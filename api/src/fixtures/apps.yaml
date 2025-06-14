@@ -1,0 +1,15 @@
+---
+- id: 1
+  name: "App 1"
+  des: "App 1 description"
+  llms: "llm1"
+  created_by: 1
+  updated_by: 1
+  status: "active"
+  is_public: true
+  is_demo: false
+  created_at: "2021-01-01"
+  updated_at: "2021-01-01"
+  mode: "park"
+  icon_type: "emoji"
+  icon: "🚗"
