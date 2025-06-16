@@ -1,6 +1,6 @@
-use tinyiothub::app::App;
 use loco_rs::testing::prelude::*;
 use serial_test::serial;
+use tinyiothub::app::App;
 
 #[tokio::test]
 #[serial]

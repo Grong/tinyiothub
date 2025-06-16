@@ -1,6 +1,6 @@
 use serde_json::Value as JsonValue;
 
-use crate::utils::settings::{Feature, SystemFeature,Settings};
+use crate::utils::settings::{Feature, Settings, SystemFeature};
 
 pub trait ConfigExt {
     fn get_features(&self) -> Feature;

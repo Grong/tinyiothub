@@ -13,9 +13,9 @@ use loco_rs::{
 use migration::Migrator;
 use std::path::Path;
 
-use crate::{initializers::AxumCorsInitializer, models::apps};
 #[allow(unused_imports)]
 use crate::{controllers, models::_entities::users, tasks, workers::downloader::DownloadWorker};
+use crate::{initializers::AxumCorsInitializer};
 
 pub struct App;
 #[async_trait]

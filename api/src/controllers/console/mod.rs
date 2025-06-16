@@ -1,13 +1,13 @@
 use loco_rs::prelude::*;
 
+pub mod apps;
+pub mod auth;
 pub mod feature;
 pub mod init;
 pub mod setup;
-pub mod auth;
-pub mod apps;
+pub mod tags;
 pub mod version;
 pub mod workspace;
-pub mod tags;
 
 pub fn routes() -> Vec<Routes> {
     vec![

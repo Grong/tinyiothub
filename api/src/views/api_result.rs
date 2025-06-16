@@ -10,13 +10,23 @@ pub struct ApiResult<T> {
 
 impl<T> ApiResult<T> {
     pub fn new(result: String, data: Option<T>, code: String, message: String) -> Self {
-        Self { result, data, code, message }
+        Self {
+            result,
+            data,
+            code,
+            message,
+        }
     }
 }
 
 impl<T> ApiResult<T> {
     pub fn success(data: Option<T>) -> Self {
-        Self::new("success".to_string(), data, "200".to_string(), "success".to_string())
+        Self::new(
+            "success".to_string(),
+            data,
+            "200".to_string(),
+            "success".to_string(),
+        )
     }
 
     pub fn error(message: String) -> Self {

@@ -4,7 +4,10 @@ use crate::{
         _entities::users,
         users::{LoginParams, RegisterParams},
     },
-    views::{api_result::ApiResult, auth::{CurrentResponse, LoginResponse}},
+    views::{
+        api_result::ApiResult,
+        auth::{CurrentResponse, LoginResponse},
+    },
 };
 use axum::debug_handler;
 use loco_rs::prelude::*;

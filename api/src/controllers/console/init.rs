@@ -1,4 +1,3 @@
-
 use axum::debug_handler;
 use loco_rs::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -18,7 +17,5 @@ async fn init(State(_ctx): State<AppContext>) -> Result<Response> {
 }
 
 pub fn routes() -> Routes {
-    Routes::new()
-        .prefix("/console/api")
-        .add("/init", get(init))
+    Routes::new().prefix("/console/api").add("/init", get(init))
 }

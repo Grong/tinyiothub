@@ -1,10 +1,13 @@
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::unnecessary_struct_initialization)]
 #![allow(clippy::unused_async)]
+use crate::models::{
+    apps::{ActiveModel, Entity, Model},
+    users, ListParams,
+};
 use axum::{debug_handler, extract::Query};
 use loco_rs::prelude::*;
 use serde::{Deserialize, Serialize};
-use crate::models::{apps::{ActiveModel, Entity, ListParams, Model}, users};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Params {
@@ -42,7 +45,11 @@ pub async fn list(
 }
 
 #[debug_handler]
-pub async fn add(auth: auth::JWT, State(ctx): State<AppContext>, Json(params): Json<Params>) -> Result<Response> {
+pub async fn add(
+    auth: auth::JWT,
+    State(ctx): State<AppContext>,
+    Json(params): Json<Params>,
+) -> Result<Response> {
     let user = users::Model::find_by_pid(&ctx.db, &auth.claims.pid).await?;
     let mut item = ActiveModel {
         created_by: Set(user.id),

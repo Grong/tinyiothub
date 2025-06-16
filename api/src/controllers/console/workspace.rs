@@ -1,11 +1,9 @@
-use axum::{debug_handler};
+use axum::debug_handler;
 use loco_rs::prelude::*;
 use serde_json::json;
 
-
 #[debug_handler]
 async fn current(State(_ctx): State<AppContext>) -> Result<Response> {
-    
     format::json(json!({
         "id": "1",
         "name": "Workspace 1",

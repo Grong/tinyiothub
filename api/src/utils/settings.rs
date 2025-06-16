@@ -41,11 +41,11 @@ impl Default for SystemFeature {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Feature {
-    apps: u64, // 应用数量
-    devices: u64, // 设备数量
-    users: u64, // 用户数量
-    workspaces: u64, // 工作空间数量
-    plugins: u64, // 插件数量
+    apps: u64,         // 应用数量
+    devices: u64,      // 设备数量
+    users: u64,        // 用户数量
+    workspaces: u64,   // 工作空间数量
+    plugins: u64,      // 插件数量
     integrations: u64, // 集成数量
 }
 
@@ -64,7 +64,7 @@ impl Default for Feature {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Branding {
-    enabled : bool ,
+    enabled: bool,
     application_title: String,
     login_page_logo: String,
     workspace_logo: String,

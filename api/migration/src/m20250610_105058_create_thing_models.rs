@@ -8,7 +8,9 @@ pub struct Migration;
 impl MigrationTrait for Migration {
     async fn up(&self, m: &SchemaManager) -> Result<(), DbErr> {
         // Create thing_model table
-        create_table(m, "thing_model",
+        create_table(
+            m,
+            "thing_model",
             &[
                 ("model_id", ColType::String),
                 ("name", ColType::String),
@@ -17,11 +19,14 @@ impl MigrationTrait for Migration {
                 ("schema_version", ColType::String),
                 ("extensions", ColType::Json),
             ],
-            &[]
-        ).await?;
+            &[],
+        )
+        .await?;
 
         // Create device table
-        create_table(m, "device",
+        create_table(
+            m,
+            "device",
             &[
                 ("device_id", ColType::String),
                 ("tenant_id", ColType::String),
@@ -31,11 +36,14 @@ impl MigrationTrait for Migration {
                 ("network_config", ColType::Json),
                 ("security_config", ColType::Json),
             ],
-            &[]
-        ).await?;
+            &[],
+        )
+        .await?;
 
         // Create model_property table
-        create_table(m, "model_property",
+        create_table(
+            m,
+            "model_property",
             &[
                 ("id", ColType::PkAuto),
                 ("model_id", ColType::String),
@@ -46,11 +54,14 @@ impl MigrationTrait for Migration {
                 ("access_mode", ColType::String),
                 ("data_specs", ColType::Json),
             ],
-            &[]
-        ).await?;
+            &[],
+        )
+        .await?;
 
         // Create model_service table
-        create_table(m, "model_service",
+        create_table(
+            m,
+            "model_service",
             &[
                 ("id", ColType::PkAuto),
                 ("model_id", ColType::String),
@@ -59,11 +70,14 @@ impl MigrationTrait for Migration {
                 ("description", ColType::StringNull),
                 ("call_type", ColType::String),
             ],
-            &[]
-        ).await?;
+            &[],
+        )
+        .await?;
 
         // Create model_event table
-        create_table(m, "model_event",
+        create_table(
+            m,
+            "model_event",
             &[
                 ("id", ColType::PkAuto),
                 ("model_id", ColType::String),
@@ -73,32 +87,41 @@ impl MigrationTrait for Migration {
                 ("event_type", ColType::String),
                 ("severity", ColType::String),
             ],
-            &[]
-        ).await?;
+            &[],
+        )
+        .await?;
 
         // Create model_module table
-        create_table(m, "model_module",
+        create_table(
+            m,
+            "model_module",
             &[
                 ("id", ColType::PkAuto),
                 ("model_id", ColType::String),
                 ("name", ColType::String),
                 ("description", ColType::StringNull),
             ],
-            &[]
-        ).await?;
+            &[],
+        )
+        .await?;
 
         // Create module_item table
-        create_table(m, "module_item",
+        create_table(
+            m,
+            "module_item",
             &[
                 ("module_id", ColType::Integer),
                 ("item_type", ColType::String),
                 ("item_identifier", ColType::String),
             ],
-            &[]
-        ).await?;
+            &[],
+        )
+        .await?;
 
         // Create service_param table
-        create_table(m, "service_param",
+        create_table(
+            m,
+            "service_param",
             &[
                 ("id", ColType::PkAuto),
                 ("service_id", ColType::Integer),
@@ -108,11 +131,14 @@ impl MigrationTrait for Migration {
                 ("required", ColType::Boolean),
                 ("data_specs", ColType::Json),
             ],
-            &[]
-        ).await?;
+            &[],
+        )
+        .await?;
 
         // Create event_param table
-        create_table(m, "event_param",
+        create_table(
+            m,
+            "event_param",
             &[
                 ("id", ColType::PkAuto),
                 ("event_id", ColType::Integer),
@@ -121,11 +147,14 @@ impl MigrationTrait for Migration {
                 ("data_type", ColType::String),
                 ("data_specs", ColType::Json),
             ],
-            &[]
-        ).await?;
+            &[],
+        )
+        .await?;
 
         // Create device_property_value table
-        create_table(m, "device_property_value",
+        create_table(
+            m,
+            "device_property_value",
             &[
                 ("device_id", ColType::String),
                 ("id", ColType::String),
@@ -136,11 +165,14 @@ impl MigrationTrait for Migration {
                 ("property_identifier", ColType::String),
                 ("value", ColType::Json),
             ],
-            &[]
-        ).await?;
+            &[],
+        )
+        .await?;
 
         // Create device_service_call table
-        create_table(m, "device_service_call",
+        create_table(
+            m,
+            "device_service_call",
             &[
                 ("id", ColType::PkAuto),
                 ("device_id", ColType::String),
@@ -149,11 +181,14 @@ impl MigrationTrait for Migration {
                 ("status", ColType::String),
                 ("output_result", ColType::JsonNull),
             ],
-            &[]
-        ).await?;
+            &[],
+        )
+        .await?;
 
         // Create device_event_record table
-        create_table(m, "device_event_record",
+        create_table(
+            m,
+            "device_event_record",
             &[
                 ("id", ColType::PkAuto),
                 ("device_id", ColType::String),
@@ -162,8 +197,9 @@ impl MigrationTrait for Migration {
                 ("occurred_at", ColType::TimestampWithTimeZone),
                 ("severity", ColType::String),
             ],
-            &[]
-        ).await?;
+            &[],
+        )
+        .await?;
 
         Ok(())
     }
