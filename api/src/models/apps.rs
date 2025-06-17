@@ -34,6 +34,7 @@ impl Model {
     pub async fn list_paginated(
         db: &DatabaseConnection,
         params: super::ListParams,
+        login_user_id: i32,
     ) -> ModelResult<super::PaginatedResult<Self>> {
         let mut query = Entity::find();
 
@@ -43,7 +44,9 @@ impl Model {
         }
 
         if let Some(is_created_by_me) = params.is_created_by_me {
-            query = query.filter(Column::CreatedBy.eq(is_created_by_me));
+            if is_created_by_me {
+                query = query.filter(Column::CreatedBy.eq(login_user_id));
+            }
         }
 
         let paginator = query.paginate(db, params.limit);

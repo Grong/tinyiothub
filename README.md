@@ -288,3 +288,14 @@
   ]
 }
 ```
+
+
+## loco 脚手架
+
+curd
+
+``` 
+cargo loco generate scaffold 模型名称 title:string content:text --api
+cargo loco generate scaffold tag_bindings tenant_id:string tag_id:int target_id:int created_by:int --api
+
+```

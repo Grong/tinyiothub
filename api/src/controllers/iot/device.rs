@@ -3,7 +3,6 @@
 #![allow(clippy::unused_async)]
 use crate::services::{
     device_property_service::DevicePropertyService, device_service::DeviceService,
-    device_status_service::DeviceStatusService,
 };
 use axum::extract::Query;
 use loco_rs::prelude::*;
@@ -32,14 +31,14 @@ pub async fn create_device(
 
 /// 从模板创建设备
 pub async fn create_from_template(
-    Path(template_id): Path<i32>,
+    Path(template_id): Path<String>,
     State(ctx): State<AppContext>,
     Json(params): Json<InputDeviceParams>,
 ) -> Result<Response> {
     let name = params
         .name
         .ok_or_else(|| Error::BadRequest("name is required".to_string()))?;
-    let device = DeviceService::create_device_from_template(&ctx.db, template_id, &name).await?;
+    let device = DeviceService::create_device_from_template(&ctx.db, &template_id, &name).await?;
 
     format::json(device)
 }
@@ -61,7 +60,7 @@ pub async fn get_full_status(
     Path(device_id): Path<String>,
     State(ctx): State<AppContext>,
 ) -> Result<Response> {
-    let status = DeviceStatusService::get_full_status(&ctx.db, &device_id).await?;
+    let status = DeviceService::get_full_status(&ctx.db, &device_id).await?;
 
     format::json(status)
 }
@@ -71,7 +70,7 @@ pub async fn get_health_report(
     Path(device_id): Path<String>,
     State(ctx): State<AppContext>,
 ) -> Result<Response> {
-    let health = DeviceStatusService::check_health(&ctx.db, &device_id).await?;
+    let health = DeviceService::check_health(&ctx.db, &device_id).await?;
 
     format::json(health)
 }
@@ -88,7 +87,7 @@ pub async fn get_property_history(
     Query(params): Query<QueryHistoryParams>,
 ) -> Result<Response> {
     let history =
-        DeviceStatusService::get_property_history(&ctx.db, &device_id, &property, params.hours)
+        DevicePropertyService::get_property_history(&ctx.db, &device_id, &property, params.hours)
             .await?;
 
     format::json(history)

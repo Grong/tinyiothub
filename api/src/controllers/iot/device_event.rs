@@ -1,10 +1,10 @@
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::unnecessary_struct_initialization)]
 #![allow(clippy::unused_async)]
-use crate::services::device_event_service::DeviceEventService;
 use axum::debug_handler;
 use loco_rs::prelude::*;
 use serde_json::Value;
+use crate::models::prelude::*;
 
 #[debug_handler]
 pub async fn record_event(
@@ -12,7 +12,7 @@ pub async fn record_event(
     State(ctx): State<AppContext>,
     Json(payload): Json<Value>,
 ) -> Result<Response> {
-    let event = DeviceEventService::record_event(&ctx.db, &device_id, &event_type, payload).await?;
+    let event = DeviceEventActiveModel::record_event(&ctx.db, &device_id, &event_type, payload).await?;
 
     format::json(event)
 }

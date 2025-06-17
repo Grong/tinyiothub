@@ -1,37 +1,11 @@
 use loco_rs::model::ModelResult;
-use sea_orm::{entity::prelude::*, ActiveValue::Set};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use sea_orm::entity::prelude::*;
 
-#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
-#[sea_orm(table_name = "thing_template")]
-pub struct Model {
-    #[sea_orm(primary_key)]
-    pub id: i32,
-
-    pub name: String,
-    pub description: Option<String>,
-    pub template: Value, // 完整的物模型JSON模板
-
-    pub created_at: DateTimeWithTimeZone,
-    pub updated_at: DateTimeWithTimeZone,
-}
-
-#[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {}
+pub use super::_entities::device_templates::{ActiveModel, Model, Entity,Column};
+pub type DeviceTemplates = Entity;
 
 #[async_trait::async_trait]
 impl ActiveModelBehavior for ActiveModel {
-    fn new() -> Self {
-        let now = chrono::Utc::now().fixed_offset();
-        Self {
-            created_at: Set(now),
-            updated_at: Set(now),
-            template: Set(serde_json::json!({})),
-            ..ActiveModelTrait::default()
-        }
-    }
-
     async fn before_save<C>(self, _db: &C, insert: bool) -> std::result::Result<Self, DbErr>
     where
         C: ConnectionTrait,
@@ -46,6 +20,7 @@ impl ActiveModelBehavior for ActiveModel {
     }
 }
 
+// implement your read-oriented logic here
 impl Model {
     pub async fn list_paginated(
         db: &DatabaseConnection,
@@ -72,3 +47,9 @@ impl Model {
         })
     }
 }
+
+// implement your write-oriented logic here
+impl ActiveModel {}
+
+// implement your custom finders, selectors oriented logic here
+impl Entity {}

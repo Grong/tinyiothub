@@ -1,0 +1,27 @@
+---
+- id: "1"
+  name: "Device 1"
+  description: "Device 1 description"
+  kind: "device"
+  config: {}
+  network_config: {}
+  security_config: {}
+  created_at: "2023-11-12T12:34:56.789Z"
+  updated_at: "2023-11-12T12:34:56.789Z"
+  last_seen: "2023-11-12T12:34:56.789Z"
+  is_active: true
+  status: "Normal"
+  extensions: {}
+- id: "2"
+  name: "Device 2"
+  description: "Device 2 description"
+  kind: "device"
+  config: {}
+  network_config: {}
+  security_config: {}
+  created_at: "2023-11-12T12:34:56.789Z"
+  updated_at: "2023-11-12T12:34:56.789Z"
+  last_seen: "2023-11-12T12:34:56.789Z"
+  is_active: true
+  status: "Normal"
+  extensions: {}

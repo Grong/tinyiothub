@@ -15,7 +15,7 @@ use std::path::Path;
 
 #[allow(unused_imports)]
 use crate::{controllers, models::_entities::users, tasks, workers::downloader::DownloadWorker};
-use crate::{initializers::AxumCorsInitializer};
+use crate::{initializers::AxumCorsInitializer, models::{apps, devices}};
 
 pub struct App;
 #[async_trait]
@@ -61,13 +61,16 @@ impl Hooks for App {
     }
     async fn truncate(ctx: &AppContext) -> Result<()> {
         truncate_table(&ctx.db, users::Entity).await?;
+        truncate_table(&ctx.db, apps::Entity).await?;
+        truncate_table(&ctx.db, devices::Entity).await?;
         Ok(())
     }
     async fn seed(ctx: &AppContext, base: &Path) -> Result<()> {
         db::seed::<users::ActiveModel>(&ctx.db, &base.join("users.yaml").display().to_string())
             .await?;
-        // db::seed::<apps::ActiveModel>(&ctx.db, &base.join("apps.yaml").display().to_string())
-        //     .await?;
+        db::seed::<apps::ActiveModel>(&ctx.db, &base.join("apps.yaml").display().to_string())
+            .await?;
+        db::seed::<devices::ActiveModel>(&ctx.db, &base.join("devices.yaml").display().to_string()).await?;
         Ok(())
     }
 }

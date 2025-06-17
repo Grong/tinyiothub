@@ -5,7 +5,7 @@ use axum::{debug_handler, extract::Query};
 use loco_rs::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::models::_entities::tags::{ActiveModel, Entity, Model};
+use crate::models::{_entities::tags::{ActiveModel, Entity, Model}, users, prelude::*};
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct QueryParams {
@@ -14,18 +14,25 @@ pub struct QueryParams {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Params {
+pub struct AddParams {
     pub name: Option<String>,
     pub r#type: Option<String>,
     pub tenant_id: Option<String>,
 }
 
-impl Params {
+impl AddParams {
     fn update(&self, item: &mut ActiveModel) {
         item.name = Set(self.name.clone());
         item.r#type = Set(self.r#type.clone());
         item.tenant_id = Set(self.tenant_id.clone());
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TagBindingParams {
+    pub tag_ids: Vec<i32>,
+    pub target_id: i32,
+    pub r#type: String,
 }
 
 async fn load_item(ctx: &AppContext, id: i32) -> Result<Model> {
@@ -43,8 +50,14 @@ pub async fn list(
 }
 
 #[debug_handler]
-pub async fn add(State(ctx): State<AppContext>, Json(params): Json<Params>) -> Result<Response> {
+pub async fn add(
+    auth: auth::JWT,
+    State(ctx): State<AppContext>,
+    Json(params): Json<AddParams>,
+) -> Result<Response> {
+    let user = users::Model::find_by_pid(&ctx.db, &auth.claims.pid).await?;
     let mut item = ActiveModel {
+        created_by: Set(user.id),
         ..Default::default()
     };
     params.update(&mut item);
@@ -56,7 +69,7 @@ pub async fn add(State(ctx): State<AppContext>, Json(params): Json<Params>) -> R
 pub async fn update(
     Path(id): Path<i32>,
     State(ctx): State<AppContext>,
-    Json(params): Json<Params>,
+    Json(params): Json<AddParams>,
 ) -> Result<Response> {
     let item = load_item(&ctx, id).await?;
     let mut item = item.into_active_model();
@@ -76,10 +89,29 @@ pub async fn get_one(Path(id): Path<i32>, State(ctx): State<AppContext>) -> Resu
     format::json(load_item(&ctx, id).await?)
 }
 
+#[debug_handler]
+pub async fn create_tag_binding(
+    State(ctx): State<AppContext>,
+    Json(params): Json<TagBindingParams>,
+) -> Result<Response> {
+    let tag_binding = TagBindingActiveModel::create_tag_binding(&ctx.db, params.tag_ids, params.target_id).await?;
+    format::json(tag_binding)
+}
+
+#[debug_handler]
+pub async fn remove_tag_binding(
+    State(ctx): State<AppContext>,
+    Json(params): Json<TagBindingParams>,
+) -> Result<Response> {
+    let tag_binding = TagBindingActiveModel::remove_tag_binding(&ctx.db, params.tag_ids, params.target_id).await?;
+    format::json(tag_binding)
+}
+
 pub fn routes() -> Routes {
     Routes::new()
-        .prefix("console/api/tags/")
-        .add("/", get(list))
-        .add("/tag-bindings/create", post(add))
-        .add("/tag-bindings/remove", post(remove))
+        .prefix("console/api")
+        .add("/tags", get(list))
+        .add("/tags", post(add))
+        .add("/tag-bindings/create", post(create_tag_binding))
+        .add("/tag-bindings/remove", post(remove_tag_binding))
 }

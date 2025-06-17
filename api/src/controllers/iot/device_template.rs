@@ -2,7 +2,7 @@
 #![allow(clippy::unnecessary_struct_initialization)]
 #![allow(clippy::unused_async)]
 use crate::models::{
-    device_template::Model, ListParams,
+    device_templates::Model, ListParams,
 };
 use axum::{debug_handler, extract::Query};
 use loco_rs::prelude::*;

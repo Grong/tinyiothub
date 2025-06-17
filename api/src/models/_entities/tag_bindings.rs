@@ -4,16 +4,16 @@ use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Serialize, Deserialize)]
-#[sea_orm(table_name = "tags")]
+#[sea_orm(table_name = "tag_bindings")]
 pub struct Model {
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
     #[sea_orm(primary_key)]
     pub id: i32,
-    pub name: Option<String>,
-    pub r#type: Option<String>,
     pub tenant_id: Option<String>,
-    pub created_by: i32,
+    pub tag_id: i32,
+    pub target_id: i32,
+    pub created_by: Option<i32>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

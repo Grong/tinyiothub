@@ -1,0 +1,29 @@
+use loco_rs::schema::*;
+use sea_orm_migration::prelude::*;
+
+#[derive(DeriveMigrationName)]
+pub struct Migration;
+
+#[async_trait::async_trait]
+impl MigrationTrait for Migration {
+    async fn up(&self, m: &SchemaManager) -> Result<(), DbErr> {
+        create_table(m, "device_service_calls",
+            &[
+                ("id", ColType::PkUuid),
+                ("device_id", ColType::String),
+                ("identifier", ColType::String),
+                ("display_name", ColType::String),
+                ("parameters", ColType::Json),
+                ("status", ColType::String),
+                ("result", ColType::JsonNull),
+            ],
+            &[
+                ("device_id", "devices"),
+            ]
+        ).await
+    }
+
+    async fn down(&self, m: &SchemaManager) -> Result<(), DbErr> {
+        drop_table(m, "device_service_calls").await
+    }
+}

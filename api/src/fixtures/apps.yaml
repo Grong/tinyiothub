@@ -3,13 +3,27 @@
   name: "App 1"
   des: "App 1 description"
   llms: "llm1"
+  status: "active"
   created_by: 1
   updated_by: 1
-  status: "active"
   is_public: true
   is_demo: false
-  created_at: "2021-01-01"
-  updated_at: "2021-01-01"
+  created_at: "2023-11-12T12:34:56.789Z"
+  updated_at: "2023-11-12T12:34:56.789Z"
+  mode: "park"
+  icon_type: "emoji"
+  icon: "🚗"
+- id: 2
+  name: "App 2"
+  des: "App 2 description"
+  llms: "llm2"
+  status: "active"
+  created_by: 1
+  updated_by: 1
+  is_public: true
+  is_demo: false
+  created_at: "2023-11-12T12:34:56.789Z"
+  updated_at: "2023-11-12T12:34:56.789Z"
   mode: "park"
   icon_type: "emoji"
   icon: "🚗"

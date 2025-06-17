@@ -1,7 +1,7 @@
-use crate::models::device::{self, DeviceStatus};
-use crate::models::device_property::{PropertyDataType, PropertyStatus};
+use crate::models::devices::{DeviceStatus};
+use crate::models::device_properties::{PropertyDataType, PropertyStatus};
 use crate::prelude::*;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 pub struct DevicePropertyService;
 
@@ -12,8 +12,8 @@ impl DevicePropertyService {
         device_id: &str,
         property_name: &str,
         value: Value,
-    ) -> Result<device::Model> {
-        let device = device::Entity::find_by_id(device_id)
+    ) -> Result<DeviceModel> {
+        let device = Device::find_by_id(device_id)
             .one(db)
             .await?
             .ok_or_else(|| Error::NotFound)?;
@@ -28,7 +28,7 @@ impl DevicePropertyService {
 
         let mut active_device = device.into_active_model();
         active_device.updated_at = Set(chrono::Utc::now().fixed_offset());
-        active_device.status = Set(overall_status);
+        active_device.status = Set(overall_status as i32);
 
         let updated = active_device.update(db).await?;
         Ok(updated)
@@ -36,7 +36,7 @@ impl DevicePropertyService {
 
     /// 根据属性类型和值计算状态
     fn calculate_property_status(property: &DevicePropertyModel, value: &Value) -> PropertyStatus {
-        match property.data_type.clone() {
+        match property.get_data_type() {
             PropertyDataType::Number
             | PropertyDataType::Float
             | PropertyDataType::Double
@@ -102,8 +102,54 @@ impl DevicePropertyService {
             DevicePropertyModel::find_prop_by_device_id(db, device_id, property_name).await?;
         let status = Self::calculate_property_status(&prop, &thresholds);
         let mut prop_active = prop.into_active_model();
-        prop_active.status = Set(status);
+        prop_active.status = Set(status as i32);
         let updated = prop_active.update(db).await?;
         Ok(updated)
+    }
+
+    
+    /// 获取设备属性历史
+    pub async fn get_property_history(
+        db: &DatabaseConnection,
+        device_id: &str,
+        property_name: &str,
+        hours: Option<i32>,
+    ) -> Result<Value> {
+        let device = Device::find_by_id(device_id)
+            .one(db)
+            .await?
+            .ok_or_else(|| Error::NotFound)?;
+
+        let history = json!([]);
+
+        // 过滤指定时间范围内的历史
+        let filtered_history = if let Some(h) = hours {
+            let cutoff = chrono::Utc::now() - chrono::Duration::hours(h as i64);
+            if let Some(history_arr) = history.as_array() {
+                let filtered: Vec<_> = history_arr
+                    .iter()
+                    .filter(|entry| {
+                        if let Some(ts) = entry.get("timestamp").and_then(|t| t.as_str()) {
+                            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts) {
+                                return dt > cutoff;
+                            }
+                        }
+                        false
+                    })
+                    .cloned()
+                    .collect();
+                json!(filtered)
+            } else {
+                history
+            }
+        } else {
+            history
+        };
+
+        Ok(json!({
+            "device_id": device_id,
+            "property": property_name,
+            "history": filtered_history
+        }))
     }
 }

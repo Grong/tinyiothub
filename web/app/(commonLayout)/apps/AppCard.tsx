@@ -264,14 +264,14 @@ const AppCard = ({ app, onRefresh }: AppCardProps) => {
     )
   }
 
-  const [tags, setTags] = useState<Tag[]>(app.tags)
+  const [tags, setTags] = useState<Tag[]>(app.tags || [])
   useEffect(() => {
-    setTags(app.tags)
+    setTags(app.tags || [])
   }, [app.tags])
 
   const EditTimeText = useMemo(() => {
     const timeText = formatTime({
-      date: (app.updated_at || app.created_at) * 1000,
+      date: (app.updated_at || app.created_at),
       dateFormat: 'MM/DD/YYYY h:mm',
     })
     return `${t('datasetDocuments.segment.editedAt')} ${timeText}`

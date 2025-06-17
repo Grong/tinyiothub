@@ -1,15 +1,6 @@
 use serde::{Deserialize, Serialize};
 
 pub mod _entities;
-pub mod apps;
-pub mod device;
-pub mod device_event;
-pub mod device_property;
-pub mod device_service_call;
-pub mod device_template;
-pub mod prelude;
-pub mod tags;
-pub mod users;
 
 #[derive(Debug, Deserialize)]
 pub struct ListParams {
@@ -37,3 +28,15 @@ pub struct PaginatedResult<T> {
     pub pages: u64,
     pub has_more: bool,
 }
+
+pub mod apps;
+pub mod prelude;
+pub mod tags;
+pub mod users;
+
+pub mod device_events;
+pub mod device_properties;
+pub mod device_service_calls;
+pub mod device_templates;
+pub mod devices;
+pub mod tag_bindings;

@@ -37,10 +37,12 @@ async fn load_item(ctx: &AppContext, id: i32) -> Result<Model> {
 
 #[debug_handler]
 pub async fn list(
+    auth: auth::JWT,
     State(ctx): State<AppContext>,
     Query(params): Query<ListParams>,
 ) -> Result<Response> {
-    let result = Model::list_paginated(&ctx.db, params).await?;
+    let user = users::Model::find_by_pid(&ctx.db, &auth.claims.pid).await?;
+    let result = Model::list_paginated(&ctx.db, params, user.id).await?;
     format::json(result)
 }
 
