@@ -1,7 +1,6 @@
 use loco_rs::model::ModelResult;
 use sea_orm::{entity::prelude::*, ActiveValue::Set};
 use serde::{Deserialize, Serialize};
-use ulid::Ulid;
 
 pub use super::_entities::devices::{ActiveModel, Model, Entity};
 pub type Devices = Entity;
@@ -11,7 +10,6 @@ impl ActiveModelBehavior for ActiveModel {
     fn new() -> Self {
         let now = chrono::Utc::now().fixed_offset();
         Self {
-            id: Set(Ulid::new().to_string()), // 自动生成ID
             created_at: Set(now),
             updated_at: Set(now),
             is_active: Set(true),

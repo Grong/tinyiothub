@@ -7,7 +7,7 @@ import { Bars3Icon } from '@heroicons/react/20/solid'
 import AccountDropdown from './account-dropdown'
 import AppNav from './app-nav'
 import EnvNav from './env-nav'
-import ExploreNav from './explore-nav'
+// import ExploreNav from './explore-nav'
 import ToolsNav from './tools-nav'
 import { WorkspaceProvider } from '@/context/workspace-context'
 import TinyIotHubLogo from '@/app/components/base/logo/tinyiothub-logo'
@@ -79,7 +79,7 @@ const Header = () => {
       {
         !isMobile && (
           <div className='absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center'>
-            <ExploreNav className={navClassName} />
+            {/* <ExploreNav className={navClassName} /> */}
             <AppNav />
             <ToolsNav className={navClassName} />
           </div>
@@ -92,7 +92,7 @@ const Header = () => {
       {
         (isMobile && isShowNavMenu) && (
           <div className='flex w-full flex-col gap-y-1 p-2'>
-            <ExploreNav className={navClassName} />
+            {/* <ExploreNav className={navClassName} /> */}
             <AppNav />
             <ToolsNav className={navClassName} />
           </div>

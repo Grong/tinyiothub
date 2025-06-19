@@ -5,16 +5,6 @@ import { useTranslation } from 'react-i18next'
 import { RiListUnordered } from '@remixicon/react'
 import TemplateEn from './template/template.en.mdx'
 import TemplateZh from './template/template.zh.mdx'
-import TemplateJa from './template/template.ja.mdx'
-import TemplateAdvancedChatEn from './template/template_advanced_chat.en.mdx'
-import TemplateAdvancedChatZh from './template/template_advanced_chat.zh.mdx'
-import TemplateAdvancedChatJa from './template/template_advanced_chat.ja.mdx'
-import TemplateWorkflowEn from './template/template_workflow.en.mdx'
-import TemplateWorkflowZh from './template/template_workflow.zh.mdx'
-import TemplateWorkflowJa from './template/template_workflow.ja.mdx'
-import TemplateChatEn from './template/template_chat.en.mdx'
-import TemplateChatZh from './template/template_chat.zh.mdx'
-import TemplateChatJa from './template/template_chat.ja.mdx'
 import I18n from '@/context/i18n'
 import { LanguagesSupported } from '@/i18n/language'
 import useTheme from '@/hooks/use-theme'
@@ -122,49 +112,11 @@ const Doc = ({ appDetail }: IDocProps) => {
           )}
       </div>
       <article className={cn('prose-xl prose', theme === Theme.dark && 'prose-invert')} >
-        {(appDetail?.mode === 'chat' || appDetail?.mode === 'agent-chat') && (
-          (() => {
-            switch (locale) {
-              case LanguagesSupported[1]:
-                return <TemplateChatZh appDetail={appDetail} variables={variables} inputs={inputs} />
-              case LanguagesSupported[7]:
-                return <TemplateChatJa appDetail={appDetail} variables={variables} inputs={inputs} />
-              default:
-                return <TemplateChatEn appDetail={appDetail} variables={variables} inputs={inputs} />
-            }
-          })()
-        )}
-        {appDetail?.mode === 'advanced-chat' && (
-          (() => {
-            switch (locale) {
-              case LanguagesSupported[1]:
-                return <TemplateAdvancedChatZh appDetail={appDetail} variables={variables} inputs={inputs} />
-              case LanguagesSupported[7]:
-                return <TemplateAdvancedChatJa appDetail={appDetail} variables={variables} inputs={inputs} />
-              default:
-                return <TemplateAdvancedChatEn appDetail={appDetail} variables={variables} inputs={inputs} />
-            }
-          })()
-        )}
-        {appDetail?.mode === 'workflow' && (
-          (() => {
-            switch (locale) {
-              case LanguagesSupported[1]:
-                return <TemplateWorkflowZh appDetail={appDetail} variables={variables} inputs={inputs} />
-              case LanguagesSupported[7]:
-                return <TemplateWorkflowJa appDetail={appDetail} variables={variables} inputs={inputs} />
-              default:
-                return <TemplateWorkflowEn appDetail={appDetail} variables={variables} inputs={inputs} />
-            }
-          })()
-        )}
-        {appDetail?.mode === 'completion' && (
+        {(appDetail?.mode === 'park' || appDetail?.mode === 'computer-room') && (
           (() => {
             switch (locale) {
               case LanguagesSupported[1]:
                 return <TemplateZh appDetail={appDetail} variables={variables} inputs={inputs} />
-              case LanguagesSupported[7]:
-                return <TemplateJa appDetail={appDetail} variables={variables} inputs={inputs} />
               default:
                 return <TemplateEn appDetail={appDetail} variables={variables} inputs={inputs} />
             }

@@ -10,4 +10,5 @@ pub mod device_templates;
 pub mod devices;
 pub mod tag_bindings;
 pub mod tags;
+pub mod tenants;
 pub mod users;

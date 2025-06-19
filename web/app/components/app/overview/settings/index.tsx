@@ -1,11 +1,10 @@
 'use client'
 import type { FC } from 'react'
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { RiArrowRightSLine, RiCloseLine } from '@remixicon/react'
 import Link from 'next/link'
 import { Trans, useTranslation } from 'react-i18next'
 import { useContext } from 'use-context-selector'
-import { SparklesSoft } from '@/app/components/base/icons/src/public/common'
 import Modal from '@/app/components/base/modal'
 import ActionButton from '@/app/components/base/action-button'
 import Button from '@/app/components/base/button'
@@ -14,15 +13,11 @@ import Input from '@/app/components/base/input'
 import Textarea from '@/app/components/base/textarea'
 import AppIcon from '@/app/components/base/app-icon'
 import Switch from '@/app/components/base/switch'
-import PremiumBadge from '@/app/components/base/premium-badge'
 import { SimpleSelect } from '@/app/components/base/select'
 import type { AppDetailResponse } from '@/models/app'
 import type { AppIconType, AppSSO, Language } from '@/types/app'
 import { useToastContext } from '@/app/components/base/toast'
 import { LanguagesSupported, languages } from '@/i18n/language'
-import Tooltip from '@/app/components/base/tooltip'
-import { useProviderContext } from '@/context/provider-context'
-import { useModalContext } from '@/context/modal-context'
 import type { AppIconSelection } from '@/app/components/base/app-icon-picker'
 import AppIconPicker from '@/app/components/base/app-icon-picker'
 import I18n from '@/context/i18n'
@@ -81,7 +76,7 @@ const SettingsModal: FC<ISettingsModalProps> = ({
     default_language,
     show_workflow_steps,
     use_icon_as_answer_icon,
-  } = appInfo.site
+  } = appInfo.site || {}
   const [inputInfo, setInputInfo] = useState({
     title,
     desc: description,
@@ -106,16 +101,6 @@ const SettingsModal: FC<ISettingsModalProps> = ({
       ? { type: 'image', url: icon_url!, fileId: icon }
       : { type: 'emoji', icon, background: icon_background! },
   )
-
-  const { enableBilling, plan, webappCopyrightEnabled } = useProviderContext()
-  const { setShowPricingModal, setShowAccountSettingModal } = useModalContext()
-  const isFreePlan = plan.type === 'sandbox'
-  const handlePlanClick = useCallback(() => {
-    if (isFreePlan)
-      setShowPricingModal()
-    else
-      setShowAccountSettingModal({ payload: 'billing' })
-  }, [isFreePlan, setShowAccountSettingModal, setShowPricingModal])
 
   useEffect(() => {
     setInputInfo({
@@ -185,11 +170,9 @@ const SettingsModal: FC<ISettingsModalProps> = ({
       chat_color_theme: inputInfo.chatColorTheme,
       chat_color_theme_inverted: inputInfo.chatColorThemeInverted,
       prompt_public: false,
-      copyright: !webappCopyrightEnabled
-        ? ''
-        : inputInfo.copyrightSwitchValue
-          ? inputInfo.copyright
-          : '',
+      copyright: inputInfo.copyrightSwitchValue
+        ? inputInfo.copyright
+        : '',
       privacy_policy: inputInfo.privacyPolicy,
       custom_disclaimer: inputInfo.customDisclaimer,
       icon_type: appIcon.type,
@@ -326,7 +309,7 @@ const SettingsModal: FC<ISettingsModalProps> = ({
             <div className='flex items-center justify-between'>
               <div className={cn('system-sm-semibold py-1 text-text-secondary')}>{t(`${prefixSettings}.workflow.subTitle`)}</div>
               <Switch
-                disabled={!(appInfo.mode === 'workflow' || appInfo.mode === 'advanced-chat')}
+                disabled={!(appInfo.mode === 'computer-room' || appInfo.mode === 'park')}
                 defaultValue={inputInfo.show_workflow_steps}
                 onChange={v => setInputInfo({ ...inputInfo, show_workflow_steps: v })}
               />
@@ -352,33 +335,7 @@ const SettingsModal: FC<ISettingsModalProps> = ({
                 <div className='flex items-center'>
                   <div className='flex grow items-center'>
                     <div className={cn('system-sm-semibold mr-1 py-1 text-text-secondary')}>{t(`${prefixSettings}.more.copyright`)}</div>
-                    {/* upgrade button */}
-                    {enableBilling && isFreePlan && (
-                      <div className='h-[18px] select-none'>
-                        <PremiumBadge size='s' color='blue' allowHover={true} onClick={handlePlanClick}>
-                          <SparklesSoft className='flex h-3.5 w-3.5 items-center py-[1px] pl-[3px] text-components-premium-badge-indigo-text-stop-0' />
-                          <div className='system-xs-medium'>
-                            <span className='p-1'>
-                              {t('billing.upgradeBtn.encourageShort')}
-                            </span>
-                          </div>
-                        </PremiumBadge>
-                      </div>
-                    )}
                   </div>
-                  <Tooltip
-                    disabled={webappCopyrightEnabled}
-                    popupContent={
-                      <div className='w-[180px]'>{t(`${prefixSettings}.more.copyrightTooltip`)}</div>
-                    }
-                    asChild={false}
-                  >
-                    <Switch
-                      disabled={!webappCopyrightEnabled}
-                      defaultValue={inputInfo.copyrightSwitchValue}
-                      onChange={v => setInputInfo({ ...inputInfo, copyrightSwitchValue: v })}
-                    />
-                  </Tooltip>
                 </div>
                 <p className='body-xs-regular pb-0.5 text-text-tertiary'>{t(`${prefixSettings}.more.copyrightTip`)}</p>
                 {inputInfo.copyrightSwitchValue && (
@@ -396,7 +353,7 @@ const SettingsModal: FC<ISettingsModalProps> = ({
                 <p className={cn('body-xs-regular pb-0.5 text-text-tertiary')}>
                   <Trans
                     i18nKey={`${prefixSettings}.more.privacyPolicyTip`}
-                    components={{ privacyPolicyLink: <Link href={'https://dify.ai/privacy'} target='_blank' rel='noopener noreferrer' className='text-text-accent' /> }}
+                    components={{ privacyPolicyLink: <Link href={'https://tinyiothub.com/privacy'} target='_blank' rel='noopener noreferrer' className='text-text-accent' /> }}
                   />
                 </p>
                 <Input

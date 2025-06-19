@@ -5,13 +5,12 @@ import NavLink from './navLink'
 import type { NavIcon } from './navLink'
 import AppBasic from './basic'
 import AppInfo from './app-info'
-import DatasetInfo from './dataset-info'
 import useBreakpoints, { MediaType } from '@/hooks/use-breakpoints'
 import { useStore as useAppStore } from '@/app/components/app/store'
 import cn from '@/utils/classnames'
 
 export type IAppDetailNavProps = {
-  iconType?: 'app' | 'dataset' | 'notion'
+  iconType?: 'app' | 'notion'
   title: string
   desc: string
   isExternal?: boolean
@@ -62,16 +61,7 @@ const AppDetailNav = ({ title, desc, isExternal, icon, icon_background, navigati
         {iconType === 'app' && (
           <AppInfo expand={expand} />
         )}
-        {iconType === 'dataset' && (
-          <DatasetInfo
-            name={title}
-            description={desc}
-            isExternal={isExternal}
-            expand={expand}
-            extraInfo={extraInfo && extraInfo(appSidebarExpand)}
-          />
-        )}
-        {!['app', 'dataset'].includes(iconType) && (
+        {!['app'].includes(iconType) && (
           <AppBasic
             mode={appSidebarExpand}
             iconType={iconType}

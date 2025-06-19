@@ -15,7 +15,7 @@ use std::path::Path;
 
 #[allow(unused_imports)]
 use crate::{controllers, models::_entities::users, tasks, workers::downloader::DownloadWorker};
-use crate::{initializers::AxumCorsInitializer, models::{apps, devices}};
+use crate::{initializers::AxumCorsInitializer, models::{apps, devices, tenants}};
 
 pub struct App;
 #[async_trait]
@@ -66,6 +66,8 @@ impl Hooks for App {
         Ok(())
     }
     async fn seed(ctx: &AppContext, base: &Path) -> Result<()> {
+        db::seed::<tenants::ActiveModel>(&ctx.db, &base.join("tenants.yaml").display().to_string())
+            .await?;
         db::seed::<users::ActiveModel>(&ctx.db, &base.join("users.yaml").display().to_string())
             .await?;
         db::seed::<apps::ActiveModel>(&ctx.db, &base.join("apps.yaml").display().to_string())

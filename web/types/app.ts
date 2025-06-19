@@ -6,7 +6,6 @@ import type {
   RerankingModeEnum,
   WeightedScoreEnum,
 } from '@/models/datasets'
-import type { UploadFileSetting } from '@/app/components/workflow/types'
 import type { AccessMode } from '@/models/access-control'
 
 export enum Theme {
@@ -243,9 +242,6 @@ export type ModelConfig = {
   }
   model: Model
   dataset_configs: DatasetConfigs
-  file_upload?: {
-    image: VisionSettings
-  } & UploadFileSetting
   files?: VisionFile[]
   created_at?: number
   updated_at?: number
@@ -257,7 +253,7 @@ export type Language = typeof LanguagesSupported[number]
  * Web Application Configuration
  */
 export type SiteConfig = {
-  /** Application URL Identifier: `http://dify.app/{access_token}` */
+  /** Application URL Identifier: `http://tinyiothub.com/{access_token}` */
   access_token: string
   /** Public Title */
   title: string

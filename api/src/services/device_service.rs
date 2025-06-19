@@ -29,7 +29,7 @@ impl DeviceService {
         template_id: &str,
         name: &str,
     ) -> Result<DeviceModel> {
-        let template = DeviceTemplate::find_by_id(template_id)
+        let template = DeviceTemplate::find_by_id(Uuid::parse_str(template_id).unwrap())
             .one(db)
             .await?
             .ok_or_else(|| Error::NotFound)?;
@@ -69,7 +69,7 @@ impl DeviceService {
 
     /// 获取设备状态
     pub async fn get_device_status(db: &DatabaseConnection, device_id: &str) -> Result<Value> {
-        let device = Device::find_by_id(device_id)
+        let device = Device::find_by_id(device_id.parse::<i32>().unwrap())
             .one(db)
             .await?
             .ok_or_else(|| Error::NotFound)?;
@@ -97,7 +97,7 @@ impl DeviceService {
 
      /// 获取设备完整状态
      pub async fn get_full_status(db: &DatabaseConnection, device_id: &str) -> Result<Value> {
-        let device = Device::find_by_id(device_id)
+        let device = Device::find_by_id(device_id.parse::<i32>().unwrap())
             .one(db)
             .await?
             .ok_or_else(|| Error::NotFound)?;
@@ -130,7 +130,7 @@ impl DeviceService {
 
     /// 检查设备健康状况
     pub async fn check_health(db: &DatabaseConnection, device_id: &str) -> Result<Value> {
-        let device = Device::find_by_id(device_id)
+        let device = Device::find_by_id(device_id.parse::<i32>().unwrap())
             .one(db)
             .await?
             .ok_or_else(|| Error::NotFound)?;

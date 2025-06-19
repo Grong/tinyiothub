@@ -40,7 +40,7 @@ const SecretKeyModal = ({
   onClose,
 }: ISecretKeyModalProps) => {
   const { t } = useTranslation()
-  const { formatTime } = useTimestamp()
+  const { formatDate } = useTimestamp()
   const { currentWorkspace, isCurrentWorkspaceManager, isCurrentWorkspaceEditor } = useAppContext()
   const [showConfirmDelete, setShowConfirmDelete] = useState(false)
   const [isVisible, setVisible] = useState(false)
@@ -100,8 +100,8 @@ const SecretKeyModal = ({
               {apiKeysList.data.map(api => (
                 <div className='flex h-9 items-center border-b border-divider-regular text-sm font-normal text-text-secondary' key={api.id}>
                   <div className='w-64 shrink-0 truncate px-3 font-mono'>{generateToken(api.token)}</div>
-                  <div className='w-[200px] shrink-0 truncate px-3'>{formatTime(Number(api.created_at), t('appLog.dateTimeFormat') as string)}</div>
-                  <div className='w-[200px] shrink-0 truncate px-3'>{api.last_used_at ? formatTime(Number(api.last_used_at), t('appLog.dateTimeFormat') as string) : t('appApi.never')}</div>
+                  <div className='w-[200px] shrink-0 truncate px-3'>{formatDate(api.created_at, t('appLog.dateTimeFormat') as string)}</div>
+                  <div className='w-[200px] shrink-0 truncate px-3'>{api.last_used_at ? formatDate(api.last_used_at, t('appLog.dateTimeFormat') as string) : t('appApi.never')}</div>
                   <div className='flex grow space-x-2 px-3'>
                     <CopyFeedback content={api.token} />
                     {isCurrentWorkspaceManager && (

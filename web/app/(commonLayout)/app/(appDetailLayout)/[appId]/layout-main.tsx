@@ -62,7 +62,7 @@ const AppDetailLayout: FC<IAppDetailLayoutProps> = (props) => {
       ...(isCurrentWorkspaceEditor
         ? [{
           name: t('common.appMenus.promptEng'),
-          href: `/app/${appId}/${(mode === 'workflow' || mode === 'advanced-chat') ? 'workflow' : 'configuration'}`,
+          href: `/app/${appId}/configuration`,
           icon: RiTerminalWindowLine,
           selectedIcon: RiTerminalWindowFill,
         }]
@@ -133,16 +133,8 @@ const AppDetailLayout: FC<IAppDetailLayoutProps> = (props) => {
       router.replace(`/app/${appId}/overview`)
       return
     }
-    if ((res.mode === 'workflow' || res.mode === 'advanced-chat') && (pathname).endsWith('configuration')) {
-      router.replace(`/app/${appId}/workflow`)
-    }
-    else if ((res.mode !== 'workflow' && res.mode !== 'advanced-chat') && (pathname).endsWith('workflow')) {
-      router.replace(`/app/${appId}/configuration`)
-    }
-    else {
-      setAppDetail({ ...res, enable_sso: false })
-      setNavigation(getNavigations(appId, isCurrentWorkspaceEditor, res.mode))
-    }
+    setAppDetail({ ...res, enable_sso: false })
+    setNavigation(getNavigations(appId, isCurrentWorkspaceEditor, res.mode))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appDetailRes, isCurrentWorkspaceEditor, isLoadingAppDetail, isLoadingCurrentWorkspace])
 

@@ -11,7 +11,7 @@ impl MigrationTrait for Migration {
             m,
             "devices",
             &[
-                ("id", ColType::PkUuid),
+                ("id", ColType::PkAuto),
                 ("name", ColType::String),
                 ("description", ColType::StringNull),
                 ("kind", ColType::StringNull),
@@ -23,7 +23,10 @@ impl MigrationTrait for Migration {
                 ("status", ColType::Integer),
                 ("extensions", ColType::JsonNull),
             ],
-            &[],
+            &[
+                ("tenant", "tenant_id"),
+                ("user", "created_by"),
+            ],
         )
         .await
     }

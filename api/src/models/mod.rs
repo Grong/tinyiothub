@@ -40,3 +40,4 @@ pub mod device_service_calls;
 pub mod device_templates;
 pub mod devices;
 pub mod tag_bindings;
+pub mod tenants;

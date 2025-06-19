@@ -24,7 +24,7 @@ export type NavItem = {
   link: string
   icon_type: AppIconType | null
   icon: string
-  icon_background: string
+  icon_background: string | null
   icon_url: string | null
   mode?: string
 }

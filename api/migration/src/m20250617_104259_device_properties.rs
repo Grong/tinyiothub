@@ -12,7 +12,6 @@ impl MigrationTrait for Migration {
             "device_properties",
             &[
                 ("id", ColType::PkUuid),
-                ("device_id", ColType::String),
                 ("identifier", ColType::String),
                 ("display_name", ColType::String),
                 ("value", ColType::String),
@@ -22,7 +21,7 @@ impl MigrationTrait for Migration {
                 ("description", ColType::StringNull),
             ],
             &[
-                ("device_id", "devices"),
+                ("device", ""),
             ],
         )
         .await

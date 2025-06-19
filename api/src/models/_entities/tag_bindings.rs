@@ -11,10 +11,39 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i32,
     pub tenant_id: Option<String>,
+    pub created_by: Option<i32>,
     pub tag_id: i32,
     pub target_id: i32,
-    pub created_by: Option<i32>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {}
+pub enum Relation {
+    #[sea_orm(
+        belongs_to = "super::apps::Entity",
+        from = "Column::TargetId",
+        to = "super::apps::Column::Id",
+        on_update = "Cascade",
+        on_delete = "Cascade"
+    )]
+    Apps,
+    #[sea_orm(
+        belongs_to = "super::tags::Entity",
+        from = "Column::TagId",
+        to = "super::tags::Column::Id",
+        on_update = "Cascade",
+        on_delete = "Cascade"
+    )]
+    Tags,
+}
+
+impl Related<super::apps::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Apps.def()
+    }
+}
+
+impl Related<super::tags::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Tags.def()
+    }
+}

@@ -57,7 +57,7 @@ const translation = {
     apiRateLimit: 'API 请求频率限制',
     apiRateLimitUnit: '{{count,number}} 次/天',
     unlimitedApiRate: 'API 请求频率无限制',
-    apiRateLimitTooltip: 'API 请求频率限制涵盖所有通过 Dify API 发起的调用，例如文本生成、聊天对话、工作流执行和文档处理等。',
+    apiRateLimitTooltip: 'API 请求频率限制涵盖所有通过 Tiny IoTHub API 发起的调用，例如文本生成、聊天对话、工作流执行和文档处理等。',
     documentProcessingPriority: '文档处理',
     documentProcessingPriorityUpgrade: '以更快的速度、更高的精度处理更多的数据。',
     priority: {
@@ -128,7 +128,7 @@ const translation = {
       features: [
         '所有核心功能均在公共存储库下发布',
         '单一工作空间',
-        '符合 Dify 开源许可证',
+        '符合 Tiny IoTHub 开源许可证',
       ],
     },
     premium: {

@@ -8,4 +8,5 @@ pub use super::device_templates::Entity as DeviceTemplates;
 pub use super::devices::Entity as Devices;
 pub use super::tag_bindings::Entity as TagBindings;
 pub use super::tags::Entity as Tags;
+pub use super::tenants::Entity as Tenants;
 pub use super::users::Entity as Users;

@@ -12,7 +12,6 @@ import {
   RiWindowLine,
 } from '@remixicon/react'
 import SettingsModal from './settings'
-import EmbeddedModal from './embedded'
 import CustomizeModal from './customize'
 import style from './style.module.css'
 import type { ConfigParams } from './settings'
@@ -65,7 +64,6 @@ function AppCard({
   const appDetail = useAppStore(state => state.appDetail)
   const setAppDetail = useAppStore(state => state.setAppDetail)
   const [showSettingsModal, setShowSettingsModal] = useState(false)
-  const [showEmbedded, setShowEmbedded] = useState(false)
   const [showCustomizeModal, setShowCustomizeModal] = useState(false)
   const [genLoading, setGenLoading] = useState(false)
   const [showConfirmDelete, setShowConfirmDelete] = useState(false)
@@ -82,7 +80,7 @@ function AppCard({
       api: [{ opName: t('appOverview.overview.apiInfo.doc'), opIcon: RiBookOpenLine }],
       app: [],
     }
-    if (appInfo.mode !== 'completion' && appInfo.mode !== 'workflow')
+    if (appInfo.mode !== 'park' && appInfo.mode !== 'computer-room')
       operationsMap.webapp.push({ opName: t('appOverview.overview.appInfo.embedded.entry'), opIcon: RiWindowLine })
 
     operationsMap.webapp.push({ opName: t('appOverview.overview.appInfo.customize.entry'), opIcon: RiPaintBrushLine })
@@ -100,7 +98,7 @@ function AppCard({
   const toggleDisabled = isApp ? !isCurrentWorkspaceEditor : !isCurrentWorkspaceManager
   const runningStatus = isApp ? appInfo.enable_site : appInfo.enable_api
   const { app_base_url, access_token } = appInfo.site ?? {}
-  const appMode = (appInfo.mode !== 'completion' && appInfo.mode !== 'workflow') ? 'chat' : appInfo.mode
+  const appMode = (appInfo.mode !== 'park' && appInfo.mode !== 'computer-room') ? 'chat' : appInfo.mode
   const appUrl = `${app_base_url}${basePath}/${appMode}/${access_token}`
   const apiUrl = appInfo?.api_base_url
 
@@ -117,10 +115,6 @@ function AppCard({
       case t('appOverview.overview.appInfo.settings.entry'):
         return () => {
           setShowSettingsModal(true)
-        }
-      case t('appOverview.overview.appInfo.embedded.entry'):
-        return () => {
-          setShowEmbedded(true)
         }
       default:
         // jump to page develop
@@ -301,13 +295,6 @@ function AppCard({
               isShow={showSettingsModal}
               onClose={() => setShowSettingsModal(false)}
               onSave={onSaveSiteConfig}
-            />
-            <EmbeddedModal
-              siteInfo={appInfo.site}
-              isShow={showEmbedded}
-              onClose={() => setShowEmbedded(false)}
-              appBaseUrl={app_base_url}
-              accessToken={access_token}
             />
             <CustomizeModal
               isShow={showCustomizeModal}

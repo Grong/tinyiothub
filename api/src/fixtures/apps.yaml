@@ -13,6 +13,15 @@
   mode: "park"
   icon_type: "emoji"
   icon: "🚗"
+  tenant_id: 1
+  enable_site: true
+  enable_api: true
+  api_rpm: 100
+  api_rph: 100
+  tracing: "tracing"
+  api_base_url: "https://api.example.com"
+  access_mode: "public"
+  icon_background: "#000000"
 - id: 2
   name: "App 2"
   des: "App 2 description"
@@ -27,3 +36,12 @@
   mode: "park"
   icon_type: "emoji"
   icon: "🚗"
+  tenant_id: 1
+  enable_site: true
+  enable_api: true
+  api_rpm: 100
+  api_rph: 100
+  tracing: "tracing"
+  api_base_url: "https://api.example.com"
+  access_mode: "public"
+  icon_background: "#000000"

@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
-    #[sea_orm(primary_key, auto_increment = false)]
-    pub id: String,
+    #[sea_orm(primary_key)]
+    pub id: i32,
     pub name: String,
     pub description: Option<String>,
     pub kind: Option<String>,
@@ -20,6 +20,8 @@ pub struct Model {
     pub is_active: bool,
     pub status: i32,
     pub extensions: Option<Json>,
+    pub tenant_id: i32,
+    pub created_by: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -30,6 +32,22 @@ pub enum Relation {
     DeviceProperties,
     #[sea_orm(has_many = "super::device_service_calls::Entity")]
     DeviceServiceCalls,
+    #[sea_orm(
+        belongs_to = "super::tenants::Entity",
+        from = "Column::TenantId",
+        to = "super::tenants::Column::Id",
+        on_update = "Cascade",
+        on_delete = "Cascade"
+    )]
+    Tenants,
+    #[sea_orm(
+        belongs_to = "super::users::Entity",
+        from = "Column::CreatedBy",
+        to = "super::users::Column::Id",
+        on_update = "Cascade",
+        on_delete = "Cascade"
+    )]
+    Users,
 }
 
 impl Related<super::device_events::Entity> for Entity {
@@ -47,5 +65,17 @@ impl Related<super::device_properties::Entity> for Entity {
 impl Related<super::device_service_calls::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::DeviceServiceCalls.def()
+    }
+}
+
+impl Related<super::tenants::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Tenants.def()
+    }
+}
+
+impl Related<super::users::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Users.def()
     }
 }

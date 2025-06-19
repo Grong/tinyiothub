@@ -9,12 +9,12 @@ pub struct Model {
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
     #[sea_orm(primary_key, auto_increment = false)]
-    pub id: String,
-    pub device_id: String,
+    pub id: Uuid,
     pub event_type: String,
     pub severity: String,
     pub payload: Json,
     pub timestamp: DateTimeWithTimeZone,
+    pub device_id: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -23,8 +23,8 @@ pub enum Relation {
         belongs_to = "super::devices::Entity",
         from = "Column::DeviceId",
         to = "super::devices::Column::Id",
-        on_update = "NoAction",
-        on_delete = "NoAction"
+        on_update = "Cascade",
+        on_delete = "Cascade"
     )]
     Devices,
 }

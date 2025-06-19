@@ -28,9 +28,12 @@ impl MigrationTrait for Migration {
                 ("magic_link_token", ColType::StringNull),
                 ("magic_link_expiration", ColType::TimestampWithTimeZoneNull),
             ],
-            &[],
+            &[
+                ("tenant", "tenant_id"),
+            ],
         )
         .await?;
+    
         Ok(())
     }
 

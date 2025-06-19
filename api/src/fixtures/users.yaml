@@ -7,6 +7,7 @@
   name: user1
   created_at: "2023-11-12T12:34:56.789Z"
   updated_at: "2023-11-12T12:34:56.789Z"
+  tenant_id: 1
 - id: 2
   pid: 22222222-2222-2222-2222-222222222222
   email: user1@loco.rs
@@ -15,3 +16,4 @@
   name: user2
   created_at: "2023-11-12T12:34:56.789Z"
   updated_at: "2023-11-12T12:34:56.789Z"
+  tenant_id: 1

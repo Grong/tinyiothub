@@ -8,8 +8,8 @@ import { RiBuildingLine, RiGlobalLine, RiLockLine, RiMoreFill } from '@remixicon
 import cn from '@/utils/classnames'
 import type { App } from '@/types/app'
 import Confirm from '@/app/components/base/confirm'
-import Toast, { ToastContext } from '@/app/components/base/toast'
-import { copyApp, deleteApp, exportAppConfig, updateAppInfo } from '@/service/apps'
+import { ToastContext } from '@/app/components/base/toast'
+import { copyApp, deleteApp, updateAppInfo } from '@/service/apps'
 import DuplicateAppModal from '@/app/components/app/duplicate-modal'
 import type { DuplicateAppModalProps } from '@/app/components/app/duplicate-modal'
 import AppIcon from '@/app/components/base/app-icon'
@@ -17,7 +17,6 @@ import AppsContext, { useAppContext } from '@/context/app-context'
 import type { HtmlContentProps } from '@/app/components/base/popover'
 import CustomPopover from '@/app/components/base/popover'
 import Divider from '@/app/components/base/divider'
-import { basePath } from '@/utils/var'
 import { getRedirection } from '@/utils/app-redirection'
 import { NEED_REFRESH_APP_LIST_KEY } from '@/config'
 import type { CreateAppModalProps } from '@/app/components/explore/create-app-modal'
@@ -25,12 +24,10 @@ import EditAppModal from '@/app/components/explore/create-app-modal'
 import SwitchAppModal from '@/app/components/app/switch-app-modal'
 import type { Tag } from '@/app/components/base/tag-management/constant'
 import TagSelector from '@/app/components/base/tag-management/selector'
-import { fetchInstalledAppList } from '@/service/explore'
 import { AppTypeIcon } from '@/app/components/app/type-selector'
 import Tooltip from '@/app/components/base/tooltip'
 import AccessControl from '@/app/components/app/app-access-control'
 import { AccessMode } from '@/models/access-control'
-import { useGlobalPublicStore } from '@/context/global-public-context'
 import { formatTime } from '@/utils/time'
 
 export type AppCardProps = {
@@ -41,7 +38,6 @@ export type AppCardProps = {
 const AppCard = ({ app, onRefresh }: AppCardProps) => {
   const { t } = useTranslation()
   const { notify } = useContext(ToastContext)
-  const systemFeatures = useGlobalPublicStore(s => s.systemFeatures)
   const { isCurrentWorkspaceEditor } = useAppContext()
   const { push } = useRouter()
 
@@ -131,23 +127,6 @@ const AppCard = ({ app, onRefresh }: AppCardProps) => {
     }
   }
 
-  const onExport = async (include = false) => {
-    try {
-      const { data } = await exportAppConfig({
-        appID: app.id,
-        include,
-      })
-      const a = document.createElement('a')
-      const file = new Blob([data], { type: 'application/yaml' })
-      a.href = URL.createObjectURL(file)
-      a.download = `${app.name}.yml`
-      a.click()
-    }
-    catch {
-      notify({ type: 'error', message: t('app.exportFailed') })
-    }
-  }
-
   const onSwitch = () => {
     if (onRefresh)
       onRefresh()
@@ -172,49 +151,11 @@ const AppCard = ({ app, onRefresh }: AppCardProps) => {
       e.preventDefault()
       setShowEditModal(true)
     }
-    const onClickDuplicate = async (e: React.MouseEvent<HTMLButtonElement>) => {
-      e.stopPropagation()
-      props.onClick?.()
-      e.preventDefault()
-      setShowDuplicateModal(true)
-    }
-    const onClickExport = async (e: React.MouseEvent<HTMLButtonElement>) => {
-      e.stopPropagation()
-      props.onClick?.()
-      e.preventDefault()
-    }
-    const onClickSwitch = async (e: React.MouseEvent<HTMLButtonElement>) => {
-      e.stopPropagation()
-      props.onClick?.()
-      e.preventDefault()
-      setShowSwitchModal(true)
-    }
     const onClickDelete = async (e: React.MouseEvent<HTMLButtonElement>) => {
       e.stopPropagation()
       props.onClick?.()
       e.preventDefault()
       setShowConfirmDelete(true)
-    }
-    const onClickAccessControl = async (e: React.MouseEvent<HTMLButtonElement>) => {
-      e.stopPropagation()
-      props.onClick?.()
-      e.preventDefault()
-      setShowAccessControl(true)
-    }
-    const onClickInstalledApp = async (e: React.MouseEvent<HTMLButtonElement>) => {
-      e.stopPropagation()
-      props.onClick?.()
-      e.preventDefault()
-      try {
-        const { installed_apps }: any = await fetchInstalledAppList(app.id) || {}
-        if (installed_apps?.length > 0)
-          window.open(`${basePath}/explore/installed/${installed_apps[0].id}`, '_blank')
-        else
-          throw new Error('No app found in Explore')
-      }
-      catch (e: any) {
-        Toast.notify({ type: 'error', message: `${e.message || e}` })
-      }
     }
     return (
       <div className="relative flex w-full flex-col py-1" onMouseLeave={onMouseLeave}>
@@ -222,36 +163,6 @@ const AppCard = ({ app, onRefresh }: AppCardProps) => {
           <span className='system-sm-regular text-text-secondary'>{t('app.editApp')}</span>
         </button>
         <Divider className="my-1" />
-        <button className='mx-1 flex h-8 cursor-pointer items-center gap-2 rounded-lg px-3 hover:bg-state-base-hover' onClick={onClickDuplicate}>
-          <span className='system-sm-regular text-text-secondary'>{t('app.duplicate')}</span>
-        </button>
-        <button className='mx-1 flex h-8 cursor-pointer items-center gap-2 rounded-lg px-3 hover:bg-state-base-hover' onClick={onClickExport}>
-          <span className='system-sm-regular text-text-secondary'>{t('app.export')}</span>
-        </button>
-        {(app.mode === 'park' || app.mode === 'computer-room') && (
-          <>
-            <Divider className="my-1" />
-            <button
-              className='mx-1 flex h-8 cursor-pointer items-center rounded-lg px-3 hover:bg-state-base-hover'
-              onClick={onClickSwitch}
-            >
-              <span className='text-sm leading-5 text-text-secondary'>{t('app.switch')}</span>
-            </button>
-          </>
-        )}
-        <Divider className="my-1" />
-        <button className='mx-1 flex h-8 cursor-pointer items-center gap-2 rounded-lg px-3 hover:bg-state-base-hover' onClick={onClickInstalledApp}>
-          <span className='system-sm-regular text-text-secondary'>{t('app.openInExplore')}</span>
-        </button>
-        <Divider className="my-1" />
-        {
-          systemFeatures.webapp_auth.enabled && isCurrentWorkspaceEditor && <>
-            <button className='mx-1 flex h-8 cursor-pointer items-center rounded-lg px-3 hover:bg-state-base-hover' onClick={onClickAccessControl}>
-              <span className='text-sm leading-5 text-text-secondary'>{t('app.accessControl')}</span>
-            </button>
-            <Divider className='my-1' />
-          </>
-        }
         <button
           className='group mx-1 flex h-8 cursor-pointer items-center gap-2 rounded-lg px-3 py-[6px] hover:bg-state-destructive-hover'
           onClick={onClickDelete}
@@ -264,9 +175,9 @@ const AppCard = ({ app, onRefresh }: AppCardProps) => {
     )
   }
 
-  const [tags, setTags] = useState<Tag[]>(app.tags || [])
+  const [tags, setTags] = useState<Tag[]>(app.tags)
   useEffect(() => {
-    setTags(app.tags || [])
+    setTags(app.tags)
   }, [app.tags])
 
   const EditTimeText = useMemo(() => {

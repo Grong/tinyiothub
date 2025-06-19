@@ -3,3 +3,8 @@ declare module 'lamejs/src/js/MPEGMode';
 declare module 'lamejs/src/js/Lame';
 declare module 'lamejs/src/js/BitStream';
 declare module 'react-18-input-autosize';
+declare module '*.mdx' {
+  import type React from 'react'
+  const component: React.ComponentType<any>
+  export default component
+}

@@ -1,6 +1,9 @@
-use crate::models::_entities::apps::{self, Column};
+use std::result;
+
+use crate::{models::_entities::apps::{self, Column}, views::tag::TagResponse};
 use loco_rs::model::{ModelError, ModelResult};
 use sea_orm::entity::prelude::*;
+use crate::views::app::AppResponse;
 
 pub use super::_entities::apps::{ActiveModel, Entity, Model};
 pub type Apps = Entity;
@@ -31,11 +34,21 @@ impl Model {
         app.ok_or_else(|| ModelError::EntityNotFound)
     }
 
+    pub async fn get_tags(db: &DatabaseConnection, app_id: i32) -> ModelResult<Vec<super::_entities::tags::Model>> {
+        let tag_bindings = super::tag_bindings::TagBindings::find()
+            .filter(super::tag_bindings::Column::TargetId.eq(app_id))
+            .find_with_related(super::_entities::tags::Entity)
+            .all(db)
+            .await?;
+        let tags = tag_bindings.iter().map(|(_, tags)| tags.clone()).flatten().collect();
+        Ok(tags)
+    }
+
     pub async fn list_paginated(
         db: &DatabaseConnection,
         params: super::ListParams,
         login_user_id: i32,
-    ) -> ModelResult<super::PaginatedResult<Self>> {
+    ) -> ModelResult<super::PaginatedResult<AppResponse>> {
         let mut query = Entity::find();
 
         // 添加名称过滤
@@ -52,9 +65,26 @@ impl Model {
         let paginator = query.paginate(db, params.limit);
         let total = paginator.num_items().await?;
         let data = paginator.fetch_page(params.page - 1).await?;
+        let mut result = vec![];
+        for app in data {
+            let tags = match Self::get_tags(db, app.id).await {
+                Ok(tags) => tags,
+                Err(_) => vec![],
+            };
+            result.push(AppResponse {
+                id: app.id,
+                name: app.name.unwrap_or_default(),
+                description: app.description.unwrap_or_default(),
+                tags: tags.iter().map(|tag| TagResponse {
+                    id: tag.id,
+                    name: tag.name.clone().unwrap_or_default(),
+                    r#type: tag.r#type.clone().unwrap_or_default(),
+                }).collect(),
+            });
+        }
 
         Ok(super::PaginatedResult {
-            data: data,
+            data: result,
             total,
             page: params.page,
             limit: params.limit,

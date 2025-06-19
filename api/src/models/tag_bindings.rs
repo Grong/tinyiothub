@@ -20,11 +20,13 @@ impl ActiveModelBehavior for ActiveModel {
 }
 
 // implement your read-oriented logic here
-impl Model {}
+impl Model {
+    
+}
 
 // implement your write-oriented logic here
 impl ActiveModel {
-
+    
     pub async fn create_tag_binding(
         db: &DatabaseConnection,
         tag_ids: Vec<i32>,

@@ -13,13 +13,11 @@ impl MigrationTrait for Migration {
             ("id", ColType::PkAuto),
             
             ("tenant_id", ColType::StringNull),
-            ("tag_id", ColType::Integer),
-            ("target_id", ColType::Integer),
             ("created_by", ColType::IntegerNull),
             ],
             &[
-                ("tag_id", "tags"),
-                ("target_id", "apps"),
+                ("tag", ""),
+                ("app", "target_id"),
             ]
         ).await
     }

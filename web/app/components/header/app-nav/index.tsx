@@ -71,15 +71,10 @@ const AppNav = () => {
       const appItems = flatten(appsData?.map(appData => appData.data))
       const navItems = appItems.map((app) => {
         const link = ((isCurrentWorkspaceEditor, app) => {
-          if (!isCurrentWorkspaceEditor) {
+          if (!isCurrentWorkspaceEditor)
             return `/app/${app.id}/overview`
-          }
-          else {
-            if (app.mode === 'workflow' || app.mode === 'advanced-chat')
-              return `/app/${app.id}/workflow`
-            else
-              return `/app/${app.id}/configuration`
-          }
+          else
+            return `/app/${app.id}/configuration`
         })(isCurrentWorkspaceEditor, app)
         return {
           id: app.id,
@@ -118,7 +113,9 @@ const AppNav = () => {
         text={t('common.menus.apps')}
         activeSegment={['apps', 'app']}
         link='/apps'
-        curNav={appDetail}
+        curNav={appDetail ? {
+          ...appDetail,
+        } : undefined}
         navs={navItems}
         createText={t('common.menus.newApp')}
         onCreate={openModal}

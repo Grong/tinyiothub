@@ -9,3 +9,4 @@ mod device_properties;
 mod device_events;
 mod device_service_calls;
 mod device_templates;
+mod tenants;

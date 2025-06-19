@@ -13,7 +13,7 @@ impl DevicePropertyService {
         property_name: &str,
         value: Value,
     ) -> Result<DeviceModel> {
-        let device = Device::find_by_id(device_id)
+        let device = Device::find_by_id(device_id.parse::<i32>().unwrap())
             .one(db)
             .await?
             .ok_or_else(|| Error::NotFound)?;
@@ -115,7 +115,7 @@ impl DevicePropertyService {
         property_name: &str,
         hours: Option<i32>,
     ) -> Result<Value> {
-        let device = Device::find_by_id(device_id)
+        let device = Device::find_by_id(device_id.parse::<i32>().unwrap())
             .one(db)
             .await?
             .ok_or_else(|| Error::NotFound)?;

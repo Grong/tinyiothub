@@ -1,19 +1,11 @@
 use loco_rs::model::{ModelError, ModelResult};
 use sea_orm::{entity::prelude::*, ActiveValue::Set};
 use serde::{Deserialize, Serialize};
-use ulid::Ulid;
 pub use super::_entities::device_events::{ActiveModel, Model, Entity};
 pub type DeviceEvents = Entity;
 
 #[async_trait::async_trait]
 impl ActiveModelBehavior for ActiveModel {
-    fn new() -> Self {
-        Self {
-            id: Set(Ulid::new().to_string()),
-            timestamp: Set(chrono::Utc::now().fixed_offset()),
-            ..ActiveModelTrait::default()
-        }
-    }
     
     async fn before_save<C>(self, _db: &C, insert: bool) -> std::result::Result<Self, DbErr>
     where
@@ -63,7 +55,7 @@ impl ActiveModel {
     ) -> ModelResult<Model> {
         // 创建事件记录
         let event = ActiveModel {
-            device_id: Set(device_id.to_string()),
+            device_id: Set(device_id.parse::<i32>().unwrap()),
             event_type: Set(event_type.to_string()),
             payload: Set(payload),
             ..Default::default()

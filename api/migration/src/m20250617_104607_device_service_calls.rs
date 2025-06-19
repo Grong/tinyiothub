@@ -10,7 +10,6 @@ impl MigrationTrait for Migration {
         create_table(m, "device_service_calls",
             &[
                 ("id", ColType::PkUuid),
-                ("device_id", ColType::String),
                 ("identifier", ColType::String),
                 ("display_name", ColType::String),
                 ("parameters", ColType::Json),
@@ -18,7 +17,7 @@ impl MigrationTrait for Migration {
                 ("result", ColType::JsonNull),
             ],
             &[
-                ("device_id", "devices"),
+                ("device", ""),
             ]
         ).await
     }

@@ -28,7 +28,7 @@ impl Model {
         r#type: Option<String>,
         keyword: Option<String>,
     ) -> ModelResult<Vec<Model>> {
-        let mut query = Entity::find().filter(Column::TenantId.eq(current_tenant.clone()));
+        let mut query = Entity::find();
 
         if let Some(r#type) = r#type {
             query = query.filter(Column::Type.eq(r#type));

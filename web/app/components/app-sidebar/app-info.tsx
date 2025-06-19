@@ -6,9 +6,7 @@ import {
   RiDeleteBinLine,
   RiEditLine,
   RiEqualizer2Line,
-  RiExchange2Line,
   RiFileCopy2Line,
-  RiFileUploadLine,
   RiMoreLine,
 } from '@remixicon/react'
 import AppIcon from '../base/app-icon'
@@ -18,7 +16,7 @@ import Confirm from '@/app/components/base/confirm'
 import { useStore as useAppStore } from '@/app/components/app/store'
 import { ToastContext } from '@/app/components/base/toast'
 import AppsContext, { useAppContext } from '@/context/app-context'
-import { copyApp, deleteApp, exportAppConfig, updateAppInfo } from '@/service/apps'
+import { copyApp, deleteApp, updateAppInfo } from '@/service/apps'
 import DuplicateAppModal from '@/app/components/app/duplicate-modal'
 import type { DuplicateAppModalProps } from '@/app/components/app/duplicate-modal'
 import CreateAppModal from '@/app/components/explore/create-app-modal'
@@ -46,8 +44,6 @@ const AppInfo = ({ expand }: IAppInfoProps) => {
   const [showDuplicateModal, setShowDuplicateModal] = useState(false)
   const [showConfirmDelete, setShowConfirmDelete] = useState(false)
   const [showSwitchModal, setShowSwitchModal] = useState<boolean>(false)
-  const [showImportDSLModal, setShowImportDSLModal] = useState<boolean>(false)
-
   const mutateApps = useContextSelector(
     AppsContext,
     state => state.mutateApps,
@@ -112,25 +108,6 @@ const AppInfo = ({ expand }: IAppInfoProps) => {
     }
   }
 
-  const onExport = async (include = false) => {
-    if (!appDetail)
-      return
-    try {
-      const { data } = await exportAppConfig({
-        appID: appDetail.id,
-        include,
-      })
-      const a = document.createElement('a')
-      const file = new Blob([data], { type: 'application/yaml' })
-      a.href = URL.createObjectURL(file)
-      a.download = `${appDetail.name}.yml`
-      a.click()
-    }
-    catch {
-      notify({ type: 'error', message: t('app.exportFailed') })
-    }
-  }
-
   const onConfirmDelete = useCallback(async () => {
     if (!appDetail)
       return
@@ -190,7 +167,7 @@ const AppInfo = ({ expand }: IAppInfoProps) => {
                 <div className='flex w-full'>
                   <div className='system-md-semibold truncate text-text-secondary'>{appDetail.name}</div>
                 </div>
-                <div className='system-2xs-medium-uppercase text-text-tertiary'>{appDetail.mode === 'advanced-chat' ? t('app.types.advanced') : appDetail.mode === 'agent-chat' ? t('app.types.agent') : appDetail.mode === 'chat' ? t('app.types.chatbot') : appDetail.mode === 'completion' ? t('app.types.completion') : t('app.types.workflow')}</div>
+                <div className='system-2xs-medium-uppercase text-text-tertiary'>{appDetail.mode === 'park' ? t('app.types.park') : appDetail.mode === 'computer-room' ? t('app.types.computerRoom') : t('app.types.park')}</div>
               </div>
             )
           }
@@ -212,7 +189,7 @@ const AppInfo = ({ expand }: IAppInfoProps) => {
             />
             <div className='flex w-full grow flex-col items-start justify-center'>
               <div className='system-md-semibold w-full truncate text-text-secondary'>{appDetail.name}</div>
-              <div className='system-2xs-medium-uppercase text-text-tertiary'>{appDetail.mode === 'advanced-chat' ? t('app.types.advanced') : appDetail.mode === 'agent-chat' ? t('app.types.agent') : appDetail.mode === 'chat' ? t('app.types.chatbot') : appDetail.mode === 'completion' ? t('app.types.completion') : t('app.types.workflow')}</div>
+              <div className='system-2xs-medium-uppercase text-text-tertiary'>{appDetail.mode === 'park' ? t('app.types.park') : appDetail.mode === 'computer-room' ? t('app.types.computerRoom') : t('app.types.park')}</div>
             </div>
           </div>
           {/* description */}
@@ -244,7 +221,7 @@ const AppInfo = ({ expand }: IAppInfoProps) => {
               <RiFileCopy2Line className='h-3.5 w-3.5 text-components-button-secondary-text' />
               <span className='system-xs-medium text-components-button-secondary-text'>{t('app.duplicate')}</span>
             </Button>
-            {appDetail.mode !== 'agent-chat' && <PortalToFollowElem
+            {appDetail.mode !== 'park' && <PortalToFollowElem
               open={showMore}
               onOpenChange={setShowMore}
               placement='bottom-end'
@@ -263,28 +240,6 @@ const AppInfo = ({ expand }: IAppInfoProps) => {
               </PortalToFollowElemTrigger>
               <PortalToFollowElemContent className='z-[21]'>
                 <div className='flex w-[264px] flex-col rounded-[12px] border-[0.5px] border-components-panel-border bg-components-panel-bg-blur p-1 shadow-lg backdrop-blur-[5px]'>
-                  {
-                    (appDetail.mode === 'advanced-chat' || appDetail.mode === 'workflow')
-                    && <div className='flex h-8 cursor-pointer items-center gap-x-1 rounded-lg p-1.5 hover:bg-state-base-hover'
-                      onClick={() => {
-                        setOpen(false)
-                        setShowImportDSLModal(true)
-                      }}>
-                      <RiFileUploadLine className='h-4 w-4 text-text-tertiary' />
-                      <span className='system-md-regular text-text-secondary'>{t('workflow.common.importDSL')}</span>
-                    </div>
-                  }
-                  {
-                    (appDetail.mode === 'completion' || appDetail.mode === 'chat')
-                    && <div className='flex h-8 cursor-pointer items-center gap-x-1 rounded-lg p-1.5 hover:bg-state-base-hover'
-                      onClick={() => {
-                        setOpen(false)
-                        setShowSwitchModal(true)
-                      }}>
-                      <RiExchange2Line className='h-4 w-4 text-text-tertiary' />
-                      <span className='system-md-regular text-text-secondary'>{t('app.switch')}</span>
-                    </div>
-                  }
                 </div>
               </PortalToFollowElemContent>
             </PortalToFollowElem>}

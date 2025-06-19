@@ -21,5 +21,5 @@ export const mailToSupport = (account: string, plan: string, version: string) =>
     Platform:
     Problem Description:
   `
-  return generateMailToLink('support@dify.ai', subject, body)
+  return generateMailToLink('59328328@qq.com', subject, body)
 }
