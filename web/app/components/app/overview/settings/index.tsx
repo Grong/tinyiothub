@@ -12,7 +12,6 @@ import Divider from '@/app/components/base/divider'
 import Input from '@/app/components/base/input'
 import Textarea from '@/app/components/base/textarea'
 import AppIcon from '@/app/components/base/app-icon'
-import Switch from '@/app/components/base/switch'
 import { SimpleSelect } from '@/app/components/base/select'
 import type { AppDetailResponse } from '@/models/app'
 import type { AppIconType, AppSSO, Language } from '@/types/app'
@@ -24,7 +23,6 @@ import I18n from '@/context/i18n'
 import cn from '@/utils/classnames'
 
 export type ISettingsModalProps = {
-  isChat: boolean
   appInfo: AppDetailResponse & Partial<AppSSO>
   isShow: boolean
   defaultValue?: string
@@ -45,7 +43,6 @@ export type ConfigParams = {
   icon_type: AppIconType
   icon: string
   icon_background?: string
-  show_workflow_steps: boolean
   use_icon_as_answer_icon: boolean
   enable_sso?: boolean
 }
@@ -53,7 +50,6 @@ export type ConfigParams = {
 const prefixSettings = 'appOverview.overview.appInfo.settings'
 
 const SettingsModal: FC<ISettingsModalProps> = ({
-  isChat,
   appInfo,
   isShow = false,
   onClose,
@@ -86,7 +82,6 @@ const SettingsModal: FC<ISettingsModalProps> = ({
     copyrightSwitchValue: !!copyright,
     privacyPolicy: privacy_policy,
     customDisclaimer: custom_disclaimer,
-    show_workflow_steps,
     use_icon_as_answer_icon,
     enable_sso: appInfo.enable_sso,
   })
@@ -112,7 +107,6 @@ const SettingsModal: FC<ISettingsModalProps> = ({
       copyrightSwitchValue: !!copyright,
       privacyPolicy: privacy_policy,
       customDisclaimer: custom_disclaimer,
-      show_workflow_steps,
       use_icon_as_answer_icon,
       enable_sso: appInfo.enable_sso,
     })
@@ -178,7 +172,6 @@ const SettingsModal: FC<ISettingsModalProps> = ({
       icon_type: appIcon.type,
       icon: appIcon.type === 'emoji' ? appIcon.icon : appIcon.fileId,
       icon_background: appIcon.type === 'emoji' ? appIcon.background : undefined,
-      show_workflow_steps: inputInfo.show_workflow_steps,
       use_icon_as_answer_icon: inputInfo.use_icon_as_answer_icon,
       enable_sso: inputInfo.enable_sso,
     }
@@ -221,7 +214,7 @@ const SettingsModal: FC<ISettingsModalProps> = ({
           </div>
           <div className='system-xs-regular mt-0.5 text-text-tertiary'>
             <span>{t(`${prefixSettings}.modalTip`)}</span>
-            <Link href={`${locale === LanguagesSupported[1] ? 'https://docs.dify.ai/zh-hans/guides/application-publishing/launch-your-webapp-quickly#she-zhi-ni-de-ai-zhan-dian' : 'https://docs.dify.ai/en/guides/application-publishing/launch-your-webapp-quickly/README'}`} target='_blank' rel='noopener noreferrer' className='text-text-accent'>{t('common.operation.learnMore')}</Link>
+            <Link href={`${locale === LanguagesSupported[1] ? 'https://docs.tinyiothub.com/zh-hans' : 'https://docs.tinyiothub.com/en'}`} target='_blank' rel='noopener noreferrer' className='text-text-accent'>{t('common.operation.learnMore')}</Link>
           </div>
         </div>
         {/* form body */}
@@ -259,19 +252,6 @@ const SettingsModal: FC<ISettingsModalProps> = ({
             <p className={cn('body-xs-regular pb-0.5 text-text-tertiary')}>{t(`${prefixSettings}.webDescTip`)}</p>
           </div>
           <Divider className="my-0 h-px" />
-          {/* answer icon */}
-          {isChat && (
-            <div className='w-full'>
-              <div className='flex items-center justify-between'>
-                <div className={cn('system-sm-semibold py-1 text-text-secondary')}>{t('app.answerIcon.title')}</div>
-                <Switch
-                  defaultValue={inputInfo.use_icon_as_answer_icon}
-                  onChange={v => setInputInfo({ ...inputInfo, use_icon_as_answer_icon: v })}
-                />
-              </div>
-              <p className='body-xs-regular pb-0.5 text-text-tertiary'>{t('app.answerIcon.description')}</p>
-            </div>
-          )}
           {/* language */}
           <div className='flex items-center'>
             <div className={cn('system-sm-semibold grow py-1 text-text-secondary')}>{t(`${prefixSettings}.language`)}</div>
@@ -282,39 +262,6 @@ const SettingsModal: FC<ISettingsModalProps> = ({
               onSelect={item => setLanguage(item.value as Language)}
               notClearable
             />
-          </div>
-          {/* theme color */}
-          {isChat && (
-            <div className='flex items-center'>
-              <div className='grow'>
-                <div className={cn('system-sm-semibold py-1 text-text-secondary')}>{t(`${prefixSettings}.chatColorTheme`)}</div>
-                <div className='body-xs-regular pb-0.5 text-text-tertiary'>{t(`${prefixSettings}.chatColorThemeDesc`)}</div>
-              </div>
-              <div className='shrink-0'>
-                <Input
-                  className='mb-1 w-[200px]'
-                  value={inputInfo.chatColorTheme ?? ''}
-                  onChange={onChange('chatColorTheme')}
-                  placeholder='E.g #A020F0'
-                />
-                <div className='flex items-center justify-between'>
-                  <p className={cn('body-xs-regular text-text-tertiary')}>{t(`${prefixSettings}.chatColorThemeInverted`)}</p>
-                  <Switch defaultValue={inputInfo.chatColorThemeInverted} onChange={v => setInputInfo({ ...inputInfo, chatColorThemeInverted: v })}></Switch>
-                </div>
-              </div>
-            </div>
-          )}
-          {/* workflow detail */}
-          <div className='w-full'>
-            <div className='flex items-center justify-between'>
-              <div className={cn('system-sm-semibold py-1 text-text-secondary')}>{t(`${prefixSettings}.workflow.subTitle`)}</div>
-              <Switch
-                disabled={!(appInfo.mode === 'computer-room' || appInfo.mode === 'park')}
-                defaultValue={inputInfo.show_workflow_steps}
-                onChange={v => setInputInfo({ ...inputInfo, show_workflow_steps: v })}
-              />
-            </div>
-            <p className='body-xs-regular pb-0.5 text-text-tertiary'>{t(`${prefixSettings}.workflow.showDesc`)}</p>
           </div>
           {/* more settings switch */}
           <Divider className="my-0 h-px" />

@@ -1,7 +1,6 @@
 #![allow(elided_lifetimes_in_paths)]
 #![allow(clippy::wildcard_imports)]
 pub use sea_orm_migration::prelude::*;
-use loco_rs::schema::*;
 
 mod m20220101_000001_users;
 mod m20250605_101407_apps;

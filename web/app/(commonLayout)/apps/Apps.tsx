@@ -26,7 +26,7 @@ import Input from '@/app/components/base/input'
 import { useStore as useTagStore } from '@/app/components/base/tag-management/store'
 import TagManagementModal from '@/app/components/base/tag-management'
 import TagFilter from '@/app/components/base/tag-management/filter'
-import CheckboxWithLabel from '@/app/components/datasets/create/website/base/checkbox-with-label'
+import CheckboxWithLabel from '@/app/components/base/checkbox-with-label'
 
 const getKey = (
   pageIndex: number,

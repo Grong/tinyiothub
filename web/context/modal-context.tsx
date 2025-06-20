@@ -5,13 +5,10 @@ import { useCallback, useState } from 'react'
 import { createContext, useContext, useContextSelector } from 'use-context-selector'
 import AccountSetting from '@/app/components/header/account-setting'
 import ApiBasedExtensionModal from '@/app/components/header/account-setting/api-based-extension-page/modal'
-import ExternalAPIModal from '@/app/components/datasets/external-api/external-api-modal'
-import type { ModerationConfig, PromptVariable } from '@/models/debug'
+import type { PromptVariable } from '@/models/debug'
 import type {
   ApiBasedExtension,
-  ExternalDataTool,
 } from '@/models/common'
-import type { CreateExternalAPIReq } from '@/app/components/datasets/external-api/declarations'
 import OpeningSettingModal from '@/app/components/base/features/new-feature-panel/conversation-opener/modal'
 import type { OpeningStatement } from '@/app/components/base/features/types'
 import { removeSpecificQueryParam } from '@/utils'
@@ -31,7 +28,6 @@ export type ModalState<T> = {
 export type ModalContextState = {
   setShowAccountSettingModal: Dispatch<SetStateAction<ModalState<string> | null>>
   setShowApiBasedExtensionModal: Dispatch<SetStateAction<ModalState<ApiBasedExtension> | null>>
-  setShowModerationSettingModal: Dispatch<SetStateAction<ModalState<ModerationConfig> | null>>
   setShowOpeningModal: Dispatch<SetStateAction<ModalState<OpeningStatement & {
     promptVariables?: PromptVariable[]
     onAutoAddPromptVariable?: (variable: PromptVariable[]) => void
@@ -40,7 +36,6 @@ export type ModalContextState = {
 const ModalContext = createContext<ModalContextState>({
   setShowAccountSettingModal: noop,
   setShowApiBasedExtensionModal: noop,
-  setShowModerationSettingModal: noop,
   setShowOpeningModal: noop,
 })
 
@@ -59,9 +54,6 @@ export const ModalContextProvider = ({
 }: ModalContextProviderProps) => {
   const [showAccountSettingModal, setShowAccountSettingModal] = useState<ModalState<string> | null>(null)
   const [showApiBasedExtensionModal, setShowApiBasedExtensionModal] = useState<ModalState<ApiBasedExtension> | null>(null)
-  const [showModerationSettingModal, setShowModerationSettingModal] = useState<ModalState<ModerationConfig> | null>(null)
-  const [showExternalDataToolModal, setShowExternalDataToolModal] = useState<ModalState<ExternalDataTool> | null>(null)
-  const [showExternalKnowledgeAPIModal, setShowExternalKnowledgeAPIModal] = useState<ModalState<CreateExternalAPIReq> | null>(null)
   const [showOpeningModal, setShowOpeningModal] = useState<ModalState<OpeningStatement & {
     promptVariables?: PromptVariable[]
     onAutoAddPromptVariable?: (variable: PromptVariable[]) => void
@@ -72,31 +64,6 @@ export const ModalContextProvider = ({
     if (showAccountSettingModal?.onCancelCallback)
       showAccountSettingModal?.onCancelCallback()
   }
-
-  const handleCancelExternalDataToolModal = () => {
-    setShowExternalDataToolModal(null)
-    if (showExternalDataToolModal?.onCancelCallback)
-      showExternalDataToolModal.onCancelCallback()
-  }
-
-  const handleCancelExternalApiModal = useCallback(() => {
-    setShowExternalKnowledgeAPIModal(null)
-    if (showExternalKnowledgeAPIModal?.onCancelCallback)
-      showExternalKnowledgeAPIModal.onCancelCallback()
-  }, [showExternalKnowledgeAPIModal])
-
-  const handleSaveExternalApiModal = useCallback(async (updatedFormValue: CreateExternalAPIReq) => {
-    if (showExternalKnowledgeAPIModal?.onSaveCallback)
-      showExternalKnowledgeAPIModal.onSaveCallback(updatedFormValue)
-    setShowExternalKnowledgeAPIModal(null)
-  }, [showExternalKnowledgeAPIModal])
-
-  const handleEditExternalApiModal = useCallback(async (updatedFormValue: CreateExternalAPIReq) => {
-    if (showExternalKnowledgeAPIModal?.onEditCallback)
-      showExternalKnowledgeAPIModal.onEditCallback(updatedFormValue)
-    setShowExternalKnowledgeAPIModal(null)
-  }, [showExternalKnowledgeAPIModal])
-
   const handleCancelOpeningModal = useCallback(() => {
     setShowOpeningModal(null)
     if (showOpeningModal?.onCancelCallback)
@@ -119,7 +86,6 @@ export const ModalContextProvider = ({
     <ModalContext.Provider value={{
       setShowAccountSettingModal,
       setShowApiBasedExtensionModal,
-      setShowModerationSettingModal,
       setShowOpeningModal,
     }}>
       <>
@@ -139,18 +105,6 @@ export const ModalContextProvider = ({
               data={showApiBasedExtensionModal.payload}
               onCancel={() => setShowApiBasedExtensionModal(null)}
               onSave={handleSaveApiBasedExtension}
-            />
-          )
-        }
-        {
-          !!showExternalKnowledgeAPIModal && (
-            <ExternalAPIModal
-              data={showExternalKnowledgeAPIModal.payload}
-              datasetBindings={showExternalKnowledgeAPIModal.datasetBindings ?? []}
-              onSave={handleSaveExternalApiModal}
-              onCancel={handleCancelExternalApiModal}
-              onEdit={handleEditExternalApiModal}
-              isEditMode={showExternalKnowledgeAPIModal.isEditMode ?? false}
             />
           )
         }

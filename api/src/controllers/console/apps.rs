@@ -153,6 +153,18 @@ pub async fn get_api_keys(Path(id): Path<i32>, State(ctx): State<AppContext>) ->
 }
 
 #[debug_handler]
+pub async fn add_api_key(Path(id): Path<i32>, State(ctx): State<AppContext>) -> Result<Response> {
+    format::json(json!({
+        "data": {
+            "id": 2,
+            "token": "lo-95ec80d7-cb60-4b70-9b4b-9ef74cb88758",
+            "created_at": "2021-01-01T00:00:00Z",
+            "last_used_at": "2021-01-01T00:00:00Z"
+        }
+    }))
+}
+
+#[debug_handler]
 pub async fn get_tracing(Path(id): Path<i32>, State(ctx): State<AppContext>) -> Result<Response> {
     let item = load_item(&ctx, id).await?;
     let tracing = match item.tracing {
@@ -184,6 +196,7 @@ pub fn routes() -> Routes {
         .add("{id}", put(update))
         .add("{id}", patch(update))
         .add("{id}/api-keys", get(get_api_keys))
+        .add("{id}/api-keys", post(add_api_key))
         .add("{id}/trace", get(get_tracing))
         .add("{id}/trace", post(update_tracing))
 }

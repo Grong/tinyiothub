@@ -290,7 +290,6 @@ function AppCard({
         ? (
           <>
             <SettingsModal
-              isChat={appMode === 'chat'}
               appInfo={appInfo}
               isShow={showSettingsModal}
               onClose={() => setShowSettingsModal(false)}

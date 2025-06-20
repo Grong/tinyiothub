@@ -44,8 +44,6 @@ const CustomizeModal: FC<IShareLinkProps> = ({
 }) => {
   const { t } = useTranslation()
   const { locale } = useContext(I18n)
-  const isChatApp = mode === 'chat' || mode === 'advanced-chat'
-
   return <Modal
     title={t(`${prefixCustomize}.title`)}
     description={t(`${prefixCustomize}.explanation`)}
@@ -62,7 +60,7 @@ const CustomizeModal: FC<IShareLinkProps> = ({
         <div className='flex flex-col'>
           <div className='text-text-primary'>{t(`${prefixCustomize}.way1.step1`)}</div>
           <div className='mb-2 mt-1 text-xs text-text-tertiary'>{t(`${prefixCustomize}.way1.step1Tip`)}</div>
-          <a href={`https://github.com/langgenius/${isChatApp ? 'webapp-conversation' : 'webapp-text-generator'}`} target='_blank' rel='noopener noreferrer'>
+          <a href='https://github.com/Grong/tinyiothub' target='_blank' rel='noopener noreferrer'>
             <Button><GithubIcon className='mr-2 text-text-secondary' />{t(`${prefixCustomize}.way1.step1Operation`)}</Button>
           </a>
         </div>
@@ -72,7 +70,7 @@ const CustomizeModal: FC<IShareLinkProps> = ({
         <div className='flex flex-col'>
           <div className='text-text-primary'>{t(`${prefixCustomize}.way1.step3`)}</div>
           <div className='mb-2 mt-1 text-xs text-text-tertiary'>{t(`${prefixCustomize}.way1.step2Tip`)}</div>
-          <a href="https://vercel.com/docs/concepts/deployments/git/vercel-for-github" target='_blank' rel='noopener noreferrer'>
+          <a href="https://docs.tinyiothub.com/zh-hans" target='_blank' rel='noopener noreferrer'>
             <Button>
               <div className='mr-1.5 border-b-[12px] border-l-[7px] border-r-[7px] border-t-0 border-solid border-text-primary border-l-transparent border-r-transparent border-t-transparent'></div>
               <span>{t(`${prefixCustomize}.way1.step2Operation`)}</span>
@@ -101,9 +99,9 @@ const CustomizeModal: FC<IShareLinkProps> = ({
         className='mt-2'
         onClick={() =>
           window.open(
-            `https://docs.dify.ai/${locale !== LanguagesSupported[1]
-              ? 'user-guide/launching-dify-apps/developing-with-apis'
-              : `${locale.toLowerCase()}/guides/application-publishing/developing-with-apis`
+            `https://docs.tinyiothub.com/${locale !== LanguagesSupported[1]
+              ? 'zh-hans'
+              : 'en'
             }`,
             '_blank',
           )

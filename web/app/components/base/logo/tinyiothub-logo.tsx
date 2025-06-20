@@ -2,6 +2,8 @@
 import type { FC } from 'react'
 import classNames from '@/utils/classnames'
 export type LogoStyle = 'default' | 'monochromeWhite'
+import useTheme from '@/hooks/use-theme'
+import { basePath } from '@/utils/var'
 
 export const logoPathMap: Record<LogoStyle, string> = {
   default: '/logo/logo.svg',
@@ -27,12 +29,19 @@ const TinyIotHubLogo: FC<TinyIotHubLogoProps> = ({
   size = 'medium',
   className,
 }) => {
+  const { theme } = useTheme()
+  const themedStyle = (theme === 'dark' && style === 'default') ? 'monochromeWhite' : style
   return (
-    <div
+    // <div
+    //   className={classNames('block object-contain', logoSizeMap[size], className)}
+    // >
+    //   <h3 className='font-bold text-white'>TinyIoTHub</h3>
+    // </div>
+    <img
+      src={`${basePath}${logoPathMap[themedStyle]}`}
       className={classNames('block object-contain', logoSizeMap[size], className)}
-    >
-      <h3 className='font-bold text-white'>TinyIoTHub</h3>
-    </div>
+      alt='tinyiothub logo'
+    />
   )
 }
 

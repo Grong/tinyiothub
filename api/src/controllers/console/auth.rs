@@ -151,6 +151,11 @@ async fn login(State(ctx): State<AppContext>, Json(params): Json<LoginParams>) -
 }
 
 #[debug_handler]
+async fn logout(auth: auth::JWT,State(_ctx): State<AppContext>) -> Result<Response> {
+    format::json(ApiResult::success(Some(())))
+}
+
+#[debug_handler]
 async fn current(auth: auth::JWT, State(ctx): State<AppContext>) -> Result<Response> {
     let user = users::Model::find_by_pid(&ctx.db, &auth.claims.pid).await?;
     format::json(CurrentResponse::new(&user))
@@ -224,6 +229,7 @@ pub fn routes() -> Routes {
         .add("/register", post(register))
         .add("/verify/{token}", get(verify))
         .add("/login", post(login))
+        .add("/logout", get(logout))
         .add("/forgot", post(forgot))
         .add("/reset", post(reset))
         .add("/auth/current", get(current))
