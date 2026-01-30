@@ -1,7 +1,8 @@
+'use client'
+
 import type { FC } from 'react'
 import React from 'react'
 import Script from 'next/script'
-import { type UnsafeUnwrappedHeaders, headers } from 'next/headers'
 import { IS_CE_EDITION } from '@/config'
 
 export enum GaType {
@@ -24,15 +25,12 @@ const GA: FC<IGAProps> = ({
   if (IS_CE_EDITION)
     return null
 
-  const nonce = process.env.NODE_ENV === 'production' ? (headers() as unknown as UnsafeUnwrappedHeaders).get('x-nonce') : ''
-
   return (
     <>
       <Script
         strategy="beforeInteractive"
         async
         src={`https://www.googletagmanager.com/gtag/js?id=${gaIdMaps[gaType]}`}
-        nonce={nonce!}
       ></Script>
       <Script
         id="ga-init"
@@ -44,14 +42,12 @@ gtag('js', new Date());
 gtag('config', '${gaIdMaps[gaType]}');
           `,
         }}
-        nonce={nonce!}
       >
       </Script>
       {/* Cookie banner */}
       <Script
         id="cookieyes"
         src='https://cdn-cookieyes.com/client_data/2a645945fcae53f8e025a2b1/script.js'
-        nonce={nonce!}
       ></Script>
     </>
 

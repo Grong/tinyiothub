@@ -1,0 +1,73 @@
+# ============================================
+# 后端专用 .dockerignore
+# 构建上下文：项目根目录
+# ============================================
+
+# 前端完全排除
+web/
+
+# Rust 编译产物
+target/
+**/*.rs.bk
+*.pdb
+
+# 数据库文件
+*.db
+*.db-shm
+*.db-wal
+data/
+
+# 日志文件
+logs/
+*.log
+
+# Git 相关
+.git/
+.gitignore
+.gitattributes
+
+# IDE 配置
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 文档
+docs/
+*.md
+!README.md
+
+# 环境配置
+.env
+.env.*
+!.env.example
+
+# 应用配置（运行时挂载）
+app_settings.toml
+!app_settings.example.toml
+
+# 脚本
+scripts/
+
+# Docker 相关
+docker/images/
+docker/logs/
+docker/*.md
+docker/build.sh
+docker/deploy.sh
+docker/.dockerignore
+docker/docker-compose.yml
+
+# 其他大文件目录
+vendor/tokio-modbus/target/
+vendor/onvif-rs/target/
+wwwroot/
+
+# 前端构建产物（以防万一）
+.next/
+node_modules/
+out/
+.turbo/
+
+examples/

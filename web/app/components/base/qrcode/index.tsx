@@ -15,7 +15,7 @@ type Props = {
 const prefixEmbedded = 'appOverview.overview.appInfo.qrcode.title'
 
 const ShareQRCode = ({ content }: Props) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
   const [isShow, setIsShow] = useState<boolean>(false)
   const qrCodeRef = useRef<HTMLDivElement>(null)
 

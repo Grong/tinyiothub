@@ -13,7 +13,7 @@ const Footer: FC<DatePickerFooterProps> = ({
   handleSelectCurrentDate,
   handleConfirmDate,
 }) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
 
   return (
     <div className={cn(

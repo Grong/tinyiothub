@@ -26,7 +26,7 @@ const Sort: FC<Props> = ({
   items,
   onSelect,
 }) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
   const [open, setOpen] = useState(false)
 
   const triggerContent = useMemo(() => {

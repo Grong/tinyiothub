@@ -1,31 +1,30 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useContext } from 'use-context-selector'
 import { useTranslation } from 'react-i18next'
 import { RiCloseLine } from '@remixicon/react'
 import { useStore as useTagStore } from './store'
 import TagItemEditor from './tag-item-editor'
 import Modal from '@/app/components/base/modal'
-import { ToastContext } from '@/app/components/base/toast'
+import { useToast } from '@/hooks/use-toast'
 import {
   createTag,
   fetchTagList,
 } from '@/service/tag'
 
 type TagManagementModalProps = {
-  type: 'knowledge' | 'app'
+  type: 'knowledge' | 'app' | 'device'
   show: boolean
 }
 
 const TagManagementModal = ({ show, type }: TagManagementModalProps) => {
-  const { t } = useTranslation()
-  const { notify } = useContext(ToastContext)
+  const { t } = useTranslation('common')
+  const { toast } = useToast()
   const tagList = useTagStore(s => s.tagList)
   const setTagList = useTagStore(s => s.setTagList)
   const setShowTagManagementModal = useTagStore(s => s.setShowTagManagementModal)
 
-  const getTagList = async (type: 'knowledge' | 'app') => {
+  const getTagList = async (type: 'knowledge' | 'app' | 'device') => {
     const res = await fetchTagList(type)
     setTagList(res)
   }
@@ -39,8 +38,8 @@ const TagManagementModal = ({ show, type }: TagManagementModalProps) => {
       return
     try {
       setPending(true)
-      const newTag = await createTag(name, type)
-      notify({ type: 'success', message: t('common.tag.created') })
+      const newTag = await createTag({ name, type })
+      toast.success(t('tag.created'))
       setTagList([
         newTag,
         ...tagList,
@@ -49,7 +48,7 @@ const TagManagementModal = ({ show, type }: TagManagementModalProps) => {
       setPending(false)
     }
     catch {
-      notify({ type: 'error', message: t('common.tag.failed') })
+      toast.error(t('tag.failed'))
       setPending(false)
     }
   }
@@ -64,14 +63,14 @@ const TagManagementModal = ({ show, type }: TagManagementModalProps) => {
       isShow={show}
       onClose={() => setShowTagManagementModal(false)}
     >
-      <div className='relative pb-2 text-xl font-semibold leading-[30px] text-text-primary'>{t('common.tag.manageTags')}</div>
+      <div className='relative pb-2 text-xl font-semibold leading-[30px] text-text-primary'>{t('tag.manageTags')}</div>
       <div className='absolute right-4 top-4 cursor-pointer p-2' onClick={() => setShowTagManagementModal(false)}>
         <RiCloseLine className='h-4 w-4 text-text-tertiary' />
       </div>
       <div className='mt-3 flex flex-wrap gap-2'>
         <input
           className='w-[100px] shrink-0 appearance-none rounded-lg border border-dashed border-divider-regular bg-transparent px-2 py-1 text-sm leading-5 text-text-secondary caret-primary-600  outline-none placeholder:text-text-quaternary focus:border-solid'
-          placeholder={t('common.tag.addNew') || ''}
+          placeholder={t('tag.addNew') || ''}
           autoFocus
           value={name}
           onChange={e => setName(e.target.value)}

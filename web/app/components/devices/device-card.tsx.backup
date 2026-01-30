@@ -1,0 +1,270 @@
+'use client'
+
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { useTranslation } from 'react-i18next'
+import { RiMoreFill } from '@remixicon/react'
+import cn from '@/utils/classnames'
+import { useToast } from '@/hooks/use-toast'
+import { useDeleteDevice } from '@/service/devices'
+import type { Device } from '@/types'
+import { getResourceTags } from '@/service/tag'
+import { useAppContext } from '@/context/app-context'
+import type { HtmlContentProps } from '@/app/components/base/popover'
+import CustomPopover from '@/app/components/base/popover'
+import Divider from '@/app/components/base/divider'
+import type { Tag } from '@/app/components/base/tag-management/constant'
+import TagSelector from '@/app/components/base/tag-management/selector'
+import { formatTime } from '@/utils/time'
+import dynamic from 'next/dynamic'
+import { 
+  getDeviceStatus, 
+  getDeviceStatusColor, 
+  getDeviceDisplayName, 
+  getDeviceProductName 
+} from '@/lib/device-utils'
+import { DISPLAY_LIMITS } from '@/lib/constants'
+
+const Confirm = dynamic(() => import('@/app/components/base/confirm'), {
+  ssr: false,
+})
+
+export type DeviceCardProps = {
+  device: Device
+  onRefresh?: () => void
+}
+
+const DeviceCard = ({ device, onRefresh }: DeviceCardProps) => {
+  const { t } = useTranslation('device')
+  const { toast } = useToast()
+  const { isCurrentWorkspaceEditor } = useAppContext()
+  const { push } = useRouter()
+
+  const [showConfirmDelete, setShowConfirmDelete] = useState(false)
+  const deleteDeviceMutation = useDeleteDevice()
+
+  const deviceStatus = getDeviceStatus(device.state)
+  const displayName = getDeviceDisplayName(device)
+  const productName = getDeviceProductName(device, t('unknownProduct'))
+
+  const onConfirmDelete = useCallback(async () => {
+    try {
+      await deleteDeviceMutation.mutateAsync(device.id)
+      toast.success(t('deviceDeleted'))
+      if (onRefresh)
+        onRefresh()
+    }
+    catch (e: any) {
+      toast.error(`${t('deviceDeleteFailed')}${'message' in e ? `: ${e.message}` : ''}`)
+    }
+    setShowConfirmDelete(false)
+  }, [device.id, toast, onRefresh, t, deleteDeviceMutation])
+
+  const Operations = (props: HtmlContentProps) => {
+    const onMouseLeave = async () => {
+      props.onClose?.()
+    }
+    const onClickEdit = async (e: React.MouseEvent<HTMLButtonElement>) => {
+      e.stopPropagation()
+      props.onClick?.()
+      e.preventDefault()
+      push(`/device/${device.id}/configuration`)
+    }
+    const onClickDelete = async (e: React.MouseEvent<HTMLButtonElement>) => {
+      e.stopPropagation()
+      props.onClick?.()
+      e.preventDefault()
+      setShowConfirmDelete(true)
+    }
+    return (
+      <div className="relative flex w-full flex-col py-1" onMouseLeave={onMouseLeave}>
+        <button type="button" className='mx-1 flex h-8 cursor-pointer items-center gap-2 rounded-lg px-3 hover:bg-state-base-hover' onClick={onClickEdit}>
+          <span className='system-sm-regular text-text-secondary'>{t('actions.editDevice')}</span>
+        </button>
+        <Divider className="my-1" />
+        <button
+          type="button"
+          className='group mx-1 flex h-8 cursor-pointer items-center gap-2 rounded-lg px-3 py-[6px] hover:bg-state-destructive-hover'
+          onClick={onClickDelete}
+        >
+          <span className='system-sm-regular text-text-secondary group-hover:text-text-destructive'>
+            {t('actions.deleteDevice')}
+          </span>
+        </button>
+      </div>
+    )
+  }
+
+  const [tags, setTags] = useState<Tag[]>(device.tags || [])
+  
+  // Load device tags on mount
+  useEffect(() => {
+    const loadDeviceTags = async () => {
+      try {
+        const deviceTags = await getResourceTags(device.id)
+        setTags(deviceTags)
+      } catch (error) {
+        console.error('Failed to load device tags:', error)
+        setTags([])
+      }
+    }
+    
+    loadDeviceTags()
+  }, [device.id])
+
+  useEffect(() => {
+    setTags(device.tags || [])
+  }, [device.tags])
+
+  const EditTimeText = useMemo(() => {
+    // 后端返回的是字符串格式的时间，需要转换
+    const timeString = device.updatedAt || device.createdAt
+    if (!timeString) return t('noTimeInfo')
+    
+    // 假设后端返回的是 "YYYY-MM-DD HH:MM:SS" 格式
+    const timeMs = new Date(timeString).getTime()
+    const timeText = formatTime(
+      timeMs,
+      `${t('dateTimeFormat')}`,
+    )
+    return `${t('editedAt')} ${timeText}`
+  }, [device.updatedAt, device.createdAt, t])
+
+  const StatusIcon = ({ status }: { status: string }) => {
+    const { RiWifiLine, RiWifiOffLine, RiAlarmWarningLine, RiSettings3Line } = require('@remixicon/react')
+    
+    switch (status) {
+      case 'online':
+        return <RiWifiLine className='h-4 w-4 text-text-success' />
+      case 'error':
+        return <RiAlarmWarningLine className='h-4 w-4 text-text-destructive' />
+      case 'maintenance':
+        return <RiSettings3Line className='h-4 w-4 text-text-warning' />
+      default:
+        return <RiWifiOffLine className='h-4 w-4 text-text-tertiary' />
+    }
+  }
+
+  const getStatusText = (status: string) => {
+    return t(`status.${status}`)
+  }
+
+  return (
+    <>
+      <div
+        onClick={(e) => {
+          e.preventDefault()
+          push(`/device/${device.id}/overview`)
+        }}
+        className='group relative col-span-1 inline-flex h-[160px] cursor-pointer flex-col rounded-xl border-[1px] border-solid border-components-card-border bg-components-card-bg shadow-sm transition-all duration-200 ease-in-out hover:shadow-lg'
+      >
+        <div className='flex h-[66px] shrink-0 grow-0 items-center gap-3 px-[14px] pb-3 pt-[14px]'>
+          <div className='relative shrink-0'>
+            <div className='flex h-10 w-10 items-center justify-center rounded-lg bg-components-panel-bg-alt border border-divider-subtle'>
+              <StatusIcon status={deviceStatus} />
+            </div>
+          </div>
+          <div className='w-0 grow py-[1px]'>
+            <div className='flex items-center text-sm font-semibold leading-5 text-text-secondary'>
+              <div className='truncate' title={displayName}>{displayName}</div>
+            </div>
+            <div className='flex items-center gap-1 text-[10px] font-medium leading-[18px] text-text-tertiary'>
+              <div className='truncate' title={productName}>{productName}</div>
+              <div>·</div>
+              <div className='truncate' title={EditTimeText}>{EditTimeText}</div>
+            </div>
+          </div>
+          <div className='flex h-5 w-5 shrink-0 items-center justify-center'>
+            <span className={cn(
+              'inline-flex items-center px-2 py-1 rounded-full text-xs font-medium',
+              getDeviceStatusColor(deviceStatus)
+            )}>
+              {getStatusText(deviceStatus)}
+            </span>
+          </div>
+        </div>
+        <div className='title-wrapper h-[90px] px-[14px] text-xs leading-normal text-text-tertiary'>
+          <div
+            className='line-clamp-2'
+            title={device.description}
+          >
+            {device.description || t('messages.noDescription')}
+          </div>
+          {device.properties && device.properties.length > 0 && (
+            <div className='mt-2'>
+              <div className='text-xs text-text-quaternary mb-1'>{t('properties')}:</div>
+              <div className='flex flex-wrap gap-1'>
+                {device.properties.slice(0, DISPLAY_LIMITS.MAX_VISIBLE_PROPERTIES).map((prop: any, index: number) => (
+                  <span key={index} className='inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-components-badge-bg-blue-soft text-text-accent'>
+                    {prop.name}: {prop.value}
+                  </span>
+                ))}
+                {device.properties.length > DISPLAY_LIMITS.MAX_VISIBLE_PROPERTIES && (
+                  <span className='inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-components-badge-bg-gray-soft text-text-tertiary'>
+                    +{device.properties.length - DISPLAY_LIMITS.MAX_VISIBLE_PROPERTIES}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+        <div className='absolute bottom-1 left-0 right-0 flex h-[42px] shrink-0 items-center pb-[6px] pl-[14px] pr-[6px] pt-1'>
+          {isCurrentWorkspaceEditor && (
+            <>
+              <div className={cn('flex w-0 grow items-center gap-1')} onClick={(e) => {
+                e.stopPropagation()
+                e.preventDefault()
+              }}>
+                <div className='mr-[41px] w-full grow group-hover:!mr-0'>
+                  <TagSelector
+                    position='bl'
+                    type='device'
+                    targetID={device.id}
+                    value={tags.map(tag => tag.id)}
+                    selectedTags={tags}
+                    onCacheUpdate={setTags}
+                    onChange={onRefresh}
+                  />
+                </div>
+              </div>
+              <div className='mx-1 !hidden h-[14px] w-[1px] shrink-0 bg-divider-regular group-hover:!flex' />
+              <div className='!hidden shrink-0 group-hover:!flex'>
+                <CustomPopover
+                  htmlContent={<Operations />}
+                  position="br"
+                  trigger="click"
+                  btnElement={
+                    <div
+                      className='flex h-8 w-8 cursor-pointer items-center justify-center rounded-md'
+                    >
+                      <RiMoreFill className='h-4 w-4 text-text-tertiary' />
+                    </div>
+                  }
+                  btnClassName={open =>
+                    cn(
+                      open ? '!bg-state-base-hover !shadow-none' : '!bg-transparent',
+                      'h-8 w-8 rounded-md border-none !p-2 hover:!bg-state-base-hover',
+                    )
+                  }
+                  popupClassName='!w-[216px] translate-x-[-128px]'
+                  className={'h-fit'}
+                />
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+      {showConfirmDelete && (
+        <Confirm
+          title={t('deleteDeviceConfirmTitle')}
+          content={t('deleteDeviceConfirmContent')}
+          isShow={showConfirmDelete}
+          onConfirm={onConfirmDelete}
+          onCancel={() => setShowConfirmDelete(false)}
+        />
+      )}
+    </>
+  )
+}
+
+export default React.memo(DeviceCard)

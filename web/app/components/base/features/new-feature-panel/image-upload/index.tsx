@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import produce from 'immer'
+import { produce } from 'immer'
 import { RiEqualizer2Line, RiImage2Fill } from '@remixicon/react'
 import FeatureCard from '@/app/components/base/features/new-feature-panel/feature-card'
 import SettingModal from '@/app/components/base/features/new-feature-panel/file-upload/setting-modal'
@@ -19,7 +19,7 @@ const FileUpload = ({
   disabled,
   onChange,
 }: Props) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
   const file = useFeatures(s => s.features.file)
   const featuresStore = useFeaturesStore()
   const [modalOpen, setModalOpen] = useState(false)

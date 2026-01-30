@@ -1,0 +1,39 @@
+# Rust 编译输出
+/api/target
+/api/Cargo.lock
+/sdks/driver-sdk/target
+/examples/example-plugin/target
+/examples/bacnet-driver/target
+
+# IDE
+/.idea
+/.vscode
+
+# 数据库文件
+*.db
+*.db-shm
+*.db-wal
+iot-edge.db*
+tinyiothub.db*
+
+# 配置文件（包含敏感信息）
+app_settings.toml
+app_settings_harmonyos.toml
+.env
+
+# 日志文件
+logs/*.log
+/api/logs
+
+# 临时文件
+/temp
+
+# 静态资源
+/wwwroot
+
+# Docker 日志
+/docker/logs
+
+# 其他
+/web-dify
+license

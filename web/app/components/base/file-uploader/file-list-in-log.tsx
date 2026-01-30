@@ -23,7 +23,7 @@ type Props = {
 }
 
 const FileListInLog = ({ fileList, isExpanded = false, noBorder = false, noPadding = false }: Props) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
   const [expanded, setExpanded] = useState(isExpanded)
   const fullList = useMemo(() => {
     return fileList.reduce((acc: FileEntity[], { list }) => {
@@ -66,7 +66,7 @@ const FileListInLog = ({ fileList, isExpanded = false, noBorder = false, noPaddi
                       <div key={id} className='rounded-md border-[0.5px] border-components-panel-border bg-components-panel-on-panel-item-bg p-1.5 shadow-xs'>
                         <FileTypeIcon
                           type={getFileAppearanceType(name, type)}
-                          size='md'
+                          size='lg'
                         />
                       </div>
                     </Tooltip>

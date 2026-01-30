@@ -5,8 +5,8 @@ import { debounce } from 'lodash-es'
 import copy from 'copy-to-clipboard'
 import Tooltip from '../tooltip'
 import {
-  Clipboard,
-  ClipboardCheck,
+  Copy,
+  CopyCheck,
 } from '@/app/components/base/icons/src/vender/line/files'
 
 type Props = {
@@ -15,8 +15,8 @@ type Props = {
 
 const prefixEmbedded = 'appOverview.overview.appInfo.embedded'
 
-export const CopyIcon = ({ content }: Props) => {
-  const { t } = useTranslation()
+const CopyIcon = ({ content }: Props) => {
+  const { t } = useTranslation('common')
   const [isCopied, setIsCopied] = useState<boolean>(false)
 
   const onClickCopy = debounce(() => {
@@ -39,10 +39,10 @@ export const CopyIcon = ({ content }: Props) => {
       <div onMouseLeave={onMouseLeave}>
         {!isCopied
           ? (
-            <Clipboard className='mx-1 h-3.5 w-3.5 cursor-pointer text-text-tertiary' onClick={onClickCopy} />
+            <Copy className='mx-1 h-3.5 w-3.5 cursor-pointer text-text-tertiary' onClick={onClickCopy} />
           )
           : (
-            <ClipboardCheck className='mx-1 h-3.5 w-3.5 text-text-tertiary' />
+            <CopyCheck className='mx-1 h-3.5 w-3.5 text-text-tertiary' />
           )
         }
       </div>

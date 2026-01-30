@@ -1,9 +1,18 @@
-import { useLanguage } from '@/app/components/header/account-setting/model-provider-page/hooks'
-import { renderI18nObject } from '@/i18n'
+import { useTranslation } from 'react-i18next'
+import type { Locale } from '@/i18n-config'
 
-export const useRenderI18nObject = () => {
-  const language = useLanguage()
-  return (obj: Record<string, string>) => {
-    return renderI18nObject(obj, language)
+export const useI18n = () => {
+  const { t, i18n } = useTranslation()
+  
+  const locale = i18n.language as Locale
+  
+  const changeLanguage = async (lng: Locale) => {
+    await i18n.changeLanguage(lng)
+  }
+
+  return {
+    t,
+    locale,
+    changeLanguage,
   }
 }

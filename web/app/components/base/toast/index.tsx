@@ -1,161 +1,168 @@
 'use client'
-import type { ReactNode } from 'react'
-import React, { useEffect, useState } from 'react'
-import { createRoot } from 'react-dom/client'
-import {
-  RiAlertFill,
-  RiCheckboxCircleFill,
-  RiCloseLine,
-  RiErrorWarningFill,
-  RiInformation2Fill,
-} from '@remixicon/react'
-import { createContext, useContext } from 'use-context-selector'
-import ActionButton from '@/app/components/base/action-button'
-import classNames from '@/utils/classnames'
-import { noop } from 'lodash-es'
 
-export type IToastProps = {
-  type?: 'success' | 'error' | 'warning' | 'info'
-  size?: 'md' | 'sm'
-  duration?: number
+import { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
+import { XMarkIcon } from '@heroicons/react/24/outline'
+import { CheckCircleIcon, ExclamationTriangleIcon, InformationCircleIcon, XCircleIcon } from '@heroicons/react/24/solid'
+import cn from '@/utils/classnames'
+
+export interface ToastProps {
+  id: string
+  type: 'success' | 'error' | 'warning' | 'info'
   message: string
-  children?: ReactNode
-  onClose?: () => void
-  className?: string
-  customComponent?: ReactNode
-}
-type IToastContext = {
-  notify: (props: IToastProps) => void
-  close: () => void
+  duration?: number
+  onClose: (id: string) => void
 }
 
-export const ToastContext = createContext<IToastContext>({} as IToastContext)
-export const useToastContext = () => useContext(ToastContext)
-const Toast = ({
-  type = 'info',
-  size = 'md',
-  message,
-  children,
-  className,
-  customComponent,
-}: IToastProps) => {
-  const { close } = useToastContext()
-  // sometimes message is react node array. Not handle it.
-  if (typeof message !== 'string')
-    return null
+const Toast = ({ id, type, message, duration = 3000, onClose }: ToastProps) => {
+  const [isVisible, setIsVisible] = useState(true)
 
-  return <div className={classNames(
-    className,
-    'fixed w-[360px] rounded-xl my-4 mx-8 flex-grow z-[9999] overflow-hidden',
-    size === 'md' ? 'p-3' : 'p-2',
-    'border border-components-panel-border-subtle bg-components-panel-bg-blur shadow-sm',
-    'top-0',
-    'right-0',
-  )}>
-    <div className={`absolute inset-0 -z-10 opacity-40 ${
-      (type === 'success' && 'bg-toast-success-bg')
-      || (type === 'warning' && 'bg-toast-warning-bg')
-      || (type === 'error' && 'bg-toast-error-bg')
-      || (type === 'info' && 'bg-toast-info-bg')
-    }`}
-    />
-    <div className={`flex ${size === 'md' ? 'gap-1' : 'gap-0.5'}`}>
-      <div className={`flex items-center justify-center ${size === 'md' ? 'p-0.5' : 'p-1'}`}>
-        {type === 'success' && <RiCheckboxCircleFill className={`${size === 'md' ? 'h-5 w-5' : 'h-4 w-4'} text-text-success`} aria-hidden="true" />}
-        {type === 'error' && <RiErrorWarningFill className={`${size === 'md' ? 'h-5 w-5' : 'h-4 w-4'} text-text-destructive`} aria-hidden="true" />}
-        {type === 'warning' && <RiAlertFill className={`${size === 'md' ? 'h-5 w-5' : 'h-4 w-4'} text-text-warning-secondary`} aria-hidden="true" />}
-        {type === 'info' && <RiInformation2Fill className={`${size === 'md' ? 'h-5 w-5' : 'h-4 w-4'} text-text-accent`} aria-hidden="true" />}
-      </div>
-      <div className={`flex py-1 ${size === 'md' ? 'px-1' : 'px-0.5'} grow flex-col items-start gap-1`}>
-        <div className='flex items-center gap-1'>
-          <div className='system-sm-semibold text-text-primary [word-break:break-word]'>{message}</div>
-          {customComponent}
-        </div>
-        {children && <div className='system-xs-regular text-text-secondary'>
-          {children}
-        </div>
-        }
-      </div>
-      {close
-        && (<ActionButton className='z-[1000]' onClick={close}>
-          <RiCloseLine className='h-4 w-4 shrink-0 text-text-tertiary' />
-        </ActionButton>)
-      }
-    </div>
-  </div>
-}
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setIsVisible(false)
+      setTimeout(() => onClose(id), 300) // Wait for animation
+    }, duration)
 
-export const ToastProvider = ({
-  children,
-}: {
-  children: ReactNode
-}) => {
-  const placeholder: IToastProps = {
-    type: 'info',
-    message: 'Toast message',
-    duration: 6000,
+    return () => clearTimeout(timer)
+  }, [id, duration, onClose])
+
+  const handleClose = () => {
+    setIsVisible(false)
+    setTimeout(() => onClose(id), 300)
   }
-  const [params, setParams] = React.useState<IToastProps>(placeholder)
-  const defaultDuring = (params.type === 'success' || params.type === 'info') ? 3000 : 6000
+
+  const getIcon = () => {
+    switch (type) {
+      case 'success':
+        return <CheckCircleIcon className="w-5 h-5 text-text-success" />
+      case 'error':
+        return <XCircleIcon className="w-5 h-5 text-text-destructive" />
+      case 'warning':
+        return <ExclamationTriangleIcon className="w-5 h-5 text-text-warning" />
+      case 'info':
+        return <InformationCircleIcon className="w-5 h-5 text-text-accent" />
+    }
+  }
+
+  const getBackgroundColor = () => {
+    switch (type) {
+      case 'success':
+        return 'bg-components-badge-bg-green-soft border-components-badge-status-light-success-border-inner'
+      case 'error':
+        return 'bg-components-badge-bg-red-soft border-components-badge-status-light-error-border-inner'
+      case 'warning':
+        return 'bg-components-badge-bg-orange-soft border-components-badge-status-light-warning-border-inner'
+      case 'info':
+        return 'bg-components-panel-bg border-divider-subtle'
+    }
+  }
+
+  return (
+    <div
+      className={cn(
+        'flex items-center p-4 mb-3 rounded-lg border shadow-sm transition-all duration-300',
+        getBackgroundColor(),
+        isVisible ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-full'
+      )}
+    >
+      {getIcon()}
+      <div className="ml-3 text-sm font-medium text-text-primary flex-1">
+        {message}
+      </div>
+      <button
+        onClick={handleClose}
+        className="ml-3 text-text-tertiary hover:text-text-secondary transition-colors"
+      >
+        <XMarkIcon className="w-4 h-4" />
+      </button>
+    </div>
+  )
+}
+
+// Toast container and manager
+class ToastManager {
+  private toasts: ToastProps[] = []
+  private listeners: Array<(toasts: ToastProps[]) => void> = []
+
+  notify = (options: Omit<ToastProps, 'id' | 'onClose'>) => {
+    const id = Math.random().toString(36).substring(2, 11)
+    const toast: ToastProps = {
+      ...options,
+      id,
+      onClose: this.remove,
+    }
+    
+    this.toasts.push(toast)
+    this.notifyListeners()
+  }
+
+  remove = (id: string) => {
+    this.toasts = this.toasts.filter(toast => toast.id !== id)
+    this.notifyListeners()
+  }
+
+  subscribe = (listener: (toasts: ToastProps[]) => void) => {
+    this.listeners.push(listener)
+    return () => {
+      this.listeners = this.listeners.filter(l => l !== listener)
+    }
+  }
+
+  private notifyListeners = () => {
+    this.listeners.forEach(listener => listener([...this.toasts]))
+  }
+}
+
+export const toastManager = new ToastManager()
+
+export const ToastContainer = () => {
+  const [toasts, setToasts] = useState<ToastProps[]>([])
   const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
-    if (mounted) {
-      setTimeout(() => {
-        setMounted(false)
-      }, params.duration || defaultDuring)
-    }
-  }, [defaultDuring, mounted, params.duration])
+    setMounted(true)
+    const unsubscribe = toastManager.subscribe(setToasts)
+    return unsubscribe
+  }, [])
 
-  return <ToastContext.Provider value={{
-    notify: (props) => {
-      setMounted(true)
-      setParams(props)
-    },
-    close: () => setMounted(false),
-  }}>
-    {mounted && <Toast {...params} />}
-    {children}
-  </ToastContext.Provider>
+  if (!mounted) return null
+
+  return createPortal(
+    <div className="fixed top-4 right-4 z-[9999] max-w-sm w-full">
+      {toasts.map(toast => (
+        <Toast key={toast.id} {...toast} />
+      ))}
+    </div>,
+    document.body
+  )
 }
 
-Toast.notify = ({
-  type,
-  size = 'md',
-  message,
-  duration,
-  className,
-  customComponent,
-  onClose,
-}: Pick<IToastProps, 'type' | 'size' | 'message' | 'duration' | 'className' | 'customComponent' | 'onClose'>) => {
-  const defaultDuring = (type === 'success' || type === 'info') ? 3000 : 6000
-  if (typeof window === 'object') {
-    const holder = document.createElement('div')
-    const root = createRoot(holder)
-
-    root.render(
-      <ToastContext.Provider value={{
-        notify: noop,
-        close: () => {
-          if (holder) {
-            root.unmount()
-            holder.remove()
-          }
-          onClose?.()
-        },
-      }}>
-        <Toast type={type} size={size} message={message} duration={duration} className={className} customComponent={customComponent} />
-      </ToastContext.Provider>,
-    )
-    document.body.appendChild(holder)
-    setTimeout(() => {
-      if (holder) {
-        root.unmount()
-        holder.remove()
-      }
-      onClose?.()
-    }, duration || defaultDuring)
-  }
+// Export a simple API
+const ToastAPI = {
+  notify: toastManager.notify,
+  success: (message: string, duration?: number) => 
+    toastManager.notify({ type: 'success', message, duration }),
+  error: (message: string, duration?: number) => 
+    toastManager.notify({ type: 'error', message, duration }),
+  warning: (message: string, duration?: number) => 
+    toastManager.notify({ type: 'warning', message, duration }),
+  info: (message: string, duration?: number) => 
+    toastManager.notify({ type: 'info', message, duration }),
 }
 
-export default Toast
+// Context for components that need toast functionality
+export const ToastContext = {
+  notify: toastManager.notify,
+}
+
+// Provider component (for compatibility)
+export const ToastProvider = ({ children }: { children: React.ReactNode }) => {
+  return <>{children}</>
+}
+
+// Hook for using toast context
+export const useToastContext = () => ({
+  notify: toastManager.notify,
+})
+
+export default ToastAPI

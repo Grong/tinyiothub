@@ -21,7 +21,7 @@ const FeatureBar = ({
   disabled,
   onFeatureBarClick,
 }: Props) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
   const features = useFeatures(s => s.features)
   const [modalOpen, setModalOpen] = useState(false)
 

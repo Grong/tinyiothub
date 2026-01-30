@@ -19,7 +19,7 @@ type Props = {
 const prefixEmbedded = 'appOverview.overview.appInfo.embedded'
 
 const CopyFeedback = ({ content }: Props) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
   const [isCopied, setIsCopied] = useState<boolean>(false)
 
   const onClickCopy = debounce(() => {
@@ -55,7 +55,7 @@ const CopyFeedback = ({ content }: Props) => {
 export default CopyFeedback
 
 export const CopyFeedbackNew = ({ content, className }: Pick<Props, 'className' | 'content'>) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
   const [isCopied, setIsCopied] = useState<boolean>(false)
 
   const onClickCopy = debounce(() => {
@@ -76,15 +76,16 @@ export const CopyFeedbackNew = ({ content, className }: Pick<Props, 'className' 
       }
     >
       <div
-        className={`h-8 w-8 cursor-pointer rounded-lg hover:bg-components-button-ghost-bg-hover ${className ?? ''
+        className={`h-8 w-8 cursor-pointer rounded-lg hover:bg-components-button-ghost-bg-hover flex items-center justify-center ${className ?? ''
         }`}
+        onClick={onClickCopy}
+        onMouseLeave={onMouseLeave}
       >
-        <div
-          onClick={onClickCopy}
-          onMouseLeave={onMouseLeave}
-          className={`h-full w-full ${copyStyle.copyIcon} ${isCopied ? copyStyle.copied : ''
-          }`}
-        ></div>
+        {isCopied ? (
+          <RiClipboardFill className={`h-4 w-4 ${copyStyle.copied}`} />
+        ) : (
+          <RiClipboardLine className={`h-4 w-4 ${copyStyle.copyIcon}`} />
+        )}
       </div>
     </Tooltip>
   )

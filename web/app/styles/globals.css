@@ -1,11 +1,17 @@
 @import "preflight.css";
-@tailwind base;
-@tailwind components;
+
 
 @import '../../themes/light.css';
 @import '../../themes/dark.css';
 @import "../../themes/manual-light.css";
 @import "../../themes/manual-dark.css";
+
+@import "../components/base/button/index.css";
+@import "../components/base/action-button/index.css";
+@import "../components/base/modal/index.css";
+
+@tailwind base;
+@tailwind components;
 
 html {
   color-scheme: light;
@@ -15,6 +21,16 @@ html[data-theme='dark'] {
   color-scheme: dark;
 }
 
+html[data-changing-theme] * {
+  transition: none !important;
+}
+
+/* 主题切换过渡效果 */
+* {
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+/* 禁用主题切换时的过渡 */
 html[data-changing-theme] * {
   transition: none !important;
 }
@@ -680,10 +696,6 @@ button:focus-within {
   display: none;
 }
 
-@import "../components/base/button/index.css";
-@import "../components/base/action-button/index.css";
-@import "../components/base/modal/index.css";
-
 @tailwind utilities;
 
 @layer utilities {
@@ -696,5 +708,16 @@ button:focus-within {
   .no-scrollbar {
     -ms-overflow-style: none;
     scrollbar-width: none;
+  }
+
+  /* Hide arrows from number input */
+  .no-spinner::-webkit-outer-spin-button,
+  .no-spinner::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  .no-spinner {
+    -moz-appearance: textfield;
   }
 }

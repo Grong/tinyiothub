@@ -1,11 +1,10 @@
 'use client'
 
 import { useTranslation } from 'react-i18next'
-import { RiCloseLine } from '@remixicon/react'
+import { RiCloseLine, RiAlarmWarningLine } from '@remixicon/react'
 import cn from '@/utils/classnames'
 import Button from '@/app/components/base/button'
 import Modal from '@/app/components/base/modal'
-import { AlertTriangle } from '@/app/components/base/icons/src/vender/solid/alertsAndFeedback'
 import type { Tag } from '@/app/components/base/tag-management/constant'
 import { noop } from 'lodash-es'
 
@@ -17,7 +16,7 @@ type TagRemoveModalProps = {
 }
 
 const TagRemoveModal = ({ show, tag, onConfirm, onClose }: TagRemoveModalProps) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
 
   return (
     <Modal
@@ -29,14 +28,14 @@ const TagRemoveModal = ({ show, tag, onConfirm, onClose }: TagRemoveModalProps) 
         <RiCloseLine className='h-4 w-4 text-text-tertiary' />
       </div>
       <div className='h-12 w-12 rounded-xl border-[0.5px] border-divider-regular bg-background-default-burn p-3 shadow-xl'>
-        <AlertTriangle className='h-6 w-6 text-[rgb(247,144,9)]' />
+        <RiAlarmWarningLine className='h-6 w-6 text-[rgb(247,144,9)]' />
       </div>
       <div className='mt-3 text-xl font-semibold leading-[30px] text-text-primary'>
-        {`${t('common.tag.delete')} `}
+        {`${t('tag.delete')} `}
         <span>{`"${tag.name}"`}</span>
       </div>
       <div className='my-1 text-sm leading-5 text-text-tertiary'>
-        {t('common.tag.deleteTip')}
+        {t('tag.deleteTip')}
       </div>
       <div className='flex items-center justify-end pt-6'>
         <Button className='mr-2' onClick={onClose}>{t('common.operation.cancel')}</Button>

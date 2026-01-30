@@ -17,7 +17,7 @@ const ModerationContent: FC<ModerationContentProps> = ({
   config,
   onConfigChange,
 }) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
 
   const handleConfigChange = (field: string, value: boolean | string) => {
     if (field === 'preset_response' && typeof value === 'string')

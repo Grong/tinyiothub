@@ -4,7 +4,7 @@ import { useToastContext } from '@/app/components/base/toast'
 import { ssePost } from '@/service/base'
 
 export const useTextGeneration = () => {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
   const { notify } = useToastContext()
   const [isResponding, setIsResponding] = useState(false)
   const [completion, setCompletion] = useState('')

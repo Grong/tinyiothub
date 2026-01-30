@@ -1,6 +1,6 @@
 import React, { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import produce from 'immer'
+import { produce } from 'immer'
 import { RiEditLine } from '@remixicon/react'
 import { LoveMessage } from '@/app/components/base/icons/src/vender/features'
 import FeatureCard from '@/app/components/base/features/new-feature-panel/feature-card'
@@ -27,7 +27,7 @@ const ConversationOpener = ({
   workflowVariables,
   onAutoAddPromptVariable,
 }: Props) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
   const { setShowOpeningModal } = useModalContext()
   const opening = useFeatures(s => s.features.opening)
   const featuresStore = useFeaturesStore()

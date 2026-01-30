@@ -13,7 +13,7 @@ type Action = {
 
 export const useStore = create<State & Action>(set => ({
   tagList: [],
-  setTagList: tagList => set(() => ({ tagList })),
+  setTagList: tagList => set(() => ({ tagList: tagList || [] })),
   showTagManagementModal: false,
   setShowTagManagementModal: showTagManagementModal => set(() => ({ showTagManagementModal })),
 }))

@@ -5,14 +5,14 @@ import { useTranslation } from 'react-i18next'
 const YEAR_RANGE = 100
 
 export const useDaysOfWeek = () => {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
   const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => t(`time.daysInWeek.${day}`))
 
   return daysOfWeek
 }
 
 export const useMonths = () => {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
   const months = [
     'January',
     'February',

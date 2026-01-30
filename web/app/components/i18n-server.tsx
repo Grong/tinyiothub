@@ -1,22 +1,15 @@
-import React from 'react'
-import I18N from './i18n'
-import { ToastProvider } from './base/toast'
-import { getLocaleOnServer } from '@/i18n/server'
+import type { FC, PropsWithChildren } from 'react'
+import { getLocaleOnServer } from '@/i18n-config/server'
+import I18nClientProvider from './providers/i18n-client-provider'
 
-export type II18NServerProps = {
-  children: React.ReactNode
-}
-
-const I18NServer = async ({
-  children,
-}: II18NServerProps) => {
+const I18nServer: FC<PropsWithChildren> = async ({ children }) => {
   const locale = await getLocaleOnServer()
 
   return (
-    <I18N {...{ locale }}>
-      <ToastProvider>{children}</ToastProvider>
-    </I18N>
+    <I18nClientProvider locale={locale}>
+      {children}
+    </I18nClientProvider>
   )
 }
 
-export default I18NServer
+export default I18nServer

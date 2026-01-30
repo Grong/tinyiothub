@@ -36,17 +36,33 @@ const MenuDialog = ({
   return (
     <Transition appear show={show} as={Fragment}>
       <Dialog as="div" className="relative z-[60]" onClose={noop}>
-        <div className="fixed inset-0">
-          <div className="flex min-h-full flex-col items-center justify-center">
-            <TransitionChild>
+        <TransitionChild
+          as={Fragment}
+          enter="ease-out duration-300"
+          enterFrom="opacity-0"
+          enterTo="opacity-100"
+          leave="ease-in duration-200"
+          leaveFrom="opacity-100"
+          leaveTo="opacity-0"
+        >
+          <div className="fixed inset-0 bg-black/25 backdrop-blur-sm" />
+        </TransitionChild>
+
+        <div className="fixed inset-0 overflow-y-auto">
+          <div className="flex min-h-full items-center justify-center p-4">
+            <TransitionChild
+              as={Fragment}
+              enter="ease-out duration-300"
+              enterFrom="opacity-0 scale-95"
+              enterTo="opacity-100 scale-100"
+              leave="ease-in duration-200"
+              leaveFrom="opacity-100 scale-100"
+              leaveTo="opacity-0 scale-95"
+            >
               <DialogPanel className={cn(
-                'relative h-full w-full grow overflow-hidden bg-background-sidenav-bg p-0 text-left align-middle backdrop-blur-md transition-all',
-                'duration-300 ease-in data-[closed]:scale-95 data-[closed]:opacity-0',
-                'data-[enter]:scale-100 data-[enter]:opacity-100',
-                'data-[enter]:scale-95 data-[leave]:opacity-0',
+                'relative w-full max-w-[1048px] h-[640px] overflow-hidden bg-components-panel-bg rounded-2xl shadow-2xl border border-divider-subtle transition-all',
                 className,
               )}>
-                <div className='absolute right-0 top-0 h-full w-1/2 bg-components-panel-bg' />
                 {children}
               </DialogPanel>
             </TransitionChild>

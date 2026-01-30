@@ -32,7 +32,7 @@ const ConfigParamModal: FC<Props> = ({
   isInit,
   annotationConfig: oldAnnotationConfig,
 }) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
   const {
     modelList: embeddingsModelList,
     defaultModel: embeddingsDefaultModel,

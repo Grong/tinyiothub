@@ -1,6 +1,6 @@
 'use client'
 import useSWR from 'swr'
-import produce from 'immer'
+import { produce } from 'immer'
 import React, { Fragment } from 'react'
 import { usePathname } from 'next/navigation'
 import { useTranslation } from 'react-i18next'
@@ -13,7 +13,7 @@ import { fetchAppVoices } from '@/service/apps'
 import Tooltip from '@/app/components/base/tooltip'
 import Switch from '@/app/components/base/switch'
 import AudioBtn from '@/app/components/base/audio-btn'
-import { languages } from '@/i18n/language'
+import { languages } from '@/i18n-config/language'
 import { TtsAutoPlay } from '@/types/app'
 import type { OnFeaturesChange } from '@/app/components/base/features/types'
 import classNames from '@/utils/classnames'
@@ -26,7 +26,7 @@ const VoiceParamConfig = ({
   onClose,
   onChange,
 }: VoiceParamConfigProps) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
   const pathname = usePathname()
   const matched = pathname.match(/\/app\/([^/]+)/)
   const appId = (matched?.length && matched[1]) ? matched[1] : ''

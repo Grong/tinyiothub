@@ -1,84 +1,161 @@
-export enum SSOProtocol {
-  SAML = 'saml',
-  OIDC = 'oidc',
-  OAuth2 = 'oauth2',
+// 系统功能特性类型定义
+
+export enum DatasetAttr {
+  DATA_API_PREFIX = 'data-api-prefix',
+  DATA_PUBLIC_API_PREFIX = 'data-public-api-prefix',
+  DATA_PUBLIC_EDITION = 'data-public-edition',
+  DATA_PUBLIC_SITE_ABOUT = 'data-public-site-about',
 }
 
-export enum LicenseStatus {
-  NONE = 'none',
-  INACTIVE = 'inactive',
-  ACTIVE = 'active',
-  EXPIRING = 'expiring',
-  EXPIRED = 'expired',
-  LOST = 'lost',
-}
-
-type License = {
-  status: LicenseStatus
-  expired_at: string | null
-}
-
-export type SystemFeatures = {
-  sso_enforced_for_signin: boolean
-  sso_enforced_for_signin_protocol: SSOProtocol | ''
-  sso_enforced_for_web: boolean
-  sso_enforced_for_web_protocol: SSOProtocol | ''
-  enable_marketplace: boolean
-  enable_email_code_login: boolean
-  enable_email_password_login: boolean
-  enable_social_oauth_login: boolean
-  is_allow_create_workspace: boolean
-  is_allow_register: boolean
-  is_email_setup: boolean
-  license: License
-  branding: {
-    enabled: boolean
-    login_page_logo: string
-    workspace_logo: string
-    favicon: string
-    application_title: string
+export interface SystemFeatures {
+  // 系统版本信息
+  version?: string
+  edition?: string
+  buildTime?: string
+  
+  // 功能开关
+  enableDeviceManagement?: boolean
+  enableAlarmSystem?: boolean
+  enableMonitoring?: boolean
+  enableUserManagement?: boolean
+  enableSystemSettings?: boolean
+  
+  // API 配置
+  apiPrefix?: string
+  publicApiPrefix?: string
+  
+  // 系统限制
+  maxDevices?: number
+  maxUsers?: number
+  maxAlarmRules?: number
+  
+  // 界面配置
+  theme?: 'light' | 'dark' | 'system'
+  language?: string
+  timezone?: string
+  
+  // 高级功能
+  enableAdvancedAnalytics?: boolean
+  enableCustomDashboard?: boolean
+  enableDataExport?: boolean
+  enableApiAccess?: boolean
+  
+  // 安全配置
+  enableTwoFactorAuth?: boolean
+  sessionTimeout?: number
+  passwordPolicy?: {
+    minLength?: number
+    requireUppercase?: boolean
+    requireLowercase?: boolean
+    requireNumbers?: boolean
+    requireSpecialChars?: boolean
   }
-  webapp_auth: {
-    enabled: boolean
-    allow_sso: boolean
-    sso_config: {
-      protocol: SSOProtocol | ''
-    }
-    allow_email_code_login: boolean
-    allow_email_password_login: boolean
-  }
+  
+  // 通知配置
+  enableEmailNotifications?: boolean
+  enableSmsNotifications?: boolean
+  enableWebhookNotifications?: boolean
+  
+  // 系统状态
+  systemStatus?: 'healthy' | 'degraded' | 'unhealthy'
+  lastHealthCheck?: string
+  
+  // 许可证信息
+  licenseType?: 'community' | 'professional' | 'enterprise'
+  licenseExpiry?: string
+  licensedFeatures?: string[]
 }
 
+// 默认系统功能配置
 export const defaultSystemFeatures: SystemFeatures = {
-  sso_enforced_for_signin: false,
-  sso_enforced_for_signin_protocol: '',
-  sso_enforced_for_web: false,
-  sso_enforced_for_web_protocol: '',
-  enable_marketplace: false,
-  enable_email_code_login: false,
-  enable_email_password_login: false,
-  enable_social_oauth_login: false,
-  is_allow_create_workspace: false,
-  is_allow_register: false,
-  is_email_setup: false,
-  license: {
-    status: LicenseStatus.NONE,
-    expired_at: '',
+  version: '1.0.0',
+  edition: 'Community',
+  
+  // 基础功能默认开启
+  enableDeviceManagement: true,
+  enableAlarmSystem: true,
+  enableMonitoring: true,
+  enableUserManagement: true,
+  enableSystemSettings: true,
+  
+  // API 配置
+  apiPrefix: '/api/v1',
+  publicApiPrefix: '/api/public',
+  
+  // 系统限制 (社区版)
+  maxDevices: 100,
+  maxUsers: 10,
+  maxAlarmRules: 50,
+  
+  // 界面配置
+  theme: 'system',
+  language: 'zh-Hans',
+  timezone: 'Asia/Shanghai',
+  
+  // 高级功能默认关闭 (需要专业版或企业版)
+  enableAdvancedAnalytics: false,
+  enableCustomDashboard: false,
+  enableDataExport: false,
+  enableApiAccess: false,
+  
+  // 安全配置
+  enableTwoFactorAuth: false,
+  sessionTimeout: 3600, // 1小时
+  passwordPolicy: {
+    minLength: 8,
+    requireUppercase: false,
+    requireLowercase: false,
+    requireNumbers: false,
+    requireSpecialChars: false,
   },
-  branding: {
-    enabled: false,
-    login_page_logo: '',
-    workspace_logo: '',
-    favicon: '',
-    application_title: 'test title',
-  },
-  webapp_auth: {
-    enabled: false,
-    allow_sso: false,
-    sso_config: {
-      protocol: '',
-    },
-    allow_email_code_login: false,
-    allow_email_password_login: false,
-  },
+  
+  // 通知配置
+  enableEmailNotifications: false,
+  enableSmsNotifications: false,
+  enableWebhookNotifications: false,
+  
+  // 系统状态
+  systemStatus: 'healthy',
+  
+  // 许可证信息
+  licenseType: 'community',
+  licensedFeatures: [
+    'device-management',
+    'alarm-system',
+    'monitoring',
+    'user-management',
+    'system-settings',
+  ],
+}
+
+// 功能检查工具函数
+export const hasFeature = (features: SystemFeatures, feature: string): boolean => {
+  return features.licensedFeatures?.includes(feature) ?? false
+}
+
+export const isFeatureEnabled = (features: SystemFeatures, feature: keyof SystemFeatures): boolean => {
+  const value = features[feature]
+  return typeof value === 'boolean' ? value : false
+}
+
+// 许可证类型检查
+export const isProfessionalOrHigher = (features: SystemFeatures): boolean => {
+  return features.licenseType === 'professional' || features.licenseType === 'enterprise'
+}
+
+export const isEnterprise = (features: SystemFeatures): boolean => {
+  return features.licenseType === 'enterprise'
+}
+
+// 系统限制检查
+export const canAddDevice = (features: SystemFeatures, currentDeviceCount: number): boolean => {
+  return currentDeviceCount < (features.maxDevices ?? 0)
+}
+
+export const canAddUser = (features: SystemFeatures, currentUserCount: number): boolean => {
+  return currentUserCount < (features.maxUsers ?? 0)
+}
+
+export const canAddAlarmRule = (features: SystemFeatures, currentRuleCount: number): boolean => {
+  return currentRuleCount < (features.maxAlarmRules ?? 0)
 }

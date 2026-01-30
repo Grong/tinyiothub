@@ -25,7 +25,7 @@ const CustomizedPagination: FC<Props> = ({
   limit = 10,
   onLimitChange,
 }) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
   const totalPages = Math.ceil(total / limit)
   const inputRef = React.useRef<HTMLDivElement>(null)
   const [showInput, setShowInput] = React.useState(false)
@@ -57,7 +57,34 @@ const CustomizedPagination: FC<Props> = ({
     if (isNaN(Number.parseInt(value)))
       return setInputValue('')
     setInputValue(Number.parseInt(value))
-    handlePaging(value)
+  }
+
+  const handleInputConfirm = () => {
+    if (inputValue !== '' && String(inputValue) !== String(current + 1)) {
+      handlePaging(String(inputValue))
+      return
+    }
+
+    if (inputValue === '')
+      setInputValue(current + 1)
+
+    setShowInput(false)
+  }
+
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      handleInputConfirm()
+    }
+    else if (e.key === 'Escape') {
+      e.preventDefault()
+      setInputValue(current + 1)
+      setShowInput(false)
+    }
+  }
+
+  const handleInputBlur = () => {
+    handleInputConfirm()
   }
 
   return (
@@ -105,7 +132,8 @@ const CustomizedPagination: FC<Props> = ({
             autoFocus
             value={inputValue}
             onChange={handleInputChange}
-            onBlur={() => setShowInput(false)}
+            onKeyDown={handleInputKeyDown}
+            onBlur={handleInputBlur}
           />
         )}
         <Pagination.NextButton

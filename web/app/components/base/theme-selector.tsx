@@ -19,7 +19,7 @@ import {
 export type Theme = 'light' | 'dark' | 'system'
 
 export default function ThemeSelector() {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
   const { theme, setTheme } = useTheme()
   const [open, setOpen] = useState(false)
 
@@ -54,7 +54,7 @@ export default function ThemeSelector() {
       </PortalToFollowElemTrigger>
       <PortalToFollowElemContent className='z-[1000]'>
         <div className='flex w-[144px] flex-col items-start rounded-xl border-[0.5px] border-components-panel-border bg-components-panel-bg-blur p-1 shadow-lg'>
-          <button
+          <button type="button"
             className='flex w-full items-center gap-1 rounded-lg px-2 py-1.5 text-text-secondary hover:bg-state-base-hover'
             onClick={() => handleThemeChange('light')}
           >
@@ -66,7 +66,7 @@ export default function ThemeSelector() {
               <RiCheckLine className='h-4 w-4 text-text-accent' />
             </div>}
           </button>
-          <button
+          <button type="button"
             className='flex w-full items-center gap-1 rounded-lg px-2 py-1.5 text-text-secondary hover:bg-state-base-hover'
             onClick={() => handleThemeChange('dark')}
           >
@@ -78,7 +78,7 @@ export default function ThemeSelector() {
               <RiCheckLine className='h-4 w-4 text-text-accent' />
             </div>}
           </button>
-          <button
+          <button type="button"
             className='flex w-full items-center gap-1 rounded-lg px-2 py-1.5 text-text-secondary hover:bg-state-base-hover'
             onClick={() => handleThemeChange('system')}
           >

@@ -2,5 +2,10 @@ export type Tag = {
   id: string
   name: string
   type: string
-  binding_count: number
+  color?: string
+  description?: string
+  createdAt: string
+  updatedAt?: string
+  createdBy?: string
+  binding_count?: number
 }

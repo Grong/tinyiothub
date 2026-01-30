@@ -1,12 +1,13 @@
-import { Theme } from '@/types/app'
-import { useTheme as useBaseTheme } from 'next-themes'
+'use client'
+import { useTheme as useNextTheme } from 'next-themes'
 
 const useTheme = () => {
-  const { theme, resolvedTheme, ...rest } = useBaseTheme()
+  const { theme, setTheme, systemTheme } = useNextTheme()
+  
   return {
-    // only returns 'light' or 'dark' theme
-    theme: theme === Theme.system ? resolvedTheme as Theme : theme as Theme,
-    ...rest,
+    theme: theme === 'system' ? systemTheme : theme,
+    setTheme,
+    systemTheme,
   }
 }
 

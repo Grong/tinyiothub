@@ -25,7 +25,7 @@ const ModalLikeWrap: FC<Props> = ({
   hideCloseBtn,
   onConfirm,
 }) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
 
   return (
     <div className={cn('w-[320px] rounded-2xl border-[0.5px] border-components-panel-border bg-components-panel-bg px-3 pb-4 pt-3.5 shadow-xl', className)}>

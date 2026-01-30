@@ -2,14 +2,14 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 import type { ClipboardEvent } from 'react'
 import { useParams } from 'next/navigation'
 import { useTranslation } from 'react-i18next'
-import { imageUpload } from './utils'
+import { getImageUploadErrorMessage, imageUpload } from './utils'
 import { useToastContext } from '@/app/components/base/toast'
 import { ALLOW_FILE_EXTENSIONS, TransferMethod } from '@/types/app'
 import type { ImageFile, VisionSettings } from '@/types/app'
 
 export const useImageFiles = () => {
   const params = useParams()
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
   const { notify } = useToastContext()
   const [files, setFiles] = useState<ImageFile[]>([])
   const filesRef = useRef<ImageFile[]>([])
@@ -81,8 +81,9 @@ export const useImageFiles = () => {
           filesRef.current = newFiles
           setFiles(newFiles)
         },
-        onErrorCallback: () => {
-          notify({ type: 'error', message: t('common.imageUploader.uploadFromComputerUploadError') })
+        onErrorCallback: (error?: any) => {
+          const errorMessage = getImageUploadErrorMessage(error, t('common.imageUploader.uploadFromComputerUploadError'), t)
+          notify({ type: 'error', message: errorMessage })
           const newFiles = [...files.slice(0, index), { ...currentImageFile, progress: -1 }, ...files.slice(index + 1)]
           filesRef.current = newFiles
           setFiles(newFiles)
@@ -120,7 +121,7 @@ type useLocalUploaderProps = {
 export const useLocalFileUploader = ({ limit, disabled = false, onUpload }: useLocalUploaderProps) => {
   const { notify } = useToastContext()
   const params = useParams()
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
 
   const handleLocalFileUpload = useCallback((file: File) => {
     if (disabled) {
@@ -158,8 +159,9 @@ export const useLocalFileUploader = ({ limit, disabled = false, onUpload }: useL
           onSuccessCallback: (res) => {
             onUpload({ ...imageFile, fileId: res.id, progress: 100 })
           },
-          onErrorCallback: () => {
-            notify({ type: 'error', message: t('common.imageUploader.uploadFromComputerUploadError') })
+          onErrorCallback: (error?: any) => {
+            const errorMessage = getImageUploadErrorMessage(error, t('common.imageUploader.uploadFromComputerUploadError'), t)
+            notify({ type: 'error', message: errorMessage })
             onUpload({ ...imageFile, progress: -1 })
           },
         }, !!params.token)

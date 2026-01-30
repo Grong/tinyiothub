@@ -1,52 +1,55 @@
 'use client'
-import { useState } from 'react'
+import { useMemo } from 'react'
 import cn from '@/utils/classnames'
 
-export type AvatarProps = {
+interface AvatarProps {
+  avatar?: string
   name: string
-  avatar: string | null
   size?: number
   className?: string
-  textClassName?: string
 }
-const Avatar = ({
-  name,
-  avatar,
-  size = 30,
-  className,
-  textClassName,
-}: AvatarProps) => {
-  const avatarClassName = 'shrink-0 flex items-center rounded-full bg-primary-600'
-  const style = { width: `${size}px`, height: `${size}px`, fontSize: `${size}px`, lineHeight: `${size}px` }
-  const [imgError, setImgError] = useState(false)
 
-  const handleError = () => {
-    setImgError(true)
+const Avatar = ({ avatar, name, size = 32, className }: AvatarProps) => {
+  const initials = useMemo(() => {
+    if (!name) return '?'
+    
+    const words = name.trim().split(/\s+/)
+    if (words.length === 1) {
+      return words[0].charAt(0).toUpperCase()
+    }
+    
+    return (words[0].charAt(0) + words[words.length - 1].charAt(0)).toUpperCase()
+  }, [name])
+
+  const avatarStyle = {
+    width: size,
+    height: size,
+    fontSize: Math.max(size * 0.4, 12),
   }
 
-  if (avatar && !imgError) {
+  if (avatar) {
     return (
       <img
-        className={cn(avatarClassName, className)}
-        style={style}
-        alt={name}
         src={avatar}
-        onError={handleError}
+        alt={name}
+        className={cn(
+          'rounded-full object-cover',
+          className
+        )}
+        style={avatarStyle}
       />
     )
   }
 
   return (
     <div
-      className={cn(avatarClassName, className)}
-      style={style}
+      className={cn(
+        'flex items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-purple-600 text-white font-medium',
+        className
+      )}
+      style={avatarStyle}
     >
-      <div
-        className={cn(textClassName, 'scale-[0.4] text-center text-white')}
-        style={style}
-      >
-        {name[0].toLocaleUpperCase()}
-      </div>
+      {initials}
     </div>
   )
 }

@@ -14,7 +14,7 @@ const ImageLinkInput: FC<ImageLinkInputProps> = ({
   onUpload,
   disabled,
 }) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
   const [imageLink, setImageLink] = useState('')
 
   const handleClick = () => {

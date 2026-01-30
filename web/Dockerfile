@@ -1,76 +1,59 @@
-# base image
-FROM node:22-alpine3.21 AS base
-LABEL maintainer="takatost@gmail.com"
+# ============================================
+# Stage 1: Dependencies - 安装依赖
+# ============================================
+FROM node:22-alpine AS deps
 
-# if you located in China, you can use aliyun mirror to speed up
-# RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
+RUN apk add --no-cache libc6-compat
+RUN corepack enable
 
-RUN apk add --no-cache tzdata
-RUN npm install -g pnpm@10.11.1
-ENV PNPM_HOME="/pnpm"
-ENV PATH="$PNPM_HOME:$PATH"
+WORKDIR /app
 
+COPY package.json pnpm-lock.yaml* ./
+RUN corepack install && pnpm install --frozen-lockfile --prod=false
 
-# install packages
-FROM base AS packages
+# ============================================
+# Stage 2: Builder - 构建应用
+# ============================================
+FROM node:22-alpine AS builder
 
-WORKDIR /app/web
+RUN corepack enable
 
-COPY package.json .
-COPY pnpm-lock.yaml .
+WORKDIR /app
 
-# if you located in China, you can use taobao registry to speed up
-# RUN pnpm install --frozen-lockfile --registry https://registry.npmmirror.com/
-
-RUN pnpm install --frozen-lockfile
-
-# build resources
-FROM base AS builder
-WORKDIR /app/web
-COPY --from=packages /app/web/ .
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-ENV NODE_OPTIONS="--max-old-space-size=4096"
-RUN pnpm build
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
 
+RUN pnpm run build
 
-# production stage
-FROM base AS production
+# ============================================
+# Stage 3: Runner - 运行时镜像（最小化）
+# ============================================
+FROM node:22-alpine AS runner
+
+WORKDIR /app
 
 ENV NODE_ENV=production
-ENV EDITION=SELF_HOSTED
-ENV DEPLOY_ENV=PRODUCTION
-ENV CONSOLE_API_URL=http://127.0.0.1:5150
-ENV APP_API_URL=http://127.0.0.1:5150
-ENV MARKETPLACE_API_URL=https://marketplace.tinyiothub.com
-ENV MARKETPLACE_URL=https://marketplace.tinyiothub.com
-ENV PORT=3000
 ENV NEXT_TELEMETRY_DISABLED=1
-ENV PM2_INSTANCES=2
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
 
-# set timezone
-ENV TZ=UTC
-RUN ln -s /usr/share/zoneinfo/${TZ} /etc/localtime \
-    && echo ${TZ} > /etc/timezone
+RUN addgroup -g 1001 nodejs && \
+    adduser -D -u 1001 -G nodejs nextjs && \
+    apk add --no-cache wget
 
+# 只复制必要的运行时文件
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-WORKDIR /app/web
-COPY --from=builder /app/web/public ./public
-COPY --from=builder /app/web/.next/standalone ./
-COPY --from=builder /app/web/.next/static ./.next/static
+USER nextjs
 
-COPY docker/entrypoint.sh ./entrypoint.sh
-
-
-# global runtime packages
-RUN pnpm add -g pm2 \
-    && mkdir /.pm2 \
-    && chown -R 1001:0 /.pm2 /app/web \
-    && chmod -R g=u /.pm2 /app/web
-
-ARG COMMIT_SHA
-ENV COMMIT_SHA=${COMMIT_SHA}
-
-USER 1001
 EXPOSE 3000
-ENTRYPOINT ["/bin/sh", "./entrypoint.sh"]
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:3000 || exit 1
+
+CMD ["node", "server.js"]

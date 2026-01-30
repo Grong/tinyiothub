@@ -32,7 +32,7 @@ const AnnotationCtrlButton: FC<Props> = ({
   onAdded,
   onEdit,
 }) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
   const { plan, enableBilling } = useProviderContext()
   const isAnnotationFull = (enableBilling && plan.usage.annotatedResponse >= plan.total.annotatedResponse)
   const { setShowAnnotationFullModal } = useModalContext()

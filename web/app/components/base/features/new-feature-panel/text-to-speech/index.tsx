@@ -1,6 +1,6 @@
 import React, { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import produce from 'immer'
+import { produce } from 'immer'
 import { RiEqualizer2Line } from '@remixicon/react'
 import { TextToAudio } from '@/app/components/base/icons/src/vender/features'
 import FeatureCard from '@/app/components/base/features/new-feature-panel/feature-card'
@@ -9,7 +9,7 @@ import VoiceSettings from '@/app/components/base/features/new-feature-panel/text
 import { useFeatures, useFeaturesStore } from '@/app/components/base/features/hooks'
 import type { OnFeaturesChange } from '@/app/components/base/features/types'
 import { FeatureEnum } from '@/app/components/base/features/types'
-import { languages } from '@/i18n/language'
+import { languages } from '@/i18n-config/language'
 import { TtsAutoPlay } from '@/types/app'
 
 type Props = {
@@ -21,7 +21,7 @@ const TextToSpeech = ({
   disabled,
   onChange,
 }: Props) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
   const textToSpeech = useFeatures(s => s.features.text2speech) // .language .voice .autoPlay
   const languageInfo = languages.find(i => i.value === textToSpeech?.language)
   const [modalOpen, setModalOpen] = useState(false)

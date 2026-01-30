@@ -1,6 +1,8 @@
 import type { FC, ReactNode } from 'react'
 import { useEffect, useState } from 'react'
 import cn from '@/utils/classnames'
+import Badge from '@/app/components/base/badge'
+
 type Option = {
   value: string
   text: ReactNode
@@ -9,17 +11,19 @@ type Option = {
 type TabSliderProps = {
   className?: string
   value: string
+  itemClassName?: string | ((active: boolean) => string)
   onChange: (v: string) => void
   options: Option[]
 }
 
 const TabSlider: FC<TabSliderProps> = ({
   className,
+  itemClassName,
   value,
   onChange,
   options,
 }) => {
-  const [activeIndex, setActiveIndex] = useState(options.findIndex(option => option.value === value))
+  const [activeIndex, setActiveIndex] = useState(() => options.findIndex(option => option.value === value))
   const [sliderStyle, setSliderStyle] = useState({})
 
   const updateSliderStyle = (index: number) => {
@@ -55,6 +59,7 @@ const TabSlider: FC<TabSliderProps> = ({
             index === activeIndex
               ? 'text-text-primary'
               : 'text-text-tertiary',
+            typeof itemClassName === 'function' ? itemClassName(index === activeIndex) : itemClassName,
           )}
           onClick={() => {
             if (index !== activeIndex) {

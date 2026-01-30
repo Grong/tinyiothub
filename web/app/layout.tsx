@@ -1,14 +1,16 @@
-import RoutePrefixHandle from './routePrefixHandle'
 import type { Viewport } from 'next'
 import I18nServer from './components/i18n-server'
-import BrowserInitor from './components/browser-initor'
-import SentryInitor from './components/sentry-initor'
-import { getLocaleOnServer } from '@/i18n/server'
-import { TanstackQueryIniter } from '@/context/query-client'
+import BrowserInitializer from './components/browser-initializer'
+import { getLocaleOnServer } from '@/i18n-config/server'
+import { TanstackQueryInitializer } from '@/context/query-client'
 import { ThemeProvider } from 'next-themes'
 import './styles/globals.css'
-import './styles/markdown.scss'
 import GlobalPublicStoreProvider from '@/context/global-public-context'
+import { StoreProvider } from '@/store/provider'
+import { AppProvider } from '@/context/app-context'
+import { ToastContainer } from './components/base/toast'
+import { DatasetAttr } from '@/types/feature'
+import cn from '@/utils/classnames'
 
 export const viewport: Viewport = {
   width: 'device-width',
@@ -25,55 +27,50 @@ const LocaleLayout = async ({
 }) => {
   const locale = await getLocaleOnServer()
 
+  const datasetMap: Record<DatasetAttr, string | undefined> = {
+    [DatasetAttr.DATA_API_PREFIX]: process.env.NEXT_PUBLIC_API_PREFIX,
+    [DatasetAttr.DATA_PUBLIC_API_PREFIX]: process.env.NEXT_PUBLIC_PUBLIC_API_PREFIX,
+    [DatasetAttr.DATA_PUBLIC_EDITION]: process.env.NEXT_PUBLIC_EDITION,
+    [DatasetAttr.DATA_PUBLIC_SITE_ABOUT]: process.env.NEXT_PUBLIC_SITE_ABOUT,
+  }
+
   return (
-    <html lang={locale ?? 'en'} className="h-full" suppressHydrationWarning>
+    <html lang={locale ?? 'en'} className={cn('h-full')} suppressHydrationWarning>
       <head>
-        <meta name="theme-color" content="#FFFFFF" />
+        <meta name="theme-color" content="#1C64F2" />
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+        <meta name="apple-mobile-web-app-title" content="TinyIoTHub" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon.ico" />
+        <meta name="msapplication-TileColor" content="#1C64F2" />
       </head>
       <body
-        className="color-scheme h-full select-auto"
-        data-api-prefix={process.env.NEXT_PUBLIC_API_PREFIX}
-        data-pubic-api-prefix={process.env.NEXT_PUBLIC_PUBLIC_API_PREFIX}
-        data-marketplace-api-prefix={process.env.NEXT_PUBLIC_MARKETPLACE_API_PREFIX}
-        data-marketplace-url-prefix={process.env.NEXT_PUBLIC_MARKETPLACE_URL_PREFIX}
-        data-public-edition={process.env.NEXT_PUBLIC_EDITION}
-        data-public-support-mail-login={process.env.NEXT_PUBLIC_SUPPORT_MAIL_LOGIN}
-        data-public-sentry-dsn={process.env.NEXT_PUBLIC_SENTRY_DSN}
-        data-public-maintenance-notice={process.env.NEXT_PUBLIC_MAINTENANCE_NOTICE}
-        data-public-site-about={process.env.NEXT_PUBLIC_SITE_ABOUT}
-        data-public-text-generation-timeout-ms={process.env.NEXT_PUBLIC_TEXT_GENERATION_TIMEOUT_MS}
-        data-public-max-tools-num={process.env.NEXT_PUBLIC_MAX_TOOLS_NUM}
-        data-public-max-parallel-limit={process.env.NEXT_PUBLIC_MAX_PARALLEL_LIMIT}
-        data-public-top-k-max-value={process.env.NEXT_PUBLIC_TOP_K_MAX_VALUE}
-        data-public-indexing-max-segmentation-tokens-length={process.env.NEXT_PUBLIC_INDEXING_MAX_SEGMENTATION_TOKENS_LENGTH}
-        data-public-loop-node-max-count={process.env.NEXT_PUBLIC_LOOP_NODE_MAX_COUNT}
-        data-public-max-iterations-num={process.env.NEXT_PUBLIC_MAX_ITERATIONS_NUM}
-        data-public-enable-website-jinareader={process.env.NEXT_PUBLIC_ENABLE_WEBSITE_JINAREADER}
-        data-public-enable-website-firecrawl={process.env.NEXT_PUBLIC_ENABLE_WEBSITE_FIRECRAWL}
-        data-public-enable-website-watercrawl={process.env.NEXT_PUBLIC_ENABLE_WEBSITE_WATERCRAWL}
+        className='color-scheme h-full select-auto'
+        {...datasetMap}
       >
-        <BrowserInitor>
-          <SentryInitor>
-            <TanstackQueryIniter>
-              <ThemeProvider
-                attribute='data-theme'
-                defaultTheme='system'
-                enableSystem
-                disableTransitionOnChange
-              >
-                <I18nServer>
-                  <GlobalPublicStoreProvider>
-                    {children}
-                  </GlobalPublicStoreProvider>
-                </I18nServer>
-              </ThemeProvider>
-            </TanstackQueryIniter>
-          </SentryInitor>
-        </BrowserInitor>
-        <RoutePrefixHandle />
+        <ThemeProvider
+          attribute='data-theme'
+          defaultTheme='system'
+          enableSystem
+          disableTransitionOnChange
+          enableColorScheme={false}
+        >
+          <TanstackQueryInitializer>
+            <I18nServer>
+              <StoreProvider>
+                <GlobalPublicStoreProvider>
+                  <AppProvider>
+                    <BrowserInitializer>
+                      {children}
+                      <ToastContainer />
+                    </BrowserInitializer>
+                  </AppProvider>
+                </GlobalPublicStoreProvider>
+              </StoreProvider>
+            </I18nServer>
+          </TanstackQueryInitializer>
+        </ThemeProvider>
       </body>
     </html>
   )

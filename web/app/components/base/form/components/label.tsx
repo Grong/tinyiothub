@@ -19,7 +19,7 @@ const Label = ({
   tooltip,
   className,
 }: LabelProps) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation('common')
 
   return (
     <div className='flex h-6 items-center'>

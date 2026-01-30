@@ -10,7 +10,7 @@ export type IRadioProps = {
   labelClassName?: string
   children?: string | ReactNode
   checked?: boolean
-  value?: string | number
+  value?: string | number | boolean
   disabled?: boolean
   onChange?: (e?: IRadioProps['value']) => void
 }
@@ -38,7 +38,7 @@ export default function Radio({
   const divClassName = `
     flex items-center py-1 relative
     px-7 cursor-pointer text-text-secondary rounded
-    bg-components-option-card-option-bg hover:bg-components-option-card-option-bg-hover hover:shadow-xs
+    hover:bg-components-option-card-option-bg-hover hover:shadow-xs
   `
 
   return (

@@ -1,0 +1,124 @@
+{
+  "version": "1.0.0",
+  "updated_at": "2025-01-29T10:00:00Z",
+  "drivers": [
+    {
+      "id": "bacnet",
+      "name": "BACnet 驱动",
+      "version": "2.1.0",
+      "protocol": "bacnet",
+      "description": "BACnet 协议驱动，支持 BACnet/IP 和 BACnet MSTP，用于楼宇自动化系统",
+      "tags": ["bacnet", "building-automation", "hvac", "bas"],
+      "author": {
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
+      },
+      "icon": "https://cdn.tinyiothub.com/drivers/bacnet.png",
+      "downloads": 856,
+      "rating": 4.6,
+      "reviews": 23,
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/tinyiothub/drivers/bacnet",
+      "documentation": "https://docs.tinyiothub.com/drivers/bacnet",
+      "platforms": {
+        "windows-x64": {
+          "file_url": "https://github.com/tinyiothub/marketplace/releases/download/bacnet-2.1.0/bacnet_driver-2.1.0-win-x64.dll",
+          "checksum": "sha256:test-bacnet-windows",
+          "size": 2457600
+        },
+        "linux-x64": {
+          "file_url": "https://github.com/tinyiothub/marketplace/releases/download/bacnet-2.1.0/bacnet_driver-2.1.0-linux-x64.so",
+          "checksum": "sha256:test-bacnet-linux",
+          "size": 2103296
+        },
+        "linux-armv7": {
+          "file_url": "https://github.com/tinyiothub/marketplace/releases/download/bacnet-2.1.0/bacnet_driver-2.1.0-linux-armv7.so",
+          "checksum": "sha256:test-bacnet-arm",
+          "size": 1945600
+        }
+      },
+      "requirements": {
+        "min_version": "1.0.0"
+      },
+      "created_at": "2024-03-10T08:00:00Z",
+      "updated_at": "2025-01-15T12:00:00Z"
+    },
+    {
+      "id": "opcua",
+      "name": "OPC UA 驱动",
+      "version": "3.0.2",
+      "protocol": "opcua",
+      "description": "OPC UA 协议驱动，支持 OPC UA 客户端功能，用于工业自动化数据采集",
+      "tags": ["opcua", "opc", "industrial", "automation"],
+      "author": {
+        "name": "Industrial Team",
+        "email": "industrial@tinyiothub.com"
+      },
+      "icon": "https://cdn.tinyiothub.com/drivers/opcua.png",
+      "downloads": 1234,
+      "rating": 4.8,
+      "reviews": 42,
+      "license": "MIT",
+      "homepage": "https://github.com/tinyiothub/drivers/opcua",
+      "documentation": "https://docs.tinyiothub.com/drivers/opcua",
+      "platforms": {
+        "windows-x64": {
+          "file_url": "https://github.com/tinyiothub/marketplace/releases/download/opcua-3.0.2/opcua_driver-3.0.2-win-x64.dll",
+          "checksum": "sha256:test-opcua-windows",
+          "size": 3145728
+        },
+        "linux-x64": {
+          "file_url": "https://github.com/tinyiothub/marketplace/releases/download/opcua-3.0.2/opcua_driver-3.0.2-linux-x64.so",
+          "checksum": "sha256:test-opcua-linux",
+          "size": 2789376
+        }
+      },
+      "requirements": {
+        "min_version": "1.0.0"
+      },
+      "created_at": "2023-09-15T10:00:00Z",
+      "updated_at": "2024-12-05T14:30:00Z"
+    },
+    {
+      "id": "snmp",
+      "name": "SNMP 驱动",
+      "version": "1.8.5",
+      "protocol": "snmp",
+      "description": "SNMP v1/v2c/v3 协议驱动，用于网络设备监控和管理",
+      "tags": ["snmp", "network", "monitoring", "management"],
+      "author": {
+        "name": "Network Team",
+        "email": "network@tinyiothub.com"
+      },
+      "icon": "https://cdn.tinyiothub.com/drivers/snmp.png",
+      "downloads": 678,
+      "rating": 4.5,
+      "reviews": 18,
+      "license": "MIT",
+      "homepage": "https://github.com/tinyiothub/drivers/snmp",
+      "documentation": "https://docs.tinyiothub.com/drivers/snmp",
+      "platforms": {
+        "windows-x64": {
+          "file_url": "https://github.com/tinyiothub/marketplace/releases/download/snmp-1.8.5/snmp_driver-1.8.5-win-x64.dll",
+          "checksum": "sha256:test-snmp-windows",
+          "size": 1572864
+        },
+        "linux-x64": {
+          "file_url": "https://github.com/tinyiothub/marketplace/releases/download/snmp-1.8.5/snmp_driver-1.8.5-linux-x64.so",
+          "checksum": "sha256:test-snmp-linux",
+          "size": 1310720
+        },
+        "linux-armv7": {
+          "file_url": "https://github.com/tinyiothub/marketplace/releases/download/snmp-1.8.5/snmp_driver-1.8.5-linux-armv7.so",
+          "checksum": "sha256:test-snmp-arm",
+          "size": 1228800
+        }
+      },
+      "requirements": {
+        "min_version": "1.0.0"
+      },
+      "created_at": "2023-12-01T09:00:00Z",
+      "updated_at": "2024-11-20T11:45:00Z"
+    }
+  ]
+}

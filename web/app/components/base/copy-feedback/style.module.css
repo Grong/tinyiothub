@@ -1,15 +1,16 @@
 .copyIcon {
-  background-image: url(~@/app/components/develop/secret-key/assets/copy.svg);
-  background-position: center;
-  background-repeat: no-repeat;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.2s ease;
 }
 
 .copyIcon:hover {
-  background-image: url(~@/app/components/develop/secret-key/assets/copy-hover.svg);
-  background-position: center;
-  background-repeat: no-repeat;
+  opacity: 1;
 }
 
 .copyIcon.copied {
-  background-image: url(~@/app/components/develop/secret-key/assets/copied.svg);
+  opacity: 1;
+  color: #10b981;
 }
