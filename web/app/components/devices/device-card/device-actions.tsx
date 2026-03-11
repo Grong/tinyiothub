@@ -30,7 +30,8 @@ const DeviceActions: React.FC<DeviceActionsProps> = ({ deviceId, onDelete }) => 
       e.stopPropagation()
       props.onClick?.()
       e.preventDefault()
-      push(`/device/${deviceId}/configuration`)
+      // 直接跳转到 device-detail 页面并设置 hash
+      window.location.href = `/device-detail#/${deviceId}/configuration`
     }
 
     const onClickDelete = (e: React.MouseEvent<HTMLButtonElement>) => {

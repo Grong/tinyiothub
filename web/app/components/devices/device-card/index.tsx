@@ -81,11 +81,12 @@ const DeviceCard: React.FC<DeviceCardProps> = ({ device, onRefresh }) => {
     }
   }, [device.id, deleteDeviceMutation, onRefresh, handleError])
 
-  // 点击卡片跳转到设备详情
+  // 点击卡片跳转到设备详情（使用 hash 路由）
   const handleCardClick = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
-    push(`/device/${device.id}/overview`)
-  }, [device.id, push])
+    // 直接跳转到 device-detail 页面并设置 hash
+    window.location.href = `/device-detail#/${device.id}/overview`
+  }, [device.id])
 
   return (
     <>

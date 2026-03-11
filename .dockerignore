@@ -1,0 +1,46 @@
+# Git
+.git
+.gitignore
+
+# Node
+web/node_modules
+web/.next
+web/out
+
+# Rust
+api/target
+api/*.db
+api/*.db-shm
+api/*.db-wal
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Logs
+*.log
+api/logs
+docker/logs
+
+# Docker
+docker/data
+docker/images
+
+# Documentation
+docs
+*.md
+!README.md
+
+# Scripts
+scripts
+
+# Environment
+.env
+.env.local
+api/app_settings.toml
+
+# Misc
+.DS_Store
+Thumbs.db

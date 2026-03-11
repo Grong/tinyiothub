@@ -1,12 +1,12 @@
 'use client'
 
 import React from 'react'
-import { useParams } from 'next/navigation'
 
-const DeviceConfiguration = () => {
-  const params = useParams()
-  const deviceId = params.deviceId as string
+interface DeviceConfigurationProps {
+  deviceId?: string
+}
 
+const DeviceConfiguration: React.FC<DeviceConfigurationProps> = ({ deviceId = '' }) => {
   return (
     <div className="h-full overflow-y-auto bg-chatbot-bg px-4 py-6 sm:px-12">
       <div className="bg-components-panel-bg rounded-xl p-6 shadow-sm border border-divider-subtle">

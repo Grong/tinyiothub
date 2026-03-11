@@ -8,7 +8,3 @@ pub mod persistence;
 
 // Event infrastructure services
 pub mod event;
-
-// Re-export commonly used items for convenience
-
-// Re-export event infrastructure services

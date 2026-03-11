@@ -1,7 +1,5 @@
 'use client'
-import React from 'react'
-import { useSelectedLayoutSegment } from 'next/navigation'
-import Link from 'next/link'
+import React, { useEffect, useState } from 'react'
 import classNames from '@/utils/classnames'
 import type { RemixiconComponentType } from '@remixicon/react'
 
@@ -29,16 +27,22 @@ const NavLink = ({
   mode = 'expand',
   disabled = false,
 }: NavLinkProps) => {
-  const segment = useSelectedLayoutSegment()
-  const formattedSegment = (() => {
-    let res = segment?.toLowerCase()
-    // events and monitoring use the same nav logic
-    if (res === 'events')
-      res = 'events'
+  const [isActive, setIsActive] = useState(false)
 
-    return res
-  })()
-  const isActive = href.toLowerCase().split('/')?.pop() === formattedSegment
+  useEffect(() => {
+    // 检查当前 hash 是否匹配
+    const checkActive = () => {
+      const currentHash = window.location.hash
+      setIsActive(currentHash === href)
+    }
+
+    checkActive()
+    
+    // 监听 hash 变化
+    window.addEventListener('hashchange', checkActive)
+    return () => window.removeEventListener('hashchange', checkActive)
+  }, [href])
+
   const NavIcon = isActive ? iconMap.selected : iconMap.normal
 
   const renderIcon = () => (
@@ -76,7 +80,7 @@ const NavLink = ({
   }
 
   return (
-    <Link
+    <a
       key={name}
       href={href}
       className={classNames(
@@ -98,7 +102,7 @@ const NavLink = ({
       >
         {name}
       </span>
-    </Link>
+    </a>
   )
 }
 

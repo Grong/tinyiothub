@@ -77,7 +77,7 @@ structured = false
 [security]
 # 安全配置
 [security.jwt]
-secret = "${JWT_SECRET}"
+secret = "tinyiothub-default-jwt-secret-change-in-production-32chars"
 expiration_secs = 10800  # 3 hours (auth_time * 3600)
 issuer = "iot-edge"
 audience = "iot-edge-users"

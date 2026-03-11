@@ -1,14 +1,11 @@
 'use client'
 
 import { useEffect } from 'react'
-import { useRouter } from 'next/navigation'
 import Loading from '@/app/components/base/loading'
 
 const Home = () => {
-  const router = useRouter()
-  
   useEffect(() => {
-    // 静态导出模式：直接跳转到登录页
+    // 静态导出模式下，使用 window.location 强制跳转
     window.location.href = '/signin'
   }, [])
 

@@ -69,20 +69,20 @@ const DeviceDetailLayout: FC<IDeviceDetailLayoutProps> = (props) => {
     const navConfig = [
       {
         name: '概览',
-        href: `/device/${deviceId}/overview`,
+        href: `#/${deviceId}/overview`,
         icon: RiDashboard2Line,
         selectedIcon: RiDashboard2Fill,
       },
       {
         name: '监控',
-        href: `/device/${deviceId}/monitoring`,
+        href: `#/${deviceId}/monitoring`,
         icon: RiBarChart2Line,
         selectedIcon: RiBarChart2Fill,
       },
       ...(isCurrentWorkspaceEditor
         ? [{
           name: '配置',
-          href: `/device/${deviceId}/configuration`,
+          href: `#/${deviceId}/configuration`,
           icon: RiSettings3Line,
           selectedIcon: RiSettings3Fill,
         }]

@@ -274,25 +274,84 @@ fn create_app_router(app_state: crate::shared::app_state::AppState) -> Router {
     let api_router = crate::api::create_router();
 
     tracing::info!("Building main router...");
-    let mut router = Router::new()
-        // API路由
-        .nest("/api", api_router);
-
-    // 静态文件服务
-    {
-        use axum::http::{StatusCode, Uri};
-        use axum::response::{IntoResponse, Response};
-        use tower_http::services::{ServeDir, ServeFile};
-
-        tracing::info!("Adding static file service from wwwroot/...");
-
-        // SPA fallback: 所有未匹配的路由返回index.html
-        let serve_dir = ServeDir::new("wwwroot")
-            .append_index_html_on_directories(true)
-            .not_found_service(ServeFile::new("wwwroot/index.html"));
-
-        router = router.fallback_service(serve_dir);
+    
+    // 静态文件服务 - SPA 模式
+    use tower_http::services::{ServeDir, ServeFile};
+    use axum::http::{StatusCode, Uri};
+    use axum::response::{IntoResponse, Response};
+    
+    tracing::info!("Serving static files from wwwroot/ (SPA mode)");
+    
+    // 创建一个处理器，对于所有非 API 请求返回对应的 HTML 文件
+    async fn spa_handler(uri: Uri) -> Response {
+        let path = uri.path();
+        
+        // 如果是 API 请求，不应该到这里（已被 nest 处理）
+        if path.starts_with("/api/") {
+            return (StatusCode::NOT_FOUND, "API endpoint not found").into_response();
+        }
+        
+        // 尝试读取请求的文件
+        let file_path = if path == "/" {
+            "wwwroot/index.html".to_string()
+        } else if path.ends_with('/') {
+            format!("wwwroot{}", path.trim_end_matches('/'))
+        } else {
+            format!("wwwroot{}", path)
+        };
+        
+        match tokio::fs::read(&file_path).await {
+            Ok(content) => {
+                // 根据文件扩展名设置 Content-Type
+                let content_type = if file_path.ends_with(".html") {
+                    "text/html"
+                } else if file_path.ends_with(".js") {
+                    "application/javascript"
+                } else if file_path.ends_with(".css") {
+                    "text/css"
+                } else if file_path.ends_with(".json") {
+                    "application/json"
+                } else if file_path.ends_with(".png") {
+                    "image/png"
+                } else if file_path.ends_with(".jpg") || file_path.ends_with(".jpeg") {
+                    "image/jpeg"
+                } else if file_path.ends_with(".svg") {
+                    "image/svg+xml"
+                } else if file_path.ends_with(".ico") {
+                    "image/x-icon"
+                } else {
+                    "application/octet-stream"
+                };
+                
+                ([(axum::http::header::CONTENT_TYPE, content_type)], content).into_response()
+            }
+            Err(_) => {
+                // 文件不存在，尝试 path.html
+                let html_path = format!("{}.html", file_path);
+                match tokio::fs::read(&html_path).await {
+                    Ok(content) => {
+                        ([(axum::http::header::CONTENT_TYPE, "text/html")], content).into_response()
+                    }
+                    Err(_) => {
+                        // 还是找不到，返回 index.html（SPA 路由）
+                        tracing::info!("Serving index.html for SPA route: {}", path);
+                        match tokio::fs::read("wwwroot/index.html").await {
+                            Ok(content) => {
+                                ([(axum::http::header::CONTENT_TYPE, "text/html")], content).into_response()
+                            }
+                            Err(_) => (StatusCode::NOT_FOUND, "index.html not found").into_response(),
+                        }
+                    }
+                }
+            }
+        }
     }
+    
+    let mut router = Router::new()
+        // API路由优先
+        .nest("/api", api_router)
+        // 所有其他请求使用 SPA 处理器
+        .fallback(spa_handler);
 
     tracing::info!("Adding middleware layers...");
     router = router.layer(cors).layer(TraceLayer::new_for_http());

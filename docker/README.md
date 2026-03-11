@@ -19,240 +19,172 @@
 
 ### 镜像特点
 
-- **小体积**: 后端镜像 ~60MB，前端镜像 ~150MB
+- **一体化镜像**: 前后端集成在单个容器中，简化部署
+- **小体积**: 完整镜像 ~100MB
 - **多阶段构建**: 分离编译和运行环境
 - **Alpine 基础**: 轻量级 Linux 发行版
-- **Rust 稳定版**: 使用 Rust 1.83+ stable
+- **Rust Nightly**: 使用 Rust 1.83+ nightly（支持 edition2024）
 - **串口支持**: 支持 Modbus RTU 等串口设备
 - **数据持久化**: 数据库和日志文件映射到宿主机
+- **内置静态文件服务**: Axum 直接提供前端静态文件
 
 ### 架构说明
 
 ```
 ┌─────────────────────────────────────────┐
-│         Nginx (172.30.0.4:8099)         │
-│              反向代理                    │
-└────────────┬────────────────────────────┘
-             │
-    ┌────────┴────────┐
-    │                 │
-┌───▼────────┐  ┌────▼──────────┐
-│ Web 前端   │  │  API 后端     │
-│ (172.30.0.3)│  │ (172.30.0.2)  │
-│ Next.js    │  │  Rust/Axum    │
-└────────────┘  └───────────────┘
-                      │
-                ┌─────▼──────┐
-                │  SQLite DB │
-                │  持久化存储 │
-                └────────────┘
+│      TinyIoTHub 容器 (端口 3002)        │
+│  ┌────────────────────────────────────┐ │
+│  │   Axum Web Server                  │ │
+│  │  ┌──────────┐    ┌──────────────┐ │ │
+│  │  │ API 路由 │    │ 静态文件服务 │ │ │
+│  │  │ /api/*   │    │ /            │ │ │
+│  │  └──────────┘    └──────────────┘ │ │
+│  │         │              │           │ │
+│  │         └──────┬───────┘           │ │
+│  │                │                   │ │
+│  │         ┌──────▼──────┐            │ │
+│  │         │  业务逻辑   │            │ │
+│  │         └──────┬──────┘            │ │
+│  │                │                   │ │
+│  │         ┌──────▼──────┐            │ │
+│  │         │  SQLite DB  │            │ │
+│  │         │ (持久化存储) │            │ │
+│  │         └─────────────┘            │ │
+│  └────────────────────────────────────┘ │
+└─────────────────────────────────────────┘
 ```
 
 ## 前置条件
 
 ### 开发机要求
 
-- **Docker**: 用于构建镜像
-- **Rust 工具链**: 1.83+ 版本
-- **Node.js**: 18+ 版本和 pnpm 包管理器
+- **Docker**: 20.10+ 版本，支持 buildx
 - **hdc 工具**: 用于与 OpenHarmony 设备通信
-- **cross**: 交叉编译工具 (`cargo install cross`)
 
 ### 目标设备要求
 
 - **系统**: OpenHarmony (ARM64 架构)
 - **Docker**: 已安装并运行
-- **内存**: 至少 2GB 可用
-- **磁盘**: 至少 5GB 可用空间
+- **内存**: 至少 512MB 可用
+- **磁盘**: 至少 2GB 可用空间
+- **网络**: 可访问外部网络（首次拉取镜像）
 
 ## 镜像构建
 
-### 方法一：使用自动化脚本（推荐）
+### 本地构建（x86_64）
 
-项目提供了自动化构建脚本，一键构建并导出镜像：
+用于本地开发测试：
 
 ```bash
-# Windows PowerShell
-.\scripts\build-and-export-docker.ps1
+# 使用构建脚本
+.\scripts\docker-build.ps1 -Tag test
 
-# Linux/macOS
-./scripts/build-and-export-docker.sh
+# 或手动构建
+docker build -t tinyiothub:latest -f Dockerfile .
 ```
 
-构建完成后，在项目根目录生成：
-- `tinyiothub-api-arm64.tar` - 后端 API 镜像
-- `tinyiothub-web-arm64.tar` - 前端 Web 镜像
+### ARM64 构建（OpenHarmony 设备）
 
-### 方法二：手动构建
-
-#### 1. 构建后端镜像
+构建适用于鸿蒙设备的镜像：
 
 ```bash
-# 交叉编译 ARM64 二进制
-cross build --target aarch64-unknown-linux-gnu --release
+# 使用多架构构建脚本
+.\scripts\docker-build-multiarch.ps1
 
-# 构建 Docker 镜像
-docker build --platform linux/arm64 -t tinyiothub-api:arm64 -f Dockerfile .
-
-# 导出镜像
-docker save tinyiothub-api:arm64 -o tinyiothub-api-arm64.tar
+# 或手动构建
+docker buildx build --platform linux/arm64 -t tinyiothub:arm64 -f Dockerfile . --load
 ```
 
-#### 2. 构建前端镜像
+### 导出镜像
 
 ```bash
-cd web
-pnpm install
-docker build --platform linux/arm64 -t tinyiothub-web:arm64 -f Dockerfile .
-docker save tinyiothub-web:arm64 -o ../tinyiothub-web-arm64.tar
-cd ..
-```
+# 导出 ARM64 镜像
+docker save tinyiothub:arm64 -o tinyiothub-arm64.tar
 
-### 验证镜像
-
-```bash
-# 查看镜像大小
-ls -lh tinyiothub-api-arm64.tar tinyiothub-web-arm64.tar
-
-# 本地测试（可选）
-docker load < tinyiothub-api-arm64.tar
-docker load < tinyiothub-web-arm64.tar
-docker images | grep tinyiothub
+# 压缩以减小传输大小（可选）
+gzip tinyiothub-arm64.tar
 ```
 
 ## 部署到 OpenHarmony
 
-### 目录结构
-
-在设备上创建以下目录结构：
-
-```
-/data/tinyiothub/
-├── app_settings.toml          # 应用配置文件
-├── nginx/
-│   └── nginx.conf             # Nginx 配置文件
-├── data/                      # 数据目录（数据库）
-├── logs/                      # 日志目录
-├── start-containers.sh        # 启动脚本
-└── stop-containers.sh         # 停止脚本
-```
-
 ### 快速部署步骤
 
-#### 1. 准备配置文件
+#### 1. 准备设备环境
 
 ```bash
+# 设置设备 ID（替换为你的设备 ID）
+$DEVICE_ID = "150100424a54443452025f70fa85c700"
+
 # 创建目录
-hdc shell "mkdir -p /data/tinyiothub/nginx /data/tinyiothub/data /data/tinyiothub/logs"
-
-# 传输配置文件
-hdc file send app_settings.toml /data/tinyiothub/app_settings.toml
-hdc file send docker/nginx/nginx.conf /data/tinyiothub/nginx/nginx.conf
-hdc file send docker/start-containers.sh /data/tinyiothub/start-containers.sh
-hdc file send docker/stop-containers.sh /data/tinyiothub/stop-containers.sh
-
-# 设置执行权限
-hdc shell "chmod +x /data/tinyiothub/start-containers.sh /data/tinyiothub/stop-containers.sh"
+hdc -t $DEVICE_ID shell "mkdir -p /data/tinyiothub/data /data/tinyiothub/logs"
 ```
 
-#### 2. 加载 Docker 镜像
+#### 2. 传输镜像
 
 ```bash
 # 传输镜像文件
-hdc file send tinyiothub-api-arm64.tar /data/tinyiothub/
-hdc file send tinyiothub-web-arm64.tar /data/tinyiothub/
+hdc -t $DEVICE_ID file send tinyiothub-arm64.tar /data/tinyiothub/
 
-# 加载镜像
-hdc shell "cd /data/tinyiothub && docker load < tinyiothub-api-arm64.tar"
-hdc shell "cd /data/tinyiothub && docker load < tinyiothub-web-arm64.tar"
-
-# 验证
-hdc shell "docker images | grep tinyiothub"
+# 如果使用了压缩
+hdc -t $DEVICE_ID file send tinyiothub-arm64.tar.gz /data/tinyiothub/
+hdc -t $DEVICE_ID shell "cd /data/tinyiothub && gunzip tinyiothub-arm64.tar.gz"
 ```
 
-#### 3. 启动服务
+#### 3. 加载镜像
 
 ```bash
-hdc shell "cd /data/tinyiothub && ./start-containers.sh"
+# 加载到 Docker
+hdc -t $DEVICE_ID shell "docker load < /data/tinyiothub/tinyiothub-arm64.tar"
+
+# 验证镜像
+hdc -t $DEVICE_ID shell "docker images | grep tinyiothub"
 ```
 
-启动脚本会自动：
-- 创建自定义网络 `tinyiothub-net` (172.30.0.0/16)
-- 启动 API 容器 (172.30.0.2:3002)
-- 启动 Web 容器 (172.30.0.3:3000)
-- 启动 Nginx 容器 (172.30.0.4，对外端口 8099)
+#### 4. 启动容器
 
-#### 4. 验证部署
+```bash
+# 停止旧容器（如果存在）
+hdc -t $DEVICE_ID shell "docker stop tinyiothub 2>/dev/null; docker rm tinyiothub 2>/dev/null"
+
+# 启动新容器
+hdc -t $DEVICE_ID shell "docker run -d \
+  --name tinyiothub \
+  --restart unless-stopped \
+  -p 3002:3002 \
+  -v /data/tinyiothub/data:/app/data \
+  -v /data/tinyiothub/logs:/app/logs \
+  -e RUST_LOG=info \
+  -e TZ=Asia/Shanghai \
+  tinyiothub:arm64"
+```
+
+#### 5. 验证部署
 
 ```bash
 # 检查容器状态
-hdc shell "docker ps"
-
-# 检查端口监听
-hdc shell "netstat -tuln | grep 8099"
+hdc -t $DEVICE_ID shell "docker ps | grep tinyiothub"
 
 # 查看日志
-hdc shell "docker logs tinyiothub-nginx --tail 20"
+hdc -t $DEVICE_ID shell "docker logs tinyiothub --tail 20"
+
+# 测试健康检查
+hdc -t $DEVICE_ID shell "wget -qO- http://localhost:3002/api/health"
 ```
 
-#### 5. 访问应用
+#### 6. 访问应用
 
-浏览器访问：`http://<设备IP>:8099`
+获取设备 IP 地址：
+```bash
+hdc -t $DEVICE_ID shell "ifconfig | grep 'inet addr'"
+```
+
+浏览器访问：`http://<设备IP>:3002`
 
 默认登录凭据：
 - 用户名：`admin`
 - 密码：`admin123`
 
 ## 配置说明
-
-### docker-compose.yml
-
-如果使用 docker-compose（开发环境）：
-
-```yaml
-services:
-  tinyiothub-api:
-    image: tinyiothub-api:latest
-    container_name: tinyiothub-api
-    restart: unless-stopped
-    privileged: true              # 串口访问权限
-    devices:
-      - /dev/ttyUSB0:/dev/ttyUSB0  # 串口设备映射
-    environment:
-      - RUST_LOG=info
-      - TZ=Asia/Shanghai
-      - TINYIOTHUB__DATABASE__URL=/app/data/tinyiothub.db
-    volumes:
-      - ./app_settings.toml:/app/app_settings.toml:ro
-      - ./data:/app/data
-      - ./logs:/app/logs
-    expose:
-      - "3002"
-
-  tinyiothub-web:
-    image: tinyiothub-web:latest
-    container_name: tinyiothub-web
-    restart: unless-stopped
-    environment:
-      - NODE_ENV=production
-      - TZ=Asia/Shanghai
-    expose:
-      - "3000"
-    depends_on:
-      - tinyiothub-api
-
-  tinyiothub-nginx:
-    image: nginx:alpine
-    container_name: tinyiothub-nginx
-    restart: unless-stopped
-    ports:
-      - "8080:80"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-    depends_on:
-      - tinyiothub-api
-      - tinyiothub-web
-```
 
 ### 环境变量
 
@@ -261,98 +193,169 @@ services:
 | `RUST_LOG` | `info` | 日志级别 (error/warn/info/debug/trace) |
 | `TZ` | `Asia/Shanghai` | 时区设置 |
 | `TINYIOTHUB__DATABASE__URL` | `/app/data/tinyiothub.db` | 数据库路径 |
-| `NODE_ENV` | `production` | Node.js 环境 |
+| `JWT_SECRET` | (内置默认值) | JWT 密钥，生产环境必须修改 |
+| `MQTT_USERNAME` | `admin` | MQTT 用户名 |
+| `MQTT_PASSWORD` | `admin123` | MQTT 密码 |
 
-### 端口说明
+### 自定义配置
 
-- **8099**: Nginx 对外端口（OpenHarmony 部署）
-- **8080**: Nginx 对外端口（开发环境）
-- **3002**: 后端 API 内部端口
-- **3000**: 前端 Web 内部端口
+如需自定义配置，可以挂载配置文件：
+
+```bash
+# 1. 复制示例配置
+cp api/app_settings.example.toml app_settings.toml
+
+# 2. 修改配置文件（根据需要）
+# 编辑 app_settings.toml
+
+# 3. 传输到设备
+hdc -t $DEVICE_ID file send app_settings.toml /data/tinyiothub/
+
+# 4. 启动时挂载配置
+hdc -t $DEVICE_ID shell "docker run -d \
+  --name tinyiothub \
+  -p 3002:3002 \
+  -v /data/tinyiothub/app_settings.toml:/app/app_settings.toml:ro \
+  -v /data/tinyiothub/data:/app/data \
+  -v /data/tinyiothub/logs:/app/logs \
+  tinyiothub:arm64"
+```
+
+### 串口设备访问
+
+如需访问串口设备（Modbus RTU 等）：
+
+```bash
+hdc -t $DEVICE_ID shell "docker run -d \
+  --name tinyiothub \
+  --privileged \
+  --device /dev/ttyUSB0:/dev/ttyUSB0 \
+  -p 3002:3002 \
+  -v /data/tinyiothub/data:/app/data \
+  -v /data/tinyiothub/logs:/app/logs \
+  tinyiothub:arm64"
+```
+
+### docker-compose 部署（开发环境）
+
+本地开发可使用 docker-compose：
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+
+services:
+  tinyiothub:
+    image: tinyiothub:latest
+    container_name: tinyiothub
+    restart: unless-stopped
+    ports:
+      - "3002:3002"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - RUST_LOG=info
+      - TZ=Asia/Shanghai
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:3002/api/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+```
+
+启动：
+```bash
+docker-compose up -d
+```
 
 ## 常用命令
 
 ### 服务管理
 
 ```bash
-# 查看服务状态
-hdc shell "docker ps --filter 'name=tinyiothub-'"
+# 设置设备 ID
+$DEVICE_ID = "150100424a54443452025f70fa85c700"
 
-# 启动服务
-hdc shell "cd /data/tinyiothub && ./start-containers.sh"
+# 查看容器状态
+hdc -t $DEVICE_ID shell "docker ps | grep tinyiothub"
 
-# 停止服务
-hdc shell "cd /data/tinyiothub && ./stop-containers.sh"
+# 启动容器
+hdc -t $DEVICE_ID shell "docker start tinyiothub"
 
-# 重启服务
-hdc shell "cd /data/tinyiothub && ./stop-containers.sh && ./start-containers.sh"
+# 停止容器
+hdc -t $DEVICE_ID shell "docker stop tinyiothub"
 
-# 重启单个容器
-hdc shell "docker restart tinyiothub-nginx"
+# 重启容器
+hdc -t $DEVICE_ID shell "docker restart tinyiothub"
+
+# 删除容器
+hdc -t $DEVICE_ID shell "docker rm tinyiothub"
 ```
 
 ### 日志查看
 
 ```bash
-# 查看 API 日志
-hdc shell "docker logs tinyiothub-api --tail 50"
-
-# 查看 Web 日志
-hdc shell "docker logs tinyiothub-web --tail 50"
-
-# 查看 Nginx 日志
-hdc shell "docker logs tinyiothub-nginx --tail 50"
+# 查看最近日志
+hdc -t $DEVICE_ID shell "docker logs tinyiothub --tail 50"
 
 # 实时跟踪日志
-hdc shell "docker logs -f tinyiothub-api"
+hdc -t $DEVICE_ID shell "docker logs -f tinyiothub"
 
 # 查看应用日志文件
-hdc shell "tail -f /data/tinyiothub/logs/app.log"
+hdc -t $DEVICE_ID shell "tail -f /data/tinyiothub/logs/app.log"
+
+# 下载日志到本地
+hdc -t $DEVICE_ID file recv /data/tinyiothub/logs/app.log ./
 ```
 
 ### 镜像管理
 
 ```bash
 # 查看镜像
-hdc shell "docker images | grep tinyiothub"
+hdc -t $DEVICE_ID shell "docker images | grep tinyiothub"
 
 # 删除镜像
-hdc shell "docker rmi tinyiothub-api:arm64 tinyiothub-web:arm64"
+hdc -t $DEVICE_ID shell "docker rmi tinyiothub:arm64"
 
 # 清理未使用的镜像
-hdc shell "docker image prune -a"
+hdc -t $DEVICE_ID shell "docker image prune -a -f"
 ```
 
 ### 容器管理
 
 ```bash
 # 进入容器
-hdc shell "docker exec -it tinyiothub-api sh"
+hdc -t $DEVICE_ID shell "docker exec -it tinyiothub sh"
 
 # 查看容器资源使用
-hdc shell "docker stats --no-stream"
+hdc -t $DEVICE_ID shell "docker stats --no-stream tinyiothub"
 
 # 查看容器详细信息
-hdc shell "docker inspect tinyiothub-api"
+hdc -t $DEVICE_ID shell "docker inspect tinyiothub"
 ```
 
 ### 更新服务
 
 ```bash
-# 1. 停止旧服务
-hdc shell "cd /data/tinyiothub && ./stop-containers.sh"
+# 1. 停止并删除旧容器
+hdc -t $DEVICE_ID shell "docker stop tinyiothub && docker rm tinyiothub"
 
-# 2. 删除旧容器
-hdc shell "docker rm tinyiothub-nginx tinyiothub-web tinyiothub-api"
+# 2. 删除旧镜像（可选）
+hdc -t $DEVICE_ID shell "docker rmi tinyiothub:arm64"
 
 # 3. 传输并加载新镜像
-hdc file send tinyiothub-api-arm64.tar /data/tinyiothub/
-hdc file send tinyiothub-web-arm64.tar /data/tinyiothub/
-hdc shell "cd /data/tinyiothub && docker load < tinyiothub-api-arm64.tar"
-hdc shell "cd /data/tinyiothub && docker load < tinyiothub-web-arm64.tar"
+hdc -t $DEVICE_ID file send tinyiothub-arm64.tar /data/tinyiothub/
+hdc -t $DEVICE_ID shell "docker load < /data/tinyiothub/tinyiothub-arm64.tar"
 
-# 4. 启动新服务
-hdc shell "cd /data/tinyiothub && ./start-containers.sh"
+# 4. 启动新容器
+hdc -t $DEVICE_ID shell "docker run -d \
+  --name tinyiothub \
+  --restart unless-stopped \
+  -p 3002:3002 \
+  -v /data/tinyiothub/data:/app/data \
+  -v /data/tinyiothub/logs:/app/logs \
+  tinyiothub:arm64"
 ```
 
 ## 故障排查
@@ -361,75 +364,90 @@ hdc shell "cd /data/tinyiothub && ./start-containers.sh"
 
 ```bash
 # 查看详细日志
-hdc shell "docker logs tinyiothub-api"
+hdc -t $DEVICE_ID shell "docker logs tinyiothub"
 
 # 检查容器详细信息
-hdc shell "docker inspect tinyiothub-api"
-
-# 检查网络连接
-hdc shell "docker network inspect tinyiothub-net"
+hdc -t $DEVICE_ID shell "docker inspect tinyiothub"
 
 # 检查配置文件
-hdc shell "cat /data/tinyiothub/app_settings.toml"
+hdc -t $DEVICE_ID shell "cat /data/tinyiothub/app_settings.toml"
+
+# 检查数据目录权限
+hdc -t $DEVICE_ID shell "ls -la /data/tinyiothub/"
 ```
 
 ### 无法访问服务
 
 ```bash
 # 检查端口映射
-hdc shell "docker ps | grep tinyiothub"
+hdc -t $DEVICE_ID shell "docker ps | grep tinyiothub"
 
-# 检查端口监听（OpenHarmony 会绑定到 IPv6）
-hdc shell "netstat -tuln | grep 8099"
+# 检查端口监听
+hdc -t $DEVICE_ID shell "netstat -tuln | grep 3002"
 
 # 测试容器内部连接
-hdc shell "docker exec tinyiothub-nginx wget -qO- http://tinyiothub-api:3002/api/health"
-hdc shell "docker exec tinyiothub-nginx wget -qO- http://tinyiothub-web:3000"
+hdc -t $DEVICE_ID shell "docker exec tinyiothub wget -qO- http://localhost:3002/api/health"
+
+# 检查防火墙
+hdc -t $DEVICE_ID shell "iptables -L -n | grep 3002"
 ```
 
-### DNS 解析问题
+### JWT 配置错误
 
-如果 nginx 报错 "no resolver defined"，检查 `nginx.conf`：
+如果看到 "JWT secret must be at least 32 characters long" 错误：
 
-```nginx
-resolver 127.0.0.11 valid=10s ipv6=off;
-resolver_timeout 5s;
+```bash
+# 检查环境变量
+hdc -t $DEVICE_ID shell "docker inspect tinyiothub | grep JWT"
+
+# 使用自定义配置文件
+# 编辑 app_settings.toml，设置 security.jwt.secret
+# 然后挂载配置文件启动容器
 ```
 
 ### 串口访问失败
 
 ```bash
 # 检查串口设备
-hdc shell "ls -l /dev/tty*"
+hdc -t $DEVICE_ID shell "ls -l /dev/tty*"
 
 # 检查容器内设备权限
-hdc shell "docker exec tinyiothub-api ls -l /dev/ttyUSB0"
+hdc -t $DEVICE_ID shell "docker exec tinyiothub ls -l /dev/ttyUSB0"
 
 # 确认 privileged 模式
-hdc shell "docker inspect tinyiothub-api | grep Privileged"
+hdc -t $DEVICE_ID shell "docker inspect tinyiothub | grep Privileged"
 ```
 
 ### 数据库问题
 
 ```bash
 # 检查数据库文件
-hdc shell "ls -lh /data/tinyiothub/data/tinyiothub.db"
+hdc -t $DEVICE_ID shell "ls -lh /data/tinyiothub/data/tinyiothub.db"
 
 # 检查挂载
-hdc shell "docker inspect tinyiothub-api | grep -A 10 Mounts"
+hdc -t $DEVICE_ID shell "docker inspect tinyiothub | grep -A 10 Mounts"
 
 # 进入容器检查
-hdc shell "docker exec -it tinyiothub-api sh"
+hdc -t $DEVICE_ID shell "docker exec -it tinyiothub sh"
+# 在容器内：ls -la /app/data/
 ```
 
 ### 内存不足
 
 ```bash
 # 查看容器资源使用
-hdc shell "docker stats --no-stream"
+hdc -t $DEVICE_ID shell "docker stats --no-stream tinyiothub"
 
 # 查看系统内存
-hdc shell "free -h"
+hdc -t $DEVICE_ID shell "free -h"
+
+# 限制容器内存
+hdc -t $DEVICE_ID shell "docker run -d \
+  --name tinyiothub \
+  --memory=512m \
+  --memory-swap=512m \
+  -p 3002:3002 \
+  tinyiothub:arm64"
 ```
 
 ## 性能优化
@@ -439,32 +457,44 @@ hdc shell "free -h"
 当前配置已优化：
 - 多阶段构建，分离编译和运行环境
 - Alpine 基础镜像（最小化）
-- Strip 二进制文件
-- Next.js standalone 模式
+- Next.js 静态导出
+- 单一容器部署，减少网络开销
 
 ### 运行时优化
 
-在 `start-containers.sh` 中添加资源限制：
+添加资源限制：
 
 ```bash
-docker run -d \
-  --name tinyiothub-api \
-  --cpus="2" \
-  --memory="512m" \
-  --memory-swap="512m" \
-  ...
+hdc -t $DEVICE_ID shell "docker run -d \
+  --name tinyiothub \
+  --cpus='1' \
+  --memory='512m' \
+  --memory-swap='512m' \
+  -p 3002:3002 \
+  tinyiothub:arm64"
 ```
 
 ### 日志优化
 
-容器日志由 Docker 自动管理，定期清理：
+限制日志大小：
+
+```bash
+hdc -t $DEVICE_ID shell "docker run -d \
+  --name tinyiothub \
+  --log-opt max-size=10m \
+  --log-opt max-file=3 \
+  -p 3002:3002 \
+  tinyiothub:arm64"
+```
+
+### 清理磁盘空间
 
 ```bash
 # 清理未使用的容器和镜像
-hdc shell "docker system prune -f"
+hdc -t $DEVICE_ID shell "docker system prune -f"
 
 # 查看磁盘使用
-hdc shell "docker system df"
+hdc -t $DEVICE_ID shell "docker system df"
 ```
 
 ## 安全建议
@@ -473,7 +503,23 @@ hdc shell "docker system df"
 
 首次登录后立即修改 admin 密码。
 
-### 2. 限制 privileged 模式
+### 2. 设置 JWT 密钥
+
+生产环境必须设置自定义 JWT 密钥：
+
+```bash
+# 生成随机密钥（至少 32 字符）
+openssl rand -base64 32
+
+# 通过环境变量设置
+hdc -t $DEVICE_ID shell "docker run -d \
+  --name tinyiothub \
+  -e JWT_SECRET='your-generated-secret-key-here' \
+  -p 3002:3002 \
+  tinyiothub:arm64"
+```
+
+### 3. 限制 privileged 模式
 
 生产环境不要使用 `--privileged`，只映射必要的设备：
 
@@ -481,18 +527,10 @@ hdc shell "docker system df"
 --device /dev/ttyUSB0:/dev/ttyUSB0
 ```
 
-### 3. 配置文件权限
+### 4. 配置文件权限
 
 ```bash
-hdc shell "chmod 600 /data/tinyiothub/app_settings.toml"
-```
-
-### 4. 使用环境变量管理敏感信息
-
-不要在配置文件中硬编码密钥：
-
-```bash
-export TINYIOTHUB__SECURITY__JWT__SECRET="your-secret-key"
+hdc -t $DEVICE_ID shell "chmod 600 /data/tinyiothub/app_settings.toml"
 ```
 
 ### 5. 定期更新镜像
@@ -509,85 +547,52 @@ export TINYIOTHUB__SECURITY__JWT__SECRET="your-secret-key"
 
 ```bash
 # 备份数据目录
-hdc shell "tar -czf /data/tinyiothub-backup-$(date +%Y%m%d).tar.gz /data/tinyiothub/data/"
+hdc -t $DEVICE_ID shell "tar -czf /data/tinyiothub-backup-\$(date +%Y%m%d).tar.gz /data/tinyiothub/data/"
 
 # 下载备份到本地
-hdc file recv /data/tinyiothub-backup-*.tar.gz ./
+hdc -t $DEVICE_ID file recv /data/tinyiothub-backup-*.tar.gz ./
 
 # 备份数据库文件
-hdc file recv /data/tinyiothub/data/tinyiothub.db ./backup/
+hdc -t $DEVICE_ID file recv /data/tinyiothub/data/tinyiothub.db ./backup/
 ```
 
 ### 恢复
 
 ```bash
 # 上传备份文件
-hdc file send tinyiothub-backup-20260128.tar.gz /data/
+hdc -t $DEVICE_ID file send tinyiothub-backup-20260226.tar.gz /data/
 
 # 停止服务
-hdc shell "cd /data/tinyiothub && ./stop-containers.sh"
+hdc -t $DEVICE_ID shell "docker stop tinyiothub"
 
 # 恢复数据
-hdc shell "tar -xzf /data/tinyiothub-backup-20260128.tar.gz -C /"
+hdc -t $DEVICE_ID shell "tar -xzf /data/tinyiothub-backup-20260226.tar.gz -C /"
 
 # 启动服务
-hdc shell "cd /data/tinyiothub && ./start-containers.sh"
-```
-
-### 定期备份脚本
-
-在设备上创建定时备份：
-
-```bash
-# 创建备份脚本
-cat > /data/tinyiothub/backup.sh << 'EOF'
-#!/bin/sh
-BACKUP_DIR="/data/backups"
-DATE=$(date +%Y%m%d)
-mkdir -p $BACKUP_DIR
-tar -czf $BACKUP_DIR/tinyiothub-$DATE.tar.gz /data/tinyiothub/data/
-# 保留最近 7 天的备份
-find $BACKUP_DIR -name "tinyiothub-*.tar.gz" -mtime +7 -delete
-EOF
-
-chmod +x /data/tinyiothub/backup.sh
-
-# 添加到 crontab（每天凌晨 2 点）
-echo "0 2 * * * /data/tinyiothub/backup.sh" | crontab -
+hdc -t $DEVICE_ID shell "docker start tinyiothub"
 ```
 
 ## OpenHarmony 特殊说明
 
-### IPv6 端口绑定
-
-OpenHarmony 的 Docker 使用 `0.0.0.0:8099:80` 端口映射时会绑定到 IPv6 (`:::8099`)。这是系统行为，不影响使用，IPv4 连接仍可正常访问。
-
 ### 重启策略
 
-所有容器配置了 `--restart unless-stopped`，设备重启后自动启动。
+容器配置了 `--restart unless-stopped`，设备重启后自动启动。
 
-### 网络配置
+### 端口访问
 
-使用自定义网络 `tinyiothub-net` (172.30.0.0/16)，容器固定 IP：
-- API: 172.30.0.2
-- Web: 172.30.0.3
-- Nginx: 172.30.0.4
+应用监听在 `0.0.0.0:3002`，可通过设备 IP 访问。
 
 ## 卸载
 
 ```bash
 # 停止并删除容器
-hdc shell "cd /data/tinyiothub && ./stop-containers.sh"
-hdc shell "docker rm tinyiothub-nginx tinyiothub-web tinyiothub-api"
-
-# 删除网络
-hdc shell "docker network rm tinyiothub-net"
+hdc -t $DEVICE_ID shell "docker stop tinyiothub && docker rm tinyiothub"
 
 # 删除镜像
-hdc shell "docker rmi tinyiothub-api:arm64 tinyiothub-web:arm64"
+hdc -t $DEVICE_ID shell "docker rmi tinyiothub:arm64"
 
 # 删除数据（谨慎操作）
-hdc shell "rm -rf /data/tinyiothub/"
+hdc -t $DEVICE_ID shell "rm -rf /data/tinyiothub/"
 ```
 
 ## 附录
@@ -598,16 +603,13 @@ hdc shell "rm -rf /data/tinyiothub/"
 
 ```bash
 # 压缩镜像
-gzip tinyiothub-api-arm64.tar
-gzip tinyiothub-web-arm64.tar
+gzip tinyiothub-arm64.tar
 
 # 传输压缩文件
-hdc file send tinyiothub-api-arm64.tar.gz /data/tinyiothub/
-hdc file send tinyiothub-web-arm64.tar.gz /data/tinyiothub/
+hdc -t $DEVICE_ID file send tinyiothub-arm64.tar.gz /data/tinyiothub/
 
 # 解压并加载
-hdc shell "cd /data/tinyiothub && gunzip tinyiothub-api-arm64.tar.gz && docker load < tinyiothub-api-arm64.tar"
-hdc shell "cd /data/tinyiothub && gunzip tinyiothub-web-arm64.tar.gz && docker load < tinyiothub-web-arm64.tar"
+hdc -t $DEVICE_ID shell "cd /data/tinyiothub && gunzip tinyiothub-arm64.tar.gz && docker load < tinyiothub-arm64.tar"
 ```
 
 ### B. 开发环境部署
@@ -627,37 +629,28 @@ docker-compose down
 
 ### C. 常见构建问题
 
-#### 问题1：cross 编译失败
-
-```bash
-# 安装 cross
-cargo install cross
-
-# 确保 Docker 运行
-docker ps
-
-# 清理缓存重新编译
-cargo clean
-cross build --target aarch64-unknown-linux-gnu --release
-```
-
-#### 问题2：前端构建内存不足
-
-```bash
-# 增加 Node.js 内存限制
-export NODE_OPTIONS="--max-old-space-size=4096"
-pnpm build
-```
-
-#### 问题3：Docker 构建平台不匹配
+#### 问题1：buildx 不可用
 
 ```bash
 # 启用 buildx
 docker buildx create --use
 
 # 构建多平台镜像
-docker buildx build --platform linux/arm64 -t tinyiothub-api:arm64 --load .
+docker buildx build --platform linux/arm64 -t tinyiothub:arm64 --load -f Dockerfile .
 ```
+
+#### 问题2：前端构建内存不足
+
+```bash
+# 增加 Node.js 内存限制
+$env:NODE_OPTIONS="--max-old-space-size=4096"
+cd web
+pnpm build
+```
+
+#### 问题3：Docker 构建平台不匹配
+
+确保使用 `--platform linux/arm64` 参数构建 ARM64 镜像。
 
 ### D. 版本管理
 
@@ -666,22 +659,18 @@ docker buildx build --platform linux/arm64 -t tinyiothub-api:arm64 --load .
 ```bash
 # 构建时添加版本标签
 docker build --platform linux/arm64 \
-  -t tinyiothub-api:arm64 \
-  -t tinyiothub-api:v1.0.0 .
+  -t tinyiothub:arm64 \
+  -t tinyiothub:v1.0.0 \
+  -f Dockerfile .
 
 # 导出特定版本
-docker save tinyiothub-api:v1.0.0 -o tinyiothub-api-v1.0.0-arm64.tar
-
-# 使用特定版本
-docker tag tinyiothub-api:v1.0.0 tinyiothub-api:arm64
+docker save tinyiothub:v1.0.0 -o tinyiothub-v1.0.0-arm64.tar
 ```
 
 ## 技术支持
 
 遇到问题请提供：
-1. 设备架构：`hdc shell "uname -a"`
-2. Docker 版本：`hdc shell "docker --version"`
-3. 容器日志：`hdc shell "docker logs <container-name>"`
-4. 系统日志：`hdc shell "dmesg | tail -50"`
-
-官方网站：https://tinyiothub.com
+1. 设备架构：`hdc -t $DEVICE_ID shell "uname -a"`
+2. Docker 版本：`hdc -t $DEVICE_ID shell "docker --version"`
+3. 容器日志：`hdc -t $DEVICE_ID shell "docker logs tinyiothub"`
+4. 系统日志：`hdc -t $DEVICE_ID shell "dmesg | tail -50"`

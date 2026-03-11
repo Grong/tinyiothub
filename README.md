@@ -73,31 +73,50 @@ tinyiothub/
 
 ### 安装和运行
 
-#### 后端服务
+#### 开发模式（分离部署）
 
+**后端**:
 ```bash
-# 克隆项目
-git clone <repository-url>
-cd tinyiothub
-
-# 进入后端目录
 cd api
-
-# 开发运行
 cargo run
-
-# 发布构建
-cargo build --release
-
-# 带调试信息运行
-RUST_BACKTRACE=1 cargo run  # Linux/macOS
-$env:RUST_BACKTRACE=1; cargo run  # Windows
 ```
 
-#### 前端界面
-
+**前端**:
 ```bash
-# 进入前端目录
+cd web
+pnpm install
+pnpm dev
+```
+
+访问: http://localhost:3001
+
+#### 生产模式（单进程部署）
+
+**构建**:
+```bash
+# Windows
+.\scripts\build-single-binary.ps1 -Release
+
+# Linux/macOS
+./scripts/build-single-binary.sh --release
+```
+
+**运行**:
+```bash
+cd api
+.\target\release\tinyiothub.exe  # Windows
+./target/release/tinyiothub      # Linux/macOS
+```
+
+访问: http://localhost:3002
+
+**优势**:
+- ✅ 单进程部署，无需 Node.js
+- ✅ 内存占用低（~80MB vs ~200MB）
+- ✅ 启动快速（<2s vs ~5s）
+- ✅ 支持动态路由
+
+详见: [单进程部署方案](docs/deployment/single-process-deployment.md)
 cd web
 
 # 安装依赖
