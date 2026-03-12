@@ -17,6 +17,7 @@ pub mod middleware;
 pub mod monitoring;
 pub mod notifications;
 pub mod notification_channels;
+pub mod open;
 pub mod system;
 pub mod tags;
 pub mod templates;
@@ -61,6 +62,7 @@ pub fn create_router() -> Router<AppState> {
     // 合并所有路由
     Router::new()
         .nest("/v1", v1_routes)
+        .nest("/open", open::create_open_router())  // 开放 API (需要 API Key)
         .route("/health", get(health_check))
 }
 
