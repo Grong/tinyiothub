@@ -1,6 +1,8 @@
 // SaaS Tenants API Module
 // 租户管理 API
 
+pub mod auth;
+
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
