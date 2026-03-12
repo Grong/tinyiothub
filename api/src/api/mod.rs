@@ -20,6 +20,7 @@ pub mod notification_channels;
 pub mod system;
 pub mod tags;
 pub mod templates;
+pub mod tenants;
 pub mod users;
 
 /// Create the main API router
@@ -36,6 +37,7 @@ pub fn create_router() -> Router<AppState> {
         .nest("/marketplace", marketplace::create_router())
         .nest("/notifications", notifications::create_router())
         .nest("/notification-channels", notification_channels::create_router())
+        .nest("/tenants", tenants::create_router())
         .nest("/events", events::create_router())
         .nest("/jobs", jobs::create_router())
         .nest("/auth", auth::session::create_router()) // 需要认证的会话路由

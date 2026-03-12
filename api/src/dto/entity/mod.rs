@@ -58,3 +58,5 @@ pub use device_property::DeviceProperty;
 pub mod alarm;
 
 pub use alarm::{AlarmDto, AlarmRuleDto, AlarmStatisticsDto};
+
+pub mod tenant;

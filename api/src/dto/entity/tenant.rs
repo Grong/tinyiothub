@@ -516,7 +516,8 @@ impl ApiKey {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
         
         let sql = format!("UPDATE api_keys SET is_revoked = 1, updated_at = '{}' WHERE id = '{}'", now, id);
-        db.execute(&sql).await
+        let _ = db.execute(&sql).await;
+        Ok(())
     }
 
     /// 启用 Key
@@ -524,7 +525,8 @@ impl ApiKey {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
         
         let sql = format!("UPDATE api_keys SET is_enabled = 1, updated_at = '{}' WHERE id = '{}'", now, id);
-        db.execute(&sql).await
+        let _ = db.execute(&sql).await;
+        Ok(())
     }
 
     /// 禁用 Key
@@ -532,7 +534,8 @@ impl ApiKey {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
         
         let sql = format!("UPDATE api_keys SET is_enabled = 0, updated_at = '{}' WHERE id = '{}'", now, id);
-        db.execute(&sql).await
+        let _ = db.execute(&sql).await;
+        Ok(())
     }
 
     /// 记录 API 使用
@@ -595,7 +598,8 @@ impl ApiKey {
             if status_code >= 400 { 1 } else { 0 },
             now
         );
-        db.execute(&usage_sql).await
+        let _ = db.execute(&usage_sql).await;
+        Ok(())
     }
 
     /// 获取使用统计
@@ -613,7 +617,7 @@ impl ApiKey {
             AND created_at >= datetime('now', '-{} days')
         "#, tenant_id, days);
         
-        let rows = db.query(&sql, |row| {
+        let mut rows = db.query(&sql, |row| {
             Ok(ApiUsageStats {
                 total_calls: row.try_get::<i64, _>("total_calls")?,
                 success_calls: row.try_get::<i64, _>("success_calls")?,
