@@ -21,6 +21,8 @@ pub mod message;
 
 pub mod mqtt_info;
 
+pub mod notification_channel;
+
 pub mod opt_record;
 
 pub mod organization;

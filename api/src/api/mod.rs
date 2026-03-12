@@ -16,6 +16,7 @@ pub mod marketplace;
 pub mod middleware;
 pub mod monitoring;
 pub mod notifications;
+pub mod notification_channels;
 pub mod system;
 pub mod tags;
 pub mod templates;
@@ -34,6 +35,7 @@ pub fn create_router() -> Router<AppState> {
         .nest("/device-templates", templates::create_router())
         .nest("/marketplace", marketplace::create_router())
         .nest("/notifications", notifications::create_router())
+        .nest("/notification-channels", notification_channels::create_router())
         .nest("/events", events::create_router())
         .nest("/jobs", jobs::create_router())
         .nest("/auth", auth::session::create_router()) // 需要认证的会话路由
