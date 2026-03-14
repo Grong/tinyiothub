@@ -1,6 +1,6 @@
 services:
   tinyiothub:
-    image: tinyiothub:test
+    image: chenguorongz/tinyiothub:latest
     container_name: tinyiothub
     restart: unless-stopped
     ports:

@@ -2,6 +2,8 @@
 
 **版本**: v1.0.0  
 **官方网站**: https://tinyiothub.com  
+**仓库地址**: https://github.com/Grong/tinyiothub  
+**Docker Hub**: https://hub.docker.com/r/chenguorongz/tinyiothub  
 **发布日期**: 2026-01-19
 
 基于 Rust 的物联网边缘网关系统，专为鸿蒙系统优化，支持多种设备协议和数据采集。

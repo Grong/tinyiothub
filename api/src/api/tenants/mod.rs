@@ -20,8 +20,8 @@ use crate::shared::app_state::AppState;
 /// Create tenants router
 pub fn create_router() -> Router<AppState> {
     Router::new()
-        // Plans
-        .route("/plans", get(list_plans))
+        // Plans - 移除这里重复的 plans，因为 auth router 已经有
+        // .route("/plans", get(list_plans))
         
         // Tenants
         .route("/tenants", get(list_tenants))
@@ -42,19 +42,6 @@ pub fn create_router() -> Router<AppState> {
         
         // Usage
         .route("/tenants/{tenant_id}/usage-stats", get(get_usage_stats))
-}
-
-/// List subscription plans
-async fn list_plans(State(state): State<AppState>) -> Result<Json<Vec<SubscriptionPlan>>, StatusCode> {
-    let db = state.database.clone();
-    
-    match SubscriptionPlan::find_all(&db).await {
-        Ok(plans) => Ok(Json(plans)),
-        Err(e) => {
-            tracing::error!("Failed to list plans: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
 }
 
 /// List tenants

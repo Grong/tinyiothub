@@ -1,4 +1,11 @@
+/* 无边框设计系统 - Markdown 浅色主题 */
 html[data-theme="light"] {
+    /* 无边框设计 - 边框透明化 */
+    --color-border-default: transparent;
+    --color-border-muted: transparent;
+    --color-canvas-subtle: transparent;
+    --color-attention-subtle: transparent;
+
     --color-prettylights-syntax-comment: #6e7781;
     --color-prettylights-syntax-constant: #0550ae;
     --color-prettylights-syntax-entity: #8250df;
@@ -33,12 +40,8 @@ html[data-theme="light"] {
     --color-fg-muted: #57606a;
     --color-fg-subtle: #6e7781;
     --color-canvas-default: transparent;
-    --color-canvas-subtle: #f6f8fa;
-    --color-border-default: #d0d7de;
-    --color-border-muted: hsla(210, 18%, 87%, 1);
     --color-neutral-muted: rgba(175, 184, 193, 0.2);
     --color-accent-fg: #0969da;
     --color-accent-emphasis: #0969da;
-    --color-attention-subtle: #fff8c5;
     --color-danger-fg: #cf222e;
-  }
+}

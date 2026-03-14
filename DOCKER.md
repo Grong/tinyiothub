@@ -1,8 +1,18 @@
 # TinyIoTHub Docker 部署指南
 
-## 快速开始
+## 使用 Docker Hub 镜像（推荐）
 
-### 1. 构建镜像
+```bash
+# 拉取最新镜像
+docker pull chenguorongz/tinyiothub:latest
+
+# 启动服务
+docker-compose up -d
+```
+
+支持架构：`linux/amd64`、`linux/arm64`（鸿蒙设备）
+
+## 本地构建
 
 #### 快速测试（推荐）
 

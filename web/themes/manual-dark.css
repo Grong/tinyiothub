@@ -1,4 +1,116 @@
+/* ===========================================
+   无边框设计系统 (Borderless Design System)
+   =========================================== */
+
 html[data-theme="dark"] {
+    /* === 移除边框，改用阴影和背景色 === */
+    
+    /* 卡片无边框 */
+    --color-components-card-border: transparent;
+    --color-components-card-bg: #1a1a1d;
+    --color-components-card-bg-alt: #242428;
+    
+    /* 面板无边框 */
+    --color-components-panel-border: transparent;
+    --color-components-panel-border-subtle: transparent;
+    --color-components-panel-bg: #18181b;
+    --color-components-panel-bg-alt: #1f1f23;
+    
+    /* 按钮无边框 */
+    --color-components-button-primary-border: transparent;
+    --color-components-button-primary-border-hover: transparent;
+    --color-components-button-primary-border-disabled: transparent;
+    --color-components-button-secondary-border: transparent;
+    --color-components-button-secondary-border-hover: transparent;
+    --color-components-button-secondary-border-disabled: transparent;
+    --color-components-button-tertiary-border: transparent;
+    --color-components-button-ghost-border: transparent;
+    --color-components-button-destructive-primary-border: transparent;
+    --color-components-button-destructive-primary-border-hover: transparent;
+    --color-components-button-destructive-secondary-border: transparent;
+    --color-components-button-secondary-accent-border: transparent;
+    
+    /* 输入框无边框 */
+    --color-components-input-border-active: transparent;
+    --color-components-input-border-hover: transparent;
+    --color-components-input-border-destructive: transparent;
+    
+    /* 分割线 - 极其淡 */
+    --color-divider-subtle: transparent;
+    --color-divider-regular: rgba(255, 255, 255, 0.04);
+    --color-divider-deep: rgba(255, 255, 255, 0.08);
+    --color-divider-burn: transparent;
+    --color-divider-solid: rgba(255, 255, 255, 0.1);
+    --color-divider-intense: rgba(255, 255, 255, 0.15);
+    
+    /* 增强阴影效果 */
+    --shadow-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-shadow-2: 0 2px 4px rgba(0, 0, 0, 0.35);
+    --shadow-shadow-3: 0 4px 8px rgba(0, 0, 0, 0.4);
+    --shadow-shadow-4: 0 6px 12px rgba(0, 0, 0, 0.45);
+    --shadow-shadow-5: 0 8px 16px rgba(0, 0, 0, 0.5);
+    --shadow-shadow-6: 0 12px 24px rgba(0, 0, 0, 0.55);
+    --shadow-shadow-7: 0 16px 32px rgba(0, 0, 0, 0.6);
+    --shadow-shadow-8: 0 20px 40px rgba(0, 0, 0, 0.65);
+    --shadow-shadow-9: 0 24px 48px rgba(0, 0, 0, 0.7);
+    --shadow-shadow-10: 0 28px 56px rgba(0, 0, 0, 0.75);
+    
+    /* 菜单无边框 */
+    --color-components-menu-item-border: transparent;
+    
+    /* Segmented control 无边框 */
+    --color-components-segmented-control-item-active-border: transparent;
+    --color-components-segmented-control-item-active-accent-border: transparent;
+    
+    /* Option card 无边框 */
+    --color-components-option-card-option-border: transparent;
+    --color-components-option-card-option-border-hover: transparent;
+    --color-components-option-card-option-selected-border: transparent;
+    
+    /* Checkbox/Radio 边框调整 */
+    --color-components-checkbox-border: transparent;
+    --color-components-checkbox-border-hover: transparent;
+    --color-components-checkbox-border-disabled: transparent;
+    --color-components-radio-border: transparent;
+    --color-components-radio-border-hover: transparent;
+    --color-components-radio-border-disabled: transparent;
+    
+    /* Action bar 无边框 */
+    --color-components-actionbar-border: transparent;
+    --color-components-actionbar-border-accent: transparent;
+    
+    /* Dropzone 无边框 */
+    --color-components-dropzone-border: transparent;
+    --color-components-dropzone-border-alt: transparent;
+    --color-components-dropzone-border-accent: transparent;
+    
+    /* Progress 无边框 */
+    --color-components-progress-brand-border: transparent;
+    --color-components-progress-white-border: transparent;
+    --color-components-progress-gray-border: transparent;
+    --color-components-progress-warning-border: transparent;
+    --color-components-progress-error-border: transparent;
+    --color-components-progress-bar-border: transparent;
+    
+    /* Main nav 无边框 */
+    --color-components-main-nav-nav-button-border: transparent;
+    --color-components-main-nav-nav-user-border: transparent;
+    
+    /* Badge 相关 */
+    --color-components-badge-status-light-border-outer: transparent;
+    
+    /* Chat input 无边框 */
+    --color-components-chat-input-border: transparent;
+    
+    /* 背景色层次 - 更明显的区分 */
+    --color-background-body: #0f0f11;
+    --color-background-default: #141416;
+    --color-background-default-subtle: #1a1a1d;
+    --color-background-soft: #1f1f23;
+    --color-background-section: #18181c;
+    --color-background-overlay: rgba(0, 0, 0, 0.7);
+    
+    /* 聊天背景 */
     --color-chatbot-bg: linear-gradient(180deg,
             rgba(34, 34, 37, 0.9) 0%,
             rgba(29, 29, 32, 0.9) 90.48%);

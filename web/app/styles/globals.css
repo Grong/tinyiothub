@@ -721,3 +721,133 @@ button:focus-within {
     -moz-appearance: textfield;
   }
 }
+
+/* ===========================================
+   无边框设计系统全局覆盖
+   =========================================== */
+
+/* 全局移除边框 */
+* {
+  border-color: transparent !important;
+}
+
+/* 恢复特定组件的边框（如果需要） */
+button, 
+input, 
+select, 
+textarea {
+  border-color: inherit !important;
+}
+
+/* Tailwind border 类覆盖 */
+.border-\[0\.5px\] {
+  border-width: 0 !important;
+}
+
+.border-\[1px\] {
+  border-width: 0 !important;
+}
+
+.border-\[1\.5px\] {
+  border-width: 0 !important;
+}
+
+.border-\[2px\] {
+  border-width: 0 !important;
+}
+
+.border-b-\[0\.5px\] {
+  border-bottom-width: 0 !important;
+}
+
+.border-b-\[1px\] {
+  border-bottom-width: 0 !important;
+
+}
+
+.border-b-\[2px\] {
+  border-bottom-width: 0 !important;
+}
+
+.border-t-\[0\.5px\] {
+  border-top-width: 0 !important;
+}
+
+.border-t-\[1px\] {
+  border-top-width: 0 !important;
+}
+
+.border-t-\[4px\] {
+  border-top-width: 0 !important;
+}
+
+.border-l-\[0\.5px\] {
+  border-left-width: 0 !important;
+}
+
+.border-l-\[1px\] {
+  border-left-width: 0 !important;
+}
+
+.border-r-\[0\.5px\] {
+  border-right-width: 0 !important;
+}
+
+.border-r-\[1px\] {
+  border-right-width: 0 !important;
+}
+
+.border-x-\[0\.5px\] {
+  border-left-width: 0 !important;
+  border-right-width: 0 !important;
+}
+
+.border-x-\[1px\] {
+  border-left-width: 0 !important;
+  border-right-width: 0 !important;
+}
+
+.border-y-\[0\.5px\] {
+  border-top-width: 0 !important;
+  border-bottom-width: 0 !important;
+}
+
+.border-y-\[1px\] {
+  border-top-width: 0 !important;
+  border-bottom-width: 0 !important;
+}
+
+/* 分割线特殊处理 - 保留底部边框用于分隔 */
+.divide-y > :not([hidden]) ~ :not([hidden]) {
+  border-top-width: 0;
+}
+
+/* 移除圆角边框效果，改用阴影 */
+.rounded-xl,
+.rounded-lg,
+.rounded-md,
+.rounded-sm {
+  box-shadow: var(--shadow-shadow-3, 0 4px 6px -1px rgba(0, 0, 0, 0.1));
+}
+
+/* 卡片悬浮效果增强 */
+.hover\:shadow-md:hover {
+  box-shadow: var(--shadow-shadow-5, 0 8px 16px -2px rgba(0, 0, 0, 0.15)) !important;
+}
+
+/* 输入框无边框 */
+input, 
+textarea, 
+select {
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+input:focus, 
+textarea:focus, 
+select:focus {
+  border: none !important;
+  outline: none !important;
+  box-shadow: 0 0 0 2px var(--color-components-input-border-active-prompt-1, rgba(21, 94, 239, 0.3)) !important;
+}
