@@ -1,5 +1,6 @@
 // Tenant Auth API Module
 // 租户注册登录 API
+// 已修复 SQL 注入问题，使用参数化查询
 
 use axum::{
     extract::{Query, State},
@@ -66,13 +67,16 @@ async fn list_plans(
     }
 }
 
-/// Simple hash function
-fn simple_hash(s: &str) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    s.hash(&mut hasher);
-    format!("{:x}", hasher.finish())
+/// 使用 bcrypt 进行密码哈希
+fn hash_password(password: &str) -> Result<String, String> {
+    bcrypt::hash(password, bcrypt::DEFAULT_COST)
+        .map_err(|e| format!("Failed to hash password: {}", e))
+}
+
+/// 验证密码
+fn verify_password(password: &str, hash: &str) -> Result<bool, String> {
+    bcrypt::verify(password, hash)
+        .map_err(|e| format!("Failed to verify password: {}", e))
 }
 
 /// Register tenant
@@ -82,16 +86,35 @@ async fn register_tenant(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let db = state.database.clone();
     
-    // 检查 slug 是否已存在
-    if Tenant::find_by_slug(&db, &payload.slug).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.is_some() {
+    // 输入验证
+    let slug = payload.slug.trim().to_lowercase();
+    let email = payload.email.trim().to_lowercase();
+    
+    // 验证 slug 格式
+    if !crate::utils::validation::is_valid_slug(&slug) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    
+    // 验证邮箱格式
+    if !crate::utils::validation::is_valid_email(&email) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    
+    // 验证密码强度
+    if !crate::utils::validation::is_strong_password(&payload.password) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    
+    // 检查 slug 是否已存在（使用参数化查询）
+    if Tenant::find_by_slug(&db, &slug).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.is_some() {
         return Err(StatusCode::BAD_REQUEST);
     }
     
     // 创建租户
     let tenant_req = CreateTenantRequest {
-        name: payload.name,
-        slug: payload.slug.clone(),
-        billing_email: Some(payload.email.clone()),
+        name: payload.name.clone(),
+        slug: slug.clone(),
+        billing_email: Some(email.clone()),
         billing_contact: None,
         timezone: None,
         locale: None,
@@ -104,39 +127,42 @@ async fn register_tenant(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     
-    // 创建用户
+    // 创建用户 - 使用参数化查询
     let user_id = uuid::Uuid::new_v4().to_string();
-    let password_hash = simple_hash(&payload.password);
+    let password_hash = hash_password(&payload.password)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
     
-    let sql = format!(r#"
-        INSERT INTO users (id, username, password_hash, email, status, created_at, updated_at)
-        VALUES ('{}', '{}', '{}', '{}', 'active', '{}', '{}')
-    "#,
-        user_id,
-        payload.email,
-        password_hash,
-        payload.email,
-        now,
-        now
-    );
-    
-    db.execute(&sql).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // 使用参数化查询防止 SQL 注入
+    sqlx::query(
+        r#"INSERT INTO users (id, username, password_hash, email, status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 'active', ?, ?)"#
+    )
+    .bind(&user_id)
+    .bind(&email)
+    .bind(&password_hash)
+    .bind(&email)
+    .bind(&now)
+    .bind(&now)
+    .execute(db.pool())
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     
     // 关联租户用户
-    let tenant_user_sql = format!(r#"
-        INSERT INTO tenant_users (id, tenant_id, user_id, role, invitation_status, joined_at, created_at, updated_at)
-        VALUES ('{}', '{}', '{}', 'owner', 'accepted', '{}', '{}', '{}')
-    "#,
-        uuid::Uuid::new_v4().to_string(),
-        tenant.id,
-        user_id,
-        now,
-        now,
-        now
-    );
-    
-    db.execute(&tenant_user_sql).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let tenant_user_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        r#"INSERT INTO tenant_users (id, tenant_id, user_id, role, invitation_status, joined_at, created_at, updated_at)
+           VALUES (?, ?, ?, 'owner', 'accepted', ?, ?, ?)"#
+    )
+    .bind(&tenant_user_id)
+    .bind(&tenant.id)
+    .bind(&user_id)
+    .bind(&now)
+    .bind(&now)
+    .bind(&now)
+    .execute(db.pool())
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     
     // 生成 token
     let token = generate_token(&tenant.id, &user_id);
@@ -146,7 +172,7 @@ async fn register_tenant(
         "tenant": tenant,
         "user": {
             "id": user_id,
-            "email": payload.email,
+            "email": email,
             "role": "owner"
         }
     })))
@@ -159,71 +185,78 @@ async fn login(
 ) -> Result<Json<LoginResponse>, StatusCode> {
     let db = state.database.clone();
     
-    // 查找用户
-    let sql = format!(
-        "SELECT id, username, password_hash FROM users WHERE email = '{}' AND status = 'active' LIMIT 1",
-        payload.email
-    );
+    // 输入验证
+    let email = payload.email.trim().to_lowercase();
     
-    let mut rows = db.query(&sql, |row| {
-        Ok(serde_json::json!({
-            "id": row.try_get::<String, _>("id")?,
-            "username": row.try_get::<String, _>("username")?,
-            "password_hash": row.try_get::<String, _>("password_hash")?,
-        }))
-    }).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // 验证邮箱格式
+    if !crate::utils::validation::is_valid_email(&email) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
     
-    let user = rows.pop().ok_or(StatusCode::UNAUTHORIZED)?;
+    // 查找用户 - 使用参数化查询
+    let rows = sqlx::query(
+        "SELECT id, username, password_hash FROM users WHERE email = ? AND status = 'active' LIMIT 1"
+    )
+    .bind(&email)
+    .fetch_all(db.pool())
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let user_row = rows.into_iter().next().ok_or(StatusCode::UNAUTHORIZED)?;
+    
+    let user_id: String = user_row.try_get("id").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let _username: String = user_row.try_get("username").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let stored_hash: String = user_row.try_get("password_hash").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     
     // 验证密码
-    let stored_hash = user.get("password_hash").and_then(|v| v.as_str()).unwrap_or("");
-    let input_hash = simple_hash(&payload.password);
+    let password_valid = verify_password(&payload.password, &stored_hash)
+        .unwrap_or(false);
     
-    if stored_hash != input_hash {
+    if !password_valid {
+        tracing::warn!("Failed login attempt for email: {}", email);
         return Err(StatusCode::UNAUTHORIZED);
     }
     
-    let user_id = user.get("id").and_then(|v| v.as_str()).unwrap_or("");
-    
-    // 查找租户
-    let tenant_sql = format!(
+    // 查找租户 - 使用参数化查询
+    let tenant_rows = sqlx::query(
         "SELECT t.* FROM tenants t 
          INNER JOIN tenant_users tu ON t.id = tu.tenant_id 
-         WHERE tu.user_id = '{}' LIMIT 1",
-        user_id
-    );
+         WHERE tu.user_id = ? LIMIT 1"
+    )
+    .bind(&user_id)
+    .fetch_all(db.pool())
+    .await
+    .map_err(|_| StatusCode::NOT_FOUND)?;
+
+    let tenant_row = tenant_rows.into_iter().next().ok_or(StatusCode::NOT_FOUND)?;
     
-    let mut tenant_rows = db.query(&tenant_sql, |row| {
-        Ok(Tenant {
-            id: row.try_get("id")?,
-            name: row.try_get("name")?,
-            slug: row.try_get("slug")?,
-            status: row.try_get("status")?,
-            plan_id: row.try_get("plan_id")?,
-            subscription_status: row.try_get("subscription_status")?,
-            trial_expires_at: row.try_get("trial_expires_at")?,
-            billing_email: row.try_get("billing_email")?,
-            billing_contact: row.try_get("billing_contact")?,
-            timezone: row.try_get("timezone")?,
-            locale: row.try_get("locale")?,
-            custom_logo: row.try_get("custom_logo")?,
-            custom_theme: row.try_get("custom_theme")?,
-            created_at: row.try_get("created_at")?,
-            updated_at: row.try_get("updated_at")?,
-        })
-    }).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    
-    let tenant = tenant_rows.pop().ok_or(StatusCode::NOT_FOUND)?;
+    let tenant = Tenant {
+        id: tenant_row.try_get("id").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        name: tenant_row.try_get("name").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        slug: tenant_row.try_get("slug").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        status: tenant_row.try_get("status").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        plan_id: tenant_row.try_get("plan_id").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        subscription_status: tenant_row.try_get("subscription_status").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        trial_expires_at: tenant_row.try_get("trial_expires_at").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        billing_email: tenant_row.try_get("billing_email").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        billing_contact: tenant_row.try_get("billing_contact").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        timezone: tenant_row.try_get("timezone").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        locale: tenant_row.try_get("locale").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        custom_logo: tenant_row.try_get("custom_logo").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        custom_theme: tenant_row.try_get("custom_theme").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        created_at: tenant_row.try_get("created_at").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        updated_at: tenant_row.try_get("updated_at").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+    };
     
     // 生成 token
-    let token = generate_token(&tenant.id, user_id);
+    let token = generate_token(&tenant.id, &user_id);
     
     Ok(Json(LoginResponse {
         token,
         tenant,
         user: serde_json::json!({
             "id": user_id,
-            "email": payload.email,
+            "email": email,
         }),
     }))
 }

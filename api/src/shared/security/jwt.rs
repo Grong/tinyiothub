@@ -12,21 +12,39 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 
 // 使用 jwt-simple 的 HS256Key (纯 Rust 实现，不依赖 ring)
-pub static JWT_KEY: Lazy<HS256Key> = Lazy::new(|| {
-    // 从环境变量读取JWT密钥，如果未设置则使用默认值（仅用于开发环境）
+pub static JWT_KEY: Lazy<Result<HS256Key, String>> = Lazy::new(|| {
+    // 从环境变量读取JWT密钥
     let secret = std::env::var("JWT_SECRET")
         .unwrap_or_else(|_| {
-            tracing::warn!("⚠️  JWT_SECRET not set, using default (INSECURE for production!)");
-            "123456123456123456".to_string()
+            // 生成一个随机密钥用于开发
+            let random_key = uuid::Uuid::new_v4().to_string() + &uuid::Uuid::new_v4().to_string();
+            tracing::warn!("⚠️  JWT_SECRET not set, using generated key (won't persist across restarts!)");
+            random_key
         });
     
     // 验证密钥长度
     if secret.len() < 32 {
-        tracing::error!("🔴 JWT_SECRET is too short! Minimum 32 characters required for security.");
+        return Err(format!(
+            "JWT_SECRET is too short! Minimum 32 characters required, got {}",
+            secret.len()
+        ));
     }
     
-    HS256Key::from_bytes(secret.as_bytes())
+    // 检查是否使用默认或弱密钥
+    if secret.len() < 64 {
+        tracing::warn!("⚠️  JWT_SECRET is shorter than 64 characters, consider using a longer secret");
+    }
+    
+    Ok(HS256Key::from_bytes(secret.as_bytes()))
 });
+
+// 获取 JWT 密钥的辅助函数
+fn get_jwt_key() -> Result<HS256Key, String> {
+    JWT_KEY.clone().map_err(|e| {
+        tracing::error!("JWT key error: {}", e);
+        format!("JWT key error: {}", e)
+    })
+}
 
 // 检查是否在 HarmonyOS 环境
 fn is_harmonyos() -> bool {
@@ -208,13 +226,16 @@ pub fn create_jwt(payload: AuthPayload) -> Result<AuthBody, String> {
 
     tracing::debug!("Creating JWT token with jwt-simple (HS256, pure-rust)");
 
+    // 获取 JWT 密钥
+    let key = get_jwt_key()?;
+
     // 使用 jwt-simple 创建 token（exp 由 jwt-simple 自动添加）
     let jwt_claims = jwt_simple::claims::Claims::with_custom_claims(
         custom_claims,
         Duration::from_secs(jwt_exp_seconds as u64),
     );
 
-    let token = JWT_KEY
+    let token = key
         .authenticate(jwt_claims)
         .map_err(|e| format!("Token creation error: {}", e))?;
 
@@ -232,7 +253,10 @@ pub fn validate_jwt(token: &str) -> Result<Claims, String> {
     // 标准 JWT 验证（非 HarmonyOS）
     tracing::debug!("Validating JWT token with jwt-simple");
 
-    let jwt_claims = JWT_KEY.verify_token::<Claims>(token, None).map_err(|e| {
+    // 获取 JWT 密钥
+    let key = get_jwt_key()?;
+
+    let jwt_claims = key.verify_token::<Claims>(token, None).map_err(|e| {
         tracing::warn!("JWT validation failed: {}", e);
         "Your login has expired, please login again".to_string()
     })?;
