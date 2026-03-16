@@ -296,3 +296,46 @@ impl GatewayDevice {
         }).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_gateway_status_as_str() {
+        assert_eq!(GatewayStatus::Online.as_str(), "online");
+        assert_eq!(GatewayStatus::Offline.as_str(), "offline");
+    }
+
+    #[test]
+    fn test_gateway_status_from_str() {
+        assert_eq!(GatewayStatus::from_str("online"), GatewayStatus::Online);
+    }
+
+    #[test]
+    fn test_create_gateway_request() {
+        let req = CreateGatewayRequest {
+            name: "Test Gateway".to_string(),
+            api_key: "test-key-123".to_string(),
+            gateway_type: Some("esp32".to_string()),
+            firmware_version: Some("1.0.0".to_string()),
+        };
+        
+        assert_eq!(req.name, "Test Gateway");
+    }
+
+    #[test]
+    fn test_device_info() {
+        let device = DeviceInfo {
+            device_id: "dev-001".to_string(),
+            name: "Test Device".to_string(),
+            device_type: "sensor".to_string(),
+            protocol: "mqtt".to_string(),
+            online: true,
+            properties: Some(json!({"temperature": 25.5})),
+        };
+        
+        assert!(device.online);
+    }
+}
