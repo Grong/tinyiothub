@@ -207,3 +207,89 @@ pub fn generate_numeric_id() -> u64 {
     let mut rng = rand::thread_rng();
     rng.gen_range(1000000000..9999999999)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_id() {
+        let id = generate_id();
+        assert_eq!(id.len(), 36); // UUID v4 format
+        assert!(id.contains('-'));
+    }
+
+    #[test]
+    fn test_generate_short_id() {
+        let id = generate_short_id();
+        assert_eq!(id.len(), 8);
+        assert!(id.chars().all(|c| c.is_ascii_alphanumeric()));
+    }
+
+    #[test]
+    fn test_generate_numeric_id() {
+        let id = generate_numeric_id();
+        assert!(id >= 1000000000);
+        assert!(id <= 9999999999);
+    }
+
+    #[test]
+    fn test_format_uptime() {
+        assert_eq!(format_uptime(0), "0s");
+        assert_eq!(format_uptime(30), "30s");
+        assert_eq!(format_uptime(60), "1m 0s");
+        assert_eq!(format_uptime(90), "1m 30s");
+        assert_eq!(format_uptime(3600), "1h 0m 0s");
+        assert_eq!(format_uptime(3661), "1h 1m 1s");
+        assert_eq!(format_uptime(86400), "1d 0h 0m 0s");
+        assert_eq!(format_uptime(90061), "1d 1h 1m 1s");
+    }
+
+    #[test]
+    fn test_memory_info_usage_percentage() {
+        let info = MemoryInfo {
+            total: 1000,
+            used: 500,
+            free: 500,
+        };
+        assert_eq!(info.usage_percentage(), 50.0);
+
+        let zero = MemoryInfo {
+            total: 0,
+            used: 0,
+            free: 0,
+        };
+        assert_eq!(zero.usage_percentage(), 0.0);
+    }
+
+    #[test]
+    fn test_disk_info_usage_percentage() {
+        let info = DiskInfo {
+            total: 1000,
+            used: 250,
+            free: 750,
+        };
+        assert_eq!(info.usage_percentage(), 25.0);
+
+        let zero = DiskInfo {
+            total: 0,
+            used: 0,
+            free: 0,
+        };
+        assert_eq!(zero.usage_percentage(), 0.0);
+    }
+
+    #[test]
+    fn test_generate_sn_format() {
+        let sn = generate_sn();
+        assert!(sn.starts_with("TINYIOTHUB-"));
+        assert_eq!(sn.len(), 17); // "TINYIOTHUB-" + 6 digits
+    }
+
+    #[test]
+    fn test_mac_address_format() {
+        let mac = get_mac_address();
+        assert!(mac.contains(':'));
+        assert_eq!(mac.chars().filter(|&c| c == ':').count(), 5);
+    }
+}
