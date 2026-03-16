@@ -2,9 +2,8 @@
 //! 处理网关相关的 MQTT 消息
 
 use serde::{Deserialize, Serialize};
-use crate::dto::entity::gateway::{Gateway, DeviceListReport};
+use crate::dto::entity::gateway::{Gateway, GatewayDevice, DeviceListReport, CreateGatewayRequest, UpdateGatewayRequest};
 use crate::dto::entity::device::{Device, CreateDeviceRequest};
-use crate::dto::entity::gateway::GatewayDevice;
 
 /// MQTT 消息通用格式
 #[derive(Debug, Clone, Serialize, Deserialize)]
