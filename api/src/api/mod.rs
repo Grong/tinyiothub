@@ -11,6 +11,7 @@ pub mod auth;
 pub mod devices;
 pub mod drivers;
 pub mod events;
+pub mod gateways;
 pub mod jobs;
 pub mod marketplace;
 pub mod middleware;
@@ -30,6 +31,7 @@ pub fn create_router() -> Router<AppState> {
     let protected_routes = Router::new()
         .nest("/devices", devices::create_router())
         .nest("/drivers", drivers::create_router())
+        .nest("/gateways", gateways::create_router())
         .nest("/alarms", alarms::create_router())
         .nest("/alarm-rules", alarm_rules::create_router())
         .nest("/monitoring", monitoring::create_router())

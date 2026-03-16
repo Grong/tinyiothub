@@ -18,11 +18,15 @@ pub struct ToolMeta {
 /// 获取所有工具元数据
 pub fn get_all_tools() -> Vec<ToolMeta> {
     vec![
+        // 设备相关
         device::list_devices(),
         device::get_device(),
         device::get_device_status(),
         device::read_sensor_data(),
         device::send_command(),
+        device::get_device_history(),
+        device::get_device_latest(),
+        // 告警相关
         alarm::list_alarms(),
         alarm::acknowledge_alarm(),
         alarm::get_alarm_statistics(),

@@ -9,7 +9,11 @@ pub mod device_alarm_rule;
 
 pub mod device_command;
 
+pub mod device_data;
+
 pub mod device_event_trigger;
+
+pub mod gateway;
 
 pub mod device_property;
 

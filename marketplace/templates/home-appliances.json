@@ -1,0 +1,902 @@
+{
+  "version": "1.0.0",
+  "updated_at": "2026-03-16T12:00:00Z",
+  "templates": [
+    {
+      "id": "smart-light",
+      "name": "智能灯泡",
+      "version": "1.0.0",
+      "category": "light",
+      "protocol": "mqtt",
+      "manufacturer": "通用",
+      "description": "支持 MQTT 协议的智能灯泡，可调节亮度和色温",
+      "tags": ["智能家居", "灯泡", "照明", "MQTT", "WiFi"],
+      "author": {
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
+      },
+      "icon": "💡",
+      "downloads": 0,
+      "rating": 5.0,
+      "reviews": 0,
+      "license": "MIT",
+      "properties": [
+        {
+          "name": "power",
+          "displayName": "电源开关",
+          "type": "boolean",
+          "readable": true,
+          "writable": true,
+          "description": "灯泡开关状态"
+        },
+        {
+          "name": "brightness",
+          "displayName": "亮度",
+          "type": "number",
+          "readable": true,
+          "writable": true,
+          "min": 0,
+          "max": 100,
+          "unit": "%",
+          "description": "灯泡亮度"
+        },
+        {
+          "name": "color_temp",
+          "displayName": "色温",
+          "type": "number",
+          "readable": true,
+          "writable": true,
+          "min": 2700,
+          "max": 6500,
+          "unit": "K",
+          "description": "灯泡色温"
+        },
+        {
+          "name": "color",
+          "displayName": "颜色",
+          "type": "string",
+          "readable": true,
+          "writable": true,
+          "description": "RGB 颜色值"
+        }
+      ],
+      "commands": [
+        {
+          "name": "turn_on",
+          "displayName": "开灯",
+          "description": "打开灯泡"
+        },
+        {
+          "name": "turn_off",
+          "displayName": "关灯",
+          "description": "关闭灯泡"
+        },
+        {
+          "name": "set_brightness",
+          "displayName": "设置亮度",
+          "parameters": [
+            {
+              "name": "brightness",
+              "type": "number",
+              "required": true
+            }
+          ]
+        }
+      ],
+      "mqtt_config": {
+        "topics": {
+          "state": "home/{device_id}/state",
+          "command": "home/{device_id}/command"
+        },
+        "qos": 1
+      }
+    },
+    {
+      "id": "smart-plug",
+      "name": "智能插座",
+      "version": "1.0.0",
+      "category": "socket",
+      "protocol": "mqtt",
+      "manufacturer": "通用",
+      "description": "支持 MQTT 协议的智能插座，可远程控制和查看用电量",
+      "tags": ["智能家居", "插座", "用电量", "MQTT", "WiFi"],
+      "author": {
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
+      },
+      "icon": "🔌",
+      "downloads": 0,
+      "rating": 5.0,
+      "reviews": 0,
+      "license": "MIT",
+      "properties": [
+        {
+          "name": "power",
+          "displayName": "电源开关",
+          "type": "boolean",
+          "readable": true,
+          "writable": true,
+          "description": "插座开关状态"
+        },
+        {
+          "name": "current_power",
+          "displayName": "当前功率",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "unit": "W",
+          "description": "当前用电功率"
+        },
+        {
+          "name": "total_energy",
+          "displayName": "总用电量",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "unit": "kWh",
+          "description": "累计用电量"
+        },
+        {
+          "name": "voltage",
+          "displayName": "电压",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "unit": "V",
+          "description": "当前电压"
+        },
+        {
+          "name": "current",
+          "displayName": "电流",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "unit": "A",
+          "description": "当前电流"
+        }
+      ],
+      "commands": [
+        {
+          "name": "turn_on",
+          "displayName": "打开",
+          "description": "打开插座"
+        },
+        {
+          "name": "turn_off",
+          "displayName": "关闭",
+          "description": "关闭插座"
+        }
+      ]
+    },
+    {
+      "id": "smart-air-conditioner",
+      "name": "智能空调",
+      "version": "1.0.0",
+      "category": "hvac",
+      "protocol": "mqtt",
+      "manufacturer": "通用",
+      "description": "支持 MQTT 协议的智能空调，可控制开关、温度、模式等",
+      "tags": ["智能家居", "空调", "温度控制", "MQTT", "WiFi"],
+      "author": {
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
+      },
+      "icon": "❄️",
+      "downloads": 0,
+      "rating": 5.0,
+      "reviews": 0,
+      "license": "MIT",
+      "properties": [
+        {
+          "name": "power",
+          "displayName": "电源",
+          "type": "boolean",
+          "readable": true,
+          "writable": true,
+          "description": "空调开关"
+        },
+        {
+          "name": "mode",
+          "displayName": "模式",
+          "type": "string",
+          "readable": true,
+          "writable": true,
+          "enum": ["cool", "heat", "dry", "fan", "auto"],
+          "description": "运行模式"
+        },
+        {
+          "name": "target_temperature",
+          "displayName": "目标温度",
+          "type": "number",
+          "readable": true,
+          "writable": true,
+          "min": 16,
+          "max": 30,
+          "unit": "℃",
+          "description": "目标温度"
+        },
+        {
+          "name": "fan_speed",
+          "displayName": "风速",
+          "type": "string",
+          "readable": true,
+          "writable": true,
+          "enum": ["auto", "low", "medium", "high"],
+          "description": "风速档位"
+        },
+        {
+          "name": "swing",
+          "displayName": "摆风",
+          "type": "boolean",
+          "readable": true,
+          "writable": true,
+          "description": "是否摆风"
+        },
+        {
+          "name": "indoor_temperature",
+          "displayName": "室内温度",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "unit": "℃",
+          "description": "室内温度"
+        }
+      ],
+      "commands": [
+        {
+          "name": "power_on",
+          "displayName": "开机",
+          "description": "打开空调"
+        },
+        {
+          "name": "power_off",
+          "displayName": "关机",
+          "description": "关闭空调"
+        },
+        {
+          "name": "set_temperature",
+          "displayName": "设置温度",
+          "parameters": [
+            {
+              "name": "temperature",
+              "type": "number",
+              "required": true
+            }
+          ]
+        },
+        {
+          "name": "set_mode",
+          "displayName": "设置模式",
+          "parameters": [
+            {
+              "name": "mode",
+              "type": "string",
+              "required": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "smart-lock",
+      "name": "智能门锁",
+      "version": "1.0.0",
+      "category": "lock",
+      "protocol": "mqtt",
+      "manufacturer": "通用",
+      "description": "支持 MQTT 协议的智能门锁，可远程开锁和查看状态",
+      "tags": ["智能家居", "门锁", "安防", "MQTT", "WiFi"],
+      "author": {
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
+      },
+      "icon": "🔒",
+      "downloads": 0,
+      "rating": 5.0,
+      "reviews": 0,
+      "license": "MIT",
+      "properties": [
+        {
+          "name": "locked",
+          "displayName": "门锁状态",
+          "type": "boolean",
+          "readable": true,
+          "writable": true,
+          "description": "true 为锁定，false 为解锁"
+        },
+        {
+          "name": "battery_level",
+          "displayName": "电池电量",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "min": 0,
+          "max": 100,
+          "unit": "%",
+          "description": "电池电量"
+        },
+        {
+          "name": "door_status",
+          "displayName": "门状态",
+          "type": "string",
+          "readable": true,
+          "writable": false,
+          "enum": ["closed", "open", "ajar"],
+          "description": "门是否关闭"
+        },
+        {
+          "name": "unlock_method",
+          "displayName": "开锁方式",
+          "type": "string",
+          "readable": true,
+          "writable": false,
+          "description": "最后开锁的方式"
+        },
+        {
+          "name": "alarmed",
+          "displayName": "告警状态",
+          "type": "boolean",
+          "readable": true,
+          "writable": false,
+          "description": "是否触发告警"
+        }
+      ],
+      "commands": [
+        {
+          "name": "unlock",
+          "displayName": "开锁",
+          "description": "远程开锁"
+        },
+        {
+          "name": "lock",
+          "displayName": "上锁",
+          "description": "远程上锁"
+        }
+      ]
+    },
+    {
+      "id": "ip-camera",
+      "name": "网络摄像头",
+      "version": "1.0.0",
+      "category": "camera",
+      "protocol": "mqtt",
+      "manufacturer": "通用",
+      "description": "支持 MQTT 协议的网络摄像头，可查看实时视频和状态",
+      "tags": ["智能家居", "摄像头", "安防", "MQTT", "WiFi", "视频"],
+      "author": {
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
+      },
+      "icon": "📹",
+      "downloads": 0,
+      "rating": 5.0,
+      "reviews": 0,
+      "license": "MIT",
+      "properties": [
+        {
+          "name": "streaming",
+          "displayName": "视频流",
+          "type": "boolean",
+          "readable": true,
+          "writable": true,
+          "description": "视频流开关"
+        },
+        {
+          "name": "motion_detection",
+          "displayName": "移动侦测",
+          "type": "boolean",
+          "readable": true,
+          "writable": true,
+          "description": "移动侦测开关"
+        },
+        {
+          "name": "motion_triggered",
+          "displayName": "移动侦测触发",
+          "type": "boolean",
+          "readable": true,
+          "writable": false,
+          "description": "是否检测到移动"
+        },
+        {
+          "name": "night_vision",
+          "displayName": "夜视模式",
+          "type": "string",
+          "readable": true,
+          "writable": true,
+          "enum": ["auto", "on", "off"],
+          "description": "夜视模式"
+        },
+        {
+          "name": "ptz",
+          "displayName": "云台控制",
+          "type": "string",
+          "readable": false,
+          "writable": true,
+          "description": "云台方向控制"
+        },
+        {
+          "name": "sd_status",
+          "displayName": "存储卡状态",
+          "type": "string",
+          "readable": true,
+          "writable": false,
+          "description": "存储卡状态"
+        }
+      ],
+      "commands": [
+        {
+          "name": "start_stream",
+          "displayName": "开始录像",
+          "description": "开始视频流"
+        },
+        {
+          "name": "stop_stream",
+          "displayName": "停止录像",
+          "description": "停止视频流"
+        },
+        {
+          "name": "ptz_control",
+          "displayName": "云台控制",
+          "parameters": [
+            {
+              "name": "direction",
+              "type": "string",
+              "required": true,
+              "enum": ["up", "down", "left", "right", "zoom_in", "zoom_out"]
+            }
+          ]
+        },
+        {
+          "name": "capture",
+          "displayName": "抓拍",
+          "description": "抓拍当前画面"
+        }
+      ]
+    },
+    {
+      "id": "temp-humidity-sensor",
+      "name": "温湿度传感器",
+      "version": "1.0.0",
+      "category": "sensor",
+      "protocol": "mqtt",
+      "manufacturer": "通用",
+      "description": "支持 MQTT 协议的温湿度传感器，实时上报环境数据",
+      "tags": ["智能家居", "传感器", "温湿度", "MQTT", "WiFi", "环境监测"],
+      "author": {
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
+      },
+      "icon": "🌡️",
+      "downloads": 0,
+      "rating": 5.0,
+      "reviews": 0,
+      "license": "MIT",
+      "properties": [
+        {
+          "name": "temperature",
+          "displayName": "温度",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "unit": "℃",
+          "description": "当前温度"
+        },
+        {
+          "name": "humidity",
+          "displayName": "湿度",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "unit": "%",
+          "description": "当前湿度"
+        },
+        {
+          "name": "battery_level",
+          "displayName": "电池电量",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "min": 0,
+          "max": 100,
+          "unit": "%",
+          "description": "电池电量"
+        },
+        {
+          "name": "signal_strength",
+          "displayName": "信号强度",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "unit": "dBm",
+          "description": "WiFi 信号强度"
+        }
+      ]
+    },
+    {
+      "id": "smart-curtain",
+      "name": "智能窗帘",
+      "version": "1.0.0",
+      "category": "curtain",
+      "protocol": "mqtt",
+      "manufacturer": "通用",
+      "description": "支持 MQTT 协议的智能窗帘，可控制开合程度",
+      "tags": ["智能家居", "窗帘", "遮阳", "MQTT", "WiFi"],
+      "author": {
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
+      },
+      "icon": "🪟",
+      "downloads": 0,
+      "rating": 5.0,
+      "reviews": 0,
+      "license": "MIT",
+      "properties": [
+        {
+          "name": "position",
+          "displayName": "位置",
+          "type": "number",
+          "readable": true,
+          "writable": true,
+          "min": 0,
+          "max": 100,
+          "unit": "%",
+          "description": "窗帘开合位置，0 为全开，100 为全关"
+        },
+        {
+          "name": "moving",
+          "displayName": "运动状态",
+          "type": "boolean",
+          "readable": true,
+          "writable": false,
+          "description": "是否正在移动"
+        },
+        {
+          "name": "battery_level",
+          "displayName": "电池电量",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "min": 0,
+          "max": 100,
+          "unit": "%",
+          "description": "电池电量"
+        }
+      ],
+      "commands": [
+        {
+          "name": "open",
+          "displayName": "打开",
+          "description": "完全打开窗帘"
+        },
+        {
+          "name": "close",
+          "displayName": "关闭",
+          "description": "完全关闭窗帘"
+        },
+        {
+          "name": "stop",
+          "displayName": "停止",
+          "description": "停止移动"
+        },
+        {
+          "name": "set_position",
+          "displayName": "设置位置",
+          "parameters": [
+            {
+              "name": "position",
+              "type": "number",
+              "required": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "air-purifier",
+      "name": "空气净化器",
+      "version": "1.0.0",
+      "category": "hvac",
+      "protocol": "mqtt",
+      "manufacturer": "通用",
+      "description": "支持 MQTT 协议的空气净化器，可控制开关和风速",
+      "tags": ["智能家居", "空气净化", "PM2.5", "MQTT", "WiFi"],
+      "author": {
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
+      },
+      "icon": "🌀",
+      "downloads": 0,
+      "rating": 5.0,
+      "reviews": 0,
+      "license": "MIT",
+      "properties": [
+        {
+          "name": "power",
+          "displayName": "电源",
+          "type": "boolean",
+          "readable": true,
+          "writable": true,
+          "description": "净化器开关"
+        },
+        {
+          "name": "fan_speed",
+          "displayName": "风速",
+          "type": "string",
+          "readable": true,
+          "writable": true,
+          "enum": ["auto", "sleep", "low", "medium", "high"],
+          "description": "风速档位"
+        },
+        {
+          "name": "pm25",
+          "displayName": "PM2.5",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "unit": "μg/m³",
+          "description": "PM2.5 浓度"
+        },
+        {
+          "name": "filter_life",
+          "displayName": "滤芯寿命",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "min": 0,
+          "max": 100,
+          "unit": "%",
+          "description": "滤芯剩余寿命"
+        },
+        {
+          "name": "child_lock",
+          "displayName": "童锁",
+          "type": "boolean",
+          "readable": true,
+          "writable": true,
+          "description": "童锁开关"
+        }
+      ],
+      "commands": [
+        {
+          "name": "power_on",
+          "displayName": "开机",
+          "description": "打开净化器"
+        },
+        {
+          "name": "power_off",
+          "displayName": "关机",
+          "description": "关闭净化器"
+        },
+        {
+          "name": "set_speed",
+          "displayName": "设置风速",
+          "parameters": [
+            {
+              "name": "speed",
+              "type": "string",
+              "required": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "smart-speaker",
+      "name": "智能音箱",
+      "version": "1.0.0",
+      "category": "speaker",
+      "protocol": "mqtt",
+      "manufacturer": "通用",
+      "description": "支持 MQTT 协议的智能音箱，可语音控制和播放",
+      "tags": ["智能家居", "音箱", "语音助手", "MQTT", "WiFi", "音频"],
+      "author": {
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
+      },
+      "icon": "🔊",
+      "downloads": 0,
+      "rating": 5.0,
+      "reviews": 0,
+      "license": "MIT",
+      "properties": [
+        {
+          "name": "power",
+          "displayName": "电源",
+          "type": "boolean",
+          "readable": true,
+          "writable": true,
+          "description": "音箱开关"
+        },
+        {
+          "name": "volume",
+          "displayName": "音量",
+          "type": "number",
+          "readable": true,
+          "writable": true,
+          "min": 0,
+          "max": 100,
+          "unit": "%",
+          "description": "音量大小"
+        },
+        {
+          "name": "playing",
+          "displayName": "播放状态",
+          "type": "boolean",
+          "readable": true,
+          "writable": true,
+          "description": "是否正在播放"
+        },
+        {
+          "name": "muted",
+          "displayName": "静音",
+          "type": "boolean",
+          "readable": true,
+          "writable": true,
+          "description": "是否静音"
+        },
+        {
+          "name": "current_track",
+          "displayName": "当前播放",
+          "type": "string",
+          "readable": true,
+          "writable": false,
+          "description": "当前播放的内容"
+        }
+      ],
+      "commands": [
+        {
+          "name": "play",
+          "displayName": "播放",
+          "description": "开始播放"
+        },
+        {
+          "name": "pause",
+          "displayName": "暂停",
+          "description": "暂停播放"
+        },
+        {
+          "name": "next",
+          "displayName": "下一首",
+          "description": "播放下一首"
+        },
+        {
+          "name": "previous",
+          "displayName": "上一首",
+          "description": "播放上一首"
+        },
+        {
+          "name": "set_volume",
+          "displayName": "设置音量",
+          "parameters": [
+            {
+              "name": "volume",
+              "type": "number",
+              "required": true
+            }
+          ]
+        },
+        {
+          "name": "speak",
+          "displayName": "语音播报",
+          "parameters": [
+            {
+              "name": "text",
+              "type": "string",
+              "required": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "smart-tv",
+      "name": "智能电视",
+      "version": "1.0.0",
+      "category": "tv",
+      "protocol": "mqtt",
+      "manufacturer": "通用",
+      "description": "支持 MQTT 协议的智能电视，可控制开关和频道",
+      "tags": ["智能家居", "电视", "视频", "MQTT", "WiFi"],
+      "author": {
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
+      },
+      "icon": "📺",
+      "downloads": 0,
+      "rating": 5.0,
+      "reviews": 0,
+      "license": "MIT",
+      "properties": [
+        {
+          "name": "power",
+          "displayName": "电源",
+          "type": "boolean",
+          "readable": true,
+          "writable": true,
+          "description": "电视开关"
+        },
+        {
+          "name": "source",
+          "displayName": "信号源",
+          "type": "string",
+          "readable": true,
+          "writable": true,
+          "enum": ["tv", "hdmi1", "hdmi2", "usb", "app"],
+          "description": "当前信号源"
+        },
+        {
+          "name": "volume",
+          "displayName": "音量",
+          "type": "number",
+          "readable": true,
+          "writable": true,
+          "min": 0,
+          "max": 100,
+          "unit": "%",
+          "description": "音量大小"
+        },
+        {
+          "name": "muted",
+          "displayName": "静音",
+          "type": "boolean",
+          "readable": true,
+          "writable": true,
+          "description": "是否静音"
+        },
+        {
+          "name": "channel",
+          "displayName": "频道",
+          "type": "number",
+          "readable": true,
+          "writable": true,
+          "description": "当前频道"
+        }
+      ],
+      "commands": [
+        {
+          "name": "power_on",
+          "displayName": "开机",
+          "description": "打开电视"
+        },
+        {
+          "name": "power_off",
+          "displayName": "关机",
+          "description": "关闭电视"
+        },
+        {
+          "name": "set_channel",
+          "displayName": "设置频道",
+          "parameters": [
+            {
+              "name": "channel",
+              "type": "number",
+              "required": true
+            }
+          ]
+        },
+        {
+          "name": "set_volume",
+          "displayName": "设置音量",
+          "parameters": [
+            {
+              "name": "volume",
+              "type": "number",
+              "required": true
+            }
+          ]
+        },
+        {
+          "name": "send_key",
+          "displayName": "发送按键",
+          "parameters": [
+            {
+              "name": "key",
+              "type": "string",
+              "required": true
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

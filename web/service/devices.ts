@@ -341,3 +341,118 @@ export const useResolveAlarm = () => {
     },
   })
 }
+
+// ==================== 设备历史数据 API ====================
+
+/** 设备历史数据类型 */
+export interface DeviceData {
+  id: string
+  device_id: string
+  property_name: string
+  property_value: string
+  property_type: string
+  unit?: string
+  quality: string
+  timestamp: string
+  created_at: string
+}
+
+/** 设备最新数据点 */
+export interface LatestDeviceData {
+  property_name: string
+  property_value: string
+  property_type: string
+  unit?: string
+  quality: string
+  timestamp: string
+}
+
+/** 历史数据查询参数 */
+export interface DeviceDataQuery {
+  property_name?: string
+  start_time?: string
+  end_time?: string
+  page?: number
+  page_size?: number
+}
+
+/**
+ * 获取设备历史数据
+ */
+export const useDeviceDataHistory = (deviceId: string, query: DeviceDataQuery) => {
+  return useQuery({
+    queryKey: ['device-data', deviceId, query],
+    queryFn: async () => {
+      const params = new URLSearchParams()
+      if (query.property_name) params.append('property_name', query.property_name)
+      if (query.start_time) params.append('start_time', query.start_time)
+      if (query.end_time) params.append('end_time', query.end_time)
+      if (query.page) params.append('page', String(query.page))
+      if (query.page_size) params.append('page_size', String(query.page_size))
+      
+      const response = await apiGet<{ code: number; result: DeviceData[] }>(
+        `/devices/${deviceId}/data?${params.toString()}`
+      )
+      return response.result || []
+    },
+    enabled: !!deviceId,
+  })
+}
+
+/**
+ * 获取设备最新数据
+ */
+export const useDeviceLatestData = (deviceId: string, propertyName?: string) => {
+  return useQuery({
+    queryKey: ['device-data-latest', deviceId, propertyName],
+    queryFn: async () => {
+      const params = propertyName ? `?property_name=${propertyName}` : ''
+      const response = await apiGet<{ code: number; result: LatestDeviceData[] }>(
+        `/devices/${deviceId}/data/latest${params}`
+      )
+      return response.result || []
+    },
+    enabled: !!deviceId,
+    refetchInterval: 30000, // 每 30 秒刷新
+  })
+}
+
+/**
+ * 上报设备数据
+ */
+export const useCreateDeviceData = () => {
+  const queryClient = useQueryClient()
+  
+  return useMutation({
+    mutationFn: async ({ deviceId, data }: { deviceId: string; data: Partial<DeviceData> }) => {
+      return apiPost<{ code: number; result: DeviceData }>(
+        `/devices/${deviceId}/data`,
+        data
+      )
+    },
+    onSuccess: (_, { deviceId }) => {
+      queryClient.invalidateQueries({ queryKey: ['device-data', deviceId] })
+      queryClient.invalidateQueries({ queryKey: ['device-data-latest', deviceId] })
+    },
+  })
+}
+
+/**
+ * 批量上报设备数据
+ */
+export const useBatchCreateDeviceData = () => {
+  const queryClient = useQueryClient()
+  
+  return useMutation({
+    mutationFn: async ({ deviceId, dataPoints }: { deviceId: string; dataPoints: any[] }) => {
+      return apiPost<{ code: number; result: DeviceData[] }>(
+        `/devices/${deviceId}/data/batch`,
+        { data_points: dataPoints }
+      )
+    },
+    onSuccess: (_, { deviceId }) => {
+      queryClient.invalidateQueries({ queryKey: ['device-data', deviceId] })
+      queryClient.invalidateQueries({ queryKey: ['device-data-latest', deviceId] })
+    },
+  })
+}

@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
+use crate::infrastructure::email::{Email, EmailSender};
 use crate::infrastructure::persistence::database::Database;
 
 /// 通知渠道类型
@@ -296,15 +297,32 @@ impl NotificationChannel {
             .and_then(|v| v.as_str())
             .unwrap_or("");
         
-        let from = config.get("from")
+        // 检查是否使用控制台模式（开发环境）
+        let provider = config.get("provider")
             .and_then(|v| v.as_str())
-            .unwrap_or("TinyIoT <noreply@tinyiot.com>");
-        
-        tracing::info!("Sending email via {} from {} to {}", smtp_host, from, req.recipient);
-        
-        // TODO: 实现实际的邮件发送
-        Ok(format!("Email sent to {} (from: {}, subject: {})", 
-            req.recipient, from, req.title.as_deref().unwrap_or("")))
+            .unwrap_or("smtp");
+
+        tracing::info!("Sending email via {} to {}: {}", provider, req.recipient, req.title.as_deref().unwrap_or(""));
+
+        // 创建邮件发送器
+        let sender = EmailSender::new(&self.config)
+            .map_err(|e| format!("Failed to create email sender: {}", e))?;
+
+        // 构建邮件
+        let email = Email::text(
+            &req.recipient,
+            req.title.as_deref().unwrap_or("TinyIoT Notification"),
+            &req.content,
+        );
+
+        // 发送邮件
+        let result = sender.send(&email);
+
+        if result.success {
+            Ok(format!("Email sent successfully. Message ID: {:?}", result.message_id))
+        } else {
+            Err(format!("Failed to send email: {}", result.message))
+        }
     }
 
     /// 发送 Webhook
@@ -320,18 +338,58 @@ impl NotificationChannel {
             .and_then(|v| v.as_str())
             .unwrap_or("POST");
         
+        let headers: Option<std::collections::HashMap<String, String>> = config.get("headers")
+            .and_then(|v| v.as_object())
+            .map(|obj| {
+                obj.iter()
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                    .collect()
+            });
+
         tracing::info!("Sending webhook {} {} to {}", method, url, req.recipient);
-        
+
         // 构建请求体
         let body = serde_json::json!({
             "msgtype": "text",
             "text": {
                 "content": format!("{}\n{}", req.title.as_deref().unwrap_or(""), req.content)
-            }
+            },
+            "recipient": req.recipient
         });
+
+        // 使用 reqwest 发送 HTTP 请求
+        let client = reqwest::Client::new();
         
-        // TODO: 实现实际的 HTTP 请求
-        Ok(format!("Webhook sent to {} via {} {}", url, method, body))
+        let mut request = match method.to_uppercase().as_str() {
+            "PUT" => client.put(url),
+            "DELETE" => client.delete(url),
+            _ => client.post(url),
+        };
+
+        // 添加自定义 headers
+        if let Some(h) = headers {
+            for (key, value) in h {
+                request = request.header(&key, &value);
+            }
+        }
+
+        request = request
+            .header("Content-Type", "application/json")
+            .json(&body);
+
+        match request.send().await {
+            Ok(response) => {
+                let status = response.status();
+                if status.is_success() {
+                    let body_text = response.text().await.unwrap_or_default();
+                    Ok(format!("Webhook sent successfully. Status: {}, Response: {}", status, body_text))
+                } else {
+                    let body_text = response.text().await.unwrap_or_default();
+                    Err(format!("Webhook failed. Status: {}, Response: {}", status, body_text))
+                }
+            }
+            Err(e) => Err(format!("Failed to send webhook: {}", e))
+        }
     }
 }
 

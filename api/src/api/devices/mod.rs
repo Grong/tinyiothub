@@ -5,6 +5,7 @@ pub mod monitoring;
 pub mod profile;
 pub mod properties;
 pub mod trace;
+pub mod data;
 
 use crate::shared::app_state::AppState;
 use axum::Router;
@@ -18,4 +19,5 @@ pub fn create_router() -> Router<AppState> {
         .merge(profile::create_router())
         .merge(trace::create_router())
         .merge(monitoring::create_router())
+        .merge(data::create_router())
 }

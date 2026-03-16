@@ -1,30 +1,26 @@
 {
   "version": "1.0.0",
-  "updated_at": "2025-01-29T10:00:00Z",
+  "updated_at": "2026-03-16T12:00:00Z",
   "templates": [
     {
-      "id": "modbus-rtu-sensor",
-      "name": "Modbus RTU 传感器模板",
-      "version": "1.2.0",
+      "id": "mqtt-sensor",
+      "name": "MQTT 传感器模板",
+      "version": "1.0.3",
       "category": "sensor",
-      "protocol": "modbus-rtu",
+      "protocol": "mqtt",
       "manufacturer": "通用",
-      "description": "通用 Modbus RTU 传感器设备模板，支持温度、湿度、压力等常见传感器",
-      "tags": ["modbus", "sensor", "rtu", "temperature", "humidity"],
+      "description": "基于 MQTT 协议的通用传感器模板，支持自定义主题和数据格式",
+      "tags": ["mqtt", "sensor", "iot", "wireless"],
       "author": {
-        "name": "TinyIoTHub Team",
-        "email": "support@tinyiothub.com"
+        "name": "IoT Team",
+        "email": "iot@tinyiothub.com"
       },
-      "icon": "https://cdn.tinyiothub.com/templates/modbus-sensor.png",
-      "downloads": 1523,
-      "rating": 4.8,
-      "reviews": 45,
+      "icon": "📡",
+      "downloads": 3421,
+      "rating": 4.7,
+      "reviews": 89,
       "license": "MIT",
-      "file_url": "https://raw.githubusercontent.com/tinyiothub/marketplace/main/templates/modbus-rtu-sensor.json",
-      "checksum": "sha256:test-modbus-template",
-      "size": 15360,
-      "created_at": "2024-01-15T10:00:00Z",
-      "updated_at": "2024-12-20T15:30:00Z"
+      "file_url": "https://raw.githubusercontent.com/tinyiothub/marketplace/main/templates/mqtt-sensor.json"
     },
     {
       "id": "onvif-camera",
@@ -39,16 +35,32 @@
         "name": "TinyIoTHub Team",
         "email": "support@tinyiothub.com"
       },
-      "icon": "https://cdn.tinyiothub.com/templates/onvif-camera.png",
+      "icon": "📹",
       "downloads": 892,
       "rating": 4.6,
       "reviews": 28,
       "license": "MIT",
-      "file_url": "https://raw.githubusercontent.com/tinyiothub/marketplace/main/templates/onvif-camera.json",
-      "checksum": "sha256:test-onvif-template",
-      "size": 12800,
-      "created_at": "2024-02-10T08:00:00Z",
-      "updated_at": "2025-01-10T14:20:00Z"
+      "file_url": "https://raw.githubusercontent.com/tinyiothub/marketplace/main/templates/onvif-camera.json"
+    },
+    {
+      "id": "modbus-rtu-sensor",
+      "name": "Modbus RTU 传感器模板",
+      "version": "1.2.0",
+      "category": "sensor",
+      "protocol": "modbus-rtu",
+      "manufacturer": "通用",
+      "description": "通用 Modbus RTU 传感器设备模板，支持温度、湿度、压力等常见传感器",
+      "tags": ["modbus", "sensor", "rtu", "temperature", "humidity"],
+      "author": {
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
+      },
+      "icon": "🌡️",
+      "downloads": 1523,
+      "rating": 4.8,
+      "reviews": 45,
+      "license": "MIT",
+      "file_url": "https://raw.githubusercontent.com/tinyiothub/marketplace/main/templates/modbus-rtu-sensor.json"
     },
     {
       "id": "plc-siemens-s7",
@@ -63,40 +75,278 @@
         "name": "Industrial Automation Team",
         "email": "industrial@tinyiothub.com"
       },
-      "icon": "https://cdn.tinyiothub.com/templates/siemens-plc.png",
+      "icon": "⚙️",
       "downloads": 2156,
       "rating": 4.9,
       "reviews": 67,
       "license": "MIT",
-      "file_url": "https://raw.githubusercontent.com/tinyiothub/marketplace/main/templates/plc-siemens-s7.json",
-      "checksum": "sha256:test-siemens-template",
-      "size": 18920,
-      "created_at": "2023-11-20T09:00:00Z",
-      "updated_at": "2024-11-15T16:45:00Z"
+      "file_url": "https://raw.githubusercontent.com/tinyiothub/marketplace/main/templates/plc-siemens-s7.json"
     },
     {
-      "id": "mqtt-sensor",
-      "name": "MQTT 传感器模板",
-      "version": "1.0.3",
+      "id": "smart-light",
+      "name": "智能灯泡",
+      "version": "1.0.0",
+      "category": "light",
+      "protocol": "mqtt",
+      "manufacturer": "通用",
+      "description": "支持 MQTT 协议的智能灯泡，可调节亮度和色温",
+      "tags": ["智能家居", "灯泡", "照明", "MQTT", "WiFi"],
+      "author": {
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
+      },
+      "icon": "💡",
+      "downloads": 0,
+      "rating": 5.0,
+      "reviews": 0,
+      "license": "MIT"
+    },
+    {
+      "id": "smart-plug",
+      "name": "智能插座",
+      "version": "1.0.0",
+      "category": "socket",
+      "protocol": "mqtt",
+      "manufacturer": "通用",
+      "description": "支持 MQTT 协议的智能插座，可远程控制和查看用电量",
+      "tags": ["智能家居", "插座", "用电量", "MQTT", "WiFi"],
+      "author": {
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
+      },
+      "icon": "🔌",
+      "downloads": 0,
+      "rating": 5.0,
+      "reviews": 0,
+      "license": "MIT"
+    },
+    {
+      "id": "smart-air-conditioner",
+      "name": "智能空调",
+      "version": "1.0.0",
+      "category": "hvac",
+      "protocol": "mqtt",
+      "manufacturer": "通用",
+      "description": "支持 MQTT 协议的智能空调，可控制开关、温度、模式等",
+      "tags": ["智能家居", "空调", "温度控制", "MQTT", "WiFi"],
+      "author": {
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
+      },
+      "icon": "❄️",
+      "downloads": 0,
+      "rating": 5.0,
+      "reviews": 0,
+      "license": "MIT"
+    },
+    {
+      "id": "smart-lock",
+      "name": "智能门锁",
+      "version": "1.0.0",
+      "category": "lock",
+      "protocol": "mqtt",
+      "manufacturer": "通用",
+      "description": "支持 MQTT 协议的智能门锁，可远程开锁和查看状态",
+      "tags": ["智能家居", "门锁", "安防", "MQTT", "WiFi"],
+      "author": {
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
+      },
+      "icon": "🔒",
+      "downloads": 0,
+      "rating": 5.0,
+      "reviews": 0,
+      "license": "MIT"
+    },
+    {
+      "id": "ip-camera",
+      "name": "网络摄像头",
+      "version": "1.0.0",
+      "category": "camera",
+      "protocol": "mqtt",
+      "manufacturer": "通用",
+      "description": "支持 MQTT 协议的网络摄像头，可查看实时视频和状态",
+      "tags": ["智能家居", "摄像头", "安防", "MQTT", "WiFi", "视频"],
+      "author": {
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
+      },
+      "icon": "📹",
+      "downloads": 0,
+      "rating": 5.0,
+      "reviews": 0,
+      "license": "MIT"
+    },
+    {
+      "id": "temp-humidity-sensor",
+      "name": "温湿度传感器",
+      "version": "1.0.0",
       "category": "sensor",
       "protocol": "mqtt",
       "manufacturer": "通用",
-      "description": "基于 MQTT 协议的通用传感器模板，支持自定义主题和数据格式",
-      "tags": ["mqtt", "sensor", "iot", "wireless"],
+      "description": "支持 MQTT 协议的温湿度传感器，实时上报环境数据",
+      "tags": ["智能家居", "传感器", "温湿度", "MQTT", "WiFi", "环境监测"],
       "author": {
-        "name": "IoT Team",
-        "email": "iot@tinyiothub.com"
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
       },
-      "icon": "https://cdn.tinyiothub.com/templates/mqtt-sensor.png",
-      "downloads": 3421,
-      "rating": 4.7,
-      "reviews": 89,
-      "license": "MIT",
-      "file_url": "https://raw.githubusercontent.com/tinyiothub/marketplace/main/templates/mqtt-sensor.json",
-      "checksum": "sha256:test-mqtt-template",
-      "size": 10240,
-      "created_at": "2024-03-05T11:00:00Z",
-      "updated_at": "2024-12-28T10:15:00Z"
+      "icon": "🌡️",
+      "downloads": 0,
+      "rating": 5.0,
+      "reviews": 0,
+      "license": "MIT"
+    },
+    {
+      "id": "smart-curtain",
+      "name": "智能窗帘",
+      "version": "1.0.0",
+      "category": "curtain",
+      "protocol": "mqtt",
+      "manufacturer": "通用",
+      "description": "支持 MQTT 协议的智能窗帘，可控制开合程度",
+      "tags": ["智能家居", "窗帘", "遮阳", "MQTT", "WiFi"],
+      "author": {
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
+      },
+      "icon": "🪟",
+      "downloads": 0,
+      "rating": 5.0,
+      "reviews": 0,
+      "license": "MIT"
+    },
+    {
+      "id": "air-purifier",
+      "name": "空气净化器",
+      "version": "1.0.0",
+      "category": "hvac",
+      "protocol": "mqtt",
+      "manufacturer": "通用",
+      "description": "支持 MQTT 协议的空气净化器，可控制开关和风速",
+      "tags": ["智能家居", "空气净化", "PM2.5", "MQTT", "WiFi"],
+      "author": {
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
+      },
+      "icon": "🌀",
+      "downloads": 0,
+      "rating": 5.0,
+      "reviews": 0,
+      "license": "MIT"
+    },
+    {
+      "id": "smart-speaker",
+      "name": "智能音箱",
+      "version": "1.0.0",
+      "category": "speaker",
+      "protocol": "mqtt",
+      "manufacturer": "通用",
+      "description": "支持 MQTT 协议的智能音箱，可语音控制和播放",
+      "tags": ["智能家居", "音箱", "语音助手", "MQTT", "WiFi", "音频"],
+      "author": {
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
+      },
+      "icon": "🔊",
+      "downloads": 0,
+      "rating": 5.0,
+      "reviews": 0,
+      "license": "MIT"
+    },
+    {
+      "id": "smart-tv",
+      "name": "智能电视",
+      "version": "1.0.0",
+      "category": "tv",
+      "protocol": "mqtt",
+      "manufacturer": "通用",
+      "description": "支持 MQTT 协议的智能电视，可控制开关和频道",
+      "tags": ["智能家居", "电视", "视频", "MQTT", "WiFi"],
+      "author": {
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
+      },
+      "icon": "📺",
+      "downloads": 0,
+      "rating": 5.0,
+      "reviews": 0,
+      "license": "MIT"
+    },
+    {
+      "id": "modbus-temp-sensor",
+      "name": "Modbus 温度传感器",
+      "version": "1.0.0",
+      "category": "sensor",
+      "protocol": "modbus-tcp",
+      "manufacturer": "通用",
+      "description": "支持 Modbus TCP 协议的工业温度传感器",
+      "tags": ["工业", "传感器", "温度", "Modbus", "TCP"],
+      "author": {
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
+      },
+      "icon": "🌡️",
+      "downloads": 0,
+      "rating": 5.0,
+      "reviews": 0,
+      "license": "MIT"
+    },
+    {
+      "id": "modbus-power-meter",
+      "name": "Modbus 电能表",
+      "version": "1.0.0",
+      "category": "meter",
+      "protocol": "modbus-tcp",
+      "manufacturer": "通用",
+      "description": "支持 Modbus TCP 协议的多功能电能表，监测电压、电流、功率等",
+      "tags": ["工业", "电能表", "功率", "Modbus", "TCP", "用电监测"],
+      "author": {
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
+      },
+      "icon": "⚡",
+      "downloads": 0,
+      "rating": 5.0,
+      "reviews": 0,
+      "license": "MIT"
+    },
+    {
+      "id": "snmp-ups",
+      "name": "SNMP UPS 监控",
+      "version": "1.0.0",
+      "category": "power",
+      "protocol": "snmp",
+      "manufacturer": "通用",
+      "description": "支持 SNMP 协议的 UPS 不间断电源监控",
+      "tags": ["工业", "UPS", "电源", "SNMP", "监控", "告警"],
+      "author": {
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
+      },
+      "icon": "🔋",
+      "downloads": 0,
+      "rating": 5.0,
+      "reviews": 0,
+      "license": "MIT"
+    },
+    {
+      "id": "snmp-switch",
+      "name": "SNMP 网络交换机",
+      "version": "1.0.0",
+      "category": "network",
+      "protocol": "snmp",
+      "manufacturer": "通用",
+      "description": "支持 SNMP 协议的网络交换机端口监控",
+      "tags": ["工业", "网络", "交换机", "SNMP", "端口监控"],
+      "author": {
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
+      },
+      "icon": "🔃",
+      "downloads": 0,
+      "rating": 5.0,
+      "reviews": 0,
+      "license": "MIT"
     }
   ]
 }

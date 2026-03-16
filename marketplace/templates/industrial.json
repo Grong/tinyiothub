@@ -1,0 +1,388 @@
+{
+  "version": "1.0.0",
+  "updated_at": "2026-03-16T12:00:00Z",
+  "templates": [
+    {
+      "id": "modbus-temp-sensor",
+      "name": "Modbus 温度传感器",
+      "version": "1.0.0",
+      "category": "sensor",
+      "protocol": "modbus-tcp",
+      "manufacturer": "通用",
+      "description": "支持 Modbus TCP 协议的工业温度传感器",
+      "tags": ["工业", "传感器", "温度", "Modbus", "TCP"],
+      "author": {
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
+      },
+      "icon": "🌡️",
+      "downloads": 0,
+      "rating": 5.0,
+      "reviews": 0,
+      "license": "MIT",
+      "properties": [
+        {
+          "name": "temperature",
+          "displayName": "温度",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "unit": "℃",
+          "address": "40001",
+          "description": "当前温度值"
+        },
+        {
+          "name": "alarm_high",
+          "displayName": "高温告警阈值",
+          "type": "number",
+          "readable": true,
+          "writable": true,
+          "unit": "℃",
+          "address": "40002",
+          "description": "高温告警阈值"
+        },
+        {
+          "name": "alarm_low",
+          "displayName": "低温告警阈值",
+          "type": "number",
+          "readable": true,
+          "writable": true,
+          "unit": "℃",
+          "address": "40003",
+          "description": "低温告警阈值"
+        },
+        {
+          "name": "status",
+          "displayName": "状态",
+          "type": "string",
+          "readable": true,
+          "writable": false,
+          "enum": ["normal", "alarm_high", "alarm_low", "offline"],
+          "description": "传感器状态"
+        }
+      ],
+      "modbus_config": {
+        "host": "192.168.1.100",
+        "port": 502,
+        "slave_id": 1,
+        "function_code": 3,
+        "registers": {
+          "temperature": 40001,
+          "alarm_high": 40002,
+          "alarm_low": 40003,
+          "status": 40004
+        }
+      }
+    },
+    {
+      "id": "modbus-power-meter",
+      "name": "Modbus 电能表",
+      "version": "1.0.0",
+      "category": "meter",
+      "protocol": "modbus-tcp",
+      "manufacturer": "通用",
+      "description": "支持 Modbus TCP 协议的多功能电能表，监测电压、电流、功率等",
+      "tags": ["工业", "电能表", "功率", "Modbus", "TCP", "用电监测"],
+      "author": {
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
+      },
+      "icon": "⚡",
+      "downloads": 0,
+      "rating": 5.0,
+      "reviews": 0,
+      "license": "MIT",
+      "properties": [
+        {
+          "name": "voltage_a",
+          "displayName": "A相电压",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "unit": "V",
+          "address": "40001",
+          "description": "A相电压"
+        },
+        {
+          "name": "voltage_b",
+          "displayName": "B相电压",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "unit": "V",
+          "address": "40003",
+          "description": "B相电压"
+        },
+        {
+          "name": "voltage_c",
+          "displayName": "C相电压",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "unit": "V",
+          "address": "40005",
+          "description": "C相电压"
+        },
+        {
+          "name": "current_a",
+          "displayName": "A相电流",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "unit": "A",
+          "address": "40007",
+          "description": "A相电流"
+        },
+        {
+          "name": "power_active",
+          "displayName": "有功功率",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "unit": "kW",
+          "address": "40013",
+          "description": "总有功功率"
+        },
+        {
+          "name": "power_reactive",
+          "displayName": "无功功率",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "unit": "kVar",
+          "address": "40015",
+          "description": "总无功功率"
+        },
+        {
+          "name": "energy_active",
+          "displayName": "有功电能",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "unit": "kWh",
+          "address": "40025",
+          "description": "累计有功电能"
+        },
+        {
+          "name": "frequency",
+          "displayName": "频率",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "unit": "Hz",
+          "address": "40031",
+          "description": "电网频率"
+        },
+        {
+          "name": "power_factor",
+          "displayName": "功率因数",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "address": "40033",
+          "description": "总功率因数"
+        }
+      ],
+      "commands": [
+        {
+          "name": "reset_energy",
+          "displayName": "电能清零",
+          "description": "清除累计电能"
+        }
+      ],
+      "modbus_config": {
+        "host": "192.168.1.100",
+        "port": 502,
+        "slave_id": 1,
+        "function_code": 3
+      }
+    },
+    {
+      "id": "snmp-ups",
+      "name": "SNMP UPS 监控",
+      "version": "1.0.0",
+      "category": "power",
+      "protocol": "snmp",
+      "manufacturer": "通用",
+      "description": "支持 SNMP 协议的 UPS 不间断电源监控",
+      "tags": ["工业", "UPS", "电源", "SNMP", "监控", "告警"],
+      "author": {
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
+      },
+      "icon": "🔋",
+      "downloads": 0,
+      "rating": 5.0,
+      "reviews": 0,
+      "license": "MIT",
+      "properties": [
+        {
+          "name": "input_voltage",
+          "displayName": "输入电压",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "unit": "V",
+          "oid": "1.3.6.1.2.1.33.1.3.3.1.3.1",
+          "description": "UPS 输入电压"
+        },
+        {
+          "name": "output_voltage",
+          "displayName": "输出电压",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "unit": "V",
+          "oid": "1.3.6.1.2.1.33.1.4.4.1.2.1",
+          "description": "UPS 输出电压"
+        },
+        {
+          "name": "load_percent",
+          "displayName": "负载百分比",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "unit": "%",
+          "oid": "1.3.6.1.2.1.33.1.4.4.1.5.1",
+          "description": "UPS 负载百分比"
+        },
+        {
+          "name": "battery_charge",
+          "displayName": "电池电量",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "unit": "%",
+          "oid": "1.3.6.1.2.1.33.1.2.1.1.0",
+          "description": "电池剩余电量"
+        },
+        {
+          "name": "battery_voltage",
+          "displayName": "电池电压",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "unit": "V",
+          "oid": "1.3.6.1.2.1.33.1.2.7.1.0",
+          "description": "电池组电压"
+        },
+        {
+          "name": "runtime_remaining",
+          "displayName": "剩余运行时间",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "unit": "min",
+          "oid": "1.3.6.1.2.1.33.1.2.3.1.0",
+          "description": "电池剩余运行时间"
+        },
+        {
+          "name": "status",
+          "displayName": "UPS 状态",
+          "type": "string",
+          "readable": true,
+          "writable": false,
+          "oid": "1.3.6.1.2.1.33.1.2.2.1.0",
+          "enum": ["unknown", "normal", "onBattery", "lowBattery", "failed", "batteryDegraded"],
+          "description": "UPS 运行状态"
+        },
+        {
+          "name": "alarm",
+          "displayName": "告警",
+          "type": "boolean",
+          "readable": true,
+          "writable": false,
+          "description": "是否有告警"
+        }
+      ]
+    },
+    {
+      "id": "snmp-switch",
+      "name": "SNMP 网络交换机",
+      "version": "1.0.0",
+      "category": "network",
+      "protocol": "snmp",
+      "manufacturer": "通用",
+      "description": "支持 SNMP 协议的网络交换机端口监控",
+      "tags": ["工业", "网络", "交换机", "SNMP", "端口监控"],
+      "author": {
+        "name": "TinyIoTHub Team",
+        "email": "support@tinyiothub.com"
+      },
+      "icon": "🔃",
+      "downloads": 0,
+      "rating": 5.0,
+      "reviews": 0,
+      "license": "MIT",
+      "properties": [
+        {
+          "name": "sys_uptime",
+          "displayName": "运行时间",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "unit": "秒",
+          "oid": "1.3.6.1.2.1.1.3.0",
+          "description": "设备运行时间"
+        },
+        {
+          "name": "sys_contact",
+          "displayName": "联系人",
+          "type": "string",
+          "readable": true,
+          "writable": true,
+          "oid": "1.3.6.1.2.1.1.4.0",
+          "description": "系统联系人"
+        },
+        {
+          "name": "port_1_status",
+          "displayName": "端口1状态",
+          "type": "string",
+          "readable": true,
+          "writable": false,
+          "enum": ["up", "down", "testing"],
+          "oid": "1.3.6.1.2.1.2.2.1.8.1",
+          "description": "端口1状态"
+        },
+        {
+          "name": "port_1_in_octets",
+          "displayName": "端口1入流量",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "unit": "字节",
+          "oid": "1.3.6.1.2.1.2.2.1.10.1",
+          "description": "端口1输入总字节数"
+        },
+        {
+          "name": "port_1_out_octets",
+          "displayName": "端口1出流量",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "unit": "字节",
+          "oid": "1.3.6.1.2.1.2.2.1.16.1",
+          "description": "端口1输出总字节数"
+        },
+        {
+          "name": "cpu_usage",
+          "displayName": "CPU 使用率",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "unit": "%",
+          "description": "CPU 使用率"
+        },
+        {
+          "name": "memory_usage",
+          "displayName": "内存使用率",
+          "type": "number",
+          "readable": true,
+          "writable": false,
+          "unit": "%",
+          "description": "内存使用率"
+        }
+      ]
+    }
+  ]
+}

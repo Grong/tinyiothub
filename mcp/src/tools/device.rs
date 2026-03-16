@@ -148,3 +148,66 @@ pub fn send_command() -> ToolMeta {
         }),
     }
 }
+
+/// get_device_history - 获取设备历史数据
+pub fn get_device_history() -> ToolMeta {
+    ToolMeta {
+        name: "get_device_history".to_string(),
+        description: "获取设备的时序历史数据，用于分析设备状态变化趋势".to_string(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "device_id": {
+                    "type": "string",
+                    "description": "设备唯一标识"
+                },
+                "property_name": {
+                    "type": "string",
+                    "description": "属性名称（可选，不填则返回所有属性）"
+                },
+                "start_time": {
+                    "type": "string",
+                    "description": "开始时间（ISO 8601格式，如 2024-01-01T00:00:00Z）"
+                },
+                "end_time": {
+                    "type": "string",
+                    "description": "结束时间（ISO 8601格式，如 2024-01-02T00:00:00Z）"
+                },
+                "page": {
+                    "type": "integer",
+                    "description": "页码",
+                    "default": 1
+                },
+                "page_size": {
+                    "type": "integer",
+                    "description": "每页数量",
+                    "default": 100,
+                    "maximum": 1000
+                }
+            },
+            "required": ["device_id"]
+        }),
+    }
+}
+
+/// get_device_latest - 获取设备最新数据
+pub fn get_device_latest() -> ToolMeta {
+    ToolMeta {
+        name: "get_device_latest".to_string(),
+        description: "获取设备的最新数据点，了解设备的当前状态".to_string(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "device_id": {
+                    "type": "string",
+                    "description": "设备唯一标识"
+                },
+                "property_name": {
+                    "type": "string",
+                    "description": "属性名称（可选，不填则返回所有属性的最新值）"
+                }
+            },
+            "required": ["device_id"]
+        }),
+    }
+}
