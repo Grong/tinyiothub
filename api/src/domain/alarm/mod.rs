@@ -5,6 +5,9 @@
 /// - 报警记录管理
 /// - 报警状态跟踪
 /// - 报警通知触发
+#[cfg(test)]
+mod tests;
+
 pub mod entity;
 pub mod errors;
 pub mod handlers;
