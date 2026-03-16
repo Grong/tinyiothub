@@ -621,3 +621,432 @@ impl Default for TemplateValidator {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dto::entity::device_template::{DeviceCreationInput, DeviceTemplate};
+    use std::collections::HashMap;
+
+    fn create_valid_template() -> DeviceTemplate {
+        DeviceTemplate {
+            id: "tmpl-001".to_string(),
+            name: "temperature-sensor".to_string(),
+            version: "1.0.0".to_string(),
+            category: "Sensors".to_string(),
+            device_type: "sensor".to_string(),
+            manufacturer: Some("Acme Inc".to_string()),
+            display_name: r#"{"zh": "温度传感器", "en": "Temperature Sensor"}"#.to_string(),
+            description: Some(r#"{"zh": "高精度温度传感器", "en": "High precision temperature sensor"}"#.to_string()),
+            tags: r#"["temperature", "sensor", "modbus"]"#.to_string(),
+            driver_name: Some("modbus_rtu".to_string()),
+            protocol_type: Some("modbus".to_string()),
+            device_info: r#"{
+                "default_name_pattern": "{name}",
+                "default_display_name_pattern": "{name}",
+                "required_fields": [],
+                "default_position": ""
+            }"#.to_string(),
+            properties: r#"[
+                {
+                    "name": "temperature",
+                    "display_name": {"zh": "温度", "en": "Temperature"},
+                    "data_type": "number",
+                    "unit": "℃",
+                    "min_value": -40.0,
+                    "max_value": 85.0,
+                    "default_value": "25.0",
+                    "is_read_only": false,
+                    "is_required": true,
+                    "validation_rules": null,
+                    "description": null
+                }
+            ]"#.to_string(),
+            commands: r#"[
+                {
+                    "name": "calibrate",
+                    "display_name": {"zh": "校准", "en": "Calibrate"},
+                    "parameters": "[]",
+                    "is_required": false,
+                    "description": null,
+                    "parameter_schema": null
+                }
+            ]"#.to_string(),
+            is_builtin: 0,
+            is_active: 1,
+            author: Some("System".to_string()),
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            updated_at: "2024-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_validate_valid_template() {
+        let validator = TemplateValidator::new();
+        let template = create_valid_template();
+        let result = validator.validate_template(&template);
+        assert!(!result.has_errors(), "Valid template should have no errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn test_validate_empty_name() {
+        let mut template = create_valid_template();
+        template.name = "".to_string();
+        
+        let validator = TemplateValidator::new();
+        let result = validator.validate_template(&template);
+        assert!(result.has_errors());
+    }
+
+    #[test]
+    fn test_validate_empty_category() {
+        let mut template = create_valid_template();
+        template.category = "".to_string();
+        
+        let validator = TemplateValidator::new();
+        let result = validator.validate_template(&template);
+        assert!(result.has_errors());
+    }
+
+    #[test]
+    fn test_validate_invalid_version_format() {
+        let mut template = create_valid_template();
+        template.version = "invalid".to_string();
+        
+        let validator = TemplateValidator::new();
+        let result = validator.validate_template(&template);
+        // Should have a warning but not error
+        assert!(result.warnings.len() > 0);
+    }
+
+    #[test]
+    fn test_validate_property_templates() {
+        let validator = TemplateValidator::new();
+        let properties_json = r#"[
+            {
+                "name": "temperature",
+                "display_name": {"zh": "温度"},
+                "data_type": "number",
+                "is_read_only": false,
+                "is_required": true
+            }
+        ]"#;
+        let properties: Vec<PropertyTemplate> = serde_json::from_str(properties_json).unwrap();
+        
+        let result = validator.validate_property_templates(&properties);
+        assert!(!result.has_errors());
+    }
+
+    #[test]
+    fn test_validate_property_empty_name() {
+        let validator = TemplateValidator::new();
+        let properties_json = r#"[
+            {
+                "name": "",
+                "display_name": {"zh": "温度"},
+                "data_type": "number",
+                "is_read_only": false,
+                "is_required": false
+            }
+        ]"#;
+        let properties: Vec<PropertyTemplate> = serde_json::from_str(properties_json).unwrap();
+        
+        let result = validator.validate_property_templates(&properties);
+        assert!(result.has_errors());
+    }
+
+    #[test]
+    fn test_validate_property_invalid_data_type() {
+        let validator = TemplateValidator::new();
+        let properties_json = r#"[
+            {
+                "name": "test",
+                "display_name": {"zh": "测试"},
+                "data_type": "invalid_type",
+                "is_read_only": false,
+                "is_required": false
+            }
+        ]"#;
+        let properties: Vec<PropertyTemplate> = serde_json::from_str(properties_json).unwrap();
+        
+        let result = validator.validate_property_templates(&properties);
+        assert!(result.has_errors());
+    }
+
+    #[test]
+    fn test_validate_property_invalid_range() {
+        let validator = TemplateValidator::new();
+        let properties_json = r#"[
+            {
+                "name": "test",
+                "display_name": {"zh": "测试"},
+                "data_type": "number",
+                "min_value": 100.0,
+                "max_value": 50.0,
+                "is_read_only": false,
+                "is_required": false
+            }
+        ]"#;
+        let properties: Vec<PropertyTemplate> = serde_json::from_str(properties_json).unwrap();
+        
+        let result = validator.validate_property_templates(&properties);
+        assert!(result.has_errors());
+    }
+
+    #[test]
+    fn test_validate_command_templates() {
+        let validator = TemplateValidator::new();
+        let commands_json = r#"[
+            {
+                "name": "reset",
+                "display_name": {"zh": "重置"},
+                "parameters": "[]",
+                "is_required": false
+            }
+        ]"#;
+        let commands: Vec<CommandTemplate> = serde_json::from_str(commands_json).unwrap();
+        
+        let result = validator.validate_command_templates(&commands);
+        assert!(!result.has_errors());
+    }
+
+    #[test]
+    fn test_validate_command_invalid_parameters_json() {
+        let validator = TemplateValidator::new();
+        let commands_json = r#"[
+            {
+                "name": "reset",
+                "display_name": {"zh": "重置"},
+                "parameters": "invalid json",
+                "is_required": false
+            }
+        ]"#;
+        let commands: Vec<CommandTemplate> = serde_json::from_str(commands_json).unwrap();
+        
+        let result = validator.validate_command_templates(&commands);
+        assert!(result.has_errors());
+    }
+
+    #[test]
+    fn test_validate_user_input_valid() {
+        let validator = TemplateValidator::new();
+        let template = create_valid_template();
+        
+        let input = DeviceCreationInput {
+            name: "My Device".to_string(),
+            display_name: Some("我的设备".to_string()),
+            address: Some("192.168.1.100".to_string()),
+            description: None,
+            position: None,
+            driver_name: None,
+            driver_options: None,
+            parent_id: None,
+            product_id: None,
+            organization_id: None,
+            property_values: HashMap::new(),
+            enabled_commands: vec![],
+        };
+        
+        let result = validator.validate_user_input(&template, &input);
+        assert!(!result.has_errors());
+    }
+
+    #[test]
+    fn test_validate_user_input_empty_name() {
+        let validator = TemplateValidator::new();
+        let template = create_valid_template();
+        
+        let input = DeviceCreationInput {
+            name: "".to_string(),
+            display_name: None,
+            address: None,
+            description: None,
+            position: None,
+            driver_name: None,
+            driver_options: None,
+            parent_id: None,
+            product_id: None,
+            organization_id: None,
+            property_values: HashMap::new(),
+            enabled_commands: vec![],
+        };
+        
+        let result = validator.validate_user_input(&template, &input);
+        assert!(result.has_errors());
+    }
+
+    #[test]
+    fn test_validate_user_input_name_too_long() {
+        let validator = TemplateValidator::new();
+        let template = create_valid_template();
+        
+        let input = DeviceCreationInput {
+            name: "a".repeat(101),
+            display_name: None,
+            address: None,
+            description: None,
+            position: None,
+            driver_name: None,
+            driver_options: None,
+            parent_id: None,
+            product_id: None,
+            organization_id: None,
+            property_values: HashMap::new(),
+            enabled_commands: vec![],
+        };
+        
+        let result = validator.validate_user_input(&template, &input);
+        assert!(result.has_errors());
+    }
+
+    #[test]
+    fn test_validate_user_input_property_type_mismatch() {
+        let validator = TemplateValidator::new();
+        let template = create_valid_template();
+        
+        let mut property_values = HashMap::new();
+        property_values.insert("temperature".to_string(), "not_a_number".to_string());
+        
+        let input = DeviceCreationInput {
+            name: "My Device".to_string(),
+            display_name: None,
+            address: None,
+            description: None,
+            position: None,
+            driver_name: None,
+            driver_options: None,
+            parent_id: None,
+            product_id: None,
+            organization_id: None,
+            property_values,
+            enabled_commands: vec![],
+        };
+        
+        let result = validator.validate_user_input(&template, &input);
+        assert!(result.has_errors());
+    }
+
+    #[test]
+    fn test_validate_user_input_property_out_of_range() {
+        let validator = TemplateValidator::new();
+        let template = create_valid_template();
+        
+        let mut property_values = HashMap::new();
+        property_values.insert("temperature".to_string(), "100.0".to_string()); // max is 85
+        
+        let input = DeviceCreationInput {
+            name: "My Device".to_string(),
+            display_name: None,
+            address: None,
+            description: None,
+            position: None,
+            driver_name: None,
+            driver_options: None,
+            parent_id: None,
+            product_id: None,
+            organization_id: None,
+            property_values,
+            enabled_commands: vec![],
+        };
+        
+        let result = validator.validate_user_input(&template, &input);
+        assert!(result.has_errors());
+    }
+
+    #[test]
+    fn test_is_valid_data_type() {
+        let validator = TemplateValidator::new();
+        
+        assert!(validator.is_valid_data_type("string"));
+        assert!(validator.is_valid_data_type("number"));
+        assert!(validator.is_valid_data_type("boolean"));
+        assert!(validator.is_valid_data_type("integer"));
+        assert!(validator.is_valid_data_type("float"));
+        assert!(validator.is_valid_data_type("array"));
+        assert!(validator.is_valid_data_type("object"));
+        assert!(!validator.is_valid_data_type("invalid"));
+    }
+
+    #[test]
+    fn test_validate_value_type() {
+        let validator = TemplateValidator::new();
+        
+        assert!(validator.validate_value_type("hello", "string"));
+        assert!(validator.validate_value_type("123.45", "number"));
+        assert!(validator.validate_value_type("123", "integer"));
+        assert!(validator.validate_value_type("true", "boolean"));
+        assert!(validator.validate_value_type("false", "boolean"));
+        assert!(validator.validate_value_type("1", "boolean"));
+        
+        assert!(!validator.validate_value_type("abc", "number"));
+        assert!(!validator.validate_value_type("notbool", "boolean"));
+    }
+
+    #[test]
+    fn test_is_valid_version() {
+        let validator = TemplateValidator::new();
+        
+        assert!(validator.is_valid_version("1.0.0"));
+        assert!(validator.is_valid_version("1.2.3"));
+        assert!(validator.is_valid_version("0.0.1"));
+        
+        assert!(!validator.is_valid_version("1.0"));
+        assert!(!validator.is_valid_version("1"));
+        assert!(!validator.is_valid_version("invalid"));
+        assert!(!validator.is_valid_version("1.0.0.0"));
+    }
+
+    #[test]
+    fn test_is_valid_name() {
+        let validator = TemplateValidator::new();
+        
+        assert!(validator.is_valid_name("temperature_sensor"));
+        assert!(validator.is_valid_name("modbus-rtu"));
+        assert!(validator.is_valid_name("Device123"));
+        
+        assert!(!validator.is_valid_name("invalid name"));
+        assert!(!validator.is_valid_name("invalid/name"));
+    }
+
+    #[test]
+    fn test_validate_field_name() {
+        let validator = TemplateValidator::new();
+        let template = create_valid_template();
+        
+        let result = validator.validate_field(&template, "name", "valid_name");
+        assert!(!result.has_errors());
+        
+        let result = validator.validate_field(&template, "name", "");
+        assert!(result.has_errors());
+        
+        let long_name = "a".repeat(101);
+        let result = validator.validate_field(&template, "name", &long_name);
+        assert!(result.has_errors());
+    }
+
+    #[test]
+    fn test_validate_duplicate_property_names() {
+        let mut template = create_valid_template();
+        template.properties = r#"[
+            {"name": "temp", "display_name": {"zh": "温度"}, "data_type": "number"},
+            {"name": "temp", "display_name": {"zh": "温度2"}, "data_type": "number"}
+        ]"#.to_string();
+        
+        let validator = TemplateValidator::new();
+        let result = validator.validate_template(&template);
+        assert!(result.has_errors());
+    }
+
+    #[test]
+    fn test_validate_duplicate_command_names() {
+        let mut template = create_valid_template();
+        template.commands = r#"[
+            {"name": "reset", "display_name": {"zh": "重置"}, "parameters": "[]"},
+            {"name": "reset", "display_name": {"zh": "重置2"}, "parameters": "[]"}
+        ]"#.to_string();
+        
+        let validator = TemplateValidator::new();
+        let result = validator.validate_template(&template);
+        assert!(result.has_errors());
+    }
+}
