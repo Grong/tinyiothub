@@ -39,3 +39,5 @@ logs/*.log
 license
 
 api/wwwroot
+
+mcp/target
