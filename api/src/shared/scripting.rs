@@ -8,3 +8,14 @@ pub fn hardware_init() -> Result<(), Error> {
     tracing::info!("Hardware abstraction layer initialized (vc0882 support removed)");
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hardware_init_returns_ok() {
+        let result = hardware_init();
+        assert!(result.is_ok());
+    }
+}
