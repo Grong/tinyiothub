@@ -77,6 +77,17 @@ mod tests {
         assert_eq!(escape_sql_string("test"), "test");
         assert_eq!(escape_sql_string("it's"), "it''s");
         assert_eq!(escape_sql_string("test'value"), "test''value");
+        assert_eq!(escape_sql_string("O'Brien"), "O''Brien");
+        assert_eq!(escape_sql_string(""), "");
+    }
+
+    #[test]
+    fn test_escape_like_pattern() {
+        assert_eq!(escape_like_pattern("test"), "test");
+        assert_eq!(escape_like_pattern("test%"), "test\\%");
+        assert_eq!(escape_like_pattern("test_"), "test\\_");
+        assert_eq!(escape_like_pattern("100%"), "100\\%");
+        assert_eq!(escape_like_pattern("a_b"), "a\\_b");
     }
 
     #[test]
@@ -87,5 +98,65 @@ mod tests {
         assert!(!is_safe_identifier(""));
         assert!(!is_safe_identifier("user;drop table"));
         assert!(!is_safe_identifier("user name"));
+        assert!(!is_safe_identifier("user-name"));
+        let long_name = "a".repeat(65);
+        assert!(!is_safe_identifier(&long_name)); // too long
+    }
+
+    #[test]
+    fn test_build_where_clause() {
+        let (clause, values) = build_where_clause(vec![
+            ("name", Some("test".to_string())),
+            ("status", Some("active".to_string())),
+        ]);
+        assert_eq!(clause, "WHERE name = ? AND status = ?");
+        assert_eq!(values, vec!["test", "active"]);
+    }
+
+    #[test]
+    fn test_build_where_clause_empty() {
+        let (clause, values) = build_where_clause(vec![]);
+        assert_eq!(clause, "");
+        assert!(values.is_empty());
+    }
+
+    #[test]
+    fn test_build_where_clause_skips_empty() {
+        let (clause, values) = build_where_clause(vec![
+            ("name", Some("test".to_string())),
+            ("status", None),
+            ("type", Some("".to_string())),
+        ]);
+        assert_eq!(clause, "WHERE name = ?");
+        assert_eq!(values, vec!["test"]);
+    }
+
+    #[test]
+    fn test_build_pagination_default() {
+        let (limit, page, size) = build_pagination(None, None);
+        assert_eq!(limit, "LIMIT 20 OFFSET 0");
+        assert_eq!(page, 1);
+        assert_eq!(size, 20);
+    }
+
+    #[test]
+    fn test_build_pagination_custom() {
+        let (limit, page, size) = build_pagination(Some(3), Some(50));
+        assert_eq!(limit, "LIMIT 50 OFFSET 100");
+        assert_eq!(page, 3);
+        assert_eq!(size, 50);
+    }
+
+    #[test]
+    fn test_build_pagination_min_max() {
+        // page 0 becomes 1
+        let (limit, page, size) = build_pagination(Some(0), Some(10));
+        assert_eq!(limit, "LIMIT 10 OFFSET 0");
+        assert_eq!(page, 1);
+        assert_eq!(size, 10);
+
+        // page_size > 100 capped to 100
+        let (limit, _, _) = build_pagination(Some(1), Some(200));
+        assert_eq!(limit, "LIMIT 100 OFFSET 0");
     }
 }

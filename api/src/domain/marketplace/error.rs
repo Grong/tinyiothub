@@ -37,3 +37,42 @@ pub enum MarketplaceError {
 }
 
 pub type Result<T> = std::result::Result<T, MarketplaceError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_marketplace_error_display() {
+        let err = MarketplaceError::NotFound("template-001".to_string());
+        assert_eq!(format!("{}", err), "Resource not found: template-001");
+
+        let err = MarketplaceError::InvalidChecksum {
+            expected: "abc123".to_string(),
+            actual: "def456".to_string(),
+        };
+        assert_eq!(
+            format!("{}", err),
+            "Invalid checksum: expected abc123, got def456"
+        );
+
+        let err = MarketplaceError::PlatformNotSupported("windows".to_string());
+        assert_eq!(format!("{}", err), "Platform not supported: windows");
+
+        let err = MarketplaceError::Disabled;
+        assert_eq!(format!("{}", err), "Marketplace is disabled");
+
+        let err = MarketplaceError::InvalidConfig("Missing API key".to_string());
+        assert_eq!(format!("{}", err), "Invalid configuration: Missing API key");
+
+        let err = MarketplaceError::InstallationFailed("File not found".to_string());
+        assert_eq!(format!("{}", err), "Installation failed: File not found");
+    }
+
+    #[test]
+    fn test_marketplace_error_source() {
+        // Test that errors from thiserror work correctly
+        let err = MarketplaceError::NotFound("test".to_string());
+        assert!(err.to_string().contains("test"));
+    }
+}
