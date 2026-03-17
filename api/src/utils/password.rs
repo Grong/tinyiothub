@@ -24,7 +24,12 @@ mod tests {
         let password = "test_password_123";
         let hashed = hash_password(password).unwrap();
         
-        assert!(verify_password(password, &hashed).is_ok());
-        assert!(!verify_password("wrong_password", &hashed).is_ok());
+        // 正确密码应该验证成功
+        let result = verify_password(password, &hashed).unwrap();
+        assert!(result, "Correct password should verify to true");
+        
+        // 错误密码应该验证失败
+        let result = verify_password("wrong_password", &hashed).unwrap();
+        assert!(!result, "Wrong password should verify to false");
     }
 }
