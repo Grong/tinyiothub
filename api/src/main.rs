@@ -255,20 +255,43 @@ async fn initialize_logging() -> std::io::Result<()> {
 
 /// Create the main application router
 fn create_app_router(app_state: crate::shared::app_state::AppState) -> Router {
-    use tower_http::cors::CorsLayer;
+    use tower_http::cors::{CorsLayer, AllowOrigin};
 
     tracing::info!("Creating CORS layer...");
-    // 创建CORS层
+    // 创建CORS层 - 使用配置中的origins，支持credentials
+    let config = crate::infrastructure::config::get();
+    let cors_origins = &config.server.cors_origins;
+
+    let allowed_headers = [
+        axum::http::header::CONTENT_TYPE,
+        axum::http::header::AUTHORIZATION,
+        axum::http::header::ACCEPT,
+    ];
+    let allowed_methods = [
+        axum::http::Method::GET,
+        axum::http::Method::POST,
+        axum::http::Method::PUT,
+        axum::http::Method::DELETE,
+        axum::http::Method::OPTIONS,
+    ];
+
+    let allow_any = cors_origins.contains(&"*".to_string());
+    let explicit_origins: Vec<axum::http::HeaderValue> = if allow_any {
+        Vec::new()
+    } else {
+        cors_origins.iter().filter_map(|o| o.parse().ok()).collect()
+    };
+
     let cors = CorsLayer::new()
-        .allow_origin(tower_http::cors::Any)
-        .allow_methods([
-            axum::http::Method::GET,
-            axum::http::Method::POST,
-            axum::http::Method::PUT,
-            axum::http::Method::DELETE,
-            axum::http::Method::OPTIONS,
-        ])
-        .allow_headers(tower_http::cors::Any);
+        .allow_origin(AllowOrigin::predicate(move |origin, _| {
+            if allow_any {
+                return true;
+            }
+            explicit_origins.iter().any(|o| o == origin)
+        }))
+        .allow_credentials(true)
+        .allow_methods(allowed_methods)
+        .allow_headers(allowed_headers);
 
     tracing::info!("Creating API router...");
     let api_router = crate::api::create_router();

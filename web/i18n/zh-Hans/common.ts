@@ -162,8 +162,8 @@ const translation = {
   
   // App branding
   branding: {
-    appName: 'TinyIoTHub',
-    appNameFull: 'TinyIoTHub',
+    appName: '招商积余',
+    appNameFull: '招商积余',
   },
 
   // Pages

@@ -17,33 +17,21 @@ export default function AlarmsPage() {
   ]
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-2xl font-semibold text-text-primary">报警管理</h1>
-          <p className="mt-1 text-sm text-text-secondary">
-            查看和管理设备报警信息
-          </p>
-        </div>
+    <div className="flex h-full w-full flex-col overflow-hidden bg-background-body">
+      <div className="flex flex-wrap items-center justify-between gap-y-2 bg-background-body px-12 pb-2 pt-4 leading-[56px]">
+        <TabSliderNew
+          value={activeTab}
+          onChange={setActiveTab}
+          options={tabs}
+        />
       </div>
+      <div className="flex-1 overflow-y-auto px-12 pb-4 space-y-4">
+        {/* 统计卡片 */}
+        <AlarmStatistics />
 
-      {/* 统计卡片 */}
-      <AlarmStatistics />
-
-      {/* 标签页 */}
-      <div className="bg-components-panel-bg shadow rounded-lg border border-divider-subtle">
-        <div className="px-4 py-4 border-b border-divider-subtle">
-          <TabSliderNew
-            value={activeTab}
-            onChange={setActiveTab}
-            options={tabs}
-          />
-        </div>
-
-        <div className="px-4 py-5 sm:p-6">
-          {activeTab === 'alarms' && <AlarmList />}
-          {activeTab === 'rules' && <AlarmRuleList />}
-        </div>
+        {/* 内容区域 */}
+        {activeTab === 'alarms' && <AlarmList />}
+        {activeTab === 'rules' && <AlarmRuleList />}
       </div>
     </div>
   )
