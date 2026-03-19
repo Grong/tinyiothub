@@ -105,6 +105,33 @@ docker save tinyiothub:arm64 -o tinyiothub-arm64.tar
 gzip tinyiothub-arm64.tar
 ```
 
+## 离线部署（无外网环境）
+
+适用于目标机器无法访问 Docker Hub 的场景。
+
+### 1. 构建并导出镜像
+
+```bash
+# Windows PowerShell
+.\scripts\docker-build-fast.ps1
+docker save tinyiothub:latest -o tinyiothub.tar
+```
+
+### 2. 复制到目标机器
+
+```bash
+scp tinyiothub.tar docker-compose.local.yml user@target-host:~/
+```
+
+### 3. 在目标机器上部署
+
+```bash
+sudo docker load -i tinyiothub.tar
+sudo docker compose -f docker-compose.local.yml up -d
+```
+
+> `docker-compose.local.yml` 引用本地镜像 `tinyiothub:latest`，`docker-compose.yml` 引用 Docker Hub 镜像，用于 CI/CD。
+
 ## 部署到 OpenHarmony
 
 ### 快速部署步骤
