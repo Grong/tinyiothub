@@ -822,18 +822,7 @@ textarea {
   border-top-width: 0;
 }
 
-/* 移除圆角边框效果，改用阴影 */
-.rounded-xl,
-.rounded-lg,
-.rounded-md,
-.rounded-sm {
-  box-shadow: var(--shadow-shadow-3, 0 4px 6px -1px rgba(0, 0, 0, 0.1));
-}
 
-/* 卡片悬浮效果增强 */
-.hover\:shadow-md:hover {
-  box-shadow: var(--shadow-shadow-5, 0 8px 16px -2px rgba(0, 0, 0, 0.15)) !important;
-}
 
 /* 输入框无边框 */
 input, 
