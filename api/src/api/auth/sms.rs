@@ -130,7 +130,7 @@ async fn send_code(
 
     // TODO: 实际发送短信（接入短信服务商）
     // 这里先返回验证码（仅供测试）
-    tracing::info!("SMS code for {}: {}", phone, code);
+    tracing::info!("SMS code sent to {}: [REDACTED]", phone);
 
     // 返回成功响应（测试模式下返回验证码）
     #[cfg(debug_assertions)]
@@ -212,8 +212,11 @@ async fn login_with_code(
         }
     }
 
-    // 比较验证码
-    if stored_code != code {
+    // 比较验证码 — 使用常量时间比较防止时序攻击
+    use subtle::ConstantTimeEq;
+    if stored_code.as_bytes().ct_eq(code.as_bytes()).into() {
+        // correct
+    } else {
         return ApiResponse::error("验证码错误".to_string());
     }
 
@@ -335,8 +338,11 @@ async fn verify_code(
         }
     }
 
-    // 比较验证码
-    if stored_code != code {
+    // 比较验证码 — 使用常量时间比较防止时序攻击
+    use subtle::ConstantTimeEq;
+    if stored_code.as_bytes().ct_eq(code.as_bytes()).into() {
+        // correct
+    } else {
         return ApiResponse::success(VerifyCodeResponse {
             valid: false,
             message: "验证码错误".to_string(),

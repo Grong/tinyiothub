@@ -30,9 +30,10 @@ fn sign_payload(payload: &str, secret: &str) -> String {
 
 /// 验证 HMAC-SHA256 签名
 fn verify_signature(payload: &str, signature: &str, secret: &str) -> bool {
+    use subtle::ConstantTimeEq;
     let expected = sign_payload(payload, secret);
     // 使用常量时间比较防止时序攻击
-    expected.as_bytes() == signature.as_bytes()
+    expected.as_bytes().ct_eq(signature.as_bytes()).into()
 }
 
 use crate::dto::entity::tenant::{CreateTenantRequest, SubscriptionPlan, Tenant};
@@ -309,7 +310,7 @@ async fn verify_token(
 
     // Get JWT_SECRET
     let secret = std::env::var("JWT_SECRET")
-        .unwrap_or_else(|_| "insecure_fallback_secret_change_in_production".to_string());
+        .expect("JWT_SECRET must be set in production");
 
     // Verify signature
     if !verify_signature(&payload_str, signature, &secret) {
@@ -341,10 +342,7 @@ struct VerifyTokenParams {
 /// Generate HMAC-SHA256 signed token
 fn generate_token(tenant_id: &str, user_id: &str) -> String {
     let secret = std::env::var("JWT_SECRET")
-        .unwrap_or_else(|_| {
-            tracing::warn!("JWT_SECRET not set, using fallback for tenant token");
-            "insecure_fallback_secret_change_in_production".to_string()
-        });
+        .expect("JWT_SECRET must be set in production — tenant token generation requires a secure secret");
 
     let exp = chrono::Utc::now().timestamp() + 86400 * 7;
     let payload = serde_json::json!({

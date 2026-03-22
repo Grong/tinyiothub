@@ -373,9 +373,12 @@ async fn execute_device_control_job(job: &Job) -> Result<String, String> {
         .ok_or("No command configured")?;
     
     tracing::info!("Executing device command: {} -> {}:{}", device_id, command, job.target_command_params.as_deref().unwrap_or(""));
-    
-    // TODO: 调用设备服务执行命令
-    Ok(format!("Device command executed: {} {} ({})", device_id, command, job.target_command_params.as_deref().unwrap_or("")))
+
+    // NOTE: device_control job type is a stub — it logs the command but does not execute it
+    // TODO: integrate with device service when device command API is available
+    tracing::warn!("device_control job is a stub — command logged but not executed: {} {} ({})",
+        device_id, command, job.target_command_params.as_deref().unwrap_or(""));
+    Ok(format!("Device command (STUB): {} {} ({})", device_id, command, job.target_command_params.as_deref().unwrap_or("")))
 }
 
 /// 执行通知任务
