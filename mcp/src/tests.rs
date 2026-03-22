@@ -3,10 +3,9 @@
 #[cfg(test)]
 mod tests {
     use crate::client::{ApiResponse, Device, Alarm};
-    use crate::config::{McpConfig, load_config};
+    use crate::config::McpConfig;
     use crate::tools::{get_all_tools, device, alarm};
     use crate::{McpServer, MethodCall, Id, Params};
-    use serde_json::json;
 
     // ==================== 配置测试 ====================
 

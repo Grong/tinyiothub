@@ -23,6 +23,7 @@ pub fn get_all_tools() -> Vec<ToolMeta> {
         device::get_device_status(),
         device::read_sensor_data(),
         device::send_command(),
+        device::list_drivers(),
         alarm::list_alarms(),
         alarm::acknowledge_alarm(),
         alarm::get_alarm_statistics(),

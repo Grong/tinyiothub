@@ -148,3 +148,15 @@ pub fn send_command() -> ToolMeta {
         }),
     }
 }
+
+/// list_drivers - 获取驱动列表
+pub fn list_drivers() -> ToolMeta {
+    ToolMeta {
+        name: "list_drivers".to_string(),
+        description: "列出系统所有已注册的驱动".to_string(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {}
+        }),
+    }
+}

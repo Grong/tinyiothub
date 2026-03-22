@@ -3,7 +3,6 @@
 use anyhow::Result;
 use serde::Deserialize;
 use std::fs;
-use std::path::Path;
 
 /// MCP 配置
 #[derive(Debug, Clone, Deserialize)]
@@ -40,7 +39,7 @@ impl Default for McpConfig {
             tinyiothub: TinyIoTHubSettings {
                 api_url: "http://localhost:3002".to_string(),
                 api_key: std::env::var("TINYIOTHUB_API_KEY")
-                    .unwrap_or_else(|_| "default-api-key".to_string()),
+                    .unwrap_or_else(|_| String::new()),
             },
         }
     }
