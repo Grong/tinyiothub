@@ -1,36 +1,72 @@
 # API 参考
 
-TinyIoTHub 提供完整的 REST API，支持设备管理、数据采集、告警监控等功能。
+TinyIoTHub 提供完整的 REST API，支持设备管理、数据采集、告警监控、自动化规则、通知管理等功能。
 
 ## 基础信息
 
 | 项目 | 说明 |
 |------|------|
 | 基础 URL | `http://localhost:3002/api/v1/` |
-| 认证方式 | JWT Token |
+| Open API 基础 URL | `http://localhost:3002/open/` |
+| 认证方式 | JWT Token / API Key |
 | 响应格式 | 统一 JSON 格式 |
 
 ## 统一响应格式
 
-所有 API 响应遵循统一格式：
-
 ```json
+// 成功
 {
-  "code": 0,
-  "msg": "",
-  "result": { }
+  "success": true,
+  "result": { ... }
+}
+
+// 错误
+{
+  "success": false,
+  "message": "错误信息"
 }
 ```
 
-| 字段 | 类型 | 说明 |
+## API 文档索引
+
+### 核心模块
+
+| 模块 | 文档 | 说明 |
 |------|------|------|
-| code | integer | 0=成功，非0=错误 |
-| msg | string | 错误信息，成功时为空 |
-| result | object | 实际数据 |
+| 认证 | [overview](./overview) | 认证与会话 API 总览 |
+| 设备 | [overview](./overview) | 设备管理 API |
+| 设备 Profile | [device-profile](./device-profile) | 设备完整配置接口 |
+| 设备追踪 | [device-trace](./device-trace) | 设备追踪与调试接口 |
+| MQTT | [mqtt](./mqtt) | MQTT 协议通信 |
 
-## 认证接口
+### 功能模块
 
-### 登录
+| 模块 | 文档 | 说明 |
+|------|------|------|
+| 告警 | [overview](./overview) | 告警查询 API |
+| 告警规则 | [alarm-rules](./alarm-rules) | 告警规则 CRUD |
+| 自动化规则 | [automations](./automations) | 自动化规则管理 |
+| 设备模板 | [templates](./templates) | 设备模板管理 |
+| 驱动管理 | [drivers-api](./drivers-api) | 驱动查询与动态加载 |
+| 事件 | [events](./events) | 事件查询与实时推送 |
+| 通知管理 | [notifications](./notifications) | 通知规则与历史 |
+| 通知渠道 | [notification-channels](./notification-channels) | SMS/邮件/Webhook 渠道 |
+| 网关管理 | [gateways](./gateways) | 边缘网关管理 |
+| 定时任务 | [jobs](./jobs) | 定时任务管理 |
+| 用户管理 | [users-api](./users-api) | 用户、角色、权限管理 |
+| 市场 | [marketplace](./marketplace) | 驱动和模板市场 |
+| 系统管理 | [system](./system) | 系统配置与产品管理 |
+| Open API | [open-api](./open-api) | 面向第三方的开放 API |
+
+### 参考资料
+
+| 文档 | 说明 |
+|------|------|
+| [设备 API 总结](./DEVICE_API_SUMMARY) | 设备相关 API 实现总结 |
+
+## 认证方式
+
+### JWT Token（受保护 API）
 
 ```http
 POST /api/v1/auth/login
@@ -42,116 +78,25 @@ Content-Type: application/json
 }
 ```
 
-### 登出
+获取 Token 后，在请求头中携带：
 
 ```http
-POST /api/v1/auth/logout
 Authorization: Bearer <token>
 ```
 
-### 获取会话
+### API Key（Open API）
 
 ```http
-GET /api/v1/auth/session
-Authorization: Bearer <token>
+X-API-Key: your_api_key_here
 ```
 
-## 设备管理
+## 常见错误码
 
-### 获取设备列表
-
-```http
-GET /api/v1/devices
-```
-
-### 创建设备
-
-```http
-POST /api/v1/devices
-Authorization: Bearer <token>
-
-{
-  "name": "温度传感器",
-  "sn": "SN001",
-  "driver": "modbus_tcp",
-  "config": {}
-}
-```
-
-### 获取设备详情
-
-```http
-GET /api/v1/devices/{id}
-```
-
-### 更新设备
-
-```http
-PUT /api/v1/devices/{id}
-```
-
-### 删除设备
-
-```http
-DELETE /api/v1/devices/{id}
-```
-
-## 驱动管理
-
-### 获取驱动列表
-
-```http
-GET /api/v1/drivers
-```
-
-### 获取驱动详情
-
-```http
-GET /api/v1/drivers/{name}
-```
-
-### 获取支持的驱动名称
-
-```http
-GET /api/v1/drivers/names
-```
-
-## 告警管理
-
-### 获取告警列表
-
-```http
-GET /api/v1/alarms
-```
-
-### 确认告警
-
-```http
-POST /api/v1/alarms/{id}/acknowledge
-```
-
-### 获取告警规则
-
-```http
-GET /api/v1/alarms/rules
-```
-
-## 系统管理
-
-### 健康检查
-
-```http
-GET /api/v1/system/health
-```
-
-### 获取系统特性
-
-```http
-GET /api/v1/system/features
-```
-
-### 获取系统配置
-
-```http
-GET /api/v1/system/config
-```
+| HTTP 状态码 | 说明 |
+|-------------|------|
+| 200 | 请求成功 |
+| 400 | 请求参数错误 |
+| 401 | 未认证 |
+| 403 | 权限不足 |
+| 404 | 资源不存在 |
+| 500 | 服务器内部错误 |

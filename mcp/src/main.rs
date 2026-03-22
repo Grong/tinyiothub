@@ -86,6 +86,26 @@ impl McpServer {
                 message: e.to_string(),
                 data: None,
             }),
+            "get_driver_info" => self.tool_get_driver_info(call.params).await.map_err(|e| Error {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            }),
+            "list_templates" => self.tool_list_templates(call.params).await.map_err(|e| Error {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            }),
+            "get_template" => self.tool_get_template(call.params).await.map_err(|e| Error {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            }),
+            "get_current_user" => self.tool_get_current_user(call.params).await.map_err(|e| Error {
+                code: ErrorCode::InternalError,
+                message: e.to_string(),
+                data: None,
+            }),
             
             // MCP 协议方法
             "initialize" => self.handle_initialize(call.params).await,
@@ -287,6 +307,58 @@ impl McpServer {
     /// list_drivers - 获取驱动列表
     async fn tool_list_drivers(&self, _params: Params) -> Result<Value, anyhow::Error> {
         let response = self.client.list_drivers().await?;
+        Ok(serde_json::to_value(response)?)
+    }
+    
+    /// get_driver_info - 获取驱动详情
+    async fn tool_get_driver_info(&self, params: Params) -> Result<Value, anyhow::Error> {
+        #[derive(serde::Deserialize)]
+        struct GetDriverInfoParams {
+            name: String,
+        }
+        
+        let params: GetDriverInfoParams = params.parse()?;
+        let response = self.client.get_driver(&params.name).await?;
+        Ok(serde_json::to_value(response)?)
+    }
+    
+    /// list_templates - 获取模板列表
+    async fn tool_list_templates(&self, params: Params) -> Result<Value, anyhow::Error> {
+        #[derive(serde::Deserialize)]
+        struct ListTemplatesParams {
+            page: Option<u32>,
+            page_size: Option<u32>,
+        }
+        
+        let params: ListTemplatesParams = params.parse().unwrap_or(ListTemplatesParams {
+            page: Some(1),
+            page_size: Some(20),
+        });
+        
+        let response: Vec<client::Template> = self.client
+            .list_templates(
+                params.page.unwrap_or(1),
+                params.page_size.unwrap_or(20),
+            )
+            .await?;
+        Ok(serde_json::to_value(response)?)
+    }
+    
+    /// get_template - 获取模板详情
+    async fn tool_get_template(&self, params: Params) -> Result<Value, anyhow::Error> {
+        #[derive(serde::Deserialize)]
+        struct GetTemplateParams {
+            id: String,
+        }
+        
+        let params: GetTemplateParams = params.parse()?;
+        let response: client::Template = self.client.get_template(&params.id).await?;
+        Ok(serde_json::to_value(response)?)
+    }
+    
+    /// get_current_user - 获取当前用户信息
+    async fn tool_get_current_user(&self, _params: Params) -> Result<Value, anyhow::Error> {
+        let response: client::User = self.client.get_current_user().await?;
         Ok(serde_json::to_value(response)?)
     }
 }

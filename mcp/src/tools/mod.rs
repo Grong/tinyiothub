@@ -4,6 +4,9 @@
 
 pub mod device;
 pub mod alarm;
+pub mod driver;
+pub mod template;
+pub mod user;
 
 // ==================== 工具定义 ====================
 
@@ -30,6 +33,14 @@ pub fn get_all_tools() -> Vec<ToolMeta> {
         alarm::list_alarms(),
         alarm::acknowledge_alarm(),
         alarm::get_alarm_statistics(),
+        // 驱动相关
+        driver::list_drivers(),
+        driver::get_driver_info(),
+        // 模板相关
+        template::list_templates(),
+        template::get_template(),
+        // 用户相关
+        user::get_current_user(),
     ]
 }
 

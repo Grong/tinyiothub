@@ -3,7 +3,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     domain::device::service::DeviceService,
@@ -41,7 +41,7 @@ pub struct CreateDeviceApiRequest {
     pub organization_id: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]
 pub struct UpdateDeviceApiRequest {
     pub name: Option<String>,
@@ -528,6 +528,178 @@ async fn validate_single_field(
     }
 }
 
+// ==================== 批量操作请求/响应 ====================
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct BatchIdsRequest {
+    pub ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct BatchOperationResult {
+    pub success_count: u32,
+    pub failed_count: u32,
+    pub failed_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct BatchUpdateRequest {
+    pub ids: Vec<String>,
+    pub data: UpdateDeviceApiRequest,
+}
+
+/// 批量删除设备
+async fn batch_delete_devices(
+    State(state): State<AppState>,
+    _claims: Claims,
+    Json(req): Json<BatchIdsRequest>,
+) -> Json<ApiResponse<BatchOperationResult>> {
+    let device_service = DeviceService::with_event_bus(
+        state.database.clone(),
+        state.event_bus.clone(),
+    );
+
+    let mut success_count = 0u32;
+    let mut failed_count = 0u32;
+    let mut failed_ids = Vec::new();
+
+    for id in &req.ids {
+        match device_service.delete_device(id).await {
+            Ok(true) => success_count += 1,
+            Ok(false) => {
+                failed_count += 1;
+                failed_ids.push(id.clone());
+            }
+            Err(_) => {
+                failed_count += 1;
+                failed_ids.push(id.clone());
+            }
+        }
+    }
+
+    ApiResponseBuilder::success(BatchOperationResult {
+        success_count,
+        failed_count,
+        failed_ids,
+    })
+}
+
+/// 批量更新设备
+async fn batch_update_devices(
+    State(state): State<AppState>,
+    _claims: Claims,
+    Json(req): Json<BatchUpdateRequest>,
+) -> Json<ApiResponse<BatchOperationResult>> {
+    let device_service = DeviceService::with_event_bus(
+        state.database.clone(),
+        state.event_bus.clone(),
+    );
+
+    let update_request = UpdateDeviceRequest {
+        name: req.data.name,
+        display_name: req.data.display_name,
+        device_type: req.data.device_type,
+        address: req.data.address,
+        description: req.data.description,
+        position: req.data.position,
+        driver_name: req.data.driver_name,
+        device_model: req.data.device_model,
+        protocol_type: req.data.protocol_type,
+        factory_name: req.data.factory_name,
+        linked_data: req.data.linked_data,
+        driver_options: req.data.connection_config,
+        state: None,
+        parent_id: req.data.parent_id,
+        product_id: req.data.product_id,
+        organization_id: req.data.organization_id,
+    };
+
+    let mut success_count = 0u32;
+    let mut failed_count = 0u32;
+    let mut failed_ids = Vec::new();
+
+    for id in &req.ids {
+        match device_service.update_device(id, &update_request).await {
+            Ok(_) => success_count += 1,
+            Err(_) => {
+                failed_count += 1;
+                failed_ids.push(id.clone());
+            }
+        }
+    }
+
+    ApiResponseBuilder::success(BatchOperationResult {
+        success_count,
+        failed_count,
+        failed_ids,
+    })
+}
+
+/// 批量启用设备
+async fn batch_enable_devices(
+    State(state): State<AppState>,
+    _claims: Claims,
+    Json(req): Json<BatchIdsRequest>,
+) -> Json<ApiResponse<BatchOperationResult>> {
+    let mut success_count = 0u32;
+    let mut failed_count = 0u32;
+    let mut failed_ids = Vec::new();
+
+    for id in &req.ids {
+        match Device::update_enabled_status(state.database(), id, true).await {
+            Ok(true) => success_count += 1,
+            Ok(false) => {
+                failed_count += 1;
+                failed_ids.push(id.clone());
+            }
+            Err(_) => {
+                failed_count += 1;
+                failed_ids.push(id.clone());
+            }
+        }
+    }
+
+    ApiResponseBuilder::success(BatchOperationResult {
+        success_count,
+        failed_count,
+        failed_ids,
+    })
+}
+
+/// 批量禁用设备
+async fn batch_disable_devices(
+    State(state): State<AppState>,
+    _claims: Claims,
+    Json(req): Json<BatchIdsRequest>,
+) -> Json<ApiResponse<BatchOperationResult>> {
+    let mut success_count = 0u32;
+    let mut failed_count = 0u32;
+    let mut failed_ids = Vec::new();
+
+    for id in &req.ids {
+        match Device::update_enabled_status(state.database(), id, false).await {
+            Ok(true) => success_count += 1,
+            Ok(false) => {
+                failed_count += 1;
+                failed_ids.push(id.clone());
+            }
+            Err(_) => {
+                failed_count += 1;
+                failed_ids.push(id.clone());
+            }
+        }
+    }
+
+    ApiResponseBuilder::success(BatchOperationResult {
+        success_count,
+        failed_count,
+        failed_ids,
+    })
+}
+
 pub fn create_router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_devices).post(create_device))
@@ -554,4 +726,9 @@ pub fn create_router() -> Router<AppState> {
             "/from-template/:template_id/validate-field",
             post(validate_single_field),
         )
+        // 批量操作路由
+        .route("/batch/delete", post(batch_delete_devices))
+        .route("/batch/update", post(batch_update_devices))
+        .route("/batch/enable", post(batch_enable_devices))
+        .route("/batch/disable", post(batch_disable_devices))
 }

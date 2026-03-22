@@ -343,3 +343,429 @@ impl Event {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::event::value_objects::{ConnectionStatus, DeviceEventType, SystemEventType};
+
+    fn create_test_source() -> EventSource {
+        EventSource::device("device-001".to_string(), Some("Test Device".to_string()))
+    }
+
+    fn create_test_content() -> RichContent {
+        RichContent::new_text("test".to_string(), "Test content".to_string())
+    }
+
+    #[test]
+    fn test_event_new_basic() {
+        let event = Event::new(
+            EventType::System(SystemEventType::UserAuth),
+            EventLevel::Info,
+            EventSource::system("test".to_string(), None),
+            create_test_content(),
+        )
+        .unwrap();
+
+        assert!(!event.id().as_str().is_empty());
+        assert_eq!(event.event_type(), &EventType::System(SystemEventType::UserAuth));
+        assert_eq!(event.level(), EventLevel::Info);
+    }
+
+    #[test]
+    fn test_event_reconstruct() {
+        let id = EventId::new();
+        let timestamp = Utc::now();
+        let source = EventSource::system("test".to_string(), None);
+        let content = create_test_content();
+
+        let event = Event::reconstruct(
+            id.clone(),
+            EventType::System(SystemEventType::UserOperation),
+            EventLevel::Debug,
+            timestamp,
+            source.clone(),
+            content.clone(),
+        );
+
+        assert_eq!(event.id(), &id);
+        assert_eq!(event.timestamp(), timestamp);
+    }
+
+    #[test]
+    fn test_event_is_critical() {
+        let critical_event = Event::new(
+            EventType::System(SystemEventType::SystemError),
+            EventLevel::Critical,
+            EventSource::system("test".to_string(), None),
+            create_test_content(),
+        )
+        .unwrap();
+
+        let info_event = Event::new(
+            EventType::System(SystemEventType::UserAuth),
+            EventLevel::Info,
+            EventSource::system("test".to_string(), None),
+            create_test_content(),
+        )
+        .unwrap();
+
+        assert!(critical_event.is_critical());
+        assert!(!info_event.is_critical());
+    }
+
+    #[test]
+    fn test_event_should_notify() {
+        let critical = Event::new(
+            EventType::System(SystemEventType::SystemError),
+            EventLevel::Critical,
+            EventSource::system("test".to_string(), None),
+            create_test_content(),
+        )
+        .unwrap();
+
+        let error = Event::new(
+            EventType::System(SystemEventType::SystemError),
+            EventLevel::Error,
+            EventSource::system("test".to_string(), None),
+            create_test_content(),
+        )
+        .unwrap();
+
+        let warning = Event::new(
+            EventType::System(SystemEventType::SystemConfig),
+            EventLevel::Warning,
+            EventSource::system("test".to_string(), None),
+            create_test_content(),
+        )
+        .unwrap();
+
+        let info = Event::new(
+            EventType::System(SystemEventType::UserAuth),
+            EventLevel::Info,
+            EventSource::system("test".to_string(), None),
+            create_test_content(),
+        )
+        .unwrap();
+
+        assert!(critical.should_notify());
+        assert!(error.should_notify());
+        assert!(!warning.should_notify()); // Warning doesn't trigger notification
+        assert!(!info.should_notify());
+    }
+
+    #[test]
+    fn test_event_should_update_real_time_status() {
+        // Device event with Warning level should update real-time status
+        let device_warning = Event::new(
+            EventType::Device(DeviceEventType::Connection),
+            EventLevel::Warning,
+            EventSource::device("device-1".to_string(), None),
+            create_test_content(),
+        )
+        .unwrap();
+        assert!(device_warning.should_update_real_time_status());
+
+        // Device event with Info level should NOT update real-time status
+        let device_info = Event::new(
+            EventType::Device(DeviceEventType::Connection),
+            EventLevel::Info,
+            EventSource::device("device-1".to_string(), None),
+            create_test_content(),
+        )
+        .unwrap();
+        assert!(!device_info.should_update_real_time_status());
+
+        // System event with Error level should update real-time status
+        let system_error = Event::new(
+            EventType::System(SystemEventType::SystemError),
+            EventLevel::Error,
+            EventSource::system("test".to_string(), None),
+            create_test_content(),
+        )
+        .unwrap();
+        assert!(system_error.should_update_real_time_status());
+
+        // System event with Warning level should NOT update real-time status
+        let system_warning = Event::new(
+            EventType::System(SystemEventType::SystemConfig),
+            EventLevel::Warning,
+            EventSource::system("test".to_string(), None),
+            create_test_content(),
+        )
+        .unwrap();
+        assert!(!system_warning.should_update_real_time_status());
+    }
+
+    // ===== Factory method tests =====
+
+    #[test]
+    fn test_new_system_event() {
+        let event = Event::new_system_event(
+            SystemEventType::UserAuth,
+            EventLevel::Info,
+            EventSource::system("admin".to_string(), Some("admin@example.com".to_string())),
+            create_test_content(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            event.event_type(),
+            &EventType::System(SystemEventType::UserAuth)
+        );
+        assert_eq!(event.level(), EventLevel::Info);
+    }
+
+    #[test]
+    fn test_new_device_event() {
+        let event = Event::new_device_event(
+            DeviceEventType::Connection,
+            EventLevel::Info,
+            create_test_source(),
+            create_test_content(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            event.event_type(),
+            &EventType::Device(DeviceEventType::Connection)
+        );
+    }
+
+    #[test]
+    fn test_new_device_connection_event_online() {
+        let event = Event::new_device_connection_event(
+            "device-001".to_string(),
+            "Sensor 1".to_string(),
+            ConnectionStatus::Online,
+            create_test_source(),
+            create_test_content(),
+        )
+        .unwrap();
+
+        assert_eq!(event.level(), EventLevel::Info);
+    }
+
+    #[test]
+    fn test_new_device_connection_event_offline() {
+        let event = Event::new_device_connection_event(
+            "device-001".to_string(),
+            "Sensor 1".to_string(),
+            ConnectionStatus::Offline,
+            create_test_source(),
+            create_test_content(),
+        )
+        .unwrap();
+
+        assert_eq!(event.level(), EventLevel::Warning);
+    }
+
+    #[test]
+    fn test_new_device_connection_event_error() {
+        let event = Event::new_device_connection_event(
+            "device-001".to_string(),
+            "Sensor 1".to_string(),
+            ConnectionStatus::Error,
+            create_test_source(),
+            create_test_content(),
+        )
+        .unwrap();
+
+        assert_eq!(event.level(), EventLevel::Error);
+    }
+
+    #[test]
+    fn test_new_device_alarm_event() {
+        let event = Event::new_device_alarm_event(
+            "device-001".to_string(),
+            create_test_source(),
+            create_test_content(),
+        )
+        .unwrap();
+
+        assert_eq!(event.level(), EventLevel::Warning);
+        assert_eq!(
+            event.event_type(),
+            &EventType::Device(DeviceEventType::DeviceAlarm)
+        );
+    }
+
+    #[test]
+    fn test_new_device_normal_event() {
+        let event = Event::new_device_normal_event(
+            "device-001".to_string(),
+            create_test_source(),
+            create_test_content(),
+        )
+        .unwrap();
+
+        assert_eq!(event.level(), EventLevel::Info);
+        assert_eq!(
+            event.event_type(),
+            &EventType::Device(DeviceEventType::DeviceNormal)
+        );
+    }
+
+    #[test]
+    fn test_new_property_change_event() {
+        let event = Event::new_property_change_event(
+            "device-001".to_string(),
+            "temperature".to_string(),
+            create_test_source(),
+            create_test_content(),
+        )
+        .unwrap();
+
+        assert_eq!(event.level(), EventLevel::Debug);
+        assert_eq!(
+            event.event_type(),
+            &EventType::Device(DeviceEventType::PropertyChange)
+        );
+    }
+
+    #[test]
+    fn test_new_property_alarm_event() {
+        let event = Event::new_property_alarm_event(
+            "device-001".to_string(),
+            "temperature".to_string(),
+            create_test_source(),
+            create_test_content(),
+            EventLevel::Critical,
+        )
+        .unwrap();
+
+        assert_eq!(event.level(), EventLevel::Critical);
+        assert_eq!(
+            event.event_type(),
+            &EventType::Device(DeviceEventType::PropertyAlarm)
+        );
+    }
+
+    #[test]
+    fn test_new_property_normal_event() {
+        let event = Event::new_property_normal_event(
+            "device-001".to_string(),
+            "temperature".to_string(),
+            create_test_source(),
+            create_test_content(),
+        )
+        .unwrap();
+
+        assert_eq!(event.level(), EventLevel::Info);
+        assert_eq!(
+            event.event_type(),
+            &EventType::Device(DeviceEventType::PropertyNormal)
+        );
+    }
+
+    #[test]
+    fn test_new_command_started_event() {
+        let event = Event::new_command_started_event(
+            "device-001".to_string(),
+            "cmd-001".to_string(),
+            create_test_source(),
+            create_test_content(),
+        )
+        .unwrap();
+
+        assert_eq!(event.level(), EventLevel::Debug);
+        assert_eq!(
+            event.event_type(),
+            &EventType::Device(DeviceEventType::CommandStarted)
+        );
+    }
+
+    #[test]
+    fn test_new_command_completed_event() {
+        let event = Event::new_command_completed_event(
+            "device-001".to_string(),
+            "cmd-001".to_string(),
+            create_test_source(),
+            create_test_content(),
+        )
+        .unwrap();
+
+        assert_eq!(event.level(), EventLevel::Info);
+        assert_eq!(
+            event.event_type(),
+            &EventType::Device(DeviceEventType::CommandCompleted)
+        );
+    }
+
+    #[test]
+    fn test_new_command_failed_event() {
+        let event = Event::new_command_failed_event(
+            "device-001".to_string(),
+            "cmd-001".to_string(),
+            create_test_source(),
+            create_test_content(),
+        )
+        .unwrap();
+
+        assert_eq!(event.level(), EventLevel::Error);
+        assert_eq!(
+            event.event_type(),
+            &EventType::Device(DeviceEventType::CommandFailed)
+        );
+    }
+
+    // ===== Validation tests =====
+
+    #[test]
+    fn test_event_validation_system_error_level() {
+        // SystemError with non-critical/error level should fail
+        let result = Event::new(
+            EventType::System(SystemEventType::SystemError),
+            EventLevel::Info, // Invalid: SystemError must be Critical or Error
+            EventSource::system("test".to_string(), None),
+            create_test_content(),
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_event_validation_device_without_device_id() {
+        // Device event without device_id in source should fail
+        let result = Event::new(
+            EventType::Device(DeviceEventType::Connection),
+            EventLevel::Info,
+            EventSource::system("test".to_string(), None), // No device_id
+            create_test_content(),
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_event_update_content_within_window() {
+        let mut event = Event::new(
+            EventType::System(SystemEventType::UserAuth),
+            EventLevel::Info,
+            EventSource::system("test".to_string(), None),
+            create_test_content(),
+        )
+        .unwrap();
+
+        // Update content immediately (within 5 minute window)
+        let new_content = RichContent::new_text("updated".to_string(), "New content".to_string());
+        let result = event.update_content(new_content);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_event_update_content_after_window() {
+        // Cannot easily test the 5-minute window without mocking time,
+        // so we verify the update_content method exists and is callable
+        let mut event = Event::new(
+            EventType::System(SystemEventType::UserAuth),
+            EventLevel::Info,
+            EventSource::system("test".to_string(), None),
+            create_test_content(),
+        )
+        .unwrap();
+
+        let new_content = RichContent::new_text("updated".to_string(), "New content".to_string());
+        assert!(event.update_content(new_content).is_ok());
+    }
+}

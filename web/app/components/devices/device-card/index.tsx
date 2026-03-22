@@ -24,6 +24,7 @@ import DeviceContent from './device-content'
 import DeviceActions from './device-actions'
 import DeviceTags from './device-tags'
 import StatusIcon from './status-icon'
+import Checkbox from '@/app/components/base/checkbox'
 
 const Confirm = dynamic(() => import('@/app/components/base/confirm'), {
   ssr: false,
@@ -32,9 +33,11 @@ const Confirm = dynamic(() => import('@/app/components/base/confirm'), {
 export interface DeviceCardProps {
   device: Device
   onRefresh?: () => void
+  selected?: boolean
+  onSelect?: () => void
 }
 
-const DeviceCard: React.FC<DeviceCardProps> = ({ device, onRefresh }) => {
+const DeviceCard: React.FC<DeviceCardProps> = ({ device, onRefresh, selected = false, onSelect }) => {
   const { t } = useTranslation('device')
   const { handleError } = useErrorHandler()
   const { isCurrentWorkspaceEditor } = useAppContext()
@@ -83,17 +86,43 @@ const DeviceCard: React.FC<DeviceCardProps> = ({ device, onRefresh }) => {
 
   // 点击卡片跳转到设备详情（使用 hash 路由）
   const handleCardClick = useCallback((e: React.MouseEvent) => {
+    // 如果点击的是选择框区域，不触发卡片点击
+    if ((e.target as HTMLElement).closest('[data-selection]')) {
+      return
+    }
     e.preventDefault()
     // 直接跳转到 device-detail 页面并设置 hash
     window.location.href = `/device-detail#/${device.id}/overview`
   }, [device.id])
 
+  const handleSelectClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    onSelect?.()
+  }, [onSelect])
+
   return (
     <>
       <div
         onClick={handleCardClick}
-        className='group relative col-span-1 inline-flex h-[160px] cursor-pointer flex-col rounded-xl border-[1px] border-solid border-components-card-border bg-components-card-bg shadow-sm transition-all duration-200 ease-in-out hover:shadow-lg'
+        className={`group relative col-span-1 inline-flex h-[160px] cursor-pointer flex-col rounded-xl border-[1px] border-solid bg-components-card-bg shadow-sm transition-all duration-200 ease-in-out hover:shadow-lg ${
+          selected 
+            ? 'border-components-checkbox-bg border-2' 
+            : 'border-components-card-border'
+        }`}
       >
+        {/* 选择复选框 */}
+        {isCurrentWorkspaceEditor && (
+          <div 
+            data-selection 
+            className='absolute top-3 left-3 z-10'
+            onClick={handleSelectClick}
+          >
+            <Checkbox
+              checked={selected}
+              onCheck={handleSelectClick}
+            />
+          </div>
+        )}
         {/* 头部：设备图标、名称、产品信息 */}
         <DeviceHeader 
           device={device} 

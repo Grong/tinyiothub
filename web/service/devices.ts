@@ -87,6 +87,22 @@ export const deviceApi = {
   deleteDevice: (id: string) => 
     apiDelete<boolean>(`devices/${id}`),
 
+  // 批量删除设备
+  batchDeleteDevices: (ids: string[]) => 
+    apiPost<{ successCount: number; failedCount: number }>('devices/batch/delete', { ids }),
+
+  // 批量更新设备
+  batchUpdateDevices: (ids: string[], data: Partial<CreateDeviceRequest>) => 
+    apiPost<{ successCount: number; failedCount: number }>('devices/batch/update', { ids, data }),
+
+  // 批量启用设备
+  batchEnableDevices: (ids: string[]) => 
+    apiPost<{ successCount: number; failedCount: number }>('devices/batch/enable', { ids }),
+
+  // 批量禁用设备
+  batchDisableDevices: (ids: string[]) => 
+    apiPost<{ successCount: number; failedCount: number }>('devices/batch/disable', { ids }),
+
 
 
   // 执行设备指令 - 保留此函数，因为概览页面需要执行指令
@@ -256,6 +272,63 @@ export const useDeleteDevice = () => {
     mutationFn: deviceApi.deleteDevice,
     onSuccess: () => {
       // 刷新设备列表
+      queryClient.invalidateQueries({ queryKey: queryKeys.devices.lists() })
+    },
+  })
+}
+
+/**
+ * 批量删除设备
+ */
+export const useBatchDeleteDevices = () => {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: deviceApi.batchDeleteDevices,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.devices.lists() })
+    },
+  })
+}
+
+/**
+ * 批量更新设备
+ */
+export const useBatchUpdateDevices = () => {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ ids, data }: { ids: string[]; data: Partial<CreateDeviceRequest> }) =>
+      deviceApi.batchUpdateDevices(ids, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.devices.lists() })
+    },
+  })
+}
+
+/**
+ * 批量启用设备
+ */
+export const useBatchEnableDevices = () => {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: deviceApi.batchEnableDevices,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.devices.lists() })
+    },
+  })
+}
+
+/**
+ * 批量禁用设备
+ */
+export const useBatchDisableDevices = () => {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: deviceApi.batchDisableDevices,
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.devices.lists() })
     },
   })

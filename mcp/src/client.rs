@@ -102,6 +102,29 @@ pub struct Driver {
     pub description: Option<String>,
 }
 
+/// 模板信息
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct Template {
+    pub id: String,
+    pub name: String,
+    pub display_name: Option<String>,
+    pub description: Option<String>,
+    pub device_type: Option<String>,
+    pub driver_name: Option<String>,
+}
+
+/// 用户信息
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct User {
+    pub id: String,
+    pub username: String,
+    pub display_name: Option<String>,
+    pub email: Option<String>,
+    pub roles: Option<Vec<String>>,
+}
+
 /// TinyIoTHub API 客户端
 pub struct TinyIoTHubClient {
     client: Client,
@@ -261,5 +284,32 @@ impl TinyIoTHubClient {
     /// 获取驱动列表
     pub async fn list_drivers(&self) -> Result<Vec<Driver>> {
         self.request(reqwest::Method::GET, "/drivers", None).await
+    }
+    
+    /// 获取驱动详情
+    pub async fn get_driver(&self, name: &str) -> Result<Driver> {
+        let path = format!("/drivers/{}", name);
+        self.request(reqwest::Method::GET, &path, None).await
+    }
+    
+    // ==================== 模板 API ====================
+    
+    /// 获取模板列表
+    pub async fn list_templates(&self, page: u32, page_size: u32) -> Result<Vec<Template>> {
+        let path = format!("/templates?page={}&page_size={}", page, page_size);
+        self.request(reqwest::Method::GET, &path, None).await
+    }
+    
+    /// 获取模板详情
+    pub async fn get_template(&self, template_id: &str) -> Result<Template> {
+        let path = format!("/templates/{}", template_id);
+        self.request(reqwest::Method::GET, &path, None).await
+    }
+    
+    // ==================== 用户 API ====================
+    
+    /// 获取当前用户信息
+    pub async fn get_current_user(&self) -> Result<User> {
+        self.request(reqwest::Method::GET, "/users/me", None).await
     }
 }

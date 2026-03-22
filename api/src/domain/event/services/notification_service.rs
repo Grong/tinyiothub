@@ -561,11 +561,12 @@ mod tests {
     fn test_create_notification_rule() {
         let service = NotificationService::new();
 
+        // Use Warning level so Email alone is sufficient (CriticalEvents spec only requires SMS/SSE for Critical|Error)
         let aggregate = service
             .create_notification_rule(
                 "Test Rule".to_string(),
-                vec!["device.error".to_string()],
-                vec![EventLevel::Error],
+                vec!["device.warning".to_string()],
+                vec![EventLevel::Warning],
                 vec![NotificationChannelType::Email],
                 vec!["admin@example.com".to_string()],
             )
