@@ -334,19 +334,18 @@ impl SqliteEventRepository {
         let content_str: String = row.get("content");
 
         let id = EventId::from_string(id_str.clone());
-        
+
         // 解析事件类型（JSON 格式）
-        let event_type: EventType = serde_json::from_str(&event_subtype_str)
-            .map_err(|e| {
-                tracing::error!(
-                    "Failed to deserialize event_type for event {}: {} - content: {}",
-                    id_str,
-                    e,
-                    event_subtype_str
-                );
-                e
-            })?;
-        
+        let event_type: EventType = serde_json::from_str(&event_subtype_str).map_err(|e| {
+            tracing::error!(
+                "Failed to deserialize event_type for event {}: {} - content: {}",
+                id_str,
+                e,
+                event_subtype_str
+            );
+            e
+        })?;
+
         let level = EventLevel::from_numeric(event_level_num).unwrap_or(EventLevel::Info);
         let timestamp = DateTime::parse_from_rfc3339(&timestamp_str)
             .map(|dt| dt.with_timezone(&Utc))
@@ -358,22 +357,21 @@ impl SqliteEventRepository {
         let user_id: Option<String> = row.get("user_id");
 
         let source = EventSource::new(source_type, source_id, device_id, user_id);
-        
+
         // 解析内容
         let content: RichContent = if content_str.trim().is_empty() {
             tracing::warn!("Empty content for event {}, using default", id_str);
             RichContent::new("Empty Event".to_string(), vec![])
         } else {
-            serde_json::from_str(&content_str)
-                .map_err(|e| {
-                    tracing::error!(
-                        "Failed to deserialize content for event {}: {} - content: {}",
-                        id_str,
-                        e,
-                        &content_str[..content_str.len().min(200)]
-                    );
-                    e
-                })?
+            serde_json::from_str(&content_str).map_err(|e| {
+                tracing::error!(
+                    "Failed to deserialize content for event {}: {} - content: {}",
+                    id_str,
+                    e,
+                    &content_str[..content_str.len().min(200)]
+                );
+                e
+            })?
         };
 
         Ok(Event::reconstruct(

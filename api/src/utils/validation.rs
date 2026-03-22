@@ -46,9 +46,28 @@ pub fn sanitize_input(input: &str) -> String {
 /// 检查输入是否包含 SQL 注入风险
 pub fn contains_sql_injection(input: &str) -> bool {
     let dangerous_patterns = [
-        "'", "\"", ";", "--", "/*", "*/", "xp_", "sp_", "exec", "execute", 
-        "union", "select", "insert", "update", "delete", "drop", "create",
-        "alter", "truncate", "script", "javascript", "<script"
+        "'",
+        "\"",
+        ";",
+        "--",
+        "/*",
+        "*/",
+        "xp_",
+        "sp_",
+        "exec",
+        "execute",
+        "union",
+        "select",
+        "insert",
+        "update",
+        "delete",
+        "drop",
+        "create",
+        "alter",
+        "truncate",
+        "script",
+        "javascript",
+        "<script",
     ];
     let lower = input.to_lowercase();
     dangerous_patterns.iter().any(|p| lower.contains(p))
@@ -57,8 +76,14 @@ pub fn contains_sql_injection(input: &str) -> bool {
 /// 检查输入是否包含 XSS 风险
 pub fn contains_xss(input: &str) -> bool {
     let xss_patterns = [
-        "<script", "javascript:", "onerror=", "onclick=", "onload=",
-        "<iframe", "eval(", "expression("
+        "<script",
+        "javascript:",
+        "onerror=",
+        "onclick=",
+        "onload=",
+        "<iframe",
+        "eval(",
+        "expression(",
     ];
     let lower = input.to_lowercase();
     xss_patterns.iter().any(|p| lower.contains(p))

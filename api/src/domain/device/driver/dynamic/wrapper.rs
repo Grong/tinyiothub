@@ -42,20 +42,29 @@ impl DeviceDriver for DynamicDriverWrapper {
 
     fn read_data(&mut self) -> Result<Vec<ResultValue>, Error> {
         // TODO: 实现通过FFI调用驱动的read_data方法
-        debug!("Reading data from dynamic driver: {}", self.loader.driver_name());
+        debug!(
+            "Reading data from dynamic driver: {}",
+            self.loader.driver_name()
+        );
         Ok(vec![])
     }
 
     fn execute_command(&mut self, _command: &DeviceCommand) -> Result<bool, Error> {
         // TODO: 实现通过FFI调用驱动的execute_command方法
-        debug!("Executing command on dynamic driver: {}", self.loader.driver_name());
+        debug!(
+            "Executing command on dynamic driver: {}",
+            self.loader.driver_name()
+        );
         Ok(true)
     }
 }
 
 impl Drop for DynamicDriverWrapper {
     fn drop(&mut self) {
-        debug!("Destroying dynamic driver instance: {}", self.loader.driver_name());
+        debug!(
+            "Destroying dynamic driver instance: {}",
+            self.loader.driver_name()
+        );
         self.loader.destroy_driver(self.driver_ptr);
     }
 }

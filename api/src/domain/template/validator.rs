@@ -221,7 +221,10 @@ impl TemplateValidator {
             for required_field in &device_info.required_fields {
                 match required_field.as_str() {
                     "driver_options" => {
-                        if input.driver_options.as_ref().map_or(true, |opt| opt.trim().is_empty())
+                        if input
+                            .driver_options
+                            .as_ref()
+                            .map_or(true, |opt| opt.trim().is_empty())
                         {
                             result.add_error(
                                 "driver_options",
@@ -231,13 +234,19 @@ impl TemplateValidator {
                         }
                     }
                     "parent_id" => {
-                        if input.parent_id.as_ref().map_or(true, |id| id.trim().is_empty())
+                        if input
+                            .parent_id
+                            .as_ref()
+                            .map_or(true, |id| id.trim().is_empty())
                         {
                             result.add_error("parent_id", "父设备ID是必填字段", "REQUIRED_FIELD");
                         }
                     }
                     "product_id" => {
-                        if input.product_id.as_ref().map_or(true, |id| id.trim().is_empty())
+                        if input
+                            .product_id
+                            .as_ref()
+                            .map_or(true, |id| id.trim().is_empty())
                         {
                             result.add_error("product_id", "产品ID是必填字段", "REQUIRED_FIELD");
                         }

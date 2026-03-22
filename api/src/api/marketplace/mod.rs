@@ -109,11 +109,8 @@ async fn install_marketplace_template(
         std::path::PathBuf::from("templates"),
     ));
 
-    let installer = TemplateInstaller::new(
-        client,
-        repository,
-        std::path::PathBuf::from("templates"),
-    );
+    let installer =
+        TemplateInstaller::new(client, repository, std::path::PathBuf::from("templates"));
 
     match installer
         .install_from_marketplace(&id, req.version.as_deref())

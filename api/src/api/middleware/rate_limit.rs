@@ -71,7 +71,10 @@ impl RateLimiter {
                 let remaining = until.duration_since(now).as_secs();
                 return RateLimitResult::Blocked {
                     retry_after: remaining as u32,
-                    message: format!("Too many requests. Please try again in {} seconds", remaining),
+                    message: format!(
+                        "Too many requests. Please try again in {} seconds",
+                        remaining
+                    ),
                 };
             } else {
                 // 限制期已过，清除限制
@@ -125,14 +128,8 @@ impl RateLimiter {
 /// 速率限制结果
 #[derive(Debug)]
 pub enum RateLimitResult {
-    Allowed {
-        remaining: usize,
-        reset_in: u32,
-    },
-    Blocked {
-        retry_after: u32,
-        message: String,
-    },
+    Allowed { remaining: usize, reset_in: u32 },
+    Blocked { retry_after: u32, message: String },
 }
 
 /// 速率限制中间件
@@ -155,9 +152,12 @@ pub async fn rate_limit_middleware(
     let client_id = RateLimiter::get_client_id(&request);
 
     match rate_limiter.check_rate_limit(&client_id).await {
-        RateLimitResult::Allowed { remaining, reset_in } => {
+        RateLimitResult::Allowed {
+            remaining,
+            reset_in,
+        } => {
             let mut response = next.run(request).await;
-            
+
             // 添加速率限制头
             response.headers_mut().insert(
                 HeaderName::from_static("x-rateLimit-limit"),
@@ -174,14 +174,20 @@ pub async fn rate_limit_middleware(
 
             response
         }
-        RateLimitResult::Blocked { retry_after, message } => {
+        RateLimitResult::Blocked {
+            retry_after,
+            message,
+        } => {
             tracing::warn!("Rate limit exceeded for client: {} on {}", client_id, path);
-            
+
             let mut response = Response::builder()
                 .status(StatusCode::TOO_MANY_REQUESTS)
                 .header("Content-Type", "application/json")
                 .header("Retry-After", retry_after)
-                .header(HeaderName::from_static("x-rateLimit-limit"), config.requests_per_minute)
+                .header(
+                    HeaderName::from_static("x-rateLimit-limit"),
+                    config.requests_per_minute,
+                )
                 .header(HeaderName::from_static("x-rateLimit-remaining"), 0)
                 .header(HeaderName::from_static("x-rateLimit-reset"), retry_after)
                 .body(Body::from(

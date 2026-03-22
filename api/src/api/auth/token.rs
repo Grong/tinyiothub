@@ -1,12 +1,7 @@
 // Token 刷新模块
 // 支持 Token 刷新和黑名单
 
-use axum::{
-    extract::State,
-    response::Json,
-    routing::post,
-    Router,
-};
+use axum::{extract::State, response::Json, routing::post, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::api::AppState;
@@ -81,17 +76,17 @@ async fn logout(
     if let Some(token) = request.token {
         // 将 token 加入黑名单
         let db = state.database();
-        
+
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
         let expires_at = chrono::Utc::now()
             .checked_add_signed(chrono::Duration::days(1))
             .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
             .unwrap_or_default();
-        
+
         // 使用参数化查询
         let result = sqlx::query(
-            "INSERT INTO token_blacklist (id, token, expires_at, created_at) VALUES (?, ?, ?, ?)"
+            "INSERT INTO token_blacklist (id, token, expires_at, created_at) VALUES (?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&token)

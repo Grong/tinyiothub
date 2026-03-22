@@ -8,9 +8,9 @@ use crate::domain::alarm::{AlarmLevel, AlarmQueryCriteria, AlarmStatus, TimeRang
 use crate::dto::entity::{AlarmDto, AlarmStatisticsDto};
 use crate::dto::request::{AlarmQueryParams, StatisticsQueryParams};
 use crate::dto::response::api_response::ApiResponse;
-use crate::shared::error_handling::ErrorCode;
 use crate::dto::response::builder::ApiResponseBuilder;
 use crate::shared::app_state::AppState;
+use crate::shared::error_handling::ErrorCode;
 use crate::shared::security::jwt::Claims;
 
 #[derive(serde::Serialize)]

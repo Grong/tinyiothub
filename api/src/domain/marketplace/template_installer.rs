@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::domain::template::repository::TemplateRepository;
 use super::client::MarketplaceClient;
 use super::error::{MarketplaceError, Result};
 use super::metadata::TemplateMetadata;
+use crate::domain::template::repository::TemplateRepository;
 
 pub struct TemplateInstaller {
     client: Arc<MarketplaceClient>,
@@ -56,7 +56,9 @@ impl TemplateInstaller {
         let temp_file = self.download_template(template_meta).await?;
 
         // 5. 验证校验和（开发模式下跳过）
-        if !template_meta.checksum.starts_with("sha256:test") && !template_meta.checksum.contains("test") {
+        if !template_meta.checksum.starts_with("sha256:test")
+            && !template_meta.checksum.contains("test")
+        {
             self.client
                 .verify_checksum(&temp_file, &template_meta.checksum)
                 .await?;
@@ -107,8 +109,9 @@ impl TemplateInstaller {
 
         // 将 JSON 转换为 CreateDeviceTemplateRequest
         let request: crate::dto::entity::device_template::CreateDeviceTemplateRequest =
-            serde_json::from_value(template_data)
-                .map_err(|e| MarketplaceError::Template(format!("Invalid template format: {}", e)))?;
+            serde_json::from_value(template_data).map_err(|e| {
+                MarketplaceError::Template(format!("Invalid template format: {}", e))
+            })?;
 
         // 使用 repository 的 create 方法
         self.repository

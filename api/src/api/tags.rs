@@ -111,7 +111,10 @@ async fn create_tag(
     }
 
     match Tag::create(state.database(), &request, &claims.user_id).await {
-        Ok(tag) => Ok(ApiResponseBuilder::success_with_message(tag, "Tag created successfully")),
+        Ok(tag) => Ok(ApiResponseBuilder::success_with_message(
+            tag,
+            "Tag created successfully",
+        )),
         Err(e) => {
             tracing::error!("Failed to create tag: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
@@ -155,7 +158,10 @@ async fn update_tag(
     }
 
     match Tag::update(state.database(), &id, &request).await {
-        Ok(tag) => Ok(ApiResponseBuilder::success_with_message(tag, "Tag updated successfully")),
+        Ok(tag) => Ok(ApiResponseBuilder::success_with_message(
+            tag,
+            "Tag updated successfully",
+        )),
         Err(sqlx::Error::RowNotFound) => Err(StatusCode::NOT_FOUND),
         Err(e) => {
             tracing::error!("Failed to update tag {}: {}", id, e);
@@ -172,7 +178,10 @@ async fn delete_tag(
     match Tag::delete(state.database(), &id).await {
         Ok(rows_affected) => {
             if rows_affected > 0 {
-                Ok(ApiResponseBuilder::success_with_message((), "Tag deleted successfully"))
+                Ok(ApiResponseBuilder::success_with_message(
+                    (),
+                    "Tag deleted successfully",
+                ))
             } else {
                 Err(StatusCode::NOT_FOUND)
             }
@@ -247,7 +256,10 @@ async fn create_tag_binding(
     }
 
     match TagBinding::create(state.database(), &request, &claims.user_id).await {
-        Ok(binding) => Ok(ApiResponseBuilder::success_with_message(binding, "Tag binding created successfully")),
+        Ok(binding) => Ok(ApiResponseBuilder::success_with_message(
+            binding,
+            "Tag binding created successfully",
+        )),
         Err(e) => {
             tracing::error!("Failed to create tag binding: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
@@ -265,7 +277,10 @@ async fn delete_tag_binding(
     {
         Ok(rows_affected) => {
             if rows_affected > 0 {
-                Ok(ApiResponseBuilder::success_with_message((), "Tag binding deleted successfully"))
+                Ok(ApiResponseBuilder::success_with_message(
+                    (),
+                    "Tag binding deleted successfully",
+                ))
             } else {
                 Err(StatusCode::NOT_FOUND)
             }
@@ -293,7 +308,10 @@ async fn batch_create_bindings(
         .collect();
 
     match TagBinding::create_batch(state.database(), &bindings, &claims.user_id).await {
-        Ok(created_bindings) => Ok(ApiResponseBuilder::success_with_message(created_bindings, "Tag bindings created successfully")),
+        Ok(created_bindings) => Ok(ApiResponseBuilder::success_with_message(
+            created_bindings,
+            "Tag bindings created successfully",
+        )),
         Err(e) => {
             tracing::error!("Failed to create tag bindings: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
@@ -307,7 +325,10 @@ async fn batch_delete_bindings(
     State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<()>>, StatusCode> {
     match TagBinding::delete_all_by_target_id(state.database(), &query.target_id).await {
-        Ok(_) => Ok(ApiResponseBuilder::success_with_message((), "Tag bindings deleted successfully")),
+        Ok(_) => Ok(ApiResponseBuilder::success_with_message(
+            (),
+            "Tag bindings deleted successfully",
+        )),
         Err(e) => {
             tracing::error!("Failed to delete tag bindings: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)

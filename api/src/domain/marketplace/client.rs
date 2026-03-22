@@ -1,11 +1,11 @@
+use reqwest::Client;
+use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::time::Duration;
-use reqwest::Client;
-use sha2::{Sha256, Digest};
 
-use crate::infrastructure::config::settings::MarketplaceConfig;
 use super::error::{MarketplaceError, Result};
-use super::metadata::{TemplateIndex, DriverIndex, TemplateMetadata, DriverMetadata};
+use super::metadata::{DriverIndex, DriverMetadata, TemplateIndex, TemplateMetadata};
+use crate::infrastructure::config::settings::MarketplaceConfig;
 
 pub struct MarketplaceClient {
     http_client: Client,

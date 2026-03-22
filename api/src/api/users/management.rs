@@ -81,20 +81,20 @@ fn validate_password_strength(password: &str) -> Result<(), String> {
     if password.len() < 8 {
         return Err("密码长度不能少于8位".to_string());
     }
-    
+
     if password.len() > 128 {
         return Err("密码长度不能超过128位".to_string());
     }
-    
+
     // 检查是否包含数字
     let has_digit = password.chars().any(|c| c.is_ascii_digit());
     // 检查是否包含字母
     let has_letter = password.chars().any(|c| c.is_ascii_alphabetic());
-    
+
     if !has_digit || !has_letter {
         return Err("密码必须包含字母和数字".to_string());
     }
-    
+
     Ok(())
 }
 
@@ -292,13 +292,10 @@ async fn change_user_password(
 
     // 授权检查：用户只能修改自己的密码，或者需要管理员权限
     let requesting_user_id = &claims.user_id;
-    let is_admin = crate::shared::error_handling::AuthHelper::check_role(
-        &state,
-        requesting_user_id,
-        "admin",
-    )
-    .await
-    .unwrap_or(false);
+    let is_admin =
+        crate::shared::error_handling::AuthHelper::check_role(&state, requesting_user_id, "admin")
+            .await
+            .unwrap_or(false);
 
     if requesting_user_id != &id && !is_admin {
         tracing::warn!(

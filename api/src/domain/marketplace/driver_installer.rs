@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::domain::device::driver;
 use super::client::MarketplaceClient;
 use super::error::{MarketplaceError, Result};
 use super::metadata::DriverMetadata;
+use crate::domain::device::driver;
 
 pub struct DriverInstaller {
     client: Arc<MarketplaceClient>,
@@ -54,10 +54,14 @@ impl DriverInstaller {
             .ok_or_else(|| MarketplaceError::PlatformNotSupported(platform.clone()))?;
 
         // 5. 下载驱动文件
-        let driver_file = self.download_driver(driver_id, binary_info, &platform).await?;
+        let driver_file = self
+            .download_driver(driver_id, binary_info, &platform)
+            .await?;
 
         // 6. 验证校验和（开发模式下跳过）
-        if !binary_info.checksum.starts_with("sha256:test") && !binary_info.checksum.contains("test") {
+        if !binary_info.checksum.starts_with("sha256:test")
+            && !binary_info.checksum.contains("test")
+        {
             self.client
                 .verify_checksum(&driver_file, &binary_info.checksum)
                 .await?;
@@ -68,7 +72,11 @@ impl DriverInstaller {
         // 7. 自动加载驱动
         let driver_name = self.load_driver(&driver_file).await?;
 
-        tracing::info!("Successfully installed driver: {} ({})", driver_id, driver_name);
+        tracing::info!(
+            "Successfully installed driver: {} ({})",
+            driver_id,
+            driver_name
+        );
         Ok(driver_name)
     }
 
@@ -89,7 +97,9 @@ impl DriverInstaller {
             "so"
         };
 
-        let dest_file = self.drivers_dir.join(format!("{}_driver.{}", driver_id, extension));
+        let dest_file = self
+            .drivers_dir
+            .join(format!("{}_driver.{}", driver_id, extension));
 
         self.client
             .download_resource(&binary_info.file_url, &dest_file)
@@ -104,8 +114,7 @@ impl DriverInstaller {
             .to_str()
             .ok_or_else(|| MarketplaceError::InstallationFailed("Invalid path".to_string()))?;
 
-        driver::load_dynamic_driver(path_str)
-            .map_err(|e| MarketplaceError::Driver(e.to_string()))
+        driver::load_dynamic_driver(path_str).map_err(|e| MarketplaceError::Driver(e.to_string()))
     }
 
     /// 检查驱动是否已安装

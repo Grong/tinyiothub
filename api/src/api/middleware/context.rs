@@ -80,8 +80,9 @@ pub async fn jwt_auth_middleware(mut request: Request, next: Next) -> Response {
                 "code": -1,
                 "msg": "Missing authorization token",
                 "result": serde_json::Value::Null
-            }))
-        ).into_response();
+            })),
+        )
+            .into_response();
     }
 
     let auth_header = auth_header.unwrap();
@@ -112,8 +113,9 @@ pub async fn jwt_auth_middleware(mut request: Request, next: Next) -> Response {
                     "code": -1,
                     "msg": format!("Invalid token: {}", e),
                     "result": serde_json::Value::Null
-                }))
-            ).into_response()
+                })),
+            )
+                .into_response()
         }
     }
 }

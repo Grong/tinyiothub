@@ -79,9 +79,9 @@ pub struct UpdateNotificationChannelRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct SendMessageRequest {
-    pub recipient: String,      // 手机号/邮箱/ webhook 地址
-    pub title: Option<String>,  // 标题（邮件/短信）
-    pub content: String,         // 消息内容
+    pub recipient: String,     // 手机号/邮箱/ webhook 地址
+    pub title: Option<String>, // 标题（邮件/短信）
+    pub content: String,       // 消息内容
 }
 
 /// 渠道统计
@@ -97,43 +97,57 @@ pub struct ChannelStatistics {
 
 impl NotificationChannel {
     /// 根据 ID 查询
-    pub async fn find_by_id(db: &Database, id: &str) -> Result<Option<NotificationChannel>, sqlx::Error> {
-        let sql = format!("SELECT * FROM notification_channels WHERE id = '{}' LIMIT 1", id);
-        
-        let mut rows = db.query(&sql, |row| {
-            Ok(NotificationChannel {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                channel_type: row.try_get("channel_type")?,
-                config: row.try_get("config")?,
-                is_enabled: row.try_get::<i32, _>("is_enabled")? != 0,
-                description: row.try_get("description")?,
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
+    pub async fn find_by_id(
+        db: &Database,
+        id: &str,
+    ) -> Result<Option<NotificationChannel>, sqlx::Error> {
+        let sql = format!(
+            "SELECT * FROM notification_channels WHERE id = '{}' LIMIT 1",
+            id
+        );
+
+        let mut rows = db
+            .query(&sql, |row| {
+                Ok(NotificationChannel {
+                    id: row.try_get("id")?,
+                    name: row.try_get("name")?,
+                    channel_type: row.try_get("channel_type")?,
+                    config: row.try_get("config")?,
+                    is_enabled: row.try_get::<i32, _>("is_enabled")? != 0,
+                    description: row.try_get("description")?,
+                    created_at: row.try_get("created_at")?,
+                    updated_at: row.try_get("updated_at")?,
+                })
             })
-        }).await?;
-        
+            .await?;
+
         Ok(rows.pop())
     }
 
     /// 查询所有
-    pub async fn find_all(db: &Database, params: &NotificationChannelQueryParams) -> Result<Vec<NotificationChannel>, sqlx::Error> {
+    pub async fn find_all(
+        db: &Database,
+        params: &NotificationChannelQueryParams,
+    ) -> Result<Vec<NotificationChannel>, sqlx::Error> {
         let mut sql = String::from("SELECT * FROM notification_channels WHERE 1=1");
-        
+
         if let Some(ref channel_type) = params.channel_type {
             sql.push_str(&format!(" AND channel_type = '{}'", channel_type));
         }
         if let Some(is_enabled) = params.is_enabled {
-            sql.push_str(&format!(" AND is_enabled = {}", if is_enabled { 1 } else { 0 }));
+            sql.push_str(&format!(
+                " AND is_enabled = {}",
+                if is_enabled { 1 } else { 0 }
+            ));
         }
-        
+
         sql.push_str(" ORDER BY created_at DESC");
-        
+
         let page = params.page.unwrap_or(1);
         let page_size = params.page_size.unwrap_or(20);
         let offset = (page - 1) * page_size;
         sql.push_str(&format!(" LIMIT {} OFFSET {}", page_size, offset));
-        
+
         db.query(&sql, |row| {
             Ok(NotificationChannel {
                 id: row.try_get("id")?,
@@ -145,15 +159,20 @@ impl NotificationChannel {
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
             })
-        }).await
+        })
+        .await
     }
 
     /// 创建
-    pub async fn create(db: &Database, req: &CreateNotificationChannelRequest) -> Result<NotificationChannel, sqlx::Error> {
+    pub async fn create(
+        db: &Database,
+        req: &CreateNotificationChannelRequest,
+    ) -> Result<NotificationChannel, sqlx::Error> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        
-        let sql = format!(r#"
+
+        let sql = format!(
+            r#"
             INSERT INTO notification_channels (id, name, channel_type, config, is_enabled, description, created_at, updated_at)
             VALUES ('{}', '{}', '{}', '{}', 1, '{}', '{}', '{}')
         "#,
@@ -165,18 +184,24 @@ impl NotificationChannel {
             now,
             now
         );
-        
+
         db.execute(&sql).await?;
-        
-        Self::find_by_id(db, &id).await?.ok_or(sqlx::Error::RowNotFound)
+
+        Self::find_by_id(db, &id)
+            .await?
+            .ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 更新
-    pub async fn update(db: &Database, id: &str, req: &UpdateNotificationChannelRequest) -> Result<NotificationChannel, sqlx::Error> {
+    pub async fn update(
+        db: &Database,
+        id: &str,
+        req: &UpdateNotificationChannelRequest,
+    ) -> Result<NotificationChannel, sqlx::Error> {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        
+
         let mut updates = vec![format!("updated_at = '{}'", now)];
-        
+
         if let Some(ref name) = req.name {
             updates.push(format!("name = '{}'", name));
         }
@@ -189,11 +214,17 @@ impl NotificationChannel {
         if let Some(ref description) = req.description {
             updates.push(format!("description = '{}'", description));
         }
-        
-        let sql = format!("UPDATE notification_channels SET {} WHERE id = '{}'", updates.join(", "), id);
+
+        let sql = format!(
+            "UPDATE notification_channels SET {} WHERE id = '{}'",
+            updates.join(", "),
+            id
+        );
         let _ = db.execute(&sql).await;
-        
-        Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound)
+
+        Self::find_by_id(db, id)
+            .await?
+            .ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 删除
@@ -203,7 +234,11 @@ impl NotificationChannel {
     }
 
     /// 设置启用/禁用
-    pub async fn set_enabled(db: &Database, id: &str, is_enabled: bool) -> Result<NotificationChannel, sqlx::Error> {
+    pub async fn set_enabled(
+        db: &Database,
+        id: &str,
+        is_enabled: bool,
+    ) -> Result<NotificationChannel, sqlx::Error> {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
         let sql = format!(
             "UPDATE notification_channels SET is_enabled = {}, updated_at = '{}' WHERE id = '{}'",
@@ -212,36 +247,52 @@ impl NotificationChannel {
             id
         );
         let _ = db.execute(&sql).await;
-        
-        Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound)
+
+        Self::find_by_id(db, id)
+            .await?
+            .ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 获取统计
     pub async fn get_statistics(db: &Database) -> Result<ChannelStatistics, sqlx::Error> {
-        let total: i64 = db.query_first(
-            "SELECT COUNT(*) FROM notification_channels", 
-            |row| row.try_get::<i64, _>(0)
-        ).await?.unwrap_or(0);
-        
-        let enabled: i64 = db.query_first(
-            "SELECT COUNT(*) FROM notification_channels WHERE is_enabled = 1", 
-            |row| row.try_get::<i64, _>(0)
-        ).await?.unwrap_or(0);
-        
-        let sms: i64 = db.query_first(
-            "SELECT COUNT(*) FROM notification_channels WHERE channel_type = 'sms'", 
-            |row| row.try_get::<i64, _>(0)
-        ).await?.unwrap_or(0);
-        
-        let email: i64 = db.query_first(
-            "SELECT COUNT(*) FROM notification_channels WHERE channel_type = 'email'", 
-            |row| row.try_get::<i64, _>(0)
-        ).await?.unwrap_or(0);
-        
-        let webhook: i64 = db.query_first(
-            "SELECT COUNT(*) FROM notification_channels WHERE channel_type = 'webhook'", 
-            |row| row.try_get::<i64, _>(0)
-        ).await?.unwrap_or(0);
+        let total: i64 = db
+            .query_first("SELECT COUNT(*) FROM notification_channels", |row| {
+                row.try_get::<i64, _>(0)
+            })
+            .await?
+            .unwrap_or(0);
+
+        let enabled: i64 = db
+            .query_first(
+                "SELECT COUNT(*) FROM notification_channels WHERE is_enabled = 1",
+                |row| row.try_get::<i64, _>(0),
+            )
+            .await?
+            .unwrap_or(0);
+
+        let sms: i64 = db
+            .query_first(
+                "SELECT COUNT(*) FROM notification_channels WHERE channel_type = 'sms'",
+                |row| row.try_get::<i64, _>(0),
+            )
+            .await?
+            .unwrap_or(0);
+
+        let email: i64 = db
+            .query_first(
+                "SELECT COUNT(*) FROM notification_channels WHERE channel_type = 'email'",
+                |row| row.try_get::<i64, _>(0),
+            )
+            .await?
+            .unwrap_or(0);
+
+        let webhook: i64 = db
+            .query_first(
+                "SELECT COUNT(*) FROM notification_channels WHERE channel_type = 'webhook'",
+                |row| row.try_get::<i64, _>(0),
+            )
+            .await?
+            .unwrap_or(0);
 
         Ok(ChannelStatistics {
             total_channels: total,
@@ -266,62 +317,85 @@ impl NotificationChannel {
     async fn send_sms(&self, req: &SendMessageRequest) -> Result<String, String> {
         let config: serde_json::Value = serde_json::from_str(&self.config)
             .map_err(|e| format!("Invalid config JSON: {}", e))?;
-        
-        let provider = config.get("provider")
+
+        let provider = config
+            .get("provider")
             .and_then(|v| v.as_str())
             .unwrap_or("aliyun");
-        
-        let sign_name = config.get("sign_name")
+
+        let sign_name = config
+            .get("sign_name")
             .and_then(|v| v.as_str())
             .unwrap_or("TinyIoT");
-        
-        let template_id = config.get("template_id")
+
+        let template_id = config
+            .get("template_id")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        
-        tracing::info!("Sending SMS via {} to {}: {}", provider, req.recipient, req.content);
-        
+
+        tracing::info!(
+            "Sending SMS via {} to {}: {}",
+            provider,
+            req.recipient,
+            req.content
+        );
+
         // TODO: 实现实际的短信发送
         // 这里模拟发送成功
-        Ok(format!("SMS sent to {} via {} (sign: {}, template: {})", 
-            req.recipient, provider, sign_name, template_id))
+        Ok(format!(
+            "SMS sent to {} via {} (sign: {}, template: {})",
+            req.recipient, provider, sign_name, template_id
+        ))
     }
 
     /// 发送邮件
     async fn send_email(&self, req: &SendMessageRequest) -> Result<String, String> {
         let config: serde_json::Value = serde_json::from_str(&self.config)
             .map_err(|e| format!("Invalid config JSON: {}", e))?;
-        
-        let smtp_host = config.get("smtp_host")
+
+        let smtp_host = config
+            .get("smtp_host")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        
-        let from = config.get("from")
+
+        let from = config
+            .get("from")
             .and_then(|v| v.as_str())
             .unwrap_or("TinyIoT <noreply@tinyiot.com>");
-        
-        tracing::info!("Sending email via {} from {} to {}", smtp_host, from, req.recipient);
-        
+
+        tracing::info!(
+            "Sending email via {} from {} to {}",
+            smtp_host,
+            from,
+            req.recipient
+        );
+
         // TODO: 实现实际的邮件发送
-        Ok(format!("Email sent to {} (from: {}, subject: {})", 
-            req.recipient, from, req.title.as_deref().unwrap_or("")))
+        Ok(format!(
+            "Email sent to {} (from: {}, subject: {})",
+            req.recipient,
+            from,
+            req.title.as_deref().unwrap_or("")
+        ))
     }
 
     /// 发送 Webhook
     async fn send_webhook(&self, req: &SendMessageRequest) -> Result<String, String> {
         let config: serde_json::Value = serde_json::from_str(&self.config)
             .map_err(|e| format!("Invalid config JSON: {}", e))?;
-        
-        let url = config.get("url")
+
+        let url = config
+            .get("url")
             .and_then(|v| v.as_str())
             .ok_or("Missing URL in config")?;
-        
-        let method = config.get("method")
+
+        let method = config
+            .get("method")
             .and_then(|v| v.as_str())
             .unwrap_or("POST");
-        
+
         tracing::info!("Sending webhook {} {} to {}", method, url, req.recipient);
-        
+
         // 构建请求体
         let body = serde_json::json!({
             "msgtype": "text",
@@ -329,7 +403,7 @@ impl NotificationChannel {
                 "content": format!("{}\n{}", req.title.as_deref().unwrap_or(""), req.content)
             }
         });
-        
+
         // TODO: 实现实际的 HTTP 请求
         Ok(format!("Webhook sent to {} via {} {}", url, method, body))
     }
@@ -449,7 +523,10 @@ mod tests {
         }"#;
 
         let parsed: serde_json::Value = serde_json::from_str(config).unwrap();
-        assert_eq!(parsed["url"], "https://oapi.dingtalk.com/robot/send?access_token=xxx");
+        assert_eq!(
+            parsed["url"],
+            "https://oapi.dingtalk.com/robot/send?access_token=xxx"
+        );
         assert_eq!(parsed["method"], "POST");
     }
 }

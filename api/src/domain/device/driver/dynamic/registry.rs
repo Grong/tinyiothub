@@ -78,16 +78,17 @@ impl UnifiedDriverRegistry {
         // 尝试使用动态驱动
         if let Some(loader) = self.dynamic_loaders.get(driver_name) {
             debug!("Creating dynamic driver: {}", driver_name);
-            let wrapper = super::wrapper::DynamicDriverWrapper::new(
-                Arc::clone(&loader),
-                device.clone(),
-            )?;
+            let wrapper =
+                super::wrapper::DynamicDriverWrapper::new(Arc::clone(&loader), device.clone())?;
             return Ok(Box::new(wrapper));
         }
 
         // 驱动不存在
         warn!("Driver not found: {}", driver_name);
-        Err(Error::Unsupported(format!("Unknown driver: {}", driver_name)))
+        Err(Error::Unsupported(format!(
+            "Unknown driver: {}",
+            driver_name
+        )))
     }
 
     /// 检查驱动是否存在

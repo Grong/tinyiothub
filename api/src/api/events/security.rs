@@ -856,7 +856,7 @@ mod tests {
             event_level: Some("2".to_string()),
             result: Some("allowed".to_string()),
             details: Some(r#"{"test": "data"}"#.to_string()),
-            ip_address: Some("127.0.0.1".to_string()),  // 测试数据使用localhost
+            ip_address: Some("127.0.0.1".to_string()), // 测试数据使用localhost
             user_agent: Some("Mozilla/5.0".to_string()),
             created_at: "2024-01-01 12:00:00".to_string(),
         };

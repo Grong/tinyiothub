@@ -157,8 +157,8 @@ impl User {
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         // 使用 bcrypt 进行安全密码哈希（必须成功，不允许降级）
-        let password_hash = crate::utils::password::hash_password(&request.password)
-            .map_err(|e| {
+        let password_hash =
+            crate::utils::password::hash_password(&request.password).map_err(|e| {
                 tracing::error!("Failed to hash password during user creation: {}", e);
                 sqlx::Error::Protocol(format!("password hashing failed: {}", e))
             })?;
@@ -405,11 +405,10 @@ impl User {
             // Use bcrypt to verify old password
             use crate::utils::password::{hash_password, verify_password};
             if verify_password(old_password, &user.password_hash).is_ok() {
-                let new_hash = hash_password(new_password)
-                    .map_err(|e| {
-                        tracing::error!("Failed to hash new password during change: {}", e);
-                        sqlx::Error::Protocol(format!("password hashing failed: {}", e))
-                    })?;
+                let new_hash = hash_password(new_password).map_err(|e| {
+                    tracing::error!("Failed to hash new password during change: {}", e);
+                    sqlx::Error::Protocol(format!("password hashing failed: {}", e))
+                })?;
                 let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
                 sqlx::query("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")
@@ -615,11 +614,10 @@ impl User {
         id: &str,
         new_password: &str,
     ) -> Result<(), sqlx::Error> {
-        let new_hash = crate::utils::password::hash_password(new_password)
-            .map_err(|e| {
-                tracing::error!("Failed to hash password for update: {}", e);
-                sqlx::Error::Protocol(format!("password hashing failed: {}", e))
-            })?;
+        let new_hash = crate::utils::password::hash_password(new_password).map_err(|e| {
+            tracing::error!("Failed to hash password for update: {}", e);
+            sqlx::Error::Protocol(format!("password hashing failed: {}", e))
+        })?;
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         sqlx::query("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")

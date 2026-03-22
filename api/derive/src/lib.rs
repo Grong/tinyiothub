@@ -189,10 +189,7 @@ pub fn derive_device_driver(input: TokenStream) -> TokenStream {
         quote! { None }
     };
 
-    let class_name = format!(
-        "tinyiothub::domain::device::driver::drivers::{}",
-        name
-    );
+    let class_name = format!("tinyiothub::domain::device::driver::drivers::{}", name);
 
     // 生成默认配置代码
     let default_config_entries = options.iter().map(|opt| {

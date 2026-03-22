@@ -306,21 +306,24 @@ impl AppState {
         // Store in OnceCell
         let service_arc = Arc::new(secure_service);
         match self.secure_event_service.set(service_arc) {
-            Ok(_) => self.secure_event_service.get()
+            Ok(_) => self
+                .secure_event_service
+                .get()
                 .ok_or_else(|| -> Box<dyn std::error::Error + Send + Sync> {
                     Box::new(std::io::Error::new(
                         std::io::ErrorKind::Other,
-                        "Failed to get secure event service"
+                        "Failed to get secure event service",
                     ))
                 })
                 .map(|s| s.as_ref()),
             Err(_) => {
                 // Another thread already initialized it
-                self.secure_event_service.get()
+                self.secure_event_service
+                    .get()
                     .ok_or_else(|| -> Box<dyn std::error::Error + Send + Sync> {
                         Box::new(std::io::Error::new(
                             std::io::ErrorKind::Other,
-                            "Failed to get secure event service"
+                            "Failed to get secure event service",
                         ))
                     })
                     .map(|s| s.as_ref())

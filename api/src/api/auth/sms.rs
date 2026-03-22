@@ -81,9 +81,9 @@ async fn send_code(
     if !config.sms.enabled {
         return ApiResponse::error("短信服务未启用".to_string());
     }
-    
+
     let phone = request.phone.trim();
-    
+
     // 验证手机号格式
     if !validate_phone(phone) {
         return ApiResponse::error("手机号格式不正确".to_string());
@@ -92,14 +92,18 @@ async fn send_code(
     let purpose = request.purpose.unwrap_or_else(|| "login".to_string());
 
     // 从配置读取验证码有效期
-    let code_expire_secs = config.sms.rate_limit
+    let code_expire_secs = config
+        .sms
+        .rate_limit
         .as_ref()
         .map(|r| r.code_expire_secs)
         .unwrap_or(300);
-    
+
     // 检查频率限制
     let db = state.database();
-    let _rate_limit_max = config.sms.rate_limit
+    let _rate_limit_max = config
+        .sms
+        .rate_limit
         .as_ref()
         .map(|r| r.max_per_minute)
         .unwrap_or(5) as i64;
@@ -140,7 +144,7 @@ async fn send_code(
             message: format!("验证码已发送（测试模式: {}）", code),
         })
     }
-    
+
     #[cfg(not(debug_assertions))]
     {
         ApiResponse::success(SendCodeResponse {
@@ -449,11 +453,11 @@ fn generate_jwt_token(user_id: &str) -> String {
         "user_id": user_id,
         "exp": chrono::Utc::now().timestamp() + 86400,
     });
-    
+
     let encoded = base64::Engine::encode(
         &base64::engine::general_purpose::STANDARD,
-        payload.to_string()
+        payload.to_string(),
     );
-    
+
     format!("sms_{}", encoded)
 }

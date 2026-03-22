@@ -25,7 +25,7 @@ pub fn is_safe_identifier(name: &str) -> bool {
 }
 
 /// SQL 查询构建辅助 - 用于构建参数化查询
-/// 
+///
 /// # 示例
 /// ```
 /// let query = build_where_clause(vec![

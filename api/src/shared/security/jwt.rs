@@ -18,11 +18,10 @@ type HmacSha256 = Hmac<Sha256>;
 // 使用 jwt-simple 的 HS256Key (纯 Rust 实现，不依赖 ring)
 pub static JWT_KEY: Lazy<Result<HS256Key, String>> = Lazy::new(|| {
     // 从环境变量读取JWT密钥
-    let secret = std::env::var("JWT_SECRET")
-        .map_err(|_| {
-            tracing::error!("JWT_SECRET environment variable is not set!");
-            "JWT_SECRET must be set in production".to_string()
-        })?;
+    let secret = std::env::var("JWT_SECRET").map_err(|_| {
+        tracing::error!("JWT_SECRET environment variable is not set!");
+        "JWT_SECRET must be set in production".to_string()
+    })?;
 
     // 验证密钥长度
     if secret.len() < 32 {
@@ -34,7 +33,9 @@ pub static JWT_KEY: Lazy<Result<HS256Key, String>> = Lazy::new(|| {
 
     // 检查是否使用弱密钥
     if secret.len() < 64 {
-        tracing::warn!("⚠️  JWT_SECRET is shorter than 64 characters, consider using a longer secret");
+        tracing::warn!(
+            "⚠️  JWT_SECRET is shorter than 64 characters, consider using a longer secret"
+        );
     }
 
     Ok(HS256Key::from_bytes(secret.as_bytes()))
@@ -59,8 +60,8 @@ fn is_harmonyos() -> bool {
 
 // 使用 HMAC-SHA256 计算消息认证码
 fn hmac_sha256(message: &str, key: &str) -> String {
-    let mut mac = HmacSha256::new_from_slice(key.as_bytes())
-        .expect("HMAC can take key of any size");
+    let mut mac =
+        HmacSha256::new_from_slice(key.as_bytes()).expect("HMAC can take key of any size");
     mac.update(message.as_bytes());
     let result = mac.finalize();
     // 返回十六进制编码的 HMAC

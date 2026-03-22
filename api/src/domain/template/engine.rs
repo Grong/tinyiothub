@@ -535,7 +535,9 @@ mod tests {
             display_name: Some("测试设备".to_string()),
             description: Some("这是一个测试设备".to_string()),
             position: None,
-            address: Some(std::env::var("TEST_DEVICE_ADDRESS").unwrap_or_else(|_| "127.0.0.1".to_string())),
+            address: Some(
+                std::env::var("TEST_DEVICE_ADDRESS").unwrap_or_else(|_| "127.0.0.1".to_string()),
+            ),
             driver_name: Some("".to_string()),
             driver_options: None,
             parent_id: None,

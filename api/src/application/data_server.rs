@@ -69,7 +69,10 @@ impl DataServer {
     }
 
     /// 核心数据处理循环（简化版）
-    pub async fn run(&self, mut shutdown_rx: tokio::sync::broadcast::Receiver<()>) -> Result<(), Error> {
+    pub async fn run(
+        &self,
+        mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
+    ) -> Result<(), Error> {
         // 按协议类型分组启动处理任务
         let driver_groups = self.group_drivers_by_protocol();
 

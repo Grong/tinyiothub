@@ -56,17 +56,20 @@ impl ServiceManager {
             app_state.data_context.clone(),
             app_state.event_bus.clone(),
         ));
-        
+
         // 启动数据服务器
         let shutdown_rx = self.shutdown_tx.subscribe();
         data_server.run(shutdown_rx).await?;
-        
+
         // 注册为事件处理器
-        app_state.event_bus.register_handler(data_server.clone()).await;
-        
+        app_state
+            .event_bus
+            .register_handler(data_server.clone())
+            .await;
+
         // 保存到 AppState
         app_state.set_data_server(data_server.clone());
-        
+
         info!("✅ DataServer started and registered");
 
         // 2. 启动定时任务调度器
@@ -82,7 +85,8 @@ impl ServiceManager {
 
         // 3. 启动健康检查服务
         #[cfg(not(feature = "harmonyos"))]
-        self.start_health_monitor(app_state.data_context.clone()).await?;
+        self.start_health_monitor(app_state.data_context.clone())
+            .await?;
 
         // 更新状态为运行中
         *self.status.write().await = ServiceStatus::Running;
@@ -188,7 +192,9 @@ impl ServiceManager {
         _app_state: &mut crate::shared::app_state::AppState,
     ) -> Result<(), Error> {
         // TODO: 实现服务重启逻辑
-        Err(Error::IOError("Service restart not implemented".to_string()))
+        Err(Error::IOError(
+            "Service restart not implemented".to_string(),
+        ))
     }
 }
 

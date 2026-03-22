@@ -255,7 +255,7 @@ async fn initialize_logging() -> std::io::Result<()> {
 
 /// Create the main application router
 fn create_app_router(app_state: crate::shared::app_state::AppState) -> Router {
-    use tower_http::cors::{CorsLayer, AllowOrigin};
+    use tower_http::cors::{AllowOrigin, CorsLayer};
 
     tracing::info!("Creating CORS layer...");
     // 创建CORS层 - 使用配置中的origins，支持credentials
@@ -297,23 +297,23 @@ fn create_app_router(app_state: crate::shared::app_state::AppState) -> Router {
     let api_router = crate::api::create_router();
 
     tracing::info!("Building main router...");
-    
+
     // 静态文件服务 - SPA 模式
-    use tower_http::services::{ServeDir, ServeFile};
     use axum::http::{StatusCode, Uri};
     use axum::response::{IntoResponse, Response};
-    
+    use tower_http::services::{ServeDir, ServeFile};
+
     tracing::info!("Serving static files from wwwroot/ (SPA mode)");
-    
+
     // 创建一个处理器，对于所有非 API 请求返回对应的 HTML 文件
     async fn spa_handler(uri: Uri) -> Response {
         let path = uri.path();
-        
+
         // 如果是 API 请求，不应该到这里（已被 nest 处理）
         if path.starts_with("/api/") {
             return (StatusCode::NOT_FOUND, "API endpoint not found").into_response();
         }
-        
+
         // 尝试读取请求的文件
         let file_path = if path == "/" {
             "wwwroot/index.html".to_string()
@@ -322,7 +322,7 @@ fn create_app_router(app_state: crate::shared::app_state::AppState) -> Router {
         } else {
             format!("wwwroot{}", path)
         };
-        
+
         match tokio::fs::read(&file_path).await {
             Ok(content) => {
                 // 根据文件扩展名设置 Content-Type
@@ -345,7 +345,7 @@ fn create_app_router(app_state: crate::shared::app_state::AppState) -> Router {
                 } else {
                     "application/octet-stream"
                 };
-                
+
                 ([(axum::http::header::CONTENT_TYPE, content_type)], content).into_response()
             }
             Err(_) => {
@@ -360,16 +360,19 @@ fn create_app_router(app_state: crate::shared::app_state::AppState) -> Router {
                         tracing::info!("Serving index.html for SPA route: {}", path);
                         match tokio::fs::read("wwwroot/index.html").await {
                             Ok(content) => {
-                                ([(axum::http::header::CONTENT_TYPE, "text/html")], content).into_response()
+                                ([(axum::http::header::CONTENT_TYPE, "text/html")], content)
+                                    .into_response()
                             }
-                            Err(_) => (StatusCode::NOT_FOUND, "index.html not found").into_response(),
+                            Err(_) => {
+                                (StatusCode::NOT_FOUND, "index.html not found").into_response()
+                            }
                         }
                     }
                 }
             }
         }
     }
-    
+
     let mut router = Router::new()
         // API路由优先
         .nest("/api", api_router)

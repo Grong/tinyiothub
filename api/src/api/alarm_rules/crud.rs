@@ -7,9 +7,9 @@ use crate::domain::alarm::{AlarmCondition, AlarmLevel, AlarmRule, NotificationCo
 use crate::dto::entity::AlarmRuleDto;
 use crate::dto::request::{CreateAlarmRuleRequest, ToggleRuleRequest, UpdateAlarmRuleRequest};
 use crate::dto::response::api_response::ApiResponse;
-use crate::shared::error_handling::ErrorCode;
 use crate::dto::response::builder::ApiResponseBuilder;
 use crate::shared::app_state::AppState;
+use crate::shared::error_handling::ErrorCode;
 use crate::shared::security::jwt::Claims;
 
 #[derive(serde::Deserialize)]

@@ -15,8 +15,8 @@ pub mod jobs;
 pub mod marketplace;
 pub mod middleware;
 pub mod monitoring;
-pub mod notifications;
 pub mod notification_channels;
+pub mod notifications;
 pub mod open;
 pub mod system;
 pub mod tags;
@@ -37,7 +37,10 @@ pub fn create_router() -> Router<AppState> {
         .nest("/device-templates", templates::create_router())
         .nest("/marketplace", marketplace::create_router())
         .nest("/notifications", notifications::create_router())
-        .nest("/notification-channels", notification_channels::create_router())
+        .nest(
+            "/notification-channels",
+            notification_channels::create_router(),
+        )
         .nest("/tenants", tenants::create_router())
         .nest("/events", events::create_router())
         .nest("/jobs", jobs::create_router())
@@ -65,7 +68,7 @@ pub fn create_router() -> Router<AppState> {
     // 合并所有路由
     Router::new()
         .nest("/v1", v1_routes)
-        .nest("/open", open::create_open_router())  // 开放 API (需要 API Key)
+        .nest("/open", open::create_open_router()) // 开放 API (需要 API Key)
         .route("/health", get(health_check))
 }
 

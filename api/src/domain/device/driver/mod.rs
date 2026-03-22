@@ -14,9 +14,9 @@ pub use tinyiothub_driver_sdk::{ComponentInfo, ComponentOption, CreateComponentR
 
 pub mod driver;
 pub mod drivers;
+pub mod dynamic;
 pub mod retry;
 pub mod status;
-pub mod dynamic;
 
 // 使用宏注册所有驱动
 tinyiothub_derive::register_drivers! {
@@ -44,7 +44,10 @@ pub fn create_driver(
         return Ok(DriverWrapper::new(base_driver));
     }
 
-    Err(Error::Unsupported(format!("Unknown driver: {}", driver_name)))
+    Err(Error::Unsupported(format!(
+        "Unknown driver: {}",
+        driver_name
+    )))
 }
 
 /// 加载动态驱动

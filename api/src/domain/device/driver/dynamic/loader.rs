@@ -39,7 +39,9 @@ impl DynamicDriverLoader {
         let get_info: Symbol<GetDriverInfoFn> = unsafe {
             library.get(b"iot_edge_driver_info\0").map_err(|e| {
                 error!("Failed to find iot_edge_driver_info symbol: {}", e);
-                Error::Unsupported(format!("Invalid driver library: missing iot_edge_driver_info"))
+                Error::Unsupported(format!(
+                    "Invalid driver library: missing iot_edge_driver_info"
+                ))
             })?
         };
 
@@ -99,9 +101,9 @@ impl DynamicDriverLoader {
     /// 创建驱动实例
     pub fn create_driver(&self, device_json: &str) -> Result<*mut std::ffi::c_void, Error> {
         let create_fn: Symbol<CreateDriverFn> = unsafe {
-            self.library
-                .get(b"iot_edge_driver_create\0")
-                .map_err(|e| Error::Unsupported(format!("Failed to get iot_edge_driver_create: {}", e)))?
+            self.library.get(b"iot_edge_driver_create\0").map_err(|e| {
+                Error::Unsupported(format!("Failed to get iot_edge_driver_create: {}", e))
+            })?
         };
 
         let device_cstr = CString::new(device_json)
@@ -114,7 +116,9 @@ impl DynamicDriverLoader {
         let driver_ptr = unsafe { create_fn(device_cstr.as_ptr(), context_cstr.as_ptr()) };
 
         if driver_ptr.is_null() {
-            return Err(Error::Unsupported("Failed to create driver instance".to_string()));
+            return Err(Error::Unsupported(
+                "Failed to create driver instance".to_string(),
+            ));
         }
 
         Ok(driver_ptr)
@@ -126,9 +130,8 @@ impl DynamicDriverLoader {
             return;
         }
 
-        let destroy_fn: Result<Symbol<DestroyDriverFn>, _> = unsafe {
-            self.library.get(b"iot_edge_driver_destroy\0")
-        };
+        let destroy_fn: Result<Symbol<DestroyDriverFn>, _> =
+            unsafe { self.library.get(b"iot_edge_driver_destroy\0") };
 
         if let Ok(destroy_fn) = destroy_fn {
             unsafe { destroy_fn(driver_ptr) };

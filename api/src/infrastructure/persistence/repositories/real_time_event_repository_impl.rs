@@ -84,7 +84,7 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
         let mut base_sql = String::from(
             r#"SELECT id, event_type, level, source_type, source_id, device_id, user_id,
                    title, content_preview, timestamp, acknowledged, acknowledged_by, acknowledged_at
-            FROM real_time_events WHERE 1=1"#
+            FROM real_time_events WHERE 1=1"#,
         );
 
         // Build query dynamically based on filter
@@ -115,7 +115,12 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
                 q
             }
             // Only acknowledged is set
-            (_, Some(acknowledged)) if filter.device_ids.as_ref().map_or(true, |ids| ids.is_empty()) => {
+            (_, Some(acknowledged))
+                if filter
+                    .device_ids
+                    .as_ref()
+                    .map_or(true, |ids| ids.is_empty()) =>
+            {
                 base_sql.push_str(" AND acknowledged = ?");
                 base_sql.push_str(" ORDER BY timestamp DESC");
                 sqlx::query(&base_sql).bind(acknowledged)
