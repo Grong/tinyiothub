@@ -49,13 +49,9 @@ export const createAuthStore = () =>
             if (response.code === 0 && response.result) {
               const { accessToken, userInfo } = response.result
 
-              // 保存token到localStorage
+              // 保存token到sessionStorage（更安全，不持久化到磁盘）
               if (typeof window !== 'undefined') {
-                localStorage.setItem('auth-token', accessToken)
-                // 设置cookie用于SSR（可选）
-                const isSecure = location.protocol === 'https:'
-                const securePart = isSecure ? '; Secure' : ''
-                document.cookie = `auth-token=${accessToken}; path=/; max-age=${24 * 60 * 60}; SameSite=Lax${securePart}`
+                sessionStorage.setItem('auth-token', accessToken)
               }
 
               set((state) => {
@@ -76,11 +72,10 @@ export const createAuthStore = () =>
         },
 
         logout: () => {
-          // 清除localStorage和cookie中的token
+          // 清除sessionStorage和localStorage中的token
           if (typeof window !== 'undefined') {
+            sessionStorage.removeItem('auth-token')
             localStorage.removeItem('auth-token')
-            // 清除cookie
-            document.cookie = 'auth-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT'
           }
 
           set((state) => {
@@ -126,9 +121,8 @@ export const createAuthStore = () =>
           set((state) => {
             // 只在客户端执行初始化逻辑
             if (typeof window !== 'undefined') {
-              // 从localStorage获取token
-              const token = localStorage.getItem('auth-token')
-              console.log('Token from localStorage:', token ? 'exists' : 'none')
+              // 从sessionStorage获取token（优先），fallback 到 localStorage
+              const token = sessionStorage.getItem('auth-token') || localStorage.getItem('auth-token')
               
               // 检查当前路径
               const isSigninPage = window.location.pathname.includes('/signin')

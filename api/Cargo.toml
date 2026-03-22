@@ -114,10 +114,21 @@ tokio-stream = "0.1"
 # Base64 编码 (用于邮件认证)
 base64 = "0.21"
 
+# URL 编码 (用于第三方登录)
+urlencoding = "2.1"
+
 # 加密库 (用于事件内容加密)
 aes-gcm = "0.10"
 sha2 = "0.10"
+hmac = "0.12"
+subtle = "2.5"
 hex = "0.4"
+
+# 密码哈希
+bcrypt = "0.15"
+
+# 输入验证
+validator = { version = "0.16", features = ["derive"] }
 
 # 性能优化
 smallvec = "1.11"

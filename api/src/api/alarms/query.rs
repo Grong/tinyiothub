@@ -8,6 +8,7 @@ use crate::domain::alarm::{AlarmLevel, AlarmQueryCriteria, AlarmStatus, TimeRang
 use crate::dto::entity::{AlarmDto, AlarmStatisticsDto};
 use crate::dto::request::{AlarmQueryParams, StatisticsQueryParams};
 use crate::dto::response::api_response::ApiResponse;
+use crate::shared::error_handling::ErrorCode;
 use crate::dto::response::builder::ApiResponseBuilder;
 use crate::shared::app_state::AppState;
 use crate::shared::security::jwt::Claims;
@@ -130,7 +131,7 @@ pub async fn get_alarm(
 ) -> Json<ApiResponse<AlarmDto>> {
     match state.alarm_service.get_alarm_by_id(&id).await {
         Ok(Some(alarm)) => ApiResponseBuilder::success(AlarmDto::from(alarm)),
-        Ok(None) => ApiResponseBuilder::error_with_code(404, "报警不存在"),
+        Ok(None) => ApiResponseBuilder::error_with_code(ErrorCode::NotFound.as_i32(), "报警不存在"),
         Err(e) => ApiResponseBuilder::error(format!("获取报警失败: {}", e)),
     }
 }

@@ -14,7 +14,7 @@ use crate::{
             BatchTagBindingRequest, CreateTagBindingRequest, CreateTagRequest, Tag, TagBinding,
             TagQuery, UpdateTagRequest,
         },
-        response::api_response::ApiResponse,
+        response::{api_response::ApiResponse, builder::ApiResponseBuilder},
     },
     shared::security::jwt::Claims,
 };
@@ -71,11 +71,7 @@ async fn list_tags(
     };
 
     match Tag::find_all(state.database(), &tag_query).await {
-        Ok(tags) => Ok(Json(ApiResponse {
-            code: 0,
-            msg: "Success".to_string(),
-            result: Some(tags),
-        })),
+        Ok(tags) => Ok(ApiResponseBuilder::success(tags)),
         Err(e) => {
             tracing::error!("Failed to fetch tags: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
@@ -89,11 +85,7 @@ async fn get_tag(
     State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<Tag>>, StatusCode> {
     match Tag::find_by_id(state.database(), &id).await {
-        Ok(Some(tag)) => Ok(Json(ApiResponse {
-            code: 0,
-            msg: "Success".to_string(),
-            result: Some(tag),
-        })),
+        Ok(Some(tag)) => Ok(ApiResponseBuilder::success(tag)),
         Ok(None) => Err(StatusCode::NOT_FOUND),
         Err(e) => {
             tracing::error!("Failed to fetch tag {}: {}", id, e);
@@ -119,11 +111,7 @@ async fn create_tag(
     }
 
     match Tag::create(state.database(), &request, &claims.user_id).await {
-        Ok(tag) => Ok(Json(ApiResponse {
-            code: 0,
-            msg: "Tag created successfully".to_string(),
-            result: Some(tag),
-        })),
+        Ok(tag) => Ok(ApiResponseBuilder::success_with_message(tag, "Tag created successfully")),
         Err(e) => {
             tracing::error!("Failed to create tag: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
@@ -167,11 +155,7 @@ async fn update_tag(
     }
 
     match Tag::update(state.database(), &id, &request).await {
-        Ok(tag) => Ok(Json(ApiResponse {
-            code: 0,
-            msg: "Tag updated successfully".to_string(),
-            result: Some(tag),
-        })),
+        Ok(tag) => Ok(ApiResponseBuilder::success_with_message(tag, "Tag updated successfully")),
         Err(sqlx::Error::RowNotFound) => Err(StatusCode::NOT_FOUND),
         Err(e) => {
             tracing::error!("Failed to update tag {}: {}", id, e);
@@ -188,11 +172,7 @@ async fn delete_tag(
     match Tag::delete(state.database(), &id).await {
         Ok(rows_affected) => {
             if rows_affected > 0 {
-                Ok(Json(ApiResponse {
-                    code: 0,
-                    msg: "Tag deleted successfully".to_string(),
-                    result: Some(()),
-                }))
+                Ok(ApiResponseBuilder::success_with_message((), "Tag deleted successfully"))
             } else {
                 Err(StatusCode::NOT_FOUND)
             }
@@ -218,11 +198,7 @@ async fn search_tags(
     };
 
     match Tag::find_all(state.database(), &tag_query).await {
-        Ok(tags) => Ok(Json(ApiResponse {
-            code: 0,
-            msg: "Success".to_string(),
-            result: Some(tags),
-        })),
+        Ok(tags) => Ok(ApiResponseBuilder::success(tags)),
         Err(e) => {
             tracing::error!("Failed to search tags: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
@@ -245,11 +221,7 @@ async fn get_tag_stats(
                     "app": 0
                 }
             });
-            Ok(Json(ApiResponse {
-                code: 0,
-                msg: "Success".to_string(),
-                result: Some(stats),
-            }))
+            Ok(ApiResponseBuilder::success(stats))
         }
         Err(e) => {
             tracing::error!("Failed to get tag stats: {}", e);
@@ -275,11 +247,7 @@ async fn create_tag_binding(
     }
 
     match TagBinding::create(state.database(), &request, &claims.user_id).await {
-        Ok(binding) => Ok(Json(ApiResponse {
-            code: 0,
-            msg: "Tag binding created successfully".to_string(),
-            result: Some(binding),
-        })),
+        Ok(binding) => Ok(ApiResponseBuilder::success_with_message(binding, "Tag binding created successfully")),
         Err(e) => {
             tracing::error!("Failed to create tag binding: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
@@ -297,11 +265,7 @@ async fn delete_tag_binding(
     {
         Ok(rows_affected) => {
             if rows_affected > 0 {
-                Ok(Json(ApiResponse {
-                    code: 0,
-                    msg: "Tag binding deleted successfully".to_string(),
-                    result: Some(()),
-                }))
+                Ok(ApiResponseBuilder::success_with_message((), "Tag binding deleted successfully"))
             } else {
                 Err(StatusCode::NOT_FOUND)
             }
@@ -329,11 +293,7 @@ async fn batch_create_bindings(
         .collect();
 
     match TagBinding::create_batch(state.database(), &bindings, &claims.user_id).await {
-        Ok(created_bindings) => Ok(Json(ApiResponse {
-            code: 0,
-            msg: "Tag bindings created successfully".to_string(),
-            result: Some(created_bindings),
-        })),
+        Ok(created_bindings) => Ok(ApiResponseBuilder::success_with_message(created_bindings, "Tag bindings created successfully")),
         Err(e) => {
             tracing::error!("Failed to create tag bindings: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
@@ -347,11 +307,7 @@ async fn batch_delete_bindings(
     State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<()>>, StatusCode> {
     match TagBinding::delete_all_by_target_id(state.database(), &query.target_id).await {
-        Ok(_) => Ok(Json(ApiResponse {
-            code: 0,
-            msg: "Tag bindings deleted successfully".to_string(),
-            result: Some(()),
-        })),
+        Ok(_) => Ok(ApiResponseBuilder::success_with_message((), "Tag bindings deleted successfully")),
         Err(e) => {
             tracing::error!("Failed to delete tag bindings: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
@@ -365,11 +321,7 @@ async fn get_target_bindings(
     State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<Vec<Tag>>>, StatusCode> {
     match Tag::find_by_target_id(state.database(), &target_id).await {
-        Ok(tags) => Ok(Json(ApiResponse {
-            code: 0,
-            msg: "Success".to_string(),
-            result: Some(tags),
-        })),
+        Ok(tags) => Ok(ApiResponseBuilder::success(tags)),
         Err(e) => {
             tracing::error!("Failed to fetch target bindings: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
@@ -383,11 +335,7 @@ async fn get_tag_bindings(
     State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<Vec<TagBinding>>>, StatusCode> {
     match TagBinding::find_by_tag_id(state.database(), &tag_id).await {
-        Ok(bindings) => Ok(Json(ApiResponse {
-            code: 0,
-            msg: "Success".to_string(),
-            result: Some(bindings),
-        })),
+        Ok(bindings) => Ok(ApiResponseBuilder::success(bindings)),
         Err(e) => {
             tracing::error!("Failed to fetch tag bindings: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)

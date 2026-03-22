@@ -2,25 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-
-interface Tenant {
-  id: string
-  name: string
-  slug: string
-  status: string
-  plan_id: string
-  subscription_status: string
-}
-
-interface ApiKey {
-  id: string
-  name: string
-  prefix: string
-  permissions: string
-  is_enabled: boolean
-  request_count: number
-  created_at: string
-}
+import { tenantApi, getStoredTenant, clearTenantData, type Tenant, type ApiKey } from '@/service/tenant'
 
 export default function DashboardPage() {
   const router = useRouter()
@@ -33,32 +15,22 @@ export default function DashboardPage() {
   const [createdKey, setCreatedKey] = useState('')
 
   useEffect(() => {
-    const token = localStorage.getItem('tenant_token')
-    const tenantData = localStorage.getItem('tenant')
-    
-    if (!token || !tenantData) {
+    const storedTenant = getStoredTenant()
+
+    if (!storedTenant) {
       router.push('/tenant/login')
       return
     }
 
-    setTenant(JSON.parse(tenantData))
-    loadApiKeys()
+    setTenant(storedTenant)
+    loadApiKeys(storedTenant.id)
   }, [router])
 
-  const loadApiKeys = async () => {
-    const token = localStorage.getItem('tenant_token')
-    const tenantData = localStorage.getItem('tenant')
-    if (!token || !tenantData) return
-
-    const t = JSON.parse(tenantData) as Tenant
-    
+  const loadApiKeys = async (tenantId: string) => {
     try {
-      const res = await fetch(`/api/v1/tenants/${t.id}/api-keys`, {
-        headers: { 'Authorization': `Bearer ${token}` },
-      })
-      if (res.ok) {
-        const data = await res.json()
-        setApiKeys(data)
+      const response = await tenantApi.getApiKeys(tenantId)
+      if (response.code === 0) {
+        setApiKeys(response.result || [])
       }
     } catch (err) {
       console.error('Failed to load API keys:', err)
@@ -68,29 +40,17 @@ export default function DashboardPage() {
   }
 
   const handleCreateKey = async () => {
-    const token = localStorage.getItem('tenant_token')
-    const tenantData = localStorage.getItem('tenant')
-    if (!token || !tenantData || !newKeyName) return
+    if (!tenant || !newKeyName) return
 
-    const t = JSON.parse(tenantData) as Tenant
-    
     try {
-      const res = await fetch(`/api/v1/tenants/${t.id}/api-keys`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          name: newKeyName,
-          permissions: newKeyPermissions,
-        }),
+      const response = await tenantApi.createApiKey(tenant.id, {
+        name: newKeyName,
+        permissions: newKeyPermissions,
       })
 
-      if (res.ok) {
-        const data = await res.json()
-        setCreatedKey(data.raw_key)
-        loadApiKeys()
+      if (response.code === 0 && response.result) {
+        setCreatedKey(response.result.raw_key)
+        loadApiKeys(tenant.id)
       }
     } catch (err) {
       console.error('Failed to create API key:', err)
@@ -98,8 +58,7 @@ export default function DashboardPage() {
   }
 
   const handleLogout = () => {
-    localStorage.removeItem('tenant_token')
-    localStorage.removeItem('tenant')
+    clearTenantData()
     router.push('/tenant/login')
   }
 

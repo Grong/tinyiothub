@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { tenantApi, saveTenantToken, saveTenantData } from '@/service/tenant'
 
 export default function RegisterPage() {
   const router = useRouter()
@@ -37,30 +38,25 @@ export default function RegisterPage() {
     setIsLoading(true)
 
     try {
-      const res = await fetch('/api/v1/tenants/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: formData.name,
-          slug: formData.slug.toLowerCase().replace(/[^a-z0-9-]/g, '-'),
-          email: formData.email,
-          password: formData.password,
-        }),
+      const response = await tenantApi.register({
+        name: formData.name,
+        slug: formData.slug.toLowerCase().replace(/[^a-z0-9-]/g, '-'),
+        email: formData.email,
+        password: formData.password,
       })
 
-      if (!res.ok) {
-        const data = await res.json()
-        throw new Error(data.message || '注册失败')
-      }
+      if (response.code === 0 && response.result) {
+        const { token, tenant } = response.result
 
-      const data = await res.json()
-      
-      // 保存 token
-      localStorage.setItem('tenant_token', data.token)
-      localStorage.setItem('tenant', JSON.stringify(data.tenant))
-      
-      // 跳转到仪表盘
-      router.push('/tenant/dashboard')
+        // 保存 token 到 sessionStorage
+        saveTenantToken(token)
+        saveTenantData(tenant)
+
+        // 跳转到仪表盘
+        router.push('/tenant/dashboard')
+      } else {
+        throw new Error(response.msg || '注册失败')
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '注册失败，请稍后重试')
     } finally {

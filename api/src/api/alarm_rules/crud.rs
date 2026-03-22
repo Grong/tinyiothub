@@ -7,6 +7,7 @@ use crate::domain::alarm::{AlarmCondition, AlarmLevel, AlarmRule, NotificationCo
 use crate::dto::entity::AlarmRuleDto;
 use crate::dto::request::{CreateAlarmRuleRequest, ToggleRuleRequest, UpdateAlarmRuleRequest};
 use crate::dto::response::api_response::ApiResponse;
+use crate::shared::error_handling::ErrorCode;
 use crate::dto::response::builder::ApiResponseBuilder;
 use crate::shared::app_state::AppState;
 use crate::shared::security::jwt::Claims;
@@ -45,7 +46,7 @@ pub async fn get_alarm_rule(
 ) -> Json<ApiResponse<AlarmRuleDto>> {
     match state.alarm_service.get_rule_by_id(&id).await {
         Ok(Some(rule)) => ApiResponseBuilder::success(AlarmRuleDto::from(rule)),
-        Ok(None) => ApiResponseBuilder::error_with_code(404, "规则不存在"),
+        Ok(None) => ApiResponseBuilder::error_with_code(ErrorCode::NotFound.as_i32(), "规则不存在"),
         Err(e) => ApiResponseBuilder::error(format!("获取规则失败: {}", e)),
     }
 }

@@ -1,5 +1,8 @@
 pub mod spawn;
 pub mod trace_util;
+pub mod password;
+pub mod validation;
+pub mod sql_security;
 
 // Re-export commonly used utilities
 pub use spawn::{execute_or_spawn, spawn_safe, spawn_with_error_handling};

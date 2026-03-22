@@ -27,10 +27,13 @@ interface RequestOptions {
   params?: Record<string, any>
 }
 
-// 获取认证token
+// 获取认证token - 使用 sessionStorage 替代 localStorage 以减少 XSS 持久化风险
+// 注意: sessionStorage 在标签页关闭时自动清除，比 localStorage 更安全
+// 但最佳方案是使用 httpOnly cookie，由后端设置
 const getAuthToken = (): string | null => {
   if (typeof window === 'undefined') return null
-  return localStorage.getItem('auth-token')
+  // 优先从 sessionStorage 获取，fallback 到 localStorage（兼容已有数据）
+  return sessionStorage.getItem('auth-token') || localStorage.getItem('auth-token')
 }
 
 // 构建完整URL
@@ -88,8 +91,10 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
     // 处理401未授权错误
     if (response.status === 401) {
       if (typeof window !== 'undefined') {
+        // 清除 sessionStorage 和 localStorage 中的 token
+        sessionStorage.removeItem('auth-token')
         localStorage.removeItem('auth-token')
-        const event = new CustomEvent('auth-error', { 
+        const event = new CustomEvent('auth-error', {
           detail: { message: 'Authentication expired' }
         })
         window.dispatchEvent(event)

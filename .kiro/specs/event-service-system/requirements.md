@@ -52,10 +52,10 @@
 
 1. THE Event_System SHALL 支持结构化的富文本内容格式，包含文本、图片、链接、表格等元素
 2. WHEN 存储事件内容时，THE Event_System SHALL 使用JSON格式保存富文本数据结构
-3. THE Event_System SHALL 支持图片内容的Base64编码存储和外部URL引用
-4. THE Event_System SHALL 支持Markdown格式的文本内容渲染
+3. THE Event_System SHALL 支持图片内容通过文件路径或外部URL引用，不存储 base64
+4. THE Event_System SHALL 支持 Markdown 和纯文本 格式的文本内容
 5. THE Event_System SHALL 限制单个事件内容大小不超过10MB
-6. THE Event_System SHALL 支持内容的安全过滤，防止XSS攻击
+6. THE Event_System SHALL 禁止原始 HTML 内容（TextFormat::Html 已移除），防止 XSS 风险
 
 ### 需求 4: 系统事件处理
 

@@ -156,8 +156,12 @@ impl User {
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-        // 这里应该对密码进行哈希处理，简化示例直接使用明文
-        let password_hash = format!("hashed_{}", request.password); // 实际应用中使用 bcrypt 等
+        // 使用 bcrypt 进行安全密码哈希（必须成功，不允许降级）
+        let password_hash = crate::utils::password::hash_password(&request.password)
+            .map_err(|e| {
+                tracing::error!("Failed to hash password during user creation: {}", e);
+                sqlx::Error::Protocol(format!("password hashing failed: {}", e))
+            })?;
 
         sqlx::query(
             r#"
@@ -368,9 +372,9 @@ impl User {
         password: &str,
     ) -> Result<Option<User>, sqlx::Error> {
         if let Some(user) = Self::find_by_username(db, username).await? {
-            // 简化的密码验证，实际应用中应使用 bcrypt 验证
-            let expected_hash = format!("hashed_{}", password);
-            if user.password_hash == expected_hash && user.is_enabled {
+            // 使用 bcrypt 验证密码
+            use crate::utils::password::verify_password;
+            if verify_password(password, &user.password_hash).is_ok() && user.is_enabled {
                 return Ok(Some(user));
             }
         }
@@ -398,9 +402,14 @@ impl User {
         new_password: &str,
     ) -> Result<bool, sqlx::Error> {
         if let Some(user) = Self::find_by_id(db, id).await? {
-            let expected_hash = format!("hashed_{}", old_password);
-            if user.password_hash == expected_hash {
-                let new_hash = format!("hashed_{}", new_password);
+            // Use bcrypt to verify old password
+            use crate::utils::password::{hash_password, verify_password};
+            if verify_password(old_password, &user.password_hash).is_ok() {
+                let new_hash = hash_password(new_password)
+                    .map_err(|e| {
+                        tracing::error!("Failed to hash new password during change: {}", e);
+                        sqlx::Error::Protocol(format!("password hashing failed: {}", e))
+                    })?;
                 let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
                 sqlx::query("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")
@@ -597,8 +606,7 @@ impl User {
 
     /// 验证密码
     pub fn verify_password(&self, password: &str) -> bool {
-        let expected_hash = format!("hashed_{}", password);
-        self.password_hash == expected_hash
+        crate::utils::password::verify_password(password, &self.password_hash).unwrap_or(false)
     }
 
     /// 更新密码（别名方法，兼容旧代码）
@@ -607,7 +615,11 @@ impl User {
         id: &str,
         new_password: &str,
     ) -> Result<(), sqlx::Error> {
-        let new_hash = format!("hashed_{}", new_password);
+        let new_hash = crate::utils::password::hash_password(new_password)
+            .map_err(|e| {
+                tracing::error!("Failed to hash password for update: {}", e);
+                sqlx::Error::Protocol(format!("password hashing failed: {}", e))
+            })?;
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         sqlx::query("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")

@@ -50,6 +50,25 @@ export default defineConfig({
           ]
         },
         {
+          text: 'AI 集成',
+          collapsed: true,
+          items: [
+            { text: 'MCP 设计', link: '/mcp-design' },
+            { text: 'MCP 参数', link: '/mcp-parameters' },
+            { text: 'MCP 需求', link: '/mcp-requirements' },
+          ]
+        },
+        {
+          text: '技术文档',
+          collapsed: true,
+          items: [
+            { text: '事件架构', link: '/technical/event-handler-architecture' },
+            { text: '告警概览', link: '/technical/alarm-module-overview' },
+            { text: '告警进度', link: '/technical/alarm-implementation-progress' },
+            { text: 'Docker 优化', link: '/technical/docker-build-optimization' },
+          ]
+        },
+        {
           text: '部署指南',
           items: [
             { text: 'Docker 部署', link: '/deployment/docker' },

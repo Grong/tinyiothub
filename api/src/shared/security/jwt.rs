@@ -7,26 +7,46 @@ use axum::{
 };
 use chrono::{Duration as ChronoDuration, Local};
 use headers::{authorization::Bearer, Authorization, HeaderMapExt};
+use hmac::{Hmac, Mac};
 use jwt_simple::prelude::*;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
+
+type HmacSha256 = Hmac<Sha256>;
 
 // 使用 jwt-simple 的 HS256Key (纯 Rust 实现，不依赖 ring)
-pub static JWT_KEY: Lazy<HS256Key> = Lazy::new(|| {
-    // 从环境变量读取JWT密钥，如果未设置则使用默认值（仅用于开发环境）
+pub static JWT_KEY: Lazy<Result<HS256Key, String>> = Lazy::new(|| {
+    // 从环境变量读取JWT密钥
     let secret = std::env::var("JWT_SECRET")
-        .unwrap_or_else(|_| {
-            tracing::warn!("⚠️  JWT_SECRET not set, using default (INSECURE for production!)");
-            "123456123456123456".to_string()
-        });
-    
+        .map_err(|_| {
+            tracing::error!("JWT_SECRET environment variable is not set!");
+            "JWT_SECRET must be set in production".to_string()
+        })?;
+
     // 验证密钥长度
     if secret.len() < 32 {
-        tracing::error!("🔴 JWT_SECRET is too short! Minimum 32 characters required for security.");
+        return Err(format!(
+            "JWT_SECRET is too short! Minimum 32 characters required, got {}",
+            secret.len()
+        ));
     }
-    
-    HS256Key::from_bytes(secret.as_bytes())
+
+    // 检查是否使用弱密钥
+    if secret.len() < 64 {
+        tracing::warn!("⚠️  JWT_SECRET is shorter than 64 characters, consider using a longer secret");
+    }
+
+    Ok(HS256Key::from_bytes(secret.as_bytes()))
 });
+
+// 获取 JWT 密钥的辅助函数
+fn get_jwt_key() -> Result<HS256Key, String> {
+    JWT_KEY.clone().map_err(|e| {
+        tracing::error!("JWT key error: {}", e);
+        format!("JWT key error: {}", e)
+    })
+}
 
 // 检查是否在 HarmonyOS 环境
 fn is_harmonyos() -> bool {
@@ -34,25 +54,17 @@ fn is_harmonyos() -> bool {
 }
 
 // ============================================================================
-// HarmonyOS 专用：不使用任何加密库的安全 token 实现
+// HarmonyOS 专用：使用 HMAC-SHA256 的安全 token 实现
 // ============================================================================
 
-// 简单但有效的校验和算法（不使用加密哈希）
-fn simple_checksum(data: &str, secret: &str) -> String {
-    let mut sum: u64 = 0;
-
-    // 对数据进行加权求和
-    for (i, byte) in data.bytes().enumerate() {
-        sum = sum.wrapping_add((byte as u64).wrapping_mul((i + 1) as u64));
-    }
-
-    // 混入秘密
-    for (i, byte) in secret.bytes().enumerate() {
-        sum = sum.wrapping_add((byte as u64).wrapping_mul((i + 100) as u64));
-    }
-
-    // 返回16位十六进制字符串
-    format!("{:016x}", sum)
+// 使用 HMAC-SHA256 计算消息认证码
+fn hmac_sha256(message: &str, key: &str) -> String {
+    let mut mac = HmacSha256::new_from_slice(key.as_bytes())
+        .expect("HMAC can take key of any size");
+    mac.update(message.as_bytes());
+    let result = mac.finalize();
+    // 返回十六进制编码的 HMAC
+    hex::encode(result.into_bytes())
 }
 
 // 简单的字符串编码（不使用 base64 库）
@@ -71,38 +83,36 @@ fn decode_simple(s: &str) -> Result<String, String> {
     String::from_utf8(bytes).map_err(|_| "Invalid UTF-8".to_string())
 }
 
-// HarmonyOS 专用：创建安全 token（不使用加密库）
+// HarmonyOS 专用：创建安全 token（使用 HMAC-SHA256）
 fn create_harmonyos_token(user_id: &str, username: &str) -> Result<String, String> {
     let secret = std::env::var("JWT_SECRET")
-        .unwrap_or_else(|_| "123456123456123456".to_string());
+        .map_err(|_| "JWT_SECRET must be set for HarmonyOS mode".to_string())?;
     let timestamp = Local::now().timestamp();
     let random_suffix = timestamp % 1000000; // 使用时间戳作为随机数
 
     // 构建数据部分：user_id:username:timestamp:random
     let data = format!("{}:{}:{}:{}", user_id, username, timestamp, random_suffix);
 
-    // 计算校验和
-    let checksum = simple_checksum(&data, &secret);
+    // 计算 HMAC-SHA256 签名
+    let signature = hmac_sha256(&data, &secret);
 
-    // 组合 token：data:checksum
-    let token_data = format!("{}:{}", data, checksum);
-
-    // 编码（不使用 base64）
+    // 组合 token：data:signature (hex encoded)
+    let token_data = format!("{}:{}", data, signature);
     let token = encode_simple(&token_data);
 
-    tracing::debug!("HarmonyOS token created with simple checksum");
+    tracing::debug!("HarmonyOS token created with HMAC-SHA256");
     Ok(token)
 }
 
-// HarmonyOS 专用：验证安全 token
+// HarmonyOS 专用：验证安全 token（使用 HMAC-SHA256）
 fn verify_harmonyos_token(token: &str) -> Result<Claims, String> {
     let secret = std::env::var("JWT_SECRET")
-        .unwrap_or_else(|_| "123456123456123456".to_string());
+        .map_err(|_| "JWT_SECRET must be set for HarmonyOS mode".to_string())?;
 
     // 解码
     let token_data = decode_simple(token)?;
 
-    // 分割数据：user_id:username:timestamp:random:checksum
+    // 分割数据：user_id:username:timestamp:random:signature
     let parts: Vec<&str> = token_data.split(':').collect();
     if parts.len() != 5 {
         return Err("Invalid token format".to_string());
@@ -114,13 +124,13 @@ fn verify_harmonyos_token(token: &str) -> Result<Claims, String> {
         .parse()
         .map_err(|_| "Invalid timestamp".to_string())?;
     let random_suffix = parts[3];
-    let checksum = parts[4];
+    let signature = parts[4];
 
-    // 验证校验和
+    // 验证 HMAC-SHA256 签名
     let data = format!("{}:{}:{}:{}", user_id, username, timestamp, random_suffix);
-    let expected_checksum = simple_checksum(&data, &secret);
+    let expected_signature = hmac_sha256(&data, &secret);
 
-    if checksum != expected_checksum {
+    if signature != expected_signature {
         return Err("Invalid token signature".to_string());
     }
 
@@ -130,7 +140,7 @@ fn verify_harmonyos_token(token: &str) -> Result<Claims, String> {
         return Err("Token expired".to_string());
     }
 
-    tracing::debug!("HarmonyOS token verified successfully");
+    tracing::debug!("HarmonyOS token verified successfully with HMAC-SHA256");
 
     Ok(Claims {
         user_id: user_id.to_string(),
@@ -208,13 +218,16 @@ pub fn create_jwt(payload: AuthPayload) -> Result<AuthBody, String> {
 
     tracing::debug!("Creating JWT token with jwt-simple (HS256, pure-rust)");
 
+    // 获取 JWT 密钥
+    let key = get_jwt_key()?;
+
     // 使用 jwt-simple 创建 token（exp 由 jwt-simple 自动添加）
     let jwt_claims = jwt_simple::claims::Claims::with_custom_claims(
         custom_claims,
         Duration::from_secs(jwt_exp_seconds as u64),
     );
 
-    let token = JWT_KEY
+    let token = key
         .authenticate(jwt_claims)
         .map_err(|e| format!("Token creation error: {}", e))?;
 
@@ -232,7 +245,10 @@ pub fn validate_jwt(token: &str) -> Result<Claims, String> {
     // 标准 JWT 验证（非 HarmonyOS）
     tracing::debug!("Validating JWT token with jwt-simple");
 
-    let jwt_claims = JWT_KEY.verify_token::<Claims>(token, None).map_err(|e| {
+    // 获取 JWT 密钥
+    let key = get_jwt_key()?;
+
+    let jwt_claims = key.verify_token::<Claims>(token, None).map_err(|e| {
         tracing::warn!("JWT validation failed: {}", e);
         "Your login has expired, please login again".to_string()
     })?;

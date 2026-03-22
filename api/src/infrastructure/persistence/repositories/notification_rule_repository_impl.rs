@@ -368,6 +368,13 @@ impl NotificationRuleRepository for NotificationRuleRepositoryImpl {
 }
 
 impl NotificationRuleRepositoryImpl {
+    /// Escape special characters in LIKE patterns to prevent SQL injection via LIKE wildcards
+    fn escape_like(s: &str) -> String {
+        s.replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_")
+    }
+
     /// Get rules by notification method
     pub async fn get_rules_by_method(
         &self,
@@ -376,16 +383,17 @@ impl NotificationRuleRepositoryImpl {
         let pool = self.db.pool();
 
         let method_str = method.as_str();
+        let escaped_method = Self::escape_like(method_str);
         let rows = sqlx::query(
             r#"
             SELECT id, name, description, event_type, event_subtype, event_level,
                    device_filter, notification_methods, recipients, enabled, created_at, updated_at
-            FROM notification_rules 
+            FROM notification_rules
             WHERE enabled = 1 AND notification_methods LIKE ?
             ORDER BY created_at DESC
             "#,
         )
-        .bind(format!("%\"{}\"", method_str))
+        .bind(format!("%\"{}\"", escaped_method))
         .fetch_all(pool)
         .await?;
 

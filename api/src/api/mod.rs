@@ -50,6 +50,8 @@ pub fn create_router() -> Router<AppState> {
     // 创建v1版本的API路由
     let v1_routes = Router::new()
         .nest("/auth", auth::login::create_router()) // 公开的登录路由
+        .nest("/auth/sms", auth::sms::create_router()) // 短信验证码登录
+        .nest("/auth/social", auth::social::create_router()) // 第三方登录
         .nest("/tenants", tenants::auth::create_auth_router()) // 租户注册登录
         .nest("/system", system::create_router())
         .nest("/tags", tags::create_router())

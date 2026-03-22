@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [master, saas]
   pull_request:
-    branches: [main]
+    branches: [master, saas]
 
 env:
   CARGO_TERM_COLOR: always
@@ -66,7 +66,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Type check
-        run: pnpm type-check || true
+        run: pnpm type-check
 
       - name: Build
         run: pnpm build

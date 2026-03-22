@@ -278,7 +278,7 @@ async fn disable_user(
 async fn change_user_password(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    _claims: Claims,
+    claims: Claims,
     Json(request): Json<PasswordChangeRequest>,
 ) -> Json<ApiResponse<bool>> {
     // 验证新密码强度
@@ -288,6 +288,25 @@ async fn change_user_password(
 
     if request.old_password == request.new_password {
         return ApiResponse::error("新密码不能与旧密码相同".to_string());
+    }
+
+    // 授权检查：用户只能修改自己的密码，或者需要管理员权限
+    let requesting_user_id = &claims.user_id;
+    let is_admin = crate::shared::error_handling::AuthHelper::check_role(
+        &state,
+        requesting_user_id,
+        "admin",
+    )
+    .await
+    .unwrap_or(false);
+
+    if requesting_user_id != &id && !is_admin {
+        tracing::warn!(
+            "User {} attempted to change password for user {} without permission",
+            requesting_user_id,
+            id
+        );
+        return ApiResponse::error("无权限修改此用户密码".to_string());
     }
 
     // 获取用户信息

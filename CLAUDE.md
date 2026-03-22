@@ -1,0 +1,169 @@
+# TinyIoTHub — Claude Code 指令
+
+## 项目概述
+
+TinyIoTHub 是一个 **Rust 后端 + Next.js 前端** 的 IoT 边缘网关系统，支持多协议（Modbus、ONVIF、SNMP、MQTT）。
+
+- **后端**: Rust 2021, Tokio (10 workers), Axum, Tower middleware, SQLx + SQLite
+- **前端**: Next.js (App Router), React Query, TailwindCSS, Zustand
+- **架构**: DDD (Domain-Driven Design) + Clean Architecture
+- **分支策略**: `master` (边缘网关), `saas` (SaaS 云端版)
+
+## 技术栈
+
+```
+Rust Backend          Next.js Frontend
+─────────────        ───────────────
+tokio (async)        React 19
+axum (HTTP)          Next.js 15
+tower (middleware)    React Query
+sqlx + rusqlite      Zustand (state)
+serde + serde_json    TailwindCSS
+jsonwebtoken (JWT)    TypeScript
+tokio-modbus         shadcn/ui
+onvif                zod (validation)
+snmp / rumqttc
+```
+
+## 项目结构
+
+```
+tinyiothub/
+├── api/src/
+│   ├── domain/          # 业务实体、值对象、领域服务
+│   ├── application/     # 应用服务、数据上下文
+│   ├── api/            # HTTP handlers（路由 + 业务逻辑）
+│   ├── infrastructure/ # 外部依赖（DB、消息、网关）
+│   ├── shared/         # 跨层共享（error、security）
+│   └── dto/            # 数据传输对象
+├── mcp/                # MCP Server (独立 Rust crate)
+├── web/
+│   ├── app/            # Next.js App Router 页面
+│   ├── service/        # API 调用层（必须用这个，不准直接 fetch）
+│   ├── hooks/          # React Query hooks
+│   ├── lib/            # 工具（api-client、query-keys）
+│   └── store/          # Zustand 状态管理
+├── docs/               # 技术文档
+├── .kiro/steering/     # 开发规范（命名、API、架构）
+└── .kiro/specs/        # 特性设计文档
+```
+
+## 开发规范
+
+### API 规范
+
+所有 API 必须返回统一格式：
+
+```json
+{ "code": 0, "msg": "", "result": T | null }
+```
+
+使用 `ApiResponseBuilder`：
+```rust
+ApiResponseBuilder::success(data)           // code: 0
+ApiResponseBuilder::error("message")        // code: -1
+ApiResponseBuilder::error_with_code(400, "bad request") // 自定义 code
+```
+
+路径规范：`/api/v1/` 前缀，RESTful。
+
+### 命名规范
+
+| 上下文 | 格式 | 示例 |
+|--------|------|------|
+| Rust 文件/模块 | snake_case | `device_service.rs` |
+| Rust 结构体/枚举 | PascalCase | `DeviceStatus` |
+| Rust 函数 | snake_case | `get_device_by_id` |
+| TypeScript 文件 | kebab-case | `device-list.tsx` |
+| React 组件 | PascalCase | `DeviceList` |
+| TypeScript 变量 | camelCase | `deviceData` |
+
+### 前端必须遵循
+
+1. **API 调用必须走 `web/service/`**，不准在组件里直接 fetch
+2. **必须用 `web/lib/api-client.ts`**（`apiGet`、`apiPost`、`apiPut`、`apiDelete`）
+3. **React Query 数据获取必须走 hooks**，不准在组件里直接用 `useQuery`
+
+## 工作流（Superpowers）
+
+使用 `/brainstorming` 开始任何新功能或特性开发，不准跳过 brainstorming 直接写代码。
+
+使用 `/plan-ceo-review` 审查设计文档和重大计划。
+
+使用 `/plan-eng-review` 审查架构和实现方案。
+
+使用 `/review` 在 PR 之前做代码审查。
+
+使用 `/qa` 测试和修复 bug。
+
+## 关键模式
+
+### 后端
+
+- **Repository Pattern**: 数据访问在 infrastructure 层
+- **Async 所有 I/O**: tokio async/await，不准在 async fn 里用 blocking 代码
+- **错误处理**: 用 `thiserror` 定义自定义错误，`Result<T, E>` 传播
+- **中间件**: Tower (CORS、tracing、rate limit)
+
+### 前端
+
+- **Service Layer**: 所有 API 调用走 `web/service/`
+- **React Query**: 数据获取走 hooks（`web/hooks/`）
+- **API Client**: 统一用 `web/lib/api-client.ts`
+- **表单验证**: zod schemas
+
+## 当前功能状态
+
+### 已实现
+
+- **设备管理**: CRUD、多协议驱动（Modbus/ONVIF/SNMP/MQTT）
+- **告警模块**: 规则引擎、告警通知、统计
+- **用户认证**: JWT + 会话管理
+- **MCP Server**: AI Agent 集成（Claude Desktop、Cursor）
+- **Tenant/Subscription**: SaaS 多租户
+- **CI/CD**: GitHub Actions + Docker 多架构构建
+
+### 规划中（见 `.kiro/specs/`）
+
+- **event-service-system**: 事件驱动架构升级（SSE 推送、富文本）
+- **device-template-system**: JSON 模板简化设备创建
+- **harmonyos-jwt-openssl**: HarmonyOS SIGSEGV 修复
+
+## 设计文档位置
+
+```
+.kiro/steering/     # 开发规范（命名/API/架构）
+.kiro/specs/        # 特性设计（event-service、device-template、harmonyos-jwt）
+docs/api/           # API 文档
+docs/guide/         # 用户指南
+docs/technical/     # 技术文档（当前有效）
+docs/deployment/    # 部署指南
+docs/drivers/        # 驱动开发
+```
+
+## 数据库
+
+- **SQLite** 作为主要数据库（`api/` 目录）
+- **SQLx** 用于编译时查询验证
+- **migrations/** 目录存放 SQL 迁移文件
+
+## Docker
+
+- 多架构构建（linux/amd64 + linux/arm64）
+- 本地构建脚本在 `scripts/`（如需要）
+- Docker Hub: `grong/tinyiothub`
+
+## 代码审查要求
+
+- 所有 PR 必须有测试
+- 提交信息格式: `type(scope): description`（参考 Conventional Commits）
+- 不准在 `api/src/` 直接写 SQL，优先用 SQLx query builder
+- 前端组件不准直接调用 API，必须走 service 层
+
+## 重要约定
+
+1. **Rust edition 2021**，最低支持 Rust 1.75+
+2. **Node 18+** for frontend
+3. 所有敏感配置通过环境变量，不硬编码
+4. JWT secret 在生产环境必须设置，不允许默认密钥
+5. API 错误必须带用户可读消息

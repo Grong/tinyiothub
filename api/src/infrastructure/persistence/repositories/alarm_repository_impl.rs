@@ -181,7 +181,9 @@ impl AlarmRepository for AlarmRepositoryImpl {
 
         // 由于 SQLx 的限制，这里简化返回空列表
         // 实际项目中需要使用动态查询构建器
-        Ok(vec![])
+        // TODO: find_by_criteria is not yet implemented - returning empty vector
+        // This method needs proper implementation before production use
+        todo!("find_by_criteria is not yet implemented - returning empty vector")
     }
 
     async fn find_active(&self, device_id: Option<&str>) -> AlarmResult<Vec<Alarm>> {
@@ -191,8 +193,9 @@ impl AlarmRepository for AlarmRepositoryImpl {
             "SELECT * FROM device_alarms WHERE is_resolved = false ORDER BY alarm_time DESC"
         };
 
-        // 简化实现
-        Ok(vec![])
+        // TODO: find_active is not yet implemented - returning empty vector
+        // This method needs proper implementation before production use
+        todo!("find_active is not yet implemented - returning empty vector")
     }
 
     async fn find_unacknowledged(&self, device_id: Option<&str>) -> AlarmResult<Vec<Alarm>> {
@@ -202,8 +205,9 @@ impl AlarmRepository for AlarmRepositoryImpl {
             "SELECT * FROM device_alarms WHERE is_acknowledged = false AND is_resolved = false ORDER BY alarm_time DESC"
         };
 
-        // 简化实现
-        Ok(vec![])
+        // TODO: find_unacknowledged is not yet implemented - returning empty vector
+        // This method needs proper implementation before production use
+        todo!("find_unacknowledged is not yet implemented - returning empty vector")
     }
 
     async fn count_by_criteria(&self, criteria: &AlarmQueryCriteria) -> AlarmResult<u64> {
@@ -220,8 +224,9 @@ impl AlarmRepository for AlarmRepositoryImpl {
             query.push_str(" AND alarm_time >= ? AND alarm_time <= ?");
         }
 
-        // 简化实现
-        Ok(0)
+        // TODO: count_by_criteria is not yet implemented - returning 0
+        // This method needs proper implementation before production use
+        todo!("count_by_criteria is not yet implemented - returning 0")
     }
 
     async fn batch_update_status(
@@ -246,8 +251,9 @@ impl AlarmRepository for AlarmRepositoryImpl {
             placeholders
         );
 
-        // 简化实现
-        Ok(0)
+        // TODO: batch_update_status is not yet implemented - returning 0
+        // This method needs proper implementation before production use
+        todo!("batch_update_status is not yet implemented - returning 0")
     }
 
     async fn delete_old_alarms(&self, before: DateTime<Utc>) -> AlarmResult<usize> {

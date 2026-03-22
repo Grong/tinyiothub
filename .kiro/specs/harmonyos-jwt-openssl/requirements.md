@@ -46,6 +46,7 @@
 # Cargo.toml
 [dependencies]
 openssl = { version = "0.10", features = ["vendored"] }
+subtle = "2.5"  # 常量时间比较，防止 timing attack
 
 [target.'cfg(target_env = "ohos")'.dependencies]
 openssl = { version = "0.10" }
@@ -246,12 +247,11 @@ fn get_jwt_secret() -> String {
 }
 
 // 常量时间比较
+// 使用 subtle::ConstantTimeEq 确保比较时间是常量，不泄露长度信息
+// ct_eq 内部实现为常量时间，长度不同时直接返回 false，无 timing leak
 fn constant_time_compare(a: &str, b: &str) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    a.bytes().zip(b.bytes())
-        .fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    use subtle::ConstantTimeEq;
+    a.as_bytes().ct_eq(b.as_bytes()).into()
 }
 ```
 

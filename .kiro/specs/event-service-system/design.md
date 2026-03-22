@@ -50,6 +50,32 @@ graph TB
 5. **Notification Service**: 通知服务，处理事件告警和推送
 6. **Query Service**: 查询服务，提供事件检索和统计功能
 
+## 架构决策说明
+
+### 事件分类：持久事件 vs 瞬时事件
+
+事件系统处理两种不同生命周期的事件：
+
+**持久事件** → 写入 `events` 表，通过 REST API 查询
+- 系统事件（用户认证、用户操作、系统配置变更）
+- 设备告警事件（需要历史追踪）
+- 设备业务事件（需要审计）
+
+**瞬时事件** → 仅通过 Event Bus 触发，不落库
+- 设备属性变更（设备状态变化，触发 SSE 推送，前端实时更新）
+- 设备心跳（仅触发状态同步，不记录）
+- 设备连接状态变化（触发通知，不重复存储）
+
+瞬时事件的 SSE 推送丢失处理：SSE reconnect 时，客户端应从 `/api/v1/events/real-time` 重新拉取当前实时状态（RealTimeStatus 表），而非依赖重放。
+
+### alarm 模块废弃
+
+本 event-service 系统完全替代现有的 alarm 模块（`api/src/models/alarm.rs`）：
+- 旧 alarm 模块**不再接收新事件**，仅保留历史数据只读
+- 所有新告警由 event-service 的 `EventLevel::Error` / `EventLevel::Critical` 事件处理
+- 通知规则（notification_rules）由 event-service 统一管理
+- alarm 模块将在后续版本中移除
+
 ## 组件和接口设计
 
 ### 事件总线 (Event Bus)
@@ -132,7 +158,6 @@ pub enum ContentElement {
     },
     Image {
         url: Option<String>,
-        base64: Option<String>,
         alt_text: String,
         width: Option<u32>,
         height: Option<u32>,
@@ -156,7 +181,6 @@ pub enum ContentElement {
 pub enum TextFormat {
     Plain,
     Markdown,
-    Html,
 }
 ```
 

@@ -42,6 +42,10 @@ pub struct ApplicationSettings {
     pub environment: EnvironmentConfig,
     #[serde(default)]
     pub marketplace: MarketplaceConfig,
+    #[serde(default)]
+    pub sms: SmsConfig,
+    #[serde(default)]
+    pub social: SocialConfig,
 }
 
 /// Server configuration
@@ -447,6 +451,95 @@ impl Default for MarketplaceConfig {
 
 fn default_github_branch() -> String {
     "main".to_string()
+}
+
+fn default_false() -> bool {
+    false
+}
+
+fn default_sms_provider() -> String {
+    "aliyun".to_string()
+}
+
+fn default_sms_rate_limit() -> u32 {
+    5
+}
+
+fn default_sms_expire() -> u64 {
+    300
+}
+
+/// SMS configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct SmsConfig {
+    #[serde(default = "default_false")]
+    pub enabled: bool,
+    #[serde(default = "default_sms_provider")]
+    pub provider: String,
+    #[serde(default)]
+    pub aliyun: Option<SmsAliyunConfig>,
+    #[serde(default)]
+    pub tencent: Option<SmsTencentConfig>,
+    #[serde(default)]
+    pub rate_limit: Option<SmsRateLimitConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SmsAliyunConfig {
+    pub access_key_id: Option<String>,
+    pub access_key_secret: Option<String>,
+    pub sign_name: Option<String>,
+    pub template_code: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SmsTencentConfig {
+    pub secret_id: Option<String>,
+    pub secret_key: Option<String>,
+    pub app_id: Option<String>,
+    pub sign_name: Option<String>,
+    pub template_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SmsRateLimitConfig {
+    #[serde(default = "default_sms_rate_limit")]
+    pub max_per_minute: u32,
+    #[serde(default = "default_sms_expire")]
+    pub code_expire_secs: u64,
+}
+
+/// Social login configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct SocialConfig {
+    #[serde(default)]
+    pub wechat: Option<WeChatConfig>,
+    #[serde(default)]
+    pub wechat_miniprogram: Option<WeChatMiniProgramConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct WeChatConfig {
+    #[serde(default = "default_false")]
+    pub enabled: bool,
+    pub app_id: Option<String>,
+    pub app_secret: Option<String>,
+    pub redirect_uri: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct WeChatMiniProgramConfig {
+    #[serde(default = "default_false")]
+    pub enabled: bool,
+    pub app_id: Option<String>,
+    pub app_secret: Option<String>,
 }
 
 fn default_cache_ttl() -> u64 {
