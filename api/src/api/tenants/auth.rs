@@ -9,8 +9,31 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use hmac::{Hmac, Mac};
 use serde::Deserialize;
+use sha2::Sha256;
 use sqlx::Row;
+
+type HmacSha256 = Hmac<Sha256>;
+
+/// HMAC-SHA256 签名
+fn sign_payload(payload: &str, secret: &str) -> String {
+    let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
+        .expect("HMAC can take key of any size");
+    mac.update(payload.as_bytes());
+    let result = mac.finalize();
+    base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        result.into_bytes(),
+    )
+}
+
+/// 验证 HMAC-SHA256 签名
+fn verify_signature(payload: &str, signature: &str, secret: &str) -> bool {
+    let expected = sign_payload(payload, secret);
+    // 使用常量时间比较防止时序攻击
+    expected.as_bytes() == signature.as_bytes()
+}
 
 use crate::dto::entity::tenant::{CreateTenantRequest, SubscriptionPlan, Tenant};
 use crate::shared::app_state::AppState;
@@ -264,24 +287,80 @@ async fn login(
 /// Verify token
 async fn verify_token(
     State(_state): State<AppState>,
+    Query(params): Query<VerifyTokenParams>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    let token = params.token;
+
+    // Parse token format: tj_{payload}:{signature}
+    let token = token.strip_prefix("tj_").ok_or(StatusCode::BAD_REQUEST)?;
+    let parts: Vec<&str> = token.rsplitn(2, ':').collect();
+    if parts.len() != 2 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let signature = parts[0];
+    let payload_encoded = parts[1];
+
+    // Decode payload
+    let payload_bytes = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        payload_encoded,
+    ).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let payload_str = String::from_utf8(payload_bytes).map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    // Get JWT_SECRET
+    let secret = std::env::var("JWT_SECRET")
+        .unwrap_or_else(|_| "insecure_fallback_secret_change_in_production".to_string());
+
+    // Verify signature
+    if !verify_signature(&payload_str, signature, &secret) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
+    // Parse and check expiration
+    let payload: serde_json::Value = serde_json::from_str(&payload_str)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let exp = payload["exp"].as_i64().ok_or(StatusCode::BAD_REQUEST)?;
+    if chrono::Utc::now().timestamp() > exp {
+        return Ok(Json(serde_json::json!({
+            "valid": false,
+            "error": "Token expired"
+        })));
+    }
+
     Ok(Json(serde_json::json!({
         "valid": true
     })))
 }
 
-/// Generate simple token
+#[derive(Debug, Deserialize)]
+struct VerifyTokenParams {
+    token: String,
+}
+
+/// Generate HMAC-SHA256 signed token
 fn generate_token(tenant_id: &str, user_id: &str) -> String {
+    let secret = std::env::var("JWT_SECRET")
+        .unwrap_or_else(|_| {
+            tracing::warn!("JWT_SECRET not set, using fallback for tenant token");
+            "insecure_fallback_secret_change_in_production".to_string()
+        });
+
+    let exp = chrono::Utc::now().timestamp() + 86400 * 7;
     let payload = serde_json::json!({
         "tenant_id": tenant_id,
         "user_id": user_id,
-        "exp": chrono::Utc::now().timestamp() + 86400 * 7,
+        "exp": exp,
     });
-    
+
+    let payload_str = payload.to_string();
+    let signature = sign_payload(&payload_str, &secret);
+
     let encoded = base64::Engine::encode(
         &base64::engine::general_purpose::STANDARD,
-        payload.to_string()
+        payload_str
     );
-    
-    format!("tj_{}", encoded)
+
+    // Format: tj_{payload}:{signature}
+    format!("tj_{}:{}", encoded, signature)
 }

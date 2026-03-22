@@ -13,18 +13,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const isCurrentWorkspaceEditor = true
   const isCurrentWorkspaceDatasetOperator = true
 
-  // 临时设置认证token用于测试
-  React.useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const token = localStorage.getItem('auth-token')
-      if (!token) {
-        // 设置一个临时的测试token
-        const testToken = 'test-token-for-development'
-        localStorage.setItem('auth-token', testToken)
-        console.log('设置临时认证token用于测试')
-      }
-    }
-  }, [])
 
   return (
     <AppContext.Provider value={{

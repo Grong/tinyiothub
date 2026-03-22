@@ -13,6 +13,7 @@
 export * from './auth'
 export * from './devices'
 export * from './templates'
+export * from './tenant'
 
 // === 监控和告警 ===
 export * from './device-monitoring'

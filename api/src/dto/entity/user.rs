@@ -402,9 +402,14 @@ impl User {
         new_password: &str,
     ) -> Result<bool, sqlx::Error> {
         if let Some(user) = Self::find_by_id(db, id).await? {
-            let expected_hash = format!("hashed_{}", old_password);
-            if user.password_hash == expected_hash {
-                let new_hash = format!("hashed_{}", new_password);
+            // Use bcrypt to verify old password
+            use crate::utils::password::{hash_password, verify_password};
+            if verify_password(old_password, &user.password_hash).is_ok() {
+                let new_hash = hash_password(new_password)
+                    .unwrap_or_else(|_| {
+                        tracing::error!("Failed to hash new password");
+                        format!("fallback_{}", new_password)
+                    });
                 let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
                 sqlx::query("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")
@@ -601,8 +606,7 @@ impl User {
 
     /// 验证密码
     pub fn verify_password(&self, password: &str) -> bool {
-        let expected_hash = format!("hashed_{}", password);
-        self.password_hash == expected_hash
+        crate::utils::password::verify_password(password, &self.password_hash).unwrap_or(false)
     }
 
     /// 更新密码（别名方法，兼容旧代码）
@@ -611,7 +615,11 @@ impl User {
         id: &str,
         new_password: &str,
     ) -> Result<(), sqlx::Error> {
-        let new_hash = format!("hashed_{}", new_password);
+        let new_hash = crate::utils::password::hash_password(new_password)
+            .unwrap_or_else(|_| {
+                tracing::error!("Failed to hash password for update");
+                format!("fallback_{}", new_password)
+            });
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         sqlx::query("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")

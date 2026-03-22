@@ -8,7 +8,6 @@ pub mod tools;
 
 mod tests;
 
-use std::io::{BufRead, BufReader, Write};
 use std::sync::Arc;
 
 use jsonrpc_core::{Error, ErrorCode, Id, MethodCall, Params, Value, Version};
@@ -392,30 +391,37 @@ fn map_client_error(err: client::ClientError) -> Error {
             message: "Request timed out after 30 seconds".to_string(),
             data: None,
         },
+        client::ClientError::InvalidParams(msg) => Error {
+            code: ErrorCode::InvalidParams,
+            message: msg,
+            data: None,
+        },
     }
 }
 
 // ==================== STDIO 处理 ====================
 
+const MAX_LINE_LENGTH: usize = 1024;
+
 /// 处理 STDIO 输入
 async fn process_stdio(server: Arc<RwLock<McpServer>>) {
-    let stdin = BufReader::new(std::io::stdin());
-    let mut stdout = std::io::stdout();
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 
-    for line in stdin.lines() {
-        let line = match line {
-            Ok(l) => l,
-            Err(_) => continue,
-        };
+    let stdin = tokio::io::stdin();
+    let mut stdout = tokio::io::stdout();
 
-        // 跳过空行
-        if line.trim().is_empty() {
+    // Use take(MAX_LINE_LENGTH) to limit line length and prevent unbounded input
+    // BufReader requires AsyncRead, and Take<Stdin> implements AsyncRead
+    let mut lines = tokio::io::BufReader::new(stdin.take(MAX_LINE_LENGTH as u64)).lines();
+    while let Some(line_result) = lines.next_line().await.unwrap_or(None) {
+        let trimmed_line = line_result.trim();
+        if trimmed_line.is_empty() {
             continue;
         }
 
         // 解析 JSON-RPC 请求（同时提取 ID）
         let parse_result: Result<MethodCallWithId, _> =
-            serde_json::from_str::<JsonRpcRequest>(&line)
+            serde_json::from_str::<JsonRpcRequest>(trimmed_line)
                 .map(|req| MethodCallWithId {
                     id: req.id,
                     call: req.method,
@@ -452,7 +458,9 @@ async fn process_stdio(server: Arc<RwLock<McpServer>>) {
         };
 
         // 输出响应
-        let _ = writeln!(stdout, "{}", response_json);
+        use tokio::io::AsyncWriteExt;
+        let _ = stdout.write_all(response_json.to_string().as_bytes()).await;
+        let _ = stdout.write_all(b"\n").await;
         let _ = stdout.flush();
     }
 }
@@ -486,7 +494,7 @@ async fn main() -> anyhow::Result<()> {
 
     // 加载配置
     let config = config::load_config()?;
-    info!("Config loaded: {}", config.tinyiothub.api_url);
+    info!("Config loaded: api_url={}, api_key=***", config.tinyiothub.api_url);
 
     // 创建 MCP Server
     let server = Arc::new(RwLock::new(McpServer::new(config)));

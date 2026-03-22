@@ -376,23 +376,25 @@ async fn update_social_config(
     Json(request): Json<UpdateSocialConfigRequest>,
 ) -> Json<ApiResponse<String>> {
     let db = state.database();
-    
-    let sql = format!(
-        r#"UPDATE social_configs 
-            SET app_id = '{}', app_secret = '{}', redirect_uri = '{}', is_enabled = {}, updated_at = CURRENT_TIMESTAMP
-            WHERE provider = '{}'"#,
-        request.app_id.unwrap_or_default(),
-        request.app_secret.unwrap_or_default(),
-        request.redirect_uri.unwrap_or_default(),
-        request.is_enabled.unwrap_or(false) as i32,
-        request.provider
-    );
-    
-    if let Err(e) = db.execute(&sql).await {
+
+    let result = sqlx::query(
+        r#"UPDATE social_configs
+            SET app_id = ?, app_secret = ?, redirect_uri = ?, is_enabled = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE provider = ?"#,
+    )
+    .bind(request.app_id.unwrap_or_default())
+    .bind(request.app_secret.unwrap_or_default())
+    .bind(request.redirect_uri.unwrap_or_default())
+    .bind(request.is_enabled.unwrap_or(false) as i32)
+    .bind(&request.provider)
+    .execute(db.pool())
+    .await;
+
+    if let Err(e) = result {
         tracing::error!("Failed to update social config: {}", e);
         return ApiResponse::error("更新配置失败".to_string());
     }
-    
+
     ApiResponse::success("配置已更新".to_string())
 }
 

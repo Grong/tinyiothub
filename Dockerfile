@@ -92,9 +92,9 @@ RUN mkdir -p /app/data /app/logs && \
 ENV RUST_LOG=info \
     TZ=Asia/Shanghai \
     TINYIOTHUB__DATABASE__URL=/app/data/tinyiothub.db \
-    JWT_SECRET=tinyiothub-default-jwt-secret-change-in-production-32chars \
-    MQTT_USERNAME=admin \
-    MQTT_PASSWORD=admin123
+    JWT_SECRET="" \
+    MQTT_USERNAME="" \
+    MQTT_PASSWORD=""
 
 # 暴露端口
 EXPOSE 3002
@@ -102,6 +102,10 @@ EXPOSE 3002
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:3002/api/health || exit 1
+
+# 创建非root用户
+RUN addgroup -g 1001 -S appgroup && adduser -u 1001 -S appuser -G appgroup
+USER appuser
 
 # 启动应用
 CMD ["/app/tinyiothub"]

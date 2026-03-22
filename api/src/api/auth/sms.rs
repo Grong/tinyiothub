@@ -7,6 +7,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
@@ -110,13 +111,19 @@ async fn send_code(
 
     // 存储验证码
     let id = uuid::Uuid::new_v4().to_string();
-    let sql = format!(
-        r#"INSERT INTO sms_codes (id, phone, code, purpose, expires_at) 
-            VALUES ('{}', '{}', '{}', '{}', '{}')"#,
-        id, phone, code, purpose, expires_at.to_rfc3339()
-    );
+    let result = sqlx::query(
+        r#"INSERT INTO sms_codes (id, phone, code, purpose, expires_at)
+            VALUES (?, ?, ?, ?, ?)"#,
+    )
+    .bind(&id)
+    .bind(phone)
+    .bind(&code)
+    .bind(&purpose)
+    .bind(expires_at.to_rfc3339())
+    .execute(db.pool())
+    .await;
 
-    if let Err(e) = db.execute(&sql).await {
+    if let Err(e) = result {
         tracing::error!("Failed to save SMS code: {}", e);
         return ApiResponse::error("发送失败，请稍后重试".to_string());
     }
@@ -158,16 +165,17 @@ async fn login_with_code(
 
     // 验证验证码
     let db = state.database();
-    
-    let sql = format!(
-        r#"SELECT id, code, expires_at, verified_at FROM sms_codes 
-            WHERE phone = '{}' AND purpose = 'login' 
+
+    let rows = match sqlx::query(
+        r#"SELECT id, code, expires_at, verified_at FROM sms_codes
+            WHERE phone = ? AND purpose = 'login'
             AND verified_at IS NULL
             ORDER BY created_at DESC LIMIT 1"#,
-        phone
-    );
-
-    let rows = match db.query(&sql, |_| Ok(())).await {
+    )
+    .bind(phone)
+    .fetch_all(db.pool())
+    .await
+    {
         Ok(r) => r,
         Err(e) => {
             tracing::error!("Database error: {}", e);
@@ -179,8 +187,53 @@ async fn login_with_code(
         return ApiResponse::error("验证码已失效，请重新获取".to_string());
     }
 
-    // 这里的验证码比对暂时简化处理
-    // TODO: 完善验证码验证逻辑
+    let row = &rows[0];
+
+    // 获取存储的验证码
+    let stored_code: String = match row.try_get("code") {
+        Ok(c) => c,
+        Err(_) => {
+            return ApiResponse::error("验证码数据异常".to_string());
+        }
+    };
+
+    // 获取过期时间
+    let expires_at: String = match row.try_get("expires_at") {
+        Ok(e) => e,
+        Err(_) => {
+            return ApiResponse::error("验证码数据异常".to_string());
+        }
+    };
+
+    // 检查验证码是否过期
+    if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(&expires_at) {
+        if exp < chrono::Utc::now() {
+            return ApiResponse::error("验证码已过期，请重新获取".to_string());
+        }
+    }
+
+    // 比较验证码
+    if stored_code != code {
+        return ApiResponse::error("验证码错误".to_string());
+    }
+
+    // 验证码验证成功，标记为已验证
+    let record_id: String = match row.try_get("id") {
+        Ok(id) => id,
+        Err(_) => {
+            return ApiResponse::error("验证码数据异常".to_string());
+        }
+    };
+
+    if let Err(e) = sqlx::query("UPDATE sms_codes SET verified_at = ? WHERE id = ?")
+        .bind(chrono::Utc::now().to_rfc3339())
+        .bind(&record_id)
+        .execute(db.pool())
+        .await
+    {
+        tracing::error!("Failed to mark code as verified: {}", e);
+        // 不影响登录，只是记录
+    }
 
     // 查找或创建用户
     let user = find_or_create_user_by_phone(db, phone).await;
@@ -189,7 +242,7 @@ async fn login_with_code(
         Ok(user) => {
             // 生成 token
             let token = generate_jwt_token(&user.id);
-            
+
             ApiResponse::success(LoginWithCodeResponse {
                 access_token: token,
                 token_type: "Bearer".to_string(),
@@ -211,15 +264,88 @@ async fn login_with_code(
 
 /// 验证验证码（查询状态）
 async fn verify_code(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Query(params): Query<VerifyCodeQuery>,
 ) -> Json<ApiResponse<VerifyCodeResponse>> {
     let phone = params.phone.unwrap_or_default();
     let code = params.code.unwrap_or_default();
 
+    // 验证手机号格式
+    if !validate_phone(&phone) {
+        return ApiResponse::error("手机号格式不正确".to_string());
+    }
+
+    if code.is_empty() {
+        return ApiResponse::error("验证码不能为空".to_string());
+    }
+
+    let db = state.database();
+
+    // 从数据库获取最新的未验证验证码
+    let rows = match sqlx::query(
+        r#"SELECT id, code, expires_at, verified_at FROM sms_codes
+            WHERE phone = ? AND purpose = 'login'
+            AND verified_at IS NULL
+            ORDER BY created_at DESC LIMIT 1"#,
+    )
+    .bind(&phone)
+    .fetch_all(db.pool())
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!("Database error: {}", e);
+            return ApiResponse::error("验证失败，请稍后重试".to_string());
+        }
+    };
+
+    if rows.is_empty() {
+        return ApiResponse::success(VerifyCodeResponse {
+            valid: false,
+            message: "验证码不存在或已失效".to_string(),
+        });
+    }
+
+    // 获取第一条记录
+    let row = &rows[0];
+
+    // 获取存储的验证码
+    let stored_code: String = match row.try_get("code") {
+        Ok(c) => c,
+        Err(_) => {
+            return ApiResponse::error("验证码数据异常".to_string());
+        }
+    };
+
+    // 获取过期时间
+    let expires_at: String = match row.try_get("expires_at") {
+        Ok(e) => e,
+        Err(_) => {
+            return ApiResponse::error("验证码数据异常".to_string());
+        }
+    };
+
+    // 检查验证码是否过期
+    if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(&expires_at) {
+        if exp < chrono::Utc::now() {
+            return ApiResponse::success(VerifyCodeResponse {
+                valid: false,
+                message: "验证码已过期".to_string(),
+            });
+        }
+    }
+
+    // 比较验证码
+    if stored_code != code {
+        return ApiResponse::success(VerifyCodeResponse {
+            valid: false,
+            message: "验证码错误".to_string(),
+        });
+    }
+
     ApiResponse::success(VerifyCodeResponse {
         valid: true,
-        message: "验证码验证功能开发中".to_string(),
+        message: "验证码验证成功".to_string(),
     })
 }
 
@@ -247,16 +373,9 @@ fn validate_phone(phone: &str) -> bool {
 
 /// 生成随机验证码
 fn generate_code() -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    use std::time::SystemTime;
-    
-    let mut hasher = DefaultHasher::new();
-    SystemTime::now().hash(&mut hasher);
-    let hash = hasher.finish();
-    
-    // 生成6位数字
-    format!("{:06}", hash % 1_000_000)
+    let mut rng = rand::thread_rng();
+    let code: u32 = rng.gen_range(0..1_000_000);
+    format!("{:06}", code)
 }
 
 /// 根据手机号查找或创建用户
@@ -265,13 +384,13 @@ async fn find_or_create_user_by_phone(
     phone: &str,
 ) -> Result<crate::dto::entity::user::User, Box<dyn std::error::Error + Send + Sync>> {
     // 查找现有用户
-    let find_sql = format!(
-        "SELECT * FROM users WHERE phone = '{}' LIMIT 1",
-        phone
-    );
-    
-    let rows = db.query(&find_sql, |row| {
-        Ok(crate::dto::entity::user::User {
+    let rows = sqlx::query("SELECT * FROM users WHERE phone = ? LIMIT 1")
+        .bind(phone)
+        .fetch_all(db.pool())
+        .await?;
+
+    if let Some(row) = rows.into_iter().next() {
+        return Ok(crate::dto::entity::user::User {
             id: row.try_get("id")?,
             username: row.try_get("username")?,
             password_hash: row.try_get("password_hash")?,
@@ -283,24 +402,24 @@ async fn find_or_create_user_by_phone(
             created_at: row.try_get("created_at")?,
             updated_at: row.try_get("updated_at")?,
             last_login_at: row.try_get("last_login_at")?,
-        })
-    }).await?;
-
-    if let Some(user) = rows.into_iter().next() {
-        return Ok(user);
+        });
     }
 
     // 创建新用户
     let user_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-    
-    let insert_sql = format!(
-        r#"INSERT INTO users (id, username, phone, is_enabled, created_at, updated_at) 
-            VALUES ('{}', '{}', '{}', 1, '{}', '{}')"#,
-        user_id, phone, phone, now, now
-    );
-    
-    db.execute(&insert_sql).await?;
+
+    sqlx::query(
+        r#"INSERT INTO users (id, username, phone, is_enabled, created_at, updated_at)
+            VALUES (?, ?, ?, 1, ?, ?)"#,
+    )
+    .bind(&user_id)
+    .bind(phone)
+    .bind(phone)
+    .bind(&now)
+    .bind(&now)
+    .execute(db.pool())
+    .await?;
 
     // 直接构建并返回新用户
     Ok(crate::dto::entity::user::User {

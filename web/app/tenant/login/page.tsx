@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { tenantApi, saveTenantToken, saveTenantData } from '@/service/tenant'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -23,28 +24,23 @@ export default function LoginPage() {
     setIsLoading(true)
 
     try {
-      const res = await fetch('/api/v1/tenants/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: formData.email,
-          password: formData.password,
-        }),
+      const response = await tenantApi.login({
+        email: formData.email,
+        password: formData.password,
       })
 
-      if (!res.ok) {
-        const data = await res.json()
-        throw new Error(data.message || '登录失败')
-      }
+      if (response.code === 0 && response.result) {
+        const { token, tenant } = response.result
 
-      const data = await res.json()
-      
-      // 保存 token
-      localStorage.setItem('tenant_token', data.token)
-      localStorage.setItem('tenant', JSON.stringify(data.tenant))
-      
-      // 跳转到仪表盘
-      router.push('/tenant/dashboard')
+        // 保存 token 到 sessionStorage
+        saveTenantToken(token)
+        saveTenantData(tenant)
+
+        // 跳转到仪表盘
+        router.push('/tenant/dashboard')
+      } else {
+        throw new Error(response.msg || '登录失败')
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '登录失败，请稍后重试')
     } finally {

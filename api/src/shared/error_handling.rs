@@ -360,7 +360,7 @@ impl AuthHelper {
                     .with_user(user_id)
                     .with_details("Admin role required");
                 Err(ApiResponseBuilder::error_with_code(
-                    403,
+                    ErrorCode::Forbidden.as_i32(),
                     "Access denied: admin role required",
                 ))
             }
@@ -369,7 +369,7 @@ impl AuthHelper {
                     .with_user(user_id)
                     .with_details(e);
                 Err(ApiResponseBuilder::error_with_code(
-                    401,
+                    ErrorCode::Unauthorized.as_i32(),
                     "Permission check failed",
                 ))
             }

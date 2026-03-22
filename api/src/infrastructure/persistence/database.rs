@@ -142,10 +142,15 @@ pub async fn execute(pool: &SqlitePool, sql: &str) -> Result<u64, SqlxError> {
 
 // Utility functions
 
+/// Escape single quotes in SQL string literals to prevent injection
+fn escape_sql_string(s: &str) -> String {
+    s.replace('\'', "''")
+}
+
 pub fn check_not_empty_equal(param: Option<String>, name: &str, list: &mut Vec<String>) {
     if let Some(s) = param {
         if !s.is_empty() {
-            let str = format!(" {} = '{}'", name, &s);
+            let str = format!(" {} = '{}'", name, escape_sql_string(&s));
 
             list.push(str);
         }
@@ -155,17 +160,25 @@ pub fn check_not_empty_equal(param: Option<String>, name: &str, list: &mut Vec<S
 pub fn check_not_empty_like(param: Option<String>, name: &str, list: &mut Vec<String>) {
     if let Some(s) = param {
         if !s.is_empty() {
-            let str = format!(" {} like '%{}%'", name, &s);
+            let escaped = escape_like(&s);
+            let str = format!(" {} like '%{}%'", name, escaped);
 
             list.push(str);
         }
     }
 }
 
+/// Escape special characters in LIKE patterns to prevent SQL injection via LIKE wildcards
+fn escape_like(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
 pub fn check_not_empty_greater(param: Option<String>, name: &str, list: &mut Vec<String>) {
     if let Some(s) = param {
         if !s.is_empty() {
-            let str = format!(" {} >= '{}'", name, &s);
+            let str = format!(" {} >= '{}'", name, escape_sql_string(&s));
 
             list.push(str);
         }
@@ -175,7 +188,7 @@ pub fn check_not_empty_greater(param: Option<String>, name: &str, list: &mut Vec
 pub fn check_not_empty_less(param: Option<String>, name: &str, list: &mut Vec<String>) {
     if let Some(s) = param {
         if !s.is_empty() {
-            let str = format!(" {} <= '{}'", name, &s);
+            let str = format!(" {} <= '{}'", name, escape_sql_string(&s));
 
             list.push(str);
         }
@@ -196,7 +209,7 @@ pub fn get_value_or_default<T: Clone>(str: &Option<T>, def: T) -> T {
 
 pub fn get_string_value_or_null<T: Clone + Display>(str: &Option<T>) -> String {
     match str {
-        Some(s) => format!("'{}'", s),
+        Some(s) => format!("'{}'", escape_sql_string(&s.to_string())),
 
         None => "null".to_string(),
     }

@@ -81,54 +81,54 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
     }
 
     async fn find_active_events(&self, filter: &RealTimeFilter) -> Result<Vec<RealTimeEvent>> {
-        let mut sql = String::from(
-            r#"
-            SELECT id, event_type, level, source_type, source_id, device_id, user_id,
+        let mut base_sql = String::from(
+            r#"SELECT id, event_type, level, source_type, source_id, device_id, user_id,
                    title, content_preview, timestamp, acknowledged, acknowledged_by, acknowledged_at
-            FROM real_time_events WHERE 1=1
-        "#,
+            FROM real_time_events WHERE 1=1"#
         );
 
-        let mut params: Vec<String> = Vec::new();
+        // Build query dynamically based on filter
+        let query = match (&filter.device_ids, filter.acknowledged) {
+            // Both device_ids and acknowledged are set
+            (Some(device_ids), Some(acknowledged)) if !device_ids.is_empty() => {
+                let placeholders = device_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                base_sql.push_str(&format!(" AND device_id IN ({})", placeholders));
+                base_sql.push_str(" AND acknowledged = ?");
+                base_sql.push_str(" ORDER BY timestamp DESC");
 
-        // Add device ID filter
-        if let Some(device_ids) = &filter.device_ids {
-            let placeholders = device_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-            sql.push_str(&format!(" AND device_id IN ({})", placeholders));
-            params.extend(device_ids.clone());
-        }
-
-        // Add acknowledgment filter
-        if let Some(acknowledged) = filter.acknowledged {
-            sql.push_str(" AND acknowledged = ?");
-            params.push(acknowledged.to_string());
-        }
-
-        // Add minimum level filter
-        if let Some(min_level) = filter.min_level {
-            match min_level {
-                EventLevel::Critical => {
-                    sql.push_str(" AND level = 'Critical'");
+                let mut q = sqlx::query(&base_sql);
+                for device_id in device_ids {
+                    q = q.bind(device_id);
                 }
-                EventLevel::Error => {
-                    sql.push_str(" AND level IN ('Critical', 'Error')");
-                }
-                EventLevel::Warning => {
-                    sql.push_str(" AND level IN ('Critical', 'Error', 'Warning')");
-                }
-                EventLevel::Info => {
-                    sql.push_str(" AND level IN ('Critical', 'Error', 'Warning', 'Info')");
-                }
-                EventLevel::Debug => {
-                    // Include all levels
-                }
+                q.bind(acknowledged)
             }
-        }
+            // Only device_ids is set and non-empty
+            (Some(device_ids), None) if !device_ids.is_empty() => {
+                let placeholders = device_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                base_sql.push_str(&format!(" AND device_id IN ({})", placeholders));
+                base_sql.push_str(" ORDER BY timestamp DESC");
 
-        sql.push_str(" ORDER BY timestamp DESC");
+                let mut q = sqlx::query(&base_sql);
+                for device_id in device_ids {
+                    q = q.bind(device_id);
+                }
+                q
+            }
+            // Only acknowledged is set
+            (_, Some(acknowledged)) if filter.device_ids.as_ref().map_or(true, |ids| ids.is_empty()) => {
+                base_sql.push_str(" AND acknowledged = ?");
+                base_sql.push_str(" ORDER BY timestamp DESC");
+                sqlx::query(&base_sql).bind(acknowledged)
+            }
+            // Neither is set
+            _ => {
+                base_sql.push_str(" ORDER BY timestamp DESC");
+                sqlx::query(&base_sql)
+            }
+        };
 
-        // Execute query (simplified - in real implementation would use proper parameter binding)
-        let rows = sqlx::query(&sql).fetch_all(self.database.pool()).await?;
+        // Execute query with proper parameter binding
+        let rows = query.fetch_all(self.database.pool()).await?;
 
         let mut events = Vec::new();
         for row in rows {

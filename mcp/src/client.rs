@@ -29,6 +29,9 @@ pub enum ClientError {
 
     #[error("Request timed out")]
     Timeout,
+
+    #[error("Invalid parameters: {0}")]
+    InvalidParams(String),
 }
 
 /// API 统一响应格式（复用 TinyIoTHub 现有结构）
@@ -134,6 +137,28 @@ pub struct TinyIoTHubClient {
 }
 
 impl TinyIoTHubClient {
+    /// Validate ID is safe (alphanumeric + hyphens/underscores, max 64 chars)
+    fn validate_id(id: &str) -> Result<String, ClientError> {
+        if id.is_empty() || id.len() > 64 {
+            return Err(ClientError::InvalidParams(format!("Invalid id: {}", id)));
+        }
+        if !id.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+            return Err(ClientError::InvalidParams(format!("Invalid id: {}", id)));
+        }
+        Ok(id.to_string())
+    }
+
+    /// Validate command is safe (alphanumeric + underscore, max 128 chars)
+    fn validate_command(command: &str) -> Result<String, ClientError> {
+        if command.is_empty() || command.len() > 128 {
+            return Err(ClientError::InvalidParams(format!("Invalid command: {}", command)));
+        }
+        if !command.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            return Err(ClientError::InvalidParams(format!("Invalid command: {}", command)));
+        }
+        Ok(command.to_string())
+    }
+
     pub fn new(base_url: &str, api_key: &str) -> Self {
         let client = Client::builder()
             .timeout(Duration::from_secs(30))
@@ -178,25 +203,33 @@ impl TinyIoTHubClient {
         let status = response.status();
 
         if status.as_u16() == 401 {
-            let text = response.text().await.unwrap_or_default();
+            let text = response.text().await.map_err(|e| {
+                ClientError::NetworkError(format!("Failed to read response body: {}", e))
+            })?;
             error!("API Unauthorized: {}", text);
             return Err(ClientError::Unauthorized(text));
         }
 
         if status.as_u16() == 404 {
-            let text = response.text().await.unwrap_or_default();
+            let text = response.text().await.map_err(|e| {
+                ClientError::NetworkError(format!("Failed to read response body: {}", e))
+            })?;
             error!("API Not Found: {}", text);
             return Err(ClientError::NotFound(text));
         }
 
         if status.as_u16() == 429 {
-            let text = response.text().await.unwrap_or_default();
+            let text = response.text().await.map_err(|e| {
+                ClientError::NetworkError(format!("Failed to read response body: {}", e))
+            })?;
             error!("API Rate Limited: {}", text);
             return Err(ClientError::RateLimited(text));
         }
 
         if !status.is_success() {
-            let text = response.text().await.unwrap_or_default();
+            let text = response.text().await.map_err(|e| {
+                ClientError::NetworkError(format!("Failed to read response body: {}", e))
+            })?;
             error!("API Error: {} - {}", status, text);
             return Err(ClientError::ApiError(status.as_u16() as i32, text));
         }
@@ -229,9 +262,10 @@ impl TinyIoTHubClient {
         device_id: &str,
         include_properties: bool,
     ) -> Result<Device, ClientError> {
+        let validated_id = Self::validate_id(device_id)?;
         let path = format!(
             "/devices/{}?include_properties={}",
-            device_id, include_properties
+            validated_id, include_properties
         );
         self.request(reqwest::Method::GET, &path, None).await
     }
@@ -242,7 +276,8 @@ impl TinyIoTHubClient {
         device_id: &str,
         properties: Option<Vec<String>>,
     ) -> Result<Vec<DeviceProperty>, ClientError> {
-        let path = format!("/devices/{}/properties/read", device_id);
+        let validated_id = Self::validate_id(device_id)?;
+        let path = format!("/devices/{}/properties/read", validated_id);
 
         let body = serde_json::json!({
             "properties": properties,
@@ -259,10 +294,12 @@ impl TinyIoTHubClient {
         command: &str,
         parameters: Option<serde_json::Value>,
     ) -> Result<CommandResult, ClientError> {
-        let path = format!("/devices/{}/commands/execute", device_id);
+        let validated_id = Self::validate_id(device_id)?;
+        let validated_cmd = Self::validate_command(command)?;
+        let path = format!("/devices/{}/commands/execute", validated_id);
 
         let mut body = serde_json::json!({
-            "command": command
+            "command": validated_cmd
         });
 
         if let Some(params) = parameters {
@@ -283,10 +320,18 @@ impl TinyIoTHubClient {
         device_id: Option<&str>,
         limit: u32,
     ) -> Result<Vec<Alarm>, ClientError> {
+        // Validate status enum
+        const VALID_STATUSES: [&str; 4] = ["active", "acknowledged", "resolved", "all"];
+        if !VALID_STATUSES.contains(&status) {
+            return Err(ClientError::InvalidParams(format!("Invalid status: {}", status)));
+        }
+
         let mut path = format!("/alarms?status={}&limit={}", status, limit);
 
+        // Validate and append device_id if provided
         if let Some(did) = device_id {
-            path.push_str(&format!("&device_id={}", did));
+            let validated_did = Self::validate_id(did)?;
+            path.push_str(&format!("&device_id={}", validated_did));
         }
 
         self.request(reqwest::Method::GET, &path, None).await
@@ -298,7 +343,8 @@ impl TinyIoTHubClient {
         alarm_id: &str,
         comment: Option<&str>,
     ) -> Result<Alarm, ClientError> {
-        let path = format!("/alarms/{}/acknowledge", alarm_id);
+        let validated_id = Self::validate_id(alarm_id)?;
+        let path = format!("/alarms/{}/acknowledge", validated_id);
 
         let body = serde_json::json!({
             "comment": comment.unwrap_or("")

@@ -6,6 +6,7 @@ use std::time::Duration;
 use cron::Schedule;
 use moka::sync::Cache;
 use serde_json::Value;
+use tokio::sync::Mutex;
 use tokio::time::interval;
 
 use crate::dto::entity::job::{Job, JobExecution};
@@ -15,7 +16,7 @@ use crate::infrastructure::persistence::database::Database;
 pub struct TimeTask {
     jobs: Cache<String, JobSchedule>,
     db: Option<Arc<Database>>,
-    running: std::sync::atomic::AtomicBool,
+    running: Mutex<bool>,
 }
 
 #[derive(Clone)]
@@ -31,7 +32,7 @@ impl TimeTask {
         Self {
             jobs: map,
             db: None,
-            running: std::sync::atomic::AtomicBool::new(false),
+            running: Mutex::new(false),
         }
     }
 
@@ -49,31 +50,43 @@ impl TimeTask {
         }
 
         let db = self.db.as_ref().unwrap();
-        
-        // 标记为运行中
-        self.running.store(true, std::sync::atomic::Ordering::SeqCst);        
+
+        // 使用互斥锁保护 running 状态，防止并发 start/stop
+        let mut running = self.running.lock().await;
+        if *running {
+            tracing::warn!("TimeTask: Scheduler already running, skipping start");
+            return;
+        }
+        *running = true;
+        drop(running); // 释放锁，让 stop() 可以获取锁
+
         tracing::info!("TimeTask Scheduler started");
 
         // 每分钟检查一次任务
         let mut checker = interval(Duration::from_secs(60));
 
         loop {
-            if !self.running.load(std::sync::atomic::Ordering::SeqCst) {
+            // 检查是否应该继续运行
+            let running = self.running.lock().await;
+            if !*running {
+                drop(running);
                 break;
             }
+            drop(running);
 
             checker.tick().await;
-            
+
             // 加载并执行到期的任务
             self.check_and_run_tasks(db).await;
         }
-        
+
         tracing::info!("TimeTask Scheduler stopped");
     }
 
     /// 停止调度器
-    pub fn stop(&self) {
-        self.running.store(false, std::sync::atomic::Ordering::SeqCst);
+    pub async fn stop(&self) {
+        let mut running = self.running.lock().await;
+        *running = false;
     }
 
     /// 检查并执行到期的任务
@@ -150,7 +163,7 @@ impl Clone for TimeTask {
         Self {
             jobs: self.jobs.clone(),
             db: self.db.clone(),
-            running: std::sync::atomic::AtomicBool::new(self.running.load(std::sync::atomic::Ordering::SeqCst)),
+            running: Mutex::new(false), // Clone 创建新实例时默认为未运行状态
         }
     }
 }

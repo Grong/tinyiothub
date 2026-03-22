@@ -12,6 +12,7 @@ use axum::{
 use sqlx::Row;
 
 use crate::dto::entity::tenant::{ApiKey, Tenant};
+use crate::dto::response::{api_response::ApiResponse, builder::ApiResponseBuilder};
 use crate::shared::app_state::AppState;
 
 /// Create open API router (public API, requires API Key)
@@ -379,13 +380,6 @@ async fn list_all_events(
 }
 
 /// Fallback handler
-async fn handle_open_api() -> Response<Body> {
-    Response::builder()
-        .status(StatusCode::NOT_FOUND)
-        .header("Content-Type", "application/json")
-        .body(Body::from(serde_json::json!({
-            "error": "Not Found",
-            "message": "API endpoint not found"
-        }).to_string()))
-        .unwrap()
+async fn handle_open_api() -> Json<ApiResponse<()>> {
+    ApiResponseBuilder::error("API endpoint not found")
 }
