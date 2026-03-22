@@ -150,9 +150,7 @@ impl DeviceAlarm {
         tx.commit().await?;
 
         // Return the created alarm
-        Self::find_by_id(db, &id)
-            .await?
-            .ok_or_else(|| sqlx::Error::RowNotFound)
+        Self::find_by_id(db, &id).await?.ok_or_else(|| sqlx::Error::RowNotFound)
     }
 
     /// Acknowledge an alarm
@@ -182,9 +180,7 @@ impl DeviceAlarm {
         tx.commit().await?;
 
         // Return the updated alarm
-        Self::find_by_id(db, id)
-            .await?
-            .ok_or_else(|| sqlx::Error::RowNotFound)
+        Self::find_by_id(db, id).await?.ok_or_else(|| sqlx::Error::RowNotFound)
     }
 
     /// Resolve an alarm
@@ -220,9 +216,7 @@ impl DeviceAlarm {
         tx.commit().await?;
 
         // Return the updated alarm
-        Self::find_by_id(db, id)
-            .await?
-            .ok_or_else(|| sqlx::Error::RowNotFound)
+        Self::find_by_id(db, id).await?.ok_or_else(|| sqlx::Error::RowNotFound)
     }
 
     /// Delete an alarm
@@ -255,9 +249,7 @@ impl DeviceAlarm {
         }
 
         if let Some(property_id) = &params.property_id {
-            query_builder
-                .push(" AND property_id = ")
-                .push_bind(property_id);
+            query_builder.push(" AND property_id = ").push_bind(property_id);
         }
 
         if let Some(rule_id) = &params.rule_id {
@@ -265,35 +257,25 @@ impl DeviceAlarm {
         }
 
         if let Some(alarm_level) = &params.alarm_level {
-            query_builder
-                .push(" AND alarm_level = ")
-                .push_bind(alarm_level);
+            query_builder.push(" AND alarm_level = ").push_bind(alarm_level);
         }
 
         if let Some(is_acknowledged) = params.is_acknowledged {
             let ack_value = if is_acknowledged { 1 } else { 0 };
-            query_builder
-                .push(" AND is_acknowledged = ")
-                .push_bind(ack_value);
+            query_builder.push(" AND is_acknowledged = ").push_bind(ack_value);
         }
 
         if let Some(is_resolved) = params.is_resolved {
             let resolved_value = if is_resolved { 1 } else { 0 };
-            query_builder
-                .push(" AND is_resolved = ")
-                .push_bind(resolved_value);
+            query_builder.push(" AND is_resolved = ").push_bind(resolved_value);
         }
 
         if let Some(start_time) = &params.start_time {
-            query_builder
-                .push(" AND alarm_time >= ")
-                .push_bind(start_time);
+            query_builder.push(" AND alarm_time >= ").push_bind(start_time);
         }
 
         if let Some(end_time) = &params.end_time {
-            query_builder
-                .push(" AND alarm_time <= ")
-                .push_bind(end_time);
+            query_builder.push(" AND alarm_time <= ").push_bind(end_time);
         }
 
         query_builder.push(" ORDER BY alarm_time DESC");
@@ -305,10 +287,7 @@ impl DeviceAlarm {
             query_builder.push(" OFFSET ").push_bind(offset);
         }
 
-        let alarms = query_builder
-            .build_query_as::<DeviceAlarm>()
-            .fetch_all(db.pool())
-            .await?;
+        let alarms = query_builder.build_query_as::<DeviceAlarm>().fetch_all(db.pool()).await?;
 
         Ok(alarms)
     }
@@ -323,9 +302,7 @@ impl DeviceAlarm {
         }
 
         if let Some(property_id) = &params.property_id {
-            query_builder
-                .push(" AND property_id = ")
-                .push_bind(property_id);
+            query_builder.push(" AND property_id = ").push_bind(property_id);
         }
 
         if let Some(rule_id) = &params.rule_id {
@@ -333,35 +310,25 @@ impl DeviceAlarm {
         }
 
         if let Some(alarm_level) = &params.alarm_level {
-            query_builder
-                .push(" AND alarm_level = ")
-                .push_bind(alarm_level);
+            query_builder.push(" AND alarm_level = ").push_bind(alarm_level);
         }
 
         if let Some(is_acknowledged) = params.is_acknowledged {
             let ack_value = if is_acknowledged { 1 } else { 0 };
-            query_builder
-                .push(" AND is_acknowledged = ")
-                .push_bind(ack_value);
+            query_builder.push(" AND is_acknowledged = ").push_bind(ack_value);
         }
 
         if let Some(is_resolved) = params.is_resolved {
             let resolved_value = if is_resolved { 1 } else { 0 };
-            query_builder
-                .push(" AND is_resolved = ")
-                .push_bind(resolved_value);
+            query_builder.push(" AND is_resolved = ").push_bind(resolved_value);
         }
 
         if let Some(start_time) = &params.start_time {
-            query_builder
-                .push(" AND alarm_time >= ")
-                .push_bind(start_time);
+            query_builder.push(" AND alarm_time >= ").push_bind(start_time);
         }
 
         if let Some(end_time) = &params.end_time {
-            query_builder
-                .push(" AND alarm_time <= ")
-                .push_bind(end_time);
+            query_builder.push(" AND alarm_time <= ").push_bind(end_time);
         }
 
         let row = query_builder.build().fetch_one(db.pool()).await?;
@@ -531,9 +498,7 @@ impl DeviceAlarm {
         }
 
         if let Some(property_id) = &params.property_id {
-            query_builder
-                .push(" AND property_id = ")
-                .push_bind(property_id);
+            query_builder.push(" AND property_id = ").push_bind(property_id);
         }
 
         if let Some(rule_id) = &params.rule_id {
@@ -541,35 +506,25 @@ impl DeviceAlarm {
         }
 
         if let Some(alarm_level) = &params.alarm_level {
-            query_builder
-                .push(" AND alarm_level = ")
-                .push_bind(alarm_level);
+            query_builder.push(" AND alarm_level = ").push_bind(alarm_level);
         }
 
         if let Some(is_acknowledged) = params.is_acknowledged {
             let ack_value = if is_acknowledged { 1 } else { 0 };
-            query_builder
-                .push(" AND is_acknowledged = ")
-                .push_bind(ack_value);
+            query_builder.push(" AND is_acknowledged = ").push_bind(ack_value);
         }
 
         if let Some(is_resolved) = params.is_resolved {
             let resolved_value = if is_resolved { 1 } else { 0 };
-            query_builder
-                .push(" AND is_resolved = ")
-                .push_bind(resolved_value);
+            query_builder.push(" AND is_resolved = ").push_bind(resolved_value);
         }
 
         if let Some(start_time) = &params.start_time {
-            query_builder
-                .push(" AND alarm_time >= ")
-                .push_bind(start_time);
+            query_builder.push(" AND alarm_time >= ").push_bind(start_time);
         }
 
         if let Some(end_time) = &params.end_time {
-            query_builder
-                .push(" AND alarm_time <= ")
-                .push_bind(end_time);
+            query_builder.push(" AND alarm_time <= ").push_bind(end_time);
         }
 
         // Add sorting
@@ -595,10 +550,7 @@ impl DeviceAlarm {
             query_builder.push(" OFFSET ").push_bind(offset);
         }
 
-        let alarms = query_builder
-            .build_query_as::<DeviceAlarm>()
-            .fetch_all(db.pool())
-            .await?;
+        let alarms = query_builder.build_query_as::<DeviceAlarm>().fetch_all(db.pool()).await?;
 
         Ok((alarms, total_count))
     }

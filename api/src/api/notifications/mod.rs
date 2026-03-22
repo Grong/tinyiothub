@@ -5,22 +5,19 @@
 pub mod management;
 
 // Re-export API handlers
-pub use management::*;
-
-use crate::shared::app_state::AppState;
 use axum::{
     routing::{get, post},
     Router,
 };
+pub use management::*;
+
+use crate::shared::app_state::AppState;
 
 /// Create notification API router
 pub fn create_router() -> Router<AppState> {
     Router::new()
         // Notification rules management
-        .route(
-            "/rules",
-            get(get_notification_rules).post(create_notification_rule),
-        )
+        .route("/rules", get(get_notification_rules).post(create_notification_rule))
         .route(
             "/rules/:rule_id",
             get(get_notification_rule)

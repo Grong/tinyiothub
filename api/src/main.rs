@@ -7,16 +7,17 @@
 use axum::Router;
 use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
-
-use crate::application::{DataContext, ServiceManager};
-use crate::infrastructure::config;
-
 use tracing::{error, info};
 use tracing_appender::{
     non_blocking,
     rolling::{RollingFileAppender, Rotation},
 };
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+
+use crate::{
+    application::{DataContext, ServiceManager},
+    infrastructure::config,
+};
 
 mod api;
 mod application;
@@ -86,9 +87,7 @@ async fn main_impl() -> std::io::Result<()> {
     // === 2. 初始化数据库 ===
     use crate::infrastructure::persistence::DatabaseConfig;
     let db_config = DatabaseConfig::from_settings(config::get());
-    let data_context = DataContext::new(db_config)
-        .await
-        .expect("Failed to initialize DataContext");
+    let data_context = DataContext::new(db_config).await.expect("Failed to initialize DataContext");
     info!("✅ DataContext initialized");
 
     // === 3. 创建 AppState（包含所有核心组件）===
@@ -211,12 +210,7 @@ async fn initialize_logging() -> std::io::Result<()> {
             .filename_prefix("app")
             .filename_suffix("log")
             .max_log_files(config.logging.max_files as usize)
-            .build(
-                config
-                    .log_file_path()
-                    .parent()
-                    .unwrap_or_else(|| std::path::Path::new("logs")),
-            )
+            .build(config.log_file_path().parent().unwrap_or_else(|| std::path::Path::new("logs")))
             .unwrap();
 
         // Create non-blocking writer
@@ -243,9 +237,7 @@ async fn initialize_logging() -> std::io::Result<()> {
             .or_else(|_| EnvFilter::try_new(&config.logging.level))
             .expect("Cannot initialize log filter");
 
-        tracing_subscriber::fmt()
-            .with_env_filter(filter_layer)
-            .init();
+        tracing_subscriber::fmt().with_env_filter(filter_layer).init();
 
         info!("Console logging only (level: {})", config.logging.level);
     }
@@ -255,7 +247,7 @@ async fn initialize_logging() -> std::io::Result<()> {
 
 /// Create the main application router
 fn create_app_router(app_state: crate::shared::app_state::AppState) -> Router {
-    use tower_http::cors::{CorsLayer, AllowOrigin};
+    use tower_http::cors::{AllowOrigin, CorsLayer};
 
     tracing::info!("Creating CORS layer...");
     // 创建CORS层 - 使用配置中的origins，支持credentials
@@ -297,23 +289,25 @@ fn create_app_router(app_state: crate::shared::app_state::AppState) -> Router {
     let api_router = crate::api::create_router();
 
     tracing::info!("Building main router...");
-    
+
     // 静态文件服务 - SPA 模式
+    use axum::{
+        http::{StatusCode, Uri},
+        response::{IntoResponse, Response},
+    };
     use tower_http::services::{ServeDir, ServeFile};
-    use axum::http::{StatusCode, Uri};
-    use axum::response::{IntoResponse, Response};
-    
+
     tracing::info!("Serving static files from wwwroot/ (SPA mode)");
-    
+
     // 创建一个处理器，对于所有非 API 请求返回对应的 HTML 文件
     async fn spa_handler(uri: Uri) -> Response {
         let path = uri.path();
-        
+
         // 如果是 API 请求，不应该到这里（已被 nest 处理）
         if path.starts_with("/api/") {
             return (StatusCode::NOT_FOUND, "API endpoint not found").into_response();
         }
-        
+
         // 尝试读取请求的文件
         let file_path = if path == "/" {
             "wwwroot/index.html".to_string()
@@ -322,7 +316,7 @@ fn create_app_router(app_state: crate::shared::app_state::AppState) -> Router {
         } else {
             format!("wwwroot{}", path)
         };
-        
+
         match tokio::fs::read(&file_path).await {
             Ok(content) => {
                 // 根据文件扩展名设置 Content-Type
@@ -345,7 +339,7 @@ fn create_app_router(app_state: crate::shared::app_state::AppState) -> Router {
                 } else {
                     "application/octet-stream"
                 };
-                
+
                 ([(axum::http::header::CONTENT_TYPE, content_type)], content).into_response()
             }
             Err(_) => {
@@ -360,16 +354,19 @@ fn create_app_router(app_state: crate::shared::app_state::AppState) -> Router {
                         tracing::info!("Serving index.html for SPA route: {}", path);
                         match tokio::fs::read("wwwroot/index.html").await {
                             Ok(content) => {
-                                ([(axum::http::header::CONTENT_TYPE, "text/html")], content).into_response()
+                                ([(axum::http::header::CONTENT_TYPE, "text/html")], content)
+                                    .into_response()
                             }
-                            Err(_) => (StatusCode::NOT_FOUND, "index.html not found").into_response(),
+                            Err(_) => {
+                                (StatusCode::NOT_FOUND, "index.html not found").into_response()
+                            }
                         }
                     }
                 }
             }
         }
     }
-    
+
     let mut router = Router::new()
         // API路由优先
         .nest("/api", api_router)

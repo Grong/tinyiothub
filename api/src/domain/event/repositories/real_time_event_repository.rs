@@ -1,11 +1,12 @@
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
 use crate::domain::event::{
     entities::Event,
     value_objects::{EventId, EventSource, EventType},
     Result,
 };
-use async_trait::async_trait;
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 
 /// Repository interface for real-time event status (defined in domain layer)
 #[async_trait]
@@ -137,9 +138,7 @@ pub struct RealTimeFilterBuilder {
 
 impl RealTimeFilterBuilder {
     pub fn new() -> Self {
-        Self {
-            filter: RealTimeFilter::default(),
-        }
+        Self { filter: RealTimeFilter::default() }
     }
 
     pub fn device_ids(mut self, device_ids: Vec<String>) -> Self {
@@ -181,10 +180,7 @@ impl Default for RealTimeFilterBuilder {
 impl RealTimeEvent {
     /// Check if this event is critical
     pub fn is_critical(&self) -> bool {
-        matches!(
-            self.level,
-            crate::domain::event::value_objects::EventLevel::Critical
-        )
+        matches!(self.level, crate::domain::event::value_objects::EventLevel::Critical)
     }
 
     /// Check if this event needs attention (critical or error)

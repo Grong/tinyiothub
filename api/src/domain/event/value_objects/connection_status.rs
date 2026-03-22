@@ -59,14 +59,8 @@ mod tests {
         assert_eq!(ConnectionStatus::Offline.as_str(), "offline");
         assert_eq!(ConnectionStatus::Error.as_str(), "error");
 
-        assert_eq!(
-            ConnectionStatus::from_str("online"),
-            Some(ConnectionStatus::Online)
-        );
-        assert_eq!(
-            ConnectionStatus::from_str("OFFLINE"),
-            Some(ConnectionStatus::Offline)
-        );
+        assert_eq!(ConnectionStatus::from_str("online"), Some(ConnectionStatus::Online));
+        assert_eq!(ConnectionStatus::from_str("OFFLINE"), Some(ConnectionStatus::Offline));
         assert_eq!(ConnectionStatus::from_str("invalid"), None);
     }
 

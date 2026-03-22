@@ -1,12 +1,15 @@
 // Event security API endpoints
 // Provides endpoints for managing event security, permissions, and audit logs
 
+use std::{sync::Arc, time::Duration};
+
 use axum::{
     extract::{Path, Query, State},
     response::Json,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use tokio::sync::OnceCell;
 
 use crate::{
     domain::event::value_objects::EventId,
@@ -23,9 +26,6 @@ use crate::{
         security::jwt::Claims,
     },
 };
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::sync::OnceCell;
 
 /// Cache for user permissions to improve performance
 static PERMISSIONS_CACHE: OnceCell<Arc<Cache<String, UserPermissionsResponse>>> =
@@ -129,34 +129,32 @@ pub async fn get_user_permissions(
         }
 
         // Cache miss, compute permissions
-        get_user_permissions_impl(&state, &claims.user_id)
-            .await
-            .inspect(|response| {
-                // Cache the result asynchronously
-                // HarmonyOS: Skip async cache update
-                #[cfg(not(feature = "harmonyos"))]
-                {
-                    let cache_clone = cache.clone();
-                    let key_clone = cache_key.clone();
-                    let response_clone = response.clone();
-                    use std::panic;
-                    tokio::spawn(async move {
-                        let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-                            tokio::runtime::Handle::current().block_on(async {
-                                cache_clone.set(key_clone, response_clone).await;
-                            })
-                        }));
-                        if let Err(e) = result {
-                            tracing::error!("Cache update panicked: {:?}", e);
-                        }
-                    });
-                }
+        get_user_permissions_impl(&state, &claims.user_id).await.inspect(|response| {
+            // Cache the result asynchronously
+            // HarmonyOS: Skip async cache update
+            #[cfg(not(feature = "harmonyos"))]
+            {
+                let cache_clone = cache.clone();
+                let key_clone = cache_key.clone();
+                let response_clone = response.clone();
+                use std::panic;
+                tokio::spawn(async move {
+                    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+                        tokio::runtime::Handle::current().block_on(async {
+                            cache_clone.set(key_clone, response_clone).await;
+                        })
+                    }));
+                    if let Err(e) = result {
+                        tracing::error!("Cache update panicked: {:?}", e);
+                    }
+                });
+            }
 
-                #[cfg(feature = "harmonyos")]
-                {
-                    drop((cache, cache_key, response));
-                }
-            })
+            #[cfg(feature = "harmonyos")]
+            {
+                drop((cache, cache_key, response));
+            }
+        })
     }
     .await;
 
@@ -164,11 +162,7 @@ pub async fn get_user_permissions(
     if duration.as_millis() > 100 {
         tracing::warn!("Slow operation '{}': {}ms", operation, duration.as_millis());
     } else {
-        tracing::info!(
-            "Operation '{}' completed in {}ms",
-            operation,
-            duration.as_millis()
-        );
+        tracing::info!("Operation '{}' completed in {}ms", operation, duration.as_millis());
     }
 
     handle_service_result!(
@@ -235,11 +229,7 @@ pub async fn get_event_audit_logs(
     State(state): State<AppState>,
     claims: Claims,
 ) -> Json<ApiResponse<Vec<AuditLogResponse>>> {
-    tracing::info!(
-        "Getting audit logs for event: {} by user: {}",
-        event_id,
-        claims.user_id
-    );
+    tracing::info!("Getting audit logs for event: {} by user: {}", event_id, claims.user_id);
 
     // Initialize secure event service if needed
     let secure_service = match state.initialize_secure_event_service().await {
@@ -255,24 +245,17 @@ pub async fn get_event_audit_logs(
 
     // Check if user has permission to view audit logs for this event
     let access_control = secure_service.access_control();
-    let has_permission = match access_control
-        .get_user_permissions(&claims.user_id, "audit_log")
-        .await
-    {
-        Ok(perms) => perms.contains(&"read".to_string()),
-        Err(_) => false,
-    };
+    let has_permission =
+        match access_control.get_user_permissions(&claims.user_id, "audit_log").await {
+            Ok(perms) => perms.contains(&"read".to_string()),
+            Err(_) => false,
+        };
 
     if !has_permission {
         // Log access denied
         if let Some(audit_log) = secure_service.audit_log() {
             let _ = audit_log
-                .log_access_denied(
-                    &claims.user_id,
-                    "read",
-                    "audit_log",
-                    "insufficient permissions",
-                )
+                .log_access_denied(&claims.user_id, "read", "audit_log", "insufficient permissions")
                 .await;
         }
         return ApiResponseBuilder::error(
@@ -288,10 +271,7 @@ pub async fn get_event_audit_logs(
         }
     };
 
-    let entries = match audit_log
-        .get_event_audit_logs(&event_id_obj, Some(100))
-        .await
-    {
+    let entries = match audit_log.get_event_audit_logs(&event_id_obj, Some(100)).await {
         Ok(entries) => entries,
         Err(e) => {
             tracing::error!("Failed to get event audit logs: {}", e);
@@ -303,9 +283,7 @@ pub async fn get_event_audit_logs(
     let logs: Vec<AuditLogResponse> = entries.into_iter().map(convert_audit_log_entry).collect();
 
     // Log the audit log access
-    let _ = audit_log
-        .log_event_accessed(&claims.user_id, &event_id_obj)
-        .await;
+    let _ = audit_log.log_event_accessed(&claims.user_id, &event_id_obj).await;
 
     ApiResponseBuilder::success(logs)
 }
@@ -341,10 +319,7 @@ pub async fn get_user_audit_logs(
         }
     };
 
-    let entries = match audit_log
-        .get_user_audit_logs(&claims.user_id, Some(limit as usize))
-        .await
-    {
+    let entries = match audit_log.get_user_audit_logs(&claims.user_id, Some(limit as usize)).await {
         Ok(entries) => entries,
         Err(e) => {
             tracing::error!("Failed to get user audit logs: {}", e);
@@ -384,10 +359,8 @@ pub async fn get_user_audit_logs(
         .collect();
 
     // Convert to response format
-    let logs: Vec<AuditLogResponse> = filtered_entries
-        .into_iter()
-        .map(convert_audit_log_entry)
-        .collect();
+    let logs: Vec<AuditLogResponse> =
+        filtered_entries.into_iter().map(convert_audit_log_entry).collect();
 
     ApiResponseBuilder::success(logs)
 }
@@ -417,11 +390,7 @@ pub async fn get_all_audit_logs(
     if duration.as_millis() > 200 {
         tracing::warn!("Slow operation '{}': {}ms", operation, duration.as_millis());
     } else {
-        tracing::info!(
-            "Operation '{}' completed in {}ms",
-            operation,
-            duration.as_millis()
-        );
+        tracing::info!("Operation '{}' completed in {}ms", operation, duration.as_millis());
     }
 
     handle_service_result!(
@@ -448,9 +417,7 @@ async fn get_all_audit_logs_impl(
     let offset = params.pagination.page.unwrap_or(1).saturating_sub(1) * limit;
 
     // Get audit logs from the audit service
-    let audit_log = secure_service
-        .audit_log()
-        .ok_or("Audit logging is not enabled")?;
+    let audit_log = secure_service.audit_log().ok_or("Audit logging is not enabled")?;
 
     let entries = audit_log
         .get_all_audit_logs(Some(limit as usize), Some(offset as usize))
@@ -487,19 +454,14 @@ async fn get_all_audit_logs_impl(
         .collect();
 
     // Convert to response format
-    let logs: Vec<AuditLogResponse> = filtered_entries
-        .into_iter()
-        .map(convert_audit_log_entry)
-        .collect();
+    let logs: Vec<AuditLogResponse> =
+        filtered_entries.into_iter().map(convert_audit_log_entry).collect();
 
     // Log the admin audit access
     let _ = audit_log
         .log(
             AuditLogEntry::new("admin_audit_access".to_string(), Some(user_id.to_string()))
-                .with_details(format!(
-                    "Accessed all audit logs, returned {} entries",
-                    logs.len()
-                )),
+                .with_details(format!("Accessed all audit logs, returned {} entries", logs.len())),
         )
         .await;
 
@@ -530,11 +492,7 @@ pub async fn cleanup_audit_logs(
     if duration.as_millis() > 5000 {
         tracing::warn!("Slow operation '{}': {}ms", operation, duration.as_millis());
     } else {
-        tracing::info!(
-            "Operation '{}' completed in {}ms",
-            operation,
-            duration.as_millis()
-        );
+        tracing::info!("Operation '{}' completed in {}ms", operation, duration.as_millis());
     }
 
     handle_service_result!(
@@ -554,9 +512,7 @@ async fn cleanup_audit_logs_impl(state: &AppState, user_id: &str) -> Result<u64,
         .map_err(|e| format!("Failed to initialize security service: {}", e))?;
 
     // Get audit log service
-    let audit_log = secure_service
-        .audit_log()
-        .ok_or("Audit logging is not enabled")?;
+    let audit_log = secure_service.audit_log().ok_or("Audit logging is not enabled")?;
 
     // Use default retention period of 90 days
     let retention_days = 90u32;
@@ -578,10 +534,7 @@ async fn cleanup_audit_logs_impl(state: &AppState, user_id: &str) -> Result<u64,
         )
         .await;
 
-    tracing::info!(
-        "Successfully cleaned up {} audit log entries",
-        cleaned_count
-    );
+    tracing::info!("Successfully cleaned up {} audit log entries", cleaned_count);
 
     Ok(cleaned_count)
 }
@@ -595,10 +548,7 @@ pub async fn get_security_config(
     State(state): State<AppState>,
     claims: Claims,
 ) -> Json<ApiResponse<SecurityConfigResponse>> {
-    tracing::info!(
-        "Getting security config requested by user: {}",
-        claims.user_id
-    );
+    tracing::info!("Getting security config requested by user: {}", claims.user_id);
 
     // Initialize secure event service if needed
     let secure_service = match state.initialize_secure_event_service().await {
@@ -611,9 +561,7 @@ pub async fn get_security_config(
 
     // Check if user has permission to view security config
     let access_control = secure_service.access_control();
-    let has_permission = match access_control
-        .get_user_permissions(&claims.user_id, "system")
-        .await
+    let has_permission = match access_control.get_user_permissions(&claims.user_id, "system").await
     {
         Ok(perms) => perms.contains(&"read".to_string()),
         Err(_) => false,
@@ -671,10 +619,7 @@ pub async fn update_security_config(
     claims: Claims,
     Json(request): Json<SecurityConfigUpdateRequest>,
 ) -> Json<ApiResponse<SecurityConfigResponse>> {
-    tracing::info!(
-        "Updating security config requested by user: {}",
-        claims.user_id
-    );
+    tracing::info!("Updating security config requested by user: {}", claims.user_id);
 
     // Initialize secure event service if needed
     let secure_service = match state.initialize_secure_event_service().await {
@@ -766,10 +711,7 @@ pub async fn update_security_config(
             .await;
     }
 
-    tracing::info!(
-        "Security configuration updated successfully by user: {}",
-        claims.user_id
-    );
+    tracing::info!("Security configuration updated successfully by user: {}", claims.user_id);
 
     ApiResponseBuilder::success(response)
 }
@@ -827,9 +769,7 @@ fn convert_audit_log_entry(entry: AuditLogEntry) -> AuditLogResponse {
         user_id: entry.user_id.unwrap_or_default(),
         event_id: entry.event_id.unwrap_or_default(),
         event_type: entry.event_type,
-        event_level: entry
-            .event_level
-            .and_then(|level| level.parse::<i32>().ok()),
+        event_level: entry.event_level.and_then(|level| level.parse::<i32>().ok()),
         action: entry.action,
         result: entry.result.unwrap_or_default(),
         details: entry.details.and_then(|d| serde_json::from_str(&d).ok()),
@@ -856,7 +796,7 @@ mod tests {
             event_level: Some("2".to_string()),
             result: Some("allowed".to_string()),
             details: Some(r#"{"test": "data"}"#.to_string()),
-            ip_address: Some("127.0.0.1".to_string()),  // 测试数据使用localhost
+            ip_address: Some("127.0.0.1".to_string()), // 测试数据使用localhost
             user_agent: Some("Mozilla/5.0".to_string()),
             created_at: "2024-01-01 12:00:00".to_string(),
         };

@@ -11,18 +11,19 @@ use axum::{
     Router,
 };
 
-use crate::dto::entity::tenant::{
-    ApiKey, ApiUsageStats, CreateApiKeyRequest, SubscriptionPlan, Tenant, TenantQueryParams,
-    TenantUsage,
+use crate::{
+    dto::entity::tenant::{
+        ApiKey, ApiUsageStats, CreateApiKeyRequest, SubscriptionPlan, Tenant, TenantQueryParams,
+        TenantUsage,
+    },
+    shared::app_state::AppState,
 };
-use crate::shared::app_state::AppState;
 
 /// Create tenants router
 pub fn create_router() -> Router<AppState> {
     Router::new()
         // Plans - 移除这里重复的 plans，因为 auth router 已经有
         // .route("/plans", get(list_plans))
-        
         // Tenants
         .route("/tenants", get(list_tenants))
         .route("/tenants", post(create_tenant))
@@ -32,14 +33,12 @@ pub fn create_router() -> Router<AppState> {
         .route("/tenants/{id}/activate", post(activate_tenant))
         .route("/tenants/{id}/change-plan", post(change_plan))
         .route("/tenants/{id}/usage", get(get_tenant_usage))
-        
         // API Keys
         .route("/tenants/{tenant_id}/api-keys", get(list_api_keys))
         .route("/tenants/{tenant_id}/api-keys", post(create_api_key))
         .route("/api-keys/{id}/enable", post(enable_api_key))
         .route("/api-keys/{id}/disable", post(disable_api_key))
         .route("/api-keys/{id}/revoke", post(revoke_api_key))
-        
         // Usage
         .route("/tenants/{tenant_id}/usage-stats", get(get_usage_stats))
 }
@@ -50,7 +49,7 @@ async fn list_tenants(
     Query(params): Query<TenantQueryParams>,
 ) -> Result<Json<Vec<Tenant>>, StatusCode> {
     let db = state.database.clone();
-    
+
     // 简化实现：返回空列表（需要管理权限）
     Ok(Json(vec![]))
 }
@@ -61,7 +60,7 @@ async fn create_tenant(
     Json(payload): Json<crate::dto::entity::tenant::CreateTenantRequest>,
 ) -> Result<Json<Tenant>, StatusCode> {
     let db = state.database.clone();
-    
+
     match Tenant::create(&db, &payload).await {
         Ok(tenant) => Ok(Json(tenant)),
         Err(e) => {
@@ -77,7 +76,7 @@ async fn get_tenant(
     Path(id): Path<String>,
 ) -> Result<Json<Tenant>, StatusCode> {
     let db = state.database.clone();
-    
+
     match Tenant::find_by_id(&db, &id).await {
         Ok(Some(tenant)) => Ok(Json(tenant)),
         Ok(None) => Err(StatusCode::NOT_FOUND),
@@ -95,7 +94,7 @@ async fn update_tenant(
     Json(payload): Json<crate::dto::entity::tenant::UpdateTenantRequest>,
 ) -> Result<Json<Tenant>, StatusCode> {
     let db = state.database.clone();
-    
+
     // 简化实现
     Err(StatusCode::NOT_IMPLEMENTED)
 }
@@ -106,7 +105,7 @@ async fn suspend_tenant(
     Path(id): Path<String>,
 ) -> Result<Json<Tenant>, StatusCode> {
     let db = state.database.clone();
-    
+
     match Tenant::suspend(&db, &id).await {
         Ok(tenant) => Ok(Json(tenant)),
         Err(e) => {
@@ -122,7 +121,7 @@ async fn activate_tenant(
     Path(id): Path<String>,
 ) -> Result<Json<Tenant>, StatusCode> {
     let db = state.database.clone();
-    
+
     match Tenant::activate(&db, &id).await {
         Ok(tenant) => Ok(Json(tenant)),
         Err(e) => {
@@ -139,11 +138,9 @@ async fn change_plan(
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<Tenant>, StatusCode> {
     let db = state.database.clone();
-    
-    let plan_id = payload.get("plan_id")
-        .and_then(|v| v.as_str())
-        .ok_or(StatusCode::BAD_REQUEST)?;
-    
+
+    let plan_id = payload.get("plan_id").and_then(|v| v.as_str()).ok_or(StatusCode::BAD_REQUEST)?;
+
     match Tenant::change_plan(&db, &id, plan_id).await {
         Ok(tenant) => Ok(Json(tenant)),
         Err(e) => {
@@ -159,7 +156,7 @@ async fn get_tenant_usage(
     Path(id): Path<String>,
 ) -> Result<Json<Option<TenantUsage>>, StatusCode> {
     let db = state.database.clone();
-    
+
     match Tenant::get_usage(&db, &id).await {
         Ok(usage) => Ok(Json(usage)),
         Err(e) => {
@@ -175,7 +172,7 @@ async fn list_api_keys(
     Path(tenant_id): Path<String>,
 ) -> Result<Json<Vec<ApiKey>>, StatusCode> {
     let db = state.database.clone();
-    
+
     match ApiKey::find_by_tenant(&db, &tenant_id).await {
         Ok(keys) => Ok(Json(keys)),
         Err(e) => {
@@ -192,14 +189,14 @@ async fn create_api_key(
     Json(payload): Json<CreateApiKeyRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let db = state.database.clone();
-    
+
     match ApiKey::create(&db, &tenant_id, &payload).await {
         Ok((key, raw_key)) => {
             Ok(Json(serde_json::json!({
                 "api_key": key,
                 "raw_key": raw_key  // 只在创建时返回一次
             })))
-        },
+        }
         Err(e) => {
             tracing::error!("Failed to create api key: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
@@ -213,7 +210,7 @@ async fn enable_api_key(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let db = state.database.clone();
-    
+
     match ApiKey::enable(&db, &id).await {
         Ok(_) => Ok(Json(serde_json::json!({"success": true}))),
         Err(e) => {
@@ -229,7 +226,7 @@ async fn disable_api_key(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let db = state.database.clone();
-    
+
     match ApiKey::disable(&db, &id).await {
         Ok(_) => Ok(Json(serde_json::json!({"success": true}))),
         Err(e) => {
@@ -245,7 +242,7 @@ async fn revoke_api_key(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let db = state.database.clone();
-    
+
     match ApiKey::revoke(&db, &id).await {
         Ok(_) => Ok(Json(serde_json::json!({"success": true}))),
         Err(e) => {
@@ -261,7 +258,7 @@ async fn get_usage_stats(
     Path(tenant_id): Path<String>,
 ) -> Result<Json<ApiUsageStats>, StatusCode> {
     let db = state.database.clone();
-    
+
     match ApiKey::get_usage_stats(&db, &tenant_id, 30).await {
         Ok(stats) => Ok(Json(stats)),
         Err(e) => {

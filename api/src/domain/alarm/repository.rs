@@ -1,9 +1,11 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
-use super::entity::{Alarm, AlarmRule};
-use super::errors::AlarmResult;
-use super::value_objects::{AlarmLevel, AlarmStatus, AlarmType};
+use super::{
+    entity::{Alarm, AlarmRule},
+    errors::AlarmResult,
+    value_objects::{AlarmLevel, AlarmStatus, AlarmType},
+};
 
 /// 报警仓储接口
 #[async_trait]

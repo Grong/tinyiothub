@@ -13,8 +13,7 @@ use crate::{
         },
     },
     dto::response::{builder::ApiResponseBuilder, ApiResponse},
-    shared::app_state::AppState,
-    shared::security::jwt::Claims,
+    shared::{app_state::AppState, security::jwt::Claims},
 };
 
 #[derive(Deserialize)]
@@ -38,24 +37,12 @@ pub fn create_router() -> Router<AppState> {
         .route("/:device_id/status", get(get_device_online_status))
         .route("/:device_id/metrics", get(get_device_metrics))
         // 性能监控相关
-        .route(
-            "/:device_id/performance",
-            get(get_device_performance_metrics),
-        )
-        .route(
-            "/:device_id/performance/history",
-            get(get_device_performance_history),
-        )
-        .route(
-            "/:device_id/performance/alerts",
-            get(get_device_performance_alerts),
-        )
+        .route("/:device_id/performance", get(get_device_performance_metrics))
+        .route("/:device_id/performance/history", get(get_device_performance_history))
+        .route("/:device_id/performance/alerts", get(get_device_performance_alerts))
         // 系统级监控
         .route("/overview", get(get_system_overview))
-        .route(
-            "/performance/overview",
-            get(get_system_performance_overview),
-        )
+        .route("/performance/overview", get(get_system_performance_overview))
         .route("/performance/alerts", get(get_all_performance_alerts))
 }
 
@@ -66,9 +53,7 @@ async fn get_device_online_status(
     _claims: Claims,
 ) -> Json<ApiResponse<DeviceOnlineStatus>> {
     let is_online = state.monitoring_service.is_device_online(&device_id);
-    let connection_quality = state
-        .monitoring_service
-        .get_device_connection_quality(&device_id);
+    let connection_quality = state.monitoring_service.get_device_connection_quality(&device_id);
 
     let status = DeviceOnlineStatus {
         device_id: device_id.clone(),
@@ -86,11 +71,7 @@ async fn get_device_metrics(
     Path(device_id): Path<String>,
     _claims: Claims,
 ) -> Json<ApiResponse<Option<DeviceMetrics>>> {
-    match state
-        .monitoring_service
-        .get_device_metrics(&device_id)
-        .await
-    {
+    match state.monitoring_service.get_device_metrics(&device_id).await {
         Some(stats) => ApiResponseBuilder::success(Some(stats)),
         None => ApiResponseBuilder::success(None),
     }
@@ -111,11 +92,7 @@ async fn get_device_performance_metrics(
     Path(device_id): Path<String>,
     _claims: Claims,
 ) -> Json<ApiResponse<Option<DevicePerformanceMetrics>>> {
-    match state
-        .performance_service
-        .get_device_performance_metrics(&device_id)
-        .await
-    {
+    match state.performance_service.get_device_performance_metrics(&device_id).await {
         Some(metrics) => ApiResponseBuilder::success(Some(metrics)),
         None => ApiResponseBuilder::success(None),
     }
@@ -129,11 +106,7 @@ async fn get_device_performance_history(
     _claims: Claims,
 ) -> Json<ApiResponse<Vec<DevicePerformanceMetrics>>> {
     let hours = params.hours.unwrap_or(24); // 默认24小时
-    match state
-        .performance_service
-        .get_device_performance_history(&device_id, hours)
-        .await
-    {
+    match state.performance_service.get_device_performance_history(&device_id, hours).await {
         Ok(history) => ApiResponseBuilder::success(history),
         Err(e) => {
             tracing::error!("Failed to get performance history for {}: {}", device_id, e);
@@ -150,10 +123,7 @@ async fn get_system_performance_overview(
     State(state): State<AppState>,
     _claims: Claims,
 ) -> Json<ApiResponse<SystemPerformanceOverview>> {
-    let overview = state
-        .performance_service
-        .get_system_performance_overview()
-        .await;
+    let overview = state.performance_service.get_system_performance_overview().await;
     ApiResponseBuilder::success(overview)
 }
 
@@ -163,10 +133,7 @@ async fn get_device_performance_alerts(
     Path(device_id): Path<String>,
     _claims: Claims,
 ) -> Json<ApiResponse<Vec<PerformanceAlert>>> {
-    let alerts = state
-        .performance_service
-        .check_device_performance_alerts(&device_id)
-        .await;
+    let alerts = state.performance_service.check_device_performance_alerts(&device_id).await;
     ApiResponseBuilder::success(alerts)
 }
 
@@ -180,10 +147,7 @@ async fn get_all_performance_alerts(
     let mut all_alerts = Vec::new();
 
     for device in all_devices {
-        let alerts = state
-            .performance_service
-            .check_device_performance_alerts(&device.id)
-            .await;
+        let alerts = state.performance_service.check_device_performance_alerts(&device.id).await;
         all_alerts.extend(alerts);
     }
 

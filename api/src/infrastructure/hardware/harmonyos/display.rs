@@ -3,6 +3,7 @@
 //! 提供与Linux版本兼容的显示接口，但使用鸿蒙系统的显示API
 
 use std::sync::Mutex;
+
 use tracing::{debug, info};
 
 /// 显示设备配置
@@ -22,10 +23,7 @@ pub struct HarmonyDisplayManager {
 impl HarmonyDisplayManager {
     /// 创建新的显示管理器
     pub fn new() -> Self {
-        Self {
-            config: Mutex::new(None),
-            initialized: Mutex::new(false),
-        }
+        Self { config: Mutex::new(None), initialized: Mutex::new(false) }
     }
 
     /// 初始化显示设备
@@ -83,10 +81,7 @@ impl HarmonyDisplayManager {
             ));
         }
 
-        debug!(
-            "Displaying text '{}' at ({}, {}) on HarmonyOS display",
-            text, x, y
-        );
+        debug!("Displaying text '{}' at ({}, {}) on HarmonyOS display", text, x, y);
 
         // TODO: 实现鸿蒙系统的文本显示逻辑
 
@@ -109,10 +104,7 @@ impl HarmonyDisplayManager {
             ));
         }
 
-        debug!(
-            "Displaying image {}x{} at ({}, {}) on HarmonyOS display",
-            width, height, x, y
-        );
+        debug!("Displaying image {}x{} at ({}, {}) on HarmonyOS display", width, height, x, y);
 
         // TODO: 实现鸿蒙系统的图像显示逻辑
 

@@ -1,8 +1,11 @@
-use crate::domain::event::aggregates::notification_aggregate::NotificationChannelType;
-use crate::domain::event::services::{NotificationChannel, NotificationMessage};
-use crate::domain::event::{EventError, Result};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
+
+use crate::domain::event::{
+    aggregates::notification_aggregate::NotificationChannelType,
+    services::{NotificationChannel, NotificationMessage},
+    EventError, Result,
+};
 
 /// SMS configuration for various providers
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,48 +49,31 @@ pub struct SmsNotificationChannel {
 impl SmsNotificationChannel {
     /// Create a new SMS notification channel
     pub fn new() -> Self {
-        Self {
-            config: None,
-            template: Self::create_default_template(),
-            enabled: false,
-        }
+        Self { config: None, template: Self::create_default_template(), enabled: false }
     }
 
     /// Create with configuration
     pub fn with_config(config: SmsConfig) -> Self {
-        Self {
-            config: Some(config),
-            template: Self::create_default_template(),
-            enabled: true,
-        }
+        Self { config: Some(config), template: Self::create_default_template(), enabled: true }
     }
 
     /// Set SMS configuration
     pub fn set_config(&mut self, config: SmsConfig) {
-        info!(
-            "SMS notification channel configured with provider: {:?}",
-            config.provider
-        );
+        info!("SMS notification channel configured with provider: {:?}", config.provider);
         self.config = Some(config);
         self.enabled = true;
     }
 
     /// Set SMS template
     pub fn set_template(&mut self, template: SmsTemplate) {
-        debug!(
-            "Updated SMS template with max length: {}",
-            template.max_length
-        );
+        debug!("Updated SMS template with max length: {}", template.max_length);
         self.template = template;
     }
 
     /// Enable or disable the SMS channel
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
-        info!(
-            "SMS notification channel {}",
-            if enabled { "enabled" } else { "disabled" }
-        );
+        info!("SMS notification channel {}", if enabled { "enabled" } else { "disabled" });
     }
 
     /// Create default SMS template
@@ -196,10 +182,7 @@ impl SmsNotificationChannel {
             EventError::Configuration("Generic SMS provider requires base_url".to_string())
         })?;
 
-        info!(
-            "Sending SMS via generic API {} to {}: {}",
-            base_url, to, content
-        );
+        info!("Sending SMS via generic API {} to {}: {}", base_url, to, content);
 
         // In a real implementation, this would make an HTTP request to the generic API
         // Mock successful send
@@ -215,10 +198,7 @@ impl SmsNotificationChannel {
     /// Validate phone number format
     fn is_valid_phone_number(&self, phone: &str) -> bool {
         // Simple phone number validation - in production, use a proper phone validation library
-        let cleaned = phone
-            .chars()
-            .filter(|c| c.is_ascii_digit() || *c == '+')
-            .collect::<String>();
+        let cleaned = phone.chars().filter(|c| c.is_ascii_digit() || *c == '+').collect::<String>();
 
         // Must start with + and have at least 10 digits
         if cleaned.starts_with('+') && cleaned.len() >= 11 {
@@ -235,10 +215,7 @@ impl SmsNotificationChannel {
 
     /// Normalize phone number format
     fn normalize_phone_number(&self, phone: &str) -> String {
-        let cleaned = phone
-            .chars()
-            .filter(|c| c.is_ascii_digit() || *c == '+')
-            .collect::<String>();
+        let cleaned = phone.chars().filter(|c| c.is_ascii_digit() || *c == '+').collect::<String>();
 
         // Add + prefix if missing and looks like international number
         if !cleaned.starts_with('+') && cleaned.len() >= 10 {
@@ -304,10 +281,8 @@ impl NotificationChannel for SmsNotificationChannel {
 
     async fn send(&self, message: &NotificationMessage) -> std::result::Result<(), String> {
         // Use the first recipient from the message
-        let recipient = message
-            .recipients
-            .first()
-            .ok_or_else(|| "No recipients specified".to_string())?;
+        let recipient =
+            message.recipients.first().ok_or_else(|| "No recipients specified".to_string())?;
 
         if !self.enabled {
             return Err("SMS channel is disabled".to_string());
@@ -319,9 +294,7 @@ impl NotificationChannel for SmsNotificationChannel {
         }
 
         let content = self.format_sms(message);
-        self.send_sms(&normalized_phone, &content)
-            .await
-            .map_err(|e| e.to_string())?;
+        self.send_sms(&normalized_phone, &content).await.map_err(|e| e.to_string())?;
 
         info!("SMS notification sent to {}: {}", normalized_phone, content);
         Ok(())
@@ -403,19 +376,10 @@ mod tests {
     fn test_phone_number_normalization() {
         let channel = SmsNotificationChannel::new();
 
-        assert_eq!(
-            channel.normalize_phone_number("+1-234-567-8900"),
-            "+12345678900"
-        );
-        assert_eq!(
-            channel.normalize_phone_number("(123) 456-7890"),
-            "+1234567890"
-        );
+        assert_eq!(channel.normalize_phone_number("+1-234-567-8900"), "+12345678900");
+        assert_eq!(channel.normalize_phone_number("(123) 456-7890"), "+1234567890");
         assert_eq!(channel.normalize_phone_number("1234567890"), "+1234567890");
-        assert_eq!(
-            channel.normalize_phone_number("+86 138 0000 0000"),
-            "+8613800000000"
-        );
+        assert_eq!(channel.normalize_phone_number("+86 138 0000 0000"), "+8613800000000");
     }
 
     #[test]
@@ -466,10 +430,7 @@ mod tests {
     fn test_sms_provider_conversion() {
         assert_eq!(SmsProvider::Twilio.as_str(), "twilio");
         assert_eq!(SmsProvider::from_str("twilio"), Some(SmsProvider::Twilio));
-        assert_eq!(
-            SmsProvider::from_str("alibaba"),
-            Some(SmsProvider::AlibabaCloud)
-        );
+        assert_eq!(SmsProvider::from_str("alibaba"), Some(SmsProvider::AlibabaCloud));
         assert_eq!(SmsProvider::from_str("invalid"), None);
     }
 

@@ -1,6 +1,7 @@
-use crate::infrastructure::persistence::database::Database;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder, Row};
+
+use crate::infrastructure::persistence::database::Database;
 
 /// Permission entity - 权限实体
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -133,9 +134,7 @@ impl Permission {
         .execute(db.pool())
         .await?;
 
-        Self::find_by_id(db, &id)
-            .await?
-            .ok_or(sqlx::Error::RowNotFound)
+        Self::find_by_id(db, &id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 更新权限信息
@@ -191,9 +190,7 @@ impl Permission {
         if has_updates {
             query.push(", updated_at = ").push_bind(&now);
         } else {
-            return Self::find_by_id(db, id)
-                .await?
-                .ok_or(sqlx::Error::RowNotFound);
+            return Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound);
         }
 
         query.push(" WHERE id = ").push_bind(id);
@@ -204,9 +201,7 @@ impl Permission {
             return Err(sqlx::Error::RowNotFound);
         }
 
-        Self::find_by_id(db, id)
-            .await?
-            .ok_or(sqlx::Error::RowNotFound)
+        Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 删除权限
@@ -218,10 +213,8 @@ impl Permission {
             }
         }
 
-        let result = sqlx::query("DELETE FROM permissions WHERE id = ?")
-            .bind(id)
-            .execute(db.pool())
-            .await?;
+        let result =
+            sqlx::query("DELETE FROM permissions WHERE id = ?").bind(id).execute(db.pool()).await?;
 
         Ok(result.rows_affected())
     }
@@ -256,15 +249,11 @@ impl Permission {
 
         // 动态添加查询条件
         if let Some(name) = &params.name {
-            query
-                .push(" AND name LIKE ")
-                .push_bind(format!("%{}%", name));
+            query.push(" AND name LIKE ").push_bind(format!("%{}%", name));
         }
 
         if let Some(code) = &params.code {
-            query
-                .push(" AND code LIKE ")
-                .push_bind(format!("%{}%", code));
+            query.push(" AND code LIKE ").push_bind(format!("%{}%", code));
         }
 
         if let Some(resource_type) = &params.resource_type {
@@ -293,10 +282,7 @@ impl Permission {
             query.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let permissions = query
-            .build_query_as::<Permission>()
-            .fetch_all(db.pool())
-            .await?;
+        let permissions = query.build_query_as::<Permission>().fetch_all(db.pool()).await?;
 
         Ok(permissions)
     }
@@ -306,15 +292,11 @@ impl Permission {
         let mut query = QueryBuilder::new("SELECT COUNT(*) as count FROM permissions WHERE 1=1");
 
         if let Some(name) = &params.name {
-            query
-                .push(" AND name LIKE ")
-                .push_bind(format!("%{}%", name));
+            query.push(" AND name LIKE ").push_bind(format!("%{}%", name));
         }
 
         if let Some(code) = &params.code {
-            query
-                .push(" AND code LIKE ")
-                .push_bind(format!("%{}%", code));
+            query.push(" AND code LIKE ").push_bind(format!("%{}%", code));
         }
 
         if let Some(resource_type) = &params.resource_type {
@@ -451,10 +433,7 @@ impl Permission {
         }
         separated.push_unseparated(")");
 
-        let permissions = query
-            .build_query_as::<Permission>()
-            .fetch_all(db.pool())
-            .await?;
+        let permissions = query.build_query_as::<Permission>().fetch_all(db.pool()).await?;
 
         Ok(permissions)
     }
@@ -568,9 +547,7 @@ impl PermissionGroup {
         .execute(db.pool())
         .await?;
 
-        Self::find_by_id(db, &id)
-            .await?
-            .ok_or(sqlx::Error::RowNotFound)
+        Self::find_by_id(db, &id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 删除权限组
@@ -639,8 +616,7 @@ impl PermissionGroup {
 
     /// Check if group contains permission
     pub fn contains_permission(&self, permission_id: &str) -> bool {
-        self.get_permission_ids()
-            .contains(&permission_id.to_string())
+        self.get_permission_ids().contains(&permission_id.to_string())
     }
 }
 

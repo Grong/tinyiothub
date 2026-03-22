@@ -1,11 +1,12 @@
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
 use crate::domain::event::{
     entities::Event,
     value_objects::{EventId, EventLevel, EventType},
     Result,
 };
-use async_trait::async_trait;
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 
 /// Repository interface for event persistence (defined in domain layer)
 #[async_trait]
@@ -197,9 +198,7 @@ pub struct EventCriteriaBuilder {
 
 impl EventCriteriaBuilder {
     pub fn new() -> Self {
-        Self {
-            criteria: EventCriteria::default(),
-        }
+        Self { criteria: EventCriteria::default() }
     }
 
     pub fn start_time(mut self, start: DateTime<Utc>) -> Self {

@@ -1,11 +1,15 @@
 use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
-use tokio::task::JoinHandle;
+
+use tokio::{
+    sync::{broadcast, RwLock},
+    task::JoinHandle,
+};
 use tracing::{error, info, warn};
 
-use crate::application::scheduler::TimeTask;
-use crate::application::{DataContext, DataServer};
-use crate::shared::error::Error;
+use crate::{
+    application::{scheduler::TimeTask, DataContext, DataServer},
+    shared::error::Error,
+};
 
 /// 服务状态枚举
 #[derive(Debug, Clone, PartialEq)]
@@ -52,21 +56,19 @@ impl ServiceManager {
         *self.status.write().await = ServiceStatus::Starting;
 
         // 1. 创建并启动数据服务器
-        let data_server = Arc::new(DataServer::new(
-            app_state.data_context.clone(),
-            app_state.event_bus.clone(),
-        ));
-        
+        let data_server =
+            Arc::new(DataServer::new(app_state.data_context.clone(), app_state.event_bus.clone()));
+
         // 启动数据服务器
         let shutdown_rx = self.shutdown_tx.subscribe();
         data_server.run(shutdown_rx).await?;
-        
+
         // 注册为事件处理器
         app_state.event_bus.register_handler(data_server.clone()).await;
-        
+
         // 保存到 AppState
         app_state.set_data_server(data_server.clone());
-        
+
         info!("✅ DataServer started and registered");
 
         // 2. 启动定时任务调度器
@@ -134,10 +136,7 @@ impl ServiceManager {
                 tracing::debug!("Database health check passed");
             }
             Err(e) => {
-                return Err(Error::IOError(format!(
-                    "Database health check failed: {}",
-                    e
-                )));
+                return Err(Error::IOError(format!("Database health check failed: {}", e)));
             }
         }
 

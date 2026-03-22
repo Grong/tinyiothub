@@ -1,21 +1,15 @@
-use serde::{Deserialize, Serialize};
 use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
 
 /// 报警条件
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AlarmCondition {
     /// 阈值条件
-    Threshold {
-        operator: ComparisonOperator,
-        value: f64,
-    },
+    Threshold { operator: ComparisonOperator, value: f64 },
     /// 范围条件
-    Range {
-        min: Option<f64>,
-        max: Option<f64>,
-        inclusive: bool,
-    },
+    Range { min: Option<f64>, max: Option<f64>, inclusive: bool },
     /// 变化条件
     Change {
         change_type: ChangeType,
@@ -30,10 +24,7 @@ pub enum AlarmCondition {
         duration: Duration,
     },
     /// 组合条件
-    Composite {
-        operator: LogicalOperator,
-        conditions: Vec<AlarmCondition>,
-    },
+    Composite { operator: LogicalOperator, conditions: Vec<AlarmCondition> },
 }
 
 /// 比较运算符
@@ -81,8 +72,9 @@ pub enum LogicalOperator {
 
 // Duration 序列化辅助模块
 mod duration_serde {
-    use serde::{Deserialize, Deserializer, Serializer};
     use std::time::Duration;
+
+    use serde::{Deserialize, Deserializer, Serializer};
 
     pub fn serialize<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
     where

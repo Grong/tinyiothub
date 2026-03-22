@@ -1,8 +1,10 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use super::errors::{AlarmError, AlarmResult};
-use super::value_objects::*;
+use super::{
+    errors::{AlarmError, AlarmResult},
+    value_objects::*,
+};
 use crate::domain::event::aggregates::NotificationChannelType;
 
 /// 报警实例实体
@@ -179,9 +181,7 @@ impl AlarmRule {
     ) -> AlarmResult<()> {
         if let Some(n) = name {
             if n.is_empty() {
-                return Err(AlarmError::InvalidRuleConfig(
-                    "规则名称不能为空".to_string(),
-                ));
+                return Err(AlarmError::InvalidRuleConfig("规则名称不能为空".to_string()));
             }
             self.name = n;
         }
@@ -225,9 +225,7 @@ impl AlarmRule {
         notification_config: &NotificationConfig,
     ) -> AlarmResult<()> {
         if name.is_empty() {
-            return Err(AlarmError::InvalidRuleConfig(
-                "规则名称不能为空".to_string(),
-            ));
+            return Err(AlarmError::InvalidRuleConfig("规则名称不能为空".to_string()));
         }
 
         if notification_config.enabled && notification_config.channels.is_empty() {
@@ -239,10 +237,7 @@ impl AlarmRule {
         // 只有在使用需要接收人的渠道时才要求配置接收人
         if notification_config.enabled {
             let needs_recipients = notification_config.channels.iter().any(|ch| {
-                matches!(
-                    ch,
-                    NotificationChannelType::Email | NotificationChannelType::Sms
-                )
+                matches!(ch, NotificationChannelType::Email | NotificationChannelType::Sms)
             });
 
             if needs_recipients && notification_config.recipients.is_empty() {

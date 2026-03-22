@@ -8,8 +8,7 @@ use serde::Deserialize;
 use crate::{
     domain::device::trace_service::{DeviceTrace, DeviceTraceStatistics, SystemTraceOverview},
     dto::response::{builder::ApiResponseBuilder, ApiResponse},
-    shared::app_state::AppState,
-    shared::security::jwt::Claims,
+    shared::{app_state::AppState, security::jwt::Claims},
 };
 
 #[derive(Deserialize)]
@@ -59,14 +58,8 @@ pub fn create_router() -> Router<AppState> {
     Router::new()
         .route("/devices/:device_id/traces", post(record_device_trace))
         .route("/devices/:device_id/traces", get(get_device_traces))
-        .route(
-            "/devices/:device_id/traces/statistics",
-            get(get_device_trace_summary),
-        )
-        .route(
-            "/devices/:device_id/traces/clear",
-            post(clear_device_traces),
-        )
+        .route("/devices/:device_id/traces/statistics", get(get_device_trace_summary))
+        .route("/devices/:device_id/traces/clear", post(clear_device_traces))
         .route("/system/traces/overview", get(get_system_trace_overview))
         .route("/system/traces/cleanup", post(cleanup_expired_traces))
 }
@@ -138,11 +131,7 @@ async fn get_device_trace_summary(
     Query(params): Query<TraceStatisticsQuery>,
     _claims: Claims,
 ) -> Json<ApiResponse<DeviceTraceStatistics>> {
-    match state
-        .trace_service
-        .get_device_trace_statistics(&device_id, params.days)
-        .await
-    {
+    match state.trace_service.get_device_trace_statistics(&device_id, params.days).await {
         Ok(stats) => ApiResponseBuilder::success(stats),
         Err(e) => {
             tracing::error!("Failed to get device trace statistics: {}", e);
@@ -182,10 +171,7 @@ async fn get_system_trace_overview(
     Query(params): Query<SystemTraceQuery>,
     _claims: Claims,
 ) -> Json<ApiResponse<SystemTraceOverview>> {
-    let overview = state
-        .trace_service
-        .get_system_trace_overview(params.days)
-        .await;
+    let overview = state.trace_service.get_system_trace_overview(params.days).await;
     ApiResponseBuilder::success(overview)
 }
 
@@ -195,11 +181,7 @@ async fn cleanup_expired_traces(
     _claims: Claims,
     Json(req): Json<CleanupTracesRequest>,
 ) -> Json<ApiResponse<u32>> {
-    match state
-        .trace_service
-        .cleanup_expired_traces(req.days_to_keep)
-        .await
-    {
+    match state.trace_service.cleanup_expired_traces(req.days_to_keep).await {
         Ok(cleaned_count) => ApiResponseBuilder::success(cleaned_count),
         Err(e) => {
             tracing::error!("Failed to cleanup expired traces: {}", e);

@@ -1,7 +1,9 @@
-use crate::application::data_context::DataContext;
-use crate::infrastructure::persistence::Database;
-use crate::shared::error::Error;
 use std::sync::Arc;
+
+use crate::{
+    application::data_context::DataContext, infrastructure::persistence::Database,
+    shared::error::Error,
+};
 
 /// 设备追踪服务
 /// 负责设备追踪记录的管理和查询
@@ -122,10 +124,7 @@ impl DeviceTraceService {
         }
 
         // 按时间倒序排列并分页
-        query.push_str(&format!(
-            " ORDER BY created_at DESC LIMIT {} OFFSET {}",
-            limit, offset
-        ));
+        query.push_str(&format!(" ORDER BY created_at DESC LIMIT {} OFFSET {}", limit, offset));
 
         // 动态绑定参数
         let mut query_builder = sqlx::query_as::<_, DeviceTrace>(&query);

@@ -94,11 +94,7 @@ pub enum EventServiceDomainError {
 #[derive(Debug, Error)]
 pub enum PerformanceDomainError {
     #[error("Performance threshold exceeded: {metric} = {value} > {threshold}")]
-    ThresholdExceeded {
-        metric: String,
-        value: f64,
-        threshold: f64,
-    },
+    ThresholdExceeded { metric: String, value: f64, threshold: f64 },
 
     #[error("Performance monitoring failed: {reason}")]
     MonitoringFailed { reason: String },
@@ -165,9 +161,7 @@ pub type DomainResult<T> = std::result::Result<T, DomainError>;
 /// Helper functions for creating domain errors
 impl EventDomainError {
     pub fn validation(message: impl Into<String>) -> Self {
-        Self::ValidationFailed {
-            message: message.into(),
-        }
+        Self::ValidationFailed { message: message.into() }
     }
 
     pub fn not_found(id: impl Into<String>) -> Self {
@@ -175,15 +169,11 @@ impl EventDomainError {
     }
 
     pub fn immutable(reason: impl Into<String>) -> Self {
-        Self::EventImmutable {
-            reason: reason.into(),
-        }
+        Self::EventImmutable { reason: reason.into() }
     }
 
     pub fn invalid_content(details: impl Into<String>) -> Self {
-        Self::InvalidContent {
-            details: details.into(),
-        }
+        Self::InvalidContent { details: details.into() }
     }
 
     pub fn invalid_source(source: impl Into<String>) -> Self {
@@ -191,18 +181,13 @@ impl EventDomainError {
     }
 
     pub fn type_mismatch(expected: impl Into<String>, actual: impl Into<String>) -> Self {
-        Self::TypeMismatch {
-            expected: expected.into(),
-            actual: actual.into(),
-        }
+        Self::TypeMismatch { expected: expected.into(), actual: actual.into() }
     }
 }
 
 impl NotificationDomainError {
     pub fn rule_validation(message: impl Into<String>) -> Self {
-        Self::RuleValidationFailed {
-            message: message.into(),
-        }
+        Self::RuleValidationFailed { message: message.into() }
     }
 
     pub fn rule_not_found(id: impl Into<String>) -> Self {
@@ -214,36 +199,25 @@ impl NotificationDomainError {
     }
 
     pub fn delivery_failed(reason: impl Into<String>) -> Self {
-        Self::DeliveryFailed {
-            reason: reason.into(),
-        }
+        Self::DeliveryFailed { reason: reason.into() }
     }
 
     pub fn invalid_recipient(recipient: impl Into<String>, channel: impl Into<String>) -> Self {
-        Self::InvalidRecipient {
-            recipient: recipient.into(),
-            channel: channel.into(),
-        }
+        Self::InvalidRecipient { recipient: recipient.into(), channel: channel.into() }
     }
 }
 
 impl EventServiceDomainError {
     pub fn processing_failed(reason: impl Into<String>) -> Self {
-        Self::ProcessingFailed {
-            reason: reason.into(),
-        }
+        Self::ProcessingFailed { reason: reason.into() }
     }
 
     pub fn storage_failed(reason: impl Into<String>) -> Self {
-        Self::StorageFailed {
-            reason: reason.into(),
-        }
+        Self::StorageFailed { reason: reason.into() }
     }
 
     pub fn query_failed(reason: impl Into<String>) -> Self {
-        Self::QueryFailed {
-            reason: reason.into(),
-        }
+        Self::QueryFailed { reason: reason.into() }
     }
 
     pub fn concurrent_modification(expected: u64, actual: u64) -> Self {
@@ -255,17 +229,11 @@ impl EventServiceDomainError {
 impl From<DomainError> for crate::domain::event::EventError {
     fn from(domain_error: DomainError) -> Self {
         match domain_error {
-            DomainError::Event(e) => Self::Validation {
-                message: e.to_string(),
-            },
+            DomainError::Event(e) => Self::Validation { message: e.to_string() },
             DomainError::Notification(e) => Self::Notification(e.to_string()),
-            DomainError::EventService(e) => Self::Validation {
-                message: e.to_string(),
-            },
+            DomainError::EventService(e) => Self::Validation { message: e.to_string() },
             DomainError::Performance(e) => Self::Configuration(e.to_string()),
-            DomainError::Security(e) => Self::PermissionDenied {
-                operation: e.to_string(),
-            },
+            DomainError::Security(e) => Self::PermissionDenied { operation: e.to_string() },
         }
     }
 }

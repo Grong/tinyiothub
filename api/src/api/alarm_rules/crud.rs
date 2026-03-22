@@ -3,14 +3,15 @@ use axum::{
     Json,
 };
 
-use crate::domain::alarm::{AlarmCondition, AlarmLevel, AlarmRule, NotificationConfig};
-use crate::dto::entity::AlarmRuleDto;
-use crate::dto::request::{CreateAlarmRuleRequest, ToggleRuleRequest, UpdateAlarmRuleRequest};
-use crate::dto::response::api_response::ApiResponse;
-use crate::shared::error_handling::ErrorCode;
-use crate::dto::response::builder::ApiResponseBuilder;
-use crate::shared::app_state::AppState;
-use crate::shared::security::jwt::Claims;
+use crate::{
+    domain::alarm::{AlarmCondition, AlarmLevel, AlarmRule, NotificationConfig},
+    dto::{
+        entity::AlarmRuleDto,
+        request::{CreateAlarmRuleRequest, ToggleRuleRequest, UpdateAlarmRuleRequest},
+        response::{api_response::ApiResponse, builder::ApiResponseBuilder},
+    },
+    shared::{app_state::AppState, error_handling::ErrorCode, security::jwt::Claims},
+};
 
 #[derive(serde::Deserialize)]
 pub struct RuleQueryParams {
@@ -114,18 +115,13 @@ pub async fn update_alarm_rule(
     // 解析更新字段
     let condition = req.condition.and_then(|c| serde_json::from_value(c).ok());
     let alarm_level = req.alarm_level.and_then(|l| AlarmLevel::from_str(&l));
-    let notification_config = req
-        .notification_config
-        .and_then(|nc| serde_json::from_value(nc).ok());
+    let notification_config =
+        req.notification_config.and_then(|nc| serde_json::from_value(nc).ok());
 
     // 更新规则
-    if let Err(e) = rule.update(
-        req.name,
-        req.description,
-        condition,
-        alarm_level,
-        notification_config,
-    ) {
+    if let Err(e) =
+        rule.update(req.name, req.description, condition, alarm_level, notification_config)
+    {
         return ApiResponseBuilder::error(format!("更新规则失败: {}", e));
     }
 

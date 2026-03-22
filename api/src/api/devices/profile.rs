@@ -14,8 +14,7 @@ use crate::{
         entity::{device::Device, device_command::DeviceCommand, device_property::DeviceProperty},
         response::{builder::ApiResponseBuilder, ApiResponse, DeviceCommandResponse},
     },
-    shared::app_state::AppState,
-    shared::security::jwt::Claims,
+    shared::{app_state::AppState, security::jwt::Claims},
 };
 
 /// 设备完整配置文件
@@ -304,11 +303,7 @@ async fn calculate_device_overview(
     let total_commands = commands.len() as u32;
 
     // 获取最后更新时间（所有属性中最新的）
-    let updated_at = properties
-        .iter()
-        .filter_map(|p| p.updated_at.as_ref())
-        .max()
-        .cloned();
+    let updated_at = properties.iter().filter_map(|p| p.updated_at.as_ref()).max().cloned();
 
     // 查询最近 24 小时的事件统计
     let twenty_four_hours_ago = now - chrono::Duration::hours(24);
@@ -317,39 +312,32 @@ async fn calculate_device_overview(
         .start_time(twenty_four_hours_ago)
         .build();
 
-    let (recent_event_count, critical_event_count, error_event_count) =
-        match state.event_repository.find_by_criteria(&criteria).await {
-            Ok(events) => {
-                let total = events.len() as u32;
-                let critical = events
-                    .iter()
-                    .filter(|e| {
-                        matches!(
-                            e.level(),
-                            crate::domain::event::value_objects::EventLevel::Critical
-                        )
-                    })
-                    .count() as u32;
-                let error = events
-                    .iter()
-                    .filter(|e| {
-                        matches!(
-                            e.level(),
-                            crate::domain::event::value_objects::EventLevel::Error
-                        )
-                    })
-                    .count() as u32;
-                (total, critical, error)
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to fetch event statistics for device {}: {}",
-                    device_id,
-                    e
-                );
-                (0, 0, 0)
-            }
-        };
+    let (recent_event_count, critical_event_count, error_event_count) = match state
+        .event_repository
+        .find_by_criteria(&criteria)
+        .await
+    {
+        Ok(events) => {
+            let total = events.len() as u32;
+            let critical = events
+                .iter()
+                .filter(|e| {
+                    matches!(e.level(), crate::domain::event::value_objects::EventLevel::Critical)
+                })
+                .count() as u32;
+            let error = events
+                .iter()
+                .filter(|e| {
+                    matches!(e.level(), crate::domain::event::value_objects::EventLevel::Error)
+                })
+                .count() as u32;
+            (total, critical, error)
+        }
+        Err(e) => {
+            tracing::warn!("Failed to fetch event statistics for device {}: {}", device_id, e);
+            (0, 0, 0)
+        }
+    };
 
     // 获取最后事件时间
     let last_event_time = recent_events.first().map(|e| e.timestamp.clone());

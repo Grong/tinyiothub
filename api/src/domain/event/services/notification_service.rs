@@ -1,3 +1,7 @@
+use std::collections::HashMap;
+
+use chrono::{DateTime, Utc};
+
 use crate::domain::event::{
     aggregates::{
         NotificationAggregate, NotificationChannelType, NotificationRecord, NotificationRule,
@@ -9,8 +13,6 @@ use crate::domain::event::{
     },
     value_objects::{EventId, EventLevel},
 };
-use chrono::{DateTime, Utc};
-use std::collections::HashMap;
 
 /// Notification level (alias for EventLevel for channel compatibility)
 pub type NotificationLevel = EventLevel;
@@ -47,10 +49,7 @@ impl NotificationMessage {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             event_id: EventId::new(),
-            channel: channels
-                .first()
-                .cloned()
-                .unwrap_or(NotificationChannelType::Email),
+            channel: channels.first().cloned().unwrap_or(NotificationChannelType::Email),
             recipient: recipients.first().cloned().unwrap_or_default(),
             subject: Some(title.clone()),
             content: content.clone(),
@@ -108,10 +107,7 @@ pub struct NotificationManager {
 impl NotificationManager {
     /// Create a new notification manager
     pub fn new() -> Self {
-        Self {
-            channels: HashMap::new(),
-            notification_service: NotificationService::new(),
-        }
+        Self { channels: HashMap::new(), notification_service: NotificationService::new() }
     }
 
     /// Register a notification channel
@@ -256,9 +252,7 @@ pub struct NotificationService {
 impl NotificationService {
     /// Create a new notification service
     pub fn new() -> Self {
-        Self {
-            validation_spec: NotificationValidationSpec::new(),
-        }
+        Self { validation_spec: NotificationValidationSpec::new() }
     }
 
     /// Create a new notification rule with validation
@@ -344,14 +338,9 @@ impl NotificationService {
 
         for notification in notifications {
             if self.should_batch_notifications(&notification.notification_method) {
-                let key = (
-                    notification.notification_method.clone(),
-                    notification.recipient.clone(),
-                );
-                groups
-                    .entry(key)
-                    .or_insert_with(Vec::new)
-                    .push(notification);
+                let key =
+                    (notification.notification_method.clone(), notification.recipient.clone());
+                groups.entry(key).or_insert_with(Vec::new).push(notification);
             }
         }
 
@@ -375,10 +364,7 @@ impl NotificationService {
         &self,
         notifications: &'a [NotificationRecord],
     ) -> Vec<&'a NotificationRecord> {
-        notifications
-            .iter()
-            .filter(|n| matches!(n.status, NotificationStatus::Pending))
-            .collect()
+        notifications.iter().filter(|n| matches!(n.status, NotificationStatus::Pending)).collect()
     }
 
     /// Get failed notifications that can be retried
@@ -404,31 +390,22 @@ impl NotificationService {
             .iter()
             .filter(|n| matches!(n.status, NotificationStatus::Pending))
             .count();
-        let sent = notifications
-            .iter()
-            .filter(|n| matches!(n.status, NotificationStatus::Sent))
-            .count();
-        let failed = notifications
-            .iter()
-            .filter(|n| matches!(n.status, NotificationStatus::Failed))
-            .count();
+        let sent =
+            notifications.iter().filter(|n| matches!(n.status, NotificationStatus::Sent)).count();
+        let failed =
+            notifications.iter().filter(|n| matches!(n.status, NotificationStatus::Failed)).count();
         let acknowledged = notifications
             .iter()
             .filter(|n| matches!(n.status, NotificationStatus::Acknowledged))
             .count();
 
-        let success_rate = if total > 0 {
-            (sent as f64 / total as f64) * 100.0
-        } else {
-            0.0
-        };
+        let success_rate = if total > 0 { (sent as f64 / total as f64) * 100.0 } else { 0.0 };
 
         // Calculate average delivery time for sent notifications
         let delivery_times: Vec<_> = notifications
             .iter()
             .filter_map(|n| {
-                n.sent_at
-                    .map(|sent_at| sent_at.signed_duration_since(n.created_at).num_seconds())
+                n.sent_at.map(|sent_at| sent_at.signed_duration_since(n.created_at).num_seconds())
             })
             .collect();
 
@@ -513,10 +490,7 @@ impl NotificationService {
                 )
             }
             NotificationChannelType::Sms => {
-                format!(
-                    "Alert: {} - {} ({:?})",
-                    event_type, event_source, event_level
-                )
+                format!("Alert: {} - {} ({:?})", event_type, event_source, event_level)
             }
             NotificationChannelType::Sse => {
                 format!(

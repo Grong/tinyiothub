@@ -1,6 +1,7 @@
 // Event access control implementations
-use crate::domain::event::{entities::Event, value_objects::EventType, Result};
 use std::sync::Arc;
+
+use crate::domain::event::{entities::Event, value_objects::EventType, Result};
 
 /// Access control result
 #[derive(Debug, Clone, PartialEq)]
@@ -213,11 +214,7 @@ impl EventAccessControl for RoleBasedAccessControl {
         // Query user roles from database
         let query = "SELECT role_name FROM user_roles WHERE user_id = ? AND is_active = 1";
 
-        match sqlx::query_scalar::<_, String>(query)
-            .bind(user_id)
-            .fetch_all(self.db.pool())
-            .await
-        {
+        match sqlx::query_scalar::<_, String>(query).bind(user_id).fetch_all(self.db.pool()).await {
             Ok(roles) => {
                 if roles.is_empty() {
                     // Default role for authenticated users

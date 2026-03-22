@@ -1,10 +1,14 @@
-use crate::domain::event::{EventError, NotificationChannelType, NotificationRule, Result};
-use crate::infrastructure::persistence::database::Database;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::Row;
-use std::sync::Arc;
 use tracing::{debug, error, info};
+
+use crate::{
+    domain::event::{EventError, NotificationChannelType, NotificationRule, Result},
+    infrastructure::persistence::database::Database,
+};
 
 /// Notification rule store trait
 #[async_trait]
@@ -118,11 +122,7 @@ impl NotificationRuleRepository for NotificationRuleRepositoryImpl {
         let pool = self.db.pool();
 
         let notification_methods_json = serde_json::to_string(
-            &rule
-                .notification_methods
-                .iter()
-                .map(|m| m.as_str())
-                .collect::<Vec<_>>(),
+            &rule.notification_methods.iter().map(|m| m.as_str()).collect::<Vec<_>>(),
         )?;
         let recipients_json = serde_json::to_string(&rule.recipients)?;
         let device_filter_json = if let Some(ref filter) = rule.device_filter {
@@ -245,11 +245,7 @@ impl NotificationRuleRepository for NotificationRuleRepositoryImpl {
         let pool = self.db.pool();
 
         let notification_methods_json = serde_json::to_string(
-            &rule
-                .notification_methods
-                .iter()
-                .map(|m| m.as_str())
-                .collect::<Vec<_>>(),
+            &rule.notification_methods.iter().map(|m| m.as_str()).collect::<Vec<_>>(),
         )?;
         let recipients_json = serde_json::to_string(&rule.recipients)?;
         let device_filter_json = if let Some(ref filter) = rule.device_filter {
@@ -281,9 +277,7 @@ impl NotificationRuleRepository for NotificationRuleRepositoryImpl {
         .await?;
 
         if result.rows_affected() == 0 {
-            return Err(EventError::NotFound {
-                id: rule.id.clone(),
-            });
+            return Err(EventError::NotFound { id: rule.id.clone() });
         }
 
         info!("Updated notification rule: {} ({})", rule.name, rule.id);
@@ -299,9 +293,7 @@ impl NotificationRuleRepository for NotificationRuleRepositoryImpl {
             .await?;
 
         if result.rows_affected() == 0 {
-            return Err(EventError::NotFound {
-                id: rule_id.to_string(),
-            });
+            return Err(EventError::NotFound { id: rule_id.to_string() });
         }
 
         info!("Deleted notification rule: {}", rule_id);
@@ -358,11 +350,7 @@ impl NotificationRuleRepository for NotificationRuleRepositoryImpl {
             }
         }
 
-        debug!(
-            "Retrieved {} notification rules for event type: {}",
-            rules.len(),
-            event_type
-        );
+        debug!("Retrieved {} notification rules for event type: {}", rules.len(), event_type);
         Ok(rules)
     }
 }
@@ -370,9 +358,7 @@ impl NotificationRuleRepository for NotificationRuleRepositoryImpl {
 impl NotificationRuleRepositoryImpl {
     /// Escape special characters in LIKE patterns to prevent SQL injection via LIKE wildcards
     fn escape_like(s: &str) -> String {
-        s.replace('\\', "\\\\")
-            .replace('%', "\\%")
-            .replace('_', "\\_")
+        s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
     }
 
     /// Get rules by notification method
@@ -413,11 +399,7 @@ impl NotificationRuleRepositoryImpl {
             }
         }
 
-        debug!(
-            "Retrieved {} notification rules for method: {:?}",
-            rules.len(),
-            method
-        );
+        debug!("Retrieved {} notification rules for method: {:?}", rules.len(), method);
         Ok(rules)
     }
 
@@ -434,9 +416,7 @@ impl NotificationRuleRepositoryImpl {
                 .await?;
 
         if result.rows_affected() == 0 {
-            return Err(EventError::NotFound {
-                id: rule_id.to_string(),
-            });
+            return Err(EventError::NotFound { id: rule_id.to_string() });
         }
 
         info!("Set notification rule {} enabled: {}", rule_id, enabled);
@@ -481,10 +461,10 @@ pub struct RuleStatistics {
 
 #[cfg(test)]
 mod tests {
+    use uuid::Uuid;
+
     use super::*;
     use crate::infrastructure::persistence::database::Database;
-
-    use uuid::Uuid;
 
     async fn create_test_db() -> Arc<Database> {
         use sqlx::sqlite::SqlitePoolOptions;
@@ -521,10 +501,7 @@ mod tests {
         assert_eq!(retrieved_rule.id, rule.id);
         assert_eq!(retrieved_rule.name, rule.name);
         assert_eq!(retrieved_rule.description, rule.description);
-        assert_eq!(
-            retrieved_rule.notification_methods,
-            rule.notification_methods
-        );
+        assert_eq!(retrieved_rule.notification_methods, rule.notification_methods);
         assert_eq!(retrieved_rule.recipients, rule.recipients);
     }
 

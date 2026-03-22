@@ -1,10 +1,11 @@
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
+use super::{
+    client::MarketplaceClient,
+    error::{MarketplaceError, Result},
+    metadata::DriverMetadata,
+};
 use crate::domain::device::driver;
-use super::client::MarketplaceClient;
-use super::error::{MarketplaceError, Result};
-use super::metadata::DriverMetadata;
 
 pub struct DriverInstaller {
     client: Arc<MarketplaceClient>,
@@ -13,10 +14,7 @@ pub struct DriverInstaller {
 
 impl DriverInstaller {
     pub fn new(client: Arc<MarketplaceClient>, drivers_dir: PathBuf) -> Self {
-        Self {
-            client,
-            drivers_dir,
-        }
+        Self { client, drivers_dir }
     }
 
     /// 从市场安装驱动
@@ -57,10 +55,10 @@ impl DriverInstaller {
         let driver_file = self.download_driver(driver_id, binary_info, &platform).await?;
 
         // 6. 验证校验和（开发模式下跳过）
-        if !binary_info.checksum.starts_with("sha256:test") && !binary_info.checksum.contains("test") {
-            self.client
-                .verify_checksum(&driver_file, &binary_info.checksum)
-                .await?;
+        if !binary_info.checksum.starts_with("sha256:test")
+            && !binary_info.checksum.contains("test")
+        {
+            self.client.verify_checksum(&driver_file, &binary_info.checksum).await?;
         } else {
             tracing::warn!("Skipping checksum verification for test/development driver");
         }
@@ -83,17 +81,11 @@ impl DriverInstaller {
         tokio::fs::create_dir_all(&self.drivers_dir).await?;
 
         // 确定文件扩展名
-        let extension = if platform.starts_with("windows") {
-            "dll"
-        } else {
-            "so"
-        };
+        let extension = if platform.starts_with("windows") { "dll" } else { "so" };
 
         let dest_file = self.drivers_dir.join(format!("{}_driver.{}", driver_id, extension));
 
-        self.client
-            .download_resource(&binary_info.file_url, &dest_file)
-            .await?;
+        self.client.download_resource(&binary_info.file_url, &dest_file).await?;
 
         Ok(dest_file)
     }
@@ -104,8 +96,7 @@ impl DriverInstaller {
             .to_str()
             .ok_or_else(|| MarketplaceError::InstallationFailed("Invalid path".to_string()))?;
 
-        driver::load_dynamic_driver(path_str)
-            .map_err(|e| MarketplaceError::Driver(e.to_string()))
+        driver::load_dynamic_driver(path_str).map_err(|e| MarketplaceError::Driver(e.to_string()))
     }
 
     /// 检查驱动是否已安装

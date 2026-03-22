@@ -1,16 +1,22 @@
-use crate::domain::event::{
-    entities::Event as DomainEvent,
-    value_objects::{
-        ContentElement, DeviceEventType, EventLevel, EventSource, RichContent, TextFormat,
-    },
-};
-use crate::dto::entity::device::{CreateDeviceRequest, DeviceQueryParams, UpdateDeviceRequest};
-use crate::dto::entity::{Device, DeviceCommand, DeviceProperty};
-use crate::dto::request::pagination::DataObjectWithPagination;
-use crate::infrastructure::event::EventBus;
-use crate::infrastructure::persistence::database::Database;
-use crate::shared::error::Error;
 use std::sync::Arc;
+
+use crate::{
+    domain::event::{
+        entities::Event as DomainEvent,
+        value_objects::{
+            ContentElement, DeviceEventType, EventLevel, EventSource, RichContent, TextFormat,
+        },
+    },
+    dto::{
+        entity::{
+            device::{CreateDeviceRequest, DeviceQueryParams, UpdateDeviceRequest},
+            Device, DeviceCommand, DeviceProperty,
+        },
+        request::pagination::DataObjectWithPagination,
+    },
+    infrastructure::{event::EventBus, persistence::database::Database},
+    shared::error::Error,
+};
 
 /// 设备服务
 /// 负责设备的业务逻辑和事件发布
@@ -21,18 +27,12 @@ pub struct DeviceService {
 
 impl DeviceService {
     pub fn new(database: Arc<Database>) -> Self {
-        Self {
-            database,
-            event_bus: None,
-        }
+        Self { database, event_bus: None }
     }
 
     /// Create device service with event bus
     pub fn with_event_bus(database: Arc<Database>, event_bus: Arc<EventBus>) -> Self {
-        Self {
-            database,
-            event_bus: Some(event_bus),
-        }
+        Self { database, event_bus: Some(event_bus) }
     }
 
     /// 创建设备
@@ -40,10 +40,7 @@ impl DeviceService {
         tracing::info!("Creating device: {}", request.name);
 
         // 验证设备名称唯一性
-        if Device::exists_by_name(&self.database, &request.name)
-            .await
-            .unwrap_or(false)
-        {
+        if Device::exists_by_name(&self.database, &request.name).await.unwrap_or(false) {
             return Err(Error::ValidationError("设备名称已存在".to_string()));
         }
 
@@ -71,10 +68,7 @@ impl DeviceService {
         );
 
         // 验证设备名称唯一性
-        if Device::exists_by_name(&self.database, &device_input.name)
-            .await
-            .unwrap_or(false)
-        {
+        if Device::exists_by_name(&self.database, &device_input.name).await.unwrap_or(false) {
             return Err(Error::ValidationError("设备名称已存在".to_string()));
         }
 
@@ -188,9 +182,8 @@ impl DeviceService {
         tracing::info!("Updating device: {}", device_id);
 
         // 获取旧设备信息
-        let old_device = Device::find_by_id(&self.database, device_id)
-            .await?
-            .ok_or(Error::NotFound)?;
+        let old_device =
+            Device::find_by_id(&self.database, device_id).await?.ok_or(Error::NotFound)?;
 
         // 更新设备
         let updated_device = Device::update_with_tags(&self.database, device_id, request).await?;
@@ -231,10 +224,8 @@ impl DeviceService {
                 }];
 
                 for change in changes {
-                    elements.push(ContentElement::Text {
-                        content: change,
-                        format: TextFormat::Plain,
-                    });
+                    elements
+                        .push(ContentElement::Text { content: change, format: TextFormat::Plain });
                 }
 
                 let event = DomainEvent::new_device_event(
@@ -262,9 +253,7 @@ impl DeviceService {
         tracing::info!("Deleting device: {}", device_id);
 
         // 获取设备信息（用于事件）
-        let device = Device::find_by_id(&self.database, device_id)
-            .await?
-            .ok_or(Error::NotFound)?;
+        let device = Device::find_by_id(&self.database, device_id).await?.ok_or(Error::NotFound)?;
 
         // 删除设备
         let deleted_count = Device::delete(&self.database, device_id).await?;
@@ -313,9 +302,7 @@ impl DeviceService {
     /// 更新设备状态
     pub async fn update_device_state(&self, device_id: &str, new_state: i32) -> Result<(), Error> {
         // 获取当前状态
-        let device = Device::find_by_id(&self.database, device_id)
-            .await?
-            .ok_or(Error::NotFound)?;
+        let device = Device::find_by_id(&self.database, device_id).await?.ok_or(Error::NotFound)?;
 
         let old_state = device.state.unwrap_or(0);
 
@@ -390,16 +377,12 @@ impl DeviceService {
 
     /// 根据名称获取设备
     pub async fn get_device_by_name(&self, name: &str) -> Result<Option<Device>, Error> {
-        Device::find_by_name(&self.database, name)
-            .await
-            .map_err(|e| Error::IOError(e.to_string()))
+        Device::find_by_name(&self.database, name).await.map_err(|e| Error::IOError(e.to_string()))
     }
 
     /// 查询设备列表
     pub async fn get_devices(&self, params: &DeviceQueryParams) -> Result<Vec<Device>, Error> {
-        Device::find_all(&self.database, params)
-            .await
-            .map_err(|e| Error::IOError(e.to_string()))
+        Device::find_all(&self.database, params).await.map_err(|e| Error::IOError(e.to_string()))
     }
 
     /// 查询设备列表（包含标签）
@@ -503,11 +486,7 @@ impl DeviceService {
             properties.retain(|p| p.name.contains(&name));
         }
 
-        Ok(DataObjectWithPagination::new(
-            &properties,
-            page_no,
-            page_size,
-        ))
+        Ok(DataObjectWithPagination::new(&properties, page_no, page_size))
     }
 
     // === 设备命令查询 ===
@@ -533,23 +512,17 @@ impl DeviceService {
 
     /// 获取设备统计信息
     pub async fn get_device_stats(&self) -> Result<crate::dto::entity::device::DeviceStats, Error> {
-        Device::get_stats(&self.database)
-            .await
-            .map_err(|e| Error::IOError(e.to_string()))
+        Device::get_stats(&self.database).await.map_err(|e| Error::IOError(e.to_string()))
     }
 
     /// 按类型统计设备
     pub async fn get_device_stats_by_type(&self) -> Result<Vec<(String, i64)>, Error> {
-        Device::get_stats_by_type(&self.database)
-            .await
-            .map_err(|e| Error::IOError(e.to_string()))
+        Device::get_stats_by_type(&self.database).await.map_err(|e| Error::IOError(e.to_string()))
     }
 
     /// 按驱动统计设备
     pub async fn get_device_stats_by_driver(&self) -> Result<Vec<(String, i64)>, Error> {
-        Device::get_stats_by_driver(&self.database)
-            .await
-            .map_err(|e| Error::IOError(e.to_string()))
+        Device::get_stats_by_driver(&self.database).await.map_err(|e| Error::IOError(e.to_string()))
     }
 
     // === 批量操作 ===
@@ -563,14 +536,8 @@ impl DeviceService {
 
         // 验证设备名称唯一性
         for request in requests {
-            if Device::exists_by_name(&self.database, &request.name)
-                .await
-                .unwrap_or(false)
-            {
-                return Err(Error::ValidationError(format!(
-                    "设备名称 '{}' 已存在",
-                    request.name
-                )));
+            if Device::exists_by_name(&self.database, &request.name).await.unwrap_or(false) {
+                return Err(Error::ValidationError(format!("设备名称 '{}' 已存在", request.name)));
             }
         }
 
@@ -615,10 +582,7 @@ impl DeviceService {
             }
         }
 
-        tracing::info!(
-            "Successfully created {} devices in batch",
-            created_devices.len()
-        );
+        tracing::info!("Successfully created {} devices in batch", created_devices.len());
         Ok(created_devices)
     }
 
@@ -688,10 +652,7 @@ impl DeviceService {
             tracing::debug!("Device {} state updated to {}", device_id, new_state);
         }
 
-        tracing::info!(
-            "Successfully updated {} device states in batch",
-            updated_count
-        );
+        tracing::info!("Successfully updated {} device states in batch", updated_count);
         Ok(updated_count)
     }
 
@@ -714,10 +675,7 @@ impl DeviceService {
 
     /// 验证设备配置
     pub async fn validate_device(&self, device_id: &str) -> Result<Vec<String>, Error> {
-        let device = self
-            .get_device_by_id(device_id)
-            .await?
-            .ok_or(Error::NotFound)?;
+        let device = self.get_device_by_id(device_id).await?.ok_or(Error::NotFound)?;
 
         let mut errors = Vec::new();
 

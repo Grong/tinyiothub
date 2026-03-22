@@ -1,9 +1,10 @@
+use std::collections::HashMap;
+
 use crate::domain::event::{
     aggregates::{NotificationChannelType, NotificationRule},
     value_objects::EventLevel,
     EventError, Result,
 };
-use std::collections::HashMap;
 
 /// Specification pattern for notification business rules
 pub trait NotificationSpecification: Send + Sync {
@@ -92,10 +93,7 @@ impl CriticalEventsImmediateChannelsSpec {
 
         // Critical events should have at least one immediate channel (SMS or SSE)
         rule.channels.iter().any(|channel| {
-            matches!(
-                channel,
-                NotificationChannelType::Sms | NotificationChannelType::Sse
-            )
+            matches!(channel, NotificationChannelType::Sms | NotificationChannelType::Sse)
         })
     }
 }
@@ -171,9 +169,7 @@ impl NotificationValidationSpec {
     pub fn validate(&self, rule: &NotificationRule) -> Result<()> {
         for spec in &self.specs {
             if !spec.is_satisfied_by(rule) {
-                return Err(EventError::Validation {
-                    message: spec.error_message(),
-                });
+                return Err(EventError::Validation { message: spec.error_message() });
             }
         }
         Ok(())
@@ -248,19 +244,14 @@ impl NotificationFilterSpec {
     ) -> bool {
         // Check event type filter
         let type_match = rule.event_types.is_empty()
-            || rule
-                .event_types
-                .iter()
-                .any(|pattern| Self::matches_pattern(event_type, pattern));
+            || rule.event_types.iter().any(|pattern| Self::matches_pattern(event_type, pattern));
 
         // Check event level filter
         let level_match = rule.event_levels.is_empty() || rule.event_levels.contains(event_level);
 
         // Check custom conditions
-        let conditions_match = rule
-            .conditions
-            .iter()
-            .all(|(key, value)| event_metadata.get(key) == Some(value));
+        let conditions_match =
+            rule.conditions.iter().all(|(key, value)| event_metadata.get(key) == Some(value));
 
         type_match && level_match && conditions_match
     }
@@ -297,8 +288,9 @@ impl NotificationFilterSpec {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use chrono::Utc;
+
+    use super::*;
 
     fn create_valid_notification_rule() -> NotificationRule {
         NotificationRule {
@@ -397,9 +389,7 @@ mod tests {
         assert_eq!(NotificationDeliverySpec::get_retry_delay(0), 30);
         assert_eq!(NotificationDeliverySpec::get_retry_delay(1), 300);
 
-        assert!(NotificationDeliverySpec::is_channel_available(
-            &NotificationChannelType::Email
-        ));
+        assert!(NotificationDeliverySpec::is_channel_available(&NotificationChannelType::Email));
 
         assert_eq!(
             NotificationDeliverySpec::get_channel_priority(&NotificationChannelType::Sse),
@@ -438,14 +428,8 @@ mod tests {
         ));
 
         // Test pattern matching
-        assert!(NotificationFilterSpec::matches_pattern(
-            "device.error",
-            "device.*"
-        ));
+        assert!(NotificationFilterSpec::matches_pattern("device.error", "device.*"));
         assert!(NotificationFilterSpec::matches_pattern("any.event", "*"));
-        assert!(!NotificationFilterSpec::matches_pattern(
-            "system.info",
-            "device.*"
-        ));
+        assert!(!NotificationFilterSpec::matches_pattern("system.info", "device.*"));
     }
 }

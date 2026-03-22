@@ -1,15 +1,11 @@
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+use std::{str::FromStr, time::Duration};
 
-use std::str::FromStr;
-use std::time::Duration;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 
 use super::config::DatabaseConfig;
 
 pub async fn create_pool(config: &DatabaseConfig) -> Result<SqlitePool, sqlx::Error> {
-    tracing::info!(
-        "Creating database connection pool with config: {:?}",
-        config
-    );
+    tracing::info!("Creating database connection pool with config: {:?}", config);
 
     // Parse connection options
     let connect_options = SqliteConnectOptions::from_str(&config.url)?.create_if_missing(true);
@@ -62,11 +58,7 @@ pub async fn create_pool(config: &DatabaseConfig) -> Result<SqlitePool, sqlx::Er
 }
 
 pub async fn create_pool_from_url(database_url: &str) -> Result<SqlitePool, sqlx::Error> {
-    let config = DatabaseConfig {
-        url: database_url.to_string(),
-
-        ..Default::default()
-    };
+    let config = DatabaseConfig { url: database_url.to_string(), ..Default::default() };
 
     create_pool(&config).await
 }

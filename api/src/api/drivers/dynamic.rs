@@ -1,6 +1,9 @@
 //! 动态驱动管理API（内部管理用）
 
-use axum::{extract::{Path, State}, Json};
+use axum::{
+    extract::{Path, State},
+    Json,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -82,10 +85,10 @@ pub async fn list_all_drivers(
 ) -> Json<ApiResponse<AllDriversResponse>> {
     let all_names = driver::get_all_driver_names();
     let registry = driver::dynamic::registry::get_global_registry();
-    
+
     let mut static_drivers = Vec::new();
     let mut dynamic_drivers = Vec::new();
-    
+
     for name in all_names {
         let is_dynamic = registry.has_driver(&name);
         let driver_info = DriverInfo {
@@ -93,26 +96,19 @@ pub async fn list_all_drivers(
             version: Some("1.0.0".to_string()),
             description: Some(format!("{} driver", name)),
             is_loaded: true,
-            path: if is_dynamic {
-                registry.get_driver_path(&name)
-            } else {
-                None
-            },
+            path: if is_dynamic { registry.get_driver_path(&name) } else { None },
             category: Some("protocol".to_string()),
             tags: Some(vec!["industrial".to_string()]),
         };
-        
+
         if is_dynamic {
             dynamic_drivers.push(driver_info);
         } else {
             static_drivers.push(driver_info);
         }
     }
-    
-    ApiResponseBuilder::success(AllDriversResponse {
-        static_drivers,
-        dynamic: dynamic_drivers,
-    })
+
+    ApiResponseBuilder::success(AllDriversResponse { static_drivers, dynamic: dynamic_drivers })
 }
 
 /// 重新加载驱动目录
@@ -122,9 +118,9 @@ pub async fn reload_drivers_dir(
 ) -> Json<ApiResponse<Vec<String>>> {
     let config = crate::infrastructure::config::get();
     let drivers_dir = &config.device.drivers.dynamic_drivers_dir;
-    
+
     tracing::info!("Reloading drivers from: {}", drivers_dir);
-    
+
     match driver::dynamic::auto_load_drivers(drivers_dir) {
         Ok(loaded) => {
             tracing::info!("Reloaded {} driver(s)", loaded.len());

@@ -1,6 +1,7 @@
-use crate::infrastructure::persistence::database::Database;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder, Row};
+
+use crate::infrastructure::persistence::database::Database;
 
 /// User permission entity - 用户权限实体
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -125,9 +126,7 @@ impl UserPermission {
         }
 
         if let Some(permission_id) = &query.permission_id {
-            sql_query
-                .push(" AND permission_id = ")
-                .push_bind(permission_id);
+            sql_query.push(" AND permission_id = ").push_bind(permission_id);
         }
 
         if let Some(target_id) = &query.target_id {
@@ -135,23 +134,16 @@ impl UserPermission {
         }
 
         if let Some(permission_type) = &query.permission_type {
-            sql_query
-                .push(" AND permission_type = ")
-                .push_bind(permission_type);
+            sql_query.push(" AND permission_type = ").push_bind(permission_type);
         }
 
         if let Some(action_entity_set) = &query.action_entity_set {
-            sql_query
-                .push(" AND action_entity_set = ")
-                .push_bind(action_entity_set);
+            sql_query.push(" AND action_entity_set = ").push_bind(action_entity_set);
         }
 
         // Filter out expired permissions by default
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        sql_query
-            .push(" AND (expires_at IS NULL OR expires_at > ")
-            .push_bind(now)
-            .push(")");
+        sql_query.push(" AND (expires_at IS NULL OR expires_at > ").push_bind(now).push(")");
 
         sql_query.push(" ORDER BY created_at DESC");
 
@@ -162,10 +154,8 @@ impl UserPermission {
             sql_query.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let user_permissions = sql_query
-            .build_query_as::<UserPermission>()
-            .fetch_all(db.pool())
-            .await?;
+        let user_permissions =
+            sql_query.build_query_as::<UserPermission>().fetch_all(db.pool()).await?;
 
         Ok(user_permissions)
     }
@@ -238,9 +228,7 @@ impl UserPermission {
 
         tx.commit().await?;
 
-        Self::find_by_id(db, id)
-            .await?
-            .ok_or(sqlx::Error::RowNotFound)
+        Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// Delete user permission
@@ -358,12 +346,8 @@ impl UserPermission {
             "#,
         );
 
-        let mut params: Vec<String> = vec![
-            user_id.to_string(),
-            permission_id.to_string(),
-            permission_type.to_string(),
-            now,
-        ];
+        let mut params: Vec<String> =
+            vec![user_id.to_string(), permission_id.to_string(), permission_type.to_string(), now];
 
         if let Some(target) = target_id {
             query_str.push_str(" AND (target_id IS NULL OR target_id = ?)");
@@ -449,9 +433,7 @@ impl UserPermission {
         }
 
         if let Some(permission_id) = &query.permission_id {
-            sql_query
-                .push(" AND permission_id = ")
-                .push_bind(permission_id);
+            sql_query.push(" AND permission_id = ").push_bind(permission_id);
         }
 
         if let Some(target_id) = &query.target_id {
@@ -459,23 +441,16 @@ impl UserPermission {
         }
 
         if let Some(permission_type) = &query.permission_type {
-            sql_query
-                .push(" AND permission_type = ")
-                .push_bind(permission_type);
+            sql_query.push(" AND permission_type = ").push_bind(permission_type);
         }
 
         if let Some(action_entity_set) = &query.action_entity_set {
-            sql_query
-                .push(" AND action_entity_set = ")
-                .push_bind(action_entity_set);
+            sql_query.push(" AND action_entity_set = ").push_bind(action_entity_set);
         }
 
         // Filter out expired permissions by default
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        sql_query
-            .push(" AND (expires_at IS NULL OR expires_at > ")
-            .push_bind(now)
-            .push(")");
+        sql_query.push(" AND (expires_at IS NULL OR expires_at > ").push_bind(now).push(")");
 
         let row = sql_query.build().fetch_one(db.pool()).await?;
         let count: i64 = row.get("count");

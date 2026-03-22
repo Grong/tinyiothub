@@ -1,9 +1,10 @@
+use chrono::{Duration, Utc};
+
 use crate::domain::event::{
     entities::Event,
     value_objects::{EventLevel, EventType},
     EventError, Result,
 };
-use chrono::{Duration, Utc};
 
 /// Specification pattern for event business rules
 pub trait EventSpecification: Send + Sync {
@@ -64,10 +65,7 @@ impl EventSpecification for EventTimestampRecentSpec {
     }
 
     fn error_message(&self) -> String {
-        format!(
-            "Event timestamp must be within {} hours",
-            self.max_age.num_hours()
-        )
+        format!("Event timestamp must be within {} hours", self.max_age.num_hours())
     }
 }
 
@@ -164,9 +162,7 @@ impl EventValidationSpec {
     pub fn validate(&self, event: &Event) -> Result<()> {
         for spec in &self.specs {
             if !spec.is_satisfied_by(event) {
-                return Err(EventError::Validation {
-                    message: spec.error_message(),
-                });
+                return Err(EventError::Validation { message: spec.error_message() });
             }
         }
         Ok(())
@@ -324,9 +320,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(EventPrioritySpec::get_priority(&critical_event), 1);
-        assert!(EventPrioritySpec::requires_immediate_processing(
-            &critical_event
-        ));
+        assert!(EventPrioritySpec::requires_immediate_processing(&critical_event));
         assert!(EventPrioritySpec::should_persist(&critical_event));
 
         let debug_event = Event::new(
@@ -338,9 +332,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(EventPrioritySpec::get_priority(&debug_event), 5);
-        assert!(!EventPrioritySpec::requires_immediate_processing(
-            &debug_event
-        ));
+        assert!(!EventPrioritySpec::requires_immediate_processing(&debug_event));
         assert!(!EventPrioritySpec::should_persist(&debug_event));
     }
 }

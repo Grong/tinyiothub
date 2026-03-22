@@ -294,14 +294,8 @@ mod tests {
 
     #[test]
     fn test_parse_sort_by() {
-        assert!(matches!(
-            parse_sort_by(Some("timestamp")).unwrap(),
-            SortBy::Timestamp
-        ));
-        assert!(matches!(
-            parse_sort_by(Some("level")).unwrap(),
-            SortBy::Level
-        ));
+        assert!(matches!(parse_sort_by(Some("timestamp")).unwrap(), SortBy::Timestamp));
+        assert!(matches!(parse_sort_by(Some("level")).unwrap(), SortBy::Level));
         assert!(matches!(parse_sort_by(None).unwrap(), SortBy::Timestamp));
 
         let invalid = parse_sort_by(Some("invalid"));
@@ -310,18 +304,9 @@ mod tests {
 
     #[test]
     fn test_parse_sort_order() {
-        assert!(matches!(
-            parse_sort_order(Some("asc")).unwrap(),
-            SortOrder::Ascending
-        ));
-        assert!(matches!(
-            parse_sort_order(Some("desc")).unwrap(),
-            SortOrder::Descending
-        ));
-        assert!(matches!(
-            parse_sort_order(None).unwrap(),
-            SortOrder::Descending
-        ));
+        assert!(matches!(parse_sort_order(Some("asc")).unwrap(), SortOrder::Ascending));
+        assert!(matches!(parse_sort_order(Some("desc")).unwrap(), SortOrder::Descending));
+        assert!(matches!(parse_sort_order(None).unwrap(), SortOrder::Descending));
 
         let invalid = parse_sort_order(Some("invalid"));
         assert!(invalid.is_err());

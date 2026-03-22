@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use axum::{
     extract::{Path, Query},
     response::Json,
@@ -5,13 +7,14 @@ use axum::{
     Router,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 use crate::{
     api_error, api_success,
     domain::device::driver::get_driver_list,
-    dto::entity::component::{Component, ComponentOption},
-    dto::response::ApiResponse,
+    dto::{
+        entity::component::{Component, ComponentOption},
+        response::ApiResponse,
+    },
     shared::app_state::AppState,
 };
 
@@ -78,12 +81,7 @@ async fn list_drivers(
 
     // 如果提供了名称过滤器，进行过滤
     if let Some(filter_name) = params.get("name") {
-        drivers.retain(|driver| {
-            driver
-                .name
-                .to_lowercase()
-                .contains(&filter_name.to_lowercase())
-        });
+        drivers.retain(|driver| driver.name.to_lowercase().contains(&filter_name.to_lowercase()));
     }
 
     let total = drivers.len();
@@ -123,15 +121,9 @@ async fn check_driver_support(Path(name): Path<String>) -> Json<ApiResponse<Driv
     let is_supported = crate::domain::device::driver::has_driver(&name);
 
     let response = if is_supported {
-        DriverListResponse {
-            drivers: vec![],
-            total: 1,
-        }
+        DriverListResponse { drivers: vec![], total: 1 }
     } else {
-        DriverListResponse {
-            drivers: vec![],
-            total: 0,
-        }
+        DriverListResponse { drivers: vec![], total: 0 }
     };
 
     tracing::info!("Driver {} support status: {}", name, is_supported);
@@ -160,11 +152,7 @@ async fn get_driver_config(Path(name): Path<String>) -> Json<ApiResponse<DriverC
             default_config.insert(option.name.clone(), option.default_value.clone());
         }
 
-        tracing::info!(
-            "Found {} config options for driver: {}",
-            config_options.len(),
-            driver.name
-        );
+        tracing::info!("Found {} config options for driver: {}", config_options.len(), driver.name);
 
         api_success!(DriverConfigResponse {
             driver_name: driver.name,

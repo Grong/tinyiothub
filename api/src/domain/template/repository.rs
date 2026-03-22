@@ -1,15 +1,22 @@
-use crate::domain::template::file_manager::TemplateFileManager;
-use crate::domain::template::search_service::{TemplateFilters, TemplateSearchService};
-use crate::dto::entity::device_template::{
-    CreateDeviceTemplateRequest, DeviceTemplate, TemplateCategory, TemplateQueryParams,
-    UpdateDeviceTemplateRequest,
-};
-use crate::dto::entity::template_error::TemplateError;
-use crate::infrastructure::persistence::database::Database;
+use std::{path::PathBuf, sync::Arc};
+
 use sqlx;
-use std::path::PathBuf;
-use std::sync::Arc;
 use tracing::{info, warn};
+
+use crate::{
+    domain::template::{
+        file_manager::TemplateFileManager,
+        search_service::{TemplateFilters, TemplateSearchService},
+    },
+    dto::entity::{
+        device_template::{
+            CreateDeviceTemplateRequest, DeviceTemplate, TemplateCategory, TemplateQueryParams,
+            UpdateDeviceTemplateRequest,
+        },
+        template_error::TemplateError,
+    },
+    infrastructure::persistence::database::Database,
+};
 
 /// 模板仓库 - 负责设备模板的存储和检索
 #[derive(Debug)]
@@ -24,11 +31,7 @@ impl TemplateRepository {
     pub fn new(database: Arc<Database>, file_system_path: PathBuf) -> Self {
         let file_manager = TemplateFileManager::new(file_system_path);
         let search_service = TemplateSearchService::new(database.clone());
-        Self {
-            database,
-            file_manager,
-            search_service,
-        }
+        Self { database, file_manager, search_service }
     }
 
     /// 查找所有模板（支持分页和筛选）
@@ -95,9 +98,7 @@ impl TemplateRepository {
         category: &str,
         limit: Option<u32>,
     ) -> Result<Vec<DeviceTemplate>, TemplateError> {
-        self.search_service
-            .search_by_category(category, limit)
-            .await
+        self.search_service.search_by_category(category, limit).await
     }
 
     /// 按厂商搜索模板
@@ -106,9 +107,7 @@ impl TemplateRepository {
         manufacturer: &str,
         limit: Option<u32>,
     ) -> Result<Vec<DeviceTemplate>, TemplateError> {
-        self.search_service
-            .search_by_manufacturer(manufacturer, limit)
-            .await
+        self.search_service.search_by_manufacturer(manufacturer, limit).await
     }
 
     /// 按协议类型搜索模板
@@ -117,9 +116,7 @@ impl TemplateRepository {
         protocol_type: &str,
         limit: Option<u32>,
     ) -> Result<Vec<DeviceTemplate>, TemplateError> {
-        self.search_service
-            .search_by_protocol(protocol_type, limit)
-            .await
+        self.search_service.search_by_protocol(protocol_type, limit).await
     }
 
     /// 多条件组合筛选
@@ -136,9 +133,7 @@ impl TemplateRepository {
         keyword: &str,
         limit: u32,
     ) -> Result<Vec<String>, TemplateError> {
-        self.search_service
-            .get_search_suggestions(keyword, limit)
-            .await
+        self.search_service.get_search_suggestions(keyword, limit).await
     }
 
     /// 获取热门搜索关键词
@@ -163,17 +158,13 @@ impl TemplateRepository {
 
         // 检查模板名称是否已存在
         if DeviceTemplate::exists_by_name(&self.database, &request.name).await? {
-            return Err(TemplateError::TemplateNameExists {
-                name: request.name.clone(),
-            });
+            return Err(TemplateError::TemplateNameExists { name: request.name.clone() });
         }
 
         // 验证分类是否存在
         let categories = TemplateCategory::get_categories(&self.database).await?;
         if !categories.iter().any(|c| c.name == request.category) {
-            return Err(TemplateError::CategoryNotFound {
-                category: request.category.clone(),
-            });
+            return Err(TemplateError::CategoryNotFound { category: request.category.clone() });
         }
 
         let template = DeviceTemplate::create(&self.database, request).await?;
@@ -200,9 +191,7 @@ impl TemplateRepository {
             let existing = DeviceTemplate::find_by_name(&self.database, new_name).await?;
             if let Some(existing_template) = existing {
                 if existing_template.id != id {
-                    return Err(TemplateError::TemplateNameExists {
-                        name: new_name.clone(),
-                    });
+                    return Err(TemplateError::TemplateNameExists { name: new_name.clone() });
                 }
             }
         }
@@ -211,9 +200,7 @@ impl TemplateRepository {
         if let Some(new_category) = &request.category {
             let categories = TemplateCategory::get_categories(&self.database).await?;
             if !categories.iter().any(|c| c.name == *new_category) {
-                return Err(TemplateError::CategoryNotFound {
-                    category: new_category.clone(),
-                });
+                return Err(TemplateError::CategoryNotFound { category: new_category.clone() });
             }
         }
 

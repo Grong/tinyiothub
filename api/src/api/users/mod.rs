@@ -1,8 +1,9 @@
 // 用户管理模块
 // 包含用户CRUD、角色管理、权限管理等功能
 
-use crate::shared::app_state::AppState;
 use axum::Router;
+
+use crate::shared::app_state::AppState;
 
 pub mod management;
 pub mod permissions;

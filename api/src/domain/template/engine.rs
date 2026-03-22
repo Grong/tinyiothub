@@ -1,16 +1,20 @@
-use crate::domain::template::repository::TemplateRepository;
-use crate::domain::template::validator::TemplateValidator;
-use crate::dto::entity::device::CreateDeviceRequest;
-use crate::dto::entity::device_command::CreateDeviceCommandRequest;
-use crate::dto::entity::device_property::CreateDevicePropertyRequest;
-use crate::dto::entity::device_template::{
-    CommandInfo, DeviceCreationInput, DevicePreview, DeviceTemplate, PropertyInfo,
-    TemplateRequirements,
-};
-use crate::dto::entity::template_error::{TemplateError, ValidationResult};
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
+
 use tracing::{debug, info};
+
+use crate::{
+    domain::template::{repository::TemplateRepository, validator::TemplateValidator},
+    dto::entity::{
+        device::CreateDeviceRequest,
+        device_command::CreateDeviceCommandRequest,
+        device_property::CreateDevicePropertyRequest,
+        device_template::{
+            CommandInfo, DeviceCreationInput, DevicePreview, DeviceTemplate, PropertyInfo,
+            TemplateRequirements,
+        },
+        template_error::{TemplateError, ValidationResult},
+    },
+};
 
 /// 模板引擎 - 负责解析和应用设备模板的核心组件
 #[derive(Debug)]
@@ -25,10 +29,7 @@ impl TemplateEngine {
         template_repository: Arc<TemplateRepository>,
         validator: Arc<TemplateValidator>,
     ) -> Self {
-        Self {
-            template_repository,
-            validator,
-        }
+        Self { template_repository, validator }
     }
 
     /// 应用模板创建设备 (需求 3.6)
@@ -37,35 +38,25 @@ impl TemplateEngine {
         template_id: &str,
         user_input: &DeviceCreationInput,
     ) -> Result<CreateDeviceRequest, TemplateError> {
-        info!(
-            "应用模板创建设备: template_id={}, device_name={}",
-            template_id, user_input.name
-        );
+        info!("应用模板创建设备: template_id={}, device_name={}", template_id, user_input.name);
 
         // 获取模板
         let template = self
             .template_repository
             .find_by_id(template_id)
             .await?
-            .ok_or_else(|| TemplateError::TemplateNotFound {
-                id: template_id.to_string(),
-            })?;
+            .ok_or_else(|| TemplateError::TemplateNotFound { id: template_id.to_string() })?;
 
         // 验证用户输入 (需求 3.7)
         let validation_result = self.validator.validate_user_input(&template, user_input);
         if validation_result.has_errors() {
-            return Err(TemplateError::ValidationFailed {
-                errors: validation_result.errors,
-            });
+            return Err(TemplateError::ValidationFailed { errors: validation_result.errors });
         }
 
         // 解析模板信息
-        let device_info =
-            template
-                .get_device_info()
-                .map_err(|e| TemplateError::JsonFormatError {
-                    message: format!("设备信息解析失败: {}", e),
-                })?;
+        let device_info = template.get_device_info().map_err(|e| {
+            TemplateError::JsonFormatError { message: format!("设备信息解析失败: {}", e) }
+        })?;
 
         // 应用模板创建设备请求 (需求 3.5)
         let device_request = CreateDeviceRequest {
@@ -81,14 +72,8 @@ impl TemplateEngine {
                     .as_ref()
                     .and_then(|desc| self.get_localized_description(desc, "zh"))
             }),
-            position: user_input
-                .position
-                .clone()
-                .or_else(|| device_info.default_position.clone()),
-            driver_name: user_input
-                .driver_name
-                .clone()
-                .or_else(|| template.driver_name.clone()),
+            position: user_input.position.clone().or_else(|| device_info.default_position.clone()),
+            driver_name: user_input.driver_name.clone().or_else(|| template.driver_name.clone()),
             device_model: template.manufacturer.clone(),
             protocol_type: template.protocol_type.clone(),
             factory_name: template.manufacturer.clone(),
@@ -112,19 +97,14 @@ impl TemplateEngine {
         template_id: &str,
         user_input: &DeviceCreationInput,
     ) -> Result<DevicePreview, TemplateError> {
-        info!(
-            "预览模板设备创建: template_id={}, device_name={}",
-            template_id, user_input.name
-        );
+        info!("预览模板设备创建: template_id={}, device_name={}", template_id, user_input.name);
 
         // 获取模板
         let template = self
             .template_repository
             .find_by_id(template_id)
             .await?
-            .ok_or_else(|| TemplateError::TemplateNotFound {
-                id: template_id.to_string(),
-            })?;
+            .ok_or_else(|| TemplateError::TemplateNotFound { id: template_id.to_string() })?;
 
         // 验证用户输入
         let validation_result = self.validator.validate_user_input(&template, user_input);
@@ -133,14 +113,12 @@ impl TemplateEngine {
         let device_info = self.apply_template(template_id, user_input).await?;
 
         // 生成属性列表
-        let properties = self
-            .generate_device_properties(&template, user_input, "temp_device_id")
-            .await?;
+        let properties =
+            self.generate_device_properties(&template, user_input, "temp_device_id").await?;
 
         // 生成命令列表
-        let commands = self
-            .generate_device_commands(&template, user_input, "temp_device_id")
-            .await?;
+        let commands =
+            self.generate_device_commands(&template, user_input, "temp_device_id").await?;
 
         // 收集警告信息
         let mut warnings = Vec::new();
@@ -153,12 +131,7 @@ impl TemplateEngine {
             warnings.push("模板未指定驱动程序，可能需要手动配置".to_string());
         }
 
-        let preview = DevicePreview {
-            device_info,
-            properties,
-            commands,
-            warnings,
-        };
+        let preview = DevicePreview { device_info, properties, commands, warnings };
 
         debug!(
             "设备预览已生成: 属性数={}, 命令数={}, 警告数={}",
@@ -183,9 +156,7 @@ impl TemplateEngine {
             .template_repository
             .find_by_id(template_id)
             .await?
-            .ok_or_else(|| TemplateError::TemplateNotFound {
-                id: template_id.to_string(),
-            })?;
+            .ok_or_else(|| TemplateError::TemplateNotFound { id: template_id.to_string() })?;
 
         // 使用验证器验证输入
         let result = self.validator.validate_user_input(&template, user_input);
@@ -205,11 +176,9 @@ impl TemplateEngine {
         user_input: &DeviceCreationInput,
         device_id: &str,
     ) -> Result<Vec<CreateDevicePropertyRequest>, TemplateError> {
-        let properties = template
-            .get_properties()
-            .map_err(|e| TemplateError::JsonFormatError {
-                message: format!("属性模板解析失败: {}", e),
-            })?;
+        let properties = template.get_properties().map_err(|e| TemplateError::JsonFormatError {
+            message: format!("属性模板解析失败: {}", e),
+        })?;
 
         let mut device_properties = Vec::new();
 
@@ -251,11 +220,9 @@ impl TemplateEngine {
         user_input: &DeviceCreationInput,
         device_id: &str,
     ) -> Result<Vec<CreateDeviceCommandRequest>, TemplateError> {
-        let commands = template
-            .get_commands()
-            .map_err(|e| TemplateError::JsonFormatError {
-                message: format!("命令模板解析失败: {}", e),
-            })?;
+        let commands = template.get_commands().map_err(|e| TemplateError::JsonFormatError {
+            message: format!("命令模板解析失败: {}", e),
+        })?;
 
         let mut device_commands = Vec::new();
 
@@ -358,31 +325,22 @@ impl TemplateEngine {
             .template_repository
             .find_by_id(template_id)
             .await?
-            .ok_or_else(|| TemplateError::TemplateNotFound {
-                id: template_id.to_string(),
-            })?;
+            .ok_or_else(|| TemplateError::TemplateNotFound { id: template_id.to_string() })?;
 
         // 解析设备信息
-        let device_info =
-            template
-                .get_device_info()
-                .map_err(|e| TemplateError::JsonFormatError {
-                    message: format!("设备信息解析失败: {}", e),
-                })?;
+        let device_info = template.get_device_info().map_err(|e| {
+            TemplateError::JsonFormatError { message: format!("设备信息解析失败: {}", e) }
+        })?;
 
         // 解析属性模板
-        let properties = template
-            .get_properties()
-            .map_err(|e| TemplateError::JsonFormatError {
-                message: format!("属性模板解析失败: {}", e),
-            })?;
+        let properties = template.get_properties().map_err(|e| TemplateError::JsonFormatError {
+            message: format!("属性模板解析失败: {}", e),
+        })?;
 
         // 解析命令模板
-        let commands = template
-            .get_commands()
-            .map_err(|e| TemplateError::JsonFormatError {
-                message: format!("命令模板解析失败: {}", e),
-            })?;
+        let commands = template.get_commands().map_err(|e| TemplateError::JsonFormatError {
+            message: format!("命令模板解析失败: {}", e),
+        })?;
 
         let requirements = TemplateRequirements {
             template_id: template_id.to_string(),
@@ -441,14 +399,10 @@ impl TemplateEngine {
             .template_repository
             .find_by_id(template_id)
             .await?
-            .ok_or_else(|| TemplateError::TemplateNotFound {
-                id: template_id.to_string(),
-            })?;
+            .ok_or_else(|| TemplateError::TemplateNotFound { id: template_id.to_string() })?;
 
         // 使用验证器验证单个字段
-        let result = self
-            .validator
-            .validate_field(&template, field_name, field_value);
+        let result = self.validator.validate_field(&template, field_name, field_value);
 
         debug!(
             "单个字段验证完成: 字段={}, 错误数={}, 警告数={}",
@@ -462,9 +416,10 @@ impl TemplateEngine {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
     use crate::dto::entity::device_template::{CommandTemplate, DeviceInfo, PropertyTemplate};
-    use std::collections::HashMap;
 
     fn create_test_template() -> DeviceTemplate {
         let mut template = DeviceTemplate::default();
@@ -535,7 +490,9 @@ mod tests {
             display_name: Some("测试设备".to_string()),
             description: Some("这是一个测试设备".to_string()),
             position: None,
-            address: Some(std::env::var("TEST_DEVICE_ADDRESS").unwrap_or_else(|_| "127.0.0.1".to_string())),
+            address: Some(
+                std::env::var("TEST_DEVICE_ADDRESS").unwrap_or_else(|_| "127.0.0.1".to_string()),
+            ),
             driver_name: Some("".to_string()),
             driver_options: None,
             parent_id: None,

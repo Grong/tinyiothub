@@ -27,9 +27,7 @@ pub struct LogoutRequest {
 }
 
 pub fn create_router() -> Router<AppState> {
-    Router::new()
-        .route("/login", post(login))
-        .route("/logout", post(logout))
+    Router::new().route("/login", post(login)).route("/logout", post(logout))
 }
 
 /// 用户登录
@@ -62,11 +60,7 @@ async fn login(
             if std::env::var("HARMONYOS_MODE").is_err() {
                 // 更新最后登录时间
                 if let Err(e) = User::update_last_logon(state.database(), &user.id).await {
-                    tracing::warn!(
-                        "Failed to update last logon time for user {}: {}",
-                        user.id,
-                        e
-                    );
+                    tracing::warn!("Failed to update last logon time for user {}: {}", user.id, e);
                 }
             } else {
                 tracing::warn!(

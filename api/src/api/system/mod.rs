@@ -1,5 +1,6 @@
-use crate::shared::app_state::AppState;
 use axum::Router;
+
+use crate::shared::app_state::AppState;
 
 mod configuration;
 pub mod features; // 公开features模块

@@ -65,10 +65,7 @@ where
         };
 
         if total_page == 0 {
-            return DataObjectWithPagination::<T> {
-                pagination,
-                data: data[0..0].to_vec(),
-            };
+            return DataObjectWithPagination::<T> { pagination, data: data[0..0].to_vec() };
         }
 
         let start = ((pagination.page - 1) * pagination.page_size) as usize;
@@ -78,20 +75,12 @@ where
             end = total_count;
         }
 
-        DataObjectWithPagination::<T> {
-            pagination,
-            data: data[start..end].to_vec(),
-        }
+        DataObjectWithPagination::<T> { pagination, data: data[start..end].to_vec() }
     }
 
     pub fn default(page: u32, page_size: u32) -> Self {
         DataObjectWithPagination::<T> {
-            pagination: Pagination {
-                page,
-                page_size,
-                total_pages: 0,
-                total_count: 0,
-            },
+            pagination: Pagination { page, page_size, total_pages: 0, total_count: 0 },
             data: Vec::new(),
         }
     }

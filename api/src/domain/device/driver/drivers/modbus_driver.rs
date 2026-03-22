@@ -10,11 +10,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone, tinyiothub_derive::DeviceDriver)]
-#[driver(
-    name = "ModbusDriver",
-    version = "1.0.0",
-    description = "Modbus RTU/TCP Driver"
-)]
+#[driver(name = "ModbusDriver", version = "1.0.0", description = "Modbus RTU/TCP Driver")]
 #[driver_option(
     label = "Refresh Interval (ms)",
     name = "interval",
@@ -86,10 +82,7 @@ impl ModbusDriver {
             device.display_name.as_deref().unwrap_or(&device.name)
         );
 
-        Self {
-            device,
-            retry_count: 0,
-        }
+        Self { device, retry_count: 0 }
     }
 
     /// 创建串口连接
@@ -105,11 +98,7 @@ impl ModbusDriver {
             .open()
             .map_err(|e| Error::IOError(format!("Serial port error {}: {:?}", port, e)))?;
 
-        tracing::debug!(
-            "Successfully opened serial port: {} at {} baud",
-            port,
-            baud_rate
-        );
+        tracing::debug!("Successfully opened serial port: {} at {} baud", port, baud_rate);
         tracing::info!("Device {} connected via Modbus", self.device.id);
 
         Ok(connection)
@@ -135,10 +124,7 @@ impl DeviceDriver for ModbusDriver {
         let start_time = std::time::Instant::now();
         tracing::debug!(
             "ModbusDriver::read_data called for device: {}",
-            self.device
-                .display_name
-                .as_deref()
-                .unwrap_or(&self.device.name)
+            self.device.display_name.as_deref().unwrap_or(&self.device.name)
         );
 
         // 使用统一的配置管理获取配置参数
@@ -239,20 +225,14 @@ impl DeviceDriver for ModbusDriver {
                     results.push(ResultValue::float("temperature".to_string(), 25.0));
                     results.push(ResultValue::float("humidity".to_string(), 60.0));
                     results.push(ResultValue::boolean("status".to_string(), true));
-                    results.push(ResultValue::integer(
-                        "slave_id".to_string(),
-                        slave_id as i64,
-                    ));
+                    results.push(ResultValue::integer("slave_id".to_string(), slave_id as i64));
                 }
             }
             Err(e) => {
                 tracing::error!("Failed to connect to Modbus device: {}", e);
                 // 连接失败时返回错误状态
                 results.push(ResultValue::boolean("connection_status".to_string(), false));
-                results.push(ResultValue::string(
-                    "error_message".to_string(),
-                    e.to_string(),
-                ));
+                results.push(ResultValue::string("error_message".to_string(), e.to_string()));
             }
         }
 
@@ -260,10 +240,7 @@ impl DeviceDriver for ModbusDriver {
         tracing::debug!(
             "ModbusDriver generated {} values for device: {} in {:?}",
             results.len(),
-            self.device
-                .display_name
-                .as_deref()
-                .unwrap_or(&self.device.name),
+            self.device.display_name.as_deref().unwrap_or(&self.device.name),
             elapsed
         );
 
@@ -271,11 +248,7 @@ impl DeviceDriver for ModbusDriver {
     }
 
     fn execute_command(&mut self, cmd: &DeviceCommand) -> Result<bool, Error> {
-        tracing::info!(
-            "Executing Modbus command: {} on device {}",
-            cmd.name,
-            self.device.name
-        );
+        tracing::info!("Executing Modbus command: {} on device {}", cmd.name, self.device.name);
 
         // 使用配置参数
         let slave_id = self.get_config_integer("slave_id", 1) as u8;

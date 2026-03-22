@@ -154,10 +154,8 @@ pub async fn get_real_time_events(
     match real_time_repo.find_active_events(&filter).await {
         Ok(events) => {
             // Convert domain events to response DTOs
-            let event_responses: Vec<RealTimeEventResponse> = events
-                .into_iter()
-                .map(convert_real_time_event_to_response)
-                .collect();
+            let event_responses: Vec<RealTimeEventResponse> =
+                events.into_iter().map(convert_real_time_event_to_response).collect();
 
             ApiResponseBuilder::success(event_responses)
         }
@@ -256,10 +254,7 @@ pub async fn acknowledge_event(
     let real_time_repo = &state.real_time_event_repository;
 
     // Acknowledge the event
-    match real_time_repo
-        .acknowledge_event(&event_id, &claims.user_id)
-        .await
-    {
+    match real_time_repo.acknowledge_event(&event_id, &claims.user_id).await {
         Ok(_) => {
             tracing::info!("Event {} acknowledged by user {}", event_id, claims.user_id);
             ApiResponseBuilder::success(true)
@@ -355,19 +350,10 @@ mod tests {
 
     #[test]
     fn test_parse_event_level() {
-        assert!(matches!(
-            parse_event_level("debug").unwrap(),
-            EventLevel::Debug
-        ));
+        assert!(matches!(parse_event_level("debug").unwrap(), EventLevel::Debug));
         assert!(matches!(parse_event_level("1").unwrap(), EventLevel::Debug));
-        assert!(matches!(
-            parse_event_level("critical").unwrap(),
-            EventLevel::Critical
-        ));
-        assert!(matches!(
-            parse_event_level("5").unwrap(),
-            EventLevel::Critical
-        ));
+        assert!(matches!(parse_event_level("critical").unwrap(), EventLevel::Critical));
+        assert!(matches!(parse_event_level("5").unwrap(), EventLevel::Critical));
 
         let invalid = parse_event_level("invalid");
         assert!(invalid.is_err());

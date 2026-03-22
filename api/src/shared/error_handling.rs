@@ -1,8 +1,10 @@
 // Unified error handling system for consistent API responses and performance monitoring
-use crate::dto::response::{builder::ApiResponseBuilder, ApiResponse};
-use axum::response::Json;
 use std::time::Instant;
+
+use axum::response::Json;
 use tracing::{error, info, warn};
+
+use crate::dto::response::{builder::ApiResponseBuilder, ApiResponse};
 
 /// Standard error codes for consistent API responses
 #[derive(Debug, Clone, Copy)]
@@ -213,11 +215,7 @@ impl PerformanceMonitor {
                 threshold_ms
             );
         } else {
-            info!(
-                "Operation '{}' completed in {}ms",
-                operation,
-                duration.as_millis()
-            );
+            info!("Operation '{}' completed in {}ms", operation, duration.as_millis());
         }
 
         result
@@ -240,11 +238,7 @@ impl PerformanceMonitor {
                 threshold_ms
             );
         } else {
-            info!(
-                "Operation '{}' completed in {}ms",
-                operation,
-                duration.as_millis()
-            );
+            info!("Operation '{}' completed in {}ms", operation, duration.as_millis());
         }
 
         result

@@ -6,7 +6,8 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    dto::response::ApiResponse, shared::app_state::AppState, shared::security::jwt::Claims,
+    dto::response::ApiResponse,
+    shared::{app_state::AppState, security::jwt::Claims},
 };
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -45,10 +46,7 @@ pub struct MqttConfig {
 pub fn create_router() -> Router<AppState> {
     Router::new()
         .route("/system", get(get_system_config).post(update_system_config))
-        .route(
-            "/network",
-            get(get_network_config).post(update_network_config),
-        )
+        .route("/network", get(get_network_config).post(update_network_config))
         .route("/mqtt", get(get_mqtt_config).post(update_mqtt_config))
         .route("/restart", post(restart_system))
         .route("/shutdown", post(shutdown_system))
@@ -141,11 +139,7 @@ async fn update_mqtt_config(
     Json(config): Json<MqttConfig>,
 ) -> Json<ApiResponse<bool>> {
     // TODO: 保存MQTT配置
-    tracing::info!(
-        "Updating MQTT config: {}:{}",
-        config.broker_host,
-        config.broker_port
-    );
+    tracing::info!("Updating MQTT config: {}:{}", config.broker_host, config.broker_port);
 
     ApiResponse::success(true)
 }

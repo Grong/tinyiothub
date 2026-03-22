@@ -73,9 +73,7 @@ impl From<String> for EventError {
 
 impl From<&str> for EventError {
     fn from(msg: &str) -> Self {
-        EventError::Validation {
-            message: msg.to_string(),
-        }
+        EventError::Validation { message: msg.to_string() }
     }
 }
 

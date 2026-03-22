@@ -174,9 +174,7 @@ impl DeviceCommand {
         query.execute(db.pool()).await?;
 
         // Return the updated command
-        Self::find_by_id(db, id)
-            .await?
-            .ok_or(sqlx::Error::RowNotFound)
+        Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// Delete a device command
@@ -301,9 +299,8 @@ impl DeviceCommand {
 
     /// Get command statistics
     pub async fn get_statistics(db: &Database) -> Result<DeviceCommandStatistics, sqlx::Error> {
-        let total_row = sqlx::query("SELECT COUNT(*) FROM device_commands")
-            .fetch_one(db.pool())
-            .await?;
+        let total_row =
+            sqlx::query("SELECT COUNT(*) FROM device_commands").fetch_one(db.pool()).await?;
 
         let devices_with_commands_row =
             sqlx::query("SELECT COUNT(DISTINCT device_id) FROM device_commands")

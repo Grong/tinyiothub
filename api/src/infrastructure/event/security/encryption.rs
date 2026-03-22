@@ -1,7 +1,8 @@
 // Event content encryption for sensitive data
 // Provides AES-256-GCM encryption for sensitive event content
 
-use crate::domain::event::{value_objects::RichContent, EventError, Result};
+use std::collections::HashSet;
+
 use aes_gcm::{
     aead::{Aead, KeyInit, OsRng},
     Aes256Gcm, Key, Nonce,
@@ -9,7 +10,8 @@ use aes_gcm::{
 use base64::{engine::general_purpose, Engine as _};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+
+use crate::domain::event::{value_objects::RichContent, EventError, Result};
 
 /// Event content encryption service
 #[async_trait::async_trait]
@@ -227,9 +229,7 @@ impl EventEncryption for AesEventEncryption {
             .map_err(|e| EventError::Configuration(format!("Invalid nonce: {}", e)))?;
 
         if nonce_bytes.len() != 12 {
-            return Err(EventError::Configuration(
-                "Invalid nonce length".to_string(),
-            ));
+            return Err(EventError::Configuration("Invalid nonce length".to_string()));
         }
 
         let nonce = Nonce::from_slice(&nonce_bytes);

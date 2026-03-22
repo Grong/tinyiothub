@@ -10,10 +10,7 @@ pub fn escape_sql_string(input: &str) -> String {
 
 /// 构建安全的 LIKE 查询模式（转义特殊字符）
 pub fn escape_like_pattern(input: &str) -> String {
-    input
-        .replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_")
+    input.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
 }
 
 /// 验证字符串是否可以安全地用于标识符（表名、列名等）
@@ -25,7 +22,7 @@ pub fn is_safe_identifier(name: &str) -> bool {
 }
 
 /// SQL 查询构建辅助 - 用于构建参数化查询
-/// 
+///
 /// # 示例
 /// ```
 /// let query = build_where_clause(vec![
@@ -61,11 +58,7 @@ pub fn build_pagination(page: Option<u32>, page_size: Option<u32>) -> (String, u
     let page_size = page_size.unwrap_or(20).min(100);
     let offset = (page - 1) * page_size;
 
-    (
-        format!("LIMIT {} OFFSET {}", page_size, offset),
-        page,
-        page_size,
-    )
+    (format!("LIMIT {} OFFSET {}", page_size, offset), page, page_size)
 }
 
 #[cfg(test)]

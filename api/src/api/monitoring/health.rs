@@ -26,9 +26,7 @@ pub struct DetailedHealthStatus {
 }
 
 pub fn create_router() -> Router<AppState> {
-    Router::new()
-        .route("/", get(get_health))
-        .route("/detailed", get(get_detailed_health))
+    Router::new().route("/", get(get_health)).route("/detailed", get(get_detailed_health))
 }
 
 /// 基础健康检查

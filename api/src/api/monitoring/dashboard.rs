@@ -41,10 +41,8 @@ pub async fn get_dashboard_stats(
     let today_messages = get_today_messages_count(&db).await.unwrap_or(0);
 
     // 获取月度增长数据
-    let monthly_growth = get_monthly_growth(&db).await.unwrap_or(MonthlyGrowth {
-        devices: 0,
-        messages: 0,
-    });
+    let monthly_growth =
+        get_monthly_growth(&db).await.unwrap_or(MonthlyGrowth { devices: 0, messages: 0 });
 
     let stats = DashboardStats {
         total_devices,
@@ -85,9 +83,8 @@ pub async fn get_dashboard_metrics(
 
 /// 获取设备总数
 async fn get_total_devices_count(db: &Database) -> Result<i64, sqlx::Error> {
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM devices")
-        .fetch_one(db.pool())
-        .await?;
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM devices").fetch_one(db.pool()).await?;
 
     Ok(count)
 }
@@ -142,10 +139,7 @@ async fn get_today_messages_count(_db: &Database) -> Result<i64, sqlx::Error> {
 async fn get_monthly_growth(_db: &Database) -> Result<MonthlyGrowth, sqlx::Error> {
     // 这里应该计算本月相比上月的增长
     // 目前返回模拟数据
-    Ok(MonthlyGrowth {
-        devices: 12,
-        messages: 350,
-    })
+    Ok(MonthlyGrowth { devices: 12, messages: 350 })
 }
 
 /// 获取 CPU 使用率

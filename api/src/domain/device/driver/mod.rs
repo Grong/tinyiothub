@@ -1,22 +1,18 @@
 use std::sync::Arc;
 
-use crate::application::data_context::DataContext;
-use crate::dto::entity::Device;
-use crate::shared::error::Error;
-
 pub use driver::{DeviceDriver, DriverWrapper, ResultValue};
-pub use status::DeviceOverview;
-
 pub use drivers::{snmp_driver::SnmpDriver, ModbusDriver, SimulatedDriver};
-
+pub use status::DeviceOverview;
 // 重新导出SDK类型以保持向后兼容
 pub use tinyiothub_driver_sdk::{ComponentInfo, ComponentOption, CreateComponentRequest};
 
+use crate::{application::data_context::DataContext, dto::entity::Device, shared::error::Error};
+
 pub mod driver;
 pub mod drivers;
+pub mod dynamic;
 pub mod retry;
 pub mod status;
-pub mod dynamic;
 
 // 使用宏注册所有驱动
 tinyiothub_derive::register_drivers! {

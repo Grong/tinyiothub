@@ -1,6 +1,7 @@
-use crate::infrastructure::persistence::database::Database;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder, Row};
+
+use crate::infrastructure::persistence::database::Database;
 
 /// User-Role association entity - 用户角色关联实体
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -144,10 +145,7 @@ impl UserRole {
         // Filter expired roles if not explicitly included
         if !query.include_expired.unwrap_or(false) {
             let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-            sql_query
-                .push(" AND (expires_at IS NULL OR expires_at > ")
-                .push_bind(now)
-                .push(")");
+            sql_query.push(" AND (expires_at IS NULL OR expires_at > ").push_bind(now).push(")");
         }
 
         sql_query.push(" ORDER BY assigned_at DESC");
@@ -159,10 +157,7 @@ impl UserRole {
             sql_query.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let user_roles = sql_query
-            .build_query_as::<UserRole>()
-            .fetch_all(db.pool())
-            .await?;
+        let user_roles = sql_query.build_query_as::<UserRole>().fetch_all(db.pool()).await?;
 
         Ok(user_roles)
     }
@@ -233,9 +228,7 @@ impl UserRole {
         }
 
         if !has_updates {
-            return Self::find_by_id(db, id)
-                .await?
-                .ok_or(sqlx::Error::RowNotFound);
+            return Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound);
         }
 
         query.push(" WHERE id = ").push_bind(id);
@@ -248,17 +241,13 @@ impl UserRole {
 
         tx.commit().await?;
 
-        Self::find_by_id(db, id)
-            .await?
-            .ok_or(sqlx::Error::RowNotFound)
+        Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// Delete user-role association
     pub async fn delete(db: &Database, id: &str) -> Result<u64, sqlx::Error> {
-        let result = sqlx::query("DELETE FROM user_roles WHERE id = ?")
-            .bind(id)
-            .execute(db.pool())
-            .await?;
+        let result =
+            sqlx::query("DELETE FROM user_roles WHERE id = ?").bind(id).execute(db.pool()).await?;
 
         Ok(result.rows_affected())
     }
@@ -452,10 +441,7 @@ impl UserRole {
 
         if !query.include_expired.unwrap_or(false) {
             let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-            sql_query
-                .push(" AND (expires_at IS NULL OR expires_at > ")
-                .push_bind(now)
-                .push(")");
+            sql_query.push(" AND (expires_at IS NULL OR expires_at > ").push_bind(now).push(")");
         }
 
         let row = sql_query.build().fetch_one(db.pool()).await?;
@@ -557,12 +543,7 @@ impl UserRole {
 impl UserWithRoles {
     /// Create a new user with roles
     pub fn new(user_id: String, user_name: String, user_email: Option<String>) -> Self {
-        Self {
-            user_id,
-            user_name,
-            user_email,
-            roles: Vec::new(),
-        }
+        Self { user_id, user_name, user_email, roles: Vec::new() }
     }
 
     /// Add a role to the user
@@ -613,14 +594,7 @@ impl RoleInfo {
         assigned_at: String,
         expires_at: Option<String>,
     ) -> Self {
-        Self {
-            role_id,
-            role_name,
-            role_description,
-            is_administrator,
-            assigned_at,
-            expires_at,
-        }
+        Self { role_id, role_name, role_description, is_administrator, assigned_at, expires_at }
     }
 
     /// Check if role is expired

@@ -1,5 +1,4 @@
 pub use modbus_driver::ModbusDriver;
-
 pub use simulated_driver::SimulatedDriver;
 
 pub mod modbus_driver;

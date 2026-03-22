@@ -2,9 +2,12 @@
 //!
 //! 提供与Linux版本兼容的网络接口，但使用鸿蒙系统的网络API
 
-use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr};
-use std::sync::Mutex;
+use std::{
+    collections::HashMap,
+    net::{IpAddr, Ipv4Addr},
+    sync::Mutex,
+};
+
 use tracing::{debug, info};
 
 /// 网络接口信息
@@ -26,9 +29,7 @@ pub struct HarmonyNetworkManager {
 impl HarmonyNetworkManager {
     /// 创建新的网络管理器
     pub fn new() -> Self {
-        Self {
-            interfaces: Mutex::new(HashMap::new()),
-        }
+        Self { interfaces: Mutex::new(HashMap::new()) }
     }
 
     /// 获取所有网络接口
@@ -60,10 +61,7 @@ impl HarmonyNetworkManager {
         ip: IpAddr,
         netmask: IpAddr,
     ) -> Result<(), std::io::Error> {
-        info!(
-            "Setting IP address for interface '{}' to {} on HarmonyOS",
-            name, ip
-        );
+        info!("Setting IP address for interface '{}' to {} on HarmonyOS", name, ip);
 
         // TODO: 实现鸿蒙系统的IP地址设置逻辑
 
@@ -135,10 +133,7 @@ impl HarmonyNetworkManager {
 
     /// Ping测试
     pub fn ping(&self, host: &str, timeout_secs: u64) -> Result<bool, std::io::Error> {
-        debug!(
-            "Pinging {} with timeout {}s on HarmonyOS",
-            host, timeout_secs
-        );
+        debug!("Pinging {} with timeout {}s on HarmonyOS", host, timeout_secs);
 
         // TODO: 实现鸿蒙系统的ping逻辑
 
@@ -147,10 +142,7 @@ impl HarmonyNetworkManager {
 
     /// 获取网络统计信息
     pub fn get_network_stats(&self, interface: &str) -> Result<NetworkStats, std::io::Error> {
-        debug!(
-            "Getting network stats for interface '{}' on HarmonyOS",
-            interface
-        );
+        debug!("Getting network stats for interface '{}' on HarmonyOS", interface);
 
         // TODO: 实现鸿蒙系统的网络统计获取逻辑
 

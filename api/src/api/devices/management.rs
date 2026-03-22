@@ -8,17 +8,18 @@ use serde::Deserialize;
 use crate::{
     domain::device::service::DeviceService,
     dto::{
-        entity::device::{CreateDeviceRequest, Device, DeviceQueryParams, UpdateDeviceRequest},
-        entity::device_template::{
-            CreateDeviceFromTemplateRequest, DeviceCreationInput, DevicePreview,
-            TemplateRequirements,
+        entity::{
+            device::{CreateDeviceRequest, Device, DeviceQueryParams, UpdateDeviceRequest},
+            device_template::{
+                CreateDeviceFromTemplateRequest, DeviceCreationInput, DevicePreview,
+                TemplateRequirements,
+            },
+            template_error::ValidationResult,
         },
-        entity::template_error::ValidationResult,
         request::pagination::PaginationQuery,
         response::{builder::ApiResponseBuilder, ApiResponse},
     },
-    shared::app_state::AppState,
-    shared::security::jwt::Claims,
+    shared::{app_state::AppState, security::jwt::Claims},
 };
 
 #[derive(Deserialize)]
@@ -164,10 +165,8 @@ async fn create_device(
     };
 
     // 使用DeviceService创建设备，传入event_bus以触发事件
-    let device_service = DeviceService::with_event_bus(
-        state.database.clone(),
-        state.event_bus.clone(),
-    );
+    let device_service =
+        DeviceService::with_event_bus(state.database.clone(), state.event_bus.clone());
 
     match device_service.create_device(&request).await {
         Ok(created_device) => ApiResponseBuilder::success(created_device),
@@ -256,10 +255,8 @@ async fn update_device(
     };
 
     // 使用DeviceService更新设备，传入event_bus以触发事件
-    let device_service = DeviceService::with_event_bus(
-        state.database.clone(),
-        state.event_bus.clone(),
-    );
+    let device_service =
+        DeviceService::with_event_bus(state.database.clone(), state.event_bus.clone());
 
     match device_service.update_device(&id, &update_request).await {
         Ok(updated_device) => ApiResponseBuilder::success(updated_device),
@@ -281,10 +278,8 @@ async fn delete_device(
     _claims: Claims,
 ) -> Json<ApiResponse<bool>> {
     // 使用DeviceService删除设备，传入event_bus以触发事件
-    let device_service = DeviceService::with_event_bus(
-        state.database.clone(),
-        state.event_bus.clone(),
-    );
+    let device_service =
+        DeviceService::with_event_bus(state.database.clone(), state.event_bus.clone());
 
     match device_service.delete_device(&id).await {
         Ok(success) => {
@@ -356,17 +351,11 @@ async fn create_device_from_template(
     Json(req): Json<CreateDeviceFromTemplateRequest>,
 ) -> Json<ApiResponse<Device>> {
     // 使用 DeviceService 创建设备（包含所有业务逻辑）
-    let device_service = DeviceService::with_event_bus(
-        state.database.clone(),
-        state.event_bus.clone(),
-    );
+    let device_service =
+        DeviceService::with_event_bus(state.database.clone(), state.event_bus.clone());
 
     match device_service
-        .create_device_from_template(
-            state.template_engine(),
-            &req.template_id,
-            &req.device_input,
-        )
+        .create_device_from_template(state.template_engine(), &req.template_id, &req.device_input)
         .await
     {
         Ok(device) => ApiResponseBuilder::success(device),
@@ -390,11 +379,7 @@ async fn preview_device_from_template(
         device_input.name
     );
 
-    match state
-        .template_engine()
-        .preview_template(&template_id, &device_input)
-        .await
-    {
+    match state.template_engine().preview_template(&template_id, &device_input).await {
         Ok(preview) => {
             tracing::debug!(
                 "Device preview generated: properties={}, commands={}, warnings={}",
@@ -405,11 +390,7 @@ async fn preview_device_from_template(
             ApiResponseBuilder::success(preview)
         }
         Err(e) => {
-            tracing::error!(
-                "Failed to preview device from template {}: {}",
-                template_id,
-                e
-            );
+            tracing::error!("Failed to preview device from template {}: {}", template_id, e);
             ApiResponseBuilder::error(format!("设备预览失败: {}", e))
         }
     }
@@ -428,11 +409,7 @@ async fn validate_device_input(
         device_input.name
     );
 
-    match state
-        .template_engine()
-        .validate_user_input(&template_id, &device_input)
-        .await
-    {
+    match state.template_engine().validate_user_input(&template_id, &device_input).await {
         Ok(validation_result) => {
             tracing::debug!(
                 "Device input validation completed: errors={}, warnings={}",
@@ -442,11 +419,7 @@ async fn validate_device_input(
             ApiResponseBuilder::success(validation_result)
         }
         Err(e) => {
-            tracing::error!(
-                "Failed to validate device input for template {}: {}",
-                template_id,
-                e
-            );
+            tracing::error!("Failed to validate device input for template {}: {}", template_id, e);
             ApiResponseBuilder::error(format!("输入验证失败: {}", e))
         }
     }
@@ -458,16 +431,9 @@ async fn get_template_requirements(
     Path(template_id): Path<String>,
     _claims: Claims,
 ) -> Json<ApiResponse<TemplateRequirements>> {
-    tracing::info!(
-        "Getting template requirements for wizard: template_id={}",
-        template_id
-    );
+    tracing::info!("Getting template requirements for wizard: template_id={}", template_id);
 
-    match state
-        .template_engine()
-        .get_template_requirements(&template_id)
-        .await
-    {
+    match state.template_engine().get_template_requirements(&template_id).await {
         Ok(requirements) => {
             tracing::debug!(
                 "Template requirements retrieved: required_fields={}, properties={}, commands={}",
@@ -478,11 +444,7 @@ async fn get_template_requirements(
             ApiResponseBuilder::success(requirements)
         }
         Err(e) => {
-            tracing::error!(
-                "Failed to get template requirements for {}: {}",
-                template_id,
-                e
-            );
+            tracing::error!("Failed to get template requirements for {}: {}", template_id, e);
             ApiResponseBuilder::error(format!("获取模板需求失败: {}", e))
         }
     }
@@ -531,27 +493,12 @@ async fn validate_single_field(
 pub fn create_router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_devices).post(create_device))
-        .route(
-            "/:id",
-            get(get_device).put(update_device).delete(delete_device),
-        )
+        .route("/:id", get(get_device).put(update_device).delete(delete_device))
         .route("/:id/enable", post(enable_device))
         .route("/:id/disable", post(disable_device))
         .route("/from-template", post(create_device_from_template))
-        .route(
-            "/from-template/:template_id/preview",
-            post(preview_device_from_template),
-        )
-        .route(
-            "/from-template/:template_id/validate",
-            post(validate_device_input),
-        )
-        .route(
-            "/from-template/:template_id/requirements",
-            get(get_template_requirements),
-        )
-        .route(
-            "/from-template/:template_id/validate-field",
-            post(validate_single_field),
-        )
+        .route("/from-template/:template_id/preview", post(preview_device_from_template))
+        .route("/from-template/:template_id/validate", post(validate_device_input))
+        .route("/from-template/:template_id/requirements", get(get_template_requirements))
+        .route("/from-template/:template_id/validate-field", post(validate_single_field))
 }

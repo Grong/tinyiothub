@@ -11,10 +11,6 @@ pub struct Acknowledgement {
 
 impl Acknowledgement {
     pub fn new(user_id: String, note: Option<String>) -> Self {
-        Self {
-            acknowledged_by: user_id,
-            acknowledged_at: Utc::now(),
-            note,
-        }
+        Self { acknowledged_by: user_id, acknowledged_at: Utc::now(), note }
     }
 }

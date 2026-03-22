@@ -1,8 +1,11 @@
-use crate::domain::event::{
-    entities::Event, repositories::RealTimeEventRepository, value_objects::EventLevel,
-};
-use crate::infrastructure::event::EventHandler;
 use std::sync::Arc;
+
+use crate::{
+    domain::event::{
+        entities::Event, repositories::RealTimeEventRepository, value_objects::EventLevel,
+    },
+    infrastructure::event::EventHandler,
+};
 
 /// 实时状态处理器
 ///
@@ -38,10 +41,7 @@ impl EventHandler for RealTimeStatusHandler {
 
     fn should_handle(&self, event: &Event) -> bool {
         // 只处理 Warning 及以上级别
-        matches!(
-            event.level(),
-            EventLevel::Warning | EventLevel::Error | EventLevel::Critical
-        )
+        matches!(event.level(), EventLevel::Warning | EventLevel::Error | EventLevel::Critical)
     }
 
     fn priority(&self) -> u8 {

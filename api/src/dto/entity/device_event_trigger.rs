@@ -103,11 +103,7 @@ impl DeviceEventTrigger {
     ) -> Result<DeviceEventTrigger, sqlx::Error> {
         let id = uuid::Uuid::new_v4().to_string();
         let created_at = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        let is_enable = if request.is_enable.unwrap_or(true) {
-            1
-        } else {
-            0
-        };
+        let is_enable = if request.is_enable.unwrap_or(true) { 1 } else { 0 };
 
         // Use transaction for data consistency
         let mut tx = db.pool().begin().await?;
@@ -132,9 +128,7 @@ impl DeviceEventTrigger {
         tx.commit().await?;
 
         // Return the created trigger
-        Self::find_by_id(db, &id)
-            .await?
-            .ok_or_else(|| sqlx::Error::RowNotFound)
+        Self::find_by_id(db, &id).await?.ok_or_else(|| sqlx::Error::RowNotFound)
     }
 
     /// Update a device event trigger
@@ -191,9 +185,7 @@ impl DeviceEventTrigger {
             if has_updates {
                 query_builder.push(", ");
             }
-            query_builder
-                .push("action_level = ")
-                .push_bind(action_level);
+            query_builder.push("action_level = ").push_bind(action_level);
             has_updates = true;
         }
 
@@ -208,9 +200,7 @@ impl DeviceEventTrigger {
         tx.commit().await?;
 
         // Return the updated trigger
-        Self::find_by_id(db, id)
-            .await?
-            .ok_or_else(|| sqlx::Error::RowNotFound)
+        Self::find_by_id(db, id).await?.ok_or_else(|| sqlx::Error::RowNotFound)
     }
 
     /// Delete a device event trigger
@@ -236,9 +226,7 @@ impl DeviceEventTrigger {
         );
 
         if let Some(action_type) = params.action_type {
-            query_builder
-                .push(" AND action_type = ")
-                .push_bind(action_type);
+            query_builder.push(" AND action_type = ").push_bind(action_type);
         }
 
         if let Some(target_id) = &params.target_id {
@@ -247,15 +235,11 @@ impl DeviceEventTrigger {
 
         if let Some(is_enable) = params.is_enable {
             let enable_value = if is_enable { 1 } else { 0 };
-            query_builder
-                .push(" AND is_enable = ")
-                .push_bind(enable_value);
+            query_builder.push(" AND is_enable = ").push_bind(enable_value);
         }
 
         if let Some(action_level) = params.action_level {
-            query_builder
-                .push(" AND action_level = ")
-                .push_bind(action_level);
+            query_builder.push(" AND action_level = ").push_bind(action_level);
         }
 
         query_builder.push(" ORDER BY created_at DESC");
@@ -267,10 +251,8 @@ impl DeviceEventTrigger {
             query_builder.push(" OFFSET ").push_bind(offset);
         }
 
-        let triggers = query_builder
-            .build_query_as::<DeviceEventTrigger>()
-            .fetch_all(db.pool())
-            .await?;
+        let triggers =
+            query_builder.build_query_as::<DeviceEventTrigger>().fetch_all(db.pool()).await?;
 
         Ok(triggers)
     }
@@ -284,9 +266,7 @@ impl DeviceEventTrigger {
             QueryBuilder::<Sqlite>::new("SELECT COUNT(*) FROM DeviceEventTriggers WHERE 1=1");
 
         if let Some(action_type) = params.action_type {
-            query_builder
-                .push(" AND action_type = ")
-                .push_bind(action_type);
+            query_builder.push(" AND action_type = ").push_bind(action_type);
         }
 
         if let Some(target_id) = &params.target_id {
@@ -295,15 +275,11 @@ impl DeviceEventTrigger {
 
         if let Some(is_enable) = params.is_enable {
             let enable_value = if is_enable { 1 } else { 0 };
-            query_builder
-                .push(" AND is_enable = ")
-                .push_bind(enable_value);
+            query_builder.push(" AND is_enable = ").push_bind(enable_value);
         }
 
         if let Some(action_level) = params.action_level {
-            query_builder
-                .push(" AND action_level = ")
-                .push_bind(action_level);
+            query_builder.push(" AND action_level = ").push_bind(action_level);
         }
 
         let row = query_builder.build().fetch_one(db.pool()).await?;
@@ -383,9 +359,7 @@ impl DeviceEventTrigger {
 
         tx.commit().await?;
 
-        Self::find_by_id(db, id)
-            .await?
-            .ok_or_else(|| sqlx::Error::RowNotFound)
+        Self::find_by_id(db, id).await?.ok_or_else(|| sqlx::Error::RowNotFound)
     }
 
     /// Batch enable/disable triggers
@@ -432,9 +406,8 @@ impl DeviceEventTrigger {
     pub async fn get_statistics(
         db: &Database,
     ) -> Result<DeviceEventTriggerStatistics, sqlx::Error> {
-        let total_row = sqlx::query("SELECT COUNT(*) FROM DeviceEventTriggers")
-            .fetch_one(db.pool())
-            .await?;
+        let total_row =
+            sqlx::query("SELECT COUNT(*) FROM DeviceEventTriggers").fetch_one(db.pool()).await?;
 
         let enabled_row =
             sqlx::query("SELECT COUNT(*) FROM DeviceEventTriggers WHERE is_enable = 1")
@@ -488,9 +461,7 @@ impl DeviceEventTrigger {
         );
 
         if let Some(action_type) = params.action_type {
-            query_builder
-                .push(" AND action_type = ")
-                .push_bind(action_type);
+            query_builder.push(" AND action_type = ").push_bind(action_type);
         }
 
         if let Some(target_id) = &params.target_id {
@@ -499,15 +470,11 @@ impl DeviceEventTrigger {
 
         if let Some(is_enable) = params.is_enable {
             let enable_value = if is_enable { 1 } else { 0 };
-            query_builder
-                .push(" AND is_enable = ")
-                .push_bind(enable_value);
+            query_builder.push(" AND is_enable = ").push_bind(enable_value);
         }
 
         if let Some(action_level) = params.action_level {
-            query_builder
-                .push(" AND action_level = ")
-                .push_bind(action_level);
+            query_builder.push(" AND action_level = ").push_bind(action_level);
         }
 
         // Add sorting
@@ -533,10 +500,8 @@ impl DeviceEventTrigger {
             query_builder.push(" OFFSET ").push_bind(offset);
         }
 
-        let triggers = query_builder
-            .build_query_as::<DeviceEventTrigger>()
-            .fetch_all(db.pool())
-            .await?;
+        let triggers =
+            query_builder.build_query_as::<DeviceEventTrigger>().fetch_all(db.pool()).await?;
 
         Ok((triggers, total_count))
     }
@@ -625,8 +590,7 @@ impl DeviceEventTrigger {
     /// Validate trigger configuration
     pub fn validate(&self) -> Result<(), String> {
         // Validate trigger JSON
-        self.parse_trigger_conditions()
-            .map_err(|e| format!("Invalid trigger JSON: {}", e))?;
+        self.parse_trigger_conditions().map_err(|e| format!("Invalid trigger JSON: {}", e))?;
 
         // Validate args JSON if present
         if let Err(e) = self.parse_action_args() {

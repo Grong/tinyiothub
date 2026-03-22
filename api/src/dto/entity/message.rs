@@ -1,6 +1,7 @@
-use crate::infrastructure::persistence::database::Database;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder, Row};
+
+use crate::infrastructure::persistence::database::Database;
 
 /// Message entity for system messages, events, and alarms
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -117,9 +118,7 @@ impl Message {
         .await?;
 
         // Return the created message
-        Message::find_by_id(db, &id)
-            .await?
-            .ok_or_else(|| sqlx::Error::RowNotFound)
+        Message::find_by_id(db, &id).await?.ok_or_else(|| sqlx::Error::RowNotFound)
     }
 
     /// Update a message
@@ -220,17 +219,13 @@ impl Message {
         query.build().execute(db.pool()).await?;
 
         // Return the updated message
-        Message::find_by_id(db, id)
-            .await?
-            .ok_or_else(|| sqlx::Error::RowNotFound)
+        Message::find_by_id(db, id).await?.ok_or_else(|| sqlx::Error::RowNotFound)
     }
 
     /// Delete a message
     pub async fn delete(db: &Database, id: &str) -> Result<u64, sqlx::Error> {
-        let result = sqlx::query("DELETE FROM Messages WHERE id = ?")
-            .bind(id)
-            .execute(db.pool())
-            .await?;
+        let result =
+            sqlx::query("DELETE FROM Messages WHERE id = ?").bind(id).execute(db.pool()).await?;
 
         Ok(result.rows_affected())
     }
@@ -265,9 +260,7 @@ impl Message {
         }
 
         if let Some(start_date) = &params.start_date {
-            query
-                .push(" AND create_date_time >= ")
-                .push_bind(start_date);
+            query.push(" AND create_date_time >= ").push_bind(start_date);
         }
 
         if let Some(end_date) = &params.end_date {
@@ -286,10 +279,7 @@ impl Message {
             query.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let messages = query
-            .build_query_as::<Message>()
-            .fetch_all(db.pool())
-            .await?;
+        let messages = query.build_query_as::<Message>().fetch_all(db.pool()).await?;
 
         Ok(messages)
     }
@@ -311,9 +301,7 @@ impl Message {
         }
 
         if let Some(start_date) = &params.start_date {
-            query
-                .push(" AND create_date_time >= ")
-                .push_bind(start_date);
+            query.push(" AND create_date_time >= ").push_bind(start_date);
         }
 
         if let Some(end_date) = &params.end_date {

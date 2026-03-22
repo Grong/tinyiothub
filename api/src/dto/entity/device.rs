@@ -1,6 +1,7 @@
-use crate::infrastructure::persistence::database::Database;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder, Row};
+
+use crate::infrastructure::persistence::database::Database;
 
 /// 设备实体 - 使用 snake_case 数据库字段
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -205,9 +206,7 @@ impl Device {
         tx.commit().await?;
 
         // 返回创建的设备
-        Self::find_by_id(db, &id)
-            .await?
-            .ok_or(sqlx::Error::RowNotFound)
+        Self::find_by_id(db, &id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 更新设备信息
@@ -350,9 +349,7 @@ impl Device {
         }
 
         if !has_updates {
-            return Self::find_by_id(db, id)
-                .await?
-                .ok_or(sqlx::Error::RowNotFound);
+            return Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound);
         }
 
         // 总是更新 updated_at
@@ -365,17 +362,13 @@ impl Device {
             return Err(sqlx::Error::RowNotFound);
         }
 
-        Self::find_by_id(db, id)
-            .await?
-            .ok_or(sqlx::Error::RowNotFound)
+        Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 删除设备
     pub async fn delete(db: &Database, id: &str) -> Result<u64, sqlx::Error> {
-        let result = sqlx::query("DELETE FROM devices WHERE id = ?")
-            .bind(id)
-            .execute(db.pool())
-            .await?;
+        let result =
+            sqlx::query("DELETE FROM devices WHERE id = ?").bind(id).execute(db.pool()).await?;
 
         Ok(result.rows_affected())
     }
@@ -421,15 +414,11 @@ impl Device {
 
         // 动态添加查询条件
         if let Some(name) = &params.name {
-            query
-                .push(" AND name LIKE ")
-                .push_bind(format!("%{}%", name));
+            query.push(" AND name LIKE ").push_bind(format!("%{}%", name));
         }
 
         if let Some(display_name) = &params.display_name {
-            query
-                .push(" AND display_name LIKE ")
-                .push_bind(format!("%{}%", display_name));
+            query.push(" AND display_name LIKE ").push_bind(format!("%{}%", display_name));
         }
 
         if let Some(device_type) = &params.device_type {
@@ -437,9 +426,7 @@ impl Device {
         }
 
         if let Some(address) = &params.address {
-            query
-                .push(" AND address LIKE ")
-                .push_bind(format!("%{}%", address));
+            query.push(" AND address LIKE ").push_bind(format!("%{}%", address));
         }
 
         if let Some(driver_name) = &params.driver_name {
@@ -468,10 +455,7 @@ impl Device {
             query.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let devices = query
-            .build_query_as::<Device>()
-            .fetch_all(db.pool())
-            .await?;
+        let devices = query.build_query_as::<Device>().fetch_all(db.pool()).await?;
 
         Ok(devices)
     }
@@ -481,15 +465,11 @@ impl Device {
         let mut query = QueryBuilder::new("SELECT COUNT(*) as count FROM devices WHERE 1=1");
 
         if let Some(name) = &params.name {
-            query
-                .push(" AND name LIKE ")
-                .push_bind(format!("%{}%", name));
+            query.push(" AND name LIKE ").push_bind(format!("%{}%", name));
         }
 
         if let Some(display_name) = &params.display_name {
-            query
-                .push(" AND display_name LIKE ")
-                .push_bind(format!("%{}%", display_name));
+            query.push(" AND display_name LIKE ").push_bind(format!("%{}%", display_name));
         }
 
         if let Some(device_type) = &params.device_type {
@@ -497,9 +477,7 @@ impl Device {
         }
 
         if let Some(address) = &params.address {
-            query
-                .push(" AND address LIKE ")
-                .push_bind(format!("%{}%", address));
+            query.push(" AND address LIKE ").push_bind(format!("%{}%", address));
         }
 
         if let Some(driver_name) = &params.driver_name {
@@ -662,10 +640,7 @@ impl Device {
         }
         separated.push_unseparated(")");
 
-        let devices = query
-            .build_query_as::<Device>()
-            .fetch_all(db.pool())
-            .await?;
+        let devices = query.build_query_as::<Device>().fetch_all(db.pool()).await?;
 
         Ok(devices)
     }
@@ -838,10 +813,7 @@ impl Device {
 
         query.push(" ORDER BY name");
 
-        let devices = query
-            .build_query_as::<Device>()
-            .fetch_all(db.pool())
-            .await?;
+        let devices = query.build_query_as::<Device>().fetch_all(db.pool()).await?;
 
         Ok(devices)
     }

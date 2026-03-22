@@ -1,9 +1,15 @@
-use crate::dto::entity::device_template::{DeviceTemplate, TemplateQueryParams};
-use crate::dto::entity::template_error::TemplateError;
-use crate::infrastructure::persistence::database::Database;
-use sqlx::{QueryBuilder, Row};
 use std::sync::Arc;
+
+use sqlx::{QueryBuilder, Row};
 use tracing::{debug, info};
+
+use crate::{
+    dto::entity::{
+        device_template::{DeviceTemplate, TemplateQueryParams},
+        template_error::TemplateError,
+    },
+    infrastructure::persistence::database::Database,
+};
 
 /// 模板搜索服务 - 负责高级搜索和筛选功能
 #[derive(Debug)]
@@ -49,10 +55,8 @@ impl TemplateSearchService {
             query.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let templates = query
-            .build_query_as::<DeviceTemplate>()
-            .fetch_all(self.database.pool())
-            .await?;
+        let templates =
+            query.build_query_as::<DeviceTemplate>().fetch_all(self.database.pool()).await?;
 
         info!("高级搜索找到 {} 个模板", templates.len());
         Ok(templates)
@@ -193,11 +197,7 @@ impl TemplateSearchService {
             .fetch_all(self.database.pool())
             .await?;
 
-        info!(
-            "协议类型 {} 的模板找到 {} 个",
-            protocol_type,
-            templates.len()
-        );
+        info!("协议类型 {} 的模板找到 {} 个", protocol_type, templates.len());
         Ok(templates)
     }
 
@@ -261,9 +261,7 @@ impl TemplateSearchService {
         // 标签筛选
         if !filters.tags.is_empty() {
             for tag in &filters.tags {
-                query
-                    .push(" AND tags LIKE ")
-                    .push_bind(format!("%{}%", tag));
+                query.push(" AND tags LIKE ").push_bind(format!("%{}%", tag));
             }
         }
 
@@ -284,10 +282,8 @@ impl TemplateSearchService {
             }
         }
 
-        let templates = query
-            .build_query_as::<DeviceTemplate>()
-            .fetch_all(self.database.pool())
-            .await?;
+        let templates =
+            query.build_query_as::<DeviceTemplate>().fetch_all(self.database.pool()).await?;
 
         info!("组合筛选找到 {} 个模板", templates.len());
         Ok(templates)
@@ -328,10 +324,8 @@ impl TemplateSearchService {
         .fetch_all(self.database.pool())
         .await?;
 
-        let suggestions: Vec<String> = suggestions
-            .into_iter()
-            .map(|row| row.get::<String, _>("suggestion"))
-            .collect();
+        let suggestions: Vec<String> =
+            suggestions.into_iter().map(|row| row.get::<String, _>("suggestion")).collect();
 
         debug!("找到 {} 个搜索建议", suggestions.len());
         Ok(suggestions)
@@ -363,10 +357,8 @@ impl TemplateSearchService {
         .fetch_all(self.database.pool())
         .await?;
 
-        let keywords: Vec<String> = popular
-            .into_iter()
-            .map(|row| row.get::<String, _>("keyword"))
-            .collect();
+        let keywords: Vec<String> =
+            popular.into_iter().map(|row| row.get::<String, _>("keyword")).collect();
 
         debug!("找到 {} 个热门关键词", keywords.len());
         Ok(keywords)

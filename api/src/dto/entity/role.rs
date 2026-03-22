@@ -1,6 +1,7 @@
-use crate::infrastructure::persistence::database::Database;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder, Row};
+
+use crate::infrastructure::persistence::database::Database;
 
 /// 角色实体 - 使用现代化 SQLx 实现
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -97,9 +98,7 @@ impl Role {
         .await?;
 
         // 返回创建的角色
-        Role::find_by_id(db, &id)
-            .await?
-            .ok_or_else(|| sqlx::Error::RowNotFound)
+        Role::find_by_id(db, &id).await?.ok_or_else(|| sqlx::Error::RowNotFound)
     }
 
     /// 更新角色信息
@@ -131,16 +130,12 @@ impl Role {
             if has_updates {
                 query.push(", ");
             }
-            query
-                .push("is_administrator = ")
-                .push_bind(is_administrator);
+            query.push("is_administrator = ").push_bind(is_administrator);
             has_updates = true;
         }
 
         if !has_updates {
-            return Self::find_by_id(db, id)
-                .await?
-                .ok_or(sqlx::Error::RowNotFound);
+            return Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound);
         }
 
         query.push(" WHERE id = ").push_bind(id);
@@ -151,17 +146,13 @@ impl Role {
             return Err(sqlx::Error::RowNotFound);
         }
 
-        Self::find_by_id(db, id)
-            .await?
-            .ok_or(sqlx::Error::RowNotFound)
+        Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 删除角色
     pub async fn delete(db: &Database, id: &str) -> Result<u64, sqlx::Error> {
-        let result = sqlx::query("DELETE FROM roles WHERE id = ?")
-            .bind(id)
-            .execute(db.pool())
-            .await?;
+        let result =
+            sqlx::query("DELETE FROM roles WHERE id = ?").bind(id).execute(db.pool()).await?;
 
         Ok(result.rows_affected())
     }
@@ -196,21 +187,15 @@ impl Role {
 
         // 动态添加查询条件
         if let Some(name) = &params.name {
-            query
-                .push(" AND name LIKE ")
-                .push_bind(format!("%{}%", name));
+            query.push(" AND name LIKE ").push_bind(format!("%{}%", name));
         }
 
         if let Some(description) = &params.description {
-            query
-                .push(" AND description LIKE ")
-                .push_bind(format!("%{}%", description));
+            query.push(" AND description LIKE ").push_bind(format!("%{}%", description));
         }
 
         if let Some(is_administrator) = params.is_administrator {
-            query
-                .push(" AND is_administrator = ")
-                .push_bind(is_administrator);
+            query.push(" AND is_administrator = ").push_bind(is_administrator);
         }
 
         // 添加排序
@@ -233,21 +218,15 @@ impl Role {
         let mut query = QueryBuilder::new("SELECT COUNT(*) as count FROM roles WHERE 1=1");
 
         if let Some(name) = &params.name {
-            query
-                .push(" AND name LIKE ")
-                .push_bind(format!("%{}%", name));
+            query.push(" AND name LIKE ").push_bind(format!("%{}%", name));
         }
 
         if let Some(description) = &params.description {
-            query
-                .push(" AND description LIKE ")
-                .push_bind(format!("%{}%", description));
+            query.push(" AND description LIKE ").push_bind(format!("%{}%", description));
         }
 
         if let Some(is_administrator) = params.is_administrator {
-            query
-                .push(" AND is_administrator = ")
-                .push_bind(is_administrator);
+            query.push(" AND is_administrator = ").push_bind(is_administrator);
         }
 
         let row = query.build().fetch_one(db.pool()).await?;

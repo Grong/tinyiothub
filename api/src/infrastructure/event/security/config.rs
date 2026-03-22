@@ -1,4 +1,8 @@
 // Event security configuration and factory
+use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
+
 use crate::{
     domain::event::{repositories::EventRepository, EventError, Result},
     infrastructure::event::security::{
@@ -6,8 +10,6 @@ use crate::{
         InMemoryAuditLog, NoOpEncryption, RoleBasedAccessControl, SecureEventService,
     },
 };
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
 /// Event security configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,11 +107,7 @@ impl EventSecurityFactory {
             Arc::new(InMemoryAuditLog::new())
         };
 
-        Ok(SecurityComponents {
-            access_control,
-            encryption,
-            audit_log,
-        })
+        Ok(SecurityComponents { access_control, encryption, audit_log })
     }
 
     /// Create a secure event service with all security components
@@ -217,10 +215,6 @@ impl EventAccessControl for NoOpAccessControl {
         _user_id: &str,
         _resource_type: &str,
     ) -> Result<Vec<String>> {
-        Ok(vec![
-            "read".to_string(),
-            "create".to_string(),
-            "update".to_string(),
-        ])
+        Ok(vec!["read".to_string(), "create".to_string(), "update".to_string()])
     }
 }

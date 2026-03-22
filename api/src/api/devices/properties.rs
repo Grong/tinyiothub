@@ -10,8 +10,7 @@ use crate::{
         entity::device_property::DeviceProperty,
         response::{builder::ApiResponseBuilder, ApiResponse},
     },
-    shared::app_state::AppState,
-    shared::security::jwt::Claims,
+    shared::{app_state::AppState, security::jwt::Claims},
 };
 
 #[derive(Deserialize)]
@@ -23,14 +22,8 @@ pub struct UpdatePropertyValueRequest {
 pub fn create_router() -> Router<AppState> {
     Router::new()
         .route("/:device_id/properties", get(get_device_properties))
-        .route(
-            "/:device_id/properties/:property_id/value",
-            put(update_property_value),
-        )
-        .route(
-            "/by-name/:device_name/properties/:property_name",
-            get(get_device_property_by_name),
-        )
+        .route("/:device_id/properties/:property_id/value", put(update_property_value))
+        .route("/by-name/:device_name/properties/:property_name", get(get_device_property_by_name))
 }
 
 /// 获取设备属性列表
@@ -65,10 +58,7 @@ async fn update_property_value(
     _claims: Claims,
     Json(req): Json<UpdatePropertyValueRequest>,
 ) -> Json<ApiResponse<bool>> {
-    match state
-        .update_device_property_value(&device_id, &property_id, &req.value)
-        .await
-    {
+    match state.update_device_property_value(&device_id, &property_id, &req.value).await {
         Ok(()) => {
             tracing::info!(
                 "Property value updated: device={}, property={}, value={}",

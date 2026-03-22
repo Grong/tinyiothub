@@ -1,14 +1,20 @@
-use crate::domain::event::value_objects::EventLevel;
-use crate::dto::request::pagination::DataObjectWithPagination;
-use crate::infrastructure::event::EventBus;
-use crate::infrastructure::persistence::database::{self, Database};
-use crate::{
-    dto::entity::message::{Message, MessageDto},
-    infrastructure::config,
-};
-use once_cell::sync::Lazy;
 use std::sync::Arc;
+
+use once_cell::sync::Lazy;
 use tokio::sync::RwLock;
+
+use crate::{
+    domain::event::value_objects::EventLevel,
+    dto::{
+        entity::message::{Message, MessageDto},
+        request::pagination::DataObjectWithPagination,
+    },
+    infrastructure::{
+        config,
+        event::EventBus,
+        persistence::database::{self, Database},
+    },
+};
 
 // 使用 tokio::sync::RwLock 替代 std::sync::Mutex 以避免死锁
 // RwLock 允许多个读取者或一个写入者，更适合异步环境
@@ -203,10 +209,7 @@ pub async fn add_system_message(
             EventSource::system("message_server".to_string(), None::<String>),
             RichContent::new(
                 title,
-                vec![ContentElement::Text {
-                    content,
-                    format: TextFormat::Plain,
-                }],
+                vec![ContentElement::Text { content, format: TextFormat::Plain }],
             ),
         )?;
 
@@ -239,10 +242,7 @@ pub async fn add_device_message(
             EventSource::device(device_id.clone(), Some("message_server".to_string())),
             RichContent::new(
                 title,
-                vec![ContentElement::Text {
-                    content,
-                    format: TextFormat::Plain,
-                }],
+                vec![ContentElement::Text { content, format: TextFormat::Plain }],
             ),
         )?;
 

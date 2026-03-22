@@ -1,13 +1,15 @@
 use std::sync::Arc;
 
-use super::super::entity::{Alarm, AlarmRule};
-use super::super::errors::{AlarmError, AlarmResult};
-use super::super::repository::{
-    AlarmQueryCriteria, AlarmRepository, AlarmRuleRepository, TimeRange,
+use super::{
+    super::{
+        entity::{Alarm, AlarmRule},
+        errors::{AlarmError, AlarmResult},
+        repository::{AlarmQueryCriteria, AlarmRepository, AlarmRuleRepository, TimeRange},
+        specifications::AlarmSpecifications,
+        value_objects::{AlarmStatus, ResolutionType},
+    },
+    rule_engine::RuleEngine,
 };
-use super::super::specifications::AlarmSpecifications;
-use super::super::value_objects::{AlarmStatus, ResolutionType};
-use super::rule_engine::RuleEngine;
 
 /// 报警业务服务
 pub struct AlarmService {
@@ -23,11 +25,7 @@ impl AlarmService {
     ) -> Self {
         let rule_engine = Arc::new(RuleEngine::new(rule_repository.clone()));
 
-        Self {
-            alarm_repository,
-            rule_repository,
-            rule_engine,
-        }
+        Self { alarm_repository, rule_repository, rule_engine }
     }
 
     /// 创建报警
@@ -103,10 +101,7 @@ impl AlarmService {
         let mut count = 0;
 
         for alarm_id in alarm_ids {
-            if let Ok(()) = self
-                .acknowledge_alarm(&alarm_id, user_id.clone(), None)
-                .await
-            {
+            if let Ok(()) = self.acknowledge_alarm(&alarm_id, user_id.clone(), None).await {
                 count += 1;
             }
         }
@@ -124,9 +119,8 @@ impl AlarmService {
         let mut count = 0;
 
         for alarm_id in alarm_ids {
-            if let Ok(()) = self
-                .resolve_alarm(&alarm_id, user_id.clone(), resolution_type, None)
-                .await
+            if let Ok(()) =
+                self.resolve_alarm(&alarm_id, user_id.clone(), resolution_type, None).await
             {
                 count += 1;
             }
@@ -155,33 +149,18 @@ impl AlarmService {
         &self,
         time_range: TimeRange,
     ) -> AlarmResult<AlarmStatistics> {
-        let criteria = AlarmQueryCriteria {
-            time_range: Some(time_range),
-            ..Default::default()
-        };
+        let criteria = AlarmQueryCriteria { time_range: Some(time_range), ..Default::default() };
 
         let alarms = self.alarm_repository.find_by_criteria(&criteria).await?;
 
         let total_count = alarms.len() as u64;
-        let active_count = alarms
-            .iter()
-            .filter(|a| a.status == AlarmStatus::Active)
-            .count() as u64;
-        let acknowledged_count = alarms
-            .iter()
-            .filter(|a| a.status == AlarmStatus::Acknowledged)
-            .count() as u64;
-        let resolved_count = alarms
-            .iter()
-            .filter(|a| a.status == AlarmStatus::Resolved)
-            .count() as u64;
+        let active_count = alarms.iter().filter(|a| a.status == AlarmStatus::Active).count() as u64;
+        let acknowledged_count =
+            alarms.iter().filter(|a| a.status == AlarmStatus::Acknowledged).count() as u64;
+        let resolved_count =
+            alarms.iter().filter(|a| a.status == AlarmStatus::Resolved).count() as u64;
 
-        Ok(AlarmStatistics {
-            total_count,
-            active_count,
-            acknowledged_count,
-            resolved_count,
-        })
+        Ok(AlarmStatistics { total_count, active_count, acknowledged_count, resolved_count })
     }
 
     /// 检查自动解决

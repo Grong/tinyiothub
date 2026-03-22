@@ -1,12 +1,15 @@
-use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use std::sync::Arc;
 
-use crate::domain::alarm::{
-    Alarm, AlarmError, AlarmQueryCriteria, AlarmRepository, AlarmResult, AlarmRule,
-    AlarmRuleRepository, AlarmStatus,
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+
+use crate::{
+    domain::alarm::{
+        Alarm, AlarmError, AlarmQueryCriteria, AlarmRepository, AlarmResult, AlarmRule,
+        AlarmRuleRepository, AlarmStatus,
+    },
+    infrastructure::persistence::Database,
 };
-use crate::infrastructure::persistence::Database;
 
 /// 报警仓储实现
 pub struct AlarmRepositoryImpl {
@@ -43,21 +46,11 @@ impl AlarmRepository for AlarmRepositoryImpl {
             .bind(alarm.alarm_time.to_rfc3339())
             .bind(alarm.acknowledgement.is_some())
             .bind(alarm.acknowledgement.as_ref().map(|a| &a.acknowledged_by))
-            .bind(
-                alarm
-                    .acknowledgement
-                    .as_ref()
-                    .map(|a| a.acknowledged_at.to_rfc3339()),
-            )
+            .bind(alarm.acknowledgement.as_ref().map(|a| a.acknowledged_at.to_rfc3339()))
             .bind(alarm.acknowledgement.as_ref().and_then(|a| a.note.as_ref()))
             .bind(alarm.resolution.is_some())
             .bind(alarm.resolution.as_ref().map(|r| &r.resolved_by))
-            .bind(
-                alarm
-                    .resolution
-                    .as_ref()
-                    .map(|r| r.resolved_at.to_rfc3339()),
-            )
+            .bind(alarm.resolution.as_ref().map(|r| r.resolved_at.to_rfc3339()))
             .bind(alarm.resolution.as_ref().and_then(|r| r.note.as_ref()))
             .bind(alarm.created_at.to_rfc3339())
             .execute(self.database.pool())
@@ -83,21 +76,11 @@ impl AlarmRepository for AlarmRepositoryImpl {
         sqlx::query(query)
             .bind(alarm.acknowledgement.is_some())
             .bind(alarm.acknowledgement.as_ref().map(|a| &a.acknowledged_by))
-            .bind(
-                alarm
-                    .acknowledgement
-                    .as_ref()
-                    .map(|a| a.acknowledged_at.to_rfc3339()),
-            )
+            .bind(alarm.acknowledgement.as_ref().map(|a| a.acknowledged_at.to_rfc3339()))
             .bind(alarm.acknowledgement.as_ref().and_then(|a| a.note.as_ref()))
             .bind(alarm.resolution.is_some())
             .bind(alarm.resolution.as_ref().map(|r| &r.resolved_by))
-            .bind(
-                alarm
-                    .resolution
-                    .as_ref()
-                    .map(|r| r.resolved_at.to_rfc3339()),
-            )
+            .bind(alarm.resolution.as_ref().map(|r| r.resolved_at.to_rfc3339()))
             .bind(alarm.resolution.as_ref().and_then(|r| r.note.as_ref()))
             .bind(&alarm.id)
             .execute(self.database.pool())
@@ -109,10 +92,7 @@ impl AlarmRepository for AlarmRepositoryImpl {
     async fn find_by_id(&self, id: &str) -> AlarmResult<Option<Alarm>> {
         let query = "SELECT * FROM device_alarms WHERE id = ?";
 
-        let row = sqlx::query(query)
-            .bind(id)
-            .fetch_optional(self.database.pool())
-            .await?;
+        let row = sqlx::query(query).bind(id).fetch_optional(self.database.pool()).await?;
 
         if let Some(row) = row {
             Ok(Some(self.row_to_alarm(row)?))
@@ -259,10 +239,8 @@ impl AlarmRepository for AlarmRepositoryImpl {
     async fn delete_old_alarms(&self, before: DateTime<Utc>) -> AlarmResult<usize> {
         let query = "DELETE FROM device_alarms WHERE created_at < ? AND is_resolved = true";
 
-        let result = sqlx::query(query)
-            .bind(before.to_rfc3339())
-            .execute(self.database.pool())
-            .await?;
+        let result =
+            sqlx::query(query).bind(before.to_rfc3339()).execute(self.database.pool()).await?;
 
         Ok(result.rows_affected() as usize)
     }
@@ -286,9 +264,12 @@ impl AlarmRuleRepositoryImpl {
     }
 
     fn row_to_alarm_rule(&self, row: sqlx::sqlite::SqliteRow) -> AlarmResult<AlarmRule> {
-        use crate::domain::alarm::entity::RuleType;
-        use crate::domain::alarm::value_objects::{AlarmCondition, AlarmLevel, NotificationConfig};
         use sqlx::Row;
+
+        use crate::domain::alarm::{
+            entity::RuleType,
+            value_objects::{AlarmCondition, AlarmLevel, NotificationConfig},
+        };
 
         let id: String = row.get("id");
         let name: String = row.get("rule_name");

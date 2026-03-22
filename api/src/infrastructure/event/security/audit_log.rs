@@ -1,13 +1,15 @@
 // Event audit logging implementations
+use std::sync::Arc;
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use tracing::{error, info};
+
 use crate::domain::event::{
     entities::Event,
     value_objects::{EventId, EventLevel, EventType},
     EventError, Result,
 };
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use tracing::{error, info};
 
 /// Audit log entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -200,10 +202,7 @@ impl DatabaseAuditLog {
         ];
 
         for sql in create_indexes_sql {
-            sqlx::query(sql)
-                .execute(self.db.pool())
-                .await
-                .map_err(EventError::Database)?;
+            sqlx::query(sql).execute(self.db.pool()).await.map_err(EventError::Database)?;
         }
 
         info!("Audit log database initialized successfully");
@@ -590,9 +589,7 @@ impl Default for InMemoryAuditLog {
 
 impl InMemoryAuditLog {
     pub fn new() -> Self {
-        Self {
-            entries: Arc::new(tokio::sync::RwLock::new(Vec::new())),
-        }
+        Self { entries: Arc::new(tokio::sync::RwLock::new(Vec::new())) }
     }
 }
 

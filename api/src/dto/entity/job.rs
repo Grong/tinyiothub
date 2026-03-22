@@ -137,45 +137,47 @@ impl Job {
     /// 根据 ID 查询
     pub async fn find_by_id(db: &Database, id: &str) -> Result<Option<Job>, sqlx::Error> {
         let sql = format!("SELECT * FROM jobs WHERE id = '{}' LIMIT 1", id);
-        let mut rows = db.query(&sql, |row| {
-            Ok(Job {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                description: row.try_get("description")?,
-                job_type: row.try_get("job_type")?,
-                cron_expression: row.try_get("cron_expression")?,
-                config: row.try_get("config")?,
-                timeout_seconds: row.try_get("timeout_seconds")?,
-                retry_count: row.try_get("retry_count")?,
-                retry_delay_seconds: row.try_get("retry_delay_seconds")?,
-                concurrency: row.try_get("concurrency")?,
-                target_device_id: row.try_get("target_device_id")?,
-                target_command_name: row.try_get("target_command_name")?,
-                target_command_params: row.try_get("target_command_params")?,
-                is_enabled: row.try_get::<i32, _>("is_enabled")? != 0,
-                is_running: row.try_get::<i32, _>("is_running")? != 0,
-                last_run_at: row.try_get("last_run_at")?,
-                last_run_status: row.try_get("last_run_status")?,
-                last_run_error: row.try_get("last_run_error")?,
-                next_run_at: row.try_get("next_run_at")?,
-                run_count: row.try_get("run_count")?,
-                success_count: row.try_get("success_count")?,
-                fail_count: row.try_get("fail_count")?,
-                tags: row.try_get("tags")?,
-                alert_config: row.try_get("alert_config")?,
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
-                created_by: row.try_get("created_by")?,
+        let mut rows = db
+            .query(&sql, |row| {
+                Ok(Job {
+                    id: row.try_get("id")?,
+                    name: row.try_get("name")?,
+                    description: row.try_get("description")?,
+                    job_type: row.try_get("job_type")?,
+                    cron_expression: row.try_get("cron_expression")?,
+                    config: row.try_get("config")?,
+                    timeout_seconds: row.try_get("timeout_seconds")?,
+                    retry_count: row.try_get("retry_count")?,
+                    retry_delay_seconds: row.try_get("retry_delay_seconds")?,
+                    concurrency: row.try_get("concurrency")?,
+                    target_device_id: row.try_get("target_device_id")?,
+                    target_command_name: row.try_get("target_command_name")?,
+                    target_command_params: row.try_get("target_command_params")?,
+                    is_enabled: row.try_get::<i32, _>("is_enabled")? != 0,
+                    is_running: row.try_get::<i32, _>("is_running")? != 0,
+                    last_run_at: row.try_get("last_run_at")?,
+                    last_run_status: row.try_get("last_run_status")?,
+                    last_run_error: row.try_get("last_run_error")?,
+                    next_run_at: row.try_get("next_run_at")?,
+                    run_count: row.try_get("run_count")?,
+                    success_count: row.try_get("success_count")?,
+                    fail_count: row.try_get("fail_count")?,
+                    tags: row.try_get("tags")?,
+                    alert_config: row.try_get("alert_config")?,
+                    created_at: row.try_get("created_at")?,
+                    updated_at: row.try_get("updated_at")?,
+                    created_by: row.try_get("created_by")?,
+                })
             })
-        }).await?;
-        
+            .await?;
+
         Ok(rows.pop())
     }
 
     /// 查询所有（带分页）
     pub async fn find_all(db: &Database, params: &JobQueryParams) -> Result<Vec<Job>, sqlx::Error> {
         let mut sql = String::from("SELECT * FROM jobs WHERE 1=1");
-        
+
         if let Some(ref name) = params.name {
             sql.push_str(&format!(" AND name LIKE '%{}%'", name));
         }
@@ -185,14 +187,14 @@ impl Job {
         if let Some(is_enabled) = params.is_enabled {
             sql.push_str(&format!(" AND is_enabled = {}", if is_enabled { 1 } else { 0 }));
         }
-        
+
         sql.push_str(" ORDER BY created_at DESC");
-        
+
         let page = params.page.unwrap_or(1);
         let page_size = params.page_size.unwrap_or(20);
         let offset = (page - 1) * page_size;
         sql.push_str(&format!(" LIMIT {} OFFSET {}", page_size, offset));
-        
+
         db.query(&sql, |row| {
             Ok(Job {
                 id: row.try_get("id")?,
@@ -223,15 +225,17 @@ impl Job {
                 updated_at: row.try_get("updated_at")?,
                 created_by: row.try_get("created_by")?,
             })
-        }).await
+        })
+        .await
     }
 
     /// 创建任务
     pub async fn create(db: &Database, req: &CreateJobRequest) -> Result<Job, sqlx::Error> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        
-        let sql = format!(r#"
+
+        let sql = format!(
+            r#"
             INSERT INTO jobs (
                 id, name, description, job_type, cron_expression, config,
                 timeout_seconds, retry_count, retry_delay_seconds, concurrency,
@@ -264,18 +268,22 @@ impl Job {
             now,
             now
         );
-        
+
         db.execute(&sql).await?;
-        
+
         Self::find_by_id(db, &id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 更新任务
-    pub async fn update(db: &Database, id: &str, req: &UpdateJobRequest) -> Result<Job, sqlx::Error> {
+    pub async fn update(
+        db: &Database,
+        id: &str,
+        req: &UpdateJobRequest,
+    ) -> Result<Job, sqlx::Error> {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        
+
         let mut updates = vec![format!("updated_at = '{}'", now)];
-        
+
         if let Some(ref name) = req.name {
             updates.push(format!("name = '{}'", name));
         }
@@ -318,10 +326,10 @@ impl Job {
         if let Some(ref alert_config) = req.alert_config {
             updates.push(format!("alert_config = '{}'", alert_config));
         }
-        
+
         let sql = format!("UPDATE jobs SET {} WHERE id = '{}'", updates.join(", "), id);
         let _ = db.execute(&sql).await;
-        
+
         Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
@@ -332,7 +340,11 @@ impl Job {
     }
 
     /// 设置启用/禁用
-    pub async fn set_enabled(db: &Database, id: &str, is_enabled: bool) -> Result<Job, sqlx::Error> {
+    pub async fn set_enabled(
+        db: &Database,
+        id: &str,
+        is_enabled: bool,
+    ) -> Result<Job, sqlx::Error> {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
         let sql = format!(
             "UPDATE jobs SET is_enabled = {}, updated_at = '{}' WHERE id = '{}'",
@@ -341,7 +353,7 @@ impl Job {
             id
         );
         let _ = db.execute(&sql).await;
-        
+
         Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
@@ -364,11 +376,12 @@ impl Job {
         error: Option<&str>,
     ) -> Result<(), sqlx::Error> {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        
+
         let success_inc = if status == "success" { 1 } else { 0 };
         let fail_inc = if status == "failed" || status == "timeout" { 1 } else { 0 };
 
-        let sql = format!(r#"
+        let sql = format!(
+            r#"
             UPDATE jobs SET
                 last_run_at = '{}',
                 last_run_status = '{}',
@@ -395,21 +408,41 @@ impl Job {
 
     /// 获取统计信息
     pub async fn get_statistics(db: &Database) -> Result<JobStatistics, sqlx::Error> {
-        let total: i64 = db.query_first("SELECT COUNT(*) FROM jobs", |row| row.try_get::<i64, _>(0))
-            .await?.unwrap_or(0);
-        let enabled: i64 = db.query_first("SELECT COUNT(*) FROM jobs WHERE is_enabled = 1", |row| row.try_get::<i64, _>(0))
-            .await?.unwrap_or(0);
+        let total: i64 = db
+            .query_first("SELECT COUNT(*) FROM jobs", |row| row.try_get::<i64, _>(0))
+            .await?
+            .unwrap_or(0);
+        let enabled: i64 = db
+            .query_first("SELECT COUNT(*) FROM jobs WHERE is_enabled = 1", |row| {
+                row.try_get::<i64, _>(0)
+            })
+            .await?
+            .unwrap_or(0);
         let disabled = total - enabled;
-        let running: i64 = db.query_first("SELECT COUNT(*) FROM jobs WHERE is_running = 1", |row| row.try_get::<i64, _>(0))
-            .await?.unwrap_or(0);
-        
-        let total_exec: i64 = db.query_first("SELECT COUNT(*) FROM job_executions", |row| row.try_get::<i64, _>(0))
-            .await?.unwrap_or(0);
-        let success_exec: i64 = db.query_first("SELECT COUNT(*) FROM job_executions WHERE status = 'success'", |row| row.try_get::<i64, _>(0))
-            .await?.unwrap_or(0);
-        let failed_exec: i64 = db.query_first("SELECT COUNT(*) FROM job_executions WHERE status = 'failed'", |row| row.try_get::<i64, _>(0))
-            .await?.unwrap_or(0);
-        
+        let running: i64 = db
+            .query_first("SELECT COUNT(*) FROM jobs WHERE is_running = 1", |row| {
+                row.try_get::<i64, _>(0)
+            })
+            .await?
+            .unwrap_or(0);
+
+        let total_exec: i64 = db
+            .query_first("SELECT COUNT(*) FROM job_executions", |row| row.try_get::<i64, _>(0))
+            .await?
+            .unwrap_or(0);
+        let success_exec: i64 = db
+            .query_first("SELECT COUNT(*) FROM job_executions WHERE status = 'success'", |row| {
+                row.try_get::<i64, _>(0)
+            })
+            .await?
+            .unwrap_or(0);
+        let failed_exec: i64 = db
+            .query_first("SELECT COUNT(*) FROM job_executions WHERE status = 'failed'", |row| {
+                row.try_get::<i64, _>(0)
+            })
+            .await?
+            .unwrap_or(0);
+
         let avg_duration: i64 = db.query_first(
             "SELECT COALESCE(AVG(duration_ms), 0) FROM job_executions WHERE duration_ms IS NOT NULL",
             |row| row.try_get::<i64, _>(0)
@@ -439,7 +472,8 @@ impl JobExecution {
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-        let sql = format!(r#"
+        let sql = format!(
+            r#"
             INSERT INTO job_executions (id, job_id, started_at, status, trigger_type, triggered_by, created_at)
             VALUES ('{}', '{}', '{}', 'running', '{}', '{}', '{}')
         "#,
@@ -459,37 +493,42 @@ impl JobExecution {
     /// 根据 ID 查询
     pub async fn find_by_id(db: &Database, id: &str) -> Result<Option<JobExecution>, sqlx::Error> {
         let sql = format!("SELECT * FROM job_executions WHERE id = '{}' LIMIT 1", id);
-        let mut rows = db.query(&sql, |row| {
-            Ok(JobExecution {
-                id: row.try_get("id")?,
-                job_id: row.try_get("job_id")?,
-                started_at: row.try_get("started_at")?,
-                ended_at: row.try_get("ended_at")?,
-                duration_ms: row.try_get("duration_ms")?,
-                status: row.try_get("status")?,
-                result: row.try_get("result")?,
-                error_message: row.try_get("error_message")?,
-                error_trace: row.try_get("error_trace")?,
-                trigger_type: row.try_get("trigger_type")?,
-                triggered_by: row.try_get("triggered_by")?,
-                worker_id: row.try_get("worker_id")?,
-                memory_usage_bytes: row.try_get("memory_usage_bytes")?,
-                cpu_time_ms: row.try_get("cpu_time_ms")?,
-                created_at: row.try_get("created_at")?,
+        let mut rows = db
+            .query(&sql, |row| {
+                Ok(JobExecution {
+                    id: row.try_get("id")?,
+                    job_id: row.try_get("job_id")?,
+                    started_at: row.try_get("started_at")?,
+                    ended_at: row.try_get("ended_at")?,
+                    duration_ms: row.try_get("duration_ms")?,
+                    status: row.try_get("status")?,
+                    result: row.try_get("result")?,
+                    error_message: row.try_get("error_message")?,
+                    error_trace: row.try_get("error_trace")?,
+                    trigger_type: row.try_get("trigger_type")?,
+                    triggered_by: row.try_get("triggered_by")?,
+                    worker_id: row.try_get("worker_id")?,
+                    memory_usage_bytes: row.try_get("memory_usage_bytes")?,
+                    cpu_time_ms: row.try_get("cpu_time_ms")?,
+                    created_at: row.try_get("created_at")?,
+                })
             })
-        }).await?;
-        
+            .await?;
+
         Ok(rows.pop())
     }
 
     /// 查询任务的所有执行记录
-    pub async fn find_by_job(db: &Database, job_id: &str, limit: i32) -> Result<Vec<JobExecution>, sqlx::Error> {
+    pub async fn find_by_job(
+        db: &Database,
+        job_id: &str,
+        limit: i32,
+    ) -> Result<Vec<JobExecution>, sqlx::Error> {
         let sql = format!(
             "SELECT * FROM job_executions WHERE job_id = '{}' ORDER BY started_at DESC LIMIT {}",
-            job_id,
-            limit
+            job_id, limit
         );
-        
+
         db.query(&sql, |row| {
             Ok(JobExecution {
                 id: row.try_get("id")?,
@@ -508,7 +547,8 @@ impl JobExecution {
                 cpu_time_ms: row.try_get("cpu_time_ms")?,
                 created_at: row.try_get("created_at")?,
             })
-        }).await
+        })
+        .await
     }
 
     /// 更新执行状态
@@ -523,8 +563,9 @@ impl JobExecution {
         let ended = ended_at.unwrap_or("");
         let result_str = result.unwrap_or("");
         let error_str = error_message.unwrap_or("");
-        
-        let sql = format!(r#"
+
+        let sql = format!(
+            r#"
             UPDATE job_executions SET
                 ended_at = '{}',
                 status = '{}',
@@ -532,13 +573,9 @@ impl JobExecution {
                 error_message = '{}'
             WHERE id = '{}'
         "#,
-            ended,
-            status,
-            result_str,
-            error_str,
-            id
+            ended, status, result_str, error_str, id
         );
-        
+
         let _ = db.execute(&sql).await;
         Ok(())
     }
@@ -648,11 +685,11 @@ mod tests {
     fn test_cron_expression_validation() {
         // 有效的 cron 表达式
         let valid_expressions = [
-            "*/5 * * * *",    // 每5分钟
-            "0 * * * *",      // 每小时
-            "0 0 * * *",      // 每天午夜
-            "0 0 * * 0",      // 每周日
-            "0 0 1 * *",      // 每月第一天
+            "*/5 * * * *", // 每5分钟
+            "0 * * * *",   // 每小时
+            "0 0 * * *",   // 每天午夜
+            "0 0 * * 0",   // 每周日
+            "0 0 1 * *",   // 每月第一天
         ];
 
         for expr in valid_expressions.iter() {

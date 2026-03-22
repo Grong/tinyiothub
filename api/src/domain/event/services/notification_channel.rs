@@ -1,7 +1,11 @@
-use crate::domain::event::services::notification_service::NotificationMessage;
-use crate::domain::event::{aggregates::NotificationChannelType, Result};
-use async_trait::async_trait;
 use std::collections::HashMap;
+
+use async_trait::async_trait;
+
+use crate::domain::event::{
+    aggregates::NotificationChannelType, services::notification_service::NotificationMessage,
+    Result,
+};
 
 /// Trait for notification channel implementations
 #[async_trait]
@@ -27,9 +31,7 @@ pub struct NotificationChannelManager {
 impl NotificationChannelManager {
     /// Create a new notification channel manager
     pub fn new() -> Self {
-        Self {
-            channels: HashMap::new(),
-        }
+        Self { channels: HashMap::new() }
     }
 
     /// Register a notification channel

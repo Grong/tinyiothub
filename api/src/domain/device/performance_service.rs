@@ -1,8 +1,10 @@
-use crate::application::data_context::DataContext;
-use crate::domain::device::monitoring_service::DeviceMonitoringService;
-use crate::infrastructure::persistence::Database;
-use crate::shared::error::Error;
 use std::sync::Arc;
+
+use crate::{
+    application::data_context::DataContext,
+    domain::device::monitoring_service::DeviceMonitoringService,
+    infrastructure::persistence::Database, shared::error::Error,
+};
 
 /// 设备性能监控服务
 /// 负责设备性能指标收集、分析和告警
@@ -16,11 +18,7 @@ impl DevicePerformanceService {
     pub fn new(database: Arc<Database>, context: Arc<DataContext>) -> Self {
         let monitoring_service = DeviceMonitoringService::new(database.clone(), context.clone());
 
-        Self {
-            database,
-            context,
-            monitoring_service,
-        }
+        Self { database, context, monitoring_service }
     }
 
     /// 获取设备性能指标
@@ -59,9 +57,8 @@ impl DevicePerformanceService {
             }
 
             // 2. 计算网络延迟（基于设备连接质量）
-            if let Some(connection_quality) = self
-                .monitoring_service
-                .get_device_connection_quality(device_id)
+            if let Some(connection_quality) =
+                self.monitoring_service.get_device_connection_quality(device_id)
             {
                 let estimated_latency = match connection_quality {
                     90..=100 => 10.0 + (100 - connection_quality) as f64 * 0.5,
@@ -89,9 +86,8 @@ impl DevicePerformanceService {
                 if stats.online_properties > 0 {
                     let base_throughput = stats.online_properties as f64 * 0.5;
 
-                    let quality_factor = if let Some(quality) = self
-                        .monitoring_service
-                        .get_device_connection_quality(device_id)
+                    let quality_factor = if let Some(quality) =
+                        self.monitoring_service.get_device_connection_quality(device_id)
                     {
                         quality as f64 / 100.0
                     } else {
@@ -183,16 +179,12 @@ impl DevicePerformanceService {
             let command_memory_overhead = command_count * 0.5;
 
             // 根据设备在线状态调整
-            let online_factor = if self.monitoring_service.is_device_online(device_id) {
-                1.2
-            } else {
-                0.3
-            };
+            let online_factor =
+                if self.monitoring_service.is_device_online(device_id) { 1.2 } else { 0.3 };
 
             // 根据连接质量调整
-            let quality_factor = if let Some(quality) = self
-                .monitoring_service
-                .get_device_connection_quality(device_id)
+            let quality_factor = if let Some(quality) =
+                self.monitoring_service.get_device_connection_quality(device_id)
             {
                 0.5 + (quality as f64 / 100.0) * 0.5
             } else {

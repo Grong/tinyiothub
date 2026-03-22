@@ -15,8 +15,8 @@ pub mod jobs;
 pub mod marketplace;
 pub mod middleware;
 pub mod monitoring;
-pub mod notifications;
 pub mod notification_channels;
+pub mod notifications;
 pub mod open;
 pub mod system;
 pub mod tags;
@@ -43,9 +43,7 @@ pub fn create_router() -> Router<AppState> {
         .nest("/jobs", jobs::create_router())
         .nest("/auth", auth::session::create_router()) // 需要认证的会话路由
         .route("/test-auth", get(test_auth_endpoint))
-        .layer(axum_middleware::from_fn(
-            crate::api::middleware::context::jwt_auth_middleware,
-        ));
+        .layer(axum_middleware::from_fn(crate::api::middleware::context::jwt_auth_middleware));
 
     // 创建v1版本的API路由
     let v1_routes = Router::new()
@@ -56,16 +54,13 @@ pub fn create_router() -> Router<AppState> {
         .nest("/system", system::create_router())
         .nest("/tags", tags::create_router())
         // 公开的SSE端点（不需要认证）
-        .route(
-            "/events/sse/public",
-            get(events::sse::handle_sse_connection_public),
-        )
+        .route("/events/sse/public", get(events::sse::handle_sse_connection_public))
         .merge(protected_routes);
 
     // 合并所有路由
     Router::new()
         .nest("/v1", v1_routes)
-        .nest("/open", open::create_open_router())  // 开放 API (需要 API Key)
+        .nest("/open", open::create_open_router()) // 开放 API (需要 API Key)
         .route("/health", get(health_check))
 }
 

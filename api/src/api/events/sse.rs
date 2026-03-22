@@ -1,11 +1,6 @@
 // API Layer - SSE Endpoints
 // Handles HTTP requests for Server-Sent Events (SSE) connections
 
-use crate::dto::response::api_response::ApiResponse;
-use crate::dto::response::builder::ApiResponseBuilder;
-use crate::infrastructure::event::sse_manager::{SseConnectionInfo, SseOverview};
-use crate::shared::app_state::AppState;
-use crate::shared::security::jwt::Claims;
 use axum::{
     extract::{Query, State},
     response::Response,
@@ -13,6 +8,12 @@ use axum::{
 };
 use serde::Deserialize;
 use tracing::{info, warn};
+
+use crate::{
+    dto::response::{api_response::ApiResponse, builder::ApiResponseBuilder},
+    infrastructure::event::sse_manager::{SseConnectionInfo, SseOverview},
+    shared::{app_state::AppState, security::jwt::Claims},
+};
 
 /// SSE connection query parameters
 #[derive(Debug, Deserialize)]
@@ -43,10 +44,7 @@ pub async fn handle_sse_connection(
     claims: Claims,
 ) -> Response {
     // Use user_id from query or fall back to JWT claims
-    let user_id = query
-        .user_id
-        .clone()
-        .unwrap_or_else(|| claims.user_id.clone());
+    let user_id = query.user_id.clone().unwrap_or_else(|| claims.user_id.clone());
 
     info!("New authenticated SSE connection from user: {}", user_id);
 
@@ -57,9 +55,7 @@ pub async fn handle_sse_connection(
 
     // Create SSE connection through the manager
     let sse_manager = state.get_sse_manager();
-    sse_manager
-        .create_connection(user_id, event_types, event_levels, organization_id)
-        .await
+    sse_manager.create_connection(user_id, event_types, event_levels, organization_id).await
 }
 
 /// Handle public (unauthenticated) SSE connection
@@ -71,15 +67,9 @@ pub async fn handle_sse_connection_public(
     Query(query): Query<SseConnectionQuery>,
     State(state): State<AppState>,
 ) -> Response {
-    let user_id = query
-        .user_id
-        .clone()
-        .unwrap_or_else(|| "anonymous".to_string());
+    let user_id = query.user_id.clone().unwrap_or_else(|| "anonymous".to_string());
 
-    warn!(
-        "New public (unauthenticated) SSE connection from user: {}",
-        user_id
-    );
+    warn!("New public (unauthenticated) SSE connection from user: {}", user_id);
 
     // Parse event filters
     let event_types = parse_event_types(&query.event_types);
@@ -87,9 +77,7 @@ pub async fn handle_sse_connection_public(
 
     // Create public SSE connection
     let sse_manager = state.get_sse_manager();
-    sse_manager
-        .create_public_connection(user_id, event_types, event_levels)
-        .await
+    sse_manager.create_public_connection(user_id, event_types, event_levels).await
 }
 
 /// Get SSE connection overview
@@ -126,22 +114,16 @@ pub async fn get_sse_connections(
 
 /// Parse comma-separated event types from query string
 fn parse_event_types(types_str: &Option<String>) -> Option<Vec<String>> {
-    types_str.as_ref().map(|s| {
-        s.split(',')
-            .map(|t| t.trim().to_string())
-            .filter(|t| !t.is_empty())
-            .collect()
-    })
+    types_str
+        .as_ref()
+        .map(|s| s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect())
 }
 
 /// Parse comma-separated event levels from query string
 fn parse_event_levels(levels_str: &Option<String>) -> Option<Vec<String>> {
-    levels_str.as_ref().map(|s| {
-        s.split(',')
-            .map(|l| l.trim().to_lowercase())
-            .filter(|l| !l.is_empty())
-            .collect()
-    })
+    levels_str
+        .as_ref()
+        .map(|s| s.split(',').map(|l| l.trim().to_lowercase()).filter(|l| !l.is_empty()).collect())
 }
 
 #[cfg(test)]
@@ -151,13 +133,7 @@ mod tests {
     #[test]
     fn test_parse_event_types() {
         let types = parse_event_types(&Some("system.auth,device.connection".to_string()));
-        assert_eq!(
-            types,
-            Some(vec![
-                "system.auth".to_string(),
-                "device.connection".to_string()
-            ])
-        );
+        assert_eq!(types, Some(vec!["system.auth".to_string(), "device.connection".to_string()]));
 
         let empty = parse_event_types(&None);
         assert_eq!(empty, None);
@@ -168,11 +144,7 @@ mod tests {
         let levels = parse_event_levels(&Some("CRITICAL,Error,warning".to_string()));
         assert_eq!(
             levels,
-            Some(vec![
-                "critical".to_string(),
-                "error".to_string(),
-                "warning".to_string()
-            ])
+            Some(vec!["critical".to_string(), "error".to_string(), "warning".to_string()])
         );
 
         let empty = parse_event_levels(&None);

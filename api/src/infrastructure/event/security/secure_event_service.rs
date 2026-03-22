@@ -1,4 +1,8 @@
 // Secure event service with access control, encryption, and audit logging
+use std::sync::Arc;
+
+use chrono::{DateTime, Utc};
+
 use crate::{
     domain::event::{
         entities::Event,
@@ -11,8 +15,6 @@ use crate::{
         EventEncryption, EventSecurityConfig,
     },
 };
-use chrono::{DateTime, Utc};
-use std::sync::Arc;
 
 /// Secure event service that wraps the event repository with security features
 pub struct SecureEventService {
@@ -32,23 +34,13 @@ impl SecureEventService {
         audit_log: Arc<dyn EventAuditLog>,
         config: EventSecurityConfig,
     ) -> Result<Self> {
-        Ok(Self {
-            event_repository,
-            access_control,
-            encryption,
-            audit_log,
-            config,
-        })
+        Ok(Self { event_repository, access_control, encryption, audit_log, config })
     }
 
     /// Create an event with security checks
     pub async fn create_event(&self, user_id: &str, mut event: Event) -> Result<EventId> {
         // Check access control
-        if !self
-            .access_control
-            .can_create_event(user_id, event.event_type())
-            .await?
-        {
+        if !self.access_control.can_create_event(user_id, event.event_type()).await? {
             self.audit_log
                 .log_access_denied(
                     user_id,
@@ -90,9 +82,7 @@ impl SecureEventService {
         let event_id = event.id().clone();
 
         // Log the action
-        self.audit_log
-            .log_event_created(user_id, &event_id, &event)
-            .await?;
+        self.audit_log.log_event_created(user_id, &event_id, &event).await?;
 
         Ok(event_id)
     }
@@ -243,18 +233,12 @@ impl SecureEventService {
         let existing_event = match self.event_repository.find_by_id(event_id).await? {
             Some(event) => event,
             None => {
-                return Err(EventError::NotFound {
-                    id: format!("Event {} not found", event_id),
-                })
+                return Err(EventError::NotFound { id: format!("Event {} not found", event_id) })
             }
         };
 
         // Check access control
-        if !self
-            .access_control
-            .can_update_event(user_id, &existing_event)
-            .await?
-        {
+        if !self.access_control.can_update_event(user_id, &existing_event).await? {
             self.audit_log
                 .log_access_denied(
                     user_id,
@@ -307,18 +291,12 @@ impl SecureEventService {
         let existing_event = match self.event_repository.find_by_id(event_id).await? {
             Some(event) => event,
             None => {
-                return Err(EventError::NotFound {
-                    id: format!("Event {} not found", event_id),
-                })
+                return Err(EventError::NotFound { id: format!("Event {} not found", event_id) })
             }
         };
 
         // Check access control
-        if !self
-            .access_control
-            .can_delete_event(user_id, &existing_event)
-            .await?
-        {
+        if !self.access_control.can_delete_event(user_id, &existing_event).await? {
             self.audit_log
                 .log_access_denied(
                     user_id,
@@ -338,9 +316,7 @@ impl SecureEventService {
         // self.event_repository.delete_event(event_id).await?;
 
         // Log the action
-        self.audit_log
-            .log_event_deleted(user_id, event_id, &existing_event)
-            .await?;
+        self.audit_log.log_event_deleted(user_id, event_id, &existing_event).await?;
 
         Ok(())
     }
@@ -363,18 +339,11 @@ impl SecureEventService {
         ];
 
         for resource_type in &resource_types {
-            let perms = self
-                .access_control
-                .get_user_permissions(user_id, resource_type)
-                .await?;
+            let perms = self.access_control.get_user_permissions(user_id, resource_type).await?;
             permissions.insert(resource_type.to_string(), perms);
         }
 
-        Ok(UserAccessSummary {
-            user_id: user_id.to_string(),
-            roles,
-            permissions,
-        })
+        Ok(UserAccessSummary { user_id: user_id.to_string(), roles, permissions })
     }
 
     /// Check if user can perform an action on a resource

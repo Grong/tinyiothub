@@ -1,15 +1,19 @@
-use crate::domain::event::{
-    entities::Event,
-    repositories::{
-        DeviceStatusSummary, RealTimeEvent, RealTimeEventRepository, RealTimeFilter, StatusSummary,
-    },
-    value_objects::{EventId, EventLevel, EventSource, EventType},
-    Result,
-};
-use crate::infrastructure::persistence::Database;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::Row;
+
+use crate::{
+    domain::event::{
+        entities::Event,
+        repositories::{
+            DeviceStatusSummary, RealTimeEvent, RealTimeEventRepository, RealTimeFilter,
+            StatusSummary,
+        },
+        value_objects::{EventId, EventLevel, EventSource, EventType},
+        Result,
+    },
+    infrastructure::persistence::Database,
+};
 
 /// SQLite implementation of RealTimeEventRepository
 pub struct SqliteRealTimeEventRepository {
@@ -84,7 +88,7 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
         let mut base_sql = String::from(
             r#"SELECT id, event_type, level, source_type, source_id, device_id, user_id,
                    title, content_preview, timestamp, acknowledged, acknowledged_by, acknowledged_at
-            FROM real_time_events WHERE 1=1"#
+            FROM real_time_events WHERE 1=1"#,
         );
 
         // Build query dynamically based on filter
@@ -115,7 +119,9 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
                 q
             }
             // Only acknowledged is set
-            (_, Some(acknowledged)) if filter.device_ids.as_ref().map_or(true, |ids| ids.is_empty()) => {
+            (_, Some(acknowledged))
+                if filter.device_ids.as_ref().map_or(true, |ids| ids.is_empty()) =>
+            {
                 base_sql.push_str(" AND acknowledged = ?");
                 base_sql.push_str(" ORDER BY timestamp DESC");
                 sqlx::query(&base_sql).bind(acknowledged)
@@ -185,9 +191,7 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
             GROUP BY device_id
         "#;
 
-        let device_rows = sqlx::query(device_sql)
-            .fetch_all(self.database.pool())
-            .await?;
+        let device_rows = sqlx::query(device_sql).fetch_all(self.database.pool()).await?;
 
         let mut by_device = Vec::new();
         for row in device_rows {
@@ -253,10 +257,7 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
     async fn cleanup_old_events(&self, before: DateTime<Utc>) -> Result<u64> {
         let sql = "DELETE FROM real_time_events WHERE timestamp < ?";
 
-        let result = sqlx::query(sql)
-            .bind(before)
-            .execute(self.database.pool())
-            .await?;
+        let result = sqlx::query(sql).bind(before).execute(self.database.pool()).await?;
 
         Ok(result.rows_affected())
     }

@@ -1,17 +1,18 @@
 // 速率限制中间件
 // 使用滑动窗口算法实现 API 速率限制
 
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
 use axum::{
     body::Body,
     extract::Request,
     http::{header::HeaderName, HeaderValue, Method, StatusCode},
     middleware::Next,
     response::Response,
-};
-use std::{
-    collections::HashMap,
-    sync::Arc,
-    time::{Duration, Instant},
 };
 use tokio::sync::RwLock;
 
@@ -49,10 +50,7 @@ pub struct RateLimiter {
 
 impl RateLimiter {
     pub fn new(config: RateLimitConfig) -> Self {
-        Self {
-            records: Arc::new(RwLock::new(HashMap::new())),
-            config,
-        }
+        Self { records: Arc::new(RwLock::new(HashMap::new())), config }
     }
 
     /// 检查是否应该限制请求
@@ -61,9 +59,8 @@ impl RateLimiter {
         let now = Instant::now();
         let window = Duration::from_secs(60);
 
-        let (requests, blocked_until) = records
-            .entry(client_id.to_string())
-            .or_insert((Vec::new(), None));
+        let (requests, blocked_until) =
+            records.entry(client_id.to_string()).or_insert((Vec::new(), None));
 
         // 如果之前被限制，检查是否还有效
         if let Some(until) = blocked_until {
@@ -71,7 +68,10 @@ impl RateLimiter {
                 let remaining = until.duration_since(now).as_secs();
                 return RateLimitResult::Blocked {
                     retry_after: remaining as u32,
-                    message: format!("Too many requests. Please try again in {} seconds", remaining),
+                    message: format!(
+                        "Too many requests. Please try again in {} seconds",
+                        remaining
+                    ),
                 };
             } else {
                 // 限制期已过，清除限制
@@ -125,14 +125,8 @@ impl RateLimiter {
 /// 速率限制结果
 #[derive(Debug)]
 pub enum RateLimitResult {
-    Allowed {
-        remaining: usize,
-        reset_in: u32,
-    },
-    Blocked {
-        retry_after: u32,
-        message: String,
-    },
+    Allowed { remaining: usize, reset_in: u32 },
+    Blocked { retry_after: u32, message: String },
 }
 
 /// 速率限制中间件
@@ -157,7 +151,7 @@ pub async fn rate_limit_middleware(
     match rate_limiter.check_rate_limit(&client_id).await {
         RateLimitResult::Allowed { remaining, reset_in } => {
             let mut response = next.run(request).await;
-            
+
             // 添加速率限制头
             response.headers_mut().insert(
                 HeaderName::from_static("x-rateLimit-limit"),
@@ -167,16 +161,15 @@ pub async fn rate_limit_middleware(
                 HeaderName::from_static("x-rateLimit-remaining"),
                 HeaderValue::from(remaining),
             );
-            response.headers_mut().insert(
-                HeaderName::from_static("x-rateLimit-reset"),
-                HeaderValue::from(reset_in),
-            );
+            response
+                .headers_mut()
+                .insert(HeaderName::from_static("x-rateLimit-reset"), HeaderValue::from(reset_in));
 
             response
         }
         RateLimitResult::Blocked { retry_after, message } => {
             tracing::warn!("Rate limit exceeded for client: {} on {}", client_id, path);
-            
+
             let mut response = Response::builder()
                 .status(StatusCode::TOO_MANY_REQUESTS)
                 .header("Content-Type", "application/json")

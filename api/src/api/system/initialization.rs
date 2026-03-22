@@ -74,10 +74,7 @@ async fn initialize_system(
 
     match User::create(state.database(), &create_request).await {
         Ok(admin_user) => {
-            tracing::info!(
-                "System initialized with admin user: {}",
-                admin_user.get_display_name()
-            );
+            tracing::info!("System initialized with admin user: {}", admin_user.get_display_name());
 
             ApiResponse::success(InitializeResponse {
                 success: true,

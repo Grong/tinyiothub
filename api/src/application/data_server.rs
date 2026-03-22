@@ -1,15 +1,15 @@
+use std::{collections::HashMap, sync::Arc};
+
 use dashmap::DashMap;
 use moka::sync::Cache;
 use parking_lot::RwLock;
-use std::collections::HashMap;
-use std::sync::Arc;
-
-use crate::dto::entity::{Device, DeviceCommand};
-use crate::shared::error::Error;
-
-use crate::domain::device::driver::{create_driver, DeviceOverview, DriverWrapper};
 
 use super::data_context::DataContext;
+use crate::{
+    domain::device::driver::{create_driver, DeviceOverview, DriverWrapper},
+    dto::entity::{Device, DeviceCommand},
+    shared::error::Error,
+};
 
 // 精简的类型别名
 type DriverCache = Cache<String, Arc<RwLock<DriverWrapper>>>;
@@ -33,12 +33,7 @@ impl DataServer {
         // 初始化驱动
         Self::initialize_drivers(&driver_cache, &context, &event_bus);
 
-        Self {
-            context,
-            driver_cache,
-            command_queue: Arc::new(DashMap::new()),
-            event_bus,
-        }
+        Self { context, driver_cache, command_queue: Arc::new(DashMap::new()), event_bus }
     }
 
     /// 初始化驱动（提取为独立方法）
@@ -69,7 +64,10 @@ impl DataServer {
     }
 
     /// 核心数据处理循环（简化版）
-    pub async fn run(&self, mut shutdown_rx: tokio::sync::broadcast::Receiver<()>) -> Result<(), Error> {
+    pub async fn run(
+        &self,
+        mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
+    ) -> Result<(), Error> {
         // 按协议类型分组启动处理任务
         let driver_groups = self.group_drivers_by_protocol();
 
@@ -119,10 +117,8 @@ impl DataServer {
             }
 
             // 获取待执行命令
-            let commands = command_queue
-                .remove(&protocol)
-                .map(|(_, cmds)| cmds)
-                .unwrap_or_default();
+            let commands =
+                command_queue.remove(&protocol).map(|(_, cmds)| cmds).unwrap_or_default();
 
             // 处理每个驱动
             for driver_arc in &drivers {
@@ -137,10 +133,8 @@ impl DataServer {
 
                     // 记录设备之前的在线状态（在克隆后立即获取）
                     let was_online = device.is_online;
-                    let device_display_name = device
-                        .display_name
-                        .clone()
-                        .unwrap_or_else(|| device.name.clone());
+                    let device_display_name =
+                        device.display_name.clone().unwrap_or_else(|| device.name.clone());
                     let device_address = device.address.clone();
 
                     match read_result.result {
@@ -345,16 +339,10 @@ impl DataServer {
 
         for (_, driver_arc) in self.driver_cache.iter() {
             if let Some(driver) = driver_arc.try_read() {
-                let protocol = driver
-                    .device()
-                    .driver_name
-                    .clone()
-                    .unwrap_or_else(|| "unknown".to_string());
+                let protocol =
+                    driver.device().driver_name.clone().unwrap_or_else(|| "unknown".to_string());
 
-                groups
-                    .entry(protocol)
-                    .or_insert_with(Vec::new)
-                    .push(driver_arc.clone());
+                groups.entry(protocol).or_insert_with(Vec::new).push(driver_arc.clone());
             }
         }
 
@@ -419,8 +407,7 @@ impl DataServer {
                         // 设置事件总线
                         driver.set_event_bus(self.event_bus.clone());
 
-                        self.driver_cache
-                            .insert(device_id.clone(), Arc::new(RwLock::new(driver)));
+                        self.driver_cache.insert(device_id.clone(), Arc::new(RwLock::new(driver)));
                         tracing::info!("Reloaded driver for device: {}", device.get_display_name());
                     }
                     Err(e) => {
@@ -582,10 +569,7 @@ impl crate::infrastructure::event::EventHandler for DataServer {
     }
 
     fn should_handle(&self, event: &crate::domain::event::entities::Event) -> bool {
-        matches!(
-            event.event_type(),
-            crate::domain::event::value_objects::EventType::Device(_)
-        )
+        matches!(event.event_type(), crate::domain::event::value_objects::EventType::Device(_))
     }
 
     fn priority(&self) -> u8 {

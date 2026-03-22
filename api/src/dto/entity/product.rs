@@ -1,6 +1,7 @@
-use crate::infrastructure::persistence::database::Database;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder, Row};
+
+use crate::infrastructure::persistence::database::Database;
 
 /// 产品实体
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -114,9 +115,7 @@ impl Product {
         .execute(db.pool())
         .await?;
 
-        Self::find_by_id(db, &id)
-            .await?
-            .ok_or(sqlx::Error::RowNotFound)
+        Self::find_by_id(db, &id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 更新产品信息
@@ -178,9 +177,7 @@ impl Product {
         }
 
         if !has_updates {
-            return Self::find_by_id(db, id)
-                .await?
-                .ok_or(sqlx::Error::RowNotFound);
+            return Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound);
         }
 
         query.push(", updated_at = ").push_bind(now);
@@ -192,17 +189,13 @@ impl Product {
             return Err(sqlx::Error::RowNotFound);
         }
 
-        Self::find_by_id(db, id)
-            .await?
-            .ok_or(sqlx::Error::RowNotFound)
+        Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 删除产品
     pub async fn delete(db: &Database, id: &str) -> Result<u64, sqlx::Error> {
-        let result = sqlx::query("DELETE FROM products WHERE id = ?")
-            .bind(id)
-            .execute(db.pool())
-            .await?;
+        let result =
+            sqlx::query("DELETE FROM products WHERE id = ?").bind(id).execute(db.pool()).await?;
 
         Ok(result.rows_affected())
     }
@@ -221,15 +214,11 @@ impl Product {
         );
 
         if let Some(name) = &params.name {
-            query
-                .push(" AND name LIKE ")
-                .push_bind(format!("%{}%", name));
+            query.push(" AND name LIKE ").push_bind(format!("%{}%", name));
         }
 
         if let Some(manufacturer) = &params.manufacturer {
-            query
-                .push(" AND manufacturer LIKE ")
-                .push_bind(format!("%{}%", manufacturer));
+            query.push(" AND manufacturer LIKE ").push_bind(format!("%{}%", manufacturer));
         }
 
         if let Some(device_type) = &params.device_type {
@@ -248,10 +237,7 @@ impl Product {
             query.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let products = query
-            .build_query_as::<Product>()
-            .fetch_all(db.pool())
-            .await?;
+        let products = query.build_query_as::<Product>().fetch_all(db.pool()).await?;
 
         Ok(products)
     }
@@ -261,15 +247,11 @@ impl Product {
         let mut query = QueryBuilder::new("SELECT COUNT(*) as count FROM products WHERE 1=1");
 
         if let Some(name) = &params.name {
-            query
-                .push(" AND name LIKE ")
-                .push_bind(format!("%{}%", name));
+            query.push(" AND name LIKE ").push_bind(format!("%{}%", name));
         }
 
         if let Some(manufacturer) = &params.manufacturer {
-            query
-                .push(" AND manufacturer LIKE ")
-                .push_bind(format!("%{}%", manufacturer));
+            query.push(" AND manufacturer LIKE ").push_bind(format!("%{}%", manufacturer));
         }
 
         if let Some(device_type) = &params.device_type {
@@ -438,15 +420,11 @@ impl Product {
         );
 
         if let Some(name) = &name {
-            query
-                .push(" AND name LIKE ")
-                .push_bind(format!("%{}%", name));
+            query.push(" AND name LIKE ").push_bind(format!("%{}%", name));
         }
 
         if let Some(manufacturer) = &manufacturer {
-            query
-                .push(" AND manufacturer LIKE ")
-                .push_bind(format!("%{}%", manufacturer));
+            query.push(" AND manufacturer LIKE ").push_bind(format!("%{}%", manufacturer));
         }
 
         if let Some(device_type) = &device_type {
@@ -461,10 +439,7 @@ impl Product {
             query.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let products = query
-            .build_query_as::<Product>()
-            .fetch_all(db.pool())
-            .await?;
+        let products = query.build_query_as::<Product>().fetch_all(db.pool()).await?;
 
         Ok(products)
     }

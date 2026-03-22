@@ -3,15 +3,17 @@ use axum::{
     Json,
 };
 
-use crate::domain::alarm::ResolutionType;
-use crate::dto::request::{
-    AcknowledgeAlarmRequest, BatchAcknowledgeRequest, BatchResolveRequest, ResolveAlarmRequest,
+use crate::{
+    domain::alarm::ResolutionType,
+    dto::{
+        request::{
+            AcknowledgeAlarmRequest, BatchAcknowledgeRequest, BatchResolveRequest,
+            ResolveAlarmRequest,
+        },
+        response::{api_response::ApiResponse, builder::ApiResponseBuilder, BatchOperationResult},
+    },
+    shared::{app_state::AppState, security::jwt::Claims},
 };
-use crate::dto::response::api_response::ApiResponse;
-use crate::dto::response::builder::ApiResponseBuilder;
-use crate::dto::response::BatchOperationResult;
-use crate::shared::app_state::AppState;
-use crate::shared::security::jwt::Claims;
 
 /// 确认报警
 pub async fn acknowledge_alarm(
@@ -20,11 +22,7 @@ pub async fn acknowledge_alarm(
     Path(id): Path<String>,
     Json(req): Json<AcknowledgeAlarmRequest>,
 ) -> Json<ApiResponse<()>> {
-    match state
-        .alarm_service
-        .acknowledge_alarm(&id, claims.user_id, req.note)
-        .await
-    {
+    match state.alarm_service.acknowledge_alarm(&id, claims.user_id, req.note).await {
         Ok(()) => ApiResponseBuilder::success(()),
         Err(e) => ApiResponseBuilder::error(format!("确认报警失败: {}", e)),
     }
@@ -45,11 +43,7 @@ pub async fn resolve_alarm(
         _ => ResolutionType::Fixed,
     };
 
-    match state
-        .alarm_service
-        .resolve_alarm(&id, claims.user_id, resolution_type, req.note)
-        .await
-    {
+    match state.alarm_service.resolve_alarm(&id, claims.user_id, resolution_type, req.note).await {
         Ok(()) => ApiResponseBuilder::success(()),
         Err(e) => ApiResponseBuilder::error(format!("解决报警失败: {}", e)),
     }
@@ -63,15 +57,10 @@ pub async fn batch_acknowledge(
 ) -> Json<ApiResponse<BatchOperationResult>> {
     let total_count = req.alarm_ids.len();
 
-    match state
-        .alarm_service
-        .batch_acknowledge(req.alarm_ids, claims.user_id)
-        .await
-    {
-        Ok(success_count) => ApiResponseBuilder::success(BatchOperationResult {
-            success_count,
-            total_count,
-        }),
+    match state.alarm_service.batch_acknowledge(req.alarm_ids, claims.user_id).await {
+        Ok(success_count) => {
+            ApiResponseBuilder::success(BatchOperationResult { success_count, total_count })
+        }
         Err(e) => ApiResponseBuilder::error(format!("批量确认失败: {}", e)),
     }
 }
@@ -91,15 +80,10 @@ pub async fn batch_resolve(
         _ => ResolutionType::Fixed,
     };
 
-    match state
-        .alarm_service
-        .batch_resolve(req.alarm_ids, claims.user_id, resolution_type)
-        .await
-    {
-        Ok(success_count) => ApiResponseBuilder::success(BatchOperationResult {
-            success_count,
-            total_count,
-        }),
+    match state.alarm_service.batch_resolve(req.alarm_ids, claims.user_id, resolution_type).await {
+        Ok(success_count) => {
+            ApiResponseBuilder::success(BatchOperationResult { success_count, total_count })
+        }
         Err(e) => ApiResponseBuilder::error(format!("批量解决失败: {}", e)),
     }
 }

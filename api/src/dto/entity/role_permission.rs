@@ -1,6 +1,7 @@
-use crate::infrastructure::persistence::database::Database;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder, Row};
+
+use crate::infrastructure::persistence::database::Database;
 
 /// Role permission entity - 角色权限关联实体
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -107,9 +108,7 @@ impl RolePermission {
         }
 
         if let Some(permission_id) = &query.permission_id {
-            sql_query
-                .push(" AND permission_id = ")
-                .push_bind(permission_id);
+            sql_query.push(" AND permission_id = ").push_bind(permission_id);
         }
 
         if let Some(target_id) = &query.target_id {
@@ -117,9 +116,7 @@ impl RolePermission {
         }
 
         if let Some(permission_type) = &query.permission_type {
-            sql_query
-                .push(" AND permission_type = ")
-                .push_bind(permission_type);
+            sql_query.push(" AND permission_type = ").push_bind(permission_type);
         }
 
         sql_query.push(" ORDER BY created_at DESC");
@@ -131,10 +128,8 @@ impl RolePermission {
             sql_query.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let role_permissions = sql_query
-            .build_query_as::<RolePermission>()
-            .fetch_all(db.pool())
-            .await?;
+        let role_permissions =
+            sql_query.build_query_as::<RolePermission>().fetch_all(db.pool()).await?;
 
         Ok(role_permissions)
     }
@@ -328,9 +323,7 @@ impl RolePermission {
         }
 
         if let Some(permission_id) = &query.permission_id {
-            sql_query
-                .push(" AND permission_id = ")
-                .push_bind(permission_id);
+            sql_query.push(" AND permission_id = ").push_bind(permission_id);
         }
 
         if let Some(target_id) = &query.target_id {
@@ -338,9 +331,7 @@ impl RolePermission {
         }
 
         if let Some(permission_type) = &query.permission_type {
-            sql_query
-                .push(" AND permission_type = ")
-                .push_bind(permission_type);
+            sql_query.push(" AND permission_type = ").push_bind(permission_type);
         }
 
         let row = sql_query.build().fetch_one(db.pool()).await?;

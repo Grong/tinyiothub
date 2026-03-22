@@ -1,5 +1,6 @@
-use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
+
+use serde::{Deserialize, Serialize};
 
 /// Event identifier value object
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

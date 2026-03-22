@@ -1,6 +1,7 @@
-use crate::infrastructure::persistence::database::Database;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder, Row};
+
+use crate::infrastructure::persistence::database::Database;
 
 /// 用户实体
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -157,8 +158,8 @@ impl User {
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         // 使用 bcrypt 进行安全密码哈希（必须成功，不允许降级）
-        let password_hash = crate::utils::password::hash_password(&request.password)
-            .map_err(|e| {
+        let password_hash =
+            crate::utils::password::hash_password(&request.password).map_err(|e| {
                 tracing::error!("Failed to hash password during user creation: {}", e);
                 sqlx::Error::Protocol(format!("password hashing failed: {}", e))
             })?;
@@ -184,9 +185,7 @@ impl User {
         .execute(db.pool())
         .await?;
 
-        Self::find_by_id(db, &id)
-            .await?
-            .ok_or(sqlx::Error::RowNotFound)
+        Self::find_by_id(db, &id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 更新用户信息
@@ -248,9 +247,7 @@ impl User {
         }
 
         if !has_updates {
-            return Self::find_by_id(db, id)
-                .await?
-                .ok_or(sqlx::Error::RowNotFound);
+            return Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound);
         }
 
         query.push(", updated_at = ").push_bind(now);
@@ -262,17 +259,13 @@ impl User {
             return Err(sqlx::Error::RowNotFound);
         }
 
-        Self::find_by_id(db, id)
-            .await?
-            .ok_or(sqlx::Error::RowNotFound)
+        Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 删除用户
     pub async fn delete(db: &Database, id: &str) -> Result<u64, sqlx::Error> {
-        let result = sqlx::query("DELETE FROM users WHERE id = ?")
-            .bind(id)
-            .execute(db.pool())
-            .await?;
+        let result =
+            sqlx::query("DELETE FROM users WHERE id = ?").bind(id).execute(db.pool()).await?;
 
         Ok(result.rows_affected())
     }
@@ -291,21 +284,15 @@ impl User {
         );
 
         if let Some(username) = &params.username {
-            query
-                .push(" AND username LIKE ")
-                .push_bind(format!("%{}%", username));
+            query.push(" AND username LIKE ").push_bind(format!("%{}%", username));
         }
 
         if let Some(email) = &params.email {
-            query
-                .push(" AND email LIKE ")
-                .push_bind(format!("%{}%", email));
+            query.push(" AND email LIKE ").push_bind(format!("%{}%", email));
         }
 
         if let Some(display_name) = &params.display_name {
-            query
-                .push(" AND display_name LIKE ")
-                .push_bind(format!("%{}%", display_name));
+            query.push(" AND display_name LIKE ").push_bind(format!("%{}%", display_name));
         }
 
         if let Some(is_enabled) = &params.is_enabled {
@@ -334,21 +321,15 @@ impl User {
         let mut query = QueryBuilder::new("SELECT COUNT(*) as count FROM users WHERE 1=1");
 
         if let Some(username) = &params.username {
-            query
-                .push(" AND username LIKE ")
-                .push_bind(format!("%{}%", username));
+            query.push(" AND username LIKE ").push_bind(format!("%{}%", username));
         }
 
         if let Some(email) = &params.email {
-            query
-                .push(" AND email LIKE ")
-                .push_bind(format!("%{}%", email));
+            query.push(" AND email LIKE ").push_bind(format!("%{}%", email));
         }
 
         if let Some(display_name) = &params.display_name {
-            query
-                .push(" AND display_name LIKE ")
-                .push_bind(format!("%{}%", display_name));
+            query.push(" AND display_name LIKE ").push_bind(format!("%{}%", display_name));
         }
 
         if let Some(is_enabled) = &params.is_enabled {
@@ -405,11 +386,10 @@ impl User {
             // Use bcrypt to verify old password
             use crate::utils::password::{hash_password, verify_password};
             if verify_password(old_password, &user.password_hash).is_ok() {
-                let new_hash = hash_password(new_password)
-                    .map_err(|e| {
-                        tracing::error!("Failed to hash new password during change: {}", e);
-                        sqlx::Error::Protocol(format!("password hashing failed: {}", e))
-                    })?;
+                let new_hash = hash_password(new_password).map_err(|e| {
+                    tracing::error!("Failed to hash new password during change: {}", e);
+                    sqlx::Error::Protocol(format!("password hashing failed: {}", e))
+                })?;
                 let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
                 sqlx::query("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")
@@ -546,9 +526,8 @@ impl User {
 
     /// 获取用户统计信息
     pub async fn get_user_statistics(db: &Database) -> Result<UserStatisticsNew, sqlx::Error> {
-        let total_users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
-            .fetch_one(db.pool())
-            .await?;
+        let total_users: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM users").fetch_one(db.pool()).await?;
 
         let enabled_users: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE is_enabled = true")
@@ -567,12 +546,7 @@ impl User {
         .fetch_one(db.pool())
         .await?;
 
-        Ok(UserStatisticsNew {
-            total_users,
-            enabled_users,
-            disabled_users,
-            recent_logins,
-        })
+        Ok(UserStatisticsNew { total_users, enabled_users, disabled_users, recent_logins })
     }
 
     /// 根据名称查找用户（别名方法，兼容旧代码）
@@ -599,9 +573,7 @@ impl User {
             return Err(sqlx::Error::RowNotFound);
         }
 
-        Self::find_by_id(db, id)
-            .await?
-            .ok_or(sqlx::Error::RowNotFound)
+        Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 验证密码
@@ -615,11 +587,10 @@ impl User {
         id: &str,
         new_password: &str,
     ) -> Result<(), sqlx::Error> {
-        let new_hash = crate::utils::password::hash_password(new_password)
-            .map_err(|e| {
-                tracing::error!("Failed to hash password for update: {}", e);
-                sqlx::Error::Protocol(format!("password hashing failed: {}", e))
-            })?;
+        let new_hash = crate::utils::password::hash_password(new_password).map_err(|e| {
+            tracing::error!("Failed to hash password for update: {}", e);
+            sqlx::Error::Protocol(format!("password hashing failed: {}", e))
+        })?;
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         sqlx::query("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")

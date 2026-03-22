@@ -1,5 +1,6 @@
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
 
 use crate::dto::entity::device_command::DeviceCommand as DeviceCommandEntity;
 

@@ -1,3 +1,7 @@
+use std::{path::PathBuf, sync::Arc};
+
+use tokio::sync::OnceCell;
+
 use crate::{
     application::data_context::DataContext,
     domain::{
@@ -15,21 +19,23 @@ use crate::{
         },
     },
     dto::entity::DeviceProperty,
-    infrastructure::event::{
-        channels::NotificationChannelFactory,
-        handlers::{PersistenceEventHandler, RealTimeStatusHandler, SseEventHandler},
-        security::{EventSecurityFactory, SecureEventService},
-        EventBus, SseConnectionManager,
+    infrastructure::{
+        event::{
+            channels::NotificationChannelFactory,
+            handlers::{PersistenceEventHandler, RealTimeStatusHandler, SseEventHandler},
+            security::{EventSecurityFactory, SecureEventService},
+            EventBus, SseConnectionManager,
+        },
+        persistence::{
+            repositories::{
+                NotificationHistoryRepositoryImpl, SqliteEventRepository,
+                SqliteRealTimeEventRepository,
+            },
+            Database,
+        },
     },
-    infrastructure::persistence::repositories::{
-        NotificationHistoryRepositoryImpl, SqliteEventRepository, SqliteRealTimeEventRepository,
-    },
-    infrastructure::persistence::Database,
     shared::error::Error,
 };
-use std::path::PathBuf;
-use std::sync::Arc;
-use tokio::sync::OnceCell;
 
 /// 应用程序状态 - 使用 Axum 推荐的依赖注入模式
 ///
@@ -109,9 +115,8 @@ impl AppState {
         // === 创建事件系统仓库 ===
         let event_repository: Arc<dyn EventRepository> =
             Arc::new(SqliteEventRepository::new(database.as_ref().clone()));
-        let real_time_event_repository: Arc<dyn RealTimeEventRepository> = Arc::new(
-            SqliteRealTimeEventRepository::new(database.as_ref().clone()),
-        );
+        let real_time_event_repository: Arc<dyn RealTimeEventRepository> =
+            Arc::new(SqliteRealTimeEventRepository::new(database.as_ref().clone()));
 
         // 通知管理器 - 可选服务，依赖数据库
         let notification_manager = Self::create_notification_manager(database.clone()).ok();
@@ -120,9 +125,11 @@ impl AppState {
         let event_bus = Arc::new(EventBus::new());
 
         // 创建报警服务
-        use crate::domain::alarm::AlarmService;
-        use crate::infrastructure::persistence::repositories::{
-            AlarmRepositoryImpl, AlarmRuleRepositoryImpl,
+        use crate::{
+            domain::alarm::AlarmService,
+            infrastructure::persistence::repositories::{
+                AlarmRepositoryImpl, AlarmRuleRepositoryImpl,
+            },
         };
 
         let alarm_repository = Arc::new(AlarmRepositoryImpl::new(database.clone()));
@@ -136,34 +143,24 @@ impl AppState {
         // 这里只创建事件总线，处理器注册推迟到 register_event_handlers() 方法
 
         // 基础服务 - 使用事件总线
-        let device_service = Arc::new(DeviceService::with_event_bus(
-            database.clone(),
-            event_bus.clone(),
-        ));
+        let device_service =
+            Arc::new(DeviceService::with_event_bus(database.clone(), event_bus.clone()));
 
         // 监控服务 - 依赖数据库和上下文
-        let monitoring_service = Arc::new(DeviceMonitoringService::new(
-            database.clone(),
-            data_context.clone(),
-        ));
+        let monitoring_service =
+            Arc::new(DeviceMonitoringService::new(database.clone(), data_context.clone()));
 
         // 性能服务 - 依赖数据库和上下文
-        let performance_service = Arc::new(DevicePerformanceService::new(
-            database.clone(),
-            data_context.clone(),
-        ));
+        let performance_service =
+            Arc::new(DevicePerformanceService::new(database.clone(), data_context.clone()));
 
         // 追踪服务 - 依赖数据库和上下文
-        let trace_service = Arc::new(DeviceTraceService::new(
-            database.clone(),
-            data_context.clone(),
-        ));
+        let trace_service =
+            Arc::new(DeviceTraceService::new(database.clone(), data_context.clone()));
 
         // 模板引擎 - 复合服务，依赖仓库和验证器
-        let template_repository = Arc::new(TemplateRepository::new(
-            database.clone(),
-            PathBuf::from("templates"),
-        ));
+        let template_repository =
+            Arc::new(TemplateRepository::new(database.clone(), PathBuf::from("templates")));
         let template_validator = Arc::new(TemplateValidator::new());
         let template_engine =
             Arc::new(TemplateEngine::new(template_repository, template_validator));
@@ -232,8 +229,7 @@ impl AppState {
         device_name: &str,
         property_name: &str,
     ) -> Option<DeviceProperty> {
-        self.data_context
-            .get_device_prop_by_name(device_name, property_name)
+        self.data_context.get_device_prop_by_name(device_name, property_name)
     }
 
     /// 更新设备属性值
@@ -299,28 +295,30 @@ impl AppState {
         let security_factory = EventSecurityFactory::new(self.database.clone(), config)?;
 
         // Create secure event service
-        let secure_service = security_factory
-            .create_secure_event_service(self.event_repository.clone())
-            .await?;
+        let secure_service =
+            security_factory.create_secure_event_service(self.event_repository.clone()).await?;
 
         // Store in OnceCell
         let service_arc = Arc::new(secure_service);
         match self.secure_event_service.set(service_arc) {
-            Ok(_) => self.secure_event_service.get()
+            Ok(_) => self
+                .secure_event_service
+                .get()
                 .ok_or_else(|| -> Box<dyn std::error::Error + Send + Sync> {
                     Box::new(std::io::Error::new(
                         std::io::ErrorKind::Other,
-                        "Failed to get secure event service"
+                        "Failed to get secure event service",
                     ))
                 })
                 .map(|s| s.as_ref()),
             Err(_) => {
                 // Another thread already initialized it
-                self.secure_event_service.get()
+                self.secure_event_service
+                    .get()
                     .ok_or_else(|| -> Box<dyn std::error::Error + Send + Sync> {
                         Box::new(std::io::Error::new(
                             std::io::ErrorKind::Other,
-                            "Failed to get secure event service"
+                            "Failed to get secure event service",
                         ))
                     })
                     .map(|s| s.as_ref())

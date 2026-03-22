@@ -69,9 +69,7 @@ pub enum ComplexityLevel {
 impl EventDatabaseOptimizer {
     /// Create a new database optimizer
     pub fn new() -> Self {
-        Self {
-            optimization_history: Vec::new(),
-        }
+        Self { optimization_history: Vec::new() }
     }
 
     /// Run database optimization
@@ -123,13 +121,7 @@ impl EventDatabaseOptimizer {
 
         self.optimization_history.push(record);
 
-        Ok(OptimizationResult {
-            optimization_id,
-            started_at,
-            completed_at,
-            steps,
-            success: true,
-        })
+        Ok(OptimizationResult { optimization_id, started_at, completed_at, steps, success: true })
     }
 
     /// Analyze existing indexes

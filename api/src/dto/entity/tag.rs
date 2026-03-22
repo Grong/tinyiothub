@@ -1,6 +1,7 @@
-use crate::infrastructure::persistence::database::Database;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder, Row};
+
+use crate::infrastructure::persistence::database::Database;
 
 /// Tag entity - 标签实体
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -122,9 +123,7 @@ impl Tag {
         .execute(db.pool())
         .await?;
 
-        Self::find_by_id(db, &id)
-            .await?
-            .ok_or(sqlx::Error::RowNotFound)
+        Self::find_by_id(db, &id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 更新标签信息
@@ -145,9 +144,7 @@ impl Tag {
         }
 
         if !has_updates {
-            return Self::find_by_id(db, id)
-                .await?
-                .ok_or(sqlx::Error::RowNotFound);
+            return Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound);
         }
 
         query.push(" WHERE id = ").push_bind(id);
@@ -158,9 +155,7 @@ impl Tag {
             return Err(sqlx::Error::RowNotFound);
         }
 
-        Self::find_by_id(db, id)
-            .await?
-            .ok_or(sqlx::Error::RowNotFound)
+        Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 删除标签
@@ -169,16 +164,11 @@ impl Tag {
         let mut tx = db.pool().begin().await?;
 
         // 先删除标签绑定关系
-        sqlx::query("DELETE FROM tag_bindings WHERE tag_id = ?")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query("DELETE FROM tag_bindings WHERE tag_id = ?").bind(id).execute(&mut *tx).await?;
 
         // 删除标签本身
-        let result = sqlx::query("DELETE FROM tags WHERE id = ?")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
+        let result =
+            sqlx::query("DELETE FROM tags WHERE id = ?").bind(id).execute(&mut *tx).await?;
 
         tx.commit().await?;
         Ok(result.rows_affected())
@@ -192,9 +182,7 @@ impl Tag {
 
         // 动态添加查询条件
         if let Some(name) = &params.name {
-            query
-                .push(" AND name LIKE ")
-                .push_bind(format!("%{}%", name));
+            query.push(" AND name LIKE ").push_bind(format!("%{}%", name));
         }
 
         if let Some(tag_type) = &params.tag_type {
@@ -221,9 +209,7 @@ impl Tag {
         let mut query = QueryBuilder::new("SELECT COUNT(*) as count FROM tags WHERE 1=1");
 
         if let Some(name) = &params.name {
-            query
-                .push(" AND name LIKE ")
-                .push_bind(format!("%{}%", name));
+            query.push(" AND name LIKE ").push_bind(format!("%{}%", name));
         }
 
         if let Some(tag_type) = &params.tag_type {
@@ -328,9 +314,7 @@ impl TagBinding {
         .execute(db.pool())
         .await?;
 
-        Self::find_by_id(db, &id)
-            .await?
-            .ok_or(sqlx::Error::RowNotFound)
+        Self::find_by_id(db, &id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 删除标签绑定

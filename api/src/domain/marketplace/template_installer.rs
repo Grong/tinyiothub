@@ -1,10 +1,11 @@
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
+use super::{
+    client::MarketplaceClient,
+    error::{MarketplaceError, Result},
+    metadata::TemplateMetadata,
+};
 use crate::domain::template::repository::TemplateRepository;
-use super::client::MarketplaceClient;
-use super::error::{MarketplaceError, Result};
-use super::metadata::TemplateMetadata;
 
 pub struct TemplateInstaller {
     client: Arc<MarketplaceClient>,
@@ -18,11 +19,7 @@ impl TemplateInstaller {
         repository: Arc<TemplateRepository>,
         templates_dir: PathBuf,
     ) -> Self {
-        Self {
-            client,
-            repository,
-            templates_dir,
-        }
+        Self { client, repository, templates_dir }
     }
 
     /// 从市场安装模板
@@ -56,10 +53,10 @@ impl TemplateInstaller {
         let temp_file = self.download_template(template_meta).await?;
 
         // 5. 验证校验和（开发模式下跳过）
-        if !template_meta.checksum.starts_with("sha256:test") && !template_meta.checksum.contains("test") {
-            self.client
-                .verify_checksum(&temp_file, &template_meta.checksum)
-                .await?;
+        if !template_meta.checksum.starts_with("sha256:test")
+            && !template_meta.checksum.contains("test")
+        {
+            self.client.verify_checksum(&temp_file, &template_meta.checksum).await?;
         } else {
             tracing::warn!("Skipping checksum verification for test/development template");
         }
@@ -79,9 +76,7 @@ impl TemplateInstaller {
         let temp_dir = std::env::temp_dir();
         let temp_file = temp_dir.join(format!("template_{}.json", meta.id));
 
-        self.client
-            .download_resource(&meta.file_url, &temp_file)
-            .await?;
+        self.client.download_resource(&meta.file_url, &temp_file).await?;
 
         Ok(temp_file)
     }
@@ -107,8 +102,9 @@ impl TemplateInstaller {
 
         // 将 JSON 转换为 CreateDeviceTemplateRequest
         let request: crate::dto::entity::device_template::CreateDeviceTemplateRequest =
-            serde_json::from_value(template_data)
-                .map_err(|e| MarketplaceError::Template(format!("Invalid template format: {}", e)))?;
+            serde_json::from_value(template_data).map_err(|e| {
+                MarketplaceError::Template(format!("Invalid template format: {}", e))
+            })?;
 
         // 使用 repository 的 create 方法
         self.repository

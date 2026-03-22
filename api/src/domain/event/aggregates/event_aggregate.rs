@@ -1,10 +1,12 @@
+use std::collections::HashMap;
+
+use chrono::{DateTime, Utc};
+
 use crate::domain::event::{
     entities::Event,
     value_objects::{EventId, EventLevel, EventSource, EventType, RichContent},
     EventError, Result,
 };
-use chrono::{DateTime, Utc};
-use std::collections::HashMap;
 
 /// Event Aggregate Root
 ///
@@ -26,20 +28,12 @@ impl EventAggregate {
     ) -> Result<Self> {
         let event = Event::new(event_type, level, source, content)?;
 
-        Ok(Self {
-            event,
-            metadata: HashMap::new(),
-            version: 1,
-        })
+        Ok(Self { event, metadata: HashMap::new(), version: 1 })
     }
 
     /// Create aggregate from existing event
     pub fn from_event(event: Event) -> Self {
-        Self {
-            event,
-            metadata: HashMap::new(),
-            version: 1,
-        }
+        Self { event, metadata: HashMap::new(), version: 1 }
     }
 
     /// Get the event entity

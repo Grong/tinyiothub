@@ -1,16 +1,20 @@
-use crate::domain::template::engine::TemplateEngine;
-use crate::domain::template::repository::TemplateRepository;
-use crate::domain::template::service::TemplateService;
-use crate::domain::template::validator::TemplateValidator;
-use crate::dto::entity::Device;
-use crate::infrastructure::event::EventBus;
-use crate::infrastructure::persistence::{create_pool, Database, DatabaseConfig};
-use crate::shared::error::Error;
+use std::{path::PathBuf, sync::Arc};
 
 use dashmap::DashMap;
 use sqlx::SqlitePool;
-use std::path::PathBuf;
-use std::sync::Arc;
+
+use crate::{
+    domain::template::{
+        engine::TemplateEngine, repository::TemplateRepository, service::TemplateService,
+        validator::TemplateValidator,
+    },
+    dto::entity::Device,
+    infrastructure::{
+        event::EventBus,
+        persistence::{create_pool, Database, DatabaseConfig},
+    },
+    shared::error::Error,
+};
 
 /// 重构后的数据上下文 - 专注于内存缓存管理
 #[derive(Debug)]
@@ -85,15 +89,11 @@ impl DataContext {
     ) -> Result<(Arc<TemplateEngine>, Arc<TemplateService>), Box<dyn std::error::Error + Send + Sync>>
     {
         let database = Database::new(db_pool.clone());
-        let template_repository = Arc::new(TemplateRepository::new(
-            Arc::new(database),
-            PathBuf::from("templates"),
-        ));
+        let template_repository =
+            Arc::new(TemplateRepository::new(Arc::new(database), PathBuf::from("templates")));
         let template_validator = Arc::new(TemplateValidator::new());
-        let template_engine = Arc::new(TemplateEngine::new(
-            template_repository.clone(),
-            template_validator,
-        ));
+        let template_engine =
+            Arc::new(TemplateEngine::new(template_repository.clone(), template_validator));
         let template_service = Arc::new(TemplateService::new(template_repository));
 
         // 初始化模板系统
@@ -172,9 +172,7 @@ impl DataContext {
 
     /// 根据名称获取设备（从缓存）
     pub fn get_device_by_name(&self, name: &str) -> Option<Device> {
-        self.name_to_id
-            .get(name)
-            .and_then(|id| self.get_device(&id))
+        self.name_to_id.get(name).and_then(|id| self.get_device(&id))
     }
 
     /// 根据设备名称和属性名称获取属性
@@ -185,18 +183,11 @@ impl DataContext {
     ) -> Option<crate::dto::entity::DeviceProperty> {
         if let Some(device) = self.get_device_by_name(dev_name) {
             if let Some(properties) = &device.properties {
-                return properties
-                    .iter()
-                    .find(|prop| prop.name == prop_name)
-                    .cloned();
+                return properties.iter().find(|prop| prop.name == prop_name).cloned();
             }
         }
 
-        tracing::debug!(
-            "Property '{}' not found for device '{}'",
-            prop_name,
-            dev_name
-        );
+        tracing::debug!("Property '{}' not found for device '{}'", prop_name, dev_name);
         None
     }
 
@@ -240,10 +231,7 @@ impl DataContext {
 
     /// 获取所有设备（从缓存）
     pub fn get_all_devices(&self) -> Vec<Device> {
-        self.devices
-            .iter()
-            .map(|entry| Device::clone(entry.value()))
-            .collect()
+        self.devices.iter().map(|entry| Device::clone(entry.value())).collect()
     }
 
     /// 尝试获取所有设备（带错误处理）
@@ -288,9 +276,7 @@ impl DataContext {
 
         // 验证属性是否属于该设备
         if property.device_id != device_id {
-            return Err(Error::IOError(
-                "Property does not belong to device".to_string(),
-            ));
+            return Err(Error::IOError("Property does not belong to device".to_string()));
         }
 
         let old_value = property.current_value.clone();
@@ -384,10 +370,7 @@ impl DataContext {
 
     /// 获取缓存统计信息
     pub fn get_cache_stats(&self) -> CacheStats {
-        CacheStats {
-            device_count: self.devices.len(),
-            name_mapping_count: self.name_to_id.len(),
-        }
+        CacheStats { device_count: self.devices.len(), name_mapping_count: self.name_to_id.len() }
     }
 
     /// 刷新设备缓存（从数据库重新加载）

@@ -1,10 +1,7 @@
-use sqlx::{Error as SqlxError, Row, SqlitePool};
-
-use sqlx::sqlite::SqliteRow;
-
 use std::fmt::Display;
 
 use serde::{de::DeserializeOwned, Serialize};
+use sqlx::{sqlite::SqliteRow, Error as SqlxError, Row, SqlitePool};
 
 /// Database abstraction layer for SQLx
 #[derive(Debug, Clone)]
@@ -170,9 +167,7 @@ pub fn check_not_empty_like(param: Option<String>, name: &str, list: &mut Vec<St
 
 /// Escape special characters in LIKE patterns to prevent SQL injection via LIKE wildcards
 fn escape_like(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_")
+    s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
 }
 
 pub fn check_not_empty_greater(param: Option<String>, name: &str, list: &mut Vec<String>) {

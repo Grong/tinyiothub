@@ -1,9 +1,3 @@
-use crate::domain::event::services::notification_service::NotificationLevel;
-use crate::domain::event::{NotificationChannelType, NotificationRule};
-use crate::dto::response::api_response::ApiResponse;
-use crate::dto::response::builder::ApiResponseBuilder;
-use crate::shared::app_state::AppState;
-use crate::shared::security::jwt::Claims;
 use axum::{
     extract::{Path, Query, State},
     response::Json,
@@ -13,29 +7,26 @@ use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 use uuid::Uuid;
 
+use crate::{
+    domain::event::{
+        services::notification_service::NotificationLevel, NotificationChannelType,
+        NotificationRule,
+    },
+    dto::response::{api_response::ApiResponse, builder::ApiResponseBuilder},
+    shared::{app_state::AppState, security::jwt::Claims},
+};
+
 /// Helper function to convert JsonValue device filter to DeviceFilterResponse
 fn convert_device_filter(filter: &serde_json::Value) -> DeviceFilterResponse {
     DeviceFilterResponse {
-        device_ids: filter
-            .get("device_ids")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect::<Vec<String>>()
-            }),
-        device_types: filter
-            .get("device_types")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect::<Vec<String>>()
-            }),
+        device_ids: filter.get("device_ids").and_then(|v| v.as_array()).map(|arr| {
+            arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect::<Vec<String>>()
+        }),
+        device_types: filter.get("device_types").and_then(|v| v.as_array()).map(|arr| {
+            arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect::<Vec<String>>()
+        }),
         tags: filter.get("tags").and_then(|v| v.as_array()).map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect::<Vec<String>>()
+            arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect::<Vec<String>>()
         }),
     }
 }
@@ -180,9 +171,8 @@ async fn get_notification_rules_impl(
     state: &AppState,
     query: NotificationRuleQuery,
 ) -> Result<Vec<NotificationRuleResponse>, String> {
-    let notification_manager = state
-        .get_notification_manager()
-        .ok_or("Notification manager not available")?;
+    let notification_manager =
+        state.get_notification_manager().ok_or("Notification manager not available")?;
 
     let rules = notification_manager
         .get_rules()
@@ -257,9 +247,8 @@ async fn create_notification_rule_impl(
     state: &AppState,
     request: CreateNotificationRuleRequest,
 ) -> Result<NotificationRuleResponse, String> {
-    let notification_manager = state
-        .get_notification_manager()
-        .ok_or("Notification manager not available")?;
+    let notification_manager =
+        state.get_notification_manager().ok_or("Notification manager not available")?;
 
     // Parse notification methods
     let notification_methods: Result<Vec<NotificationChannelType>, _> = request
@@ -273,9 +262,7 @@ async fn create_notification_rule_impl(
     let notification_methods = notification_methods?;
 
     // Create device filter if provided
-    let device_filter = request
-        .device_filter
-        .map(|filter| device_filter_to_json(&filter));
+    let device_filter = request.device_filter.map(|filter| device_filter_to_json(&filter));
 
     // Create the rule
     let mut rule = NotificationRule::new(
@@ -355,9 +342,8 @@ async fn get_notification_rule_impl(
     state: &AppState,
     rule_id: &str,
 ) -> Result<Option<NotificationRuleResponse>, String> {
-    let notification_manager = state
-        .get_notification_manager()
-        .ok_or("Notification manager not available")?;
+    let notification_manager =
+        state.get_notification_manager().ok_or("Notification manager not available")?;
 
     let rules = notification_manager
         .get_rules()
@@ -412,9 +398,8 @@ async fn update_notification_rule_impl(
     rule_id: &str,
     request: UpdateNotificationRuleRequest,
 ) -> Result<NotificationRuleResponse, String> {
-    let notification_manager = state
-        .get_notification_manager()
-        .ok_or("Notification manager not available")?;
+    let notification_manager =
+        state.get_notification_manager().ok_or("Notification manager not available")?;
 
     // Get existing rule
     let rules = notification_manager
@@ -422,10 +407,8 @@ async fn update_notification_rule_impl(
         .await
         .map_err(|e| format!("Failed to get notification rules: {}", e))?;
 
-    let mut rule = rules
-        .into_iter()
-        .find(|r| r.id == rule_id)
-        .ok_or("Notification rule not found")?;
+    let mut rule =
+        rules.into_iter().find(|r| r.id == rule_id).ok_or("Notification rule not found")?;
 
     // Update fields
     if let Some(name) = request.name {
@@ -521,9 +504,8 @@ pub async fn delete_notification_rule(
 }
 
 async fn delete_notification_rule_impl(state: &AppState, rule_id: &str) -> Result<(), String> {
-    let notification_manager = state
-        .get_notification_manager()
-        .ok_or("Notification manager not available")?;
+    let notification_manager =
+        state.get_notification_manager().ok_or("Notification manager not available")?;
 
     notification_manager
         .remove_rule(rule_id)
@@ -552,9 +534,8 @@ async fn get_notification_history_impl(
     state: &AppState,
     query: NotificationHistoryQuery,
 ) -> Result<Vec<NotificationHistoryResponse>, String> {
-    let notification_manager = state
-        .get_notification_manager()
-        .ok_or("Notification manager not available")?;
+    let notification_manager =
+        state.get_notification_manager().ok_or("Notification manager not available")?;
 
     // For now, return empty history as we need to implement the history retrieval
     // In a full implementation, this would query the notification history store
@@ -609,9 +590,8 @@ async fn send_test_notification_impl(
     state: &AppState,
     request: TestNotificationRequest,
 ) -> Result<(), String> {
-    let notification_manager = state
-        .get_notification_manager()
-        .ok_or("Notification manager not available")?;
+    let notification_manager =
+        state.get_notification_manager().ok_or("Notification manager not available")?;
 
     // Parse notification level
     let level = NotificationLevel::from_str(&request.level)

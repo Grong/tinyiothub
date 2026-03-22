@@ -1,5 +1,6 @@
-use crate::domain::device::trace_service::DeviceTraceService;
 use std::sync::Arc;
+
+use crate::domain::device::trace_service::DeviceTraceService;
 
 /// 设备追踪工具类
 pub struct DeviceTracer {
@@ -74,10 +75,7 @@ impl DeviceTracer {
         let mut details = comm_details.unwrap_or_default();
         if let Some(duration) = duration_ms {
             if let serde_json::Value::Object(ref mut map) = details {
-                map.insert(
-                    "duration_ms".to_string(),
-                    serde_json::Value::Number(duration.into()),
-                );
+                map.insert("duration_ms".to_string(), serde_json::Value::Number(duration.into()));
             }
         }
 
@@ -144,85 +142,52 @@ impl DeviceTracer {
 macro_rules! trace_device {
     // 操作追踪
     (operation, $tracer:expr, $device_id:expr, $title:expr, $message:expr) => {
-        $tracer
-            .trace_operation($device_id, $title, $message, None, None, None)
-            .await
+        $tracer.trace_operation($device_id, $title, $message, None, None, None).await
     };
     (operation, $tracer:expr, $device_id:expr, $title:expr, $message:expr, $details:expr) => {
-        $tracer
-            .trace_operation($device_id, $title, $message, None, None, Some($details))
-            .await
+        $tracer.trace_operation($device_id, $title, $message, None, None, Some($details)).await
     };
     (operation, $tracer:expr, $device_id:expr, $title:expr, $message:expr, $user_id:expr, $session_id:expr) => {
         $tracer
-            .trace_operation(
-                $device_id,
-                $title,
-                $message,
-                Some($user_id),
-                Some($session_id),
-                None,
-            )
+            .trace_operation($device_id, $title, $message, Some($user_id), Some($session_id), None)
             .await
     };
 
     // 错误追踪
     (error, $tracer:expr, $device_id:expr, $title:expr, $message:expr) => {
-        $tracer
-            .trace_error($device_id, $title, $message, None, None)
-            .await
+        $tracer.trace_error($device_id, $title, $message, None, None).await
     };
     (error, $tracer:expr, $device_id:expr, $title:expr, $message:expr, $details:expr) => {
-        $tracer
-            .trace_error($device_id, $title, $message, Some($details), None)
-            .await
+        $tracer.trace_error($device_id, $title, $message, Some($details), None).await
     };
 
     // 通信追踪
     (comm, $tracer:expr, $device_id:expr, $title:expr, $message:expr) => {
-        $tracer
-            .trace_communication($device_id, $title, $message, None, None)
-            .await
+        $tracer.trace_communication($device_id, $title, $message, None, None).await
     };
     (comm, $tracer:expr, $device_id:expr, $title:expr, $message:expr, $details:expr) => {
-        $tracer
-            .trace_communication($device_id, $title, $message, Some($details), None)
-            .await
+        $tracer.trace_communication($device_id, $title, $message, Some($details), None).await
     };
     (comm, $tracer:expr, $device_id:expr, $title:expr, $message:expr, $details:expr, $duration:expr) => {
         $tracer
-            .trace_communication(
-                $device_id,
-                $title,
-                $message,
-                Some($details),
-                Some($duration),
-            )
+            .trace_communication($device_id, $title, $message, Some($details), Some($duration))
             .await
     };
 
     // 性能追踪
     (perf, $tracer:expr, $device_id:expr, $title:expr, $message:expr) => {
-        $tracer
-            .trace_performance($device_id, $title, $message, None)
-            .await
+        $tracer.trace_performance($device_id, $title, $message, None).await
     };
     (perf, $tracer:expr, $device_id:expr, $title:expr, $message:expr, $metrics:expr) => {
-        $tracer
-            .trace_performance($device_id, $title, $message, Some($metrics))
-            .await
+        $tracer.trace_performance($device_id, $title, $message, Some($metrics)).await
     };
 
     // 调试追踪
     (debug, $tracer:expr, $device_id:expr, $title:expr, $message:expr) => {
-        $tracer
-            .trace_debug($device_id, $title, $message, None, None)
-            .await
+        $tracer.trace_debug($device_id, $title, $message, None, None).await
     };
     (debug, $tracer:expr, $device_id:expr, $title:expr, $message:expr, $details:expr) => {
-        $tracer
-            .trace_debug($device_id, $title, $message, Some($details), None)
-            .await
+        $tracer.trace_debug($device_id, $title, $message, Some($details), None).await
     };
 }
 

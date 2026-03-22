@@ -1,12 +1,16 @@
-use crate::domain::event::{
-    EventError, NotificationChannelType, NotificationRecord, NotificationStatus, Result,
-};
-use crate::infrastructure::persistence::database::Database;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::Row;
-use std::sync::Arc;
 use tracing::{debug, error, info};
+
+use crate::{
+    domain::event::{
+        EventError, NotificationChannelType, NotificationRecord, NotificationStatus, Result,
+    },
+    infrastructure::persistence::database::Database,
+};
 
 /// Notification history store trait
 #[async_trait]
@@ -143,11 +147,7 @@ impl NotificationHistoryStore for NotificationHistoryRepositoryImpl {
             }
         }
 
-        debug!(
-            "Retrieved {} notification records for event: {}",
-            records.len(),
-            event_id
-        );
+        debug!("Retrieved {} notification records for event: {}", records.len(), event_id);
         Ok(records)
     }
 
@@ -159,11 +159,8 @@ impl NotificationHistoryStore for NotificationHistoryRepositoryImpl {
     ) -> Result<()> {
         let pool = self.db.pool();
 
-        let sent_at = if status == NotificationStatus::Sent {
-            Some(Utc::now().to_rfc3339())
-        } else {
-            None
-        };
+        let sent_at =
+            if status == NotificationStatus::Sent { Some(Utc::now().to_rfc3339()) } else { None };
 
         let result = sqlx::query(
             r#"
@@ -180,15 +177,10 @@ impl NotificationHistoryStore for NotificationHistoryRepositoryImpl {
         .await?;
 
         if result.rows_affected() == 0 {
-            return Err(EventError::NotFound {
-                id: record_id.to_string(),
-            });
+            return Err(EventError::NotFound { id: record_id.to_string() });
         }
 
-        debug!(
-            "Updated notification record {} status to: {}",
-            record_id, status
-        );
+        debug!("Updated notification record {} status to: {}", record_id, status);
         Ok(())
     }
 }
@@ -222,11 +214,7 @@ impl NotificationHistoryRepositoryImpl {
             }
         }
 
-        debug!(
-            "Retrieved {} notification records for rule: {}",
-            records.len(),
-            rule_id
-        );
+        debug!("Retrieved {} notification records for rule: {}", records.len(), rule_id);
         Ok(records)
     }
 
@@ -261,11 +249,7 @@ impl NotificationHistoryRepositoryImpl {
             }
         }
 
-        debug!(
-            "Retrieved {} notification records with status: {}",
-            records.len(),
-            status
-        );
+        debug!("Retrieved {} notification records with status: {}", records.len(), status);
         Ok(records)
     }
 
@@ -324,10 +308,7 @@ impl NotificationHistoryRepositoryImpl {
 
         let deleted_count = result.rows_affected();
         if deleted_count > 0 {
-            info!(
-                "Cleaned up {} old notification records older than {} days",
-                deleted_count, days
-            );
+            info!("Cleaned up {} old notification records older than {} days", deleted_count, days);
         }
 
         Ok(deleted_count)
@@ -390,10 +371,11 @@ pub struct NotificationStatistics {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::infrastructure::persistence::database::Database;
     use tempfile::tempdir;
     use uuid::Uuid;
+
+    use super::*;
+    use crate::infrastructure::persistence::database::Database;
 
     async fn create_test_db() -> Arc<Database> {
         let temp_dir = tempdir().unwrap();
@@ -456,9 +438,7 @@ mod tests {
         repo.store_record(&record).await.unwrap();
 
         // Update status to sent
-        repo.update_status(&record.id, NotificationStatus::Sent, None)
-            .await
-            .unwrap();
+        repo.update_status(&record.id, NotificationStatus::Sent, None).await.unwrap();
 
         // Retrieve and verify
         let retrieved_records = repo.get_records(&record.event_id).await.unwrap();
@@ -489,13 +469,9 @@ mod tests {
 
         // Update status to failed with error message
         let error_msg = "SMTP connection failed".to_string();
-        repo.update_status(
-            &record.id,
-            NotificationStatus::Failed,
-            Some(error_msg.clone()),
-        )
-        .await
-        .unwrap();
+        repo.update_status(&record.id, NotificationStatus::Failed, Some(error_msg.clone()))
+            .await
+            .unwrap();
 
         // Retrieve and verify
         let retrieved_records = repo.get_records(&record.event_id).await.unwrap();
@@ -516,11 +492,8 @@ mod tests {
                 1 => NotificationStatus::Failed,
                 _ => NotificationStatus::Pending,
             };
-            let sent_at = if status.clone() == NotificationStatus::Sent {
-                Some(Utc::now())
-            } else {
-                None
-            };
+            let sent_at =
+                if status.clone() == NotificationStatus::Sent { Some(Utc::now()) } else { None };
 
             let record = NotificationRecord {
                 id: Uuid::new_v4().to_string(),

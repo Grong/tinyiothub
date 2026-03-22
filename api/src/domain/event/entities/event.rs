@@ -1,9 +1,10 @@
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
 use crate::domain::event::{
     value_objects::{EventId, EventLevel, EventSource, EventType, RichContent},
     EventError, Result,
 };
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 
 /// Core event entity representing any event in the system
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,14 +28,8 @@ impl Event {
         // Validate content size
         content.validate_size()?;
 
-        let event = Self {
-            id: EventId::new(),
-            event_type,
-            level,
-            timestamp: Utc::now(),
-            source,
-            content,
-        };
+        let event =
+            Self { id: EventId::new(), event_type, level, timestamp: Utc::now(), source, content };
 
         // Additional business rule validations
         event.validate()?;
@@ -51,14 +46,7 @@ impl Event {
         source: EventSource,
         content: RichContent,
     ) -> Self {
-        Self {
-            id,
-            event_type,
-            level,
-            timestamp,
-            source,
-            content,
-        }
+        Self { id, event_type, level, timestamp, source, content }
     }
 
     /// Get event ID
@@ -123,10 +111,9 @@ impl Event {
     /// Check if this event should update real-time status
     pub fn should_update_real_time_status(&self) -> bool {
         match &self.event_type {
-            EventType::Device(_) => matches!(
-                self.level,
-                EventLevel::Critical | EventLevel::Error | EventLevel::Warning
-            ),
+            EventType::Device(_) => {
+                matches!(self.level, EventLevel::Critical | EventLevel::Error | EventLevel::Warning)
+            }
             EventType::System(_) => matches!(self.level, EventLevel::Critical | EventLevel::Error),
         }
     }

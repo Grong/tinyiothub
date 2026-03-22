@@ -194,18 +194,12 @@ impl std::fmt::Display for EventType {
 impl DeviceEventType {
     /// Check if this is an alarm-related event
     pub fn is_alarm(&self) -> bool {
-        matches!(
-            self,
-            DeviceEventType::DeviceAlarm | DeviceEventType::PropertyAlarm
-        )
+        matches!(self, DeviceEventType::DeviceAlarm | DeviceEventType::PropertyAlarm)
     }
 
     /// Check if this is a normal/recovery event
     pub fn is_normal(&self) -> bool {
-        matches!(
-            self,
-            DeviceEventType::DeviceNormal | DeviceEventType::PropertyNormal
-        )
+        matches!(self, DeviceEventType::DeviceNormal | DeviceEventType::PropertyNormal)
     }
 
     /// Check if this is a property-related event
@@ -289,16 +283,10 @@ mod tests {
         assert_eq!(parsed, EventType::System(SystemEventType::UserAuth));
 
         let device_alarm = EventType::from_strings("device", "device_alarm").unwrap();
-        assert_eq!(
-            device_alarm,
-            EventType::Device(DeviceEventType::DeviceAlarm)
-        );
+        assert_eq!(device_alarm, EventType::Device(DeviceEventType::DeviceAlarm));
 
         let property_alarm = EventType::from_strings("device", "property_alarm").unwrap();
-        assert_eq!(
-            property_alarm,
-            EventType::Device(DeviceEventType::PropertyAlarm)
-        );
+        assert_eq!(property_alarm, EventType::Device(DeviceEventType::PropertyAlarm));
 
         let invalid = EventType::from_strings("invalid", "type");
         assert!(invalid.is_err());
@@ -342,26 +330,11 @@ mod tests {
     fn test_default_severity() {
         use crate::domain::event::value_objects::EventLevel;
 
-        assert_eq!(
-            DeviceEventType::DeviceAlarm.default_severity(),
-            EventLevel::Warning
-        );
-        assert_eq!(
-            DeviceEventType::PropertyAlarm.default_severity(),
-            EventLevel::Warning
-        );
-        assert_eq!(
-            DeviceEventType::CommandFailed.default_severity(),
-            EventLevel::Error
-        );
-        assert_eq!(
-            DeviceEventType::CommandCompleted.default_severity(),
-            EventLevel::Info
-        );
-        assert_eq!(
-            DeviceEventType::PropertyChange.default_severity(),
-            EventLevel::Debug
-        );
+        assert_eq!(DeviceEventType::DeviceAlarm.default_severity(), EventLevel::Warning);
+        assert_eq!(DeviceEventType::PropertyAlarm.default_severity(), EventLevel::Warning);
+        assert_eq!(DeviceEventType::CommandFailed.default_severity(), EventLevel::Error);
+        assert_eq!(DeviceEventType::CommandCompleted.default_severity(), EventLevel::Info);
+        assert_eq!(DeviceEventType::PropertyChange.default_severity(), EventLevel::Debug);
     }
 
     #[test]

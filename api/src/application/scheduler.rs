@@ -1,16 +1,14 @@
-use std::process::Command;
-use std::str::FromStr;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{process::Command, str::FromStr, sync::Arc, time::Duration};
 
 use cron::Schedule;
 use moka::sync::Cache;
 use serde_json::Value;
-use tokio::sync::Mutex;
-use tokio::time::interval;
+use tokio::{sync::Mutex, time::interval};
 
-use crate::dto::entity::job::{Job, JobExecution};
-use crate::infrastructure::persistence::database::Database;
+use crate::{
+    dto::entity::job::{Job, JobExecution},
+    infrastructure::persistence::database::Database,
+};
 
 /// 任务调度器
 pub struct TimeTask {
@@ -29,11 +27,7 @@ impl TimeTask {
     pub fn new() -> Self {
         let map: Cache<String, JobSchedule> = Cache::new(100);
 
-        Self {
-            jobs: map,
-            db: None,
-            running: Mutex::new(false),
-        }
+        Self { jobs: map, db: None, running: Mutex::new(false) }
     }
 
     /// 设置数据库连接
@@ -92,13 +86,13 @@ impl TimeTask {
     /// 检查并执行到期的任务
     async fn check_and_run_tasks(&self, db: &Database) {
         let now = chrono::Utc::now();
-        
+
         // 查询所有启用的任务
         let params = crate::dto::entity::job::JobQueryParams {
             is_enabled: Some(true),
             ..Default::default()
         };
-        
+
         let jobs = match Job::find_all(db, &params).await {
             Ok(jobs) => jobs,
             Err(e) => {
@@ -106,16 +100,16 @@ impl TimeTask {
                 return;
             }
         };
-        
+
         for job in jobs {
             // 检查是否应该执行
             if should_run_now(&job, &now) {
                 tracing::info!("Executing job: {} ({})", job.name, job.id);
-                
+
                 // 异步执行任务
                 let db_clone = db.clone();
                 let job_clone = job.clone();
-                
+
                 tokio::spawn(async move {
                     execute_job(&job_clone, &db_clone).await;
                 });
@@ -126,10 +120,7 @@ impl TimeTask {
     /// 添加任务
     pub fn add_job(&self, job: Job) {
         if let Ok(schedule) = Schedule::from_str(&job.cron_expression) {
-            self.jobs.insert(
-                job.id.clone(),
-                JobSchedule { job, schedule },
-            );
+            self.jobs.insert(job.id.clone(), JobSchedule { job, schedule });
             tracing::info!("Added job to scheduler");
         } else {
             tracing::warn!("Invalid cron expression for job");
@@ -174,17 +165,17 @@ fn should_run_now(job: &Job, now: &chrono::DateTime<chrono::Utc>) -> bool {
     if job.is_running {
         return false;
     }
-    
+
     // 如果没有下次的行时间，跳过
     let Some(next_run) = &job.next_run_at else {
         return true; // 首次执行
     };
-    
+
     // 解析下次执行时间
     if let Ok(next) = chrono::DateTime::parse_from_rfc3339(next_run) {
         return now >= &next;
     }
-    
+
     // 如果无法解析，认为应该执行
     true
 }
@@ -193,7 +184,7 @@ fn should_run_now(job: &Job, now: &chrono::DateTime<chrono::Utc>) -> bool {
 async fn execute_job(job: &Job, db: &Database) {
     let job_id = job.id.clone();
     let start_time = std::time::Instant::now();
-    
+
     // 创建执行记录
     let execution = match JobExecution::create(db, &job_id, "schedule", Some("system")).await {
         Ok(e) => e,
@@ -202,10 +193,10 @@ async fn execute_job(job: &Job, db: &Database) {
             return;
         }
     };
-    
+
     // 设置任务为运行中
     let _ = Job::set_running(db, &job_id, true).await;
-    
+
     // 执行任务
     let result = match job.job_type.as_str() {
         "webhook" | "http" => execute_http_job(job).await,
@@ -215,14 +206,14 @@ async fn execute_job(job: &Job, db: &Database) {
         "sql" => execute_sql_job(job).await,
         _ => Err(format!("Unknown job type: {}", job.job_type)),
     };
-    
+
     let duration = start_time.elapsed().as_millis() as i64;
     let ended_at = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-    
+
     // 更新执行状态
     let status = if result.is_ok() { "success" } else { "failed" };
     let error_msg = result.as_ref().err().map(|s| s.as_str());
-    
+
     let _ = JobExecution::update_status(
         db,
         &execution.id,
@@ -230,47 +221,38 @@ async fn execute_job(job: &Job, db: &Database) {
         Some(&ended_at),
         result.as_ref().ok().map(|s| s.as_str()),
         error_msg,
-    ).await;
-    
+    )
+    .await;
+
     // 更新任务统计
     let _ = Job::update_run_stats(db, &job_id, status, error_msg).await;
-    
+
     tracing::info!("Job {} executed: {} ({}ms)", job_id, status, duration);
 }
 
 /// 执行 HTTP/Webhook 任务
 async fn execute_http_job(job: &Job) -> Result<String, String> {
-    let config: Value = serde_json::from_str(&job.config)
-        .map_err(|e| format!("Invalid config JSON: {}", e))?;
-    
-    let url = config.get("url")
-        .and_then(|v| v.as_str())
-        .ok_or("Missing URL in config")?;
-    
-    let method = config.get("method")
-        .and_then(|v| v.as_str())
-        .unwrap_or("GET");
-    
-    let headers = config.get("headers")
-        .and_then(|v| v.as_object())
-        .map(|o| {
-            o.iter()
-                .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
-                .collect::<std::collections::HashMap<String, String>>()
-        });
-    
-    let body = config.get("body")
-        .and_then(|v| v.as_str());
-    
+    let config: Value =
+        serde_json::from_str(&job.config).map_err(|e| format!("Invalid config JSON: {}", e))?;
+
+    let url = config.get("url").and_then(|v| v.as_str()).ok_or("Missing URL in config")?;
+
+    let method = config.get("method").and_then(|v| v.as_str()).unwrap_or("GET");
+
+    let headers = config.get("headers").and_then(|v| v.as_object()).map(|o| {
+        o.iter()
+            .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+            .collect::<std::collections::HashMap<String, String>>()
+    });
+
+    let body = config.get("body").and_then(|v| v.as_str());
+
     // 构建完整 URL
-    let full_url = if url.starts_with("http") {
-        url.to_string()
-    } else {
-        format!("http://localhost{}", url)
-    };
-    
+    let full_url =
+        if url.starts_with("http") { url.to_string() } else { format!("http://localhost{}", url) };
+
     let client = reqwest::Client::new();
-    
+
     let mut request = match method {
         "GET" => client.get(&full_url),
         "POST" => client.post(&full_url),
@@ -279,30 +261,27 @@ async fn execute_http_job(job: &Job) -> Result<String, String> {
         "PATCH" => client.patch(&full_url),
         _ => return Err(format!("Unsupported HTTP method: {}", method)),
     };
-    
+
     // 添加 headers
     if let Some(hdrs) = headers {
         for (key, value) in hdrs.iter() {
             request = request.header(key.as_str(), value.as_str());
         }
     }
-    
+
     // 添加 body
     if let Some(b) = body {
         request = request.body(b.to_string());
     }
-    
+
     let timeout = std::time::Duration::from_secs(job.timeout_seconds as u64);
-    
-    let response = request
-        .timeout(timeout)
-        .send()
-        .await
-        .map_err(|e| format!("HTTP request failed: {}", e))?;
-    
+
+    let response =
+        request.timeout(timeout).send().await.map_err(|e| format!("HTTP request failed: {}", e))?;
+
     let status = response.status();
     let body = response.text().await.unwrap_or_default();
-    
+
     if status.is_success() {
         Ok(body)
     } else {
@@ -312,20 +291,15 @@ async fn execute_http_job(job: &Job) -> Result<String, String> {
 
 /// 执行脚本任务
 async fn execute_script_job(job: &Job) -> Result<String, String> {
-    let config: Value = serde_json::from_str(&job.config)
-        .map_err(|e| format!("Invalid config JSON: {}", e))?;
-    
-    let script = config.get("script")
-        .and_then(|v| v.as_str())
-        .ok_or("Missing script in config")?;
-    
-    let working_dir = config.get("working_dir")
-        .and_then(|v| v.as_str());
-    
-    let interpreter = config.get("interpreter")
-        .and_then(|v| v.as_str())
-        .unwrap_or("bash");
-    
+    let config: Value =
+        serde_json::from_str(&job.config).map_err(|e| format!("Invalid config JSON: {}", e))?;
+
+    let script = config.get("script").and_then(|v| v.as_str()).ok_or("Missing script in config")?;
+
+    let working_dir = config.get("working_dir").and_then(|v| v.as_str());
+
+    let interpreter = config.get("interpreter").and_then(|v| v.as_str()).unwrap_or("bash");
+
     // 根据解释器执行脚本
     let output = match interpreter {
         "python" => Command::new("python")
@@ -351,7 +325,7 @@ async fn execute_script_job(job: &Job) -> Result<String, String> {
             .current_dir(working_dir.unwrap_or("."))
             .output(),
     };
-    
+
     match output {
         Ok(output) => {
             if output.status.success() {
@@ -367,56 +341,60 @@ async fn execute_script_job(job: &Job) -> Result<String, String> {
 /// 执行设备控制任务
 async fn execute_device_control_job(job: &Job) -> Result<String, String> {
     // 需要设备服务支持，这里简化处理
-    let device_id = job.target_device_id.as_ref()
-        .ok_or("No target device configured")?;
-    let command = job.target_command_name.as_ref()
-        .ok_or("No command configured")?;
-    
-    tracing::info!("Executing device command: {} -> {}:{}", device_id, command, job.target_command_params.as_deref().unwrap_or(""));
+    let device_id = job.target_device_id.as_ref().ok_or("No target device configured")?;
+    let command = job.target_command_name.as_ref().ok_or("No command configured")?;
+
+    tracing::info!(
+        "Executing device command: {} -> {}:{}",
+        device_id,
+        command,
+        job.target_command_params.as_deref().unwrap_or("")
+    );
 
     // NOTE: device_control job type is a stub — it logs the command but does not execute it
     // TODO: integrate with device service when device command API is available
-    tracing::warn!("device_control job is a stub — command logged but not executed: {} {} ({})",
-        device_id, command, job.target_command_params.as_deref().unwrap_or(""));
-    Ok(format!("Device command (STUB): {} {} ({})", device_id, command, job.target_command_params.as_deref().unwrap_or("")))
+    tracing::warn!(
+        "device_control job is a stub — command logged but not executed: {} {} ({})",
+        device_id,
+        command,
+        job.target_command_params.as_deref().unwrap_or("")
+    );
+    Ok(format!(
+        "Device command (STUB): {} {} ({})",
+        device_id,
+        command,
+        job.target_command_params.as_deref().unwrap_or("")
+    ))
 }
 
 /// 执行通知任务
 async fn execute_notification_job(job: &Job) -> Result<String, String> {
-    let config: Value = serde_json::from_str(&job.config)
-        .map_err(|e| format!("Invalid config JSON: {}", e))?;
-    
-    let channel = config.get("channel")
-        .and_then(|v| v.as_str())
-        .unwrap_or("email");
-    
-    let to = config.get("to")
-        .and_then(|v| v.as_str())
-        .ok_or("Missing 'to' in config")?;
-    
-    let message = config.get("message")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    
+    let config: Value =
+        serde_json::from_str(&job.config).map_err(|e| format!("Invalid config JSON: {}", e))?;
+
+    let channel = config.get("channel").and_then(|v| v.as_str()).unwrap_or("email");
+
+    let to = config.get("to").and_then(|v| v.as_str()).ok_or("Missing 'to' in config")?;
+
+    let message = config.get("message").and_then(|v| v.as_str()).unwrap_or("");
+
     tracing::info!("Sending notification: {} -> {}: {}", channel, to, message);
-    
+
     // TODO: 调用通知服务
     Ok(format!("Notification sent via {} to {}", channel, to))
 }
 
 /// 执行 SQL 任务
 async fn execute_sql_job(job: &Job) -> Result<String, String> {
-    let config: Value = serde_json::from_str(&job.config)
-        .map_err(|e| format!("Invalid config JSON: {}", e))?;
-    
-    let sql = config.get("sql")
-        .and_then(|v| v.as_str())
-        .ok_or("Missing SQL in config")?;
-    
+    let config: Value =
+        serde_json::from_str(&job.config).map_err(|e| format!("Invalid config JSON: {}", e))?;
+
+    let sql = config.get("sql").and_then(|v| v.as_str()).ok_or("Missing SQL in config")?;
+
     // 注意：实际执行需要数据库连接
     // 这里只做验证和模拟
     tracing::info!("Executing SQL: {}", sql);
-    
+
     Ok(format!("SQL would execute: {}", sql))
 }
 
@@ -510,7 +488,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_device_control_job_no_device() {
         let job = create_test_job("device_control");
-        
+
         let result = execute_device_control_job(&job).await;
         assert!(result.is_err());
     }
@@ -522,7 +500,8 @@ mod tests {
                 "channel": "email",
                 "to": "test@example.com",
                 "message": "Test notification"
-            }"#.to_string(),
+            }"#
+            .to_string(),
             ..create_test_job("notification")
         };
 
@@ -544,10 +523,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_sql_job_missing_sql() {
-        let job = Job {
-            config: r#"{}"#.to_string(),
-            ..create_test_job("sql")
-        };
+        let job = Job { config: r#"{}"#.to_string(), ..create_test_job("sql") };
 
         let result = execute_sql_job(&job).await;
         assert!(result.is_err());
@@ -556,7 +532,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_unknown_job_type() {
         let job = create_test_job("unknown_type");
-        
+
         // 测试未知任务类型应该返回错误
         let result = match job.job_type.as_str() {
             "http" | "webhook" => Ok("http"),
@@ -566,7 +542,7 @@ mod tests {
             "sql" => Ok("sql"),
             other => Err(format!("Unknown job type: {}", other)),
         };
-        
+
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Unknown job type"));
     }
@@ -574,7 +550,7 @@ mod tests {
     #[test]
     fn test_should_run_now_first_time() {
         let job = create_test_job("http");
-        
+
         // 首次执行（没有 next_run_at）应该返回 true
         let result = should_run_now(&job, &chrono::Utc::now());
         assert!(result);
@@ -584,7 +560,7 @@ mod tests {
     fn test_should_run_now_already_running() {
         let mut job = create_test_job("http");
         job.is_running = true;
-        
+
         let result = should_run_now(&job, &chrono::Utc::now());
         assert!(!result);
     }
@@ -599,7 +575,7 @@ mod tests {
     fn test_timetask_add_job() {
         let task = TimeTask::new();
         let job = create_test_job("http");
-        
+
         task.add_job(job.clone());
         // 添加后不会 panic，说明 cron 表达式有效
     }

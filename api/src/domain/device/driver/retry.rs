@@ -2,9 +2,11 @@
 //!
 //! 提供灵活、可配置的重试策略，支持不同类型的错误采用不同的重试方式
 
-use crate::shared::error::Error;
-use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
+
+use serde::{Deserialize, Serialize};
+
+use crate::shared::error::Error;
 
 /// 重试策略配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,22 +54,11 @@ pub enum RetryResult<T> {
     /// 成功
     Success(T),
     /// 重试中
-    Retrying {
-        attempt: u32,
-        next_retry_at: Instant,
-        last_error: Error,
-    },
+    Retrying { attempt: u32, next_retry_at: Instant, last_error: Error },
     /// 最终失败
-    Failed {
-        attempts: u32,
-        last_error: Error,
-        total_duration: Duration,
-    },
+    Failed { attempts: u32, last_error: Error, total_duration: Duration },
     /// 超时
-    Timeout {
-        attempts: u32,
-        total_duration: Duration,
-    },
+    Timeout { attempts: u32, total_duration: Duration },
 }
 
 /// 重试状态
@@ -158,9 +149,8 @@ impl RetryState {
             }
 
             BackoffStrategy::Exponential { multiplier } => {
-                let multiplied = config
-                    .base_interval
-                    .mul_f64(multiplier.powi(self.current_attempt as i32 - 1));
+                let multiplied =
+                    config.base_interval.mul_f64(multiplier.powi(self.current_attempt as i32 - 1));
                 multiplied.min(config.max_interval)
             }
 
@@ -184,10 +174,7 @@ pub struct RetryManager {
 impl RetryManager {
     /// 创建新的重试管理器
     pub fn new(config: RetryConfig) -> Self {
-        Self {
-            config,
-            state: RetryState::default(),
-        }
+        Self { config, state: RetryState::default() }
     }
 
     /// 使用默认配置创建
@@ -250,10 +237,7 @@ impl RetryManager {
             }
 
             // 执行操作
-            tracing::debug!(
-                "Executing operation, attempt={}",
-                self.state.current_attempt + 1
-            );
+            tracing::debug!("Executing operation, attempt={}", self.state.current_attempt + 1);
             let operation_start = std::time::Instant::now();
 
             match operation() {

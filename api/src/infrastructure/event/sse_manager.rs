@@ -1,12 +1,16 @@
 // Infrastructure Layer - SSE Connection Manager
 // Manages Server-Sent Events (SSE) connections and event distribution
 
-use crate::domain::event::entities::Event;
-use crate::infrastructure::event::channels::sse_channel::{SseMessage, SseNotificationChannel};
+use std::sync::Arc;
+
 use axum::response::Response;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use tracing::{debug, error, info};
+
+use crate::{
+    domain::event::entities::Event,
+    infrastructure::event::channels::sse_channel::{SseMessage, SseNotificationChannel},
+};
 
 /// SSE Connection Manager
 ///
@@ -20,9 +24,7 @@ pub struct SseConnectionManager {
 impl SseConnectionManager {
     /// Create a new SSE connection manager
     pub fn new() -> Self {
-        Self {
-            sse_channel: Arc::new(SseNotificationChannel::new()),
-        }
+        Self { sse_channel: Arc::new(SseNotificationChannel::new()) }
     }
 
     /// Create an authenticated SSE connection
@@ -42,10 +44,7 @@ impl SseConnectionManager {
         _event_levels: Option<Vec<String>>,
         _organization_id: Option<String>,
     ) -> Response {
-        info!(
-            "Creating authenticated SSE connection for user: {}",
-            user_id
-        );
+        info!("Creating authenticated SSE connection for user: {}", user_id);
 
         self.sse_channel.create_sse_stream(user_id).await
     }
@@ -153,9 +152,7 @@ impl SseConnectionManager {
     /// Clean up stale connections
     pub async fn cleanup_stale_connections(&self) {
         debug!("Cleaning up stale SSE connections");
-        self.sse_channel
-            .cleanup_stale_connections(std::time::Duration::from_secs(300))
-            .await;
+        self.sse_channel.cleanup_stale_connections(std::time::Duration::from_secs(300)).await;
     }
 }
 

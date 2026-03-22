@@ -2,11 +2,14 @@
 //!
 //! 提供与Linux版本兼容的串口接口，但使用鸿蒙系统的串口API
 
-use std::collections::HashMap;
-use std::fs::OpenOptions;
-use std::io::{Read, Write};
-use std::sync::Mutex;
-use std::time::Duration;
+use std::{
+    collections::HashMap,
+    fs::OpenOptions,
+    io::{Read, Write},
+    sync::Mutex,
+    time::Duration,
+};
+
 use tracing::{debug, info};
 
 /// 串口配置
@@ -38,11 +41,7 @@ pub struct HarmonySerialConnection {
 impl HarmonySerialConnection {
     /// 创建新的串口连接
     pub fn new(config: SerialConfig) -> Self {
-        Self {
-            config,
-            file: None,
-            is_open: false,
-        }
+        Self { config, file: None, is_open: false }
     }
 
     /// 打开串口连接
@@ -50,18 +49,12 @@ impl HarmonySerialConnection {
         info!("Opening HarmonyOS serial port: {}", self.config.port);
 
         // 使用标准文件I/O打开串口设备
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&self.config.port)?;
+        let file = OpenOptions::new().read(true).write(true).open(&self.config.port)?;
 
         self.file = Some(file);
         self.is_open = true;
 
-        info!(
-            "HarmonyOS serial port opened successfully: {}",
-            self.config.port
-        );
+        info!("HarmonyOS serial port opened successfully: {}", self.config.port);
         Ok(())
     }
 
@@ -93,11 +86,7 @@ impl HarmonySerialConnection {
             ));
         }
 
-        debug!(
-            "Writing {} bytes to HarmonyOS serial port: {}",
-            data.len(),
-            self.config.port
-        );
+        debug!("Writing {} bytes to HarmonyOS serial port: {}", data.len(), self.config.port);
 
         match &mut self.file {
             Some(file) => {
@@ -225,9 +214,7 @@ pub struct HarmonySerialManager {
 impl HarmonySerialManager {
     /// 创建新的串口管理器
     pub fn new() -> Self {
-        Self {
-            connections: Mutex::new(HashMap::new()),
-        }
+        Self { connections: Mutex::new(HashMap::new()) }
     }
 
     /// 创建串口连接
@@ -302,11 +289,7 @@ impl HarmonySerialManager {
             }
         }
 
-        info!(
-            "Found {} serial ports: {:?}",
-            available_ports.len(),
-            available_ports
-        );
+        info!("Found {} serial ports: {:?}", available_ports.len(), available_ports);
         Ok(available_ports)
     }
 

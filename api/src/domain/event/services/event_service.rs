@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::domain::event::{
     aggregates::{EventAggregate, NotificationAggregate},
     entities::Event,
@@ -5,7 +7,6 @@ use crate::domain::event::{
     specifications::{EventPrioritySpec, EventValidationSpec},
     value_objects::{EventLevel, EventSource, EventType, RichContent},
 };
-use std::collections::HashMap;
 
 /// Domain service for event processing (pure business logic)
 ///
@@ -18,9 +19,7 @@ pub struct EventService {
 impl EventService {
     /// Create a new event service
     pub fn new() -> Self {
-        Self {
-            validation_spec: EventValidationSpec::new(),
-        }
+        Self { validation_spec: EventValidationSpec::new() }
     }
 
     /// Create a new event with validation
@@ -147,10 +146,7 @@ impl EventService {
                 EventType::Device(_) => "device",
             };
 
-            groups
-                .entry(category.to_string())
-                .or_insert_with(Vec::new)
-                .push(event);
+            groups.entry(category.to_string()).or_insert_with(Vec::new).push(event);
         }
 
         groups
@@ -390,9 +386,7 @@ mod tests {
         assert!(service.validate_event_batch(&events).is_ok());
 
         // Test batch size limit
-        let large_batch: Vec<_> = (0..1001)
-            .map(|_| create_test_event(EventLevel::Info))
-            .collect();
+        let large_batch: Vec<_> = (0..1001).map(|_| create_test_event(EventLevel::Info)).collect();
         assert!(service.validate_event_batch(&large_batch).is_err());
     }
 

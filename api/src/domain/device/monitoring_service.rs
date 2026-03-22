@@ -1,6 +1,6 @@
-use crate::application::data_context::DataContext;
-use crate::infrastructure::persistence::Database;
 use std::sync::Arc;
+
+use crate::{application::data_context::DataContext, infrastructure::persistence::Database};
 
 /// 设备监控服务
 /// 负责设备性能监控、告警检查、追踪记录等功能

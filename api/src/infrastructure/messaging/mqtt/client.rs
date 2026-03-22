@@ -44,18 +44,8 @@ impl NormallyMqttClient {
         let cfg = config::get();
         let host = cfg.mqtt.primary.host.clone();
         let port = cfg.mqtt.primary.port;
-        let username = cfg
-            .mqtt
-            .primary
-            .username
-            .clone()
-            .unwrap_or_else(|| "admin".to_string());
-        let password = cfg
-            .mqtt
-            .primary
-            .password
-            .clone()
-            .unwrap_or_else(|| "password".to_string());
+        let username = cfg.mqtt.primary.username.clone().unwrap_or_else(|| "admin".to_string());
+        let password = cfg.mqtt.primary.password.clone().unwrap_or_else(|| "password".to_string());
 
         let sn = sn::get_sn();
 
@@ -63,9 +53,7 @@ impl NormallyMqttClient {
 
         let mut options = MqttOptions::new(format!("edge_{}", sn), host, port);
 
-        options
-            .set_keep_alive(Duration::from_secs(30))
-            .set_credentials(username, password);
+        options.set_keep_alive(Duration::from_secs(30)).set_credentials(username, password);
 
         let (client, mut conn) = Client::new(options, 100);
 
@@ -120,13 +108,7 @@ impl NormallyMqttClient {
             }
         });
 
-        Self {
-            mqtt: client,
-
-            mqtt_conn_receiver,
-
-            mqtt_receiver,
-        }
+        Self { mqtt: client, mqtt_conn_receiver, mqtt_receiver }
     }
 }
 
@@ -146,10 +128,7 @@ impl MqttClient for NormallyMqttClient {
     }
 
     fn publish(&mut self, topic: &str, data: &str) -> io::Result<()> {
-        match self
-            .mqtt
-            .publish(topic, QoS::AtMostOnce, false, data.to_string().as_bytes())
-        {
+        match self.mqtt.publish(topic, QoS::AtMostOnce, false, data.to_string().as_bytes()) {
             Err(e) => Err(io::Error::other(format!("publish has error,{e}"))),
 
             Ok(()) => Ok(()),

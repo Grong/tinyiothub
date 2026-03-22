@@ -4,14 +4,15 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 
-use crate::domain::alarm::{AlarmLevel, AlarmQueryCriteria, AlarmStatus, TimeRange};
-use crate::dto::entity::{AlarmDto, AlarmStatisticsDto};
-use crate::dto::request::{AlarmQueryParams, StatisticsQueryParams};
-use crate::dto::response::api_response::ApiResponse;
-use crate::shared::error_handling::ErrorCode;
-use crate::dto::response::builder::ApiResponseBuilder;
-use crate::shared::app_state::AppState;
-use crate::shared::security::jwt::Claims;
+use crate::{
+    domain::alarm::{AlarmLevel, AlarmQueryCriteria, AlarmStatus, TimeRange},
+    dto::{
+        entity::{AlarmDto, AlarmStatisticsDto},
+        request::{AlarmQueryParams, StatisticsQueryParams},
+        response::{api_response::ApiResponse, builder::ApiResponseBuilder},
+    },
+    shared::{app_state::AppState, error_handling::ErrorCode, security::jwt::Claims},
+};
 
 #[derive(serde::Serialize)]
 pub struct PaginatedResponse<T> {
@@ -53,10 +54,8 @@ pub async fn list_alarms(
     };
 
     let alarm_levels = params.levels.as_ref().and_then(|levels| {
-        let parsed: Vec<AlarmLevel> = levels
-            .iter()
-            .filter_map(|l| AlarmLevel::from_str(l))
-            .collect();
+        let parsed: Vec<AlarmLevel> =
+            levels.iter().filter_map(|l| AlarmLevel::from_str(l)).collect();
         if parsed.is_empty() {
             None
         } else {
@@ -65,10 +64,8 @@ pub async fn list_alarms(
     });
 
     let statuses = params.statuses.as_ref().and_then(|statuses| {
-        let parsed: Vec<AlarmStatus> = statuses
-            .iter()
-            .filter_map(|s| AlarmStatus::from_str(s))
-            .collect();
+        let parsed: Vec<AlarmStatus> =
+            statuses.iter().filter_map(|s| AlarmStatus::from_str(s)).collect();
         if parsed.is_empty() {
             None
         } else {
@@ -94,29 +91,16 @@ pub async fn list_alarms(
     };
 
     // 查询报警
-    match state
-        .alarm_service
-        .get_alarm_history(criteria.clone())
-        .await
-    {
+    match state.alarm_service.get_alarm_history(criteria.clone()).await {
         Ok(alarms) => {
-            let total = state
-                .alarm_service
-                .count_alarms(criteria)
-                .await
-                .unwrap_or(0);
+            let total = state.alarm_service.count_alarms(criteria).await.unwrap_or(0);
             let total_pages = ((total as f64) / (page_size as f64)).ceil() as u32;
 
             let data: Vec<AlarmDto> = alarms.into_iter().map(AlarmDto::from).collect();
 
             ApiResponseBuilder::success(PaginatedResponse {
                 data,
-                pagination: PaginationInfo {
-                    page,
-                    page_size,
-                    total_pages,
-                    total_count: total,
-                },
+                pagination: PaginationInfo { page, page_size, total_pages, total_count: total },
             })
         }
         Err(e) => ApiResponseBuilder::error(format!("查询报警失败: {}", e)),

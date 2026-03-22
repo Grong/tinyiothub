@@ -18,11 +18,10 @@ type HmacSha256 = Hmac<Sha256>;
 // 使用 jwt-simple 的 HS256Key (纯 Rust 实现，不依赖 ring)
 pub static JWT_KEY: Lazy<Result<HS256Key, String>> = Lazy::new(|| {
     // 从环境变量读取JWT密钥
-    let secret = std::env::var("JWT_SECRET")
-        .map_err(|_| {
-            tracing::error!("JWT_SECRET environment variable is not set!");
-            "JWT_SECRET must be set in production".to_string()
-        })?;
+    let secret = std::env::var("JWT_SECRET").map_err(|_| {
+        tracing::error!("JWT_SECRET environment variable is not set!");
+        "JWT_SECRET must be set in production".to_string()
+    })?;
 
     // 验证密钥长度
     if secret.len() < 32 {
@@ -34,7 +33,9 @@ pub static JWT_KEY: Lazy<Result<HS256Key, String>> = Lazy::new(|| {
 
     // 检查是否使用弱密钥
     if secret.len() < 64 {
-        tracing::warn!("⚠️  JWT_SECRET is shorter than 64 characters, consider using a longer secret");
+        tracing::warn!(
+            "⚠️  JWT_SECRET is shorter than 64 characters, consider using a longer secret"
+        );
     }
 
     Ok(HS256Key::from_bytes(secret.as_bytes()))
@@ -59,8 +60,8 @@ fn is_harmonyos() -> bool {
 
 // 使用 HMAC-SHA256 计算消息认证码
 fn hmac_sha256(message: &str, key: &str) -> String {
-    let mut mac = HmacSha256::new_from_slice(key.as_bytes())
-        .expect("HMAC can take key of any size");
+    let mut mac =
+        HmacSha256::new_from_slice(key.as_bytes()).expect("HMAC can take key of any size");
     mac.update(message.as_bytes());
     let result = mac.finalize();
     // 返回十六进制编码的 HMAC
@@ -74,10 +75,8 @@ fn encode_simple(s: &str) -> String {
 
 // 简单的字符串解码
 fn decode_simple(s: &str) -> Result<String, String> {
-    let bytes: Result<Vec<u8>, _> = (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16))
-        .collect();
+    let bytes: Result<Vec<u8>, _> =
+        (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16)).collect();
 
     let bytes = bytes.map_err(|_| "Invalid encoding".to_string())?;
     String::from_utf8(bytes).map_err(|_| "Invalid UTF-8".to_string())
@@ -120,9 +119,7 @@ fn verify_harmonyos_token(token: &str) -> Result<Claims, String> {
 
     let user_id = parts[0];
     let username = parts[1];
-    let timestamp: i64 = parts[2]
-        .parse()
-        .map_err(|_| "Invalid timestamp".to_string())?;
+    let timestamp: i64 = parts[2].parse().map_err(|_| "Invalid timestamp".to_string())?;
     let random_suffix = parts[3];
     let signature = parts[4];
 
@@ -178,10 +175,8 @@ where
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         // 尝试从 Authorization header 中提取 JWT token
-        let auth_header = parts
-            .headers
-            .typed_get::<Authorization<Bearer>>()
-            .ok_or(AuthError::MissingToken)?;
+        let auth_header =
+            parts.headers.typed_get::<Authorization<Bearer>>().ok_or(AuthError::MissingToken)?;
 
         // 验证 JWT token
         validate_jwt(auth_header.token()).map_err(AuthError::InvalidToken)
@@ -227,9 +222,7 @@ pub fn create_jwt(payload: AuthPayload) -> Result<AuthBody, String> {
         Duration::from_secs(jwt_exp_seconds as u64),
     );
 
-    let token = key
-        .authenticate(jwt_claims)
-        .map_err(|e| format!("Token creation error: {}", e))?;
+    let token = key.authenticate(jwt_claims).map_err(|e| format!("Token creation error: {}", e))?;
 
     tracing::debug!("JWT token created successfully with pure-rust implementation");
     Ok(AuthBody::new(token, exp.timestamp(), jwt_exp_seconds))
@@ -268,10 +261,7 @@ pub fn validate_jwt(token: &str) -> Result<Claims, String> {
 
 // 生成 JWT token 的便捷函数
 pub fn generate_token(user_id: &str, username: &str) -> Result<String, String> {
-    let payload = AuthPayload {
-        id: user_id.to_string(),
-        name: username.to_string(),
-    };
+    let payload = AuthPayload { id: user_id.to_string(), name: username.to_string() };
 
     let auth_body = create_jwt(payload)?;
     Ok(auth_body.token)
@@ -287,12 +277,7 @@ pub struct AuthBody {
 
 impl AuthBody {
     fn new(access_token: String, exp: i64, exp_in: i64) -> Self {
-        Self {
-            token: access_token,
-            token_type: "Bearer".to_string(),
-            exp,
-            expired: exp_in,
-        }
+        Self { token: access_token, token_type: "Bearer".to_string(), exp, expired: exp_in }
     }
 }
 

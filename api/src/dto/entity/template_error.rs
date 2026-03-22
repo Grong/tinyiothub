@@ -110,29 +110,17 @@ pub struct ValidationResult {
 impl ValidationResult {
     /// 创建成功的验证结果
     pub fn success() -> Self {
-        Self {
-            is_valid: true,
-            errors: Vec::new(),
-            warnings: Vec::new(),
-        }
+        Self { is_valid: true, errors: Vec::new(), warnings: Vec::new() }
     }
 
     /// 创建失败的验证结果
     pub fn failure(errors: Vec<ValidationError>) -> Self {
-        Self {
-            is_valid: false,
-            errors,
-            warnings: Vec::new(),
-        }
+        Self { is_valid: false, errors, warnings: Vec::new() }
     }
 
     /// 创建带警告的成功验证结果
     pub fn success_with_warnings(warnings: Vec<ValidationWarning>) -> Self {
-        Self {
-            is_valid: true,
-            errors: Vec::new(),
-            warnings,
-        }
+        Self { is_valid: true, errors: Vec::new(), warnings }
     }
 
     /// 添加错误
@@ -200,20 +188,12 @@ impl ValidationError {
 
     /// 无效值错误
     pub fn invalid_value(field: &str, value: &str) -> Self {
-        Self::new(
-            field,
-            &format!("字段 {} 的值 '{}' 无效", field, value),
-            "INVALID_VALUE",
-        )
+        Self::new(field, &format!("字段 {} 的值 '{}' 无效", field, value), "INVALID_VALUE")
     }
 
     /// JSON格式错误
     pub fn json_format(field: &str) -> Self {
-        Self::new(
-            field,
-            &format!("字段 {} 不是有效的JSON格式", field),
-            "INVALID_JSON",
-        )
+        Self::new(field, &format!("字段 {} 不是有效的JSON格式", field), "INVALID_JSON")
     }
 
     /// 数值范围错误
@@ -238,11 +218,7 @@ impl ValidationWarning {
 
     /// 字段为空警告
     pub fn empty_field(field: &str) -> Self {
-        Self::new(
-            field,
-            &format!("字段 {} 为空，建议填写", field),
-            "EMPTY_FIELD",
-        )
+        Self::new(field, &format!("字段 {} 为空，建议填写", field), "EMPTY_FIELD")
     }
 
     /// 默认值警告
@@ -264,30 +240,26 @@ impl ValidationWarning {
 impl From<TemplateError> for ApiError {
     fn from(err: TemplateError) -> Self {
         match err {
-            TemplateError::TemplateNotFound { .. } => ApiError::NotFound {
-                resource: "设备模板".to_string(),
-            },
-            TemplateError::ValidationFailed { .. } => ApiError::BadRequest {
-                message: err.to_string(),
-            },
-            TemplateError::JsonFormatError { .. } => ApiError::BadRequest {
-                message: err.to_string(),
-            },
-            TemplateError::InvalidUserInput { .. } => ApiError::BadRequest {
-                message: err.to_string(),
-            },
-            TemplateError::TemplateNameExists { .. } => ApiError::Conflict {
-                message: err.to_string(),
-            },
-            TemplateError::CategoryNotFound { .. } => ApiError::BadRequest {
-                message: err.to_string(),
-            },
-            TemplateError::TemplateInUse { .. } => ApiError::Conflict {
-                message: err.to_string(),
-            },
-            _ => ApiError::InternalServerError {
-                message: err.to_string(),
-            },
+            TemplateError::TemplateNotFound { .. } => {
+                ApiError::NotFound { resource: "设备模板".to_string() }
+            }
+            TemplateError::ValidationFailed { .. } => {
+                ApiError::BadRequest { message: err.to_string() }
+            }
+            TemplateError::JsonFormatError { .. } => {
+                ApiError::BadRequest { message: err.to_string() }
+            }
+            TemplateError::InvalidUserInput { .. } => {
+                ApiError::BadRequest { message: err.to_string() }
+            }
+            TemplateError::TemplateNameExists { .. } => {
+                ApiError::Conflict { message: err.to_string() }
+            }
+            TemplateError::CategoryNotFound { .. } => {
+                ApiError::BadRequest { message: err.to_string() }
+            }
+            TemplateError::TemplateInUse { .. } => ApiError::Conflict { message: err.to_string() },
+            _ => ApiError::InternalServerError { message: err.to_string() },
         }
     }
 }
@@ -325,19 +297,11 @@ pub struct ErrorResponse {
 
 impl ErrorResponse {
     pub fn new(error: &str, message: &str) -> Self {
-        Self {
-            error: error.to_string(),
-            message: message.to_string(),
-            details: None,
-        }
+        Self { error: error.to_string(), message: message.to_string(), details: None }
     }
 
     pub fn with_details(error: &str, message: &str, details: serde_json::Value) -> Self {
-        Self {
-            error: error.to_string(),
-            message: message.to_string(),
-            details: Some(details),
-        }
+        Self { error: error.to_string(), message: message.to_string(), details: Some(details) }
     }
 
     pub fn from_template_error(err: &TemplateError) -> Self {

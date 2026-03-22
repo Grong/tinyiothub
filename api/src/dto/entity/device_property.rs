@@ -226,9 +226,7 @@ impl DeviceProperty {
         tx.commit().await?;
 
         // 返回创建的属性
-        Self::find_by_id(db, &id)
-            .await?
-            .ok_or(sqlx::Error::RowNotFound)
+        Self::find_by_id(db, &id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 更新设备属性
@@ -253,9 +251,7 @@ impl DeviceProperty {
             if has_updates {
                 query_builder.push(", ");
             }
-            query_builder
-                .push("display_name = ")
-                .push_bind(display_name);
+            query_builder.push("display_name = ").push_bind(display_name);
             has_updates = true;
         }
 
@@ -303,9 +299,7 @@ impl DeviceProperty {
             if has_updates {
                 query_builder.push(", ");
             }
-            query_builder
-                .push("default_value = ")
-                .push_bind(default_value);
+            query_builder.push("default_value = ").push_bind(default_value);
             has_updates = true;
         }
 
@@ -313,16 +307,12 @@ impl DeviceProperty {
             if has_updates {
                 query_builder.push(", ");
             }
-            query_builder
-                .push("is_read_only = ")
-                .push_bind(is_read_only);
+            query_builder.push("is_read_only = ").push_bind(is_read_only);
             has_updates = true;
         }
 
         if !has_updates {
-            return Self::find_by_id(db, id)
-                .await?
-                .ok_or(sqlx::Error::RowNotFound);
+            return Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound);
         }
 
         query_builder.push(" WHERE id = ").push_bind(id);
@@ -336,9 +326,7 @@ impl DeviceProperty {
 
         tx.commit().await?;
 
-        Self::find_by_id(db, id)
-            .await?
-            .ok_or(sqlx::Error::RowNotFound)
+        Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 删除设备属性
@@ -400,15 +388,11 @@ impl DeviceProperty {
         }
 
         if let Some(name) = &params.name {
-            query_builder
-                .push(" AND name LIKE ")
-                .push_bind(format!("%{}%", name));
+            query_builder.push(" AND name LIKE ").push_bind(format!("%{}%", name));
         }
 
         if let Some(display_name) = &params.display_name {
-            query_builder
-                .push(" AND display_name LIKE ")
-                .push_bind(format!("%{}%", display_name));
+            query_builder.push(" AND display_name LIKE ").push_bind(format!("%{}%", display_name));
         }
 
         if let Some(data_type) = &params.data_type {
@@ -416,9 +400,7 @@ impl DeviceProperty {
         }
 
         if let Some(is_read_only) = params.is_read_only {
-            query_builder
-                .push(" AND is_read_only = ")
-                .push_bind(is_read_only);
+            query_builder.push(" AND is_read_only = ").push_bind(is_read_only);
         }
 
         // 添加排序
@@ -431,10 +413,8 @@ impl DeviceProperty {
             query_builder.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let mut properties = query_builder
-            .build_query_as::<DeviceProperty>()
-            .fetch_all(db.pool())
-            .await?;
+        let mut properties =
+            query_builder.build_query_as::<DeviceProperty>().fetch_all(db.pool()).await?;
 
         // 初始化运行时字段
 
@@ -458,15 +438,11 @@ impl DeviceProperty {
         }
 
         if let Some(name) = &params.name {
-            query_builder
-                .push(" AND name LIKE ")
-                .push_bind(format!("%{}%", name));
+            query_builder.push(" AND name LIKE ").push_bind(format!("%{}%", name));
         }
 
         if let Some(display_name) = &params.display_name {
-            query_builder
-                .push(" AND display_name LIKE ")
-                .push_bind(format!("%{}%", display_name));
+            query_builder.push(" AND display_name LIKE ").push_bind(format!("%{}%", display_name));
         }
 
         if let Some(data_type) = &params.data_type {
@@ -474,9 +450,7 @@ impl DeviceProperty {
         }
 
         if let Some(is_read_only) = params.is_read_only {
-            query_builder
-                .push(" AND is_read_only = ")
-                .push_bind(is_read_only);
+            query_builder.push(" AND is_read_only = ").push_bind(is_read_only);
         }
 
         let row = query_builder.build().fetch_one(db.pool()).await?;
@@ -785,15 +759,11 @@ impl DeviceProperty {
         }
 
         if let Some(name) = &params.name {
-            query_builder
-                .push(" AND name LIKE ")
-                .push_bind(format!("%{}%", name));
+            query_builder.push(" AND name LIKE ").push_bind(format!("%{}%", name));
         }
 
         if let Some(display_name) = &params.display_name {
-            query_builder
-                .push(" AND display_name LIKE ")
-                .push_bind(format!("%{}%", display_name));
+            query_builder.push(" AND display_name LIKE ").push_bind(format!("%{}%", display_name));
         }
 
         if let Some(data_type) = &params.data_type {
@@ -801,9 +771,7 @@ impl DeviceProperty {
         }
 
         if let Some(is_read_only) = params.is_read_only {
-            query_builder
-                .push(" AND is_read_only = ")
-                .push_bind(is_read_only);
+            query_builder.push(" AND is_read_only = ").push_bind(is_read_only);
         }
 
         // Add sorting
@@ -829,10 +797,8 @@ impl DeviceProperty {
             query_builder.push(" OFFSET ").push_bind(offset);
         }
 
-        let mut properties = query_builder
-            .build_query_as::<DeviceProperty>()
-            .fetch_all(db.pool())
-            .await?;
+        let mut properties =
+            query_builder.build_query_as::<DeviceProperty>().fetch_all(db.pool()).await?;
 
         // Initialize runtime fields
 

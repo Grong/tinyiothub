@@ -11,8 +11,7 @@ use crate::{
         builder::ApiResponseBuilder, ApiResponse, DeviceStatusDistribution, QuickDevice,
     },
     infrastructure::persistence::Database,
-    shared::app_state::AppState,
-    shared::security::jwt::Claims,
+    shared::{app_state::AppState, security::jwt::Claims},
 };
 
 #[derive(Debug, Deserialize)]
@@ -84,12 +83,7 @@ async fn get_device_status_distribution(
         .fetch_one(db.pool())
         .await?;
 
-    Ok(DeviceStatusDistribution {
-        online,
-        offline,
-        error,
-        maintenance,
-    })
+    Ok(DeviceStatusDistribution { online, offline, error, maintenance })
 }
 
 /// 获取关键设备列表

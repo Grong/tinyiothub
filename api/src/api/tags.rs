@@ -45,14 +45,8 @@ pub fn create_router() -> Router<AppState> {
         .route("/:id", get(get_tag).put(update_tag).delete(delete_tag))
         .route("/search", get(search_tags))
         .route("/stats", get(get_tag_stats))
-        .route(
-            "/bindings",
-            post(create_tag_binding).delete(delete_tag_binding),
-        )
-        .route(
-            "/bindings/batch",
-            post(batch_create_bindings).delete(batch_delete_bindings),
-        )
+        .route("/bindings", post(create_tag_binding).delete(delete_tag_binding))
+        .route("/bindings/batch", post(batch_create_bindings).delete(batch_delete_bindings))
         .route("/bindings/target/:target_id", get(get_target_bindings))
         .route("/bindings/tag/:tag_id", get(get_tag_bindings))
 }
@@ -247,7 +241,10 @@ async fn create_tag_binding(
     }
 
     match TagBinding::create(state.database(), &request, &claims.user_id).await {
-        Ok(binding) => Ok(ApiResponseBuilder::success_with_message(binding, "Tag binding created successfully")),
+        Ok(binding) => Ok(ApiResponseBuilder::success_with_message(
+            binding,
+            "Tag binding created successfully",
+        )),
         Err(e) => {
             tracing::error!("Failed to create tag binding: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
@@ -286,14 +283,14 @@ async fn batch_create_bindings(
     let bindings: Vec<CreateTagBindingRequest> = request
         .tag_ids
         .into_iter()
-        .map(|tag_id| CreateTagBindingRequest {
-            tag_id,
-            target_id: request.target_id.clone(),
-        })
+        .map(|tag_id| CreateTagBindingRequest { tag_id, target_id: request.target_id.clone() })
         .collect();
 
     match TagBinding::create_batch(state.database(), &bindings, &claims.user_id).await {
-        Ok(created_bindings) => Ok(ApiResponseBuilder::success_with_message(created_bindings, "Tag bindings created successfully")),
+        Ok(created_bindings) => Ok(ApiResponseBuilder::success_with_message(
+            created_bindings,
+            "Tag bindings created successfully",
+        )),
         Err(e) => {
             tracing::error!("Failed to create tag bindings: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
@@ -307,7 +304,9 @@ async fn batch_delete_bindings(
     State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<()>>, StatusCode> {
     match TagBinding::delete_all_by_target_id(state.database(), &query.target_id).await {
-        Ok(_) => Ok(ApiResponseBuilder::success_with_message((), "Tag bindings deleted successfully")),
+        Ok(_) => {
+            Ok(ApiResponseBuilder::success_with_message((), "Tag bindings deleted successfully"))
+        }
         Err(e) => {
             tracing::error!("Failed to delete tag bindings: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)

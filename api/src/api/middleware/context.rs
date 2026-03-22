@@ -7,8 +7,10 @@ use axum::{
 };
 use headers::{authorization::Bearer, Authorization, HeaderMapExt};
 
-use crate::dto::response::{ReqCtx, UserInfo};
-use crate::shared::security::jwt::validate_jwt;
+use crate::{
+    dto::response::{ReqCtx, UserInfo},
+    shared::security::jwt::validate_jwt,
+};
 
 /// Context middleware for request processing with Axum
 pub async fn context_middleware(
@@ -49,11 +51,7 @@ fn extract_user_from_jwt(headers: &HeaderMap) -> Option<UserInfo> {
     let claims = validate_jwt(auth_header.token()).ok()?;
 
     // Convert claims to UserInfo
-    Some(UserInfo {
-        id: claims.user_id,
-        name: claims.username,
-        ..Default::default()
-    })
+    Some(UserInfo { id: claims.user_id, name: claims.username, ..Default::default() })
 }
 
 /// Extract body data from request (helper function)
@@ -80,26 +78,19 @@ pub async fn jwt_auth_middleware(mut request: Request, next: Next) -> Response {
                 "code": -1,
                 "msg": "Missing authorization token",
                 "result": serde_json::Value::Null
-            }))
-        ).into_response();
+            })),
+        )
+            .into_response();
     }
 
     let auth_header = auth_header.unwrap();
     let token = auth_header.token();
-    tracing::debug!(
-        "Found Authorization header for: {}, token length: {}",
-        uri,
-        token.len()
-    );
+    tracing::debug!("Found Authorization header for: {}, token length: {}", uri, token.len());
 
     // Validate JWT token
     match validate_jwt(token) {
         Ok(claims) => {
-            tracing::debug!(
-                "JWT validation successful for user: {} at: {}",
-                claims.username,
-                uri
-            );
+            tracing::debug!("JWT validation successful for user: {} at: {}", claims.username, uri);
             // Add claims to request extensions for handlers to use
             request.extensions_mut().insert(claims);
             next.run(request).await
@@ -112,8 +103,9 @@ pub async fn jwt_auth_middleware(mut request: Request, next: Next) -> Response {
                     "code": -1,
                     "msg": format!("Invalid token: {}", e),
                     "result": serde_json::Value::Null
-                }))
-            ).into_response()
+                })),
+            )
+                .into_response()
         }
     }
 }

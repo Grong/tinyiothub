@@ -1,7 +1,9 @@
-use crate::infrastructure::persistence::database::Database;
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder, Row};
-use std::collections::HashMap;
+
+use crate::infrastructure::persistence::database::Database;
 
 /// 菜单实体 - 使用现代化 SQLx 实现
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -138,9 +140,7 @@ impl Menu {
         .await?;
 
         // 返回创建的菜单
-        Self::find_by_id(db, &id)
-            .await?
-            .ok_or(sqlx::Error::RowNotFound)
+        Self::find_by_id(db, &id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 更新菜单信息
@@ -241,9 +241,7 @@ impl Menu {
         }
 
         if !has_updates {
-            return Self::find_by_id(db, id)
-                .await?
-                .ok_or(sqlx::Error::RowNotFound);
+            return Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound);
         }
 
         query.push(" WHERE id = ").push_bind(id);
@@ -254,17 +252,13 @@ impl Menu {
             return Err(sqlx::Error::RowNotFound);
         }
 
-        Self::find_by_id(db, id)
-            .await?
-            .ok_or(sqlx::Error::RowNotFound)
+        Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 删除菜单
     pub async fn delete(db: &Database, id: &str) -> Result<u64, sqlx::Error> {
-        let result = sqlx::query("DELETE FROM Menus WHERE id = ?")
-            .bind(id)
-            .execute(db.pool())
-            .await?;
+        let result =
+            sqlx::query("DELETE FROM Menus WHERE id = ?").bind(id).execute(db.pool()).await?;
 
         Ok(result.rows_affected())
     }
@@ -303,15 +297,11 @@ impl Menu {
 
         // 动态添加查询条件
         if let Some(title) = &params.title {
-            query
-                .push(" AND Title LIKE ")
-                .push_bind(format!("%{}%", title));
+            query.push(" AND Title LIKE ").push_bind(format!("%{}%", title));
         }
 
         if let Some(path) = &params.path {
-            query
-                .push(" AND Path LIKE ")
-                .push_bind(format!("%{}%", path));
+            query.push(" AND Path LIKE ").push_bind(format!("%{}%", path));
         }
 
         if let Some(menu_type) = &params.menu_type {
@@ -342,15 +332,11 @@ impl Menu {
         let mut query = QueryBuilder::new("SELECT COUNT(*) as count FROM Menus WHERE 1=1");
 
         if let Some(title) = &params.title {
-            query
-                .push(" AND Title LIKE ")
-                .push_bind(format!("%{}%", title));
+            query.push(" AND Title LIKE ").push_bind(format!("%{}%", title));
         }
 
         if let Some(path) = &params.path {
-            query
-                .push(" AND Path LIKE ")
-                .push_bind(format!("%{}%", path));
+            query.push(" AND Path LIKE ").push_bind(format!("%{}%", path));
         }
 
         if let Some(menu_type) = &params.menu_type {
@@ -447,11 +433,7 @@ impl Menu {
             };
 
             let is_root = menu.parent_id.is_none()
-                || menu
-                    .parent_id
-                    .as_ref()
-                    .map(|s| s.is_empty())
-                    .unwrap_or(true);
+                || menu.parent_id.as_ref().map(|s| s.is_empty()).unwrap_or(true);
 
             if is_root {
                 root_menus.push(menu_tree.clone());

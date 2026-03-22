@@ -46,10 +46,7 @@ async fn get_profile(State(state): State<AppState>, claims: Claims) -> Json<ApiR
             ApiResponse::success(UserInfo::from(user))
         }
         Ok(None) => {
-            tracing::warn!(
-                "Profile requested for non-existent user: {}",
-                claims.user_id
-            );
+            tracing::warn!("Profile requested for non-existent user: {}", claims.user_id);
             ApiResponse::error("用户不存在".to_string())
         }
         Err(e) => {
@@ -107,10 +104,7 @@ async fn validate_session(
             }
         }
         Ok(None) => {
-            tracing::warn!(
-                "Session validation failed - user not found: {}",
-                claims.user_id
-            );
+            tracing::warn!("Session validation failed - user not found: {}", claims.user_id);
             ApiResponse::error("用户不存在".to_string())
         }
         Err(e) => {

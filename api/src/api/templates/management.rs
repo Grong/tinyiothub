@@ -1,11 +1,11 @@
+use std::{path::PathBuf, sync::Arc};
+
 use axum::{
     extract::{Path, Query, State},
     routing::{delete, get, post, put},
     Json, Router,
 };
 use serde::Deserialize;
-use std::path::PathBuf;
-use std::sync::Arc;
 
 use crate::{
     api::AppState,
@@ -144,11 +144,7 @@ async fn create_template(
     };
 
     // 验证模板名称唯一性
-    match template_service
-        .get_repository()
-        .exists_by_name(&req.name)
-        .await
-    {
+    match template_service.get_repository().exists_by_name(&req.name).await {
         Ok(true) => {
             return ApiResponse::error("模板名称已存在".to_string());
         }
@@ -308,10 +304,8 @@ async fn preview_device_from_template(
     };
 
     // 创建模板引擎并预览设备
-    let template_repository = Arc::new(TemplateRepository::new(
-        state.database.clone(),
-        PathBuf::from("templates"),
-    ));
+    let template_repository =
+        Arc::new(TemplateRepository::new(state.database.clone(), PathBuf::from("templates")));
     let validator = Arc::new(TemplateValidator::new());
     let engine = TemplateEngine::new(template_repository, validator);
 
@@ -328,10 +322,8 @@ async fn preview_device_from_template(
 async fn initialize_template_service(
     state: &AppState,
 ) -> Result<TemplateService, Box<dyn std::error::Error + Send + Sync>> {
-    let template_repository = Arc::new(TemplateRepository::new(
-        state.database.clone(),
-        PathBuf::from("templates"),
-    ));
+    let template_repository =
+        Arc::new(TemplateRepository::new(state.database.clone(), PathBuf::from("templates")));
 
     let template_service = TemplateService::new(template_repository);
 

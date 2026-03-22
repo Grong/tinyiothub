@@ -50,9 +50,7 @@ pub mod template_error;
 // Re-export commonly used types (using actual struct names from the modules)
 
 pub use device::Device;
-
 pub use device_command::DeviceCommand;
-
 pub use device_property::DeviceProperty;
 
 pub mod alarm;

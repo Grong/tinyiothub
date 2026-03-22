@@ -1,6 +1,7 @@
-use crate::infrastructure::persistence::database::Database;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder, Row};
+
+use crate::infrastructure::persistence::database::Database;
 
 /// Operation record entity - 操作记录实体
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -156,9 +157,7 @@ impl OperationRecord {
         );
 
         if let Some(operation_type) = &query.operation_type {
-            sql_query
-                .push(" AND operation_type = ")
-                .push_bind(operation_type);
+            sql_query.push(" AND operation_type = ").push_bind(operation_type);
         }
 
         if let Some(user_id) = &query.user_id {
@@ -166,9 +165,7 @@ impl OperationRecord {
         }
 
         if let Some(user_name) = &query.user_name {
-            sql_query
-                .push(" AND user_name LIKE ")
-                .push_bind(format!("%{}%", user_name));
+            sql_query.push(" AND user_name LIKE ").push_bind(format!("%{}%", user_name));
         }
 
         if let Some(target_type) = &query.target_type {
@@ -184,15 +181,11 @@ impl OperationRecord {
         }
 
         if let Some(start_time) = &query.start_time {
-            sql_query
-                .push(" AND operation_time >= ")
-                .push_bind(start_time);
+            sql_query.push(" AND operation_time >= ").push_bind(start_time);
         }
 
         if let Some(end_time) = &query.end_time {
-            sql_query
-                .push(" AND operation_time <= ")
-                .push_bind(end_time);
+            sql_query.push(" AND operation_time <= ").push_bind(end_time);
         }
 
         sql_query.push(" ORDER BY operation_time DESC");
@@ -204,10 +197,7 @@ impl OperationRecord {
             sql_query.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let records = sql_query
-            .build_query_as::<OperationRecord>()
-            .fetch_all(db.pool())
-            .await?;
+        let records = sql_query.build_query_as::<OperationRecord>().fetch_all(db.pool()).await?;
 
         Ok(records)
     }
@@ -331,9 +321,7 @@ impl OperationRecord {
             QueryBuilder::new("SELECT COUNT(*) as count FROM OperationRecords WHERE 1=1");
 
         if let Some(operation_type) = &query.operation_type {
-            sql_query
-                .push(" AND operation_type = ")
-                .push_bind(operation_type);
+            sql_query.push(" AND operation_type = ").push_bind(operation_type);
         }
 
         if let Some(user_id) = &query.user_id {
@@ -341,9 +329,7 @@ impl OperationRecord {
         }
 
         if let Some(user_name) = &query.user_name {
-            sql_query
-                .push(" AND user_name LIKE ")
-                .push_bind(format!("%{}%", user_name));
+            sql_query.push(" AND user_name LIKE ").push_bind(format!("%{}%", user_name));
         }
 
         if let Some(target_type) = &query.target_type {
@@ -359,15 +345,11 @@ impl OperationRecord {
         }
 
         if let Some(start_time) = &query.start_time {
-            sql_query
-                .push(" AND operation_time >= ")
-                .push_bind(start_time);
+            sql_query.push(" AND operation_time >= ").push_bind(start_time);
         }
 
         if let Some(end_time) = &query.end_time {
-            sql_query
-                .push(" AND operation_time <= ")
-                .push_bind(end_time);
+            sql_query.push(" AND operation_time <= ").push_bind(end_time);
         }
 
         let row = sql_query.build().fetch_one(db.pool()).await?;
@@ -452,10 +434,7 @@ impl OperationRecord {
             query.push(" LIMIT ").push_bind(limit as i64);
         }
 
-        let records = query
-            .build_query_as::<OperationRecord>()
-            .fetch_all(db.pool())
-            .await?;
+        let records = query.build_query_as::<OperationRecord>().fetch_all(db.pool()).await?;
 
         Ok(records)
     }

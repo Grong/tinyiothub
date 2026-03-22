@@ -1,5 +1,6 @@
-use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
 
 /// Configuration error type
 #[derive(Debug)]
@@ -244,10 +245,7 @@ pub struct NetworkInterfaceConfig {
 
 impl Default for NetworkInterfaceConfig {
     fn default() -> Self {
-        Self {
-            use_dhcp: true,
-            interface_name: "eth0".to_string(),
-        }
+        Self { use_dhcp: true, interface_name: "eth0".to_string() }
     }
 }
 
@@ -262,10 +260,7 @@ pub struct NtpConfig {
 
 impl Default for NtpConfig {
     fn default() -> Self {
-        Self {
-            servers: vec!["pool.ntp.org".to_string()],
-            enabled: true,
-        }
+        Self { servers: vec!["pool.ntp.org".to_string()], enabled: true }
     }
 }
 
@@ -412,9 +407,7 @@ pub struct EnvironmentConfig {
 
 impl Default for EnvironmentConfig {
     fn default() -> Self {
-        Self {
-            name: "production".to_string(),
-        }
+        Self { name: "production".to_string() }
     }
 }
 
@@ -662,16 +655,12 @@ impl ApplicationSettings {
 
         // Validate server port
         if self.server.port == 0 {
-            return Err(ConfigError::ValidationError(
-                "Server port cannot be 0".to_string(),
-            ));
+            return Err(ConfigError::ValidationError("Server port cannot be 0".to_string()));
         }
 
         // Validate database URL
         if self.database.url.is_empty() {
-            return Err(ConfigError::ValidationError(
-                "Database URL cannot be empty".to_string(),
-            ));
+            return Err(ConfigError::ValidationError("Database URL cannot be empty".to_string()));
         }
 
         Ok(())

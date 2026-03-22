@@ -42,9 +42,7 @@ pub struct LogQuery {
 }
 
 pub fn create_router() -> Router<AppState> {
-    Router::new()
-        .route("/", get(get_logs))
-        .route("/levels", get(get_log_levels))
+    Router::new().route("/", get(get_logs)).route("/levels", get(get_log_levels))
 }
 
 /// 获取日志列表
@@ -66,22 +64,10 @@ async fn get_log_levels(
     _claims: Claims,
 ) -> Json<ApiResponse<Vec<LogLevel>>> {
     let levels = vec![
-        LogLevel {
-            name: "ERROR".to_string(),
-            description: "错误级别".to_string(),
-        },
-        LogLevel {
-            name: "WARN".to_string(),
-            description: "警告级别".to_string(),
-        },
-        LogLevel {
-            name: "INFO".to_string(),
-            description: "信息级别".to_string(),
-        },
-        LogLevel {
-            name: "DEBUG".to_string(),
-            description: "调试级别".to_string(),
-        },
+        LogLevel { name: "ERROR".to_string(), description: "错误级别".to_string() },
+        LogLevel { name: "WARN".to_string(), description: "警告级别".to_string() },
+        LogLevel { name: "INFO".to_string(), description: "信息级别".to_string() },
+        LogLevel { name: "DEBUG".to_string(), description: "调试级别".to_string() },
     ];
 
     ApiResponse::success(levels)

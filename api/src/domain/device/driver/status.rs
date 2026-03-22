@@ -2,9 +2,11 @@
 //!
 //! 统一管理设备连接状态、健康状态和告警状态
 
-use crate::dto::entity::Device;
-use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
+
+use serde::{Deserialize, Serialize};
+
+use crate::dto::entity::Device;
 
 /// 设备连接状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -54,9 +56,7 @@ impl From<ConnectionStatus> for String {
 
 impl From<&str> for ConnectionStatus {
     fn from(s: &str) -> Self {
-        s.parse::<i32>()
-            .map(ConnectionStatus::from)
-            .unwrap_or(ConnectionStatus::Disconnected)
+        s.parse::<i32>().map(ConnectionStatus::from).unwrap_or(ConnectionStatus::Disconnected)
     }
 }
 
@@ -176,10 +176,7 @@ impl DeviceOverview {
         let now = SystemTime::now();
         Self {
             device_id: device.id.clone(),
-            device_name: device
-                .display_name
-                .clone()
-                .unwrap_or_else(|| device.name.clone()),
+            device_name: device.display_name.clone().unwrap_or_else(|| device.name.clone()),
             health: HealthStatus::default(),
             start_time: now,
             uptime: Duration::from_secs(0),
@@ -216,9 +213,7 @@ pub struct DeviceStatusManager {
 
 impl DeviceStatusManager {
     pub fn new(device: &Device) -> Self {
-        Self {
-            overview: DeviceOverview::new(device),
-        }
+        Self { overview: DeviceOverview::new(device) }
     }
 
     /// 获取连接状态

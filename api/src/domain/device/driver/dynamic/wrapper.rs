@@ -1,12 +1,15 @@
 //! 动态驱动包装器
 
 use std::sync::Arc;
+
 use tracing::{debug, error};
 
 use super::loader::DynamicDriverLoader;
-use crate::domain::device::driver::{DeviceDriver, ResultValue};
-use crate::dto::entity::{Device, DeviceCommand};
-use crate::shared::error::Error;
+use crate::{
+    domain::device::driver::{DeviceDriver, ResultValue},
+    dto::entity::{Device, DeviceCommand},
+    shared::error::Error,
+};
 
 /// 动态驱动包装器
 pub struct DynamicDriverWrapper {
@@ -23,11 +26,7 @@ impl DynamicDriverWrapper {
 
         let driver_ptr = loader.create_driver(&device_json)?;
 
-        Ok(Self {
-            loader,
-            driver_ptr,
-            device,
-        })
+        Ok(Self { loader, driver_ptr, device })
     }
 }
 

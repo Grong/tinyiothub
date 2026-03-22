@@ -1,7 +1,10 @@
-use crate::domain::template::repository::TemplateRepository;
-use crate::dto::entity::template_error::TemplateError;
 use std::sync::Arc;
+
 use tracing::info;
+
+use crate::{
+    domain::template::repository::TemplateRepository, dto::entity::template_error::TemplateError,
+};
 
 /// 模板服务 - 提供高级模板操作功能
 #[derive(Debug)]
@@ -20,9 +23,7 @@ impl TemplateService {
         info!("初始化模板系统");
 
         // 确保目录结构存在
-        self.repository
-            .get_file_manager()
-            .ensure_directory_structure()?;
+        self.repository.get_file_manager().ensure_directory_structure()?;
 
         // 加载内置模板
         let _templates = self.repository.load_builtin_templates().await?;

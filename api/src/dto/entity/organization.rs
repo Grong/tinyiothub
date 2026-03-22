@@ -1,6 +1,7 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder, Row, Sqlite};
-use std::collections::HashMap;
 
 use crate::infrastructure::persistence::database::Database;
 
@@ -134,9 +135,7 @@ impl Organization {
         tx.commit().await?;
 
         // Return the created organization
-        Self::find_by_id(db, &id)
-            .await?
-            .ok_or_else(|| sqlx::Error::RowNotFound)
+        Self::find_by_id(db, &id).await?.ok_or_else(|| sqlx::Error::RowNotFound)
     }
 
     /// Update an organization
@@ -199,9 +198,7 @@ impl Organization {
         tx.commit().await?;
 
         // Return the updated organization
-        Self::find_by_id(db, id)
-            .await?
-            .ok_or_else(|| sqlx::Error::RowNotFound)
+        Self::find_by_id(db, id).await?.ok_or_else(|| sqlx::Error::RowNotFound)
     }
 
     /// Delete an organization (and optionally its children)
@@ -252,9 +249,7 @@ impl Organization {
         );
 
         if let Some(name) = &params.name {
-            query_builder
-                .push(" AND name LIKE ")
-                .push_bind(format!("%{}%", name));
+            query_builder.push(" AND name LIKE ").push_bind(format!("%{}%", name));
         }
 
         if let Some(parent_id) = &params.parent_id {
@@ -262,9 +257,7 @@ impl Organization {
                 // Include all descendants
                 let descendants = Self::find_all_descendants(db, parent_id).await?;
                 if !descendants.is_empty() {
-                    query_builder
-                        .push(" AND (parent_id = ")
-                        .push_bind(parent_id);
+                    query_builder.push(" AND (parent_id = ").push_bind(parent_id);
                     query_builder.push(" OR id IN (");
                     let mut separated = query_builder.separated(", ");
                     for desc in descendants {
@@ -288,10 +281,8 @@ impl Organization {
             query_builder.push(" OFFSET ").push_bind(offset);
         }
 
-        let organizations = query_builder
-            .build_query_as::<Organization>()
-            .fetch_all(db.pool())
-            .await?;
+        let organizations =
+            query_builder.build_query_as::<Organization>().fetch_all(db.pool()).await?;
 
         Ok(organizations)
     }
@@ -305,18 +296,14 @@ impl Organization {
             QueryBuilder::<Sqlite>::new("SELECT COUNT(*) FROM Organizations WHERE 1=1");
 
         if let Some(name) = &params.name {
-            query_builder
-                .push(" AND name LIKE ")
-                .push_bind(format!("%{}%", name));
+            query_builder.push(" AND name LIKE ").push_bind(format!("%{}%", name));
         }
 
         if let Some(parent_id) = &params.parent_id {
             if params.include_children.unwrap_or(false) {
                 let descendants = Self::find_all_descendants(db, parent_id).await?;
                 if !descendants.is_empty() {
-                    query_builder
-                        .push(" AND (parent_id = ")
-                        .push_bind(parent_id);
+                    query_builder.push(" AND (parent_id = ").push_bind(parent_id);
                     query_builder.push(" OR id IN (");
                     let mut separated = query_builder.separated(", ");
                     for desc in descendants {
@@ -441,10 +428,7 @@ impl Organization {
 
         for (_, node) in org_map {
             if let Some(parent_id) = &node.parent_id {
-                children_map
-                    .entry(parent_id.clone())
-                    .or_default()
-                    .push(node);
+                children_map.entry(parent_id.clone()).or_default().push(node);
             } else {
                 roots.push(node);
             }
@@ -511,9 +495,8 @@ impl Organization {
 
     /// Get organization statistics
     pub async fn get_statistics(db: &Database) -> Result<OrganizationStatistics, sqlx::Error> {
-        let total_row = sqlx::query("SELECT COUNT(*) FROM Organizations")
-            .fetch_one(db.pool())
-            .await?;
+        let total_row =
+            sqlx::query("SELECT COUNT(*) FROM Organizations").fetch_one(db.pool()).await?;
 
         let root_row = sqlx::query("SELECT COUNT(*) FROM Organizations WHERE parent_id IS NULL")
             .fetch_one(db.pool())
@@ -530,10 +513,8 @@ impl Organization {
             max_depth = max_depth.max(depth);
         }
 
-        let mut organizations_by_depth: Vec<DepthCount> = depth_counts
-            .into_iter()
-            .map(|(depth, count)| DepthCount { depth, count })
-            .collect();
+        let mut organizations_by_depth: Vec<DepthCount> =
+            depth_counts.into_iter().map(|(depth, count)| DepthCount { depth, count }).collect();
         organizations_by_depth.sort_by_key(|dc| dc.depth);
 
         Ok(OrganizationStatistics {
@@ -563,9 +544,7 @@ impl Organization {
         );
 
         if let Some(name) = &params.name {
-            query_builder
-                .push(" AND name LIKE ")
-                .push_bind(format!("%{}%", name));
+            query_builder.push(" AND name LIKE ").push_bind(format!("%{}%", name));
         }
 
         if let Some(parent_id) = &params.parent_id {
@@ -593,10 +572,8 @@ impl Organization {
             query_builder.push(" OFFSET ").push_bind(offset);
         }
 
-        let organizations = query_builder
-            .build_query_as::<Organization>()
-            .fetch_all(db.pool())
-            .await?;
+        let organizations =
+            query_builder.build_query_as::<Organization>().fetch_all(db.pool()).await?;
 
         Ok((organizations, total_count))
     }
@@ -651,9 +628,7 @@ impl Organization {
 
         tx.commit().await?;
 
-        Self::find_by_id(db, org_id)
-            .await?
-            .ok_or_else(|| sqlx::Error::RowNotFound)
+        Self::find_by_id(db, org_id).await?.ok_or_else(|| sqlx::Error::RowNotFound)
     }
 
     // Helper methods for business logic

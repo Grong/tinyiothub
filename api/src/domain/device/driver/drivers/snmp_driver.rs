@@ -23,10 +23,7 @@ impl SnmpDriver {
         device: Device,
         _context: std::sync::Arc<crate::application::data_context::DataContext>,
     ) -> Self {
-        Self {
-            device,
-            retry_count: 0,
-        }
+        Self { device, retry_count: 0 }
     }
 
     pub fn get_driver_info() -> ComponentInfo {
@@ -90,11 +87,8 @@ impl SnmpDriver {
 
         let default_serial = "/dev/ttyS1".to_string();
         let tty_path = parsed.get("serial").unwrap_or(&default_serial);
-        let baud_rate: u32 = parsed
-            .get("baud_rate")
-            .unwrap_or(&"9600".to_string())
-            .parse()
-            .unwrap_or(9600);
+        let baud_rate: u32 =
+            parsed.get("baud_rate").unwrap_or(&"9600".to_string()).parse().unwrap_or(9600);
 
         let conn = serialport::new(tty_path, baud_rate)
             .timeout(Duration::from_millis(3000))
@@ -145,10 +139,7 @@ impl DeviceDriver for SnmpDriver {
         // 模拟读取 SNMP 设备数据
         let mut results = Vec::new();
 
-        results.push(ResultValue::string(
-            "system_name".to_string(),
-            "SNMP Device".to_string(),
-        ));
+        results.push(ResultValue::string("system_name".to_string(), "SNMP Device".to_string()));
         results.push(ResultValue::integer("uptime".to_string(), 86400));
         results.push(ResultValue::float("cpu_usage".to_string(), 45.2));
         results.push(ResultValue::float("memory_usage".to_string(), 67.8));
@@ -157,11 +148,7 @@ impl DeviceDriver for SnmpDriver {
     }
 
     fn execute_command(&mut self, cmd: &DeviceCommand) -> Result<bool, Error> {
-        tracing::info!(
-            "Executing SNMP command: {} on device {}",
-            cmd.name,
-            self.device.name
-        );
+        tracing::info!("Executing SNMP command: {} on device {}", cmd.name, self.device.name);
 
         match cmd.name.as_str() {
             "get_system_info" => {

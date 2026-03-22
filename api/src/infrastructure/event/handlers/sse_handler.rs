@@ -1,6 +1,9 @@
-use crate::domain::event::entities::Event;
-use crate::infrastructure::event::{EventHandler, SseConnectionManager};
 use std::sync::Arc;
+
+use crate::{
+    domain::event::entities::Event,
+    infrastructure::event::{EventHandler, SseConnectionManager},
+};
 
 /// SSE 推送处理器
 ///

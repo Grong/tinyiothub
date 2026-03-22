@@ -37,12 +37,10 @@ impl AlarmType {
             "property_threshold" => AlarmType::PropertyThreshold,
             "property_anomaly" => AlarmType::PropertyAnomaly,
             "command_failed" => AlarmType::CommandFailed,
-            s if s.starts_with("custom_") => AlarmType::Custom {
-                name: s.strip_prefix("custom_").unwrap_or(s).to_string(),
-            },
-            _ => AlarmType::Custom {
-                name: s.to_string(),
-            },
+            s if s.starts_with("custom_") => {
+                AlarmType::Custom { name: s.strip_prefix("custom_").unwrap_or(s).to_string() }
+            }
+            _ => AlarmType::Custom { name: s.to_string() },
         }
     }
 }

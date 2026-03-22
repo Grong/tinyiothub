@@ -1,9 +1,13 @@
-use crate::domain::event::aggregates::notification_aggregate::NotificationChannelType;
-use crate::domain::event::services::{NotificationChannel, NotificationLevel, NotificationMessage};
-use crate::domain::event::{EventError, Result};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
+
+use crate::domain::event::{
+    aggregates::notification_aggregate::NotificationChannelType,
+    services::{NotificationChannel, NotificationLevel, NotificationMessage},
+    EventError, Result,
+};
 
 /// Email configuration for SMTP
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,28 +40,17 @@ pub struct EmailNotificationChannel {
 impl EmailNotificationChannel {
     /// Create a new email notification channel
     pub fn new() -> Self {
-        Self {
-            config: None,
-            templates: Self::create_default_templates(),
-            enabled: false,
-        }
+        Self { config: None, templates: Self::create_default_templates(), enabled: false }
     }
 
     /// Create with configuration
     pub fn with_config(config: EmailConfig) -> Self {
-        Self {
-            config: Some(config),
-            templates: Self::create_default_templates(),
-            enabled: true,
-        }
+        Self { config: Some(config), templates: Self::create_default_templates(), enabled: true }
     }
 
     /// Set email configuration
     pub fn set_config(&mut self, config: EmailConfig) {
-        info!(
-            "Email notification channel configured with SMTP host: {}",
-            config.smtp_host
-        );
+        info!("Email notification channel configured with SMTP host: {}", config.smtp_host);
         self.config = Some(config);
         self.enabled = true;
     }
@@ -71,10 +64,7 @@ impl EmailNotificationChannel {
     /// Enable or disable the email channel
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
-        info!(
-            "Email notification channel {}",
-            if enabled { "enabled" } else { "disabled" }
-        );
+        info!("Email notification channel {}", if enabled { "enabled" } else { "disabled" });
     }
 
     /// Create default email templates
@@ -213,12 +203,9 @@ This is an automated notification from your IoT Gateway system.
             _ => "default",
         };
 
-        self.templates
-            .get(template_name)
-            .or_else(|| self.templates.get("default"))
-            .ok_or_else(|| {
-                EventError::Configuration("Default email template not found".to_string())
-            })
+        self.templates.get(template_name).or_else(|| self.templates.get("default")).ok_or_else(
+            || EventError::Configuration("Default email template not found".to_string()),
+        )
     }
 
     /// Format email content using template
@@ -229,10 +216,7 @@ This is an automated notification from your IoT Gateway system.
     ) -> (String, String) {
         let level_str = message.level.as_str();
         let level_class = level_str.to_lowercase();
-        let timestamp = message
-            .timestamp
-            .format("%Y-%m-%d %H:%M:%S UTC")
-            .to_string();
+        let timestamp = message.timestamp.format("%Y-%m-%d %H:%M:%S UTC").to_string();
 
         // Format metadata
         let metadata_section = if !message.metadata.is_empty() {
@@ -383,10 +367,8 @@ impl NotificationChannel for EmailNotificationChannel {
 
     async fn send(&self, message: &NotificationMessage) -> std::result::Result<(), String> {
         // Use the first recipient from the message
-        let recipient = message
-            .recipients
-            .first()
-            .ok_or_else(|| "No recipients specified".to_string())?;
+        let recipient =
+            message.recipients.first().ok_or_else(|| "No recipients specified".to_string())?;
 
         if !self.enabled {
             return Err("Email channel is disabled".to_string());

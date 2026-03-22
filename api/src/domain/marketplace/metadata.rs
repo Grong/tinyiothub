@@ -1,5 +1,6 @@
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
 
 /// 模板元数据
 #[derive(Debug, Clone, Serialize, Deserialize)]

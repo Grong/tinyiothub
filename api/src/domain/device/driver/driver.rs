@@ -1,19 +1,23 @@
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
-
-use crate::domain::event::{
-    entities::Event as DomainEvent,
-    value_objects::{
-        ContentElement, DeviceEventType, EventLevel, EventSource, RichContent, TextFormat,
-    },
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
 };
-use crate::dto::entity::Device;
-use crate::dto::entity::DeviceCommand;
-use crate::infrastructure::event::EventBus;
-use crate::shared::error::Error;
 
-use super::retry::{BackoffStrategy, RetryConfig, RetryManager, RetryResult};
-use super::status::{DeviceOverview, DeviceStatusManager};
+use super::{
+    retry::{BackoffStrategy, RetryConfig, RetryManager, RetryResult},
+    status::{DeviceOverview, DeviceStatusManager},
+};
+use crate::{
+    domain::event::{
+        entities::Event as DomainEvent,
+        value_objects::{
+            ContentElement, DeviceEventType, EventLevel, EventSource, RichContent, TextFormat,
+        },
+    },
+    dto::entity::{Device, DeviceCommand},
+    infrastructure::event::EventBus,
+    shared::error::Error,
+};
 
 /// 驱动配置管理器
 #[derive(Debug, Clone)]
@@ -83,16 +87,12 @@ impl DriverConfig {
 
     /// 获取数值类型配置参数
     pub fn get_number(&self, key: &str, default: f64) -> f64 {
-        self.get_value(key)
-            .and_then(|v| v.parse::<f64>().ok())
-            .unwrap_or(default)
+        self.get_value(key).and_then(|v| v.parse::<f64>().ok()).unwrap_or(default)
     }
 
     /// 获取整数类型配置参数
     pub fn get_integer(&self, key: &str, default: i64) -> i64 {
-        self.get_value(key)
-            .and_then(|v| v.parse::<i64>().ok())
-            .unwrap_or(default)
+        self.get_value(key).and_then(|v| v.parse::<i64>().ok()).unwrap_or(default)
     }
 
     /// 获取布尔类型配置参数
@@ -108,9 +108,7 @@ impl DriverConfig {
 
     /// 获取字符串类型配置参数
     pub fn get_string(&self, key: &str, default: &str) -> String {
-        self.get_value(key)
-            .cloned()
-            .unwrap_or_else(|| default.to_string())
+        self.get_value(key).cloned().unwrap_or_else(|| default.to_string())
     }
 
     /// 设置配置参数
@@ -163,11 +161,7 @@ pub struct RetryInfo {
 
 impl RetryInfo {
     pub fn new(attempt: u32, will_retry: bool, next_retry_in: Option<Duration>) -> Self {
-        Self {
-            attempt,
-            will_retry,
-            next_retry_in,
-        }
+        Self { attempt, will_retry, next_retry_in }
     }
 }
 
@@ -181,11 +175,7 @@ pub struct ResultValue {
 
 impl ResultValue {
     pub fn new(name: String, value_type: String, value: Option<String>) -> Self {
-        Self {
-            name,
-            value_type,
-            value,
-        }
+        Self { name, value_type, value }
     }
 
     /// 创建整数类型结果
@@ -205,11 +195,7 @@ impl ResultValue {
         Self::new(
             name,
             "float".to_string(),
-            Some(format!(
-                "{:.precision$}",
-                rounded_value,
-                precision = decimal_places as usize
-            )),
+            Some(format!("{:.precision$}", rounded_value, precision = decimal_places as usize)),
         )
     }
 
@@ -289,10 +275,7 @@ pub trait DeviceDriver: Send + Sync {
 
     /// 获取设备显示名称
     fn display_name(&self) -> String {
-        self.device()
-            .display_name
-            .clone()
-            .unwrap_or_else(|| self.device().name.clone())
+        self.device().display_name.clone().unwrap_or_else(|| self.device().name.clone())
     }
 
     /// 获取设备协议类型
@@ -439,9 +422,7 @@ impl DriverWrapper {
     pub fn read_data(&mut self) -> DriverExecutionResult<Vec<ResultValue>> {
         let start_time = Instant::now();
 
-        let result = self
-            .retry_manager
-            .execute_with_retry(|| self.inner_driver.read_data());
+        let result = self.retry_manager.execute_with_retry(|| self.inner_driver.read_data());
 
         let elapsed = start_time.elapsed();
         self.update_status(&result, elapsed);
@@ -453,9 +434,8 @@ impl DriverWrapper {
     pub fn execute_command(&mut self, cmd: &DeviceCommand) -> DriverExecutionResult<bool> {
         let start_time = Instant::now();
 
-        let result = self
-            .retry_manager
-            .execute_with_retry(|| self.inner_driver.execute_command(cmd));
+        let result =
+            self.retry_manager.execute_with_retry(|| self.inner_driver.execute_command(cmd));
 
         let elapsed = start_time.elapsed();
         self.update_status(&result, elapsed);
@@ -486,33 +466,22 @@ impl DriverWrapper {
         elapsed: Duration,
     ) -> DriverExecutionResult<T> {
         match result {
-            RetryResult::Success(data) => DriverExecutionResult {
-                result: Ok(data),
-                elapsed,
-                retry_info: None,
-            },
-            RetryResult::Failed {
-                attempts,
-                last_error,
-                total_duration: _,
-            } => DriverExecutionResult {
-                result: Err(last_error),
-                elapsed,
-                retry_info: Some(RetryInfo::new(attempts, false, None)),
-            },
-            RetryResult::Timeout {
-                attempts,
-                total_duration: _,
-            } => DriverExecutionResult {
+            RetryResult::Success(data) => {
+                DriverExecutionResult { result: Ok(data), elapsed, retry_info: None }
+            }
+            RetryResult::Failed { attempts, last_error, total_duration: _ } => {
+                DriverExecutionResult {
+                    result: Err(last_error),
+                    elapsed,
+                    retry_info: Some(RetryInfo::new(attempts, false, None)),
+                }
+            }
+            RetryResult::Timeout { attempts, total_duration: _ } => DriverExecutionResult {
                 result: Err(Error::IOError("Operation timeout".to_string())),
                 elapsed,
                 retry_info: Some(RetryInfo::new(attempts, false, None)),
             },
-            RetryResult::Retrying {
-                attempt,
-                next_retry_at,
-                last_error,
-            } => {
+            RetryResult::Retrying { attempt, next_retry_at, last_error } => {
                 // execute_with_retry 不应该返回这个状态，但为安全起见处理一下
                 let next_retry_in = if next_retry_at > Instant::now() {
                     Some(next_retry_at - Instant::now())
@@ -676,11 +645,7 @@ impl DriverWrapper {
             // }
         }
 
-        tracing::error!(
-            "Device '{}' connection failed: {}",
-            self.display_name(),
-            error_message
-        );
+        tracing::error!("Device '{}' connection failed: {}", self.display_name(), error_message);
     }
 
     /// 直接访问设备数据（不经过重试和状态管理）
@@ -762,11 +727,7 @@ impl DriverWrapper {
     ) {
         if let Some(ref event_bus) = self.event_bus {
             let device = self.device();
-            let level = if success {
-                EventLevel::Info
-            } else {
-                EventLevel::Error
-            };
+            let level = if success { EventLevel::Info } else { EventLevel::Error };
             let status = if success { "success" } else { "failed" };
 
             let mut elements = vec![
@@ -800,10 +761,7 @@ impl DriverWrapper {
             )
             .with_metadata("command_status".to_string(), serde_json::json!(status))
             .with_metadata("command_name".to_string(), serde_json::json!(command_name))
-            .with_metadata(
-                "execution_time_ms".to_string(),
-                serde_json::json!(execution_time_ms),
-            )
+            .with_metadata("execution_time_ms".to_string(), serde_json::json!(execution_time_ms))
             .with_metadata("success".to_string(), serde_json::json!(success));
 
             let content = if let Some(error) = error_message {
@@ -835,10 +793,7 @@ impl DriverWrapper {
 
     /// 获取设备显示名称
     fn display_name(&self) -> String {
-        self.device()
-            .display_name
-            .clone()
-            .unwrap_or_else(|| self.device().name.clone())
+        self.device().display_name.clone().unwrap_or_else(|| self.device().name.clone())
     }
 }
 
@@ -951,10 +906,7 @@ mod tests {
         config.set_value("test_key".to_string(), "test_value".to_string());
         assert_eq!(config.len(), 1);
         assert!(config.contains_key("test_key"));
-        assert_eq!(
-            config.get_value("test_key"),
-            Some(&"test_value".to_string())
-        );
+        assert_eq!(config.get_value("test_key"), Some(&"test_value".to_string()));
 
         // 测试类型转换方法
         config.set_value("number".to_string(), "42.5".to_string());

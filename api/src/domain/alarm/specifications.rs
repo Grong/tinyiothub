@@ -1,7 +1,9 @@
 use chrono::{DateTime, Duration, Utc};
 
-use super::entity::{Alarm, AlarmRule};
-use super::value_objects::AlarmStatus;
+use super::{
+    entity::{Alarm, AlarmRule},
+    value_objects::AlarmStatus,
+};
 use crate::domain::event::aggregates::NotificationChannelType;
 
 /// 报警规约
@@ -15,10 +17,7 @@ impl AlarmSpecifications {
 
     /// 检查报警是否可以解决
     pub fn can_resolve(alarm: &Alarm) -> bool {
-        matches!(
-            alarm.status,
-            AlarmStatus::Active | AlarmStatus::Acknowledged
-        )
+        matches!(alarm.status, AlarmStatus::Active | AlarmStatus::Acknowledged)
     }
 
     /// 检查报警是否需要通知
@@ -54,10 +53,7 @@ impl AlarmSpecifications {
 
             // 只有在使用需要接收人的渠道时才要求配置接收人
             let needs_recipients = rule.notification_config.channels.iter().any(|ch| {
-                matches!(
-                    ch,
-                    NotificationChannelType::Email | NotificationChannelType::Sms
-                )
+                matches!(ch, NotificationChannelType::Email | NotificationChannelType::Sms)
             });
 
             if needs_recipients && rule.notification_config.recipients.is_empty() {

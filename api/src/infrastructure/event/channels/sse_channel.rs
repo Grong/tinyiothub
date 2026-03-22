@@ -1,16 +1,19 @@
-use crate::domain::event::aggregates::notification_aggregate::NotificationChannelType;
-use crate::domain::event::services::{NotificationChannel, NotificationMessage};
-use crate::domain::event::Result;
-use axum::response::sse::{Event as SseEvent, KeepAlive};
-use axum::response::{IntoResponse, Response, Sse};
+use std::{collections::HashMap, convert::Infallible, sync::Arc, time::Duration};
+
+use axum::response::{
+    sse::{Event as SseEvent, KeepAlive},
+    IntoResponse, Response, Sse,
+};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::convert::Infallible;
-use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::{broadcast, RwLock};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
+
+use crate::domain::event::{
+    aggregates::notification_aggregate::NotificationChannelType,
+    services::{NotificationChannel, NotificationMessage},
+    Result,
+};
 
 /// SSE connection information
 #[derive(Debug, Clone)]
@@ -42,11 +45,7 @@ impl SseNotificationChannel {
     pub fn new() -> Self {
         let (sender, receiver) = broadcast::channel(1000);
 
-        Self {
-            connections: Arc::new(RwLock::new(HashMap::new())),
-            sender,
-            _receiver: receiver,
-        }
+        Self { connections: Arc::new(RwLock::new(HashMap::new())), sender, _receiver: receiver }
     }
 
     /// Create an SSE response for a client connection
@@ -65,10 +64,7 @@ impl SseNotificationChannel {
             connections.insert(connection_id.clone(), connection);
         }
 
-        info!(
-            "New SSE connection established: {} for user: {}",
-            connection_id, user_id
-        );
+        info!("New SSE connection established: {} for user: {}", connection_id, user_id);
 
         // Create a receiver for this connection
         let mut receiver = self.sender.subscribe();
@@ -143,9 +139,7 @@ impl SseNotificationChannel {
             info!("SSE connection closed: {}", connection_id_clone);
         };
 
-        Sse::new(stream)
-            .keep_alive(KeepAlive::default())
-            .into_response()
+        Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
     }
 
     /// Broadcast a message to all connected clients
@@ -231,12 +225,7 @@ fn should_send_to_user(user_id: &str, message: &SseMessage) -> bool {
 impl SseMessage {
     /// Create a new SSE message
     pub fn new(event_type: String, data: serde_json::Value) -> Self {
-        Self {
-            id: Uuid::new_v4().to_string(),
-            event_type,
-            data,
-            timestamp: chrono::Utc::now(),
-        }
+        Self { id: Uuid::new_v4().to_string(), event_type, data, timestamp: chrono::Utc::now() }
     }
 
     /// Create a notification message
@@ -291,9 +280,7 @@ impl NotificationChannel for SseNotificationChannel {
         };
 
         // Broadcast to all connections
-        self.broadcast(sse_message)
-            .await
-            .map_err(|e| e.to_string())?;
+        self.broadcast(sse_message).await.map_err(|e| e.to_string())?;
 
         info!("SSE notification sent: {}", message.formatted_title());
         Ok(())
@@ -314,11 +301,12 @@ impl NotificationChannel for SseNotificationChannel {
 
 #[cfg(test)]
 mod tests {
+    use tokio::time::Duration;
+
     use super::*;
     use crate::domain::event::services::{
         NotificationChannel, NotificationLevel, NotificationMessage,
     };
-    use tokio::time::Duration;
 
     #[tokio::test]
     async fn test_sse_channel_creation() {
@@ -345,11 +333,8 @@ mod tests {
     async fn test_broadcast_message() {
         let channel = SseNotificationChannel::new();
 
-        let message = SseMessage::notification(
-            "Test".to_string(),
-            "Content".to_string(),
-            "info".to_string(),
-        );
+        let message =
+            SseMessage::notification("Test".to_string(), "Content".to_string(), "info".to_string());
 
         // Should succeed even with no connections
         let result: crate::domain::event::Result<usize> = channel.broadcast(message).await;
@@ -430,9 +415,7 @@ mod tests {
         assert_eq!(channel.get_connection_count().await, 1);
 
         // Clean up connections older than 30 minutes
-        let removed = channel
-            .cleanup_stale_connections(Duration::from_secs(30 * 60))
-            .await;
+        let removed = channel.cleanup_stale_connections(Duration::from_secs(30 * 60)).await;
         assert_eq!(removed, 1);
         assert_eq!(channel.get_connection_count().await, 0);
     }

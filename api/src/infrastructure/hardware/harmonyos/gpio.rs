@@ -2,8 +2,8 @@
 //!
 //! 提供与Linux版本兼容的GPIO接口，但使用鸿蒙系统的底层API
 
-use std::collections::HashMap;
-use std::sync::Mutex;
+use std::{collections::HashMap, sync::Mutex};
+
 use tracing::debug;
 
 /// GPIO引脚状态
@@ -37,9 +37,7 @@ pub struct HarmonyGpioManager {
 impl HarmonyGpioManager {
     /// 创建新的GPIO管理器
     pub fn new() -> Self {
-        Self {
-            pins: Mutex::new(HashMap::new()),
-        }
+        Self { pins: Mutex::new(HashMap::new()) }
     }
 
     /// 导出GPIO引脚
@@ -52,12 +50,7 @@ impl HarmonyGpioManager {
         let mut pins = self.pins.lock().unwrap();
         pins.insert(
             (chip, pin),
-            GpioPin {
-                chip,
-                pin,
-                direction: GpioDirection::Input,
-                value: GpioValue::Low,
-            },
+            GpioPin { chip, pin, direction: GpioDirection::Input, value: GpioValue::Low },
         );
 
         Ok(())
@@ -70,10 +63,7 @@ impl HarmonyGpioManager {
         pin: u32,
         direction: GpioDirection,
     ) -> Result<(), std::io::Error> {
-        debug!(
-            "Setting GPIO pin {}/{} direction to {:?} on HarmonyOS",
-            chip, pin, direction
-        );
+        debug!("Setting GPIO pin {}/{} direction to {:?} on HarmonyOS", chip, pin, direction);
 
         // TODO: 实现鸿蒙系统的GPIO方向设置
 
@@ -91,10 +81,7 @@ impl HarmonyGpioManager {
 
     /// 设置GPIO引脚值
     pub fn set_value(&self, chip: u32, pin: u32, value: GpioValue) -> Result<(), std::io::Error> {
-        debug!(
-            "Setting GPIO pin {}/{} value to {:?} on HarmonyOS",
-            chip, pin, value
-        );
+        debug!("Setting GPIO pin {}/{} value to {:?} on HarmonyOS", chip, pin, value);
 
         // TODO: 实现鸿蒙系统的GPIO值设置
 
@@ -164,11 +151,7 @@ pub fn get_gpio_manager() -> &'static HarmonyGpioManager {
 
 /// 兼容性函数：设置GPIO值（与Linux版本兼容）
 pub fn set_gpio_value(chip: u32, pin: u32, value: u32) -> Result<(), std::io::Error> {
-    let gpio_value = if value == 0 {
-        GpioValue::Low
-    } else {
-        GpioValue::High
-    };
+    let gpio_value = if value == 0 { GpioValue::Low } else { GpioValue::High };
     get_gpio_manager().set_value(chip, pin, gpio_value)
 }
 

@@ -1,9 +1,9 @@
 // Configuration Module - Using config crate for zero-boilerplate config management
 pub mod settings;
 
-pub use settings::*;
-
 use std::sync::OnceLock;
+
+pub use settings::*;
 
 /// Global configuration instance
 static CONFIG: OnceLock<ApplicationSettings> = OnceLock::new();
@@ -31,11 +31,7 @@ pub fn load_configuration() -> Result<ApplicationSettings, ConfigError> {
         // 1. 从 app_settings.toml 加载（如果存在）
         .add_source(File::with_name("app_settings").required(false))
         // 2. 从环境变量覆盖（自动处理 TINYIOTHUB__ 前缀，双下划线表示嵌套）
-        .add_source(
-            Environment::with_prefix("TINYIOTHUB")
-                .separator("__")
-                .try_parsing(true),
-        )
+        .add_source(Environment::with_prefix("TINYIOTHUB").separator("__").try_parsing(true))
         .build()
         .map_err(|e| ConfigError::ParseError(format!("Failed to build config: {}", e)))?;
 
@@ -45,11 +41,7 @@ pub fn load_configuration() -> Result<ApplicationSettings, ConfigError> {
 
     // 打印关键配置信息
     tracing::info!("Database URL: {}", app_settings.database.url);
-    tracing::info!(
-        "Server: {}:{}",
-        app_settings.server.host,
-        app_settings.server.port
-    );
+    tracing::info!("Server: {}:{}", app_settings.server.host, app_settings.server.port);
 
     app_settings.validate()?;
 
@@ -58,9 +50,7 @@ pub fn load_configuration() -> Result<ApplicationSettings, ConfigError> {
 
 /// Get the global configuration instance
 pub fn get() -> &'static ApplicationSettings {
-    CONFIG
-        .get()
-        .expect("Configuration not initialized. Call config::initialize() first")
+    CONFIG.get().expect("Configuration not initialized. Call config::initialize() first")
 }
 
 /// Get environment name

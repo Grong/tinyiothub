@@ -12,12 +12,7 @@ pub struct Resolution {
 
 impl Resolution {
     pub fn new(user_id: String, resolution_type: ResolutionType, note: Option<String>) -> Self {
-        Self {
-            resolved_by: user_id,
-            resolved_at: Utc::now(),
-            note,
-            resolution_type,
-        }
+        Self { resolved_by: user_id, resolved_at: Utc::now(), note, resolution_type }
     }
 }
 

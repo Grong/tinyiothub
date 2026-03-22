@@ -13,27 +13,15 @@ where
     T: Serialize,
 {
     pub fn success(data: T) -> Json<ApiResponse<T>> {
-        Json(ApiResponse {
-            code: 0,
-            msg: "".to_string(),
-            result: Some(data),
-        })
+        Json(ApiResponse { code: 0, msg: "".to_string(), result: Some(data) })
     }
 
     pub fn error(msg: String) -> Json<ApiResponse<T>> {
-        Json(ApiResponse {
-            code: -1,
-            msg,
-            result: None,
-        })
+        Json(ApiResponse { code: -1, msg, result: None })
     }
 
     pub fn error_with_code(code: i32, msg: String) -> Json<ApiResponse<T>> {
-        Json(ApiResponse {
-            code,
-            msg,
-            result: None,
-        })
+        Json(ApiResponse { code, msg, result: None })
     }
 
     pub fn from_result(rst: Result<T, sqlx::Error>) -> Json<ApiResponse<T>> {

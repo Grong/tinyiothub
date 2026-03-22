@@ -10,6 +10,5 @@ pub mod sse_manager;
 
 // Export core event infrastructure
 pub use event_bus::{EventBus, EventHandler};
-
 // Export SSE connection manager
 pub use sse_manager::SseConnectionManager;

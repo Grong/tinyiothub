@@ -1,13 +1,16 @@
-use crate::domain::event::{
-    entities::Event,
-    repositories::EventRepository,
-    value_objects::{DeviceEventType, EventLevel, EventType},
-};
-use crate::infrastructure::event::EventHandler;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
+
 use tokio::sync::RwLock;
 use tracing::{debug, error, trace};
+
+use crate::{
+    domain::event::{
+        entities::Event,
+        repositories::EventRepository,
+        value_objects::{DeviceEventType, EventLevel, EventType},
+    },
+    infrastructure::event::EventHandler,
+};
 
 /// 持久化事件处理器
 ///
@@ -34,11 +37,7 @@ pub struct PersistenceConfig {
 
 impl Default for PersistenceConfig {
     fn default() -> Self {
-        Self {
-            batch_size: 100,
-            flush_interval: Duration::from_secs(5),
-            enable_batching: true,
-        }
+        Self { batch_size: 100, flush_interval: Duration::from_secs(5), enable_batching: true }
     }
 }
 
@@ -47,10 +46,7 @@ impl PersistenceEventHandler {
     pub fn new(repository: Arc<dyn EventRepository>, config: PersistenceConfig) -> Self {
         // HarmonyOS: 强制禁用批量写入，避免后台任务
         #[cfg(feature = "harmonyos")]
-        let config = PersistenceConfig {
-            enable_batching: false,
-            ..config
-        };
+        let config = PersistenceConfig { enable_batching: false, ..config };
 
         let buffer = Arc::new(RwLock::new(EventBuffer::new(config.batch_size)));
 
@@ -59,11 +55,7 @@ impl PersistenceEventHandler {
             Self::start_flush_task(buffer.clone(), repository.clone(), config.flush_interval);
         }
 
-        Self {
-            repository,
-            buffer,
-            config,
-        }
+        Self { repository, buffer, config }
     }
 
     /// 判断是否应该持久化
@@ -223,10 +215,7 @@ struct EventBuffer {
 
 impl EventBuffer {
     fn new(capacity: usize) -> Self {
-        Self {
-            events: Vec::with_capacity(capacity),
-            capacity,
-        }
+        Self { events: Vec::with_capacity(capacity), capacity }
     }
 
     fn add(&mut self, event: Event) {

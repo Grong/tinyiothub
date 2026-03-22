@@ -1,8 +1,11 @@
 // Performance optimization utilities for improved user experience
-use std::borrow::Cow;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
@@ -32,11 +35,7 @@ where
 {
     /// Create a new cache with specified TTL and maximum size
     pub fn new(ttl: Duration, max_size: usize) -> Self {
-        Self {
-            data: Arc::new(RwLock::new(HashMap::new())),
-            ttl,
-            max_size,
-        }
+        Self { data: Arc::new(RwLock::new(HashMap::new())), ttl, max_size }
     }
 
     /// Get value from cache if it exists and hasn't expired
@@ -123,10 +122,7 @@ where
                 cache.remove(&key);
             }
 
-            info!(
-                "Evicted {} LRU cache entries",
-                cache.len() - self.max_size + 1
-            );
+            info!("Evicted {} LRU cache entries", cache.len() - self.max_size + 1);
         }
     }
 
@@ -303,11 +299,7 @@ where
         let connections = self.connections.read().await;
         let current_size = *self.current_size.read().await;
 
-        PoolStats {
-            available: connections.len(),
-            total: current_size,
-            max_size: self.max_size,
-        }
+        PoolStats { available: connections.len(), total: current_size, max_size: self.max_size }
     }
 }
 
@@ -320,8 +312,9 @@ pub struct PoolStats {
 
 /// Memory-efficient data structures for common use cases
 pub mod efficient_collections {
-    use smallvec::SmallVec;
     use std::collections::HashMap;
+
+    use smallvec::SmallVec;
 
     /// Small vector that stores up to N elements on the stack
     pub type SmallStringVec<const N: usize> = SmallVec<[String; N]>;
@@ -336,9 +329,7 @@ pub mod efficient_collections {
 
     impl PreAllocatedString {
         pub fn new(capacity: usize) -> Self {
-            Self {
-                buffer: String::with_capacity(capacity),
-            }
+            Self { buffer: String::with_capacity(capacity) }
         }
 
         pub fn format(&mut self, template: &str, args: &[&str]) -> &str {
@@ -378,10 +369,7 @@ impl PerformanceMetrics {
     /// Record operation time
     pub async fn record_operation_time(&self, operation: &str, duration: Duration) {
         let mut times = self.operation_times.write().await;
-        times
-            .entry(operation.to_string())
-            .or_insert_with(Vec::new)
-            .push(duration);
+        times.entry(operation.to_string()).or_insert_with(Vec::new).push(duration);
 
         // Keep only last 100 measurements to prevent memory growth
         if let Some(measurements) = times.get_mut(operation) {
@@ -432,10 +420,7 @@ impl PerformanceMetrics {
             }
         }
 
-        MetricsSnapshot {
-            operation_averages,
-            error_counts: errors.clone(),
-        }
+        MetricsSnapshot { operation_averages, error_counts: errors.clone() }
     }
 }
 
@@ -453,8 +438,9 @@ impl Default for PerformanceMetrics {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tokio::time::sleep;
+
+    use super::*;
 
     #[tokio::test]
     async fn test_cache_basic_operations() {
@@ -462,10 +448,7 @@ mod tests {
 
         // Test set and get
         cache.set("key1".to_string(), "value1".to_string()).await;
-        assert_eq!(
-            cache.get(&"key1".to_string()).await,
-            Some("value1".to_string())
-        );
+        assert_eq!(cache.get(&"key1".to_string()).await, Some("value1".to_string()));
 
         // Test cache miss
         assert_eq!(cache.get(&"nonexistent".to_string()).await, None);
@@ -476,10 +459,7 @@ mod tests {
         let cache = Cache::new(Duration::from_millis(50), 10);
 
         cache.set("key1".to_string(), "value1".to_string()).await;
-        assert_eq!(
-            cache.get(&"key1".to_string()).await,
-            Some("value1".to_string())
-        );
+        assert_eq!(cache.get(&"key1".to_string()).await, Some("value1".to_string()));
 
         // Wait for expiration
         sleep(Duration::from_millis(100)).await;
@@ -536,12 +516,8 @@ mod tests {
     async fn test_performance_metrics() {
         let metrics = PerformanceMetrics::new();
 
-        metrics
-            .record_operation_time("test_op", Duration::from_millis(100))
-            .await;
-        metrics
-            .record_operation_time("test_op", Duration::from_millis(200))
-            .await;
+        metrics.record_operation_time("test_op", Duration::from_millis(100)).await;
+        metrics.record_operation_time("test_op", Duration::from_millis(200)).await;
         metrics.record_error("test_op").await;
 
         let avg_time = metrics.get_average_time("test_op").await;

@@ -1,11 +1,13 @@
-use std::path::Path;
-use std::time::Duration;
-use reqwest::Client;
-use sha2::{Sha256, Digest};
+use std::{path::Path, time::Duration};
 
+use reqwest::Client;
+use sha2::{Digest, Sha256};
+
+use super::{
+    error::{MarketplaceError, Result},
+    metadata::{DriverIndex, DriverMetadata, TemplateIndex, TemplateMetadata},
+};
 use crate::infrastructure::config::settings::MarketplaceConfig;
-use super::error::{MarketplaceError, Result};
-use super::metadata::{TemplateIndex, DriverIndex, TemplateMetadata, DriverMetadata};
 
 pub struct MarketplaceClient {
     http_client: Client,
@@ -18,14 +20,10 @@ impl MarketplaceClient {
             return Err(MarketplaceError::Disabled);
         }
 
-        let http_client = Client::builder()
-            .timeout(Duration::from_secs(config.download_timeout_secs))
-            .build()?;
+        let http_client =
+            Client::builder().timeout(Duration::from_secs(config.download_timeout_secs)).build()?;
 
-        Ok(Self {
-            http_client,
-            config,
-        })
+        Ok(Self { http_client, config })
     }
 
     /// 获取模板列表
@@ -123,9 +121,7 @@ impl MarketplaceClient {
             return Ok(url);
         }
 
-        Err(MarketplaceError::InvalidConfig(
-            "No marketplace source configured".to_string(),
-        ))
+        Err(MarketplaceError::InvalidConfig("No marketplace source configured".to_string()))
     }
 
     /// 获取当前平台标识

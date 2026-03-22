@@ -217,11 +217,7 @@ impl EventLoadBalancer {
 
     /// Get next available worker
     pub fn get_available_worker(&mut self) -> Option<usize> {
-        self.workers
-            .iter()
-            .enumerate()
-            .find(|(_, worker)| !worker.is_busy)
-            .map(|(idx, _)| idx)
+        self.workers.iter().enumerate().find(|(_, worker)| !worker.is_busy).map(|(idx, _)| idx)
     }
 
     /// Assign task to worker

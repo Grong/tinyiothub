@@ -1,10 +1,13 @@
 //! 动态驱动加载器
 
+use std::{
+    ffi::{CStr, CString},
+    os::raw::c_char,
+    path::Path,
+    sync::Arc,
+};
+
 use libloading::{Library, Symbol};
-use std::ffi::{CStr, CString};
-use std::os::raw::c_char;
-use std::path::Path;
-use std::sync::Arc;
 use tracing::{debug, error, info};
 
 use crate::shared::error::Error;
@@ -61,11 +64,7 @@ impl DynamicDriverLoader {
         info!("Successfully loaded driver: {}", driver_name);
         debug!("Driver info: {}", info_json);
 
-        Ok(Self {
-            library: Arc::new(library),
-            driver_name,
-            path: path.to_path_buf(),
-        })
+        Ok(Self { library: Arc::new(library), driver_name, path: path.to_path_buf() })
     }
 
     /// 获取驱动名称
@@ -99,9 +98,9 @@ impl DynamicDriverLoader {
     /// 创建驱动实例
     pub fn create_driver(&self, device_json: &str) -> Result<*mut std::ffi::c_void, Error> {
         let create_fn: Symbol<CreateDriverFn> = unsafe {
-            self.library
-                .get(b"iot_edge_driver_create\0")
-                .map_err(|e| Error::Unsupported(format!("Failed to get iot_edge_driver_create: {}", e)))?
+            self.library.get(b"iot_edge_driver_create\0").map_err(|e| {
+                Error::Unsupported(format!("Failed to get iot_edge_driver_create: {}", e))
+            })?
         };
 
         let device_cstr = CString::new(device_json)
@@ -126,9 +125,8 @@ impl DynamicDriverLoader {
             return;
         }
 
-        let destroy_fn: Result<Symbol<DestroyDriverFn>, _> = unsafe {
-            self.library.get(b"iot_edge_driver_destroy\0")
-        };
+        let destroy_fn: Result<Symbol<DestroyDriverFn>, _> =
+            unsafe { self.library.get(b"iot_edge_driver_destroy\0") };
 
         if let Ok(destroy_fn) = destroy_fn {
             unsafe { destroy_fn(driver_ptr) };

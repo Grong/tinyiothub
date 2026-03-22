@@ -55,10 +55,7 @@ impl SimulatedDriver {
             device.display_name.as_deref().unwrap_or(&device.name)
         );
 
-        Self {
-            device,
-            retry_count: 0,
-        }
+        Self { device, retry_count: 0 }
     }
 }
 
@@ -79,8 +76,9 @@ impl DeviceDriver for SimulatedDriver {
 
     /// 为模拟驱动提供快速的重试配置
     fn retry_config(&self) -> crate::domain::device::driver::retry::RetryConfig {
-        use crate::domain::device::driver::retry::{BackoffStrategy, RetryConfig};
         use std::time::Duration;
+
+        use crate::domain::device::driver::retry::{BackoffStrategy, RetryConfig};
 
         RetryConfig {
             max_attempts: 1, // 模拟驱动不需要重试
@@ -95,10 +93,7 @@ impl DeviceDriver for SimulatedDriver {
         let start_time = std::time::Instant::now();
         tracing::debug!(
             "SimulatedDriver::read_data called for device: {}",
-            self.device
-                .display_name
-                .as_deref()
-                .unwrap_or(&self.device.name)
+            self.device.display_name.as_deref().unwrap_or(&self.device.name)
         );
 
         // 使用统一的配置管理获取配置参数
@@ -136,11 +131,8 @@ impl DeviceDriver for SimulatedDriver {
                         let temp = if simulation_mode == "fixed" {
                             base_temp
                         } else {
-                            let noise = if enable_noise {
-                                rand::random::<f64>() * temp_range
-                            } else {
-                                0.0
-                            };
+                            let noise =
+                                if enable_noise { rand::random::<f64>() * temp_range } else { 0.0 };
                             base_temp + noise
                         };
                         ResultValue::float_with_precision(property.name.clone(), temp, 2)
@@ -150,11 +142,8 @@ impl DeviceDriver for SimulatedDriver {
                         let temp = if simulation_mode == "fixed" {
                             base_temp
                         } else {
-                            let noise = if enable_noise {
-                                rand::random::<f64>() * temp_range
-                            } else {
-                                0.0
-                            };
+                            let noise =
+                                if enable_noise { rand::random::<f64>() * temp_range } else { 0.0 };
                             base_temp + noise
                         };
                         ResultValue::float_with_precision(property.name.clone(), temp, 2)
@@ -189,11 +178,8 @@ impl DeviceDriver for SimulatedDriver {
                         let humidity = if simulation_mode == "fixed" {
                             base_humidity
                         } else {
-                            let noise = if enable_noise {
-                                rand::random::<f64>() * 10.0
-                            } else {
-                                0.0
-                            };
+                            let noise =
+                                if enable_noise { rand::random::<f64>() * 10.0 } else { 0.0 };
                             base_humidity + noise
                         };
                         ResultValue::float_with_precision(property.name.clone(), humidity, 1)
@@ -203,11 +189,8 @@ impl DeviceDriver for SimulatedDriver {
                         let humidity = if simulation_mode == "fixed" {
                             base_humidity
                         } else {
-                            let noise = if enable_noise {
-                                rand::random::<f64>() * 10.0
-                            } else {
-                                0.0
-                            };
+                            let noise =
+                                if enable_noise { rand::random::<f64>() * 10.0 } else { 0.0 };
                             base_humidity + noise
                         };
                         ResultValue::float_with_precision(property.name.clone(), humidity, 1)
@@ -359,10 +342,7 @@ impl DeviceDriver for SimulatedDriver {
         tracing::debug!(
             "SimulatedDriver generated {} values for device: {} in {:?}",
             results.len(),
-            self.device
-                .display_name
-                .as_deref()
-                .unwrap_or(&self.device.name),
+            self.device.display_name.as_deref().unwrap_or(&self.device.name),
             elapsed
         );
 
@@ -370,21 +350,14 @@ impl DeviceDriver for SimulatedDriver {
             tracing::warn!(
                 "SimulatedDriver::read_data took longer than expected: {:?} for device: {}",
                 elapsed,
-                self.device
-                    .display_name
-                    .as_deref()
-                    .unwrap_or(&self.device.name)
+                self.device.display_name.as_deref().unwrap_or(&self.device.name)
             );
         }
         Ok(results)
     }
 
     fn execute_command(&mut self, cmd: &DeviceCommand) -> Result<bool, Error> {
-        tracing::info!(
-            "Executing Simulated command: {} on device {}",
-            cmd.name,
-            self.device.name
-        );
+        tracing::info!("Executing Simulated command: {} on device {}", cmd.name, self.device.name);
 
         // 模拟设备总是成功执行命令
         Ok(true)
@@ -393,9 +366,10 @@ impl DeviceDriver for SimulatedDriver {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::application::data_context::DataContext;
-    use std::sync::Arc;
 
     fn create_test_device() -> Device {
         Device {
@@ -421,10 +395,7 @@ mod tests {
         assert_eq!(default_config.get("interval"), Some(&"1000".to_string()));
         assert_eq!(default_config.get("mode"), Some(&"random".to_string()));
         assert_eq!(default_config.get("temp_range"), Some(&"10.0".to_string()));
-        assert_eq!(
-            default_config.get("enable_noise"),
-            Some(&"true".to_string())
-        );
+        assert_eq!(default_config.get("enable_noise"), Some(&"true".to_string()));
         assert_eq!(default_config.len(), 4);
     }
 
@@ -474,10 +445,7 @@ mod tests {
         assert!(driver.get_config_boolean("enable_noise", false));
 
         // 测试不存在的配置参数
-        assert_eq!(
-            driver.get_config_string("non_existent", "default"),
-            "default"
-        );
+        assert_eq!(driver.get_config_string("non_existent", "default"), "default");
         assert_eq!(driver.get_config_integer("non_existent", 42), 42);
     }
 
@@ -501,10 +469,7 @@ mod tests {
         assert_eq!(options_json.len(), 4);
 
         // 验证每个选项
-        let interval_option = options_json
-            .iter()
-            .find(|opt| opt.name == "interval")
-            .unwrap();
+        let interval_option = options_json.iter().find(|opt| opt.name == "interval").unwrap();
         assert_eq!(interval_option.label, "Refresh Interval (ms)");
         assert_eq!(interval_option.default_value, "1000");
         assert_eq!(interval_option.option_type, "number");

@@ -7,8 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     dto::{request::pagination::PaginationQuery, response::ApiResponse},
-    shared::app_state::AppState,
-    shared::security::jwt::Claims,
+    shared::{app_state::AppState, security::jwt::Claims},
 };
 
 #[derive(Serialize, Deserialize, Debug)]

@@ -1,5 +1,6 @@
-use crate::shared::app_state::AppState;
 use axum::Router;
+
+use crate::shared::app_state::AppState;
 
 mod dashboard;
 mod health;

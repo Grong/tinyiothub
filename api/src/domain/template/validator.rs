@@ -1,10 +1,14 @@
-use crate::dto::entity::device_template::{
-    CommandTemplate, CreateDeviceTemplateRequest, DeviceCreationInput, DeviceTemplate,
-    PropertyTemplate,
-};
-use crate::dto::entity::template_error::{ValidationError, ValidationResult};
 use std::collections::{HashMap, HashSet};
+
 use tracing::{debug, info, warn};
+
+use crate::dto::entity::{
+    device_template::{
+        CommandTemplate, CreateDeviceTemplateRequest, DeviceCreationInput, DeviceTemplate,
+        PropertyTemplate,
+    },
+    template_error::{ValidationError, ValidationResult},
+};
 
 /// 模板验证器 - 负责验证模板格式和内容的正确性
 #[derive(Debug)]
@@ -40,11 +44,7 @@ impl TemplateValidator {
         // 需求 6.5: 验证驱动引用
         self.validate_driver_reference(template, &mut result);
 
-        debug!(
-            "模板验证完成，错误数: {}, 警告数: {}",
-            result.errors.len(),
-            result.warnings.len()
-        );
+        debug!("模板验证完成，错误数: {}, 警告数: {}", result.errors.len(), result.warnings.len());
 
         // 需求 6.7: 如果验证失败，记录详细错误日志
         if result.has_errors() {
@@ -221,8 +221,7 @@ impl TemplateValidator {
             for required_field in &device_info.required_fields {
                 match required_field.as_str() {
                     "driver_options" => {
-                        if input.driver_options.as_ref().map_or(true, |opt| opt.trim().is_empty())
-                        {
+                        if input.driver_options.as_ref().map_or(true, |opt| opt.trim().is_empty()) {
                             result.add_error(
                                 "driver_options",
                                 "驱动选项是必填字段",
@@ -231,14 +230,12 @@ impl TemplateValidator {
                         }
                     }
                     "parent_id" => {
-                        if input.parent_id.as_ref().map_or(true, |id| id.trim().is_empty())
-                        {
+                        if input.parent_id.as_ref().map_or(true, |id| id.trim().is_empty()) {
                             result.add_error("parent_id", "父设备ID是必填字段", "REQUIRED_FIELD");
                         }
                     }
                     "product_id" => {
-                        if input.product_id.as_ref().map_or(true, |id| id.trim().is_empty())
-                        {
+                        if input.product_id.as_ref().map_or(true, |id| id.trim().is_empty()) {
                             result.add_error("product_id", "产品ID是必填字段", "REQUIRED_FIELD");
                         }
                     }
@@ -389,20 +386,12 @@ impl TemplateValidator {
 
         // 验证属性JSON
         if let Err(e) = template.get_properties() {
-            result.add_error(
-                "properties",
-                &format!("属性模板JSON格式错误: {}", e),
-                "INVALID_JSON",
-            );
+            result.add_error("properties", &format!("属性模板JSON格式错误: {}", e), "INVALID_JSON");
         }
 
         // 验证命令JSON
         if let Err(e) = template.get_commands() {
-            result.add_error(
-                "commands",
-                &format!("命令模板JSON格式错误: {}", e),
-                "INVALID_JSON",
-            );
+            result.add_error("commands", &format!("命令模板JSON格式错误: {}", e), "INVALID_JSON");
         }
     }
 
@@ -525,8 +514,7 @@ impl TemplateValidator {
     /// 验证名称格式是否有效
     fn is_valid_name(&self, name: &str) -> bool {
         // 只允许字母、数字、下划线、连字符
-        name.chars()
-            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+        name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
     }
 
     /// 验证单个字段 (用于向导的实时验证)
@@ -536,10 +524,7 @@ impl TemplateValidator {
         field_name: &str,
         field_value: &str,
     ) -> ValidationResult {
-        debug!(
-            "验证单个字段: 模板={}, 字段={}, 值={}",
-            template.name, field_name, field_value
-        );
+        debug!("验证单个字段: 模板={}, 字段={}, 值={}", template.name, field_name, field_value);
 
         let mut result = ValidationResult::success();
 
@@ -550,9 +535,7 @@ impl TemplateValidator {
                     result.add_error("name", "设备名称不能为空", "FIELD_REQUIRED");
                 } else if field_value.len() > 100 {
                     result.add_error("name", "设备名称长度不能超过100个字符", "FIELD_TOO_LONG");
-                } else if !field_value
-                    .chars()
-                    .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+                } else if !field_value.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
                 {
                     result.add_error(
                         "name",
@@ -579,11 +562,7 @@ impl TemplateValidator {
             }
             "description" => {
                 if !field_value.trim().is_empty() && field_value.len() > 1000 {
-                    result.add_error(
-                        "description",
-                        "描述长度不能超过1000个字符",
-                        "FIELD_TOO_LONG",
-                    );
+                    result.add_error("description", "描述长度不能超过1000个字符", "FIELD_TOO_LONG");
                 }
             }
             _ => {
@@ -596,9 +575,7 @@ impl TemplateValidator {
 
         // 检查是否为必需字段
         if let Ok(device_info) = template.get_device_info() {
-            if device_info
-                .required_fields
-                .contains(&field_name.to_string())
+            if device_info.required_fields.contains(&field_name.to_string())
                 && field_value.trim().is_empty()
             {
                 result.add_error(field_name, "此字段为必填项", "FIELD_REQUIRED");

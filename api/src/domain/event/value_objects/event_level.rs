@@ -68,10 +68,7 @@ impl EventLevel {
 
     /// Check if this level should update real-time status
     pub fn should_update_real_time_status(&self) -> bool {
-        matches!(
-            self,
-            EventLevel::Critical | EventLevel::Error | EventLevel::Warning
-        )
+        matches!(self, EventLevel::Critical | EventLevel::Error | EventLevel::Warning)
     }
 }
 

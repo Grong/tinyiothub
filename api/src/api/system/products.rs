@@ -11,8 +11,7 @@ use crate::{
         request::pagination::PaginationQuery,
         response::ApiResponse,
     },
-    shared::app_state::AppState,
-    shared::security::jwt::Claims,
+    shared::{app_state::AppState, security::jwt::Claims},
 };
 
 #[derive(Deserialize)]
@@ -29,10 +28,7 @@ pub struct ProductQuery {
 pub fn create_router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_products).post(create_product))
-        .route(
-            "/:id",
-            get(get_product).put(update_product).delete(delete_product),
-        )
+        .route("/:id", get(get_product).put(update_product).delete(delete_product))
 }
 
 /// 获取产品列表

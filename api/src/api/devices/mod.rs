@@ -6,8 +6,9 @@ pub mod profile;
 pub mod properties;
 pub mod trace;
 
-use crate::shared::app_state::AppState;
 use axum::Router;
+
+use crate::shared::app_state::AppState;
 
 pub fn create_router() -> Router<AppState> {
     Router::new()

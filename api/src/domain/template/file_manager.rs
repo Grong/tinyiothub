@@ -1,9 +1,14 @@
-use crate::dto::entity::device_template::CreateDeviceTemplateRequest;
-use crate::dto::entity::template_error::TemplateError;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
 use serde_json;
-use std::fs;
-use std::path::{Path, PathBuf};
 use tracing::{error, info, warn};
+
+use crate::dto::entity::{
+    device_template::CreateDeviceTemplateRequest, template_error::TemplateError,
+};
 
 /// 模板文件系统管理器 - 负责模板文件的加载和解析
 #[derive(Debug)]
@@ -14,9 +19,7 @@ pub struct TemplateFileManager {
 impl TemplateFileManager {
     /// 创建新的模板文件管理器
     pub fn new<P: AsRef<Path>>(templates_root: P) -> Self {
-        Self {
-            templates_root: templates_root.as_ref().to_path_buf(),
-        }
+        Self { templates_root: templates_root.as_ref().to_path_buf() }
     }
 
     /// 获取内置模板目录路径
@@ -84,11 +87,7 @@ impl TemplateFileManager {
 
             match self.load_templates_from_directory(&category_path) {
                 Ok(mut category_templates) => {
-                    info!(
-                        "从分类 {} 加载了 {} 个模板",
-                        category,
-                        category_templates.len()
-                    );
+                    info!("从分类 {} 加载了 {} 个模板", category, category_templates.len());
                     templates.append(&mut category_templates);
                 }
                 Err(e) => {
@@ -168,37 +167,33 @@ impl TemplateFileManager {
         // 检查必填字段
         if template.name.is_empty() {
             return Err(TemplateError::ValidationFailed {
-                errors: vec![
-                    crate::dto::entity::template_error::ValidationError::required_field("name"),
-                ],
+                errors: vec![crate::dto::entity::template_error::ValidationError::required_field(
+                    "name",
+                )],
             });
         }
 
         if template.category.is_empty() {
             return Err(TemplateError::ValidationFailed {
-                errors: vec![
-                    crate::dto::entity::template_error::ValidationError::required_field("category"),
-                ],
+                errors: vec![crate::dto::entity::template_error::ValidationError::required_field(
+                    "category",
+                )],
             });
         }
 
         if template.device_type.is_empty() {
             return Err(TemplateError::ValidationFailed {
-                errors: vec![
-                    crate::dto::entity::template_error::ValidationError::required_field(
-                        "device_type",
-                    ),
-                ],
+                errors: vec![crate::dto::entity::template_error::ValidationError::required_field(
+                    "device_type",
+                )],
             });
         }
 
         if template.display_name.is_empty() {
             return Err(TemplateError::ValidationFailed {
-                errors: vec![
-                    crate::dto::entity::template_error::ValidationError::required_field(
-                        "display_name",
-                    ),
-                ],
+                errors: vec![crate::dto::entity::template_error::ValidationError::required_field(
+                    "display_name",
+                )],
             });
         }
 
@@ -256,15 +251,12 @@ impl TemplateFileManager {
 
     /// 获取模板文件路径
     pub fn get_template_file_path(&self, category: &str, template_name: &str) -> PathBuf {
-        self.get_builtin_path()
-            .join(category)
-            .join(format!("{}.json", template_name))
+        self.get_builtin_path().join(category).join(format!("{}.json", template_name))
     }
 
     /// 获取自定义模板文件路径
     pub fn get_custom_template_file_path(&self, template_name: &str) -> PathBuf {
-        self.get_custom_path()
-            .join(format!("{}.json", template_name))
+        self.get_custom_path().join(format!("{}.json", template_name))
     }
 
     /// 列出指定分类的所有模板文件

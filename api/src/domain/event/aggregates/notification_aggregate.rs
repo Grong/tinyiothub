@@ -1,6 +1,7 @@
-use crate::domain::event::{value_objects::EventLevel, EventError, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
+use crate::domain::event::{value_objects::EventLevel, EventError, Result};
 
 /// Notification Status
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -235,20 +236,12 @@ impl NotificationAggregate {
             is_active: true,
         };
 
-        Ok(Self {
-            rule,
-            records: Vec::new(),
-            version: 1,
-        })
+        Ok(Self { rule, records: Vec::new(), version: 1 })
     }
 
     /// Create aggregate from existing rule
     pub fn from_rule(rule: NotificationRule) -> Self {
-        Self {
-            rule,
-            records: Vec::new(),
-            version: 1,
-        }
+        Self { rule, records: Vec::new(), version: 1 }
     }
 
     /// Get the notification rule
@@ -326,9 +319,7 @@ impl NotificationAggregate {
             self.version += 1;
             Ok(())
         } else {
-            Err(EventError::NotFound {
-                id: notification_id.to_string(),
-            })
+            Err(EventError::NotFound { id: notification_id.to_string() })
         }
     }
 
@@ -340,9 +331,7 @@ impl NotificationAggregate {
             self.version += 1;
             Ok(())
         } else {
-            Err(EventError::NotFound {
-                id: notification_id.to_string(),
-            })
+            Err(EventError::NotFound { id: notification_id.to_string() })
         }
     }
 
@@ -408,18 +397,12 @@ impl NotificationAggregate {
 
     /// Get pending notifications count
     pub fn pending_notifications_count(&self) -> usize {
-        self.records
-            .iter()
-            .filter(|r| matches!(r.status, NotificationStatus::Pending))
-            .count()
+        self.records.iter().filter(|r| matches!(r.status, NotificationStatus::Pending)).count()
     }
 
     /// Get failed notifications that can be retried
     pub fn retryable_notifications(&self) -> Vec<&NotificationRecord> {
-        self.records
-            .iter()
-            .filter(|r| matches!(r.status, NotificationStatus::Failed))
-            .collect()
+        self.records.iter().filter(|r| matches!(r.status, NotificationStatus::Failed)).collect()
     }
 }
 
@@ -465,10 +448,7 @@ mod tests {
             vec!["device.error".to_string()],
             vec![EventLevel::Error],
             vec![NotificationChannelType::Email, NotificationChannelType::Sms],
-            vec![
-                "admin@example.com".to_string(),
-                "admin2@example.com".to_string(),
-            ],
+            vec!["admin@example.com".to_string(), "admin2@example.com".to_string()],
         )
         .unwrap();
 
@@ -501,23 +481,13 @@ mod tests {
 
         // Mark as sent
         aggregate.mark_notification_sent(notification_id).unwrap();
-        let record = aggregate
-            .records()
-            .iter()
-            .find(|r| r.id == *notification_id)
-            .unwrap();
+        let record = aggregate.records().iter().find(|r| r.id == *notification_id).unwrap();
         assert!(matches!(record.status, NotificationStatus::Sent));
         assert!(record.sent_at.is_some());
 
         // Mark as failed
-        aggregate
-            .mark_notification_failed(notification_id, "Network error".to_string())
-            .unwrap();
-        let record = aggregate
-            .records()
-            .iter()
-            .find(|r| r.id == *notification_id)
-            .unwrap();
+        aggregate.mark_notification_failed(notification_id, "Network error".to_string()).unwrap();
+        let record = aggregate.records().iter().find(|r| r.id == *notification_id).unwrap();
         assert!(matches!(record.status, NotificationStatus::Failed));
         // Note: retry_count field doesn't exist in current NotificationRecord structure
     }

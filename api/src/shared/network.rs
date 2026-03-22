@@ -1,6 +1,4 @@
-use std::process::Command;
-use std::time::Duration;
-use std::{fs, thread};
+use std::{fs, process::Command, thread, time::Duration};
 
 use serde::{Deserialize, Serialize};
 
@@ -67,10 +65,7 @@ pub fn set_network_info(info: &NetworkInfo) -> bool {
 
 /// Check if network interface is up
 pub fn is_interface_up(interface: &str) -> bool {
-    match Command::new("ip")
-        .args(["link", "show", interface])
-        .output()
-    {
+    match Command::new("ip").args(["link", "show", interface]).output() {
         Ok(output) => {
             let output_str = String::from_utf8_lossy(&output.stdout);
             output_str.contains("state UP")
@@ -81,10 +76,7 @@ pub fn is_interface_up(interface: &str) -> bool {
 
 /// Get IP address of interface
 pub fn get_interface_ip(interface: &str) -> Option<String> {
-    match Command::new("ip")
-        .args(["addr", "show", interface])
-        .output()
-    {
+    match Command::new("ip").args(["addr", "show", interface]).output() {
         Ok(output) => {
             let output_str = String::from_utf8_lossy(&output.stdout);
             // Parse IP address from output
@@ -104,10 +96,7 @@ pub fn get_interface_ip(interface: &str) -> Option<String> {
 
 /// Ping a host to check connectivity
 pub fn ping_host(host: &str, timeout_secs: u64) -> bool {
-    match Command::new("ping")
-        .args(["-c", "1", "-W", &timeout_secs.to_string(), host])
-        .output()
-    {
+    match Command::new("ping").args(["-c", "1", "-W", &timeout_secs.to_string(), host]).output() {
         Ok(output) => output.status.success(),
         Err(_) => false,
     }
@@ -115,10 +104,7 @@ pub fn ping_host(host: &str, timeout_secs: u64) -> bool {
 
 /// Get default gateway
 pub fn get_default_gateway() -> Option<String> {
-    match Command::new("ip")
-        .args(["route", "show", "default"])
-        .output()
-    {
+    match Command::new("ip").args(["route", "show", "default"]).output() {
         Ok(output) => {
             let output_str = String::from_utf8_lossy(&output.stdout);
             if let Some(line) = output_str.lines().next() {

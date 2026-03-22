@@ -1,10 +1,13 @@
-use crate::domain::event::entities::Event;
-use crate::domain::event::value_objects::EventType;
-use crate::infrastructure::event::EventHandler;
 use std::sync::Arc;
 
-use super::super::entity::Alarm;
-use super::super::services::{AlarmService, RuleEngine};
+use super::super::{
+    entity::Alarm,
+    services::{AlarmService, RuleEngine},
+};
+use crate::{
+    domain::event::{entities::Event, value_objects::EventType},
+    infrastructure::event::EventHandler,
+};
 
 /// 报警事件处理器（领域层）
 ///
@@ -22,10 +25,7 @@ pub struct AlarmEventHandler {
 impl AlarmEventHandler {
     pub fn new(alarm_service: Arc<AlarmService>) -> Self {
         let rule_engine = alarm_service.rule_engine();
-        Self {
-            alarm_service,
-            rule_engine,
-        }
+        Self { alarm_service, rule_engine }
     }
 }
 

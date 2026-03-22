@@ -1,16 +1,19 @@
-use crate::domain::event::{
-    entities::Event,
-    repositories::{
-        EventCriteria, EventRepository, EventStatistics, ExportFormat, SortBy, SortOrder,
-        StatisticsParams,
-    },
-    value_objects::{EventId, EventLevel, EventSource, EventType, RichContent},
-    Result,
-};
-use crate::infrastructure::persistence::Database;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::Row;
+
+use crate::{
+    domain::event::{
+        entities::Event,
+        repositories::{
+            EventCriteria, EventRepository, EventStatistics, ExportFormat, SortBy, SortOrder,
+            StatisticsParams,
+        },
+        value_objects::{EventId, EventLevel, EventSource, EventType, RichContent},
+        Result,
+    },
+    infrastructure::persistence::Database,
+};
 
 /// SQLite implementation of EventRepository
 pub struct SqliteEventRepository {
@@ -70,10 +73,8 @@ impl EventRepository for SqliteEventRepository {
             WHERE id = ?
         "#;
 
-        let row = sqlx::query(sql)
-            .bind(id.to_string())
-            .fetch_optional(self.database.pool())
-            .await?;
+        let row =
+            sqlx::query(sql).bind(id.to_string()).fetch_optional(self.database.pool()).await?;
 
         if let Some(row) = row {
             let event = self.row_to_event(row)?;
@@ -191,10 +192,7 @@ impl EventRepository for SqliteEventRepository {
         let sql = "SELECT COUNT(*) as count FROM events WHERE event_level = ?";
         let level_num = level.to_numeric();
 
-        let row = sqlx::query(sql)
-            .bind(level_num)
-            .fetch_one(self.database.pool())
-            .await?;
+        let row = sqlx::query(sql).bind(level_num).fetch_one(self.database.pool()).await?;
 
         let count: i64 = row.get("count");
         Ok(count as u64)
@@ -204,10 +202,7 @@ impl EventRepository for SqliteEventRepository {
         let sql = "SELECT COUNT(*) as count FROM events WHERE event_type = ?";
         let type_str = serde_json::to_string(event_type)?;
 
-        let row = sqlx::query(sql)
-            .bind(type_str)
-            .fetch_one(self.database.pool())
-            .await?;
+        let row = sqlx::query(sql).bind(type_str).fetch_one(self.database.pool()).await?;
 
         let count: i64 = row.get("count");
         Ok(count as u64)
@@ -271,20 +266,14 @@ impl EventRepository for SqliteEventRepository {
         // Simplified implementation - in real version would implement full statistics
         let total_count = self.get_total_count().await?;
 
-        Ok(EventStatistics {
-            total_count,
-            groups: vec![],
-        })
+        Ok(EventStatistics { total_count, groups: vec![] })
     }
 
     async fn cleanup_old_events(&self, before: DateTime<Utc>) -> Result<u64> {
         let sql = "DELETE FROM events WHERE timestamp < ?";
         let before_str = before.to_rfc3339();
 
-        let result = sqlx::query(sql)
-            .bind(before_str)
-            .execute(self.database.pool())
-            .await?;
+        let result = sqlx::query(sql).bind(before_str).execute(self.database.pool()).await?;
 
         Ok(result.rows_affected())
     }
@@ -334,19 +323,18 @@ impl SqliteEventRepository {
         let content_str: String = row.get("content");
 
         let id = EventId::from_string(id_str.clone());
-        
+
         // 解析事件类型（JSON 格式）
-        let event_type: EventType = serde_json::from_str(&event_subtype_str)
-            .map_err(|e| {
-                tracing::error!(
-                    "Failed to deserialize event_type for event {}: {} - content: {}",
-                    id_str,
-                    e,
-                    event_subtype_str
-                );
-                e
-            })?;
-        
+        let event_type: EventType = serde_json::from_str(&event_subtype_str).map_err(|e| {
+            tracing::error!(
+                "Failed to deserialize event_type for event {}: {} - content: {}",
+                id_str,
+                e,
+                event_subtype_str
+            );
+            e
+        })?;
+
         let level = EventLevel::from_numeric(event_level_num).unwrap_or(EventLevel::Info);
         let timestamp = DateTime::parse_from_rfc3339(&timestamp_str)
             .map(|dt| dt.with_timezone(&Utc))
@@ -358,27 +346,24 @@ impl SqliteEventRepository {
         let user_id: Option<String> = row.get("user_id");
 
         let source = EventSource::new(source_type, source_id, device_id, user_id);
-        
+
         // 解析内容
         let content: RichContent = if content_str.trim().is_empty() {
             tracing::warn!("Empty content for event {}, using default", id_str);
             RichContent::new("Empty Event".to_string(), vec![])
         } else {
-            serde_json::from_str(&content_str)
-                .map_err(|e| {
-                    tracing::error!(
-                        "Failed to deserialize content for event {}: {} - content: {}",
-                        id_str,
-                        e,
-                        &content_str[..content_str.len().min(200)]
-                    );
-                    e
-                })?
+            serde_json::from_str(&content_str).map_err(|e| {
+                tracing::error!(
+                    "Failed to deserialize content for event {}: {} - content: {}",
+                    id_str,
+                    e,
+                    &content_str[..content_str.len().min(200)]
+                );
+                e
+            })?
         };
 
-        Ok(Event::reconstruct(
-            id, event_type, level, timestamp, source, content,
-        ))
+        Ok(Event::reconstruct(id, event_type, level, timestamp, source, content))
     }
 
     async fn get_total_count(&self) -> Result<u64> {

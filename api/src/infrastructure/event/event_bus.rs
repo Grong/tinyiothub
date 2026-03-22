@@ -1,7 +1,9 @@
-use crate::domain::event::{entities::Event, Result as EventResult};
 use std::sync::Arc;
+
 use tokio::sync::{broadcast, RwLock};
 use tracing::{debug, error, info};
+
+use crate::domain::event::{entities::Event, Result as EventResult};
 
 /// 事件处理器接口
 ///
@@ -69,11 +71,7 @@ impl EventBus {
         // 1. 广播给实时订阅者
         match self.event_sender.send(event.clone()) {
             Ok(subscriber_count) => {
-                debug!(
-                    "Event {} broadcasted to {} subscribers",
-                    event.id(),
-                    subscriber_count
-                );
+                debug!("Event {} broadcasted to {} subscribers", event.id(), subscriber_count);
             }
             Err(_) => {
                 debug!("No subscribers for event {}", event.id());

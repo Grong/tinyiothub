@@ -1,7 +1,9 @@
-use crate::infrastructure::persistence::database::Database;
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder, Row};
-use std::collections::HashMap;
+
+use crate::infrastructure::persistence::database::Database;
 
 /// 设备模板实体 - 使用 snake_case 数据库字段
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -228,12 +230,8 @@ impl DeviceTemplate {
         let display_name_json = serde_json::to_string(&request.display_name).map_err(|e| {
             sqlx::Error::Protocol(format!("Failed to serialize display_name: {}", e))
         })?;
-        let description_json = request
-            .description
-            .as_ref()
-            .map(serde_json::to_string)
-            .transpose()
-            .map_err(|e| {
+        let description_json =
+            request.description.as_ref().map(serde_json::to_string).transpose().map_err(|e| {
                 sqlx::Error::Protocol(format!("Failed to serialize description: {}", e))
             })?;
         let tags_json = serde_json::to_string(&request.tags)
@@ -283,9 +281,7 @@ impl DeviceTemplate {
         tx.commit().await?;
 
         // 返回创建的模板
-        Self::find_by_id(db, &id)
-            .await?
-            .ok_or(sqlx::Error::RowNotFound)
+        Self::find_by_id(db, &id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 更新设备模板
@@ -429,9 +425,7 @@ impl DeviceTemplate {
         }
 
         if !has_updates {
-            return Self::find_by_id(db, id)
-                .await?
-                .ok_or(sqlx::Error::RowNotFound);
+            return Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound);
         }
 
         // 总是更新 updated_at
@@ -444,9 +438,7 @@ impl DeviceTemplate {
             return Err(sqlx::Error::RowNotFound);
         }
 
-        Self::find_by_id(db, id)
-            .await?
-            .ok_or(sqlx::Error::RowNotFound)
+        Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 删除设备模板（软删除）
@@ -516,10 +508,7 @@ impl DeviceTemplate {
             query.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let templates = query
-            .build_query_as::<DeviceTemplate>()
-            .fetch_all(db.pool())
-            .await?;
+        let templates = query.build_query_as::<DeviceTemplate>().fetch_all(db.pool()).await?;
 
         Ok(templates)
     }
@@ -671,15 +660,15 @@ impl DeviceTemplate {
     /// 解析描述（多语言支持）
     pub fn get_description(&self, language: &str) -> Option<String> {
         self.description.as_ref().and_then(|desc_json| {
-            serde_json::from_str::<HashMap<String, String>>(desc_json)
-                .ok()
-                .and_then(|descriptions| {
+            serde_json::from_str::<HashMap<String, String>>(desc_json).ok().and_then(
+                |descriptions| {
                     descriptions
                         .get(language)
                         .or_else(|| descriptions.get("zh")) // 回退到中文
                         .or_else(|| descriptions.values().next()) // 回退到任意语言
                         .cloned()
-                })
+                },
+            )
         })
     }
 
@@ -761,15 +750,15 @@ impl TemplateCategory {
     /// 解析描述（多语言支持）
     pub fn get_description(&self, language: &str) -> Option<String> {
         self.description.as_ref().and_then(|desc_json| {
-            serde_json::from_str::<HashMap<String, String>>(desc_json)
-                .ok()
-                .and_then(|descriptions| {
+            serde_json::from_str::<HashMap<String, String>>(desc_json).ok().and_then(
+                |descriptions| {
                     descriptions
                         .get(language)
                         .or_else(|| descriptions.get("zh")) // 回退到中文
                         .or_else(|| descriptions.values().next()) // 回退到任意语言
                         .cloned()
-                })
+                },
+            )
         })
     }
 }

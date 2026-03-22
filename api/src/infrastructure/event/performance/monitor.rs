@@ -76,10 +76,7 @@ impl EventPerformanceMonitor {
 
     /// Create with custom thresholds
     pub fn with_thresholds(thresholds: PerformanceThresholds) -> Self {
-        Self {
-            thresholds,
-            metrics: PerformanceMetrics::default(),
-        }
+        Self { thresholds, metrics: PerformanceMetrics::default() }
     }
 
     /// Get current thresholds

@@ -1,17 +1,20 @@
+use std::sync::Arc;
+
 use axum::{
     extract::{Path, State},
     routing::{get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
 use crate::{
-    domain::marketplace::{
-        client::MarketplaceClient, driver_installer::DriverInstaller, metadata::*,
-        template_installer::TemplateInstaller,
+    domain::{
+        marketplace::{
+            client::MarketplaceClient, driver_installer::DriverInstaller, metadata::*,
+            template_installer::TemplateInstaller,
+        },
+        template::repository::TemplateRepository,
     },
-    domain::template::repository::TemplateRepository,
     dto::response::{builder::ApiResponseBuilder, ApiResponse},
     infrastructure::config,
     shared::{app_state::AppState, security::jwt::Claims},
@@ -109,16 +112,10 @@ async fn install_marketplace_template(
         std::path::PathBuf::from("templates"),
     ));
 
-    let installer = TemplateInstaller::new(
-        client,
-        repository,
-        std::path::PathBuf::from("templates"),
-    );
+    let installer =
+        TemplateInstaller::new(client, repository, std::path::PathBuf::from("templates"));
 
-    match installer
-        .install_from_marketplace(&id, req.version.as_deref())
-        .await
-    {
+    match installer.install_from_marketplace(&id, req.version.as_deref()).await {
         Ok(template_id) => {
             tracing::info!("Successfully installed template: {}", template_id);
             ApiResponseBuilder::success(template_id)
@@ -204,10 +201,7 @@ async fn install_marketplace_driver(
         std::path::PathBuf::from(&config.device.drivers.dynamic_drivers_dir),
     );
 
-    match installer
-        .install_from_marketplace(&id, req.version.as_deref())
-        .await
-    {
+    match installer.install_from_marketplace(&id, req.version.as_deref()).await {
         Ok(driver_name) => {
             tracing::info!("Successfully installed driver: {}", driver_name);
             ApiResponseBuilder::success(driver_name)

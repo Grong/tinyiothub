@@ -46,21 +46,12 @@ impl From<crate::domain::alarm::Alarm> for AlarmDto {
             alarm_time: alarm.alarm_time.to_rfc3339(),
             status: alarm.status.as_str().to_string(),
             is_acknowledged: alarm.acknowledgement.is_some(),
-            acknowledged_by: alarm
-                .acknowledgement
-                .as_ref()
-                .map(|a| a.acknowledged_by.clone()),
-            acknowledged_at: alarm
-                .acknowledgement
-                .as_ref()
-                .map(|a| a.acknowledged_at.to_rfc3339()),
+            acknowledged_by: alarm.acknowledgement.as_ref().map(|a| a.acknowledged_by.clone()),
+            acknowledged_at: alarm.acknowledgement.as_ref().map(|a| a.acknowledged_at.to_rfc3339()),
             acknowledged_note: alarm.acknowledgement.as_ref().and_then(|a| a.note.clone()),
             is_resolved: alarm.resolution.is_some(),
             resolved_by: alarm.resolution.as_ref().map(|r| r.resolved_by.clone()),
-            resolved_at: alarm
-                .resolution
-                .as_ref()
-                .map(|r| r.resolved_at.to_rfc3339()),
+            resolved_at: alarm.resolution.as_ref().map(|r| r.resolved_at.to_rfc3339()),
             resolved_note: alarm.resolution.as_ref().and_then(|r| r.note.clone()),
             created_at: alarm.created_at.to_rfc3339(),
         }

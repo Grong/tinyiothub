@@ -1,6 +1,7 @@
-use crate::infrastructure::persistence::database::Database;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+
+use crate::infrastructure::persistence::database::Database;
 
 /// MQTT configuration entity - MQTT配置实体
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -271,17 +272,13 @@ impl MqttConfig {
 
         tx.commit().await?;
 
-        Self::find_by_id(db, id)
-            .await?
-            .ok_or(sqlx::Error::RowNotFound)
+        Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// Delete MQTT configuration
     pub async fn delete(db: &Database, id: &str) -> Result<u64, sqlx::Error> {
-        let result = sqlx::query("DELETE FROM MqttConfigs WHERE id = ?")
-            .bind(id)
-            .execute(db.pool())
-            .await?;
+        let result =
+            sqlx::query("DELETE FROM MqttConfigs WHERE id = ?").bind(id).execute(db.pool()).await?;
 
         Ok(result.rows_affected())
     }
@@ -432,9 +429,7 @@ impl NtpConfig {
 
         tx.commit().await?;
 
-        Self::find_by_id(db, id)
-            .await?
-            .ok_or(sqlx::Error::RowNotFound)
+        Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// Enable/disable NTP synchronization

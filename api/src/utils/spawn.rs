@@ -4,6 +4,7 @@
 /// All panics are caught and logged instead of crashing the application.
 use std::future::Future;
 use std::panic;
+
 use tracing::{error, warn};
 
 /// Spawn a task with panic protection
@@ -61,10 +62,7 @@ where
 {
     #[cfg(feature = "harmonyos")]
     {
-        warn!(
-            "spawn_with_error_handling: skipping '{}' on HarmonyOS",
-            name
-        );
+        warn!("spawn_with_error_handling: skipping '{}' on HarmonyOS", name);
     }
 
     #[cfg(not(feature = "harmonyos"))]

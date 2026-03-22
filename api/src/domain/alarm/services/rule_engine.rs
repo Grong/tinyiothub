@@ -1,12 +1,12 @@
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
-use super::super::entity::AlarmRule;
-use super::super::errors::{AlarmError, AlarmResult};
-use super::super::repository::AlarmRuleRepository;
-use super::super::value_objects::*;
-use crate::domain::event::entities::Event;
-use crate::domain::event::value_objects::EventType;
+use super::super::{
+    entity::AlarmRule,
+    errors::{AlarmError, AlarmResult},
+    repository::AlarmRuleRepository,
+    value_objects::*,
+};
+use crate::domain::event::{entities::Event, value_objects::EventType};
 
 /// 规则引擎
 pub struct RuleEngine {
@@ -26,11 +26,7 @@ impl RuleEngine {
         }
 
         let device_id = event.source().source_id();
-        let property_id = event
-            .content()
-            .metadata()
-            .get("property_id")
-            .and_then(|v| v.as_str());
+        let property_id = event.content().metadata().get("property_id").and_then(|v| v.as_str());
 
         // 加载相关规则
         let rules = self.load_relevant_rules(device_id, property_id).await?;
@@ -87,24 +83,19 @@ impl RuleEngine {
             AlarmCondition::Threshold { operator, value } => {
                 self.check_threshold(operator, *value, context)
             }
-            AlarmCondition::Range {
-                min,
-                max,
-                inclusive,
-            } => self.check_range(*min, *max, *inclusive, context),
-            AlarmCondition::Change {
-                change_type,
-                threshold,
-                ..
-            } => self.check_change(change_type, *threshold, context),
+            AlarmCondition::Range { min, max, inclusive } => {
+                self.check_range(*min, *max, *inclusive, context)
+            }
+            AlarmCondition::Change { change_type, threshold, .. } => {
+                self.check_change(change_type, *threshold, context)
+            }
             AlarmCondition::Duration { condition, .. } => {
                 // 持续时间条件需要历史数据，暂时简化处理
                 self.check_condition(condition, context)
             }
-            AlarmCondition::Composite {
-                operator,
-                conditions,
-            } => self.check_composite(operator, conditions, context),
+            AlarmCondition::Composite { operator, conditions } => {
+                self.check_composite(operator, conditions, context)
+            }
         }
     }
 
@@ -235,11 +226,7 @@ impl RuleEngine {
 
         // 如果有属性ID，加载属性规则
         if let Some(prop_id) = property_id {
-            rules.extend(
-                self.rule_repository
-                    .find_by_property(device_id, prop_id)
-                    .await?,
-            );
+            rules.extend(self.rule_repository.find_by_property(device_id, prop_id).await?);
         }
 
         Ok(rules)
@@ -308,20 +295,10 @@ pub struct EvaluationContext {
 impl EvaluationContext {
     pub fn from_event(event: &Event) -> Self {
         let metadata = event.content().metadata().clone();
-        let current_value = metadata
-            .get("value")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-        let previous_value = metadata
-            .get("old_value")
-            .and_then(|v| v.as_str())
-            .map(String::from);
+        let current_value = metadata.get("value").and_then(|v| v.as_str()).map(String::from);
+        let previous_value = metadata.get("old_value").and_then(|v| v.as_str()).map(String::from);
 
-        Self {
-            current_value,
-            previous_value,
-            metadata,
-        }
+        Self { current_value, previous_value, metadata }
     }
 
     pub fn get_numeric_value(&self) -> Option<f64> {

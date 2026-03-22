@@ -1,15 +1,17 @@
 //! 统一驱动注册表
 
+use std::{path::PathBuf, sync::Arc};
+
 use dashmap::DashMap;
-use std::path::PathBuf;
-use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use super::loader::DynamicDriverLoader;
-use crate::application::data_context::DataContext;
-use crate::domain::device::driver::{create_driver_by_name, DeviceDriver};
-use crate::dto::entity::{component::Component, Device};
-use crate::shared::error::Error;
+use crate::{
+    application::data_context::DataContext,
+    domain::device::driver::{create_driver_by_name, DeviceDriver},
+    dto::entity::{component::Component, Device},
+    shared::error::Error,
+};
 
 /// 驱动工厂函数类型
 type DriverFactory = Box<dyn Fn(Device, Arc<DataContext>) -> Box<dyn DeviceDriver> + Send + Sync>;
@@ -25,10 +27,7 @@ pub struct UnifiedDriverRegistry {
 impl UnifiedDriverRegistry {
     /// 创建新的注册表
     pub fn new() -> Self {
-        Self {
-            static_factories: DashMap::new(),
-            dynamic_loaders: DashMap::new(),
-        }
+        Self { static_factories: DashMap::new(), dynamic_loaders: DashMap::new() }
     }
 
     /// 注册静态驱动
@@ -46,8 +45,7 @@ impl UnifiedDriverRegistry {
         let driver_name = loader.driver_name().to_string();
 
         info!("Loaded dynamic driver: {} from {:?}", driver_name, path);
-        self.dynamic_loaders
-            .insert(driver_name.clone(), Arc::new(loader));
+        self.dynamic_loaders.insert(driver_name.clone(), Arc::new(loader));
 
         Ok(driver_name)
     }
@@ -78,10 +76,8 @@ impl UnifiedDriverRegistry {
         // 尝试使用动态驱动
         if let Some(loader) = self.dynamic_loaders.get(driver_name) {
             debug!("Creating dynamic driver: {}", driver_name);
-            let wrapper = super::wrapper::DynamicDriverWrapper::new(
-                Arc::clone(&loader),
-                device.clone(),
-            )?;
+            let wrapper =
+                super::wrapper::DynamicDriverWrapper::new(Arc::clone(&loader), device.clone())?;
             return Ok(Box::new(wrapper));
         }
 
@@ -129,9 +125,7 @@ impl UnifiedDriverRegistry {
 
     /// 获取驱动路径（仅动态驱动）
     pub fn get_driver_path(&self, name: &str) -> Option<String> {
-        self.dynamic_loaders
-            .get(name)
-            .map(|loader| loader.path().to_string_lossy().to_string())
+        self.dynamic_loaders.get(name).map(|loader| loader.path().to_string_lossy().to_string())
     }
 }
 

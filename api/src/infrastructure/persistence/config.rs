@@ -24,10 +24,7 @@ impl Default for DatabaseConfig {
 impl DatabaseConfig {
     /// Create database config from file path
     pub fn from_file_path(path: &str) -> Self {
-        Self {
-            url: format!("sqlite:{}", path),
-            ..Default::default()
-        }
+        Self { url: format!("sqlite:{}", path), ..Default::default() }
     }
 
     /// Create database config from application settings
