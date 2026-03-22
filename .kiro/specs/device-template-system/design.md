@@ -126,7 +126,31 @@ pub struct PropertyTemplate {
     pub default_value: Option<String>,
     pub is_read_only: bool,
     pub is_required: bool,
-    pub validation_rules: Option<String>, // JSON格式的验证规则
+    pub validation_rules: Option<ValidationRules>, // 结构化的验证规则
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ValidationRules {
+    Number(NumberValidation),
+    String(StringValidation),
+    Enum { values: Vec<String> },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct NumberValidation {
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub precision: Option<u8>, // 小数位数
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct StringValidation {
+    pub min_length: Option<usize>,
+    pub max_length: Option<usize>,
+    pub pattern: Option<String>,  // 正则表达式
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,9 +159,42 @@ pub struct CommandTemplate {
     pub name: String,
     pub display_name: HashMap<String, String>,
     pub description: Option<HashMap<String, String>>,
-    pub parameters: Option<String>, // JSON格式的参数定义
-    pub parameter_schema: Option<String>, // JSON Schema格式的参数验证
+    pub parameters: Option<CommandParameters>, // 结构化的命令参数
+    pub parameter_schema: Option<ParameterSchema>, // JSON Schema 格式的参数验证
     pub is_required: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct CommandParameters {
+    #[serde(flatten)]
+    pub fields: HashMap<String, ParameterValue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", untagged)]
+pub enum ParameterValue {
+    Number(f64),
+    String(String),
+    Boolean(bool),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ParameterSchema {
+    #[serde(rename = "type")]
+    pub param_type: String,
+    pub properties: HashMap<String, PropertySchema>,
+    pub required: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct PropertySchema {
+    #[serde(rename = "type")]
+    pub param_type: String,
+    pub minimum: Option<f64>,
+    pub maximum: Option<f64>,
 }
 ```
 
@@ -237,6 +294,18 @@ pub struct TemplateCategory {
 
 ```rust
 pub struct TemplateValidator;
+
+// i18n 回退策略：按以下顺序尝试语言，直到找到为止
+// 1. 请求的语言 (e.g., "en")
+// 2. 默认语言 "zh"
+// 3. HashMap 中的第一个条目（如果 HashMap 非空）
+fn get_localized<'a>(map: &'a HashMap<String, String>, lang: &str) -> &'a String {
+    map.get(lang)
+        .or_else(|| map.get("zh"))
+        .or_else(|| map.values().next())
+        .expect("display_name should never be empty")
+}
+```
 
 impl TemplateValidator {
     pub fn validate_template(&self, template: &DeviceTemplate) -> ValidationResult;
@@ -464,7 +533,8 @@ templates/
       "max_value": 200.0,
       "default_value": "25.0",
       "is_read_only": true,
-      "is_required": true
+      "is_required": true,
+      "validation_rules": {"number": {"min": -50.0, "max": 200.0}}
     },
     {
       "name": "alarm_high_temp",
@@ -482,7 +552,8 @@ templates/
       "max_value": 200.0,
       "default_value": "80.0",
       "is_read_only": false,
-      "is_required": false
+      "is_required": false,
+      "validation_rules": {"number": {"min": 0.0, "max": 200.0}}
     },
     {
       "name": "alarm_low_temp",
@@ -500,7 +571,8 @@ templates/
       "max_value": 100.0,
       "default_value": "10.0",
       "is_read_only": false,
-      "is_required": false
+      "is_required": false,
+      "validation_rules": {"number": {"min": -50.0, "max": 100.0}}
     },
     {
       "name": "sampling_interval",
@@ -518,7 +590,8 @@ templates/
       "max_value": 3600.0,
       "default_value": "60.0",
       "is_read_only": false,
-      "is_required": false
+      "is_required": false,
+      "validation_rules": {"number": {"min": 1.0, "max": 3600.0}}
     }
   ],
   "commands": [
@@ -532,7 +605,7 @@ templates/
         "zh": "读取当前温度值",
         "en": "Read current temperature value"
       },
-      "parameters": "{}",
+      "parameters": null,
       "is_required": true
     },
     {
@@ -545,8 +618,15 @@ templates/
         "zh": "设置高低温报警阈值",
         "en": "Set high and low temperature alarm thresholds"
       },
-      "parameters": "{\"high_temp\": 80, \"low_temp\": 10}",
-      "parameter_schema": "{\"type\": \"object\", \"properties\": {\"high_temp\": {\"type\": \"number\", \"minimum\": 0, \"maximum\": 200}, \"low_temp\": {\"type\": \"number\", \"minimum\": -50, \"maximum\": 100}}, \"required\": [\"high_temp\", \"low_temp\"]}",
+      "parameters": {"high_temp": 80, "low_temp": 10},
+      "parameter_schema": {
+        "type": "object",
+        "properties": {
+          "high_temp": {"type": "number", "minimum": 0, "maximum": 200},
+          "low_temp": {"type": "number", "minimum": -50, "maximum": 100}
+        },
+        "required": ["high_temp", "low_temp"]
+      },
       "is_required": false
     },
     {
@@ -559,8 +639,14 @@ templates/
         "zh": "执行传感器校准程序",
         "en": "Execute sensor calibration procedure"
       },
-      "parameters": "{\"reference_temp\": 25}",
-      "parameter_schema": "{\"type\": \"object\", \"properties\": {\"reference_temp\": {\"type\": \"number\", \"minimum\": -50, \"maximum\": 200}}, \"required\": [\"reference_temp\"]}",
+      "parameters": {"reference_temp": 25},
+      "parameter_schema": {
+        "type": "object",
+        "properties": {
+          "reference_temp": {"type": "number", "minimum": -50, "maximum": 200}
+        },
+        "required": ["reference_temp"]
+      },
       "is_required": false
     }
   ],
@@ -700,7 +786,7 @@ templates/
         "zh": "获取当前视频快照",
         "en": "Get current video snapshot"
       },
-      "parameters": "{}",
+      "parameters": null,
       "is_required": true
     },
     {
@@ -713,8 +799,15 @@ templates/
         "zh": "控制摄像头水平和垂直旋转",
         "en": "Control camera horizontal and vertical rotation"
       },
-      "parameters": "{\"pan_angle\": 0, \"tilt_angle\": 0}",
-      "parameter_schema": "{\"type\": \"object\", \"properties\": {\"pan_angle\": {\"type\": \"number\", \"minimum\": -180, \"maximum\": 180}, \"tilt_angle\": {\"type\": \"number\", \"minimum\": -90, \"maximum\": 90}}, \"required\": [\"pan_angle\", \"tilt_angle\"]}",
+      "parameters": {"pan_angle": 0, "tilt_angle": 0},
+      "parameter_schema": {
+        "type": "object",
+        "properties": {
+          "pan_angle": {"type": "number", "minimum": -180, "maximum": 180},
+          "tilt_angle": {"type": "number", "minimum": -90, "maximum": 90}
+        },
+        "required": ["pan_angle", "tilt_angle"]
+      },
       "is_required": false
     },
     {
@@ -727,8 +820,14 @@ templates/
         "zh": "调整摄像头变焦级别",
         "en": "Adjust camera zoom level"
       },
-      "parameters": "{\"zoom_level\": 1}",
-      "parameter_schema": "{\"type\": \"object\", \"properties\": {\"zoom_level\": {\"type\": \"number\", \"minimum\": 1, \"maximum\": 20}}, \"required\": [\"zoom_level\"]}",
+      "parameters": {"zoom_level": 1},
+      "parameter_schema": {
+        "type": "object",
+        "properties": {
+          "zoom_level": {"type": "number", "minimum": 1, "maximum": 20}
+        },
+        "required": ["zoom_level"]
+      },
       "is_required": false
     },
     {
@@ -741,8 +840,14 @@ templates/
         "zh": "开始视频录制",
         "en": "Start video recording"
       },
-      "parameters": "{\"duration_minutes\": 60}",
-      "parameter_schema": "{\"type\": \"object\", \"properties\": {\"duration_minutes\": {\"type\": \"number\", \"minimum\": 1, \"maximum\": 1440}}, \"required\": [\"duration_minutes\"]}",
+      "parameters": {"duration_minutes": 60},
+      "parameter_schema": {
+        "type": "object",
+        "properties": {
+          "duration_minutes": {"type": "number", "minimum": 1, "maximum": 1440}
+        },
+        "required": ["duration_minutes"]
+      },
       "is_required": false
     },
     {
@@ -755,7 +860,7 @@ templates/
         "zh": "停止视频录制",
         "en": "Stop video recording"
       },
-      "parameters": "{}",
+      "parameters": null,
       "is_required": false
     }
   ],
