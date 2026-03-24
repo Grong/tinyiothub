@@ -57,7 +57,7 @@ async fn login(
             tracing::debug!("Updating last login time for user: {}", user.id);
 
             // Skip database write on HarmonyOS (causes Signal 11)
-            if std::env::var("HARMONYOS_MODE").is_err() {
+            if !crate::infrastructure::config::get().harmonyos.enabled {
                 // 更新最后登录时间
                 if let Err(e) = User::update_last_logon(state.database(), &user.id).await {
                     tracing::warn!("Failed to update last logon time for user {}: {}", user.id, e);

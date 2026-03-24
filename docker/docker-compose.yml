@@ -62,6 +62,7 @@ services:
       - RUST_LOG=info
       - TZ=Asia/Shanghai
       - TINYIOTHUB__DATABASE__URL=/app/data/tinyiothub.db
+      - TINYIOTHUB__SECURITY__JWT__SECRET=tinyiothub-default-jwt-secret-change-in-production-32chars
     
     # 数据卷挂载
     volumes:

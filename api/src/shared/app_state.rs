@@ -288,8 +288,8 @@ impl AppState {
             return Ok(service.as_ref()); // Already initialized
         }
 
-        // Create default security configuration
-        let config = crate::infrastructure::event::security::EventSecurityConfig::default();
+        // Get security configuration from unified config
+        let config = crate::infrastructure::config::get().event.security.clone();
 
         // Create security factory
         let security_factory = EventSecurityFactory::new(self.database.clone(), config)?;

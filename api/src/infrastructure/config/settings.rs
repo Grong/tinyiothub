@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::infrastructure::event::security::EventSecurityConfig;
+
 /// Configuration error type
 #[derive(Debug)]
 pub enum ConfigError {
@@ -47,6 +49,26 @@ pub struct ApplicationSettings {
     pub sms: SmsConfig,
     #[serde(default)]
     pub social: SocialConfig,
+    #[serde(default)]
+    pub event: EventSettings,
+    #[serde(default)]
+    pub harmonyos: HarmonyosConfig,
+}
+
+/// Event system configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct EventSettings {
+    #[serde(default)]
+    pub security: EventSecurityConfig,
+}
+
+/// HarmonyOS configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct HarmonyosConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
 }
 
 /// Server configuration

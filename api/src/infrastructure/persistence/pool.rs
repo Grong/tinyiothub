@@ -13,7 +13,7 @@ pub async fn create_pool(config: &DatabaseConfig) -> Result<SqlitePool, sqlx::Er
     // For HarmonyOS: Use conservative settings to prevent issues
     #[cfg(target_os = "linux")]
     {
-        if cfg!(target_env = "ohos") || std::env::var("HARMONYOS_MODE").is_ok() {
+        if cfg!(target_env = "ohos") || crate::infrastructure::config::get().harmonyos.enabled {
             tracing::warn!("HarmonyOS detected: Using conservative SQLite settings");
 
             // Use conservative settings for HarmonyOS

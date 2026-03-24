@@ -324,8 +324,8 @@ async fn verify_token(
             .map_err(|_| StatusCode::BAD_REQUEST)?;
     let payload_str = String::from_utf8(payload_bytes).map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    // Get JWT_SECRET
-    let secret = std::env::var("JWT_SECRET").expect("JWT_SECRET must be set in production");
+    // Get JWT secret from unified config
+    let secret = crate::infrastructure::config::get().security.jwt.secret.clone();
 
     // Verify signature
     if !verify_signature(&payload_str, signature, &secret) {
@@ -356,9 +356,7 @@ struct VerifyTokenParams {
 
 /// Generate HMAC-SHA256 signed token
 fn generate_token(tenant_id: &str, user_id: &str) -> String {
-    let secret = std::env::var("JWT_SECRET").expect(
-        "JWT_SECRET must be set in production — tenant token generation requires a secure secret",
-    );
+    let secret = crate::infrastructure::config::get().security.jwt.secret.clone();
 
     let exp = chrono::Utc::now().timestamp() + 86400 * 7;
     let payload = serde_json::json!({

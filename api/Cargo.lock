@@ -3210,6 +3210,7 @@ dependencies = [
  "sha2",
  "smallvec",
  "sqlx",
+ "subtle",
  "sysinfo",
  "tempfile",
  "thiserror 1.0.69",

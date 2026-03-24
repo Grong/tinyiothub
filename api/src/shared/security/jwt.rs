@@ -9,24 +9,19 @@ use chrono::{Duration as ChronoDuration, Local};
 use headers::{authorization::Bearer, Authorization, HeaderMapExt};
 use hmac::{Hmac, Mac};
 use jwt_simple::prelude::*;
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 
 type HmacSha256 = Hmac<Sha256>;
 
-// 使用 jwt-simple 的 HS256Key (纯 Rust 实现，不依赖 ring)
-pub static JWT_KEY: Lazy<Result<HS256Key, String>> = Lazy::new(|| {
-    // 从环境变量读取JWT密钥
-    let secret = std::env::var("JWT_SECRET").map_err(|_| {
-        tracing::error!("JWT_SECRET environment variable is not set!");
-        "JWT_SECRET must be set in production".to_string()
-    })?;
+// 获取 JWT 密钥的辅助函数 - 从统一配置读取
+fn get_jwt_key() -> Result<HS256Key, String> {
+    let secret = crate::infrastructure::config::get().security.jwt.secret.clone();
 
     // 验证密钥长度
     if secret.len() < 32 {
         return Err(format!(
-            "JWT_SECRET is too short! Minimum 32 characters required, got {}",
+            "JWT secret is too short! Minimum 32 characters required, got {}",
             secret.len()
         ));
     }
@@ -34,24 +29,16 @@ pub static JWT_KEY: Lazy<Result<HS256Key, String>> = Lazy::new(|| {
     // 检查是否使用弱密钥
     if secret.len() < 64 {
         tracing::warn!(
-            "⚠️  JWT_SECRET is shorter than 64 characters, consider using a longer secret"
+            "⚠️  JWT secret is shorter than 64 characters, consider using a longer secret"
         );
     }
 
     Ok(HS256Key::from_bytes(secret.as_bytes()))
-});
-
-// 获取 JWT 密钥的辅助函数
-fn get_jwt_key() -> Result<HS256Key, String> {
-    JWT_KEY.clone().map_err(|e| {
-        tracing::error!("JWT key error: {}", e);
-        format!("JWT key error: {}", e)
-    })
 }
 
 // 检查是否在 HarmonyOS 环境
 fn is_harmonyos() -> bool {
-    std::env::var("HARMONYOS_MODE").is_ok()
+    crate::infrastructure::config::get().harmonyos.enabled
 }
 
 // ============================================================================
@@ -84,8 +71,7 @@ fn decode_simple(s: &str) -> Result<String, String> {
 
 // HarmonyOS 专用：创建安全 token（使用 HMAC-SHA256）
 fn create_harmonyos_token(user_id: &str, username: &str) -> Result<String, String> {
-    let secret = std::env::var("JWT_SECRET")
-        .map_err(|_| "JWT_SECRET must be set for HarmonyOS mode".to_string())?;
+    let secret = crate::infrastructure::config::get().security.jwt.secret.clone();
     let timestamp = Local::now().timestamp();
     let random_suffix = timestamp % 1000000; // 使用时间戳作为随机数
 
@@ -105,8 +91,7 @@ fn create_harmonyos_token(user_id: &str, username: &str) -> Result<String, Strin
 
 // HarmonyOS 专用：验证安全 token（使用 HMAC-SHA256）
 fn verify_harmonyos_token(token: &str) -> Result<Claims, String> {
-    let secret = std::env::var("JWT_SECRET")
-        .map_err(|_| "JWT_SECRET must be set for HarmonyOS mode".to_string())?;
+    let secret = crate::infrastructure::config::get().security.jwt.secret.clone();
 
     // 解码
     let token_data = decode_simple(token)?;

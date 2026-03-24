@@ -235,7 +235,7 @@ pub fn get_local_ip() -> Result<String, std::io::Error> {
     }
 
     // 返回配置的默认IP或环境变量
-    Ok(std::env::var("DEFAULT_IP_ADDRESS").unwrap_or_else(|_| "127.0.0.1".to_string()))
+    Ok(crate::infrastructure::config::get().network.defaults.ip_address.clone())
 }
 
 /// 兼容性函数：检查网络连接
