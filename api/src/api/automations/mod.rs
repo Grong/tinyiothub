@@ -392,8 +392,7 @@ async fn disable_automation(
             ApiResponseBuilder::error("禁用自动化失败")
         }
     }
-}
-/// 执行
+}/// 执行
 async fn run_automation(
     State(state): State<AppState>,
     Path(id): Path<String>,
