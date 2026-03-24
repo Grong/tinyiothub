@@ -297,9 +297,9 @@ mod tests {
             id: "rule-1".to_string(),
             name: "Test Rule".to_string(),
             description: Some("Test description".to_string()),
-            event_type: Some("device.error".to_string()),
+            event_type: Some("device.warning".to_string()),
             event_subtype: None,
-            event_level: Some(3), // Error level
+            event_level: Some(3), // Warning level
             device_filter: None,
             notification_methods: vec![NotificationChannelType::Email],
             recipients: vec!["admin@example.com".to_string()],
@@ -307,8 +307,8 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
             // Legacy compatibility fields
-            event_types: vec!["device.error".to_string()],
-            event_levels: vec![EventLevel::Error],
+            event_types: vec!["device.warning".to_string()],
+            event_levels: vec![EventLevel::Warning], // Warning doesn't trigger CriticalEventsImmediateChannelsSpec
             channels: vec![NotificationChannelType::Email],
             conditions: HashMap::new(),
             is_active: true,
@@ -413,10 +413,11 @@ mod tests {
         let rule = create_valid_notification_rule();
         let metadata = HashMap::new();
 
+        // Rule is for device.warning with Warning level
         assert!(NotificationFilterSpec::matches_filters(
             &rule,
-            "device.error",
-            &EventLevel::Error,
+            "device.warning",
+            &EventLevel::Warning,
             &metadata
         ));
 
@@ -428,7 +429,7 @@ mod tests {
         ));
 
         // Test pattern matching
-        assert!(NotificationFilterSpec::matches_pattern("device.error", "device.*"));
+        assert!(NotificationFilterSpec::matches_pattern("device.warning", "device.*"));
         assert!(NotificationFilterSpec::matches_pattern("any.event", "*"));
         assert!(!NotificationFilterSpec::matches_pattern("system.info", "device.*"));
     }

@@ -166,7 +166,8 @@ mod tests {
     #[tokio::test]
     async fn test_event_bus_creation() {
         let bus = EventBus::new();
-        assert_eq!(bus.subscriber_count(), 0);
+        // subscriber_count includes the internal _event_receiver that keeps the channel alive
+        assert_eq!(bus.subscriber_count(), 1);
         assert_eq!(bus.handler_count().await, 0);
     }
 
@@ -184,7 +185,8 @@ mod tests {
         let bus = EventBus::new();
         let mut receiver = bus.subscribe();
 
-        assert_eq!(bus.subscriber_count(), 1);
+        // subscriber_count = internal receiver + new subscriber
+        assert_eq!(bus.subscriber_count(), 2);
 
         let event = create_test_event();
         let event_id = event.id().clone();

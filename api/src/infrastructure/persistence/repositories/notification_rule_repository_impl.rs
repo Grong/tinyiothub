@@ -48,6 +48,25 @@ impl NotificationRuleRepositoryImpl {
         Self { db }
     }
 
+    /// Parse timestamp from database - handles both RFC3339 and SQLite datetime formats
+    fn parse_timestamp(timestamp_str: &str, field_name: &str) -> Result<DateTime<Utc>> {
+        // Try RFC3339 first (ISO 8601 with timezone)
+        if let Ok(dt) = DateTime::parse_from_rfc3339(timestamp_str) {
+            return Ok(dt.with_timezone(&Utc));
+        }
+        // Fallback to SQLite datetime format (YYYY-MM-DD HH:MM:SS)
+        if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(timestamp_str, "%Y-%m-%d %H:%M:%S") {
+            return Ok(dt.and_utc());
+        }
+        // Try with microseconds (SQLite datetime can include them)
+        if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(timestamp_str, "%Y-%m-%d %H:%M:%S%.f") {
+            return Ok(dt.and_utc());
+        }
+        Err(EventError::Validation {
+            message: format!("Invalid {} timestamp: {}", field_name, timestamp_str),
+        })
+    }
+
     /// Convert database row to NotificationRule
     fn row_to_notification_rule(&self, row: &sqlx::sqlite::SqliteRow) -> Result<NotificationRule> {
         let notification_methods_str: String = row.try_get("notification_methods")?;
@@ -79,18 +98,10 @@ impl NotificationRuleRepositoryImpl {
         };
 
         let created_at_str: String = row.try_get("created_at")?;
-        let created_at = DateTime::parse_from_rfc3339(&created_at_str)
-            .map_err(|e| EventError::Validation {
-                message: format!("Invalid created_at timestamp: {}", e),
-            })?
-            .with_timezone(&Utc);
+        let created_at = Self::parse_timestamp(&created_at_str, "created_at")?;
 
         let updated_at_str: String = row.try_get("updated_at")?;
-        let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
-            .map_err(|e| EventError::Validation {
-                message: format!("Invalid updated_at timestamp: {}", e),
-            })?
-            .with_timezone(&Utc);
+        let updated_at = Self::parse_timestamp(&updated_at_str, "updated_at")?;
 
         Ok(NotificationRule {
             id: row.try_get("id")?,
@@ -646,6 +657,11 @@ mod tests {
     #[tokio::test]
     async fn test_rule_statistics() {
         let db = create_test_db().await;
+
+        // Clear any seed data from migrations to ensure test isolation
+        let pool = db.pool();
+        sqlx::query("DELETE FROM notification_rules").execute(pool).await.unwrap();
+
         let repo = NotificationRuleRepositoryImpl::new(db);
 
         // Create some rules

@@ -482,6 +482,11 @@ mod tests {
     #[tokio::test]
     async fn test_get_statistics() {
         let db = create_test_db().await;
+
+        // Clear any seed data from migrations to ensure test isolation
+        let pool = db.pool();
+        sqlx::query("DELETE FROM notification_history").execute(pool).await.unwrap();
+
         let repo = NotificationHistoryRepositoryImpl::new(db);
 
         // Create test records
@@ -521,6 +526,11 @@ mod tests {
     #[tokio::test]
     async fn test_pagination() {
         let db = create_test_db().await;
+
+        // Clear any seed data from migrations to ensure test isolation
+        let pool = db.pool();
+        sqlx::query("DELETE FROM notification_history").execute(pool).await.unwrap();
+
         let repo = NotificationHistoryRepositoryImpl::new(db);
 
         // Create test records

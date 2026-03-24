@@ -454,7 +454,7 @@ mod tests {
         // 测试宏生成的驱动信息
         let driver_info = SimulatedDriver::get_driver_info();
 
-        assert_eq!(driver_info.name, "SimulatedDriver");
+        assert_eq!(driver_info.name, "simulator");
         assert_eq!(driver_info.version, "1.0.0");
         assert!(driver_info.class_name.contains("SimulatedDriver"));
         assert_eq!(

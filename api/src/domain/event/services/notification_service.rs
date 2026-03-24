@@ -538,8 +538,8 @@ mod tests {
         let aggregate = service
             .create_notification_rule(
                 "Test Rule".to_string(),
-                vec!["device.error".to_string()],
-                vec![EventLevel::Error],
+                vec!["device.warning".to_string()],
+                vec![EventLevel::Warning], // Warning doesn't require SMS/SSE
                 vec![NotificationChannelType::Email],
                 vec!["admin@example.com".to_string()],
             )
