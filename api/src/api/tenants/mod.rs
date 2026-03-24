@@ -5,9 +5,8 @@ pub mod auth;
 
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
-    response::Json,
     routing::{delete, get, post, put},
+    Json,
     Router,
 };
 
@@ -16,6 +15,7 @@ use crate::{
         ApiKey, ApiUsageStats, CreateApiKeyRequest, SubscriptionPlan, Tenant, TenantQueryParams,
         TenantUsage,
     },
+    dto::response::{ApiResponse, builder::ApiResponseBuilder},
     shared::app_state::AppState,
 };
 
@@ -29,15 +29,12 @@ pub fn create_router() -> Router<AppState> {
         .route("/tenants", post(create_tenant))
         .route("/tenants/{id}", get(get_tenant))
         .route("/tenants/{id}", put(update_tenant))
-        .route("/tenants/{id}/suspend", post(suspend_tenant))
-        .route("/tenants/{id}/activate", post(activate_tenant))
         .route("/tenants/{id}/change-plan", post(change_plan))
         .route("/tenants/{id}/usage", get(get_tenant_usage))
         // API Keys
         .route("/tenants/{tenant_id}/api-keys", get(list_api_keys))
         .route("/tenants/{tenant_id}/api-keys", post(create_api_key))
-        .route("/api-keys/{id}/enable", post(enable_api_key))
-        .route("/api-keys/{id}/disable", post(disable_api_key))
+        // 撤销 API Key 是不可逆动作，保持 RPC 风格
         .route("/api-keys/{id}/revoke", post(revoke_api_key))
         // Usage
         .route("/tenants/{tenant_id}/usage-stats", get(get_usage_stats))
@@ -47,25 +44,25 @@ pub fn create_router() -> Router<AppState> {
 async fn list_tenants(
     State(state): State<AppState>,
     Query(params): Query<TenantQueryParams>,
-) -> Result<Json<Vec<Tenant>>, StatusCode> {
+) -> Json<ApiResponse<Vec<Tenant>>> {
     let db = state.database.clone();
 
     // 简化实现：返回空列表（需要管理权限）
-    Ok(Json(vec![]))
+    ApiResponseBuilder::success(vec![])
 }
 
 /// Create tenant
 async fn create_tenant(
     State(state): State<AppState>,
     Json(payload): Json<crate::dto::entity::tenant::CreateTenantRequest>,
-) -> Result<Json<Tenant>, StatusCode> {
+) -> Json<ApiResponse<Tenant>> {
     let db = state.database.clone();
 
     match Tenant::create(&db, &payload).await {
-        Ok(tenant) => Ok(Json(tenant)),
+        Ok(tenant) => ApiResponseBuilder::success(tenant),
         Err(e) => {
             tracing::error!("Failed to create tenant: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            ApiResponseBuilder::error("创建租户失败")
         }
     }
 }
@@ -74,15 +71,15 @@ async fn create_tenant(
 async fn get_tenant(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<Tenant>, StatusCode> {
+) -> Json<ApiResponse<Tenant>> {
     let db = state.database.clone();
 
     match Tenant::find_by_id(&db, &id).await {
-        Ok(Some(tenant)) => Ok(Json(tenant)),
-        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Ok(Some(tenant)) => ApiResponseBuilder::success(tenant),
+        Ok(None) => ApiResponseBuilder::error_with_code(404, "租户不存在"),
         Err(e) => {
             tracing::error!("Failed to get tenant: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            ApiResponseBuilder::error("获取租户失败")
         }
     }
 }
@@ -92,43 +89,11 @@ async fn update_tenant(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(payload): Json<crate::dto::entity::tenant::UpdateTenantRequest>,
-) -> Result<Json<Tenant>, StatusCode> {
+) -> Json<ApiResponse<Tenant>> {
     let db = state.database.clone();
 
     // 简化实现
-    Err(StatusCode::NOT_IMPLEMENTED)
-}
-
-/// Suspend tenant
-async fn suspend_tenant(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<Tenant>, StatusCode> {
-    let db = state.database.clone();
-
-    match Tenant::suspend(&db, &id).await {
-        Ok(tenant) => Ok(Json(tenant)),
-        Err(e) => {
-            tracing::error!("Failed to suspend tenant: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
-}
-
-/// Activate tenant
-async fn activate_tenant(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<Tenant>, StatusCode> {
-    let db = state.database.clone();
-
-    match Tenant::activate(&db, &id).await {
-        Ok(tenant) => Ok(Json(tenant)),
-        Err(e) => {
-            tracing::error!("Failed to activate tenant: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
+    ApiResponseBuilder::error_with_code(501, "功能未实现")
 }
 
 /// Change subscription plan
@@ -136,16 +101,19 @@ async fn change_plan(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(payload): Json<serde_json::Value>,
-) -> Result<Json<Tenant>, StatusCode> {
+) -> Json<ApiResponse<Tenant>> {
     let db = state.database.clone();
 
-    let plan_id = payload.get("plan_id").and_then(|v| v.as_str()).ok_or(StatusCode::BAD_REQUEST)?;
+    let plan_id = match payload.get("plan_id").and_then(|v| v.as_str()) {
+        Some(id) => id,
+        None => return ApiResponseBuilder::error_with_code(400, "缺少 plan_id 参数"),
+    };
 
     match Tenant::change_plan(&db, &id, plan_id).await {
-        Ok(tenant) => Ok(Json(tenant)),
+        Ok(tenant) => ApiResponseBuilder::success(tenant),
         Err(e) => {
             tracing::error!("Failed to change plan: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            ApiResponseBuilder::error("切换套餐失败")
         }
     }
 }
@@ -154,14 +122,14 @@ async fn change_plan(
 async fn get_tenant_usage(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<Option<TenantUsage>>, StatusCode> {
+) -> Json<ApiResponse<Option<TenantUsage>>> {
     let db = state.database.clone();
 
     match Tenant::get_usage(&db, &id).await {
-        Ok(usage) => Ok(Json(usage)),
+        Ok(usage) => ApiResponseBuilder::success(usage),
         Err(e) => {
             tracing::error!("Failed to get tenant usage: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            ApiResponseBuilder::error("获取租户使用情况失败")
         }
     }
 }
@@ -170,14 +138,14 @@ async fn get_tenant_usage(
 async fn list_api_keys(
     State(state): State<AppState>,
     Path(tenant_id): Path<String>,
-) -> Result<Json<Vec<ApiKey>>, StatusCode> {
+) -> Json<ApiResponse<Vec<ApiKey>>> {
     let db = state.database.clone();
 
     match ApiKey::find_by_tenant(&db, &tenant_id).await {
-        Ok(keys) => Ok(Json(keys)),
+        Ok(keys) => ApiResponseBuilder::success(keys),
         Err(e) => {
             tracing::error!("Failed to list api keys: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            ApiResponseBuilder::error("获取 API Key 列表失败")
         }
     }
 }
@@ -187,51 +155,19 @@ async fn create_api_key(
     State(state): State<AppState>,
     Path(tenant_id): Path<String>,
     Json(payload): Json<CreateApiKeyRequest>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
+) -> Json<ApiResponse<serde_json::Value>> {
     let db = state.database.clone();
 
     match ApiKey::create(&db, &tenant_id, &payload).await {
         Ok((key, raw_key)) => {
-            Ok(Json(serde_json::json!({
+            ApiResponseBuilder::success(serde_json::json!({
                 "api_key": key,
                 "raw_key": raw_key  // 只在创建时返回一次
-            })))
+            }))
         }
         Err(e) => {
             tracing::error!("Failed to create api key: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
-}
-
-/// Enable API key
-async fn enable_api_key(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let db = state.database.clone();
-
-    match ApiKey::enable(&db, &id).await {
-        Ok(_) => Ok(Json(serde_json::json!({"success": true}))),
-        Err(e) => {
-            tracing::error!("Failed to enable api key: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
-}
-
-/// Disable API key
-async fn disable_api_key(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let db = state.database.clone();
-
-    match ApiKey::disable(&db, &id).await {
-        Ok(_) => Ok(Json(serde_json::json!({"success": true}))),
-        Err(e) => {
-            tracing::error!("Failed to disable api key: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            ApiResponseBuilder::error("创建 API Key 失败")
         }
     }
 }
@@ -240,14 +176,14 @@ async fn disable_api_key(
 async fn revoke_api_key(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
+) -> Json<ApiResponse<serde_json::Value>> {
     let db = state.database.clone();
 
     match ApiKey::revoke(&db, &id).await {
-        Ok(_) => Ok(Json(serde_json::json!({"success": true}))),
+        Ok(_) => ApiResponseBuilder::success(serde_json::json!({"success": true})),
         Err(e) => {
             tracing::error!("Failed to revoke api key: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            ApiResponseBuilder::error("撤销 API Key 失败")
         }
     }
 }
@@ -256,14 +192,14 @@ async fn revoke_api_key(
 async fn get_usage_stats(
     State(state): State<AppState>,
     Path(tenant_id): Path<String>,
-) -> Result<Json<ApiUsageStats>, StatusCode> {
+) -> Json<ApiResponse<ApiUsageStats>> {
     let db = state.database.clone();
 
     match ApiKey::get_usage_stats(&db, &tenant_id, 30).await {
-        Ok(stats) => Ok(Json(stats)),
+        Ok(stats) => ApiResponseBuilder::success(stats),
         Err(e) => {
             tracing::error!("Failed to get usage stats: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            ApiResponseBuilder::error("获取使用统计失败")
         }
     }
 }

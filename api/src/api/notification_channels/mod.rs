@@ -5,9 +5,8 @@ use std::str::FromStr;
 
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
-    response::Json,
     routing::{delete, get, post, put},
+    Json,
     Router,
 };
 
@@ -16,6 +15,7 @@ use crate::{
         ChannelStatistics, CreateNotificationChannelRequest, NotificationChannel,
         NotificationChannelQueryParams, SendMessageRequest, UpdateNotificationChannelRequest,
     },
+    dto::response::{ApiResponse, builder::ApiResponseBuilder},
     shared::app_state::AppState,
 };
 
@@ -28,9 +28,7 @@ pub fn create_router() -> Router<AppState> {
         .route("/notification-channels/{id}", get(get_channel))
         .route("/notification-channels/{id}", put(update_channel))
         .route("/notification-channels/{id}", delete(delete_channel))
-        // Channel Actions
-        .route("/notification-channels/{id}/enable", post(enable_channel))
-        .route("/notification-channels/{id}/disable", post(disable_channel))
+        // 复杂业务动作，保持 RPC 风格
         .route("/notification-channels/{id}/test", post(test_channel))
         // Statistics
         .route("/notification-channels/statistics", get(get_statistics))
@@ -40,14 +38,14 @@ pub fn create_router() -> Router<AppState> {
 async fn list_channels(
     State(state): State<AppState>,
     Query(params): Query<NotificationChannelQueryParams>,
-) -> Result<Json<Vec<NotificationChannel>>, StatusCode> {
+) -> Json<ApiResponse<Vec<NotificationChannel>>> {
     let db = state.database.clone();
 
     match NotificationChannel::find_all(&db, &params).await {
-        Ok(channels) => Ok(Json(channels)),
+        Ok(channels) => ApiResponseBuilder::success(channels),
         Err(e) => {
             tracing::error!("Failed to list channels: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            ApiResponseBuilder::error("获取通知渠道列表失败")
         }
     }
 }
@@ -56,15 +54,15 @@ async fn list_channels(
 async fn get_channel(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<NotificationChannel>, StatusCode> {
+) -> Json<ApiResponse<NotificationChannel>> {
     let db = state.database.clone();
 
     match NotificationChannel::find_by_id(&db, &id).await {
-        Ok(Some(channel)) => Ok(Json(channel)),
-        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Ok(Some(channel)) => ApiResponseBuilder::success(channel),
+        Ok(None) => ApiResponseBuilder::error_with_code(404, "通知渠道不存在"),
         Err(e) => {
             tracing::error!("Failed to get channel: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            ApiResponseBuilder::error("获取通知渠道失败")
         }
     }
 }
@@ -73,25 +71,25 @@ async fn get_channel(
 async fn create_channel(
     State(state): State<AppState>,
     Json(payload): Json<CreateNotificationChannelRequest>,
-) -> Result<Json<NotificationChannel>, StatusCode> {
+) -> Json<ApiResponse<NotificationChannel>> {
     let db = state.database.clone();
 
     // 验证渠道类型
     if !["sms", "email", "webhook"].contains(&payload.channel_type.as_str()) {
-        return Err(StatusCode::BAD_REQUEST);
+        return ApiResponseBuilder::error_with_code(400, "无效的通知渠道类型");
     }
 
     // 验证配置 JSON
     if let Err(e) = serde_json::from_str::<serde_json::Value>(&payload.config) {
         tracing::error!("Invalid config JSON: {}", e);
-        return Err(StatusCode::BAD_REQUEST);
+        return ApiResponseBuilder::error_with_code(400, "无效的配置 JSON");
     }
 
     match NotificationChannel::create(&db, &payload).await {
-        Ok(channel) => Ok(Json(channel)),
+        Ok(channel) => ApiResponseBuilder::success(channel),
         Err(e) => {
             tracing::error!("Failed to create channel: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            ApiResponseBuilder::error("创建通知渠道失败")
         }
     }
 }
@@ -101,13 +99,13 @@ async fn update_channel(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(payload): Json<UpdateNotificationChannelRequest>,
-) -> Result<Json<NotificationChannel>, StatusCode> {
+) -> Json<ApiResponse<NotificationChannel>> {
     let db = state.database.clone();
 
     // 验证渠道类型
     if let Some(ref channel_type) = payload.channel_type {
         if !["sms", "email", "webhook"].contains(&channel_type.as_str()) {
-            return Err(StatusCode::BAD_REQUEST);
+            return ApiResponseBuilder::error_with_code(400, "无效的通知渠道类型");
         }
     }
 
@@ -115,15 +113,15 @@ async fn update_channel(
     if let Some(ref config) = payload.config {
         if let Err(e) = serde_json::from_str::<serde_json::Value>(config) {
             tracing::error!("Invalid config JSON: {}", e);
-            return Err(StatusCode::BAD_REQUEST);
+            return ApiResponseBuilder::error_with_code(400, "无效的配置 JSON");
         }
     }
 
     match NotificationChannel::update(&db, &id, &payload).await {
-        Ok(channel) => Ok(Json(channel)),
+        Ok(channel) => ApiResponseBuilder::success(channel),
         Err(e) => {
             tracing::error!("Failed to update channel: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            ApiResponseBuilder::error("更新通知渠道失败")
         }
     }
 }
@@ -132,46 +130,14 @@ async fn update_channel(
 async fn delete_channel(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<StatusCode, StatusCode> {
+) -> Json<ApiResponse<bool>> {
     let db = state.database.clone();
 
     match NotificationChannel::delete(&db, &id).await {
-        Ok(_) => Ok(StatusCode::NO_CONTENT),
+        Ok(_) => ApiResponseBuilder::success(true),
         Err(e) => {
             tracing::error!("Failed to delete channel: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
-}
-
-/// Enable a notification channel
-async fn enable_channel(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<NotificationChannel>, StatusCode> {
-    let db = state.database.clone();
-
-    match NotificationChannel::set_enabled(&db, &id, true).await {
-        Ok(channel) => Ok(Json(channel)),
-        Err(e) => {
-            tracing::error!("Failed to enable channel: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
-}
-
-/// Disable a notification channel
-async fn disable_channel(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<NotificationChannel>, StatusCode> {
-    let db = state.database.clone();
-
-    match NotificationChannel::set_enabled(&db, &id, false).await {
-        Ok(channel) => Ok(Json(channel)),
-        Err(e) => {
-            tracing::error!("Failed to disable channel: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            ApiResponseBuilder::error("删除通知渠道失败")
         }
     }
 }
@@ -181,54 +147,52 @@ async fn test_channel(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(payload): Json<SendMessageRequest>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
+) -> Json<ApiResponse<serde_json::Value>> {
     let db = state.database.clone();
 
     // 获取渠道配置
     let channel = match NotificationChannel::find_by_id(&db, &id).await {
         Ok(Some(c)) => c,
-        Ok(None) => return Err(StatusCode::NOT_FOUND),
+        Ok(None) => return ApiResponseBuilder::error_with_code(404, "通知渠道不存在"),
         Err(e) => {
             tracing::error!("Failed to get channel: {}", e);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return ApiResponseBuilder::error("获取通知渠道失败");
         }
     };
 
     // 检查是否启用
     if !channel.is_enabled {
-        return Err(StatusCode::BAD_REQUEST);
+        return ApiResponseBuilder::error_with_code(400, "通知渠道未启用");
     }
 
     // 发送测试消息
     match channel.send_message(&payload).await {
         Ok(result) => {
             tracing::info!("Test message sent successfully: {}", result);
-            Ok(Json(serde_json::json!({
+            ApiResponseBuilder::success(serde_json::json!({
                 "success": true,
                 "message": result
-            })))
+            }))
         }
         Err(e) => {
             tracing::error!("Failed to send test message: {}", e);
-            Ok(Json(serde_json::json!({
+            ApiResponseBuilder::success(serde_json::json!({
                 "success": false,
                 "error": e
-            })))
+            }))
         }
     }
 }
 
 /// Get channel statistics
-async fn get_statistics(
-    State(state): State<AppState>,
-) -> Result<Json<ChannelStatistics>, StatusCode> {
+async fn get_statistics(State(state): State<AppState>) -> Json<ApiResponse<ChannelStatistics>> {
     let db = state.database.clone();
 
     match NotificationChannel::get_statistics(&db).await {
-        Ok(stats) => Ok(Json(stats)),
+        Ok(stats) => ApiResponseBuilder::success(stats),
         Err(e) => {
             tracing::error!("Failed to get statistics: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            ApiResponseBuilder::error("获取统计信息失败")
         }
     }
 }

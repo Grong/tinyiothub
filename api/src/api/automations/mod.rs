@@ -24,8 +24,7 @@ pub fn create_router() -> Router<AppState> {
         .route("/automations/{id}", get(get_automation))
         .route("/automations/{id}", put(update_automation))
         .route("/automations/{id}", delete(delete_automation))
-        .route("/automations/{id}/enable", post(enable_automation))
-        .route("/automations/{id}/disable", post(disable_automation))
+        // 复杂业务动作，保持 RPC 风格
         .route("/automations/{id}/run", post(run_automation))
         .route("/automations/{id}/test", post(test_automation))
         .route("/automations/statistics", get(get_statistics))
@@ -347,50 +346,6 @@ async fn delete_automation(
         Err(e) => {
             tracing::error!("Failed to delete automation: {}", e);
             ApiResponseBuilder::error("删除自动化失败")
-        }
-    }
-}
-
-/// 启用
-async fn enable_automation(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Json<ApiResponse<serde_json::Value>> {
-    let now = chrono::Utc::now().to_rfc3339();
-
-    // 使用参数化查询防止 SQL 注入
-    match sqlx::query("UPDATE automations SET enabled = 1, updated_at = ? WHERE id = ?")
-        .bind(&now)
-        .bind(&id)
-        .execute(state.database.pool())
-        .await
-    {
-        Ok(_) => get_automation(State(state), Path(id)).await,
-        Err(e) => {
-            tracing::error!("Failed to enable automation: {}", e);
-            ApiResponseBuilder::error("启用自动化失败")
-        }
-    }
-}
-
-/// 禁用
-async fn disable_automation(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Json<ApiResponse<serde_json::Value>> {
-    let now = chrono::Utc::now().to_rfc3339();
-
-    // 使用参数化查询防止 SQL 注入
-    match sqlx::query("UPDATE automations SET enabled = 0, updated_at = ? WHERE id = ?")
-        .bind(&now)
-        .bind(&id)
-        .execute(state.database.pool())
-        .await
-    {
-        Ok(_) => get_automation(State(state), Path(id)).await,
-        Err(e) => {
-            tracing::error!("Failed to disable automation: {}", e);
-            ApiResponseBuilder::error("禁用自动化失败")
         }
     }
 }
