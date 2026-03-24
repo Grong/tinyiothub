@@ -22,7 +22,9 @@ mod tests {
         let password = "test_password_123";
         let hashed = hash_password(password).unwrap();
 
-        assert!(verify_password(password, &hashed).is_ok());
-        assert!(!verify_password("wrong_password", &hashed).is_ok());
+        // Correct password should verify successfully
+        assert!(verify_password(password, &hashed).unwrap());
+        // Wrong password should fail verification
+        assert!(!verify_password("wrong_password", &hashed).unwrap());
     }
 }

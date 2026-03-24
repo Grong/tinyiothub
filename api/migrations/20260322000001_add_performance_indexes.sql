@@ -16,11 +16,6 @@ CREATE INDEX IF NOT EXISTS idx_jobs_target_device_id ON jobs(target_device_id);
 -- Index for sms_codes (phone lookup and expiration queries)
 CREATE INDEX IF NOT EXISTS idx_sms_codes_phone_expires ON sms_codes(phone, expires_at);
 
--- Add updated_at columns to tables missing them (SQLite 3.35+)
--- These tables track mutable data but lack timestamps
-
+-- Add updated_at column to sms_codes table (only if missing)
+-- Note: social_bindings and notification_channels already have updated_at
 ALTER TABLE sms_codes ADD COLUMN updated_at TEXT;
-
-ALTER TABLE social_bindings ADD COLUMN updated_at TEXT;
-
-ALTER TABLE notification_channels ADD COLUMN updated_at TEXT;

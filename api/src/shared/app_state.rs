@@ -356,7 +356,7 @@ impl AppState {
 
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        let database_url = format!("sqlite:{}", db_path.to_str().unwrap());
+        let database_url = format!("sqlite://{}", db_path.to_str().unwrap());
         let pool = sqlx::SqlitePool::connect(&database_url).await.unwrap();
 
         // Run migrations

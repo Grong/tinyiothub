@@ -378,10 +378,9 @@ mod tests {
     use crate::infrastructure::persistence::database::Database;
 
     async fn create_test_db() -> Arc<Database> {
-        let temp_dir = tempdir().unwrap();
-        let db_path = temp_dir.path().join("test.db");
-        let database_url = format!("sqlite:{}", db_path.to_str().unwrap());
-        let pool = sqlx::SqlitePool::connect(&database_url).await.unwrap();
+        use sqlx::sqlite::SqlitePoolOptions;
+
+        let pool = SqlitePoolOptions::new().connect(":memory:").await.unwrap();
 
         // Run migrations
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
