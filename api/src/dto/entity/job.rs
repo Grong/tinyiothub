@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, Row};
+use sqlx::{Execute, FromRow, Row, Sqlite};
 
 use crate::infrastructure::persistence::database::Database;
 
@@ -136,9 +136,76 @@ pub struct JobStatistics {
 impl Job {
     /// 根据 ID 查询
     pub async fn find_by_id(db: &Database, id: &str) -> Result<Option<Job>, sqlx::Error> {
-        let sql = format!("SELECT * FROM jobs WHERE id = '{}' LIMIT 1", id);
+        // 使用参数化查询防止 SQL 注入
+        let row = sqlx::query("SELECT * FROM jobs WHERE id = ? LIMIT 1")
+            .bind(id)
+            .fetch_optional(db.pool())
+            .await?;
+
+        if let Some(row) = row {
+            Ok(Some(Job {
+                    id: row.try_get("id")?,
+                    name: row.try_get("name")?,
+                    description: row.try_get("description")?,
+                    job_type: row.try_get("job_type")?,
+                    cron_expression: row.try_get("cron_expression")?,
+                    config: row.try_get("config")?,
+                    timeout_seconds: row.try_get("timeout_seconds")?,
+                    retry_count: row.try_get("retry_count")?,
+                    retry_delay_seconds: row.try_get("retry_delay_seconds")?,
+                    concurrency: row.try_get("concurrency")?,
+                    target_device_id: row.try_get("target_device_id")?,
+                    target_command_name: row.try_get("target_command_name")?,
+                    target_command_params: row.try_get("target_command_params")?,
+                    is_enabled: row.try_get::<i32, _>("is_enabled")? != 0,
+                    is_running: row.try_get::<i32, _>("is_running")? != 0,
+                    last_run_at: row.try_get("last_run_at")?,
+                    last_run_status: row.try_get("last_run_status")?,
+                    last_run_error: row.try_get("last_run_error")?,
+                    next_run_at: row.try_get("next_run_at")?,
+                    run_count: row.try_get("run_count")?,
+                    success_count: row.try_get("success_count")?,
+                    fail_count: row.try_get("fail_count")?,
+                    tags: row.try_get("tags")?,
+                    alert_config: row.try_get("alert_config")?,
+                    created_at: row.try_get("created_at")?,
+                    updated_at: row.try_get("updated_at")?,
+                    created_by: row.try_get("created_by")?,
+                }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// 查询所有（带分页）
+    pub async fn find_all(db: &Database, params: &JobQueryParams) -> Result<Vec<Job>, sqlx::Error> {
+        // 使用 QueryBuilder 防止 SQL 注入
+        let mut query_builder: sqlx::query_builder::QueryBuilder<'_, Sqlite> = sqlx::query_builder::QueryBuilder::new("SELECT * FROM jobs WHERE 1=1");
+
+        if let Some(ref name) = params.name {
+            // 转义 LIKE 特殊字符防止注入
+            let escaped = name.replace('\'', "''");
+            query_builder.push(&format!(" AND name LIKE '%{}%'", escaped));
+        }
+        if let Some(ref job_type) = params.job_type {
+            query_builder.push(" AND job_type = ");
+            query_builder.push(job_type);
+        }
+        if let Some(is_enabled) = params.is_enabled {
+            query_builder.push(" AND is_enabled = ");
+            query_builder.push(if is_enabled { "1" } else { "0" });
+        }
+
+        query_builder.push(" ORDER BY created_at DESC");
+
+        let page = params.page.unwrap_or(1);
+        let page_size = params.page_size.unwrap_or(20);
+        let offset = (page - 1) * page_size;
+        query_builder.push(&format!(" LIMIT {} OFFSET {}", page_size, offset));
+
+        let sql = query_builder.build().sql();
         let mut rows = db
-            .query(&sql, |row| {
+            .query(sql, |row| {
                 Ok(Job {
                     id: row.try_get("id")?,
                     name: row.try_get("name")?,
@@ -171,62 +238,7 @@ impl Job {
             })
             .await?;
 
-        Ok(rows.pop())
-    }
-
-    /// 查询所有（带分页）
-    pub async fn find_all(db: &Database, params: &JobQueryParams) -> Result<Vec<Job>, sqlx::Error> {
-        let mut sql = String::from("SELECT * FROM jobs WHERE 1=1");
-
-        if let Some(ref name) = params.name {
-            sql.push_str(&format!(" AND name LIKE '%{}%'", name));
-        }
-        if let Some(ref job_type) = params.job_type {
-            sql.push_str(&format!(" AND job_type = '{}'", job_type));
-        }
-        if let Some(is_enabled) = params.is_enabled {
-            sql.push_str(&format!(" AND is_enabled = {}", if is_enabled { 1 } else { 0 }));
-        }
-
-        sql.push_str(" ORDER BY created_at DESC");
-
-        let page = params.page.unwrap_or(1);
-        let page_size = params.page_size.unwrap_or(20);
-        let offset = (page - 1) * page_size;
-        sql.push_str(&format!(" LIMIT {} OFFSET {}", page_size, offset));
-
-        db.query(&sql, |row| {
-            Ok(Job {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                description: row.try_get("description")?,
-                job_type: row.try_get("job_type")?,
-                cron_expression: row.try_get("cron_expression")?,
-                config: row.try_get("config")?,
-                timeout_seconds: row.try_get("timeout_seconds")?,
-                retry_count: row.try_get("retry_count")?,
-                retry_delay_seconds: row.try_get("retry_delay_seconds")?,
-                concurrency: row.try_get("concurrency")?,
-                target_device_id: row.try_get("target_device_id")?,
-                target_command_name: row.try_get("target_command_name")?,
-                target_command_params: row.try_get("target_command_params")?,
-                is_enabled: row.try_get::<i32, _>("is_enabled")? != 0,
-                is_running: row.try_get::<i32, _>("is_running")? != 0,
-                last_run_at: row.try_get("last_run_at")?,
-                last_run_status: row.try_get("last_run_status")?,
-                last_run_error: row.try_get("last_run_error")?,
-                next_run_at: row.try_get("next_run_at")?,
-                run_count: row.try_get("run_count")?,
-                success_count: row.try_get("success_count")?,
-                fail_count: row.try_get("fail_count")?,
-                tags: row.try_get("tags")?,
-                alert_config: row.try_get("alert_config")?,
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
-                created_by: row.try_get("created_by")?,
-            })
-        })
-        .await
+        Ok(rows)
     }
 
     /// 创建任务
@@ -234,7 +246,8 @@ impl Job {
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-        let sql = format!(
+        // 使用参数化查询防止 SQL 注入
+        sqlx::query(
             r#"
             INSERT INTO jobs (
                 id, name, description, job_type, cron_expression, config,
@@ -242,34 +255,28 @@ impl Job {
                 target_device_id, target_command_name, target_command_params,
                 is_enabled, is_running, tags, alert_config,
                 created_at, updated_at
-            ) VALUES (
-                '{}', '{}', '{}', '{}', '{}', '{}',
-                {}, {}, {}, {},
-                '{}', '{}', '{}',
-                1, 0, '{}', '{}',
-                '{}', '{}'
-            )
-        "#,
-            id,
-            req.name,
-            req.description.as_deref().unwrap_or(""),
-            req.job_type,
-            req.cron_expression,
-            req.config,
-            req.timeout_seconds.unwrap_or(300),
-            req.retry_count.unwrap_or(0),
-            req.retry_delay_seconds.unwrap_or(60),
-            req.concurrency.unwrap_or(1),
-            req.target_device_id.as_deref().unwrap_or(""),
-            req.target_command_name.as_deref().unwrap_or(""),
-            req.target_command_params.as_deref().unwrap_or(""),
-            req.tags.as_deref().unwrap_or("[]"),
-            req.alert_config.as_deref().unwrap_or("{}"),
-            now,
-            now
-        );
-
-        db.execute(&sql).await?;
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?)
+            "#,
+        )
+            .bind(&id)
+            .bind(&req.name)
+            .bind(req.description.as_deref().unwrap_or(""))
+            .bind(&req.job_type)
+            .bind(&req.cron_expression)
+            .bind(&req.config)
+            .bind(req.timeout_seconds.unwrap_or(300))
+            .bind(req.retry_count.unwrap_or(0))
+            .bind(req.retry_delay_seconds.unwrap_or(60))
+            .bind(req.concurrency.unwrap_or(1))
+            .bind(req.target_device_id.as_deref().unwrap_or(""))
+            .bind(req.target_command_name.as_deref().unwrap_or(""))
+            .bind(req.target_command_params.as_deref().unwrap_or(""))
+            .bind(req.tags.as_deref().unwrap_or("[]"))
+            .bind(req.alert_config.as_deref().unwrap_or("{}"))
+            .bind(&now)
+            .bind(&now)
+            .execute(db.pool())
+            .await?;
 
         Self::find_by_id(db, &id).await?.ok_or(sqlx::Error::RowNotFound)
     }
@@ -282,61 +289,83 @@ impl Job {
     ) -> Result<Job, sqlx::Error> {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-        let mut updates = vec![format!("updated_at = '{}'", now)];
+        // 使用 QueryBuilder 防止 SQL 注入
+        let mut query_builder = sqlx::query_builder::QueryBuilder::new("UPDATE jobs SET updated_at = ");
+        query_builder.push(&now);
 
         if let Some(ref name) = req.name {
-            updates.push(format!("name = '{}'", name));
+            query_builder.push(", name = ");
+            query_builder.push(name);
         }
         if let Some(ref description) = req.description {
-            updates.push(format!("description = '{}'", description));
+            query_builder.push(", description = ");
+            query_builder.push(description);
         }
         if let Some(ref job_type) = req.job_type {
-            updates.push(format!("job_type = '{}'", job_type));
+            query_builder.push(", job_type = ");
+            query_builder.push(job_type);
         }
         if let Some(ref cron_expression) = req.cron_expression {
-            updates.push(format!("cron_expression = '{}'", cron_expression));
+            query_builder.push(", cron_expression = ");
+            query_builder.push(cron_expression);
         }
         if let Some(ref config) = req.config {
-            updates.push(format!("config = '{}'", config));
+            query_builder.push(", config = ");
+            query_builder.push(config);
         }
         if let Some(timeout_seconds) = req.timeout_seconds {
-            updates.push(format!("timeout_seconds = {}", timeout_seconds));
+            query_builder.push(", timeout_seconds = ");
+            query_builder.push(timeout_seconds.to_string());
         }
         if let Some(retry_count) = req.retry_count {
-            updates.push(format!("retry_count = {}", retry_count));
+            query_builder.push(", retry_count = ");
+            query_builder.push(retry_count.to_string());
         }
         if let Some(retry_delay_seconds) = req.retry_delay_seconds {
-            updates.push(format!("retry_delay_seconds = {}", retry_delay_seconds));
+            query_builder.push(", retry_delay_seconds = ");
+            query_builder.push(retry_delay_seconds.to_string());
         }
         if let Some(concurrency) = req.concurrency {
-            updates.push(format!("concurrency = {}", concurrency));
+            query_builder.push(", concurrency = ");
+            query_builder.push(concurrency.to_string());
         }
         if let Some(ref target_device_id) = req.target_device_id {
-            updates.push(format!("target_device_id = '{}'", target_device_id));
+            query_builder.push(", target_device_id = ");
+            query_builder.push(target_device_id);
         }
         if let Some(ref target_command_name) = req.target_command_name {
-            updates.push(format!("target_command_name = '{}'", target_command_name));
+            query_builder.push(", target_command_name = ");
+            query_builder.push(target_command_name);
         }
         if let Some(ref target_command_params) = req.target_command_params {
-            updates.push(format!("target_command_params = '{}'", target_command_params));
+            query_builder.push(", target_command_params = ");
+            query_builder.push(target_command_params);
         }
         if let Some(ref tags) = req.tags {
-            updates.push(format!("tags = '{}'", tags));
+            query_builder.push(", tags = ");
+            query_builder.push(tags);
         }
         if let Some(ref alert_config) = req.alert_config {
-            updates.push(format!("alert_config = '{}'", alert_config));
+            query_builder.push(", alert_config = ");
+            query_builder.push(alert_config);
         }
 
-        let sql = format!("UPDATE jobs SET {} WHERE id = '{}'", updates.join(", "), id);
-        let _ = db.execute(&sql).await;
+        query_builder.push(" WHERE id = ");
+        query_builder.push(id);
+
+        query_builder.build().execute(db.pool()).await?;
 
         Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 删除任务
     pub async fn delete(db: &Database, id: &str) -> Result<u64, sqlx::Error> {
-        let sql = format!("DELETE FROM jobs WHERE id = '{}'", id);
-        db.execute(&sql).await
+        // 使用参数化查询防止 SQL 注入
+        let result = sqlx::query("DELETE FROM jobs WHERE id = ?")
+            .bind(id)
+            .execute(db.pool())
+            .await?;
+        Ok(result.rows_affected())
     }
 
     /// 设置启用/禁用
@@ -346,25 +375,25 @@ impl Job {
         is_enabled: bool,
     ) -> Result<Job, sqlx::Error> {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        let sql = format!(
-            "UPDATE jobs SET is_enabled = {}, updated_at = '{}' WHERE id = '{}'",
-            if is_enabled { 1 } else { 0 },
-            now,
-            id
-        );
-        let _ = db.execute(&sql).await;
+        // 使用参数化查询防止 SQL 注入
+        sqlx::query("UPDATE jobs SET is_enabled = ?, updated_at = ? WHERE id = ?")
+            .bind(if is_enabled { 1 } else { 0 })
+            .bind(&now)
+            .bind(id)
+            .execute(db.pool())
+            .await?;
 
         Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 设置运行状态
     pub async fn set_running(db: &Database, id: &str, is_running: bool) -> Result<(), sqlx::Error> {
-        let sql = format!(
-            "UPDATE jobs SET is_running = {} WHERE id = '{}'",
-            if is_running { 1 } else { 0 },
-            id
-        );
-        let _ = db.execute(&sql).await;
+        // 使用参数化查询防止 SQL 注入
+        sqlx::query("UPDATE jobs SET is_running = ? WHERE id = ?")
+            .bind(if is_running { 1 } else { 0 })
+            .bind(id)
+            .execute(db.pool())
+            .await?;
         Ok(())
     }
 
@@ -380,29 +409,30 @@ impl Job {
         let success_inc = if status == "success" { 1 } else { 0 };
         let fail_inc = if status == "failed" || status == "timeout" { 1 } else { 0 };
 
-        let sql = format!(
+        // 使用参数化查询防止 SQL 注入
+        sqlx::query(
             r#"
             UPDATE jobs SET
-                last_run_at = '{}',
-                last_run_status = '{}',
-                last_run_error = '{}',
+                last_run_at = ?,
+                last_run_status = ?,
+                last_run_error = ?,
                 run_count = run_count + 1,
-                success_count = success_count + {},
-                fail_count = fail_count + {},
+                success_count = success_count + ?,
+                fail_count = fail_count + ?,
                 is_running = 0,
-                updated_at = '{}'
-            WHERE id = '{}'
+                updated_at = ?
+            WHERE id = ?
         "#,
-            now,
-            status,
-            error.unwrap_or(""),
-            success_inc,
-            fail_inc,
-            now,
-            id
-        );
-
-        let _ = db.execute(&sql).await;
+        )
+            .bind(&now)
+            .bind(status)
+            .bind(error.unwrap_or(""))
+            .bind(success_inc)
+            .bind(fail_inc)
+            .bind(&now)
+            .bind(id)
+            .execute(db.pool())
+            .await?;
         Ok(())
     }
 
@@ -472,50 +502,53 @@ impl JobExecution {
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-        let sql = format!(
+        // 使用参数化查询防止 SQL 注入
+        sqlx::query(
             r#"
             INSERT INTO job_executions (id, job_id, started_at, status, trigger_type, triggered_by, created_at)
-            VALUES ('{}', '{}', '{}', 'running', '{}', '{}', '{}')
-        "#,
-            id,
-            job_id,
-            now,
-            trigger_type,
-            triggered_by.unwrap_or("system"),
-            now
-        );
-
-        db.execute(&sql).await?;
+            VALUES (?, ?, ?, 'running', ?, ?, ?)
+            "#,
+        )
+            .bind(&id)
+            .bind(job_id)
+            .bind(&now)
+            .bind(trigger_type)
+            .bind(triggered_by.unwrap_or("system"))
+            .bind(&now)
+            .execute(db.pool())
+            .await?;
 
         Self::find_by_id(db, &id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 根据 ID 查询
     pub async fn find_by_id(db: &Database, id: &str) -> Result<Option<JobExecution>, sqlx::Error> {
-        let sql = format!("SELECT * FROM job_executions WHERE id = '{}' LIMIT 1", id);
-        let mut rows = db
-            .query(&sql, |row| {
-                Ok(JobExecution {
-                    id: row.try_get("id")?,
-                    job_id: row.try_get("job_id")?,
-                    started_at: row.try_get("started_at")?,
-                    ended_at: row.try_get("ended_at")?,
-                    duration_ms: row.try_get("duration_ms")?,
-                    status: row.try_get("status")?,
-                    result: row.try_get("result")?,
-                    error_message: row.try_get("error_message")?,
-                    error_trace: row.try_get("error_trace")?,
-                    trigger_type: row.try_get("trigger_type")?,
-                    triggered_by: row.try_get("triggered_by")?,
-                    worker_id: row.try_get("worker_id")?,
-                    memory_usage_bytes: row.try_get("memory_usage_bytes")?,
-                    cpu_time_ms: row.try_get("cpu_time_ms")?,
-                    created_at: row.try_get("created_at")?,
-                })
-            })
+        let row = sqlx::query("SELECT * FROM job_executions WHERE id = ? LIMIT 1")
+            .bind(id)
+            .fetch_optional(db.pool())
             .await?;
 
-        Ok(rows.pop())
+        if let Some(row) = row {
+            Ok(Some(JobExecution {
+                id: row.try_get("id")?,
+                job_id: row.try_get("job_id")?,
+                started_at: row.try_get("started_at")?,
+                ended_at: row.try_get("ended_at")?,
+                duration_ms: row.try_get("duration_ms")?,
+                status: row.try_get("status")?,
+                result: row.try_get("result")?,
+                error_message: row.try_get("error_message")?,
+                error_trace: row.try_get("error_trace")?,
+                trigger_type: row.try_get("trigger_type")?,
+                triggered_by: row.try_get("triggered_by")?,
+                worker_id: row.try_get("worker_id")?,
+                memory_usage_bytes: row.try_get("memory_usage_bytes")?,
+                cpu_time_ms: row.try_get("cpu_time_ms")?,
+                created_at: row.try_get("created_at")?,
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     /// 查询任务的所有执行记录
@@ -524,9 +557,11 @@ impl JobExecution {
         job_id: &str,
         limit: i32,
     ) -> Result<Vec<JobExecution>, sqlx::Error> {
+        // 使用转义防止 SQL 注入
+        let safe_job_id = job_id.replace('\'', "''");
         let sql = format!(
             "SELECT * FROM job_executions WHERE job_id = '{}' ORDER BY started_at DESC LIMIT {}",
-            job_id, limit
+            safe_job_id, limit
         );
 
         db.query(&sql, |row| {
@@ -560,23 +595,24 @@ impl JobExecution {
         result: Option<&str>,
         error_message: Option<&str>,
     ) -> Result<(), sqlx::Error> {
-        let ended = ended_at.unwrap_or("");
-        let result_str = result.unwrap_or("");
-        let error_str = error_message.unwrap_or("");
-
-        let sql = format!(
+        // 使用参数化查询防止 SQL 注入
+        sqlx::query(
             r#"
             UPDATE job_executions SET
-                ended_at = '{}',
-                status = '{}',
-                result = '{}',
-                error_message = '{}'
-            WHERE id = '{}'
-        "#,
-            ended, status, result_str, error_str, id
-        );
-
-        let _ = db.execute(&sql).await;
+                ended_at = ?,
+                status = ?,
+                result = ?,
+                error_message = ?
+            WHERE id = ?
+            "#,
+        )
+            .bind(ended_at.unwrap_or(""))
+            .bind(status)
+            .bind(result.unwrap_or(""))
+            .bind(error_message.unwrap_or(""))
+            .bind(id)
+            .execute(db.pool())
+            .await?;
         Ok(())
     }
 }
