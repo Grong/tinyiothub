@@ -1,5 +1,7 @@
 # TinyIoTHub — Claude Code 指令
 
+> ⚠️ **强制要求**：在开始任何开发工作之前，必须阅读 `ARCHITECTURE_HARNESS.md`。该文件是架构宪法，所有代码必须遵守，违者 PR 拒绝合并。
+
 ## 项目概述
 
 TinyIoTHub 是一个 **Rust 后端 + Next.js 前端** 的 IoT 边缘网关系统，支持多协议（Modbus、ONVIF、SNMP、MQTT）。
@@ -95,6 +97,25 @@ ApiResponseBuilder::error_with_code(400, "bad request") // 自定义 code
 使用 `/review` 在 PR 之前做代码审查。
 
 使用 `/qa` 测试和修复 bug。
+
+## ⚠️ AI 编码约束（必须遵守）
+
+**核心原则：先搜索，后实现；找不到复用再新建。**
+
+每次写代码前必须：
+1. 在 `api/src/shared/` 搜索是否有可复用组件
+2. 在 `web/service/` 搜索是否有可复用 API 封装
+3. 在 `web/hooks/` 搜索是否有可复用数据 hooks
+4. 确认要新建模块/文件时，说明理由并引用 ARCHITECTURE_HARNESS.md 对应条款
+
+**禁止行为：**
+- ❌ 不搜索就直接创建重复功能
+- ❌ 在 `api/src/` 创建散弹式的 `utils/` 或 `helpers/`
+- ❌ 前端组件里直接 `fetch()` 或 `useQuery()`
+- ❌ API handler 里直接写 SQL
+- ❌ 绕过 `ApiResponseBuilder` 拼装自定义 JSON 响应
+
+详细规则见 `ARCHITECTURE_HARNESS.md`。
 
 ## 关键模式
 
