@@ -43,6 +43,18 @@ jobs:
       - name: Clippy
         run: cargo clippy -- -D warnings --allow dead_code --allow unused_imports --allow unused_variables --allow unused_mut --allow non_snake_case
 
+      - name: Test
+        run: cargo test --all
+
+      - name: Architecture Check
+        run: |
+          echo "=== Checking for hardcoded API responses ==="
+          ! grep -r "Json(serde_json::to_value" api/src/api/ || exit 1
+          echo "=== Checking for direct SQL in handlers ==="
+          ! grep -r "conn.query_row\|pool.query\|.execute(" api/src/api/ || exit 1
+          echo "=== Checking for bypass of service layer (frontend) ==="
+          ! grep -r "fetch\|axios\|useQuery" web/app/ web/components/ 2>/dev/null || echo "WARNING: Direct API calls or useQuery found in components"
+
   frontend-check:
     name: Frontend Check
     runs-on: ubuntu-latest
@@ -67,6 +79,9 @@ jobs:
 
       - name: Type check
         run: pnpm type-check
+
+      - name: Test
+        run: pnpm test --if-present
 
       - name: Build
         run: pnpm build
