@@ -28,7 +28,7 @@ pub fn create_router() -> Router<AppState> {
         .route("/security/config", get(security::get_security_config))
         .route("/security/config", put(security::update_security_config))
         .route("/security/roles", get(security::get_user_roles))
-        .route("/security/audit-logs/:event_id", get(security::get_event_audit_logs))
+        .route("/security/audit-logs/{id}", get(security::get_event_audit_logs))
         .route("/security/audit-logs", get(security::get_user_audit_logs))
         .route("/security/audit-logs/all", get(security::get_all_audit_logs))
         .route("/security/cleanup", post(security::cleanup_audit_logs))

@@ -54,30 +54,31 @@ impl SubscriptionPlan {
         db: &Database,
         id: &str,
     ) -> Result<Option<SubscriptionPlan>, sqlx::Error> {
-        let sql = format!("SELECT * FROM subscription_plans WHERE id = '{}' LIMIT 1", id);
-
-        let mut rows = db
-            .query(&sql, |row| {
-                Ok(SubscriptionPlan {
-                    id: row.try_get("id")?,
-                    name: row.try_get("name")?,
-                    display_name: row.try_get("display_name")?,
-                    description: row.try_get("description")?,
-                    device_limit: row.try_get("device_limit")?,
-                    api_call_limit: row.try_get("api_call_limit")?,
-                    storage_mb: row.try_get("storage_mb")?,
-                    user_limit: row.try_get("user_limit")?,
-                    price_monthly: row.try_get("price_monthly")?,
-                    price_yearly: row.try_get("price_yearly")?,
-                    features: row.try_get("features")?,
-                    sort_order: row.try_get("sort_order")?,
-                    created_at: row.try_get("created_at")?,
-                    updated_at: row.try_get("updated_at")?,
-                })
-            })
+        let row = sqlx::query("SELECT * FROM subscription_plans WHERE id = ? LIMIT 1")
+            .bind(id)
+            .fetch_optional(db.pool())
             .await?;
 
-        Ok(rows.pop())
+        if let Some(row) = row {
+            Ok(Some(SubscriptionPlan {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+                display_name: row.try_get("display_name")?,
+                description: row.try_get("description")?,
+                device_limit: row.try_get("device_limit")?,
+                api_call_limit: row.try_get("api_call_limit")?,
+                storage_mb: row.try_get("storage_mb")?,
+                user_limit: row.try_get("user_limit")?,
+                price_monthly: row.try_get("price_monthly")?,
+                price_yearly: row.try_get("price_yearly")?,
+                features: row.try_get("features")?,
+                sort_order: row.try_get("sort_order")?,
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+            }))
+        } else {
+            Ok(None)
+        }
     }
 }
 
@@ -164,99 +165,104 @@ impl Tenant {
             .format("%Y-%m-%d %H:%M:%S")
             .to_string();
 
-        let sql = format!(
+        // 使用参数化查询防止 SQL 注入
+        sqlx::query(
             r#"
-            INSERT INTO tenants (id, name, slug, status, plan_id, subscription_status, 
+            INSERT INTO tenants (id, name, slug, status, plan_id, subscription_status,
                 trial_expires_at, billing_email, billing_contact, timezone, locale,
                 created_at, updated_at)
-            VALUES ('{}', '{}', '{}', 'trial', 'plan_free', 'active',
-                '{}', '{}', '{}', '{}', '{}',
-                '{}', '{}')
-        "#,
-            id,
-            req.name,
-            req.slug,
-            trial_expires,
-            req.billing_email.as_deref().unwrap_or(""),
-            req.billing_contact.as_deref().unwrap_or(""),
-            req.timezone.as_deref().unwrap_or("Asia/Shanghai"),
-            req.locale.as_deref().unwrap_or("zh-CN"),
-            now,
-            now
-        );
-
-        db.execute(&sql).await?;
+            VALUES (?, ?, ?, 'trial', 'plan_free', 'active',
+                ?, ?, ?, ?, ?,
+                ?, ?)
+            "#,
+        )
+        .bind(&id)
+        .bind(&req.name)
+        .bind(&req.slug)
+        .bind(&trial_expires)
+        .bind(req.billing_email.as_deref().unwrap_or(""))
+        .bind(req.billing_contact.as_deref().unwrap_or(""))
+        .bind(req.timezone.as_deref().unwrap_or("Asia/Shanghai"))
+        .bind(req.locale.as_deref().unwrap_or("zh-CN"))
+        .bind(&now)
+        .bind(&now)
+        .execute(db.pool())
+        .await?;
 
         // 初始化使用量记录
-        let usage_sql = format!(
+        sqlx::query(
             r#"
-            INSERT INTO tenant_usage (id, tenant_id, device_count, api_call_count, storage_used_bytes, user_count, total_api_calls, total_api_errors)
-            VALUES ('{}', '{}', 0, 0, 0, 1, 0, 0)
-        "#,
-            uuid::Uuid::new_v4().to_string(),
-            id
-        );
-        db.execute(&usage_sql).await?;
+            INSERT INTO tenant_usage (id, tenant_id, device_count, api_call_count, storage_used_bytes, user_count, total_api_calls, total_api_errors, updated_at)
+            VALUES (?, ?, 0, 0, 0, 1, 0, 0, ?)
+            "#,
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(&id)
+        .bind(&now)
+        .execute(db.pool())
+        .await?;
 
         Self::find_by_id(db, &id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 根据 ID 获取
     pub async fn find_by_id(db: &Database, id: &str) -> Result<Option<Tenant>, sqlx::Error> {
-        let sql = format!("SELECT * FROM tenants WHERE id = '{}' LIMIT 1", id);
-
-        let mut rows = db
-            .query(&sql, |row| {
-                Ok(Tenant {
-                    id: row.try_get("id")?,
-                    name: row.try_get("name")?,
-                    slug: row.try_get("slug")?,
-                    status: row.try_get("status")?,
-                    plan_id: row.try_get("plan_id")?,
-                    subscription_status: row.try_get("subscription_status")?,
-                    trial_expires_at: row.try_get("trial_expires_at")?,
-                    billing_email: row.try_get("billing_email")?,
-                    billing_contact: row.try_get("billing_contact")?,
-                    timezone: row.try_get("timezone")?,
-                    locale: row.try_get("locale")?,
-                    custom_logo: row.try_get("custom_logo")?,
-                    custom_theme: row.try_get("custom_theme")?,
-                    created_at: row.try_get("created_at")?,
-                    updated_at: row.try_get("updated_at")?,
-                })
-            })
+        let row = sqlx::query("SELECT * FROM tenants WHERE id = ? LIMIT 1")
+            .bind(id)
+            .fetch_optional(db.pool())
             .await?;
 
-        Ok(rows.pop())
+        if let Some(row) = row {
+            Ok(Some(Tenant {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+                slug: row.try_get("slug")?,
+                status: row.try_get("status")?,
+                plan_id: row.try_get("plan_id")?,
+                subscription_status: row.try_get("subscription_status")?,
+                trial_expires_at: row.try_get("trial_expires_at")?,
+                billing_email: row.try_get("billing_email")?,
+                billing_contact: row.try_get("billing_contact")?,
+                timezone: row.try_get("timezone")?,
+                locale: row.try_get("locale")?,
+                custom_logo: row.try_get("custom_logo")?,
+                custom_theme: row.try_get("custom_theme")?,
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     /// 根据 slug 获取
     pub async fn find_by_slug(db: &Database, slug: &str) -> Result<Option<Tenant>, sqlx::Error> {
-        let sql = format!("SELECT * FROM tenants WHERE slug = '{}' LIMIT 1", slug);
-
-        let mut rows = db
-            .query(&sql, |row| {
-                Ok(Tenant {
-                    id: row.try_get("id")?,
-                    name: row.try_get("name")?,
-                    slug: row.try_get("slug")?,
-                    status: row.try_get("status")?,
-                    plan_id: row.try_get("plan_id")?,
-                    subscription_status: row.try_get("subscription_status")?,
-                    trial_expires_at: row.try_get("trial_expires_at")?,
-                    billing_email: row.try_get("billing_email")?,
-                    billing_contact: row.try_get("billing_contact")?,
-                    timezone: row.try_get("timezone")?,
-                    locale: row.try_get("locale")?,
-                    custom_logo: row.try_get("custom_logo")?,
-                    custom_theme: row.try_get("custom_theme")?,
-                    created_at: row.try_get("created_at")?,
-                    updated_at: row.try_get("updated_at")?,
-                })
-            })
+        let row = sqlx::query("SELECT * FROM tenants WHERE slug = ? LIMIT 1")
+            .bind(slug)
+            .fetch_optional(db.pool())
             .await?;
 
-        Ok(rows.pop())
+        if let Some(row) = row {
+            Ok(Some(Tenant {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+                slug: row.try_get("slug")?,
+                status: row.try_get("status")?,
+                plan_id: row.try_get("plan_id")?,
+                subscription_status: row.try_get("subscription_status")?,
+                trial_expires_at: row.try_get("trial_expires_at")?,
+                billing_email: row.try_get("billing_email")?,
+                billing_contact: row.try_get("billing_contact")?,
+                timezone: row.try_get("timezone")?,
+                locale: row.try_get("locale")?,
+                custom_logo: row.try_get("custom_logo")?,
+                custom_theme: row.try_get("custom_theme")?,
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     /// 获取租户使用量
@@ -264,26 +270,27 @@ impl Tenant {
         db: &Database,
         tenant_id: &str,
     ) -> Result<Option<TenantUsage>, sqlx::Error> {
-        let sql = format!("SELECT * FROM tenant_usage WHERE tenant_id = '{}' LIMIT 1", tenant_id);
-
-        let mut rows = db
-            .query(&sql, |row| {
-                Ok(TenantUsage {
-                    id: row.try_get("id")?,
-                    tenant_id: row.try_get("tenant_id")?,
-                    device_count: row.try_get("device_count")?,
-                    api_call_count: row.try_get("api_call_count")?,
-                    api_call_reset_at: row.try_get("api_call_reset_at")?,
-                    storage_used_bytes: row.try_get("storage_used_bytes")?,
-                    user_count: row.try_get("user_count")?,
-                    total_api_calls: row.try_get("total_api_calls")?,
-                    total_api_errors: row.try_get("total_api_errors")?,
-                    updated_at: row.try_get("updated_at")?,
-                })
-            })
+        let row = sqlx::query("SELECT * FROM tenant_usage WHERE tenant_id = ? LIMIT 1")
+            .bind(tenant_id)
+            .fetch_optional(db.pool())
             .await?;
 
-        Ok(rows.pop())
+        if let Some(row) = row {
+            Ok(Some(TenantUsage {
+                id: row.try_get("id")?,
+                tenant_id: row.try_get("tenant_id")?,
+                device_count: row.try_get("device_count")?,
+                api_call_count: row.try_get("api_call_count")?,
+                api_call_reset_at: row.try_get("api_call_reset_at")?,
+                storage_used_bytes: row.try_get("storage_used_bytes")?,
+                user_count: row.try_get("user_count")?,
+                total_api_calls: row.try_get("total_api_calls")?,
+                total_api_errors: row.try_get("total_api_errors")?,
+                updated_at: row.try_get("updated_at")?,
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     /// 检查配额
@@ -329,19 +336,22 @@ impl Tenant {
     ) -> Result<Tenant, sqlx::Error> {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-        let sql = format!(
+        // 使用参数化查询防止 SQL 注入
+        sqlx::query(
             r#"
-            UPDATE tenants SET 
-                plan_id = '{}',
+            UPDATE tenants SET
+                plan_id = ?,
                 subscription_status = 'active',
                 trial_expires_at = NULL,
-                updated_at = '{}'
-            WHERE id = '{}'
-        "#,
-            plan_id, now, tenant_id
-        );
-
-        db.execute(&sql).await?;
+                updated_at = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(plan_id)
+        .bind(&now)
+        .bind(tenant_id)
+        .execute(db.pool())
+        .await?;
 
         Self::find_by_id(db, tenant_id).await?.ok_or(sqlx::Error::RowNotFound)
     }
@@ -350,14 +360,14 @@ impl Tenant {
     pub async fn suspend(db: &Database, tenant_id: &str) -> Result<Tenant, sqlx::Error> {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-        let sql = format!(
-            r#"
-            UPDATE tenants SET status = 'suspended', updated_at = '{}' WHERE id = '{}'
-        "#,
-            now, tenant_id
-        );
-
-        db.execute(&sql).await?;
+        // 使用参数化查询防止 SQL 注入
+        sqlx::query(
+            "UPDATE tenants SET status = 'suspended', updated_at = ? WHERE id = ?"
+        )
+        .bind(&now)
+        .bind(tenant_id)
+        .execute(db.pool())
+        .await?;
 
         Self::find_by_id(db, tenant_id).await?.ok_or(sqlx::Error::RowNotFound)
     }
@@ -366,14 +376,14 @@ impl Tenant {
     pub async fn activate(db: &Database, tenant_id: &str) -> Result<Tenant, sqlx::Error> {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-        let sql = format!(
-            r#"
-            UPDATE tenants SET status = 'active', updated_at = '{}' WHERE id = '{}'
-        "#,
-            now, tenant_id
-        );
-
-        db.execute(&sql).await?;
+        // 使用参数化查询防止 SQL 注入
+        sqlx::query(
+            "UPDATE tenants SET status = 'active', updated_at = ? WHERE id = ?"
+        )
+        .bind(&now)
+        .bind(tenant_id)
+        .execute(db.pool())
+        .await?;
 
         Self::find_by_id(db, tenant_id).await?.ok_or(sqlx::Error::RowNotFound)
     }
@@ -459,24 +469,25 @@ impl ApiKey {
                 .to_string()
         });
 
-        let sql = format!(
+        // 使用参数化查询防止 SQL 注入
+        sqlx::query(
             r#"
             INSERT INTO api_keys (id, tenant_id, name, key_hash, prefix, permissions, rate_limit, is_enabled, is_revoked, expires_at, created_at, updated_at)
-            VALUES ('{}', '{}', '{}', '{}', '{}', '{}', {}, 1, 0, '{}', '{}', '{}')
-        "#,
-            id,
-            tenant_id,
-            req.name,
-            key_hash,
-            prefix,
-            permissions,
-            rate_limit,
-            expires_at.as_deref().unwrap_or(""),
-            now,
-            now
-        );
-
-        db.execute(&sql).await?;
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?)
+            "#,
+        )
+        .bind(&id)
+        .bind(tenant_id)
+        .bind(&req.name)
+        .bind(&key_hash)
+        .bind(&prefix)
+        .bind(&permissions)
+        .bind(rate_limit)
+        .bind(expires_at.as_deref())
+        .bind(&now)
+        .bind(&now)
+        .execute(db.pool())
+        .await?;
 
         let key = Self::find_by_id(db, &id).await?.ok_or(sqlx::Error::RowNotFound)?;
 
@@ -485,77 +496,13 @@ impl ApiKey {
 
     /// 根据 ID 获取
     pub async fn find_by_id(db: &Database, id: &str) -> Result<Option<ApiKey>, sqlx::Error> {
-        let sql = format!("SELECT * FROM api_keys WHERE id = '{}' LIMIT 1", id);
-
-        let mut rows = db
-            .query(&sql, |row| {
-                Ok(ApiKey {
-                    id: row.try_get("id")?,
-                    tenant_id: row.try_get("tenant_id")?,
-                    name: row.try_get("name")?,
-                    key_hash: row.try_get("key_hash")?,
-                    prefix: row.try_get("prefix")?,
-                    permissions: row.try_get("permissions")?,
-                    rate_limit: row.try_get("rate_limit")?,
-                    is_enabled: row.try_get::<i32, _>("is_enabled")? != 0,
-                    is_revoked: row.try_get::<i32, _>("is_revoked")? != 0,
-                    last_used_at: row.try_get("last_used_at")?,
-                    last_used_ip: row.try_get("last_used_ip")?,
-                    request_count: row.try_get("request_count")?,
-                    expires_at: row.try_get("expires_at")?,
-                    created_at: row.try_get("created_at")?,
-                    updated_at: row.try_get("updated_at")?,
-                })
-            })
+        let row = sqlx::query("SELECT * FROM api_keys WHERE id = ? LIMIT 1")
+            .bind(id)
+            .fetch_optional(db.pool())
             .await?;
 
-        Ok(rows.pop())
-    }
-
-    /// 根据 prefix 获取
-    pub async fn find_by_prefix(
-        db: &Database,
-        prefix: &str,
-    ) -> Result<Option<ApiKey>, sqlx::Error> {
-        let sql = format!(
-            "SELECT * FROM api_keys WHERE prefix = '{}' AND is_revoked = 0 LIMIT 1",
-            prefix
-        );
-
-        let mut rows = db
-            .query(&sql, |row| {
-                Ok(ApiKey {
-                    id: row.try_get("id")?,
-                    tenant_id: row.try_get("tenant_id")?,
-                    name: row.try_get("name")?,
-                    key_hash: row.try_get("key_hash")?,
-                    prefix: row.try_get("prefix")?,
-                    permissions: row.try_get("permissions")?,
-                    rate_limit: row.try_get("rate_limit")?,
-                    is_enabled: row.try_get::<i32, _>("is_enabled")? != 0,
-                    is_revoked: row.try_get::<i32, _>("is_revoked")? != 0,
-                    last_used_at: row.try_get("last_used_at")?,
-                    last_used_ip: row.try_get("last_used_ip")?,
-                    request_count: row.try_get("request_count")?,
-                    expires_at: row.try_get("expires_at")?,
-                    created_at: row.try_get("created_at")?,
-                    updated_at: row.try_get("updated_at")?,
-                })
-            })
-            .await?;
-
-        Ok(rows.pop())
-    }
-
-    /// 获取租户的所有 Key
-    pub async fn find_by_tenant(
-        db: &Database,
-        tenant_id: &str,
-    ) -> Result<Vec<ApiKey>, sqlx::Error> {
-        let sql = format!("SELECT * FROM api_keys WHERE tenant_id = '{}' AND is_revoked = 0 ORDER BY created_at DESC", tenant_id);
-
-        db.query(&sql, |row| {
-            Ok(ApiKey {
+        if let Some(row) = row {
+            Ok(Some(ApiKey {
                 id: row.try_get("id")?,
                 tenant_id: row.try_get("tenant_id")?,
                 name: row.try_get("name")?,
@@ -571,20 +518,90 @@ impl ApiKey {
                 expires_at: row.try_get("expires_at")?,
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// 根据 prefix 获取
+    pub async fn find_by_prefix(
+        db: &Database,
+        prefix: &str,
+    ) -> Result<Option<ApiKey>, sqlx::Error> {
+        let row = sqlx::query("SELECT * FROM api_keys WHERE prefix = ? AND is_revoked = 0 LIMIT 1")
+            .bind(prefix)
+            .fetch_optional(db.pool())
+            .await?;
+
+        if let Some(row) = row {
+            Ok(Some(ApiKey {
+                id: row.try_get("id")?,
+                tenant_id: row.try_get("tenant_id")?,
+                name: row.try_get("name")?,
+                key_hash: row.try_get("key_hash")?,
+                prefix: row.try_get("prefix")?,
+                permissions: row.try_get("permissions")?,
+                rate_limit: row.try_get("rate_limit")?,
+                is_enabled: row.try_get::<i32, _>("is_enabled")? != 0,
+                is_revoked: row.try_get::<i32, _>("is_revoked")? != 0,
+                last_used_at: row.try_get("last_used_at")?,
+                last_used_ip: row.try_get("last_used_ip")?,
+                request_count: row.try_get("request_count")?,
+                expires_at: row.try_get("expires_at")?,
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// 获取租户的所有 Key
+    pub async fn find_by_tenant(
+        db: &Database,
+        tenant_id: &str,
+    ) -> Result<Vec<ApiKey>, sqlx::Error> {
+        // 使用参数化查询防止 SQL 注入
+        let sql = "SELECT * FROM api_keys WHERE tenant_id = ? AND is_revoked = 0 ORDER BY created_at DESC";
+
+        let mut rows = sqlx::query(sql)
+            .bind(tenant_id)
+            .fetch_all(db.pool())
+            .await?;
+
+        Ok(rows
+            .drain(..)
+            .map(|row| ApiKey {
+                id: row.try_get("id").unwrap_or_default(),
+                tenant_id: row.try_get("tenant_id").unwrap_or_default(),
+                name: row.try_get("name").unwrap_or_default(),
+                key_hash: row.try_get("key_hash").unwrap_or_default(),
+                prefix: row.try_get("prefix").unwrap_or_default(),
+                permissions: row.try_get("permissions").unwrap_or_default(),
+                rate_limit: row.try_get("rate_limit").unwrap_or_default(),
+                is_enabled: row.try_get::<i32, _>("is_enabled").unwrap_or_default() != 0,
+                is_revoked: row.try_get::<i32, _>("is_revoked").unwrap_or_default() != 0,
+                last_used_at: row.try_get("last_used_at").ok(),
+                last_used_ip: row.try_get("last_used_ip").ok(),
+                request_count: row.try_get("request_count").unwrap_or_default(),
+                expires_at: row.try_get("expires_at").ok(),
+                created_at: row.try_get("created_at").unwrap_or_default(),
+                updated_at: row.try_get("updated_at").unwrap_or_default(),
             })
-        })
-        .await
+            .collect())
     }
 
     /// 禁用 Key
     pub async fn revoke(db: &Database, id: &str) -> Result<(), sqlx::Error> {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-        let sql = format!(
-            "UPDATE api_keys SET is_revoked = 1, updated_at = '{}' WHERE id = '{}'",
-            now, id
-        );
-        let _ = db.execute(&sql).await;
+        // 使用参数化查询防止 SQL 注入
+        sqlx::query("UPDATE api_keys SET is_revoked = 1, updated_at = ? WHERE id = ?")
+            .bind(&now)
+            .bind(id)
+            .execute(db.pool())
+            .await?;
         Ok(())
     }
 
@@ -592,11 +609,12 @@ impl ApiKey {
     pub async fn enable(db: &Database, id: &str) -> Result<(), sqlx::Error> {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-        let sql = format!(
-            "UPDATE api_keys SET is_enabled = 1, updated_at = '{}' WHERE id = '{}'",
-            now, id
-        );
-        let _ = db.execute(&sql).await;
+        // 使用参数化查询防止 SQL 注入
+        sqlx::query("UPDATE api_keys SET is_enabled = 1, updated_at = ? WHERE id = ?")
+            .bind(&now)
+            .bind(id)
+            .execute(db.pool())
+            .await?;
         Ok(())
     }
 
@@ -604,11 +622,12 @@ impl ApiKey {
     pub async fn disable(db: &Database, id: &str) -> Result<(), sqlx::Error> {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-        let sql = format!(
-            "UPDATE api_keys SET is_enabled = 0, updated_at = '{}' WHERE id = '{}'",
-            now, id
-        );
-        let _ = db.execute(&sql).await;
+        // 使用参数化查询防止 SQL 注入
+        sqlx::query("UPDATE api_keys SET is_enabled = 0, updated_at = ? WHERE id = ?")
+            .bind(&now)
+            .bind(id)
+            .execute(db.pool())
+            .await?;
         Ok(())
     }
 
@@ -626,60 +645,65 @@ impl ApiKey {
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-        let sql = format!(
+        // 使用参数化查询防止 SQL 注入
+        sqlx::query(
             r#"
             INSERT INTO api_usage (id, tenant_id, api_key_id, method, path, status_code, latency_ms, ip_address, created_at)
-            VALUES ('{}', '{}', '{}', '{}', '{}', {}, {}, '{}', '{}')
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
-            id,
-            tenant_id,
-            api_key_id.unwrap_or(""),
-            method,
-            path,
-            status_code,
-            latency_ms,
-            ip_address.unwrap_or(""),
-            now
-        );
-
-        db.execute(&sql).await?;
+        )
+        .bind(&id)
+        .bind(tenant_id)
+        .bind(api_key_id.unwrap_or(""))
+        .bind(method)
+        .bind(path)
+        .bind(status_code)
+        .bind(latency_ms)
+        .bind(ip_address.unwrap_or(""))
+        .bind(&now)
+        .execute(db.pool())
+        .await?;
 
         // 更新 Key 使用统计
         if let Some(key_id) = api_key_id {
-            let update_sql = format!(
+            sqlx::query(
                 r#"
-                UPDATE api_keys SET 
-                    last_used_at = '{}',
-                    last_used_ip = '{}',
+                UPDATE api_keys SET
+                    last_used_at = ?,
+                    last_used_ip = ?,
                     request_count = request_count + 1
-                WHERE id = '{}'
+                WHERE id = ?
             "#,
-                now,
-                ip_address.unwrap_or(""),
-                key_id
-            );
-            db.execute(&update_sql).await?;
+            )
+            .bind(&now)
+            .bind(ip_address.unwrap_or(""))
+            .bind(key_id)
+            .execute(db.pool())
+            .await?;
         }
 
         // 更新租户使用统计
-        let usage_sql = format!(
+        let error_count = if status_code >= 400 { 1 } else { 0 };
+        sqlx::query(
             r#"
             INSERT INTO tenant_usage (id, tenant_id, api_call_count, total_api_calls, total_api_errors, updated_at)
-            VALUES ('{}', '{}', 1, 1, {}, '{}')
-            ON CONFLICT(tenant_id) DO UPDATE SET 
+            VALUES (?, ?, 1, 1, ?, ?)
+            ON CONFLICT(tenant_id) DO UPDATE SET
                 api_call_count = api_call_count + 1,
                 total_api_calls = total_api_calls + 1,
-                total_api_errors = total_api_errors + {},
-                updated_at = '{}'
+                total_api_errors = total_api_errors + ?,
+                updated_at = ?
         "#,
-            uuid::Uuid::new_v4().to_string(),
-            tenant_id,
-            if status_code >= 400 { 1 } else { 0 },
-            now,
-            if status_code >= 400 { 1 } else { 0 },
-            now
-        );
-        let _ = db.execute(&usage_sql).await;
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(tenant_id)
+        .bind(error_count)
+        .bind(&now)
+        .bind(error_count)
+        .bind(&now)
+        .execute(db.pool())
+        .await?;
+
         Ok(())
     }
 
@@ -689,43 +713,50 @@ impl ApiKey {
         tenant_id: &str,
         days: i32,
     ) -> Result<ApiUsageStats, sqlx::Error> {
-        let sql = format!(
+        // 计算日期范围，避免在 SQL 中直接拼接天数
+        let cutoff_date = (chrono::Utc::now() - chrono::Duration::days(days as i64))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+
+        // 使用参数化查询防止 SQL 注入
+        let row = sqlx::query(
             r#"
-            SELECT 
+            SELECT
                 COUNT(*) as total_calls,
                 SUM(CASE WHEN status_code < 400 THEN 1 ELSE 0 END) as success_calls,
                 SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) as error_calls,
                 COALESCE(AVG(latency_ms), 0) as avg_latency,
                 MIN(created_at) as period_start,
                 MAX(created_at) as period_end
-            FROM api_usage 
-            WHERE tenant_id = '{}' 
-            AND created_at >= datetime('now', '-{} days')
+            FROM api_usage
+            WHERE tenant_id = ?
+            AND created_at >= ?
         "#,
-            tenant_id, days
-        );
+        )
+        .bind(tenant_id)
+        .bind(&cutoff_date)
+        .fetch_optional(db.pool())
+        .await?;
 
-        let mut rows = db
-            .query(&sql, |row| {
-                Ok(ApiUsageStats {
-                    total_calls: row.try_get::<i64, _>("total_calls")?,
-                    success_calls: row.try_get::<i64, _>("success_calls")?,
-                    error_calls: row.try_get::<i64, _>("error_calls")?,
-                    avg_latency_ms: row.try_get::<f64, _>("avg_latency")?,
-                    period_start: row.try_get("period_start")?,
-                    period_end: row.try_get("period_end")?,
-                })
+        if let Some(row) = row {
+            Ok(ApiUsageStats {
+                total_calls: row.try_get::<i64, _>("total_calls")?,
+                success_calls: row.try_get::<i64, _>("success_calls")?,
+                error_calls: row.try_get::<i64, _>("error_calls")?,
+                avg_latency_ms: row.try_get::<f64, _>("avg_latency")?,
+                period_start: row.try_get("period_start")?,
+                period_end: row.try_get("period_end")?,
             })
-            .await?;
-
-        Ok(rows.pop().unwrap_or(ApiUsageStats {
-            total_calls: 0,
-            success_calls: 0,
-            error_calls: 0,
-            avg_latency_ms: 0.0,
-            period_start: String::new(),
-            period_end: String::new(),
-        }))
+        } else {
+            Ok(ApiUsageStats {
+                total_calls: 0,
+                success_calls: 0,
+                error_calls: 0,
+                avg_latency_ms: 0.0,
+                period_start: String::new(),
+                period_end: String::new(),
+            })
+        }
     }
 }
 
