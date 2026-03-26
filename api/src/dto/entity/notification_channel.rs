@@ -101,10 +101,63 @@ impl NotificationChannel {
         db: &Database,
         id: &str,
     ) -> Result<Option<NotificationChannel>, sqlx::Error> {
-        let sql = format!("SELECT * FROM notification_channels WHERE id = '{}' LIMIT 1", id);
+        // 使用参数化查询防止 SQL 注入
+        let row = sqlx::query("SELECT * FROM notification_channels WHERE id = ? LIMIT 1")
+            .bind(id)
+            .fetch_optional(db.pool())
+            .await?;
 
-        let mut rows = db
-            .query(&sql, |row| {
+        if let Some(row) = row {
+            Ok(Some(NotificationChannel {
+                id: row.try_get("id")?,
+                name: row.try_get("name")?,
+                channel_type: row.try_get("channel_type")?,
+                config: row.try_get("config")?,
+                is_enabled: row.try_get::<i32, _>("is_enabled")? != 0,
+                description: row.try_get("description")?,
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// 查询所有
+    pub async fn find_all(
+        db: &Database,
+        params: &NotificationChannelQueryParams,
+    ) -> Result<Vec<NotificationChannel>, sqlx::Error> {
+        let page = params.page.unwrap_or(1);
+        let page_size = params.page_size.unwrap_or(20);
+        let offset = (page - 1) * page_size;
+
+        // 使用 QueryBuilder 防止 SQL 注入
+        let mut query_builder = sqlx::query_builder::QueryBuilder::new(
+            "SELECT * FROM notification_channels WHERE 1=1"
+        );
+
+        if let Some(ref channel_type) = params.channel_type {
+            query_builder.push(" AND channel_type = ");
+            query_builder.push_bind(channel_type);
+        }
+        if let Some(is_enabled) = params.is_enabled {
+            query_builder.push(" AND is_enabled = ");
+            query_builder.push_bind(if is_enabled { 1 } else { 0 });
+        }
+
+        query_builder.push(" ORDER BY created_at DESC");
+        query_builder.push(" LIMIT ");
+        query_builder.push_bind(page_size as i64);
+        query_builder.push(" OFFSET ");
+        query_builder.push_bind(offset as i64);
+
+        // 使用 QueryBuilder 直接执行查询
+        let query = query_builder.build();
+        let rows = query.fetch_all(db.pool()).await?;
+
+        rows.into_iter()
+            .map(|row| {
                 Ok(NotificationChannel {
                     id: row.try_get("id")?,
                     name: row.try_get("name")?,
@@ -116,45 +169,7 @@ impl NotificationChannel {
                     updated_at: row.try_get("updated_at")?,
                 })
             })
-            .await?;
-
-        Ok(rows.pop())
-    }
-
-    /// 查询所有
-    pub async fn find_all(
-        db: &Database,
-        params: &NotificationChannelQueryParams,
-    ) -> Result<Vec<NotificationChannel>, sqlx::Error> {
-        let mut sql = String::from("SELECT * FROM notification_channels WHERE 1=1");
-
-        if let Some(ref channel_type) = params.channel_type {
-            sql.push_str(&format!(" AND channel_type = '{}'", channel_type));
-        }
-        if let Some(is_enabled) = params.is_enabled {
-            sql.push_str(&format!(" AND is_enabled = {}", if is_enabled { 1 } else { 0 }));
-        }
-
-        sql.push_str(" ORDER BY created_at DESC");
-
-        let page = params.page.unwrap_or(1);
-        let page_size = params.page_size.unwrap_or(20);
-        let offset = (page - 1) * page_size;
-        sql.push_str(&format!(" LIMIT {} OFFSET {}", page_size, offset));
-
-        db.query(&sql, |row| {
-            Ok(NotificationChannel {
-                id: row.try_get("id")?,
-                name: row.try_get("name")?,
-                channel_type: row.try_get("channel_type")?,
-                config: row.try_get("config")?,
-                is_enabled: row.try_get::<i32, _>("is_enabled")? != 0,
-                description: row.try_get("description")?,
-                created_at: row.try_get("created_at")?,
-                updated_at: row.try_get("updated_at")?,
-            })
-        })
-        .await
+            .collect()
     }
 
     /// 创建
@@ -165,21 +180,22 @@ impl NotificationChannel {
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-        let sql = format!(
+        // 使用参数化查询防止 SQL 注入
+        sqlx::query(
             r#"
             INSERT INTO notification_channels (id, name, channel_type, config, is_enabled, description, created_at, updated_at)
-            VALUES ('{}', '{}', '{}', '{}', 1, '{}', '{}', '{}')
-        "#,
-            id,
-            req.name,
-            req.channel_type,
-            req.config,
-            req.description.as_deref().unwrap_or(""),
-            now,
-            now
-        );
-
-        db.execute(&sql).await?;
+            VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+            "#,
+        )
+        .bind(&id)
+        .bind(&req.name)
+        .bind(&req.channel_type)
+        .bind(&req.config)
+        .bind(req.description.as_deref().unwrap_or(""))
+        .bind(&now)
+        .bind(&now)
+        .execute(db.pool())
+        .await?;
 
         Self::find_by_id(db, &id).await?.ok_or(sqlx::Error::RowNotFound)
     }
@@ -190,34 +206,47 @@ impl NotificationChannel {
         id: &str,
         req: &UpdateNotificationChannelRequest,
     ) -> Result<NotificationChannel, sqlx::Error> {
-        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let now = chrono::Utc::now().to_rfc3339();
 
-        let mut updates = vec![format!("updated_at = '{}'", now)];
+        // 构建动态更新语句 - 使用参数化查询防止 SQL 注入
+        let mut query_builder = sqlx::query_builder::QueryBuilder::new(
+            "UPDATE notification_channels SET updated_at = "
+        );
+        query_builder.push_bind(&now);
 
         if let Some(ref name) = req.name {
-            updates.push(format!("name = '{}'", name));
+            query_builder.push(", name = ");
+            query_builder.push_bind(name);
         }
         if let Some(ref channel_type) = req.channel_type {
-            updates.push(format!("channel_type = '{}'", channel_type));
+            query_builder.push(", channel_type = ");
+            query_builder.push_bind(channel_type);
         }
         if let Some(ref config) = req.config {
-            updates.push(format!("config = '{}'", config));
+            query_builder.push(", config = ");
+            query_builder.push_bind(config);
         }
         if let Some(ref description) = req.description {
-            updates.push(format!("description = '{}'", description));
+            query_builder.push(", description = ");
+            query_builder.push_bind(description);
         }
 
-        let sql =
-            format!("UPDATE notification_channels SET {} WHERE id = '{}'", updates.join(", "), id);
-        let _ = db.execute(&sql).await;
+        query_builder.push(" WHERE id = ");
+        query_builder.push_bind(id);
+
+        query_builder.build().execute(db.pool()).await?;
 
         Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 删除
     pub async fn delete(db: &Database, id: &str) -> Result<u64, sqlx::Error> {
-        let sql = format!("DELETE FROM notification_channels WHERE id = '{}'", id);
-        db.execute(&sql).await
+        // 使用参数化查询防止 SQL 注入
+        let result = sqlx::query("DELETE FROM notification_channels WHERE id = ?")
+            .bind(id)
+            .execute(db.pool())
+            .await?;
+        Ok(result.rows_affected())
     }
 
     /// 设置启用/禁用
@@ -226,14 +255,14 @@ impl NotificationChannel {
         id: &str,
         is_enabled: bool,
     ) -> Result<NotificationChannel, sqlx::Error> {
-        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        let sql = format!(
-            "UPDATE notification_channels SET is_enabled = {}, updated_at = '{}' WHERE id = '{}'",
-            if is_enabled { 1 } else { 0 },
-            now,
-            id
-        );
-        let _ = db.execute(&sql).await;
+        let now = chrono::Utc::now().to_rfc3339();
+        // 使用参数化查询防止 SQL 注入
+        sqlx::query("UPDATE notification_channels SET is_enabled = ?, updated_at = ? WHERE id = ?")
+            .bind(if is_enabled { 1 } else { 0 })
+            .bind(&now)
+            .bind(id)
+            .execute(db.pool())
+            .await?;
 
         Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound)
     }

@@ -24,8 +24,7 @@ pub fn create_router() -> Router<AppState> {
         .route("/automations/{id}", get(get_automation))
         .route("/automations/{id}", put(update_automation))
         .route("/automations/{id}", delete(delete_automation))
-        .route("/automations/{id}/enable", post(enable_automation))
-        .route("/automations/{id}/disable", post(disable_automation))
+        // 复杂业务动作，保持 RPC 风格
         .route("/automations/{id}/run", post(run_automation))
         .route("/automations/{id}/test", post(test_automation))
         .route("/automations/statistics", get(get_statistics))
@@ -82,24 +81,42 @@ async fn list_automations(
     let page = params.page.unwrap_or(1);
     let page_size = params.page_size.unwrap_or(20);
     let offset = (page - 1) * page_size;
-    
-    let mut sql = String::from("SELECT * FROM automations WHERE 1=1");
-    
+
+    let db = state.database.clone();
+
+    // 使用 QueryBuilder 防止 SQL 注入
+    let mut query_builder = sqlx::query_builder::QueryBuilder::new("SELECT * FROM automations WHERE 1=1");
+
     if let Some(ref trigger_type) = params.trigger_type {
-        sql.push_str(&format!(" AND trigger_type = '{}'", trigger_type));
+        query_builder.push(" AND trigger_type = ");
+        query_builder.push_bind(trigger_type);
     }
     if let Some(enabled) = params.enabled {
-        sql.push_str(&format!(" AND enabled = {}", if enabled { 1 } else { 0 }));
+        query_builder.push(" AND enabled = ");
+        query_builder.push_bind(if enabled { 1 } else { 0 });
     }
     if let Some(ref name) = params.name {
-        sql.push_str(&format!(" AND name LIKE '%{}%'", name));
+        query_builder.push(" AND name LIKE ");
+        query_builder.push_bind(format!("%{}%", name));
     }
-    sql.push_str(&format!(" ORDER BY priority LIMIT {} OFFSET {}", page_size, offset));
-    
-    let db = state.database.clone();
-    
-    match db.query(&sql, map_automation_row).await {
-        Ok(results) => ApiResponseBuilder::success(results),
+    query_builder.push(" ORDER BY priority LIMIT ");
+    query_builder.push_bind(page_size as i64);
+    query_builder.push(" OFFSET ");
+    query_builder.push_bind(offset as i64);
+
+    // 使用 QueryBuilder 直接执行查询
+    let query = query_builder.build();
+    match query.fetch_all(db.pool()).await {
+        Ok(rows) => {
+            let results: Result<Vec<_>, _> = rows.iter().map(map_automation_row).collect();
+            match results {
+                Ok(data) => ApiResponseBuilder::success(data),
+                Err(e) => {
+                    tracing::error!("Failed to map automation rows: {}", e);
+                    ApiResponseBuilder::error("获取自动化列表失败")
+                }
+            }
+        }
         Err(e) => {
             tracing::error!("Failed to list automations: {}", e);
             ApiResponseBuilder::error("获取自动化列表失败")
@@ -112,11 +129,21 @@ async fn get_automation(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    let sql = format!("SELECT * FROM automations WHERE id = '{}'", id);
     let db = state.database.clone();
-    
-    match db.query_first(&sql, map_automation_row).await {
-        Ok(Some(result)) => ApiResponseBuilder::success(result),
+
+    // 使用参数化查询防止 SQL 注入
+    match sqlx::query("SELECT * FROM automations WHERE id = ?")
+        .bind(&id)
+        .fetch_optional(db.pool())
+        .await
+    {
+        Ok(Some(row)) => match map_automation_row(&row) {
+            Ok(result) => ApiResponseBuilder::success(result),
+            Err(e) => {
+                tracing::error!("Failed to map automation row: {}", e);
+                ApiResponseBuilder::error("获取自动化失败")
+            }
+        },
         Ok(None) => ApiResponseBuilder::error("自动化不存在"),
         Err(e) => {
             tracing::error!("Failed to get automation: {}", e);
@@ -156,49 +183,46 @@ async fn create_automation(
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
     let trigger_type = payload.trigger_type.unwrap_or_else(|| "event".to_string());
-    
+
     if let Some(ref cron) = payload.cron_expression {
         if cron::Schedule::from_str(cron).is_err() {
             return ApiResponseBuilder::error("无效的 Cron 表达式");
         }
     }
-    
-    let sql = format!(
+
+    // 使用参数化查询防止 SQL 注入
+    let result = sqlx::query(
         r#"INSERT INTO automations (
             id, name, description, trigger_type, event_source_type, event_device_id,
             event_property, event_condition, cron_expression, conditions, actions,
             timeout_seconds, retry_count, retry_delay_seconds, cooldown_seconds,
             priority, enabled, tags, created_at, updated_at
-        ) VALUES (
-            '{}', '{}', {}, '{}', {}, {}, {}, {}, {}, {}, '{}',
-            {}, {}, {}, {},
-            {}, {}, {}, '{}', '{}'
-        )"#,
-        id,
-        payload.name,
-        payload.description.as_ref().map(|s| format!("'{}'", s)).unwrap_or_else(|| "NULL".to_string()),
-        trigger_type,
-        payload.event_source_type.as_ref().map(|s| format!("'{}'", s)).unwrap_or_else(|| "NULL".to_string()),
-        payload.event_device_id.as_ref().map(|s| format!("'{}'", s)).unwrap_or_else(|| "NULL".to_string()),
-        payload.event_property.as_ref().map(|s| format!("'{}'", s)).unwrap_or_else(|| "NULL".to_string()),
-        payload.event_condition.as_ref().map(|s| format!("'{}'", s)).unwrap_or_else(|| "NULL".to_string()),
-        payload.cron_expression.as_ref().map(|s| format!("'{}'", s)).unwrap_or_else(|| "NULL".to_string()),
-        payload.conditions.as_ref().map(|s| format!("'{}'", s)).unwrap_or_else(|| "NULL".to_string()),
-        payload.actions,
-        payload.timeout_seconds.unwrap_or(30),
-        payload.retry_count.unwrap_or(0),
-        payload.retry_delay_seconds.unwrap_or(5),
-        payload.cooldown_seconds.unwrap_or(0),
-        payload.priority.unwrap_or(100),
-        payload.enabled.unwrap_or(true) as i32,
-        payload.tags.as_ref().map(|s| format!("'{}'", s)).unwrap_or_else(|| "NULL".to_string()),
-        now,
-        now
-    );
-    
-    let db = state.database.clone();
-    
-    match db.execute(&sql).await {
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+    )
+    .bind(&id)
+    .bind(&payload.name)
+    .bind(payload.description.as_deref())
+    .bind(&trigger_type)
+    .bind(payload.event_source_type.as_deref())
+    .bind(payload.event_device_id.as_deref())
+    .bind(payload.event_property.as_deref())
+    .bind(payload.event_condition.as_deref())
+    .bind(payload.cron_expression.as_deref())
+    .bind(payload.conditions.as_deref())
+    .bind(&payload.actions)
+    .bind(payload.timeout_seconds.unwrap_or(30))
+    .bind(payload.retry_count.unwrap_or(0))
+    .bind(payload.retry_delay_seconds.unwrap_or(5))
+    .bind(payload.cooldown_seconds.unwrap_or(0))
+    .bind(payload.priority.unwrap_or(100))
+    .bind(payload.enabled.unwrap_or(true) as i32)
+    .bind(payload.tags.as_deref())
+    .bind(&now)
+    .bind(&now)
+    .execute(state.database.pool())
+    .await;
+
+    match result {
         Ok(_) => get_automation(State(state), Path(id)).await,
         Err(e) => {
             tracing::error!("Failed to create automation: {}", e);
@@ -230,25 +254,72 @@ async fn update_automation(
     Json(payload): Json<UpdateAutomationRequest>,
 ) -> Json<ApiResponse<serde_json::Value>> {
     let now = chrono::Utc::now().to_rfc3339();
-    
-    let mut updates = vec![format!("updated_at = '{}'", now)];
-    
-    if let Some(name) = payload.name { updates.push(format!("name = '{}'", name)); }
-    if let Some(description) = payload.description { updates.push(format!("description = '{}'", description)); }
-    if let Some(trigger_type) = payload.trigger_type { updates.push(format!("trigger_type = '{}'", trigger_type)); }
-    if let Some(cron_expression) = payload.cron_expression { updates.push(format!("cron_expression = '{}'", cron_expression)); }
-    if let Some(conditions) = payload.conditions { updates.push(format!("conditions = '{}'", conditions)); }
-    if let Some(actions) = payload.actions { updates.push(format!("actions = '{}'", actions)); }
-    if let Some(timeout_seconds) = payload.timeout_seconds { updates.push(format!("timeout_seconds = {}", timeout_seconds)); }
-    if let Some(priority) = payload.priority { updates.push(format!("priority = {}", priority)); }
-    if let Some(enabled) = payload.enabled { updates.push(format!("enabled = {}", enabled as i32)); }
-    if let Some(tags) = payload.tags { updates.push(format!("tags = '{}'", tags)); }
-    
-    let sql = format!("UPDATE automations SET {} WHERE id = '{}'", updates.join(", "), id);
-    
-    let db = state.database.clone();
-    
-    match db.execute(&sql).await {
+
+    // 检查是否有任何字段需要更新
+    let has_updates = payload.name.is_some()
+        || payload.description.is_some()
+        || payload.trigger_type.is_some()
+        || payload.cron_expression.is_some()
+        || payload.conditions.is_some()
+        || payload.actions.is_some()
+        || payload.timeout_seconds.is_some()
+        || payload.priority.is_some()
+        || payload.enabled.is_some()
+        || payload.tags.is_some();
+
+    if !has_updates {
+        return get_automation(State(state), Path(id)).await;
+    }
+
+    // 使用 QueryBuilder 防止 SQL 注入
+    let mut query_builder = sqlx::query_builder::QueryBuilder::new("UPDATE automations SET updated_at = ");
+    query_builder.push_bind(&now);
+
+    if let Some(ref name) = payload.name {
+        query_builder.push(", name = ");
+        query_builder.push_bind(name);
+    }
+    if let Some(ref description) = payload.description {
+        query_builder.push(", description = ");
+        query_builder.push_bind(description);
+    }
+    if let Some(ref trigger_type) = payload.trigger_type {
+        query_builder.push(", trigger_type = ");
+        query_builder.push_bind(trigger_type);
+    }
+    if let Some(ref cron_expression) = payload.cron_expression {
+        query_builder.push(", cron_expression = ");
+        query_builder.push_bind(cron_expression);
+    }
+    if let Some(ref conditions) = payload.conditions {
+        query_builder.push(", conditions = ");
+        query_builder.push_bind(conditions);
+    }
+    if let Some(ref actions) = payload.actions {
+        query_builder.push(", actions = ");
+        query_builder.push_bind(actions);
+    }
+    if let Some(timeout_seconds) = payload.timeout_seconds {
+        query_builder.push(", timeout_seconds = ");
+        query_builder.push_bind(timeout_seconds);
+    }
+    if let Some(priority) = payload.priority {
+        query_builder.push(", priority = ");
+        query_builder.push_bind(priority);
+    }
+    if let Some(enabled) = payload.enabled {
+        query_builder.push(", enabled = ");
+        query_builder.push_bind(enabled as i32);
+    }
+    if let Some(ref tags) = payload.tags {
+        query_builder.push(", tags = ");
+        query_builder.push_bind(tags);
+    }
+
+    query_builder.push(" WHERE id = ");
+    query_builder.push_bind(&id);
+
+    match query_builder.build().execute(state.database.pool()).await {
         Ok(_) => get_automation(State(state), Path(id)).await,
         Err(e) => {
             tracing::error!("Failed to update automation: {}", e);
@@ -262,50 +333,19 @@ async fn delete_automation(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Json<ApiResponse<bool>> {
-    let sql = format!("DELETE FROM automations WHERE id = '{}'", id);
     let db = state.database.clone();
-    
-    match db.execute(&sql).await {
-        Ok(_) => ApiResponseBuilder::success(true),
+
+    // 使用参数化查询防止 SQL 注入
+    match sqlx::query("DELETE FROM automations WHERE id = ?")
+        .bind(&id)
+        .execute(db.pool())
+        .await
+    {
+        Ok(result) if result.rows_affected() > 0 => ApiResponseBuilder::success(true),
+        Ok(_) => ApiResponseBuilder::error("自动化不存在"),
         Err(e) => {
             tracing::error!("Failed to delete automation: {}", e);
             ApiResponseBuilder::error("删除自动化失败")
-        }
-    }
-}
-
-/// 启用
-async fn enable_automation(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Json<ApiResponse<serde_json::Value>> {
-    let sql = format!("UPDATE automations SET enabled = 1, updated_at = '{}' WHERE id = '{}'",
-        chrono::Utc::now().to_rfc3339(), id);
-    let db = state.database.clone();
-    
-    match db.execute(&sql).await {
-        Ok(_) => get_automation(State(state), Path(id)).await,
-        Err(e) => {
-            tracing::error!("Failed to enable automation: {}", e);
-            ApiResponseBuilder::error("启用自动化失败")
-        }
-    }
-}
-
-/// 禁用
-async fn disable_automation(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Json<ApiResponse<serde_json::Value>> {
-    let sql = format!("UPDATE automations SET enabled = 0, updated_at = '{}' WHERE id = '{}'",
-        chrono::Utc::now().to_rfc3339(), id);
-    let db = state.database.clone();
-    
-    match db.execute(&sql).await {
-        Ok(_) => get_automation(State(state), Path(id)).await,
-        Err(e) => {
-            tracing::error!("Failed to disable automation: {}", e);
-            ApiResponseBuilder::error("禁用自动化失败")
         }
     }
 }
@@ -316,18 +356,25 @@ async fn run_automation(
     Path(id): Path<String>,
 ) -> Json<ApiResponse<serde_json::Value>> {
     let now = chrono::Utc::now().to_rfc3339();
-    let sql = format!(
-        "UPDATE automations SET run_count = run_count + 1, last_run_at = '{}', last_run_status = 'success' WHERE id = '{}'",
-        now, id
-    );
-    
-    let db = state.database.clone();
-    let _ = db.execute(&sql).await;
-    
-    ApiResponseBuilder::success(serde_json::json!({
-        "message": "自动化已执行",
-        "executed_at": now
-    }))
+
+    // 使用参数化查询防止 SQL 注入
+    match sqlx::query(
+        "UPDATE automations SET run_count = run_count + 1, last_run_at = ?, last_run_status = 'success' WHERE id = ?"
+    )
+    .bind(&now)
+    .bind(&id)
+    .execute(state.database.pool())
+    .await
+    {
+        Ok(_) => ApiResponseBuilder::success(serde_json::json!({
+            "message": "自动化已执行",
+            "executed_at": now
+        })),
+        Err(e) => {
+            tracing::error!("Failed to run automation: {}", e);
+            ApiResponseBuilder::error("执行自动化失败")
+        }
+    }
 }
 
 /// 测试
@@ -357,19 +404,21 @@ async fn get_statistics(
     State(state): State<AppState>,
 ) -> Json<ApiResponse<serde_json::Value>> {
     let db = state.database.clone();
-    
+
     // 获取总数
-    let total = match db.execute("SELECT COUNT(*) FROM automations").await {
-        Ok(_) => 0i64,
-        Err(_) => 0i64,
-    };
-    
+    let total: i64 = db
+        .query_first("SELECT COUNT(*) FROM automations", |row| row.try_get::<i64, _>(0))
+        .await
+        .unwrap_or(Some(0))
+        .unwrap_or(0);
+
     // 获取启用数
-    let enabled = match db.execute("SELECT COUNT(*) FROM automations WHERE enabled = 1").await {
-        Ok(_) => 0i64,
-        Err(_) => 0i64,
-    };
-    
+    let enabled: i64 = db
+        .query_first("SELECT COUNT(*) FROM automations WHERE enabled = 1", |row| row.try_get::<i64, _>(0))
+        .await
+        .unwrap_or(Some(0))
+        .unwrap_or(0);
+
     ApiResponseBuilder::success(serde_json::json!({
         "total": total,
         "enabled": enabled,
