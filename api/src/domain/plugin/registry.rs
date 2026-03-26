@@ -142,23 +142,20 @@ impl PluginRegistry {
     fn create_config_plugin(
         &self,
         manifest: &PluginManifest,
-        config: &toml::Value,
-        context: Arc<AppContext>,
+        _config: &toml::Value,
+        _context: Arc<AppContext>,
     ) -> Result<Box<dyn PluginHandler>, Error> {
         match manifest.plugin_type {
-            PluginType::Protocol => {
-                use crate::domain::plugin::protocol;
-                protocol::create_handler(config)
-            }
-            PluginType::Notification => {
-                use crate::domain::plugin::notification;
-                notification::create_handler(config, context)
-            }
-            PluginType::Scheduler => {
-                use crate::domain::plugin::scheduler;
-                scheduler::create_handler(config)
-            }
-            _ => Err(Error::Unsupported(format!(
+            PluginType::Protocol => Err(Error::Unsupported(
+                "Protocol plugin handler not implemented yet".to_string(),
+            )),
+            PluginType::Notification => Err(Error::Unsupported(
+                "Notification plugin handler not implemented yet".to_string(),
+            )),
+            PluginType::Scheduler => Err(Error::Unsupported(
+                "Scheduler plugin handler not implemented yet".to_string(),
+            )),
+            PluginType::Storage | PluginType::Integration => Err(Error::Unsupported(format!(
                 "Plugin type {:?} not implemented yet",
                 manifest.plugin_type
             ))),
