@@ -17,6 +17,7 @@ use crate::{
 type DriverFactory = Box<dyn Fn(Device, Arc<DataContext>) -> Box<dyn DeviceDriver> + Send + Sync>;
 
 /// 统一驱动注册表（支持静态和动态驱动）
+#[deprecated(since = "0.2.0", note = "Use PluginRegistry from domain::plugin instead")]
 pub struct UnifiedDriverRegistry {
     /// 静态驱动工厂（编译时注册）
     static_factories: DashMap<String, DriverFactory>,
