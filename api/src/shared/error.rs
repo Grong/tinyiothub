@@ -10,6 +10,8 @@ pub enum Error {
     NetworkError(String),
     ConfigError(String),
     ValidationError(String),
+    DatabaseError(String),
+    SerializationError(String),
 }
 
 impl fmt::Display for Error {
@@ -23,6 +25,8 @@ impl fmt::Display for Error {
             Error::NetworkError(ref s) => write!(f, "network error: {s}"),
             Error::ConfigError(ref s) => write!(f, "config error: {s}"),
             Error::ValidationError(ref s) => write!(f, "validation error: {s}"),
+            Error::DatabaseError(ref s) => write!(f, "database error: {s}"),
+            Error::SerializationError(ref s) => write!(f, "serialization error: {s}"),
         }
     }
 }

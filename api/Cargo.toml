@@ -44,6 +44,10 @@ num_cpus = "1.16"
 # 数据库
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "chrono", "uuid"] }
 
+# 存储插件依赖
+tokio-postgres = "0.7"
+influxdb2 = "0.4"
+
 # MQTT 客户端
 rumqttc = { version = "0.24", default-features = false, features = ["use-rustls"] }
 

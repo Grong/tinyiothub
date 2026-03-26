@@ -1,0 +1,42 @@
+//! 集成插件
+//!
+//! 支持微信、钉钉、企业微信等外部系统集成。
+
+pub mod handlers;
+pub mod config;
+
+pub use config::{IntegrationConfig, WechatConfig, WeComConfig};
+pub use handlers::{IntegrationHandler, WechatHandler, WeComHandler};
+
+use crate::domain::plugin::{PluginHandler, AppContext};
+use crate::shared::error::Error;
+use std::sync::Arc;
+
+pub struct IntegrationRequest {
+    pub msg_type: String,
+    pub content: String,
+    pub extras: std::collections::HashMap<String, String>,
+}
+
+pub fn create_handler(
+    config: &toml::Value,
+    _context: Arc<AppContext>,
+) -> Result<Box<dyn PluginHandler>, Error> {
+    let integration_cfg = config.get("integration")
+        .ok_or_else(|| Error::ValidationError("Missing [integration] section".to_string()))?;
+
+    match integration_cfg.get("type").and_then(|v| v.as_str()) {
+        Some("wechat") => {
+            let cfg: WechatConfig = integration_cfg.try_into()?;
+            Ok(Box::new(WechatHandler::new(cfg)))
+        }
+        Some("wecom") => {
+            let cfg: WeComConfig = integration_cfg.try_into()?;
+            Ok(Box::new(WeComHandler::new(cfg)))
+        }
+        _ => Err(Error::Unsupported(format!(
+            "Unknown integration type: {:?}",
+            integration_cfg.get("type")
+        ))),
+    }
+}
