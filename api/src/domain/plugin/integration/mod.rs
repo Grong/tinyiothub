@@ -27,11 +27,23 @@ pub fn create_handler(
 
     match integration_cfg.get("type").and_then(|v| v.as_str()) {
         Some("wechat") => {
-            let cfg: WechatConfig = integration_cfg.try_into()?;
+            let mut json_val = serde_json::to_value(integration_cfg)
+                .map_err(|e| Error::ValidationError(format!("Invalid WeChat config: {}", e)))?;
+            if let Some(obj) = json_val.as_object_mut() {
+                obj.remove("type");
+            }
+            let cfg: WechatConfig = serde_json::from_value(json_val)
+                .map_err(|e| Error::ValidationError(format!("Invalid WeChat config: {}", e)))?;
             Ok(Box::new(WechatHandler::new(cfg)))
         }
         Some("wecom") => {
-            let cfg: WeComConfig = integration_cfg.try_into()?;
+            let mut json_val = serde_json::to_value(integration_cfg)
+                .map_err(|e| Error::ValidationError(format!("Invalid WeCom config: {}", e)))?;
+            if let Some(obj) = json_val.as_object_mut() {
+                obj.remove("type");
+            }
+            let cfg: WeComConfig = serde_json::from_value(json_val)
+                .map_err(|e| Error::ValidationError(format!("Invalid WeCom config: {}", e)))?;
             Ok(Box::new(WeComHandler::new(cfg)))
         }
         _ => Err(Error::Unsupported(format!(

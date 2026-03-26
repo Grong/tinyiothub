@@ -1,8 +1,6 @@
 //! 集成处理器
 
 use async_trait::async_trait;
-use std::collections::HashMap;
-use tracing::debug;
 
 use crate::domain::plugin::integration::IntegrationRequest;
 use crate::shared::error::Error;

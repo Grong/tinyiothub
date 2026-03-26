@@ -1,15 +1,16 @@
 //! 微信集成处理器
 
-use std::sync::Arc;
+use std::any::Any;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
 
-use super::IntegrationHandler;
 use crate::domain::plugin::integration::IntegrationRequest;
+use crate::domain::plugin::{PluginHandler, PluginManifest, PluginType};
 use crate::shared::error::Error;
 
+use crate::domain::plugin::integration::handlers::IntegrationHandler;
 use super::super::config::WechatConfig;
 
 #[derive(Serialize)]
@@ -29,15 +30,20 @@ struct WechatAccessTokenResponse {
 pub struct WechatHandler {
     config: WechatConfig,
     client: Client,
-    access_token: std::sync::Arc<tokio::sync::RwLock<Option<String>>>,
+    manifest: PluginManifest,
 }
 
 impl WechatHandler {
     pub fn new(config: WechatConfig) -> Self {
         Self {
+            manifest: PluginManifest {
+                name: "wechat".to_string(),
+                version: Some("1.0.0".to_string()),
+                plugin_type: PluginType::Integration,
+                description: Some("WeChat integration handler".to_string()),
+            },
             config,
             client: Client::new(),
-            access_token: Arc::new(tokio::sync::RwLock::new(None)),
         }
     }
 
@@ -90,5 +96,19 @@ impl IntegrationHandler for WechatHandler {
 
     fn name(&self) -> &str {
         "WechatHandler"
+    }
+}
+
+impl PluginHandler for WechatHandler {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn manifest(&self) -> &PluginManifest {
+        &self.manifest
+    }
+
+    fn plugin_type(&self) -> PluginType {
+        self.manifest.plugin_type
     }
 }

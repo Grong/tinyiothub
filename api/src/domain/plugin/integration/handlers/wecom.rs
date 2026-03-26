@@ -1,14 +1,16 @@
 //! 企业微信集成处理器
 
+use std::any::Any;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
 
-use super::IntegrationHandler;
 use crate::domain::plugin::integration::IntegrationRequest;
+use crate::domain::plugin::{PluginHandler, PluginManifest, PluginType};
 use crate::shared::error::Error;
 
+use crate::domain::plugin::integration::handlers::IntegrationHandler;
 use super::super::config::WeComConfig;
 
 #[derive(Serialize)]
@@ -30,11 +32,18 @@ struct WeComAccessTokenResponse {
 pub struct WeComHandler {
     config: WeComConfig,
     client: Client,
+    manifest: PluginManifest,
 }
 
 impl WeComHandler {
     pub fn new(config: WeComConfig) -> Self {
         Self {
+            manifest: PluginManifest {
+                name: "wecom".to_string(),
+                version: Some("1.0.0".to_string()),
+                plugin_type: PluginType::Integration,
+                description: Some("Enterprise WeChat integration handler".to_string()),
+            },
             config,
             client: Client::new(),
         }
@@ -91,5 +100,19 @@ impl IntegrationHandler for WeComHandler {
 
     fn name(&self) -> &str {
         "WeComHandler"
+    }
+}
+
+impl PluginHandler for WeComHandler {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn manifest(&self) -> &PluginManifest {
+        &self.manifest
+    }
+
+    fn plugin_type(&self) -> PluginType {
+        self.manifest.plugin_type
     }
 }
