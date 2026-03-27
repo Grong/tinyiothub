@@ -1,5 +1,6 @@
 //! MQTT 订阅协议处理器
 
+use std::any::Any;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -14,11 +15,13 @@ use crate::{
 };
 
 use super::super::config::MqttConfig;
+use crate::domain::plugin::{PluginHandler, PluginManifest, PluginType};
 
 pub struct MqttSubscribeHandler {
     config: MqttConfig,
     mapping: HashMap<String, String>,
     last_message: Arc<RwLock<Option<String>>>,
+    manifest: PluginManifest,
 }
 
 impl MqttSubscribeHandler {
@@ -27,6 +30,12 @@ impl MqttSubscribeHandler {
             config,
             mapping,
             last_message: Arc::new(RwLock::new(None)),
+            manifest: PluginManifest {
+                name: "mqtt_subscribe".to_string(),
+                version: Some("1.0.0".to_string()),
+                plugin_type: PluginType::Protocol,
+                description: Some("MQTT Subscribe protocol handler".to_string()),
+            },
         }
     }
 }
@@ -83,5 +92,19 @@ impl MqttSubscribeHandler {
             serde_json::Value::String(s) => ResultValue::string(name, s),
             _ => ResultValue::string(name, value.to_string()),
         }
+    }
+}
+
+impl PluginHandler for MqttSubscribeHandler {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn manifest(&self) -> &PluginManifest {
+        &self.manifest
+    }
+
+    fn plugin_type(&self) -> PluginType {
+        self.manifest.plugin_type
     }
 }

@@ -1,9 +1,9 @@
 pub mod registry;
 pub mod integration;
-// FIXME: These plugin submodules have pre-existing compilation errors and need to be completed
-// pub mod protocol;
-// pub mod notification;
-// pub mod scheduler;
+pub mod protocol;
+pub mod notification;
+pub mod scheduler;
+pub mod storage;
 pub mod driver_plugin;
 
 #[cfg(test)] mod tests;

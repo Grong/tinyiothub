@@ -1,12 +1,12 @@
 //! 存储处理器
 
 use async_trait::async_trait;
-use std::collections::HashMap;
 use tracing::debug;
 
 use crate::domain::plugin::storage::StorageData;
 use crate::shared::error::Error;
 
+#[async_trait]
 pub trait StorageHandler: Send + Sync {
     async fn write(&self, data: &StorageData) -> Result<(), Error>;
     fn name(&self) -> &str;

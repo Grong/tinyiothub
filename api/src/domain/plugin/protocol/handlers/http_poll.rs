@@ -1,5 +1,6 @@
 //! HTTP 轮询协议处理器
 
+use std::any::Any;
 use async_trait::async_trait;
 use reqwest::Client;
 use std::collections::HashMap;
@@ -14,11 +15,13 @@ use crate::{
 };
 
 use super::super::config::HttpPollConfig;
+use crate::domain::plugin::{PluginHandler, PluginManifest, PluginType};
 
 pub struct HttpPollHandler {
     config: HttpPollConfig,
     mapping: HashMap<String, String>,
     client: Client,
+    manifest: PluginManifest,
 }
 
 impl HttpPollHandler {
@@ -28,7 +31,17 @@ impl HttpPollHandler {
             .build()
             .expect("HTTP client build failed");
 
-        Self { config, mapping, client }
+        Self {
+            config,
+            mapping,
+            client,
+            manifest: PluginManifest {
+                name: "http_poll".to_string(),
+                version: Some("1.0.0".to_string()),
+                plugin_type: PluginType::Protocol,
+                description: Some("HTTP Polling protocol handler".to_string()),
+            },
+        }
     }
 
     fn build_url(&self) -> String {
@@ -119,5 +132,19 @@ impl HttpPollHandler {
             serde_json::Value::String(s) => ResultValue::string(name, s),
             _ => ResultValue::string(name, value.to_string()),
         }
+    }
+}
+
+impl PluginHandler for HttpPollHandler {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn manifest(&self) -> &PluginManifest {
+        &self.manifest
+    }
+
+    fn plugin_type(&self) -> PluginType {
+        self.manifest.plugin_type
     }
 }

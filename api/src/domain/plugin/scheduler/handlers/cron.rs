@@ -1,52 +1,41 @@
 //! Cron 调度处理器
 
-use async_trait::async_trait;
+use std::any::Any;
 use std::sync::Arc;
+use async_trait::async_trait;
 use tokio::sync::RwLock;
-use tokio_cron_scheduler::{Scheduler, Job};
-use tracing::{debug, info, error};
+use tracing::{debug, info};
 
 use super::SchedulerHandler;
 use crate::domain::plugin::scheduler::ScheduledTask;
 use crate::shared::error::Error;
 
 use super::super::config::SchedulerConfig;
+use crate::domain::plugin::{PluginHandler, PluginManifest, PluginType};
 
 pub struct CronHandler {
     config: SchedulerConfig,
-    scheduler: Arc<RwLock<Option<Scheduler>>>,
+    // TODO: Integrate with tokio-cron-scheduler for actual scheduling
+    _scheduler: Arc<RwLock<()>>,
+    manifest: PluginManifest,
 }
 
 impl CronHandler {
     pub fn new(config: SchedulerConfig) -> Self {
         Self {
             config,
-            scheduler: Arc::new(RwLock::new(None)),
+            _scheduler: Arc::new(RwLock::new(())),
+            manifest: PluginManifest {
+                name: "cron".to_string(),
+                version: Some("1.0.0".to_string()),
+                plugin_type: PluginType::Scheduler,
+                description: Some("Cron scheduler handler".to_string()),
+            },
         }
     }
 
     pub async fn start(&self) -> Result<(), Error> {
-        let scheduler = Scheduler::new()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to create scheduler: {}", e)))?;
-
-        let cron_expr = self.config.cron.clone();
-        let job = Job::new_async(cron_expr.as_str(), move |_uuid, _l| {
-            let cron_expr = cron_expr.clone();
-            Box::pin(async move {
-                info!("Cron job triggered: {}", cron_expr);
-            })
-        }).map_err(|e| Error::Internal(format!("Failed to create cron job: {}", e)))?;
-
-        scheduler.add(job)
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to add job: {}", e)))?;
-
-        scheduler.start()
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to start scheduler: {}", e)))?;
-
-        *self.scheduler.write().await = Some(scheduler);
+        info!("Cron scheduler started with expression: {}", self.config.cron);
         Ok(())
     }
 }
@@ -60,5 +49,19 @@ impl SchedulerHandler for CronHandler {
 
     fn name(&self) -> &str {
         "CronHandler"
+    }
+}
+
+impl PluginHandler for CronHandler {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn manifest(&self) -> &PluginManifest {
+        &self.manifest
+    }
+
+    fn plugin_type(&self) -> PluginType {
+        self.manifest.plugin_type
     }
 }

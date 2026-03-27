@@ -5,7 +5,7 @@
 pub mod handlers;
 pub mod config;
 
-pub use config::{NotificationConfig, FeishuConfig, DingtalkConfig};
+pub use config::{FeishuConfig, DingtalkConfig};
 pub use handlers::{NotificationHandler, FeishuHandler, DingtalkHandler};
 
 use crate::domain::plugin::{PluginHandler, AppContext};
@@ -28,11 +28,23 @@ pub fn create_handler(
 
     match notification_cfg.get("type").and_then(|v| v.as_str()) {
         Some("feishu") => {
-            let cfg: FeishuConfig = notification_cfg.try_into()?;
+            let mut json_val: serde_json::Value = notification_cfg.clone().try_into()
+                .map_err(|e| Error::ValidationError(format!("Invalid Feishu config: {}", e)))?;
+            if let Some(obj) = json_val.as_object_mut() {
+                obj.remove("type");
+            }
+            let cfg: FeishuConfig = serde_json::from_value(json_val)
+                .map_err(|e| Error::ValidationError(format!("Invalid Feishu config: {}", e)))?;
             Ok(Box::new(FeishuHandler::new(cfg)))
         }
         Some("dingtalk") => {
-            let cfg: DingtalkConfig = notification_cfg.try_into()?;
+            let mut json_val: serde_json::Value = notification_cfg.clone().try_into()
+                .map_err(|e| Error::ValidationError(format!("Invalid Dingtalk config: {}", e)))?;
+            if let Some(obj) = json_val.as_object_mut() {
+                obj.remove("type");
+            }
+            let cfg: DingtalkConfig = serde_json::from_value(json_val)
+                .map_err(|e| Error::ValidationError(format!("Invalid Dingtalk config: {}", e)))?;
             Ok(Box::new(DingtalkHandler::new(cfg)))
         }
         _ => Err(Error::Unsupported(format!(

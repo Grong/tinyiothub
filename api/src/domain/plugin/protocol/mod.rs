@@ -5,7 +5,7 @@
 pub mod handlers;
 pub mod config;
 
-pub use config::{ProtocolConfig, HttpPollConfig, MqttConfig, ModbusConfig, SnmpConfig};
+pub use config::{HttpPollConfig, MqttConfig};
 pub use handlers::{ProtocolHandler, HttpPollHandler, MqttSubscribeHandler};
 
 use crate::domain::plugin::{PluginHandler, AppContext};
@@ -19,16 +19,24 @@ pub fn create_handler(config: &toml::Value) -> Result<Box<dyn PluginHandler>, Er
 
     match protocol_cfg.get("type").and_then(|v| v.as_str()) {
         Some("http_poll") => {
-            let cfg: HttpPollConfig = protocol_cfg.try_into()?;
+            let mut json_val: serde_json::Value = protocol_cfg.clone().try_into()
+                .map_err(|e| Error::ValidationError(format!("Invalid HTTP poll config: {}", e)))?;
+            if let Some(obj) = json_val.as_object_mut() {
+                obj.remove("type");
+            }
+            let cfg: HttpPollConfig = serde_json::from_value(json_val)
+                .map_err(|e| Error::ValidationError(format!("Invalid HTTP poll config: {}", e)))?;
             Ok(Box::new(HttpPollHandler::new(cfg, get_mapping(config)?)))
         }
         Some("mqtt_subscribe") => {
-            let cfg: MqttConfig = protocol_cfg.try_into()?;
+            let mut json_val: serde_json::Value = protocol_cfg.clone().try_into()
+                .map_err(|e| Error::ValidationError(format!("Invalid MQTT config: {}", e)))?;
+            if let Some(obj) = json_val.as_object_mut() {
+                obj.remove("type");
+            }
+            let cfg: MqttConfig = serde_json::from_value(json_val)
+                .map_err(|e| Error::ValidationError(format!("Invalid MQTT config: {}", e)))?;
             Ok(Box::new(MqttSubscribeHandler::new(cfg, get_mapping(config)?)))
-        }
-        Some("modbus_tcp") => {
-            let cfg: ModbusConfig = protocol_cfg.try_into()?;
-            Ok(Box::new(crate::domain::plugin::protocol::handlers::modbus_tcp::ModbusTcpHandler::new(cfg)))
         }
         _ => Err(Error::Unsupported(format!(
             "Unknown protocol type: {:?}",

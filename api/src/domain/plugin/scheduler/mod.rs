@@ -20,6 +20,12 @@ pub fn create_handler(config: &toml::Value) -> Result<Box<dyn PluginHandler>, Er
     let scheduler_cfg = config.get("scheduler")
         .ok_or_else(|| Error::ValidationError("Missing [scheduler] section".to_string()))?;
 
-    let cfg: SchedulerConfig = scheduler_cfg.try_into()?;
+    let mut json_val: serde_json::Value = scheduler_cfg.clone().try_into()
+        .map_err(|e| Error::ValidationError(format!("Invalid scheduler config: {}", e)))?;
+    if let Some(obj) = json_val.as_object_mut() {
+        obj.remove("type");
+    }
+    let cfg: SchedulerConfig = serde_json::from_value(json_val)
+        .map_err(|e| Error::ValidationError(format!("Invalid scheduler config: {}", e)))?;
     Ok(Box::new(CronHandler::new(cfg)))
 }

@@ -1,18 +1,21 @@
 //! 飞书通知处理器
 
+use std::any::Any;
 use async_trait::async_trait;
 use reqwest::Client;
-use tracing::debug;
+use tracing::{debug, error};
 
 use super::NotificationHandler;
 use crate::domain::plugin::notification::Notification;
 use crate::shared::error::Error;
 
 use super::super::config::FeishuConfig;
+use crate::domain::plugin::{PluginHandler, PluginManifest, PluginType};
 
 pub struct FeishuHandler {
     config: FeishuConfig,
     client: Client,
+    manifest: PluginManifest,
 }
 
 impl FeishuHandler {
@@ -20,6 +23,12 @@ impl FeishuHandler {
         Self {
             config,
             client: Client::new(),
+            manifest: PluginManifest {
+                name: "feishu".to_string(),
+                version: Some("1.0.0".to_string()),
+                plugin_type: PluginType::Notification,
+                description: Some("Feishu notification handler".to_string()),
+            },
         }
     }
 }
@@ -55,5 +64,19 @@ impl NotificationHandler for FeishuHandler {
 
     fn name(&self) -> &str {
         "FeishuHandler"
+    }
+}
+
+impl PluginHandler for FeishuHandler {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn manifest(&self) -> &PluginManifest {
+        &self.manifest
+    }
+
+    fn plugin_type(&self) -> PluginType {
+        self.manifest.plugin_type
     }
 }

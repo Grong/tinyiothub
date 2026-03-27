@@ -1,18 +1,21 @@
 //! 钉钉通知处理器
 
+use std::any::Any;
 use async_trait::async_trait;
 use reqwest::Client;
-use tracing::debug;
+use tracing::{debug, error};
 
 use super::NotificationHandler;
 use crate::domain::plugin::notification::Notification;
 use crate::shared::error::Error;
 
 use super::super::config::DingtalkConfig;
+use crate::domain::plugin::{PluginHandler, PluginManifest, PluginType};
 
 pub struct DingtalkHandler {
     config: DingtalkConfig,
     client: Client,
+    manifest: PluginManifest,
 }
 
 impl DingtalkHandler {
@@ -20,6 +23,12 @@ impl DingtalkHandler {
         Self {
             config,
             client: Client::new(),
+            manifest: PluginManifest {
+                name: "dingtalk".to_string(),
+                version: Some("1.0.0".to_string()),
+                plugin_type: PluginType::Notification,
+                description: Some("DingTalk notification handler".to_string()),
+            },
         }
     }
 }
@@ -50,5 +59,19 @@ impl NotificationHandler for DingtalkHandler {
 
     fn name(&self) -> &str {
         "DingtalkHandler"
+    }
+}
+
+impl PluginHandler for DingtalkHandler {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn manifest(&self) -> &PluginManifest {
+        &self.manifest
+    }
+
+    fn plugin_type(&self) -> PluginType {
+        self.manifest.plugin_type
     }
 }

@@ -1,5 +1,6 @@
 //! PostgreSQL 存储处理器
 
+use std::any::Any;
 use async_trait::async_trait;
 use tokio_postgres::NoTls;
 use tracing::{debug, error};
@@ -9,10 +10,12 @@ use crate::domain::plugin::storage::StorageData;
 use crate::shared::error::Error;
 
 use super::super::config::PostgresConfig;
+use crate::domain::plugin::{PluginHandler, PluginManifest, PluginType};
 
 pub struct PostgresHandler {
     config: PostgresConfig,
     client: tokio_postgres::Client,
+    manifest: PluginManifest,
 }
 
 impl PostgresHandler {
@@ -27,7 +30,16 @@ impl PostgresHandler {
             }
         });
 
-        Ok(Self { config, client })
+        Ok(Self {
+            config,
+            client,
+            manifest: PluginManifest {
+                name: "postgres".to_string(),
+                version: Some("1.0.0".to_string()),
+                plugin_type: PluginType::Storage,
+                description: Some("PostgreSQL storage handler".to_string()),
+            },
+        })
     }
 }
 
@@ -53,5 +65,19 @@ impl StorageHandler for PostgresHandler {
 
     fn name(&self) -> &str {
         "PostgresHandler"
+    }
+}
+
+impl PluginHandler for PostgresHandler {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn manifest(&self) -> &PluginManifest {
+        &self.manifest
+    }
+
+    fn plugin_type(&self) -> PluginType {
+        self.manifest.plugin_type
     }
 }

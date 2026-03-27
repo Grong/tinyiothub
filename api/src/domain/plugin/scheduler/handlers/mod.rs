@@ -6,6 +6,7 @@ use tracing::{debug, info};
 use crate::domain::plugin::scheduler::ScheduledTask;
 use crate::shared::error::Error;
 
+#[async_trait]
 pub trait SchedulerHandler: Send + Sync {
     async fn execute(&self, task: &ScheduledTask) -> Result<(), Error>;
     fn name(&self) -> &str;
