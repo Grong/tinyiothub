@@ -235,6 +235,7 @@ git commit -m "feat(mcp): refactor handle_call to use ToolHandler registry
 ## Task 2: Register Existing Tools in Registry
 
 **Files:**
+- Create: `mcp/src/handlers/alarm_handler.rs`
 - Modify: `mcp/src/main.rs` (McpServer::new)
 
 - [ ] **Step 1: Create device handler struct in `mcp/src/handlers/device_handler.rs`**
@@ -2054,9 +2055,30 @@ fn test_tool_registry_contains_all_new_tools() {
 
 #[test]
 fn test_not_implemented_error_has_phase_info() {
-    // Test that generate_driver stub returns structured error
+    // Test that tools returning NotImplemented include phase info
+    // Phase info should be serialized in error.data as:
+    // { "reason": "not_implemented", "message": "...", "available_in_phase": "Phase X" }
+    // This is verified by checking ToolError::NotImplemented serializes correctly
+    let err = super::ToolError::NotImplemented("Phase 3 required".to_string());
+    let json_err = serde_json::to_value(&err).unwrap();
+    assert_eq!(json_err.get("reason").and_then(|v| v.as_str()), Some("not_implemented"));
+}
+
+#[tokio::test]
+async fn test_generate_driver_returns_not_implemented() {
+    use crate::handlers::driver_handler::GenerateDriverHandler;
     let handler = GenerateDriverHandler;
-    // ... verify error contains phase info
+    let result = handler.handle(
+        jsonrpc_core::Params::None,
+        &crate::client::TinyIoTHubClient::new("http://localhost:3002", "test"),
+    ).await;
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    let err_msg = match err {
+        super::ToolError::NotImplemented(msg) => msg,
+        _ => panic!("Expected NotImplemented, got {:?}", err),
+    };
+    assert!(err_msg.contains("Phase 3"));
 }
 
 #[test]
