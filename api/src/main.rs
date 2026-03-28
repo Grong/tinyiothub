@@ -140,6 +140,10 @@ async fn main_impl() -> std::io::Result<()> {
     #[cfg(feature = "harmonyos")]
     let app = {
         use tower_http::services::ServeDir;
+        // Initialize MCP tools with AppState for harmonyos
+        use std::sync::Arc;
+        crate::api::mcp::init_app_state(Arc::new(app_state.clone()));
+        crate::api::mcp::register_tools().await;
         let api_router = crate::api::create_router();
         Router::new()
             .nest("/api", api_router)
@@ -148,7 +152,7 @@ async fn main_impl() -> std::io::Result<()> {
     };
 
     #[cfg(not(feature = "harmonyos"))]
-    let app = create_app_router(app_state);
+    let app = create_app_router(app_state).await;
 
     let bind_address = config::get().server_bind_address();
     info!("🚀 Server listening on {}", bind_address);
@@ -246,10 +250,18 @@ async fn initialize_logging() -> std::io::Result<()> {
 }
 
 /// Create the main application router
-fn create_app_router(app_state: crate::shared::app_state::AppState) -> Router {
+async fn create_app_router(app_state: crate::shared::app_state::AppState) -> Router {
     use tower_http::cors::{AllowOrigin, CorsLayer};
 
     tracing::info!("Creating CORS layer...");
+
+    // Initialize MCP tools with AppState
+    tracing::info!("Initializing MCP tools...");
+    use std::sync::Arc;
+    crate::api::mcp::init_app_state(Arc::new(app_state.clone()));
+    crate::api::mcp::register_tools().await;
+    tracing::info!("MCP tools initialized");
+
     // 创建CORS层 - 使用配置中的origins，支持credentials
     let config = crate::infrastructure::config::get();
     let cors_origins = &config.server.cors_origins;

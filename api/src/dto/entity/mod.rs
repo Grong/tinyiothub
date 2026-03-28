@@ -47,6 +47,8 @@ pub mod device_template;
 
 pub mod template_error;
 
+pub mod heartbeat;
+
 // Re-export commonly used types (using actual struct names from the modules)
 
 pub use device::Device;

@@ -11,9 +11,11 @@ pub mod auth;
 pub mod devices;
 pub mod drivers;
 pub mod events;
+pub mod heartbeat;
 pub mod jobs;
 pub mod marketplace;
 pub mod middleware;
+pub mod mcp;
 pub mod monitoring;
 pub mod notification_channels;
 pub mod notifications;
@@ -41,6 +43,8 @@ pub fn create_router() -> Router<AppState> {
         .nest("/tenants", tenants::create_router())
         .nest("/events", events::create_router())
         .nest("/jobs", jobs::create_router())
+        .nest("/heartbeat", heartbeat::create_router()) // 心跳端点
+        .nest("/mcp", mcp::create_router()) // MCP 工具端点
         .nest("/auth", auth::session::create_router()) // 需要认证的会话路由
         .route("/test-auth", get(test_auth_endpoint))
         .layer(axum_middleware::from_fn(crate::api::middleware::context::jwt_auth_middleware));
