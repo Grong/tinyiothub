@@ -242,7 +242,6 @@ mod tests {
         assert_eq!(json["properties"]["name"]["type"], "string");
         assert_eq!(json["properties"]["name"]["description"], "User name");
     }
-<<<<<<< HEAD
 
     // =========================================================================
     // Self-Healing MCP Handler Tests
@@ -356,6 +355,4 @@ mod tests {
         assert_eq!(handler.name(), "get_recovery_history");
         assert!(!handler.description().is_empty());
     }
-=======
->>>>>>> origin/main
 }
