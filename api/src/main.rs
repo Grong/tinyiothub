@@ -262,6 +262,10 @@ async fn create_app_router(app_state: crate::shared::app_state::AppState) -> Rou
     crate::api::mcp::register_tools().await;
     tracing::info!("MCP tools initialized");
 
+    // Initialize self-healing state
+    let db = app_state.database.clone();
+    let _self_healing_state = crate::api::self_healing::init_self_healing_state(db);
+
     // 创建CORS层 - 使用配置中的origins，支持credentials
     let config = crate::infrastructure::config::get();
     let cors_origins = &config.server.cors_origins;
