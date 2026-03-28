@@ -5,9 +5,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::api::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
+use crate::api::self_healing::get_self_healing_state;
+use crate::domain::self_healing::{RecoveryActionType, SeverityLevel};
+use crate::dto::entity::self_healing::{ExecuteSelfHealRequest, SelfHealingPolicyDto};
 
 /// Get self-heal policy tool handler
 pub struct GetSelfHealPolicyHandler;
@@ -27,30 +31,18 @@ impl ToolHandler for GetSelfHealPolicyHandler {
     }
 
     async fn execute(&self, _args: Value) -> Result<Value, ToolError> {
-        // Phase 1: Return default recovery policy configuration
-        Ok(serde_json::json!({
-            "enabled": true,
-            "health_thresholds": {
-                "cpu_warning": 70,
-                "cpu_critical": 90,
-                "memory_warning": 75,
-                "memory_critical": 90,
-                "disk_warning": 80,
-                "disk_critical": 95,
-                "network_warning": 5,
-                "network_critical": 10
-            },
-            "recovery_actions": [
-                {"type": "restart_process", "max_retries": 3},
-                {"type": "free_memory", "max_retries": 2},
-                {"type": "reset_network", "max_retries": 1}
-            ],
-            "cooldown_seconds": 300
-        }))
+        let state = get_self_healing_state()
+            .ok_or_else(|| ToolError::Internal("Self-healing not initialized".to_string()))?;
+
+        let state_guard = state.read().await;
+        let policy_dto = SelfHealingPolicyDto::from(&state_guard.policy);
+        drop(state_guard);
+
+        Ok(serde_json::to_value(policy_dto).unwrap_or_default())
     }
 }
 
-/// Execute self-heal action tool handler (Phase 1 stub)
+/// Execute self-heal action tool handler
 pub struct ExecuteSelfHealActionHandler;
 
 #[async_trait]
@@ -66,10 +58,17 @@ impl ToolHandler for ExecuteSelfHealActionHandler {
     fn input_schema(&self) -> InputSchema {
         let mut props = HashMap::new();
         props.insert(
+            "level".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("严重级别: L0, L1, L2, L3".to_string()),
+            },
+        );
+        props.insert(
             "actionType".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some("自愈动作类型: restart_process, free_memory, reset_network, restart_device".to_string()),
+                description: Some("自愈动作类型: log_only, restart_driver, rejoin_lora, reconnect_device, clean_logs, report_cloud, create_ticket".to_string()),
             },
         );
         props.insert(
@@ -79,22 +78,57 @@ impl ToolHandler for ExecuteSelfHealActionHandler {
                 description: Some("目标设备或进程 ID".to_string()),
             },
         );
-        props.insert(
-            "parameters".to_string(),
-            PropertySchema {
-                prop_type: "object".to_string(),
-                description: Some("动作参数".to_string()),
-            },
-        );
-        InputSchema::object(vec!["actionType".to_string()], props)
+        InputSchema::object(vec!["level".to_string(), "actionType".to_string()], props)
     }
 
-    async fn execute(&self, _args: Value) -> Result<Value, ToolError> {
-        Err(ToolError::NotImplemented("Phase 2: 自愈动作执行".to_string()))
+    async fn execute(&self, args: Value) -> Result<Value, ToolError> {
+        let request: ExecuteSelfHealRequest = serde_json::from_value(args)
+            .map_err(|e| ToolError::InvalidParams(e.to_string()))?;
+
+        let state = get_self_healing_state()
+            .ok_or_else(|| ToolError::Internal("Self-healing not initialized".to_string()))?;
+
+        let state_guard = state.read().await;
+        let executor = state_guard.executor.clone();
+        let policy = state_guard.policy.clone();
+        drop(state_guard);
+
+        let level = match request.level.to_uppercase().as_str() {
+            "L0" => SeverityLevel::L0,
+            "L1" => SeverityLevel::L1,
+            "L2" => SeverityLevel::L2,
+            "L3" => SeverityLevel::L3,
+            _ => return Err(ToolError::InvalidParams("Invalid level: use L0, L1, L2, or L3".to_string())),
+        };
+
+        let action_type = match request.action_type.to_lowercase().as_str() {
+            "log_only" => RecoveryActionType::LogOnly,
+            "restart_driver" => RecoveryActionType::RestartDriver,
+            "rejoin_lora" => RecoveryActionType::RejoinLora,
+            "reconnect_device" => RecoveryActionType::ReconnectDevice,
+            "clean_logs" => RecoveryActionType::CleanLogs,
+            "report_cloud" => RecoveryActionType::ReportCloud,
+            "create_ticket" => RecoveryActionType::CreateTicket,
+            _ => return Err(ToolError::InvalidParams("Invalid action_type".to_string())),
+        };
+
+        let cooldown = policy.levels.get(&level)
+            .map(|p| p.cooldown_secs)
+            .unwrap_or(0);
+
+        executor.execute(level, action_type, request.target, cooldown)
+            .await
+            .map(|exec| serde_json::json!({
+                "execution_id": exec.id,
+                "executed": true,
+                "result": format!("{:?}", exec.result),
+                "logs": exec.logs
+            }))
+            .map_err(|e| ToolError::Internal(e.to_string()))
     }
 }
 
-/// Get recovery history tool handler (Phase 1 stub)
+/// Get recovery history tool handler
 pub struct GetRecoveryHistoryHandler;
 
 #[async_trait]
@@ -126,8 +160,52 @@ impl ToolHandler for GetRecoveryHistoryHandler {
         InputSchema::object(vec![], props)
     }
 
-    async fn execute(&self, _args: Value) -> Result<Value, ToolError> {
-        Err(ToolError::NotImplemented("Phase 2: 恢复历史记录".to_string()))
+    async fn execute(&self, args: Value) -> Result<Value, ToolError> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct HistoryInput {
+            limit: Option<u32>,
+            offset: Option<u32>,
+        }
+
+        let input: HistoryInput = serde_json::from_value(args)
+            .map_err(|e| ToolError::InvalidParams(e.to_string()))?;
+
+        let limit = input.limit.unwrap_or(20).min(100);
+        let offset = input.offset.unwrap_or(0);
+
+        let state = get_self_healing_state()
+            .ok_or_else(|| ToolError::Internal("Self-healing not initialized".to_string()))?;
+
+        let state_guard = state.read().await;
+        let repository = state_guard.repository.clone();
+        drop(state_guard);
+
+        // Default tenant for MCP context (single-tenant or system context)
+        let tenant_id = "default";
+
+        let executions = repository.get_recent(tenant_id, limit, offset)
+            .await
+            .map_err(|e| ToolError::Internal(format!("DB error: {}", e)))?;
+
+        let history: Vec<serde_json::Value> = executions.iter().map(|e| {
+            serde_json::json!({
+                "id": e.id,
+                "timestamp": e.timestamp.to_rfc3339(),
+                "level": format!("{:?}", e.level),
+                "action_type": format!("{:?}", e.action_type),
+                "target": e.target,
+                "result": format!("{:?}", e.result),
+                "logs": e.logs
+            })
+        }).collect();
+
+        Ok(serde_json::json!({
+            "executions": history,
+            "limit": limit,
+            "offset": offset,
+            "total": history.len()
+        }))
     }
 }
 
