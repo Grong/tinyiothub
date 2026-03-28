@@ -38,7 +38,7 @@ tinyiothub/
 │   ├── infrastructure/ # 外部依赖（DB、消息、网关）
 │   ├── shared/         # 跨层共享（error、security）
 │   └── dto/            # 数据传输对象
-├── mcp/                # MCP Server (独立 Rust crate)
+├── mcp/                # MCP Server (已废弃 - 集成到 api/src/api/mcp/)
 ├── web/
 │   ├── app/            # Next.js App Router 页面
 │   ├── service/        # API 调用层（必须用这个，不准直接 fetch）
