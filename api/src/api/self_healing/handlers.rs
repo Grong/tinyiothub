@@ -114,13 +114,27 @@ async fn execute_action(
         .map(|p| p.cooldown_secs)
         .unwrap_or(0);
 
-    // Clone executor while holding the read lock to avoid race condition
+    // Check require_approval flag — if set, reject manual execution
+    if state.policy.levels.get(&severity)
+        .map(|p| p.require_approval)
+        .unwrap_or(false)
+    {
+        return ApiResponseBuilder::error("This action requires approval per policy — direct execution not allowed");
+    }
+
+    // Clone executor and repository while holding the read lock to avoid race condition
     let executor = state.executor.clone();
+    let repository = state.repository.clone();
 
     drop(state);
 
     match executor.execute(severity, action_type, request.target.clone(), cooldown).await {
         Ok(execution) => {
+            // Persist execution to database
+            if let Err(e) = repository.save(&execution).await {
+                tracing::error!("Failed to persist healing execution: {}", e);
+                // Still return success to caller — execution happened, just recording failed
+            }
             ApiResponseBuilder::success(ExecuteSelfHealResponse {
                 execution: HealingExecutionDto::from(&execution),
                 message: format!("Self-healing action executed successfully"),

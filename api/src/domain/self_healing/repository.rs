@@ -120,6 +120,18 @@ impl HealingExecutionRepository {
         rows
     }
 
+    /// Count total healing executions for a tenant
+    pub async fn count(&self, tenant_id: &str) -> std::result::Result<u32, sqlx::Error> {
+        let sql = r#"
+            SELECT COUNT(*) as cnt FROM healing_executions WHERE tenant_id = ?
+        "#;
+
+        self.db
+            .query_first(sql, |row| row.try_get::<i64, _>("cnt"))
+            .await
+            .map(|cnt| cnt.unwrap_or(0) as u32)
+    }
+
     /// Ensure the healing_executions table exists
     pub async fn ensure_table(&self) -> std::result::Result<(), sqlx::Error> {
         let sql = r#"

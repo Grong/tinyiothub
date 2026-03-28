@@ -91,6 +91,7 @@ impl ToolHandler for ExecuteSelfHealActionHandler {
         let state_guard = state.read().await;
         let executor = state_guard.executor.clone();
         let policy = state_guard.policy.clone();
+        let repository = state_guard.repository.clone();
         drop(state_guard);
 
         let level = match request.level.to_uppercase().as_str() {
@@ -116,15 +117,31 @@ impl ToolHandler for ExecuteSelfHealActionHandler {
             .map(|p| p.cooldown_secs)
             .unwrap_or(0);
 
-        executor.execute(level, action_type, request.target, cooldown)
+        // Check require_approval flag — if set, reject via MCP
+        if policy.levels.get(&level)
+            .map(|p| p.require_approval)
+            .unwrap_or(false)
+        {
+            return Err(ToolError::InvalidParams(
+                "This action requires approval per policy — direct execution not allowed".to_string(),
+            ));
+        }
+
+        let exec_result = executor.execute(level, action_type, request.target, cooldown)
             .await
-            .map(|exec| serde_json::json!({
-                "execution_id": exec.id,
-                "executed": true,
-                "result": format!("{:?}", exec.result),
-                "logs": exec.logs
-            }))
-            .map_err(|e| ToolError::Internal(e.to_string()))
+            .map_err(|e| ToolError::Internal(e.to_string()))?;
+
+        // Persist execution to database
+        if let Err(e) = repository.save(&exec_result).await {
+            tracing::error!("Failed to persist healing execution: {}", e);
+        }
+
+        Ok(serde_json::json!({
+            "execution_id": exec_result.id,
+            "executed": true,
+            "result": format!("{:?}", exec_result.result),
+            "logs": exec_result.logs
+        }))
     }
 }
 
@@ -188,6 +205,10 @@ impl ToolHandler for GetRecoveryHistoryHandler {
             .await
             .map_err(|e| ToolError::Internal(format!("DB error: {}", e)))?;
 
+        let total = repository.count(tenant_id)
+            .await
+            .unwrap_or(executions.len() as u32);
+
         let history: Vec<serde_json::Value> = executions.iter().map(|e| {
             serde_json::json!({
                 "id": e.id,
@@ -204,7 +225,7 @@ impl ToolHandler for GetRecoveryHistoryHandler {
             "executions": history,
             "limit": limit,
             "offset": offset,
-            "total": history.len()
+            "total": total
         }))
     }
 }
