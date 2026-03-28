@@ -49,6 +49,7 @@ pub mod template_error;
 
 pub mod heartbeat;
 
+pub mod self_healing;
 // Re-export commonly used types (using actual struct names from the modules)
 
 pub use device::Device;

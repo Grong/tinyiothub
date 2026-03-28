@@ -6,6 +6,7 @@ pub mod marketplace;
 pub mod organization;
 pub mod plugin;
 pub mod product;
+pub mod self_healing;
 pub mod template;
 pub mod user;
 

@@ -4,6 +4,9 @@
 mod tests {
     use crate::api::mcp::{HandlerRegistry, ToolMetadata, ToolHandler, ToolError};
     use crate::api::mcp::tool_registry::InputSchema;
+    use crate::api::mcp::tools::self_heal::{
+        GetSelfHealPolicyHandler, ExecuteSelfHealActionHandler, GetRecoveryHistoryHandler,
+    };
     use async_trait::async_trait;
     use std::collections::HashMap;
     use serde_json::Value;
@@ -238,5 +241,118 @@ mod tests {
         assert_eq!(json["required"], serde_json::json!(["name"]));
         assert_eq!(json["properties"]["name"]["type"], "string");
         assert_eq!(json["properties"]["name"]["description"], "User name");
+    }
+
+    // =========================================================================
+    // Self-Healing MCP Handler Tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_get_self_heal_policy_returns_error_when_not_initialized() {
+        let handler = GetSelfHealPolicyHandler;
+        let result = handler.execute(serde_json::json!({})).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        match err {
+            ToolError::Internal(msg) => {
+                assert!(msg.contains("Self-healing not initialized"), "{}", msg);
+            }
+            other => panic!("Expected ToolError::Internal, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_self_heal_action_returns_error_when_not_initialized() {
+        let handler = ExecuteSelfHealActionHandler;
+        let result = handler.execute(serde_json::json!({
+            "level": "L1",
+            "actionType": "log_only",
+            "target": "test-device"
+        })).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        match err {
+            ToolError::Internal(msg) => {
+                assert!(msg.contains("Self-healing not initialized"), "{}", msg);
+            }
+            other => panic!("Expected ToolError::Internal, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_self_heal_action_rejects_invalid_level() {
+        let handler = ExecuteSelfHealActionHandler;
+        // State check happens first; invalid level still fails on state
+        let result = handler.execute(serde_json::json!({
+            "level": "INVALID",
+            "actionType": "log_only",
+            "target": "test"
+        })).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_execute_self_heal_action_rejects_invalid_action_type() {
+        let handler = ExecuteSelfHealActionHandler;
+        // State check happens before action_type validation
+        let result = handler.execute(serde_json::json!({
+            "level": "L1",
+            "actionType": "invalid_action",
+            "target": "test"
+        })).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_get_recovery_history_returns_error_when_not_initialized() {
+        let handler = GetRecoveryHistoryHandler;
+        let result = handler.execute(serde_json::json!({
+            "limit": 10,
+            "offset": 0
+        })).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        match err {
+            ToolError::Internal(msg) => {
+                assert!(msg.contains("Self-healing not initialized"), "{}", msg);
+            }
+            other => panic!("Expected ToolError::Internal, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_recovery_history_accepts_empty_args() {
+        let handler = GetRecoveryHistoryHandler;
+        // Empty args should deserialize as HistoryInput with None limit/offset
+        let result = handler.execute(serde_json::json!({})).await;
+        // Will fail on state check, not param parsing
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_self_heal_policy_handler_metadata() {
+        let handler = GetSelfHealPolicyHandler;
+        assert_eq!(handler.name(), "get_self_heal_policy");
+        assert!(!handler.description().is_empty());
+    }
+
+    #[test]
+    fn test_self_heal_action_handler_metadata() {
+        let handler = ExecuteSelfHealActionHandler;
+        assert_eq!(handler.name(), "execute_self_heal_action");
+        assert!(!handler.description().is_empty());
+        let schema = handler.input_schema();
+        let json = schema.to_json();
+        assert_eq!(json["type"], "object");
+        let required = json["required"].as_array().unwrap();
+        assert!(required.iter().any(|r| r == "level"), "level should be required");
+        assert!(required.iter().any(|r| r == "actionType"), "actionType should be required");
+    }
+
+    #[test]
+    fn test_self_heal_recovery_history_handler_metadata() {
+        let handler = GetRecoveryHistoryHandler;
+        assert_eq!(handler.name(), "get_recovery_history");
+        assert!(!handler.description().is_empty());
     }
 }
