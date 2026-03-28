@@ -8,3 +8,6 @@ pub mod persistence;
 
 // Event infrastructure services
 pub mod event;
+
+// Self-healing infrastructure
+pub mod self_healing;
