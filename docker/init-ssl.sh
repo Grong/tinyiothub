@@ -10,6 +10,15 @@ if [ "${SSL_STAGING}" = "1" ]; then
     STAGING_ARG="--staging"
 fi
 
+# 创建必要的目录并设置权限
+echo "📁 创建数据目录..."
+mkdir -p data/certbot data/mosquitto/data data/mosquitto/log logs config templates mosquitto/config nginx/conf.d
+chmod -R 777 data logs config templates mosquitto/config nginx/conf.d
+
+# 修复 mosquitto 配置目录权限
+echo "🔧 修复 mosquitto 目录权限..."
+chown -R root mosquitto/config 2>/dev/null || true
+
 # 检查是否已有证书
 if [ -d "./nginx/ssl/live/www.tinyiothub.com" ]; then
     echo "证书已存在，跳过申请。如需重新申请请删除 ./nginx/ssl/live/ 目录"
