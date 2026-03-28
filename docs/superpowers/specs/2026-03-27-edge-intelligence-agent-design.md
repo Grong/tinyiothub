@@ -2,7 +2,7 @@
 
 > **项目**: TinyIoTHub + OpenClaw 边缘智能体
 > **日期**: 2026-03-27
-> **状态**: 设计中
+> **状态**: 已审查（含 Phase 1 实现计划 + Skills 设计）
 
 ## 1. 背景与目标
 
@@ -709,3 +709,430 @@ pub enum SeverityLevel {
 
 - **V2.0**：扩展协议覆盖（BACnet、OPC UA）、多模态设备识别
 - **V3.0**：时序预测故障预警、跨设备联动优化、数字孪生集成
+
+---
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | `/office-hours` | Scope & strategy | 0 | — | Not run |
+| Codex Review | `/codex review` | Independent 2nd opinion | 0 | — | Not run |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | CLEAR | 7 issues, 1 critical gap, all resolved |
+| Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | Not run |
+
+### Eng Review Findings (detailed)
+
+**Resolved issues:**
+1. ✅ Handler registry pattern — replace match explosion with `HashMap<ToolHandler>` registry
+2. ✅ NotImplemented error variant — add `ToolError::NotImplemented(String)` for Phase 1 stubs
+3. ✅ Pagination clamp — `page_size.clamp(1, 1000)` on all list tools
+4. ✅ Structured stub for `generate_driver` — returns phase info for OpenClaw
+5. ✅ Backend endpoints in Phase 1 — ~11 new API endpoints for heartbeat/self_heal/knowledge
+6. ✅ Batch query for `report_heartbeat` — prevents unbounded device query
+7. ✅ Time range bounds for `get_device_history` — 7-day max window
+8. ✅ Embedded MCP — MCP from separate crate to `api/src/api/mcp/`
+9. ✅ Skills creation — device-onboarding, heartbeat-query, device-status, alarm-management
+10. ✅ Architecture confirmed — OpenClaw skill → MCP over HTTP → TinyIoTHub API /mcp
+
+**Critical gap identified:**
+- No tests for stub tool error responses — should verify each stub returns `NotImplemented` with correct phase info
+
+### Phase 1 Scope Summary
+
+| Category | In Scope | Deferred |
+|----------|----------|----------|
+| MCP 端点 `/mcp` | ✅ 嵌入式（复用 API 容器） | — |
+| MCP tool surface (27 tools) | ✅ All | — |
+| Backend API endpoints | ✅ ~11 new endpoints | — |
+| Handler registry refactor | ✅ | — |
+| OpenClaw Skills (4个) | ✅ device-onboarding, heartbeat, status, alarm | — |
+| Skills prompts | ✅ 4 个引导文档 | — |
+| Self-healing engine | ❌ | Phase 2 |
+| Cloud LLM driver gen | ❌ | Phase 3 |
+| Knowledge cloud sync | ❌ | Phase 4 |
+| BACnet/OPC UA | ❌ | V2.0 |
+
+### Unresolved decisions
+None — all decisions resolved during review.
+
+---
+
+## 11. OpenClaw Skills 设计
+
+### 11.1 Skill 架构
+
+OpenClaw 通过 Skill 调用 TinyIoTHub MCP 工具。每个 Skill 封装一组相关的工具调用和提示词。
+
+```
+OpenClaw
+  └── Skill: tinyiothub-device-onboarding
+              ├── Prompts: 设备接入引导词
+              └── Tools: [create_device, match_driver, test_driver, ...]
+       Skill: tinyiothub-heartbeat
+              ├── Prompts: 心跳查询引导词
+              └── Tools: [report_heartbeat, get_heartbeat_status]
+```
+
+### 11.2 Skill 目录结构
+
+```
+skills/
+└── tinyiothub/
+    ├── skill.yaml           # Skill 元数据
+    └── prompts/
+        ├── device-onboarding.md    # 设备接入引导
+        ├── heartbeat-query.md       # 心跳查询引导
+        ├── device-status.md         # 设备状态查询
+        └── alarm-management.md      # 告警管理引导
+```
+
+### 11.3 Skill 定义
+
+#### 11.3.1 device-onboarding（设备接入）
+
+**文件**: `skills/tinyiothub/skill.yaml`
+
+```yaml
+name: tinyiothub-device-onboarding
+description: 物联网设备快速接入，从自然语言描述到设备上线
+version: 1.0.0
+tools:
+  - create_device
+  - match_driver
+  - generate_driver
+  - test_driver
+  - report_heartbeat
+```
+
+**Prompt** (`skills/tinyiothub/prompts/device-onboarding.md`):
+
+```markdown
+# 设备接入技能
+
+你是一个物联网设备接入专家。当用户描述要接入设备时，按照以下步骤执行：
+
+## 步骤 1: 理解设备信息
+从用户描述中提取：
+- 设备品牌/型号 (brand, model)
+- 硬件接口 (interface: serial/ethernet/can/lora)
+- 通信协议 (protocol: modbus/snmp/http/onvif)
+- 数据点表 (points: 寄存器/变量)
+- 网络配置 (ip, port)
+
+## 步骤 2: 匹配驱动
+调用 `match_driver` 工具，传入 protocol 和 brand。
+- 如果匹配成功：获取驱动配置 schema
+- 如果匹配失败：调用 `generate_driver` 生成驱动
+
+## 步骤 3: 创建设备
+调用 `create_device` 工具，传入：
+- name: 设备名称
+- device_type: sensor/actuator/gateway
+- interface: 接口类型
+- protocol: 协议类型
+- config: 接口配置
+- points: 数据点表
+
+## 步骤 4: 测试验证
+调用 `test_driver` 工具，验证设备通信：
+- 冒烟测试：连续读取 5 次
+- 数据合理性校验
+- 返回测试报告
+
+## 步骤 5: 上报心跳
+调用 `report_heartbeat` 通知网关设备已接入
+
+## 常见设备描述模板
+
+用户可能这样描述：
+- "串口1接入XX品牌温湿度传感器，Modbus RTU，40101温度，40102湿度"
+- "以太网接入XX品牌PLC，IP 192.168.1.100，Modbus TCP"
+- "LoRa DTU接入气表，设备EUI xxx"
+
+提取信息后按步骤执行。
+```
+
+#### 11.3.2 heartbeat-query（心跳查询）
+
+**文件**: `skills/tinyiothub/skill.yaml` (追加)
+
+```yaml
+tools:
+  - get_heartbeat_status
+  - configure_heartbeat
+```
+
+**Prompt** (`skills/tinyiothub/prompts/heartbeat-query.md`):
+
+```markdown
+# 心跳查询技能
+
+你负责查询和配置网关心跳监控。
+
+## 查询心跳状态
+调用 `get_heartbeat_status` 获取当前网关健康状态。
+
+用户可能问：
+- "网关心跳正常吗？"
+- "查看心跳状态"
+- "系统健康状态如何？"
+
+返回：CPU、内存、磁盘、网络、关键服务状态
+
+## 配置心跳
+调用 `configure_heartbeat` 修改探针配置。
+
+用户可能说：
+- "把心跳间隔改成10分钟"
+- "禁用系统探针"
+
+参数：
+- interval_seconds: 心跳间隔（秒）
+- probes.system: 系统探针配置
+- probes.devices: 设备探针配置
+```
+
+#### 11.3.3 device-status（设备状态）
+
+**文件**: `skills/tinyiothub/skill.yaml` (追加)
+
+```yaml
+tools:
+  - list_devices
+  - get_device_status
+  - read_properties
+  - get_device_history
+```
+
+**Prompt** (`skills/tinyiothub/prompts/device-status.md`):
+
+```markdown
+# 设备状态查询技能
+
+你负责查询设备在线状态和传感器数据。
+
+## 查询设备列表
+调用 `list_devices` 获取所有设备。
+
+## 查询设备状态
+调用 `get_device_status` 获取单个设备：
+- 在线/离线状态
+- 最后心跳时间
+- 信号强度（RSSI）
+
+用户可能问：
+- "3号厂房的设备都在线吗？"
+- "温湿度传感器为什么离线？"
+- "查看设备状态"
+
+## 读取传感器数据
+调用 `read_properties` 读取当前值。
+
+## 查询历史数据
+调用 `get_device_history` 查询历史：
+- 支持时间范围（默认24小时）
+- 最大7天窗口
+```
+
+#### 11.3.4 alarm-management（告警管理）
+
+**文件**: `skills/tinyiothub/skill.yaml` (追加)
+
+```yaml
+tools:
+  - list_alarms
+  - acknowledge_alarm
+  - get_alarm_statistics
+```
+
+---
+
+### 11.4 核心流程：设备接入详解
+
+设备接入是最复杂的 Skill，以下是完整流程：
+
+```
+用户: "串口1接入XX品牌温湿度传感器，Modbus RTU，40101温度，40102湿度"
+                                  ↓
+┌─────────────────────────────────────────────────────────────┐
+│ Step 1: 意图识别                                            │
+│ - interface: "串口1"                                        │
+│ - brand: "XX品牌"                                          │
+│ - protocol: "Modbus RTU"                                   │
+│ - points: [{name: "温度", register: 40101}, {name: "湿度", register: 40102}]│
+└─────────────────────────────────────────────────────────────┘
+                                  ↓
+┌─────────────────────────────────────────────────────────────┐
+│ Step 2: 驱动匹配 (match_driver)                            │
+│ - 传入: protocol="modbus_rtu", brand="XX品牌"              │
+│ - 命中驱动: modbus_rtu_generic                             │
+│ - 返回: driver_id, config_schema                          │
+└─────────────────────────────────────────────────────────────┘
+                                  ↓ (未命中则 generate_driver)
+┌─────────────────────────────────────────────────────────────┐
+│ Step 3: 创建设备 (create_device)                           │
+│ - name: "XX品牌温湿度传感器"                               │
+│ - interface: "serial"                                    │
+│ - protocol: "modbus_rtu"                                  │
+│ - config: {port: "/dev/ttyUSB0", baudrate: 9600}        │
+│ - points: [{name: "温度", address: "40101", type: "float32"}]│
+└─────────────────────────────────────────────────────────────┘
+                                  ↓
+┌─────────────────────────────────────────────────────────────┐
+│ Step 4: 测试验证 (test_driver)                             │
+│ - 冒烟测试: 连续读取 5 次                                  │
+│ - 数据合理性校验: 温度范围 -40~80°C                       │
+│ - 返回: test_passed, read_values, elapsed_ms              │
+└─────────────────────────────────────────────────────────────┘
+                                  ↓
+┌─────────────────────────────────────────────────────────────┐
+│ Step 5: 上报心跳 (report_heartbeat)                        │
+│ - gateway_id, timestamp                                    │
+│ - device: {id, status: "online"}                         │
+│ - auto_actions: []                                        │
+└─────────────────────────────────────────────────────────────┘
+                                  ↓
+用户看到: "✅ 设备已接入成功！温度: 25.6°C, 湿度: 65.2%RH"
+```
+
+---
+
+## 12. 实施计划（Phase 1）
+
+### 12.1 架构确认
+
+```
+OpenClaw (AI 编排器，skill 驱动)
+    ↓ MCP over HTTP
+TinyIoTHub API :3002
+    ├── /api/v1/*  — REST API（Web UI）
+    └── /mcp       — MCP 协议端点（OpenClaw Skill 调用）
+              ├── tools/list — 返回所有工具
+              └── tools/call — 执行工具（JWT 透传，API 层统一验证）
+```
+
+### 12.2 文件变更
+
+#### 新增文件
+
+| 文件 | 描述 |
+|------|------|
+| `api/src/api/mcp/mod.rs` | MCP Router |
+| `api/src/api/mcp/handlers.rs` | MCP 协议处理 |
+| `api/src/api/mcp/tool_registry.rs` | ToolHandler trait + registry |
+| `api/src/api/mcp/tools/mod.rs` | 工具定义导出 |
+| `api/src/api/mcp/tools/device.rs` | 设备类别 12 个工具 |
+| `api/src/api/mcp/tools/driver.rs` | 驱动类别 7 个工具 |
+| `api/src/api/mcp/tools/heartbeat.rs` | 心跳类别 3 个工具 |
+| `api/src/api/mcp/tools/self_heal.rs` | 自愈类别 3 个工具 |
+| `api/src/api/mcp/tools/knowledge.rs` | 知识库 3 个工具 |
+| `api/src/api/heartbeat/mod.rs` | 心跳端点 |
+| `api/src/api/heartbeat/handlers.rs` | 心跳 API handlers |
+| `api/src/api/self_healing/mod.rs` | 自愈端点 |
+| `api/src/api/self_healing/handlers.rs` | 自愈 API handlers |
+| `api/src/api/knowledge/mod.rs` | 知识库端点 |
+| `api/src/api/knowledge/handlers.rs` | 知识库 API handlers |
+| `api/src/dto/entity/heartbeat.rs` | 心跳 DTO |
+| `api/src/dto/entity/self_healing.rs` | 自愈 DTO |
+| `api/src/dto/entity/knowledge.rs` | 知识库 DTO |
+| `skills/tinyiothub/skill.yaml` | Skill 元数据 |
+| `skills/tinyiothub/prompts/device-onboarding.md` | 设备接入引导 |
+| `skills/tinyiothub/prompts/heartbeat-query.md` | 心跳查询引导 |
+| `skills/tinyiothub/prompts/device-status.md` | 设备状态引导 |
+| `skills/tinyiothub/prompts/alarm-management.md` | 告警管理引导 |
+
+#### 废弃文件
+
+| 文件 | 原因 |
+|------|------|
+| `mcp/` crate | MCP 已嵌入 API，冗余 |
+
+### 12.3 任务分解
+
+#### Task 1: MCP 模块骨架（P0）
+- [ ] 创建 `api/src/api/mcp/` 目录
+- [ ] 实现 `tool_registry.rs` — ToolHandler trait + registry
+- [ ] 实现 `handlers.rs` — `/mcp` 端点，tools/list + tools/call
+- [ ] 注册到 `api/src/api/mod.rs`
+
+#### Task 2: 设备类别工具（P0）
+- [ ] `list_devices`, `get_device`, `get_device_status`
+- [ ] `read_properties`, `write_properties`, `send_command`
+- [ ] `create_device`, `update_device`, `delete_device`
+- [ ] `get_device_history` (7天窗口), `get_device_metrics`, `export_device_report`
+
+#### Task 3: 驱动类别工具（P0）
+- [ ] `list_drivers`, `get_driver_config_schema`
+- [ ] `match_driver` — 本地匹配 + 云端查询
+- [ ] `generate_driver` — stub (Phase 3)
+- [ ] `load_driver`, `unload_driver`, `test_driver`
+
+#### Task 4: 心跳类别工具（P1）
+- [ ] `report_heartbeat`, `get_heartbeat_status`, `configure_heartbeat`
+- [ ] 端点: `POST/GET /heartbeat`
+
+#### Task 5: 自愈类别工具（P1）
+- [ ] `get_self_heal_policy`, `execute_self_heal_action`, `get_recovery_history`
+- [ ] 端点: `GET/PUT /self-healing/policies`, `POST /self-healing/actions/:level`
+- [ ] Phase 1 返回 stub
+
+#### Task 6: 知识库类别工具（P2）
+- [ ] `query_knowledge_base`, `contribute_knowledge`, `sync_knowledge`
+- [ ] 端点: `GET/POST /knowledge`, `POST /knowledge/sync`
+- [ ] Phase 1 返回 stub
+
+#### Task 7: Skills 创建（P0）
+- [ ] `skills/tinyiothub/skill.yaml` — Skill 元数据
+- [ ] `prompts/device-onboarding.md` — 设备接入引导（核心）
+- [ ] `prompts/heartbeat-query.md` — 心跳查询引导
+- [ ] `prompts/device-status.md` — 设备状态引导
+- [ ] `prompts/alarm-management.md` — 告警管理引导
+
+#### Task 8: 废弃旧 MCP Server（P2）
+- [ ] 删除 `mcp/` crate 或标记废弃
+
+#### Task 9: 测试（P0）
+- [ ] Tool registry 完整性测试
+- [ ] NotImplemented 错误格式测试
+- [ ] 分页参数 clamp 测试
+
+#### Task 10: 端到端验证（P0）
+- [ ] `curl http://localhost:3002/mcp` — tools/list 返回 27 个工具
+- [ ] OpenClaw skill 配置指向 `/mcp`
+- [ ] 完整对话测试: "串口1接入温湿度传感器..."
+
+### 12.4 任务依赖图
+
+```
+Task 1 (MCP骨架)
+    ├── Task 2 (设备工具) ──→ Task 7 (device-onboarding skill)
+    ├── Task 3 (驱动工具) ──→ Task 7 (device-onboarding skill)
+    ├── Task 4 (心跳工具) ──→ Task 7 (heartbeat skill)
+    ├── Task 5 (自愈工具)
+    ├── Task 6 (知识库工具)
+    └── Task 7 (Skills) ←─ 所有工具完成后
+              │
+              └── Task 9 (测试)
+                       │
+                       └── Task 10 (端到端验证)
+```
+
+### 12.5 Phase 1 交付物
+
+| 交付物 | 描述 |
+|--------|------|
+| MCP 端点 `/mcp` | OpenClaw 可调用 |
+| 27 个 MCP 工具 | 覆盖设备/驱动/心跳/自愈/知识库 |
+| 4 个 OpenClaw Skills | device-onboarding (核心), heartbeat-query, device-status, alarm-management |
+| 嵌入式部署 | 复用 API 容器，无需额外部署 |
+
+### 12.6 后续规划
+
+| Phase | 内容 |
+|-------|------|
+| Phase 2 | 自愈引擎（探针调度 + L0-L3 策略） |
+| Phase 3 | 云端 LLM 驱动生成 |
+| Phase 4 | 云端知识库同步 |
+| V2.0 | BACnet/OPC UA 协议支持 |
+| V3.0 | 时序预测故障预警 |
