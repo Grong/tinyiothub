@@ -127,7 +127,7 @@ TinyIoTHub 目前已具备成熟的物联网边缘网关能力：
 
 > **工具命名规范**：MCP 工具统一使用 `verb_object` 格式（如 `create_device`），与现有 TinyIoTHub MCP 工具命名惯例保持一致（如 `list_devices`、`get_device_status`）。
 
-##### 2.2.1 device_create
+##### 2.2.1 create_device
 
 **输入**：
 ```json
@@ -178,7 +178,7 @@ TinyIoTHub 目前已具备成熟的物联网边缘网关能力：
 }
 ```
 
-##### 2.2.2 driver_match
+##### 2.2.2 match_driver
 
 **输入**：
 ```json
@@ -202,7 +202,7 @@ TinyIoTHub 目前已具备成熟的物联网边缘网关能力：
 }
 ```
 
-##### 2.2.3 driver_generate
+##### 2.2.3 generate_driver
 
 **输入**：
 ```json
@@ -227,7 +227,7 @@ TinyIoTHub 目前已具备成熟的物联网边缘网关能力：
 }
 ```
 
-##### 2.2.4 heartbeat_report
+##### 2.2.4 report_heartbeat
 
 **输入**：
 ```json
@@ -253,7 +253,7 @@ TinyIoTHub 目前已具备成熟的物联网边缘网关能力：
 }
 ```
 
-##### 2.2.5 self_heal_execute
+##### 2.2.5 execute_self_heal_action
 
 **输入**：
 ```json
@@ -341,7 +341,7 @@ self_healing:
           count: 1
 
     L1:
-      actions: [restart_driver, rejoin_lora]
+      actions: [restart_driver, rejoin_lora, reconnect_device]
       conditions:
         - type: process_dead
         - type: device_timeout
