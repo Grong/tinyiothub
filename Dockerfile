@@ -85,8 +85,8 @@ COPY --from=frontend-builder /frontend/out /app/wwwroot
 COPY api/app_settings.example.toml /app/app_settings.toml
 
 # 创建数据目录
-RUN mkdir -p /app/data /app/logs && \
-    chmod -R 755 /app/data /app/logs
+RUN mkdir -p /app/data /app/logs /app/templates && \
+    chmod -R 777 /app/data /app/logs /app/templates
 
 # 设置环境变量
 ENV RUST_LOG=info \
