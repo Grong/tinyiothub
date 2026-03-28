@@ -36,20 +36,25 @@ TinyIoTHub 目前已具备成熟的物联网边缘网关能力：
 │  - 技能编排                                             │
 │  - 调用 MCP Tools                                       │
 └─────────────────┬───────────────────────────────────────┘
-                  │ MCP（JSON-RPC over STDIO/HTTP）
+                  │ MCP over HTTP
                   ↓
 ┌─────────────────────────────────────────────────────────┐
-│  TinyIoTHub MCP Server（MCP Tools 提供者）               │
+│  TinyIoTHub API（同一进程）                             │
 │  ┌───────────────────────────────────────────────────┐ │
-│  │ 工具分类：                                         │ │
+│  │ /mcp 端点（MCP 协议处理）                          │ │
+│  │                                                   │ │
+│  │ MCP Tools（ToolHandler 注册表）：                  │ │
 │  │   - device_*：设备 CRUD、读写、命令                │ │
 │  │   - driver_*：驱动匹配、生成、加载、测试          │ │
 │  │   - heartbeat_*：心跳上报、状态查询                │ │
 │  │   - self_heal_*：自愈策略、恢复执行               │ │
 │  │   - knowledge_*：知识查询、知识贡献                │ │
 │  └───────────────────────────────────────────────────┘ │
+│  ┌───────────────────────────────────────────────────┐ │
+│  │ /api/v1/* REST API（Web UI）                      │ │
+│  └───────────────────────────────────────────────────┘ │
 └─────────────────┬───────────────────────────────────────┘
-                  │ 内部 API 调用
+                  │ 内部函数调用
                   ↓
 ┌─────────────────────────────────────────────────────────┐
 │  TinyIoTHub Rust 后端（Axum）                           │
@@ -78,9 +83,10 @@ TinyIoTHub 目前已具备成熟的物联网边缘网关能力：
 ### 1.3 技术前提
 
 - OpenClaw 作为 AI 编排器，使用 MCP 协议调用工具
-- TinyIoTHub MCP Server 已实现 STDIO 传输（HTTP 可扩展）
+- TinyIoTHub MCP Server 嵌入 API 进程（`api/src/api/mcp/`），HTTP 传输
 - 驱动通过 libloading 动态加载（`.so` 文件）
 - 设备数据通过 SQLx + SQLite 持久化
+- JWT Token 透传：OpenClaw → MCP → API 层统一验证
 
 ---
 
@@ -716,12 +722,12 @@ pub enum SeverityLevel {
 
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
-| CEO Review | `/office-hours` | Scope & strategy | 0 | — | Not run |
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 1 | CLEAR | 架构图修复（1.2+1.3），4项决策 |
 | Codex Review | `/codex review` | Independent 2nd opinion | 0 | — | Not run |
-| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | CLEAR | 7 issues, 1 critical gap, all resolved |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 2 | CLEAR | 4 issues, all resolved |
 | Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | Not run |
 
-### Eng Review Findings (detailed)
+### Eng Review Findings (Round 1 - detailed)
 
 **Resolved issues:**
 1. ✅ Handler registry pattern — replace match explosion with `HashMap<ToolHandler>` registry
@@ -738,6 +744,16 @@ pub enum SeverityLevel {
 **Critical gap identified:**
 - No tests for stub tool error responses — should verify each stub returns `NotImplemented` with correct phase info
 
+### Eng Review Findings (Round 2 - this review)
+
+**Resolved issues:**
+1. ✅ Section 1.2 架构图 — 更新为嵌入式 MCP，与 Section 12 一致
+2. ✅ Section 1.3 技术前提 — 更新为嵌入式 MCP + JWT 透传说明
+3. ✅ JWT 验证点 — MCP handler 复用现有 Bearer JWT middleware（`context.rs`）
+4. ✅ 工具 handler 调用层次 — 确认直接调用 domain service 函数，不走 HTTP
+5. ✅ 测试补充 — Task 9 新增 MCP → 后端集成测试
+6. ✅ JWT 缓存 — 在请求 context 中缓存解析结果，TTL 为 token 剩余有效期
+
 ### Phase 1 Scope Summary
 
 | Category | In Scope | Deferred |
@@ -748,6 +764,8 @@ pub enum SeverityLevel {
 | Handler registry refactor | ✅ | — |
 | OpenClaw Skills (4个) | ✅ device-onboarding, heartbeat, status, alarm | — |
 | Skills prompts | ✅ 4 个引导文档 | — |
+| JWT auth | ✅ Bearer JWT middleware 复用 + 解析结果缓存 | — |
+| MCP → 后端集成测试 | ✅ Task 9 新增 | — |
 | Self-healing engine | ❌ | Phase 2 |
 | Cloud LLM driver gen | ❌ | Phase 3 |
 | Knowledge cloud sync | ❌ | Phase 4 |
@@ -1004,13 +1022,23 @@ tools:
 
 ```
 OpenClaw (AI 编排器，skill 驱动)
-    ↓ MCP over HTTP
+    ↓ Authorization: Bearer <jwt>
 TinyIoTHub API :3002
     ├── /api/v1/*  — REST API（Web UI）
     └── /mcp       — MCP 协议端点（OpenClaw Skill 调用）
               ├── tools/list — 返回所有工具
-              └── tools/call — 执行工具（JWT 透传，API 层统一验证）
+              └── tools/call — 复用现有 Bearer JWT middleware
+                               JWT 在 handlers.rs 解析后注入 context
+                               工具 handler 直接调用 domain service 函数
 ```
+
+**认证流程：**
+1. OpenClaw 请求携带 `Authorization: Bearer <jwt>`
+2. MCP handler 复用现有 `context.rs` 的 JWT 中间件逻辑
+3. 解析出的 `user_id` / `tenant_id` 注入请求 context
+4. **JWT 解析结果缓存**：在请求 context 中缓存，TTL 为 token 剩余有效期
+5. 工具 handler 调用 service 函数时携带 context
+6. API 层已有 SQL 注入防护和 RBAC 验证
 
 ### 12.2 文件变更
 
@@ -1096,6 +1124,7 @@ TinyIoTHub API :3002
 - [ ] Tool registry 完整性测试
 - [ ] NotImplemented 错误格式测试
 - [ ] 分页参数 clamp 测试
+- [ ] MCP → 后端集成测试（handlers.rs → service → DB 完整链路）
 
 #### Task 10: 端到端验证（P0）
 - [ ] `curl http://localhost:3002/mcp` — tools/list 返回 27 个工具
