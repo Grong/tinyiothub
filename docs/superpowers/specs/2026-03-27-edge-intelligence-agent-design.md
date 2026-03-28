@@ -125,7 +125,7 @@ TinyIoTHub 目前已具备成熟的物联网边缘网关能力：
 
 #### 2.2 工具详细设计
 
-> **工具命名规范**：MCP 工具统一使用 `object_verb` 格式（如 `device_create`），与现有 RESTful API 路由（`/devices`）保持语义一致。
+> **工具命名规范**：MCP 工具统一使用 `verb_object` 格式（如 `create_device`），与现有 TinyIoTHub MCP 工具命名惯例保持一致（如 `list_devices`、`get_device_status`）。
 
 ##### 2.2.1 device_create
 
@@ -246,7 +246,7 @@ TinyIoTHub 目前已具备成熟的物联网边缘网关能力：
     {"id": "sensor_2", "status": "offline", "last_data": "2026-03-27T09:45:00Z", "rssi": null}
   ],
   "auto_actions": [
-    // type 有效值: restart_driver | rejoin_lora | reconnect_device | clean_logs
+    // type 有效值: restart_driver | rejoin_lora | reconnect_device | clean_logs | create_ticket
     // result 有效值: success | failed
     {"type": "restart_driver", "target": "modbus_1", "result": "success", "timestamp": "..."}
   ]
@@ -271,7 +271,7 @@ TinyIoTHub 目前已具备成熟的物联网边缘网关能力：
   "action_id": "uuid",
   "executed": true,
   // result 有效值: success | failed | pending_approval
-  "result": "success | failed | pending_approval",
+  "result": "success",
   "details": "string",
   "logs": ["action started", "driver stopped", "driver started"]
 }
