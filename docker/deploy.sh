@@ -7,7 +7,15 @@ echo "🚀 开始部署 TinyIoTHub..."
 
 # 创建必要的目录
 echo "📁 创建数据目录..."
-mkdir -p data/certbot data/mosquitto/data data/mosquitto/log
+mkdir -p data/certbot data/mosquitto/data data/mosquitto/log logs config templates mosquitto/config nginx/conf.d
+
+# 设置目录权限（容器使用 UID 1000）
+echo "🔧 设置目录权限..."
+chmod -R 777 data logs config templates mosquitto/config nginx/conf.d
+
+# 修复 mosquitto 配置目录权限
+echo "🔧 修复 mosquitto 目录权限..."
+chown -R root mosquitto/config 2>/dev/null || true
 
 # 检查 SSL 证书是否存在，选择合适的 nginx 配置
 if [ -d "./nginx/ssl/live/www.tinyiothub.com" ]; then
