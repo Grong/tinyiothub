@@ -23,6 +23,36 @@ mod tests {
         }
     }
 
+    /// 测试用的小型 handler，返回 NotImplemented 错误
+    struct NotImplementedHandler;
+
+    #[async_trait]
+    impl ToolHandler for NotImplementedHandler {
+        fn name(&self) -> &str { "not_implemented_handler" }
+        fn description(&self) -> &str { "A handler that returns NotImplemented" }
+        fn input_schema(&self) -> InputSchema {
+            InputSchema::object(vec![], HashMap::new())
+        }
+        async fn execute(&self, _args: Value) -> Result<Value, ToolError> {
+            Err(ToolError::NotImplemented("Phase: Initialization".to_string()))
+        }
+    }
+
+    /// 测试用的小型 handler，覆盖用
+    struct AnotherTestHandler;
+
+    #[async_trait]
+    impl ToolHandler for AnotherTestHandler {
+        fn name(&self) -> &str { "test_handler" } // Same name as TestHandler
+        fn description(&self) -> &str { "Another test handler" }
+        fn input_schema(&self) -> InputSchema {
+            InputSchema::object(vec![], HashMap::new())
+        }
+        async fn execute(&self, args: Value) -> Result<Value, ToolError> {
+            Ok(args)
+        }
+    }
+
     #[test]
     fn test_handler_registry_register() {
         let mut registry = HandlerRegistry::new();
@@ -81,6 +111,24 @@ mod tests {
 
         let result = handler.execute(args).await;
         assert!(result.is_ok());
+        assert_eq!(result.unwrap(), serde_json::json!({}));
+    }
+
+    #[tokio::test]
+    async fn test_handler_error_not_implemented() {
+        let handler = NotImplementedHandler;
+        let args = serde_json::json!({"key": "value"});
+
+        let result = handler.execute(args).await;
+        assert!(result.is_err());
+
+        let error = result.unwrap_err();
+        match error {
+            ToolError::NotImplemented(msg) => {
+                assert!(msg.contains("Phase"), "Error message should contain 'Phase': {}", msg);
+            }
+            other => panic!("Expected ToolError::NotImplemented, got {:?}", other),
+        }
     }
 
     #[test]
@@ -93,7 +141,7 @@ mod tests {
     }
 
     #[test]
-    fn test_handler_registry_unregister() {
+    fn test_handler_registry_contains() {
         let mut registry = HandlerRegistry::new();
         registry.register(TestHandler);
 
@@ -103,19 +151,23 @@ mod tests {
         // 使用 contains 检查
         assert!(registry.contains("test_handler"));
 
-        // 移除不存在的 (没有 unregister 方法, 使用 contains 检查)
+        // 不存在的 handler
         assert!(!registry.contains("nonexistent"));
     }
 
     #[test]
-    fn test_handler_registry_multiple_handlers() {
+    fn test_handler_registry_multiple_handlers_name_collision() {
         let mut registry = HandlerRegistry::new();
 
+        // 注册两个同名 handler，后者覆盖前者
         registry.register(TestHandler);
+        registry.register(AnotherTestHandler);
 
-        // 列出所有工具
+        // 列表中只有 1 个，因为名字相同，后者覆盖前者
         let tools = registry.list_tools();
-        assert_eq!(tools.len(), 1); // 只有 1 个，因为名字相同
+        assert_eq!(tools.len(), 1);
+        // 验证是后者（AnotherTestHandler）的描述
+        assert_eq!(tools[0].description, "Another test handler");
     }
 
     #[tokio::test]
