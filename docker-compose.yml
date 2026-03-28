@@ -19,6 +19,7 @@ services:
       - TINYIOTHUB__SECURITY__JWT__SECRET=tinyiothub-default-jwt-secret-change-in-production-32chars
       - TINYIOTHUB__MQTT__PRIMARY__USERNAME=admin
       - TINYIOTHUB__MQTT__PRIMARY__PASSWORD=admin123
+      - TINYIOTHUB__SERVER__CORS_ORIGINS=https://tinyiothub.com,https://www.tinyiothub.com,https://api.tinyiothub.com,https://docs.tinyiothub.com,https://mqtt.tinyiothub.com
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3002/api/health"]
       interval: 30s

@@ -8,21 +8,21 @@ services:
     image: nginx:alpine
     container_name: tinyiothub-nginx
     restart: unless-stopped
-    
-    # 端口映射 - 统一入口
+
     ports:
-      - "8080:80"
-    
-    # 配置文件挂载
+      - "80:80"
+      - "443:443"
+      - "8883:8883"
+
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-    
-    # 依赖服务
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./data/certbot:/var/www/certbot
+
     depends_on:
       - tinyiothub-api
-      - tinyiothub-web
-    
-    # 日志配置
+      - tinyiothub-mqtt
+
     logging:
       driver: "json-file"
       options:
@@ -33,49 +33,35 @@ services:
   # TinyIoTHub API 后端服务
   # ============================================
   tinyiothub-api:
-    build:
-      context: ../api
-      dockerfile: Dockerfile
-    image: tinyiothub-api:latest
+    image: chenguorongz/tinyiothub:latest
     container_name: tinyiothub-api
     restart: unless-stopped
-    
-    # 停止配置
-    stop_grace_period: 10s
-    stop_signal: SIGTERM
-    
-    # 内部端口（不对外暴露）
+
     expose:
       - "3002"
-    
-    # 特权模式（串口设备访问）
+
     privileged: true
-    
-    # 设备映射（串口设备 - Linux 环境）
-    # Windows 环境下串口访问需要特殊配置
-    # devices:
-    #   - /dev/ttyUSB0:/dev/ttyUSB0
-    #   - /dev/ttyUSB1:/dev/ttyUSB1
-    
-    # 环境变量（使用双下划线表示嵌套）
+
     environment:
       - RUST_LOG=info
       - TZ=Asia/Shanghai
       - TINYIOTHUB__DATABASE__URL=/app/data/tinyiothub.db
       - TINYIOTHUB__SECURITY__JWT__SECRET=tinyiothub-default-jwt-secret-change-in-production-32chars
-    
-    # 数据卷挂载
+      - TINYIOTHUB__MQTT__PRIMARY__USERNAME=admin
+      - TINYIOTHUB__MQTT__PRIMARY__PASSWORD=admin123
+      - TINYIOTHUB__SERVER__CORS_ORIGINS=https://tinyiothub.com,https://www.tinyiothub.com,https://api.tinyiothub.com,https://docs.tinyiothub.com,https://mqtt.tinyiothub.com
+
     volumes:
-      # 配置文件
-      - ../api/app_settings.toml:/app/app_settings.toml:ro
-      # 数据库目录（持久化）
       - ./data:/app/data
-      # 日志目录
       - ./logs:/app/logs
-      # 设备模板（如果需要自定义）
-      - ../api/templates:/app/templates:ro
-    
-    # 日志配置
+
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3002/api/health"]
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+
     logging:
       driver: "json-file"
       options:
@@ -83,38 +69,42 @@ services:
         max-file: "3"
 
   # ============================================
-  # TinyIoTHub Web 前端服务
+  # MQTT Broker (Eclipse Mosquitto)
   # ============================================
-  tinyiothub-web:
-    build:
-      context: ../web
-      dockerfile: Dockerfile
-    image: tinyiothub-web:latest
-    container_name: tinyiothub-web
+  tinyiothub-mqtt:
+    image: eclipse-mosquitto:2
+    container_name: tinyiothub-mqtt
     restart: unless-stopped
-    
-    # 停止配置
-    stop_grace_period: 10s
-    stop_signal: SIGTERM
-    
-    # 内部端口（不对外暴露）
-    expose:
-      - "3000"
-    
-    # 环境变量
-    environment:
-      - NODE_ENV=production
-      - TZ=Asia/Shanghai
-      # API 地址（通过 Nginx 代理，使用相对路径）
-      - NEXT_PUBLIC_API_PREFIX=/api/v1
-    
-    # 日志配置
+
+    ports:
+      - "1883:1883"     # MQTT 原始端口
+      - "9001:9001"    # MQTT over WebSocket
+
+    volumes:
+      - ./data/mosquitto:/mosquitto/data
+      - ./data/mosquitto:/mosquitto/log
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/pwfile:/mosquitto/config/pwfile:ro
+
+    user: "${UID:-1000}:${GID:-1000}"
+
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
-    
-    # 依赖后端服务
-    depends_on:
-      - tinyiothub-api
+
+  # ============================================
+  # Certbot (用于 SSL 证书申请)
+  # ============================================
+  certbot:
+    image: certbot/certbot
+    container_name: tinyiothub-certbot
+    volumes:
+      - ./data/certbot:/var/www/certbot
+      - ./nginx/ssl:/etc/nginx/ssl
+    entrypoint: "/bin/sh -c 'mkdir -p /var/www/certbot/.well-known/acme-challenge; trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+
+networks:
+  default:
+    name: tinyiothub-network

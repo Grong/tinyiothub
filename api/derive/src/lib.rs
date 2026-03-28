@@ -236,7 +236,7 @@ pub fn derive_device_driver(input: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-/// 驱动注册宏
+/// 驱动注册宏（已废弃，请使用新的插件系统）
 ///
 /// 使用方式：
 /// ```rust
