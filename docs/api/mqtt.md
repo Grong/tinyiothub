@@ -2,6 +2,67 @@
 
 TinyIoTHub 通过 MQTT 协议进行消息通信，支持设备数据上报、命令下发等功能。
 
+## 连接地址
+
+### 公共 MQTT Broker
+
+生产环境使用 `mqtt.tinyiothub.com`：
+
+| 连接方式 | 地址 | 端口 | 说明 |
+|----------|------|------|------|
+| **MQTT over TLS** | `mqtt.tinyiothub.com` | 8883 | 推荐，最安全 |
+| **MQTT over WebSocket** | `wss://mqtt.tinyiothub.com/mqtt` | 443 | 浏览器可用 |
+| Raw MQTT | `mqtt.tinyiothub.com` | 1883 | 仅开发环境 |
+
+**默认凭据：**
+- 用户名: `admin`
+- 密码: `admin123`
+
+> 首次部署后请务必修改密码：
+> ```bash
+> docker exec tinyiothub-mqtt mosquitto_passwd -c /mosquitto/config/pwfile admin your_password
+> ```
+
+### 客户端连接示例
+
+**MQTTX (桌面客户端):**
+```
+Broker: mqtt.tinyiothub.com
+Port: 8883 (TLS)
+Username: admin
+Password: admin123
+```
+
+**JavaScript (WebSocket):**
+```javascript
+const client = mqtt.connect('wss://mqtt.tinyiothub.com/mqtt', {
+  username: 'admin',
+  password: 'admin123'
+});
+
+client.on('connect', () => {
+  console.log('Connected to MQTT');
+  client.subscribe('tinyiothub/+/data');
+});
+
+client.on('message', (topic, message) => {
+  console.log('Received:', topic, message.toString());
+});
+```
+
+**Python:**
+```python
+import paho.mqtt.client as mqtt
+
+client = mqtt.Client()
+client.username_pw_set('admin', 'admin123')
+client.tls_set()
+client.connect('mqtt.tinyiothub.com', 8883)
+
+client.subscribe('tinyiothub/+/data')
+client.loop_forever()
+```
+
 ## MQTT 配置
 
 ### 配置参数

@@ -237,6 +237,8 @@ impl RetryPolicy for DefaultRetryPolicy {
             Error::NotFound => false,
             Error::InvalidArgument(_) => false,
             Error::Unsupported(_) => false,
+            Error::DatabaseError(_) => false,
+            Error::SerializationError(_) => false,
         }
     }
 

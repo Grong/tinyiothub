@@ -12,11 +12,31 @@
 ```bash
 # 克隆项目
 git clone https://github.com/tinyiothub/tinyiothub.git
-cd tinyiothub
+cd tinyiothub/docker
+
+# 申请 SSL 证书（首次部署）
+bash init-ssl.sh
 
 # 启动所有服务
-docker-compose up -d
+docker compose up -d
 ```
+
+## 服务架构
+
+| 服务 | 端口 | 说明 |
+|------|------|------|
+| tinyiothub-nginx | 80, 443, 8883 | 反向代理 + MQTT over TLS |
+| tinyiothub-api | 3002 | API 后端 |
+| tinyiothub-mqtt | 1883, 9001 | Eclipse Mosquitto MQTT Broker |
+
+## 域名
+
+| 域名 | 用途 |
+|------|------|
+| www.tinyiothub.com | 主站 (前端 + API) |
+| api.tinyiothub.com | API 服务 |
+| mqtt.tinyiothub.com | MQTT Broker (TLS: 8883, WS: 443) |
+| docs.tinyiothub.com | 文档站点 |
 
 ## 配置说明
 

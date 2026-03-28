@@ -44,6 +44,10 @@ num_cpus = "1.16"
 # 数据库
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "chrono", "uuid"] }
 
+# 存储插件依赖
+tokio-postgres = "0.7"
+influxdb2 = "0.4"
+
 # MQTT 客户端
 rumqttc = { version = "0.24", default-features = false, features = ["use-rustls"] }
 
@@ -51,13 +55,14 @@ rumqttc = { version = "0.24", default-features = false, features = ["use-rustls"
 jwt-simple = { version = "0.12", default-features = false, features = ["pure-rust"] }
 
 # 网络工具
-reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 # 正则表达式
 regex = "1.10"
 
 # 任务调度
 cron = "0.12"
+tokio-cron-scheduler = "0.13"
 
 # 配置文件解析
 toml = "0.8"
