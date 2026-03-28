@@ -1,6 +1,20 @@
 # Edge Intelligence Agent Skills Configuration
 # AI Agent 使用这些 prompt 模板与 MCP tools 交互
 
+phase_info:
+  phase_1: |
+    Phase 1 实现状态：
+    - system_context: ✅ 完整
+    - device_operation: ✅ 完整
+    - troubleshooting: ✅ 完整
+    - self_healing: ⚠️ 部分（execute_self_heal_action, get_recovery_history 为 Phase 2）
+  phase_2: |
+    Phase 2 计划：
+    - execute_self_heal_action: 执行自愈动作
+    - get_recovery_history: 恢复历史记录
+    - add_knowledge_entry: 知识条目管理
+    - get_device_manual: 设备手册查询
+
 skills:
   - name: system_context
     description: 获取网关系统基本信息
