@@ -1,6 +1,6 @@
 # TinyIoTHub - Rust Implementation
 
-**版本**: v1.0.0  
+**版本**: v1.1.0  
 **官方网站**: https://tinyiothub.com  
 **仓库地址**: https://github.com/Grong/tinyiothub  
 **Docker Hub**: https://hub.docker.com/r/chenguorongz/tinyiothub  
@@ -24,7 +24,8 @@
 - 🎯 **事件驱动架构**（设备联动和规则引擎）
 - 💾 **SQLite 数据存储**（支持自动迁移）
 - 🔄 **自动重连和故障恢复**
-- 🤖 **AI Agent 集成**（MCP Server，29 工具，Claude Desktop/Cursor 支持）
+- 🤖 **AI Agent 集成**（MCP Server，29+ 工具，Claude Desktop/Cursor 支持）
+- 🔧 **自愈引擎**（探测调度器 + 自动故障恢复，支持 system/device/task 探针）
 - 🤖 **鸿蒙系统原生支持**
 - ⚙️ **专业配置系统**（层次化配置，环境感知）
 - 🔒 **安全加固**（配置验证，权限控制）
