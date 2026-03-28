@@ -93,7 +93,7 @@ impl Default for SelfHealingPolicy {
 }
 
 /// Type of probe
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub enum ProbeType {
     System,
