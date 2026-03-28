@@ -142,6 +142,7 @@ ApiResponseBuilder::error_with_code(400, "bad request") // 自定义 code
 - **用户认证**: JWT + 会话管理
 - **MCP Server**: AI Agent 集成（Claude Desktop、Cursor）
 - **Tenant/Subscription**: SaaS 多租户
+- **自愈引擎**: 探测调度器、自动故障恢复（system/device/task 探针）
 - **CI/CD**: GitHub Actions + Docker 多架构构建
 
 ### 规划中（见 `.kiro/specs/`）
