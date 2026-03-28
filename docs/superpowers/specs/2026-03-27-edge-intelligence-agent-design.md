@@ -125,6 +125,8 @@ TinyIoTHub 目前已具备成熟的物联网边缘网关能力：
 
 #### 2.2 工具详细设计
 
+> **工具命名规范**：MCP 工具统一使用 `object_verb` 格式（如 `device_create`），与现有 RESTful API 路由（`/devices`）保持语义一致。
+
 ##### 2.2.1 device_create
 
 **输入**：
@@ -132,11 +134,13 @@ TinyIoTHub 目前已具备成熟的物联网边缘网关能力：
 {
   "name": "string",
   "type": "sensor | actuator | gateway",
-  "interface": "serial | ethernet | can | lora",
   "protocol": "modbus_tcp | modbus_rtu | snmp | http | onvif | simulated",
   "config": {
+    // 互斥组：只能出现其中一组，由 interface 字段决定类型
+    // ethernet 接口
     "ip": "string (optional)",
     "port": "number (optional)",
+    // serial 接口（interface: "serial" 时使用）
     "serial": {
       "port": "/dev/ttyUSB0",
       "baudrate": 9600,
@@ -144,12 +148,14 @@ TinyIoTHub 目前已具备成熟的物联网边缘网关能力：
       "stop_bits": 1,
       "parity": "none"
     },
+    // lora 接口（interface: "lora" 时使用）
     "lora": {
       "device_eui": "string",
       "app_eui": "string",
       "app_key": "string"
     }
   },
+  "interface": "serial | ethernet | can | lora",
   "points": [
     {"name": "温度", "address": "40101", "type": "float32", "access": "read"},
     {"name": "湿度", "address": "40102", "type": "float32", "access": "read"}
@@ -240,6 +246,8 @@ TinyIoTHub 目前已具备成熟的物联网边缘网关能力：
     {"id": "sensor_2", "status": "offline", "last_data": "2026-03-27T09:45:00Z", "rssi": null}
   ],
   "auto_actions": [
+    // type 有效值: restart_driver | rejoin_lora | reconnect_device | clean_logs
+    // result 有效值: success | failed
     {"type": "restart_driver", "target": "modbus_1", "result": "success", "timestamp": "..."}
   ]
 }
@@ -262,6 +270,7 @@ TinyIoTHub 目前已具备成熟的物联网边缘网关能力：
 {
   "action_id": "uuid",
   "executed": true,
+  // result 有效值: success | failed | pending_approval
   "result": "success | failed | pending_approval",
   "details": "string",
   "logs": ["action started", "driver stopped", "driver started"]
@@ -346,7 +355,7 @@ self_healing:
         - type: devices_offline_ratio
           threshold: 0.2  # 20% 设备离线
         - type: disk_usage
-          threshold: 85  # 磁盘使用 85%
+          threshold: 85  # 磁盘使用百分比 (0-100)
         - type: consecutive_failures
           count: 5
 
@@ -533,6 +542,8 @@ OpenClaw 提取的结构化信息，供 MCP Tools 使用：
 ## 6. 技术实现细节
 
 ### 6.1 MCP Server 扩展
+
+> **前提说明**：`mcp/` 目录已存在，包含基础 MCP Server 实现（8 个工具）。本节描述在现有基础上扩展新工具类别的文件结构变更。
 
 **文件结构**：
 ```
