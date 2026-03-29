@@ -124,7 +124,7 @@ const ProviderList = () => {
           className="relative flex grow flex-col overflow-y-auto bg-background-body"
         >
           {/* 固定头部 */}
-          <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-y-2 bg-background-body px-12 pb-2 pt-4 leading-[56px]">
+          <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-y-2 glass-nav px-12 pb-2 pt-4 leading-[56px]">
             <TabSlider
               value={activeTab}
               onChange={handleTabChange}
