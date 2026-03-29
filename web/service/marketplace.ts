@@ -1,10 +1,9 @@
 import { apiGet, apiPost } from '@/lib/api-client'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { queryKeys } from '@/lib/query-keys'
-import { API_PREFIX } from '@/config'
 
-// 使用本地后端代理，避免跨域问题
-const MARKETPLACE_API_PREFIX = `${API_PREFIX}/marketplace`
+// api-client 会自动添加 /api/v1 前缀，所以这里只用相对路径
+const MARKETPLACE_API_PREFIX = '/marketplace'
 
 // API 响应分页结构
 interface PaginatedResult<T> {

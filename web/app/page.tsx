@@ -335,7 +335,7 @@ export default function Home() {
               <a href="https://docs.tinyiothub.com" target="_blank" rel="noopener noreferrer" className="text-sm text-gray-600 hover:text-gray-900 transition-colors">文档</a>
               <a href="/signin" className="text-sm text-gray-600 hover:text-gray-900 transition-colors">登录</a>
             </div>
-            <p className="text-sm text-gray-500">&copy; 2026 TinyIoTHub. All rights reserved.</p>
+            <p className="text-sm text-gray-500">&copy; 2026 TinyIoTHub. All rights reserved. | <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer" className="hover:text-gray-700 transition-colors">粤ICP备2026029601号-2</a></p>
           </div>
         </div>
       </footer>
