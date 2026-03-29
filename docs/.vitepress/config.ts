@@ -1,17 +1,21 @@
 import { defineConfig } from 'vitepress'
 
 export default defineConfig({
-  title: "TinyIoTHub",
+  title: "TinyIoTHub | 文档",
   description: "专业物联网边缘网关系统",
+  lang: 'zh-CN',
   appearance: 'dark',
-  
+
   ignoreDeadLinks: true,
-  
+
   head: [
     ['link', { rel: 'icon', href: '/favicon.ico' }]
   ],
 
   themeConfig: {
+    // Logo 链接到主站
+    logoLink: 'https://tinyiothub.com',
+
     // 导航栏
     nav: [
       { text: '首页', link: '/' },
@@ -81,13 +85,13 @@ export default defineConfig({
 
     // 社交链接
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/tinyiothub/tinyiothub' }
+      { icon: 'github', link: 'https://github.com/Grong/tinyiothub' }
     ],
 
     // 页脚
     footer: {
       message: '基于 Rust 的高性能物联网边缘网关系统',
-      copyright: 'MIT License © 2026 TinyIoTHub'
+      copyright: 'MIT License © 2026 TinyIoTHub | <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">粤ICP备2026029601号-2</a>'
     },
 
     // 搜索

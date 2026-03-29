@@ -1,0 +1,48 @@
+/**
+ * Custom theme overrides to match web brand colors
+ * Primary brand color: #155aef
+ */
+
+:root {
+  /* Brand colors */
+  --vp-c-brand-1: #155aef;
+  --vp-c-brand-2: #296dff;
+  --vp-c-brand-3: #004aeb;
+  --vp-c-brand-soft: rgb(21 90 239 / 0.12);
+
+  /* Button primary */
+  --vp-button-brand-bg: #155aef;
+  --vp-button-brand-hover-bg: #296dff;
+  --vp-button-brand-active-bg: #004aeb;
+
+  /* Nav bar */
+  --vp-nav-logo-bg: #155aef;
+}
+
+/**
+ * Dark theme overrides
+ */
+.dark {
+  --vp-c-brand-1: #296dff;
+  --vp-c-brand-2: #528bff;
+  --vp-c-brand-3: #155aef;
+  --vp-c-brand-soft: rgb(41 109 255 / 0.12);
+
+  --vp-button-brand-bg: #296dff;
+  --vp-button-brand-hover-bg: #528bff;
+  --vp-button-brand-active-bg: #155aef;
+}
+
+/**
+ * Homepage hero customization
+ */
+/* .VPHome .VPHero .clip {
+  background: linear-gradient(135deg, #155aef 0%, #00359e 100%);
+} */
+
+.VPHome .VPHero .tagline {
+  background: linear-gradient(135deg, #155aef 0%, #296dff 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
