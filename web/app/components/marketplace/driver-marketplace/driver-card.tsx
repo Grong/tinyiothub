@@ -115,7 +115,7 @@ const DriverCard: React.FC<DriverCardProps> = ({
   }
 
   const wrapClassName = cn(
-    'glass-card p-5 hover:shadow-xl transition-all duration-200 relative overflow-hidden'
+    'group glass-card p-5 hover:shadow-xl transition-all duration-200 relative overflow-hidden'
   )
 
   return (

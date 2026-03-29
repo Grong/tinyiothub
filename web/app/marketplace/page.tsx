@@ -99,6 +99,7 @@ export default function MarketplacePage() {
           activeSort={activeSort}
           onFilterChange={setActiveFilter}
           onSortChange={setActiveSort}
+          tabType={activeTab}
         />
 
         {/* Grid */}
