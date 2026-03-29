@@ -18,10 +18,10 @@ const MarketplaceNav = ({
 }: MarketplaceNavProps) => {
   const { t } = useTranslation('common')
   const selectedSegment = useSelectedLayoutSegment()
-  const activated = selectedSegment === 'marketplace'
+  const activated = selectedSegment === 'installed-marketplace'
 
   return (
-    <Link href="/marketplace" className={classNames(
+    <Link href="/installed-marketplace" className={classNames(
       className,
       'group text-sm font-medium',
       activated && 'hover:bg-components-main-nav-nav-button-bg-active-hover bg-components-main-nav-nav-button-bg-active font-semibold shadow-md',

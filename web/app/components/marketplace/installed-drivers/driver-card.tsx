@@ -103,7 +103,7 @@ const DriverCard: React.FC<DriverCardProps> = ({
   driver,
 }) => {
   const wrapClassName = cn(
-    'group hover-bg-components-panel-on-panel-item-bg relative overflow-hidden rounded-xl border-[0.5px] border-components-panel-border bg-components-panel-on-panel-item-bg shadow-xs'
+    'group hover-bg-components-panel-on-panel-item-bg relative overflow-hidden rounded-2xl border border-white/40 glass-shadow glass bg-white/60 backdrop-blur-xl transition-all duration-300 hover:shadow-2xl hover:bg-white/80 hover:-translate-y-1'
   )
 
   return (
