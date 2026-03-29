@@ -355,7 +355,7 @@ impl User {
         if let Some(user) = Self::find_by_username(db, username).await? {
             // 使用 bcrypt 验证密码
             use crate::utils::password::verify_password;
-            if verify_password(password, &user.password_hash).is_ok() && user.is_enabled {
+            if verify_password(password, &user.password_hash).is_ok_and(|v| v) && user.is_enabled {
                 return Ok(Some(user));
             }
         }
