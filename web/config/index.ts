@@ -14,5 +14,5 @@ export const ZENDESK_WIDGET_KEY = process.env.NEXT_PUBLIC_ZENDESK_WIDGET_KEY || 
 
 export const basePath = process.env.NEXT_PUBLIC_BASE_PATH || ''
 
-export const MARKETPLACE_API_PREFIX = process.env.NEXT_PUBLIC_MARKETPLACE_API_PREFIX || ''
+export const MARKETPLACE_API_PREFIX = process.env.NEXT_PUBLIC_MARKETPLACE_API_PREFIX || 'https://marketplace.tinyiothub.com/api/v1'
 export const ALLOW_UNSAFE_DATA_SCHEME = process.env.NEXT_PUBLIC_ALLOW_UNSAFE_DATA_SCHEME === 'true'
