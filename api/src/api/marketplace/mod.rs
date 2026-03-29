@@ -1,18 +1,17 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     routing::{get, post},
     Json, Router,
 };
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     domain::{
-        marketplace::{
-            client::MarketplaceClient, driver_installer::DriverInstaller, metadata::*,
-            template_installer::TemplateInstaller,
-        },
+        marketplace::{client::MarketplaceClient, driver_installer::DriverInstaller,
+            template_installer::TemplateInstaller},
         template::repository::TemplateRepository,
     },
     dto::response::{builder::ApiResponseBuilder, ApiResponse},
@@ -23,14 +22,26 @@ use crate::{
 pub fn create_router() -> Router<AppState> {
     Router::new()
         // 模板市场
-        .route("/templates", get(list_marketplace_templates))
-        .route("/templates/:id", get(get_marketplace_template))
+        .route("/templates", get(proxy_marketplace_templates))
+        .route("/templates/:id", get(proxy_marketplace_template))
         .route("/templates/:id/install", post(install_marketplace_template))
         // 驱动市场
-        .route("/drivers", get(list_marketplace_drivers))
-        .route("/drivers/:id", get(get_marketplace_driver))
+        .route("/drivers", get(proxy_marketplace_drivers))
+        .route("/drivers/:id", get(proxy_marketplace_driver))
         .route("/drivers/:id/install", post(install_marketplace_driver))
 }
+
+/// 外部市场 API 地址
+const EXTERNAL_MARKETPLACE_API: &str = "https://marketplace.tinyiothub.com/api/v1";
+
+/// HTTP 客户端（懒加载初始化）
+static HTTP_CLIENT: std::sync::LazyLock<Client, fn() -> Client> =
+    std::sync::LazyLock::new(|| {
+        Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("Failed to create HTTP client")
+    });
 
 /// 安装请求
 #[derive(Debug, Deserialize)]
@@ -38,54 +49,156 @@ pub struct InstallRequest {
     pub version: Option<String>,
 }
 
-/// 获取市场模板列表
-async fn list_marketplace_templates(
+/// 代理获取市场模板列表
+async fn proxy_marketplace_templates(
     State(_state): State<AppState>,
-    _claims: Claims,
-) -> Json<ApiResponse<Vec<TemplateMetadata>>> {
-    let config = config::get();
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    let mut url = format!("{}/templates", EXTERNAL_MARKETPLACE_API);
 
-    let client = match MarketplaceClient::new(config.marketplace.clone()) {
-        Ok(client) => client,
-        Err(e) => {
-            tracing::error!("Failed to create marketplace client: {}", e);
-            return ApiResponseBuilder::error(&format!("市场客户端初始化失败: {}", e));
+    // 添加查询参数
+    if !params.is_empty() {
+        let query_string = params
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect::<Vec<_>>()
+            .join("&");
+        url = format!("{}?{}", url, query_string);
+    }
+
+    tracing::info!("Proxying marketplace templates request to: {}", url);
+
+    match HTTP_CLIENT.get(&url).send().await {
+        Ok(response) => {
+            match response.json::<serde_json::Value>().await {
+                Ok(data) => Json(data),
+                Err(e) => {
+                    tracing::error!("Failed to parse marketplace response: {}", e);
+                    Json(serde_json::json!({
+                        "code": -1,
+                        "msg": format!("解析市场响应失败: {}", e),
+                        "result": null
+                    }))
+                }
+            }
         }
-    };
-
-    match client.fetch_templates().await {
-        Ok(templates) => ApiResponseBuilder::success(templates),
         Err(e) => {
             tracing::error!("Failed to fetch marketplace templates: {}", e);
-            ApiResponseBuilder::error(&format!("获取市场模板失败: {}", e))
+            Json(serde_json::json!({
+                "code": -1,
+                "msg": format!("获取市场模板失败: {}", e),
+                "result": null
+            }))
         }
     }
 }
 
-/// 获取市场模板详情
-async fn get_marketplace_template(
+/// 代理获取市场模板详情
+async fn proxy_marketplace_template(
     State(_state): State<AppState>,
     Path(id): Path<String>,
-    _claims: Claims,
-) -> Json<ApiResponse<Option<TemplateMetadata>>> {
-    let config = config::get();
+) -> Json<serde_json::Value> {
+    let url = format!("{}/templates/{}", EXTERNAL_MARKETPLACE_API, id);
+    tracing::info!("Proxying marketplace template request to: {}", url);
 
-    let client = match MarketplaceClient::new(config.marketplace.clone()) {
-        Ok(client) => client,
-        Err(e) => {
-            tracing::error!("Failed to create marketplace client: {}", e);
-            return ApiResponseBuilder::error(&format!("市场客户端初始化失败: {}", e));
-        }
-    };
-
-    match client.fetch_templates().await {
-        Ok(templates) => {
-            let template = templates.into_iter().find(|t| t.id == id);
-            ApiResponseBuilder::success(template)
+    match HTTP_CLIENT.get(&url).send().await {
+        Ok(response) => {
+            match response.json::<serde_json::Value>().await {
+                Ok(data) => Json(data),
+                Err(e) => {
+                    tracing::error!("Failed to parse marketplace response: {}", e);
+                    Json(serde_json::json!({
+                        "code": -1,
+                        "msg": format!("解析市场响应失败: {}", e),
+                        "result": null
+                    }))
+                }
+            }
         }
         Err(e) => {
             tracing::error!("Failed to fetch marketplace template {}: {}", id, e);
-            ApiResponseBuilder::error(&format!("获取模板详情失败: {}", e))
+            Json(serde_json::json!({
+                "code": -1,
+                "msg": format!("获取模板详情失败: {}", e),
+                "result": null
+            }))
+        }
+    }
+}
+
+/// 代理获取市场驱动列表
+async fn proxy_marketplace_drivers(
+    State(_state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    let mut url = format!("{}/drivers", EXTERNAL_MARKETPLACE_API);
+
+    // 添加查询参数
+    if !params.is_empty() {
+        let query_string = params
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect::<Vec<_>>()
+            .join("&");
+        url = format!("{}?{}", url, query_string);
+    }
+
+    tracing::info!("Proxying marketplace drivers request to: {}", url);
+
+    match HTTP_CLIENT.get(&url).send().await {
+        Ok(response) => {
+            match response.json::<serde_json::Value>().await {
+                Ok(data) => Json(data),
+                Err(e) => {
+                    tracing::error!("Failed to parse marketplace response: {}", e);
+                    Json(serde_json::json!({
+                        "code": -1,
+                        "msg": format!("解析市场响应失败: {}", e),
+                        "result": null
+                    }))
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!("Failed to fetch marketplace drivers: {}", e);
+            Json(serde_json::json!({
+                "code": -1,
+                "msg": format!("获取市场驱动失败: {}", e),
+                "result": null
+            }))
+        }
+    }
+}
+
+/// 代理获取市场驱动详情
+async fn proxy_marketplace_driver(
+    State(_state): State<AppState>,
+    Path(id): Path<String>,
+) -> Json<serde_json::Value> {
+    let url = format!("{}/drivers/{}", EXTERNAL_MARKETPLACE_API, id);
+    tracing::info!("Proxying marketplace driver request to: {}", url);
+
+    match HTTP_CLIENT.get(&url).send().await {
+        Ok(response) => {
+            match response.json::<serde_json::Value>().await {
+                Ok(data) => Json(data),
+                Err(e) => {
+                    tracing::error!("Failed to parse marketplace response: {}", e);
+                    Json(serde_json::json!({
+                        "code": -1,
+                        "msg": format!("解析市场响应失败: {}", e),
+                        "result": null
+                    }))
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!("Failed to fetch marketplace driver {}: {}", id, e);
+            Json(serde_json::json!({
+                "code": -1,
+                "msg": format!("获取驱动详情失败: {}", e),
+                "result": null
+            }))
         }
     }
 }
@@ -123,58 +236,6 @@ async fn install_marketplace_template(
         Err(e) => {
             tracing::error!("Failed to install template {}: {}", id, e);
             ApiResponseBuilder::error(&format!("安装模板失败: {}", e))
-        }
-    }
-}
-
-/// 获取市场驱动列表
-async fn list_marketplace_drivers(
-    State(_state): State<AppState>,
-    _claims: Claims,
-) -> Json<ApiResponse<Vec<DriverMetadata>>> {
-    let config = config::get();
-
-    let client = match MarketplaceClient::new(config.marketplace.clone()) {
-        Ok(client) => client,
-        Err(e) => {
-            tracing::error!("Failed to create marketplace client: {}", e);
-            return ApiResponseBuilder::error(&format!("市场客户端初始化失败: {}", e));
-        }
-    };
-
-    match client.fetch_drivers().await {
-        Ok(drivers) => ApiResponseBuilder::success(drivers),
-        Err(e) => {
-            tracing::error!("Failed to fetch marketplace drivers: {}", e);
-            ApiResponseBuilder::error(&format!("获取市场驱动失败: {}", e))
-        }
-    }
-}
-
-/// 获取市场驱动详情
-async fn get_marketplace_driver(
-    State(_state): State<AppState>,
-    Path(id): Path<String>,
-    _claims: Claims,
-) -> Json<ApiResponse<Option<DriverMetadata>>> {
-    let config = config::get();
-
-    let client = match MarketplaceClient::new(config.marketplace.clone()) {
-        Ok(client) => client,
-        Err(e) => {
-            tracing::error!("Failed to create marketplace client: {}", e);
-            return ApiResponseBuilder::error(&format!("市场客户端初始化失败: {}", e));
-        }
-    };
-
-    match client.fetch_drivers().await {
-        Ok(drivers) => {
-            let driver = drivers.into_iter().find(|d| d.id == id);
-            ApiResponseBuilder::success(driver)
-        }
-        Err(e) => {
-            tracing::error!("Failed to fetch marketplace driver {}: {}", id, e);
-            ApiResponseBuilder::error(&format!("获取驱动详情失败: {}", e))
         }
     }
 }

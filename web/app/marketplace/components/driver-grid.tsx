@@ -12,7 +12,7 @@ interface DriverGridProps {
 export default function DriverGrid({ drivers, isLoading }: DriverGridProps) {
   if (isLoading) {
     return (
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
         {[...Array(8)].map((_, i) => (
           <div key={i} className="glass-card h-48 animate-pulse" />
         ))}
@@ -29,7 +29,7 @@ export default function DriverGrid({ drivers, isLoading }: DriverGridProps) {
   }
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
       {drivers.map((driver) => (
         <DriverCard key={driver.id} driver={driver} />
       ))}
