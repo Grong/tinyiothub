@@ -3703,7 +3703,7 @@ dependencies = [
 
 [[package]]
 name = "tinyiothub"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
