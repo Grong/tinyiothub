@@ -50,12 +50,12 @@ export interface DriverMetadata {
 
 // API 函数
 const marketplaceApi = {
-  getTemplates: () => apiGet<TemplateMetadata[]>(`${MARKETPLACE_API_PREFIX}/v1/templates`),
-  getTemplate: (id: string) => apiGet<TemplateMetadata | null>(`${MARKETPLACE_API_PREFIX}/v1/templates/${id}`),
-  installTemplate: (id: string) => apiPost<string>(`${MARKETPLACE_API_PREFIX}/v1/templates/${id}/install`, {}),
-  getDrivers: () => apiGet<DriverMetadata[]>(`${MARKETPLACE_API_PREFIX}/v1/drivers`),
-  getDriver: (id: string) => apiGet<DriverMetadata | null>(`${MARKETPLACE_API_PREFIX}/v1/drivers/${id}`),
-  installDriver: (id: string) => apiPost<string>(`${MARKETPLACE_API_PREFIX}/v1/drivers/${id}/install`, {}),
+  getTemplates: () => apiGet<TemplateMetadata[]>(`${MARKETPLACE_API_PREFIX}/templates`),
+  getTemplate: (id: string) => apiGet<TemplateMetadata | null>(`${MARKETPLACE_API_PREFIX}/templates/${id}`),
+  installTemplate: (id: string) => apiPost<string>(`${MARKETPLACE_API_PREFIX}/templates/${id}/install`, {}),
+  getDrivers: () => apiGet<DriverMetadata[]>(`${MARKETPLACE_API_PREFIX}/drivers`),
+  getDriver: (id: string) => apiGet<DriverMetadata | null>(`${MARKETPLACE_API_PREFIX}/drivers/${id}`),
+  installDriver: (id: string) => apiPost<string>(`${MARKETPLACE_API_PREFIX}/drivers/${id}/install`, {}),
 }
 
 // React Query Hooks
