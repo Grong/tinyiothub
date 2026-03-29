@@ -7,7 +7,7 @@ echo "🚀 开始部署 TinyIoTHub..."
 
 # 创建必要的目录
 echo "📁 创建数据目录..."
-mkdir -p data/certbot data/mosquitto/data data/mosquitto/log logs config templates mosquitto/config nginx/conf.d
+mkdir -p data/certbot data/mosquitto/data data/mosquitto/log logs config templates mosquitto/config nginx/conf.d nginx/ssl/live/marketplace.tinyiothub.com
 
 # 设置目录权限（使用安全的权限设置）
 echo "🔧 设置目录权限..."
@@ -66,6 +66,23 @@ if [ $retry_count -eq $max_retries ]; then
     echo "❌ API 服务启动超时"
 fi
 
+# 健康检查：等待 Marketplace 服务就绪
+max_retries=10
+retry_count=0
+while [ $retry_count -lt $max_retries ]; do
+    health=$(docker compose exec -T tinyiothub-marketplace wget -qO- http://localhost:3003/ 2>/dev/null)
+    if [ -n "$health" ]; then
+        echo "✅ Marketplace 服务已就绪"
+        break
+    fi
+    retry_count=$((retry_count + 1))
+    echo "⏳ 等待 Marketplace 就绪... ($retry_count/$max_retries)"
+    sleep 5
+done
+if [ $retry_count -eq $max_retries ]; then
+    echo "❌ Marketplace 服务启动超时"
+fi
+
 # 检查服务状态
 echo "🔍 检查服务状态..."
 docker compose ps
@@ -86,3 +103,4 @@ echo "访问: https://www.tinyiothub.com"
 echo "API: https://api.tinyiothub.com"
 echo "MQTT: https://mqtt.tinyiothub.com"
 echo "文档: https://docs.tinyiothub.com"
+echo "市场：https://marketplace.tinyiothub.com"

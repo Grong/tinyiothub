@@ -66,6 +66,14 @@ docker compose run --rm --entrypoint "certbot" certbot certonly \
     --agree-tos --no-eff-email \
     $STAGING_ARG
 
+echo "==> 申请 marketplace.tinyiothub.com 证书..."
+docker compose run --rm --entrypoint "certbot" certbot certonly \
+    --webroot -w /var/www/certbot \
+    -d marketplace.tinyiothub.com \
+    --email "$EMAIL" \
+    --agree-tos --no-eff-email \
+    $STAGING_ARG
+
 echo "==> 切换到 HTTPS 配置..."
 cp nginx/conf.d-ssl/*.conf nginx/conf.d/
 

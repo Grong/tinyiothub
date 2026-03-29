@@ -121,6 +121,41 @@ services:
       - ./nginx/ssl:/etc/nginx/ssl
     entrypoint: "/bin/sh -c 'mkdir -p /var/www/certbot/.well-known/acme-challenge; trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
 
+  # ============================================
+  # Marketplace 市场服务
+  # ============================================
+  tinyiothub-marketplace:
+    image: chenguorongz/tinyiothub-marketplace:latest
+    container_name: tinyiothub-marketplace
+    restart: unless-stopped
+
+    expose:
+      - "3003"
+
+    privileged: true
+
+    user: "${UID:-1000}:${GID:-1000}"
+
+    environment:
+      - RUST_LOG=info
+      - TZ=Asia/Shanghai
+      - TINYIOTHUB__DATABASE__URL=/app/data/tinyiothub.db
+      - TINYIOTHUB__SECURITY__JWT__SECRET=tinyiothub-default-jwt-secret-change-in-production-32chars
+      - TINYIOTHUB__MQTT__PRIMARY__USERNAME=admin
+      - TINYIOTHUB__MQTT__PRIMARY__PASSWORD=admin123
+
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./templates:/app/templates
+      - ./config/app_settings.toml:/app/app_settings.toml:ro
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 networks:
   default:
     name: tinyiothub-network
