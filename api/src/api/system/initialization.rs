@@ -97,11 +97,27 @@ pub async fn check_system_initialization(state: &AppState) -> Result<bool, sqlx:
 
 /// 自动创建默认管理员用户（如果不存在）
 pub async fn ensure_default_admin_user(state: &AppState) -> Result<(), sqlx::Error> {
-    // 检查是否已有用户
-    let users = User::find_all(state.database(), &Default::default()).await?;
+    // 先查找 admin 用户是否已存在
+    let admin_user = User::find_by_username(state.database(), "admin").await?;
 
-    if users.is_empty() {
+    if let Some(user) = admin_user {
+        // admin 用户已存在，检查密码哈希是否是迁移脚本里的假哈希
+        if user.password_hash == "FIX_ME_admin_hash" || user.password_hash == "hashed_admin123" {
+            tracing::info!("[init] Admin user has invalid password hash from migration, fixing...");
+            match User::update_password(state.database(), &user.id, "admin123").await {
+                Ok(_) => {
+                    tracing::info!("[init] Admin password fixed successfully");
+                }
+                Err(e) => {
+                    tracing::error!("[init] Failed to fix admin password: {}", e);
+                    return Err(e);
+                }
+            }
+        }
+        // 密码哈希正确则不修改
+    } else {
         // 创建默认管理员用户
+        tracing::info!("[init] No admin user found, creating default admin...");
         let create_request = CreateUserRequest {
             username: "admin".to_string(),
             password: "admin123".to_string(), // 默认密码，生产环境应该要求用户修改
