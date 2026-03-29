@@ -350,7 +350,49 @@ async fn delete_automation(
     }
 }
 
-/// 执行
+/// 启用
+async fn enable_automation(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Json<ApiResponse<serde_json::Value>> {
+    let now = chrono::Utc::now().to_rfc3339();
+
+    // 使用参数化查询防止 SQL 注入
+    match sqlx::query("UPDATE automations SET enabled = 1, updated_at = ? WHERE id = ?")
+        .bind(&now)
+        .bind(&id)
+        .execute(state.database.pool())
+        .await
+    {
+        Ok(_) => get_automation(State(state), Path(id)).await,
+        Err(e) => {
+            tracing::error!("Failed to enable automation: {}", e);
+            ApiResponseBuilder::error("启用自动化失败")
+        }
+    }
+}
+
+/// 禁用
+async fn disable_automation(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Json<ApiResponse<serde_json::Value>> {
+    let now = chrono::Utc::now().to_rfc3339();
+
+    // 使用参数化查询防止 SQL 注入
+    match sqlx::query("UPDATE automations SET enabled = 0, updated_at = ? WHERE id = ?")
+        .bind(&now)
+        .bind(&id)
+        .execute(state.database.pool())
+        .await
+    {
+        Ok(_) => get_automation(State(state), Path(id)).await,
+        Err(e) => {
+            tracing::error!("Failed to disable automation: {}", e);
+            ApiResponseBuilder::error("禁用自动化失败")
+        }
+    }
+}/// 执行
 async fn run_automation(
     State(state): State<AppState>,
     Path(id): Path<String>,

@@ -1,3 +1,6 @@
+# DEPRECATED: This crate is replaced by the embedded MCP server in api/src/api/mcp/
+# No longer maintained as of 2026-03-28. Phase 1 of Edge Intelligence Agent.
+
 [package]
 name = "tinyiothub-mcp"
 version = "1.0.0"

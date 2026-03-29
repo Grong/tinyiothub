@@ -1,6 +1,6 @@
 # TinyIoTHub - Rust Implementation
 
-**版本**: v1.0.0  
+**版本**: v1.1.0  
 **官方网站**: https://tinyiothub.com  
 **仓库地址**: https://github.com/Grong/tinyiothub  
 **Docker Hub**: https://hub.docker.com/r/chenguorongz/tinyiothub  
@@ -24,6 +24,8 @@
 - 🎯 **事件驱动架构**（设备联动和规则引擎）
 - 💾 **SQLite 数据存储**（支持自动迁移）
 - 🔄 **自动重连和故障恢复**
+- 🤖 **AI Agent 集成**（MCP Server，29+ 工具，Claude Desktop/Cursor 支持）
+- 🔧 **自愈引擎**（探测调度器 + 自动故障恢复，支持 system/device/task 探针）
 - 🤖 **鸿蒙系统原生支持**
 - ⚙️ **专业配置系统**（层次化配置，环境感知）
 - 🔒 **安全加固**（配置验证，权限控制）
@@ -383,6 +385,11 @@ web/
 - `GET /api/v1/monitoring/health` - 健康检查
 - `GET /api/v1/monitoring/metrics` - 系统指标
 - `GET /api/v1/monitoring/dashboard/stats` - 仪表板统计
+
+### MCP Server（AI Agent）
+- `POST /mcp` - MCP JSON-RPC 统一端点（tools/list、tools/call）
+- `POST /mcp/tools/list` - 列出可用工具（29 工具）
+- `POST /mcp/tools/call` - 调用指定工具
 
 ## 开发指南
 
