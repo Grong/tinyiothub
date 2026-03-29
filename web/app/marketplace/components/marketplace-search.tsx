@@ -12,6 +12,7 @@ interface MarketplaceSearchProps {
   activeSort: string
   onFilterChange: (filter: string) => void
   onSortChange: (sort: string) => void
+  tabType?: 'templates' | 'drivers'
 }
 
 export default function MarketplaceSearch({
@@ -23,6 +24,7 @@ export default function MarketplaceSearch({
   activeSort,
   onFilterChange,
   onSortChange,
+  tabType,
 }: MarketplaceSearchProps) {
   return (
     <div className="glass-card p-4 mb-6">
@@ -34,7 +36,7 @@ export default function MarketplaceSearch({
             type="text"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="搜索模板..."
+            placeholder={tabType === 'drivers' ? '搜索驱动...' : '搜索模板...'}
             className="glass-search pl-10"
           />
         </div>
