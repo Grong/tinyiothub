@@ -1,0 +1,93 @@
+/* Glassmorphism styles for marketplace */
+
+/* 玻璃卡片基础 */
+.glass-card {
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08), 0 2px 8px rgba(0, 0, 0, 0.04);
+  transition: all 0.2s ease;
+}
+
+.glass-card:hover {
+  background: rgba(255, 255, 255, 0.8);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
+}
+
+/* 暗色模式 */
+[data-theme="dark"] .glass-card {
+  background: rgba(30, 41, 59, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+[data-theme="dark"] .glass-card:hover {
+  background: rgba(30, 41, 59, 0.8);
+}
+
+/* Tab 按钮 */
+.tab-button {
+  @apply px-6 py-2.5 rounded-full text-sm font-medium transition-all duration-200;
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+}
+
+.tab-button:hover {
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.tab-button.active {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.9), rgba(79, 70, 229, 0.9));
+  color: white;
+  border-color: transparent;
+  box-shadow: 0 4px 16px rgba(59, 130, 246, 0.3);
+}
+
+[data-theme="dark"] .tab-button {
+  background: rgba(30, 41, 59, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+[data-theme="dark"] .tab-button:hover {
+  background: rgba(30, 41, 59, 0.8);
+}
+
+[data-theme="dark"] .tab-button.active {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.9), rgba(79, 70, 229, 0.9));
+}
+
+/* 搜索框 */
+.glass-search {
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  @apply rounded-xl px-4 py-2.5 text-sm w-full;
+}
+
+.glass-search:focus {
+  background: rgba(255, 255, 255, 0.8);
+  border-color: rgba(59, 130, 246, 0.5);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+[data-theme="dark"] .glass-search {
+  background: rgba(30, 41, 59, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+[data-theme="dark"] .glass-search:focus {
+  background: rgba(30, 41, 59, 0.8);
+}
+
+/* 页面背景 */
+.marketplace-bg {
+  background: linear-gradient(135deg, #f8fafc 0%, #eff6ff 40%, #eef2ff 100%);
+  min-height: 100vh;
+}
+
+[data-theme="dark"] .marketplace-bg {
+  background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+}
