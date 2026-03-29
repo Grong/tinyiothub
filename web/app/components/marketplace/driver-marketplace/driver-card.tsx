@@ -38,7 +38,7 @@ const CornerMark = ({ text }: { text: string }) => {
 // 图标组件
 const DriverIcon = ({ protocol }: { protocol: string }) => {
   return (
-    <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-components-button-secondary-bg text-2xl">
+    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500/20 to-indigo-500/20 flex items-center justify-center mb-4">
       {getProtocolIcon(protocol)}
     </div>
   )
@@ -47,7 +47,7 @@ const DriverIcon = ({ protocol }: { protocol: string }) => {
 // 标题组件
 const DriverTitle = ({ title }: { title: string }) => {
   return (
-    <div className="system-md-semibold truncate text-text-secondary">
+    <div className="text-base font-semibold text-gray-900 mb-2">
       {title}
     </div>
   )
@@ -87,15 +87,15 @@ const DriverOrgInfo = ({
 }
 
 // 描述组件
-const DriverDescription = ({ 
-  text, 
-  className 
-}: { 
+const DriverDescription = ({
+  text,
+  className
+}: {
   text: string
-  className?: string 
+  className?: string
 }) => {
   return (
-    <div className={cn('system-xs-regular h-8 line-clamp-2 text-text-tertiary', className)}>
+    <div className={cn('text-sm text-gray-600 line-clamp-2', className)}>
       {text}
     </div>
   )
@@ -115,7 +115,7 @@ const DriverCard: React.FC<DriverCardProps> = ({
   }
 
   const wrapClassName = cn(
-    'group hover-bg-components-panel-on-panel-item-bg relative overflow-hidden rounded-xl border-[0.5px] border-components-panel-border bg-components-panel-on-panel-item-bg shadow-xs'
+    'group glass-card p-5 hover:shadow-xl transition-all duration-200 relative overflow-hidden'
   )
 
   return (
@@ -162,7 +162,7 @@ const DriverCard: React.FC<DriverCardProps> = ({
       </div>
 
       {/* 悬停显示的操作按钮 */}
-      <div className="absolute bottom-0 left-0 z-10 hidden w-full items-center gap-x-2 bg-pipeline-template-card-hover-bg p-4 pt-8 group-hover:flex">
+      <div className="absolute bottom-0 left-0 z-10 hidden w-full items-center gap-x-2 backdrop-blur-sm bg-white/50 p-4 pt-8 group-hover:flex">
         <Button
           variant="ghost"
           size="small"

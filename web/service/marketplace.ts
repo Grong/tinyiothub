@@ -1,14 +1,9 @@
 import { apiGet, apiPost } from '@/lib/api-client'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { queryKeys } from '@/lib/query-keys'
+import { MARKETPLACE_API_PREFIX } from '@/config'
 
-// ==================== 类型定义 ====================
-
-export interface AuthorInfo {
-  name: string
-  email: string
-}
-
+// 模板类型
 export interface TemplateMetadata {
   id: string
   name: string
@@ -18,7 +13,7 @@ export interface TemplateMetadata {
   manufacturer: string
   description: string
   tags: string[]
-  author: AuthorInfo
+  author: { name: string; email: string }
   icon?: string
   downloads: number
   rating: number
@@ -31,16 +26,7 @@ export interface TemplateMetadata {
   updatedAt: string
 }
 
-export interface PlatformBinary {
-  fileUrl: string
-  checksum: string
-  size: number
-}
-
-export interface DriverRequirements {
-  minVersion: string
-}
-
+// 驱动类型
 export interface DriverMetadata {
   id: string
   name: string
@@ -48,7 +34,7 @@ export interface DriverMetadata {
   protocol: string
   description: string
   tags: string[]
-  author: AuthorInfo
+  author: { name: string; email: string }
   icon?: string
   downloads: number
   rating: number
@@ -56,110 +42,73 @@ export interface DriverMetadata {
   license: string
   homepage?: string
   documentation?: string
-  platforms: Record<string, PlatformBinary>
-  requirements: DriverRequirements
+  platforms: Record<string, { fileUrl: string; checksum: string; size: number }>
+  requirements: { minVersion: string }
   createdAt: string
   updatedAt: string
 }
 
-export interface InstallRequest {
-  version?: string
+// API 函数
+const marketplaceApi = {
+  getTemplates: () => apiGet<TemplateMetadata[]>(`${MARKETPLACE_API_PREFIX}/templates`),
+  getTemplate: (id: string) => apiGet<TemplateMetadata | null>(`${MARKETPLACE_API_PREFIX}/templates/${id}`),
+  installTemplate: (id: string) => apiPost<string>(`${MARKETPLACE_API_PREFIX}/templates/${id}/install`, {}),
+  getDrivers: () => apiGet<DriverMetadata[]>(`${MARKETPLACE_API_PREFIX}/drivers`),
+  getDriver: (id: string) => apiGet<DriverMetadata | null>(`${MARKETPLACE_API_PREFIX}/drivers/${id}`),
+  installDriver: (id: string) => apiPost<string>(`${MARKETPLACE_API_PREFIX}/drivers/${id}/install`, {}),
 }
 
-// ==================== API 调用函数 ====================
-
-export const marketplaceApi = {
-  // 模板市场
-  getTemplates: () => apiGet<TemplateMetadata[]>('marketplace/templates'),
-  
-  getTemplate: (id: string) => apiGet<TemplateMetadata | null>(`marketplace/templates/${id}`),
-  
-  installTemplate: (id: string, data?: InstallRequest) => 
-    apiPost<string>(`marketplace/templates/${id}/install`, data || {}),
-  
-  // 驱动市场
-  getDrivers: () => apiGet<DriverMetadata[]>('marketplace/drivers'),
-  
-  getDriver: (id: string) => apiGet<DriverMetadata | null>(`marketplace/drivers/${id}`),
-  
-  installDriver: (id: string, data?: InstallRequest) => 
-    apiPost<string>(`marketplace/drivers/${id}/install`, data || {}),
-}
-
-// ==================== React Query Hooks ====================
-
-// 模板市场 Hooks
-export const useMarketplaceTemplates = () => {
-  return useQuery({
+// React Query Hooks
+export const useMarketplaceTemplates = () =>
+  useQuery({
     queryKey: queryKeys.marketplace.templates,
     queryFn: async () => {
-      const response = await marketplaceApi.getTemplates()
-      return response.result || []
+      const res = await marketplaceApi.getTemplates()
+      return res.result || []
     },
   })
-}
 
-export const useMarketplaceTemplate = (id: string, enabled = true) => {
-  return useQuery({
+export const useMarketplaceTemplate = (id: string, enabled = true) =>
+  useQuery({
     queryKey: queryKeys.marketplace.template(id),
-    queryFn: async () => {
-      const response = await marketplaceApi.getTemplate(id)
-      return response.result
-    },
+    queryFn: async () => (await marketplaceApi.getTemplate(id)).result,
     enabled: enabled && !!id,
   })
-}
 
 export const useInstallTemplate = () => {
-  const queryClient = useQueryClient()
-  
+  const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, data }: { id: string; data?: InstallRequest }) =>
-      marketplaceApi.installTemplate(id, data),
+    mutationFn: ({ id }: { id: string }) => marketplaceApi.installTemplate(id),
     onSuccess: () => {
-      // 刷新模板列表
-      queryClient.invalidateQueries({ queryKey: queryKeys.templates.all })
-      queryClient.invalidateQueries({ queryKey: queryKeys.marketplace.templates })
+      qc.invalidateQueries({ queryKey: queryKeys.templates.all })
+      qc.invalidateQueries({ queryKey: queryKeys.marketplace.templates })
     },
   })
 }
 
-// 驱动市场 Hooks
-export const useMarketplaceDrivers = () => {
-  return useQuery({
+export const useMarketplaceDrivers = () =>
+  useQuery({
     queryKey: queryKeys.marketplace.drivers,
     queryFn: async () => {
-      const response = await marketplaceApi.getDrivers()
-      return response.result || []
+      const res = await marketplaceApi.getDrivers()
+      return res.result || []
     },
   })
-}
 
-// 简化别名
-export const useTemplates = useMarketplaceTemplates
-export const useDrivers = useMarketplaceDrivers
-
-export const useMarketplaceDriver = (id: string, enabled = true) => {
-  return useQuery({
+export const useMarketplaceDriver = (id: string, enabled = true) =>
+  useQuery({
     queryKey: queryKeys.marketplace.driver(id),
-    queryFn: async () => {
-      const response = await marketplaceApi.getDriver(id)
-      return response.result
-    },
+    queryFn: async () => (await marketplaceApi.getDriver(id)).result,
     enabled: enabled && !!id,
   })
-}
 
 export const useInstallDriver = () => {
-  const queryClient = useQueryClient()
-  
+  const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, data }: { id: string; data?: InstallRequest }) =>
-      marketplaceApi.installDriver(id, data),
+    mutationFn: ({ id }: { id: string }) => marketplaceApi.installDriver(id),
     onSuccess: () => {
-      // 刷新驱动列表
-      queryClient.invalidateQueries({ queryKey: queryKeys.drivers.all })
-      queryClient.invalidateQueries({ queryKey: queryKeys.marketplace.drivers })
+      qc.invalidateQueries({ queryKey: queryKeys.drivers.all })
+      qc.invalidateQueries({ queryKey: queryKeys.marketplace.drivers })
     },
   })
 }
