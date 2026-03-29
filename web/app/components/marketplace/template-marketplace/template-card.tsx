@@ -127,7 +127,7 @@ const TemplateCard: React.FC<TemplateCardProps> = ({
           <TemplateIcon category={template.category} />
           <div className="ml-3 w-0 grow">
             <div className="flex h-5 items-center">
-              <TemplateTitle title={template.name} />
+              <TemplateTitle title={template.displayName || template.name} />
             </div>
             <TemplateOrgInfo
               manufacturer={template.manufacturer}

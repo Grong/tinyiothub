@@ -1,9 +1,9 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { ArrowRightIcon } from '@heroicons/react/24/outline'
-import MarketplaceTabs, { TabType } from './components/marketplace-tabs'
+import { ArrowRightIcon, HomeIcon } from '@heroicons/react/24/outline'
 import MarketplaceSearch from './components/marketplace-search'
+import { TabType } from './components/marketplace-tabs'
 import TemplateGrid from './components/template-grid'
 import DriverGrid from './components/driver-grid'
 import {
@@ -17,12 +17,34 @@ export default function MarketplacePage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [activeFilter, setActiveFilter] = useState('all')
   const [activeSort, setActiveSort] = useState('popular')
+  const [isNavVisible, setIsNavVisible] = useState(true)
 
   const { data: templates = [], isLoading: templatesLoading } = useMarketplaceTemplates()
   const { data: drivers = [], isLoading: driversLoading } = useMarketplaceDrivers()
 
   useEffect(() => {
     document.title = 'TinyIoTHub | 智能物联网平台'
+  }, [])
+
+  // 滚动隐藏/显示导航
+  useEffect(() => {
+    let lastScrollY = 0
+
+    const handleScroll = () => {
+      const currentScrollY = window.scrollY
+      const threshold = 80
+
+      if (currentScrollY > lastScrollY && currentScrollY > threshold) {
+        setIsNavVisible(false)
+      } else {
+        setIsNavVisible(true)
+      }
+
+      lastScrollY = currentScrollY
+    }
+
+    window.addEventListener('scroll', handleScroll, { passive: true })
+    return () => window.removeEventListener('scroll', handleScroll)
   }, [])
 
   // 筛选和排序逻辑
@@ -59,48 +81,58 @@ export default function MarketplacePage() {
   return (
     <div className="marketplace-bg">
       {/* Navigation */}
-      <nav className="sticky top-0 z-50 glass-nav border-b border-white/30">
-        <div className="mx-auto max-w-7xl px-6 lg:px-8">
+      <nav className={`fixed inset-x-0 top-0 z-50 glass-nav border-b border-white/30 transition-transform duration-300 ease-out ${isNavVisible ? 'translate-y-0' : '-translate-y-full'}`}>
+        <div className="px-4 md:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between">
             <div className="flex items-center gap-8">
               <a href="/" className="flex items-center gap-2 group">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-blue-700 text-white shadow-lg shadow-blue-600/30">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-components-button-primary-bg text-components-button-primary-text shadow-lg">
                   <ArrowRightIcon className="h-5 w-5" />
                 </div>
-                <span className="text-xl font-bold text-gray-900">TinyIoTHub</span>
+                <span className="text-xl font-bold text-primary">TinyIoTHub</span>
               </a>
-              <div className="hidden lg:flex items-center gap-8">
-                <a href="/marketplace" className="text-sm font-medium text-blue-600">市场</a>
-                <a href="https://docs.tinyiothub.com" className="text-sm font-medium text-gray-600">文档</a>
+              <div className="hidden lg:flex items-center gap-1">
+                <a href="/" className="flex h-8 items-center rounded-xl px-3 text-sm font-medium text-components-main-nav-nav-button-text hover:bg-components-main-nav-nav-button-bg-hover transition-colors">首页</a>
+                <a href="/marketplace" className="flex h-8 items-center rounded-xl px-3 text-sm font-medium bg-components-main-nav-nav-button-bg-active text-components-main-nav-nav-button-text-active font-semibold shadow-md transition-colors">市场</a>
+                <a href="https://docs.tinyiothub.com" target="_blank" rel="noopener noreferrer" className="flex h-8 items-center rounded-xl px-3 text-sm font-medium text-components-main-nav-nav-button-text hover:bg-components-main-nav-nav-button-bg-hover transition-colors">文档</a>
               </div>
             </div>
-            <div className="flex items-center gap-3">
-              <a href="/signin" className="text-sm font-medium text-gray-600">登录</a>
-              <a href="/signin" className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white">免费试用</a>
+            <div className="flex items-center gap-4">
+              <a href="/signin" className="text-sm font-medium text-secondary hover:text-primary transition-colors">登录</a>
+              <a href="/signin" className="rounded-lg bg-components-button-primary-bg text-components-button-primary-text px-5 py-2.5 text-sm font-semibold hover:bg-components-button-primary-bg-hover transition-all">免费试用</a>
             </div>
           </div>
         </div>
       </nav>
 
       {/* Main Content */}
-      <div className="px-6 lg:px-8 py-8 max-w-7xl mx-auto">
-        {/* Tabs */}
-        <div className="flex justify-center mb-8">
-          <MarketplaceTabs activeTab={activeTab} onTabChange={setActiveTab} />
+      <div className="px-4 md:px-6 lg:px-8 pt-20 py-8">
+        {/* Hero Section */}
+        <div className="text-center mb-12 pt-4">
+          <h1 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
+            设备市场
+          </h1>
+          <p className="text-base text-gray-500 max-w-xl mx-auto leading-relaxed">
+            探索来自社区的优质设备模板与驱动，开箱即用，快速接入传感器、执行器与工业设备
+          </p>
         </div>
 
-        {/* Search */}
-        <MarketplaceSearch
-          searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
-          filterOptions={activeTab === 'templates' ? templateFilters : driverFilters}
-          sortOptions={sortOptions}
-          activeFilter={activeFilter}
-          activeSort={activeSort}
-          onFilterChange={setActiveFilter}
-          onSortChange={setActiveSort}
-          tabType={activeTab}
-        />
+        {/* Search + Segmented Control */}
+        <div className="mb-8">
+          <MarketplaceSearch
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            filterOptions={activeTab === 'templates' ? templateFilters : driverFilters}
+            sortOptions={sortOptions}
+            activeFilter={activeFilter}
+            activeSort={activeSort}
+            onFilterChange={setActiveFilter}
+            onSortChange={setActiveSort}
+            tabType={activeTab}
+            onTabChange={setActiveTab}
+            activeTab={activeTab}
+          />
+        </div>
 
         {/* Grid */}
         <div className="transition-all duration-300">

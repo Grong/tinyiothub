@@ -38,6 +38,10 @@ const getAuthToken = (): string | null => {
 
 // 构建完整URL
 const buildUrl = (endpoint: string): string => {
+  // 如果是完整的 http/https URL，直接返回
+  if (endpoint.startsWith('http://') || endpoint.startsWith('https://')) {
+    return endpoint
+  }
   const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`
   return `${API_PREFIX}${normalizedEndpoint}`
 }

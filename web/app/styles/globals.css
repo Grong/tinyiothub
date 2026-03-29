@@ -809,6 +809,11 @@ button:focus-within {
     border-bottom: 1px solid rgba(255, 255, 255, 0.3);
   }
 
+  [data-theme="dark"] .glass-nav {
+    background: rgba(15, 23, 42, 0.8);
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+  }
+
   /* Brand dark gradient - unified for left panels, sign-in pages, etc. */
   .brand-dark-gradient {
     background: linear-gradient(135deg, var(--brand-start, #2563eb), var(--brand-mid, #1d4ed8), var(--brand-end, #1e3a8a));
