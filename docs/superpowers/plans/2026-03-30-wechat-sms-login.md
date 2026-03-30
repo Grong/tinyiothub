@@ -214,13 +214,21 @@ impl RedisClient {
 
 - [ ] **Step 3: 在 AppState 中添加 Redis 客户端引用**
 
-查找 `api/src/api/mod.rs` 中的 `AppState` 定义，添加：
+查找 `api/src/shared/app_state.rs` 中的 `AppState` 结构体，添加：
 
 ```rust
-pub struct AppState {
-    // ... existing fields
-    pub redis: Option<RedisClient>,
-}
+// 在 notification_manager 字段后添加
+/// Redis 客户端 - 用于会话管理和频率限制
+pub redis: Option<RedisClient>,
+```
+
+同时在 `AppState::new()` 构造函数或初始化逻辑中添加 Redis 客户端的创建逻辑。如果配置中有 Redis URL，则初始化连接。
+
+```rust
+// 示例初始化逻辑（具体实现取决于现有代码模式）
+redis: config.redis_url.as_ref().map(|url| {
+    RedisClient::new(url).expect("Failed to connect to Redis")
+})
 ```
 
 - [ ] **Step 4: Commit**
@@ -393,9 +401,9 @@ async fn send_code(
 
         // 增加当日计数
         let daily_key = format!("sms:count:daily:{}", phone);
-        r.incr(&daily_key).await?;
+        let new_count = r.incr(&daily_key).await?;
         // 设置每日计数器在次日凌晨过期（简化处理：直接设置 24 小时）
-        r.set_ex(&daily_key, "1", 86400).await?;
+        r.set_ex(&daily_key, &new_count.to_string(), 86400).await?;
 
         // 增加 IP 计数
         let ip_key = format!("sms:count:ip:{}", ip_str);
@@ -882,79 +890,33 @@ fn user_from_row(row: sqlx::Row) -> crate::dto::entity::user::User {
         last_login_at: row.try_get("last_login_at").ok(),
     }
 }
-```
 
-- [ ] **Step 6: 创建微信回调前端页面**
+/// 存储社交账号绑定
+async fn save_social_binding(
+    db: &Database,
+    user_id: &str,
+    provider: &str,
+    provider_user_id: &str,
+) -> Result<(), StatusCode> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-> 微信授权成功后会回调到 `/auth/wechat/callback?code=xxx&state=xxx`，此页面需要：
-> 1. 接收 code 和 state 参数
-> 2. 调用后端 API 完成登录
-> 3. 通过 postMessage 将结果发送给 opener 窗口
+    sqlx::query(
+        r#"INSERT INTO social_bindings (id, user_id, provider, provider_user_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(provider, provider_user_id) DO NOTHING"#
+    )
+    .bind(&id)
+    .bind(user_id)
+    .bind(provider)
+    .bind(provider_user_id)
+    .bind(&now)
+    .bind(&now)
+    .execute(db.pool())
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-**Files:**
-- Create: `web/app/auth/wechat/callback/page.tsx`
-
-```tsx
-'use client'
-
-import { useEffect, useState } from 'react'
-import { useSearchParams } from 'next/navigation'
-import { apiPost } from '@/lib/api-client'
-import { saveTenantToken } from '@/service/tenant'
-
-export default function WechatCallbackPage() {
-  const searchParams = useSearchParams()
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    const code = searchParams.get('code')
-    const state = searchParams.get('state')
-    const errorDesc = searchParams.get('error_description')
-
-    if (errorDesc) {
-      window.opener?.postMessage({ type: 'wechat_callback', error: errorDesc }, window.location.origin)
-      window.close()
-      return
-    }
-
-    if (!code || !state) {
-      setError('授权参数不完整')
-      window.opener?.postMessage({ type: 'wechat_callback', error: '授权参数不完整' }, window.location.origin)
-      window.close()
-      return
-    }
-
-    // 调用后端回调接口
-    apiPost('/auth/social/wechat/callback', { code, state })
-      .then((resp) => {
-        if (resp.code === 0 && resp.result?.access_token) {
-          saveTenantToken(resp.result.access_token)
-          window.opener?.postMessage({
-            type: 'wechat_callback',
-            code,
-            access_token: resp.result.access_token,
-          }, window.location.origin)
-        } else {
-          window.opener?.postMessage({ type: 'wechat_callback', error: resp.msg }, window.location.origin)
-        }
-      })
-      .catch((err) => {
-        window.opener?.postMessage({ type: 'wechat_callback', error: err.message }, window.location.origin)
-      })
-      .finally(() => {
-        window.close()
-      })
-  }, [searchParams])
-
-  return (
-    <div className="flex items-center justify-center h-screen">
-      {error ? (
-        <p className="text-red-600">{error}</p>
-      ) : (
-        <p>正在处理登录...</p>
-      )}
-    </div>
-  )
+    Ok(())
 }
 ```
 
