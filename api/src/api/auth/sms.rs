@@ -279,10 +279,14 @@ async fn send_code(
 
         // 增加 IP 计数
         let ip_key = format!("sms:count:ip:{}", ip_str);
-        if let Err(e) = r.incr(&ip_key).await {
-            tracing::error!("Failed to increment IP counter: {}", e);
-        }
-        if let Err(e) = r.set_ex(&ip_key, "1", 300).await {
+        let new_ip_count = match r.incr(&ip_key).await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!("Failed to increment IP counter: {}", e);
+                1
+            }
+        };
+        if let Err(e) = r.set_ex(&ip_key, &new_ip_count.to_string(), 300).await {
             tracing::error!("Failed to set IP counter expiry: {}", e);
         }
     } else {

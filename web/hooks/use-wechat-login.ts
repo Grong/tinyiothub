@@ -1,7 +1,7 @@
 'use client'
 
-import { useQuery, useMutation } from '@tanstack/react-query'
-import { apiGet, apiPost } from '@/lib/api-client'
+import { useQuery } from '@tanstack/react-query'
+import { apiGet } from '@/lib/api-client'
 import { useAuthStore } from '@/store/provider'
 
 interface WechatQrcodeResponse {
@@ -10,15 +10,8 @@ interface WechatQrcodeResponse {
   state: string
 }
 
-interface WechatCallbackRequest {
-  code: string
-  state: string
-}
-
-interface WechatLoginResponse {
+interface WechatLoginResult {
   access_token: string
-  token_type: string
-  expires_in: number
   user_info: {
     id: string
     openid?: string
@@ -38,34 +31,27 @@ export const useWechatLogin = () => {
     enabled: false, // 手动触发
   })
 
-  // 完成微信登录（供 login page 调用）
-  const completeLogin = useMutation({
-    mutationFn: (data: WechatCallbackRequest) =>
-      apiPost<WechatLoginResponse>('auth/social/wechat/callback', data),
-    onSuccess: async (response) => {
-      if (response.code === 0 && response.result) {
-        const { access_token, user_info } = response.result
+  // 完成微信登录（由 login page 通过 postMessage 调用，token 直接传入）
+  const completeLogin = async (accessToken: string, userInfo?: WechatLoginResult['user_info']) => {
+    // Store token in sessionStorage
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('auth-token', accessToken)
+    }
 
-        // Store token in sessionStorage
-        if (typeof window !== 'undefined') {
-          sessionStorage.setItem('auth-token', access_token)
-        }
+    // Set auth state
+    setToken(accessToken)
+    if (userInfo) {
+      setUser({
+        id: userInfo.id,
+        openid: userInfo.openid,
+        unionid: userInfo.unionid,
+        nickname: userInfo.nickname,
+        headimgurl: userInfo.headimgurl,
+      } as any)
+    }
 
-        // Set auth state
-        setToken(access_token)
-        setUser({
-          id: user_info.id,
-          openid: user_info.openid,
-          unionid: user_info.unionid,
-          nickname: user_info.nickname,
-          headimgurl: user_info.headimgurl,
-        } as any)
-
-        return response.result
-      }
-      throw new Error(response.msg)
-    },
-  })
+    return { access_token: accessToken }
+  }
 
   return {
     getQrcode,

@@ -16,19 +16,19 @@ interface SmsLoginRequest {
 }
 
 interface SmsCodeResponse {
-  expires_in: number
+  expiresIn: number
   message: string
 }
 
 interface LoginResponse {
-  access_token: string
-  token_type: string
-  expires_in: number
-  user_info: {
+  accessToken: string
+  tokenType: string
+  expiresIn: number
+  userInfo: {
     id: string
     phone: string
     username?: string
-    display_name?: string
+    displayName?: string
   }
 }
 
@@ -45,20 +45,20 @@ export const useSmsLogin = () => {
       apiPost<LoginResponse>('auth/sms/login', data),
     onSuccess: async (response) => {
       if (response.code === 0 && response.result) {
-        const { access_token, user_info } = response.result
+        const { accessToken, userInfo } = response.result
 
         // Store token in sessionStorage
         if (typeof window !== 'undefined') {
-          sessionStorage.setItem('auth-token', access_token)
+          sessionStorage.setItem('auth-token', accessToken)
         }
 
         // Set auth state
-        setToken(access_token)
+        setToken(accessToken)
         setUser({
-          id: user_info.id,
-          phone: user_info.phone,
-          username: user_info.username,
-          display_name: user_info.display_name,
+          id: userInfo.id,
+          phone: userInfo.phone,
+          username: userInfo.username,
+          displayName: userInfo.displayName,
         } as any)
 
         return response.result
