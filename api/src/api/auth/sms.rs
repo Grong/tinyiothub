@@ -90,13 +90,21 @@ async fn send_code(
     let purpose = request.purpose.unwrap_or_else(|| "login".to_string());
 
     // 从配置读取验证码有效期
-    let code_expire_secs =
-        config.sms.rate_limit.as_ref().map(|r| r.code_expire_secs).unwrap_or(300);
+    let code_expire_secs = config
+        .sms
+        .rate_limit
+        .as_ref()
+        .and_then(|r| r.code_expire_secs)
+        .unwrap_or(300);
 
     // 检查频率限制
     let db = state.database();
-    let _rate_limit_max =
-        config.sms.rate_limit.as_ref().map(|r| r.max_per_minute).unwrap_or(5) as i64;
+    let _rate_limit_max = config
+        .sms
+        .rate_limit
+        .as_ref()
+        .and_then(|r| r.max_per_minute)
+        .unwrap_or(5) as i64;
 
     // 生成验证码
     let code = generate_code();

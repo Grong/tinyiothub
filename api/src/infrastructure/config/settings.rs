@@ -490,42 +490,40 @@ fn default_sms_expire() -> u64 {
 pub struct SmsConfig {
     #[serde(default = "default_false")]
     pub enabled: bool,
-    #[serde(default = "default_sms_provider")]
-    pub provider: String,
     #[serde(default)]
-    pub aliyun: Option<SmsAliyunConfig>,
+    pub rate_limit: Option<SmsRateLimit>,
+    // 阿里云 SMS 新增
     #[serde(default)]
-    pub tencent: Option<SmsTencentConfig>,
+    pub aliyun: Option<AliyunSmsConfig>,
+    // 腾讯防水墙新增
     #[serde(default)]
-    pub rate_limit: Option<SmsRateLimitConfig>,
+    pub captcha: Option<CaptchaConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct SmsAliyunConfig {
-    pub access_key_id: Option<String>,
-    pub access_key_secret: Option<String>,
-    pub sign_name: Option<String>,
-    pub template_code: Option<String>,
+pub struct AliyunSmsConfig {
+    pub access_key_id: String,
+    pub access_key_secret: String,
+    pub sign_name: String,        // 短信签名
+    pub template_code: String,    // 短信模板 code
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct SmsTencentConfig {
-    pub secret_id: Option<String>,
-    pub secret_key: Option<String>,
-    pub app_id: Option<String>,
-    pub sign_name: Option<String>,
-    pub template_id: Option<String>,
+pub struct CaptchaConfig {
+    pub enabled: bool,
+    pub app_id: String,           // 腾讯防水墙 AppID
+    pub app_secret: String,       // 腾讯防水墙 AppSecret
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct SmsRateLimitConfig {
-    #[serde(default = "default_sms_rate_limit")]
-    pub max_per_minute: u32,
-    #[serde(default = "default_sms_expire")]
-    pub code_expire_secs: u64,
+pub struct SmsRateLimit {
+    pub code_expire_secs: Option<u64>,  // 验证码有效期，默认 300
+    pub max_per_minute: Option<u64>,    // 每分钟最大发送次数
+    pub daily_limit: Option<u64>,       // 每天最大发送次数，默认 5
+    pub interval_secs: Option<u64>,     // 发送间隔，默认 90
 }
 
 /// Social login configuration
@@ -533,15 +531,14 @@ pub struct SmsRateLimitConfig {
 #[serde(rename_all = "snake_case")]
 pub struct SocialConfig {
     #[serde(default)]
-    pub wechat: Option<WeChatConfig>,
+    pub wechat: Option<WechatConfig>,
     #[serde(default)]
     pub wechat_miniprogram: Option<WeChatMiniProgramConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct WeChatConfig {
-    #[serde(default = "default_false")]
+pub struct WechatConfig {
     pub enabled: bool,
     pub app_id: Option<String>,
     pub app_secret: Option<String>,
