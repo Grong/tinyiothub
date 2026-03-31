@@ -17,6 +17,7 @@ use crate::{
     api::AppState,
     dto::response::ApiResponse,
     infrastructure::{config::get as get_config, redis::RedisClient},
+    shared::security::jwt,
 };
 
 // 验证码有效期（秒）
@@ -356,106 +357,88 @@ async fn login_with_code(
         return ApiResponse::error("手机号格式不正确".to_string());
     }
 
-    // 验证验证码
-    let db = state.database();
+    let redis = state.redis.as_ref();
 
-    let rows = match sqlx::query(
-        r#"SELECT id, code, expires_at, verified_at FROM sms_codes
-            WHERE phone = ? AND purpose = 'login'
-            AND verified_at IS NULL
-            ORDER BY created_at DESC LIMIT 1"#,
-    )
-    .bind(phone)
-    .fetch_all(db.pool())
-    .await
-    {
-        Ok(r) => r,
+    // 从 Redis 获取验证码
+    let stored_code = match redis {
+        Some(r) => {
+            let code_key = format!("sms:code:{}", phone);
+            r.get(&code_key).await.ok().flatten()
+        }
+        None => {
+            // Fallback to DB（仅用于开发/测试）
+            get_code_from_db(&state, phone).await
+        }
+    };
+
+    let stored_code = match stored_code {
+        Some(c) => c,
+        None => return ApiResponse::error("验证码已过期，请重新获取".to_string()),
+    };
+
+    // 验证码比较
+    use subtle::ConstantTimeEq;
+    if !bool::from(stored_code.as_bytes().ct_eq(code.as_bytes())) {
+        // 增加错误计数
+        if let Some(r) = redis {
+            let fail_key = format!("sms:verify:fail:{}", phone);
+            let fail_count: i64 = r.get(&fail_key).await.ok().flatten()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0) + 1;
+            if let Err(e) = r.set_ex(&fail_key, &fail_count.to_string(), 300).await {
+                tracing::error!("Failed to increment fail count: {}", e);
+            }
+
+            if fail_count >= 3 {
+                // 错误次数过多，删除验证码
+                let code_key = format!("sms:code:{}", phone);
+                if let Err(e) = r.del(&code_key).await {
+                    tracing::error!("Failed to delete code after too many failures: {}", e);
+                }
+                return ApiResponse::error("验证码错误次数过多，请重新获取".to_string());
+            }
+        }
+        return ApiResponse::error("验证码错误".to_string());
+    }
+
+    // 验证成功，删除验证码
+    if let Some(r) = redis {
+        let code_key = format!("sms:code:{}", phone);
+        if let Err(e) = r.del(&code_key).await {
+            tracing::error!("Failed to delete code after successful verification: {}", e);
+        }
+    }
+
+    // 查找或创建用户（复用现有逻辑）
+    let db = state.database();
+    let user = match find_or_create_user_by_phone(db, phone).await {
+        Ok(u) => u,
         Err(e) => {
-            tracing::error!("Database error: {}", e);
+            tracing::error!("Failed to find or create user: {}", e);
             return ApiResponse::error("登录失败，请稍后重试".to_string());
         }
     };
 
-    if rows.is_empty() {
-        return ApiResponse::error("验证码已失效，请重新获取".to_string());
-    }
-
-    let row = &rows[0];
-
-    // 获取存储的验证码
-    let stored_code: String = match row.try_get("code") {
-        Ok(c) => c,
-        Err(_) => {
-            return ApiResponse::error("验证码数据异常".to_string());
-        }
-    };
-
-    // 获取过期时间
-    let expires_at: String = match row.try_get("expires_at") {
-        Ok(e) => e,
-        Err(_) => {
-            return ApiResponse::error("验证码数据异常".to_string());
-        }
-    };
-
-    // 检查验证码是否过期
-    if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(&expires_at) {
-        if exp < chrono::Utc::now() {
-            return ApiResponse::error("验证码已过期，请重新获取".to_string());
-        }
-    }
-
-    // 比较验证码 — 使用常量时间比较防止时序攻击
-    use subtle::ConstantTimeEq;
-    if stored_code.as_bytes().ct_eq(code.as_bytes()).into() {
-        // correct
-    } else {
-        return ApiResponse::error("验证码错误".to_string());
-    }
-
-    // 验证码验证成功，标记为已验证
-    let record_id: String = match row.try_get("id") {
-        Ok(id) => id,
-        Err(_) => {
-            return ApiResponse::error("验证码数据异常".to_string());
-        }
-    };
-
-    if let Err(e) = sqlx::query("UPDATE sms_codes SET verified_at = ? WHERE id = ?")
-        .bind(chrono::Utc::now().to_rfc3339())
-        .bind(&record_id)
-        .execute(db.pool())
-        .await
-    {
-        tracing::error!("Failed to mark code as verified: {}", e);
-        // 不影响登录，只是记录
-    }
-
-    // 查找或创建用户
-    let user = find_or_create_user_by_phone(db, phone).await;
-
-    match user {
-        Ok(user) => {
-            // 生成 token
-            let token = generate_jwt_token(&user.id);
-
-            ApiResponse::success(LoginWithCodeResponse {
-                access_token: token,
-                token_type: "Bearer".to_string(),
-                expires_in: 86400,
-                user_info: UserInfo {
-                    id: user.id,
-                    phone: user.phone.unwrap_or_default(),
-                    username: Some(user.username),
-                    display_name: user.display_name,
-                },
-            })
-        }
+    // 生成 JWT token（复用 jwt::generate_token）
+    let token = match jwt::generate_token(&user.id, user.get_display_name()) {
+        Ok(t) => t,
         Err(e) => {
-            tracing::error!("Failed to find or create user: {}", e);
-            ApiResponse::error("登录失败，请稍后重试".to_string())
+            tracing::error!("Failed to generate token: {}", e);
+            return ApiResponse::error("登录失败，请稍后重试".to_string());
         }
-    }
+    };
+
+    ApiResponse::success(LoginWithCodeResponse {
+        access_token: token,
+        token_type: "Bearer".to_string(),
+        expires_in: 7200,
+        user_info: UserInfo {
+            id: user.id,
+            phone: user.phone.unwrap_or_default(),
+            username: Some(user.username),
+            display_name: user.display_name,
+        },
+    })
 }
 
 /// 验证验证码（查询状态）
@@ -563,6 +546,58 @@ pub struct VerifyCodeResponse {
 
 // ============== 辅助函数 ==============
 
+/// 从数据库获取验证码（Redis 不可用时的 fallback）
+async fn get_code_from_db(
+    state: &AppState,
+    phone: &str,
+) -> Option<String> {
+    let db = state.database();
+
+    let rows = match sqlx::query(
+        r#"SELECT code, expires_at FROM sms_codes
+            WHERE phone = ? AND purpose = 'login'
+            AND verified_at IS NULL
+            ORDER BY created_at DESC LIMIT 1"#,
+    )
+    .bind(phone)
+    .fetch_all(db.pool())
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!("Database error when fetching code: {}", e);
+            return None;
+        }
+    };
+
+    if rows.is_empty() {
+        return None;
+    }
+
+    let row = &rows[0];
+
+    // 获取存储的验证码
+    let stored_code: String = match row.try_get("code") {
+        Ok(c) => c,
+        Err(_) => return None,
+    };
+
+    // 获取过期时间
+    let expires_at: String = match row.try_get("expires_at") {
+        Ok(e) => e,
+        Err(_) => return None,
+    };
+
+    // 检查验证码是否过期
+    if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(&expires_at) {
+        if exp < chrono::Utc::now() {
+            return None;
+        }
+    }
+
+    Some(stored_code)
+}
+
 /// 验证手机号格式（中国大陆手机号）
 fn validate_phone(phone: &str) -> bool {
     // 简单验证：11位数字，以1开头
@@ -633,17 +668,4 @@ async fn find_or_create_user_by_phone(
         updated_at: now,
         last_login_at: None,
     })
-}
-
-/// 生成简单的 JWT token（简化版）
-fn generate_jwt_token(user_id: &str) -> String {
-    let payload = serde_json::json!({
-        "user_id": user_id,
-        "exp": chrono::Utc::now().timestamp() + 86400,
-    });
-
-    let encoded =
-        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, payload.to_string());
-
-    format!("sms_{}", encoded)
 }
