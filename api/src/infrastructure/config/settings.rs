@@ -53,6 +53,8 @@ pub struct ApplicationSettings {
     pub event: EventSettings,
     #[serde(default)]
     pub harmonyos: HarmonyosConfig,
+    #[serde(default)]
+    pub redis: Option<RedisConfig>,
 }
 
 /// Event system configuration
@@ -69,6 +71,19 @@ pub struct EventSettings {
 pub struct HarmonyosConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
+}
+
+/// Redis configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct RedisConfig {
+    pub url: String,
+    #[serde(default = "default_redis_max_connections")]
+    pub max_connections: u32,
+}
+
+fn default_redis_max_connections() -> u32 {
+    16
 }
 
 /// Server configuration

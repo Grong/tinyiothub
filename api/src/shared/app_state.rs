@@ -33,6 +33,7 @@ use crate::{
             },
             Database,
         },
+        redis::RedisClient,
     },
     shared::error::Error,
 };
@@ -74,6 +75,9 @@ pub struct AppState {
 
     /// 通知管理器 - 事件通知和告警
     pub notification_manager: Option<Arc<NotificationManager>>,
+
+    /// Redis 客户端 - 用于会话管理和频率限制
+    pub redis: Option<RedisClient>,
 
     /// SSE连接管理器 - 实时事件推送
     pub sse_manager: Arc<SseConnectionManager>,
@@ -172,6 +176,13 @@ impl AppState {
         // Note: Secure event service requires async initialization, so we'll create it lazily
         let secure_event_service = OnceCell::new();
 
+        // Redis 客户端 - 可选服务，依赖配置
+        let redis = crate::infrastructure::config::get()
+            .redis
+            .as_ref()
+            .map(|config| RedisClient::new(&config.url).ok())
+            .flatten();
+
         Self {
             data_context,
             database,
@@ -182,6 +193,7 @@ impl AppState {
             trace_service,
             template_engine,
             notification_manager,
+            redis,
             event_bus,
             event_repository,
             real_time_event_repository,
@@ -263,6 +275,11 @@ impl AppState {
     /// 获取通知管理器
     pub fn get_notification_manager(&self) -> Option<&NotificationManager> {
         self.notification_manager.as_ref().map(|nm| nm.as_ref())
+    }
+
+    /// 获取 Redis 客户端
+    pub fn get_redis(&self) -> Option<&RedisClient> {
+        self.redis.as_ref()
     }
 
     /// 获取SSE连接管理器
