@@ -762,3 +762,82 @@ async fn find_or_create_user_by_phone(
         last_login_at: None,
     })
 }
+
+// ============== 单元测试 ==============
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_phone_valid() {
+        // 有效手机号
+        assert!(validate_phone("13812345678"));
+        assert!(validate_phone("15912345678"));
+        assert!(validate_phone("19912345678"));
+        assert!(validate_phone("16612345678"));
+    }
+
+    #[test]
+    fn test_validate_phone_invalid() {
+        // 无效手机号 - 长度不对
+        assert!(!validate_phone("1381234567"));   // 10位
+        assert!(!validate_phone("138123456789")); // 12位
+        assert!(!validate_phone(""));              // 空
+
+        // 无效手机号 - 不是1开头
+        assert!(!validate_phone("23812345678"));
+        assert!(!validate_phone("13812345678".replace("1", "a").as_str()));
+
+        // 无效手机号 - 包含非数字
+        assert!(!validate_phone("1381234567a"));
+        assert!(!validate_phone("138123456!"));
+        assert!(!validate_phone("138 1234 5678")); // 有空格
+    }
+
+    #[test]
+    fn test_generate_code_format() {
+        for _ in 0..100 {
+            let code = generate_code();
+            // 验证码应该是6位数字
+            assert_eq!(code.len(), 6, "Code {} should be 6 digits", code);
+            assert!(code.chars().all(|c| c.is_ascii_digit()), "Code {} should be all digits", code);
+        }
+    }
+
+    #[test]
+    fn test_generate_code_range() {
+        for _ in 0..100 {
+            let code = generate_code();
+            let num: u32 = code.parse().unwrap();
+            assert!(num < 1_000_000, "Code {} should be < 1000000", num);
+        }
+    }
+
+    #[test]
+    fn test_percent_encode_normal_chars() {
+        // 普通字符不编码
+        assert_eq!(percent_encode("abc123"), "abc123");
+        assert_eq!(percent_encode("hello world"), "hello%20world");
+        assert_eq!(percent_encode("test-value.test"), "test-value.test");
+    }
+
+    #[test]
+    fn test_percent_encode_special_chars() {
+        // 特殊字符需要编码
+        assert_eq!(percent_encode(" "), "%20");
+        assert_eq!(percent_encode("&"), "%26");
+        assert_eq!(percent_encode("="), "%3D");
+        assert_eq!(percent_encode("%"), "%25");
+        assert_eq!(percent_encode("/"), "%2F");
+    }
+
+    #[test]
+    fn test_percent_encode_chinese() {
+        // 中文需要编码
+        let result = percent_encode("测试");
+        assert!(result.starts_with("%"));
+    }
+
+    // RateLimitResult variants tested implicitly via integration tests
+}
