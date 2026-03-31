@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/store/provider'
 import { useSmsLogin } from '@/hooks/use-sms-login'
 import { useWechatLogin } from '@/hooks/use-wechat-login'
+import { basePath } from '@/utils/var'
 import Button from '@/app/components/base/button'
 import Input from '@/app/components/base/input'
 
@@ -185,10 +186,8 @@ export default function SignInPage() {
         <div className="relative z-10 flex flex-col justify-center px-16 text-white">
           <div className="max-w-lg">
             <div className="flex items-center gap-4 mb-8">
-              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-white/30 to-white/10 backdrop-blur-xl border border-white/20 flex items-center justify-center">
-                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
+              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-white/30 to-white/10 backdrop-blur-xl border border-white/20 flex items-center justify-center overflow-hidden">
+                <img src={`${basePath}/logo.svg`} alt="logo" className="w-10 h-10 object-contain" />
               </div>
               <h1 className="text-5xl font-bold">
                 TinyIoTHub
@@ -241,10 +240,8 @@ export default function SignInPage() {
           <div className="glass rounded-3xl p-10 shadow-2xl">
             <div className="text-center mb-6">
               {/* Logo */}
-              <div className="mx-auto w-16 h-16 bg-gradient-to-br from-blue-600 to-blue-700 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-blue-600/30">
-                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
+              <div className="mx-auto w-16 h-16 bg-gradient-to-br from-blue-600 to-blue-700 rounded-2xl flex items-center justify-center mb-6 shadow-lg shadow-blue-600/30 overflow-hidden">
+                <img src={`${basePath}/logo.svg`} alt="logo" className="w-10 h-10 object-contain" />
               </div>
               <h2 className="text-2xl font-bold text-gray-900 mb-1">
                 {t('auth.welcomeBack')}
