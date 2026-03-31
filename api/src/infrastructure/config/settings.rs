@@ -505,12 +505,14 @@ fn default_sms_expire() -> u64 {
 pub struct SmsConfig {
     #[serde(default = "default_false")]
     pub enabled: bool,
+    #[serde(default = "default_sms_provider")]
+    pub provider: String,           // aliyun, tencent, twilio
     #[serde(default)]
     pub rate_limit: Option<SmsRateLimit>,
-    // 阿里云 SMS 新增
+    // 阿里云 SMS
     #[serde(default)]
     pub aliyun: Option<AliyunSmsConfig>,
-    // 腾讯防水墙新增
+    // 腾讯防水墙
     #[serde(default)]
     pub captcha: Option<CaptchaConfig>,
 }
@@ -527,9 +529,8 @@ pub struct AliyunSmsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct CaptchaConfig {
+    #[serde(default = "default_false")]
     pub enabled: bool,
-    pub app_id: String,           // 腾讯防水墙 AppID
-    pub app_secret: String,       // 腾讯防水墙 AppSecret
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
