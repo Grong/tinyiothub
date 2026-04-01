@@ -47,4 +47,5 @@ pub struct UserInfo {
     pub id: String,
     pub token_id: String,
     pub name: String,
+    pub tenant_id: String,
 }
