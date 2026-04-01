@@ -201,7 +201,10 @@ impl ToolHandler for GetRecoveryHistoryHandler {
         // Default tenant for MCP context (single-tenant or system context)
         let tenant_id = crate::api::mcp::handlers::get_mcp_context()
             .map(|c| c.tenant_id)
-            .unwrap_or_else(|| "default".to_string());
+            .unwrap_or_else(|| {
+                tracing::debug!("MCP context not set, using 'default' tenant for recovery history");
+                "default".to_string()
+            });
 
         let executions = repository.get_recent(&tenant_id, limit, offset)
             .await

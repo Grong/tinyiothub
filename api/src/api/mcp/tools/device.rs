@@ -333,10 +333,22 @@ impl ToolHandler for GetDeviceHandler {
 
         let include_properties = input.include_properties.unwrap_or(true);
 
+        // Get tenant_id from MCP context for access control
+        let tenant_id = crate::api::mcp::handlers::get_mcp_context()
+            .map(|c| c.tenant_id);
+
         let mut device = Device::find_by_id_with_tags(state.database(), &input.id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.id)))?;
+
+        // Verify device belongs to user's tenant
+        if let Some(ref tid) = tenant_id {
+            if device.tenant_id.as_ref() != Some(tid) {
+                tracing::warn!("MCP get_device: access denied to device {} for tenant {}", input.id, tid);
+                return Err(ToolError::NotFound(format!("Device {} not found", input.id)));
+            }
+        }
 
         // Sync real-time state
         if let Some(cached) = state.data_context.get_device(&device.id) {
@@ -380,10 +392,22 @@ impl ToolHandler for GetDeviceStatusHandler {
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
+        // Get tenant_id from MCP context for access control
+        let tenant_id = crate::api::mcp::handlers::get_mcp_context()
+            .map(|c| c.tenant_id);
+
         let device = Device::find_by_id(state.database(), &input.id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.id)))?;
+
+        // Verify device belongs to user's tenant
+        if let Some(ref tid) = tenant_id {
+            if device.tenant_id.as_ref() != Some(tid) {
+                tracing::warn!("MCP get_device_status: access denied to device {} for tenant {}", input.id, tid);
+                return Err(ToolError::NotFound(format!("Device {} not found", input.id)));
+            }
+        }
 
         let state_description = device.get_state_description().to_string();
 
@@ -810,6 +834,31 @@ impl ToolHandler for UpdateDeviceHandler {
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
+        // Get tenant_id from MCP context for access control
+        let tenant_id = crate::api::mcp::handlers::get_mcp_context()
+            .map(|c| c.tenant_id);
+
+        // Verify device belongs to user's tenant before updating
+        if let Some(ref tid) = tenant_id {
+            match Device::find_by_id(state.database(), &input.id).await {
+                Ok(Some(device)) if device.tenant_id.as_ref() == Some(tid) => {
+                    // Device verified, proceed
+                }
+                Ok(Some(_)) => {
+                    tracing::warn!("MCP update_device: access denied to device {} for tenant {}", input.id, tid);
+                    return Err(ToolError::NotFound(format!("Device {} not found", input.id)));
+                }
+                Ok(None) => {
+                    tracing::warn!("MCP update_device: device {} not found for tenant {}", input.id, tid);
+                    return Err(ToolError::NotFound(format!("Device {} not found", input.id)));
+                }
+                Err(e) => {
+                    tracing::error!("MCP update_device: failed to find device {}: {}", input.id, e);
+                    return Err(ToolError::Internal(format!("Failed to update device: {}", e)));
+                }
+            }
+        }
+
         let request = UpdateDeviceRequest {
             name: input.name,
             display_name: input.display_name,
@@ -864,6 +913,31 @@ impl ToolHandler for DeleteDeviceHandler {
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
+        // Get tenant_id from MCP context for access control
+        let tenant_id = crate::api::mcp::handlers::get_mcp_context()
+            .map(|c| c.tenant_id);
+
+        // Verify device belongs to user's tenant before deleting
+        if let Some(ref tid) = tenant_id {
+            match Device::find_by_id(state.database(), &input.id).await {
+                Ok(Some(device)) if device.tenant_id.as_ref() == Some(tid) => {
+                    // Device verified, proceed
+                }
+                Ok(Some(_)) => {
+                    tracing::warn!("MCP delete_device: access denied to device {} for tenant {}", input.id, tid);
+                    return Err(ToolError::NotFound(format!("Device {} not found", input.id)));
+                }
+                Ok(None) => {
+                    tracing::warn!("MCP delete_device: device {} not found for tenant {}", input.id, tid);
+                    return Err(ToolError::NotFound(format!("Device {} not found", input.id)));
+                }
+                Err(e) => {
+                    tracing::error!("MCP delete_device: failed to find device {}: {}", input.id, e);
+                    return Err(ToolError::Internal(format!("Failed to delete device: {}", e)));
+                }
+            }
+        }
+
         let device_service = state.device_service.as_ref();
 
         match device_service.delete_device(&input.id).await {
@@ -901,14 +975,26 @@ impl ToolHandler for GetDeviceHistoryHandler {
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
+        // Get tenant_id from MCP context for access control
+        let tenant_id = crate::api::mcp::handlers::get_mcp_context()
+            .map(|c| c.tenant_id);
+
         // Default to 7 days (168 hours)
         let hours = input.hours.unwrap_or(168);
 
-        // Check device exists
-        Device::find_by_id(state.database(), &input.device_id)
+        // Check device exists and belongs to user's tenant
+        let device = Device::find_by_id(state.database(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.device_id)))?;
+
+        // Verify device belongs to user's tenant
+        if let Some(ref tid) = tenant_id {
+            if device.tenant_id.as_ref() != Some(tid) {
+                tracing::warn!("MCP get_device_history: access denied to device {} for tenant {}", input.device_id, tid);
+                return Err(ToolError::NotFound(format!("Device {} not found", input.device_id)));
+            }
+        }
 
         // Get performance history from performance service
         let records = state.performance_service

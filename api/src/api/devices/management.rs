@@ -73,7 +73,8 @@ pub struct CreateDeviceApiRequest {
     pub connection_config: Option<String>,
     pub parent_id: Option<String>,
     pub product_id: Option<String>,
-    pub tenant_id: Option<String>, // Will be set from claims, not from request
+    #[serde(skip)]
+    pub tenant_id: Option<String>, // Set from JWT claims, not from request
 }
 
 #[derive(Deserialize)]
