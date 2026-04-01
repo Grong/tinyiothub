@@ -513,7 +513,8 @@ async fn login_with_code(
     };
 
     // 生成 JWT token（复用 jwt::generate_token）
-    let token = match jwt::generate_token(&user.id, user.get_display_name()) {
+    let default_tenant_id = "default";
+    let token = match jwt::generate_token(&user.id, &user.username, default_tenant_id) {
         Ok(t) => t,
         Err(e) => {
             tracing::error!("Failed to generate token: {}", e);
@@ -524,7 +525,7 @@ async fn login_with_code(
     ApiResponse::success(LoginWithCodeResponse {
         access_token: token,
         token_type: "Bearer".to_string(),
-        expires_in: 7200,
+        expires_in: 86400,
         user_info: UserInfo {
             id: user.id,
             phone: user.phone.unwrap_or_default(),

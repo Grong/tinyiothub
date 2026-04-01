@@ -274,7 +274,16 @@ async fn wechat_callback(
     };
 
     // 生成 JWT
-    let jwt_token = match jwt::generate_token(&user.id, user.get_display_name()) {
+    let tenant_id: String = sqlx::query_scalar(
+        "SELECT tenant_id FROM tenant_users WHERE user_id = ? LIMIT 1"
+    )
+    .bind(&user.id)
+    .fetch_optional(db.pool())
+    .await
+    .unwrap_or(None)
+    .unwrap_or_else(|| "default".to_string());
+
+    let jwt_token = match jwt::generate_token(&user.id, &user.username, &tenant_id) {
         Ok(t) => t,
         Err(e) => {
             tracing::error!("Failed to generate JWT: {}", e);
