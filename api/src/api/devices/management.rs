@@ -100,6 +100,7 @@ async fn list_devices(
         product_id: query.product_id,
         page: query.pagination.page,
         page_size: query.pagination.page_size,
+        tenant_id: None,
     };
 
     let include_properties = query.include_properties.unwrap_or(false);
@@ -162,6 +163,7 @@ async fn create_device(
         parent_id: req.parent_id,
         product_id: req.product_id,
         organization_id: req.organization_id,
+        tenant_id: None,
     };
 
     // 使用DeviceService创建设备，传入event_bus以触发事件
@@ -252,6 +254,7 @@ async fn update_device(
         parent_id: req.parent_id,
         product_id: req.product_id,
         organization_id: req.organization_id,
+        tenant_id: None,
     };
 
     // 使用DeviceService更新设备，传入event_bus以触发事件

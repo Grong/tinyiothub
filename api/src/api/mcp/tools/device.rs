@@ -282,6 +282,7 @@ impl ToolHandler for ListDevicesHandler {
             product_id: input.product_id,
             page: input.page,
             page_size: input.page_size.or(Some(20)),
+            tenant_id: None,
         };
 
         let devices = Device::find_all_with_tags(state.database(), &params)
@@ -755,6 +756,7 @@ impl ToolHandler for CreateDeviceHandler {
             parent_id: input.parent_id,
             product_id: input.product_id,
             organization_id: input.organization_id,
+            tenant_id: None,
         };
 
         let device_service = state.device_service.as_ref();
@@ -824,6 +826,7 @@ impl ToolHandler for UpdateDeviceHandler {
             parent_id: input.parent_id,
             product_id: input.product_id,
             organization_id: input.organization_id,
+            tenant_id: None,
         };
 
         let device_service = state.device_service.as_ref();
