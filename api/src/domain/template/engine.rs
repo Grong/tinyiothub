@@ -85,7 +85,7 @@ impl TemplateEngine {
             parent_id: user_input.parent_id.clone(),
             product_id: user_input.product_id.clone(),
             organization_id: user_input.organization_id.clone(),
-            tenant_id: None,
+            tenant_id: user_input.tenant_id.clone(),
         };
 
         debug!("设备创建请求已生成: {:?}", device_request);

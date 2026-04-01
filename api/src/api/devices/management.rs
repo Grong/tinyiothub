@@ -401,15 +401,19 @@ async fn disable_device(
 /// 基于模板创建设备 (需求 4.5, 3.6)
 async fn create_device_from_template(
     State(state): State<AppState>,
-    _claims: Claims,
+    claims: Claims,
     Json(req): Json<CreateDeviceFromTemplateRequest>,
 ) -> Json<ApiResponse<Device>> {
     // 使用 DeviceService 创建设备（包含所有业务逻辑）
     let device_service =
         DeviceService::with_event_bus(state.database.clone(), state.event_bus.clone());
 
+    // Set tenant_id from authenticated user's claims
+    let mut device_input = req.device_input;
+    device_input.tenant_id = Some(claims.tenant_id);
+
     match device_service
-        .create_device_from_template(state.template_engine(), &req.template_id, &req.device_input)
+        .create_device_from_template(state.template_engine(), &req.template_id, &device_input)
         .await
     {
         Ok(device) => ApiResponseBuilder::success(device),
