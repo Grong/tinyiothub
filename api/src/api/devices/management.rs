@@ -22,6 +22,40 @@ use crate::{
     shared::{app_state::AppState, security::jwt::Claims},
 };
 
+use crate::infrastructure::persistence::database::Database;
+
+/// Verify device belongs to the user's tenant.
+/// Returns Ok(Some(Device)) if verified, Ok(None) if not authorized or not found (logs warning),
+/// Err if database error.
+async fn verify_device_tenant(
+    db: &Database,
+    device_id: &str,
+    tenant_id: &str,
+) -> Result<Option<Device>, (String, Option<Device>)> {
+    match Device::find_by_id(db, device_id).await {
+        Ok(Some(device)) if device.tenant_id.as_ref() == Some(&tenant_id.to_string()) => {
+            Ok(Some(device))
+        }
+        Ok(Some(device)) => {
+            tracing::warn!(
+                "Access denied: device {} belongs to tenant {:?}, user tenant {}",
+                device_id,
+                device.tenant_id,
+                tenant_id
+            );
+            Ok(None)
+        }
+        Ok(None) => {
+            tracing::warn!("Access denied: device {} not found for tenant {}", device_id, tenant_id);
+            Ok(None)
+        }
+        Err(e) => {
+            tracing::error!("Failed to find device {}: {}", device_id, e);
+            Err(("设备不存在".to_string(), None))
+        }
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct CreateDeviceApiRequest {
@@ -246,13 +280,10 @@ async fn update_device(
     Json(req): Json<UpdateDeviceApiRequest>,
 ) -> Json<ApiResponse<Device>> {
     // Verify device belongs to user's tenant before updating
-    match Device::find_by_id(state.database(), &id).await {
-        Ok(Some(device)) if device.tenant_id.as_ref() == Some(&claims.tenant_id) => {}
-        Ok(_) => return ApiResponseBuilder::error("设备不存在".to_string()),
-        Err(e) => {
-            tracing::error!("Failed to find device {}: {}", id, e);
-            return ApiResponseBuilder::error("设备不存在".to_string());
-        }
+    match verify_device_tenant(state.database(), &id, &claims.tenant_id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return ApiResponseBuilder::error("设备不存在".to_string()),
+        Err((msg, _)) => return ApiResponseBuilder::error(msg),
     }
 
     let update_request = UpdateDeviceRequest {
@@ -298,13 +329,10 @@ async fn delete_device(
     claims: Claims,
 ) -> Json<ApiResponse<bool>> {
     // Verify device belongs to user's tenant before deleting
-    match Device::find_by_id(state.database(), &id).await {
-        Ok(Some(device)) if device.tenant_id.as_ref() == Some(&claims.tenant_id) => {}
-        Ok(_) => return ApiResponseBuilder::error("设备不存在".to_string()),
-        Err(e) => {
-            tracing::error!("Failed to find device {}: {}", id, e);
-            return ApiResponseBuilder::error("设备不存在".to_string());
-        }
+    match verify_device_tenant(state.database(), &id, &claims.tenant_id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return ApiResponseBuilder::error("设备不存在".to_string()),
+        Err((msg, _)) => return ApiResponseBuilder::error(msg),
     }
 
     // 使用DeviceService删除设备，传入event_bus以触发事件
@@ -337,13 +365,10 @@ async fn enable_device(
     claims: Claims,
 ) -> Json<ApiResponse<bool>> {
     // Verify device belongs to user's tenant before enabling
-    match Device::find_by_id(state.database(), &id).await {
-        Ok(Some(device)) if device.tenant_id.as_ref() == Some(&claims.tenant_id) => {}
-        Ok(_) => return ApiResponseBuilder::error("设备不存在".to_string()),
-        Err(e) => {
-            tracing::error!("Failed to find device {}: {}", id, e);
-            return ApiResponseBuilder::error("设备不存在".to_string());
-        }
+    match verify_device_tenant(state.database(), &id, &claims.tenant_id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return ApiResponseBuilder::error("设备不存在".to_string()),
+        Err((msg, _)) => return ApiResponseBuilder::error(msg),
     }
 
     match Device::update_enabled_status(state.database(), &id, true).await {
@@ -369,13 +394,10 @@ async fn disable_device(
     claims: Claims,
 ) -> Json<ApiResponse<bool>> {
     // Verify device belongs to user's tenant before disabling
-    match Device::find_by_id(state.database(), &id).await {
-        Ok(Some(device)) if device.tenant_id.as_ref() == Some(&claims.tenant_id) => {}
-        Ok(_) => return ApiResponseBuilder::error("设备不存在".to_string()),
-        Err(e) => {
-            tracing::error!("Failed to find device {}: {}", id, e);
-            return ApiResponseBuilder::error("设备不存在".to_string());
-        }
+    match verify_device_tenant(state.database(), &id, &claims.tenant_id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return ApiResponseBuilder::error("设备不存在".to_string()),
+        Err((msg, _)) => return ApiResponseBuilder::error(msg),
     }
 
     match Device::update_enabled_status(state.database(), &id, false).await {

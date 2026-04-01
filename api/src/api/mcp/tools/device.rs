@@ -269,6 +269,8 @@ impl ToolHandler for ListDevicesHandler {
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
+        let tenant_id = crate::api::mcp::handlers::get_mcp_context()
+            .map(|c| c.tenant_id);
         let params = DeviceQueryParams {
             name: input.name,
             display_name: None,
@@ -280,7 +282,7 @@ impl ToolHandler for ListDevicesHandler {
             product_id: input.product_id,
             page: input.page,
             page_size: input.page_size.or(Some(20)),
-            tenant_id: None,
+            tenant_id,
         };
 
         let devices = Device::find_all_with_tags(state.database(), &params)
@@ -738,6 +740,8 @@ impl ToolHandler for CreateDeviceHandler {
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
+        let tenant_id = crate::api::mcp::handlers::get_mcp_context()
+            .map(|c| c.tenant_id);
         let request = CreateDeviceRequest {
             name: input.name,
             display_name: input.display_name,
@@ -753,7 +757,7 @@ impl ToolHandler for CreateDeviceHandler {
             driver_options: input.connection_config,
             parent_id: input.parent_id,
             product_id: input.product_id,
-            tenant_id: None,
+            tenant_id,
         };
 
         let device_service = state.device_service.as_ref();
@@ -822,7 +826,7 @@ impl ToolHandler for UpdateDeviceHandler {
             state: None,
             parent_id: input.parent_id,
             product_id: input.product_id,
-            tenant_id: None,
+            tenant_id: None, // Tenant cannot be changed via update
         };
 
         let device_service = state.device_service.as_ref();
