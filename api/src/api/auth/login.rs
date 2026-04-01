@@ -70,8 +70,24 @@ async fn login(
 
             tracing::debug!("Generating JWT token for user: {}", user.id);
 
+            // 查找用户关联的租户，默认为 "default"
+            let tenant_id: String = sqlx::query_scalar(
+                "SELECT tenant_id FROM tenant_users WHERE user_id = ? LIMIT 1"
+            )
+            .bind(&user.id)
+            .fetch_optional(state.database().pool())
+            .await
+            .unwrap_or(None)
+            .unwrap_or_else(|| "default".to_string());
+
+            tracing::debug!(
+                "Found tenant_id {} for user: {}",
+                tenant_id,
+                user.id
+            );
+
             // 生成 JWT 令牌（HarmonyOS 会自动使用 HMAC-SHA256）
-            match jwt::generate_token(&user.id, user.get_display_name()) {
+            match jwt::generate_token(&user.id, user.get_display_name(), &tenant_id) {
                 Ok(token) => {
                     let login_response = LoginResponse {
                         access_token: token,

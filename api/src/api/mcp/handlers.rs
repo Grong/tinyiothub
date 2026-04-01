@@ -16,10 +16,41 @@ use tokio::sync::RwLock;
 
 use crate::{
     dto::response::builder::ApiResponseBuilder,
-    shared::app_state::AppState,
+    shared::{app_state::AppState, security::jwt::Claims},
 };
 
 use super::tool_registry::{HandlerRegistry, ToolError, ToolMetadata};
+
+/// Thread-local storage for MCP request context (tenant_id from JWT)
+thread_local! {
+    static MCP_CONTEXT: std::cell::RefCell<Option<Claims>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Set MCP context (tenant_id) for the current async task
+fn set_mcp_context(claims: Claims) {
+    MCP_CONTEXT.with(|ctx| *ctx.borrow_mut() = Some(claims));
+}
+
+/// Get MCP context (tenant_id) for the current async task
+pub fn get_mcp_context() -> Option<Claims> {
+    MCP_CONTEXT.with(|ctx| ctx.borrow().clone())
+}
+
+/// RAII guard for MCP context - clears on drop
+struct McpContextGuard;
+
+impl McpContextGuard {
+    fn new(claims: Claims) -> Self {
+        set_mcp_context(claims);
+        McpContextGuard
+    }
+}
+
+impl Drop for McpContextGuard {
+    fn drop(&mut self) {
+        MCP_CONTEXT.with(|ctx| *ctx.borrow_mut() = None);
+    }
+}
 
 /// MCP JSON-RPC request
 #[derive(Debug, Deserialize)]
@@ -84,11 +115,15 @@ async fn handle_mcp_request(
     headers: axum::http::HeaderMap,
     Json(request): Json<JsonRpcRequest>,
 ) -> Response {
-    // Validate JWT
-    if let Err(e) = extract_jwt_claims(&headers) {
-        return ApiResponseBuilder::error_with_code::<serde_json::Value>(401, e.to_string())
-            .into_response();
-    }
+    // Validate JWT and set tenant context with RAII guard
+    let claims = match extract_jwt_claims(&headers) {
+        Ok(c) => c,
+        Err(e) => {
+            return ApiResponseBuilder::error_with_code::<serde_json::Value>(401, e.to_string())
+                .into_response();
+        }
+    };
+    let _guard = McpContextGuard::new(claims);
 
     // Get registry from global state
     let registry = match super::get_mcp_registry() {
@@ -171,11 +206,15 @@ async fn handle_mcp_request(
 
 /// Handle tools/list endpoint
 async fn handle_tools_list(headers: axum::http::HeaderMap) -> Response {
-    // Validate JWT
-    if let Err(e) = extract_jwt_claims(&headers) {
-        return ApiResponseBuilder::error_with_code::<serde_json::Value>(401, e.to_string())
-            .into_response();
-    }
+    // Validate JWT and set tenant context with RAII guard
+    let claims = match extract_jwt_claims(&headers) {
+        Ok(c) => c,
+        Err(e) => {
+            return ApiResponseBuilder::error_with_code::<serde_json::Value>(401, e.to_string())
+                .into_response();
+        }
+    };
+    let _guard = McpContextGuard::new(claims);
 
     // Get registry from global state
     let registry = match super::get_mcp_registry() {
@@ -199,11 +238,15 @@ async fn handle_tools_call(
     headers: axum::http::HeaderMap,
     Json(params): Json<ToolCallParams>,
 ) -> Response {
-    // Validate JWT
-    if let Err(e) = extract_jwt_claims(&headers) {
-        return ApiResponseBuilder::error_with_code::<serde_json::Value>(401, e.to_string())
-            .into_response();
-    }
+    // Validate JWT and set tenant context with RAII guard
+    let claims = match extract_jwt_claims(&headers) {
+        Ok(c) => c,
+        Err(e) => {
+            return ApiResponseBuilder::error_with_code::<serde_json::Value>(401, e.to_string())
+                .into_response();
+        }
+    };
+    let _guard = McpContextGuard::new(claims);
 
     // Get registry from global state
     let registry = match super::get_mcp_registry() {

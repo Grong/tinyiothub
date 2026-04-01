@@ -70,13 +70,13 @@ fn decode_simple(s: &str) -> Result<String, String> {
 }
 
 // HarmonyOS 专用：创建安全 token（使用 HMAC-SHA256）
-fn create_harmonyos_token(user_id: &str, username: &str) -> Result<String, String> {
+fn create_harmonyos_token(user_id: &str, username: &str, tenant_id: &str) -> Result<String, String> {
     let secret = crate::infrastructure::config::get().security.jwt.secret.clone();
     let timestamp = Local::now().timestamp();
     let random_suffix = timestamp % 1000000; // 使用时间戳作为随机数
 
-    // 构建数据部分：user_id:username:timestamp:random
-    let data = format!("{}:{}:{}:{}", user_id, username, timestamp, random_suffix);
+    // 构建数据部分：user_id:username:tenant_id:timestamp:random
+    let data = format!("{}:{}:{}:{}:{}", user_id, username, tenant_id, timestamp, random_suffix);
 
     // 计算 HMAC-SHA256 签名
     let signature = hmac_sha256(&data, &secret);
@@ -96,20 +96,21 @@ fn verify_harmonyos_token(token: &str) -> Result<Claims, String> {
     // 解码
     let token_data = decode_simple(token)?;
 
-    // 分割数据：user_id:username:timestamp:random:signature
+    // 分割数据：user_id:username:tenant_id:timestamp:random:signature
     let parts: Vec<&str> = token_data.split(':').collect();
-    if parts.len() != 5 {
+    if parts.len() != 6 {
         return Err("Invalid token format".to_string());
     }
 
     let user_id = parts[0];
     let username = parts[1];
-    let timestamp: i64 = parts[2].parse().map_err(|_| "Invalid timestamp".to_string())?;
-    let random_suffix = parts[3];
-    let signature = parts[4];
+    let tenant_id = parts[2];
+    let timestamp: i64 = parts[3].parse().map_err(|_| "Invalid timestamp".to_string())?;
+    let random_suffix = parts[4];
+    let signature = parts[5];
 
     // 验证 HMAC-SHA256 签名
-    let data = format!("{}:{}:{}:{}", user_id, username, timestamp, random_suffix);
+    let data = format!("{}:{}:{}:{}:{}", user_id, username, tenant_id, timestamp, random_suffix);
     let expected_signature = hmac_sha256(&data, &secret);
 
     if signature != expected_signature {
@@ -128,6 +129,7 @@ fn verify_harmonyos_token(token: &str) -> Result<Claims, String> {
         user_id: user_id.to_string(),
         token_id: timestamp.to_string(),
         username: username.to_string(),
+        tenant_id: tenant_id.to_string(),
         exp: Some(timestamp + 86400),
     })
 }
@@ -136,6 +138,7 @@ fn verify_harmonyos_token(token: &str) -> Result<Claims, String> {
 pub struct AuthPayload {
     pub id: String,
     pub name: String,
+    pub tenant_id: String,
 }
 
 // JWT Claims 结构体
@@ -145,6 +148,7 @@ pub struct Claims {
     pub user_id: String,
     pub token_id: String,
     pub username: String,
+    pub tenant_id: String,
     // 从 JWT 验证结果中提取的过期时间（不参与序列化到 JWT）
     #[serde(skip_serializing)]
     pub exp: Option<i64>,
@@ -176,7 +180,7 @@ pub fn create_jwt(payload: AuthPayload) -> Result<AuthBody, String> {
     if is_harmonyos() {
         tracing::warn!("🔧 HarmonyOS: Using simple secure token (no crypto libs)");
 
-        let token = create_harmonyos_token(&payload.id, &payload.name)?;
+        let token = create_harmonyos_token(&payload.id, &payload.name, &payload.tenant_id)?;
         let jwt_exp_seconds = 86400; // 24小时
         let exp = iat + ChronoDuration::seconds(jwt_exp_seconds);
 
@@ -193,6 +197,7 @@ pub fn create_jwt(payload: AuthPayload) -> Result<AuthBody, String> {
         user_id: payload.id.to_owned(),
         token_id: token_id.clone(),
         username: payload.name.clone(),
+        tenant_id: payload.tenant_id.clone(),
         exp: None, // 不设置，让 jwt-simple 自动管理
     };
 
@@ -240,13 +245,18 @@ pub fn validate_jwt(token: &str) -> Result<Claims, String> {
         user_id: jwt_claims.custom.user_id,
         token_id: jwt_claims.custom.token_id,
         username: jwt_claims.custom.username,
+        tenant_id: jwt_claims.custom.tenant_id,
         exp,
     })
 }
 
 // 生成 JWT token 的便捷函数
-pub fn generate_token(user_id: &str, username: &str) -> Result<String, String> {
-    let payload = AuthPayload { id: user_id.to_string(), name: username.to_string() };
+pub fn generate_token(user_id: &str, username: &str, tenant_id: &str) -> Result<String, String> {
+    let payload = AuthPayload {
+        id: user_id.to_string(),
+        name: username.to_string(),
+        tenant_id: tenant_id.to_string(),
+    };
 
     let auth_body = create_jwt(payload)?;
     Ok(auth_body.token)

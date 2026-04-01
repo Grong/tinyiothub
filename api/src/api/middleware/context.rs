@@ -51,7 +51,12 @@ fn extract_user_from_jwt(headers: &HeaderMap) -> Option<UserInfo> {
     let claims = validate_jwt(auth_header.token()).ok()?;
 
     // Convert claims to UserInfo
-    Some(UserInfo { id: claims.user_id, name: claims.username, ..Default::default() })
+    Some(UserInfo {
+        id: claims.user_id,
+        name: claims.username,
+        token_id: claims.token_id,
+        tenant_id: claims.tenant_id,
+    })
 }
 
 /// Extract body data from request (helper function)

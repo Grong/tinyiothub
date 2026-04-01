@@ -28,9 +28,6 @@ pub struct SseConnectionQuery {
     /// Comma-separated list of event levels to filter
     /// Example: "critical,error,warning"
     pub event_levels: Option<String>,
-
-    /// Organization ID filter
-    pub organization_id: Option<String>,
 }
 
 /// Handle authenticated SSE connection for real-time event notifications
@@ -51,11 +48,10 @@ pub async fn handle_sse_connection(
     // Parse event filters
     let event_types = parse_event_types(&query.event_types);
     let event_levels = parse_event_levels(&query.event_levels);
-    let organization_id = query.organization_id.clone();
 
     // Create SSE connection through the manager
     let sse_manager = state.get_sse_manager();
-    sse_manager.create_connection(user_id, event_types, event_levels, organization_id).await
+    sse_manager.create_connection(user_id, event_types, event_levels).await
 }
 
 /// Handle public (unauthenticated) SSE connection

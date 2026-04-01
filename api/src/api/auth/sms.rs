@@ -11,7 +11,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
-use crate::{api::AppState, dto::response::ApiResponse, infrastructure::config::get as get_config};
+use crate::{api::AppState, dto::response::ApiResponse, infrastructure::config::get as get_config, shared::security::jwt::generate_token};
 
 // 验证码有效期（秒）
 const CODE_EXPIRE_SECONDS: u64 = 300; // 5 分钟
@@ -232,13 +232,20 @@ async fn login_with_code(
         // 不影响登录，只是记录
     }
 
-    // 查找或创建用户
-    let user = find_or_create_user_by_phone(db, phone).await;
+    // 查找或创建用户（使用 default 作为租户 ID）
+    let default_tenant_id = "default";
+    let user = find_or_create_user_by_phone(db, phone, default_tenant_id).await;
 
     match user {
         Ok(user) => {
-            // 生成 token
-            let token = generate_jwt_token(&user.id);
+            // 生成 JWT token
+            let token = match generate_token(&user.id, &user.username, default_tenant_id) {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::error!("Failed to generate token: {}", e);
+                    return ApiResponse::error("登录失败，请稍后重试".to_string());
+                }
+            };
 
             ApiResponse::success(LoginWithCodeResponse {
                 access_token: token,
@@ -381,6 +388,7 @@ fn generate_code() -> String {
 async fn find_or_create_user_by_phone(
     db: &crate::infrastructure::persistence::database::Database,
     phone: &str,
+    tenant_id: &str,
 ) -> Result<crate::dto::entity::user::User, Box<dyn std::error::Error + Send + Sync>> {
     // 查找现有用户
     let rows = sqlx::query("SELECT * FROM users WHERE phone = ? LIMIT 1")
@@ -407,14 +415,31 @@ async fn find_or_create_user_by_phone(
     // 创建新用户
     let user_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let password_hash = "SMS_AUTH_NO_PASSWORD";
 
     sqlx::query(
-        r#"INSERT INTO users (id, username, phone, is_enabled, created_at, updated_at)
-            VALUES (?, ?, ?, 1, ?, ?)"#,
+        r#"INSERT INTO users (id, username, password_hash, phone, is_enabled, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 1, ?, ?)"#,
     )
     .bind(&user_id)
     .bind(phone)
+    .bind(password_hash)
     .bind(phone)
+    .bind(&now)
+    .bind(&now)
+    .execute(db.pool())
+    .await?;
+
+    // 创建 tenant_users 关联
+    let tenant_user_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        r#"INSERT INTO tenant_users (id, tenant_id, user_id, role, invitation_status, joined_at, created_at, updated_at)
+           VALUES (?, ?, ?, 'member', 'accepted', ?, ?, ?)"#,
+    )
+    .bind(&tenant_user_id)
+    .bind(tenant_id)
+    .bind(&user_id)
+    .bind(&now)
     .bind(&now)
     .bind(&now)
     .execute(db.pool())
@@ -436,15 +461,3 @@ async fn find_or_create_user_by_phone(
     })
 }
 
-/// 生成简单的 JWT token（简化版）
-fn generate_jwt_token(user_id: &str) -> String {
-    let payload = serde_json::json!({
-        "user_id": user_id,
-        "exp": chrono::Utc::now().timestamp() + 86400,
-    });
-
-    let encoded =
-        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, payload.to_string());
-
-    format!("sms_{}", encoded)
-}
