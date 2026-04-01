@@ -152,7 +152,6 @@ pub struct DeviceCreationInput {
     pub driver_options: Option<String>,
     pub parent_id: Option<String>,
     pub product_id: Option<String>,
-    pub organization_id: Option<String>,
     pub property_values: HashMap<String, String>, // 属性默认值覆盖
     pub enabled_commands: Vec<String>,            // 用户选择启用的命令
     pub tenant_id: Option<String>,               // Will be set from claims, not from request

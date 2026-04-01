@@ -84,7 +84,6 @@ impl TemplateEngine {
                 .or_else(|| device_info.default_driver_options.clone()),
             parent_id: user_input.parent_id.clone(),
             product_id: user_input.product_id.clone(),
-            organization_id: user_input.organization_id.clone(),
             tenant_id: user_input.tenant_id.clone(),
         };
 
@@ -498,7 +497,6 @@ mod tests {
             driver_options: None,
             parent_id: None,
             product_id: None,
-            organization_id: None,
             property_values: HashMap::new(),
             enabled_commands: vec!["read_temperature".to_string()],
             tenant_id: None,

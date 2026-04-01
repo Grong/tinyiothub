@@ -548,7 +548,6 @@ impl ToolHandler for TestDriverHandler {
                 tags: None,
                 parent_id: None,
                 product_id: None,
-                organization_id: None,
                 tenant_id: None,
                 created_at: Some(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),
                 updated_at: Some(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),

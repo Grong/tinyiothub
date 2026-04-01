@@ -33,7 +33,6 @@ impl SseConnectionManager {
     /// * `user_id` - User identifier
     /// * `_event_types` - Optional filter for event types (not yet implemented)
     /// * `_event_levels` - Optional filter for event severity levels (not yet implemented)
-    /// * `_organization_id` - Optional organization filter (not yet implemented)
     ///
     /// # Returns
     /// An Axum Response with SSE stream
@@ -42,7 +41,6 @@ impl SseConnectionManager {
         user_id: String,
         _event_types: Option<Vec<String>>,
         _event_levels: Option<Vec<String>>,
-        _organization_id: Option<String>,
     ) -> Response {
         info!("Creating authenticated SSE connection for user: {}", user_id);
 
@@ -139,7 +137,6 @@ impl SseConnectionManager {
                 connected_at: conn.connected_at.to_rfc3339(),
                 event_types: None,
                 event_levels: None,
-                organization_id: None,
             })
             .collect()
     }
@@ -178,7 +175,6 @@ pub struct SseConnectionInfo {
     pub connected_at: String,
     pub event_types: Option<Vec<String>>,
     pub event_levels: Option<Vec<String>>,
-    pub organization_id: Option<String>,
 }
 
 #[cfg(test)]

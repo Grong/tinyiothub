@@ -39,7 +39,6 @@ pub struct CreateDeviceApiRequest {
     pub connection_config: Option<String>,
     pub parent_id: Option<String>,
     pub product_id: Option<String>,
-    pub organization_id: Option<String>,
     pub tenant_id: Option<String>, // Will be set from claims, not from request
 }
 
@@ -60,7 +59,6 @@ pub struct UpdateDeviceApiRequest {
     pub connection_config: Option<String>,
     pub parent_id: Option<String>,
     pub product_id: Option<String>,
-    pub organization_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -163,7 +161,6 @@ async fn create_device(
         driver_options: req.connection_config,
         parent_id: req.parent_id,
         product_id: req.product_id,
-        organization_id: req.organization_id,
         tenant_id: Some(claims.tenant_id), // Set from authenticated user's tenant
     };
 
@@ -274,7 +271,6 @@ async fn update_device(
         state: None, // 不在此处更新状态
         parent_id: req.parent_id,
         product_id: req.product_id,
-        organization_id: req.organization_id,
         tenant_id: None, // Tenant cannot be changed
     };
 

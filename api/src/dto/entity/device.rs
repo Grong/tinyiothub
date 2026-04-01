@@ -23,7 +23,6 @@ pub struct Device {
     pub state: Option<i32>,
     pub parent_id: Option<String>,
     pub product_id: Option<String>,
-    pub organization_id: Option<String>,
     pub tenant_id: Option<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
@@ -83,7 +82,6 @@ pub struct CreateDeviceRequest {
     pub driver_options: Option<String>,
     pub parent_id: Option<String>,
     pub product_id: Option<String>,
-    pub organization_id: Option<String>,
     pub tenant_id: Option<String>,
 }
 
@@ -106,7 +104,6 @@ pub struct UpdateDeviceRequest {
     pub state: Option<i32>,
     pub parent_id: Option<String>,
     pub product_id: Option<String>,
-    pub organization_id: Option<String>,
     pub tenant_id: Option<String>,
 }
 
@@ -138,7 +135,7 @@ impl Device {
             r#"
             SELECT id, name, display_name, device_type, address, description, position,
                    driver_name, device_model, protocol_type, factory_name, linked_data,
-                   driver_options, state, parent_id, product_id, organization_id, tenant_id, created_at, updated_at
+                   driver_options, state, parent_id, product_id, tenant_id, created_at, updated_at
             FROM devices WHERE id = ?
             "#,
         )
@@ -155,7 +152,7 @@ impl Device {
             r#"
             SELECT id, name, display_name, device_type, address, description, position,
                    driver_name, device_model, protocol_type, factory_name, linked_data,
-                   driver_options, state, parent_id, product_id, organization_id, tenant_id, created_at, updated_at
+                   driver_options, state, parent_id, product_id, tenant_id, created_at, updated_at
             FROM devices WHERE name = ?
             "#,
         )
@@ -181,8 +178,8 @@ impl Device {
             INSERT INTO devices (
                 id, name, display_name, device_type, address, description, position,
                 driver_name, device_model, protocol_type, factory_name, linked_data,
-                driver_options, state, parent_id, product_id, organization_id, tenant_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                driver_options, state, parent_id, product_id, tenant_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&id)
@@ -201,7 +198,6 @@ impl Device {
         .bind(0) // 默认状态为离线
         .bind(&request.parent_id)
         .bind(&request.product_id)
-        .bind(&request.organization_id)
         .bind(&request.tenant_id)
         .bind(&now)
         .bind(&now)
@@ -345,14 +341,6 @@ impl Device {
             has_updates = true;
         }
 
-        if let Some(organization_id) = &request.organization_id {
-            if has_updates {
-                query.push(", ");
-            }
-            query.push("organization_id = ").push_bind(organization_id);
-            has_updates = true;
-        }
-
         if let Some(tenant_id) = &request.tenant_id {
             if has_updates {
                 query.push(", ");
@@ -420,7 +408,7 @@ impl Device {
             r#"
             SELECT id, name, display_name, device_type, address, description, position,
                    driver_name, device_model, protocol_type, factory_name, linked_data,
-                   driver_options, state, parent_id, product_id, organization_id, tenant_id, created_at, updated_at
+                   driver_options, state, parent_id, product_id, tenant_id, created_at, updated_at
             FROM devices WHERE 1=1
             "#,
         );
@@ -570,7 +558,7 @@ impl Device {
             r#"
             SELECT id, name, display_name, device_type, address, description, position,
                    driver_name, device_model, protocol_type, factory_name, linked_data,
-                   driver_options, state, parent_id, product_id, organization_id, tenant_id, created_at, updated_at
+                   driver_options, state, parent_id, product_id, tenant_id, created_at, updated_at
             FROM devices WHERE parent_id = ?
             ORDER BY name
             "#,
@@ -591,7 +579,7 @@ impl Device {
             r#"
             SELECT id, name, display_name, device_type, address, description, position,
                    driver_name, device_model, protocol_type, factory_name, linked_data,
-                   driver_options, state, parent_id, product_id, organization_id, tenant_id, created_at, updated_at
+                   driver_options, state, parent_id, product_id, tenant_id, created_at, updated_at
             FROM devices WHERE product_id = ?
             ORDER BY name
             "#,
@@ -612,7 +600,7 @@ impl Device {
             r#"
             SELECT id, name, display_name, device_type, address, description, position,
                    driver_name, device_model, protocol_type, factory_name, linked_data,
-                   driver_options, state, parent_id, product_id, organization_id, tenant_id, created_at, updated_at
+                   driver_options, state, parent_id, product_id, tenant_id, created_at, updated_at
             FROM devices WHERE driver_name = ?
             ORDER BY name
             "#,
@@ -650,7 +638,7 @@ impl Device {
             r#"
             SELECT id, name, display_name, device_type, address, description, position,
                    driver_name, device_model, protocol_type, factory_name, linked_data,
-                   driver_options, state, parent_id, product_id, organization_id, tenant_id, created_at, updated_at
+                   driver_options, state, parent_id, product_id, tenant_id, created_at, updated_at
             FROM devices WHERE id IN (
             "#,
         );
@@ -696,8 +684,8 @@ impl Device {
                 INSERT INTO devices (
                     id, name, display_name, device_type, address, description, position,
                     driver_name, device_model, protocol_type, factory_name, linked_data,
-                    driver_options, state, parent_id, product_id, organization_id, tenant_id, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    driver_options, state, parent_id, product_id, tenant_id, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 "#,
             )
             .bind(&id)
@@ -716,7 +704,6 @@ impl Device {
             .bind(0) // 默认状态为离线
             .bind(&request.parent_id)
             .bind(&request.product_id)
-            .bind(&request.organization_id)
             .bind(&request.tenant_id)
             .bind(&now)
             .bind(&now)
@@ -741,7 +728,6 @@ impl Device {
                 state: Some(0),
                 parent_id: request.parent_id.clone(),
                 product_id: request.product_id.clone(),
-                organization_id: request.organization_id.clone(),
                 tenant_id: request.tenant_id.clone(),
                 created_at: Some(now.clone()),
                 updated_at: Some(now.clone()),
@@ -823,7 +809,7 @@ impl Device {
             r#"
             SELECT id, name, display_name, device_type, address, description, position,
                    driver_name, device_model, protocol_type, factory_name, linked_data,
-                   driver_options, state, parent_id, product_id, organization_id, tenant_id, created_at, updated_at
+                   driver_options, state, parent_id, product_id, tenant_id, created_at, updated_at
             FROM devices WHERE
             "#,
         );
@@ -900,7 +886,7 @@ impl Device {
             r#"
             SELECT id, name, display_name, device_type, address, description, position,
                    driver_name, device_model, protocol_type, factory_name, linked_data,
-                   driver_options, state, parent_id, product_id, organization_id, tenant_id, created_at, updated_at
+                   driver_options, state, parent_id, product_id, tenant_id, created_at, updated_at
             FROM devices WHERE
                 name LIKE ? OR 
                 display_name LIKE ? OR 
@@ -1031,7 +1017,6 @@ impl Default for Device {
             state: Some(0), // 默认离线状态
             parent_id: None,
             product_id: None,
-            organization_id: None,
             tenant_id: None,
             created_at: Some(now.clone()),
             updated_at: Some(now),

@@ -87,7 +87,6 @@ struct CreateDeviceInput {
     connection_config: Option<String>,
     parent_id: Option<String>,
     product_id: Option<String>,
-    organization_id: Option<String>,
 }
 
 /// Tool input: Update device
@@ -109,7 +108,6 @@ struct UpdateDeviceInput {
     connection_config: Option<String>,
     parent_id: Option<String>,
     product_id: Option<String>,
-    organization_id: Option<String>,
 }
 
 /// Tool input: Delete device
@@ -755,7 +753,6 @@ impl ToolHandler for CreateDeviceHandler {
             driver_options: input.connection_config,
             parent_id: input.parent_id,
             product_id: input.product_id,
-            organization_id: input.organization_id,
             tenant_id: None,
         };
 
@@ -825,7 +822,6 @@ impl ToolHandler for UpdateDeviceHandler {
             state: None,
             parent_id: input.parent_id,
             product_id: input.product_id,
-            organization_id: input.organization_id,
             tenant_id: None,
         };
 
