@@ -22,6 +22,40 @@ use crate::{
     shared::{app_state::AppState, security::jwt::Claims},
 };
 
+use crate::infrastructure::persistence::database::Database;
+
+/// Verify device belongs to the user's tenant.
+/// Returns Ok(Some(Device)) if verified, Ok(None) if not authorized or not found (logs warning),
+/// Err if database error.
+async fn verify_device_tenant(
+    db: &Database,
+    device_id: &str,
+    tenant_id: &str,
+) -> Result<Option<Device>, (String, Option<Device>)> {
+    match Device::find_by_id(db, device_id).await {
+        Ok(Some(device)) if device.tenant_id.as_ref() == Some(&tenant_id.to_string()) => {
+            Ok(Some(device))
+        }
+        Ok(Some(device)) => {
+            tracing::warn!(
+                "Access denied: device {} belongs to tenant {:?}, user tenant {}",
+                device_id,
+                device.tenant_id,
+                tenant_id
+            );
+            Ok(None)
+        }
+        Ok(None) => {
+            tracing::warn!("Access denied: device {} not found for tenant {}", device_id, tenant_id);
+            Ok(None)
+        }
+        Err(e) => {
+            tracing::error!("Failed to find device {}: {}", device_id, e);
+            Err(("设备不存在".to_string(), None))
+        }
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct CreateDeviceApiRequest {
@@ -39,7 +73,8 @@ pub struct CreateDeviceApiRequest {
     pub connection_config: Option<String>,
     pub parent_id: Option<String>,
     pub product_id: Option<String>,
-    pub organization_id: Option<String>,
+    #[serde(skip)]
+    pub tenant_id: Option<String>, // Set from JWT claims, not from request
 }
 
 #[derive(Deserialize)]
@@ -59,7 +94,6 @@ pub struct UpdateDeviceApiRequest {
     pub connection_config: Option<String>,
     pub parent_id: Option<String>,
     pub product_id: Option<String>,
-    pub organization_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -87,7 +121,7 @@ pub struct ValidateFieldRequest {
 async fn list_devices(
     State(state): State<AppState>,
     Query(query): Query<DeviceQuery>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<Vec<Device>>> {
     let params = DeviceQueryParams {
         name: query.name,
@@ -100,6 +134,7 @@ async fn list_devices(
         product_id: query.product_id,
         page: query.pagination.page,
         page_size: query.pagination.page_size,
+        tenant_id: Some(claims.tenant_id), // Enforce tenant isolation
     };
 
     let include_properties = query.include_properties.unwrap_or(false);
@@ -143,7 +178,7 @@ async fn list_devices(
 /// 创建设备
 async fn create_device(
     State(state): State<AppState>,
-    _claims: Claims,
+    claims: Claims,
     Json(req): Json<CreateDeviceApiRequest>,
 ) -> Json<ApiResponse<Device>> {
     let request = CreateDeviceRequest {
@@ -161,7 +196,7 @@ async fn create_device(
         driver_options: req.connection_config,
         parent_id: req.parent_id,
         product_id: req.product_id,
-        organization_id: req.organization_id,
+        tenant_id: Some(claims.tenant_id), // Set from authenticated user's tenant
     };
 
     // 使用DeviceService创建设备，传入event_bus以触发事件
@@ -185,35 +220,45 @@ async fn get_device(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Query(query): Query<DeviceDetailQuery>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<Option<Device>>> {
     let include_properties = query.include_properties.unwrap_or(true); // 详情默认包含属性
 
-    match Device::find_by_id_with_tags(state.database(), &id).await {
-        Ok(device_opt) => {
-            // 从 DataContext 同步实时状态
-            let device = device_opt.map(|mut device| {
-                if let Some(cached_device) = state.data_context.get_device(&device.id) {
-                    // 始终更新实时状态字段
-                    device.state = cached_device.state;
-                    device.is_online = cached_device.is_online;
-                    device.last_heartbeat = cached_device.last_heartbeat;
+    // Verify device belongs to user's tenant before returning
+    let device_result = Device::find_by_id(state.database(), &id).await;
 
-                    // 根据参数决定是否包含属性和命令
-                    if include_properties {
-                        device.properties = cached_device.properties.clone();
-                        device.commands = cached_device.commands.clone();
-                    } else {
+    match device_result {
+        Ok(device_opt) => {
+            let device = device_opt
+                .filter(|d| d.tenant_id.as_ref() == Some(&claims.tenant_id))
+                .map(|mut device| {
+                    // 从 DataContext 同步实时状态
+                    if let Some(cached_device) = state.data_context.get_device(&device.id) {
+                        // 始终更新实时状态字段
+                        device.state = cached_device.state;
+                        device.is_online = cached_device.is_online;
+                        device.last_heartbeat = cached_device.last_heartbeat;
+
+                        // 根据参数决定是否包含属性和命令
+                        if include_properties {
+                            device.properties = cached_device.properties.clone();
+                            device.commands = cached_device.commands.clone();
+                        } else {
+                            device.properties = None;
+                            device.commands = None;
+                        }
+                    } else if !include_properties {
                         device.properties = None;
                         device.commands = None;
                     }
-                } else if !include_properties {
-                    device.properties = None;
-                    device.commands = None;
-                }
-                device
-            });
-            ApiResponseBuilder::success(device)
+                    device
+                });
+
+            if device.is_some() {
+                ApiResponseBuilder::success(device)
+            } else {
+                ApiResponseBuilder::error("Device not found".to_string())
+            }
         }
         Err(e) => {
             tracing::error!("Failed to get device {}: {}", id, e);
@@ -232,9 +277,16 @@ pub struct DeviceDetailQuery {
 async fn update_device(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    _claims: Claims,
+    claims: Claims,
     Json(req): Json<UpdateDeviceApiRequest>,
 ) -> Json<ApiResponse<Device>> {
+    // Verify device belongs to user's tenant before updating
+    match verify_device_tenant(state.database(), &id, &claims.tenant_id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return ApiResponseBuilder::error("设备不存在".to_string()),
+        Err((msg, _)) => return ApiResponseBuilder::error(msg),
+    }
+
     let update_request = UpdateDeviceRequest {
         name: req.name,
         display_name: req.display_name,
@@ -251,7 +303,7 @@ async fn update_device(
         state: None, // 不在此处更新状态
         parent_id: req.parent_id,
         product_id: req.product_id,
-        organization_id: req.organization_id,
+        tenant_id: None, // Tenant cannot be changed
     };
 
     // 使用DeviceService更新设备，传入event_bus以触发事件
@@ -275,8 +327,15 @@ async fn update_device(
 async fn delete_device(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<bool>> {
+    // Verify device belongs to user's tenant before deleting
+    match verify_device_tenant(state.database(), &id, &claims.tenant_id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return ApiResponseBuilder::error("设备不存在".to_string()),
+        Err((msg, _)) => return ApiResponseBuilder::error(msg),
+    }
+
     // 使用DeviceService删除设备，传入event_bus以触发事件
     let device_service =
         DeviceService::with_event_bus(state.database.clone(), state.event_bus.clone());
@@ -304,8 +363,15 @@ async fn delete_device(
 async fn enable_device(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<bool>> {
+    // Verify device belongs to user's tenant before enabling
+    match verify_device_tenant(state.database(), &id, &claims.tenant_id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return ApiResponseBuilder::error("设备不存在".to_string()),
+        Err((msg, _)) => return ApiResponseBuilder::error(msg),
+    }
+
     match Device::update_enabled_status(state.database(), &id, true).await {
         Ok(updated) => {
             if updated {
@@ -326,8 +392,15 @@ async fn enable_device(
 async fn disable_device(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<bool>> {
+    // Verify device belongs to user's tenant before disabling
+    match verify_device_tenant(state.database(), &id, &claims.tenant_id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return ApiResponseBuilder::error("设备不存在".to_string()),
+        Err((msg, _)) => return ApiResponseBuilder::error(msg),
+    }
+
     match Device::update_enabled_status(state.database(), &id, false).await {
         Ok(updated) => {
             if updated {
@@ -347,15 +420,19 @@ async fn disable_device(
 /// 基于模板创建设备 (需求 4.5, 3.6)
 async fn create_device_from_template(
     State(state): State<AppState>,
-    _claims: Claims,
+    claims: Claims,
     Json(req): Json<CreateDeviceFromTemplateRequest>,
 ) -> Json<ApiResponse<Device>> {
     // 使用 DeviceService 创建设备（包含所有业务逻辑）
     let device_service =
         DeviceService::with_event_bus(state.database.clone(), state.event_bus.clone());
 
+    // Set tenant_id from authenticated user's claims
+    let mut device_input = req.device_input;
+    device_input.tenant_id = Some(claims.tenant_id);
+
     match device_service
-        .create_device_from_template(state.template_engine(), &req.template_id, &req.device_input)
+        .create_device_from_template(state.template_engine(), &req.template_id, &device_input)
         .await
     {
         Ok(device) => ApiResponseBuilder::success(device),
