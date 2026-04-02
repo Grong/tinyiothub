@@ -110,22 +110,22 @@ export default function Home() {
           <div className="flex h-16 items-center justify-between">
             <div className="flex items-center gap-8">
               <a href="/" className="flex items-center gap-2 group">
-                <img src={`${basePath}/logo.svg`} alt="logo" className="h-9 w-9 object-contain dark:brightness-0 dark:invert" />
-                <span className="text-xl font-bold text-primary dark:text-white">TinyIoTHub</span>
+                <img src={`${basePath}/logo.svg`} alt="logo" className="h-9 w-9 object-contain homepage-logo" />
+                <span className="text-xl font-bold text-primary homepage-nav-text">TinyIoTHub</span>
               </a>
               <div className="hidden lg:flex items-center gap-1">
-                <a href="/dashboard" className="flex h-8 items-center rounded-xl px-3 text-sm font-medium text-components-main-nav-nav-button-text hover:bg-components-main-nav-nav-button-bg-hover transition-colors dark:text-gray-300 dark:hover:bg-white/10">仪表盘</a>
-                <a href="/marketplace" className="flex h-8 items-center rounded-xl px-3 text-sm font-medium text-components-main-nav-nav-button-text hover:bg-components-main-nav-nav-button-bg-hover transition-colors dark:text-gray-300 dark:hover:bg-white/10">市场</a>
-                <a href="https://docs.tinyiothub.com" target="_blank" rel="noopener noreferrer" className="flex h-8 items-center rounded-xl px-3 text-sm font-medium text-components-main-nav-nav-button-text hover:bg-components-main-nav-nav-button-bg-hover transition-colors dark:text-gray-300 dark:hover:bg-white/10">文档</a>
+                <a href="/dashboard" className="flex h-8 items-center rounded-xl px-3 text-sm font-medium text-components-main-nav-nav-button-text hover:bg-components-main-nav-nav-button-bg-hover transition-colors homepage-nav-text">仪表盘</a>
+                <a href="/marketplace" className="flex h-8 items-center rounded-xl px-3 text-sm font-medium text-components-main-nav-nav-button-text hover:bg-components-main-nav-nav-button-bg-hover transition-colors homepage-nav-text">市场</a>
+                <a href="https://docs.tinyiothub.com" target="_blank" rel="noopener noreferrer" className="flex h-8 items-center rounded-xl px-3 text-sm font-medium text-components-main-nav-nav-button-text hover:bg-components-main-nav-nav-button-bg-hover transition-colors homepage-nav-text">文档</a>
               </div>
             </div>
             <div className="flex items-center gap-4">
-              <a href="https://github.com/Grong/tinyiothub" target="_blank" rel="noopener noreferrer" className="text-secondary hover:text-primary transition-colors dark:text-gray-400 dark:hover:text-white">
+              <a href="https://github.com/Grong/tinyiothub" target="_blank" rel="noopener noreferrer" className="text-secondary hover:text-primary transition-colors homepage-nav-text">
                 <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
                   <path fillRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clipRule="evenodd" />
                 </svg>
               </a>
-              <a href="/signin" className="text-sm font-medium text-secondary hover:text-primary transition-colors dark:text-gray-300 dark:hover:text-white">登录</a>
+              <a href="/signin" className="text-sm font-medium text-secondary hover:text-primary transition-colors homepage-nav-text">登录</a>
               <a href="/signin" className="rounded-lg bg-components-button-primary-bg text-components-button-primary-text px-5 py-2.5 text-sm font-semibold hover:bg-components-button-primary-bg-hover transition-all dark:opacity-90">免费试用</a>
             </div>
           </div>
@@ -143,10 +143,10 @@ export default function Home() {
 
         <div className="mx-auto max-w-7xl px-6 lg:px-8">
           <div className="flex justify-center mb-6">
-            <div className="rounded-full border border-purple-200/50 bg-gradient-to-r from-purple-50/80 to-blue-50/80 backdrop-blur-xl px-5 py-2 text-sm text-purple-700 shadow-lg dark:border-purple-500/30 dark:bg-slate-800/90 dark:text-gray-200 dark:shadow-none">
+            <div className="homepage-badge rounded-full border border-purple-200/50 bg-gradient-to-r from-purple-50/80 to-blue-50/80 backdrop-blur-xl px-5 py-2 text-sm text-purple-700 shadow-lg">
               <span className="relative inline-flex h-2 w-2 mr-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75 dark:bg-purple-500" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-purple-500 dark:bg-purple-400" />
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-purple-500" />
               </span>
               内置人工智能 · 物联行业的 OpenAI
             </div>
@@ -175,9 +175,9 @@ export default function Home() {
               <p className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-4">支持的协议</p>
               <div className="flex flex-wrap justify-center gap-3">
                 {protocols.map((p) => (
-                  <div key={p.name} className="rounded-xl bg-white/60 backdrop-blur-xl border border-white/50 px-5 py-2.5 shadow-lg dark:bg-slate-800/60 dark:border-white/20 dark:shadow-none">
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">{p.name}</span>
-                    <span className="text-sm text-gray-400 ml-1 dark:text-gray-500">{p.desc}</span>
+                  <div key={p.name} className="homepage-protocol-badge rounded-xl bg-white/60 backdrop-blur-xl border border-white/50 px-5 py-2.5 shadow-lg">
+                    <span className="text-sm font-medium text-gray-700">{p.name}</span>
+                    <span className="text-sm text-gray-400 ml-1">{p.desc}</span>
                   </div>
                 ))}
                 <div className="rounded-xl bg-gradient-to-r from-blue-50 to-indigo-50 backdrop-blur-xl border border-blue-200/50 px-5 py-2.5 shadow-lg dark:bg-slate-800/60 dark:border-blue-500/30 dark:shadow-none">
@@ -268,9 +268,9 @@ export default function Home() {
             <h3 className="text-xl font-bold text-gray-900 dark:text-white text-center mb-8">典型应用场景</h3>
             <div className="grid md:grid-cols-3 gap-6">
               {scenarios.map((scenario) => (
-                <div key={scenario.title} className="rounded-2xl bg-gradient-to-br from-purple-50/80 to-indigo-50/80 backdrop-blur-xl border border-purple-100/50 p-6 text-center hover:shadow-lg transition-all dark:from-slate-800/80 dark:to-slate-900/80 dark:border-purple-500/30 dark:hover:shadow-none">
-                  <h4 className="font-semibold text-gray-900 dark:text-white">{scenario.title}</h4>
-                  <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">{scenario.desc}</p>
+                <div key={scenario.title} className="homepage-scenario-card rounded-2xl bg-gradient-to-br from-purple-50/80 to-indigo-50/80 backdrop-blur-xl border border-purple-100/50 p-6 text-center hover:shadow-lg transition-all">
+                  <h4 className="font-semibold text-gray-900">{scenario.title}</h4>
+                  <p className="mt-2 text-sm text-gray-600">{scenario.desc}</p>
                 </div>
               ))}
             </div>

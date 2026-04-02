@@ -1051,10 +1051,125 @@ select {
   box-shadow: none !important;
 }
 
-input:focus, 
-textarea:focus, 
+input:focus,
+textarea:focus,
 select:focus {
   border: none !important;
   outline: none !important;
   box-shadow: 0 0 0 2px var(--color-components-input-border-active-prompt-1, rgba(21, 94, 239, 0.3)) !important;
+}
+
+/* ====================
+   Homepage Dark Mode Overrides
+   page.tsx uses hardcoded light colors, use html[data-theme='dark'] selectors
+   ==================== */
+
+/* Logo - invert black SVG to white */
+html[data-theme='dark'] nav img[alt="logo"] {
+  filter: brightness(0) invert(1);
+}
+
+/* Nav text */
+html[data-theme='dark'] nav a:not([class*="bg-"]):not([class*="border-"]),
+html[data-theme='dark'] nav span {
+  color: #d1d5db;
+}
+
+/* Hero badge */
+.homepage-badge {
+  background: linear-gradient(to right, rgba(236, 72, 153, 0.15), rgba(59, 130, 246, 0.15)) !important;
+  border-color: rgba(168, 85, 247, 0.4) !important;
+  color: #e2e8f0 !important;
+}
+
+/* Hero glows - make them dark */
+html[data-theme='dark'] section > div > div:nth-child(1) > div:nth-child(1) {
+  background: linear-gradient(to bottom, rgba(30, 40, 80, 0.5), transparent) !important;
+}
+html[data-theme='dark'] section > div > div:nth-child(1) > div:nth-child(2) {
+  background: rgba(30, 30, 40, 0.5) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+html[data-theme='dark'] section > div > div:nth-child(1) > div:nth-child(3) {
+  background: rgba(40, 30, 80, 0.4) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+html[data-theme='dark'] section > div > div:nth-child(1) > div:nth-child(4) {
+  background: rgba(60, 30, 100, 0.4) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Hero text */
+html[data-theme='dark'] h1 > span:first-child {
+  color: #ffffff !important;
+}
+
+/* Protocol badges */
+.homepage-protocol-badge {
+  background: rgba(20, 20, 28, 0.85) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+}
+.homepage-protocol-badge span:first-child {
+  color: #e2e8f0 !important;
+}
+.homepage-protocol-badge span:last-child {
+  color: #94a3b8 !important;
+}
+
+/* Stats card */
+html[data-theme='dark'] div.rounded-3xl.bg-white\/50 {
+  background: rgba(20, 20, 28, 0.85) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Cards in feature sections */
+html[data-theme='dark'] div.grid > div.rounded-2xl {
+  background: rgba(20, 20, 25, 0.85) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Card text primary */
+html[data-theme='dark'] div.grid > div.rounded-2xl h3 {
+  color: #f1f5f9 !important;
+}
+
+/* Card text secondary */
+html[data-theme='dark'] div.grid > div.rounded-2xl p {
+  color: #94a3b8 !important;
+}
+
+/* Scenario cards */
+.homepage-scenario-card {
+  background: rgba(25, 25, 35, 0.85) !important;
+  border-color: rgba(120, 100, 200, 0.25) !important;
+}
+.homepage-scenario-card h4 {
+  color: #f1f5f9 !important;
+}
+.homepage-scenario-card p {
+  color: #94a3b8 !important;
+}
+
+/* Footer */
+html[data-theme='dark'] footer {
+  background: rgba(15, 15, 20, 0.85) !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+html[data-theme='dark'] footer span,
+html[data-theme='dark'] footer p {
+  color: #94a3b8 !important;
+}
+
+/* CTA secondary button */
+html[data-theme='dark'] a:has(> svg) + a + a.rounded-xl.border {
+  background: rgba(30, 30, 35, 0.85) !important;
+  border-color: rgba(255, 255, 255, 0.15) !important;
+  color: #e2e8f0 !important;
+}
+
+/* Final CTA card */
+html[data-theme='dark'] section:last-of-type div.rounded-3xl {
+  background: rgba(20, 20, 28, 0.85) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
 }
