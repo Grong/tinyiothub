@@ -135,10 +135,10 @@ export default function Home() {
       {/* Hero Section */}
       <section className="relative pt-28 pb-20">
         <div className="absolute inset-0 -z-10 overflow-hidden">
-          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[500px] bg-gradient-to-b from-blue-200/40 via-blue-100/20 to-transparent rounded-[100%] blur-3xl dark:from-blue-900/30 dark:via-slate-800/20" />
-          <div className="absolute top-10 left-20 w-64 h-64 bg-white/40 rounded-full blur-3xl backdrop-blur-xl border border-white/30 dark:bg-slate-800/40 dark:border-white/10" />
-          <div className="absolute top-32 right-20 w-80 h-80 bg-indigo-200/30 rounded-full blur-3xl backdrop-blur-xl border border-white/30 dark:bg-indigo-900/30 dark:border-white/10" />
-          <div className="absolute bottom-20 left-1/3 w-72 h-72 bg-purple-200/20 rounded-full blur-3xl backdrop-blur-xl border border-white/30 dark:bg-purple-900/30 dark:border-white/10" />
+          <div className="homepage-hero-glow-1 absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[500px] bg-gradient-to-b from-blue-200/40 via-blue-100/20 to-transparent rounded-[100%] blur-3xl" />
+          <div className="homepage-hero-glow-2 absolute top-10 left-20 w-64 h-64 bg-white/40 rounded-full blur-3xl backdrop-blur-xl border border-white/30" />
+          <div className="homepage-hero-glow-3 absolute top-32 right-20 w-80 h-80 bg-indigo-200/30 rounded-full blur-3xl backdrop-blur-xl border border-white/30" />
+          <div className="homepage-hero-glow-4 absolute bottom-20 left-1/3 w-72 h-72 bg-purple-200/20 rounded-full blur-3xl backdrop-blur-xl border border-white/30" />
         </div>
 
         <div className="mx-auto max-w-7xl px-6 lg:px-8">
@@ -155,9 +155,9 @@ export default function Home() {
           <div className="text-center max-w-4xl mx-auto">
             <h1 className="text-5xl sm:text-6xl lg:text-7xl font-bold tracking-tight">
               <span className="text-gray-900 dark:text-white">构建下一代 </span>
-              <span className="bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent dark:from-blue-400 dark:to-indigo-400">IoT 平台</span>
+              <span className="homepage-hero-gradient-text bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">IoT 平台</span>
             </h1>
-            <p className="mt-8 text-xl leading-8 text-gray-600 dark:text-gray-400 max-w-2xl mx-auto">
+            <p className="homepage-hero-description mt-8 text-xl leading-8 text-gray-600 max-w-2xl mx-auto">
               轻量级、高性能、企业级的物联网边缘网关系统。基于 Rust + AI 构建，为工业物联网场景提供可靠的设备接入、数据采集和边缘计算能力。
             </p>
 
@@ -180,8 +180,8 @@ export default function Home() {
                     <span className="text-sm text-gray-400 ml-1">{p.desc}</span>
                   </div>
                 ))}
-                <div className="rounded-xl bg-gradient-to-r from-blue-50 to-indigo-50 backdrop-blur-xl border border-blue-200/50 px-5 py-2.5 shadow-lg dark:bg-slate-800/60 dark:border-blue-500/30 dark:shadow-none">
-                  <span className="text-sm font-medium bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent dark:from-blue-400 dark:to-indigo-400">9999+ 协议支持</span>
+                <div className="homepage-protocol-9999 rounded-xl bg-gradient-to-r from-blue-50 to-indigo-50 backdrop-blur-xl border border-blue-200/50 px-5 py-2.5 shadow-lg">
+                  <span className="text-sm font-medium bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">9999+ 协议支持</span>
                 </div>
               </div>
             </div>
@@ -196,8 +196,8 @@ export default function Home() {
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-8 lg:gap-16">
               {stats.map((stat) => (
                 <div key={stat.label} className="text-center">
-                  <div className="text-4xl lg:text-5xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent dark:from-white dark:to-gray-300">{stat.value}</div>
-                  <div className="mt-2 text-sm text-gray-600 dark:text-gray-400">{stat.label}</div>
+                  <div className="homepage-stats-value text-4xl lg:text-5xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent">{stat.value}</div>
+                  <div className="homepage-stats-label mt-2 text-sm text-gray-600">{stat.label}</div>
                 </div>
               ))}
             </div>
@@ -209,15 +209,15 @@ export default function Home() {
       <section className="py-24">
         <div className="mx-auto max-w-7xl px-6 lg:px-8">
           <div className="text-center max-w-3xl mx-auto mb-16">
-            <div className="inline-flex items-center gap-2 rounded-full border border-purple-200/50 bg-purple-50/60 backdrop-blur-xl px-4 py-1.5 text-sm text-purple-700 mb-6 dark:border-purple-500/30 dark:bg-slate-900/80 dark:text-purple-300 dark:shadow-none">
+            <div className="homepage-ai-badge inline-flex items-center gap-2 rounded-full border border-purple-200/50 bg-purple-50/60 backdrop-blur-xl px-4 py-1.5 text-sm text-purple-700 mb-6">
               <SparklesIcon className="h-4 w-4" />
               AI 驱动的新一代边缘计算
             </div>
-            <h2 className="text-3xl lg:text-5xl font-bold text-gray-900 dark:text-white">
+            <h2 className="homepage-ai-heading text-3xl lg:text-5xl font-bold text-gray-900">
               边缘智能体
             </h2>
-            <p className="mt-6 text-xl text-gray-600 dark:text-gray-400 leading-relaxed">
-              <span className="font-semibold text-purple-600 dark:text-purple-400">接入即自治，运行即自愈</span>
+            <p className="homepage-ai-description mt-6 text-xl text-gray-600 leading-relaxed">
+              <span className="homepage-ai-accent font-semibold text-purple-600">接入即自治，运行即自愈</span>
               <br />
               AI 原生自主型边缘计算平台，将大模型驱动的智能体嵌入边缘侧，从根本上重塑设备接入与运维流程
             </p>
@@ -226,7 +226,7 @@ export default function Home() {
           {/* Core Value Cards */}
           <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 mb-16">
             {coreFeatures.map((feature) => (
-              <div key={feature.title} className="group rounded-2xl bg-white/60 backdrop-blur-xl border border-white/80 p-6 shadow-lg hover:shadow-2xl hover:bg-white/80 hover:border-purple-200/50 transition-all duration-300 dark:bg-slate-900/60 dark:border-white/20 dark:hover:bg-slate-800/60 dark:hover:border-purple-500/30 dark:shadow-none">
+              <div key={feature.title} className="group rounded-2xl bg-white/60 backdrop-blur-xl border border-white/80 p-6 shadow-lg hover:shadow-2xl hover:bg-white/80 hover:border-purple-200/50 transition-all duration-300 dark:bg-slate-900/60 dark:border-white/20 dark:hover:bg-slate-800/60 dark:hover:border-white/10 dark:shadow-none">
                 <div className={clsx(
                   "inline-flex rounded-xl p-3 mb-4",
                   feature.color === 'blue' && "bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/30 dark:from-blue-600 dark:to-blue-700",
@@ -245,7 +245,7 @@ export default function Home() {
           {/* Feature Cards */}
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
             {agentFeatures.map((feature) => (
-              <div key={feature.title} className="group rounded-2xl bg-white/60 backdrop-blur-xl border border-white/80 p-8 shadow-lg hover:shadow-2xl hover:bg-white/80 hover:border-purple-200/50 hover:-translate-y-1 transition-all duration-300 dark:bg-slate-900/60 dark:border-white/20 dark:hover:bg-slate-800/60 dark:hover:border-purple-500/30 dark:shadow-none">
+              <div key={feature.title} className="group rounded-2xl bg-white/60 backdrop-blur-xl border border-white/80 p-8 shadow-lg hover:shadow-2xl hover:bg-white/80 hover:border-purple-200/50 hover:-translate-y-1 transition-all duration-300 dark:bg-slate-900/60 dark:border-white/20 dark:hover:bg-slate-800/60 dark:hover:border-white/10 dark:shadow-none">
                 <div className={clsx(
                   "inline-flex rounded-xl p-3 transition-transform duration-300 group-hover:scale-110",
                   feature.color === 'blue' && "bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/30 dark:from-blue-600 dark:to-blue-700",

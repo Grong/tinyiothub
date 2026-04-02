@@ -1086,57 +1086,105 @@ html[data-theme='dark'] nav span {
   color: #d1d5db;
 }
 
-/* Hero badge */
-.homepage-badge {
+/* Hero badge - dark mode */
+html[data-theme='dark'] .homepage-badge {
   background: linear-gradient(to right, rgba(236, 72, 153, 0.15), rgba(59, 130, 246, 0.15)) !important;
   border-color: rgba(168, 85, 247, 0.4) !important;
   color: #e2e8f0 !important;
 }
 
-/* Hero glows - make them dark */
-html[data-theme='dark'] section > div > div:nth-child(1) > div:nth-child(1) {
+/* Hero glows - class-based selectors, scoped to dark mode */
+html[data-theme='dark'] .homepage-hero-glow-1 {
   background: linear-gradient(to bottom, rgba(30, 40, 80, 0.5), transparent) !important;
 }
-html[data-theme='dark'] section > div > div:nth-child(1) > div:nth-child(2) {
+html[data-theme='dark'] .homepage-hero-glow-2 {
   background: rgba(30, 30, 40, 0.5) !important;
-  border-color: rgba(255, 255, 255, 0.1) !important;
+  border-color: transparent !important;
 }
-html[data-theme='dark'] section > div > div:nth-child(1) > div:nth-child(3) {
+html[data-theme='dark'] .homepage-hero-glow-3 {
   background: rgba(40, 30, 80, 0.4) !important;
-  border-color: rgba(255, 255, 255, 0.1) !important;
+  border-color: transparent !important;
 }
-html[data-theme='dark'] section > div > div:nth-child(1) > div:nth-child(4) {
+html[data-theme='dark'] .homepage-hero-glow-4 {
   background: rgba(60, 30, 100, 0.4) !important;
-  border-color: rgba(255, 255, 255, 0.1) !important;
+  border-color: transparent !important;
 }
 
-/* Hero text */
-html[data-theme='dark'] h1 > span:first-child {
-  color: #ffffff !important;
+/* Hero gradient text - dark mode override */
+html[data-theme='dark'] .homepage-hero-gradient-text {
+  background: linear-gradient(to right, #60a5fa, #818cf8) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
 }
 
-/* Protocol badges */
-.homepage-protocol-badge {
-  background: rgba(20, 20, 28, 0.85) !important;
-  border-color: rgba(255, 255, 255, 0.12) !important;
-}
-.homepage-protocol-badge span:first-child {
-  color: #e2e8f0 !important;
-}
-.homepage-protocol-badge span:last-child {
+/* Hero description - dark mode override */
+html[data-theme='dark'] .homepage-hero-description {
   color: #94a3b8 !important;
 }
 
-/* Stats card */
-html[data-theme='dark'] div.rounded-3xl.bg-white\/50 {
-  background: rgba(20, 20, 28, 0.85) !important;
-  border-color: rgba(255, 255, 255, 0.1) !important;
+/* Stats - dark mode override */
+html[data-theme='dark'] .homepage-stats-value {
+  background: linear-gradient(to right, #ffffff, #d1d5db) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+}
+html[data-theme='dark'] .homepage-stats-label {
+  color: #94a3b8 !important;
 }
 
-/* Cards in feature sections */
+/* AI section - dark mode override */
+html[data-theme='dark'] .homepage-ai-badge {
+  background: rgba(15, 15, 25, 0.85) !important;
+  border-color: rgba(168, 85, 247, 0.35) !important;
+  color: #c4b5fd !important;
+}
+html[data-theme='dark'] .homepage-ai-heading {
+  color: #ffffff !important;
+}
+html[data-theme='dark'] .homepage-ai-description {
+  color: #94a3b8 !important;
+}
+html[data-theme='dark'] .homepage-ai-accent {
+  background: linear-gradient(to right, #c084fc, #a78bfa) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+  color: transparent !important;
+}
+
+/* Protocol 9999+ badge - dark mode override */
+html[data-theme='dark'] .homepage-protocol-9999 {
+  background: rgba(20, 20, 30, 0.9) !important;
+  border-color: rgba(59, 130, 246, 0.35) !important;
+}
+html[data-theme='dark'] .homepage-protocol-9999 span {
+  background: linear-gradient(to right, #60a5fa, #818cf8) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+  color: transparent !important;
+}
+
+/* Protocol badges - dark mode */
+html[data-theme='dark'] .homepage-protocol-badge {
+  background: rgba(20, 20, 28, 0.85) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+}
+html[data-theme='dark'] .homepage-protocol-badge span:first-child {
+  color: #e2e8f0 !important;
+}
+html[data-theme='dark'] .homepage-protocol-badge span:last-child {
+  color: #94a3b8 !important;
+}
+
+/* Stats card - dark mode: transparent border for borderless glass effect */
+html[data-theme='dark'] div.rounded-3xl.bg-white\/50 {
+  background: rgba(20, 20, 28, 0.85) !important;
+  border-color: transparent !important;
+}
+
+/* Cards in feature sections - dark mode: transparent border */
 html[data-theme='dark'] div.grid > div.rounded-2xl {
   background: rgba(20, 20, 25, 0.85) !important;
-  border-color: rgba(255, 255, 255, 0.1) !important;
+  border-color: transparent !important;
 }
 
 /* Card text primary */
@@ -1149,15 +1197,18 @@ html[data-theme='dark'] div.grid > div.rounded-2xl p {
   color: #94a3b8 !important;
 }
 
-/* Scenario cards */
-.homepage-scenario-card {
+/* Scenario cards - dark mode: transparent border, no purple tint */
+html[data-theme='dark'] .homepage-scenario-card {
   background: rgba(25, 25, 35, 0.85) !important;
-  border-color: rgba(120, 100, 200, 0.25) !important;
+  border-color: transparent !important;
 }
-.homepage-scenario-card h4 {
+html[data-theme='dark'] .homepage-scenario-card:hover {
+  border-color: transparent !important;
+}
+html[data-theme='dark'] .homepage-scenario-card h4 {
   color: #f1f5f9 !important;
 }
-.homepage-scenario-card p {
+html[data-theme='dark'] .homepage-scenario-card p {
   color: #94a3b8 !important;
 }
 
@@ -1179,8 +1230,8 @@ html[data-theme='dark'] a:has(> svg) + a + a.rounded-xl.border {
   color: #e2e8f0 !important;
 }
 
-/* Final CTA card */
+/* Final CTA card - dark mode: transparent border */
 html[data-theme='dark'] section:last-of-type div.rounded-3xl {
   background: rgba(20, 20, 28, 0.85) !important;
-  border-color: rgba(255, 255, 255, 0.1) !important;
+  border-color: transparent !important;
 }
