@@ -3,6 +3,7 @@
 import { ArrowRightIcon, CubeIcon, DevicePhoneMobileIcon, LockClosedIcon, CloudIcon, CpuChipIcon, SparklesIcon, ShieldCheckIcon, BoltIcon, RadioIcon, CommandLineIcon, ArrowPathIcon, LanguageIcon } from '@heroicons/react/24/outline'
 import { useState, useEffect } from 'react'
 import clsx from 'clsx'
+import { basePath } from '@/utils/var'
 
 const protocols = [
   { name: 'Modbus', desc: 'RTU/TCP' },
@@ -109,9 +110,7 @@ export default function Home() {
           <div className="flex h-16 items-center justify-between">
             <div className="flex items-center gap-8">
               <a href="/" className="flex items-center gap-2 group">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-components-button-primary-bg text-components-button-primary-text shadow-lg transition-transform group-hover:scale-105">
-                  <ArrowRightIcon className="h-5 w-5" />
-                </div>
+                <img src={`${basePath}/logo.svg`} alt="logo" className="h-9 w-9 object-contain" />
                 <span className="text-xl font-bold text-primary">TinyIoTHub</span>
               </a>
               <div className="hidden lg:flex items-center gap-1">

@@ -20,6 +20,14 @@ export const viewport: Viewport = {
   userScalable: false,
 }
 
+export const metadata = {
+  title: 'TinyIoTHub',
+  description: '轻量级、高性能、企业级的物联网边缘网关系统',
+  icons: {
+    icon: '/logo.svg',
+  },
+}
+
 const LocaleLayout = async ({
   children,
 }: {
@@ -42,7 +50,7 @@ const LocaleLayout = async ({
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
         <meta name="apple-mobile-web-app-title" content="TinyIoTHub" />
-        <link rel="icon" type="image/png" sizes="32x32" href="/favicon.ico" />
+        <link rel="icon" type="image/svg+xml" href="/logo.svg" />
         <meta name="msapplication-TileColor" content="#1C64F2" />
       </head>
       <body
