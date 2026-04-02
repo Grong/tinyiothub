@@ -77,34 +77,12 @@ html[data-changing-theme] * {
   --card-border-rgb: 131, 134, 135;
 }
 
-/* @media (prefers-color-scheme: dark) {
-  :root {
-    --foreground-rgb: 255, 255, 255;
-    --background-start-rgb: 0, 0, 0;
-    --background-end-rgb: 0, 0, 0;
-
-    --primary-glow: radial-gradient(rgba(1, 65, 255, 0.4), rgba(1, 65, 255, 0));
-    --secondary-glow: linear-gradient(to bottom right,
-        rgba(1, 65, 255, 0),
-        rgba(1, 65, 255, 0),
-        rgba(1, 65, 255, 0.3));
-
-    --tile-start-rgb: 2, 13, 46;
-    --tile-end-rgb: 2, 5, 19;
-    --tile-border: conic-gradient(#ffffff80,
-        #ffffff40,
-        #ffffff30,
-        #ffffff20,
-        #ffffff10,
-        #ffffff10,
-        #ffffff80);
-
-    --callout-rgb: 20, 20, 20;
-    --callout-border-rgb: 108, 108, 108;
-    --card-rgb: 100, 100, 100;
-    --card-border-rgb: 200, 200, 200;
-  }
-} */
+/* Dark mode variables — activated by html[data-theme='dark'] via next-themes */
+html[data-theme='dark'] {
+  --foreground-rgb: 251, 251, 251;
+  --background-start-rgb: 15, 15, 17;
+  --background-end-rgb: 20, 20, 23;
+}
 
 * {
   box-sizing: border-box;
@@ -131,9 +109,9 @@ body {
   min-height: 100vh;
 }
 
-/* Dark mode glassmorphism background */
-[data-theme="dark"] body {
-  background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+/* Dark mode glassmorphism background — uses CSS var from manual-dark.css */
+html[data-theme='dark'] body {
+  background: var(--color-background-body, #0f0f11);
 }
 
 a {
@@ -160,11 +138,19 @@ button:focus-within {
   color: #111928;
 }
 
+html[data-theme='dark'] .h1 {
+  color: rgb(var(--foreground-rgb));
+}
+
 .h2 {
   font-size: 14px;
   font-weight: 500;
   color: #111928;
   line-height: 1.5;
+}
+
+html[data-theme='dark'] .h2 {
+  color: rgb(var(--foreground-rgb));
 }
 
 /* font define start */
@@ -810,7 +796,7 @@ button:focus-within {
   }
 
   [data-theme="dark"] .glass-nav {
-    background: rgba(15, 23, 42, 0.8);
+    background: rgba(20, 20, 22, 0.85);
     border-bottom-color: rgba(255, 255, 255, 0.08);
   }
 
