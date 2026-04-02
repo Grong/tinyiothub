@@ -55,3 +55,8 @@ html[data-theme='dark'] .glass-card-action {
 html[data-theme='dark'] .marketplace-nav-text {
   color: #d1d5db !important;
 }
+
+/* Nav border in dark mode */
+html[data-theme='dark'] .glass-nav {
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}

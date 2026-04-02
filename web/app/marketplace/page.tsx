@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { ArrowRightIcon, HomeIcon } from '@heroicons/react/24/outline'
+import { basePath } from '@/utils/var'
 import MarketplaceSearch from './components/marketplace-search'
 import { TabType } from './components/marketplace-tabs'
 import TemplateGrid from './components/template-grid'
@@ -86,19 +86,17 @@ export default function MarketplacePage() {
           <div className="flex h-16 items-center justify-between">
             <div className="flex items-center gap-8">
               <a href="/" className="flex items-center gap-2 group">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-components-button-primary-bg text-components-button-primary-text shadow-lg">
-                  <ArrowRightIcon className="h-5 w-5" />
-                </div>
-                <span className="text-xl font-bold text-primary">TinyIoTHub</span>
+                <img src={`${basePath}/logo.svg`} alt="logo" className="h-9 w-9 object-contain homepage-logo" />
+                <span className="text-xl font-bold text-primary homepage-nav-text">TinyIoTHub</span>
               </a>
               <div className="hidden lg:flex items-center gap-1">
-                <a href="/" className="flex h-8 items-center rounded-xl px-3 text-sm font-medium text-components-main-nav-nav-button-text hover:bg-components-main-nav-nav-button-bg-hover transition-colors">首页</a>
+                <a href="/" className="flex h-8 items-center rounded-xl px-3 text-sm font-medium text-components-main-nav-nav-button-text hover:bg-components-main-nav-nav-button-bg-hover transition-colors homepage-nav-text">首页</a>
                 <a href="/marketplace" className="flex h-8 items-center rounded-xl px-3 text-sm font-medium bg-components-main-nav-nav-button-bg-active text-components-main-nav-nav-button-text-active font-semibold shadow-md transition-colors">市场</a>
-                <a href="https://docs.tinyiothub.com" target="_blank" rel="noopener noreferrer" className="flex h-8 items-center rounded-xl px-3 text-sm font-medium text-components-main-nav-nav-button-text hover:bg-components-main-nav-nav-button-bg-hover transition-colors">文档</a>
+                <a href="https://docs.tinyiothub.com" target="_blank" rel="noopener noreferrer" className="flex h-8 items-center rounded-xl px-3 text-sm font-medium text-components-main-nav-nav-button-text hover:bg-components-main-nav-nav-button-bg-hover transition-colors homepage-nav-text">文档</a>
               </div>
             </div>
             <div className="flex items-center gap-4">
-              <a href="/signin" className="text-sm font-medium text-secondary hover:text-primary transition-colors">登录</a>
+              <a href="/signin" className="text-sm font-medium text-secondary hover:text-primary transition-colors homepage-nav-text">登录</a>
               <a href="/signin" className="rounded-lg bg-components-button-primary-bg text-components-button-primary-text px-5 py-2.5 text-sm font-semibold hover:bg-components-button-primary-bg-hover transition-all">免费试用</a>
             </div>
           </div>
