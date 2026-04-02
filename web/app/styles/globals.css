@@ -1065,7 +1065,8 @@ select:focus {
    ==================== */
 
 /* Logo - invert black SVG to white */
-html[data-theme='dark'] nav img[alt="logo"] {
+html[data-theme='dark'] nav img[alt="logo"],
+html[data-theme='dark'] footer img[alt="logo"] {
   filter: brightness(0) invert(1);
 }
 

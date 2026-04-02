@@ -320,9 +320,7 @@ export default function Home() {
         <div className="mx-auto max-w-7xl px-6 lg:px-8">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-8">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-blue-700 text-white shadow-lg dark:from-blue-700 dark:to-blue-800">
-                <ArrowRightIcon className="h-5 w-5" />
-              </div>
+              <img src={`${basePath}/logo.svg`} alt="logo" className="h-10 w-10 object-contain homepage-logo" />
               <div>
                 <span className="text-lg font-bold text-gray-900 dark:text-white">TinyIoTHub</span>
                 <p className="text-sm text-gray-500 dark:text-gray-400">开源物联网平台</p>
