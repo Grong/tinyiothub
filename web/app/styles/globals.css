@@ -742,10 +742,21 @@ html[data-theme='dark'] .h2 {
     box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
   }
 
+  [data-theme="dark"] .glass {
+    background: rgba(20, 20, 22, 0.85);
+    border-color: rgba(255, 255, 255, 0.08);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+  }
+
   .glass-hover:hover {
     background: rgba(255, 255, 255, 0.8);
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
     transform: translateY(-2px);
+  }
+
+  [data-theme="dark"] .glass-hover:hover {
+    background: rgba(30, 30, 33, 0.9);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
   }
 
   /* Glass dark variant */
@@ -766,9 +777,21 @@ html[data-theme='dark'] .h2 {
     transition: all 0.2s ease;
   }
 
+  [data-theme="dark"] .glass-btn {
+    background: rgba(30, 30, 33, 0.85);
+    border-color: rgba(255, 255, 255, 0.1);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    color: rgba(255, 255, 255, 0.9);
+  }
+
   .glass-btn:hover {
     background: rgba(255, 255, 255, 0.8);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  }
+
+  [data-theme="dark"] .glass-btn:hover {
+    background: rgba(40, 40, 44, 0.9);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   }
 
   /* Glass primary button */
@@ -779,6 +802,11 @@ html[data-theme='dark'] .h2 {
     border: 1px solid rgba(255, 255, 255, 0.2);
     color: white;
     box-shadow: 0 4px 16px rgba(59, 130, 246, 0.3);
+  }
+
+  [data-theme="dark"] .glass-btn-primary {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.7), rgba(79, 70, 229, 0.7));
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   }
 
   .glass-btn-primary:hover {
@@ -813,6 +841,11 @@ html[data-theme='dark'] .h2 {
     border: 1px solid rgba(255, 255, 255, 0.4);
   }
 
+  [data-theme="dark"] .glass-section {
+    background: linear-gradient(135deg, rgba(30, 30, 33, 0.85), rgba(20, 20, 22, 0.85));
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+
   /* Glass input */
   .glass-input {
     background: rgba(255, 255, 255, 0.6);
@@ -822,10 +855,22 @@ html[data-theme='dark'] .h2 {
     transition: all 0.2s ease;
   }
 
+  [data-theme="dark"] .glass-input {
+    background: rgba(30, 30, 33, 0.85);
+    border-color: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.9);
+  }
+
   .glass-input:focus {
     background: rgba(255, 255, 255, 0.8);
     border-color: rgba(59, 130, 246, 0.5);
     box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  }
+
+  [data-theme="dark"] .glass-input:focus {
+    background: rgba(40, 40, 44, 0.9);
+    border-color: rgba(59, 130, 246, 0.5);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
   }
 
   /* Glass badge */
