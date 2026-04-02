@@ -45,7 +45,7 @@ const TemplateIcon = ({ category }: { category: string }) => {
 // 标题组件
 const TemplateTitle = ({ title }: { title: string }) => {
   return (
-    <div className="text-base font-semibold text-gray-900 mb-2">
+    <div className="text-base font-semibold text-text-primary mb-2">
       {title}
     </div>
   )
@@ -93,7 +93,7 @@ const TemplateDescription = ({
   className?: string
 }) => {
   return (
-    <div className={cn('text-sm text-gray-600 line-clamp-2', className)}>
+    <div className={cn('text-sm text-text-secondary line-clamp-2', className)}>
       {text}
     </div>
   )
@@ -160,7 +160,7 @@ const TemplateCard: React.FC<TemplateCardProps> = ({
       </div>
 
       {/* 悬停显示的操作按钮 */}
-      <div className="absolute bottom-0 left-0 z-10 hidden w-full items-center gap-x-2 backdrop-blur-sm bg-white/50 p-4 pt-8 group-hover:flex">
+      <div className="glass-card-action absolute bottom-0 left-0 z-10 hidden w-full items-center gap-x-2 backdrop-blur-sm p-4 pt-8 group-hover:flex">
         <Button
           variant="ghost"
           size="small"

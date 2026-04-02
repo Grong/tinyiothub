@@ -23,7 +23,7 @@ export default function TemplateGrid({ templates, isLoading }: TemplateGridProps
   if (templates.length === 0) {
     return (
       <div className="glass-card p-12 text-center">
-        <p className="text-gray-500">暂无模板</p>
+        <p className="text-text-tertiary">暂无模板</p>
       </div>
     )
   }

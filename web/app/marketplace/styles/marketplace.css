@@ -17,13 +17,13 @@
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
 }
 
-/* 暗色模式 */
-[data-theme="dark"] .glass-card {
+/* 暗色模式 - marketplace uses next-themes html[data-theme */
+html[data-theme='dark'] .glass-card {
   background: rgba(30, 41, 59, 0.6);
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-[data-theme="dark"] .glass-card:hover {
+html[data-theme='dark'] .glass-card:hover {
   background: rgba(30, 41, 59, 0.8);
 }
 
@@ -33,6 +33,25 @@
   min-height: 100vh;
 }
 
-[data-theme="dark"] .marketplace-bg {
+html[data-theme='dark'] .marketplace-bg {
   background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+}
+
+/* Hero text */
+html[data-theme='dark'] .marketplace-hero-title {
+  color: #fbfbfc !important;
+}
+
+html[data-theme='dark'] .marketplace-hero-subtitle {
+  color: #94a3b8 !important;
+}
+
+/* Card hover action button */
+html[data-theme='dark'] .glass-card-action {
+  background: rgba(30, 41, 59, 0.85) !important;
+}
+
+/* Nav text in marketplace page */
+html[data-theme='dark'] .marketplace-nav-text {
+  color: #d1d5db !important;
 }

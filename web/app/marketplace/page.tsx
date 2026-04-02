@@ -109,10 +109,10 @@ export default function MarketplacePage() {
       <div className="px-4 md:px-6 lg:px-8 pt-20 py-8">
         {/* Hero Section */}
         <div className="text-center mb-12 pt-4">
-          <h1 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
+          <h1 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4 marketplace-hero-title">
             设备市场
           </h1>
-          <p className="text-base text-gray-500 max-w-xl mx-auto leading-relaxed">
+          <p className="text-base text-gray-500 max-w-xl mx-auto leading-relaxed marketplace-hero-subtitle">
             探索来自社区的优质设备模板与驱动，开箱即用，快速接入传感器、执行器与工业设备
           </p>
         </div>
