@@ -97,6 +97,9 @@ backoff = "0.4"
 # 内存管理
 elsa = "1.10"
 
+# Redis 客户端（用于会话管理和频率限制）
+redis = { version = "0.25", features = ["tokio-comp", "connection-manager"] }
+
 # 自定义宏 (如果存在)
 tinyiothub_derive = { path = "./derive" }
 tinyiothub-driver-sdk = { path = "../sdks/driver-sdk" }
@@ -126,6 +129,7 @@ urlencoding = "2.1"
 aes-gcm = "0.10"
 sha2 = "0.10"
 hmac = "0.12"
+sha1 = "0.10"
 subtle = "2.5"
 hex = "0.4"
 

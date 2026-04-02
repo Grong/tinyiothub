@@ -213,6 +213,12 @@ template_id = ""     # 模板ID
 [sms.rate_limit]
 max_per_minute = 5   # 每分钟最大发送次数
 code_expire_secs = 300 # 验证码有效期（秒）
+daily_limit = 5       # 每天最大发送次数
+interval_secs = 90    # 发送间隔（秒）
+
+[sms.captcha]
+# 腾讯防水墙 CAPTCHA 验证
+enabled = false
 
 [social]
 # 第三方登录配置

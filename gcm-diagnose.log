@@ -1,0 +1,133 @@
+﻿Diagnose log at 2026-03-29T12:24:16Z
+
+AppPath: C:\Program Files\Git\mingw64\bin\git-credential-manager.exe
+InstallDir: C:\Program Files\Git\mingw64\bin\
+Version: 2.6.1+786ab03440ddc82e807a97c0e540f5247e44cec6
+
+------------
+Diagnostic: Environment
+Skipped: False
+Success: True
+Exception: None
+Log:
+OSType: Windows
+OSVersion: 10.0 (build 26200)
+Reading environment variables... OK
+ Variables:
+HOMEPATH=\Users\59328
+DriverData=C:\Windows\System32\Drivers\DriverData
+COMPUTERNAME=WINGPC
+OHOS_NDK_HOME=C:\Program Files\Huawei\DevEco Studio\sdk\default\openharmony
+GIT_TRACE2_PARENT_SID=bef2ae58-3601-4cba-93de-cce497653700
+CommonProgramFiles(x86)=C:\Program Files (x86)\Common Files
+OPENSSL_LIB_DIR=C:\Program Files\OpenSSL-Win64\lib\VC\x64\MD
+OneDrive=C:\Users\59328\OneDrive
+ANTHROPIC_DEFAULT_SONNET_MODEL=MiniMax-M2.7
+WT_PROFILE_ID={61c54bbd-c2c6-5271-96e7-009a87ff44bf}
+ANTHROPIC_SMALL_FAST_MODEL=MiniMax-M2.7
+SESSIONNAME=Console
+CLAUDECODE=1
+PROCESSOR_REVISION=b701
+USERDOMAIN=WINGPC
+PATHEXT=.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC;.CPL
+ANTHROPIC_AUTH_TOKEN=sk-cp-YCFKLRE1f_lMV1CZqLuhtCjbgXxduOaudgHy6jbzrZ7e9U58SWFIophzfNh3VTNgybxXWSlXqSc986LDvtBywn06rUjeRIGAG0Y9FHKQgOWcLboiLEySFGY
+_=C:/Program Files/Git/mingw64/bin/git-credential-manager
+PYENV_ROOT=C:\Users\59328\.pyenv\pyenv-win\
+PYENV_HOME=C:\Users\59328\.pyenv\pyenv-win\
+PWD=C:/Users/59328/.openclaw/workspace/tinyiothub
+TEMP=C:\Users\59328\AppData\Local\Temp
+LOCALAPPDATA=C:\Users\59328\AppData\Local
+MSYSTEM=MINGW64
+SHLVL=1
+PROCESSOR_IDENTIFIER=Intel64 Family 6 Model 183 Stepping 1, GenuineIntel
+GIT_EDITOR=true
+PROGRAMFILES=C:\Program Files (x86)
+CLAUDE_CODE_ENTRYPOINT=cli
+ProgramFiles(x86)=C:\Program Files (x86)
+SYSTEMROOT=C:\WINDOWS
+COMSPEC=C:\WINDOWS\system32\cmd.exe
+PROCESSOR_LEVEL=6
+NUMBER_OF_PROCESSORS=32
+COREPACK_ENABLE_AUTO_PIN=0
+NoDefaultCurrentDirectoryInExePath=1
+SYSTEMDRIVE=C:
+ANTHROPIC_MODEL=MiniMax-M2.7
+PSModulePath=C:\Users\59328\Documents\WindowsPowerShell\Modules;C:\Program Files\WindowsPowerShell\Modules;C:\WINDOWS\system32\WindowsPowerShell\v1.0\Modules
+PUBLIC=C:\Users\Public
+OPENSSL_DIR=C:\Program Files\OpenSSL-Win64
+ANTHROPIC_BASE_URL=https://api.minimaxi.com/anthropic
+USERNAME=59328
+WT_SESSION=153667b5-9f85-44ca-80e0-5a379a406e91
+WSLENV=WT_SESSION:WT_PROFILE_ID:
+TERM=xterm-256color
+PNPM_HOME=C:\Users\59328\AppData\Local\pnpm
+PLINK_PROTOCOL=ssh
+ProgramData=C:\ProgramData
+ProgramW6432=C:\Program Files
+PATH=C:\Program Files\Git\mingw64\bin;C:\Program Files\Git\usr\bin;C:\Users\59328\bin;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0;C:\WINDOWS\System32\OpenSSH;C:\Program Files\Microsoft SQL Server\150\Tools\Binn;C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\170\Tools\Binn;C:\Program Files\Git\cmd;C:\Users\59328\AppData\Local\nvm;C:\nvm4w\nodejs;C:\Program Files\Huawei\DevEco Studio\sdk\default\openharmony\toolchains;C:\Program Files\Docker\Docker\resources\bin;C:\Strawberry\c\bin;C:\Strawberry\perl\site\bin;C:\Strawberry\perl\bin;C:\Program Files\dotnet;C:\Program Files (x86)\Windows Kits\10\Windows Performance Toolkit;C:\Program Files\GitHub CLI;C:\Users\59328\.local\bin;C:\Users\59328\.cargo\bin;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0;C:\WINDOWS\System32\OpenSSH;C:\Program Files\Microsoft SQL Server\150\Tools\Binn;C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\170\Tools\Binn;C:\Program Files\dotnet;C:\Program Files\Git\cmd;C:\Users\59328\AppData\Local\nvm;C:\nvm4w\nodejs;C:\Program Files\Huawei\DevEco Studio\sdk\default\openharmony\toolchains;C:\Program Files\Docker\Docker\resources\bin;C:\Strawberry\c\bin;C:\Strawberry\perl\site\bin;C:\Strawberry\perl\bin;C:\Program Files\NASM;C:\Users\59328\AppData\Local\pnpm;C:\Program Files\OpenSSL-Win64;C:\Users\59328\AppData\Local\Programs\Kiro\bin;C:\Users\59328\.dotnet\tools;C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.44.35207\bin\HostX64\x64;C:\Program Files\Git\usr\bin;C:\Users\59328\AppData\Local\Programs\Ollama;C:\Users\59328\AppData\Local\Microsoft\WindowsApps;C:\Users\59328\AppData\Local\Programs\Microsoft VS Code\bin
+CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+PROCESSOR_ARCHITEW6432=AMD64
+TMP=C:\Users\59328\AppData\Local\Temp
+NVM_SYMLINK=C:\nvm4w\nodejs
+NVM_HOME=C:\Users\59328\AppData\Local\nvm
+SHELL=C:\Program Files\Git\bin\bash.exe
+HOME=C:\Users\59328
+OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta
+CommonProgramW6432=C:\Program Files\Common Files
+OPENSSL_INCLUDE_DIR=C:\Program Files\OpenSSL-Win64\include
+LOGONSERVER=\\WINGPC
+USERPROFILE=C:\Users\59328
+PYENV=C:\Users\59328\.pyenv\pyenv-win\
+COMMONPROGRAMFILES=C:\Program Files (x86)\Common Files
+ANTHROPIC_DEFAULT_OPUS_MODEL=MiniMax-M2.7
+USERDOMAIN_ROAMINGPROFILE=WINGPC
+ANTHROPIC_DEFAULT_HAIKU_MODEL=MiniMax-M2.7
+APPDATA=C:\Users\59328\AppData\Roaming
+HOMEDRIVE=C:
+VBOX_MSI_INSTALL_PATH=C:\Program Files\Oracle\VirtualBox\
+ZES_ENABLE_SYSMAN=1
+EXEPATH=C:\Program Files\Git\bin
+API_TIMEOUT_MS=3000000
+NODE_PATH=C:\Users\59328\AppData\Local\pnpm\global\5\.pnpm\@anthropic-ai+claude-code@2.1.78\node_modules\@anthropic-ai\claude-code\node_modules;C:\Users\59328\AppData\Local\pnpm\global\5\.pnpm\@anthropic-ai+claude-code@2.1.78\node_modules;C:\Users\59328\AppData\Local\pnpm\global\5\.pnpm\node_modules
+WINDIR=C:\WINDOWS
+PROCESSOR_ARCHITECTURE=x86
+OS=Windows_NT
+SSL_CERT_FILE=C:\Program Files\OpenSSL-Win64\certs
+OneDriveConsumer=C:\Users\59328\OneDrive
+ALLUSERSPROFILE=C:\ProgramData
+
+
+------------
+Diagnostic: File system
+Skipped: False
+Success: True
+Exception: None
+Log:
+Temporary directory is 'C:\Users\59328\AppData\Local\Temp\'...
+Checking basic file I/O...
+Writing to temporary file 'C:\Users\59328\AppData\Local\Temp\70d9480c9515f1eac557292b'... OK
+Reading from temporary file 'C:\Users\59328\AppData\Local\Temp\70d9480c9515f1eac557292b'... OK
+Deleting temporary file 'C:\Users\59328\AppData\Local\Temp\70d9480c9515f1eac557292b'... OK
+Testing IFileSystem instance...
+UserHomePath: C:\Users\59328
+UserDataDirectoryPath: C:\Users\59328\.gcm
+GetCurrentDirectory(): C:\Users\59328\.openclaw\workspace\tinyiothub
+
+------------
+Diagnostic: Networking
+Skipped: False
+Success: True
+Exception: None
+Log:
+Checking networking and HTTP stack...
+Creating HTTP client... OK
+IsNetworkAvailable: True
+Sending HEAD request to http://example.com...Sending HEAD request to https://example.com... OK
+Acquiring free TCP port... OK
+Testing local HTTP loopback connections...
+Creating new HTTP listener for http://localhost:61291/... OK
+Waiting for loopback connection... OK
+Writing response... OK
+Waiting for response data... OK
+Loopback connection data OK
+

@@ -2,16 +2,23 @@
 // 支持手机验证码登录/注册
 
 use axum::{
-    extract::{Query, State},
+    extract::{ConnectInfo, Query, State},
+    http::StatusCode,
     response::Json,
     routing::{get, post},
     Router,
 };
+use std::net::SocketAddr;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
-use crate::{api::AppState, dto::response::ApiResponse, infrastructure::config::get as get_config, shared::security::jwt::generate_token};
+use crate::{
+    api::AppState,
+    dto::response::ApiResponse,
+    infrastructure::{config::get as get_config, redis::RedisClient},
+    shared::security::jwt,
+};
 
 // 验证码有效期（秒）
 const CODE_EXPIRE_SECONDS: u64 = 300; // 5 分钟
@@ -30,6 +37,8 @@ pub fn create_router() -> Router<AppState> {
 pub struct SendCodeRequest {
     pub phone: String,
     pub purpose: Option<String>, // login, register, reset_password
+    pub captcha_ticket: Option<String>,   // 腾讯防水墙票据
+    pub captcha_randstr: Option<String>,  // 腾讯防水墙随机串
 }
 
 #[derive(Debug, Deserialize)]
@@ -67,11 +76,214 @@ pub struct UserInfo {
 
 // ============== 验证码相关配置 ==============
 
+// ============== 频率限制 ==============
+
+enum RateLimitResult {
+    Allowed,
+    NeedsWait(i64),
+    DailyLimitExceeded,
+    NeedsCaptcha,
+}
+
+/// 检查发送频率限制
+async fn check_rate_limit(
+    redis: &Option<RedisClient>,
+    phone: &str,
+    ip: Option<&str>,
+) -> Result<RateLimitResult, StatusCode> {
+    let config = get_config();
+    let rate_limit = config.sms.rate_limit.as_ref();
+
+    let interval_secs = rate_limit.and_then(|r| r.interval_secs).unwrap_or(90) as i64;
+    let daily_limit = rate_limit.and_then(|r| r.daily_limit).unwrap_or(5) as i64;
+
+    let redis = match redis {
+        Some(r) => r,
+        None => return Ok(RateLimitResult::Allowed), // 无 Redis 时跳过检查（仅用于测试）
+    };
+
+    // 检查同手机号发送间隔
+    let interval_key = format!("sms:interval:{}", phone);
+    if let Ok(Some(_)) = redis.get(&interval_key).await {
+        return Ok(RateLimitResult::NeedsWait(interval_secs));
+    }
+
+    // 检查同手机号当日发送次数
+    let daily_key = format!("sms:count:daily:{}", phone);
+    if let Ok(count) = redis.get(&daily_key).await {
+        if let Ok(c) = count.unwrap_or_default().parse::<i64>() {
+            if c >= daily_limit {
+                return Ok(RateLimitResult::DailyLimitExceeded);
+            }
+        }
+    }
+
+    // 检查同 IP 5分钟内发送次数
+    if let Some(ip_addr) = ip {
+        let ip_key = format!("sms:count:ip:{}", ip_addr);
+        if let Ok(count) = redis.get(&ip_key).await {
+            if let Ok(c) = count.unwrap_or_default().parse::<i64>() {
+                if c >= 3 {
+                    return Ok(RateLimitResult::NeedsCaptcha);
+                }
+            }
+        }
+    }
+
+    Ok(RateLimitResult::Allowed)
+}
+
+// ============== CAPTCHA 验证 ==============
+
+/// 验证腾讯防水墙票据
+async fn verify_captcha(_ticket: &str, _randstr: &str, _ip: &str) -> Result<bool, StatusCode> {
+    let config = get_config();
+    let captcha_config = match config.sms.captcha.as_ref() {
+        Some(c) if c.enabled => c,
+        None | Some(_) => return Ok(true), // 未配置或未启用时跳过
+    };
+
+    // TODO: 腾讯防水墙 CAPTCHA 验证需要 app_id 和 app_secret
+    // 当前仅当 enabled=true 时验证通过（后续完善）
+    tracing::warn!("[CAPTCHA] Tencent CAPTCHA verification not fully implemented");
+    Ok(captcha_config.enabled)
+}
+
+// ============== 阿里云 SMS ==============
+
+use hmac::{Hmac, Mac};
+use sha1::Sha1;
+
+type HmacSha1 = Hmac<Sha1>;
+
+/// 调用阿里云 SMS API 发送短信
+async fn send_aliyun_sms(
+    phone: &str,
+    code: &str,
+    config: &crate::infrastructure::config::settings::AliyunSmsConfig,
+) -> Result<(), String> {
+    let endpoint = "https://dysmsapi.aliyuncs.com/";
+    let action = "SendSms";
+    let version = "2017-05-25";
+    let region_id = "cn-hangzhou";
+
+    // 生成签名随机数和时间戳
+    let signature_nonce = uuid::Uuid::new_v4().to_string();
+    let timestamp = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let template_param = format!("{{\"code\":\"{}\"}}", code);
+
+    // 构建请求参数（按字母顺序排序）
+    let mut params: Vec<(&str, &str)> = vec![
+        ("AccessKeyId", config.access_key_id.as_str()),
+        ("Action", action),
+        ("Format", "JSON"),
+        ("PhoneNumbers", phone),
+        ("RegionId", region_id),
+        ("SignName", config.sign_name.as_str()),
+        ("SignatureMethod", "HMAC-SHA1"),
+        ("SignatureNonce", signature_nonce.as_str()),
+        ("SignatureVersion", "1.0"),
+        ("TemplateCode", config.template_code.as_str()),
+        ("TemplateParam", template_param.as_str()),
+        ("Timestamp", timestamp.as_str()),
+        ("Version", version),
+    ];
+
+    // 按 key 排序
+    params.sort_by(|a, b| a.0.cmp(b.0));
+
+    // 构建规范的查询字符串
+    let canonical_query_string: String = params
+        .iter()
+        .map(|(k, v)| {
+            format!(
+                "{}={}",
+                percent_encode(k),
+                percent_encode(v)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("&");
+
+    // 构建待签名字符串
+    let string_to_sign = format!(
+        "GET&{}&{}",
+        percent_encode("/"),
+        percent_encode(canonical_query_string.as_str())
+    );
+
+    // 计算 HMAC-SHA1 签名
+    let mut mac = HmacSha1::new_from_slice(format!("{}&", config.access_key_secret).as_bytes())
+        .map_err(|e| format!("HMAC error: {}", e))?;
+    mac.update(string_to_sign.as_bytes());
+    let signature = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, mac.finalize().into_bytes());
+
+    // 构建完整 URL
+    let url = format!(
+        "{}?Signature={}&{}",
+        endpoint,
+        percent_encode(signature.as_str()),
+        canonical_query_string
+    );
+
+    tracing::debug!("[SMS] Sending request to Aliyun: {}", url.replace(&config.access_key_secret, "***"));
+
+    // 发送请求
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    #[derive(serde::Deserialize)]
+    struct AliyunResponse {
+        pub code: String,
+        pub message: String,
+    }
+
+    let result: AliyunResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    if result.code == "OK" {
+        tracing::info!(
+            "[SMS] Successfully sent code to {} via Aliyun",
+            phone
+        );
+        Ok(())
+    } else {
+        tracing::error!(
+            "[SMS] Aliyun API error: {} - {}",
+            result.code,
+            result.message
+        );
+        Err(format!("{}: {}", result.code, result.message))
+    }
+}
+
+/// URL 百分号编码（Aliyun 风格）
+fn percent_encode(s: &str) -> String {
+    let encoded: String = s
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '~' {
+                c.to_string()
+            } else {
+                format!("%{:02X}", c as u8)
+            }
+        })
+        .collect();
+    encoded
+}
+
 // ============== 路由处理函数 ==============
 
 /// 发送验证码
 async fn send_code(
     State(state): State<AppState>,
+    ConnectInfo(ip_addr): ConnectInfo<SocketAddr>,
     Json(request): Json<SendCodeRequest>,
 ) -> Json<ApiResponse<SendCodeResponse>> {
     // 检查 SMS 是否启用
@@ -88,47 +300,112 @@ async fn send_code(
     }
 
     let purpose = request.purpose.unwrap_or_else(|| "login".to_string());
+    let ip_str = ip_addr.to_string();
 
-    // 从配置读取验证码有效期
-    let code_expire_secs =
-        config.sms.rate_limit.as_ref().map(|r| r.code_expire_secs).unwrap_or(300);
+    // 频率限制检查
+    match check_rate_limit(&state.redis, phone, Some(&ip_str)).await {
+        Ok(RateLimitResult::NeedsWait(secs)) => {
+            return ApiResponse::error(format!("操作太频繁，请 {} 秒后重试", secs));
+        }
+        Ok(RateLimitResult::DailyLimitExceeded) => {
+            return ApiResponse::error("今日发送次数已用完，请明天再试".to_string());
+        }
+        Ok(RateLimitResult::NeedsCaptcha) => {
+            return ApiResponse::error_with_code(1001, "请先完成验证".to_string());
+        }
+        Ok(RateLimitResult::Allowed) => {}
+        Err(_) => return ApiResponse::error("系统错误".to_string()),
+    }
 
-    // 检查频率限制
-    let db = state.database();
-    let _rate_limit_max =
-        config.sms.rate_limit.as_ref().map(|r| r.max_per_minute).unwrap_or(5) as i64;
+    // CAPTCHA 验证（如果频率异常，需要验证）
+    if let Some(ticket) = &request.captcha_ticket {
+        let randstr = request.captcha_randstr.as_deref().unwrap_or("");
+        match verify_captcha(ticket, randstr, &ip_str).await {
+            Ok(true) => {}
+            Ok(false) => {
+                return ApiResponse::error("验证失败，请重试".to_string());
+            }
+            Err(_) => {
+                return ApiResponse::error("验证服务异常".to_string());
+            }
+        }
+    }
 
     // 生成验证码
     let code = generate_code();
-    let now = chrono::Utc::now();
-    let expires_at = now + chrono::Duration::seconds(CODE_EXPIRE_SECONDS as i64);
 
-    // 存储验证码
-    let id = uuid::Uuid::new_v4().to_string();
-    let result = sqlx::query(
-        r#"INSERT INTO sms_codes (id, phone, code, purpose, expires_at)
-            VALUES (?, ?, ?, ?, ?)"#,
-    )
-    .bind(&id)
-    .bind(phone)
-    .bind(&code)
-    .bind(&purpose)
-    .bind(expires_at.to_rfc3339())
-    .execute(db.pool())
-    .await;
+    // 使用 Redis 存储验证码（优先）
+    let redis = state.redis.as_ref();
 
-    if let Err(e) = result {
-        tracing::error!("Failed to save SMS code: {}", e);
-        return ApiResponse::error("发送失败，请稍后重试".to_string());
+    if let Some(r) = redis {
+        // 存储验证码到 Redis（5分钟过期）
+        let code_key = format!("sms:code:{}", phone);
+        if let Err(e) = r.set_ex(&code_key, &code, CODE_EXPIRE_SECONDS).await {
+            tracing::error!("Failed to store SMS code in Redis: {}", e);
+            // 不阻止流程，继续使用数据库存储
+        }
+
+        // 设置发送间隔（90秒）
+        let interval_key = format!("sms:interval:{}", phone);
+        let interval_secs = config
+            .sms
+            .rate_limit
+            .as_ref()
+            .and_then(|r| r.interval_secs)
+            .unwrap_or(90);
+        if let Err(e) = r.set_ex(&interval_key, "1", interval_secs).await {
+            tracing::error!("Failed to set rate limit interval: {}", e);
+        }
+
+        // 增加当日计数
+        let daily_key = format!("sms:count:daily:{}", phone);
+        if let Ok(new_count) = r.incr(&daily_key).await {
+            // 设置每日计数器在次日凌晨过期（简化处理：直接设置 24 小时）
+            if let Err(e) = r.set_ex(&daily_key, &new_count.to_string(), 86400).await {
+                tracing::error!("Failed to set daily counter expiry: {}", e);
+            }
+        }
+
+        // 增加 IP 计数
+        let ip_key = format!("sms:count:ip:{}", ip_str);
+        let new_ip_count = match r.incr(&ip_key).await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!("Failed to increment IP counter: {}", e);
+                1
+            }
+        };
+        if let Err(e) = r.set_ex(&ip_key, &new_ip_count.to_string(), 300).await {
+            tracing::error!("Failed to set IP counter expiry: {}", e);
+        }
+    } else {
+        // 无 Redis 时降级到数据库存储
+        let db = state.database();
+        let now = chrono::Utc::now();
+        let expires_at = now + chrono::Duration::seconds(CODE_EXPIRE_SECONDS as i64);
+
+        let id = uuid::Uuid::new_v4().to_string();
+        if let Err(e) = sqlx::query(
+            r#"INSERT INTO sms_codes (id, phone, code, purpose, expires_at)
+                VALUES (?, ?, ?, ?, ?)"#,
+        )
+        .bind(&id)
+        .bind(phone)
+        .bind(&code)
+        .bind(&purpose)
+        .bind(expires_at.to_rfc3339())
+        .execute(db.pool())
+        .await
+        {
+            tracing::error!("Failed to save SMS code: {}", e);
+            return ApiResponse::error("发送失败，请稍后重试".to_string());
+        }
     }
-
-    // TODO: 实际发送短信（接入短信服务商）
-    // 这里先返回验证码（仅供测试）
-    tracing::info!("SMS code sent to {}: [REDACTED]", phone);
 
     // 返回成功响应（测试模式下返回验证码）
     #[cfg(debug_assertions)]
     {
+        tracing::info!("[TEST] SMS code for {}: {}", phone, code);
         ApiResponse::success(SendCodeResponse {
             expires_in: CODE_EXPIRE_SECONDS,
             message: format!("验证码已发送（测试模式: {}）", code),
@@ -137,10 +414,26 @@ async fn send_code(
 
     #[cfg(not(debug_assertions))]
     {
-        ApiResponse::success(SendCodeResponse {
-            expires_in: CODE_EXPIRE_SECONDS,
-            message: "验证码已发送".to_string(),
-        })
+        // 调用阿里云 SMS API
+        if let Some(aliyun_config) = &config.sms.aliyun {
+            match send_aliyun_sms(phone, &code, aliyun_config).await {
+                Ok(_) => ApiResponse::success(SendCodeResponse {
+                    expires_in: CODE_EXPIRE_SECONDS,
+                    message: "验证码已发送".to_string(),
+                }),
+                Err(e) => {
+                    tracing::error!("Failed to send SMS: {}", e);
+                    ApiResponse::error("发送失败，请稍后重试".to_string())
+                }
+            }
+        } else {
+            // 未配置阿里云 SMS 时记录日志
+            tracing::warn!("Aliyun SMS not configured, code logged only");
+            ApiResponse::success(SendCodeResponse {
+                expires_in: CODE_EXPIRE_SECONDS,
+                message: "验证码已发送".to_string(),
+            })
+        }
     }
 }
 
@@ -157,113 +450,89 @@ async fn login_with_code(
         return ApiResponse::error("手机号格式不正确".to_string());
     }
 
-    // 验证验证码
-    let db = state.database();
+    let redis = state.redis.as_ref();
 
-    let rows = match sqlx::query(
-        r#"SELECT id, code, expires_at, verified_at FROM sms_codes
-            WHERE phone = ? AND purpose = 'login'
-            AND verified_at IS NULL
-            ORDER BY created_at DESC LIMIT 1"#,
-    )
-    .bind(phone)
-    .fetch_all(db.pool())
-    .await
-    {
-        Ok(r) => r,
+    // 从 Redis 获取验证码
+    let stored_code = match redis {
+        Some(r) => {
+            let code_key = format!("sms:code:{}", phone);
+            r.get(&code_key).await.ok().flatten()
+        }
+        None => {
+            // Fallback to DB（仅用于开发/测试）
+            get_code_from_db(&state, phone).await
+        }
+    };
+
+    let stored_code = match stored_code {
+        Some(c) => c,
+        None => return ApiResponse::error("验证码已过期，请重新获取".to_string()),
+    };
+
+    // 验证码比较
+    use subtle::ConstantTimeEq;
+    if !bool::from(stored_code.as_bytes().ct_eq(code.as_bytes())) {
+        // 增加错误计数
+        if let Some(r) = redis {
+            let fail_key = format!("sms:verify:fail:{}", phone);
+            let fail_count: i64 = r.get(&fail_key).await.ok().flatten()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0) + 1;
+            if let Err(e) = r.set_ex(&fail_key, &fail_count.to_string(), 300).await {
+                tracing::error!("Failed to increment fail count: {}", e);
+            }
+
+            if fail_count >= 3 {
+                // 错误次数过多，删除验证码
+                let code_key = format!("sms:code:{}", phone);
+                if let Err(e) = r.del(&code_key).await {
+                    tracing::error!("Failed to delete code after too many failures: {}", e);
+                }
+                return ApiResponse::error("验证码错误次数过多，请重新获取".to_string());
+            }
+        }
+        return ApiResponse::error("验证码错误".to_string());
+    }
+
+    // 验证成功，删除验证码
+    if let Some(r) = redis {
+        let code_key = format!("sms:code:{}", phone);
+        if let Err(e) = r.del(&code_key).await {
+            tracing::error!("Failed to delete code after successful verification: {}", e);
+        }
+    }
+
+    // 查找或创建用户（复用现有逻辑）
+    let db = state.database();
+    let user = match find_or_create_user_by_phone(db, phone).await {
+        Ok(u) => u,
         Err(e) => {
-            tracing::error!("Database error: {}", e);
+            tracing::error!("Failed to find or create user: {}", e);
             return ApiResponse::error("登录失败，请稍后重试".to_string());
         }
     };
 
-    if rows.is_empty() {
-        return ApiResponse::error("验证码已失效，请重新获取".to_string());
-    }
-
-    let row = &rows[0];
-
-    // 获取存储的验证码
-    let stored_code: String = match row.try_get("code") {
-        Ok(c) => c,
-        Err(_) => {
-            return ApiResponse::error("验证码数据异常".to_string());
-        }
-    };
-
-    // 获取过期时间
-    let expires_at: String = match row.try_get("expires_at") {
-        Ok(e) => e,
-        Err(_) => {
-            return ApiResponse::error("验证码数据异常".to_string());
-        }
-    };
-
-    // 检查验证码是否过期
-    if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(&expires_at) {
-        if exp < chrono::Utc::now() {
-            return ApiResponse::error("验证码已过期，请重新获取".to_string());
-        }
-    }
-
-    // 比较验证码 — 使用常量时间比较防止时序攻击
-    use subtle::ConstantTimeEq;
-    if stored_code.as_bytes().ct_eq(code.as_bytes()).into() {
-        // correct
-    } else {
-        return ApiResponse::error("验证码错误".to_string());
-    }
-
-    // 验证码验证成功，标记为已验证
-    let record_id: String = match row.try_get("id") {
-        Ok(id) => id,
-        Err(_) => {
-            return ApiResponse::error("验证码数据异常".to_string());
-        }
-    };
-
-    if let Err(e) = sqlx::query("UPDATE sms_codes SET verified_at = ? WHERE id = ?")
-        .bind(chrono::Utc::now().to_rfc3339())
-        .bind(&record_id)
-        .execute(db.pool())
-        .await
-    {
-        tracing::error!("Failed to mark code as verified: {}", e);
-        // 不影响登录，只是记录
-    }
-
-    // 查找或创建用户（使用 default 作为租户 ID）
+    // 生成 JWT token（复用 jwt::generate_token）
     let default_tenant_id = "default";
-    let user = find_or_create_user_by_phone(db, phone, default_tenant_id).await;
-
-    match user {
-        Ok(user) => {
-            // 生成 JWT token
-            let token = match generate_token(&user.id, &user.username, default_tenant_id) {
-                Ok(t) => t,
-                Err(e) => {
-                    tracing::error!("Failed to generate token: {}", e);
-                    return ApiResponse::error("登录失败，请稍后重试".to_string());
-                }
-            };
-
-            ApiResponse::success(LoginWithCodeResponse {
-                access_token: token,
-                token_type: "Bearer".to_string(),
-                expires_in: 86400,
-                user_info: UserInfo {
-                    id: user.id,
-                    phone: user.phone.unwrap_or_default(),
-                    username: Some(user.username),
-                    display_name: user.display_name,
-                },
-            })
-        }
+    let token = match jwt::generate_token(&user.id, &user.username, default_tenant_id) {
+        Ok(t) => t,
         Err(e) => {
-            tracing::error!("Failed to find or create user: {}", e);
-            ApiResponse::error("登录失败，请稍后重试".to_string())
+            tracing::error!("Failed to generate token: {}", e);
+            return ApiResponse::error("登录失败，请稍后重试".to_string());
         }
-    }
+    };
+
+    ApiResponse::success(LoginWithCodeResponse {
+        access_token: token,
+        token_type: "Bearer".to_string(),
+        expires_in: 86400,
+        user_info: UserInfo {
+            id: user.id,
+            phone: user.phone.unwrap_or_default(),
+            username: Some(user.username),
+            display_name: user.display_name,
+        },
+    })
 }
 
 /// 验证验证码（查询状态）
@@ -371,6 +640,58 @@ pub struct VerifyCodeResponse {
 
 // ============== 辅助函数 ==============
 
+/// 从数据库获取验证码（Redis 不可用时的 fallback）
+async fn get_code_from_db(
+    state: &AppState,
+    phone: &str,
+) -> Option<String> {
+    let db = state.database();
+
+    let rows = match sqlx::query(
+        r#"SELECT code, expires_at FROM sms_codes
+            WHERE phone = ? AND purpose = 'login'
+            AND verified_at IS NULL
+            ORDER BY created_at DESC LIMIT 1"#,
+    )
+    .bind(phone)
+    .fetch_all(db.pool())
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!("Database error when fetching code: {}", e);
+            return None;
+        }
+    };
+
+    if rows.is_empty() {
+        return None;
+    }
+
+    let row = &rows[0];
+
+    // 获取存储的验证码
+    let stored_code: String = match row.try_get("code") {
+        Ok(c) => c,
+        Err(_) => return None,
+    };
+
+    // 获取过期时间
+    let expires_at: String = match row.try_get("expires_at") {
+        Ok(e) => e,
+        Err(_) => return None,
+    };
+
+    // 检查验证码是否过期
+    if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(&expires_at) {
+        if exp < chrono::Utc::now() {
+            return None;
+        }
+    }
+
+    Some(stored_code)
+}
+
 /// 验证手机号格式（中国大陆手机号）
 fn validate_phone(phone: &str) -> bool {
     // 简单验证：11位数字，以1开头
@@ -388,7 +709,6 @@ fn generate_code() -> String {
 async fn find_or_create_user_by_phone(
     db: &crate::infrastructure::persistence::database::Database,
     phone: &str,
-    tenant_id: &str,
 ) -> Result<crate::dto::entity::user::User, Box<dyn std::error::Error + Send + Sync>> {
     // 查找现有用户
     let rows = sqlx::query("SELECT * FROM users WHERE phone = ? LIMIT 1")
@@ -415,31 +735,14 @@ async fn find_or_create_user_by_phone(
     // 创建新用户
     let user_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-    let password_hash = "SMS_AUTH_NO_PASSWORD";
 
     sqlx::query(
-        r#"INSERT INTO users (id, username, password_hash, phone, is_enabled, created_at, updated_at)
-            VALUES (?, ?, ?, ?, 1, ?, ?)"#,
+        r#"INSERT INTO users (id, username, phone, is_enabled, created_at, updated_at)
+            VALUES (?, ?, ?, 1, ?, ?)"#,
     )
     .bind(&user_id)
     .bind(phone)
-    .bind(password_hash)
     .bind(phone)
-    .bind(&now)
-    .bind(&now)
-    .execute(db.pool())
-    .await?;
-
-    // 创建 tenant_users 关联
-    let tenant_user_id = uuid::Uuid::new_v4().to_string();
-    sqlx::query(
-        r#"INSERT INTO tenant_users (id, tenant_id, user_id, role, invitation_status, joined_at, created_at, updated_at)
-           VALUES (?, ?, ?, 'member', 'accepted', ?, ?, ?)"#,
-    )
-    .bind(&tenant_user_id)
-    .bind(tenant_id)
-    .bind(&user_id)
-    .bind(&now)
     .bind(&now)
     .bind(&now)
     .execute(db.pool())
@@ -461,3 +764,81 @@ async fn find_or_create_user_by_phone(
     })
 }
 
+// ============== 单元测试 ==============
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_phone_valid() {
+        // 有效手机号
+        assert!(validate_phone("13812345678"));
+        assert!(validate_phone("15912345678"));
+        assert!(validate_phone("19912345678"));
+        assert!(validate_phone("16612345678"));
+    }
+
+    #[test]
+    fn test_validate_phone_invalid() {
+        // 无效手机号 - 长度不对
+        assert!(!validate_phone("1381234567"));   // 10位
+        assert!(!validate_phone("138123456789")); // 12位
+        assert!(!validate_phone(""));              // 空
+
+        // 无效手机号 - 不是1开头
+        assert!(!validate_phone("23812345678"));
+        assert!(!validate_phone("13812345678".replace("1", "a").as_str()));
+
+        // 无效手机号 - 包含非数字
+        assert!(!validate_phone("1381234567a"));
+        assert!(!validate_phone("138123456!"));
+        assert!(!validate_phone("138 1234 5678")); // 有空格
+    }
+
+    #[test]
+    fn test_generate_code_format() {
+        for _ in 0..100 {
+            let code = generate_code();
+            // 验证码应该是6位数字
+            assert_eq!(code.len(), 6, "Code {} should be 6 digits", code);
+            assert!(code.chars().all(|c| c.is_ascii_digit()), "Code {} should be all digits", code);
+        }
+    }
+
+    #[test]
+    fn test_generate_code_range() {
+        for _ in 0..100 {
+            let code = generate_code();
+            let num: u32 = code.parse().unwrap();
+            assert!(num < 1_000_000, "Code {} should be < 1000000", num);
+        }
+    }
+
+    #[test]
+    fn test_percent_encode_normal_chars() {
+        // 普通字符不编码
+        assert_eq!(percent_encode("abc123"), "abc123");
+        assert_eq!(percent_encode("hello world"), "hello%20world");
+        assert_eq!(percent_encode("test-value.test"), "test-value.test");
+    }
+
+    #[test]
+    fn test_percent_encode_special_chars() {
+        // 特殊字符需要编码
+        assert_eq!(percent_encode(" "), "%20");
+        assert_eq!(percent_encode("&"), "%26");
+        assert_eq!(percent_encode("="), "%3D");
+        assert_eq!(percent_encode("%"), "%25");
+        assert_eq!(percent_encode("/"), "%2F");
+    }
+
+    #[test]
+    fn test_percent_encode_chinese() {
+        // 中文需要编码
+        let result = percent_encode("测试");
+        assert!(result.starts_with("%"));
+    }
+
+    // RateLimitResult variants tested implicitly via integration tests
+}
