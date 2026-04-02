@@ -110,7 +110,7 @@ export default function Home() {
           <div className="flex h-16 items-center justify-between">
             <div className="flex items-center gap-8">
               <a href="/" className="flex items-center gap-2 group">
-                <img src={`${basePath}/logo.svg`} alt="logo" className="h-9 w-9 object-contain" />
+                <img src={`${basePath}/logo.svg`} alt="logo" className="h-9 w-9 object-contain dark:brightness-0 dark:invert" />
                 <span className="text-xl font-bold text-primary dark:text-white">TinyIoTHub</span>
               </a>
               <div className="hidden lg:flex items-center gap-1">
@@ -143,7 +143,7 @@ export default function Home() {
 
         <div className="mx-auto max-w-7xl px-6 lg:px-8">
           <div className="flex justify-center mb-6">
-            <div className="rounded-full border border-purple-200/50 bg-gradient-to-r from-purple-50/80 to-blue-50/80 backdrop-blur-xl px-5 py-2 text-sm text-purple-700 shadow-lg dark:border-purple-500/30 dark:bg-slate-900/80 dark:text-purple-300 dark:shadow-none">
+            <div className="rounded-full border border-purple-200/50 bg-gradient-to-r from-purple-50/80 to-blue-50/80 backdrop-blur-xl px-5 py-2 text-sm text-purple-700 shadow-lg dark:border-purple-500/30 dark:bg-slate-900/80 dark:text-purple-200 dark:shadow-none">
               <span className="relative inline-flex h-2 w-2 mr-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75 dark:bg-purple-500" />
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-purple-500 dark:bg-purple-400" />
