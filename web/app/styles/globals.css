@@ -742,10 +742,11 @@ html[data-theme='dark'] .h2 {
     box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
   }
 
-  [data-theme="dark"] .glass {
-    background: rgba(20, 20, 22, 0.85);
+  [data-theme="dark"] .glass,
+  html[data-theme='dark'] .glass {
+    background: rgba(255, 255, 255, 0.03);
     border-color: rgba(255, 255, 255, 0.08);
-    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.04);
   }
 
   .glass-hover:hover {
@@ -754,9 +755,10 @@ html[data-theme='dark'] .h2 {
     transform: translateY(-2px);
   }
 
-  [data-theme="dark"] .glass-hover:hover {
-    background: rgba(30, 30, 33, 0.9);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  [data-theme="dark"] .glass-hover:hover,
+  html[data-theme='dark'] .glass-hover:hover {
+    background: rgba(255, 255, 255, 0.06);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.06);
   }
 
   /* Glass dark variant */
@@ -777,8 +779,9 @@ html[data-theme='dark'] .h2 {
     transition: all 0.2s ease;
   }
 
-  [data-theme="dark"] .glass-btn {
-    background: rgba(30, 30, 33, 0.85);
+  [data-theme="dark"] .glass-btn,
+  html[data-theme='dark'] .glass-btn {
+    background: rgba(255, 255, 255, 0.05);
     border-color: rgba(255, 255, 255, 0.1);
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
     color: rgba(255, 255, 255, 0.9);
@@ -789,8 +792,9 @@ html[data-theme='dark'] .h2 {
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
   }
 
-  [data-theme="dark"] .glass-btn:hover {
-    background: rgba(40, 40, 44, 0.9);
+  [data-theme="dark"] .glass-btn:hover,
+  html[data-theme='dark'] .glass-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   }
 
@@ -804,9 +808,10 @@ html[data-theme='dark'] .h2 {
     box-shadow: 0 4px 16px rgba(59, 130, 246, 0.3);
   }
 
-  [data-theme="dark"] .glass-btn-primary {
-    background: linear-gradient(135deg, rgba(59, 130, 246, 0.7), rgba(79, 70, 229, 0.7));
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  [data-theme="dark"] .glass-btn-primary,
+  html[data-theme='dark'] .glass-btn-primary {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.6), rgba(79, 70, 229, 0.6));
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.1);
   }
 
   .glass-btn-primary:hover {
@@ -823,9 +828,11 @@ html[data-theme='dark'] .h2 {
     border-bottom: 1px solid rgba(255, 255, 255, 0.3);
   }
 
-  [data-theme="dark"] .glass-nav {
-    background: rgba(20, 20, 22, 0.85);
-    border-bottom-color: rgba(255, 255, 255, 0.08);
+  [data-theme="dark"] .glass-nav,
+  html[data-theme='dark'] .glass-nav {
+    background: rgba(15, 18, 30, 0.75) !important;
+    border-bottom-color: rgba(255, 255, 255, 0.08) !important;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
   }
 
   /* Brand dark gradient - unified for left panels, sign-in pages, etc. */
@@ -841,8 +848,9 @@ html[data-theme='dark'] .h2 {
     border: 1px solid rgba(255, 255, 255, 0.4);
   }
 
-  [data-theme="dark"] .glass-section {
-    background: linear-gradient(135deg, rgba(30, 30, 33, 0.85), rgba(20, 20, 22, 0.85));
+  [data-theme="dark"] .glass-section,
+  html[data-theme='dark'] .glass-section {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01));
     border-color: rgba(255, 255, 255, 0.08);
   }
 
@@ -855,8 +863,9 @@ html[data-theme='dark'] .h2 {
     transition: all 0.2s ease;
   }
 
-  [data-theme="dark"] .glass-input {
-    background: rgba(30, 30, 33, 0.85);
+  [data-theme="dark"] .glass-input,
+  html[data-theme='dark'] .glass-input {
+    background: rgba(255, 255, 255, 0.05);
     border-color: rgba(255, 255, 255, 0.1);
     color: rgba(255, 255, 255, 0.9);
   }
@@ -867,8 +876,9 @@ html[data-theme='dark'] .h2 {
     box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
   }
 
-  [data-theme="dark"] .glass-input:focus {
-    background: rgba(40, 40, 44, 0.9);
+  [data-theme="dark"] .glass-input:focus,
+  html[data-theme='dark'] .glass-input:focus {
+    background: rgba(255, 255, 255, 0.08);
     border-color: rgba(59, 130, 246, 0.5);
     box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
   }
