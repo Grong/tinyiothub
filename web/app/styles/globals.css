@@ -77,34 +77,12 @@ html[data-changing-theme] * {
   --card-border-rgb: 131, 134, 135;
 }
 
-/* @media (prefers-color-scheme: dark) {
-  :root {
-    --foreground-rgb: 255, 255, 255;
-    --background-start-rgb: 0, 0, 0;
-    --background-end-rgb: 0, 0, 0;
-
-    --primary-glow: radial-gradient(rgba(1, 65, 255, 0.4), rgba(1, 65, 255, 0));
-    --secondary-glow: linear-gradient(to bottom right,
-        rgba(1, 65, 255, 0),
-        rgba(1, 65, 255, 0),
-        rgba(1, 65, 255, 0.3));
-
-    --tile-start-rgb: 2, 13, 46;
-    --tile-end-rgb: 2, 5, 19;
-    --tile-border: conic-gradient(#ffffff80,
-        #ffffff40,
-        #ffffff30,
-        #ffffff20,
-        #ffffff10,
-        #ffffff10,
-        #ffffff80);
-
-    --callout-rgb: 20, 20, 20;
-    --callout-border-rgb: 108, 108, 108;
-    --card-rgb: 100, 100, 100;
-    --card-border-rgb: 200, 200, 200;
-  }
-} */
+/* Dark mode variables — activated by html[data-theme='dark'] via next-themes */
+html[data-theme='dark'] {
+  --foreground-rgb: 251, 251, 251;
+  --background-start-rgb: 15, 15, 17;
+  --background-end-rgb: 20, 20, 23;
+}
 
 * {
   box-sizing: border-box;
@@ -131,9 +109,9 @@ body {
   min-height: 100vh;
 }
 
-/* Dark mode glassmorphism background */
-[data-theme="dark"] body {
-  background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+/* Dark mode glassmorphism background — uses CSS var from manual-dark.css */
+html[data-theme='dark'] body {
+  background: var(--color-background-body, #0f0f11);
 }
 
 a {
@@ -160,11 +138,19 @@ button:focus-within {
   color: #111928;
 }
 
+html[data-theme='dark'] .h1 {
+  color: rgb(var(--foreground-rgb));
+}
+
 .h2 {
   font-size: 14px;
   font-weight: 500;
   color: #111928;
   line-height: 1.5;
+}
+
+html[data-theme='dark'] .h2 {
+  color: rgb(var(--foreground-rgb));
 }
 
 /* font define start */
@@ -756,10 +742,23 @@ button:focus-within {
     box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
   }
 
+  [data-theme="dark"] .glass,
+  html[data-theme='dark'] .glass {
+    background: rgba(255, 255, 255, 0.03);
+    border-color: rgba(255, 255, 255, 0.08);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  }
+
   .glass-hover:hover {
     background: rgba(255, 255, 255, 0.8);
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
     transform: translateY(-2px);
+  }
+
+  [data-theme="dark"] .glass-hover:hover,
+  html[data-theme='dark'] .glass-hover:hover {
+    background: rgba(255, 255, 255, 0.06);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.06);
   }
 
   /* Glass dark variant */
@@ -780,9 +779,23 @@ button:focus-within {
     transition: all 0.2s ease;
   }
 
+  [data-theme="dark"] .glass-btn,
+  html[data-theme='dark'] .glass-btn {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.1);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    color: rgba(255, 255, 255, 0.9);
+  }
+
   .glass-btn:hover {
     background: rgba(255, 255, 255, 0.8);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  }
+
+  [data-theme="dark"] .glass-btn:hover,
+  html[data-theme='dark'] .glass-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   }
 
   /* Glass primary button */
@@ -793,6 +806,12 @@ button:focus-within {
     border: 1px solid rgba(255, 255, 255, 0.2);
     color: white;
     box-shadow: 0 4px 16px rgba(59, 130, 246, 0.3);
+  }
+
+  [data-theme="dark"] .glass-btn-primary,
+  html[data-theme='dark'] .glass-btn-primary {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.6), rgba(79, 70, 229, 0.6));
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.1);
   }
 
   .glass-btn-primary:hover {
@@ -809,9 +828,11 @@ button:focus-within {
     border-bottom: 1px solid rgba(255, 255, 255, 0.3);
   }
 
-  [data-theme="dark"] .glass-nav {
-    background: rgba(15, 23, 42, 0.8);
-    border-bottom-color: rgba(255, 255, 255, 0.08);
+  [data-theme="dark"] .glass-nav,
+  html[data-theme='dark'] .glass-nav {
+    background: rgba(15, 18, 30, 0.75) !important;
+    border-bottom-color: rgba(255, 255, 255, 0.08) !important;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
   }
 
   /* Brand dark gradient - unified for left panels, sign-in pages, etc. */
@@ -827,6 +848,12 @@ button:focus-within {
     border: 1px solid rgba(255, 255, 255, 0.4);
   }
 
+  [data-theme="dark"] .glass-section,
+  html[data-theme='dark'] .glass-section {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01));
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+
   /* Glass input */
   .glass-input {
     background: rgba(255, 255, 255, 0.6);
@@ -836,10 +863,24 @@ button:focus-within {
     transition: all 0.2s ease;
   }
 
+  [data-theme="dark"] .glass-input,
+  html[data-theme='dark'] .glass-input {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.9);
+  }
+
   .glass-input:focus {
     background: rgba(255, 255, 255, 0.8);
     border-color: rgba(59, 130, 246, 0.5);
     box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  }
+
+  [data-theme="dark"] .glass-input:focus,
+  html[data-theme='dark'] .glass-input:focus {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(59, 130, 246, 0.5);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
   }
 
   /* Glass badge */
@@ -1020,10 +1061,177 @@ select {
   box-shadow: none !important;
 }
 
-input:focus, 
-textarea:focus, 
+input:focus,
+textarea:focus,
 select:focus {
   border: none !important;
   outline: none !important;
   box-shadow: 0 0 0 2px var(--color-components-input-border-active-prompt-1, rgba(21, 94, 239, 0.3)) !important;
+}
+
+/* ====================
+   Homepage Dark Mode Overrides
+   page.tsx uses hardcoded light colors, use html[data-theme='dark'] selectors
+   ==================== */
+
+/* Logo - invert black SVG to white */
+html[data-theme='dark'] nav img[alt="logo"],
+html[data-theme='dark'] footer img[alt="logo"] {
+  filter: brightness(0) invert(1);
+}
+
+/* Nav text */
+html[data-theme='dark'] nav a:not([class*="bg-"]):not([class*="border-"]),
+html[data-theme='dark'] nav span {
+  color: #d1d5db;
+}
+
+/* Hero badge - dark mode */
+html[data-theme='dark'] .homepage-badge {
+  background: linear-gradient(to right, rgba(236, 72, 153, 0.15), rgba(59, 130, 246, 0.15)) !important;
+  border-color: rgba(168, 85, 247, 0.4) !important;
+  color: #e2e8f0 !important;
+}
+
+/* Hero glows - class-based selectors, scoped to dark mode */
+html[data-theme='dark'] .homepage-hero-glow-1 {
+  background: linear-gradient(to bottom, rgba(30, 40, 80, 0.5), transparent) !important;
+}
+html[data-theme='dark'] .homepage-hero-glow-2 {
+  background: rgba(30, 30, 40, 0.5) !important;
+  border-color: transparent !important;
+}
+html[data-theme='dark'] .homepage-hero-glow-3 {
+  background: rgba(40, 30, 80, 0.4) !important;
+  border-color: transparent !important;
+}
+html[data-theme='dark'] .homepage-hero-glow-4 {
+  background: rgba(60, 30, 100, 0.4) !important;
+  border-color: transparent !important;
+}
+
+/* Hero gradient text - dark mode override */
+html[data-theme='dark'] .homepage-hero-gradient-text {
+  background: linear-gradient(to right, #60a5fa, #818cf8) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+}
+
+/* Hero description - dark mode override */
+html[data-theme='dark'] .homepage-hero-description {
+  color: #94a3b8 !important;
+}
+
+/* Stats - dark mode override */
+html[data-theme='dark'] .homepage-stats-value {
+  background: linear-gradient(to right, #ffffff, #d1d5db) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+}
+html[data-theme='dark'] .homepage-stats-label {
+  color: #94a3b8 !important;
+}
+
+/* AI section - dark mode override */
+html[data-theme='dark'] .homepage-ai-badge {
+  background: rgba(15, 15, 25, 0.85) !important;
+  border-color: rgba(168, 85, 247, 0.35) !important;
+  color: #c4b5fd !important;
+}
+html[data-theme='dark'] .homepage-ai-heading {
+  color: #ffffff !important;
+}
+html[data-theme='dark'] .homepage-ai-description {
+  color: #94a3b8 !important;
+}
+html[data-theme='dark'] .homepage-ai-accent {
+  background: linear-gradient(to right, #c084fc, #a78bfa) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+  color: transparent !important;
+}
+
+/* Protocol 9999+ badge - dark mode override */
+html[data-theme='dark'] .homepage-protocol-9999 {
+  background: rgba(20, 20, 30, 0.9) !important;
+  border-color: rgba(59, 130, 246, 0.35) !important;
+}
+html[data-theme='dark'] .homepage-protocol-9999 span {
+  background: linear-gradient(to right, #60a5fa, #818cf8) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+  color: transparent !important;
+}
+
+/* Protocol badges - dark mode */
+html[data-theme='dark'] .homepage-protocol-badge {
+  background: rgba(20, 20, 28, 0.85) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+}
+html[data-theme='dark'] .homepage-protocol-badge span:first-child {
+  color: #e2e8f0 !important;
+}
+html[data-theme='dark'] .homepage-protocol-badge span:last-child {
+  color: #94a3b8 !important;
+}
+
+/* Stats card - dark mode: transparent border for borderless glass effect */
+html[data-theme='dark'] div.rounded-3xl.bg-white\/50 {
+  background: rgba(20, 20, 28, 0.85) !important;
+  border-color: transparent !important;
+}
+
+/* Cards in feature sections - dark mode: transparent border */
+html[data-theme='dark'] div.grid > div.rounded-2xl {
+  background: rgba(20, 20, 25, 0.85) !important;
+  border-color: transparent !important;
+}
+
+/* Card text primary */
+html[data-theme='dark'] div.grid > div.rounded-2xl h3 {
+  color: #f1f5f9 !important;
+}
+
+/* Card text secondary */
+html[data-theme='dark'] div.grid > div.rounded-2xl p {
+  color: #94a3b8 !important;
+}
+
+/* Scenario cards - dark mode: transparent border, no purple tint */
+html[data-theme='dark'] .homepage-scenario-card {
+  background: rgba(25, 25, 35, 0.85) !important;
+  border-color: transparent !important;
+}
+html[data-theme='dark'] .homepage-scenario-card:hover {
+  border-color: transparent !important;
+}
+html[data-theme='dark'] .homepage-scenario-card h4 {
+  color: #f1f5f9 !important;
+}
+html[data-theme='dark'] .homepage-scenario-card p {
+  color: #94a3b8 !important;
+}
+
+/* Footer */
+html[data-theme='dark'] footer {
+  background: rgba(15, 15, 20, 0.85) !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+html[data-theme='dark'] footer span,
+html[data-theme='dark'] footer p {
+  color: #94a3b8 !important;
+}
+
+/* CTA secondary button */
+html[data-theme='dark'] a:has(> svg) + a + a.rounded-xl.border {
+  background: rgba(30, 30, 35, 0.85) !important;
+  border-color: rgba(255, 255, 255, 0.15) !important;
+  color: #e2e8f0 !important;
+}
+
+/* Final CTA card - dark mode: transparent border */
+html[data-theme='dark'] section:last-of-type div.rounded-3xl {
+  background: rgba(20, 20, 28, 0.85) !important;
+  border-color: transparent !important;
 }
