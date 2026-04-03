@@ -7,9 +7,9 @@ import { TabType } from './components/marketplace-tabs'
 import TemplateGrid from './components/template-grid'
 import DriverGrid from './components/driver-grid'
 import {
-  useMarketplaceTemplates,
-  useMarketplaceDrivers,
-} from '@/service/marketplace'
+  usePublicMarketplaceTemplates,
+  usePublicMarketplaceDrivers,
+} from '@/service/public-marketplace'
 import './styles/marketplace.css'
 
 export default function MarketplacePage() {
@@ -19,8 +19,8 @@ export default function MarketplacePage() {
   const [activeSort, setActiveSort] = useState('popular')
   const [isNavVisible, setIsNavVisible] = useState(true)
 
-  const { data: templates = [], isLoading: templatesLoading } = useMarketplaceTemplates()
-  const { data: drivers = [], isLoading: driversLoading } = useMarketplaceDrivers()
+  const { data: templates = [], isLoading: templatesLoading } = usePublicMarketplaceTemplates()
+  const { data: drivers = [], isLoading: driversLoading } = usePublicMarketplaceDrivers()
 
   useEffect(() => {
     document.title = 'TinyIoTHub | 智能物联网平台'
