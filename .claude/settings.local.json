@@ -6,7 +6,8 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(DATABASE_URL=\"sqlite:tinyiothub.db\" cargo sqlx migrate run)",
-      "Bash(cargo check:*)"
+      "Bash(cargo check:*)",
+      "Bash(git push:*)"
     ]
   }
 }

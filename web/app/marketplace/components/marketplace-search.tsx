@@ -32,12 +32,12 @@ export default function MarketplaceSearch({
   activeTab,
 }: MarketplaceSearchProps) {
   return (
-    <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
+    <div className="flex flex-col lg:flex-row gap-3 items-start lg:items-center">
       {/* Segmented Control */}
       <div className="flex items-center shrink-0 rounded-xl bg-components-input-bg-normal p-1">
         <button
           onClick={() => onTabChange('templates')}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 whitespace-nowrap ${
             activeTab === 'templates'
               ? 'bg-components-button-primary-bg text-components-button-primary-text'
               : 'text-secondary hover:bg-state-base-hover hover:text-primary'
@@ -47,7 +47,7 @@ export default function MarketplaceSearch({
         </button>
         <button
           onClick={() => onTabChange('drivers')}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 whitespace-nowrap ${
             activeTab === 'drivers'
               ? 'bg-components-button-primary-bg text-components-button-primary-text'
               : 'text-secondary hover:bg-state-base-hover hover:text-primary'
@@ -58,7 +58,7 @@ export default function MarketplaceSearch({
       </div>
 
       {/* Search + controls row */}
-      <div className="flex flex-col sm:flex-row gap-3 flex-1 min-w-0">
+      <div className="flex flex-col sm:flex-row gap-3 w-full lg:w-auto lg:flex-1 min-w-0">
         {/* Search input */}
         <div className="relative flex-1 min-w-0">
           <MagnifyingGlassIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-components-input-text-placeholder" />
@@ -72,11 +72,11 @@ export default function MarketplaceSearch({
         </div>
 
         {/* Filter & Sort */}
-        <div className="flex gap-2">
+        <div className="flex flex-row gap-2 flex-1 min-w-0">
           <select
             value={activeFilter}
             onChange={(e) => onFilterChange(e.target.value)}
-            className="px-3 py-2.5 bg-components-input-bg-normal text-components-input-text-filled border border-transparent rounded-xl text-sm focus:outline-none focus:border-components-input-border-active focus:bg-components-input-bg-active cursor-pointer"
+            className="px-3 py-2 flex-1 min-w-[120px] bg-components-input-bg-normal text-components-input-text-filled border border-transparent rounded-xl text-sm focus:outline-none focus:border-components-input-border-active focus:bg-components-input-bg-active cursor-pointer"
           >
             {filterOptions.map((opt) => (
               <option key={opt.value} value={opt.value}>
@@ -88,7 +88,7 @@ export default function MarketplaceSearch({
           <select
             value={activeSort}
             onChange={(e) => onSortChange(e.target.value)}
-            className="px-3 py-2.5 bg-components-input-bg-normal text-components-input-text-filled border border-transparent rounded-xl text-sm focus:outline-none focus:border-components-input-border-active focus:bg-components-input-bg-active cursor-pointer"
+            className="px-3 py-2 flex-1 min-w-[120px] bg-components-input-bg-normal text-components-input-text-filled border border-transparent rounded-xl text-sm focus:outline-none focus:border-components-input-border-active focus:bg-components-input-bg-active cursor-pointer"
           >
             {sortOptions.map((opt) => (
               <option key={opt.value} value={opt.value}>
