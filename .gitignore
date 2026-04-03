@@ -35,6 +35,9 @@ logs/*.log
 # Docker 日志
 /docker/logs
 
+# Worktrees
+.worktrees/
+
 # 其他
 /web-dify
 license
