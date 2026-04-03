@@ -102,7 +102,7 @@ export default function Home() {
   return (
     <div>
       {/* Background */}
-      <div className="fixed inset-0 -z-10 bg-gradient-to-br from-slate-50 via-blue-50/40 to-indigo-50/60 dark:from-slate-950 dark:via-slate-900/80 dark:to-indigo-950/60" />
+      <div className="fixed inset-0 -z-10 bg-gradient-to-br from-slate-100 via-slate-50/50 to-slate-200 dark:from-slate-950 dark:via-slate-900/80 dark:to-indigo-950/60" />
 
       {/* Navigation */}
       <nav className={`fixed inset-x-0 top-0 z-50 glass-nav border-b border-white/30 dark:border-white/10 transition-transform duration-300 ease-out ${isNavVisible ? 'translate-y-0' : '-translate-y-full'}`}>

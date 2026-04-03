@@ -110,7 +110,7 @@ export default function MarketplacePage() {
           <h1 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4 marketplace-hero-title">
             设备市场
           </h1>
-          <p className="text-base text-gray-500 max-w-xl mx-auto leading-relaxed marketplace-hero-subtitle">
+          <p className="text-base text-gray-600 max-w-xl mx-auto leading-relaxed marketplace-hero-subtitle">
             探索来自社区的优质设备模板与驱动，开箱即用，快速接入传感器、执行器与工业设备
           </p>
         </div>
