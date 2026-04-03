@@ -1,0 +1,56 @@
+# TinyIoTHub OpenClaw Skills Configuration
+# AI Agent uses these prompt templates to interact with MCP tools
+
+version: "1.0.0"
+description: OpenClaw Skills for TinyIoTHub IoT Edge Gateway - device management, heartbeat monitoring, and self-healing
+
+skills:
+  - name: tinyiothub-device-onboarding
+    description: IoT device rapid onboarding - from natural language description to device online
+    version: 1.0.0
+    mcp_endpoint: /mcp
+    prompts:
+      - device-onboarding
+    tools:
+      - list_drivers
+      - match_driver
+      - generate_driver
+      - load_driver
+      - create_device
+      - test_driver
+      - report_heartbeat
+
+  - name: tinyiothub-heartbeat-query
+    description: Gateway heartbeat monitoring and configuration
+    version: 1.0.0
+    mcp_endpoint: /mcp
+    prompts:
+      - heartbeat-query
+    tools:
+      - report_heartbeat
+      - get_heartbeat_status
+      - configure_heartbeat
+
+  - name: tinyiothub-device-status
+    description: Device status querying and sensor data reading
+    version: 1.0.0
+    mcp_endpoint: /mcp
+    prompts:
+      - device-status
+    tools:
+      - list_devices
+      - get_device
+      - get_device_status
+      - read_properties
+      - get_device_history
+
+  - name: tinyiothub-alarm-management
+    description: Alarm management and self-healing operations
+    version: 1.0.0
+    mcp_endpoint: /mcp
+    prompts:
+      - alarm-management
+    tools:
+      - get_self_heal_policy
+      - execute_self_heal_action
+      - get_recovery_history
