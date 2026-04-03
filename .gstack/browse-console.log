@@ -1,0 +1,712 @@
+[2026-04-03T00:42:49.119Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T00:42:49.224Z] [log] Auth store initializing...
+[2026-04-03T00:42:49.224Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:42:49.225Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:42:49.231Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T00:42:49.232Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T00:42:49.236Z] [log] Auth store initializing...
+[2026-04-03T00:42:49.237Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:42:49.237Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:42:49.238Z] [log] Auth store initializing...
+[2026-04-03T00:42:49.238Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:42:49.239Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:42:49.394Z] [log] [Fast Refresh] rebuilding
+[2026-04-03T00:42:49.394Z] [log] Auth store initializing...
+[2026-04-03T00:42:49.401Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:42:49.402Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:42:49.402Z] [log] Auth store initializing...
+[2026-04-03T00:42:49.402Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:42:49.404Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:42:49.439Z] [log] [Fast Refresh] done in 185ms
+[2026-04-03T00:43:40.234Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T00:43:40.494Z] [log] Auth store initializing...
+[2026-04-03T00:43:40.494Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:43:40.494Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:43:40.494Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T00:43:40.495Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T00:43:40.519Z] [log] Auth store initializing...
+[2026-04-03T00:43:40.522Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:43:40.523Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:43:40.523Z] [log] Auth store initializing...
+[2026-04-03T00:43:40.523Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:43:40.524Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:43:40.771Z] [log] [Fast Refresh] rebuilding
+[2026-04-03T00:43:40.771Z] [log] [Fast Refresh] done in 175ms
+[2026-04-03T00:43:40.830Z] [log] Auth store initializing...
+[2026-04-03T00:43:40.831Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:43:40.848Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:43:40.879Z] [log] Auth store initializing...
+[2026-04-03T00:43:40.897Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:43:40.898Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:43:40.914Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/templates' from origin 'http://localhost:3001' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:43:40.914Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:43:40.914Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/drivers' from origin 'http://localhost:3001' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:43:40.914Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:44:04.778Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T00:44:04.830Z] [log] Auth store initializing...
+[2026-04-03T00:44:04.831Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:44:04.832Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:44:04.832Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T00:44:04.832Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T00:44:04.837Z] [log] Auth store initializing...
+[2026-04-03T00:44:04.838Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:44:04.838Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:44:04.838Z] [log] Auth store initializing...
+[2026-04-03T00:44:04.838Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:44:04.839Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:44:04.852Z] [log] Auth store initializing...
+[2026-04-03T00:44:04.852Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:44:04.853Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:44:04.853Z] [log] Auth store initializing...
+[2026-04-03T00:44:04.853Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:44:04.854Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:44:44.680Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T00:44:44.752Z] [log] Auth store initializing...
+[2026-04-03T00:44:44.752Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:44:44.752Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:44:44.752Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T00:44:44.753Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T00:44:44.761Z] [log] Auth store initializing...
+[2026-04-03T00:44:44.762Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:44:44.763Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:44:44.775Z] [log] Auth store initializing...
+[2026-04-03T00:44:44.776Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:44:44.776Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:44:44.779Z] [log] Auth store initializing...
+[2026-04-03T00:44:44.779Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:44:44.780Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:44:44.780Z] [log] Auth store initializing...
+[2026-04-03T00:44:44.780Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:44:44.780Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:45:02.351Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T00:45:02.366Z] [log] Auth store initializing...
+[2026-04-03T00:45:02.366Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:45:02.368Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:45:02.376Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T00:45:02.388Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T00:45:02.414Z] [log] Auth store initializing...
+[2026-04-03T00:45:02.415Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:45:02.415Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:45:02.417Z] [log] Auth store initializing...
+[2026-04-03T00:45:02.418Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:45:02.421Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:45:02.529Z] [log] [Fast Refresh] rebuilding
+[2026-04-03T00:45:02.530Z] [log] [Fast Refresh] done in 123ms
+[2026-04-03T00:45:02.692Z] [log] Auth store initializing...
+[2026-04-03T00:45:02.694Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:45:02.695Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:45:02.696Z] [log] Auth store initializing...
+[2026-04-03T00:45:02.697Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:45:02.697Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:45:02.842Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/drivers' from origin 'http://localhost:3001' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:45:02.842Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:45:02.842Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/templates' from origin 'http://localhost:3001' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:45:02.842Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:45:21.467Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T00:45:21.479Z] [log] Auth store initializing...
+[2026-04-03T00:45:21.496Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:45:21.496Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:45:21.496Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T00:45:21.503Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T00:45:21.533Z] [log] Auth store initializing...
+[2026-04-03T00:45:21.534Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:45:21.534Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:45:21.535Z] [log] Auth store initializing...
+[2026-04-03T00:45:21.535Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:45:21.535Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:45:22.004Z] [log] Auth store initializing...
+[2026-04-03T00:45:22.004Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:45:22.005Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:45:22.005Z] [log] Auth store initializing...
+[2026-04-03T00:45:22.006Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:45:22.007Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:45:22.085Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/drivers' from origin 'http://localhost:3001' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:45:22.085Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:45:22.085Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/templates' from origin 'http://localhost:3001' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:45:22.085Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:50:39.934Z] [log] [Fast Refresh] rebuilding
+[2026-04-03T00:50:41.034Z] [log] [Fast Refresh] done in 1187ms
+[2026-04-03T00:52:23.976Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T00:52:24.131Z] [log] Auth store initializing...
+[2026-04-03T00:52:24.131Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:52:24.131Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:52:24.133Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T00:52:24.134Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T00:52:24.150Z] [log] Auth store initializing...
+[2026-04-03T00:52:24.150Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:52:24.151Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:52:24.151Z] [log] Auth store initializing...
+[2026-04-03T00:52:24.151Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:52:24.152Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:52:24.180Z] [log] Auth store initializing...
+[2026-04-03T00:52:24.180Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:52:24.180Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:52:24.181Z] [log] Auth store initializing...
+[2026-04-03T00:52:24.181Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:52:24.181Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:52:24.288Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/drivers' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:52:24.289Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:52:24.290Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/templates' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:52:24.290Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:52:30.527Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T00:52:30.590Z] [log] Auth store initializing...
+[2026-04-03T00:52:30.590Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:52:30.590Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:52:30.591Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T00:52:30.592Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T00:52:30.595Z] [log] Auth store initializing...
+[2026-04-03T00:52:30.595Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:52:30.596Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:52:30.596Z] [log] Auth store initializing...
+[2026-04-03T00:52:30.596Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:52:30.597Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:52:30.675Z] [log] Auth store initializing...
+[2026-04-03T00:52:30.676Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:52:30.679Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:52:30.681Z] [log] Auth store initializing...
+[2026-04-03T00:52:30.681Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:52:30.682Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:52:30.682Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/drivers' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:52:30.683Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:52:30.683Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/templates' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:52:30.683Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:52:45.695Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T00:52:45.763Z] [log] Auth store initializing...
+[2026-04-03T00:52:45.764Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:52:45.764Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:52:45.764Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T00:52:45.770Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T00:52:45.805Z] [log] Auth store initializing...
+[2026-04-03T00:52:45.806Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:52:45.806Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:52:45.806Z] [log] Auth store initializing...
+[2026-04-03T00:52:45.806Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:52:45.806Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:52:45.858Z] [log] Auth store initializing...
+[2026-04-03T00:52:45.858Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:52:45.859Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:52:45.859Z] [log] Auth store initializing...
+[2026-04-03T00:52:45.859Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:52:45.859Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:52:45.888Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/drivers' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:52:45.888Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:52:45.904Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/templates' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:52:45.904Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:53:01.044Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T00:53:01.094Z] [log] Auth store initializing...
+[2026-04-03T00:53:01.094Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:01.094Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:01.094Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T00:53:01.095Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T00:53:01.159Z] [log] Auth store initializing...
+[2026-04-03T00:53:01.160Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:01.160Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:01.160Z] [log] Auth store initializing...
+[2026-04-03T00:53:01.160Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:01.160Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:01.253Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T00:53:01.377Z] [log] Auth store initializing...
+[2026-04-03T00:53:01.377Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:01.378Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:01.378Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T00:53:01.378Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T00:53:01.380Z] [log] Auth store initializing...
+[2026-04-03T00:53:01.381Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:01.381Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:01.381Z] [log] Auth store initializing...
+[2026-04-03T00:53:01.381Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:01.381Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:01.385Z] [log] Auth store initializing...
+[2026-04-03T00:53:01.385Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:01.385Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:01.385Z] [log] Auth store initializing...
+[2026-04-03T00:53:01.385Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:01.386Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:01.409Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/drivers' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:53:01.409Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:53:01.429Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/templates' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:53:01.429Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:53:08.582Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T00:53:08.689Z] [log] Auth store initializing...
+[2026-04-03T00:53:08.689Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:08.690Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:08.690Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T00:53:08.690Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T00:53:08.693Z] [log] Auth store initializing...
+[2026-04-03T00:53:08.693Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:08.694Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:08.694Z] [log] Auth store initializing...
+[2026-04-03T00:53:08.694Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:08.694Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:08.698Z] [log] Auth store initializing...
+[2026-04-03T00:53:08.698Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:08.698Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:08.698Z] [log] Auth store initializing...
+[2026-04-03T00:53:08.698Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:08.698Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:08.729Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/drivers' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:53:08.729Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:53:08.729Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/templates' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:53:08.729Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:53:08.805Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T00:53:08.903Z] [log] Auth store initializing...
+[2026-04-03T00:53:08.904Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:08.907Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:08.907Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T00:53:08.907Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T00:53:08.911Z] [log] Auth store initializing...
+[2026-04-03T00:53:08.911Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:08.911Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:08.911Z] [log] Auth store initializing...
+[2026-04-03T00:53:08.911Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:08.912Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:08.915Z] [log] Auth store initializing...
+[2026-04-03T00:53:08.915Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:08.915Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:08.915Z] [log] Auth store initializing...
+[2026-04-03T00:53:08.915Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:08.915Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:08.963Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/drivers' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:53:08.963Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:53:08.963Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/templates' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:53:08.963Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:53:24.243Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T00:53:24.308Z] [log] Auth store initializing...
+[2026-04-03T00:53:24.308Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:24.309Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:24.309Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T00:53:24.309Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T00:53:24.348Z] [log] Auth store initializing...
+[2026-04-03T00:53:24.348Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:24.348Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:24.348Z] [log] Auth store initializing...
+[2026-04-03T00:53:24.348Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:24.348Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:24.396Z] [log] Auth store initializing...
+[2026-04-03T00:53:24.396Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:24.396Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:24.396Z] [log] Auth store initializing...
+[2026-04-03T00:53:24.396Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:24.396Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:24.411Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/drivers' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:53:24.411Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:53:24.426Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/templates' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:53:24.426Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:53:31.248Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T00:53:31.355Z] [log] Auth store initializing...
+[2026-04-03T00:53:31.356Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:31.357Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:31.357Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T00:53:31.357Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T00:53:31.359Z] [log] Auth store initializing...
+[2026-04-03T00:53:31.359Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:31.360Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:31.360Z] [log] Auth store initializing...
+[2026-04-03T00:53:31.360Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:31.364Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:31.367Z] [log] Auth store initializing...
+[2026-04-03T00:53:31.368Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:31.368Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:31.368Z] [log] Auth store initializing...
+[2026-04-03T00:53:31.368Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:31.368Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:31.411Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/templates' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:53:31.411Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:53:31.411Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/drivers' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:53:31.411Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:53:39.593Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T00:53:39.642Z] [log] Auth store initializing...
+[2026-04-03T00:53:39.642Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:39.642Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:39.643Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T00:53:39.643Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T00:53:39.671Z] [log] Auth store initializing...
+[2026-04-03T00:53:39.671Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:39.671Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:39.671Z] [log] Auth store initializing...
+[2026-04-03T00:53:39.671Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:39.671Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:39.752Z] [log] Auth store initializing...
+[2026-04-03T00:53:39.752Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:39.753Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:39.753Z] [log] Auth store initializing...
+[2026-04-03T00:53:39.753Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:53:39.753Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:53:39.773Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/drivers' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:53:39.773Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:53:39.778Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/templates' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:53:39.778Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:54:25.942Z] [log] [Fast Refresh] rebuilding
+[2026-04-03T00:54:26.785Z] [log] [Fast Refresh] done in 914ms
+[2026-04-03T00:54:52.509Z] [log] [Fast Refresh] rebuilding
+[2026-04-03T00:54:52.529Z] [log] [Fast Refresh] done in 121ms
+[2026-04-03T00:54:52.774Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T00:54:52.893Z] [log] Auth store initializing...
+[2026-04-03T00:54:52.893Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:54:52.894Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:54:52.894Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T00:54:52.894Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T00:54:52.905Z] [log] Auth store initializing...
+[2026-04-03T00:54:52.905Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:54:52.905Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:54:52.906Z] [log] Auth store initializing...
+[2026-04-03T00:54:52.906Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:54:52.907Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:54:52.913Z] [log] Auth store initializing...
+[2026-04-03T00:54:52.913Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:54:52.913Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:54:52.913Z] [log] Auth store initializing...
+[2026-04-03T00:54:52.913Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:54:52.913Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:54:52.979Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/drivers' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:54:52.980Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:54:52.997Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/templates' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:54:52.997Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:55:17.970Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T00:55:18.044Z] [log] Auth store initializing...
+[2026-04-03T00:55:18.044Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:55:18.044Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:55:18.045Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T00:55:18.045Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T00:55:18.118Z] [log] Auth store initializing...
+[2026-04-03T00:55:18.118Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:55:18.118Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:55:18.118Z] [log] Auth store initializing...
+[2026-04-03T00:55:18.118Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:55:18.118Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:55:18.119Z] [log] Auth store initializing...
+[2026-04-03T00:55:18.119Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:55:18.119Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:55:18.119Z] [log] Auth store initializing...
+[2026-04-03T00:55:18.120Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:55:18.120Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:55:18.131Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/drivers' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:55:18.131Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:55:18.150Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/templates' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:55:18.150Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:56:16.049Z] [log] [Fast Refresh] rebuilding
+[2026-04-03T00:56:16.787Z] [log] [Fast Refresh] done in 813ms
+[2026-04-03T00:56:41.044Z] [log] [Fast Refresh] rebuilding
+[2026-04-03T00:56:41.780Z] [log] [Fast Refresh] done in 811ms
+[2026-04-03T00:56:50.269Z] [log] [Fast Refresh] rebuilding
+[2026-04-03T00:56:50.329Z] [log] [Fast Refresh] done in 163ms
+[2026-04-03T00:56:50.615Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T00:56:50.700Z] [log] Auth store initializing...
+[2026-04-03T00:56:50.700Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:56:50.700Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:56:50.700Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T00:56:50.701Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T00:56:50.757Z] [log] Auth store initializing...
+[2026-04-03T00:56:50.758Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:56:50.758Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:56:50.758Z] [log] Auth store initializing...
+[2026-04-03T00:56:50.758Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:56:50.758Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:56:50.801Z] [log] Auth store initializing...
+[2026-04-03T00:56:50.801Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:56:50.801Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:56:50.801Z] [log] Auth store initializing...
+[2026-04-03T00:56:50.801Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:56:50.801Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:56:50.857Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/drivers' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:56:50.857Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:56:50.957Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/templates' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:56:50.957Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:57:07.857Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T00:57:07.926Z] [log] Auth store initializing...
+[2026-04-03T00:57:07.926Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:57:07.927Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:57:07.927Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T00:57:07.929Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T00:57:07.995Z] [log] Auth store initializing...
+[2026-04-03T00:57:07.995Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:57:07.995Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:57:07.995Z] [log] Auth store initializing...
+[2026-04-03T00:57:07.995Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:57:07.995Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:57:08.008Z] [log] Auth store initializing...
+[2026-04-03T00:57:08.018Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:57:08.019Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:57:08.020Z] [log] Auth store initializing...
+[2026-04-03T00:57:08.020Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:57:08.020Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:57:08.022Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/drivers' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:57:08.023Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:57:08.053Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/templates' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:57:08.053Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:57:51.042Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T00:57:51.183Z] [log] Auth store initializing...
+[2026-04-03T00:57:51.183Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:57:51.183Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:57:51.184Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T00:57:51.184Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T00:57:51.191Z] [log] Auth store initializing...
+[2026-04-03T00:57:51.191Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:57:51.191Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:57:51.192Z] [log] Auth store initializing...
+[2026-04-03T00:57:51.192Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:57:51.192Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:57:51.198Z] [log] Auth store initializing...
+[2026-04-03T00:57:51.198Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:57:51.199Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:57:51.199Z] [log] Auth store initializing...
+[2026-04-03T00:57:51.199Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:57:51.199Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:57:51.204Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/drivers' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:57:51.204Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:57:51.246Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/templates' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:57:51.246Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:59:12.404Z] [log] [Fast Refresh] rebuilding
+[2026-04-03T00:59:12.560Z] [log] [Fast Refresh] done in 236ms
+[2026-04-03T00:59:26.223Z] [log] [Fast Refresh] rebuilding
+[2026-04-03T00:59:26.243Z] [log] [Fast Refresh] done in 122ms
+[2026-04-03T00:59:26.493Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T00:59:26.636Z] [log] Auth store initializing...
+[2026-04-03T00:59:26.637Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:59:26.637Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:59:26.637Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T00:59:26.637Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T00:59:26.640Z] [log] Auth store initializing...
+[2026-04-03T00:59:26.641Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:59:26.641Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:59:26.641Z] [log] Auth store initializing...
+[2026-04-03T00:59:26.641Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:59:26.642Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:59:26.644Z] [log] Auth store initializing...
+[2026-04-03T00:59:26.644Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:59:26.645Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:59:26.645Z] [log] Auth store initializing...
+[2026-04-03T00:59:26.645Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:59:26.645Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:59:26.699Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/drivers' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:59:26.699Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:59:26.716Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/templates' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:59:26.716Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:59:47.416Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T00:59:47.570Z] [log] Auth store initializing...
+[2026-04-03T00:59:47.570Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:59:47.570Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:59:47.572Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T00:59:47.573Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T00:59:47.575Z] [log] Auth store initializing...
+[2026-04-03T00:59:47.575Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:59:47.575Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:59:47.575Z] [log] Auth store initializing...
+[2026-04-03T00:59:47.575Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:59:47.575Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:59:47.577Z] [log] Auth store initializing...
+[2026-04-03T00:59:47.579Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:59:47.579Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:59:47.579Z] [log] Auth store initializing...
+[2026-04-03T00:59:47.579Z] [log] Auth: no token, not authenticated
+[2026-04-03T00:59:47.579Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T00:59:47.625Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/drivers' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:59:47.625Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T00:59:47.625Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/templates' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T00:59:47.625Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T01:00:27.389Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T01:00:27.455Z] [log] Auth store initializing...
+[2026-04-03T01:00:27.455Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:00:27.456Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:00:27.456Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T01:00:27.457Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T01:00:27.460Z] [log] Auth store initializing...
+[2026-04-03T01:00:27.460Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:00:27.460Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:00:27.461Z] [log] Auth store initializing...
+[2026-04-03T01:00:27.463Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:00:27.463Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:00:27.591Z] [log] Auth store initializing...
+[2026-04-03T01:00:27.591Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:00:27.592Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:00:27.592Z] [log] Auth store initializing...
+[2026-04-03T01:00:27.592Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:00:27.592Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:00:27.668Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/templates' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T01:00:27.668Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T01:00:27.710Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/drivers' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T01:00:27.710Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T01:00:36.510Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T01:00:36.621Z] [log] Auth store initializing...
+[2026-04-03T01:00:36.621Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:00:36.622Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:00:36.622Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T01:00:36.622Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T01:00:36.624Z] [log] Auth store initializing...
+[2026-04-03T01:00:36.624Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:00:36.625Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:00:36.625Z] [log] Auth store initializing...
+[2026-04-03T01:00:36.625Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:00:36.625Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:00:36.638Z] [log] Auth store initializing...
+[2026-04-03T01:00:36.638Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:00:36.638Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:00:36.638Z] [log] Auth store initializing...
+[2026-04-03T01:00:36.638Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:00:36.638Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:00:36.685Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/drivers' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T01:00:36.685Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T01:00:36.685Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/templates' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T01:00:36.685Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T01:00:48.509Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T01:00:48.594Z] [log] Auth store initializing...
+[2026-04-03T01:00:48.594Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:00:48.597Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:00:48.597Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T01:00:48.598Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T01:00:48.604Z] [log] Auth store initializing...
+[2026-04-03T01:00:48.604Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:00:48.605Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:00:48.605Z] [log] Auth store initializing...
+[2026-04-03T01:00:48.605Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:00:48.609Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:00:48.660Z] [log] Auth store initializing...
+[2026-04-03T01:00:48.660Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:00:48.660Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:00:48.660Z] [log] Auth store initializing...
+[2026-04-03T01:00:48.660Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:00:48.660Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:00:48.699Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/templates' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T01:00:48.700Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T01:00:48.701Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/drivers' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T01:00:48.701Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T01:02:20.010Z] [log] [Fast Refresh] rebuilding
+[2026-04-03T01:02:20.163Z] [log] [Fast Refresh] done in 229ms
+[2026-04-03T01:02:45.921Z] [log] [Fast Refresh] rebuilding
+[2026-04-03T01:02:45.946Z] [log] [Fast Refresh] done in 124ms
+[2026-04-03T01:02:46.203Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T01:02:46.321Z] [log] Auth store initializing...
+[2026-04-03T01:02:46.321Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:02:46.321Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:02:46.321Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T01:02:46.321Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T01:02:46.323Z] [log] Auth store initializing...
+[2026-04-03T01:02:46.323Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:02:46.323Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:02:46.323Z] [log] Auth store initializing...
+[2026-04-03T01:02:46.323Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:02:46.323Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:02:46.346Z] [log] Auth store initializing...
+[2026-04-03T01:02:46.346Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:02:46.346Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:02:46.346Z] [log] Auth store initializing...
+[2026-04-03T01:02:46.347Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:02:46.348Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:02:46.416Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/drivers' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T01:02:46.416Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T01:02:46.453Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/templates' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T01:02:46.453Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T01:03:49.259Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T01:03:49.357Z] [log] Auth store initializing...
+[2026-04-03T01:03:49.357Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:03:49.358Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:03:49.359Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T01:03:49.360Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T01:03:49.382Z] [log] Auth store initializing...
+[2026-04-03T01:03:49.382Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:03:49.383Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:03:49.383Z] [log] Auth store initializing...
+[2026-04-03T01:03:49.384Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:03:49.398Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:03:49.401Z] [log] Auth store initializing...
+[2026-04-03T01:03:49.401Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:03:49.402Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:03:49.402Z] [log] Auth store initializing...
+[2026-04-03T01:03:49.402Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:03:49.402Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:03:49.458Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/drivers' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T01:03:49.458Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T01:03:49.459Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/templates' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T01:03:49.459Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T01:03:49.809Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T01:03:49.857Z] [log] Auth store initializing...
+[2026-04-03T01:03:49.857Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:03:49.857Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:03:49.858Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T01:03:49.858Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T01:03:49.896Z] [log] Auth store initializing...
+[2026-04-03T01:03:49.897Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:03:49.901Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:03:49.901Z] [log] Auth store initializing...
+[2026-04-03T01:03:49.901Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:03:49.901Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:03:50.030Z] [log] Auth store initializing...
+[2026-04-03T01:03:50.030Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:03:50.030Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:03:50.031Z] [log] Auth store initializing...
+[2026-04-03T01:03:50.031Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:03:50.031Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:03:50.031Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/drivers' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T01:03:50.031Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T01:03:50.031Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/templates' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T01:03:50.031Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T01:04:37.107Z] [log] [Fast Refresh] rebuilding
+[2026-04-03T01:04:37.301Z] [log] [Fast Refresh] done in 269ms
+[2026-04-03T01:04:37.401Z] [log] [Fast Refresh] rebuilding
+[2026-04-03T01:04:37.438Z] [log] [Fast Refresh] done in 109ms
+[2026-04-03T01:10:18.641Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T01:10:18.766Z] [log] Auth store initializing...
+[2026-04-03T01:10:18.766Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:10:18.766Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:10:18.766Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T01:10:18.766Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T01:10:18.767Z] [log] Auth store initializing...
+[2026-04-03T01:10:18.767Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:10:18.768Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:10:18.768Z] [log] Auth store initializing...
+[2026-04-03T01:10:18.768Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:10:18.769Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:10:18.773Z] [log] Auth store initializing...
+[2026-04-03T01:10:18.773Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:10:18.774Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:10:18.774Z] [log] Auth store initializing...
+[2026-04-03T01:10:18.774Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:10:18.774Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:10:18.832Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/drivers' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T01:10:18.832Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T01:10:18.850Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/templates' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T01:10:18.850Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T01:10:45.597Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T01:10:45.674Z] [log] Auth store initializing...
+[2026-04-03T01:10:45.674Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:10:45.674Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:10:45.674Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T01:10:45.677Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T01:10:45.681Z] [log] Auth store initializing...
+[2026-04-03T01:10:45.681Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:10:45.682Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:10:45.682Z] [log] Auth store initializing...
+[2026-04-03T01:10:45.682Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:10:45.683Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:10:45.688Z] [log] Auth store initializing...
+[2026-04-03T01:10:45.689Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:10:45.689Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:10:45.689Z] [log] Auth store initializing...
+[2026-04-03T01:10:45.689Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:10:45.690Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:11:25.315Z] [info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[2026-04-03T01:11:25.397Z] [log] Auth store initializing...
+[2026-04-03T01:11:25.397Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:11:25.397Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:11:25.398Z] [log] i18next: languageChanged zh-Hans
+[2026-04-03T01:11:25.398Z] [log] i18next: initialized {debug: true, initImmediate: true, ns: Array(5), defaultNS: common, fallbackLng: Array(1)}
+[2026-04-03T01:11:25.453Z] [log] Auth store initializing...
+[2026-04-03T01:11:25.453Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:11:25.453Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:11:25.453Z] [log] Auth store initializing...
+[2026-04-03T01:11:25.453Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:11:25.453Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:11:25.504Z] [log] Auth store initializing...
+[2026-04-03T01:11:25.504Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:11:25.505Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:11:25.505Z] [log] Auth store initializing...
+[2026-04-03T01:11:25.505Z] [log] Auth: no token, not authenticated
+[2026-04-03T01:11:25.505Z] [log] Auth store initialized, isLoading: false isAuthenticated: false
+[2026-04-03T01:11:25.549Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/drivers' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T01:11:25.549Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T01:11:25.565Z] [error] Access to fetch at 'https://marketplace.tinyiothub.com/api/v1/templates' from origin 'http://localhost:3000' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+[2026-04-03T01:11:25.565Z] [error] Failed to load resource: net::ERR_FAILED
+[2026-04-03T01:14:46.384Z] [log] [Fast Refresh] rebuilding
+[2026-04-03T01:14:46.676Z] [log] [Fast Refresh] done in 476ms
+[2026-04-03T01:14:49.947Z] [log] [Fast Refresh] rebuilding
+[2026-04-03T01:14:49.998Z] [log] [Fast Refresh] done in 150ms
