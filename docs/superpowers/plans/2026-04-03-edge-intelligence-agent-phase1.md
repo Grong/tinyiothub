@@ -439,10 +439,10 @@ Task 7 (OpenClaw Skills)
 |-------------|--------|
 | MCP endpoint `/mcp` | ✅ Complete |
 | 28 MCP tools | ✅ Complete |
-| 4 OpenClaw Skills | ⬜ Pending |
-| Old MCP crate deprecated | ⬜ Pending |
-| MCP tool tests | ⬜ Pending |
-| E2E verification | ⬜ Pending |
+| 4 OpenClaw Skills | ✅ `59b6bc9` |
+| Old MCP crate deprecated | ✅ `72c780f` |
+| MCP tool tests | ✅ `942a286` (65 tests passing) |
+| E2E verification | ✅ `adc2522` |
 
 ---
 
