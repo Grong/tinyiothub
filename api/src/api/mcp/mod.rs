@@ -90,5 +90,5 @@ pub async fn register_tools() {
     tools::knowledge::register_knowledge_tools(&mut reg);
 
     tracing::info!("Registered {} device MCP tools, {} driver MCP tools, {} heartbeat MCP tools, {} self-heal MCP tools, {} knowledge MCP tools",
-        13, 7, 3, 3, 3);
+        12, 7, 3, 3, 3);
 }

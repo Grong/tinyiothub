@@ -4,12 +4,10 @@
 
 ## Edge Intelligence Agent
 
-**P2:**
+**Completed:
 
-- **Correct tool count in plan doc:** The plan says "27 MCP tools" but `registry_tests.rs:19` asserts 28. Update `docs/superpowers/plans/2026-04-03-edge-intelligence-agent-phase1.md` to reflect 28 tools.
-  - Source: `/plan-ceo-review` on `feature/edge-agent-phase1` (2026-04-04)
-
-**Completed:**
+- **Correct tool count in plan doc:** The plan doc already reflected 28 tools (was updated in prior session). Log message in `mod.rs` incorrectly said "13 device tools" — fixed to "12".
+  **Completed:** (fix: change 13 to 12 in mod.rs:93)
 
 - **MCP tool call logging:** Add structured logging for every MCP tool invocation: tool name, user ID, tenant ID, sanitized args, latency, result/error. Without this, production debugging of AI → MCP interactions is impossible.
   - Source: `/plan-ceo-review` on `feature/edge-agent-phase1` (2026-04-04)
