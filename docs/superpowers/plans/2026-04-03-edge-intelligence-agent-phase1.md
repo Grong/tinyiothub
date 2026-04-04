@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Complete Phase 1 of TinyIoTHub + OpenClaw integration with 27 MCP tools, 4 OpenClaw Skills, and full E2E verification.
+**Goal:** Complete Phase 1 of TinyIoTHub + OpenClaw integration with 28 MCP tools, 4 OpenClaw Skills, and full E2E verification.
 
 **Architecture:** OpenClaw (AI orchestrator) → MCP over HTTP → TinyIoTHub API :3002 → Rust backend. OpenClaw Skills provide prompt templates that guide the AI to use MCP tools for device onboarding, heartbeat management, device status queries, and alarm handling.
 
@@ -438,7 +438,7 @@ Task 7 (OpenClaw Skills)
 | Deliverable | Status |
 |-------------|--------|
 | MCP endpoint `/mcp` | ✅ Complete |
-| 27 MCP tools | ✅ Complete |
+| 28 MCP tools | ✅ Complete |
 | 4 OpenClaw Skills | ⬜ Pending |
 | Old MCP crate deprecated | ⬜ Pending |
 | MCP tool tests | ⬜ Pending |

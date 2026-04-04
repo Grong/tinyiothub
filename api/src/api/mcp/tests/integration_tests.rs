@@ -56,19 +56,13 @@ async fn test_list_devices_respects_pagination() {
     let guard = registry.read().await;
     let handler = guard.get("list_devices").unwrap();
 
-    // Test over-limit page_size - should succeed or fail gracefully with AppState not initialized
-    let result = handler.execute(json!({"page_size": 1000 })).await;
-    match result {
-        Ok(_) => {}
-        Err(e) => {
-            // AppState may not be initialized in unit test context
-            assert!(
-                matches!(e, crate::api::mcp::ToolError::Internal(_)),
-                "Expected Internal error for uninitialized state, got {:?}",
-                e
-            );
-        }
-    }
+    // Test over-limit page_size - should be rejected with InvalidParams (schema says max: 100)
+    let result = handler.execute(json!({"pageSize": 1000 })).await;
+    assert!(
+        matches!(result, Err(crate::api::mcp::ToolError::InvalidParams(_))),
+        "Expected InvalidParams for page_size > 100, got {:?}",
+        result
+    );
 }
 
 /// Test that list_devices returns array result or graceful error
