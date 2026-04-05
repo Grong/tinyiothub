@@ -32,7 +32,7 @@ skills:
       - configure_heartbeat
 
   - name: tinyiothub-device-status
-    description: Device status querying and sensor data reading
+    description: Device status querying, sensor data reading, and device comparison
     version: 1.0.0
     mcp_endpoint: /mcp
     prompts:
@@ -43,14 +43,54 @@ skills:
       - get_device_status
       - read_properties
       - get_device_history
+      - compare_devices
 
   - name: tinyiothub-alarm-management
-    description: Alarm management and self-healing operations
+    description: Alarm management, statistics, and self-healing operations
     version: 1.0.0
     mcp_endpoint: /mcp
     prompts:
       - alarm-management
     tools:
+      - alarm_list
+      - alarm_statistics
+      - alarm_acknowledge
+      - alarm_rule_add
       - get_self_heal_policy
       - execute_self_heal_action
       - get_recovery_history
+
+  - name: tinyiothub-workspace-management
+    description: Workspace management and device assignment
+    version: 1.0.0
+    mcp_endpoint: /mcp
+    prompts:
+      - workspace-management
+    tools:
+      - workspace_list
+      - workspace_get
+      - workspace_create
+      - workspace_update
+      - workspace_delete
+
+  - name: tinyiothub-schedule-tasks
+    description: Scheduled task management and automation rules
+    version: 1.0.0
+    mcp_endpoint: /mcp
+    prompts:
+      - schedule-tasks
+    tools:
+      - list_schedules
+      - create_schedule
+      - delete_schedule
+
+  - name: tinyiothub-diagnostics
+    description: Device fault diagnosis, property comparison, and hardware scanning
+    version: 1.0.0
+    mcp_endpoint: /mcp
+    prompts:
+      - diagnostics
+    tools:
+      - diagnose_device
+      - compare_devices
+      - scan_serial

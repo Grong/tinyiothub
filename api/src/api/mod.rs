@@ -8,6 +8,7 @@ use crate::{application::data_context::DataContext, shared::app_state::AppState}
 pub mod alarm_rules;
 pub mod alarms;
 pub mod auth;
+pub mod batch;
 pub mod devices;
 pub mod drivers;
 pub mod events;
@@ -45,6 +46,7 @@ pub fn create_router() -> Router<AppState> {
         .nest("/tenants", tenants::create_router())
         .nest("/events", events::create_router())
         .nest("/jobs", jobs::create_router())
+        .nest("/batch", batch::create_router())
         .nest("/heartbeat", heartbeat::create_router()) // 心跳端点
         .nest("/self-healing", self_healing::create_router()) // 自愈端点
         .nest("/workspaces", workspaces::create_router()) // 工作空间端点

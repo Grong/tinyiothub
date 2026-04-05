@@ -2,7 +2,10 @@
 // Phase 1 tool implementations: device_*, driver_*, heartbeat_*, self_heal_*, knowledge_*
 // Phase 2: workspace_* (5 tools), job_* (3 tools)
 
+pub mod alarm_mcp;
+pub mod batch;
 pub mod device;
+pub mod device_enhanced;
 pub mod driver;
 pub mod heartbeat;
 pub mod job;

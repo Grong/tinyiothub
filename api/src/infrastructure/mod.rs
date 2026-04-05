@@ -17,3 +17,9 @@ pub mod redis;
 
 // OpenClaw Agent client
 pub mod openclaw_agent;
+
+// Batch command infrastructure
+pub mod batch_command;
+
+// Diagnostics infrastructure
+pub mod diagnostics;

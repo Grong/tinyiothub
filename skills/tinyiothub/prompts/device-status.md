@@ -150,6 +150,47 @@ Returns:
 }
 ```
 
+## Compare Devices
+
+Call `compare_devices` to compare property values across multiple devices.
+
+Input parameters:
+- `deviceIds`: Array of device IDs to compare (required, min 2)
+- `property`: Property name to compare (required)
+
+Example:
+```
+compare_devices(
+  deviceIds=["uuid-1", "uuid-2", "uuid-3"],
+  property="temperature"
+)
+```
+
+Returns:
+```json
+{
+  "property": "temperature",
+  "values": [
+    {
+      "deviceId": "uuid-1",
+      "deviceName": "Temperature Sensor 1",
+      "value": "25.6",
+      "unit": "celsius",
+      "timestamp": "2026-04-05T10:00:00Z"
+    }
+  ],
+  "statistics": {
+    "maxDiff": 1.3,
+    "average": 25.5,
+    "minValue": 24.8,
+    "maxValue": 26.1,
+    "count": 3
+  }
+}
+```
+
+**Use this when**: User asks to compare readings across multiple devices, find outliers, or identify devices with unusual values.
+
 ## Common User Questions
 
 Users may ask:
@@ -160,6 +201,8 @@ Users may ask:
 - "What is the history of humidity for the last 24 hours?"
 - "List all Modbus devices"
 - "Show me devices with active alarms"
+- "Compare temperature across all sensors in Building 1"
+- "Which device has the highest voltage reading?"
 
 ## Troubleshooting Flow
 
