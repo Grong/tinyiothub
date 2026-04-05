@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit'
 import { customElement } from 'lit/decorators.js'
+import { destroyRouter } from './router'
 
 @customElement('tinyiothub-app')
 export class App extends LitElement {
@@ -42,6 +43,11 @@ export class App extends LitElement {
       padding: 24px;
     }
   `
+
+  disconnectedCallback() {
+    super.disconnectedCallback()
+    destroyRouter()
+  }
 
   render() {
     return html`

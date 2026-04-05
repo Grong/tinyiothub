@@ -37,6 +37,10 @@ export function initRouter(container: Element) {
   return _router
 }
 
+export function destroyRouter() {
+  _router = null
+}
+
 // Helper to navigate - uses router's internal navigation when available
 export function navigate(path: string) {
   if (_router) {
