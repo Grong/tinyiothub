@@ -64,7 +64,7 @@ export class App extends LitElement {
 
     .app-shell--public {
       grid-template-columns: 0 minmax(0, 1fr);
-      grid-template-rows: 0 1fr;
+      grid-template-rows: var(--shell-topbar-height) 1fr;
       grid-template-areas:
         "topbar topbar"
         "content content";
@@ -73,11 +73,6 @@ export class App extends LitElement {
     .app-shell--public .sidebar,
     .app-shell--public .shell-nav {
       display: none;
-    }
-
-    /* Public pages centered */
-    .app-shell--public .main-content {
-      grid-column: 1 / -1;
     }
 
     /* Sidebar nav area */
@@ -672,26 +667,22 @@ export class App extends LitElement {
         <header class="topbar">
           <div class="topnav-shell">
             ${isPublic ? html`
-              <div style="display:flex;align-items:center;gap:16px;margin-right:auto;">
-                <a class="back-to-home" href="/" @click=${(e: Event) => { e.preventDefault(); this.navigate('home'); }}>
-                  ${this.renderIcon('arrow-left')}
-                  <span>返回首页</span>
-                </a>
+              <!-- Public pages: simple logo -->
+              <div class="sidebar-brand" style="margin-right: auto;">
+                <img class="sidebar-brand__logo" src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2300d4aa' stroke-width='2'><path d='M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z'/></svg>" alt="TinyIoTHub" style="width:28px;height:28px;" />
+                <span class="sidebar-brand__title">TinyIoTHub</span>
               </div>
-            ` : ''}
-
-            <div class="topnav-shell__content">
-              <div class="dashboard-header">
-                ${!isPublic ? html`
+            ` : html`
+              <!-- Authenticated pages: full topbar -->
+              <div class="topnav-shell__content">
+                <div class="dashboard-header">
                   <div class="dashboard-header__breadcrumb">
                     <span class="dashboard-header__breadcrumb-current">${this.getPageTitle()}</span>
                   </div>
-                ` : ''}
+                </div>
               </div>
-            </div>
 
-            <div class="topnav-shell__actions">
-              ${!isPublic ? html`
+              <div class="topnav-shell__actions">
                 <div class="topbar-search">
                   ${this.renderIcon('search')}
                   <input
@@ -760,8 +751,8 @@ export class App extends LitElement {
                     </div>
                   ` : ''}
                 </div>
-              ` : ''}
-            </div>
+              </div>
+            `}
           </div>
         </header>
 
