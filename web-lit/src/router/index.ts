@@ -1,4 +1,3 @@
-import { html } from 'lit'
 import { Route, Router } from '@lit-labs/router'
 import '../pages/home-page'
 import '../pages/signin-page'
@@ -30,7 +29,13 @@ export const routes: Route[] = [
   { path: '/installed-marketplace', component: 'installed-marketplace-page' },
 ]
 
-export const router = new Router(document.body, routes)
+// Router instance - initialized when app provides container
+let _router: Router | null = null
+
+export function initRouter(container: Element) {
+  _router = new Router(container, routes)
+  return _router
+}
 
 // Helper to navigate
 export function navigate(path: string) {
