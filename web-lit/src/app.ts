@@ -246,6 +246,17 @@ export class App extends LitElement {
       color: var(--text);
     }
 
+    .topbar-btn.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--accent-foreground);
+    }
+
+    .topbar-btn.primary:hover {
+      background: var(--accent-hover);
+      border-color: var(--accent-hover);
+    }
+
     .topbar-btn svg {
       width: 18px;
       height: 18px;
@@ -667,11 +678,19 @@ export class App extends LitElement {
         <header class="topbar">
           <div class="topnav-shell">
             ${isPublic ? html`
-              <!-- Public pages: simple logo -->
-              <div class="sidebar-brand" style="margin-right: auto;">
+              <!-- Public pages: logo + nav buttons -->
+              <div class="sidebar-brand">
                 <img class="sidebar-brand__logo" src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2300d4aa' stroke-width='2'><path d='M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z'/></svg>" alt="TinyIoTHub" style="width:28px;height:28px;" />
                 <span class="sidebar-brand__title">TinyIoTHub</span>
               </div>
+              <nav style="display:flex;gap:8px;margin-left:auto;">
+                <button class="topbar-btn" style="width:auto;padding:0 16px;gap:6px;font-size:13px;" @click=${() => this.navigate('signin')}>
+                  登录
+                </button>
+                <button class="topbar-btn primary" style="width:auto;padding:0 16px;gap:6px;font-size:13px;background:var(--accent);color:var(--accent-foreground);border-color:var(--accent);" @click=${() => this.navigate('tenant/register')}>
+                  注册
+                </button>
+              </nav>
             ` : html`
               <!-- Authenticated pages: full topbar -->
               <div class="topnav-shell__content">
