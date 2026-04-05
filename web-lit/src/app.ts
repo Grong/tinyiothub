@@ -1,6 +1,5 @@
 import { LitElement, html, css } from 'lit'
 import { customElement, state } from 'lit/decorators.js'
-import { router } from './router'
 
 @customElement('tinyiothub-app')
 export class App extends LitElement {
