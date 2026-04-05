@@ -272,9 +272,7 @@ export class SigninPage extends LitElement {
         <div class="orb orb-2"></div>
         <div class="brand-content">
           <div class="brand-logo">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z" />
-            </svg>
+            <img src="/logo.svg" alt="TinyIoTHub" style="width:48px;height:48px;" />
             <h1>TinyIoTHub</h1>
           </div>
           <p class="brand-tagline">
@@ -313,9 +311,7 @@ export class SigninPage extends LitElement {
       <div class="form-side">
         <div class="form-container">
           <div class="form-header">
-            <svg class="form-logo" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z" />
-            </svg>
+            <img class="form-logo" src="/logo.svg" alt="TinyIoTHub" style="width:48px;height:48px;" />
             <h2 class="form-title">欢迎回来</h2>
             <p class="form-subtitle">请登录您的账户以继续</p>
           </div>
