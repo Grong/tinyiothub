@@ -2,6 +2,8 @@ import { LitElement, html, css } from 'lit'
 import { customElement, state } from 'lit/decorators.js'
 import { deviceApi, type Device, type DeviceListParams, type CreateDeviceRequest } from '../services/devices'
 import { driverApi, type Driver, type DriverConfigOption } from '../services/drivers'
+import './components/device-card'
+import './components/tag-filter'
 
 @customElement('devices-page')
 export class DevicesPage extends LitElement {
@@ -102,6 +104,58 @@ export class DevicesPage extends LitElement {
       border-radius: var(--radius-lg);
       overflow: hidden;
     }
+
+    /* Device grid */
+    .device-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 16px;
+    }
+
+    .empty-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 160px;
+      background: var(--card);
+      border-radius: var(--radius-lg);
+      border: 2px dashed var(--border);
+      cursor: pointer;
+      color: var(--muted);
+      transition: border-color 0.15s ease, color 0.15s ease;
+    }
+
+    .empty-card:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .empty-card svg { margin-bottom: 8px; opacity: 0.5; }
+    .empty-card p { margin: 0; font-size: 14px; }
+    .empty-card span { font-size: 12px; }
+
+    @media (max-width: 768px) {
+      .device-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* View toggle */
+    .view-toggle {
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: none;
+      border-radius: var(--radius-md);
+      background: var(--card);
+      color: var(--muted);
+      cursor: pointer;
+    }
+
+    .view-toggle:hover { background: var(--bg-hover); color: var(--text); }
 
     .device-list-header {
       display: grid;
@@ -526,6 +580,8 @@ export class DevicesPage extends LitElement {
   @state() page = 1
   @state() pageSize = 10
   @state() totalCount = 0
+  @state() viewMode: 'grid' | 'table' = 'grid'
+  @state() tagId = ''
 
   // Modal state
   @state() showModal = false
@@ -765,6 +821,18 @@ export class DevicesPage extends LitElement {
       <div class="page-header">
         <h1 class="page-title">设备管理</h1>
         <div class="header-actions">
+          <button class="view-toggle" @click=${() => { this.viewMode = this.viewMode === 'grid' ? 'table' : 'grid' }}>
+            ${this.viewMode === 'grid' ? html`
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 10h18M3 14h18M3 6h18M3 18h18"/>
+              </svg>
+            ` : html`
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+                <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
+              </svg>
+            `}
+          </button>
           <button class="btn-primary" @click=${() => this.openCreateModal()}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
@@ -796,9 +864,13 @@ export class DevicesPage extends LitElement {
           <option value="error">错误</option>
           <option value="maintenance">维护</option>
         </select>
+        <tag-filter
+          .value=${this.tagId}
+          @change=${(e: CustomEvent) => { this.tagId = e.detail; this.page = 1; this.loadDevices() }}
+        ></tag-filter>
       </div>
 
-      ${this.loading ? this.renderLoading() : this.error ? this.renderError() : this.renderDeviceList()}
+      ${this.loading ? this.renderLoading() : this.error ? this.renderError() : this.viewMode === 'grid' ? this.renderDeviceGrid() : this.renderDeviceList()}
       ${this.showModal ? this.renderModal() : ''}
     `
   }
@@ -891,6 +963,37 @@ export class DevicesPage extends LitElement {
             <button class="page-btn" ?disabled=${this.page <= 1} @click=${() => this.handlePageChange(this.page - 1)}>上一页</button>
             <button class="page-btn" ?disabled=${this.page >= totalPages} @click=${() => this.handlePageChange(this.page + 1)}>下一页</button>
           </div>
+        </div>
+      </div>
+    `
+  }
+
+  renderDeviceGrid() {
+    if (this.devices.length === 0) {
+      return this.renderEmptyGrid()
+    }
+    return html`
+      <div class="device-grid">
+        ${this.devices.map(device => html`
+          <device-card
+            .device=${device}
+            .onEdit=${(d: Device) => this.openEditModal(d)}
+            .onDelete=${(d: Device) => this.deleteDevice(d)}
+          ></device-card>
+        `)}
+      </div>
+    `
+  }
+
+  renderEmptyGrid() {
+    return html`
+      <div class="device-grid">
+        <div class="empty-card" @click=${() => this.openCreateModal()}>
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
+          </svg>
+          <p>暂无设备</p>
+          <span>点击添加设备</span>
         </div>
       </div>
     `
