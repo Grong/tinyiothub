@@ -1,6 +1,8 @@
 import { LitElement, html, css } from 'lit'
 import { customElement, state } from 'lit/decorators.js'
-import { deviceApi, type DeviceProfile, type CreateDeviceRequest } from '../services/devices'
+import { deviceApi, type DeviceProfile, type DeviceCommand, type DeviceProperty, type CreateDeviceRequest } from '../services/devices'
+import './command-execute-dialog'
+import './property-chart-dialog'
 import { driverApi, type Driver, type DriverConfigOption } from '../services/drivers'
 import { navigate } from '../lib/navigate'
 
@@ -314,6 +316,21 @@ export class DeviceDetailPage extends LitElement {
       background: var(--accent-subtle);
     }
 
+    .chart-btn {
+      width: 28px;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: none;
+      border-radius: var(--radius-sm);
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      margin-left: 8px;
+    }
+    .chart-btn:hover { background: var(--bg-hover); color: var(--accent); }
+
     /* Events */
     .event-list {
       display: flex;
@@ -596,6 +613,13 @@ export class DeviceDetailPage extends LitElement {
   @state() error: string | null = null
   @state() activeTab = 'properties'
 
+  // Auto-refresh and dialog state
+  @state() refreshInterval: number | null = null
+  @state() showCommandDialog = false
+  @state() selectedCommand: DeviceCommand | null = null
+  @state() showPropertyChart = false
+  @state() selectedProperty: DeviceProperty | null = null
+
   // Edit modal state
   @state() showEditModal = false
   @state() editLoading = false
@@ -618,10 +642,24 @@ export class DeviceDetailPage extends LitElement {
     const deviceId = params.get('id')
     if (deviceId) {
       this.loadDevice(deviceId)
+      // Auto-refresh every 3 seconds
+      this.refreshInterval = window.setInterval(() => {
+        if (this.deviceId) this.loadDevice(this.deviceId)
+      }, 3000)
     } else {
       this.error = '未指定设备ID'
       this.loading = false
     }
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback()
+    if (this.refreshInterval) clearInterval(this.refreshInterval)
+  }
+
+  private get deviceId(): string {
+    const params = new URLSearchParams(window.location.search)
+    return params.get('id') || ''
   }
 
   async loadDevice(deviceId: string) {
@@ -687,6 +725,10 @@ export class DeviceDetailPage extends LitElement {
     } catch {
       this.driverConfigOptions = []
     }
+  }
+
+  private isNumericProperty(prop: DeviceProperty): boolean {
+    return prop.dataType === 'number' || prop.dataType === 'integer' || prop.dataType === 'float'
   }
 
   async handleDriverChange(driverName: string) {
@@ -932,6 +974,13 @@ export class DeviceDetailPage extends LitElement {
           </div>
         </div>
         <div class="header-actions">
+          <button class="btn" @click=${() => this.loadDevice(this.deviceId)}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M23 4v6h-6M1 20v-6h6"/>
+              <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+            </svg>
+            刷新
+          </button>
           <button class="btn btn-primary" @click=${() => this.openEditModal()}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"/>
@@ -944,6 +993,23 @@ export class DeviceDetailPage extends LitElement {
 
       ${this.loading ? this.renderLoading() : this.error ? this.renderError() : this.renderContent()}
       ${this.renderEditModal()}
+      ${this.showCommandDialog ? html`
+        <command-execute-dialog
+          .open=${this.showCommandDialog}
+          .command=${this.selectedCommand}
+          .deviceId=${this.deviceId}
+          @close=${() => this.showCommandDialog = false}
+          @success=${() => this.loadDevice(this.deviceId)}
+        ></command-execute-dialog>
+      ` : ''}
+      ${this.showPropertyChart ? html`
+        <property-chart-dialog
+          .open=${this.showPropertyChart}
+          .property=${this.selectedProperty}
+          .deviceId=${this.deviceId}
+          @close=${() => this.showPropertyChart = false}
+        ></property-chart-dialog>
+      ` : ''}
     `
   }
 
@@ -1001,7 +1067,17 @@ export class DeviceDetailPage extends LitElement {
                     ${properties.slice(0, 10).map(prop => html`
                       <tr>
                         <td class="prop-name">${prop.name}</td>
-                        <td class="prop-value">${this.formatValue(prop.value)}</td>
+                        <td class="prop-value">
+                          ${this.formatValue(prop.value)}
+                          ${this.isNumericProperty(prop) ? html`
+                            <button class="chart-btn" @click=${() => { this.selectedProperty = prop; this.showPropertyChart = true }} title="查看曲线">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M3 3v18h18"/>
+                                <path d="M18 17l-5-5-3 3-4-4"/>
+                              </svg>
+                            </button>
+                          ` : ''}
+                        </td>
                         <td>
                           <span class="prop-badge ${prop.readonly ? 'readonly' : 'writable'}">
                             ${prop.readonly ? '只读' : '可写'}
@@ -1030,7 +1106,7 @@ export class DeviceDetailPage extends LitElement {
                   ${commands.map(cmd => html`
                     <div class="command-item">
                       <span class="command-name">${cmd.name}</span>
-                      <button class="command-btn" @click=${() => this.executeCommand(cmd.id)}>执行</button>
+                      <button class="command-btn" @click=${() => { this.selectedCommand = cmd; this.showCommandDialog = true }}>执行</button>
                     </div>
                   `)}
                 </div>
