@@ -207,7 +207,7 @@ export const getEventTypeName = (eventType: EventType): string => {
   }
 
   if ('Device' in eventType) {
-    const deviceType = eventType.Device
+    const deviceType = eventType.Device as any
     if ('Connection' in deviceType) return 'Device Connection'
     if ('Property' in deviceType) return 'Device Property'
     if ('Command' in deviceType) return 'Device Command'

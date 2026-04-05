@@ -138,7 +138,7 @@ const translation = {
       preview: '设备预览',
       fileValidated: '文件验证成功',
       import: '导入设备',
-      preview: {
+      previewConfig: {
         title: '导入配置',
         description: '从 JSON 配置文件导入设备设置',
       },

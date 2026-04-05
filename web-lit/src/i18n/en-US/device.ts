@@ -138,7 +138,7 @@ const translation = {
       preview: 'Device Preview',
       fileValidated: 'File validated successfully',
       import: 'Import Device',
-      preview: {
+      previewConfig: {
         title: 'Import Configuration',
         description: 'Import device settings from a JSON configuration file',
       },

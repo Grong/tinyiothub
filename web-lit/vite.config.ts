@@ -27,9 +27,13 @@ export default defineConfig({
     sourcemap: true,
     rollupOptions: {
       output: {
-        manualChunks: {
-          lit: ['lit', '@lit-labs/router'],
-          vendor: ['ky', 'chart.js', 'i18next'],
+        manualChunks: (id) => {
+          if (id.includes('node_modules/lit') || id.includes('@lit-labs/router')) {
+            return 'lit'
+          }
+          if (id.includes('node_modules/ky') || id.includes('node_modules/chart.js') || id.includes('node_modules/i18next')) {
+            return 'vendor'
+          }
         },
       },
     },

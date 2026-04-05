@@ -1,4 +1,4 @@
-import { Route, Router } from '@lit-labs/router'
+import { Router, type RouteConfig } from '@lit-labs/router'
 import '../pages/home-page'
 import '../pages/signin-page'
 import '../pages/register-page'
@@ -13,27 +13,36 @@ import '../pages/templates-page'
 import '../pages/marketplace-page'
 import '../pages/installed-marketplace-page'
 
-export const routes: Route[] = [
-  { path: '/', component: 'home-page' },
-  { path: '/signin', component: 'signin-page' },
-  { path: '/tenant/register', component: 'register-page' },
-  { path: '/dashboard', component: 'dashboard-page' },
-  { path: '/devices', component: 'devices-page' },
-  { path: '/device-detail/:id', component: 'device-detail-page' },
-  { path: '/alarms', component: 'alarms-page' },
-  { path: '/monitoring', component: 'monitoring-page' },
-  { path: '/settings', component: 'settings-page' },
-  { path: '/tags', component: 'tags-page' },
-  { path: '/templates', component: 'templates-page' },
-  { path: '/marketplace', component: 'marketplace-page' },
-  { path: '/installed-marketplace', component: 'installed-marketplace-page' },
+// Helper to create a route config with render callback
+const createRoute = (path: string, component: string): RouteConfig => ({
+  path,
+  render: () => {
+    const el = document.createElement(component)
+    return el
+  },
+})
+
+export const routes: RouteConfig[] = [
+  createRoute('/', 'home-page'),
+  createRoute('/signin', 'signin-page'),
+  createRoute('/tenant/register', 'register-page'),
+  createRoute('/dashboard', 'dashboard-page'),
+  createRoute('/devices', 'devices-page'),
+  createRoute('/device-detail/:id', 'device-detail-page'),
+  createRoute('/alarms', 'alarms-page'),
+  createRoute('/monitoring', 'monitoring-page'),
+  createRoute('/settings', 'settings-page'),
+  createRoute('/tags', 'tags-page'),
+  createRoute('/templates', 'templates-page'),
+  createRoute('/marketplace', 'marketplace-page'),
+  createRoute('/installed-marketplace', 'installed-marketplace-page'),
 ]
 
 // Router instance - initialized when app provides container
 let _router: Router | null = null
 
-export function initRouter(container: Element) {
-  _router = new Router(container, routes)
+export function initRouter(container: HTMLElement & { addController?: any; removeController?: any }) {
+  _router = new Router(container as any, routes)
   return _router
 }
 
@@ -44,10 +53,8 @@ export function destroyRouter() {
 // Helper to navigate - uses router's internal navigation when available
 export function navigate(path: string) {
   if (_router) {
-    // Use the router's internal goto method for proper routing
-    ;(_router as any).goto?.(path)
+    _router.goto(path)
   } else {
-    // Fallback: just change URL, router will pick up on next navigation
     history.pushState({}, '', path)
   }
 }

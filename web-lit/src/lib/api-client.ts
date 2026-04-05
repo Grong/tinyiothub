@@ -179,6 +179,8 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
     }
 
     return await response.json()
+  } catch (error) {
+    throw error
   }
 }
 
