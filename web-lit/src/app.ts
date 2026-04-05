@@ -27,6 +27,7 @@ import './pages/tags-page'
 import './pages/templates-page'
 import './pages/marketplace-page'
 import './pages/installed-marketplace-page'
+import './pages/agent-page'
 
 @customElement('tinyiothub-app')
 export class App extends LitElement {
@@ -157,6 +158,8 @@ export class App extends LitElement {
         return html`<marketplace-page></marketplace-page>`
       case 'installed-marketplace':
         return html`<installed-marketplace-page></installed-marketplace-page>`
+      case 'agent':
+        return html`<agent-page></agent-page>`
       default:
         return html`<home-page></home-page>`
     }
