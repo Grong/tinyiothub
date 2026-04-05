@@ -1,13 +1,30 @@
 import { LitElement, html, css } from 'lit'
-import { customElement } from 'lit/decorators.js'
-import { destroyRouter } from './router'
+import { customElement, state } from 'lit/decorators.js'
+import './styles/base.css'
+import './styles/layout.css'
+import './styles/components.css'
+import './pages/home-page'
+import './pages/signin-page'
+import './pages/register-page'
+import './pages/dashboard-page'
+import './pages/devices-page'
+import './pages/device-detail-page'
+import './pages/alarms-page'
+import './pages/monitoring-page'
+import './pages/settings-page'
+import './pages/tags-page'
+import './pages/templates-page'
+import './pages/marketplace-page'
+import './pages/installed-marketplace-page'
 
 @customElement('tinyiothub-app')
 export class App extends LitElement {
-  // Use light DOM so this element IS the container
   createRenderRoot() {
     return this
   }
+
+  @state() currentRoute = 'home'
+  @state() navCollapsed = false
 
   static styles = css`
     :host {
@@ -40,13 +57,38 @@ export class App extends LitElement {
     }
     .content {
       flex: 1;
-      padding: 24px;
+      display: flex;
+      flex-direction: column;
     }
   `
 
+  connectedCallback() {
+    super.connectedCallback()
+    this.setupRouter()
+  }
+
   disconnectedCallback() {
     super.disconnectedCallback()
-    destroyRouter()
+    window.removeEventListener('popstate', this.handleRoute.bind(this))
+  }
+
+  setupRouter() {
+    window.addEventListener('popstate', this.handleRoute.bind(this))
+    this.handleRoute()
+  }
+
+  handleRoute() {
+    const path = window.location.pathname.slice(1) || ''
+    this.currentRoute = path === '' ? 'home' : path
+  }
+
+  navigate(route: string) {
+    window.history.pushState({}, '', `/${route}`)
+    this.handleRoute()
+  }
+
+  toggleNav() {
+    this.navCollapsed = !this.navCollapsed
   }
 
   render() {
@@ -55,9 +97,29 @@ export class App extends LitElement {
         <div class="sidebar">Sidebar</div>
         <div class="main-content">
           <header class="topbar">TinyIoTHub</header>
-          <main class="content"></main>
+          <div class="content">
+            ${this.currentRoute === 'home' ? html`<home-page></home-page>` : ''}
+            ${this.currentRoute === 'signin' ? html`<signin-page></signin-page>` : ''}
+            ${this.currentRoute === 'tenant/register' ? html`<register-page></register-page>` : ''}
+            ${this.currentRoute === 'dashboard' ? html`<dashboard-page></dashboard-page>` : ''}
+            ${this.currentRoute === 'devices' ? html`<devices-page></devices-page>` : ''}
+            ${this.currentRoute === 'device-detail' ? html`<device-detail-page></device-detail-page>` : ''}
+            ${this.currentRoute === 'alarms' ? html`<alarms-page></alarms-page>` : ''}
+            ${this.currentRoute === 'monitoring' ? html`<monitoring-page></monitoring-page>` : ''}
+            ${this.currentRoute === 'settings' ? html`<settings-page></settings-page>` : ''}
+            ${this.currentRoute === 'tags' ? html`<tags-page></tags-page>` : ''}
+            ${this.currentRoute === 'templates' ? html`<templates-page></templates-page>` : ''}
+            ${this.currentRoute === 'marketplace' ? html`<marketplace-page></marketplace-page>` : ''}
+            ${this.currentRoute === 'installed-marketplace' ? html`<installed-marketplace-page></installed-marketplace-page>` : ''}
+          </div>
         </div>
       </div>
     `
+  }
+}
+
+declare global {
+  interface HTMLElementTagNameMap {
+    'tinyiothub-app': App
   }
 }
