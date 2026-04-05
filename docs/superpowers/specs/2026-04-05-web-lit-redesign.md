@@ -240,7 +240,7 @@ All interactive components must support:
 |-----------|-------------|
 | `<device-card>` | Device summary card |
 | `<device-status>` | Device status indicator |
-| `<data-chart>` | Time-series chart (ECharts) |
+| `<data-chart>` | Time-series chart (Chart.js) |
 | `<alarm-list>` | Alarm list with filters |
 | `<protocol-badge>` | Protocol type badge (Modbus, MQTT, etc.) |
 
@@ -365,14 +365,24 @@ cd web-lit && pnpm build
 
 ---
 
-## 9. Open Questions
+## 9. Resolved Decisions
 
-| Question | Status |
-|----------|--------|
-| SEO strategy (SSR/prerender)? | Open |
-| Authentication backend integration? | Open |
-| WebSocket for real-time data? | Open |
-| ECharts for charts or lighter alternative? | Open |
+| Decision | Resolution | Rationale |
+|----------|------------|-----------|
+| **Authentication** | Reuse existing JWT auth from Rust backend | Same `/api/v1/auth/login` endpoint, store token in localStorage |
+| **Real-time data** | Polling for MVP | Poll device data every 30s; WebSocket added in v2 if needed |
+| **Charts** | Chart.js (lightweight) | ~60KB vs ECharts ~300KB; compatible with bundle size target |
+| **SEO strategy** | Not applicable | Dashboard app, not a marketing site; no SSR needed |
+| **API client deps** | Extract pure TS from `web/service/` | Remove React Query/Next.js dependencies; use ky directly |
+
+### 9.1 API Client Adaptation
+
+The existing `web/service/` layer has React Query and Next.js dependencies. Before symlinking:
+
+1. Copy `web/service/` to `web-lit/src/services/`
+2. Remove React Query wrappers, keep pure async functions
+3. Replace `import from 'ky'` with direct fetch or ky standalone
+4. Verify `web/types/` has no React types
 
 ---
 
@@ -383,5 +393,5 @@ cd web-lit && pnpm build
 - [ ] Responsive design (desktop + tablet)
 - [ ] Authentication flow working
 - [ ] API integration with Rust backend
-- [ ] Bundle size < 200KB (gzipped)
+- [ ] Bundle size < 300KB (gzipped) — using Chart.js (~60KB) instead of ECharts
 - [ ] Playwright tests passing
