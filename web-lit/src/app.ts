@@ -676,31 +676,10 @@ export class App extends LitElement {
         ` : ''}
 
         <!-- Topbar -->
+        ${!isPublic ? html`
         <header class="topbar">
           <div class="topnav-shell">
-            ${isPublic ? html`
-              <!-- Public pages: logo + nav buttons -->
-              <div class="sidebar-brand">
-                <logo-icon size="28px"></logo-icon>
-                <span class="sidebar-brand__title">TinyIoTHub</span>
-              </div>
-              <nav style="display:flex;gap:8px;margin-left:auto;">
-                <button class="topbar-btn" style="width:auto;padding:0 16px;gap:6px;font-size:13px;" @click=${() => this.navigate('signin')}>
-                  登录
-                </button>
-                <button class="topbar-btn primary" style="width:auto;padding:0 16px;gap:6px;font-size:13px;background:var(--accent);color:var(--accent-foreground);border-color:var(--accent);" @click=${() => this.navigate('tenant/register')}>
-                  注册
-                </button>
-              </nav>
-            ` : html`
-              <!-- Authenticated pages: full topbar -->
-              <div class="topnav-shell__content">
-                <div class="dashboard-header">
-                  <div class="dashboard-header__breadcrumb">
-                    <span class="dashboard-header__breadcrumb-current">${this.getPageTitle()}</span>
-                  </div>
-                </div>
-              </div>
+            <!-- Authenticated pages: full topbar -->
 
               <div class="topnav-shell__actions">
                 <div class="topbar-search">
@@ -770,11 +749,10 @@ export class App extends LitElement {
                       </div>
                     </div>
                   ` : ''}
-                </div>
               </div>
-            `}
-          </div>
-        </header>
+            </div>
+          </header>
+        ` : ''}
 
         <!-- Main Content -->
         <div class="main-content">
