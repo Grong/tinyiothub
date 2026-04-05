@@ -18,12 +18,20 @@ describe('driverApi', () => {
   })
 
   describe('getDrivers', () => {
-    it('calls apiGet with correct endpoint', async () => {
-      const mockDrivers: Driver[] = [
-        { name: 'modbus-tcp', version: '1.0.0', isLoaded: true, category: 'industrial' },
-        { name: 'mqtt', version: '2.1.0', isLoaded: true, category: 'iot' },
-      ]
-      const mockResponse = { code: 0, msg: '', result: mockDrivers }
+    it('calls apiGet with correct endpoint and flattens static + dynamic drivers', async () => {
+      // API returns { staticDrivers, dynamic } structure
+      const mockResponse = {
+        code: 0,
+        msg: '',
+        result: {
+          staticDrivers: [
+            { name: 'modbus-tcp', version: '1.0.0', isLoaded: true, category: 'industrial' },
+          ],
+          dynamic: [
+            { name: 'mqtt', version: '2.1.0', isLoaded: true, category: 'iot' },
+          ],
+        },
+      }
       ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue(mockResponse)
 
       const result = await driverApi.getDrivers()
@@ -31,26 +39,29 @@ describe('driverApi', () => {
       expect(apiGet).toHaveBeenCalledWith('drivers/dynamic/list')
       expect(result.result).toHaveLength(2)
       expect(result.result![0].name).toBe('modbus-tcp')
+      expect(result.result![1].name).toBe('mqtt')
     })
 
-    it('returns empty array when result is null', async () => {
+    it('handles empty static and dynamic arrays', async () => {
+      const mockResponse = {
+        code: 0,
+        msg: '',
+        result: { staticDrivers: [], dynamic: [] },
+      }
+      ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue(mockResponse)
+
+      const result = await driverApi.getDrivers()
+
+      expect(result.result).toEqual([])
+    })
+
+    it('returns null when result is null', async () => {
       const mockResponse = { code: 0, msg: '', result: null }
       ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue(mockResponse)
 
       const result = await driverApi.getDrivers()
 
       expect(result.result).toBeNull()
-    })
-
-    it('returns empty array when result is not an array', async () => {
-      // This is the bug scenario: API returns an object instead of array
-      const mockResponse = { code: 0, msg: '', result: { data: 'not an array' } }
-      ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue(mockResponse)
-
-      const result = await driverApi.getDrivers()
-
-      // The api client passes through whatever the API returns
-      expect(result.result).toEqual({ data: 'not an array' })
     })
   })
 

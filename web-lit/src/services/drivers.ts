@@ -22,9 +22,25 @@ export interface DriverConfigOption {
   options?: string[]  // for select type
 }
 
+// API returns { staticDrivers: Driver[], dynamic: Driver[] }
+interface AllDriversResponse {
+  staticDrivers: Driver[]
+  dynamic: Driver[]
+}
+
 export const driverApi = {
-  getDrivers: () =>
-    apiGet<Driver[]>('drivers/dynamic/list'),
+  getDrivers: async (): Promise<{ result: Driver[] | null }> => {
+    const res = await apiGet<AllDriversResponse>('drivers/dynamic/list')
+    if (res.result) {
+      return {
+        result: [
+          ...(res.result.staticDrivers || []),
+          ...(res.result.dynamic || []),
+        ],
+      }
+    }
+    return { result: null }
+  },
 
   getDriverConfig: (name: string) =>
     apiGet<DriverConfigOption[]>(`drivers/${name}/config`),
