@@ -37,8 +37,13 @@ export function initRouter(container: Element) {
   return _router
 }
 
-// Helper to navigate
+// Helper to navigate - uses router's internal navigation when available
 export function navigate(path: string) {
-  history.pushState({}, '', path)
-  window.dispatchEvent(new PopStateEvent('popstate'))
+  if (_router) {
+    // Use the router's internal goto method for proper routing
+    ;(_router as any).goto?.(path)
+  } else {
+    // Fallback: just change URL, router will pick up on next navigation
+    history.pushState({}, '', path)
+  }
 }
