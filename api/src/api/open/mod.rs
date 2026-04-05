@@ -180,16 +180,25 @@ async fn get_device(
     let row = row.ok_or(StatusCode::NOT_FOUND)?;
     let device = {
         use sqlx::Row;
+        let get = |col: &str| -> Result<String, StatusCode> {
+            row.try_get::<String, _>(col).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        };
+        let get_opt = |col: &str| -> Result<Option<String>, StatusCode> {
+            row.try_get::<Option<String>, _>(col).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        };
+        let get_i32 = |col: &str| -> Result<i32, StatusCode> {
+            row.try_get::<i32, _>(col).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        };
         serde_json::json!({
-            "id": row.try_get::<String, _>("id")?,
-            "name": row.try_get::<String, _>("name")?,
-            "display_name": row.try_get::<Option<String>, _>("display_name")?,
-            "device_type": row.try_get::<Option<String>, _>("device_type")?,
-            "address": row.try_get::<Option<String>, _>("address")?,
-            "state": row.try_get::<i32, _>("state")?,
-            "protocol_type": row.try_get::<Option<String>, _>("protocol_type")?,
-            "created_at": row.try_get::<String, _>("created_at")?,
-            "updated_at": row.try_get::<String, _>("updated_at")?,
+            "id": get("id")?,
+            "name": get("name")?,
+            "display_name": get_opt("display_name")?,
+            "device_type": get_opt("device_type")?,
+            "address": get_opt("address")?,
+            "state": get_i32("state")?,
+            "protocol_type": get_opt("protocol_type")?,
+            "created_at": get("created_at")?,
+            "updated_at": get("updated_at")?,
         })
     };
 
@@ -229,23 +238,28 @@ async fn get_device_properties(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let rows = {
-        use sqlx::Row;
-        let mut result = Vec::new();
-        for row in rows {
-            result.push(serde_json::json!({
-                "name": row.try_get::<String, _>("name")?,
-                "display_name": row.try_get::<Option<String>, _>("display_name")?,
-                "data_type": row.try_get::<String, _>("data_type")?,
-                "value": row.try_get::<Option<String>, _>("value")?,
-                "unit": row.try_get::<Option<String>, _>("unit")?,
-                "updated_at": row.try_get::<String, _>("updated_at")?,
-            }));
-        }
-        result
-    };
-
-    let properties: Vec<_> = rows.into_iter().map(|r| r).collect();
+    let properties: Vec<_> = rows
+        .into_iter()
+        .map(|row| {
+            use sqlx::Row;
+            let get = |r: &sqlx::sqlite::SqliteRow, col: &str| -> Result<String, StatusCode> {
+                r.try_get::<String, _>(col).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+            };
+            let get_opt =
+                |r: &sqlx::sqlite::SqliteRow, col: &str| -> Result<Option<String>, StatusCode> {
+                    r.try_get::<Option<String>, _>(col)
+                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+                };
+            Ok(serde_json::json!({
+                "name": get(&row, "name")?,
+                "display_name": get_opt(&row, "display_name")?,
+                "data_type": get(&row, "data_type")?,
+                "value": get_opt(&row, "value")?,
+                "unit": get_opt(&row, "unit")?,
+                "updated_at": get(&row, "updated_at")?,
+            }))
+        })
+        .collect::<Result<Vec<_>, StatusCode>>()?;
 
     let latency_ms = start.elapsed().as_millis() as i32;
     record_api_usage(
@@ -283,22 +297,27 @@ async fn list_commands(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let rows = {
-        use sqlx::Row;
-        let mut result = Vec::new();
-        for row in rows {
-            result.push(serde_json::json!({
-                "id": row.try_get::<String, _>("id")?,
-                "name": row.try_get::<String, _>("name")?,
-                "display_name": row.try_get::<Option<String>, _>("display_name")?,
-                "description": row.try_get::<Option<String>, _>("description")?,
-                "command_type": row.try_get::<String, _>("command_type")?,
-            }));
-        }
-        result
-    };
-
-    let commands: Vec<_> = rows.into_iter().map(|r| r).collect();
+    let commands: Vec<_> = rows
+        .into_iter()
+        .map(|row| {
+            use sqlx::Row;
+            let get = |r: &sqlx::sqlite::SqliteRow, col: &str| -> Result<String, StatusCode> {
+                r.try_get::<String, _>(col).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+            };
+            let get_opt =
+                |r: &sqlx::sqlite::SqliteRow, col: &str| -> Result<Option<String>, StatusCode> {
+                    r.try_get::<Option<String>, _>(col)
+                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+                };
+            Ok(serde_json::json!({
+                "id": get(&row, "id")?,
+                "name": get(&row, "name")?,
+                "display_name": get_opt(&row, "display_name")?,
+                "description": get_opt(&row, "description")?,
+                "command_type": get(&row, "command_type")?,
+            }))
+        })
+        .collect::<Result<Vec<_>, StatusCode>>()?;
 
     let latency_ms = start.elapsed().as_millis() as i32;
     record_api_usage(
@@ -393,22 +412,22 @@ async fn list_events(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let rows = {
-        use sqlx::Row;
-        let mut result = Vec::new();
-        for row in rows {
-            result.push(serde_json::json!({
-                "id": row.try_get::<String, _>("id")?,
-                "event_type": row.try_get::<String, _>("event_type")?,
-                "event_level": row.try_get::<String, _>("event_level")?,
-                "message": row.try_get::<String, _>("message")?,
-                "created_at": row.try_get::<String, _>("created_at")?,
-            }));
-        }
-        result
-    };
-
-    let events: Vec<_> = rows.into_iter().map(|r| r).collect();
+    let events: Vec<_> = rows
+        .into_iter()
+        .map(|row| {
+            use sqlx::Row;
+            let get = |r: &sqlx::sqlite::SqliteRow, col: &str| -> Result<String, StatusCode> {
+                r.try_get::<String, _>(col).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+            };
+            Ok(serde_json::json!({
+                "id": get(&row, "id")?,
+                "event_type": get(&row, "event_type")?,
+                "event_level": get(&row, "event_level")?,
+                "message": get(&row, "message")?,
+                "created_at": get(&row, "created_at")?,
+            }))
+        })
+        .collect::<Result<Vec<_>, StatusCode>>()?;
 
     let latency_ms = start.elapsed().as_millis() as i32;
     record_api_usage(
