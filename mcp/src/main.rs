@@ -482,6 +482,7 @@ fn _assert_deserialize_flatten() {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    eprintln!("WARNING: This MCP server is deprecated. Use the embedded MCP in api/src/api/mcp/ instead. This crate will be removed in v2.0.");
     // 初始化日志
     tracing_subscriber::fmt()
         .with_env_filter(
