@@ -3,6 +3,7 @@ import { LitElement, html, css } from 'lit'
 import { customElement, property, state } from 'lit/decorators.js'
 import { driverApi, type Driver, type DriverConfigOption } from '../services/drivers'
 import type { ProcessedDeviceTemplate } from '../services/templates'
+import { isFieldRequired } from '../services/templates'
 
 @customElement('device-info-form')
 export class DeviceInfoForm extends LitElement {
@@ -49,20 +50,73 @@ export class DeviceInfoForm extends LitElement {
   @state() drivers: Driver[] = []
   @state() driverConfig: DriverConfigOption[] = []
   @state() errors: Record<string, string> = {}
+  @state() private _initialized = false
 
   private get _formData() {
-    try { return JSON.parse(this.value) } catch { return {} }
-  }
+    try { return JSON.parse(this.value) } catch { return {} }  }
 
   async connectedCallback() {
     super.connectedCallback()
     await this.loadDrivers()
   }
 
+  updated(changedProperties: Map<string, unknown>) {
+    if (changedProperties.has('template') && this.template) {
+      this._initFromTemplate()
+    }
+  }
+
+  private async _initFromTemplate() {
+    if (!this.template || this._initialized) return
+    this._initialized = true
+
+    // Wait for drivers to load
+    if (this.drivers.length === 0) {
+      await this.loadDrivers()
+    }
+
+    // Pre-fill form with template defaults
+    const d = this._formData
+    const data: Record<string, any> = { ...d }
+
+    if (!data.name) {
+      const pattern = this.template.deviceInfo?.defaultNamePattern
+      data.name = pattern ? pattern.replace('{name}', this.template.name) : this.template.name
+    }
+    if (!data.description) {
+      const desc = this.template.deviceInfo?.defaultDescription
+      data.description = typeof desc === 'object' ? Object.values(desc as Record<string, string>)[0] || '' : ''
+    }
+    if (!data.address && isFieldRequired(this.template.deviceInfo, 'address')) {
+      data.address = ''
+    }
+    if (!data.position) {
+      data.position = this.template.deviceInfo?.defaultPosition || ''
+    }
+
+    // Auto-load driver config for template's driver
+    const templateDriver = this.template.driverName
+    if (templateDriver && !data.driverName) {
+      data.driverName = templateDriver
+      await this.loadDriverConfig(templateDriver)
+      // Initialize driver options with defaults
+      const opts: Record<string, string> = {}
+      for (const opt of this.driverConfig) {
+        if (opt.defaultValue) opts[opt.name] = opt.defaultValue
+      }
+      data.driverOptions = JSON.stringify(opts)
+    } else if (data.driverName) {
+      await this.loadDriverConfig(data.driverName)
+    }
+
+    this.value = JSON.stringify(data)
+    this.dispatchEvent(new CustomEvent('change', { detail: data }))
+  }
+
   async loadDrivers() {
     try {
       const res = await driverApi.getDrivers()
-      if (res.result) this.drivers = res.result
+      if (Array.isArray(res.result)) this.drivers = res.result
     } catch { this.drivers = [] }
   }
 
@@ -70,7 +124,7 @@ export class DeviceInfoForm extends LitElement {
     if (!driverName) { this.driverConfig = []; return }
     try {
       const res = await driverApi.getDriverConfig(driverName)
-      if (res.result) this.driverConfig = res.result
+      if (Array.isArray(res.result)) this.driverConfig = res.result
     } catch { this.driverConfig = [] }
   }
 
@@ -108,7 +162,7 @@ export class DeviceInfoForm extends LitElement {
       </div>
 
       <div class="form-group">
-        <label class="form-label">设备地址</label>
+        <label class="form-label">设备地址 ${isFieldRequired(this.template?.deviceInfo, 'address') ? html`<span class="required">*</span>` : ''}</label>
         <input type="text" class="form-input" .value=${d.address || ''} @input=${(e: InputEvent) => this.handleInput('address', (e.target as HTMLInputElement).value)} />
       </div>
 
@@ -121,7 +175,7 @@ export class DeviceInfoForm extends LitElement {
         <label class="form-label">驱动</label>
         <select class="form-select" .value=${d.driverName || ''} @change=${(e: Event) => this.handleInput('driverName', (e.target as HTMLSelectElement).value)}>
           <option value="">选择驱动</option>
-          ${this.drivers.map(dr => html`<option value=${dr.name}>${dr.name}</option>`)}
+          ${this.drivers.map(dr => html`<option value=${dr.name}>${dr.name}${dr.version ? ` (${dr.version})` : ''}</option>`)}
         </select>
       </div>
 
@@ -134,7 +188,7 @@ export class DeviceInfoForm extends LitElement {
                 ${opt.label} ${opt.required ? html`<span class="required">*</span>` : ''}
               </label>
               ${opt.type === 'boolean' ? html`
-                <select class="form-select" @change=${(e: Event) => this.handleDriverOption(opt.name, (e.target as HTMLSelectElement).value)}>
+                <select class="form-select" .value=${JSON.parse(d.driverOptions || '{}')[opt.name] || opt.defaultValue || 'false'} @change=${(e: Event) => this.handleDriverOption(opt.name, (e.target as HTMLSelectElement).value)}>
                   <option value="true">是</option>
                   <option value="false">否</option>
                 </select>

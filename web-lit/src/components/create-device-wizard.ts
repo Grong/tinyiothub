@@ -31,6 +31,7 @@ export class CreateDeviceWizard extends LitElement {
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      min-height: 0;
     }
     .header {
       display: flex;
@@ -57,7 +58,7 @@ export class CreateDeviceWizard extends LitElement {
       cursor: pointer;
     }
     .close-btn:hover { background: var(--bg-hover); }
-    .body { flex: 1; display: flex; overflow: hidden; }
+    .body { flex: 1; display: flex; overflow: hidden; min-height: 0; }
     .step-indicator {
       display: flex;
       gap: 8px;
@@ -109,17 +110,20 @@ export class CreateDeviceWizard extends LitElement {
     }
     .device-step {
       display: flex;
-      height: 100%;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
     }
     .form-area {
       flex: 1;
       padding: 24px;
       overflow-y: auto;
+      min-width: 0;
     }
     .preview-area {
-      width: 400px;
+      flex: 0 0 360px;
       border-left: 1px solid var(--border);
-      background: var(--card);
+      overflow-y: auto;
     }
     .footer {
       display: flex;
