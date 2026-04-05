@@ -642,9 +642,9 @@ export class DeviceDetailPage extends LitElement {
     const deviceId = params.get('id')
     if (deviceId) {
       this.loadDevice(deviceId)
-      // Auto-refresh every 3 seconds
+      // Auto-refresh every 3 seconds (silent refresh to avoid UI flicker)
       this.refreshInterval = window.setInterval(() => {
-        if (this.deviceId) this.loadDevice(this.deviceId)
+        if (this.deviceId) this.loadDevice(this.deviceId, true)
       }, 3000)
     } else {
       this.error = '未指定设备ID'
@@ -662,9 +662,11 @@ export class DeviceDetailPage extends LitElement {
     return params.get('id') || ''
   }
 
-  async loadDevice(deviceId: string) {
-    this.loading = true
-    this.error = null
+  async loadDevice(deviceId: string, silent = false) {
+    if (!silent) {
+      this.loading = true
+      this.error = null
+    }
 
     try {
       const response = await deviceApi.getDeviceProfile(deviceId)
@@ -674,7 +676,9 @@ export class DeviceDetailPage extends LitElement {
     } catch (err: any) {
       this.error = err.message || '加载设备详情失败'
     } finally {
-      this.loading = false
+      if (!silent) {
+        this.loading = false
+      }
     }
   }
 

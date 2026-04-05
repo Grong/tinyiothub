@@ -77,6 +77,7 @@ export class DeviceCard extends LitElement {
     }
     .status-dot.online { background: var(--ok); }
     .status-dot.offline { background: var(--muted); }
+    .status-dot.warning { background: var(--warn); }
     .status-dot.error { background: var(--danger); }
     .status-dot.maintenance { background: var(--warn); }
     .actions { display: flex; gap: 4px; }
@@ -138,7 +139,7 @@ export class DeviceCard extends LitElement {
           <div class="card-footer">
             <div class="status">
               <span class="status-dot ${status}"></span>
-              <span>${status === 'online' ? '在线' : status === 'offline' ? '离线' : status === 'maintenance' ? '维护' : '错误'}</span>
+              <span>${status === 'online' ? '在线' : status === 'offline' ? '离线' : status === 'warning' ? '警告' : status === 'maintenance' ? '维护' : '错误'}</span>
             </div>
             <div class="actions">
               <button class="action-btn" title="编辑" @click=${this.handleEdit}>
