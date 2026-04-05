@@ -24,6 +24,19 @@ export interface PaginatedResponse<T> {
   }
 }
 
+// 自定义 API 错误类
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public code: number,
+    public data: unknown,
+    public status: number
+  ) {
+    super(message)
+    this.name = 'ApiError'
+  }
+}
+
 // HTTP 请求选项
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH'
@@ -162,17 +175,10 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
       }
 
       const errorMessage = errorData?.msg || errorData?.message || `HTTP ${response.status}`
-      const error = new Error(errorMessage)
-      ;(error as any).data = errorData
-      ;(error as any).status = response.status
-
-      throw error
+      throw new ApiError(errorMessage, errorData?.code ?? -1, errorData, response.status)
     }
 
     return await response.json()
-  } catch (error) {
-    // 重新抛出错误，保持错误信息
-    throw error
   }
 }
 
@@ -195,10 +201,7 @@ export class ApiClient {
 
     // 检查API响应中的code字段
     if (response.code !== 0) {
-      const error = new Error(response.msg || '请求失败')
-      ;(error as any).data = response
-      ;(error as any).code = response.code
-      throw error
+      throw new ApiError(response.msg || '请求失败', response.code, response, 0)
     }
 
     // 将响应转换为 camelCase
@@ -225,10 +228,7 @@ export class ApiClient {
 
     // 检查API响应中的code字段
     if (response.code !== 0) {
-      const error = new Error(response.msg || '请求失败')
-      ;(error as any).data = response
-      ;(error as any).code = response.code
-      throw error
+      throw new ApiError(response.msg || '请求失败', response.code, response, 0)
     }
 
     // 将响应转换为 camelCase
@@ -255,10 +255,7 @@ export class ApiClient {
 
     // 检查API响应中的code字段
     if (response.code !== 0) {
-      const error = new Error(response.msg || '请求失败')
-      ;(error as any).data = response
-      ;(error as any).code = response.code
-      throw error
+      throw new ApiError(response.msg || '请求失败', response.code, response, 0)
     }
 
     // 将响应转换为 camelCase
@@ -280,10 +277,7 @@ export class ApiClient {
 
     // 检查API响应中的code字段
     if (response.code !== 0) {
-      const error = new Error(response.msg || '请求失败')
-      ;(error as any).data = response
-      ;(error as any).code = response.code
-      throw error
+      throw new ApiError(response.msg || '请求失败', response.code, response, 0)
     }
 
     // 将响应转换为 camelCase
@@ -310,10 +304,7 @@ export class ApiClient {
 
     // 检查API响应中的code字段
     if (response.code !== 0) {
-      const error = new Error(response.msg || '请求失败')
-      ;(error as any).data = response
-      ;(error as any).code = response.code
-      throw error
+      throw new ApiError(response.msg || '请求失败', response.code, response, 0)
     }
 
     // 将响应转换为 camelCase
