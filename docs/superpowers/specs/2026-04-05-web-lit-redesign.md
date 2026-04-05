@@ -186,25 +186,96 @@ All interactive components must support:
 - Focused (ring: `--ring`)
 - Disabled (opacity: 0.5)
 
+### 3.6 Interaction State Specifications
+
+Every feature must implement all states below. "—" means state does not apply.
+
+```
+FEATURE                    | LOADING              | EMPTY                    | ERROR                    | SUCCESS                  | PARTIAL
+--------------------------|---------------------|--------------------------|--------------------------|--------------------------|--------
+Device List               | Skeleton rows (5)   | "No devices yet" + CTA  | Red banner + retry btn   | Toast + update list      | Filtered, no results
+Device Detail             | Spinner in content  | N/A (single item)      | Red banner + back btn    | Auto-dismiss toast       | Some data missing
+Alarm List                | Skeleton rows (5)   | "No alarms" + icon      | Red banner + retry btn   | Toast + highlight new    | Filtered, some dismissed
+Dashboard Stats            | Skeleton cards (4)  | N/A (always has data)  | Gray out + "Offline"     | Auto-refresh in 30s      | Partial data
+Sign-in Form              | Spinner in button   | N/A                     | Inline field errors       | Redirect to /dashboard   | Network timeout
+Register Form             | Spinner in button   | N/A                     | Inline field errors       | Redirect to /signin     | Validation errors
+Settings Form             | Spinner in save btn | N/A                     | Inline error + toast     | Toast + disable save     | Unsaved changes warn
+Marketplace               | Skeleton cards (6)  | "Nothing found" + clear  | Red banner + retry btn   | Toast on install         | Some installable
+Command Send              | Spinner in panel    | N/A                     | Red inline + retry       | Green toast              | Device offline warn
+```
+
+**Loading state: Skeleton pattern**
+- Use animated pulse (opacity 0.5 → 1.0, 1.5s ease-in-out loop)
+- Skeleton matches the shape of real content (table rows, cards, text lines)
+- Never show spinners for content areas
+
+**Empty state: Warm + Actionable**
+- Centered illustration (simple SVG, IoT-themed: gateway, sensor, cloud)
+- Friendly message: "No [items] yet" — not "No items found"
+- Primary CTA button to add/create first item
+- Secondary text explaining what these are for
+
+**Error state: Recoverable**
+- Red banner at top of affected area (not full-page overlay)
+- Message: what failed + why (if known)
+- Retry button (primary action)
+- Error ID for support if persistent
+
+**Success state: Feedback + Proceed**
+- Toast notification (bottom-right, 4s auto-dismiss)
+- Action confirmation text (not just "Success")
+- Navigate or update affected list/panel
+
 ---
 
 ## 4. Page Routes
 
-| Route | Component | Description |
-|-------|-----------|-------------|
-| `/` | `HomePage` | Landing page |
-| `/signin` | `SigninPage` | Login |
-| `/tenant/register` | `RegisterPage` | Registration |
-| `/dashboard` | `DashboardPage` | Main dashboard |
-| `/devices` | `DevicesPage` | Device list |
-| `/device-detail/:id` | `DeviceDetailPage` | Device detail |
-| `/alarms` | `AlarmsPage` | Alarm management |
-| `/monitoring` | `MonitoringPage` | Real-time monitoring |
-| `/settings` | `SettingsPage` | User settings |
-| `/tags` | `TagsPage` | Tag management |
-| `/templates` | `TemplatesPage` | Device templates |
-| `/marketplace` | `MarketplacePage` | Plugin marketplace |
-| `/installed-marketplace` | `InstalledMarketplacePage` | Installed plugins |
+### 4.1 Shell Types
+
+| Shell Type | Pages | Description |
+|------------|-------|-------------|
+| **Standalone** | `/`, `/signin`, `/tenant/register` | No sidebar, no topbar. Full-bleed pages for marketing and auth. |
+| **App Shell** | All other routes | Sidebar (258px) + Topbar (52px) + Content. Authenticated workspace. |
+
+### 4.2 Route Map
+
+| Route | Component | Shell | Description |
+|-------|-----------|-------|-------------|
+| `/` | `HomePage` | Standalone | Landing page (marketing) |
+| `/signin` | `SigninPage` | Standalone | Login |
+| `/tenant/register` | `RegisterPage` | Standalone | Registration |
+| `/dashboard` | `DashboardPage` | App Shell | Main dashboard |
+| `/devices` | `DevicesPage` | App Shell | Device list |
+| `/device-detail/:id` | `DeviceDetailPage` | App Shell | Device detail |
+| `/alarms` | `AlarmsPage` | App Shell | Alarm management |
+| `/monitoring` | `MonitoringPage` | App Shell | Real-time monitoring |
+| `/settings` | `SettingsPage` | App Shell | User settings |
+| `/tags` | `TagsPage` | App Shell | Tag management |
+| `/templates` | `TemplatesPage` | App Shell | Device templates |
+| `/marketplace` | `MarketplacePage` | App Shell | Plugin marketplace |
+| `/installed-marketplace` | `InstalledMarketplacePage` | App Shell | Installed plugins |
+
+### 4.3 Sidebar Navigation
+
+**Primary Nav (always visible in sidebar)**:
+- Dashboard (overview icon)
+- Devices (device icon)
+- Alarms (bell icon)
+- Monitoring (chart icon)
+
+**Secondary Nav (collapsible section)**:
+- Templates (box icon)
+- Marketplace (store icon)
+- Installed Plugins (plug icon)
+
+**Footer Nav**:
+- Settings (gear icon)
+
+**Navigation behavior**:
+- Active item: `--accent` background tint, `--accent` text color
+- Hover: `--bg-hover` background
+- Collapsed mode (78px): icons only, tooltips on hover
+- Mobile (<768px): drawer overlay, hamburger toggle in topbar
 
 ---
 
@@ -286,7 +357,77 @@ UI Re-render
 
 ---
 
-## 7. Development Phases
+## 7. User Journeys
+
+### 7.1 First-Time User Journey (Onboarding)
+
+```
+STEP | USER DOES                    | USER FEELS              | PLAN SPECIFIES
+-----|------------------------------|-------------------------|-------------------
+1    | Lands on /                  | Curious, evaluating     | Hero: "Edge Intelligence" tagline, value prop, CTA "Get Started"
+2    | Clicks "Get Started"        | Ready to try            | Redirect to /tenant/register
+3    | Fills registration form      | Anticipating setup     | Email + password, tenant name. No company size dropdown
+4    | Submits → lands on /dashboard | Accomplished, curious  | Empty dashboard with onboarding banner: "Add your first device"
+5    | Clicks "Add First Device"    | Empowered               | Opens device creation modal or /devices with create wizard
+6    | Selects template or manual   | Focused                 | Template cards (Modbus, MQTT, ONVIF, SNMP) + manual option
+7    | Configures device + tests     | Validating              | Test connection button, live status feedback
+8    | Device online → sees data    | Excited, trusting       | Dashboard auto-refreshes, shows first data point + celebration toast
+```
+
+### 7.2 Returning Operator Journey (Daily Use)
+
+```
+STEP | USER DOES                    | USER FEELS              | PLAN SPECIFIES
+-----|------------------------------|-------------------------|-------------------
+1    | Lands on /dashboard          | habitual, efficient     | Stats cards visible immediately (no loading if cached)
+2    | Skims alarm count badge      | Alert, assessing        | Red badge on Alarms nav if unread alarms. Badge count = urgency cue
+3    | Clicks Alarms                | Focused, urgency        | Alarm list sorted by severity + time. Critical on top.
+4    | Acknowledges alarm           | Relieved, responsible   | "Acknowledge" button → alarm moves to "Acknowledged" state, badge decrements
+5    | Investigates device          | Analytical              | Clicks device → Device Detail with live metrics + command panel
+6    | Sends command (e.g., reset) | Empowered, in control   | Confirmation dialog → spinner → success toast → device responds
+```
+
+### 7.3 First Device Empty State
+
+When `/dashboard` has zero devices:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                                                         │
+│              [Gateway SVG illustration]                  │
+│                                                         │
+│              "No devices yet"                          │
+│                                                         │
+│       Your edge gateway is ready. Add your first        │
+│       device to start monitoring.                       │
+│                                                         │
+│       [  Add First Device  ]  (primary button)          │
+│                                                         │
+│       Or [Browse Templates]  (ghost button)             │
+│                                                         │
+└─────────────────────────────────────────────────────────┘
+```
+
+### 7.4 Auth Flow
+
+```
+Sign-in (/signin):
+- Single email + password form
+- "Remember me" checkbox (persists session 30 days)
+- Forgot password link → (future: reset flow)
+- Error: inline field error, no full-page error
+- Success: redirect to URL param `?redirect=` or /dashboard
+
+Register (/tenant/register):
+- Tenant name + email + password
+- Terms acceptance checkbox
+- Error: inline field errors
+- Success: auto-login → redirect to /dashboard
+```
+
+---
+
+## 8. Development Phases
 
 ### Phase 0: Scaffold (P0)
 - [ ] Initialize `web-lit/` with Vite + Lit
@@ -344,7 +485,7 @@ UI Re-render
 
 ---
 
-## 8. Build & Deployment
+## 9. Build & Deployment
 
 ### 8.1 Build Output
 - Single HTML entry point
@@ -365,7 +506,7 @@ cd web-lit && pnpm build
 
 ---
 
-## 9. Resolved Decisions
+## 10. Resolved Decisions
 
 | Decision | Resolution | Rationale |
 |----------|------------|-----------|
@@ -386,7 +527,7 @@ The existing `web/service/` layer has React Query and Next.js dependencies. Befo
 
 ---
 
-## 10. Success Criteria
+## 11. Success Criteria
 
 - [ ] All 14 pages implemented
 - [ ] Base component library complete
