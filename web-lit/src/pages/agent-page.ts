@@ -20,6 +20,7 @@ import { sendAgentMessage } from '../services/agent'
 import type { A2uiMessage } from '../types/agent-types'
 import '../components/agent/chat-thread'
 import '../components/agent/chat-input'
+import { hostStyles } from '../styles/shared-host'
 
 @customElement('agent-page')
 export class AgentPage extends LitElement {
@@ -29,7 +30,7 @@ export class AgentPage extends LitElement {
   private _abortController: AbortController | null = null
   private _unsubs: (() => void)[] = []
 
-  static styles = css`
+  static styles = [hostStyles, css`
     :host {
       display: flex;
       flex-direction: column;
@@ -111,7 +112,7 @@ export class AgentPage extends LitElement {
     @media (max-width: 768px) {
       .suggestions { max-width: 100%; }
     }
-  `
+  `]
 
   firstUpdated() {
     loadMessagesFromStorage()
