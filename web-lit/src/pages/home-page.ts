@@ -1,7 +1,6 @@
 import { LitElement, html, css } from 'lit'
 import { customElement, state } from 'lit/decorators.js'
 import { navigate } from '../lib/navigate'
-import { $isAuthenticated } from '../stores/auth-store'
 
 @customElement('home-page')
 export class HomePage extends LitElement {
@@ -19,15 +18,9 @@ export class HomePage extends LitElement {
       left: 0;
       right: 0;
       z-index: 50;
-      background: rgba(255, 255, 255, 0.8);
+      background: var(--chrome);
+      border-bottom: 1px solid var(--border);
       backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      border-bottom: 1px solid rgba(255, 255, 255, 0.3);
-      transition: transform 0.3s ease;
-    }
-
-    :host([data-scrolled="true"]) .nav {
-      transform: translateY(-100%);
     }
 
     .nav-inner {
@@ -51,17 +44,20 @@ export class HomePage extends LitElement {
       align-items: center;
       gap: 8px;
       text-decoration: none;
+      cursor: pointer;
     }
 
-    .nav-logo img {
+    .nav-logo svg {
       width: 36px;
       height: 36px;
+      color: var(--accent);
     }
 
     .nav-logo-text {
       font-size: 20px;
       font-weight: 700;
       color: var(--text-strong);
+      letter-spacing: -0.02em;
     }
 
     .nav-links {
@@ -79,11 +75,13 @@ export class HomePage extends LitElement {
       font-weight: 500;
       color: var(--text);
       text-decoration: none;
-      transition: background 0.15s ease;
+      cursor: pointer;
+      transition: background 0.15s ease, color 0.15s ease;
     }
 
     .nav-link:hover {
       background: var(--bg-hover);
+      color: var(--text-strong);
     }
 
     .nav-right {
@@ -95,243 +93,185 @@ export class HomePage extends LitElement {
     .nav-github {
       color: var(--muted);
       transition: color 0.15s ease;
+      cursor: pointer;
     }
 
     .nav-github:hover {
-      color: var(--text);
+      color: var(--text-strong);
     }
 
-    .nav-github svg {
-      width: 20px;
-      height: 20px;
-    }
-
-    .nav-btn-text {
-      font-size: 14px;
-      font-weight: 500;
-      color: var(--text);
-      cursor: pointer;
-      transition: color 0.15s ease;
-    }
-
-    .nav-btn-text:hover {
-      color: var(--accent);
-    }
-
-    .nav-btn-primary {
-      padding: 8px 20px;
-      background: var(--accent);
-      color: var(--accent-foreground);
-      border: none;
+    .nav-btn {
+      height: 32px;
+      padding: 0 16px;
       border-radius: var(--radius-md);
       font-size: 14px;
-      font-weight: 600;
+      font-weight: 500;
       cursor: pointer;
-      transition: background 0.15s ease;
+      transition: all 0.15s ease;
+      border: none;
     }
 
-    .nav-btn-primary:hover {
+    .nav-btn.ghost {
+      background: transparent;
+      color: var(--text);
+    }
+
+    .nav-btn.ghost:hover {
+      background: var(--bg-hover);
+      color: var(--text-strong);
+    }
+
+    .nav-btn.primary {
+      background: var(--accent);
+      color: var(--accent-foreground);
+    }
+
+    .nav-btn.primary:hover {
       background: var(--accent-hover);
     }
 
     /* Hero Section */
     .hero {
-      position: relative;
-      padding: 140px 24px 80px;
+      padding: 160px 24px 80px;
       text-align: center;
-      overflow: hidden;
-    }
-
-    .hero-bg {
-      position: absolute;
-      inset: 0;
       background: linear-gradient(180deg, var(--bg-accent) 0%, var(--bg) 100%);
-      z-index: 0;
-    }
-
-    .hero-glow {
-      position: absolute;
-      top: 0;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 800px;
-      height: 500px;
-      background: radial-gradient(ellipse, rgba(59, 130, 246, 0.15) 0%, transparent 70%);
-      pointer-events: none;
-    }
-
-    .hero-content {
-      position: relative;
-      z-index: 1;
-      max-width: 900px;
-      margin: 0 auto;
     }
 
     .hero-badge {
       display: inline-flex;
       align-items: center;
       gap: 8px;
-      padding: 8px 16px;
-      background: rgba(139, 92, 246, 0.1);
-      border: 1px solid rgba(139, 92, 246, 0.3);
+      padding: 6px 12px;
+      background: var(--accent-subtle);
+      border: 1px solid var(--accent-muted);
       border-radius: var(--radius-full);
-      font-size: 14px;
-      color: #8b5cf6;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--accent);
       margin-bottom: 24px;
     }
 
-    .hero-badge-dot {
-      width: 8px;
-      height: 8px;
-      background: #a78bfa;
-      border-radius: 50%;
-      animation: pulse 2s infinite;
-    }
-
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.5; }
-    }
-
     .hero-title {
-      font-size: 56px;
+      font-size: 64px;
       font-weight: 700;
-      color: var(--text-strong);
-      margin: 0 0 24px;
-      letter-spacing: -0.03em;
       line-height: 1.1;
+      letter-spacing: -0.03em;
+      margin: 0 0 24px;
+      max-width: 900px;
+      margin-left: auto;
+      margin-right: auto;
     }
 
-    .hero-title-gradient {
-      background: linear-gradient(135deg, #3b82f6 0%, #6366f1 50%, #8b5cf6 100%);
+    .hero-title .gradient {
+      background: linear-gradient(135deg, var(--accent) 0%, #ff8a8a 50%, var(--accent-2) 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
     }
 
     .hero-desc {
-      font-size: 20px;
-      color: var(--muted);
-      margin: 0 0 48px;
+      font-size: 18px;
       line-height: 1.6;
-      max-width: 700px;
-      margin-left: auto;
-      margin-right: auto;
+      color: var(--muted);
+      max-width: 600px;
+      margin: 0 auto 40px;
     }
 
-    .hero-actions {
+    .hero-btns {
       display: flex;
       gap: 16px;
       justify-content: center;
       flex-wrap: wrap;
     }
 
-    .btn-primary {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 16px 32px;
-      background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-      color: white;
+    .btn {
+      height: 44px;
+      padding: 0 24px;
+      border-radius: var(--radius-md);
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
       border: none;
-      border-radius: var(--radius-lg);
-      font-size: 16px;
-      font-weight: 600;
-      cursor: pointer;
       text-decoration: none;
-      box-shadow: 0 4px 14px rgba(59, 130, 246, 0.4);
-      transition: all 0.2s ease;
-    }
-
-    .btn-primary:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 6px 20px rgba(59, 130, 246, 0.5);
-    }
-
-    .btn-secondary {
       display: inline-flex;
       align-items: center;
       gap: 8px;
-      padding: 16px 32px;
-      background: rgba(255, 255, 255, 0.6);
-      backdrop-filter: blur(8px);
-      color: var(--text);
-      border: 1px solid rgba(255, 255, 255, 0.5);
-      border-radius: var(--radius-lg);
-      font-size: 16px;
-      font-weight: 600;
-      cursor: pointer;
-      text-decoration: none;
-      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
-      transition: all 0.2s ease;
     }
 
-    .btn-secondary:hover {
-      background: rgba(255, 255, 255, 0.8);
-      transform: translateY(-2px);
+    .btn.primary {
+      background: var(--accent);
+      color: var(--accent-foreground);
+    }
+
+    .btn.primary:hover {
+      background: var(--accent-hover);
+      transform: translateY(-1px);
+    }
+
+    .btn.secondary {
+      background: var(--card);
+      color: var(--text-strong);
+      border: 1px solid var(--border);
+    }
+
+    .btn.secondary:hover {
+      background: var(--bg-hover);
+      border-color: var(--border-hover);
     }
 
     /* Protocols */
     .protocols {
-      padding: 48px 24px;
-      text-align: center;
+      padding: 0 24px 80px;
+      background: var(--bg);
     }
 
-    .protocols-label {
-      font-size: 14px;
-      color: var(--muted);
-      margin-bottom: 20px;
-    }
-
-    .protocols-list {
+    .protocols-inner {
+      max-width: 900px;
+      margin: 0 auto;
       display: flex;
-      gap: 12px;
-      justify-content: center;
       flex-wrap: wrap;
+      justify-content: center;
+      gap: 12px;
     }
 
     .protocol-badge {
-      padding: 10px 20px;
-      background: rgba(255, 255, 255, 0.6);
-      backdrop-filter: blur(8px);
-      border: 1px solid rgba(255, 255, 255, 0.5);
-      border-radius: var(--radius-lg);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
       font-size: 14px;
       font-weight: 500;
       color: var(--text);
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
     }
 
-    .protocol-badge-accent {
-      background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(99, 102, 241, 0.1) 100%);
-      border-color: rgba(59, 130, 246, 0.3);
-      background-clip: padding-box;
+    .protocol-badge svg {
+      width: 18px;
+      height: 18px;
+      color: var(--accent);
     }
 
-    /* Stats Section */
+    /* Stats */
     .stats {
-      padding: 64px 24px;
+      padding: 60px 24px;
+      background: var(--bg-accent);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
     }
 
-    .stats-card {
-      max-width: 1100px;
+    .stats-inner {
+      max-width: 1000px;
       margin: 0 auto;
-      padding: 32px 48px;
-      background: rgba(255, 255, 255, 0.5);
-      backdrop-filter: blur(16px);
-      border: 1px solid rgba(255, 255, 255, 0.6);
-      border-radius: var(--radius-3xl);
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
-    }
-
-    .stats-grid {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
       gap: 32px;
     }
 
     @media (max-width: 768px) {
-      .stats-grid {
+      .stats-inner {
         grid-template-columns: repeat(2, 1fr);
       }
     }
@@ -341,407 +281,336 @@ export class HomePage extends LitElement {
     }
 
     .stat-value {
-      font-size: 42px;
+      font-size: 36px;
       font-weight: 700;
       color: var(--text-strong);
-      letter-spacing: -0.03em;
-      background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
+      letter-spacing: -0.02em;
+      margin-bottom: 8px;
     }
 
     .stat-label {
       font-size: 14px;
       color: var(--muted);
-      margin-top: 8px;
     }
 
-    /* AI Features Section */
-    .ai-section {
-      padding: 96px 24px;
+    /* Features */
+    .features {
+      padding: 100px 24px;
+      background: var(--bg);
     }
 
-    .ai-header {
+    .section-header {
       text-align: center;
-      max-width: 700px;
-      margin: 0 auto 64px;
+      margin-bottom: 60px;
     }
 
-    .ai-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 6px 14px;
-      background: rgba(139, 92, 246, 0.1);
-      border: 1px solid rgba(139, 92, 246, 0.3);
-      border-radius: var(--radius-full);
-      font-size: 14px;
-      color: #8b5cf6;
-      margin-bottom: 24px;
+    .section-tag {
+      display: inline-block;
+      padding: 6px 12px;
+      background: var(--accent-subtle);
+      border-radius: var(--radius-md);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 16px;
     }
 
-    .ai-badge svg {
-      width: 16px;
-      height: 16px;
-    }
-
-    .ai-title {
-      font-size: 42px;
+    .section-title {
+      font-size: 40px;
       font-weight: 700;
       color: var(--text-strong);
-      margin: 0 0 24px;
       letter-spacing: -0.02em;
+      margin: 0 0 16px;
     }
 
-    .ai-desc {
-      font-size: 18px;
+    .section-desc {
+      font-size: 16px;
       color: var(--muted);
-      line-height: 1.7;
+      max-width: 600px;
+      margin: 0 auto;
+      line-height: 1.6;
     }
 
-    .ai-accent {
-      color: #8b5cf6;
-      font-weight: 600;
-    }
-
-    /* Feature Cards */
     .features-grid {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 24px;
       max-width: 1200px;
-      margin: 0 auto 48px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 24px;
     }
 
-    @media (max-width: 900px) {
+    @media (max-width: 768px) {
       .features-grid {
-        grid-template-columns: repeat(2, 1fr);
+        grid-template-columns: 1fr;
       }
     }
 
     .feature-card {
-      background: rgba(255, 255, 255, 0.6);
-      backdrop-filter: blur(12px);
-      border: 1px solid rgba(255, 255, 255, 0.8);
-      border-radius: var(--radius-2xl);
-      padding: 24px;
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
-      transition: all 0.3s ease;
+      padding: 32px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      transition: all 0.2s ease;
     }
 
     .feature-card:hover {
-      transform: translateY(-4px);
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+      border-color: var(--border-hover);
+      transform: translateY(-2px);
     }
 
     .feature-icon {
       width: 48px;
       height: 48px;
-      border-radius: var(--radius-lg);
       display: flex;
       align-items: center;
       justify-content: center;
-      margin-bottom: 16px;
+      background: var(--accent-subtle);
+      border-radius: var(--radius-md);
+      margin-bottom: 20px;
     }
 
     .feature-icon svg {
       width: 24px;
       height: 24px;
-    }
-
-    .feature-icon.blue {
-      background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-      color: white;
-      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
-    }
-
-    .feature-icon.green {
-      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-      color: white;
-      box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
-    }
-
-    .feature-icon.purple {
-      background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
-      color: white;
-      box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
-    }
-
-    .feature-icon.orange {
-      background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
-      color: white;
-      box-shadow: 0 4px 12px rgba(249, 115, 22, 0.3);
+      color: var(--accent);
     }
 
     .feature-title {
-      font-size: 18px;
+      font-size: 20px;
       font-weight: 600;
       color: var(--text-strong);
-      margin: 0 0 8px;
+      margin: 0 0 12px;
+      letter-spacing: -0.01em;
     }
 
     .feature-desc {
       font-size: 14px;
       color: var(--muted);
+      line-height: 1.6;
       margin: 0;
-      line-height: 1.5;
     }
 
-    /* Agent Features */
-    .agent-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 24px;
+    /* Agents */
+    .agents {
+      padding: 0 24px 100px;
+      background: var(--bg);
+    }
+
+    .agents-grid {
       max-width: 1200px;
       margin: 0 auto;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
     }
 
     @media (max-width: 900px) {
-      .agent-grid {
+      .agents-grid {
         grid-template-columns: repeat(2, 1fr);
       }
     }
 
+    @media (max-width: 600px) {
+      .agents-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
     .agent-card {
-      background: rgba(255, 255, 255, 0.6);
-      backdrop-filter: blur(12px);
-      border: 1px solid rgba(255, 255, 255, 0.8);
-      border-radius: var(--radius-2xl);
-      padding: 32px;
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
-      transition: all 0.3s ease;
+      padding: 20px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      transition: all 0.15s ease;
     }
 
     .agent-card:hover {
-      transform: translateY(-4px);
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+      background: var(--bg-hover);
+      border-color: var(--border-hover);
     }
 
-    .agent-icon {
-      width: 48px;
-      height: 48px;
-      border-radius: var(--radius-lg);
+    .agent-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .agent-avatar {
+      width: 36px;
+      height: 36px;
       display: flex;
       align-items: center;
       justify-content: center;
-      margin-bottom: 20px;
-      transition: transform 0.3s ease;
+      background: var(--accent-subtle);
+      border-radius: var(--radius-md);
+      font-size: 16px;
     }
 
-    .agent-card:hover .agent-icon {
-      transform: scale(1.1);
-    }
-
-    .agent-icon svg {
-      width: 24px;
-      height: 24px;
-    }
-
-    .agent-icon.blue {
-      background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-      color: white;
-      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
-    }
-
-    .agent-icon.green {
-      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-      color: white;
-      box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
-    }
-
-    .agent-icon.purple {
-      background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
-      color: white;
-      box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
-    }
-
-    .agent-icon.orange {
-      background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
-      color: white;
-      box-shadow: 0 4px 12px rgba(249, 115, 22, 0.3);
-    }
-
-    .agent-icon.red {
-      background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-      color: white;
-      box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
-    }
-
-    .agent-icon.indigo {
-      background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
-      color: white;
-      box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
-    }
-
-    .agent-title {
-      font-size: 20px;
+    .agent-name {
+      font-size: 14px;
       font-weight: 600;
       color: var(--text-strong);
-      margin: 0 0 12px;
     }
 
     .agent-desc {
-      font-size: 15px;
+      font-size: 13px;
       color: var(--muted);
+      line-height: 1.5;
       margin: 0;
-      line-height: 1.6;
     }
 
-    /* CTA Section */
-    .cta-section {
-      padding: 96px 24px;
-      position: relative;
-    }
-
-    .cta-bg {
-      position: absolute;
-      inset: 0;
-      background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(99, 102, 241, 0.1) 100%);
-      z-index: 0;
-    }
-
-    .cta-card {
-      position: relative;
-      z-index: 1;
-      max-width: 800px;
-      margin: 0 auto;
-      padding: 48px 64px;
-      background: rgba(255, 255, 255, 0.6);
-      backdrop-filter: blur(16px);
-      border: 1px solid rgba(255, 255, 255, 0.5);
-      border-radius: var(--radius-3xl);
+    /* CTA */
+    .cta {
+      padding: 100px 24px;
+      background: linear-gradient(180deg, var(--bg) 0%, var(--bg-accent) 100%);
       text-align: center;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+    }
+
+    .cta-inner {
+      max-width: 600px;
+      margin: 0 auto;
     }
 
     .cta-title {
       font-size: 36px;
       font-weight: 700;
       color: var(--text-strong);
+      letter-spacing: -0.02em;
       margin: 0 0 16px;
     }
 
     .cta-desc {
-      font-size: 18px;
+      font-size: 16px;
       color: var(--muted);
       margin: 0 0 32px;
       line-height: 1.6;
     }
 
-    .cta-actions {
-      display: flex;
-      gap: 16px;
-      justify-content: center;
-      flex-wrap: wrap;
-    }
-
     /* Footer */
     .footer {
       padding: 48px 24px;
+      background: var(--bg-accent);
       border-top: 1px solid var(--border);
     }
 
     .footer-inner {
-      max-width: 1280px;
+      max-width: 1200px;
       margin: 0 auto;
       display: flex;
-      flex-wrap: wrap;
       justify-content: space-between;
-      align-items: center;
-      gap: 24px;
+      align-items: flex-start;
+      gap: 48px;
+      flex-wrap: wrap;
     }
 
     .footer-brand {
+      max-width: 300px;
+    }
+
+    .footer-logo {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 8px;
+      margin-bottom: 16px;
     }
 
-    .footer-brand img {
-      width: 40px;
-      height: 40px;
+    .footer-logo svg {
+      width: 28px;
+      height: 28px;
+      color: var(--accent);
     }
 
-    .footer-brand-text {
-      font-size: 18px;
+    .footer-logo-text {
+      font-size: 16px;
       font-weight: 700;
       color: var(--text-strong);
     }
 
-    .footer-brand-sub {
-      font-size: 14px;
+    .footer-tagline {
+      font-size: 13px;
       color: var(--muted);
+      line-height: 1.6;
+      margin: 0;
     }
 
     .footer-links {
       display: flex;
-      gap: 24px;
+      gap: 80px;
     }
 
-    .footer-link {
-      font-size: 14px;
+    @media (max-width: 768px) {
+      .footer-links {
+        gap: 40px;
+      }
+    }
+
+    .footer-col h4 {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-strong);
+      margin: 0 0 16px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .footer-col ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+
+    .footer-col li {
+      margin-bottom: 10px;
+    }
+
+    .footer-col a {
+      font-size: 13px;
       color: var(--muted);
       text-decoration: none;
       transition: color 0.15s ease;
     }
 
-    .footer-link:hover {
-      color: var(--text);
+    .footer-col a:hover {
+      color: var(--text-strong);
     }
 
-    .footer-copy {
-      font-size: 14px;
+    .footer-bottom {
+      max-width: 1200px;
+      margin: 32px auto 0;
+      padding-top: 24px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .footer-copyright {
+      font-size: 12px;
       color: var(--muted);
     }
 
-    .footer-copy a {
+    .footer-legal {
+      display: flex;
+      gap: 24px;
+    }
+
+    .footer-legal a {
+      font-size: 12px;
       color: var(--muted);
       text-decoration: none;
+      transition: color 0.15s ease;
     }
 
-    .footer-copy a:hover {
-      color: var(--text);
+    .footer-legal a:hover {
+      color: var(--text-strong);
     }
   `
-
-  @state() private isAuthenticated = false
-  @state() private isScrolled = false
-
-  connectedCallback() {
-    super.connectedCallback()
-    this.isAuthenticated = $isAuthenticated.get()
-    $isAuthenticated.subscribe((value) => {
-      this.isAuthenticated = value
-    })
-    window.addEventListener('scroll', this.handleScroll.bind(this))
-  }
-
-  disconnectedCallback() {
-    super.disconnectedCallback()
-    window.removeEventListener('scroll', this.handleScroll.bind(this))
-  }
-
-  handleScroll() {
-    this.isScrolled = window.scrollY > 80
-  }
-
-  renderIcon(name: string) {
-    const icons: Record<string, ReturnType<typeof html>> = {
-      'sparkles': html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z"/></svg>`,
-      'arrow-right': html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3"/></svg>`,
-      'command': html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 00-2.91-.09zM12 15l-3-3a22 22 0 012-3.95A12.88 12.88 0 0122 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 01-4 2z"/></svg>`,
-      'chip': html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z"/></svg>`,
-      'shield': html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"/></svg>`,
-      'bolt': html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z"/></svg>`,
-      'cloud': html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2.25 15a4.5 4.5 0 004.5 4.5H18a3.75 3.75 0 001.332-7.257 3 3 0 00-3.758-3.848 5.25 5.25 0 00-9.764 0A3 3 0 003.75 9a4.5 4.5 0 00-1.5 3.5z"/></svg>`,
-      'device': html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10.5 1.5H8.25A2.25 2.25 0 006 3.75v16.5a2.25 2.25 0 002.25 2.25h7.5A2.25 2.25 0 0018 20.25V3.75a2.25 2.25 0 00-2.25-2.25H13.5m-3 0V3h3V1.5m-3 0h3m-3 18.75h3"/></svg>`,
-      'refresh': html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"/></svg>`,
-      'radio': html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582"/></svg>`,
-      'github': html`<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>`,
-    }
-    return icons[name] || html``
-  }
 
   render() {
     return html`
@@ -749,201 +618,228 @@ export class HomePage extends LitElement {
       <nav class="nav">
         <div class="nav-inner">
           <div class="nav-left">
-            <a href="/" class="nav-logo">
-              <img src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2300d4aa' stroke-width='2'><path d='M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z'/></svg>" alt="TinyIoTHub" />
+            <div class="nav-logo" @click=${() => navigate('')}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z"/>
+              </svg>
               <span class="nav-logo-text">TinyIoTHub</span>
-            </a>
+            </div>
             <div class="nav-links">
-              <a href="/marketplace" class="nav-link">市场</a>
-              <a href="https://docs.tinyiothub.com" target="_blank" class="nav-link">文档</a>
+              <a class="nav-link" href="/marketplace">市场</a>
+              <a class="nav-link" href="/docs">文档</a>
             </div>
           </div>
           <div class="nav-right">
-            <a href="https://github.com/Grong/tinyiothub" target="_blank" class="nav-github">
-              ${this.renderIcon('github')}
+            <a class="nav-github" href="https://github.com" target="_blank">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+              </svg>
             </a>
-            ${this.isAuthenticated ? html`
-              <a href="/dashboard" class="nav-btn-primary">控制台</a>
-            ` : html`
-              <a href="/signin" class="nav-btn-text">登录</a>
-              <a href="/signin" class="nav-btn-primary">免费试用</a>
-            `}
+            <button class="nav-btn ghost" @click=${() => navigate('signin')}>登录</button>
+            <button class="nav-btn primary" @click=${() => navigate('tenant/register')}>注册</button>
           </div>
         </div>
       </nav>
 
-      <!-- Hero Section -->
+      <!-- Hero -->
       <section class="hero">
-        <div class="hero-bg"></div>
-        <div class="hero-glow"></div>
-        <div class="hero-content">
-          <div class="hero-badge">
-            <span class="hero-badge-dot"></span>
-            内置人工智能 · 物联行业的 OpenAI
-          </div>
-          <h1 class="hero-title">
-            构建下一代 <span class="hero-title-gradient">IoT 平台</span>
-          </h1>
-          <p class="hero-desc">
-            轻量级、高性能，企业级的物联网边缘网关系统。基于 Rust + AI 构建，为工业物联网场景提供可靠的设备接入、数据采集和边缘计算能力。
-          </p>
-          <div class="hero-actions">
-            <a href="/signin" class="btn-primary">
-              开始免费试用
-              ${this.renderIcon('arrow-right')}
-            </a>
-            <a href="https://docs.tinyiothub.com" target="_blank" class="btn-secondary">
-              查看文档
-            </a>
-          </div>
+        <div class="hero-badge">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z"/>
+          </svg>
+          Edge Intelligence Agent
+        </div>
+        <h1 class="hero-title">
+          <span class="gradient">智能边缘网关</span><br/>
+          连接万物，驱动未来
+        </h1>
+        <p class="hero-desc">
+          TinyIoTHub 是一款面向工业物联网的高性能边缘计算网关平台，支持多协议设备接入、实时数据处理与智能告警
+        </p>
+        <div class="hero-btns">
+          <button class="btn primary" @click=${() => navigate('tenant/register')}>
+            立即体验
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3"/>
+            </svg>
+          </button>
+          <button class="btn secondary" @click=${() => navigate('signin')}>
+            登录控制台
+          </button>
         </div>
       </section>
 
       <!-- Protocols -->
       <section class="protocols">
-        <div class="protocols-label">支持的协议</div>
-        <div class="protocols-list">
-          <span class="protocol-badge">Modbus RTU/TCP</span>
-          <span class="protocol-badge">ONVIF 摄像头</span>
-          <span class="protocol-badge">SNMP 网络设备</span>
-          <span class="protocol-badge">MQTT 消息推送</span>
-          <span class="protocol-badge protocol-badge-accent">9999+ 协议支持</span>
+        <div class="protocols-inner">
+          <div class="protocol-badge">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 14.25h13.5m-13.5 0a3 3 0 01-3-3m3 3a3 3 0 100 6h13.5a3 3 0 100-6m-16.5-3a3 3 0 013-3h13.5a3 3 0 013 3m-19.5 0a4.5 4.5 0 01.9-2.7L5.737 5.1a3.375 3.375 0 012.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 01.9 2.7m0 0a3 3 0 01-3 3m0 3h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008zm-3 6h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008z"/>
+            </svg>
+            Modbus
+          </div>
+          <div class="protocol-badge">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z"/>
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z"/>
+            </svg>
+            ONVIF
+          </div>
+          <div class="protocol-badge">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M8.288 15.038a5.25 5.25 0 017.424 0M5.106 11.856c3.807-3.808 9.98-3.808 13.788 0M1.924 8.674c5.565-5.565 14.587-5.565 20.152 0M12.53 18.22l-.53.53-.53-.53a.75.75 0 011.06 0z"/>
+            </svg>
+            SNMP
+          </div>
+          <div class="protocol-badge">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z"/>
+            </svg>
+            MQTT
+          </div>
         </div>
       </section>
 
       <!-- Stats -->
       <section class="stats">
-        <div class="stats-card">
-          <div class="stats-grid">
-            <div class="stat-item">
-              <div class="stat-value">99.99%</div>
-              <div class="stat-label">服务可用性</div>
-            </div>
-            <div class="stat-item">
-              <div class="stat-value">9999+</div>
-              <div class="stat-label">协议支持</div>
-            </div>
-            <div class="stat-item">
-              <div class="stat-value">&lt;50ms</div>
-              <div class="stat-label">采集延迟</div>
-            </div>
-            <div class="stat-item">
-              <div class="stat-value">7*24</div>
-              <div class="stat-label">全天候监控</div>
-            </div>
+        <div class="stats-inner">
+          <div class="stat-item">
+            <div class="stat-value">99.99%</div>
+            <div class="stat-label">系统可用性</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-value">9999+</div>
+            <div class="stat-label">并发设备接入</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-value">&lt;50ms</div>
+            <div class="stat-label">平均响应延迟</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-value">7×24</div>
+            <div class="stat-label">全天候监控</div>
           </div>
         </div>
       </section>
 
-      <!-- AI Features -->
-      <section class="ai-section">
-        <div class="ai-header">
-          <div class="ai-badge">
-            ${this.renderIcon('sparkles')}
-            AI 驱动的新一代边缘计算
-          </div>
-          <h2 class="ai-title">边缘智能体</h2>
-          <p class="ai-desc">
-            <span class="ai-accent">接入即自治，运行即自愈</span>
-            <br/>
-            AI 原生自主型边缘计算平台，将大模型驱动的智能体嵌入边缘侧，从根本上重塑设备接入与运维流程
+      <!-- Features -->
+      <section class="features">
+        <div class="section-header">
+          <span class="section-tag">核心功能</span>
+          <h2 class="section-title">为什么选择 TinyIoTHub？</h2>
+          <p class="section-desc">
+            强大的边缘计算能力，多协议支持，以及智能化的运维管理
           </p>
         </div>
-
         <div class="features-grid">
           <div class="feature-card">
-            <div class="feature-icon blue">
-              ${this.renderIcon('sparkles')}
+            <div class="feature-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z"/>
+              </svg>
             </div>
-            <h3 class="feature-title">接入即自治</h3>
-            <p class="feature-desc">自然语言描述设备，自动完成驱动匹配与生成</p>
+            <h3 class="feature-title">边缘计算</h3>
+            <p class="feature-desc">支持在边缘网关本地执行数据处理、协议转换和逻辑运算，减少云端依赖，降低延迟</p>
           </div>
           <div class="feature-card">
-            <div class="feature-icon green">
-              ${this.renderIcon('refresh')}
+            <div class="feature-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5"/>
+              </svg>
             </div>
-            <h3 class="feature-title">运行即自愈</h3>
-            <p class="feature-desc">分级自愈机制，主动发现并修复故障</p>
+            <h3 class="feature-title">多协议适配</h3>
+            <p class="feature-desc">同时支持 Modbus、ONVIF、SNMP、MQTT 等主流工业协议，灵活适配各种设备</p>
           </div>
           <div class="feature-card">
-            <div class="feature-icon purple">
-              ${this.renderIcon('radio')}
+            <div class="feature-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"/>
+              </svg>
             </div>
-            <h3 class="feature-title">LoRa无线化</h3>
-            <p class="feature-desc">免布线施工，改造无需停产</p>
+            <h3 class="feature-title">实时监控</h3>
+            <p class="feature-desc">可视化仪表盘，实时展示设备状态、数据趋势和告警信息，掌握全局动态</p>
           </div>
           <div class="feature-card">
-            <div class="feature-icon orange">
-              ${this.renderIcon('bolt')}
+            <div class="feature-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0"/>
+              </svg>
             </div>
-            <h3 class="feature-title">持续进化</h3>
-            <p class="feature-desc">云端驱动库与知识库不断积累</p>
+            <h3 class="feature-title">智能告警</h3>
+            <p class="feature-desc">多级别告警规则，灵活的通知策略，支持邮件、短信、Webhook 等多种方式</p>
           </div>
         </div>
+      </section>
 
-        <div class="agent-grid">
+      <!-- AI Agents -->
+      <section class="agents">
+        <div class="section-header">
+          <span class="section-tag">AI Agent</span>
+          <h2 class="section-title">智能运维助手</h2>
+          <p class="section-desc">
+            基于大语言模型的智能助手，帮助您更高效地管理和运维 IoT 设备
+          </p>
+        </div>
+        <div class="agents-grid">
           <div class="agent-card">
-            <div class="agent-icon blue">
-              ${this.renderIcon('command')}
+            <div class="agent-header">
+              <div class="agent-avatar">🔧</div>
+              <span class="agent-name">设备诊断助手</span>
             </div>
-            <h3 class="agent-title">自然语言交互</h3>
-            <p class="agent-desc">用日常语言配置设备、查询状态，无需专业背景</p>
+            <p class="agent-desc">自动分析设备异常，提供诊断建议和解决方案</p>
           </div>
           <div class="agent-card">
-            <div class="agent-icon green">
-              ${this.renderIcon('chip')}
+            <div class="agent-header">
+              <div class="agent-avatar">📊</div>
+              <span class="agent-name">数据分析师</span>
             </div>
-            <h3 class="agent-title">智能驱动匹配</h3>
-            <p class="agent-desc">AI自动匹配驱动库，无匹配则自动生成并测试验证</p>
+            <p class="agent-desc">智能分析设备数据，发现趋势和潜在问题</p>
           </div>
           <div class="agent-card">
-            <div class="agent-icon purple">
-              ${this.renderIcon('shield')}
+            <div class="agent-header">
+              <div class="agent-avatar">⚡</div>
+              <span class="agent-name">性能优化师</span>
             </div>
-            <h3 class="agent-title">分级自愈机制</h3>
-            <p class="agent-desc">L0-L3分级处理，从被动响应到主动运维</p>
+            <p class="agent-desc">监控系统性能，提供优化建议和容量规划</p>
           </div>
           <div class="agent-card">
-            <div class="agent-icon orange">
-              ${this.renderIcon('bolt')}
+            <div class="agent-header">
+              <div class="agent-avatar">🔒</div>
+              <span class="agent-name">安全审计员</span>
             </div>
-            <h3 class="agent-title">心跳探针</h3>
-            <p class="agent-desc">定期自检网关与子设备，提前发现隐患</p>
+            <p class="agent-desc">实时监控安全事件，及时发现和响应威胁</p>
           </div>
           <div class="agent-card">
-            <div class="agent-icon red">
-              ${this.renderIcon('cloud')}
+            <div class="agent-header">
+              <div class="agent-avatar">📝</div>
+              <span class="agent-name">日志分析员</span>
             </div>
-            <h3 class="agent-title">云端协同</h3>
-            <p class="agent-desc">状态上报、工单联动，知识闭环</p>
+            <p class="agent-desc">自动分析日志数据，快速定位问题根因</p>
           </div>
           <div class="agent-card">
-            <div class="agent-icon indigo">
-              ${this.renderIcon('device')}
+            <div class="agent-header">
+              <div class="agent-avatar">🤖</div>
+              <span class="agent-name">自动化工程师</span>
             </div>
-            <h3 class="agent-title">LoRa无线接入</h3>
-            <p class="agent-desc">内置LoRa网关，远距离低功耗免布线</p>
+            <p class="agent-desc">编排自动化任务，减少人工干预和重复工作</p>
           </div>
         </div>
       </section>
 
       <!-- CTA -->
-      <section class="cta-section">
-        <div class="cta-bg"></div>
-        <div class="cta-card">
-          <h2 class="cta-title">准备好开始了吗？</h2>
+      <section class="cta">
+        <div class="cta-inner">
+          <h2 class="cta-title">立即开始使用</h2>
           <p class="cta-desc">
-            立即部署 TinyIoTHub，开启您的物联网之旅。开源免费，支持私有化部署。
+            几分钟内完成注册，即可体验完整的 IoT 边缘网关功能
           </p>
-          <div class="cta-actions">
-            <a href="/signin" class="btn-primary">
-              免费开始使用
-              ${this.renderIcon('arrow-right')}
-            </a>
-            <a href="https://github.com/Grong/tinyiothub" target="_blank" class="btn-secondary">
-              ${this.renderIcon('github')}
-              查看 GitHub
-            </a>
+          <div class="hero-btns">
+            <button class="btn primary" @click=${() => navigate('tenant/register')}>
+              免费试用
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3"/>
+              </svg>
+            </button>
           </div>
         </div>
       </section>
@@ -952,20 +848,48 @@ export class HomePage extends LitElement {
       <footer class="footer">
         <div class="footer-inner">
           <div class="footer-brand">
-            <img src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2300d4aa' stroke-width='2'><path d='M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z'/></svg>" alt="TinyIoTHub" />
-            <div>
-              <div class="footer-brand-text">TinyIoTHub</div>
-              <div class="footer-brand-sub">开源物联网平台</div>
+            <div class="footer-logo">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z"/>
+              </svg>
+              <span class="footer-logo-text">TinyIoTHub</span>
             </div>
+            <p class="footer-tagline">
+              高性能 IoT 边缘网关平台，支持多协议设备接入与智能运维
+            </p>
           </div>
           <div class="footer-links">
-            <a href="https://github.com/Grong/tinyiothub" target="_blank" class="footer-link">GitHub</a>
-            <a href="/marketplace" class="footer-link">市场</a>
-            <a href="https://docs.tinyiothub.com" target="_blank" class="footer-link">文档</a>
-            <a href="/signin" class="footer-link">登录</a>
+            <div class="footer-col">
+              <h4>产品</h4>
+              <ul>
+                <li><a href="/marketplace">市场</a></li>
+                <li><a href="/docs">文档</a></li>
+                <li><a href="/pricing">定价</a></li>
+              </ul>
+            </div>
+            <div class="footer-col">
+              <h4>支持</h4>
+              <ul>
+                <li><a href="/help">帮助中心</a></li>
+                <li><a href="/contact">联系我们</a></li>
+                <li><a href="/faq">常见问题</a></li>
+              </ul>
+            </div>
+            <div class="footer-col">
+              <h4>资源</h4>
+              <ul>
+                <li><a href="/blog">博客</a></li>
+                <li><a href="/github">GitHub</a></li>
+                <li><a href="/community">社区</a></li>
+              </ul>
+            </div>
           </div>
-          <div class="footer-copy">
-            &copy; 2026 TinyIoTHub. All rights reserved. | <a href="https://beian.miit.gov.cn/" target="_blank">粤ICP备2026029601号-2</a>
+        </div>
+        <div class="footer-bottom">
+          <span class="footer-copyright">© 2024 TinyIoTHub. 京ICP备XXXXXXXX号-1</span>
+          <div class="footer-legal">
+            <a href="/privacy">隐私政策</a>
+            <a href="/terms">服务条款</a>
           </div>
         </div>
       </footer>
