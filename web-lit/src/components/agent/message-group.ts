@@ -7,8 +7,8 @@ import { LitElement, html, css } from 'lit'
 import { customElement, property } from 'lit/decorators.js'
 import type { ChatMessage } from '../../types/agent-types'
 import { toSanitizedMarkdownHtml } from '../../lib/markdown'
-import '../a2ui/a2ui-surface'
-import '../a2ui/a2ui-component'
+import './a2ui/a2ui-surface'
+import './a2ui/a2ui-component'
 
 @customElement('message-group')
 export class MessageGroup extends LitElement {
