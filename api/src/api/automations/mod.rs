@@ -429,12 +429,15 @@ pub struct TestAutomationRequest {
 
 /// 测试条件
 async fn test_automation(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Json(payload): Json<TestAutomationRequest>,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    let service = AutomationService::new();
+    let service = AutomationService::with_dependencies(
+        state.data_server.clone(),
+        state.notification_manager.clone(),
+    );
     let (result, details) = service.test_condition(&payload.conditions, payload.mock_data);
-    
+
     ApiResponseBuilder::success(serde_json::json!({
         "matched": result,
         "details": details

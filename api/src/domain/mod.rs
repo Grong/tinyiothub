@@ -9,5 +9,6 @@ pub mod product;
 pub mod self_healing;
 pub mod template;
 pub mod user;
+pub mod workspace;
 
 // Re-export commonly used items

@@ -12,6 +12,8 @@ use super::action::{Action, ActionResult};
 use super::condition::{Condition, TriggerContext, TriggerType};
 use crate::domain::automation::evaluator::ConditionEvaluator;
 use crate::domain::automation::executor::ActionExecutor;
+use crate::application::data_server::DataServer;
+use crate::domain::event::services::notification_service::NotificationManager;
 
 /// 自动化规则服务
 pub struct AutomationService {
@@ -25,6 +27,25 @@ impl AutomationService {
         Self {
             evaluator: ConditionEvaluator::new(),
             executor: ActionExecutor::new(),
+            automations: Arc::new(RwLock::new(Vec::new())),
+        }
+    }
+
+    /// 使用 AppState 依赖创建服务
+    pub fn with_dependencies(
+        data_server: Option<Arc<DataServer>>,
+        notification_manager: Option<Arc<NotificationManager>>,
+    ) -> Self {
+        let executor = ActionExecutor::new();
+        let executor = match (data_server, notification_manager) {
+            (Some(ds), Some(nm)) => executor.with_data_server(ds).with_notification_manager(nm),
+            (Some(ds), None) => executor.with_data_server(ds),
+            (None, Some(nm)) => executor.with_notification_manager(nm),
+            (None, None) => executor,
+        };
+        Self {
+            evaluator: ConditionEvaluator::new(),
+            executor,
             automations: Arc::new(RwLock::new(Vec::new())),
         }
     }

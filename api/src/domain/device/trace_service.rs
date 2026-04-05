@@ -400,7 +400,7 @@ pub struct DeviceTrace {
 }
 
 /// 设备追踪记录统计
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DeviceTraceStatistics {
     pub device_id: String,
     pub total_traces: u32,

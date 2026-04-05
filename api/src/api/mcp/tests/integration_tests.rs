@@ -14,9 +14,9 @@ async fn test_all_tools_registered() {
 
     let tools = registry.read().await.list_tools();
 
-    // Expected count: 12 device + 7 driver + 3 heartbeat + 3 self_heal + 3 knowledge = 28
+    // Expected count: 12 device + 7 driver + 3 heartbeat + 5 workspace + 3 job + 2 batch + 4 alarm + 3 device_enhanced + 3 self_heal + 3 knowledge = 45
     // Note: generate_driver returns NotImplemented in Phase 1
-    assert_eq!(tools.len(), 28, "Expected 28 tools registered");
+    assert_eq!(tools.len(), 45, "Expected 45 tools registered");
 
     // Verify critical tools exist
     let tool_names: Vec<_> = tools.iter().map(|t| t.name.clone()).collect();
