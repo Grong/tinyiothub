@@ -10,6 +10,7 @@ use crate::{
     dto::{
         entity::{
             device::{CreateDeviceRequest, DeviceQueryParams, UpdateDeviceRequest},
+            device_command::CreateDeviceCommandRequest,
             Device, DeviceCommand, DeviceProperty,
         },
         request::pagination::DataObjectWithPagination,
@@ -747,5 +748,73 @@ impl DeviceService {
         }
 
         Ok(devices)
+    }
+
+    // === 设备命令执行 ===
+
+    /// 发送设备命令（供自动化执行器使用）
+    ///
+    /// 创建设备命令记录（实际执行由 DataServer 通过事件驱动）
+    pub async fn send_command(
+        &self,
+        device_id: &str,
+        command_name: &str,
+        command_type: &str,
+        params: Option<String>,
+    ) -> Result<String, Error> {
+        // 验证设备存在
+        let device = Device::find_by_id(&self.database, device_id).await?
+            .ok_or(Error::NotFound)?;
+
+        let command_id = uuid::Uuid::new_v4().to_string();
+
+        tracing::info!(
+            "Automation sent command '{}' ({}) to device '{}' (command_id: {})",
+            command_name,
+            command_type,
+            device.name,
+            command_id
+        );
+
+        // 存储命令到数据库（用于历史记录和 DataServer 轮询）
+        let create_request = CreateDeviceCommandRequest {
+            device_id: device_id.to_string(),
+            name: command_name.to_string(),
+            display_name: Some(format!("{} ({})", command_name, command_type)),
+            description: Some(format!("Automation command: {} via {}", command_name, command_type)),
+            parameters: params,
+        };
+        let _ = DeviceCommand::create(&self.database, &create_request).await;
+
+        // 发布命令执行事件（DataServer 会处理实际执行）
+        if let Some(ref event_bus) = self.event_bus {
+            let event = crate::domain::event::entities::Event::new_device_event(
+                crate::domain::event::value_objects::DeviceEventType::CommandStarted,
+                crate::domain::event::value_objects::EventLevel::Info,
+                crate::domain::event::value_objects::EventSource::device(
+                    device_id.to_string(),
+                    Some("automation_service".to_string()),
+                ),
+                crate::domain::event::value_objects::RichContent::new(
+                    format!("Command: {} ({})", command_name, command_type),
+                    vec![
+                        crate::domain::event::value_objects::ContentElement::Text {
+                            content: format!("Device: {}", device.name),
+                            format: crate::domain::event::value_objects::TextFormat::Plain,
+                        },
+                        crate::domain::event::value_objects::ContentElement::Text {
+                            content: format!("Command ID: {}", command_id),
+                            format: crate::domain::event::value_objects::TextFormat::Plain,
+                        },
+                    ],
+                ),
+            );
+            if let Ok(event) = event {
+                let event_bus_clone = event_bus.clone();
+                crate::utils::publish_event_safe(event_bus_clone, event).await;
+            }
+        }
+
+        Ok(command_id)
     }
 }

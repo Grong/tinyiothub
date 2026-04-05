@@ -11,7 +11,10 @@ use axum::{
 };
 use serde::Deserialize;
 
+use std::sync::Arc;
+
 use crate::{
+    domain::device::service::DeviceService,
     dto::entity::job::{
         CreateJobRequest, Job, JobExecution, JobExecutionQueryParams, JobQueryParams,
         JobStatistics, UpdateJobRequest,
@@ -202,9 +205,10 @@ async fn run_job_now(
     let db_clone = db.clone();
     let job_clone = job.clone();
     let exec_id = execution.id.clone();
+    let device_service = state.device_service.clone();
 
     tokio::spawn(async move {
-        let result = execute_job(&job_clone).await;
+        let result = execute_job(&job_clone, device_service).await;
 
         // 更新执行状态
         let status = if result.is_ok() { "success" } else { "failed" };
@@ -228,11 +232,11 @@ async fn run_job_now(
 }
 
 /// Execute a job based on its type
-async fn execute_job(job: &Job) -> Result<String, String> {
+async fn execute_job(job: &Job, device_service: Arc<DeviceService>) -> Result<String, String> {
     match job.job_type.as_str() {
         "http" => execute_http_job(job).await,
         "script" => execute_script_job(job).await,
-        "device_command" => execute_device_command_job(job).await,
+        "device_command" => execute_device_command_job(job, device_service).await,
         "sql" => execute_sql_job(job).await,
         _ => Err(format!("Unknown job type: {}", job.job_type)),
     }
@@ -327,10 +331,20 @@ async fn execute_script_job(job: &Job) -> Result<String, String> {
 }
 
 /// Execute device command job
-async fn execute_device_command_job(job: &Job) -> Result<String, String> {
-    // 这里需要调用设备命令服务
-    // 暂时返回模拟结果
-    Ok(format!("Device command executed for device: {:?}", job.target_device_id))
+async fn execute_device_command_job(job: &Job, device_service: Arc<DeviceService>) -> Result<String, String> {
+    let device_id = job.target_device_id.as_ref()
+        .ok_or_else(|| "Missing target_device_id in job".to_string())?;
+    let command_name = job.target_command_name.as_ref()
+        .ok_or_else(|| "Missing target_command_name in job".to_string())?;
+
+    // Get parameters from config JSON or target_command_params
+    let params = job.target_command_params.clone();
+
+    match device_service.send_command(device_id, command_name, "custom", params).await {
+        Ok(command_id) => Ok(format!("Device command '{}' sent to device '{}', command_id: {}",
+            command_name, device_id, command_id)),
+        Err(e) => Err(format!("Failed to send device command: {}", e)),
+    }
 }
 
 /// Execute SQL job

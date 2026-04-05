@@ -89,6 +89,33 @@ pub async fn register_tools() {
     // Register knowledge tools (Task 6)
     tools::knowledge::register_knowledge_tools(&mut reg);
 
-    tracing::info!("Registered {} device MCP tools, {} driver MCP tools, {} heartbeat MCP tools, {} self-heal MCP tools, {} knowledge MCP tools",
-        12, 7, 3, 3, 3);
+    // Register workspace tools (Task 11)
+    reg.register(tools::workspace::ListWorkspacesHandler);
+    reg.register(tools::workspace::GetWorkspaceHandler);
+    reg.register(tools::workspace::CreateWorkspaceHandler);
+    reg.register(tools::workspace::UpdateWorkspaceHandler);
+    reg.register(tools::workspace::DeleteWorkspaceHandler);
+
+    // Register job tools (Task 13)
+    reg.register(tools::job::ListSchedulesHandler);
+    reg.register(tools::job::CreateScheduleHandler);
+    reg.register(tools::job::DeleteScheduleHandler);
+
+    // Register batch tools (Task 14)
+    reg.register(tools::batch::BatchCommandHandler);
+    reg.register(tools::batch::GetBatchStatusHandler);
+
+    // Register alarm tools (Task 18)
+    reg.register(tools::alarm_mcp::AlarmListHandler);
+    reg.register(tools::alarm_mcp::AlarmStatisticsHandler);
+    reg.register(tools::alarm_mcp::AlarmAcknowledgeHandler);
+    reg.register(tools::alarm_mcp::AlarmRuleAddHandler);
+
+    // Register device enhanced tools (Task 19)
+    reg.register(tools::device_enhanced::CompareDevicesHandler);
+    reg.register(tools::device_enhanced::DiagnoseDeviceHandler);
+    reg.register(tools::device_enhanced::ScanSerialHandler);
+
+    tracing::info!("Registered {} device MCP tools, {} driver MCP tools, {} heartbeat MCP tools, {} self-heal MCP tools, {} knowledge MCP tools, {} workspace MCP tools, {} job MCP tools, {} batch MCP tools, {} alarm MCP tools, {} device_enhanced MCP tools",
+        12, 7, 3, 3, 3, 5, 3, 2, 4, 3);
 }
