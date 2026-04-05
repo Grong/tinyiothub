@@ -183,8 +183,10 @@ All interactive components must support:
 - Default
 - Hover
 - Active/Pressed
-- Focused (ring: `--ring`)
-- Disabled (opacity: 0.5)
+- Focused (ring: 2px `--accent` outline, offset 2px)
+- Disabled (opacity: 0.5, cursor: not-allowed)
+
+**Focus ring**: All keyboard-focusable elements must show a visible focus indicator. No `outline: none` without replacement.
 
 ### 3.6 Interaction State Specifications
 
@@ -276,6 +278,77 @@ Command Send              | Spinner in panel    | N/A                     | Red 
 - Hover: `--bg-hover` background
 - Collapsed mode (78px): icons only, tooltips on hover
 - Mobile (<768px): drawer overlay, hamburger toggle in topbar
+
+### 4.4 Responsive Breakpoints
+
+| Viewport | Width | Shell Behavior |
+|----------|-------|---------------|
+| **Desktop** | ≥1024px | Full sidebar (258px), all labels visible |
+| **Tablet** | 768px–1023px | Collapsed sidebar (78px), icons only, tooltips |
+| **Mobile** | <768px | No sidebar, hamburger menu in topbar, drawer overlay |
+
+**Tablet behavior**:
+- Sidebar auto-collapses to 78px rail
+- Labels hidden, icons + tooltips on hover
+- Content area expands to fill space
+- No drawer — always visible rail
+
+**Mobile behavior**:
+- Sidebar hidden entirely
+- Topbar adds hamburger button (left)
+- Sidebar renders as drawer (slides in from left, overlay backdrop)
+- Drawer: full-height, 280px wide, backdrop click closes
+- All nav items stack vertically
+
+**Content reflow**:
+- Dashboard: 4-col stats → 2-col → 1-col
+- Device list: full table → card stack
+- Forms: 2-col fields → single column
+
+### 4.5 Accessibility
+
+**Keyboard navigation**:
+- `Tab` / `Shift+Tab`: move between interactive elements
+- `Enter` / `Space`: activate buttons, toggle checkboxes
+- `Escape`: close modals, dropdowns, drawers
+- `Arrow keys`: navigate within dropdowns, tabs, table rows
+- Sidebar items: focusable with visible focus ring (2px `--accent` outline)
+
+**Focus management**:
+- Modal opens: focus moves to first interactive element inside
+- Modal closes: focus returns to trigger element
+- Drawer opens: focus moves to close button or first item
+- Page navigation: focus moves to `<main>` or page heading
+
+**ARIA landmarks**:
+```
+<header>    — topbar
+<nav>       — sidebar (role="navigation", aria-label="Main")
+<main>      — content area (role="main")
+<aside>     — secondary panels (e.g., device detail side panel)
+<footer>    — page footer (if any)
+```
+
+**ARIA labels**:
+- Sidebar nav: `aria-label="Main navigation"`
+- Hamburger button: `aria-label="Open menu"`, `aria-expanded`, `aria-controls`
+- Alarm badge: `aria-label="N unread alarms"`
+- Modal: `role="dialog"`, `aria-modal="true"`, `aria-labelledby`
+
+**Touch targets**:
+- Minimum 44×44px for all interactive elements (buttons, links, inputs)
+- Icon-only buttons: tooltips with visible text label
+
+**Color contrast**:
+- All text: minimum 4.5:1 contrast ratio (WCAG AA)
+- Large text (≥18px): minimum 3:1
+- Interactive element boundaries: 3:1 against adjacent colors
+- Error/warning states: never rely on color alone — always paired with icon or text
+
+**Screen reader**:
+- Live regions for dynamic content: `aria-live="polite"` for toast notifications
+- `aria-busy="true"` during loading states
+- Form errors announced immediately on invalid submission
 
 ---
 
