@@ -11,7 +11,7 @@ pub mod tool_registry;
 pub mod tools;
 
 #[cfg(test)]
-mod tests;
+mod tests; // Integration tests in tests/ directory
 
 // Re-export types for use in other modules
 pub use tool_registry::{HandlerRegistry, ToolError, ToolHandler, ToolMetadata};
@@ -90,5 +90,5 @@ pub async fn register_tools() {
     tools::knowledge::register_knowledge_tools(&mut reg);
 
     tracing::info!("Registered {} device MCP tools, {} driver MCP tools, {} heartbeat MCP tools, {} self-heal MCP tools, {} knowledge MCP tools",
-        13, 7, 3, 3, 3);
+        12, 7, 3, 3, 3);
 }

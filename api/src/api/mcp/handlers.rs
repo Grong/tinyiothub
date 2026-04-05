@@ -12,6 +12,7 @@ use headers::{authorization::Bearer, Authorization, HeaderMapExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::RwLock;
 
 use crate::{
@@ -123,6 +124,9 @@ async fn handle_mcp_request(
                 .into_response();
         }
     };
+    // Extract needed fields before passing ownership to guard
+    let user_id = claims.user_id.clone();
+    let tenant_id = claims.tenant_id.clone();
     let _guard = McpContextGuard::new(claims);
 
     // Get registry from global state
@@ -170,9 +174,25 @@ async fn handle_mcp_request(
         }
         JsonRpcMethod::ToolsCall(params) => {
             let tool = registry.get(&params.name);
+            // Clone args for logging before passing ownership to handler
+            let args_for_log = params.arguments.clone();
+            let sanitized_args = serde_json::to_string(&args_for_log)
+                .unwrap_or_else(|_| "<invalid JSON>".to_string());
+            let start = Instant::now();
+
             match tool {
                 Some(handler) => match handler.execute(params.arguments).await {
                     Ok(result) => {
+                        let latency_ms = start.elapsed().as_millis() as u64;
+                        tracing::info!(
+                            tool = %params.name,
+                            user_id = %user_id,
+                            tenant_id = %tenant_id,
+                            args = %sanitized_args,
+                            latency_ms = %latency_ms,
+                            success = true,
+                            "MCP tool invocation succeeded"
+                        );
                         let response = serde_json::json!({
                             "jsonrpc": "2.0",
                             "id": request.id,
@@ -181,6 +201,17 @@ async fn handle_mcp_request(
                         (StatusCode::OK, Json(response)).into_response()
                     }
                     Err(e) => {
+                        let latency_ms = start.elapsed().as_millis() as u64;
+                        tracing::error!(
+                            tool = %params.name,
+                            user_id = %user_id,
+                            tenant_id = %tenant_id,
+                            args = %sanitized_args,
+                            latency_ms = %latency_ms,
+                            success = false,
+                            error = %e.to_string(),
+                            "MCP tool invocation failed"
+                        );
                         let code = match &e {
                             ToolError::InvalidParams(_) => 400,
                             ToolError::NotImplemented(_) => 501,
@@ -194,11 +225,24 @@ async fn handle_mcp_request(
                             .into_response()
                     }
                 },
-                None => ApiResponseBuilder::error_with_code::<serde_json::Value>(
-                    404,
-                    format!("Tool not found: {}", params.name),
-                )
-                .into_response(),
+                None => {
+                    let latency_ms = start.elapsed().as_millis() as u64;
+                    tracing::warn!(
+                        tool = %params.name,
+                        user_id = %user_id,
+                        tenant_id = %tenant_id,
+                        args = %sanitized_args,
+                        latency_ms = %latency_ms,
+                        success = false,
+                        error = "Tool not found",
+                        "MCP tool not found"
+                    );
+                    ApiResponseBuilder::error_with_code::<serde_json::Value>(
+                        404,
+                        format!("Tool not found: {}", params.name),
+                    )
+                    .into_response()
+                }
             }
         }
     }
@@ -214,6 +258,9 @@ async fn handle_tools_list(headers: axum::http::HeaderMap) -> Response {
                 .into_response();
         }
     };
+    // Extract needed fields before passing ownership to guard
+    let _user_id = claims.user_id.clone();
+    let _tenant_id = claims.tenant_id.clone();
     let _guard = McpContextGuard::new(claims);
 
     // Get registry from global state
@@ -246,6 +293,9 @@ async fn handle_tools_call(
                 .into_response();
         }
     };
+    // Extract needed fields before passing ownership to guard
+    let user_id = claims.user_id.clone();
+    let tenant_id = claims.tenant_id.clone();
     let _guard = McpContextGuard::new(claims);
 
     // Get registry from global state
@@ -263,10 +313,39 @@ async fn handle_tools_call(
     let registry = registry.read().await;
 
     let tool = registry.get(&params.name);
+    // Clone args for logging before passing ownership to handler
+    let args_for_log = params.arguments.clone();
+    let sanitized_args = serde_json::to_string(&args_for_log)
+        .unwrap_or_else(|_| "<invalid JSON>".to_string());
+    let start = Instant::now();
+
     match tool {
         Some(handler) => match handler.execute(params.arguments).await {
-            Ok(result) => ApiResponseBuilder::success(result).into_response(),
+            Ok(result) => {
+                let latency_ms = start.elapsed().as_millis() as u64;
+                tracing::info!(
+                    tool = %params.name,
+                    user_id = %user_id,
+                    tenant_id = %tenant_id,
+                    args = %sanitized_args,
+                    latency_ms = %latency_ms,
+                    success = true,
+                    "MCP tool invocation succeeded"
+                );
+                ApiResponseBuilder::success(result).into_response()
+            }
             Err(e) => {
+                let latency_ms = start.elapsed().as_millis() as u64;
+                tracing::error!(
+                    tool = %params.name,
+                    user_id = %user_id,
+                    tenant_id = %tenant_id,
+                    args = %sanitized_args,
+                    latency_ms = %latency_ms,
+                    success = false,
+                    error = %e.to_string(),
+                    "MCP tool invocation failed"
+                );
                 let code = match &e {
                     ToolError::InvalidParams(_) => 400,
                     ToolError::NotImplemented(_) => 501,
@@ -280,11 +359,24 @@ async fn handle_tools_call(
                     .into_response()
             }
         },
-        None => ApiResponseBuilder::error_with_code::<serde_json::Value>(
-            404,
-            format!("Tool not found: {}", params.name),
-        )
-        .into_response(),
+        None => {
+            let latency_ms = start.elapsed().as_millis() as u64;
+            tracing::warn!(
+                tool = %params.name,
+                user_id = %user_id,
+                tenant_id = %tenant_id,
+                args = %sanitized_args,
+                latency_ms = %latency_ms,
+                success = false,
+                error = "Tool not found",
+                "MCP tool not found"
+            );
+            ApiResponseBuilder::error_with_code::<serde_json::Value>(
+                404,
+                format!("Tool not found: {}", params.name),
+            )
+            .into_response()
+        }
     }
 }
 

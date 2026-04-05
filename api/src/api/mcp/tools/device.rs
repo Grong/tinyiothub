@@ -266,6 +266,15 @@ impl ToolHandler for ListDevicesHandler {
         let input: ListDevicesInput = serde_json::from_value(args)
             .map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
+        // Validate page_size against schema max of 100
+        if let Some(size) = input.page_size {
+            if size > 100 {
+                return Err(ToolError::InvalidParams(
+                    format!("page_size {} exceeds maximum allowed value of 100", size),
+                ));
+            }
+        }
+
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
