@@ -1,0 +1,178 @@
+// web-lit/src/components/property-chart-dialog.ts
+import { LitElement, html, css } from 'lit'
+import { customElement, property, state } from 'lit/decorators.js'
+import { deviceApi } from '../services/devices'
+import type { DeviceProperty, PerformanceHistory } from '../services/devices'
+
+@customElement('property-chart-dialog')
+export class PropertyChartDialog extends LitElement {
+  static styles = css`
+    :host { display: block; }
+    .overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .dialog {
+      background: var(--bg);
+      width: 90vw;
+      max-width: 800px;
+      max-height: 80vh;
+      border-radius: var(--radius-lg);
+      display: flex;
+      flex-direction: column;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+    }
+    .header h3 { margin: 0; font-size: 16px; }
+    .close-btn {
+      width: 32px; height: 32px;
+      display: flex; align-items: center; justify-content: center;
+      border: none; border-radius: var(--radius-md);
+      background: transparent; color: var(--muted); cursor: pointer;
+    }
+    .body { flex: 1; overflow-y: auto; padding: 20px; }
+    .time-range {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .time-btn {
+      padding: 6px 12px;
+      border: none;
+      border-radius: var(--radius-md);
+      background: var(--card);
+      color: var(--text);
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .time-btn.active { background: var(--accent); color: white; }
+    .chart-container {
+      height: 300px;
+      background: var(--card);
+      border-radius: var(--radius-md);
+      padding: 16px;
+    }
+    .chart-svg { width: 100%; height: 100%; }
+    .no-data {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 200px;
+      color: var(--muted);
+    }
+  `
+
+  @property({ type: Boolean }) open = false
+  @property({ type: Object }) property!: DeviceProperty
+  @property({ type: String }) deviceId = ''
+  @state() timeRange = 1 // hours
+  @state() data: PerformanceHistory | null = null
+  @state() loading = true
+
+  async updated(changedProperties: Map<string, any>) {
+    if (changedProperties.has('open') && this.open) {
+      await this.loadData()
+    }
+  }
+
+  async loadData() {
+    this.loading = true
+    try {
+      const res = await deviceApi.getDevicePerformance(this.deviceId, this.timeRange)
+      if (res.result) {
+        this.data = res.result
+      }
+    } finally {
+      this.loading = false
+    }
+  }
+
+  private setTimeRange(hours: number) {
+    this.timeRange = hours
+    this.loadData()
+  }
+
+  private close() {
+    this.open = false
+    this.dispatchEvent(new CustomEvent('close'))
+  }
+
+  render() {
+    if (!this.open) return html``
+    return html`
+      <div class="overlay" @click=${() => this.close()}>
+        <div class="dialog" @click=${(e: Event) => e.stopPropagation()}>
+          <div class="header">
+            <h3>属性历史: ${this.property?.displayName || this.property?.name}</h3>
+            <button class="close-btn" @click=${() => this.close()}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M18 6L6 18M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
+          <div class="body">
+            <div class="time-range">
+              ${[1, 6, 24, 168, 720].map(h => html`
+                <button class="time-btn ${this.timeRange === h ? 'active' : ''}"
+                  @click=${() => this.setTimeRange(h)}>
+                  ${h === 1 ? '1小时' : h === 6 ? '6小时' : h === 24 ? '24小时' : h === 168 ? '7天' : '30天'}
+                </button>
+              `)}
+            </div>
+            ${this.loading ? html`<div class="no-data">加载中...</div>` :
+              this.data?.data?.length ? this.renderChart() : html`<div class="no-data">暂无历史数据</div>`
+            }
+          </div>
+        </div>
+      </div>
+    `
+  }
+
+  private renderChart() {
+    const points = this.data?.data || []
+    if (points.length < 2) return html`<div class="no-data">数据点不足</div>`
+    const width = 700
+    const height = 250
+    const padding = 30
+    const max = Math.max(...points.map(p => p.value))
+    const min = Math.min(...points.map(p => p.value))
+    const range = max - min || 1
+    const coords = points.map((p, i) => {
+      const x = padding + (i / (points.length - 1)) * (width - padding * 2)
+      const y = height - padding - ((p.value - min) / range) * (height - padding * 2)
+      return `${x},${y}`
+    }).join(' ')
+    return html`
+      <div class="chart-container">
+        <svg class="chart-svg" viewBox="0 0 ${width} ${height}">
+          <polyline
+            points=${coords}
+            fill="none"
+            stroke="var(--accent)"
+            stroke-width="2"
+          />
+          ${points.map((p, i) => {
+            const x = padding + (i / (points.length - 1)) * (width - padding * 2)
+            const y = height - padding - ((p.value - min) / range) * (height - padding * 2)
+            return html`<circle cx=${x} cy=${y} r="3" fill="var(--accent)"/>`
+          })}
+        </svg>
+      </div>
+    `
+  }
+}
+
+declare global {
+  interface HTMLElementTagNameMap { 'property-chart-dialog': PropertyChartDialog }
+}
