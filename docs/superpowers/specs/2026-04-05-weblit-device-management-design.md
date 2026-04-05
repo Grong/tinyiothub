@@ -1,7 +1,7 @@
 # web-lit 设备管理功能设计文档
 
-> 状态: 已评审
-> 日期: 2026-04-05
+> 状态: 实现中
+> 实现开始: 2026-04-05
 > Review: plan-design-review passed (7 passes, score 5→8)
 
 ## 概述
