@@ -103,11 +103,15 @@ impl AlarmRepository for AlarmRepositoryImpl {
 
     async fn find_by_criteria(&self, criteria: &AlarmQueryCriteria) -> AlarmResult<Vec<Alarm>> {
         let mut query = String::from("SELECT * FROM device_alarms WHERE 1=1");
+        let mut bindings: Vec<String> = Vec::new();
 
         if let Some(device_ids) = &criteria.device_ids {
             if !device_ids.is_empty() {
                 let placeholders = vec!["?"; device_ids.len()].join(",");
                 query.push_str(&format!(" AND device_id IN ({})", placeholders));
+                for id in device_ids {
+                    bindings.push(id.clone());
+                }
             }
         }
 
@@ -115,6 +119,9 @@ impl AlarmRepository for AlarmRepositoryImpl {
             if !levels.is_empty() {
                 let placeholders = vec!["?"; levels.len()].join(",");
                 query.push_str(&format!(" AND alarm_level IN ({})", placeholders));
+                for level in levels {
+                    bindings.push(level.as_str().to_string());
+                }
             }
         }
 
@@ -145,8 +152,10 @@ impl AlarmRepository for AlarmRepositoryImpl {
             }
         }
 
-        if let Some(_time_range) = &criteria.time_range {
+        if let Some(time_range) = &criteria.time_range {
             query.push_str(" AND alarm_time >= ? AND alarm_time <= ?");
+            bindings.push(time_range.start.to_rfc3339());
+            bindings.push(time_range.end.to_rfc3339());
         }
 
         query.push_str(" ORDER BY alarm_time DESC");
@@ -159,11 +168,21 @@ impl AlarmRepository for AlarmRepositoryImpl {
             query.push_str(&format!(" OFFSET {}", offset));
         }
 
-        // 由于 SQLx 的限制，这里简化返回空列表
-        // 实际项目中需要使用动态查询构建器
-        // TODO: find_by_criteria is not yet implemented - returning empty vector
-        // This method needs proper implementation before production use
-        todo!("find_by_criteria is not yet implemented - returning empty vector")
+        // Build and execute query with bindings
+        let mut sqlx_query = sqlx::query(&query);
+        for binding in &bindings {
+            sqlx_query = sqlx_query.bind(binding);
+        }
+
+        let rows = sqlx_query.fetch_all(self.database.pool()).await
+            .map_err(|e| AlarmError::InternalError(format!("Query failed: {}", e)))?;
+
+        let mut alarms = Vec::new();
+        for row in rows {
+            alarms.push(self.row_to_alarm(row)?);
+        }
+
+        Ok(alarms)
     }
 
     async fn find_active(&self, device_id: Option<&str>) -> AlarmResult<Vec<Alarm>> {
@@ -192,21 +211,70 @@ impl AlarmRepository for AlarmRepositoryImpl {
 
     async fn count_by_criteria(&self, criteria: &AlarmQueryCriteria) -> AlarmResult<u64> {
         let mut query = String::from("SELECT COUNT(*) as count FROM device_alarms WHERE 1=1");
+        let mut bindings: Vec<String> = Vec::new();
 
         if let Some(device_ids) = &criteria.device_ids {
             if !device_ids.is_empty() {
                 let placeholders = vec!["?"; device_ids.len()].join(",");
                 query.push_str(&format!(" AND device_id IN ({})", placeholders));
+                for id in device_ids {
+                    bindings.push(id.clone());
+                }
             }
         }
 
-        if let Some(_time_range) = &criteria.time_range {
-            query.push_str(" AND alarm_time >= ? AND alarm_time <= ?");
+        if let Some(levels) = &criteria.alarm_levels {
+            if !levels.is_empty() {
+                let placeholders = vec!["?"; levels.len()].join(",");
+                query.push_str(&format!(" AND alarm_level IN ({})", placeholders));
+                for level in levels {
+                    bindings.push(level.as_str().to_string());
+                }
+            }
         }
 
-        // TODO: count_by_criteria is not yet implemented - returning 0
-        // This method needs proper implementation before production use
-        todo!("count_by_criteria is not yet implemented - returning 0")
+        if let Some(statuses) = &criteria.statuses {
+            if !statuses.is_empty() {
+                let mut status_conditions: Vec<&str> = Vec::new();
+                for status in statuses {
+                    match status {
+                        AlarmStatus::Active => {
+                            status_conditions
+                                .push("(is_resolved = false AND is_acknowledged = false)");
+                        }
+                        AlarmStatus::Acknowledged => {
+                            status_conditions
+                                .push("(is_resolved = false AND is_acknowledged = true)");
+                        }
+                        AlarmStatus::Resolved => {
+                            status_conditions.push("is_resolved = true");
+                        }
+                        AlarmStatus::Suppressed => {}
+                    }
+                }
+                if !status_conditions.is_empty() {
+                    query.push_str(&format!(" AND ({})", status_conditions.join(" OR ")));
+                }
+            }
+        }
+
+        if let Some(time_range) = &criteria.time_range {
+            query.push_str(" AND alarm_time >= ? AND alarm_time <= ?");
+            bindings.push(time_range.start.to_rfc3339());
+            bindings.push(time_range.end.to_rfc3339());
+        }
+
+        let mut sqlx_query = sqlx::query(&query);
+        for binding in &bindings {
+            sqlx_query = sqlx_query.bind(binding);
+        }
+
+        let row = sqlx_query.fetch_one(self.database.pool()).await
+            .map_err(|e| AlarmError::InternalError(format!("Count query failed: {}", e)))?;
+
+        use sqlx::Row;
+        let count: i64 = row.get("count");
+        Ok(count as u64)
     }
 
     async fn batch_update_status(
@@ -247,9 +315,107 @@ impl AlarmRepository for AlarmRepositoryImpl {
 }
 
 impl AlarmRepositoryImpl {
-    fn row_to_alarm(&self, _row: sqlx::sqlite::SqliteRow) -> AlarmResult<Alarm> {
-        // 简化实现，需要完整的字段映射
-        Err(AlarmError::InternalError("Not implemented".to_string()))
+    fn row_to_alarm(&self, row: sqlx::sqlite::SqliteRow) -> AlarmResult<Alarm> {
+        use sqlx::Row;
+        use chrono::TimeZone;
+
+        use crate::domain::alarm::value_objects::{AlarmLevel, AlarmType, AlarmStatus, ResolutionType};
+
+        let id: String = row.get("id");
+        let device_id: String = row.get("device_id");
+        let property_id: Option<String> = row.get("property_id");
+        let rule_id: Option<String> = row.get("rule_id");
+        let alarm_level_str: String = row.get("alarm_level");
+        let message: String = row.get("alarm_message");
+        let alarm_value: Option<String> = row.get("alarm_value");
+        let threshold_value: Option<String> = row.get("threshold_value");
+        let alarm_time_str: String = row.get("alarm_time");
+        let is_acknowledged: bool = row.get("is_acknowledged");
+        let acknowledged_by: Option<String> = row.get("acknowledged_by");
+        let acknowledged_at_str: Option<String> = row.get("acknowledged_at");
+        let acknowledged_note: Option<String> = row.get("acknowledged_note");
+        let is_resolved: bool = row.get("is_resolved");
+        let resolved_by: Option<String> = row.get("resolved_by");
+        let resolved_at_str: Option<String> = row.get("resolved_at");
+        let resolved_note: Option<String> = row.get("resolved_note");
+        let created_at_str: String = row.get("created_at");
+
+        // Parse alarm_level
+        let alarm_level = AlarmLevel::from_str(&alarm_level_str).ok_or_else(|| {
+            AlarmError::InvalidRuleConfig(format!("Unknown alarm level: {}", alarm_level_str))
+        })?;
+
+        // alarm_type is not stored in DB - default to PropertyThreshold
+        let alarm_type = AlarmType::PropertyThreshold;
+
+        // Parse alarm_time (DB format: YYYY-MM-DD HH:MM:SS)
+        let alarm_time = chrono::NaiveDateTime::parse_from_str(&alarm_time_str, "%Y-%m-%d %H:%M:%S")
+            .map_err(|e| AlarmError::InternalError(format!("Parse alarm_time failed: {}", e)))?
+            .and_utc();
+
+        // Parse created_at (DB format: YYYY-MM-DD HH:MM:SS)
+        let created_at = chrono::NaiveDateTime::parse_from_str(&created_at_str, "%Y-%m-%d %H:%M:%S")
+            .map_err(|e| AlarmError::InternalError(format!("Parse created_at failed: {}", e)))?
+            .and_utc();
+
+        // Build acknowledgement
+        let acknowledgement = if is_acknowledged {
+            let acknowledged_at = acknowledged_at_str
+                .as_ref()
+                .and_then(|s| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").ok())
+                .map(|dt| dt.and_utc());
+
+            Some(crate::domain::alarm::value_objects::Acknowledgement {
+                acknowledged_by: acknowledged_by.unwrap_or_default(),
+                acknowledged_at: acknowledged_at.unwrap_or_else(Utc::now),
+                note: acknowledged_note,
+            })
+        } else {
+            None
+        };
+
+        // Build resolution
+        let resolution = if is_resolved {
+            let resolved_at = resolved_at_str
+                .as_ref()
+                .and_then(|s| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").ok())
+                .map(|dt| dt.and_utc());
+
+            Some(crate::domain::alarm::value_objects::Resolution {
+                resolved_by: resolved_by.unwrap_or_default(),
+                resolved_at: resolved_at.unwrap_or_else(Utc::now),
+                note: resolved_note,
+                resolution_type: ResolutionType::Fixed,
+            })
+        } else {
+            None
+        };
+
+        // Derive status from acknowledgement and resolution
+        let status = if is_resolved {
+            AlarmStatus::Resolved
+        } else if is_acknowledged {
+            AlarmStatus::Acknowledged
+        } else {
+            AlarmStatus::Active
+        };
+
+        Ok(Alarm {
+            id,
+            device_id,
+            property_id,
+            rule_id,
+            alarm_type,
+            alarm_level,
+            message,
+            alarm_value,
+            threshold_value,
+            alarm_time,
+            status,
+            acknowledgement,
+            resolution,
+            created_at,
+        })
     }
 }
 
