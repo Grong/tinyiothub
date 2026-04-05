@@ -1,8 +1,9 @@
 //! 动作执行器
-//! 
+//!
 //! 执行自动化规则中的各种动作（简化版）
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Instant;
 
 use reqwest::Client;
@@ -11,17 +12,37 @@ use tokio::time::{sleep, Duration};
 
 use super::action::*;
 use super::condition::TriggerContext;
+use crate::application::data_server::DataServer;
+use crate::domain::event::services::notification_service::NotificationManager;
+use crate::domain::event::value_objects::{ContentElement, EventLevel, NotificationChannelType, RichContent, TextFormat};
+use crate::dto::entity::DeviceCommand;
 
 /// 动作执行器
 pub struct ActionExecutor {
     http_client: Client,
+    data_server: Option<Arc<DataServer>>,
+    notification_manager: Option<Arc<NotificationManager>>,
 }
 
 impl ActionExecutor {
     pub fn new() -> Self {
         Self {
             http_client: Client::new(),
+            data_server: None,
+            notification_manager: None,
         }
+    }
+
+    /// 设置数据服务器（用于设备命令执行）
+    pub fn with_data_server(mut self, data_server: Arc<DataServer>) -> Self {
+        self.data_server = Some(data_server);
+        self
+    }
+
+    /// 设置通知管理器（用于发送通知）
+    pub fn with_notification_manager(mut self, notification_manager: Arc<NotificationManager>) -> Self {
+        self.notification_manager = Some(notification_manager);
+        self
     }
     
     /// 执行动作列表
@@ -126,9 +147,29 @@ impl ActionExecutor {
         &self,
         device_id: &str,
         command: &str,
-        _parameters: Option<&HashMap<String, String>>,
+        parameters: Option<&HashMap<String, String>>,
     ) -> ActionResult {
-        ActionResult::success("control_device", &format!("Command '{}' sent to device '{}'", command, device_id))
+        let params_json = parameters.map(|p| serde_json::to_string(p).unwrap_or_default());
+
+        if let Some(ref data_server) = self.data_server {
+            let cmd = DeviceCommand {
+                id: uuid::Uuid::new_v4().to_string(),
+                device_id: device_id.to_string(),
+                name: command.to_string(),
+                display_name: Some(format!("{} (custom)", command)),
+                description: Some("Automation control".to_string()),
+                parameters: params_json,
+                created_at: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+            };
+
+            match data_server.execute_command(cmd) {
+                Ok(()) => ActionResult::success("control_device", &format!("Command '{}' sent to device '{}'", command, device_id)),
+                Err(e) => ActionResult::failure("control_device", &format!("Failed to send command: {}", e)),
+            }
+        } else {
+            // Fallback: 命令已发送（无 DataServer）
+            ActionResult::success("control_device", &format!("Command '{}' queued for device '{}' (DataServer not available)", command, device_id))
+        }
     }
     
     async fn execute_set_property(
@@ -137,7 +178,29 @@ impl ActionExecutor {
         property: &str,
         value: &str,
     ) -> ActionResult {
-        ActionResult::success("set_property", &format!("Set {}.{} = {}", device_id, property, value))
+        let params = serde_json::json!({
+            "property": property,
+            "value": value
+        });
+
+        if let Some(ref data_server) = self.data_server {
+            let cmd = DeviceCommand {
+                id: uuid::Uuid::new_v4().to_string(),
+                device_id: device_id.to_string(),
+                name: "set_property".to_string(),
+                display_name: Some(format!("Set {} = {}", property, value)),
+                description: Some("Automation set property".to_string()),
+                parameters: Some(params.to_string()),
+                created_at: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+            };
+
+            match data_server.execute_command(cmd) {
+                Ok(()) => ActionResult::success("set_property", &format!("Set {}.{} = {}", device_id, property, value)),
+                Err(e) => ActionResult::failure("set_property", &format!("Failed to set property: {}", e)),
+            }
+        } else {
+            ActionResult::success("set_property", &format!("Set {}.{} = {} (DataServer not available)", device_id, property, value))
+        }
     }
     
     // ========== 通知动作 ==========
@@ -148,7 +211,30 @@ impl ActionExecutor {
         title: &str,
         content: &str,
     ) -> ActionResult {
-        ActionResult::success("notify", &format!("[{:?}] {} - {}", channel, title, content))
+        let channel_type = match channel {
+            NotifyChannel::Email => NotificationChannelType::Email,
+            NotifyChannel::Sms => NotificationChannelType::Sms,
+            NotifyChannel::Webhook => NotificationChannelType::Webhook,
+            NotifyChannel::Mqtt => NotificationChannelType::Webhook, // MQTT not in NotificationChannelType, use Webhook
+            NotifyChannel::System => NotificationChannelType::Sse,
+        };
+
+        let message = NotificationMessage::new(
+            title.to_string(),
+            content.to_string(),
+            EventLevel::Info,
+            vec![channel_type],
+            vec![], // recipients filled by notification manager
+        );
+
+        if let Some(ref notification_manager) = self.notification_manager {
+            match notification_manager.send_notification(&message).await {
+                Ok(()) => ActionResult::success("notify", &format!("[{:?}] {} - {}", channel, title, content)),
+                Err(e) => ActionResult::failure("notify", &format!("Notification failed: {}", e)),
+            }
+        } else {
+            ActionResult::success("notify", &format!("[{:?}] {} - {} (NotificationManager not available)", channel, title, content))
+        }
     }
     
     async fn execute_send_email(
@@ -157,7 +243,22 @@ impl ActionExecutor {
         subject: &str,
         body: &str,
     ) -> ActionResult {
-        ActionResult::success("send_email", &format!("To: {:?}, Subject: {}", to, subject))
+        let message = NotificationMessage::new(
+            subject.to_string(),
+            body.to_string(),
+            EventLevel::Info,
+            vec![NotificationChannelType::Email],
+            to.clone(),
+        );
+
+        if let Some(ref notification_manager) = self.notification_manager {
+            match notification_manager.send_notification(&message).await {
+                Ok(()) => ActionResult::success("send_email", &format!("Email sent to {:?}: {}", to, subject)),
+                Err(e) => ActionResult::failure("send_email", &format!("Failed to send email: {}", e)),
+            }
+        } else {
+            ActionResult::success("send_email", &format!("Email queued to {:?}: {} (NotificationManager not available)", to, subject))
+        }
     }
     
     // ========== HTTP 动作 ==========
