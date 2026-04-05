@@ -6,11 +6,13 @@ import { navigate } from '../lib/navigate'
 @customElement('alarms-page')
 export class AlarmsPage extends LitElement {
   static styles = css`
-    :host {
-      display: block;
+    alarms-page {
+      display: flex;
+      flex-direction: column;
       padding: 24px;
       background: var(--bg);
-      min-height: 100%;
+      flex: 1;
+      min-height: 0;
     }
 
     /* Header */

@@ -6,11 +6,13 @@ import { $user, type User } from '../stores/auth-store'
 @customElement('settings-page')
 export class SettingsPage extends LitElement {
   static styles = css`
-    :host {
-      display: block;
-      padding: 24px;
+    settings-page {
+      display: flex;
+      flex-direction: column;
+      padding: 0;
       background: var(--bg);
-      min-height: 100%;
+      flex: 1;
+      min-height: 0;
     }
 
     /* Header */

@@ -39,10 +39,12 @@ interface MarketplaceDriver {
 @customElement('marketplace-page')
 export class MarketplacePage extends LitElement {
   static styles = css`
-    :host {
-      display: block;
+    marketplace-page {
+      display: flex;
+      flex-direction: column;
       background: var(--bg);
-      min-height: 100%;
+      flex: 1;
+      min-height: 0;
     }
 
     /* Navigation */
@@ -636,27 +638,6 @@ export class MarketplacePage extends LitElement {
 
   render() {
     return html`
-      <!-- Navigation -->
-      <nav class="nav">
-        <div class="nav-inner">
-          <a href="/" class="nav-brand">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z"/>
-            </svg>
-            TinyIoTHub
-          </a>
-          <div class="nav-links">
-            <a href="/" class="nav-link">首页</a>
-            <a href="/marketplace" class="nav-link active">市场</a>
-            <a href="https://docs.tinyiothub.com" target="_blank" rel="noopener noreferrer" class="nav-link">文档</a>
-          </div>
-          <div class="nav-actions">
-            <a href="/signin" class="btn-text">登录</a>
-            <a href="/signin" class="btn-primary">免费试用</a>
-          </div>
-        </div>
-      </nav>
-
       <!-- Hero -->
       <div class="hero">
         <h1 class="hero-title">设备市场</h1>

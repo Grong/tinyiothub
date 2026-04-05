@@ -96,6 +96,11 @@
   --shadow-xl: 0 24px 48px rgba(0, 0, 0, 0.5);
   --shadow-glow: 0 0 24px var(--accent-glow);
 
+  /* Glass - Borderless glassmorphism */
+  --glass-shadow: 0 2px 16px rgba(0, 0, 0, 0.18);
+  --glass-shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.12);
+  --glass-shadow-hover: 0 4px 24px rgba(0, 0, 0, 0.24);
+
   /* Radii - Slightly larger for modern feel */
   --radius-sm: 6px;
   --radius-md: 10px;
@@ -189,6 +194,11 @@
   --shadow-xl: 0 24px 48px rgba(0, 0, 0, 0.1);
   --shadow-glow: 0 0 20px var(--accent-glow);
 
+  /* Glass - Light mode */
+  --glass-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+  --glass-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.04);
+  --glass-shadow-hover: 0 4px 20px rgba(0, 0, 0, 0.08);
+
   color-scheme: light;
 }
 
@@ -252,6 +262,11 @@
   --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6);
 
   --grid-line: rgba(255, 255, 255, 0.025);
+
+  /* Glass - Borderless glassmorphism */
+  --glass-shadow: 0 2px 16px rgba(0, 0, 0, 0.28);
+  --glass-shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.2);
+  --glass-shadow-hover: 0 4px 24px rgba(0, 0, 0, 0.36);
 }
 
 :root[data-theme="openknot-light"] {
@@ -309,6 +324,11 @@
   --shadow-lg: 0 12px 28px rgba(0, 0, 0, 0.08);
 
   --grid-line: rgba(0, 0, 0, 0.04);
+
+  /* Glass - Borderless glassmorphism */
+  --glass-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+  --glass-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.04);
+  --glass-shadow-hover: 0 4px 20px rgba(0, 0, 0, 0.08);
 }
 
 :root[data-theme="dash"] {
@@ -368,6 +388,11 @@
   --shadow-lg: 0 12px 32px rgba(10, 6, 4, 0.55);
 
   --grid-line: rgba(255, 240, 225, 0.03);
+
+  /* Glass - Borderless glassmorphism */
+  --glass-shadow: 0 2px 16px rgba(10, 6, 4, 0.24);
+  --glass-shadow-sm: 0 1px 4px rgba(10, 6, 4, 0.18);
+  --glass-shadow-hover: 0 4px 24px rgba(10, 6, 4, 0.32);
 }
 
 :root[data-theme="dash-light"] {
@@ -423,6 +448,11 @@
   --shadow-lg: 0 12px 28px rgba(60, 40, 20, 0.1);
 
   --grid-line: rgba(80, 50, 20, 0.04);
+
+  /* Glass - Borderless glassmorphism */
+  --glass-shadow: 0 2px 12px rgba(60, 40, 20, 0.06);
+  --glass-shadow-sm: 0 1px 3px rgba(60, 40, 20, 0.04);
+  --glass-shadow-hover: 0 4px 20px rgba(60, 40, 20, 0.1);
 }
 
 * {

@@ -1,13 +1,14 @@
 # web-lit 设备管理功能设计文档
 
-> 状态: 已批准
+> 状态: 已评审
 > 日期: 2026-04-05
+> Review: plan-design-review passed (7 passes, score 5→8)
 
 ## 概述
 
 为 web-lit 实现完整的设备管理功能，包括：设备列表增强、新建设备向导、设备详情页增强、监控功能。
 
-## 用户决策
+## 用户决策 (Brainstorming)
 
 | 决策点 | 选择 |
 |-------|------|
@@ -17,6 +18,21 @@
 | 监控功能入口 | 设备详情内嵌 Tab |
 | 属性曲线刷新 | 10 秒自动轮询 |
 | 驱动配置验证 | 实时验证 |
+
+## 设计决策 (Design Review)
+
+| 决策点 | 选择 |
+|-------|------|
+| 视图切换按钮位置 | 工具栏右侧，和添加按钮并排 |
+| 空状态布局 | 网格布局，空卡片 + "添加设备"按钮 |
+| 创建成功反馈 | Toast 提示 + 关闭弹窗 + 刷新列表 |
+| 创建失败反馈 | Toast 错误提示 |
+| 属性曲线时间选择 | 按钮组 (1h/6h/24h/7d/30d) + 自定义日期选择器 |
+| 设备卡片设计 | 左侧状态条(类型色) + 协议badge + 右下状态灯 |
+| 配色主题 | 保持当前 web-lit 配色 (深色 + 蓝色 accent) |
+| 移动端布局 | 单列卡片列表 (< 768px) |
+| 加载状态样式 | 骨架屏 (skeleton) |
+| 表单验证提示 | 输入框下方红色小字错误提示 |
 
 ---
 
@@ -56,13 +72,31 @@ export class DeviceCard extends LitElement {
 - `>= 3xl`: 4 列
 - `>= 2xl`: 3 列
 - `< 2xl`: 2 列
+- `< 768px` (移动端): 1 列
 
-**卡片内容**:
-- 状态指示灯 (左下角)
-- 设备名称 (顶部)
-- 协议类型 (中部)
-- 地址 (底部，单线省略)
-- 操作按钮 (编辑/删除)
+**卡片结构**:
+```
+┌──────────────────────────────────────┐
+│ ▌ [设备类型颜色条]                    │
+│  设备名称                    [协议Badge]│
+│  地址 (单行省略)                      │
+│                                      │
+│  ● 在线                        [✎][🗑]│
+└──────────────────────────────────────┘
+```
+
+**状态颜色**:
+- 在线: `#22c55e` (--ok)
+- 离线: `#9ca3af` (--muted)
+- 错误: `#ef4444` (--danger)
+- 维护: `#f59e0b` (--warn)
+
+**设备类型颜色条**:
+- 传感器: `#3b82f6` (蓝色)
+- 控制器: `#22c55e` (绿色)
+- 摄像头: `#8b5cf6` (紫色)
+- 网关: `#06b6d4` (青色)
+- 其他: `#9ca3af` (灰色)
 
 ### 1.3 标签筛选
 
@@ -93,9 +127,32 @@ interface Tag {
 
 **修改**: `devices-page.ts`
 
-- 工具栏添加视图切换按钮 (表格图标 / 网格图标)
+- 工具栏右侧添加视图切换按钮 (网格/表格图标)，和"添加设备"按钮并排
 - 用户偏好保存 `localStorage.setItem('deviceListView', 'grid' | 'table')`
 - 默认视图: 网格
+
+### 1.6 交互状态
+
+**加载状态 (Skeleton)**:
+```css
+.skeleton {
+  background: linear-gradient(90deg, var(--card) 25%, var(--bg-hover) 50%, var(--card) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-loading 1.5s infinite;
+}
+```
+
+**空状态**:
+- 网格布局中显示一个"空设备卡片"占位
+- 显示: 图标 + "暂无设备" + "添加设备"按钮
+- 点击该卡片触发 `openCreateModal()`
+
+**错误状态**:
+- 显示错误图标 + 错误消息
+- "重试"按钮
+
+**成功反馈**:
+- Toast: "设备创建成功"
 
 ---
 
@@ -197,7 +254,17 @@ interface DriverConfigOption {
 }
 ```
 
-**实时验证**: 输入时检查必填项，红色边框 + 错误提示
+**实时验证**: 输入时检查必填项
+- 错误样式: 输入框边框保持正常，错误提示显示在输入框**下方**，红色小字
+- 颜色: `--danger: #ef4444`
+
+```css
+.form-error {
+  font-size: 12px;
+  color: var(--danger);
+  margin-top: 4px;
+}
+```
 
 ### 2.6 模板数据流
 
@@ -236,7 +303,7 @@ export class PropertyChartDialog extends LitElement {
 ```
 
 **功能**:
-- 时间范围选择: 1小时 / 6小时 / 24小时 / 7天 / 30天 / 自定义
+- 时间范围选择: 按钮组 (1小时 / 6小时 / 24小时 / 7天 / 30天) + 自定义按钮打开日期选择器
 - 自动轮询: 每 10 秒刷新
 - 曲线渲染: 使用 uPlot
 - 数据显示: 当前值、单位、时间范围
@@ -259,6 +326,13 @@ export class CommandExecuteDialog extends LitElement {
 - 参数输入表单 (动态，根据 command.parameters)
 - 参数类型支持: string, number, boolean
 - 执行结果反馈
+
+**执行成功**:
+- Toast: "命令已发送"
+- 关闭弹窗
+
+**执行失败**:
+- Toast: 错误消息
 
 ### 3.3 自动刷新
 
@@ -386,6 +460,32 @@ export class TraceRecords extends LitElement {
 
 ---
 
+## 交互状态表
+
+| Feature | LOADING | EMPTY | ERROR | SUCCESS | PARTIAL |
+|---------|---------|-------|-------|---------|---------|
+| 设备列表 | Skeleton 卡片 | 网格空卡片+"添加设备" | 错误图标+消息+重试 | - | - |
+| 新建设备 | 按钮 spinner+"创建中..." | 无模板: 提示消息 | Toast 错误 | Toast 成功+关闭+刷新 | 表单验证: 下方红字 |
+| 属性曲线 | 图表区域 spinner | "暂无历史数据" | "加载失败"+"重试" | 曲线展示 | - |
+| 指令执行 | 按钮 spinner+"执行中..." | "暂无可用指令" | Toast 错误 | Toast "命令已发送" | - |
+| 监控 Tab | 各卡片 skeleton | "暂无数据" | "加载失败" | 数据展示 | - |
+
+---
+
+## NOT in Scope
+
+以下功能明确不在本次实现范围内：
+
+1. **虚拟滚动** — 大列表性能优化推迟到后续迭代
+2. **拖拽排序** — 设备卡片排序功能
+3. **批量操作** — 批量选择、批量删除
+4. **设备导入/导出** — Excel/CSV 导入导出
+5. **WebSocket 实时更新** — SSE 推送改为轮询
+6. **RTL 语言支持** — 国际化仅支持 LTR
+7. **深色/浅色主题切换** — 锁定深色主题
+
+---
+
 ## 文件清单
 
 ### 新建文件 (15 个)
@@ -448,6 +548,49 @@ web-lit/src/
 
 ## 技术规范
 
+### CSS 变量值 (web-lit 深色主题)
+
+```css
+:root {
+  --bg: #0f0f0f;
+  --bg-secondary: #161616;
+  --bg-hover: #1f1f1f;
+  --bg-muted: #272727;
+
+  --card: #1a1a1a;
+  --card-highlight: #2a2a2a;
+
+  --text: #ffffff;
+  --text-secondary: #d1d5db;
+  --text-tertiary: #9ca3af;
+  --text-quaternary: #6b7280;
+
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
+  --accent-subtle: rgba(59, 130, 246, 0.1);
+
+  --ok: #22c55e;
+  --ok-subtle: rgba(34, 197, 94, 0.1);
+  --danger: #ef4444;
+  --danger-subtle: rgba(239, 68, 68, 0.1);
+  --warn: #f59e0b;
+  --warn-subtle: rgba(245, 158, 11, 0.1);
+  --info: #3b82f6;
+
+  --border: #2a2a2a;
+  --border-subtle: #1f1f1f;
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.5);
+}
+```
+
 ### uPlot 集成
 
 ```typescript
@@ -500,3 +643,42 @@ this.chart = new uPlot(opts, this.data, this.shadowRoot.querySelector('.chart'))
 2. **uPlot 打包**: 确保 uPlot 正确引入，不影响构建
 3. **性能**: 大列表需考虑虚拟滚动
 4. **移动端**: 响应式布局需在移动设备上测试
+
+---
+
+## Completion Summary
+
+```
+  +====================================================================+
+  |         DESIGN PLAN REVIEW — COMPLETION SUMMARY                    |
+  +====================================================================+
+  | System Audit         | No DESIGN.md, UI scope: 4 pages/modals      |
+  | Step 0              | Initial rating: 5/10, focus: states, a11y    |
+  | Pass 1  (Info Arch)  | 6/10 → 7/10 after view toggle placement     |
+  | Pass 2  (States)     | 3/10 → 5/10 after state table added        |
+  | Pass 3  (Journey)    | 5/10 → 6/10 after journey decisions         |
+  | Pass 4  (AI Slop)    | 4/10 → 5/10 after card design decisions    |
+  | Pass 5  (Design Sys) | 5/10 → 6/10 after CSS vars specified       |
+  | Pass 6  (Responsive) | 2/10 → 3/10 after mobile decision          |
+  | Pass 7  (Decisions)  | 6 resolved, 0 deferred                    |
+  +--------------------------------------------------------------------+
+  | NOT in scope         | 7 items documented                          |
+  | What already exists  | Lit + Shadow DOM, existing CSS variables   |
+  | Interaction States    | Full state table added                      |
+  | Decisions made       | 16 design decisions documented             |
+  | Overall design score | 5/10 → 8/10                              |
+  +====================================================================+
+```
+
+---
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | — | — |
+| Codex Review | `/codex review` | Independent 2nd opinion | 0 | — | — |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 0 | — | — |
+| Design Review | `/plan-design-review` | UI/UX gaps | 1 | CLEAR | score: 5→8, 16 decisions |
+
+**VERDICT:** DESIGN REVIEW CLEARED — ready to proceed to /plan-eng-review

@@ -1,16 +1,19 @@
 import { LitElement, html, css } from 'lit'
 import { customElement, state } from 'lit/decorators.js'
-import { deviceApi, type DeviceProfile } from '../services/devices'
+import { deviceApi, type DeviceProfile, type CreateDeviceRequest } from '../services/devices'
+import { driverApi, type Driver, type DriverConfigOption } from '../services/drivers'
 import { navigate } from '../lib/navigate'
 
 @customElement('device-detail-page')
 export class DeviceDetailPage extends LitElement {
   static styles = css`
     :host {
-      display: block;
-      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      padding: 0;
       background: var(--bg);
-      min-height: 100%;
+      flex: 1;
+      min-height: 0;
     }
 
     /* Header */
@@ -33,7 +36,7 @@ export class DeviceDetailPage extends LitElement {
       display: flex;
       align-items: center;
       justify-content: center;
-      border: 1px solid var(--border);
+      box-shadow: var(--glass-shadow-sm);
       border-radius: var(--radius-md);
       background: var(--card);
       color: var(--muted);
@@ -75,28 +78,35 @@ export class DeviceDetailPage extends LitElement {
       align-items: center;
       gap: 8px;
       padding: 10px 16px;
-      border: 1px solid var(--border);
+      box-shadow: var(--glass-shadow-sm);
       border-radius: var(--radius-md);
       background: var(--card);
       color: var(--text);
       font-size: 13px;
       font-weight: 500;
       cursor: pointer;
-      transition: border-color var(--duration-fast) ease, background var(--duration-fast) ease;
+      transition: background var(--duration-fast) ease;
     }
 
     .btn:hover {
       background: var(--bg-hover);
-      border-color: var(--border-strong);
     }
 
     .btn-danger {
-      border-color: var(--danger);
       color: var(--danger);
     }
 
     .btn-danger:hover {
       background: var(--danger-subtle);
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: var(--accent-foreground);
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-hover);
     }
 
     /* Status badge */
@@ -161,7 +171,7 @@ export class DeviceDetailPage extends LitElement {
     /* Card */
     .card {
       background: var(--card);
-      border: 1px solid var(--border);
+      box-shadow: var(--glass-shadow-sm);
       border-radius: var(--radius-lg);
       overflow: hidden;
     }
@@ -171,7 +181,7 @@ export class DeviceDetailPage extends LitElement {
       align-items: center;
       justify-content: space-between;
       padding: 16px 20px;
-      border-bottom: 1px solid var(--border);
+      box-shadow: 0 1px 0 var(--card-highlight);
     }
 
     .card-title {
@@ -220,7 +230,7 @@ export class DeviceDetailPage extends LitElement {
     .prop-table td {
       padding: 12px 16px;
       text-align: left;
-      border-bottom: 1px solid var(--border);
+      box-shadow: 0 1px 0 var(--card-highlight);
     }
 
     .prop-table th {
@@ -238,7 +248,7 @@ export class DeviceDetailPage extends LitElement {
     }
 
     .prop-table tr:last-child td {
-      border-bottom: none;
+      box-shadow: none;
     }
 
     .prop-name {
@@ -290,7 +300,7 @@ export class DeviceDetailPage extends LitElement {
 
     .command-btn {
       padding: 6px 12px;
-      border: 1px solid var(--accent);
+      box-shadow: var(--glass-shadow-sm);
       border-radius: var(--radius-md);
       background: transparent;
       color: var(--accent);
@@ -315,11 +325,11 @@ export class DeviceDetailPage extends LitElement {
       align-items: flex-start;
       gap: 12px;
       padding: 12px 0;
-      border-bottom: 1px solid var(--border);
+      box-shadow: 0 1px 0 var(--card-highlight);
     }
 
     .event-item:last-child {
-      border-bottom: none;
+      box-shadow: none;
     }
 
     .event-level {
@@ -392,12 +402,215 @@ export class DeviceDetailPage extends LitElement {
     @keyframes spin {
       to { transform: rotate(360deg); }
     }
+
+    /* Modal overlay */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      background: rgba(0, 0, 0, 0.4);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      animation: fade-in 0.15s ease;
+    }
+
+    @keyframes fade-in {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    .modal-card {
+      background: var(--card);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--glass-shadow);
+      width: 100%;
+      max-width: 560px;
+      max-height: 90vh;
+      overflow-y: auto;
+      animation: rise 0.2s var(--ease-out);
+    }
+
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 20px 24px;
+      box-shadow: 0 1px 0 var(--card-highlight);
+    }
+
+    .modal-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text-strong);
+      margin: 0;
+    }
+
+    .modal-close {
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: var(--radius-md);
+      background: none;
+      color: var(--muted);
+      cursor: pointer;
+      transition: background var(--duration-fast) ease, color var(--duration-fast) ease;
+    }
+
+    .modal-close:hover {
+      background: var(--bg-hover);
+      color: var(--text);
+    }
+
+    .modal-close svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .modal-body {
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .modal-footer {
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+      padding: 16px 24px;
+      box-shadow: 0 -1px 0 var(--card-highlight);
+    }
+
+    /* Form */
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .form-label {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text);
+    }
+
+    .form-label .required {
+      color: var(--danger);
+      margin-left: 2px;
+    }
+
+    .form-input,
+    .form-select,
+    .form-textarea {
+      width: 100%;
+      padding: 10px 14px;
+      border: none;
+      box-shadow: var(--glass-shadow-sm);
+      border-radius: var(--radius-md);
+      background: var(--card);
+      color: var(--text);
+      font-size: 14px;
+      transition: box-shadow var(--duration-fast) ease;
+    }
+
+    .form-input:focus,
+    .form-select:focus,
+    .form-textarea:focus {
+      outline: none;
+      box-shadow: var(--focus-ring);
+    }
+
+    .form-input::placeholder,
+    .form-textarea::placeholder {
+      color: var(--muted);
+    }
+
+    .form-textarea {
+      resize: vertical;
+      min-height: 80px;
+    }
+
+    .form-hint {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .form-error {
+      font-size: 12px;
+      color: var(--danger);
+    }
+
+    .modal-error {
+      padding: 12px 16px;
+      border-radius: var(--radius-md);
+      background: var(--danger-subtle);
+      color: var(--danger);
+      font-size: 13px;
+    }
+
+    .modal-btn {
+      padding: 10px 20px;
+      border-radius: var(--radius-md);
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background var(--duration-fast) ease;
+    }
+
+    .modal-btn-cancel {
+      background: var(--bg-secondary);
+      color: var(--text);
+      box-shadow: var(--glass-shadow-sm);
+    }
+
+    .modal-btn-cancel:hover {
+      background: var(--bg-hover);
+    }
+
+    .modal-btn-primary {
+      background: var(--accent);
+      color: var(--accent-foreground);
+    }
+
+    .modal-btn-primary:hover:not(:disabled) {
+      background: var(--accent-hover);
+    }
+
+    .modal-btn-primary:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
   `
 
   @state() profile: DeviceProfile | null = null
   @state() loading = true
   @state() error: string | null = null
   @state() activeTab = 'properties'
+
+  // Edit modal state
+  @state() showEditModal = false
+  @state() editLoading = false
+  @state() editError = ''
+  @state() editName = ''
+  @state() editDisplayName = ''
+  @state() editDescription = ''
+  @state() editProtocol = ''
+  @state() editAddress = ''
+  @state() editDriverName = ''
+  @state() editDriverOptions: Record<string, string> = {}
+
+  // Driver state
+  @state() drivers: Driver[] = []
+  @state() driverConfigOptions: DriverConfigOption[] = []
 
   connectedCallback() {
     super.connectedCallback()
@@ -437,6 +650,273 @@ export class DeviceDetailPage extends LitElement {
     }
   }
 
+  async openEditModal() {
+    if (!this.profile) return
+    const { device } = this.profile
+
+    this.editName = device.name
+    this.editDisplayName = device.displayName || ''
+    this.editDescription = device.description || ''
+    this.editProtocol = device.protocol || ''
+    this.editAddress = device.address || ''
+    this.editDriverName = device.driverName || ''
+    this.editDriverOptions = {}
+    this.editError = ''
+    this.showEditModal = true
+
+    // Load drivers list
+    try {
+      const response = await driverApi.getDrivers()
+      if (response.result) {
+        this.drivers = response.result
+      }
+    } catch {
+      // Drivers list is optional
+    }
+
+    // Load driver config if device has a driver
+    if (this.editDriverName) {
+      await this.loadDriverConfig(this.editDriverName)
+    }
+  }
+
+  async loadDriverConfig(driverName: string) {
+    try {
+      const response = await driverApi.getDriverConfig(driverName)
+      this.driverConfigOptions = response.result || []
+    } catch {
+      this.driverConfigOptions = []
+    }
+  }
+
+  async handleDriverChange(driverName: string) {
+    this.editDriverName = driverName
+    this.editDriverOptions = {}
+    if (driverName) {
+      await this.loadDriverConfig(driverName)
+    } else {
+      this.driverConfigOptions = []
+    }
+  }
+
+  handleDriverOptionChange(optionName: string, value: string) {
+    this.editDriverOptions = { ...this.editDriverOptions, [optionName]: value }
+  }
+
+  closeEditModal() {
+    this.showEditModal = false
+    this.editError = ''
+  }
+
+  async handleEditSubmit(e: Event) {
+    e.preventDefault()
+    if (!this.profile) return
+
+    this.editError = ''
+
+    // Validation
+    if (!this.editName.trim()) {
+      this.editError = '请输入设备名称'
+      return
+    }
+    if (this.editName.length < 2 || this.editName.length > 50) {
+      this.editError = '设备名称长度为2-50个字符'
+      return
+    }
+
+    // Check required driver config options
+    for (const opt of this.driverConfigOptions) {
+      if (opt.required && (!this.editDriverOptions[opt.name] || !this.editDriverOptions[opt.name].trim())) {
+        this.editError = `请填写必填项：${opt.label || opt.name}`
+        return
+      }
+    }
+
+    this.editLoading = true
+    try {
+      const data: Partial<CreateDeviceRequest> = {
+        name: this.editName.trim(),
+        displayName: this.editDisplayName.trim() || undefined,
+        description: this.editDescription.trim() || undefined,
+        protocol: this.editProtocol || undefined,
+        address: this.editAddress.trim() || undefined,
+        driverName: this.editDriverName || undefined,
+        driverOptions: Object.keys(this.editDriverOptions).length > 0
+          ? JSON.stringify(this.editDriverOptions)
+          : undefined,
+      }
+
+      await deviceApi.updateDevice(this.profile.device.id, data)
+      this.closeEditModal()
+      await this.loadDevice(this.profile.device.id)
+    } catch (err: any) {
+      this.editError = err.message || '更新设备失败'
+    } finally {
+      this.editLoading = false
+    }
+  }
+
+  renderEditModal() {
+    if (!this.showEditModal) return null
+
+    return html`
+      <div class="modal-overlay" @click=${this.closeEditModal}>
+        <div class="modal-card" @click=${(e: Event) => e.stopPropagation()}>
+          <div class="modal-header">
+            <h2 class="modal-title">编辑设备</h2>
+            <button class="modal-close" @click=${this.closeEditModal}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
+          <form @submit=${this.handleEditSubmit}>
+            <div class="modal-body">
+              ${this.editError ? html`<div class="modal-error">${this.editError}</div>` : ''}
+
+              <div class="form-group">
+                <label class="form-label">设备名称 <span class="required">*</span></label>
+                <input
+                  type="text"
+                  class="form-input"
+                  placeholder="请输入设备名称"
+                  .value=${this.editName}
+                  @input=${(e: InputEvent) => { this.editName = (e.target as HTMLInputElement).value }}
+                />
+                <span class="form-hint">2-50个字符</span>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">显示名称</label>
+                <input
+                  type="text"
+                  class="form-input"
+                  placeholder="可选，用于显示"
+                  .value=${this.editDisplayName}
+                  @input=${(e: InputEvent) => { this.editDisplayName = (e.target as HTMLInputElement).value }}
+                />
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">描述</label>
+                <textarea
+                  class="form-textarea"
+                  placeholder="可选，设备描述"
+                  .value=${this.editDescription}
+                  @input=${(e: InputEvent) => { this.editDescription = (e.target as HTMLTextAreaElement).value }}
+                ></textarea>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">协议</label>
+                <select
+                  class="form-select"
+                  .value=${this.editProtocol}
+                  @change=${(e: Event) => { this.editProtocol = (e.target as HTMLSelectElement).value }}
+                >
+                  <option value="">请选择协议</option>
+                  <option value="modbus">Modbus</option>
+                  <option value="onvif">ONVIF</option>
+                  <option value="snmp">SNMP</option>
+                  <option value="mqtt">MQTT</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">地址</label>
+                <input
+                  type="text"
+                  class="form-input"
+                  placeholder="例如 192.168.1.100:502"
+                  .value=${this.editAddress}
+                  @input=${(e: InputEvent) => { this.editAddress = (e.target as HTMLInputElement).value }}
+                />
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">驱动</label>
+                <select
+                  class="form-select"
+                  .value=${this.editDriverName}
+                  @change=${(e: Event) => this.handleDriverChange((e.target as HTMLSelectElement).value)}
+                >
+                  <option value="">请选择驱动</option>
+                  ${this.drivers.map(d => html`
+                    <option value=${d.name}>${d.name}${d.version ? ` (${d.version})` : ''}</option>
+                  `)}
+                </select>
+              </div>
+
+              ${this.driverConfigOptions.length > 0 ? html`
+                <div style="padding: 12px; background: var(--bg); border-radius: var(--radius-md);">
+                  <label class="form-label" style="margin-bottom: 12px;">驱动配置</label>
+                  ${this.driverConfigOptions.map(opt => html`
+                    <div class="form-group" style="margin-bottom: 12px;">
+                      <label class="form-label">
+                        ${opt.label || opt.name}
+                        ${opt.required ? html`<span class="required">*</span>` : ''}
+                      </label>
+                      ${this.renderDriverOptionInput(opt)}
+                      ${opt.description ? html`<span class="form-hint">${opt.description}</span>` : ''}
+                    </div>
+                  `)}
+                </div>
+              ` : ''}
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="modal-btn modal-btn-cancel" @click=${this.closeEditModal}>取消</button>
+              <button type="submit" class="modal-btn modal-btn-primary" ?disabled=${this.editLoading}>
+                ${this.editLoading ? '保存中...' : '保存'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `
+  }
+
+  renderDriverOptionInput(opt: DriverConfigOption) {
+    const value = this.editDriverOptions[opt.name] ?? opt.defaultValue ?? ''
+
+    if (opt.type === 'select') {
+      return html`
+        <select
+          class="form-select"
+          .value=${value}
+          @change=${(e: Event) => this.handleDriverOptionChange(opt.name, (e.target as HTMLSelectElement).value)}
+        >
+          <option value="">请选择</option>
+          ${opt.defaultValue?.split(',').map(v => html`
+            <option value=${v.trim()}>${v.trim()}</option>
+          `)}
+        </select>
+      `
+    }
+
+    if (opt.type === 'number') {
+      return html`
+        <input
+          type="number"
+          class="form-input"
+          placeholder=${opt.label || opt.name}
+          .value=${value}
+          @input=${(e: InputEvent) => this.handleDriverOptionChange(opt.name, (e.target as HTMLInputElement).value)}
+        />
+      `
+    }
+
+    // Default: string input
+    return html`
+      <input
+        type="text"
+        class="form-input"
+        placeholder=${opt.label || opt.name}
+        .value=${value}
+        @input=${(e: InputEvent) => this.handleDriverOptionChange(opt.name, (e.target as HTMLInputElement).value)}
+      />
+    `
+  }
+
   render() {
     return html`
       <div class="page-header">
@@ -452,11 +932,18 @@ export class DeviceDetailPage extends LitElement {
           </div>
         </div>
         <div class="header-actions">
+          <button class="btn btn-primary" @click=${() => this.openEditModal()}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"/>
+            </svg>
+            编辑
+          </button>
           <button class="btn btn-danger" @click=${() => this.deleteDevice()}>删除设备</button>
         </div>
       </div>
 
       ${this.loading ? this.renderLoading() : this.error ? this.renderError() : this.renderContent()}
+      ${this.renderEditModal()}
     `
   }
 

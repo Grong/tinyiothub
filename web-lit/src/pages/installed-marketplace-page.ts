@@ -18,11 +18,13 @@ interface InstalledItem {
 @customElement('installed-marketplace-page')
 export class InstalledMarketplacePage extends LitElement {
   static styles = css`
-    :host {
-      display: block;
-      padding: 24px;
+    installed-marketplace-page {
+      display: flex;
+      flex-direction: column;
+      padding: 0;
       background: var(--bg);
-      min-height: 100%;
+      flex: 1;
+      min-height: 0;
     }
 
     /* Header */

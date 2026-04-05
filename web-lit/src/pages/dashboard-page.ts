@@ -6,11 +6,8 @@ import { navigate } from '../lib/navigate'
 @customElement('dashboard-page')
 export class DashboardPage extends LitElement {
   static styles = css`
-    :host {
+    dashboard-page {
       display: block;
-      padding: 24px;
-      background: var(--bg);
-      min-height: 100%;
     }
 
     /* Header */
@@ -42,16 +39,15 @@ export class DashboardPage extends LitElement {
 
     .stat-card {
       background: var(--card);
-      border: 1px solid var(--border);
       border-radius: var(--radius-lg);
       padding: 20px;
-      transition: border-color var(--duration-normal) ease, box-shadow var(--duration-normal) ease;
+      box-shadow: var(--glass-shadow-sm);
+      transition: box-shadow var(--duration-normal) ease;
       animation: rise 0.25s var(--ease-out) backwards;
     }
 
     .stat-card:hover {
-      border-color: var(--border-strong);
-      box-shadow: var(--shadow-sm);
+      box-shadow: var(--glass-shadow-hover);
     }
 
     .stat-header {
@@ -135,9 +131,9 @@ export class DashboardPage extends LitElement {
     /* Card */
     .card {
       background: var(--card);
-      border: 1px solid var(--border);
       border-radius: var(--radius-lg);
       overflow: hidden;
+      box-shadow: var(--glass-shadow-sm);
     }
 
     .card-header {
@@ -145,7 +141,7 @@ export class DashboardPage extends LitElement {
       align-items: center;
       justify-content: space-between;
       padding: 16px 20px;
-      border-bottom: 1px solid var(--border);
+      box-shadow: 0 1px 0 var(--card-highlight);
     }
 
     .card-title {
@@ -238,11 +234,11 @@ export class DashboardPage extends LitElement {
       align-items: flex-start;
       gap: 12px;
       padding: 12px 0;
-      border-bottom: 1px solid var(--border);
+      box-shadow: 0 1px 0 var(--card-highlight);
     }
 
     .alarm-item:last-child {
-      border-bottom: none;
+      box-shadow: none;
     }
 
     .alarm-level {

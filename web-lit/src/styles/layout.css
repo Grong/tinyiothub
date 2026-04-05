@@ -12,7 +12,7 @@
   --shell-gap: 16px;
   --shell-nav-width: 258px;
   --shell-nav-rail-width: 78px;
-  --shell-topbar-height: 52px;
+  --shell-topbar-height: 64px;
   --shell-focus-duration: 200ms;
   --shell-focus-ease: var(--ease-out);
   height: 100vh;
@@ -92,7 +92,7 @@
   align-items: center;
   padding: 0 24px;
   min-height: 58px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 74%, transparent);
+  box-shadow: 0 1px 8px rgba(0, 0, 0, 0.12);
   background: color-mix(in srgb, var(--bg) 82%, transparent);
   backdrop-filter: blur(12px) saturate(1.6);
   -webkit-backdrop-filter: blur(12px) saturate(1.6);
@@ -212,7 +212,7 @@
   gap: 12px;
   min-height: 38px;
   padding: 0 14px;
-  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  border: none;
   border-radius: var(--radius-full);
   background: color-mix(in srgb, var(--bg-elevated) 84%, transparent);
   color: var(--muted);
@@ -226,7 +226,7 @@
 }
 
 .topbar-search:hover {
-  border-color: color-mix(in srgb, var(--border-strong) 90%, transparent);
+  border-color: transparent;
   background: color-mix(in srgb, var(--bg-hover) 84%, transparent);
   color: var(--text);
 }
@@ -246,7 +246,7 @@
   align-items: center;
   justify-content: center;
   padding: 2px 6px;
-  border: 1px solid var(--border);
+  border: none;
   border-radius: var(--radius-sm);
   background: var(--bg);
   font-family: var(--mono);
@@ -260,7 +260,7 @@
   align-items: center;
   gap: 2px;
   padding: 3px;
-  border: 1px solid color-mix(in srgb, var(--border) 84%, transparent);
+  border: none;
   border-radius: var(--radius-full);
   background: color-mix(in srgb, var(--bg-elevated) 78%, transparent);
 }
@@ -272,7 +272,7 @@
   align-items: center;
   justify-content: center;
   padding: 0;
-  border: 1px solid transparent;
+  border: none;
   border-radius: var(--radius-full);
   background: transparent;
   color: var(--muted);
@@ -296,7 +296,7 @@
 .topbar-theme-mode__btn--active {
   color: var(--accent);
   background: var(--accent-subtle);
-  border-color: color-mix(in srgb, var(--accent) 25%, transparent);
+  box-shadow: var(--glass-shadow-sm);
 }
 
 .topbar-theme-mode__btn svg {
@@ -318,7 +318,7 @@
   display: flex;
   min-height: 100%;
   overflow: hidden;
-  border-right: 1px solid color-mix(in srgb, var(--border) 74%, transparent);
+  border-right: none;
   transition: width var(--shell-focus-duration) var(--shell-focus-ease);
 }
 
@@ -334,6 +334,8 @@
   min-width: 0;
   overflow: hidden;
   background: color-mix(in srgb, var(--bg) 96%, var(--bg-elevated) 4%);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
 }
 
 :root[data-theme-mode="light"] .sidebar {
@@ -380,7 +382,7 @@
 
 .sidebar-shell__footer {
   padding: 12px 0 0;
-  border-top: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  box-shadow: 0 -1px 8px rgba(0, 0, 0, 0.08);
 }
 
 .sidebar-brand {
@@ -444,7 +446,7 @@
   align-items: center;
   justify-content: center;
   background: color-mix(in srgb, var(--bg-elevated) 88%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border-strong) 68%, transparent);
+  border: none;
   border-radius: var(--radius-full);
   cursor: pointer;
   transition:
@@ -459,7 +461,7 @@
 
 .nav-collapse-toggle:hover {
   background: color-mix(in srgb, var(--bg-hover) 90%, transparent);
-  border-color: color-mix(in srgb, var(--border-strong) 88%, transparent);
+  box-shadow: var(--glass-shadow-sm);
   color: var(--text);
   transform: translateY(-1px);
 }
@@ -564,7 +566,6 @@
   min-height: 40px;
   padding: 0 9px;
   border-radius: var(--radius-md);
-  border: 1px solid transparent;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
@@ -608,7 +609,7 @@
 .nav-item:hover {
   color: var(--text);
   background: color-mix(in srgb, var(--bg-hover) 84%, transparent);
-  border-color: color-mix(in srgb, var(--border) 72%, transparent);
+  box-shadow: var(--glass-shadow-sm);
   text-decoration: none;
 }
 
@@ -620,7 +621,9 @@
 .nav-item--active {
   color: var(--text-strong);
   background: color-mix(in srgb, var(--accent-subtle) 88%, var(--bg-elevated) 12%);
-  border-color: color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 10%, transparent),
+    var(--glass-shadow);
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, white 10%, transparent),
     0 12px 24px color-mix(in srgb, black 10%, transparent);
@@ -659,7 +662,6 @@
   padding: 0;
   margin: 0 auto;
   border-radius: var(--radius-lg);
-  border-color: transparent;
   box-shadow: none;
 }
 
@@ -698,7 +700,9 @@
     color-mix(in srgb, var(--accent) 14%, var(--bg-elevated) 86%) 0%,
     color-mix(in srgb, var(--accent) 8%, var(--bg) 92%) 100%
   );
-  border-color: color-mix(in srgb, var(--accent) 18%, var(--border) 82%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 8%, transparent),
+    0 10px 20px color-mix(in srgb, black 18%, transparent);
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, white 8%, transparent),
     0 10px 20px color-mix(in srgb, black 18%, transparent);
@@ -707,7 +711,6 @@
 .sidebar--collapsed .nav-collapse-toggle {
   width: 42px;
   height: 42px;
-  border-color: color-mix(in srgb, var(--border) 82%, transparent);
   background: color-mix(in srgb, var(--bg-elevated) 92%, transparent);
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, white 8%, transparent),
@@ -741,7 +744,7 @@
   padding: 0 12px;
   border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--bg-elevated) 72%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  box-shadow: var(--glass-shadow-sm);
 }
 
 .sidebar-version__label {

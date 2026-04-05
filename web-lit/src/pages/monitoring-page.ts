@@ -5,11 +5,13 @@ import { dashboardApi, type DashboardMetrics } from '../services/dashboard'
 @customElement('monitoring-page')
 export class MonitoringPage extends LitElement {
   static styles = css`
-    :host {
-      display: block;
-      padding: 24px;
+    monitoring-page {
+      display: flex;
+      flex-direction: column;
+      padding: 0;
       background: var(--bg);
-      min-height: 100%;
+      flex: 1;
+      min-height: 0;
     }
 
     /* Header */

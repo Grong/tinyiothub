@@ -6,11 +6,13 @@ import { navigate } from '../lib/navigate'
 @customElement('templates-page')
 export class TemplatesPage extends LitElement {
   static styles = css`
-    :host {
-      display: block;
-      padding: 24px;
+    templates-page {
+      display: flex;
+      flex-direction: column;
+      padding: 0;
       background: var(--bg);
-      min-height: 100%;
+      flex: 1;
+      min-height: 0;
     }
 
     /* Header */

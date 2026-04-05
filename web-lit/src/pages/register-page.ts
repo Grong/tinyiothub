@@ -158,17 +158,19 @@ export class RegisterPage extends LitElement {
 
     .form-input {
       padding: 12px 14px;
-      border: 1px solid var(--input);
-      border-radius: var(--radius-md);
-      background: var(--bg);
+      border: none;
+      border-bottom: 1px solid var(--input);
+      border-radius: var(--radius-md) var(--radius-md) 0 0;
+      background: var(--card);
       color: var(--text);
       font-size: 14px;
-      transition: border-color var(--duration-fast) ease;
+      transition: border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
     }
 
     .form-input:focus {
       outline: none;
-      border-color: var(--accent);
+      border-bottom-color: var(--accent);
+      box-shadow: var(--focus-ring);
     }
 
     .form-input::placeholder {
@@ -230,8 +232,7 @@ export class RegisterPage extends LitElement {
     .divider-line {
       flex: 1;
       height: 1px;
-      background: var(--border);
-    }
+      background: var(--card-highlight);    }
 
     .divider-text {
       font-size: 12px;
@@ -249,13 +250,11 @@ export class RegisterPage extends LitElement {
     .alert.error {
       background: var(--danger-subtle);
       color: var(--danger);
-      border: 1px solid var(--danger);
     }
 
     .alert.success {
       background: var(--ok-subtle);
       color: var(--ok);
-      border: 1px solid var(--ok);
     }
 
     /* Terms */
