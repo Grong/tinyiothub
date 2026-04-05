@@ -29,6 +29,9 @@ importers:
       nanostores:
         specifier: ^0.10.3
         version: 0.10.3
+      uplot:
+        specifier: ^1.6.32
+        version: 1.6.32
     devDependencies:
       '@playwright/test':
         specifier: ^1.48.0
@@ -711,6 +714,9 @@ packages:
     resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
     engines: {node: '>=14.17'}
     hasBin: true
+
+  uplot@1.6.32:
+    resolution: {integrity: sha512-KIMVnG68zvu5XXUbC4LQEPnhwOxBuLyW1AHtpm6IKTXImkbLgkMy+jabjLgSLMasNuGGzQm/ep3tOkyTxpiQIw==}
 
   vite@8.0.3:
     resolution: {integrity: sha512-B9ifbFudT1TFhfltfaIPgjo9Z3mDynBTJSUYxTjOQruf/zHH+ezCQKcoqO+h7a9Pw9Nm/OtlXAiGT1axBgwqrQ==}
@@ -1444,6 +1450,8 @@ snapshots:
     optional: true
 
   typescript@5.9.3: {}
+
+  uplot@1.6.32: {}
 
   vite@8.0.3(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2):
     dependencies:
