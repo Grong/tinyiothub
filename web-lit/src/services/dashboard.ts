@@ -51,11 +51,13 @@ export interface RecentAlarm {
 }
 
 export interface DashboardMetrics {
-  cpuUsage: number
-  memoryUsage: number
-  diskUsage: number
-  networkIn: number
-  networkOut: number
+  cpu: number
+  memory: number
+  disk: number
+  network: {
+    inbound: number
+    outbound: number
+  }
 }
 
 export interface QuickDevice {

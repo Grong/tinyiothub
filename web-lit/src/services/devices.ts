@@ -9,20 +9,42 @@ import type { PaginatedResponse } from '../lib/api-client'
 export interface Device {
   id: string
   name: string
-  // ... other device fields
+  displayName?: string
+  description?: string
+  protocol?: string
+  address?: string
+  status?: 'online' | 'offline' | 'warning' | 'error'
+  isOnline?: boolean
+  driverName?: string
+  tags?: string[]
+  createdAt?: string
+  updatedAt?: string
 }
 
 export interface DeviceProperty {
   id: string
   name: string
   value: any
-  // ... other property fields
+  displayName?: string
+  description?: string
+  dataType?: string
+  unit?: string
+  readonly?: boolean
+  isReadOnly?: boolean
+  timestamp?: string
 }
 
 export interface DeviceAlarm {
   id: string
   deviceId: string
-  // ... other alarm fields
+  deviceName?: string
+  alarmType?: string
+  level?: 'info' | 'warning' | 'error' | 'critical'
+  message?: string
+  status?: 'active' | 'acknowledged' | 'resolved'
+  acknowledged?: boolean
+  resolved?: boolean
+  timestamp?: string
 }
 
 export interface DeviceListParams {
