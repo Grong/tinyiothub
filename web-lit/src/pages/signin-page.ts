@@ -8,6 +8,9 @@ import { navigate } from '../lib/navigate'
 export class SigninPage extends LitElement {
   static styles = css`
     :host {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
       display: flex;
       min-height: 100vh;
       background: var(--bg);

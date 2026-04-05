@@ -7,8 +7,11 @@ import { navigate } from '../lib/navigate'
 export class RegisterPage extends LitElement {
   static styles = css`
     :host {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
       display: block;
-      min-height: 100%;
+      min-height: 100vh;
       background: var(--bg);
     }
 
