@@ -34,11 +34,9 @@ interface RequestOptions {
 
 // 获取认证token - 使用 sessionStorage 替代 localStorage 以减少 XSS 持久化风险
 // 注意: sessionStorage 在标签页关闭时自动清除，比 localStorage 更安全
-// 但最佳方案是使用 httpOnly cookie，由后端设置
 const getAuthToken = (): string | null => {
   if (typeof window === 'undefined') return null
-  // 优先从 sessionStorage 获取，fallback 到 localStorage（兼容已有数据）
-  return sessionStorage.getItem('auth-token') || localStorage.getItem('auth-token')
+  return sessionStorage.getItem('auth-token')
 }
 
 // 构建完整URL
@@ -49,6 +47,36 @@ const buildUrl = (endpoint: string): string => {
   }
   const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`
   return `${API_PREFIX}${normalizedEndpoint}`
+}
+
+// 刷新token
+const refreshToken = async (): Promise<boolean> => {
+  try {
+    const response = await fetch(buildUrl('auth/refresh'), {
+      method: 'POST',
+      credentials: 'include',
+    })
+    if (response.ok) {
+      const data = await response.json()
+      if (data.code === 0 && data.result?.accessToken) {
+        sessionStorage.setItem('auth-token', data.result.accessToken)
+        return true
+      }
+    }
+  } catch {
+    // 刷新失败
+  }
+  return false
+}
+
+// 清除认证状态
+const clearAuth = () => {
+  sessionStorage.removeItem('auth-token')
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('auth-error', {
+      detail: { message: 'Authentication expired' }
+    }))
+  }
 }
 
 // 底层HTTP请求函数
@@ -97,18 +125,31 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
   try {
     const response = await fetch(url.toString(), config)
 
-    // 处理401未授权错误
+    // 处理401未授权错误 - 尝试刷新token
     if (response.status === 401) {
-      if (typeof window !== 'undefined') {
-        // 清除 sessionStorage 和 localStorage 中的 token
-        sessionStorage.removeItem('auth-token')
-        localStorage.removeItem('auth-token')
-        const event = new CustomEvent('auth-error', {
-          detail: { message: 'Authentication expired' }
-        })
-        window.dispatchEvent(event)
+      // 尝试刷新token
+      const refreshed = await refreshToken()
+      if (refreshed) {
+        // 重试请求，使用新token
+        const newToken = sessionStorage.getItem('auth-token')
+        config.headers = {
+          ...config.headers,
+          'Authorization': `Bearer ${newToken}`,
+        }
+        const retryResponse = await fetch(url.toString(), config)
+        if (retryResponse.ok) {
+          return await retryResponse.json()
+        }
+        if (retryResponse.status === 401) {
+          // 刷新后仍然是401，清除token并跳转登录
+          clearAuth()
+          throw new Error('Unauthorized - please login again')
+        }
+      } else {
+        // 刷新失败，清除token并跳转登录
+        clearAuth()
+        throw new Error('Unauthorized - please login again')
       }
-      throw new Error('Unauthorized - please login again')
     }
 
     // 处理其他HTTP错误
