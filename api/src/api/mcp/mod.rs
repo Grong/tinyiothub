@@ -89,6 +89,13 @@ pub async fn register_tools() {
     // Register knowledge tools (Task 6)
     tools::knowledge::register_knowledge_tools(&mut reg);
 
-    tracing::info!("Registered {} device MCP tools, {} driver MCP tools, {} heartbeat MCP tools, {} self-heal MCP tools, {} knowledge MCP tools",
-        12, 7, 3, 3, 3);
+    // Register workspace tools (Task 11)
+    reg.register(tools::workspace::ListWorkspacesHandler);
+    reg.register(tools::workspace::GetWorkspaceHandler);
+    reg.register(tools::workspace::CreateWorkspaceHandler);
+    reg.register(tools::workspace::UpdateWorkspaceHandler);
+    reg.register(tools::workspace::DeleteWorkspaceHandler);
+
+    tracing::info!("Registered {} device MCP tools, {} driver MCP tools, {} heartbeat MCP tools, {} self-heal MCP tools, {} knowledge MCP tools, {} workspace MCP tools",
+        12, 7, 3, 3, 3, 5);
 }

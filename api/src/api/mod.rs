@@ -26,6 +26,7 @@ pub mod tags;
 pub mod templates;
 pub mod tenants;
 pub mod users;
+pub mod workspaces;
 
 /// Create the main API router
 pub fn create_router() -> Router<AppState> {
@@ -46,6 +47,7 @@ pub fn create_router() -> Router<AppState> {
         .nest("/jobs", jobs::create_router())
         .nest("/heartbeat", heartbeat::create_router()) // 心跳端点
         .nest("/self-healing", self_healing::create_router()) // 自愈端点
+        .nest("/workspaces", workspaces::create_router()) // 工作空间端点
         .nest("/mcp", mcp::create_router()) // MCP 工具端点
         .nest("/auth", auth::session::create_router()) // 需要认证的会话路由
         .route("/test-auth", get(test_auth_endpoint))

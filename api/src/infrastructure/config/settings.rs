@@ -55,6 +55,15 @@ pub struct ApplicationSettings {
     pub harmonyos: HarmonyosConfig,
     #[serde(default)]
     pub redis: Option<RedisConfig>,
+    #[serde(default)]
+    pub openclaw: Option<OpenClawConfig>,
+}
+
+/// OpenClaw Agent configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct OpenClawConfig {
+    pub url: String,
 }
 
 /// Event system configuration

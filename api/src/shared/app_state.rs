@@ -34,6 +34,7 @@ use crate::{
             Database,
         },
         redis::RedisClient,
+        openclaw_agent::OpenClawAgentClient,
     },
     shared::error::Error,
 };
@@ -98,6 +99,9 @@ pub struct AppState {
 
     /// 报警服务 - 报警规则和报警管理
     pub alarm_service: Arc<crate::domain::alarm::AlarmService>,
+
+    /// OpenClaw Agent 客户端
+    pub openclaw_agent: Arc<dyn OpenClawAgentClient>,
 }
 
 impl AppState {
@@ -183,6 +187,17 @@ impl AppState {
             .map(|config| RedisClient::new(&config.url).ok())
             .flatten();
 
+        // OpenClaw Agent 客户端 - 从配置读取 URL
+        let openclaw_url = crate::infrastructure::config::get()
+            .openclaw
+            .as_ref()
+            .map(|c| c.url.clone())
+            .unwrap_or_else(|| "http://localhost:4010".to_string());
+        let openclaw_agent: Arc<dyn OpenClawAgentClient> =
+            Arc::new(crate::infrastructure::openclaw_agent::RealOpenClawAgentClient::new(
+                openclaw_url,
+            ));
+
         Self {
             data_context,
             database,
@@ -200,6 +215,7 @@ impl AppState {
             sse_manager,
             secure_event_service,
             alarm_service,
+            openclaw_agent,
         }
     }
 

@@ -61,3 +61,5 @@ pub mod alarm;
 pub use alarm::{AlarmDto, AlarmRuleDto, AlarmStatisticsDto};
 
 pub mod tenant;
+
+pub mod workspace;
