@@ -7,6 +7,7 @@ use serde::Deserialize;
 use tracing::{error, info};
 
 use crate::{
+    api::middleware::WorkspaceScope,
     dto::response::{
         builder::ApiResponseBuilder, ApiResponse, DeviceStatusDistribution, QuickDevice,
     },
@@ -23,12 +24,13 @@ pub struct QuickDevicesQuery {
 pub async fn get_device_distribution(
     State(state): State<AppState>,
     _claims: Claims,
+    WorkspaceScope(workspace_id): WorkspaceScope,
 ) -> Json<ApiResponse<DeviceStatusDistribution>> {
     info!("Getting device status distribution");
 
     let db = Database::new(state.db_pool());
 
-    match get_device_status_distribution(&db).await {
+    match get_device_status_distribution(&db, workspace_id.as_deref()).await {
         Ok(distribution) => ApiResponseBuilder::success(distribution),
         Err(e) => {
             error!("Failed to get device status distribution: {}", e);
@@ -42,13 +44,14 @@ pub async fn get_quick_devices(
     State(state): State<AppState>,
     Query(query): Query<QuickDevicesQuery>,
     _claims: Claims,
+    WorkspaceScope(workspace_id): WorkspaceScope,
 ) -> Json<ApiResponse<Vec<QuickDevice>>> {
     info!("Getting quick devices list with limit: {:?}", query.limit);
 
     let db = Database::new(state.db_pool());
 
     let limit = query.limit.unwrap_or(8);
-    match get_quick_devices_list(&db, limit).await {
+    match get_quick_devices_list(&db, limit, workspace_id.as_deref()).await {
         Ok(devices) => ApiResponseBuilder::success(devices),
         Err(e) => {
             error!("Failed to get quick devices list: {}", e);
@@ -62,26 +65,33 @@ pub async fn get_quick_devices(
 /// 获取设备状态分布统计
 async fn get_device_status_distribution(
     db: &Database,
+    workspace_id: Option<&str>,
 ) -> Result<DeviceStatusDistribution, sqlx::Error> {
+    let workspace_filter = workspace_id.map(|_| " AND workspace_id = ?").unwrap_or("");
+
     // 在线设备 (state = 1)
-    let online: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE state = 1")
-        .fetch_one(db.pool())
-        .await?;
+    let mut online_query = format!("SELECT COUNT(*) FROM devices WHERE state = 1{}", workspace_filter);
+    let mut q = sqlx::query_scalar(&online_query);
+    if let Some(wid) = workspace_id { q = q.bind(wid); }
+    let online: i64 = q.fetch_one(db.pool()).await?;
 
     // 离线设备 (state = 0)
-    let offline: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE state = 0")
-        .fetch_one(db.pool())
-        .await?;
+    let offline_query = format!("SELECT COUNT(*) FROM devices WHERE state = 0{}", workspace_filter);
+    let mut q = sqlx::query_scalar(&offline_query);
+    if let Some(wid) = workspace_id { q = q.bind(wid); }
+    let offline: i64 = q.fetch_one(db.pool()).await?;
 
     // 故障设备 (state = -1 或其他错误状态)
-    let error: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE state < 0")
-        .fetch_one(db.pool())
-        .await?;
+    let error_query = format!("SELECT COUNT(*) FROM devices WHERE state < 0{}", workspace_filter);
+    let mut q = sqlx::query_scalar(&error_query);
+    if let Some(wid) = workspace_id { q = q.bind(wid); }
+    let error: i64 = q.fetch_one(db.pool()).await?;
 
     // 维护中设备 (state = 2)
-    let maintenance: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE state = 2")
-        .fetch_one(db.pool())
-        .await?;
+    let maintenance_query = format!("SELECT COUNT(*) FROM devices WHERE state = 2{}", workspace_filter);
+    let mut q = sqlx::query_scalar(&maintenance_query);
+    if let Some(wid) = workspace_id { q = q.bind(wid); }
+    let maintenance: i64 = q.fetch_one(db.pool()).await?;
 
     Ok(DeviceStatusDistribution { online, offline, error, maintenance })
 }
@@ -90,19 +100,20 @@ async fn get_device_status_distribution(
 async fn get_quick_devices_list(
     db: &Database,
     limit: i32,
+    workspace_id: Option<&str>,
 ) -> Result<Vec<QuickDevice>, sqlx::Error> {
-    let devices =
-        sqlx::query_as::<_, (String, String, Option<String>, i32, chrono::NaiveDateTime)>(
-            r#"
-        SELECT 
+    let workspace_filter = workspace_id.map(|_| " WHERE workspace_id = ?").unwrap_or("");
+    let query_str = format!(
+        r#"
+        SELECT
             id,
             name,
             device_type,
             state,
             updated_at
-        FROM devices 
-        ORDER BY 
-            CASE 
+        FROM devices{}
+        ORDER BY
+            CASE
                 WHEN state = 1 THEN 0  -- 在线设备优先
                 WHEN state = 0 THEN 1  -- 离线设备其次
                 WHEN state < 0 THEN 2  -- 故障设备
@@ -111,7 +122,12 @@ async fn get_quick_devices_list(
             updated_at DESC
         LIMIT ?
         "#,
-        )
+        workspace_filter
+    );
+
+    let mut q = sqlx::query_as::<_, (String, String, Option<String>, i32, chrono::NaiveDateTime)>(&query_str);
+    if let Some(wid) = workspace_id { q = q.bind(wid); }
+    let devices = q
         .bind(limit)
         .fetch_all(db.pool())
         .await?;

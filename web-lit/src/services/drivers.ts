@@ -42,6 +42,34 @@ export const driverApi = {
     return { result: null }
   },
 
-  getDriverConfig: (name: string) =>
-    apiGet<DriverConfigOption[]>(`drivers/${name}/config`),
+  getDriverConfig: async (name: string): Promise<{ result: DriverConfigOption[] | null }> => {
+    // API returns { driverName, configOptions[], defaultConfig } with snake_case option fields
+    const res = await apiGet<{
+      driverName: string
+      configOptions: Array<{
+        name: string
+        label: string
+        optionType?: string
+        defaultValue?: string
+        required: boolean
+        description?: string | null
+        options?: string[]
+      }>
+      defaultConfig: Record<string, string>
+    }>(`drivers/${name}/config`)
+    if (res.result) {
+      return {
+        result: res.result.configOptions.map(opt => ({
+          name: opt.name,
+          label: opt.label,
+          type: (opt.optionType || 'string') as DriverConfigOption['type'],
+          defaultValue: opt.defaultValue,
+          required: opt.required,
+          description: opt.description ?? undefined,
+          options: opt.options,
+        })),
+      }
+    }
+    return { result: null }
+  },
 }

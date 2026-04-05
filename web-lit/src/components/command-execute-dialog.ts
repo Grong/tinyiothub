@@ -45,10 +45,34 @@ export class CommandExecuteDialog extends LitElement {
       margin-bottom: 16px;
     }
     .command-name { font-weight: 600; margin-bottom: 4px; }
+    .command-id { font-size: 11px; color: var(--muted); font-family: monospace; margin-bottom: 4px; }
     .command-desc { font-size: 12px; color: var(--muted); }
     .param-group { margin-bottom: 12px; }
-    .param-label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 4px; }
+    .param-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      margin-bottom: 4px;
+    }
+    .param-type {
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 4px;
+      background: var(--bg-muted);
+      color: var(--muted);
+    }
     .param-input {
+      width: 100%;
+      padding: 8px 12px;
+      background: var(--card);
+      border: none;
+      border-bottom: 1px solid var(--input);
+      color: var(--text);
+      font-size: 14px;
+    }
+    .param-select {
       width: 100%;
       padding: 8px 12px;
       background: var(--card);
@@ -150,18 +174,34 @@ export class CommandExecuteDialog extends LitElement {
           <div class="body">
             <div class="command-info">
               <div class="command-name">${this.command?.name}</div>
+              <div class="command-id">ID: ${this.command?.id}</div>
               <div class="command-desc">${this.command?.description || '无描述'}</div>
             </div>
-            ${paramEntries.length > 0 ? paramEntries.map(([key, defaultValue]) => html`
+            ${paramEntries.length > 0 ? paramEntries.map(([key, defaultValue]) => {
+              const paramType = typeof defaultValue
+              const placeholder = defaultValue != null ? String(defaultValue) : ''
+              return html`
               <div class="param-group">
-                <label class="param-label">${key}</label>
-                <input type=${typeof defaultValue === 'number' ? 'number' : 'text'}
-                  class="param-input"
-                  .value=${this.params[key] ?? defaultValue ?? ''}
-                  @input=${(e: InputEvent) => this.handleParamChange(key, (e.target as HTMLInputElement).value)}
-                />
+                <label class="param-label">
+                  ${key}
+                  <span class="param-type">${paramType}</span>
+                </label>
+                ${paramType === 'boolean' ? html`
+                  <select class="param-select"
+                    @change=${(e: Event) => this.handleParamChange(key, (e.target as HTMLSelectElement).value === 'true')}>
+                    <option value="true" ?selected=${this.params[key] === true}>true</option>
+                    <option value="false" ?selected=${this.params[key] === false || this.params[key] == null}>false</option>
+                  </select>
+                ` : html`
+                  <input type=${paramType === 'number' ? 'number' : 'text'}
+                    class="param-input"
+                    placeholder=${placeholder}
+                    .value=${this.params[key] ?? defaultValue ?? ''}
+                    @input=${(e: InputEvent) => this.handleParamChange(key, (e.target as HTMLInputElement).value)}
+                  />
+                `}
               </div>
-            `) : html`<p style="color: var(--muted); font-size: 13px;">此指令无需参数</p>`}
+            `}) : html`<p style="color: var(--muted); font-size: 13px;">此指令无需参数</p>`}
           </div>
           <div class="footer">
             <button class="btn btn-secondary" @click=${() => this.close()}>取消</button>

@@ -67,30 +67,41 @@ describe('driverApi', () => {
 
   describe('getDriverConfig', () => {
     it('calls apiGet with correct endpoint and driver name', async () => {
-      const mockConfig: DriverConfigOption[] = [
-        {
-          name: 'host',
-          label: 'Host',
-          type: 'string',
-          required: true,
-          defaultValue: 'localhost',
+      // API returns snake_case nested in config_options
+      const mockResponse = {
+        code: 0,
+        msg: '',
+        result: {
+          driverName: 'modbus-tcp',
+          configOptions: [
+            {
+              name: 'host',
+              label: 'Host',
+              optionType: 'string',
+              defaultValue: 'localhost',
+              required: true,
+              description: null,
+            },
+            {
+              name: 'port',
+              label: 'Port',
+              optionType: 'number',
+              defaultValue: '502',
+              required: true,
+              description: null,
+            },
+            {
+              name: 'debug',
+              label: 'Debug Mode',
+              optionType: 'boolean',
+              defaultValue: 'false',
+              required: false,
+              description: null,
+            },
+          ],
+          defaultConfig: { host: 'localhost', port: '502' },
         },
-        {
-          name: 'port',
-          label: 'Port',
-          type: 'number',
-          required: true,
-          defaultValue: '502',
-        },
-        {
-          name: 'debug',
-          label: 'Debug Mode',
-          type: 'boolean',
-          required: false,
-          defaultValue: 'false',
-        },
-      ]
-      const mockResponse = { code: 0, msg: '', result: mockConfig }
+      }
       ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue(mockResponse)
 
       const result = await driverApi.getDriverConfig('modbus-tcp')

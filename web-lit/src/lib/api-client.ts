@@ -6,6 +6,7 @@
 
 import { keysToCamelCase, keysToSnakeCase, type KeysToCamelCase } from './case-converter'
 import { API_PREFIX } from './config'
+import { $currentWorkspaceId } from '../stores/workspace-store'
 
 // 统一的 API 响应类型
 export interface ApiResponse<T = unknown> {
@@ -62,24 +63,34 @@ const buildUrl = (endpoint: string): string => {
   return `${API_PREFIX}${normalizedEndpoint}`
 }
 
-// 刷新token
+// 刷新token mutex - 防止多个并发请求同时刷新
+let refreshPromise: Promise<boolean> | null = null
+
 const refreshToken = async (): Promise<boolean> => {
-  try {
-    const response = await fetch(buildUrl('auth/refresh'), {
-      method: 'POST',
-      credentials: 'include',
-    })
-    if (response.ok) {
-      const data = await response.json()
-      if (data.code === 0 && data.result?.accessToken) {
-        sessionStorage.setItem('auth-token', data.result.accessToken)
-        return true
+  if (refreshPromise) return refreshPromise
+  refreshPromise = (async () => {
+    try {
+      const response = await fetch(buildUrl('auth/refresh'), {
+        method: 'POST',
+        credentials: 'include',
+      })
+      if (response.ok) {
+        const data = await response.json()
+        if (data.code === 0 && data.result?.access_token) {
+          sessionStorage.setItem('auth-token', data.result.access_token)
+          return true
+        }
       }
+    } catch {
+      console.warn('[api-client] Token refresh failed')
     }
-  } catch {
-    // 刷新失败
+    return false
+  })()
+  try {
+    return await refreshPromise
+  } finally {
+    refreshPromise = null
   }
-  return false
 }
 
 // 清除认证状态
@@ -130,58 +141,58 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
     }
   }
 
+  // 添加 workspace 上下文（可选，未选择时显示租户全部数据）
+  const workspaceId = $currentWorkspaceId.get()
+  if (workspaceId) {
+    config.headers = {
+      ...config.headers,
+      'X-Workspace-Id': workspaceId,
+    }
+  }
+
   // 添加请求体
   if (body && method !== 'GET') {
     config.body = JSON.stringify(body)
   }
 
-  try {
-    const response = await fetch(url.toString(), config)
+  const response = await fetch(url.toString(), config)
 
-    // 处理401未授权错误 - 尝试刷新token
-    if (response.status === 401) {
-      // 尝试刷新token
-      const refreshed = await refreshToken()
-      if (refreshed) {
-        // 重试请求，使用新token
-        const newToken = sessionStorage.getItem('auth-token')
-        config.headers = {
-          ...config.headers,
-          'Authorization': `Bearer ${newToken}`,
-        }
-        const retryResponse = await fetch(url.toString(), config)
-        if (retryResponse.ok) {
-          return await retryResponse.json()
-        }
-        if (retryResponse.status === 401) {
-          // 刷新后仍然是401，清除token并跳转登录
-          clearAuth()
-          throw new Error('Unauthorized - please login again')
-        }
-      } else {
-        // 刷新失败，清除token并跳转登录
-        clearAuth()
-        throw new Error('Unauthorized - please login again')
+  // 处理401未授权错误 - 尝试刷新token
+  if (response.status === 401) {
+    const refreshed = await refreshToken()
+    if (refreshed) {
+      const newToken = sessionStorage.getItem('auth-token')
+      config.headers = {
+        ...config.headers,
+        'Authorization': `Bearer ${newToken}`,
       }
-    }
-
-    // 处理其他HTTP错误
-    if (!response.ok) {
-      let errorData: any = {}
-      try {
-        errorData = await response.json()
-      } catch {
-        // JSON解析失败时使用默认错误信息
+      const retryResponse = await fetch(url.toString(), config)
+      if (retryResponse.ok) {
+        return await retryResponse.json()
       }
-
-      const errorMessage = errorData?.msg || errorData?.message || `HTTP ${response.status}`
-      throw new ApiError(errorMessage, errorData?.code ?? -1, errorData, response.status)
+      // Refresh succeeded but retry failed — auth is broken
+      clearAuth()
+      throw new Error('Unauthorized - please login again')
+    } else {
+      clearAuth()
+      throw new Error('Unauthorized - please login again')
     }
-
-    return await response.json()
-  } catch (error) {
-    throw error
   }
+
+  // 处理其他HTTP错误
+  if (!response.ok) {
+    let errorData: any = {}
+    try {
+      errorData = await response.json()
+    } catch {
+      // JSON解析失败时使用默认错误信息
+    }
+
+    const errorMessage = errorData?.msg || errorData?.message || `HTTP ${response.status}`
+    throw new ApiError(errorMessage, errorData?.code ?? -1, errorData, response.status)
+  }
+
+  return await response.json()
 }
 
 // API 客户端类
@@ -203,7 +214,7 @@ export class ApiClient {
 
     // 检查API响应中的code字段
     if (response.code !== 0) {
-      throw new ApiError(response.msg || '请求失败', response.code, response, 0)
+      throw new ApiError(response.msg || 'Request failed', response.code, response, 0)
     }
 
     // 将响应转换为 camelCase
@@ -230,7 +241,7 @@ export class ApiClient {
 
     // 检查API响应中的code字段
     if (response.code !== 0) {
-      throw new ApiError(response.msg || '请求失败', response.code, response, 0)
+      throw new ApiError(response.msg || 'Request failed', response.code, response, 0)
     }
 
     // 将响应转换为 camelCase
@@ -257,7 +268,7 @@ export class ApiClient {
 
     // 检查API响应中的code字段
     if (response.code !== 0) {
-      throw new ApiError(response.msg || '请求失败', response.code, response, 0)
+      throw new ApiError(response.msg || 'Request failed', response.code, response, 0)
     }
 
     // 将响应转换为 camelCase
@@ -279,7 +290,7 @@ export class ApiClient {
 
     // 检查API响应中的code字段
     if (response.code !== 0) {
-      throw new ApiError(response.msg || '请求失败', response.code, response, 0)
+      throw new ApiError(response.msg || 'Request failed', response.code, response, 0)
     }
 
     // 将响应转换为 camelCase
@@ -306,7 +317,7 @@ export class ApiClient {
 
     // 检查API响应中的code字段
     if (response.code !== 0) {
-      throw new ApiError(response.msg || '请求失败', response.code, response, 0)
+      throw new ApiError(response.msg || 'Request failed', response.code, response, 0)
     }
 
     // 将响应转换为 camelCase
@@ -318,4 +329,8 @@ export class ApiClient {
 }
 
 // 导出便捷方法
-export const { get: apiGet, post: apiPost, put: apiPut, delete: apiDelete, patch: apiPatch } = ApiClient
+export const apiGet = ApiClient.get
+export const apiPost = ApiClient.post
+export const apiPut = ApiClient.put
+export const apiDelete = ApiClient.delete
+export const apiPatch = ApiClient.patch

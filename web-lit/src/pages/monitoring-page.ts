@@ -1,6 +1,7 @@
 import { LitElement, html, css } from 'lit'
 import { customElement, state } from 'lit/decorators.js'
 import { dashboardApi, type DashboardMetrics } from '../services/dashboard'
+import { $currentWorkspaceId } from '../stores/workspace-store'
 
 @customElement('monitoring-page')
 export class MonitoringPage extends LitElement {
@@ -267,9 +268,17 @@ export class MonitoringPage extends LitElement {
   @state() loading = true
   @state() error: string | null = null
 
+  private _workspaceUnsub?: () => void
+
   async connectedCallback() {
     super.connectedCallback()
     await this.loadMetrics()
+    this._workspaceUnsub = $currentWorkspaceId.subscribe(() => { this.loadMetrics() })
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback()
+    this._workspaceUnsub?.()
   }
 
   async loadMetrics() {

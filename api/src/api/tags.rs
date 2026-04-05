@@ -283,7 +283,7 @@ async fn batch_create_bindings(
     let bindings: Vec<CreateTagBindingRequest> = request
         .tag_ids
         .into_iter()
-        .map(|tag_id| CreateTagBindingRequest { tag_id, target_id: request.target_id.clone() })
+        .map(|tag_id| CreateTagBindingRequest { tag_id, target_id: request.target_id.clone(), target_type: request.target_type.clone() })
         .collect();
 
     match TagBinding::create_batch(state.database(), &bindings, &claims.user_id).await {

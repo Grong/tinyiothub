@@ -49,16 +49,16 @@ export interface TenantRegisterResponse {
 // Pure async API functions
 export const tenantApi = {
   login: (data: TenantLoginRequest) =>
-    apiPost<TenantLoginResponse>('/api/v1/tenants/login', data),
+    apiPost<TenantLoginResponse>('tenants/login', data),
 
   register: (data: TenantRegisterRequest) =>
-    apiPost<TenantRegisterResponse>('/api/v1/tenants/register', data),
+    apiPost<TenantRegisterResponse>('tenants/register', data),
 
   getApiKeys: (tenantId: string) =>
-    apiGet<ApiKey[]>(`/api/v1/tenants/${tenantId}/api-keys`),
+    apiGet<ApiKey[]>(`tenants/${tenantId}/api-keys`),
 
   createApiKey: (tenantId: string, data: { name: string; permissions: string[] }) =>
-    apiPost<{ raw_key: string; key: ApiKey }>(`/api/v1/tenants/${tenantId}/api-keys`, data),
+    apiPost<{ raw_key: string; key: ApiKey }>(`tenants/${tenantId}/api-keys`, data),
 }
 
 // Storage helpers

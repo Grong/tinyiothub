@@ -1,18 +1,29 @@
 // web-lit/src/components/monitoring/performance-alerts.ts
 import { LitElement, html, css } from 'lit'
-import { customElement, property } from 'lit/decorators.js'
+import { customElement, property, state } from 'lit/decorators.js'
+import { deviceApi } from '../../services/devices'
 import type { PerformanceAlert } from '../../services/devices'
 
 @customElement('performance-alerts')
 export class PerformanceAlerts extends LitElement {
   static styles = css`
     :host { display: block; }
+    .card {
+      background: var(--card);
+      border-radius: var(--radius-lg);
+      padding: 16px;
+    }
+    .card-title {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 16px;
+    }
     .alert-item {
       display: flex;
       align-items: flex-start;
       gap: 12px;
       padding: 12px;
-      background: var(--card);
+      background: var(--bg-muted);
       border-radius: var(--radius-md);
       margin-bottom: 8px;
     }
@@ -33,22 +44,41 @@ export class PerformanceAlerts extends LitElement {
     .empty { text-align: center; padding: 32px; color: var(--muted); }
   `
 
-  @property({ type: Array }) alerts: PerformanceAlert[] = []
+  @property({ type: String }) deviceId = ''
+  @state() private alerts: PerformanceAlert[] = []
+
+  updated(changed: Map<string, unknown>) {
+    if (changed.has('deviceId') && this.deviceId) {
+      this.loadData()
+    }
+  }
+
+  private async loadData() {
+    try {
+      const resp = await deviceApi.getDevicePerformanceAlerts(this.deviceId)
+      this.alerts = resp.result || []
+    } catch {
+      this.alerts = []
+    }
+  }
 
   render() {
     if (!this.alerts?.length) {
-      return html`<div class="empty">暂无告警</div>`
+      return html`<div class="card"><div class="card-title">性能告警</div><div class="empty">暂无告警</div></div>`
     }
     return html`
-      ${this.alerts.map(alert => html`
-        <div class="alert-item">
-          <div class="alert-dot ${alert.level}"></div>
-          <div class="alert-content">
-            <div class="alert-message">${alert.message}</div>
-            <div class="alert-meta">${new Date(alert.triggered_at).toLocaleString()} - ${alert.alert_type}</div>
+      <div class="card">
+        <div class="card-title">性能告警</div>
+        ${this.alerts.map(alert => html`
+          <div class="alert-item">
+            <div class="alert-dot ${alert.level}"></div>
+            <div class="alert-content">
+              <div class="alert-message">${alert.message}</div>
+              <div class="alert-meta">${new Date(alert.triggeredAt).toLocaleString()} - ${alert.alertType}</div>
+            </div>
           </div>
-        </div>
-      `)}
+        `)}
+      </div>
     `
   }
 }

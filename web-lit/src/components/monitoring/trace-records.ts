@@ -7,6 +7,16 @@ import { deviceApi, type DeviceTrace } from '../../services/devices'
 export class TraceRecords extends LitElement {
   static styles = css`
     :host { display: block; }
+    .card {
+      background: var(--card);
+      border-radius: var(--radius-lg);
+      padding: 16px;
+    }
+    .card-title {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 16px;
+    }
     .trace-item {
       display: flex;
       align-items: flex-start;
@@ -50,19 +60,27 @@ export class TraceRecords extends LitElement {
   }
 
   render() {
-    if (this.loading) return html`<div class="empty">加载中...</div>`
-    if (!this.traces?.length) return html`<div class="empty">暂无追踪记录</div>`
+    const content = this.loading
+      ? html`<div class="empty">加载中...</div>`
+      : !this.traces?.length
+        ? html`<div class="empty">暂无追踪记录</div>`
+        : html`
+          ${this.traces.map(t => html`
+            <div class="trace-item">
+              <span class="trace-level ${t.level}">${t.level}</span>
+              <div class="trace-content">
+                <div class="trace-title">${t.title}</div>
+                <div class="trace-message">${t.message}</div>
+              </div>
+              <span class="trace-time">${new Date(t.createdAt).toLocaleString()}</span>
+            </div>
+          `)}
+        `
     return html`
-      ${this.traces.map(t => html`
-        <div class="trace-item">
-          <span class="trace-level ${t.level}">${t.level}</span>
-          <div class="trace-content">
-            <div class="trace-title">${t.title}</div>
-            <div class="trace-message">${t.message}</div>
-          </div>
-          <span class="trace-time">${new Date(t.created_at).toLocaleString()}</span>
-        </div>
-      `)}
+      <div class="card">
+        <div class="card-title">追踪记录</div>
+        ${content}
+      </div>
     `
   }
 }

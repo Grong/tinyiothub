@@ -2,6 +2,7 @@ import { LitElement, html, css } from 'lit'
 import { customElement, state } from 'lit/decorators.js'
 import { dashboardApi, type DashboardData, type RecentAlarm, type QuickDevice } from '../services/dashboard'
 import { navigate } from '../lib/navigate'
+import { $currentWorkspaceId } from '../stores/workspace-store'
 
 @customElement('dashboard-page')
 export class DashboardPage extends LitElement {
@@ -385,9 +386,17 @@ export class DashboardPage extends LitElement {
   @state() loading = true
   @state() error: string | null = null
 
+  private _workspaceUnsub?: () => void
+
   async connectedCallback() {
     super.connectedCallback()
     await this.loadData()
+    this._workspaceUnsub = $currentWorkspaceId.subscribe(() => { this.loadData() })
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback()
+    this._workspaceUnsub?.()
   }
 
   async loadData() {

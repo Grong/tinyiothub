@@ -35,6 +35,7 @@ fn verify_signature(payload: &str, signature: &str, secret: &str) -> bool {
 
 use crate::{
     dto::entity::tenant::{CreateTenantRequest, SubscriptionPlan, Tenant},
+    dto::entity::workspace::Workspace,
     shared::app_state::AppState,
 };
 
@@ -187,6 +188,14 @@ async fn register_tenant(
     .execute(db.pool())
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // 创建默认工作空间
+    Workspace::create(&db, &tenant.id, "默认工作空间", Some("系统自动创建的默认工作空间"), None, None)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to create default workspace: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     // 生成 token
     let token = generate_token(&tenant.id, &user_id);

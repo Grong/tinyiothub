@@ -14,6 +14,11 @@ export class PerformanceChart extends LitElement {
       border-radius: var(--radius-lg);
       padding: 16px;
     }
+    .card-title {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 16px;
+    }
     .time-range {
       display: flex;
       gap: 8px;
@@ -47,16 +52,21 @@ export class PerformanceChart extends LitElement {
   private chart: uPlot | null = null
   private interval: number | null = null
 
-  async connectedCallback() {
-    super.connectedCallback()
-    await this.loadData()
+  firstUpdated() {
+    this.loadData()
     this.interval = window.setInterval(() => this.loadData(), this.refreshInterval)
   }
 
   disconnectedCallback() {
     super.disconnectedCallback()
-    if (this.interval) clearInterval(this.interval)
-    if (this.chart) this.chart.destroy()
+    if (this.interval) {
+      clearInterval(this.interval)
+      this.interval = null
+    }
+    if (this.chart) {
+      this.chart.destroy()
+      this.chart = null
+    }
   }
 
   async loadData() {
@@ -93,6 +103,7 @@ export class PerformanceChart extends LitElement {
   render() {
     return html`
       <div class="chart-container">
+        <div class="card-title">性能趋势</div>
         <div class="time-range">
           ${[1, 6, 24, 168, 720].map(h => html`
             <button class="time-btn ${this.timeRange === h ? 'active' : ''}" @click=${() => this.setTimeRange(h)}>

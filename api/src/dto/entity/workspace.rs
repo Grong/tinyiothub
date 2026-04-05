@@ -33,6 +33,7 @@ pub struct WorkspaceWithDeviceCount {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub device_count: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[sqlx(default)]
     pub warning: Option<String>,
 }
 

@@ -48,32 +48,6 @@ export class App extends LitElement {
       grid-area: topbar;
       display: block;
     }
-
-    /* Footer */
-    .footer {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 12px 20px;
-      box-shadow: 0 -1px 0 var(--card-highlight);      background: var(--bg-secondary);
-      font-size: 12px;
-      color: var(--muted);
-    }
-
-    .footer-links {
-      display: flex;
-      gap: 16px;
-    }
-
-    .footer-links a {
-      color: var(--muted);
-      text-decoration: none;
-      transition: color var(--duration-fast) ease;
-    }
-
-    .footer-links a:hover {
-      color: var(--text);
-    }
   `
 
   connectedCallback() {
@@ -84,7 +58,7 @@ export class App extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback()
-    window.removeEventListener('popstate', this.handleRoute.bind(this))
+    window.removeEventListener('popstate', this._onPopstate)
     this.unsubs.forEach((unsub) => unsub())
     this.unsubs = []
   }
@@ -98,24 +72,22 @@ export class App extends LitElement {
     )
   }
 
+  private _onPopstate = () => this.handleRoute()
+
   setupRouter() {
-    window.addEventListener('popstate', this.handleRoute.bind(this))
+    window.addEventListener('popstate', this._onPopstate)
     this.handleRoute()
   }
 
   handleRoute() {
-    const path = window.location.pathname.slice(1) || ''
-    const route = path === '' ? 'home' : path
+    const pathname = window.location.pathname
+    // Only use the path portion, ignore query string
+    const route = pathname === '/' ? 'home' : pathname.slice(1).split('?')[0]
     setCurrentRoute(route)
     // Check auth for protected routes
     if (!PUBLIC_ROUTES.includes(route) && !$isAuthenticated.get()) {
       navigate('signin')
     }
-  }
-
-  navigate(route: string) {
-    setCurrentRoute(route)
-    window.history.pushState({}, '', `/${route}`)
   }
 
   render() {
@@ -150,15 +122,6 @@ export class App extends LitElement {
         <!-- Main Content -->
         <div class="content">
           ${this.renderPage()}
-
-          <footer class="footer">
-            <span>© 2024 TinyIoTHub. All rights reserved.</span>
-            <div class="footer-links">
-              <a href="https://docs.tinyiothub.com" target="_blank" rel="noopener">文档</a>
-              <a href="/support" target="_blank">支持</a>
-              <a href="/privacy" target="_blank">隐私政策</a>
-            </div>
-          </footer>
         </div>
       </div>
     `

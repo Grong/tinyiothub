@@ -336,13 +336,15 @@ export class AppHeader extends LitElement {
 
   connectedCallback() {
     super.connectedCallback()
-    document.addEventListener('click', this.handleDocumentClick.bind(this))
+    document.addEventListener('click', this._onDocumentClick)
   }
 
   disconnectedCallback() {
     super.disconnectedCallback()
-    document.removeEventListener('click', this.handleDocumentClick.bind(this))
+    document.removeEventListener('click', this._onDocumentClick)
   }
+
+  private _onDocumentClick = (e: Event) => this.handleDocumentClick(e)
 
   handleDocumentClick(e: Event) {
     const target = e.target as HTMLElement
@@ -412,8 +414,8 @@ export class AppHeader extends LitElement {
           ${this.showUserMenu ? html`
             <div class="dropdown" @click=${(e: Event) => e.stopPropagation()}>
               <div class="dropdown-header">
-                <div class="dropdown-name">${user?.name || '管理员'}</div>
-                <div class="dropdown-email">${user?.email || 'admin@tinyiothub.com'}</div>
+                <div class="dropdown-name">${user?.name || ''}</div>
+                <div class="dropdown-email">${user?.email || ''}</div>
                 <div class="dropdown-status">在线</div>
               </div>
               <div class="dropdown-item" @click=${() => { navigate('settings'); this.showUserMenu = false; }}>

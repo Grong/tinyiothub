@@ -96,19 +96,11 @@ impl FileSource {
         toml: TomlValue,
     ) -> Result<ApplicationSettings, ConfigError> {
         // Try direct deserialization from TOML value
-        match toml.clone().try_into::<ApplicationSettings>() {
-            Ok(settings) => {
-                eprintln!("DEBUG: Direct TOML deserialization succeeded");
-                eprintln!("DEBUG: Deserialized JWT secret: {}", settings.security.jwt.secret);
-                return Ok(settings);
-            }
-            Err(e) => {
-                eprintln!("DEBUG: Direct TOML deserialization failed: {}", e);
-            }
+        if let Ok(settings) = toml.clone().try_into::<ApplicationSettings>() {
+            return Ok(settings);
         }
 
         // Fall back to legacy format conversion
-        eprintln!("DEBUG: Falling back to legacy format conversion");
         let mut settings = ApplicationSettings::default();
 
         if let TomlValue::Table(table) = toml {
@@ -445,13 +437,8 @@ impl SourceChain {
             if source.is_available() {
                 match source.load() {
                     Ok(source_settings) => {
-                        eprintln!("DEBUG: Loading from source: {}", source.name());
-                        eprintln!("DEBUG: Source JWT secret: {}", source_settings.security.jwt.secret);
-                        
                         // Merge settings (later sources override earlier ones)
                         settings = self.merge_settings(settings, source_settings);
-                        
-                        eprintln!("DEBUG: After merge JWT secret: {}", settings.security.jwt.secret);
                         tracing::debug!("Loaded configuration from source: {}", source.name());
                     }
                     Err(e) => {

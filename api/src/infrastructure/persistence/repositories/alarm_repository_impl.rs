@@ -186,27 +186,49 @@ impl AlarmRepository for AlarmRepositoryImpl {
     }
 
     async fn find_active(&self, device_id: Option<&str>) -> AlarmResult<Vec<Alarm>> {
-        let _query = if device_id.is_some() {
+        let query = if device_id.is_some() {
             "SELECT * FROM device_alarms WHERE is_resolved = false AND device_id = ? ORDER BY alarm_time DESC"
         } else {
             "SELECT * FROM device_alarms WHERE is_resolved = false ORDER BY alarm_time DESC"
         };
 
-        // TODO: find_active is not yet implemented - returning empty vector
-        // This method needs proper implementation before production use
-        todo!("find_active is not yet implemented - returning empty vector")
+        let mut sqlx_query = sqlx::query(query);
+        if let Some(id) = device_id {
+            sqlx_query = sqlx_query.bind(id);
+        }
+
+        let rows = sqlx_query.fetch_all(self.database.pool()).await
+            .map_err(|e| AlarmError::InternalError(format!("find_active query failed: {}", e)))?;
+
+        let mut alarms = Vec::new();
+        for row in rows {
+            alarms.push(self.row_to_alarm(row)?);
+        }
+
+        Ok(alarms)
     }
 
     async fn find_unacknowledged(&self, device_id: Option<&str>) -> AlarmResult<Vec<Alarm>> {
-        let _query = if device_id.is_some() {
+        let query = if device_id.is_some() {
             "SELECT * FROM device_alarms WHERE is_acknowledged = false AND is_resolved = false AND device_id = ? ORDER BY alarm_time DESC"
         } else {
             "SELECT * FROM device_alarms WHERE is_acknowledged = false AND is_resolved = false ORDER BY alarm_time DESC"
         };
 
-        // TODO: find_unacknowledged is not yet implemented - returning empty vector
-        // This method needs proper implementation before production use
-        todo!("find_unacknowledged is not yet implemented - returning empty vector")
+        let mut sqlx_query = sqlx::query(query);
+        if let Some(id) = device_id {
+            sqlx_query = sqlx_query.bind(id);
+        }
+
+        let rows = sqlx_query.fetch_all(self.database.pool()).await
+            .map_err(|e| AlarmError::InternalError(format!("find_unacknowledged query failed: {}", e)))?;
+
+        let mut alarms = Vec::new();
+        for row in rows {
+            alarms.push(self.row_to_alarm(row)?);
+        }
+
+        Ok(alarms)
     }
 
     async fn count_by_criteria(&self, criteria: &AlarmQueryCriteria) -> AlarmResult<u64> {
@@ -286,22 +308,30 @@ impl AlarmRepository for AlarmRepositoryImpl {
             return Ok(0);
         }
 
-        let (_is_resolved, _is_acknowledged) = match status {
+        let (is_resolved, is_acknowledged) = match status {
             AlarmStatus::Active => (false, false),
             AlarmStatus::Acknowledged => (false, true),
             AlarmStatus::Resolved => (true, true),
-            AlarmStatus::Suppressed => return Ok(0), // 暂不支持
+            AlarmStatus::Suppressed => return Ok(0),
         };
 
         let placeholders = vec!["?"; alarm_ids.len()].join(",");
-        let _query = format!(
+        let query = format!(
             "UPDATE device_alarms SET is_resolved = ?, is_acknowledged = ? WHERE id IN ({})",
             placeholders
         );
 
-        // TODO: batch_update_status is not yet implemented - returning 0
-        // This method needs proper implementation before production use
-        todo!("batch_update_status is not yet implemented - returning 0")
+        let mut sqlx_query = sqlx::query(&query)
+            .bind(is_resolved)
+            .bind(is_acknowledged);
+        for id in alarm_ids {
+            sqlx_query = sqlx_query.bind(id);
+        }
+
+        let result = sqlx_query.execute(self.database.pool()).await
+            .map_err(|e| AlarmError::InternalError(format!("batch_update_status failed: {}", e)))?;
+
+        Ok(result.rows_affected() as usize)
     }
 
     async fn delete_old_alarms(&self, before: DateTime<Utc>) -> AlarmResult<usize> {

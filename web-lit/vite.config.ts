@@ -10,6 +10,7 @@ export default defineConfig({
       '@': path.resolve(here, './src'),
     },
   },
+  appType: 'spa',
   server: {
     host: true,
     port: 5173,

@@ -6,13 +6,15 @@ import { apiGet, apiPost } from '../lib/api-client'
 import type { PaginatedResponse } from '../lib/api-client'
 
 // Types
-export interface EventLevel {
-  Critical: number
-  Error: number
-  Warning: number
-  Info: number
-  Debug: number
-}
+export const EventLevel = {
+  Debug: 1,
+  Info: 2,
+  Warning: 3,
+  Error: 4,
+  Critical: 5,
+} as const
+
+export type EventLevelValue = typeof EventLevel[keyof typeof EventLevel]
 
 export interface EventType {
   System: {
@@ -170,8 +172,23 @@ export const eventApi = {
   getEvent: (id: string) =>
     apiGet<Event>(`events/${id}`),
 
-  exportEvents: (params?: EventQuery & { format: 'json' | 'csv' }) =>
-    apiGet<Blob>('events/export', params),
+  exportEvents: async (params?: EventQuery & { format: 'json' | 'csv' }): Promise<Blob> => {
+    const url = new URL('events/export', window.location.origin)
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) {
+          url.searchParams.append(key, String(value))
+        }
+      })
+    }
+    const token = sessionStorage.getItem('auth-token')
+    const response = await fetch(url.toString(), {
+      credentials: 'include',
+      headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+    })
+    if (!response.ok) throw new Error(`Export failed: ${response.status}`)
+    return response.blob()
+  },
 }
 
 // Utility functions

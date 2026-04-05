@@ -2,6 +2,7 @@ import { LitElement, html, css } from 'lit'
 import { customElement, state } from 'lit/decorators.js'
 import { deviceApi, type Device, type DeviceListParams, type CreateDeviceRequest } from '../services/devices'
 import { driverApi, type Driver, type DriverConfigOption } from '../services/drivers'
+import { $currentWorkspaceId } from '../stores/workspace-store'
 import '../components/device-card'
 import '../components/tag-filter'
 import '../components/create-device-wizard'
@@ -106,11 +107,23 @@ export class DevicesPage extends LitElement {
       overflow: hidden;
     }
 
-    /* Device grid */
+    /* Device grid - responsive columns like original web */
     .device-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      grid-template-columns: repeat(1, 1fr);
       gap: 16px;
+    }
+    @media (min-width: 768px) {
+      .device-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (min-width: 1280px) {
+      .device-grid { grid-template-columns: repeat(4, 1fr); }
+    }
+    @media (min-width: 1536px) {
+      .device-grid { grid-template-columns: repeat(5, 1fr); }
+    }
+    @media (min-width: 2000px) {
+      .device-grid { grid-template-columns: repeat(6, 1fr); }
     }
 
     .empty-card {
@@ -135,12 +148,6 @@ export class DevicesPage extends LitElement {
     .empty-card svg { margin-bottom: 8px; opacity: 0.5; }
     .empty-card p { margin: 0; font-size: 14px; }
     .empty-card span { font-size: 12px; }
-
-    @media (max-width: 768px) {
-      .device-grid {
-        grid-template-columns: 1fr;
-      }
-    }
 
     /* View toggle */
     .view-toggle {
@@ -605,9 +612,17 @@ export class DevicesPage extends LitElement {
   @state() drivers: Driver[] = []
   @state() driverConfigOptions: DriverConfigOption[] = []
 
+  private _workspaceUnsub?: () => void
+
   async connectedCallback() {
     super.connectedCallback()
     await this.loadDevices()
+    this._workspaceUnsub = $currentWorkspaceId.subscribe(() => { this.loadDevices() })
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback()
+    this._workspaceUnsub?.()
   }
 
   firstUpdated() {
@@ -625,13 +640,20 @@ export class DevicesPage extends LitElement {
         search: this.search || undefined,
         protocol: this.protocol || undefined,
         status: this.status || undefined,
+        tagIds: this.tagId ? [this.tagId] : undefined,
       }
 
       const response = await deviceApi.getDevices(params)
 
       if (response.result) {
-        this.devices = response.result.data || []
-        this.totalCount = response.result.pagination?.totalCount || 0
+        // API returns direct array, not PaginatedResponse {data, pagination}
+        if (Array.isArray(response.result)) {
+          this.devices = response.result
+          this.totalCount = response.result.length
+        } else {
+          this.devices = response.result.data || []
+          this.totalCount = response.result.pagination?.totalCount || 0
+        }
       }
     } catch (err: any) {
       this.error = err.message || '加载设备失败'

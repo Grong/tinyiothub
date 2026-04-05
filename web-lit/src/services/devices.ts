@@ -4,36 +4,12 @@
 
 import { apiGet, apiPost, apiPut, apiDelete } from '../lib/api-client'
 import type { PaginatedResponse } from '../lib/api-client'
+import type { Device, DeviceProperty, DeviceCommand } from '../types/device'
 
-// Types
-export interface Device {
-  id: string
-  name: string
-  displayName?: string
-  description?: string
-  protocol?: string
-  address?: string
-  status?: 'online' | 'offline' | 'warning' | 'error' | 'maintenance'
-  isOnline?: boolean
-  driverName?: string
-  tags?: string[]
-  createdAt?: string
-  updatedAt?: string
-}
+// Re-export types from canonical source
+export type { Device, DeviceProperty, DeviceCommand } from '../types/device'
 
-export interface DeviceProperty {
-  id: string
-  name: string
-  value: any
-  displayName?: string
-  description?: string
-  dataType?: string
-  unit?: string
-  readonly?: boolean
-  isReadOnly?: boolean
-  timestamp?: string
-}
-
+// Services-layer specific types (not in types/device.ts)
 export interface DeviceAlarm {
   id: string
   deviceId: string
@@ -70,12 +46,6 @@ export interface CreateDeviceRequest {
   type?: string
   propertyValues?: Record<string, string>
   enabledCommands?: string[]
-}
-
-export interface DeviceCommand {
-  id: string
-  name: string
-  parameters?: Record<string, any>
 }
 
 export interface CommandExecution {
@@ -121,21 +91,21 @@ export interface DeviceProfile {
   generatedAt: string
 }
 
-// Phase 4: Monitoring Types
+// Phase 4: Monitoring Types (camelCase — API client converts snake_case)
 export interface DeviceOnlineStatus {
-  device_id: string
-  is_online: boolean
-  connection_quality?: number
-  last_check: string
+  deviceId: string
+  isOnline: boolean
+  connectionQuality?: number
+  lastCheck: string
 }
 
 export interface DeviceMetrics {
-  device_id: string
-  cpu_usage?: number
-  memory_usage?: number
-  network_in?: number
-  network_out?: number
-  disk_usage?: number
+  deviceId: string
+  cpuUsage?: number
+  memoryUsage?: number
+  networkIn?: number
+  networkOut?: number
+  diskUsage?: number
   uptime?: number
   temperature?: number
   timestamp: string
@@ -160,30 +130,30 @@ export interface PerformanceHistory {
 
 export interface PerformanceAlert {
   id: string
-  device_id: string
-  alert_type: string
+  deviceId: string
+  alertType: string
   level: 'info' | 'warning' | 'error' | 'critical'
   message: string
-  metric_name?: string
-  metric_value?: number
+  metricName?: string
+  metricValue?: number
   threshold?: number
-  triggered_at: string
+  triggeredAt: string
   acknowledged?: boolean
 }
 
 export interface DeviceTrace {
   id: string
-  device_id: string
-  trace_type: string
+  deviceId: string
+  traceType: string
   level: string
   category: string
   title: string
   message: string
   details?: Record<string, any>
   source?: string
-  user_id?: string
-  session_id?: string
-  created_at: string
+  userId?: string
+  sessionId?: string
+  createdAt: string
 }
 
 export interface DeviceTraceStatistics {

@@ -47,6 +47,19 @@ export class PropertyChartDialog extends LitElement {
       gap: 8px;
       margin-bottom: 16px;
     }
+    .prop-info {
+      background: var(--card);
+      border-radius: var(--radius-md);
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      font-size: 13px;
+    }
+    .prop-info-item { display: flex; gap: 6px; }
+    .prop-info-label { color: var(--muted); }
+    .prop-info-value { font-weight: 500; }
     .time-btn {
       padding: 6px 12px;
       border: none;
@@ -80,9 +93,9 @@ export class PropertyChartDialog extends LitElement {
   @state() data: PerformanceHistory | null = null
   @state() loading = true
 
-  async updated(changedProperties: Map<string, any>) {
+  updated(changedProperties: Map<string, any>) {
     if (changedProperties.has('open') && this.open) {
-      await this.loadData()
+      this.loadData()
     }
   }
 
@@ -122,6 +135,24 @@ export class PropertyChartDialog extends LitElement {
             </button>
           </div>
           <div class="body">
+            <div class="prop-info">
+              <div class="prop-info-item">
+                <span class="prop-info-label">ID:</span>
+                <span class="prop-info-value" style="font-family: monospace; font-size: 12px;">${this.property?.id}</span>
+              </div>
+              <div class="prop-info-item">
+                <span class="prop-info-label">名称:</span>
+                <span class="prop-info-value">${this.property?.displayName || this.property?.name}</span>
+              </div>
+              <div class="prop-info-item">
+                <span class="prop-info-label">类型:</span>
+                <span class="prop-info-value">${this.property?.dataType}</span>
+              </div>
+              <div class="prop-info-item">
+                <span class="prop-info-label">当前值:</span>
+                <span class="prop-info-value">${this.property?.currentValue ?? this.property?.value ?? '-'}${this.property?.unit ? ` ${this.property.unit}` : ''}</span>
+              </div>
+            </div>
             <div class="time-range">
               ${[1, 6, 24, 168, 720].map(h => html`
                 <button class="time-btn ${this.timeRange === h ? 'active' : ''}"

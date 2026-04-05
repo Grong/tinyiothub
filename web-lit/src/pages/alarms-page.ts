@@ -2,6 +2,7 @@ import { LitElement, html, css } from 'lit'
 import { customElement, state } from 'lit/decorators.js'
 import { deviceApi, type DeviceAlarm } from '../services/devices'
 import { navigate } from '../lib/navigate'
+import { $currentWorkspaceId } from '../stores/workspace-store'
 
 @customElement('alarms-page')
 export class AlarmsPage extends LitElement {
@@ -318,9 +319,17 @@ export class AlarmsPage extends LitElement {
   @state() pageSize = 10
   @state() totalCount = 0
 
+  private _workspaceUnsub?: () => void
+
   async connectedCallback() {
     super.connectedCallback()
     await this.loadAlarms()
+    this._workspaceUnsub = $currentWorkspaceId.subscribe(() => { this.loadAlarms() })
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback()
+    this._workspaceUnsub?.()
   }
 
   async loadAlarms() {

@@ -60,6 +60,7 @@ pub struct UpdateTagRequest {
 pub struct CreateTagBindingRequest {
     pub tag_id: String,
     pub target_id: String,
+    pub target_type: String,
 }
 
 /// Request for batch creating tag bindings
@@ -68,6 +69,7 @@ pub struct CreateTagBindingRequest {
 pub struct BatchTagBindingRequest {
     pub tag_ids: Vec<String>,
     pub target_id: String,
+    pub target_type: String,
 }
 
 impl Tag {
@@ -302,13 +304,14 @@ impl TagBinding {
 
         sqlx::query(
             r#"
-            INSERT INTO tag_bindings (id, tag_id, target_id, created_by, created_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO tag_bindings (id, tag_id, target_id, target_type, created_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&id)
         .bind(&request.tag_id)
         .bind(&request.target_id)
+        .bind(&request.target_type)
         .bind(created_by)
         .bind(&now)
         .execute(db.pool())
@@ -414,13 +417,14 @@ impl TagBinding {
 
                 sqlx::query(
                     r#"
-                    INSERT INTO tag_bindings (id, tag_id, target_id, created_by, created_at)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO tag_bindings (id, tag_id, target_id, target_type, created_by, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     "#,
                 )
                 .bind(&id)
                 .bind(&request.tag_id)
                 .bind(&request.target_id)
+                .bind(&request.target_type)
                 .bind(created_by)
                 .bind(&now)
                 .execute(&mut *tx)

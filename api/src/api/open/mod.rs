@@ -169,30 +169,29 @@ async fn get_device(
 
     let (key, tenant) = validate_api_key(&state, None).await?;
 
-    let sql = format!(
-        "SELECT id, name, display_name, device_type, address, state, protocol_type, created_at, updated_at FROM devices WHERE id = '{}' LIMIT 1",
-        id
-    );
+    let row = sqlx::query(
+        "SELECT id, name, display_name, device_type, address, state, protocol_type, created_at, updated_at FROM devices WHERE id = ? LIMIT 1"
+    )
+    .bind(&id)
+    .fetch_optional(state.database.pool())
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let mut rows = state
-        .database
-        .query(&sql, |row| {
-            Ok(serde_json::json!({
-                "id": row.try_get::<String, _>("id")?,
-                "name": row.try_get::<String, _>("name")?,
-                "display_name": row.try_get::<Option<String>, _>("display_name")?,
-                "device_type": row.try_get::<Option<String>, _>("device_type")?,
-                "address": row.try_get::<Option<String>, _>("address")?,
-                "state": row.try_get::<i32, _>("state")?,
-                "protocol_type": row.try_get::<Option<String>, _>("protocol_type")?,
-                "created_at": row.try_get::<String, _>("created_at")?,
-                "updated_at": row.try_get::<String, _>("updated_at")?,
-            }))
+    let row = row.ok_or(StatusCode::NOT_FOUND)?;
+    let device = {
+        use sqlx::Row;
+        serde_json::json!({
+            "id": row.try_get::<String, _>("id")?,
+            "name": row.try_get::<String, _>("name")?,
+            "display_name": row.try_get::<Option<String>, _>("display_name")?,
+            "device_type": row.try_get::<Option<String>, _>("device_type")?,
+            "address": row.try_get::<Option<String>, _>("address")?,
+            "state": row.try_get::<i32, _>("state")?,
+            "protocol_type": row.try_get::<Option<String>, _>("protocol_type")?,
+            "created_at": row.try_get::<String, _>("created_at")?,
+            "updated_at": row.try_get::<String, _>("updated_at")?,
         })
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let device = rows.pop().ok_or(StatusCode::NOT_FOUND)?;
+    };
 
     let latency_ms = start.elapsed().as_millis() as i32;
     record_api_usage(
@@ -222,25 +221,29 @@ async fn get_device_properties(
 
     let (key, tenant) = validate_api_key(&state, None).await?;
 
-    let sql = format!(
-        "SELECT name, display_name, data_type, value, unit, updated_at FROM device_properties WHERE device_id = '{}' ORDER BY created_at DESC",
-        id
-    );
+    let rows = sqlx::query(
+        "SELECT name, display_name, data_type, value, unit, updated_at FROM device_properties WHERE device_id = ? ORDER BY created_at DESC"
+    )
+    .bind(&id)
+    .fetch_all(state.database.pool())
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let rows = state
-        .database
-        .query(&sql, |row| {
-            Ok(serde_json::json!({
+    let rows = {
+        use sqlx::Row;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(serde_json::json!({
                 "name": row.try_get::<String, _>("name")?,
                 "display_name": row.try_get::<Option<String>, _>("display_name")?,
                 "data_type": row.try_get::<String, _>("data_type")?,
                 "value": row.try_get::<Option<String>, _>("value")?,
                 "unit": row.try_get::<Option<String>, _>("unit")?,
                 "updated_at": row.try_get::<String, _>("updated_at")?,
-            }))
-        })
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            }));
+        }
+        result
+    };
 
     let properties: Vec<_> = rows.into_iter().map(|r| r).collect();
 
@@ -272,24 +275,28 @@ async fn list_commands(
 
     let (key, tenant) = validate_api_key(&state, None).await?;
 
-    let sql = format!(
-        "SELECT id, name, display_name, description, command_type FROM device_commands WHERE device_id = '{}' ORDER BY created_at DESC",
-        id
-    );
+    let rows = sqlx::query(
+        "SELECT id, name, display_name, description, command_type FROM device_commands WHERE device_id = ? ORDER BY created_at DESC"
+    )
+    .bind(&id)
+    .fetch_all(state.database.pool())
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let rows = state
-        .database
-        .query(&sql, |row| {
-            Ok(serde_json::json!({
+    let rows = {
+        use sqlx::Row;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(serde_json::json!({
                 "id": row.try_get::<String, _>("id")?,
                 "name": row.try_get::<String, _>("name")?,
                 "display_name": row.try_get::<Option<String>, _>("display_name")?,
                 "description": row.try_get::<Option<String>, _>("description")?,
                 "command_type": row.try_get::<String, _>("command_type")?,
-            }))
-        })
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            }));
+        }
+        result
+    };
 
     let commands: Vec<_> = rows.into_iter().map(|r| r).collect();
 
@@ -331,20 +338,18 @@ async fn send_command(
     let cmd_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-    let sql = format!(
-        r#"
-        INSERT INTO device_commands (id, device_id, name, command_type, parameters, status, created_at, updated_at)
-        VALUES ('{}', '{}', '{}', 'custom', '{}', 'pending', '{}', '{}')
-    "#,
-        cmd_id,
-        id,
-        command_name,
-        command_params.unwrap_or_default(),
-        now,
-        now
-    );
-
-    state.database.execute(&sql).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    sqlx::query(
+        "INSERT INTO device_commands (id, device_id, name, command_type, parameters, status, created_at, updated_at) VALUES (?, ?, ?, 'custom', ?, 'pending', ?, ?)"
+    )
+    .bind(&cmd_id)
+    .bind(&id)
+    .bind(command_name)
+    .bind(command_params.unwrap_or_default())
+    .bind(&now)
+    .bind(&now)
+    .execute(state.database.pool())
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let result = serde_json::json!({
         "command_id": cmd_id,
@@ -380,24 +385,28 @@ async fn list_events(
 
     let (key, tenant) = validate_api_key(&state, None).await?;
 
-    let sql = format!(
-        "SELECT id, event_type, event_level, message, created_at FROM events WHERE device_id = '{}' ORDER BY created_at DESC LIMIT 100",
-        id
-    );
+    let rows = sqlx::query(
+        "SELECT id, event_type, event_level, message, created_at FROM events WHERE device_id = ? ORDER BY created_at DESC LIMIT 100"
+    )
+    .bind(&id)
+    .fetch_all(state.database.pool())
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let rows = state
-        .database
-        .query(&sql, |row| {
-            Ok(serde_json::json!({
+    let rows = {
+        use sqlx::Row;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(serde_json::json!({
                 "id": row.try_get::<String, _>("id")?,
                 "event_type": row.try_get::<String, _>("event_type")?,
                 "event_level": row.try_get::<String, _>("event_level")?,
                 "message": row.try_get::<String, _>("message")?,
                 "created_at": row.try_get::<String, _>("created_at")?,
-            }))
-        })
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            }));
+        }
+        result
+    };
 
     let events: Vec<_> = rows.into_iter().map(|r| r).collect();
 

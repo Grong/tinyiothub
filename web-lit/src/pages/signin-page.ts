@@ -2,6 +2,8 @@ import { LitElement, html, css } from 'lit'
 import { customElement, state } from 'lit/decorators.js'
 import { authApi, type LoginRequest } from '../services/auth'
 import { setAuth } from '../stores/auth-store'
+import { setWorkspaces, selectWorkspace } from '../stores/workspace-store'
+import { workspaceApi } from '../services/workspace'
 import { navigate } from '../lib/navigate'
 import '../components/logo-icon'
 
@@ -466,6 +468,7 @@ export class SigninPage extends LitElement {
       if (response.result) {
         const { accessToken, userInfo } = response.result
         setAuth(accessToken, userInfo)
+        await this.loadWorkspaces()
         navigate('dashboard')
       }
     } catch (err: any) {
@@ -488,16 +491,8 @@ export class SigninPage extends LitElement {
         throw new Error('请输入6位验证码')
       }
 
-      // Simulate phone login - in real app, call API
-      // For demo, accept any 6-digit code with phone starting with 138
-      if (this.phone.startsWith('138') && this.code === '123456') {
-        const mockToken = 'phone_token_' + Date.now()
-        const mockUser = { id: 'phone_user_1', name: '手机用户', email: this.phone + '@example.com' }
-        setAuth(mockToken, mockUser)
-        navigate('dashboard')
-      } else {
-        throw new Error('验证码错误')
-      }
+      // TODO: Implement phone login API call
+      throw new Error('手机号登录功能尚未开放，请使用账号密码登录')
     } catch (err: any) {
       this.error = err.message || '登录失败'
     } finally {
@@ -509,6 +504,21 @@ export class SigninPage extends LitElement {
     // WeChat OAuth would redirect to WeChat authorization page
     // For demo, show placeholder
     this.error = '请使用微信扫描二维码登录'
+  }
+
+  private async loadWorkspaces() {
+    try {
+      const wsResp = await workspaceApi.list()
+      if (wsResp.result?.length) {
+        setWorkspaces(wsResp.result)
+        const saved = sessionStorage.getItem('workspace-id')
+        if (!saved) {
+          selectWorkspace(wsResp.result[0].id)
+        }
+      }
+    } catch {
+      /* workspace loading is non-critical */
+    }
   }
 
   renderAccountForm() {
@@ -693,9 +703,6 @@ export class SigninPage extends LitElement {
             ${this.loginMethod === 'phone' ? this.renderPhoneForm() : ''}
             ${this.loginMethod === 'wechat' ? this.renderWeChatForm() : ''}
 
-            ${this.loginMethod !== 'wechat' ? html`
-              <p class="default-hint">测试账号：admin / admin123</p>
-            ` : ''}
           </div>
 
           <a href="/" class="back-link">← 返回首页</a>

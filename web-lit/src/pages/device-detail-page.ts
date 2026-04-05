@@ -1,10 +1,17 @@
 import { LitElement, html, css } from 'lit'
 import { customElement, state } from 'lit/decorators.js'
 import { deviceApi, type DeviceProfile, type DeviceCommand, type DeviceProperty, type CreateDeviceRequest } from '../services/devices'
-import './command-execute-dialog'
-import './property-chart-dialog'
+import '../components/command-execute-dialog'
+import '../components/property-chart-dialog'
+import '../components/tag-selector'
+import '../components/monitoring/performance-metrics-card'
+import '../components/monitoring/performance-chart'
+import '../components/monitoring/performance-alerts'
+import '../components/monitoring/trace-records'
 import { driverApi, type Driver, type DriverConfigOption } from '../services/drivers'
+import { tagApi, type Tag } from '../services/tags'
 import { navigate } from '../lib/navigate'
+import { $currentWorkspaceId } from '../stores/workspace-store'
 
 @customElement('device-detail-page')
 export class DeviceDetailPage extends LitElement {
@@ -38,6 +45,7 @@ export class DeviceDetailPage extends LitElement {
       display: flex;
       align-items: center;
       justify-content: center;
+      border: none;
       box-shadow: var(--glass-shadow-sm);
       border-radius: var(--radius-md);
       background: var(--card);
@@ -80,6 +88,7 @@ export class DeviceDetailPage extends LitElement {
       align-items: center;
       gap: 8px;
       padding: 10px 16px;
+      border: none;
       box-shadow: var(--glass-shadow-sm);
       border-radius: var(--radius-md);
       background: var(--card);
@@ -100,6 +109,18 @@ export class DeviceDetailPage extends LitElement {
 
     .btn-danger:hover {
       background: var(--danger-subtle);
+    }
+
+    .btn-icon {
+      width: 36px;
+      height: 36px;
+      padding: 0;
+      justify-content: center;
+    }
+
+    .btn-icon svg {
+      width: 16px;
+      height: 16px;
     }
 
     .btn-primary {
@@ -156,6 +177,22 @@ export class DeviceDetailPage extends LitElement {
       background: var(--danger);
       box-shadow: 0 0 6px var(--danger);
     }
+
+    .status-badge-inline {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 10px;
+      border-radius: var(--radius-full);
+      font-size: 12px;
+      font-weight: 500;
+      vertical-align: middle;
+      margin-left: 12px;
+    }
+    .status-badge-inline.online { background: var(--ok-subtle); color: var(--ok); }
+    .status-badge-inline.offline { background: var(--bg-muted); color: var(--muted); }
+    .status-badge-inline.error { background: var(--danger-subtle); color: var(--danger); }
+    .status-badge-inline .status-dot { width: 6px; height: 6px; }
 
     /* Grid layout */
     .detail-grid {
@@ -222,11 +259,38 @@ export class DeviceDetailPage extends LitElement {
       color: var(--text-strong);
     }
 
+    .info-item-tags {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    .tags-wrap {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .tag-pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 10px;
+      border-radius: var(--radius-sm);
+      font-size: 12px;
+      background: rgba(59, 130, 246, 0.1);
+      color: var(--accent);
+    }
+
     /* Properties table */
     .prop-table {
       width: 100%;
       border-collapse: collapse;
+      table-layout: fixed;
     }
+
+    .prop-table th:first-child,
+    .prop-table td:first-child { width: 35%; }
+
+    .prop-table th:last-child,
+    .prop-table td:last-child { width: 80px; }
 
     .prop-table th,
     .prop-table td {
@@ -255,10 +319,18 @@ export class DeviceDetailPage extends LitElement {
 
     .prop-name {
       font-weight: 500;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .prop-value {
       font-family: var(--mono);
+      display: flex;
+      align-items: center;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .prop-badge {
@@ -301,7 +373,8 @@ export class DeviceDetailPage extends LitElement {
     }
 
     .command-btn {
-      padding: 6px 12px;
+      padding: 6px 16px;
+      border: none;
       box-shadow: var(--glass-shadow-sm);
       border-radius: var(--radius-md);
       background: transparent;
@@ -309,6 +382,7 @@ export class DeviceDetailPage extends LitElement {
       font-size: 12px;
       font-weight: 500;
       cursor: pointer;
+      white-space: nowrap;
       transition: background var(--duration-fast) ease;
     }
 
@@ -576,6 +650,7 @@ export class DeviceDetailPage extends LitElement {
 
     .modal-btn {
       padding: 10px 20px;
+      border: none;
       border-radius: var(--radius-md);
       font-size: 14px;
       font-weight: 500;
@@ -584,7 +659,7 @@ export class DeviceDetailPage extends LitElement {
     }
 
     .modal-btn-cancel {
-      background: var(--bg-secondary);
+      background: var(--secondary);
       color: var(--text);
       box-shadow: var(--glass-shadow-sm);
     }
@@ -606,12 +681,150 @@ export class DeviceDetailPage extends LitElement {
       opacity: 0.6;
       cursor: not-allowed;
     }
+
+    /* Layout helpers */
+    .section-gap { margin-bottom: 24px; }
+    .card-body-flush { padding: 0; }
+    .card-body-pad { padding: 0 20px; }
+    .config-summary { padding: 12px; background: var(--bg); border-radius: var(--radius-md); }
+    .config-summary .form-group { margin-bottom: 12px; }
+    .config-summary .form-label { margin-bottom: 0; }
+
+    /* Overview stats bar */
+    .overview-stats {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .stat-card {
+      background: var(--card);
+      box-shadow: var(--glass-shadow-sm);
+      border-radius: var(--radius-lg);
+      padding: 16px 20px;
+    }
+    .stat-value { font-size: 28px; font-weight: 700; }
+    .stat-label { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .stat-card.properties .stat-value { color: var(--accent); }
+    .stat-card.commands .stat-value { color: var(--ok); }
+    .stat-card.events .stat-value { color: var(--warn); }
+    .stat-card.alarms .stat-value { color: var(--danger); }
+
+    /* Enhanced property display */
+    .prop-alarm-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      margin-right: 8px;
+    }
+    .prop-alarm-dot.normal { background: var(--ok); }
+    .prop-alarm-dot.alarm { background: var(--warn); }
+    .prop-alarm-dot.high-alarm { background: var(--danger); box-shadow: 0 0 4px var(--danger); }
+    .prop-display-name { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .prop-unit { font-size: 11px; color: var(--muted); margin-left: 4px; }
+
+    /* Enhanced event display */
+    .event-level-icon { width: 20px; height: 20px; flex-shrink: 0; margin-top: 2px; }
+    .event-type-badge {
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      margin-left: 8px;
+    }
+    .event-level-badge {
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      flex-shrink: 0;
+    }
+    .event-level-badge.critical { background: rgba(239,68,68,0.15); color: var(--danger); }
+    .event-level-badge.error { background: rgba(239,68,68,0.15); color: var(--danger); }
+    .event-level-badge.warning { background: rgba(234,179,8,0.15); color: var(--warn); }
+    .event-level-badge.info { background: rgba(59,130,246,0.15); color: var(--accent); }
+    .event-metadata { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+    .event-meta-pill {
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 4px;
+      background: var(--bg-muted);
+      color: var(--muted);
+    }
+    .event-header {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .event-title {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text);
+      margin: 0;
+    }
+
+    /* Enhanced command display */
+    .command-id {
+      font-size: 11px;
+      color: var(--muted);
+      font-family: var(--mono);
+      margin-top: 2px;
+    }
+    .command-desc {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+    .command-info-wrap {
+      flex: 1;
+      min-width: 0;
+    }
+
+    /* Tab navigation */
+    .main-tab-bar {
+      display: flex;
+      gap: 0;
+      margin-bottom: 24px;
+      border-bottom: 1px solid var(--border);
+    }
+    .main-tab-item {
+      padding: 10px 20px;
+      border: none;
+      background: none;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+      transition: color 0.15s ease;
+    }
+    .main-tab-item:hover { color: var(--text); }
+    .main-tab-item.active {
+      color: var(--text-strong);
+      border-bottom-color: var(--accent);
+    }
+    .monitoring-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .monitoring-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+    @media (max-width: 1100px) {
+      .monitoring-row { grid-template-columns: 1fr; }
+    }
   `
 
   @state() profile: DeviceProfile | null = null
   @state() loading = true
   @state() error: string | null = null
   @state() activeTab = 'properties'
+  @state() activeMainTab = 'overview'
 
   // Auto-refresh and dialog state
   @state() refreshInterval: number | null = null
@@ -635,6 +848,9 @@ export class DeviceDetailPage extends LitElement {
   // Driver state
   @state() drivers: Driver[] = []
   @state() driverConfigOptions: DriverConfigOption[] = []
+  @state() loadedTags: Tag[] = []
+
+  private _workspaceUnsub?: () => void
 
   connectedCallback() {
     super.connectedCallback()
@@ -650,11 +866,15 @@ export class DeviceDetailPage extends LitElement {
       this.error = '未指定设备ID'
       this.loading = false
     }
+    this._workspaceUnsub = $currentWorkspaceId.subscribe(() => {
+      if (this.deviceId) this.loadDevice(this.deviceId)
+    })
   }
 
   disconnectedCallback() {
     super.disconnectedCallback()
     if (this.refreshInterval) clearInterval(this.refreshInterval)
+    this._workspaceUnsub?.()
   }
 
   private get deviceId(): string {
@@ -669,10 +889,14 @@ export class DeviceDetailPage extends LitElement {
     }
 
     try {
-      const response = await deviceApi.getDeviceProfile(deviceId)
-      if (response.result) {
-        this.profile = response.result
+      const [profileRes, tagsRes] = await Promise.all([
+        deviceApi.getDeviceProfile(deviceId),
+        tagApi.getResourceTags(deviceId),
+      ])
+      if (profileRes.result) {
+        this.profile = profileRes.result
       }
+      this.loadedTags = tagsRes.result || []
     } catch (err: any) {
       this.error = err.message || '加载设备详情失败'
     } finally {
@@ -894,10 +1118,10 @@ export class DeviceDetailPage extends LitElement {
               </div>
 
               ${this.driverConfigOptions.length > 0 ? html`
-                <div style="padding: 12px; background: var(--bg); border-radius: var(--radius-md);">
-                  <label class="form-label" style="margin-bottom: 12px;">驱动配置</label>
+                <div class="config-summary">
+                  <label class="form-label">驱动配置</label>
                   ${this.driverConfigOptions.map(opt => html`
-                    <div class="form-group" style="margin-bottom: 12px;">
+                    <div class="form-group">
                       <label class="form-label">
                         ${opt.label || opt.name}
                         ${opt.required ? html`<span class="required">*</span>` : ''}
@@ -973,25 +1197,35 @@ export class DeviceDetailPage extends LitElement {
             </svg>
           </button>
           <div>
-            <h1 class="page-title">${this.profile?.device.name || '设备详情'}</h1>
+            <h1 class="page-title">
+              ${this.profile?.device.name || '设备详情'}
+              ${this.profile ? html`
+                <span class="status-badge-inline ${this.profile.isOnline ? 'online' : 'offline'}">
+                  <span class="status-dot"></span>
+                  ${this.profile.isOnline ? '在线' : '离线'}
+                </span>
+              ` : ''}
+            </h1>
             ${this.profile ? html`<div class="device-id">${this.profile.device.id}</div>` : ''}
           </div>
         </div>
         <div class="header-actions">
-          <button class="btn" @click=${() => this.loadDevice(this.deviceId)}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <button class="btn btn-icon" title="刷新" @click=${() => this.loadDevice(this.deviceId)}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M23 4v6h-6M1 20v-6h6"/>
               <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
             </svg>
-            刷新
           </button>
-          <button class="btn btn-primary" @click=${() => this.openEditModal()}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <button class="btn btn-icon btn-primary" title="编辑" @click=${() => this.openEditModal()}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"/>
             </svg>
-            编辑
           </button>
-          <button class="btn btn-danger" @click=${() => this.deleteDevice()}>删除设备</button>
+          <button class="btn btn-icon btn-danger" title="删除设备" @click=${() => this.deleteDevice()}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"/>
+            </svg>
+          </button>
         </div>
       </div>
 
@@ -1041,23 +1275,53 @@ export class DeviceDetailPage extends LitElement {
     const { device, isOnline, properties, commands, recentEvents, overview } = this.profile
 
     return html`
-      <!-- Status -->
-      <div style="margin-bottom: 24px;">
-        <span class="status-badge ${isOnline ? 'online' : 'offline'}">
-          <span class="status-dot"></span>
-          ${isOnline ? '在线' : '离线'}
-        </span>
+      <!-- Overview stats bar -->
+      <div class="overview-stats">
+        <div class="stat-card properties">
+          <div class="stat-value">${overview.totalProperties}</div>
+          <div class="stat-label">属性</div>
+        </div>
+        <div class="stat-card commands">
+          <div class="stat-value">${overview.totalCommands}</div>
+          <div class="stat-label">命令</div>
+        </div>
+        <div class="stat-card events">
+          <div class="stat-value">${overview.recentEventCount}</div>
+          <div class="stat-label">事件</div>
+        </div>
+        <div class="stat-card alarms">
+          <div class="stat-value">${overview.criticalEventCount}</div>
+          <div class="stat-label">告警</div>
+        </div>
       </div>
 
+      <!-- Main tab bar -->
+      <div class="main-tab-bar">
+        <button class="main-tab-item ${this.activeMainTab === 'overview' ? 'active' : ''}"
+          @click=${() => this.activeMainTab = 'overview'}>概览</button>
+        <button class="main-tab-item ${this.activeMainTab === 'monitoring' ? 'active' : ''}"
+          @click=${() => this.activeMainTab = 'monitoring'}>监控</button>
+      </div>
+
+      ${this.activeMainTab === 'overview' ? this.renderOverview() : this.renderMonitoring()}
+    `
+  }
+
+  renderOverview() {
+    if (!this.profile) return null
+
+    const { device, properties, commands, recentEvents, overview } = this.profile
+
+    return html`
       <div class="detail-grid">
         <!-- Left column -->
         <div>
           <!-- Properties -->
-          <div class="card" style="margin-bottom: 24px;">
+          <div class="card section-gap">
             <div class="card-header">
               <h3 class="card-title">属性 (${overview.totalProperties})</h3>
             </div>
-            <div class="card-body" style="padding: 0;">
+            <div class="card-body card-body-flush">
               ${properties.length > 0 ? html`
                 <table class="prop-table">
                   <thead>
@@ -1068,14 +1332,23 @@ export class DeviceDetailPage extends LitElement {
                     </tr>
                   </thead>
                   <tbody>
-                    ${properties.slice(0, 10).map(prop => html`
+                    ${properties.map(prop => html`
                       <tr>
-                        <td class="prop-name">${prop.name}</td>
+                        <td>
+                          <div style="display: flex; align-items: center;">
+                            <span class="prop-alarm-dot ${prop.alarmStatus === 2 ? 'high-alarm' : prop.alarmStatus === 1 ? 'alarm' : 'normal'}"></span>
+                            <div>
+                              <div class="prop-name">${prop.name}</div>
+                              ${prop.displayName ? html`<div class="prop-display-name">${prop.displayName}</div>` : ''}
+                            </div>
+                          </div>
+                        </td>
                         <td class="prop-value">
-                          ${this.formatValue(prop.value)}
+                          ${this.formatPropValue(prop)}
+                          ${prop.unit ? html`<span class="prop-unit">${prop.unit}</span>` : ''}
                           ${this.isNumericProperty(prop) ? html`
                             <button class="chart-btn" @click=${() => { this.selectedProperty = prop; this.showPropertyChart = true }} title="查看曲线">
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M3 3v18h18"/>
                                 <path d="M18 17l-5-5-3 3-4-4"/>
                               </svg>
@@ -1083,8 +1356,8 @@ export class DeviceDetailPage extends LitElement {
                           ` : ''}
                         </td>
                         <td>
-                          <span class="prop-badge ${prop.readonly ? 'readonly' : 'writable'}">
-                            ${prop.readonly ? '只读' : '可写'}
+                          <span class="prop-badge ${(prop.isReadOnly ?? prop.readonly) ? 'readonly' : 'writable'}">
+                            ${(prop.isReadOnly ?? prop.readonly) ? '只读' : '可写'}
                           </span>
                         </td>
                       </tr>
@@ -1100,7 +1373,7 @@ export class DeviceDetailPage extends LitElement {
           </div>
 
           <!-- Commands -->
-          <div class="card" style="margin-bottom: 24px;">
+          <div class="card section-gap">
             <div class="card-header">
               <h3 class="card-title">命令 (${overview.totalCommands})</h3>
             </div>
@@ -1109,7 +1382,11 @@ export class DeviceDetailPage extends LitElement {
                 <div class="command-list">
                   ${commands.map(cmd => html`
                     <div class="command-item">
-                      <span class="command-name">${cmd.name}</span>
+                      <div class="command-info-wrap">
+                        <div class="command-id">${cmd.id.length > 12 ? cmd.id.slice(0, 12) + '...' : cmd.id}</div>
+                        <span class="command-name">${cmd.name}</span>
+                        ${cmd.description ? html`<div class="command-desc">${cmd.description}</div>` : ''}
+                      </div>
                       <button class="command-btn" @click=${() => { this.selectedCommand = cmd; this.showCommandDialog = true }}>执行</button>
                     </div>
                   `)}
@@ -1127,14 +1404,20 @@ export class DeviceDetailPage extends LitElement {
             <div class="card-header">
               <h3 class="card-title">最近事件</h3>
             </div>
-            <div class="card-body" style="padding: 0 20px;">
+            <div class="card-body card-body-pad">
               ${recentEvents.length > 0 ? html`
                 <div class="event-list">
                   ${recentEvents.map(event => html`
                     <div class="event-item">
-                      <span class="event-level ${event.level}"></span>
+                      ${this.renderEventLevelIcon(event.level)}
                       <div class="event-content">
-                        <p class="event-message">${event.message}</p>
+                        <div class="event-header">
+                          <span class="event-title">${event.title || event.message}</span>
+                          ${event.eventType ? html`<span class="event-type-badge">${this.getEventTypeLabel(event.eventType)}</span>` : ''}
+                          <span class="event-level-badge ${event.level}">${this.getLevelLabel(event.level)}</span>
+                        </div>
+                        ${event.title ? html`<p class="event-message">${event.message}</p>` : ''}
+                        ${this.renderEventMetadata(event.metadata)}
                         <span class="event-time">${this.formatTime(event.timestamp)}</span>
                       </div>
                     </div>
@@ -1181,9 +1464,36 @@ export class DeviceDetailPage extends LitElement {
                   <span class="info-label">最后更新</span>
                   <span class="info-value">${overview.updatedAt ? this.formatTime(overview.updatedAt) : '-'}</span>
                 </div>
+                <div class="info-item info-item-tags">
+                  <span class="info-label">标签</span>
+                  <tag-selector
+                    .targetId=${device.id}
+                    .initialTags=${this.loadedTags}
+                    .onChange=${() => this.loadDevice(device.id, true)}
+                  ></tag-selector>
+                </div>
               </div>
             </div>
           </div>
+        </div>
+      </div>
+    `
+  }
+
+  renderMonitoring() {
+    if (!this.profile) return null
+    const deviceId = this.profile.device.id
+
+    return html`
+      <div class="monitoring-grid">
+        <!-- Row 1: Device status + metrics (full width) -->
+        <performance-metrics-card .deviceId=${deviceId}></performance-metrics-card>
+        <!-- Row 2: Chart (full width) -->
+        <performance-chart .deviceId=${deviceId}></performance-chart>
+        <!-- Row 3: Alerts + Traces -->
+        <div class="monitoring-row">
+          <performance-alerts .deviceId=${deviceId}></performance-alerts>
+          <trace-records .deviceId=${deviceId}></trace-records>
         </div>
       </div>
     `
@@ -1193,6 +1503,65 @@ export class DeviceDetailPage extends LitElement {
     if (value === null || value === undefined) return '-'
     if (typeof value === 'object') return JSON.stringify(value)
     return String(value)
+  }
+
+  formatPropValue(prop: DeviceProperty): string {
+    const value = prop.currentValue ?? prop.value
+    if (value === null || value === undefined) return '-'
+    if (prop.dataType === 'boolean' || typeof value === 'boolean') {
+      return value ? '开启' : '关闭'
+    }
+    if (typeof value === 'object') return JSON.stringify(value)
+    return String(value)
+  }
+
+  renderEventLevelIcon(level: string) {
+    switch (level) {
+      case 'critical':
+      case 'error':
+        return html`
+          <svg class="event-level-icon" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="2">
+            <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>`
+      case 'warning':
+        return html`
+          <svg class="event-level-icon" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+          </svg>`
+      default:
+        return html`
+          <svg class="event-level-icon" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+          </svg>`
+    }
+  }
+
+  getEventTypeLabel(type: string): string {
+    const labels: Record<string, string> = {
+      Connection: '连接', Property: '属性', Command: '命令',
+      Business: '业务', System: '系统', alarm: '告警', warning: '警告',
+      info: '信息', error: '错误', status_change: '状态变更', command_executed: '命令执行',
+    }
+    return labels[type] || type
+  }
+
+  getLevelLabel(level: string): string {
+    const labels: Record<string, string> = {
+      critical: '严重', error: '错误', warning: '警告', info: '信息',
+    }
+    return labels[level] || level
+  }
+
+  renderEventMetadata(metadata?: Record<string, any>) {
+    if (!metadata) return null
+    const entries = Object.entries(metadata).filter(([k]) => !k.startsWith('_'))
+    if (entries.length === 0) return null
+    return html`
+      <div class="event-metadata">
+        ${entries.map(([k, v]) => html`<span class="event-meta-pill">${k}: ${String(v)}</span>`)}
+      </div>
+    `
   }
 
   formatTime(timestamp?: string): string {

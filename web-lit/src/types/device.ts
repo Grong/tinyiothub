@@ -16,6 +16,7 @@ export interface Device {
   driverName?: string
   deviceModel?: string
   protocolType?: string
+  protocol?: string
   factoryName?: string
   linkedData?: string
   driverOptions?: string
@@ -26,7 +27,7 @@ export interface Device {
   createdAt?: string
   updatedAt?: string
   // 计算属性
-  status?: 'online' | 'offline' | 'error' | 'maintenance'
+  status?: 'online' | 'offline' | 'warning' | 'error' | 'maintenance'
   tags?: Tag[]
   properties?: DeviceProperty[]
   productName?: string
@@ -46,6 +47,7 @@ export interface DeviceProperty {
   lastUpdateTime?: string // 新增：最后更新时间，映射到 updated_at
   alarmStatus?: number // 告警状态：0=正常，1=告警，2=高告警，映射到 alarm_status
   isReadOnly?: boolean // 映射到 is_read_only
+  readonly?: boolean // 兼容旧字段名
   minValue?: number // 映射到 min_value
   maxValue?: number // 映射到 max_value
 }
@@ -114,23 +116,3 @@ export interface DeviceEvent {
   status: 'active' | 'acknowledged' | 'resolved'
 }
 
-// 设备Profile类型（完整设备信息）
-export interface DeviceProfile {
-  device: Device
-  isOnline: boolean
-  properties: DeviceProperty[]
-  commands: DeviceCommand[]
-  recentEvents?: DeviceEvent[]
-  overview: {
-    totalProperties: number
-    onlineProperties: number
-    offlineProperties: number
-    readonlyProperties: number
-    writableProperties: number
-    totalCommands: number
-    totalEvents: number
-    activeAlarms: number
-    lastUpdateTime?: string
-  }
-  generatedAt: string
-}

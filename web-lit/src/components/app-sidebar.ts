@@ -10,6 +10,7 @@ import { customElement } from 'lit/decorators.js'
 import { $currentRoute, $navCollapsed } from '../stores/app-state'
 import { navigate } from '../lib/navigate'
 import './logo-icon'
+import './workspace-picker'
 
 interface NavItem {
   id: string
@@ -65,10 +66,21 @@ export class AppSidebar extends LitElement {
     },
   ]
 
+  private _unsubNavCollapsed: (() => void) | null = null
+  private _unsubCurrentRoute: (() => void) | null = null
+
   connectedCallback() {
     super.connectedCallback()
-    $navCollapsed.subscribe(() => this.requestUpdate())
-    $currentRoute.subscribe(() => this.requestUpdate())
+    this._unsubNavCollapsed = $navCollapsed.subscribe(() => this.requestUpdate())
+    this._unsubCurrentRoute = $currentRoute.subscribe(() => this.requestUpdate())
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback()
+    this._unsubNavCollapsed?.()
+    this._unsubCurrentRoute?.()
+    this._unsubNavCollapsed = null
+    this._unsubCurrentRoute = null
   }
 
   toggleCollapse() {
@@ -124,6 +136,9 @@ export class AppSidebar extends LitElement {
           </button>
         </div>
 
+        <!-- Workspace picker -->
+        ${!collapsed ? html`<workspace-picker></workspace-picker>` : ''}
+
         <!-- Navigation -->
         <nav class="sidebar-nav">
           ${this.navSections.map((section) => html`
@@ -153,7 +168,7 @@ export class AppSidebar extends LitElement {
         <!-- Footer -->
         <div class="sidebar-shell__footer">
           <div class="sidebar-version">
-            ${!collapsed ? html`<span class="sidebar-version__text">v1.0</span>` : ''}
+            ${!collapsed ? html`<span class="sidebar-version__text"></span>` : ''}
             <div class="sidebar-version__dot"></div>
           </div>
         </div>

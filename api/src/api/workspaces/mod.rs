@@ -19,12 +19,12 @@ use crate::{
 /// Create workspaces router
 pub fn create_router() -> Router<AppState> {
     Router::new()
-        .route("/workspaces", get(list_workspaces))
-        .route("/workspaces", post(create_workspace))
-        .route("/workspaces/{id}", get(get_workspace))
-        .route("/workspaces/{id}", put(update_workspace))
-        .route("/workspaces/{id}", delete(delete_workspace))
-        .route("/workspaces/{id}/devices", post(assign_device))
+        .route("/", get(list_workspaces))
+        .route("/", post(create_workspace))
+        .route("/{id}", get(get_workspace))
+        .route("/{id}", put(update_workspace))
+        .route("/{id}", delete(delete_workspace))
+        .route("/{id}/devices", post(assign_device))
 }
 
 /// List workspaces for current tenant

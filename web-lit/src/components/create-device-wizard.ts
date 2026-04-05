@@ -84,6 +84,12 @@ export class CreateDeviceWizard extends LitElement {
       border-radius: var(--radius-md);
       color: var(--text);
       font-size: 14px;
+      box-shadow: var(--glass-shadow-sm);
+      transition: box-shadow var(--duration-fast) ease;
+    }
+    .search-input:focus {
+      outline: none;
+      box-shadow: var(--focus-ring);
     }
     .category-tabs {
       display: flex;
@@ -98,6 +104,11 @@ export class CreateDeviceWizard extends LitElement {
       color: var(--muted);
       cursor: pointer;
       border: none;
+      transition: background var(--duration-fast) ease, color var(--duration-fast) ease;
+    }
+    .category-tab:hover {
+      background: var(--bg-hover);
+      color: var(--text);
     }
     .category-tab.active {
       background: var(--accent);
@@ -140,8 +151,21 @@ export class CreateDeviceWizard extends LitElement {
       cursor: pointer;
       border: none;
     }
-    .btn-secondary { background: var(--bg-secondary); color: var(--text); }
-    .btn-primary { background: var(--accent); color: white; }
+    .btn-secondary {
+      background: var(--secondary);
+      color: var(--text);
+      transition: background var(--duration-fast) ease;
+    }
+    .btn-secondary:hover { background: var(--bg-hover); }
+    .btn-primary {
+      background: var(--accent);
+      color: white;
+      transition: background var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
+    }
+    .btn-primary:hover:not(:disabled) {
+      background: var(--accent-hover);
+      box-shadow: 0 2px 12px var(--accent-glow);
+    }
     .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
     .toast {
       position: fixed;
@@ -156,6 +180,23 @@ export class CreateDeviceWizard extends LitElement {
     }
     .toast.success { border-left: 4px solid var(--ok); }
     .toast.error { border-left: 4px solid var(--danger); }
+
+    @keyframes fade-in {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .overlay { animation: fade-in 0.2s ease; }
+    .modal { animation: rise 0.25s var(--ease-out) backwards; }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
   `
 
   @state() open = false
@@ -263,7 +304,7 @@ export class CreateDeviceWizard extends LitElement {
       <div class="overlay" @click=${() => this.hide()}>
         <div class="modal" @click=${(e: Event) => e.stopPropagation()}>
           <div class="header">
-            <div style="display: flex; align-items: center; gap: 16px;">
+            <div class="header-left">
               <h2>创建设备</h2>
               <div class="step-indicator">
                 <div class="step-dot ${this.step === 'template' ? 'active' : ''}"></div>

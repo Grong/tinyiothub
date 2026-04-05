@@ -38,5 +38,5 @@ export class Skeleton extends LitElement {
 }
 
 declare global {
-  interface HTMLElementTagNameMap { 'sk-skeleton': Skeleton }
+  interface HTMLElementTagNameMap { 'skeleton': Skeleton }
 }

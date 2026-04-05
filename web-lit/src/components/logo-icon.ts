@@ -6,7 +6,7 @@ export class LogoIcon extends LitElement {
   @property({ type: String }) size = '24px'
 
   static styles = css`
-    logo-icon {
+    :host {
       display: inline-flex;
       align-items: center;
       justify-content: center;

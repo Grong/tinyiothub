@@ -240,7 +240,7 @@ export class BasePage extends LitElement {
     }
   `
 
-  // Navigation helper
+  // Navigation helper — use navigate() from lib/navigate directly
   protected goTo(route: string) {
     navigate(route)
   }
@@ -312,9 +312,11 @@ export class BasePage extends LitElement {
   protected onRetry() {
     this.loading = false
     this.error = null
+    this.loadData()
   }
 
-  // Page lifecycle (override in child pages)
-  protected async onPageInit() {}
-  protected async onPageLoad() {}
+  // Override in child pages to provide data loading logic
+  protected loadData() {
+    // Subclasses should override this method
+  }
 }

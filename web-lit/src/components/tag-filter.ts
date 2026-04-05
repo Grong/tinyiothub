@@ -92,6 +92,12 @@ export class TagFilter extends LitElement {
     this.dispatchEvent(new CustomEvent('change', { detail: tag.id }))
   }
 
+  clearFilter() {
+    this.value = ''
+    this.open = false
+    this.dispatchEvent(new CustomEvent('change', { detail: '' }))
+  }
+
   render() {
     const selectedTag = this.tags.find(t => t.id === this.value)
     return html`
@@ -104,6 +110,10 @@ export class TagFilter extends LitElement {
         </button>
         ${this.open ? html`
           <div class="dropdown">
+            <div class="tag-item ${!this.value ? 'selected' : ''}" @click=${this.clearFilter}>
+              <span class="tag-color" style="background: var(--muted)"></span>
+              <span class="tag-name">全部</span>
+            </div>
             ${this.tags.map(tag => html`
               <div class="tag-item ${tag.id === this.value ? 'selected' : ''}" @click=${() => this.selectTag(tag)}>
                 <span class="tag-color" style="background: ${tag.color}"></span>

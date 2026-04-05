@@ -1,4 +1,5 @@
 import { atom, computed } from 'nanostores'
+import { navigate } from '../lib/navigate'
 
 export interface User {
   id: string
@@ -15,7 +16,8 @@ export const $user = atom<User | null>(null)
 
 export const $isAuthenticated = computed([$token], (token) => !!token)
 
-// Persist to sessionStorage
+// Module-level subscription persists token to sessionStorage.
+// No cleanup needed — auth-store module is never unloaded.
 $token.subscribe((token) => {
   if (typeof window !== 'undefined') {
     if (token) {
@@ -41,6 +43,6 @@ export function clearAuth() {
 if (typeof window !== 'undefined') {
   window.addEventListener('auth-error', () => {
     clearAuth()
-    window.location.href = '/signin'
+    navigate('signin')
   })
 }
