@@ -637,7 +637,7 @@ export class DevicesPage extends LitElement {
   async loadDrivers() {
     try {
       const response = await driverApi.getDrivers()
-      if (response.result) {
+      if (Array.isArray(response.result)) {
         this.drivers = response.result
       }
     } catch {
