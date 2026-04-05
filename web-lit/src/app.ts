@@ -33,7 +33,9 @@ export class App extends LitElement {
   @state() isAuthenticated = false
   @state() user: { name?: string; email?: string } | null = null
   @state() showUserMenu = false
+  @state() showNotifications = false
   @state() searchQuery = ''
+  @state() alarmCount = 0
 
   private unsubAuth?: () => void
   private unsubUser?: () => void
@@ -227,6 +229,201 @@ export class App extends LitElement {
       opacity: 0.85;
     }
 
+    /* Topbar icon buttons */
+    .topbar-btn {
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      position: relative;
+      transition: all var(--duration-fast) ease;
+    }
+
+    .topbar-btn:hover {
+      background: var(--bg-hover);
+      border-color: var(--border-strong);
+      color: var(--text);
+    }
+
+    .topbar-btn svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .topbar-btn .badge {
+      position: absolute;
+      top: -4px;
+      right: -4px;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      background: var(--danger);
+      color: white;
+      font-size: 10px;
+      font-weight: 700;
+      border-radius: var(--radius-full);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Notification dropdown */
+    .notification-dropdown {
+      position: absolute;
+      top: 100%;
+      right: 0;
+      margin-top: 8px;
+      width: 320px;
+      max-height: 400px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+      z-index: 100;
+      overflow: hidden;
+    }
+
+    .notification-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .notification-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .notification-item {
+      display: flex;
+      gap: 12px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background var(--duration-fast) ease;
+    }
+
+    .notification-item:hover {
+      background: var(--bg-hover);
+    }
+
+    .notification-item:last-child {
+      border-bottom: none;
+    }
+
+    .notification-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: var(--radius-full);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .notification-icon.warning {
+      background: var(--warn-subtle);
+      color: var(--warn);
+    }
+
+    .notification-icon.danger {
+      background: var(--danger-subtle);
+      color: var(--danger);
+    }
+
+    .notification-icon svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    .notification-content {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .notification-text {
+      font-size: 13px;
+      color: var(--text);
+      margin-bottom: 2px;
+    }
+
+    .notification-time {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .notification-empty {
+      padding: 32px 16px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    /* User menu header */
+    .user-menu-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-secondary);
+    }
+
+    .user-menu-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 2px;
+    }
+
+    .user-menu-email {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .user-menu-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 6px;
+      font-size: 11px;
+      color: var(--ok);
+    }
+
+    .user-menu-status::before {
+      content: '';
+      width: 6px;
+      height: 6px;
+      border-radius: var(--radius-full);
+      background: var(--ok);
+    }
+
+    /* Back to home link */
+    .back-to-home {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 13px;
+      text-decoration: none;
+      transition: color var(--duration-fast) ease;
+    }
+
+    .back-to-home:hover {
+      color: var(--accent);
+    }
+
+    .back-to-home svg {
+      width: 14px;
+      height: 14px;
+    }
+
     /* Responsive */
     @media (max-width: 1100px) {
       .app-shell {
@@ -249,6 +446,8 @@ export class App extends LitElement {
     super.connectedCallback()
     this.setupRouter()
     this.subscribeToAuth()
+    // Close menus when clicking outside
+    document.addEventListener('click', this.handleDocumentClick.bind(this))
   }
 
   disconnectedCallback() {
@@ -301,6 +500,15 @@ export class App extends LitElement {
 
   toggleUserMenu() {
     this.showUserMenu = !this.showUserMenu
+  }
+
+  handleDocumentClick(e: Event) {
+    // Close dropdowns when clicking outside
+    const target = e.target as HTMLElement
+    if (!target.closest('.topbar-btn') && !target.closest('.user-avatar') && !target.closest('.user-menu-dropdown') && !target.closest('.notification-dropdown')) {
+      this.showUserMenu = false
+      this.showNotifications = false
+    }
   }
 
   handleSearchKeydown(e: KeyboardEvent) {
@@ -369,6 +577,11 @@ export class App extends LitElement {
       'logout': html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75"/></svg>`,
       'collapse': html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12"/></svg>`,
       'expand': html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12"/></svg>`,
+      'bell': html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14.857 17.082a24.06 24.06 0 01-8.835-2.084L3 21l1.035-3.194a24.06 24.06 0 018.835-2.084L15 15M6 6h12M6 10h12M6 14h8"/></svg>`,
+      'help': html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z"/></svg>`,
+      'sun': html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z"/></svg>`,
+      'moon': html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z"/></svg>`,
+      'arrow-left': html`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"/></svg>`,
     }
     return icons[name] || html``
   }
@@ -459,9 +672,11 @@ export class App extends LitElement {
         <header class="topbar">
           <div class="topnav-shell">
             ${isPublic ? html`
-              <div class="sidebar-brand" style="margin-right: auto;">
-                <img class="sidebar-brand__logo" src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2300d4aa' stroke-width='2'><path d='M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z'/></svg>" alt="TinyIoTHub" style="width:28px;height:28px;" />
-                <span class="sidebar-brand__title">TinyIoTHub</span>
+              <div style="display:flex;align-items:center;gap:16px;margin-right:auto;">
+                <a class="back-to-home" href="/" @click=${(e: Event) => { e.preventDefault(); this.navigate('home'); }}>
+                  ${this.renderIcon('arrow-left')}
+                  <span>返回首页</span>
+                </a>
               </div>
             ` : ''}
 
@@ -488,22 +703,57 @@ export class App extends LitElement {
                   />
                 </div>
 
+                <!-- Help button -->
+                <button class="topbar-btn" title="帮助文档">
+                  ${this.renderIcon('help')}
+                </button>
+
+                <!-- Notifications -->
                 <div style="position: relative;">
-                  <div class="user-avatar" @click=${this.toggleUserMenu}>
+                  <button class="topbar-btn" title="通知" @click=${(e: Event) => { e.stopPropagation(); this.showNotifications = !this.showNotifications; this.showUserMenu = false; }}>
+                    ${this.renderIcon('bell')}
+                    ${this.alarmCount > 0 ? html`<span class="badge">${this.alarmCount > 99 ? '99+' : this.alarmCount}</span>` : ''}
+                  </button>
+                  ${this.showNotifications ? html`
+                    <div class="notification-dropdown" @click=${(e: Event) => e.stopPropagation()}>
+                      <div class="notification-header">
+                        <span class="notification-title">通知</span>
+                        ${this.alarmCount > 0 ? html`<span style="font-size:11px;color:var(--muted)">${this.alarmCount} 条未读</span>` : ''}
+                      </div>
+                      <div class="notification-empty">
+                        暂无新通知
+                      </div>
+                    </div>
+                  ` : ''}
+                </div>
+
+                <!-- Theme toggle -->
+                <button class="topbar-btn" title="切换主题">
+                  ${this.renderIcon('moon')}
+                </button>
+
+                <!-- User menu -->
+                <div style="position: relative;">
+                  <div class="user-avatar" @click=${(e: Event) => { e.stopPropagation(); this.toggleUserMenu(); this.showNotifications = false; }} title="${this.user?.name || this.user?.email || '用户'}">
                     ${this.getUserInitials()}
                   </div>
                   ${this.showUserMenu ? html`
-                    <div class="user-menu-dropdown">
-                      <div class="user-menu-item">
-                        ${this.renderIcon('user')}
-                        <span>${this.user?.name || this.user?.email || '用户'}</span>
+                    <div class="user-menu-dropdown" @click=${(e: Event) => e.stopPropagation()}>
+                      <div class="user-menu-header">
+                        <div class="user-menu-name">${this.user?.name || '管理员'}</div>
+                        <div class="user-menu-email">${this.user?.email || 'admin@tinyiothub.com'}</div>
+                        <div class="user-menu-status">在线</div>
                       </div>
-                      <div class="user-menu-divider"></div>
-                      <div class="user-menu-item" @click=${() => this.navigate('settings')}>
+                      <div class="user-menu-item" @click=${() => { this.navigate('settings'); this.showUserMenu = false; }}>
+                        ${this.renderIcon('user')}
+                        <span>个人资料</span>
+                      </div>
+                      <div class="user-menu-item" @click=${() => { this.navigate('settings'); this.showUserMenu = false; }}>
                         ${this.renderIcon('settings')}
                         <span>设置</span>
                       </div>
-                      <div class="user-menu-item danger" @click=${this.handleLogout}>
+                      <div class="user-menu-divider"></div>
+                      <div class="user-menu-item danger" @click=${() => { this.handleLogout(); this.showUserMenu = false; }}>
                         ${this.renderIcon('logout')}
                         <span>退出登录</span>
                       </div>
