@@ -7,7 +7,7 @@ vi.mock('./config', () => ({
 
 // We need to mock fetch
 const mockFetch = vi.fn()
-global.fetch = mockFetch
+vi.stubGlobal('fetch', mockFetch)
 
 // Import after mocking
 import { ApiError } from './api-client'

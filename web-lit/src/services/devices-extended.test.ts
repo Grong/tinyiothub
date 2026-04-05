@@ -150,13 +150,14 @@ describe('deviceApi - additional coverage', () => {
 
   describe('getDeviceMetrics', () => {
     it('calls apiGet with metrics endpoint', async () => {
+      // Mock apiGet directly - provides camelCase data as apiGet would return after conversion
       const mockResponse = {
         code: 0,
         msg: '',
         result: {
-          device_id: 'dev-1',
-          cpu_usage: 45.5,
-          memory_usage: 62.1,
+          deviceId: 'dev-1',
+          cpuUsage: 45.5,
+          memoryUsage: 62.1,
           timestamp: '2024-01-01T00:00:00Z',
         },
       }
@@ -165,7 +166,7 @@ describe('deviceApi - additional coverage', () => {
       const result = await deviceApi.getDeviceMetrics('dev-1')
 
       expect(apiGet).toHaveBeenCalledWith('devices/dev-1/metrics')
-      expect(result.result?.cpu_usage).toBe(45.5)
+      expect(result.result?.cpuUsage).toBe(45.5)
     })
   })
 
@@ -205,11 +206,11 @@ describe('deviceApi - additional coverage', () => {
         result: [
           {
             id: 'alert-1',
-            device_id: 'dev-1',
-            alert_type: 'high_cpu',
+            deviceId: 'dev-1',
+            alertType: 'high_cpu',
             level: 'warning',
             message: 'CPU usage exceeded 80%',
-            triggered_at: '2024-01-01T00:00:00Z',
+            triggeredAt: '2024-01-01T00:00:00Z',
           },
         ],
       }
@@ -219,7 +220,7 @@ describe('deviceApi - additional coverage', () => {
 
       expect(apiGet).toHaveBeenCalledWith('devices/dev-1/performance/alerts')
       expect(result.result).toHaveLength(1)
-      expect(result.result![0].alert_type).toBe('high_cpu')
+      expect(result.result![0].alertType).toBe('high_cpu')
     })
   })
 
@@ -229,12 +230,12 @@ describe('deviceApi - additional coverage', () => {
         code: 0,
         msg: '',
         result: {
-          device_id: 'dev-1',
-          total_traces: 150,
-          by_level: { info: 100, warning: 40, error: 10 },
-          by_type: { connection: 50, data: 80, system: 20 },
-          recent_24h: 25,
-          recent_7d: 150,
+          deviceId: 'dev-1',
+          totalTraces: 150,
+          byLevel: { info: 100, warning: 40, error: 10 },
+          byType: { connection: 50, data: 80, system: 20 },
+          recent24h: 25,
+          recent7d: 150,
         },
       }
       ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue(mockResponse)
@@ -242,7 +243,7 @@ describe('deviceApi - additional coverage', () => {
       const result = await deviceApi.getDeviceTraceStatistics('dev-1', 7)
 
       expect(apiGet).toHaveBeenCalledWith('devices/dev-1/traces/statistics', { days: 7 })
-      expect(result.result?.recent_7d).toBe(150)
+      expect(result.result?.recent7d).toBe(150)
     })
   })
 })

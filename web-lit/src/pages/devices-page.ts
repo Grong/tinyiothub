@@ -4,6 +4,7 @@ import { deviceApi, type Device, type DeviceListParams, type CreateDeviceRequest
 import { driverApi, type Driver, type DriverConfigOption } from '../services/drivers'
 import '../components/device-card'
 import '../components/tag-filter'
+import '../components/create-device-wizard'
 
 @customElement('devices-page')
 export class DevicesPage extends LitElement {
@@ -584,6 +585,7 @@ export class DevicesPage extends LitElement {
   @state() tagId = ''
 
   // Modal state
+  @state() wizardRef: any = null
   @state() showModal = false
   @state() isEditMode = false
   @state() editingDeviceId = ''
@@ -606,6 +608,10 @@ export class DevicesPage extends LitElement {
   async connectedCallback() {
     super.connectedCallback()
     await this.loadDevices()
+  }
+
+  firstUpdated() {
+    this.wizardRef = this.shadowRoot?.querySelector('create-device-wizard')
   }
 
   async loadDevices() {
@@ -693,19 +699,7 @@ export class DevicesPage extends LitElement {
 
   // Modal actions
   openCreateModal() {
-    this.isEditMode = false
-    this.editingDeviceId = ''
-    this.formName = ''
-    this.formDisplayName = ''
-    this.formDescription = ''
-    this.formProtocol = ''
-    this.formAddress = ''
-    this.formDriverName = ''
-    this.formDriverOptions = {}
-    this.driverConfigOptions = []
-    this.formError = ''
-    this.showModal = true
-    this.loadDrivers()
+    this.wizardRef?.show()
   }
 
   openEditModal(device: Device, e?: Event) {
@@ -870,6 +864,10 @@ export class DevicesPage extends LitElement {
       </div>
 
       ${this.loading ? this.renderLoading() : this.error ? this.renderError() : this.viewMode === 'grid' ? this.renderDeviceGrid() : this.renderDeviceList()}
+      <create-device-wizard
+        id="wizard"
+        @success=${() => this.loadDevices()}
+      ></create-device-wizard>
       ${this.showModal ? this.renderModal() : ''}
     `
   }

@@ -1,8 +1,7 @@
 // web-lit/src/components/create-device-wizard.ts
 import { LitElement, html, css } from 'lit'
 import { customElement, state } from 'lit/decorators.js'
-import { templateApi, transformDeviceTemplate, type ProcessedDeviceTemplate } from '../services/templates'
-import { deviceApi } from '../services/devices'
+import { templateApi, transformDeviceTemplate, type ProcessedDeviceTemplate, type DeviceCreationInput } from '../services/templates'
 import './template-card'
 import './template-preview'
 import './device-info-form'
@@ -221,17 +220,24 @@ export class CreateDeviceWizard extends LitElement {
     try {
       const data = JSON.parse(this.formData)
       const driverOptions = data.driverOptions ? JSON.parse(data.driverOptions) : {}
-      await deviceApi.createDevice({
+
+      const deviceInput: DeviceCreationInput = {
         name: data.name,
         displayName: data.name,
-        description: data.description,
-        address: data.address,
-        position: data.position,
-        driverName: data.driverName,
+        description: data.description || undefined,
+        address: data.address || undefined,
+        position: data.position || undefined,
+        driverName: data.driverName || this.selectedTemplate?.driverName || undefined,
         driverOptions: Object.keys(driverOptions).length > 0 ? JSON.stringify(driverOptions) : undefined,
         propertyValues: {},
         enabledCommands: this.selectedTemplate?.commands?.map(c => c.name) || [],
+      }
+
+      await templateApi.createDeviceFromTemplate({
+        templateId: this.selectedTemplate!.id,
+        deviceInput,
       })
+
       this.showToast('设备创建成功', 'success')
       this.hide()
       this.dispatchEvent(new CustomEvent('success'))
