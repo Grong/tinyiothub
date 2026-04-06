@@ -4,18 +4,19 @@
 
 import { LitElement, html, css } from 'lit'
 import { customElement, property, state } from 'lit/decorators.js'
+import { hostStyles } from '../../styles/shared-host'
 
 @customElement('chat-input')
 export class ChatInput extends LitElement {
   @property({ type: Boolean }) isStreaming = false
   @state() private value = ''
 
-  static styles = css`
+  static styles = [hostStyles, css`
     :host { display: block; flex-shrink: 0; }
     .input-area {
       padding: 12px 24px 16px;
-      border-top: 1px solid var(--border, #e2e8f0);
-      background: var(--bg, #fff);
+      box-shadow: 0 -1px 0 var(--card-highlight);
+      background: var(--chrome);
     }
     .input-row {
       display: flex;
@@ -25,7 +26,7 @@ export class ChatInput extends LitElement {
     textarea {
       flex: 1;
       resize: none;
-      border: 1px solid var(--border, #e2e8f0);
+      border: none;
       border-radius: 12px;
       padding: 10px 14px;
       font-size: 0.875rem;
@@ -34,13 +35,14 @@ export class ChatInput extends LitElement {
       min-height: 42px;
       max-height: 150px;
       overflow-y: auto;
-      background: var(--bg, #fff);
+      background: var(--card);
       color: var(--text, #1a1a1a);
       outline: none;
-      transition: border-color 0.15s;
+      box-shadow: var(--glass-shadow-sm);
+      transition: box-shadow var(--duration-normal) var(--ease-out);
     }
     textarea:focus {
-      border-color: var(--accent, #6366f1);
+      box-shadow: var(--focus-ring);
     }
     textarea:disabled {
       opacity: 0.5;
@@ -62,11 +64,11 @@ export class ChatInput extends LitElement {
       transition: background 0.15s;
     }
     .send-btn.send {
-      background: var(--accent, #6366f1);
+      background: var(--accent);
       color: #fff;
     }
     .send-btn.send:hover {
-      background: var(--accent-hover, #4f46e5);
+      background: var(--accent-hover);
     }
     .send-btn.send:disabled {
       opacity: 0.4;
@@ -86,7 +88,7 @@ export class ChatInput extends LitElement {
     @media (max-width: 768px) {
       .input-area { padding: 8px 12px 12px; }
     }
-  `
+  `]
 
   private _handleInput(e: Event) {
     const textarea = e.target as HTMLTextAreaElement
