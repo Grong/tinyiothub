@@ -67,6 +67,15 @@ export class ChatView extends LitElement {
     sendChatMessage(this.chatState, msg);
     this.requestUpdate();
     this._startStreamPolling();
+
+    // Auto-title: use first 20 chars of first user message
+    const sessionIdx = this.sessionsList.findIndex((s) => s.key === this.sessionKey);
+    if (sessionIdx >= 0 && this.sessionsList[sessionIdx].label === "新会话") {
+      const title = msg.length > 20 ? msg.slice(0, 20) + "..." : msg;
+      const updated = [...this.sessionsList];
+      updated[sessionIdx] = { ...updated[sessionIdx], label: title };
+      this.sessionsList = updated;
+    }
   }
 
   private handleAbort(): void {
@@ -151,24 +160,30 @@ export class ChatView extends LitElement {
         <div
           class="chat-sidebar ${this.sidebarCollapsed ? "collapsed" : ""}"
         >
-          <button
-            class="chat-new-session-btn"
-            @click=${this.handleNewSession}
-          >
-            新建会话
+          <button class="chat-sidebar-toggle"
+                  @click=${() => { this.sidebarCollapsed = !this.sidebarCollapsed; }}>
+            ${this.sidebarCollapsed ? "▶" : "◀"}
           </button>
-          ${this.sessionsList.map(
-            (s) => html`
-              <div
-                class="chat-session-item ${s.key === this.sessionKey
-                  ? "active"
-                  : ""}"
-                @click=${() => this.switchSession(s.key)}
-              >
-                ${s.label}
-              </div>
-            `,
-          )}
+          ${!this.sidebarCollapsed ? html`
+            <button
+              class="chat-new-session-btn"
+              @click=${this.handleNewSession}
+            >
+              新建会话
+            </button>
+            ${this.sessionsList.map(
+              (s) => html`
+                <div
+                  class="chat-session-item ${s.key === this.sessionKey
+                    ? "active"
+                    : ""}"
+                  @click=${() => this.switchSession(s.key)}
+                >
+                  ${s.label}
+                </div>
+              `,
+            )}
+          ` : nothing}
         </div>
         <div class="chat-main">
           <div class="chat-messages" id="chatMessages">
