@@ -673,24 +673,248 @@ impl AgentClient for ZeroClawAgentClient {
         &self,
         _agent_id: &str,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, AgentError>> + Send + '_>> {
-        Box::pin(async move { Ok(serde_json::json!([])) })
+        Box::pin(async move { Ok(build_tools_catalog_json()) })
     }
 
     fn tools_effective(
         &self,
-        _agent_id: &str,
+        agent_id: &str,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, AgentError>> + Send + '_>> {
-        Box::pin(async move { Ok(serde_json::json!([])) })
+        let agent_id = agent_id.to_string();
+        let db_pool = self.db_pool.clone();
+
+        Box::pin(async move {
+            let overrides_row = sqlx::query_as::<_, (String,)>(
+                "SELECT tool_overrides FROM agent_tools WHERE agent_id = ?"
+            )
+            .bind(&agent_id)
+            .fetch_optional(&db_pool)
+            .await
+            .map_err(|e| AgentError::RequestFailed(format!("DB query failed: {}", e)))?;
+
+            let overrides: serde_json::Value = overrides_row
+                .map(|(json_str,)| serde_json::from_str(&json_str).unwrap_or_default())
+                .unwrap_or_else(|| serde_json::json!({ "enabled": [], "disabled": [] }));
+
+            let enabled_list: Vec<String> = overrides
+                .get("enabled")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+
+            let disabled_list: Vec<String> = overrides
+                .get("disabled")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+
+            let catalog = build_tools_catalog_json();
+            let groups = catalog
+                .get("groups")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+
+            let filtered_groups: Vec<serde_json::Value> = groups
+                .into_iter()
+                .map(|group| {
+                    let tools = group
+                        .get("tools")
+                        .and_then(|v| v.as_array())
+                        .cloned()
+                        .unwrap_or_default();
+
+                    let filtered_tools: Vec<serde_json::Value> = tools
+                        .into_iter()
+                        .map(|mut tool| {
+                            let tool_id = tool
+                                .get("id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let is_dangerous = tool
+                                .get("danger")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+
+                            let effective_enabled = if !enabled_list.is_empty() {
+                                enabled_list.contains(&tool_id)
+                            } else if !disabled_list.is_empty() {
+                                !disabled_list.contains(&tool_id)
+                            } else {
+                                !is_dangerous
+                            };
+
+                            tool["enabled"] = serde_json::json!(effective_enabled);
+                            tool
+                        })
+                        .collect();
+
+                    serde_json::json!({
+                        "id": group.get("id"),
+                        "label": group.get("label"),
+                        "source": group.get("source"),
+                        "tools": filtered_tools,
+                    })
+                })
+                .collect();
+
+            Ok(serde_json::json!({ "groups": filtered_groups }))
+        })
     }
 
     fn tools_toggle(
         &self,
-        _agent_id: &str,
-        _tool_name: &str,
-        _enabled: bool,
+        agent_id: &str,
+        tool_name: &str,
+        enabled: bool,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<(), AgentError>> + Send + '_>> {
-        Box::pin(async move { Ok(()) })
+        let agent_id = agent_id.to_string();
+        let tool_name = tool_name.to_string();
+        let db_pool = self.db_pool.clone();
+
+        Box::pin(async move {
+            let current_row = sqlx::query_as::<_, (String,)>(
+                "SELECT tool_overrides FROM agent_tools WHERE agent_id = ?"
+            )
+            .bind(&agent_id)
+            .fetch_optional(&db_pool)
+            .await
+            .map_err(|e| AgentError::RequestFailed(format!("DB query failed: {}", e)))?;
+
+            let overrides: serde_json::Value = current_row
+                .map(|(json_str,)| serde_json::from_str(&json_str).unwrap_or_default())
+                .unwrap_or_else(|| serde_json::json!({ "enabled": [], "disabled": [] }));
+
+            let mut enabled_list: Vec<String> = overrides
+                .get("enabled")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+
+            let mut disabled_list: Vec<String> = overrides
+                .get("disabled")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+
+            enabled_list.retain(|t| t != &tool_name);
+            disabled_list.retain(|t| t != &tool_name);
+            if enabled {
+                enabled_list.push(tool_name.clone());
+            } else {
+                disabled_list.push(tool_name);
+            }
+
+            let new_overrides = serde_json::json!({
+                "enabled": enabled_list,
+                "disabled": disabled_list,
+            });
+
+            sqlx::query(
+                "INSERT INTO agent_tools (agent_id, tool_overrides, updated_at)
+                 VALUES (?, ?, datetime('now'))
+                 ON CONFLICT(agent_id) DO UPDATE SET
+                   tool_overrides = excluded.tool_overrides,
+                   updated_at = datetime('now')"
+            )
+            .bind(&agent_id)
+            .bind(new_overrides.to_string())
+            .execute(&db_pool)
+            .await
+            .map_err(|e| AgentError::RequestFailed(format!("DB upsert failed: {}", e)))?;
+
+            Ok(())
+        })
     }
+}
+
+/// Returns the static catalog of all available TinyIoTHub tools grouped by category.
+fn build_tools_catalog_json() -> serde_json::Value {
+    serde_json::json!({
+        "groups": [
+            {
+                "id": "device",
+                "label": "设备管理",
+                "source": "core",
+                "tools": [
+                    { "id": "device_list",           "name": "device_list",           "label": "查询设备列表",     "description": "列出所有已注册的IoT设备，支持分页和过滤",           "danger": false, "enabled": true  },
+                    { "id": "device_get",             "name": "device_get",             "label": "获取设备详情",     "description": "根据设备ID获取设备完整信息",                          "danger": false, "enabled": true  },
+                    { "id": "device_create",          "name": "device_create",          "label": "创建设备",         "description": "注册一个新的IoT设备到系统",                           "danger": false, "enabled": true  },
+                    { "id": "device_update",          "name": "device_update",          "label": "更新设备",         "description": "更新已有设备的基本信息或配置",                       "danger": false, "enabled": true  },
+                    { "id": "device_delete",          "name": "device_delete",          "label": "删除设备",         "description": "永久删除一个设备及其所有数据",                        "danger": true,  "enabled": false },
+                    { "id": "device_read",            "name": "device_read",            "label": "读取设备属性",     "description": "从设备读取当前属性/遥测数据",                       "danger": false, "enabled": true  },
+                    { "id": "device_write",           "name": "device_write",           "label": "写入设备属性",     "description": "向设备写入属性值或下发控制指令",                    "danger": false, "enabled": true  },
+                    { "id": "device_batch_read",      "name": "device_batch_read",      "label": "批量读取设备",     "description": "批量读取多个设备的属性数据",                       "danger": false, "enabled": true  },
+                    { "id": "batch_command_execute",  "name": "batch_command_execute",  "label": "批量执行命令",     "description": "向多个设备批量下发控制命令",                        "danger": true,  "enabled": false },
+                    { "id": "batch_property_write",   "name": "batch_property_write",   "label": "批量写入属性",     "description": "批量写入多个设备的属性值",                          "danger": true,  "enabled": false },
+                    { "id": "device_template_list",   "name": "device_template_list",   "label": "查询设备模板",     "description": "列出系统中所有设备模板",                            "danger": false, "enabled": true  },
+                ]
+            },
+            {
+                "id": "alarm",
+                "label": "告警管理",
+                "source": "core",
+                "tools": [
+                    { "id": "alarm_list",      "name": "alarm_list",      "label": "查询告警列表",  "description": "列出当前告警和历史告警记录",                  "danger": false, "enabled": true },
+                    { "id": "alarm_get",       "name": "alarm_get",       "label": "获取告警详情",  "description": "获取指定告警的详细信息",                    "danger": false, "enabled": true },
+                    { "id": "alarm_ack",       "name": "alarm_ack",       "label": "确认告警",      "description": "确认并关闭一条告警",                      "danger": false, "enabled": true },
+                    { "id": "alarm_rule_list", "name": "alarm_rule_list", "label": "查询告警规则",  "description": "列出系统中所有告警规则",                  "danger": false, "enabled": true },
+                    { "id": "alarm_stats",     "name": "alarm_stats",     "label": "告警统计",      "description": "获取告警统计摘要（总数、等级分布等）",      "danger": false, "enabled": true },
+                ]
+            },
+            {
+                "id": "workspace",
+                "label": "工作空间",
+                "source": "core",
+                "tools": [
+                    { "id": "workspace_list",    "name": "workspace_list",    "label": "查询工作空间", "description": "列出当前用户所属的所有工作空间",           "danger": false, "enabled": true },
+                    { "id": "workspace_get",    "name": "workspace_get",    "label": "获取工作空间", "description": "获取指定工作空间的详细信息",           "danger": false, "enabled": true },
+                    { "id": "workspace_create", "name": "workspace_create", "label": "创建工作空间", "description": "创建一个新的工作空间",                   "danger": false, "enabled": true },
+                    { "id": "workspace_update", "name": "workspace_update", "label": "更新工作空间", "description": "更新工作空间的名称、描述等",           "danger": false, "enabled": true },
+                    { "id": "workspace_delete", "name": "workspace_delete", "label": "删除工作空间", "description": "删除指定工作空间（不可恢复）",           "danger": true,  "enabled": false },
+                    { "id": "agent_list",       "name": "agent_list",       "label": "查询 Agent",   "description": "列出当前工作空间中的所有 Agent 实例",   "danger": false, "enabled": true },
+                ]
+            },
+            {
+                "id": "monitoring",
+                "label": "系统监控",
+                "source": "core",
+                "tools": [
+                    { "id": "system_health", "name": "system_health", "label": "系统健康检查", "description": "查询系统各组件的运行状态和健康度",    "danger": false, "enabled": true },
+                    { "id": "event_list",    "name": "event_list",    "label": "查询事件列表", "description": "列出系统事件日志，支持过滤和分页",  "danger": false, "enabled": true },
+                ]
+            },
+            {
+                "id": "driver",
+                "label": "驱动管理",
+                "source": "core",
+                "tools": [
+                    { "id": "driver_list", "name": "driver_list", "label": "查询驱动列表", "description": "列出系统中所有已注册的协议驱动（Modbus/ONVIF等）", "danger": false, "enabled": true },
+                    { "id": "driver_get",  "name": "driver_get",  "label": "获取驱动详情", "description": "获取指定驱动的配置和状态信息",                     "danger": false, "enabled": true },
+                ]
+            },
+            {
+                "id": "job",
+                "label": "任务管理",
+                "source": "core",
+                "tools": [
+                    { "id": "job_list",   "name": "job_list",   "label": "查询任务列表", "description": "列出系统中所有调度任务",                    "danger": false, "enabled": true },
+                    { "id": "job_get",    "name": "job_get",    "label": "获取任务详情", "description": "获取指定任务的执行状态和历史记录",          "danger": false, "enabled": true },
+                    { "id": "job_cancel", "name": "job_cancel", "label": "取消任务",     "description": "取消一个正在等待或运行中的调度任务",        "danger": true,  "enabled": false },
+                ]
+            },
+            {
+                "id": "mcp",
+                "label": "MCP 工具",
+                "source": "plugin",
+                "tools": [
+                    { "id": "mcp_workspace_list", "name": "mcp_workspace_list", "label": "查询 MCP 工作空间", "description": "列出 AI Agent 可用的 MCP 工作空间资源", "danger": false, "enabled": true },
+                    { "id": "mcp_workspace_read", "name": "mcp_workspace_read", "label": "读取 MCP 资源",      "description": "读取 MCP 工作空间中的文件或配置资源",  "danger": false, "enabled": true },
+                ]
+            },
+        ]
+    })
 }
 
 // ============================================================================
@@ -700,29 +924,32 @@ impl AgentClient for ZeroClawAgentClient {
 /// Fallback agent client — in-memory implementation for when no agent backend is available
 pub struct FallbackAgentClient {
     pub agents: std::sync::Mutex<std::collections::HashMap<String, AgentInfo>>,
+    pub db_pool: sqlx::SqlitePool,
 }
 
 impl FallbackAgentClient {
-    pub fn new() -> Self {
+    pub fn new(db_pool: sqlx::SqlitePool) -> Self {
         Self {
             agents: std::sync::Mutex::new(std::collections::HashMap::new()),
+            db_pool,
         }
     }
 
-    pub fn with_agents(agents: Vec<AgentInfo>) -> Self {
+    pub fn with_agents(db_pool: sqlx::SqlitePool, agents: Vec<AgentInfo>) -> Self {
         let map: std::collections::HashMap<String, AgentInfo> = agents
             .into_iter()
             .map(|a| (a.id.clone(), a))
             .collect();
         Self {
             agents: std::sync::Mutex::new(map),
+            db_pool,
         }
     }
 }
 
 impl Default for FallbackAgentClient {
     fn default() -> Self {
-        Self::new()
+        panic!("FallbackAgentClient::default() is not available — use FallbackAgentClient::new(pool) instead")
     }
 }
 
@@ -829,10 +1056,39 @@ impl AgentClient for FallbackAgentClient {
     fn chat_history(
         &self,
         _agent_id: &str,
-        _session_key: &str,
-        _limit: u32,
+        session_key: &str,
+        limit: u32,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, AgentError>> + Send + '_>> {
-        Box::pin(async move { Err(AgentError::Unavailable("fallback: chat_history not implemented".into())) })
+        let session_key = session_key.to_string();
+        let db_pool = self.db_pool.clone();
+
+        Box::pin(async move {
+            let rows = sqlx::query_as::<_, (String, String, i64, Option<String>)>(
+                "SELECT role, content, timestamp, run_id FROM chat_messages
+                 WHERE session_key = ? ORDER BY timestamp ASC LIMIT ?"
+            )
+            .bind(&session_key)
+            .bind(limit as i64)
+            .fetch_all(&db_pool)
+            .await
+            .map_err(|e| AgentError::RequestFailed(format!("DB query failed: {}", e)))?;
+
+            let messages: Vec<serde_json::Value> = rows
+                .into_iter()
+                .map(|(role, content, timestamp, run_id)| {
+                    let content_parsed: serde_json::Value = serde_json::from_str(&content)
+                        .unwrap_or(serde_json::json!([{"type": "text", "text": content}]));
+                    serde_json::json!({
+                        "role": role,
+                        "content": content_parsed,
+                        "timestamp": timestamp,
+                        "toolCallId": run_id,
+                    })
+                })
+                .collect();
+
+            Ok(serde_json::json!({ "messages": messages }))
+        })
     }
 
     fn chat_abort(
@@ -882,23 +1138,159 @@ impl AgentClient for FallbackAgentClient {
         &self,
         _agent_id: &str,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, AgentError>> + Send + '_>> {
-        Box::pin(async move { Ok(serde_json::json!([])) })
+        Box::pin(async move { Ok(build_tools_catalog_json()) })
     }
 
     fn tools_effective(
         &self,
-        _agent_id: &str,
+        agent_id: &str,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, AgentError>> + Send + '_>> {
-        Box::pin(async move { Ok(serde_json::json!([])) })
+        let agent_id = agent_id.to_string();
+        let db_pool = self.db_pool.clone();
+
+        Box::pin(async move {
+            let overrides_row = sqlx::query_as::<_, (String,)>(
+                "SELECT tool_overrides FROM agent_tools WHERE agent_id = ?"
+            )
+            .bind(&agent_id)
+            .fetch_optional(&db_pool)
+            .await
+            .map_err(|e| AgentError::RequestFailed(format!("DB query failed: {}", e)))?;
+
+            let overrides: serde_json::Value = overrides_row
+                .map(|(json_str,)| serde_json::from_str(&json_str).unwrap_or_default())
+                .unwrap_or_else(|| serde_json::json!({ "enabled": [], "disabled": [] }));
+
+            let enabled_list: Vec<String> = overrides
+                .get("enabled")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+
+            let disabled_list: Vec<String> = overrides
+                .get("disabled")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+
+            let catalog = build_tools_catalog_json();
+            let groups = catalog
+                .get("groups")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+
+            let filtered_groups: Vec<serde_json::Value> = groups
+                .into_iter()
+                .map(|group| {
+                    let tools = group
+                        .get("tools")
+                        .and_then(|v| v.as_array())
+                        .cloned()
+                        .unwrap_or_default();
+
+                    let filtered_tools: Vec<serde_json::Value> = tools
+                        .into_iter()
+                        .map(|mut tool| {
+                            let tool_id = tool
+                                .get("id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            let is_dangerous = tool
+                                .get("danger")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+
+                            let effective_enabled = if !enabled_list.is_empty() {
+                                enabled_list.contains(&tool_id)
+                            } else if !disabled_list.is_empty() {
+                                !disabled_list.contains(&tool_id)
+                            } else {
+                                !is_dangerous
+                            };
+
+                            tool["enabled"] = serde_json::json!(effective_enabled);
+                            tool
+                        })
+                        .collect();
+
+                    serde_json::json!({
+                        "id": group.get("id"),
+                        "label": group.get("label"),
+                        "source": group.get("source"),
+                        "tools": filtered_tools,
+                    })
+                })
+                .collect();
+
+            Ok(serde_json::json!({ "groups": filtered_groups }))
+        })
     }
 
     fn tools_toggle(
         &self,
-        _agent_id: &str,
-        _tool_name: &str,
-        _enabled: bool,
+        agent_id: &str,
+        tool_name: &str,
+        enabled: bool,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<(), AgentError>> + Send + '_>> {
-        Box::pin(async move { Ok(()) })
+        let agent_id = agent_id.to_string();
+        let tool_name = tool_name.to_string();
+        let db_pool = self.db_pool.clone();
+
+        Box::pin(async move {
+            let current_row = sqlx::query_as::<_, (String,)>(
+                "SELECT tool_overrides FROM agent_tools WHERE agent_id = ?"
+            )
+            .bind(&agent_id)
+            .fetch_optional(&db_pool)
+            .await
+            .map_err(|e| AgentError::RequestFailed(format!("DB query failed: {}", e)))?;
+
+            let overrides: serde_json::Value = current_row
+                .map(|(json_str,)| serde_json::from_str(&json_str).unwrap_or_default())
+                .unwrap_or_else(|| serde_json::json!({ "enabled": [], "disabled": [] }));
+
+            let mut enabled_list: Vec<String> = overrides
+                .get("enabled")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+
+            let mut disabled_list: Vec<String> = overrides
+                .get("disabled")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+
+            enabled_list.retain(|t| t != &tool_name);
+            disabled_list.retain(|t| t != &tool_name);
+            if enabled {
+                enabled_list.push(tool_name.clone());
+            } else {
+                disabled_list.push(tool_name);
+            }
+
+            let new_overrides = serde_json::json!({
+                "enabled": enabled_list,
+                "disabled": disabled_list,
+            });
+
+            sqlx::query(
+                "INSERT INTO agent_tools (agent_id, tool_overrides, updated_at)
+                 VALUES (?, ?, datetime('now'))
+                 ON CONFLICT(agent_id) DO UPDATE SET
+                   tool_overrides = excluded.tool_overrides,
+                   updated_at = datetime('now')"
+            )
+            .bind(&agent_id)
+            .bind(new_overrides.to_string())
+            .execute(&db_pool)
+            .await
+            .map_err(|e| AgentError::RequestFailed(format!("DB upsert failed: {}", e)))?;
+
+            Ok(())
+        })
     }
 }
 
@@ -951,7 +1343,14 @@ mod tests {
 
     #[test]
     fn test_fallback_agent_client_chat_abort_returns_unavailable() {
-        let client = FallbackAgentClient::new();
+        // Test chat_abort which still returns Unavailable in fallback
+        let client = FallbackAgentClient::with_agents(
+            sqlx::sqlite::SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect("sqlite::memory:")
+                .unwrap(),
+            vec![],
+        );
         let result = tokio::runtime::Runtime::new().unwrap().block_on(
             client.chat_abort("agent1", "session1", None)
         );
@@ -967,14 +1366,20 @@ mod tests {
 
     #[test]
     fn test_fallback_agent_client_list_agents() {
-        let client = FallbackAgentClient::with_agents(vec![
-            AgentInfo {
-                id: "a1".to_string(),
-                name: "Agent One".to_string(),
-                status: "active".to_string(),
-                created_at: None,
-            },
-        ]);
+        let client = FallbackAgentClient::with_agents(
+            sqlx::sqlite::SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect("sqlite::memory:")
+                .unwrap(),
+            vec![
+                AgentInfo {
+                    id: "a1".to_string(),
+                    name: "Agent One".to_string(),
+                    status: "active".to_string(),
+                    created_at: None,
+                },
+            ],
+        );
         let result = tokio::runtime::Runtime::new().unwrap().block_on(
             client.list_agents()
         );
