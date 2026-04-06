@@ -1207,108 +1207,126 @@ export class DevicesView extends LitElement {
     const getError = (name: string) => this.wizValidationErrors[name] || "";
 
     return html`
-      <div style="padding: 20px 24px;">
-        <div style="font-size: 14px; font-weight: 600; margin-bottom: 16px;">填写设备信息</div>
+      <div class="wizard-split">
+        <!-- Left panel: form -->
+        <div class="wizard-split__form">
+          <div style="font-size: 14px; font-weight: 600; margin-bottom: 16px;">填写设备信息</div>
 
-        <!-- Template summary card -->
-        <div style="display: flex; align-items: center; gap: 12px; padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-subtle); margin-bottom: 16px;">
-          <span style="font-size: 28px;">${CATEGORY_ICONS[t.category] || "📦"}</span>
-          <div style="min-width: 0; flex: 1;">
-            <div style="font-weight: 600; font-size: 15px;">${displayName}</div>
-            <div style="font-size: 12px; color: var(--muted); margin-top: 2px;">
-              ${t.manufacturer ? html`<span>${t.manufacturer} · </span>` : nothing}
-              <span>${t.deviceType || t.category}</span>
-              ${t.version ? html` · v${t.version}` : nothing}
-              ${this.wizDriver ? html` · ${this.wizDriver}` : nothing}
+          <!-- Template summary chip -->
+          <div style="display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-subtle); margin-bottom: 16px;">
+            <span style="font-size: 24px;">${CATEGORY_ICONS[t.category] || "📦"}</span>
+            <div style="min-width: 0; flex: 1;">
+              <div style="font-weight: 600; font-size: 14px;">${displayName}</div>
+              <div style="font-size: 12px; color: var(--muted); margin-top: 2px;">
+                ${t.manufacturer ? html`<span>${t.manufacturer} · </span>` : nothing}
+                <span>${t.deviceType || t.category}</span>
+                ${t.version ? html` · v${t.version}` : nothing}
+              </div>
             </div>
+            ${t.isBuiltin ? html`<span style="font-size: 10px; padding: 2px 8px; border-radius: 4px; background: var(--bg); color: var(--muted); text-transform: uppercase;">内置</span>` : nothing}
           </div>
-          ${t.isBuiltin ? html`<span style="font-size: 10px; padding: 2px 8px; border-radius: 4px; background: var(--bg); color: var(--muted); text-transform: uppercase;">内置</span>` : nothing}
-        </div>
 
-        <!-- Device name -->
-        <div class="field">
-          <span>设备名称 <span style="color: var(--danger);">*</span></span>
-          <input
-            type="text"
-            placeholder="请输入设备名称"
-            .value=${this.wizName}
-            @input=${(e: any) => { this.wizName = e.target.value; }}
-            style=${hasError("deviceName") ? "border-color: var(--danger);" : ""}
-          />
-          ${hasError("deviceName") ? html`<div style="font-size: 12px; color: var(--danger); margin-top: 4px;">${getError("deviceName")}</div>` : nothing}
-        </div>
+          <!-- Device name -->
+          <div class="field">
+            <span>设备名称 <span style="color: var(--danger);">*</span></span>
+            <input
+              type="text"
+              placeholder="请输入设备名称"
+              .value=${this.wizName}
+              @input=${(e: any) => { this.wizName = e.target.value; }}
+              style=${hasError("deviceName") ? "border-color: var(--danger);" : ""}
+            />
+            ${hasError("deviceName") ? html`<div style="font-size: 12px; color: var(--danger); margin-top: 4px;">${getError("deviceName")}</div>` : nothing}
+          </div>
 
-        <!-- Device description -->
-        <div class="field" style="margin-top: 12px;">
-          <span>设备描述 <span style="font-size: 11px; color: var(--muted);">(可选)</span></span>
-          <textarea
-            placeholder="请输入设备描述"
-            rows="2"
-            .value=${this.wizDescription}
-            @input=${(e: any) => { this.wizDescription = e.target.value; }}
-            style="resize: none;"
-          ></textarea>
-        </div>
+          <!-- Device description -->
+          <div class="field" style="margin-top: 12px;">
+            <span>设备描述 <span style="font-size: 11px; color: var(--muted);">(可选)</span></span>
+            <textarea
+              placeholder="请输入设备描述"
+              rows="2"
+              .value=${this.wizDescription}
+              @input=${(e: any) => { this.wizDescription = e.target.value; }}
+              style="resize: none;"
+            ></textarea>
+          </div>
 
-        <!-- Device address -->
-        <div class="field" style="margin-top: 12px;">
-          <span>设备地址 ${isFieldRequired(t.deviceInfo, "address")
-            ? html`<span style="color: var(--danger);">*</span>`
-            : html`<span style="font-size: 11px; color: var(--muted);">(可选)</span>`}</span>
-          <input
-            type="text"
-            placeholder="请输入设备IP地址或连接地址"
-            .value=${this.wizAddress}
-            @input=${(e: any) => { this.wizAddress = e.target.value; }}
-            style=${hasError("deviceAddress") ? "border-color: var(--danger);" : ""}
-          />
-          ${hasError("deviceAddress") ? html`<div style="font-size: 12px; color: var(--danger); margin-top: 4px;">${getError("deviceAddress")}</div>` : nothing}
-        </div>
+          <!-- Device address -->
+          <div class="field" style="margin-top: 12px;">
+            <span>设备地址 ${isFieldRequired(t.deviceInfo, "address")
+              ? html`<span style="color: var(--danger);">*</span>`
+              : html`<span style="font-size: 11px; color: var(--muted);">(可选)</span>`}</span>
+            <input
+              type="text"
+              placeholder="请输入设备IP地址或连接地址"
+              .value=${this.wizAddress}
+              @input=${(e: any) => { this.wizAddress = e.target.value; }}
+              style=${hasError("deviceAddress") ? "border-color: var(--danger);" : ""}
+            />
+            ${hasError("deviceAddress") ? html`<div style="font-size: 12px; color: var(--danger); margin-top: 4px;">${getError("deviceAddress")}</div>` : nothing}
+          </div>
 
-        <!-- Device position -->
-        <div class="field" style="margin-top: 12px;">
-          <span>安装位置 <span style="font-size: 11px; color: var(--muted);">(可选)</span></span>
-          <input
-            type="text"
-            placeholder="请输入设备安装位置"
-            .value=${this.wizPosition}
-            @input=${(e: any) => { this.wizPosition = e.target.value; }}
-          />
-        </div>
+          <!-- Device position -->
+          <div class="field" style="margin-top: 12px;">
+            <span>安装位置 <span style="font-size: 11px; color: var(--muted);">(可选)</span></span>
+            <input
+              type="text"
+              placeholder="请输入设备安装位置"
+              .value=${this.wizPosition}
+              @input=${(e: any) => { this.wizPosition = e.target.value; }}
+            />
+          </div>
 
-        <!-- Driver select -->
-        <div class="field" style="margin-top: 12px;">
-          <span>设备驱动 <span style="font-size: 11px; color: var(--muted);">(选择适合的驱动程序)</span></span>
-          <select .value=${this.wizDriver} @change=${(e: Event) => this.onWizardDriverSelect((e.target as HTMLSelectElement).value)}>
-            <option value="">请选择驱动</option>
-            ${this.driverNames.map(name => html`<option value=${name}>${name}</option>`)}
-          </select>
-          ${t.driverName && this.wizDriver !== t.driverName ? html`
-            <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">模板默认驱动: ${t.driverName}</div>
+          <!-- Driver select -->
+          <div class="field" style="margin-top: 12px;">
+            <span>设备驱动 <span style="font-size: 11px; color: var(--muted);">(选择适合的驱动程序)</span></span>
+            <select .value=${this.wizDriver} @change=${(e: Event) => this.onWizardDriverSelect((e.target as HTMLSelectElement).value)}>
+              <option value="">请选择驱动</option>
+              ${this.driverNames.map(name => html`<option value=${name}>${name}</option>`)}
+            </select>
+            ${t.driverName && this.wizDriver !== t.driverName ? html`
+              <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">模板默认驱动: ${t.driverName}</div>
+            ` : nothing}
+          </div>
+
+          <!-- Driver config -->
+          ${this.wizDriver ? html`
+            <div style="margin-top: 16px;">
+              <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 12px;">
+                <span style="font-size: 14px; font-weight: 600;">驱动配置</span>
+                <span style="font-size: 12px; color: var(--muted);">(${this.wizDriver})</span>
+              </div>
+              ${this.wizConfigLoading ? html`
+                <div style="display: flex; align-items: center; justify-content: center; padding: 20px;">
+                  <span class="loading-spinner"></span>
+                  <span style="margin-left: 8px; color: var(--muted);">加载驱动配置参数...</span>
+                </div>
+              ` : this.wizConfigOptions.length > 0 ? html`
+                ${this.wizConfigOptions.map(opt => this.renderWizardConfigField(opt))}
+              ` : html`
+                <div style="padding: 12px; border: 1px solid var(--border); border-radius: 8px; color: var(--muted); font-size: 13px; text-align: center;">
+                  该驱动无需额外配置参数
+                </div>
+              `}
+            </div>
           ` : nothing}
+
+          <!-- Bottom spacer for sticky footer -->
+          <div style="height: 24px;"></div>
         </div>
 
-        <!-- Driver config -->
-        ${this.wizDriver ? html`
-          <div style="margin-top: 16px;">
-            <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 12px;">
-              <span style="font-size: 14px; font-weight: 600;">驱动配置</span>
-              <span style="font-size: 12px; color: var(--muted);">(${this.wizDriver})</span>
-            </div>
-            ${this.wizConfigLoading ? html`
-              <div style="display: flex; align-items: center; justify-content: center; padding: 20px;">
-                <span class="loading-spinner"></span>
-                <span style="margin-left: 8px; color: var(--muted);">加载驱动配置参数...</span>
-              </div>
-            ` : this.wizConfigOptions.length > 0 ? html`
-              ${this.wizConfigOptions.map(opt => this.renderWizardConfigField(opt))}
-            ` : html`
-              <div style="padding: 12px; border: 1px solid var(--border); border-radius: 8px; color: var(--muted); font-size: 13px; text-align: center;">
-                该驱动无需额外配置参数
-              </div>
-            `}
-          </div>
-        ` : nothing}
+        <!-- Right panel: template overview -->
+        <div class="wizard-split__overview">
+          ${this.renderTemplateOverview(t)}
+        </div>
+      </div>
+
+      <!-- Sticky footer with action buttons -->
+      <div class="wizard-form-footer">
+        <button class="btn btn--ghost" @click=${this.wizardBack}>上一步</button>
+        <button class="btn btn--primary" ?disabled=${this.wizardSaving || !this.wizName.trim()} @click=${this.submitWizard}>
+          ${this.wizardSaving ? "创建中..." : "创建设备"}
+        </button>
       </div>
     `;
   }
@@ -1345,6 +1363,88 @@ export class DevicesView extends LitElement {
         `}
         ${hasError ? html`<div style="font-size: 12px; color: var(--danger); margin-top: 4px;">${errorMsg}</div>` : nothing}
       </div>
+    `;
+  }
+
+  renderTemplateOverview(t: ProcessedTemplate) {
+    const displayName = getLocalizedText(t.displayName, t.name);
+
+    // Compute stats from template properties
+    const totalProps = t.properties.length;
+    const totalCmds = t.commands.length;
+    const readonlyProps = t.properties.filter((p: any) => p.accessMode === "r" || p.accessMode === "R").length;
+    const writableProps = totalProps - readonlyProps;
+
+    return html`
+      <!-- Template summary -->
+      <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px;">
+        <span style="font-size: 32px;">${CATEGORY_ICONS[t.category] || "📦"}</span>
+        <div style="min-width: 0; flex: 1;">
+          <div style="font-weight: 600; font-size: 16px;">${displayName}</div>
+          <div style="font-size: 12px; color: var(--muted); margin-top: 2px;">
+            ${t.manufacturer ? html`${t.manufacturer} · ` : nothing}${t.deviceType || t.category}${t.version ? html` · v${t.version}` : nothing}
+          </div>
+        </div>
+        ${t.isBuiltin ? html`<span style="font-size: 10px; padding: 2px 8px; border-radius: 4px; background: var(--bg-subtle); color: var(--muted); text-transform: uppercase;">内置</span>` : nothing}
+      </div>
+
+      ${t.protocolType ? html`
+        <div style="font-size: 12px; color: var(--muted); margin-bottom: 16px;">
+          协议: ${t.protocolType}
+        </div>
+      ` : nothing}
+
+      <!-- Stats grid 2x2 -->
+      <div class="wizard-overview__stats">
+        <div class="wizard-overview__stat">
+          <div class="wizard-overview__stat-value">${totalProps}</div>
+          <div class="wizard-overview__stat-label">属性数</div>
+        </div>
+        <div class="wizard-overview__stat">
+          <div class="wizard-overview__stat-value">${totalCmds}</div>
+          <div class="wizard-overview__stat-label">命令数</div>
+        </div>
+        <div class="wizard-overview__stat">
+          <div class="wizard-overview__stat-value">${readonlyProps}</div>
+          <div class="wizard-overview__stat-label">只读属性</div>
+        </div>
+        <div class="wizard-overview__stat">
+          <div class="wizard-overview__stat-value">${writableProps}</div>
+          <div class="wizard-overview__stat-label">可写属性</div>
+        </div>
+      </div>
+
+      <!-- Property list -->
+      ${totalProps > 0 ? html`
+        <div class="wizard-overview__section-title">属性列表</div>
+        <ul class="wizard-overview__list" style="max-height: 200px; overflow-y: auto;">
+          ${t.properties.map((p: any) => html`
+            <li class="wizard-overview__list-item">
+              <span class="wizard-overview__list-item-name">${p.name || p.displayName || "unnamed"}</span>
+              <span class="wizard-overview__list-item-meta">${p.dataType || ""}${p.unit ? ` ${p.unit}` : ""}</span>
+            </li>
+          `)}
+        </ul>
+      ` : nothing}
+
+      <!-- Command list -->
+      ${totalCmds > 0 ? html`
+        <div class="wizard-overview__section-title">命令列表</div>
+        <ul class="wizard-overview__list" style="max-height: 200px; overflow-y: auto;">
+          ${t.commands.map((c: any) => html`
+            <li class="wizard-overview__list-item">
+              <span class="wizard-overview__list-item-name">${c.name || "unnamed"}</span>
+              <span class="wizard-overview__list-item-meta">${c.description || ""}</span>
+            </li>
+          `)}
+        </ul>
+      ` : nothing}
+
+      ${totalProps === 0 && totalCmds === 0 ? html`
+        <div style="text-align: center; padding: 24px; color: var(--muted); font-size: 13px;">
+          该模板暂无属性和命令定义
+        </div>
+      ` : nothing}
     `;
   }
 }
