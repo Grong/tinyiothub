@@ -6,24 +6,26 @@
 import { LitElement, html, css } from 'lit'
 import { customElement, property } from 'lit/decorators.js'
 import { toSanitizedMarkdownHtml } from '../../lib/markdown'
+import { hostStyles } from '../../styles/shared-host'
 
 @customElement('streaming-message')
 export class StreamingMessage extends LitElement {
   @property({ type: String }) content = ''
 
-  static styles = css`
+  static styles = [hostStyles, css`
     :host { display: block; }
     .bubble {
-      background: var(--bg-elevated, #f8fafc);
+      background: var(--card);
       border-radius: 12px;
       padding: 12px 16px;
       max-width: 72%;
+      box-shadow: var(--glass-shadow-sm);
     }
     .cursor {
       display: inline-block;
       width: 2px;
       height: 1em;
-      background: var(--accent, #6366f1);
+      background: var(--accent);
       animation: blink 1s step-end infinite;
       vertical-align: text-bottom;
       margin-left: 1px;
@@ -38,7 +40,7 @@ export class StreamingMessage extends LitElement {
     }
     /* Markdown styling */
     .content :deep(pre) {
-      background: var(--bg, #f1f5f9);
+      background: var(--bg-elevated);
       border-radius: 6px;
       padding: 8px 12px;
       overflow-x: auto;
@@ -50,7 +52,7 @@ export class StreamingMessage extends LitElement {
     }
     .content :deep(p) { margin: 0 0 0.5em; }
     .content :deep(p:last-child) { margin-bottom: 0; }
-  `
+  `]
 
   render() {
     const htmlContent = this.content ? toSanitizedMarkdownHtml(this.content) : ''
