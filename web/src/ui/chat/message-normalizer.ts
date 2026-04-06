@@ -4,6 +4,7 @@ export type NormalizedMessage = {
   timestamp: number;
   id?: string;
   senderLabel?: string | null;
+  a2uiSurfaceId?: string;
 };
 
 export type NormalizedContentItem = {

@@ -25,7 +25,9 @@ export class ChatView extends LitElement {
   @state() agentId: string = "";
 
   private _pollTimer: ReturnType<typeof setInterval> | null = null;
-  private a2uiRenderer = new A2uiRendererEngine();
+  private a2uiRenderer = new A2uiRendererEngine((functionId: string, data: Record<string, unknown>) => {
+    this._handleA2uiAction(functionId, data);
+  });
 
   createRenderRoot() {
     return this;
@@ -87,8 +89,29 @@ export class ChatView extends LitElement {
   private _bindA2uiCallback(): void {
     this.chatState.onA2ui = (jsonl: string) => {
       this.a2uiRenderer.handleA2uiMessage(jsonl);
+      this._attachLastSurfaceToMessage();
       this.requestUpdate();
     };
+  }
+
+  private _attachLastSurfaceToMessage(): void {
+    const surfaceId = this.chatState.lastA2uiSurfaceId;
+    if (!surfaceId) return;
+    const msgs = this.chatState.chatMessages;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role === "assistant") {
+        const updated = [...msgs];
+        updated[i] = { ...updated[i], a2uiSurfaceId: surfaceId } as any;
+        this.chatState.chatMessages = updated;
+        return;
+      }
+    }
+  }
+
+  private _handleA2uiAction(functionId: string, data: Record<string, unknown>): void {
+    const actionMsg = `[操作] ${functionId}: ${JSON.stringify(data)}`;
+    sendChatMessage(this.chatState, actionMsg);
+    this._startStreamPolling();
   }
 
   private _startStreamPolling(): void {
@@ -152,7 +175,7 @@ export class ChatView extends LitElement {
             ${this.chatState.chatLoading
               ? html`<div class="chat-loading">加载中...</div>`
               : nothing}
-            ${groups.map((g) => renderMessageGroup(g))}
+            ${groups.map((g) => renderMessageGroup(g, this.a2uiRenderer))}
             ${this.chatState.chatStream
               ? renderStreamingGroup(
                   this.chatState.chatStream,
@@ -162,7 +185,6 @@ export class ChatView extends LitElement {
             ${this.chatState.chatSending && !this.chatState.chatStream
               ? renderReadingIndicatorGroup()
               : nothing}
-            ${this.a2uiRenderer.renderAllSurfaces()}
           </div>
           <div class="chat-input-area">
             <textarea

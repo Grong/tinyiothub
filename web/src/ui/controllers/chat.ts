@@ -30,6 +30,7 @@ export type ChatState = {
   chatStreamStartedAt: number | null;
   lastError: string | null;
   onA2ui?: (jsonl: string) => void;
+  lastA2uiSurfaceId?: string;
 };
 
 export function createChatState(sessionKey: string, agentId: string): ChatState {
@@ -93,7 +94,7 @@ export function sendChatMessage(
   state.chatStreamStartedAt = now;
 
   // POST to /chat/stream, read SSE response
-  const token = sessionStorage.getItem("token") || localStorage.getItem("token") || "";
+  const token = sessionStorage.getItem("auth-token") || localStorage.getItem("auth-token") || "";
   const baseUrl = (import.meta as any).env?.VITE_API_BASE || "/api/v1";
 
   const controller = new AbortController();
@@ -113,6 +114,16 @@ export function sendChatMessage(
     signal: controller.signal,
   })
     .then(async (response) => {
+      if (!response.ok) {
+        let errMsg = `HTTP ${response.status}`;
+        try {
+          const errData = await response.json();
+          errMsg = errData?.msg || errData?.message || errMsg;
+        } catch {
+          // not JSON
+        }
+        throw new Error(errMsg);
+      }
       if (!response.body) throw new Error("No response body");
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -209,6 +220,11 @@ export function handleChatEvent(state: ChatState, payload: ChatEventPayload): vo
   }
 
   if (payload.a2ui && state.onA2ui) {
+    // Track the last surface ID from A2UI messages
+    const surfaceId = extractA2uiSurfaceId(payload.a2ui);
+    if (surfaceId) {
+      state.lastA2uiSurfaceId = surfaceId;
+    }
     state.onA2ui(payload.a2ui);
   }
 }
@@ -250,4 +266,17 @@ function extractText(message: ChatMessage | undefined | null): string {
       .join("");
   }
   return "";
+}
+
+function extractA2uiSurfaceId(jsonl: string): string | null {
+  const lines = jsonl.split("\n").filter((l) => l.trim());
+  for (const line of lines) {
+    try {
+      const msg = JSON.parse(line);
+      if (msg.createSurface?.id) return msg.createSurface.id as string;
+    } catch {
+      // skip non-JSON lines
+    }
+  }
+  return null;
 }

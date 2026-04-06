@@ -4,6 +4,7 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import type { NormalizedMessage } from "./message-normalizer.js";
 import { normalizeMessage, normalizeRoleForGrouping } from "./message-normalizer.js";
+import type { A2uiRendererEngine } from "./a2ui/a2ui-renderer.js";
 
 export type MessageGroup = {
   role: string;
@@ -45,7 +46,7 @@ export function groupMessages(messages: unknown[]): MessageGroup[] {
   return groups;
 }
 
-export function renderMessageGroup(group: MessageGroup): TemplateResult {
+export function renderMessageGroup(group: MessageGroup, a2uiRenderer?: A2uiRendererEngine): TemplateResult {
   const isUser = group.role === "user";
   const isAssistant = group.role === "assistant";
   const isTool = group.role === "tool";
@@ -61,7 +62,7 @@ export function renderMessageGroup(group: MessageGroup): TemplateResult {
     <div class="chat-group ${group.role}">
       <div class="chat-avatar ${avatarClass}">${avatarIcon}</div>
       <div class="chat-group-messages">
-        ${group.messages.map((msg) => renderSingleMessage(msg, isTool))}
+        ${group.messages.map((msg) => renderSingleMessage(msg, isTool, a2uiRenderer))}
       </div>
     </div>
   `;
@@ -70,10 +71,16 @@ export function renderMessageGroup(group: MessageGroup): TemplateResult {
 function renderSingleMessage(
   msg: NormalizedMessage,
   isTool: boolean,
+  a2uiRenderer?: A2uiRendererEngine,
 ): TemplateResult {
   if (isTool) {
     return renderToolMessage(msg);
   }
+
+  const surfaceContent =
+    a2uiRenderer && msg.a2uiSurfaceId
+      ? a2uiRenderer.renderSurface(msg.a2uiSurfaceId)
+      : nothing;
 
   return html`
     <div
@@ -89,6 +96,7 @@ function renderSingleMessage(
         }
         return nothing;
       })}
+      ${surfaceContent}
       ${msg.timestamp
         ? html`
             <div class="chat-timestamp">${formatTime(msg.timestamp)}</div>
