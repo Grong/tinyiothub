@@ -75,31 +75,28 @@ export class ViewAgents extends LitElement {
 
     return html`
       <div class="agents-layout">
-        <div class="agents-top">
-          <div class="agents-header">
-            <h2>Agent 管理</h2>
-            <div class="agents-selector">
-              <select class="agent-dropdown"
-                      @change=${(e: Event) => this.onAgentSelected((e.target as HTMLSelectElement).value)}>
-                ${agents.map((a) => html`
-                  <option value=${a.id} ?selected=${a.id === this.state.selectedAgentId}>
-                    ${a.name || a.id}
-                  </option>
-                `)}
-              </select>
-            </div>
-          </div>
-          <div class="agent-tabs">
-            ${allPanels.map((panel) => html`
-              <button class="agent-tab ${this.state.activePanel === panel ? 'active' : ''}"
-                      @click=${() => { this.state = { ...this.state, activePanel: panel }; }}>
-                ${panelLabels[panel]}
-              </button>
-            `)}
+        <div class="agents-header">
+          <h2>Agent 管理</h2>
+          <div class="agents-selector">
+            <select class="agent-dropdown"
+                    @change=${(e: Event) => this.onAgentSelected((e.target as HTMLSelectElement).value)}>
+              ${agents.map((a) => html`
+                <option value=${a.id} ?selected=${a.id === this.state.selectedAgentId}>
+                  ${a.name || a.id}
+                </option>
+              `)}
+            </select>
           </div>
         </div>
 
-        <div class="agents-sidebar"></div>
+        <div class="agent-tabs">
+          ${allPanels.map((panel) => html`
+            <button class="agent-tab ${this.state.activePanel === panel ? 'active' : ''}"
+                    @click=${() => { this.state = { ...this.state, activePanel: panel }; }}>
+              ${panelLabels[panel]}
+            </button>
+          `)}
+        </div>
 
         <div class="agents-main">
           ${this.state.activePanel === "overview" ? renderModelTab(this.state, this._patchState.bind(this), this.onSaveConfig.bind(this), () => { if (this.state.selectedAgentId) loadAgentConfig(this.state, this.state.selectedAgentId).then(() => this.requestUpdate()); }) : nothing}
