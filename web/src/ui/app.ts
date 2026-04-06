@@ -22,6 +22,8 @@ import "./views/drivers.js";
 import "./views/tags.js";
 import "./views/users.js";
 import "./views/settings.js";
+import "./views/chat.js";
+import "./views/agents.js";
 
 interface NavItem {
   route: string;
@@ -55,6 +57,13 @@ const NAV_GROUPS: NavGroup[] = [
       { route: "alarms", label: "告警中心", icon: "M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01" },
       { route: "events", label: "事件日志", icon: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" },
       { route: "monitoring", label: "系统监控", icon: "M18 20V10M12 20V4M6 20v-6" },
+    ],
+  },
+  {
+    label: "AI 助手",
+    items: [
+      { route: "chat", label: "AI 聊天", icon: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" },
+      { route: "agents", label: "Agent 管理", icon: "M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" },
     ],
   },
   {
@@ -237,6 +246,8 @@ export class TinyIoTHubApp extends LitElement {
       users: "用户管理",
       settings: "系统设置",
       marketplace: "市场",
+      chat: "AI 聊天",
+      agents: "Agent 管理",
     };
     // Handle /devices/:id
     if (this.currentRoute.startsWith("devices/")) return "设备详情";
@@ -256,6 +267,8 @@ export class TinyIoTHubApp extends LitElement {
       users: "管理系统用户和权限",
       settings: "系统配置和参数管理",
       marketplace: "驱动和模板市场",
+      chat: "与 AI Agent 对话",
+      agents: "管理和配置 Agent",
     };
     if (this.currentRoute.startsWith("devices/")) return "查看设备属性、命令和事件";
     return subs[this.currentRoute] || "";
@@ -400,6 +413,8 @@ export class TinyIoTHubApp extends LitElement {
     if (route === "tags") return html`<view-tags></view-tags>`;
     if (route === "users") return html`<view-users></view-users>`;
     if (route === "settings") return html`<view-settings></view-settings>`;
+    if (route === "chat") return html`<view-chat></view-chat>`;
+    if (route === "agents") return html`<view-agents></view-agents>`;
     return html`<div style="padding: 40px; text-align: center; color: var(--muted);">页面不存在</div>`;
   }
 }
