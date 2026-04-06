@@ -40,7 +40,7 @@ export class AgentPage extends LitElement {
     }
     .header {
       padding: 12px 24px;
-      border-bottom: 1px solid var(--border, #e2e8f0);
+      box-shadow: 0 1px 0 var(--card-highlight);
       font-size: 0.9375rem;
       font-weight: 600;
       display: flex;
@@ -48,6 +48,7 @@ export class AgentPage extends LitElement {
       gap: 8px;
       flex-shrink: 0;
       color: var(--text-strong);
+      background: var(--chrome);
     }
     .header svg { width: 20px; height: 20px; color: var(--accent, #6366f1); }
     .main {
@@ -70,7 +71,7 @@ export class AgentPage extends LitElement {
       width: 64px;
       height: 64px;
       border-radius: 16px;
-      background: linear-gradient(135deg, var(--accent, #6366f1), #8b5cf6);
+      background: linear-gradient(135deg, var(--accent), var(--accent-hover));
       display: flex;
       align-items: center;
       justify-content: center;
@@ -97,16 +98,17 @@ export class AgentPage extends LitElement {
     }
     .suggestion {
       padding: 8px 16px;
-      border: 1px solid var(--border, #e2e8f0);
+      border: none;
       border-radius: 20px;
       font-size: 0.8125rem;
-      background: transparent;
+      background: var(--card);
       cursor: pointer;
       color: var(--text);
-      transition: border-color 0.15s, background 0.15s;
+      box-shadow: var(--glass-shadow-sm);
+      transition: box-shadow var(--duration-normal) var(--ease-out), background 0.15s;
     }
     .suggestion:hover {
-      border-color: var(--accent, #6366f1);
+      box-shadow: var(--glass-shadow-hover);
       background: var(--bg-elevated);
     }
     @media (max-width: 768px) {
