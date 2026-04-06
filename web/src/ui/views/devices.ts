@@ -1,11 +1,12 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import { SignalWatcher } from "@lit-labs/signals";
 import { deviceApi } from "../../api/devices.js";
 import { driverApi } from "../../api/drivers.js";
 import { templateApi } from "../../api/templates.js";
 import { tagApi } from "../../api/tags.js";
 import { eventApi } from "../../api/events.js";
-import { API_BASE } from "../../api/config.js";
+import { deviceCache } from "../../stores/device-cache.js";
 import type { Device, DeviceProfile, DeviceProperty, CreateDeviceRequest, DriverConfigOption, Tag, Template } from "../../types/index.js";
 import { success, error as toastError } from "../components/toast.js";
 import { icons } from "../icons.js";
@@ -96,7 +97,7 @@ const CATEGORY_ICONS: Record<string, string> = {
 type ViewMode = "table" | "grid";
 
 @customElement("view-devices")
-export class DevicesView extends LitElement {
+export class DevicesView extends SignalWatcher(LitElement) {
   @state() loading = true;
   @state() error = "";
   @state() devices: Device[] = [];
@@ -150,9 +151,6 @@ export class DevicesView extends LitElement {
   // Command execution
   @state() executingCommand = "";
 
-  // SSE
-  private eventSource: EventSource | null = null;
-
   // Tags
   @state() allTags: Tag[] = [];
   @state() editingTagsDeviceId: string | null = null;
@@ -190,68 +188,34 @@ export class DevicesView extends LitElement {
       const id = path.split("/")[2];
       if (id) {
         this.loadDeviceDetail(id);
+        document.addEventListener("click", this._boundCloseTagEditor);
         return;
       }
     }
-    this.loadDevices();
+    // 从缓存加载设备（首次触发 fetch + SSE 自动连接）
+    this.loadDevicesFromCache();
     this.loadDriverNames();
     this.loadAllTags();
-    this.connectSSE();
     document.addEventListener("click", this._boundCloseTagEditor);
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
-    this.disconnectSSE();
+    // 不断开 SSE — 缓存层管理连接生命周期
     document.removeEventListener("click", this._boundCloseTagEditor);
   }
 
-  // === SSE ===
-
-  connectSSE() {
-    this.disconnectSSE();
-    const token = sessionStorage.getItem("auth-token") || localStorage.getItem("auth-token");
-    if (!token) return;
-    const url = `${API_BASE}/events/sse?token=${encodeURIComponent(token)}&event_types=device.status_change,device.connection`;
+  private async loadDevicesFromCache() {
+    this.loading = true;
+    this.error = "";
     try {
-      this.eventSource = new EventSource(url);
-      this.eventSource.onmessage = (ev) => {
-        try {
-          const data = JSON.parse(ev.data);
-          if (data.event_type === "device.status_change" || data.event_type === "device.connection") {
-            this.handleDeviceStatusEvent(data);
-          }
-        } catch {
-          // ignore non-JSON pings
-        }
-      };
-      this.eventSource.onerror = () => {
-        this.disconnectSSE();
-        setTimeout(() => this.connectSSE(), 5000);
-      };
-    } catch {
-      // SSE not supported
-    }
-  }
-
-  disconnectSSE() {
-    if (this.eventSource) {
-      this.eventSource.close();
-      this.eventSource = null;
-    }
-  }
-
-  handleDeviceStatusEvent(data: any) {
-    const deviceId = data.device_id || data.deviceId;
-    if (!deviceId) return;
-    const idx = this.devices.findIndex((d) => d.id === deviceId);
-    if (idx >= 0) {
-      const newStatus = data.status || data.new_status;
-      if (newStatus) {
-        this.devices = this.devices.map((d, i) =>
-          i === idx ? { ...d, status: newStatus } : d
-        );
-      }
+      const devices = await deviceCache.getDevices();
+      this.devices = devices;
+      this.total = devices.length;
+    } catch (err: any) {
+      this.error = err.message || "加载设备列表失败";
+    } finally {
+      this.loading = false;
     }
   }
 
@@ -942,6 +906,15 @@ export class DevicesView extends LitElement {
   // === Render ===
 
   render() {
+    // 列表页: 从缓存信号读取最新数据（SSE 更新时 SignalWatcher 自动触发 re-render）
+    if (!this.selectedDevice) {
+      const cachedDevices = deviceCache.$devicesList.get();
+      if (cachedDevices.length > 0 || !this.loading) {
+        this.devices = cachedDevices;
+        this.total = cachedDevices.length;
+      }
+    }
+
     if (this.loading) {
       return html`
         <div style="display: flex; align-items: center; justify-content: center; padding: 60px;">
