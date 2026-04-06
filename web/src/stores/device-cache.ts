@@ -115,7 +115,7 @@ class DeviceCache {
     this.pendingSseEvents = [];
 
     try {
-      const response = await deviceApi.getDevices();
+      const response = await deviceApi.getDevices({ page: 1, pageSize: 100 });
       const devices = response.result?.data ?? [];
 
       const map = new Map<string, Device>();

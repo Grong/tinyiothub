@@ -38,7 +38,7 @@ export class A2uiRendererEngine {
       const s = msg.createSurface as Record<string, unknown>;
       this.surfaces.set(s.id as string, {
         id: s.id as string,
-        surfaceKind: (s.surfaceKind as string) || "inline",
+        surfaceKind: ((s.surfaceKind as string) || "inline") as "inline" | "overlay",
         components: [],
       });
     } else if (msg.updateComponents) {
@@ -111,5 +111,9 @@ export class A2uiRendererEngine {
 
   hasSurfaces(): boolean {
     return this.surfaces.size > 0;
+  }
+
+  getSurfaceIds(): string[] {
+    return Array.from(this.surfaces.keys());
   }
 }
