@@ -1,7 +1,7 @@
 import { LitElement, html } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { apiPost } from "../../api/client.js";
-import { success, error as toastError } from "../components/toast.js";
+import { success } from "../components/toast.js";
 
 @customElement("view-register")
 export class RegisterView extends LitElement {

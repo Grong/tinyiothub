@@ -7,7 +7,7 @@ import { templateApi } from "../../api/templates.js";
 import { tagApi } from "../../api/tags.js";
 import { eventApi } from "../../api/events.js";
 import { deviceCache } from "../../stores/device-cache.js";
-import type { Device, DeviceProfile, DeviceProperty, CreateDeviceRequest, DriverConfigOption, Tag, Template } from "../../types/index.js";
+import type { Device, DeviceProfile, DeviceProperty, CreateDeviceRequest, DriverConfigOption, Tag, DeviceEvent } from "../../types/index.js";
 import { success, error as toastError } from "../components/toast.js";
 import { icons } from "../icons.js";
 
@@ -168,7 +168,6 @@ export class DevicesView extends SignalWatcher(LitElement) {
   @state() historyCustomStart = "";
   @state() historyCustomEnd = "";
   private historyDeviceId = "";
-  private historyEventSource: EventSource | null = null;
 
   createRenderRoot() {
     return this;
@@ -265,9 +264,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     try {
       const res = await driverApi.getDriverNames();
       const data = res.result;
-      if (data && Array.isArray(data.drivers)) {
-        this.driverNames = data.drivers.map((d: any) => d.name || d);
-      } else if (Array.isArray(data)) {
+      if (Array.isArray(data)) {
         this.driverNames = data;
       }
     } catch {
@@ -406,7 +403,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
         pageSize: 500,
       });
 
-      const events = res?.items || res?.data?.items || [];
+      const events = (res as any)?.result?.items || [];
       const points: { time: string; value: number }[] = [];
       const name = this.historyPropertyName;
 
@@ -1742,14 +1739,13 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   renderTemplateOverview(t: ProcessedTemplate) {
     const displayName = getLocalizedText(t.displayName, t.name);
-    const description = getLocalizedText(t.description, "");
+    const description = getLocalizedText(t.description ?? undefined, "");
 
     // Compute stats from template properties
     const totalProps = t.properties.length;
     const totalCmds = t.commands.length;
     const readonlyProps = t.properties.filter((p: any) => p.accessMode === "r" || p.accessMode === "R").length;
     const writableProps = totalProps - readonlyProps;
-    const requiredProps = t.properties.filter((p: any) => p.isRequired).length;
 
     return html`
       <!-- Template summary -->

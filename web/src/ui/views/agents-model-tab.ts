@@ -1,4 +1,4 @@
-import { html, nothing, type TemplateResult } from "lit";
+import { html, type TemplateResult } from "lit";
 import type { AgentsState } from "../controllers/agents.js";
 
 export function renderModelTab(
@@ -47,7 +47,7 @@ export function renderModelTab(
                      configDirty: true,
                    });
                  }} />
-          <span class="agent-slider-value">${(config.temperature ?? 1.0).toFixed(1)}</span>
+          <span class="agent-slider-value">${((config.temperature ?? 1.0) as number).toFixed(1)}</span>
         </div>
       </div>
 

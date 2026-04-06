@@ -48,7 +48,7 @@ export function renderToolsTab(
 
         return html`
           <div class="agent-tool-group">
-            <h4 class="agent-tool-group__title">${group.label || group.name}</h4>
+            <h4 class="agent-tool-group__title">${group.label}</h4>
             <div class="agent-tool-list">
               ${tools.map((tool) => html`
                 <div class="agent-tool-item ${DANGEROUS_TOOLS.has(tool.name as string) ? 'agent-tool-item--danger' : ''}">

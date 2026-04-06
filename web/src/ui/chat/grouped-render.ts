@@ -144,7 +144,7 @@ function renderToolMessage(msg: NormalizedMessage): TemplateResult {
 
 export function renderStreamingGroup(
   text: string,
-  startedAt: number,
+  _startedAt: number,
 ): TemplateResult {
   return html`
     <div class="chat-group assistant">

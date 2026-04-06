@@ -1,6 +1,6 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
-import type { AgentsState, AgentsPanel, AgentConfig } from "../controllers/agents.js";
+import type { AgentsState, AgentsPanel } from "../controllers/agents.js";
 import { createAgentsState, loadAgents, loadAgentConfig, saveAgentConfig, loadToolsCatalog, toggleTool } from "../controllers/agents.js";
 import { renderModelTab } from "./agents-model-tab.js";
 import { renderToolsTab } from "./agents-tools-tab.js";

@@ -1,7 +1,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { tagApi } from "../../api/tags.js";
-import type { Tag, CreateTagRequest } from "../../types/index.js";
+import type { Tag } from "../../types/index.js";
 import { success, error as toastError } from "../components/toast.js";
 
 @customElement("view-tags")
@@ -79,12 +79,7 @@ export class TagsView extends LitElement {
     this.saving = true;
     try {
       if (this.editingTag) {
-        await tagApi.updateTag(this.editingTag.id, {
-          name: this.formName,
-          type: this.formType,
-          description: this.formDescription || undefined,
-          color: this.formColor || undefined,
-        });
+        await tagApi.updateTag(this.editingTag.id, { name: this.formName });
         success("标签已更新");
       } else {
         await tagApi.createTag({
