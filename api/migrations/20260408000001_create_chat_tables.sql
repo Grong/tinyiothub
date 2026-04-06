@@ -24,3 +24,10 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 
 CREATE INDEX idx_chat_messages_session ON chat_messages(session_key);
 CREATE INDEX idx_chat_messages_run ON chat_messages(run_id);
+
+CREATE TABLE IF NOT EXISTS agent_configs (
+    agent_id TEXT PRIMARY KEY,
+    config TEXT NOT NULL,
+    config_hash TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
