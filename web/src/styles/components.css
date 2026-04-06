@@ -5143,3 +5143,78 @@ button:hover:not(:disabled):not(.unstyled) {
   justify-content: flex-end;
   gap: 8px;
 }
+
+/* ===========================================
+   A2UI Surfaces
+   =========================================== */
+
+.a2ui-surface {
+  margin: 8px 0;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--bg-muted);
+}
+
+.a2ui-surface--overlay {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1000;
+  background: var(--card);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  max-width: 600px;
+  width: 90%;
+}
+
+/* ===========================================
+   A2UI Basic Components
+   =========================================== */
+
+.a2ui-text { margin: 4px 0; }
+.a2ui-heading { margin: 8px 0 4px; font-size: 1.1em; font-weight: 600; }
+.a2ui-subtitle { margin: 4px 0; color: var(--muted); }
+.a2ui-caption { color: var(--muted); font-size: 0.85em; }
+
+.a2ui-btn {
+  padding: 6px 16px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  font-size: 0.9em;
+  font-weight: 500;
+  transition: opacity 0.15s;
+}
+.a2ui-btn:hover { opacity: 0.85; }
+.a2ui-btn--primary { background: var(--accent); color: white; }
+.a2ui-btn--secondary { background: var(--bg-muted); color: var(--text); border: 1px solid var(--border); }
+.a2ui-btn--danger { background: #e74c3c; color: white; }
+
+.a2ui-divider { border: none; border-top: 1px solid var(--border); margin: 8px 0; }
+
+/* ===========================================
+   A2UI IoT Components
+   =========================================== */
+
+.a2ui-device-card {
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card);
+}
+.a2ui-device-card__header { display: flex; align-items: center; gap: 8px; }
+.a2ui-device-card__status {
+  width: 8px; height: 8px; border-radius: 50%;
+}
+.a2ui-device-card__status.online { background: #2ecc71; }
+.a2ui-device-card__status.offline { background: #95a5a6; }
+.a2ui-device-card__name { font-weight: 600; }
+.a2ui-device-card__id { font-size: 0.8em; color: var(--muted); margin-top: 4px; }
+
+.a2ui-unknown {
+  padding: 8px;
+  border: 1px dashed var(--border);
+  color: var(--muted);
+  font-size: 0.85em;
+  border-radius: 4px;
+}
