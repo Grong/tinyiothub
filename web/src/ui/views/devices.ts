@@ -4,6 +4,7 @@ import { deviceApi } from "../../api/devices.js";
 import { driverApi } from "../../api/drivers.js";
 import { templateApi } from "../../api/templates.js";
 import { tagApi } from "../../api/tags.js";
+import { eventApi } from "../../api/events.js";
 import { API_BASE } from "../../api/config.js";
 import type { Device, DeviceProfile, DeviceProperty, CreateDeviceRequest, DriverConfigOption, Tag, Template } from "../../types/index.js";
 import { success, error as toastError } from "../components/toast.js";
@@ -106,6 +107,7 @@ export class DevicesView extends LitElement {
   @state() searchName = "";
   @state() selectedDevice: DeviceProfile | null = null;
   @state() detailLoading = false;
+  @state() detailTab: string = "properties";
 
   // View mode
   @state() viewMode: ViewMode = "grid";
@@ -158,8 +160,27 @@ export class DevicesView extends LitElement {
   @state() tagSaving = false;
   private _boundCloseTagEditor = () => { this.editingTagsDeviceId = null; };
 
+  // Property history dialog
+  @state() showHistoryDialog = false;
+  @state() historyPropertyName = "";
+  @state() historyPropertyUnit = "";
+  @state() historyLoading = false;
+  @state() historyData: { time: string; value: number }[] = [];
+  @state() historyRange: string = "1h";
+  @state() historyCustomStart = "";
+  @state() historyCustomEnd = "";
+  private historyDeviceId = "";
+  private historyEventSource: EventSource | null = null;
+
   createRenderRoot() {
     return this;
+  }
+
+  updated(changedProperties: Map<string, unknown>) {
+    super.updated(changedProperties);
+    if (this.showHistoryDialog && !this.historyLoading && this.historyData.length > 0) {
+      requestAnimationFrame(() => this.drawHistoryChart());
+    }
   }
 
   connectedCallback() {
@@ -364,9 +385,265 @@ export class DevicesView extends LitElement {
 
   backToList() {
     this.selectedDevice = null;
+    this.detailTab = "properties";
     window.history.pushState({}, "", "/devices");
     window.dispatchEvent(new PopStateEvent("popstate"));
     this.loadDevices();
+  }
+
+  switchDetailTab(key: string) {
+    this.detailTab = key;
+  }
+
+  isNumericType(dataType: string): boolean {
+    const dt = dataType?.toLowerCase() || "";
+    return ["int", "integer", "float", "double", "number", "long", "short", "decimal", "byte"].some(t => dt.includes(t));
+  }
+
+  async openPropertyHistory(name: string, unit: string) {
+    const deviceId = this.selectedDevice?.device?.id;
+    if (!deviceId) return;
+
+    this.showHistoryDialog = true;
+    this.historyPropertyName = name;
+    this.historyPropertyUnit = unit;
+    this.historyDeviceId = deviceId;
+    this.historyRange = "1h";
+    this.historyCustomStart = "";
+    this.historyCustomEnd = "";
+    this.historyData = [];
+    this.loadHistoryData();
+  }
+
+  async loadHistoryData() {
+    if (!this.historyDeviceId || !this.historyPropertyName) return;
+    this.historyLoading = true;
+
+    let startTime: string | undefined;
+    let endTime: string | undefined;
+    const now = new Date();
+
+    if (this.historyRange === "custom") {
+      if (this.historyCustomStart) startTime = this.historyCustomStart;
+      if (this.historyCustomEnd) endTime = this.historyCustomEnd;
+    } else {
+      const minutes: Record<string, number> = { "30m": 30, "1h": 60, "5h": 300, "24h": 1440 };
+      const m = minutes[this.historyRange] || 60;
+      const start = new Date(now.getTime() - m * 60 * 1000);
+      startTime = start.toISOString();
+    }
+
+    try {
+      const res = await eventApi.getEvents({
+        deviceId: this.historyDeviceId,
+        eventType: "device.property_change",
+        startTime,
+        endTime,
+        pageSize: 500,
+      });
+
+      const events = res?.items || res?.data?.items || [];
+      const points: { time: string; value: number }[] = [];
+      const name = this.historyPropertyName;
+
+      for (const ev of events) {
+        const title = ev.title || "";
+        if (!title.includes(` - ${name}`) && !title.endsWith(` ${name}`)) continue;
+
+        const preview = ev.contentPreview || ev.content_preview || "";
+        const match = preview.match(/Current value:\s*([-\d.]+)/i)
+          || preview.match(/当前值:\s*([-\d.]+)/i)
+          || preview.match(/value:\s*([-\d.]+)/i);
+        if (!match) continue;
+
+        const val = parseFloat(match[1]);
+        if (isNaN(val)) continue;
+
+        const ts = ev.createdAt || ev.timestamp || ev.created_at || "";
+        points.push({ time: ts, value: val });
+      }
+
+      points.sort((a, b) => a.time.localeCompare(b.time));
+      this.historyData = points;
+    } catch {
+      this.historyData = [];
+    } finally {
+      this.historyLoading = false;
+    }
+  }
+
+  onHistoryRangeChange(range: string) {
+    this.historyRange = range;
+    if (range !== "custom") {
+      this.loadHistoryData();
+    }
+  }
+
+  onHistoryCustomTimeApply() {
+    if (!this.historyCustomStart && !this.historyCustomEnd) return;
+    this.loadHistoryData();
+  }
+
+  closeHistoryDialog() {
+    this.showHistoryDialog = false;
+    this.historyData = [];
+    this.historyPropertyName = "";
+    this.historyPropertyUnit = "";
+    this.historyRange = "1h";
+    this.historyCustomStart = "";
+    this.historyCustomEnd = "";
+    this.historyDeviceId = "";
+  }
+
+  renderHistoryDialog() {
+    if (!this.showHistoryDialog) return nothing;
+
+    const ranges = [
+      { key: "30m", label: "30分钟" },
+      { key: "1h", label: "1小时" },
+      { key: "5h", label: "5小时" },
+      { key: "24h", label: "24小时" },
+      { key: "custom", label: "自定义" },
+    ];
+
+    return html`
+      <div class="modal-overlay" @click=${this.closeHistoryDialog}>
+        <div class="modal" style="max-width: 720px; width: 90vw;" @click=${(e: Event) => e.stopPropagation()}>
+          <div class="modal-header">
+            <span>${this.historyPropertyName}${this.historyPropertyUnit ? ` (${this.historyPropertyUnit})` : ""} — 历史曲线</span>
+            <button class="btn btn--icon" @click=${this.closeHistoryDialog} style="margin-left: auto;">×</button>
+          </div>
+          <div class="modal-body" style="min-height: 300px; padding: 16px;">
+            <!-- Time range selector -->
+            <div style="display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; align-items: center;">
+              ${ranges.map(r => html`
+                <button
+                  class="btn"
+                  style="padding: 4px 12px; font-size: 12px; border-radius: 16px; ${this.historyRange === r.key
+                    ? "background: var(--accent); color: #fff; border-color: var(--accent);"
+                    : "background: var(--bg-subtle); border-color: var(--border); color: var(--text);"}"
+                  @click=${() => this.onHistoryRangeChange(r.key)}
+                >${r.label}</button>
+              `)}
+            </div>
+            ${this.historyRange === "custom" ? html`
+              <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 14px; flex-wrap: wrap;">
+                <label style="font-size: 12px; color: var(--muted);">开始</label>
+                <input type="datetime-local" style="font-size: 12px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text);"
+                  .value=${this.historyCustomStart}
+                  @change=${(e: Event) => { this.historyCustomStart = (e.target as HTMLInputElement).value; }}
+                />
+                <label style="font-size: 12px; color: var(--muted);">结束</label>
+                <input type="datetime-local" style="font-size: 12px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text);"
+                  .value=${this.historyCustomEnd}
+                  @change=${(e: Event) => { this.historyCustomEnd = (e.target as HTMLInputElement).value; }}
+                />
+                <button class="btn" style="font-size: 12px; padding: 4px 12px; border-radius: 6px; background: var(--accent); color: #fff; border-color: var(--accent);"
+                  @click=${this.onHistoryCustomTimeApply}
+                >查询</button>
+              </div>
+            ` : nothing}
+            <!-- Chart -->
+            ${this.historyLoading
+              ? html`<div style="display: flex; align-items: center; justify-content: center; height: 260px; color: var(--muted);">加载中...</div>`
+              : this.historyData.length === 0
+                ? html`<div style="display: flex; align-items: center; justify-content: center; height: 260px; color: var(--muted);">暂无历史数据</div>`
+                : html`<div id="history-chart-container" style="width: 100%; height: 280px; position: relative;">
+                    <canvas id="history-chart" style="width: 100%; height: 100%;"></canvas>
+                  </div>`
+            }
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  drawHistoryChart() {
+    const canvas = this.querySelector("#history-chart") as HTMLCanvasElement;
+    if (!canvas || this.historyData.length === 0) return;
+
+    const container = this.querySelector("#history-chart-container") as HTMLElement;
+    if (!container) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = w + "px";
+    canvas.style.height = h + "px";
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.scale(dpr, dpr);
+
+    const data = this.historyData;
+    const padding = { top: 24, right: 20, bottom: 36, left: 56 };
+    const chartW = w - padding.left - padding.right;
+    const chartH = h - padding.top - padding.bottom;
+
+    const values = data.map(d => d.value);
+    let minVal = Math.min(...values);
+    let maxVal = Math.max(...values);
+    if (minVal === maxVal) { minVal -= 1; maxVal += 1; }
+    const range = maxVal - minVal;
+
+    const cs = getComputedStyle(document.documentElement);
+    const textColor = cs.getPropertyValue("--muted").trim() || "#888";
+    const lineColor = cs.getPropertyValue("--accent").trim() || "#6366f1";
+    const gridColor = cs.getPropertyValue("--border").trim() || "#e5e7eb";
+
+    ctx.clearRect(0, 0, w, h);
+
+    // Grid lines + Y labels
+    ctx.strokeStyle = gridColor;
+    ctx.lineWidth = 0.5;
+    ctx.fillStyle = textColor;
+    ctx.font = "11px system-ui, sans-serif";
+    ctx.textAlign = "right";
+    const yTicks = 5;
+    for (let i = 0; i <= yTicks; i++) {
+      const y = padding.top + (chartH / yTicks) * i;
+      const val = maxVal - (range / yTicks) * i;
+      ctx.beginPath();
+      ctx.moveTo(padding.left, y);
+      ctx.lineTo(w - padding.right, y);
+      ctx.stroke();
+      ctx.fillText(val.toFixed(1), padding.left - 6, y + 4);
+    }
+
+    // X labels
+    ctx.textAlign = "center";
+    const xLabelCount = Math.min(data.length, 6);
+    const xStep = Math.max(1, Math.floor(data.length / xLabelCount));
+    for (let i = 0; i < data.length; i += xStep) {
+      const x = padding.left + (chartW / (data.length - 1)) * i;
+      const label = data[i].time.slice(5, 16);
+      ctx.fillText(label, x, h - padding.bottom + 16);
+    }
+
+    // Line
+    ctx.strokeStyle = lineColor;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    for (let i = 0; i < data.length; i++) {
+      const x = padding.left + (chartW / (data.length - 1)) * i;
+      const y = padding.top + chartH - ((data[i].value - minVal) / range) * chartH;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    // Dots
+    ctx.fillStyle = lineColor;
+    for (let i = 0; i < data.length; i++) {
+      const x = padding.left + (chartW / (data.length - 1)) * i;
+      const y = padding.top + chartH - ((data[i].value - minVal) / range) * chartH;
+      ctx.beginPath();
+      ctx.arc(x, y, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   goToPage(p: number) {
@@ -947,100 +1224,233 @@ export class DevicesView extends LitElement {
     if (!profile) return nothing;
     const d = profile.device;
     const ov = profile.overview;
+    const deviceTags: Tag[] = (d as any).tags || [];
 
     return html`
-      <button class="btn btn--ghost" @click=${this.backToList} style="margin-bottom: 16px;">
-        &larr; 返回设备列表
-      </button>
-      <div class="card" style="padding: 24px; margin-bottom: 16px;">
-        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-          <div>
-            <h2 style="margin: 0 0 8px; font-size: 20px;">${d.displayName || d.name}</h2>
-            <div style="font-size: 13px; color: var(--muted); display: flex; gap: 16px; flex-wrap: wrap;">
-              <span>类型: ${d.deviceType || "-"}</span>
-              <span>协议: ${d.protocolType || d.driverName || "-"}</span>
-              <span>厂商: ${d.factoryName || "-"}</span>
-            </div>
-          </div>
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <span style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 9999px; font-size: 13px; background: var(--bg-subtle);">
-              <span style="width: 8px; height: 8px; border-radius: 50%; background: ${this.statusColor(d.status)};"></span>
+      <!-- Header: name, status, type, tags, edit -->
+      <div class="card" style="padding: 16px 20px; margin-bottom: 12px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <button class="btn btn--ghost btn--sm" @click=${this.backToList} style="padding: 4px 8px;">
+              &larr; 返回
+            </button>
+            <h2 style="margin: 0; font-size: 18px;">${d.displayName || d.name}</h2>
+            <span style="display: inline-flex; align-items: center; gap: 5px; padding: 2px 10px; border-radius: 9999px; font-size: 12px; background: var(--bg-subtle);">
+              <span style="width: 7px; height: 7px; border-radius: 50%; background: ${this.statusColor(d.status)};"></span>
               ${this.statusLabel(d.status)}
             </span>
-            <button class="btn btn--ghost btn--sm" @click=${() => this.openEdit(d)}>编辑</button>
+            ${d.deviceType ? html`
+              <span style="display: inline-flex; padding: 2px 8px; border-radius: 4px; font-size: 11px; background: var(--accent-subtle, rgba(59,130,246,0.08)); color: var(--accent, #3b82f6);">
+                ${d.deviceType}
+              </span>
+            ` : nothing}
           </div>
+          <button class="btn btn--ghost btn--sm" @click=${() => this.openEdit(d)}>编辑</button>
         </div>
-      </div>
-
-      <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px;">
-        <div class="card" style="padding: 16px;">
-          <div style="color: var(--muted); font-size: 12px;">属性总数</div>
-          <div style="font-size: 24px; font-weight: 700; margin-top: 4px;">${ov.totalProperties}</div>
-        </div>
-        <div class="card" style="padding: 16px;">
-          <div style="color: var(--muted); font-size: 12px;">在线属性</div>
-          <div style="font-size: 24px; font-weight: 700; margin-top: 4px; color: var(--success);">${ov.onlineProperties}</div>
-        </div>
-        <div class="card" style="padding: 16px;">
-          <div style="color: var(--muted); font-size: 12px;">命令数</div>
-          <div style="font-size: 24px; font-weight: 700; margin-top: 4px;">${ov.totalCommands}</div>
-        </div>
-        <div class="card" style="padding: 16px;">
-          <div style="color: var(--muted); font-size: 12px;">活跃告警</div>
-          <div style="font-size: 24px; font-weight: 700; margin-top: 4px; color: ${ov.activeAlarms > 0 ? 'var(--danger)' : 'inherit'};">${ov.activeAlarms}</div>
-        </div>
-      </div>
-
-      ${profile.properties.length > 0 ? html`
-        <div class="card" style="padding: 20px; margin-bottom: 16px;">
-          <div style="font-weight: 600; margin-bottom: 12px;">设备属性</div>
-          <table style="width: 100%; border-collapse: collapse;">
-            <thead>
-              <tr style="border-bottom: 1px solid var(--border);">
-                <th style="padding: 8px 12px; text-align: left; font-size: 12px; color: var(--muted);">属性名</th>
-                <th style="padding: 8px 12px; text-align: left; font-size: 12px; color: var(--muted);">当前值</th>
-                <th style="padding: 8px 12px; text-align: left; font-size: 12px; color: var(--muted);">数据类型</th>
-                <th style="padding: 8px 12px; text-align: left; font-size: 12px; color: var(--muted);">单位</th>
-                <th style="padding: 8px 12px; text-align: left; font-size: 12px; color: var(--muted);">更新时间</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${profile.properties.map((p: DeviceProperty) => html`
-                <tr style="border-bottom: 1px solid var(--border);">
-                  <td style="padding: 8px 12px; font-size: 13px;">${p.displayName || p.name}</td>
-                  <td style="padding: 8px 12px; font-size: 13px; font-weight: 500;">${p.currentValue ?? p.value ?? "-"}</td>
-                  <td style="padding: 8px 12px; font-size: 13px; color: var(--muted);">${p.dataType}</td>
-                  <td style="padding: 8px 12px; font-size: 13px; color: var(--muted);">${p.unit || "-"}</td>
-                  <td style="padding: 8px 12px; font-size: 13px; color: var(--muted);">${p.updatedAt?.slice(0, 16) || "-"}</td>
-                </tr>
-              `)}
-            </tbody>
-          </table>
-        </div>
-      ` : nothing}
-
-      ${profile.commands.length > 0 ? html`
-        <div class="card" style="padding: 20px;">
-          <div style="font-weight: 600; margin-bottom: 12px;">设备命令</div>
-          <div style="display: flex; flex-direction: column; gap: 8px;">
-            ${profile.commands.map(c => html`
-              <div style="display: flex; align-items: center; justify-content: space-between; padding: 12px; background: var(--bg-subtle); border-radius: 8px;">
-                <div>
-                  <div style="font-weight: 500; font-size: 14px;">${c.name}</div>
-                  <div style="font-size: 12px; color: var(--muted);">${c.description || "无描述"}</div>
-                </div>
-                <button
-                  class="btn btn--primary btn--sm"
-                  ?disabled=${this.executingCommand === c.name}
-                  @click=${() => this.executeCommand(d.id, c.name)}
-                >
-                  ${this.executingCommand === c.name ? "执行中..." : "执行"}
-                </button>
-              </div>
+        ${deviceTags.length > 0 ? html`
+          <div style="padding-top: 8px; display: flex; flex-wrap: wrap; gap: 4px;">
+            ${deviceTags.map((t: Tag) => html`
+              <span style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 9999px; font-size: 11px; background: var(--bg-subtle); border: 1px solid var(--border);">
+                <span style="width: 6px; height: 6px; border-radius: 50%; background: ${t.color || 'var(--primary, #3b82f6)'};"></span>
+                ${t.name}
+              </span>
             `)}
           </div>
+        ` : nothing}
+      </div>
+
+      <!-- Mini stat grid -->
+      <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 12px;">
+        <div class="detail-stat-mini">
+          <div class="detail-stat-mini__label">属性总数</div>
+          <div class="detail-stat-mini__value">${ov.totalProperties}</div>
         </div>
-      ` : nothing}
+        <div class="detail-stat-mini">
+          <div class="detail-stat-mini__label">在线属性</div>
+          <div class="detail-stat-mini__value" style="color: var(--success);">${ov.onlineProperties}</div>
+        </div>
+        <div class="detail-stat-mini">
+          <div class="detail-stat-mini__label">命令数</div>
+          <div class="detail-stat-mini__value">${ov.totalCommands}</div>
+        </div>
+        <div class="detail-stat-mini">
+          <div class="detail-stat-mini__label">活跃告警</div>
+          <div class="detail-stat-mini__value" style="color: ${ov.activeAlarms > 0 ? 'var(--danger)' : 'inherit'};">${ov.activeAlarms}</div>
+        </div>
+      </div>
+
+      <!-- Tab bar -->
+      <div class="detail-tabs" style="margin-bottom: 12px;">
+        <button class="detail-tab ${this.detailTab === 'properties' ? 'active' : ''}" @click=${() => this.switchDetailTab('properties')}>${icons.barChart} 属性</button>
+        <button class="detail-tab ${this.detailTab === 'commands' ? 'active' : ''}" @click=${() => this.switchDetailTab('commands')}>${icons.zap} 命令</button>
+        <button class="detail-tab ${this.detailTab === 'events' ? 'active' : ''}" @click=${() => this.switchDetailTab('events')}>${icons.scrollText} 事件</button>
+        <button class="detail-tab ${this.detailTab === 'alarms' ? 'active' : ''}" @click=${() => this.switchDetailTab('alarms')}>${icons.bug} 告警</button>
+      </div>
+
+      <!-- Tab content -->
+      ${this.detailTab === 'properties' ? this.renderDetailProperties() : nothing}
+      ${this.detailTab === 'commands' ? this.renderDetailCommands() : nothing}
+      ${this.detailTab === 'events' ? this.renderDetailEvents() : nothing}
+      ${this.detailTab === 'alarms' ? this.renderDetailAlarms() : nothing}
+      ${this.showModal ? this.renderModal() : nothing}
+      ${this.showHistoryDialog ? this.renderHistoryDialog() : nothing}
+    `;
+  }
+
+  renderDetailProperties() {
+    const profile = this.selectedDevice;
+    if (!profile || profile.properties.length === 0) {
+      return html`<div class="card" style="padding: 32px; text-align: center; color: var(--muted);">暂无属性数据</div>`;
+    }
+
+    return html`
+      <div class="card" style="padding: 16px 20px;">
+        <table style="width: 100%; border-collapse: collapse;">
+          <thead>
+            <tr style="border-bottom: 1px solid var(--border);">
+              <th style="padding: 6px 10px; text-align: left; font-size: 11px; color: var(--muted); font-weight: 600;">属性名</th>
+              <th style="padding: 6px 10px; text-align: left; font-size: 11px; color: var(--muted); font-weight: 600;">当前值</th>
+              <th style="padding: 6px 10px; text-align: left; font-size: 11px; color: var(--muted); font-weight: 600;">类型</th>
+              <th style="padding: 6px 10px; text-align: left; font-size: 11px; color: var(--muted); font-weight: 600;">单位</th>
+              <th style="padding: 6px 10px; text-align: center; font-size: 11px; color: var(--muted); font-weight: 600;">读写</th>
+              <th style="padding: 6px 10px; text-align: left; font-size: 11px; color: var(--muted); font-weight: 600;">更新时间</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${profile.properties.map((p: DeviceProperty) => html`
+              <tr style="border-bottom: 1px solid var(--border);">
+                <td style="padding: 6px 10px; font-size: 13px;">${p.displayName || p.name}</td>
+                <td style="padding: 6px 10px; font-size: 13px; font-weight: 500;">
+                  ${p.currentValue ?? p.value ?? "-"}
+                  ${this.isNumericType(p.dataType) ? html`
+                    <button
+                      class="btn btn--icon btn--xs"
+                      title="查看历史曲线"
+                      @click=${() => this.openPropertyHistory(p.name, p.unit || "")}
+                      style="margin-left: 4px; color: var(--accent); cursor: pointer; padding: 2px;"
+                    >${icons.trendingUp}</button>
+                  ` : nothing}
+                </td>
+                <td style="padding: 6px 10px; font-size: 12px; color: var(--muted);">${p.dataType}</td>
+                <td style="padding: 6px 10px; font-size: 12px; color: var(--muted);">${p.unit || "-"}</td>
+                <td style="padding: 6px 10px; text-align: center;">
+                  <span style="display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600;
+                    background: ${p.isReadOnly ? 'rgba(107,114,128,0.1)' : 'rgba(16,185,129,0.1)'};
+                    color: ${p.isReadOnly ? 'var(--muted)' : 'var(--success)'};">
+                    ${p.isReadOnly ? '只读' : '读写'}
+                  </span>
+                </td>
+                <td style="padding: 6px 10px; font-size: 12px; color: var(--muted);">${p.updatedAt?.slice(0, 16) || "-"}</td>
+              </tr>
+            `)}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  renderDetailCommands() {
+    const profile = this.selectedDevice;
+    if (!profile) return nothing;
+    const d = profile.device;
+
+    if (profile.commands.length === 0) {
+      return html`<div class="card" style="padding: 32px; text-align: center; color: var(--muted);">暂无命令</div>`;
+    }
+
+    return html`
+      <div class="card" style="padding: 16px 20px;">
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          ${profile.commands.map(c => html`
+            <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; background: var(--bg-subtle); border-radius: 8px;">
+              <div>
+                <div style="font-weight: 500; font-size: 13px;">${c.name}</div>
+                <div style="font-size: 12px; color: var(--muted);">${c.description || "无描述"}</div>
+              </div>
+              <button
+                class="btn btn--primary btn--sm"
+                ?disabled=${this.executingCommand === c.name}
+                @click=${() => this.executeCommand(d.id, c.name)}
+              >
+                ${this.executingCommand === c.name ? "执行中..." : "执行"}
+              </button>
+            </div>
+          `)}
+        </div>
+      </div>
+    `;
+  }
+
+  renderDetailEvents() {
+    const profile = this.selectedDevice;
+    if (!profile) return nothing;
+
+    const events = profile.recentEvents || [];
+    if (events.length === 0) {
+      return html`<div class="card" style="padding: 32px; text-align: center; color: var(--muted);">暂无事件记录</div>`;
+    }
+
+    const levelClass = (level: string) => {
+      switch (level) {
+        case 'info': return 'event-badge--info';
+        case 'warning': return 'event-badge--warning';
+        case 'error': return 'event-badge--error';
+        case 'critical': return 'event-badge--critical';
+        default: return 'event-badge--info';
+      }
+    };
+
+    const levelLabel = (level: string) => {
+      switch (level) {
+        case 'info': return '信息';
+        case 'warning': return '警告';
+        case 'error': return '错误';
+        case 'critical': return '严重';
+        default: return level;
+      }
+    };
+
+    return html`
+      <div class="card" style="padding: 16px 20px;">
+        ${events.map((ev: DeviceEvent) => html`
+          <div class="event-item">
+            <span class="event-badge ${levelClass(ev.level)}">${levelLabel(ev.level)}</span>
+            <div style="flex: 1; min-width: 0;">
+              <div style="font-size: 13px; font-weight: 500;">${ev.title}</div>
+              ${ev.message ? html`<div style="font-size: 12px; color: var(--muted); margin-top: 2px;">${ev.message}</div>` : nothing}
+            </div>
+            <span style="font-size: 11px; color: var(--muted); flex-shrink: 0; margin-top: 2px;">${ev.createdAt?.slice(0, 16)}</span>
+          </div>
+        `)}
+      </div>
+    `;
+  }
+
+  renderDetailAlarms() {
+    const profile = this.selectedDevice;
+    if (!profile) return nothing;
+    const ov = profile.overview;
+
+    return html`
+      <div class="card" style="padding: 20px;">
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
+          <div style="font-size: 36px; font-weight: 700; color: ${ov.activeAlarms > 0 ? 'var(--danger)' : 'var(--success)'};">
+            ${ov.activeAlarms}
+          </div>
+          <div>
+            <div style="font-size: 14px; font-weight: 500;">活跃告警</div>
+            <div style="font-size: 12px; color: var(--muted);">需要处理的告警数量</div>
+          </div>
+        </div>
+        ${ov.activeAlarms === 0
+          ? html`<div style="padding: 20px; text-align: center; color: var(--success); font-size: 14px;">暂无活跃告警</div>`
+          : html`
+            <div style="padding: 12px; background: rgba(239,68,68,0.05); border-radius: 8px; border: 1px solid rgba(239,68,68,0.15);">
+              <div style="font-size: 13px; color: var(--danger);">存在 ${ov.activeAlarms} 个活跃告警需要处理</div>
+            </div>
+          `
+        }
+      </div>
     `;
   }
 
@@ -1093,25 +1503,29 @@ export class DevicesView extends LitElement {
   renderWizard() {
     const isStep1 = this.wizardStep === "template";
     return html`
-      <div class="wizard-fullscreen">
-        <!-- Header bar -->
-        <div class="wizard-fullscreen__header">
-          <button class="wizard-fullscreen__back" @click=${isStep1 ? this.closeWizard : this.wizardBack}>
-            <span style="transform: rotate(90deg); display: inline-flex;">${icons.arrowDown}</span>
-            <span>${isStep1 ? "返回设备列表" : "返回模板选择"}</span>
-          </button>
-          <span class="wizard-fullscreen__title">${isStep1 ? "选择设备模板" : "填写设备信息"}</span>
-          <div class="wizard-fullscreen__steps">
-            <div class="wizard-fullscreen__dot ${isStep1 ? 'wizard-fullscreen__dot--active' : 'wizard-fullscreen__dot--done'}"></div>
-            <div class="wizard-fullscreen__dot ${!isStep1 ? 'wizard-fullscreen__dot--active' : ''}"></div>
+      <div class="wizard-overlay" @click=${(e: Event) => { if ((e.target as HTMLElement).classList.contains('wizard-overlay')) this.closeWizard(); }}>
+        <div class="wizard-dialog">
+          <!-- Header -->
+          <div class="wizard-dialog__header">
+            <button class="wizard-dialog__back" @click=${isStep1 ? this.closeWizard : this.wizardBack}>
+              <span style="transform: rotate(90deg); display: inline-flex;">${icons.arrowDown}</span>
+              <span>${isStep1 ? "返回设备列表" : "返回模板选择"}</span>
+            </button>
+            <span class="wizard-dialog__title">${isStep1 ? "选择设备模板" : "填写设备信息"}</span>
+            <button class="modal-close wizard-dialog__close" @click=${this.closeWizard}>✕</button>
           </div>
-          ${isStep1 ? html`
-            <button class="btn btn--ghost" @click=${this.closeWizard} style="margin-left: 8px;">取消</button>
+          <!-- Body -->
+          <div class="wizard-dialog__body">
+            ${isStep1 ? this.renderWizardTemplateSelection() : this.renderWizardDeviceInfo()}
+          </div>
+          ${!isStep1 ? html`
+            <div class="wizard-form-footer">
+              <button class="btn btn--ghost" @click=${this.wizardBack}>上一步</button>
+              <button class="btn btn--primary" ?disabled=${this.wizardSaving || !this.wizName.trim()} @click=${this.submitWizard}>
+                ${this.wizardSaving ? "创建中..." : "创建设备"}
+              </button>
+            </div>
           ` : nothing}
-        </div>
-        <!-- Body -->
-        <div class="wizard-fullscreen__body">
-          ${isStep1 ? this.renderWizardTemplateSelection() : this.renderWizardDeviceInfo()}
         </div>
       </div>
     `;
@@ -1122,23 +1536,18 @@ export class DevicesView extends LitElement {
     const categories = Object.keys(groups);
 
     return html`
-      <p style="text-align: center; color: var(--muted); font-size: 14px; margin: 0 0 20px;">
-        选择一个设备模板来快速创建和配置您的IoT设备
-      </p>
-      <!-- Search bar centered, max 640px -->
-      <div style="display: flex; justify-content: center; margin-bottom: 24px;">
-        <div style="position: relative; width: 100%; max-width: 640px;">
-          <span style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--muted);">
-            ${icons.search}
-          </span>
-          <input
-            type="text"
-            placeholder="搜索设备模板..."
-            .value=${this.wizTemplateSearch}
-            @input=${(e: Event) => { this.wizTemplateSearch = (e.target as HTMLInputElement).value; }}
-            style="width: 100%; padding: 10px 14px 10px 38px; box-sizing: border-box; border-radius: 10px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 14px;"
-          />
-        </div>
+      <!-- Search bar -->
+      <div style="position: relative; margin-bottom: 20px;">
+        <span style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--muted);">
+          ${icons.search}
+        </span>
+        <input
+          type="text"
+          placeholder="搜索设备模板..."
+          .value=${this.wizTemplateSearch}
+          @input=${(e: Event) => { this.wizTemplateSearch = (e.target as HTMLInputElement).value; }}
+          style="width: 100%; padding: 10px 14px 10px 38px; box-sizing: border-box; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-subtle); color: var(--text); font-size: 14px;"
+        />
       </div>
 
       ${this.wizTemplateLoading ? html`
@@ -1210,7 +1619,10 @@ export class DevicesView extends LitElement {
       <div class="wizard-split">
         <!-- Left panel: form -->
         <div class="wizard-split__form">
-          <div style="font-size: 14px; font-weight: 600; margin-bottom: 16px;">填写设备信息</div>
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
+            <div style="font-size: 14px; font-weight: 600;">填写设备信息</div>
+            <button class="btn btn--ghost" style="font-size: 12px; padding: 4px 10px;" @click=${this.wizardBack}>切换模板</button>
+          </div>
 
           <!-- Template summary chip -->
           <div style="display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-subtle); margin-bottom: 16px;">
@@ -1310,23 +1722,12 @@ export class DevicesView extends LitElement {
               `}
             </div>
           ` : nothing}
-
-          <!-- Bottom spacer for sticky footer -->
-          <div style="height: 24px;"></div>
         </div>
 
         <!-- Right panel: template overview -->
         <div class="wizard-split__overview">
           ${this.renderTemplateOverview(t)}
         </div>
-      </div>
-
-      <!-- Sticky footer with action buttons -->
-      <div class="wizard-form-footer">
-        <button class="btn btn--ghost" @click=${this.wizardBack}>上一步</button>
-        <button class="btn btn--primary" ?disabled=${this.wizardSaving || !this.wizName.trim()} @click=${this.submitWizard}>
-          ${this.wizardSaving ? "创建中..." : "创建设备"}
-        </button>
       </div>
     `;
   }
@@ -1368,16 +1769,18 @@ export class DevicesView extends LitElement {
 
   renderTemplateOverview(t: ProcessedTemplate) {
     const displayName = getLocalizedText(t.displayName, t.name);
+    const description = getLocalizedText(t.description, "");
 
     // Compute stats from template properties
     const totalProps = t.properties.length;
     const totalCmds = t.commands.length;
     const readonlyProps = t.properties.filter((p: any) => p.accessMode === "r" || p.accessMode === "R").length;
     const writableProps = totalProps - readonlyProps;
+    const requiredProps = t.properties.filter((p: any) => p.isRequired).length;
 
     return html`
       <!-- Template summary -->
-      <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px;">
+      <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
         <span style="font-size: 32px;">${CATEGORY_ICONS[t.category] || "📦"}</span>
         <div style="min-width: 0; flex: 1;">
           <div style="font-weight: 600; font-size: 16px;">${displayName}</div>
@@ -1385,12 +1788,27 @@ export class DevicesView extends LitElement {
             ${t.manufacturer ? html`${t.manufacturer} · ` : nothing}${t.deviceType || t.category}${t.version ? html` · v${t.version}` : nothing}
           </div>
         </div>
-        ${t.isBuiltin ? html`<span style="font-size: 10px; padding: 2px 8px; border-radius: 4px; background: var(--bg-subtle); color: var(--muted); text-transform: uppercase;">内置</span>` : nothing}
+        ${t.isBuiltin ? html`<span style="font-size: 10px; padding: 2px 8px; border-radius: 4px; background: var(--bg); color: var(--muted); text-transform: uppercase;">内置</span>` : nothing}
       </div>
 
-      ${t.protocolType ? html`
-        <div style="font-size: 12px; color: var(--muted); margin-bottom: 16px;">
-          协议: ${t.protocolType}
+      <!-- Description -->
+      ${description ? html`
+        <div style="font-size: 13px; color: var(--muted); line-height: 1.5; margin-bottom: 16px; padding: 10px 12px; background: var(--bg); border-radius: 8px;">
+          ${description}
+        </div>
+      ` : nothing}
+
+      <!-- Meta info -->
+      <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px;">
+        ${t.protocolType ? html`<span style="font-size: 11px; padding: 3px 8px; border-radius: 6px; background: var(--bg); color: var(--muted);">协议: ${t.protocolType}</span>` : nothing}
+        ${t.driverName ? html`<span style="font-size: 11px; padding: 3px 8px; border-radius: 6px; background: var(--bg); color: var(--muted);">驱动: ${t.driverName}</span>` : nothing}
+        ${t.category ? html`<span style="font-size: 11px; padding: 3px 8px; border-radius: 6px; background: var(--bg); color: var(--muted);">${CATEGORY_LABELS[t.category] || t.category}</span>` : nothing}
+      </div>
+
+      <!-- Tags -->
+      ${t.tags && t.tags.length > 0 ? html`
+        <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px;">
+          ${t.tags.map(tag => html`<span style="font-size: 11px; padding: 2px 8px; border-radius: 4px; background: var(--primary, #3b82f6); color: white; opacity: 0.8;">${tag}</span>`)}
         </div>
       ` : nothing}
 
@@ -1417,11 +1835,23 @@ export class DevicesView extends LitElement {
       <!-- Property list -->
       ${totalProps > 0 ? html`
         <div class="wizard-overview__section-title">属性列表</div>
-        <ul class="wizard-overview__list" style="max-height: 200px; overflow-y: auto;">
+        <ul class="wizard-overview__list" style="max-height: 240px; overflow-y: auto;">
           ${t.properties.map((p: any) => html`
-            <li class="wizard-overview__list-item">
-              <span class="wizard-overview__list-item-name">${p.name || p.displayName || "unnamed"}</span>
-              <span class="wizard-overview__list-item-meta">${p.dataType || ""}${p.unit ? ` ${p.unit}` : ""}</span>
+            <li class="wizard-overview__list-item" style="flex-wrap: wrap; gap: 4px;">
+              <div style="display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0;">
+                <span class="wizard-overview__list-item-name">${p.name || p.displayName || "unnamed"}</span>
+                ${p.accessMode === "r" || p.accessMode === "R"
+                  ? html`<span style="font-size: 10px; padding: 1px 5px; border-radius: 3px; background: var(--bg-subtle); color: var(--muted);">R</span>`
+                  : html`<span style="font-size: 10px; padding: 1px 5px; border-radius: 3px; background: var(--primary, #3b82f6); color: white; opacity: 0.7;">RW</span>`
+                }
+              </div>
+              <span class="wizard-overview__list-item-meta">
+                ${p.dataType || ""}${p.unit ? ` ${p.unit}` : ""}
+                ${p.minValue != null || p.maxValue != null
+                  ? html` <span style="opacity: 0.7;">[${p.minValue ?? '–'}~${p.maxValue ?? '–'}]</span>`
+                  : nothing
+                }
+              </span>
             </li>
           `)}
         </ul>
@@ -1432,8 +1862,14 @@ export class DevicesView extends LitElement {
         <div class="wizard-overview__section-title">命令列表</div>
         <ul class="wizard-overview__list" style="max-height: 200px; overflow-y: auto;">
           ${t.commands.map((c: any) => html`
-            <li class="wizard-overview__list-item">
-              <span class="wizard-overview__list-item-name">${c.name || "unnamed"}</span>
+            <li class="wizard-overview__list-item" style="flex-wrap: wrap; gap: 4px;">
+              <div style="display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0;">
+                <span class="wizard-overview__list-item-name">${c.name || "unnamed"}</span>
+                ${c.parameters && c.parameters.length > 0
+                  ? html`<span style="font-size: 10px; color: var(--muted);">${c.parameters.length} 参数</span>`
+                  : nothing
+                }
+              </div>
               <span class="wizard-overview__list-item-meta">${c.description || ""}</span>
             </li>
           `)}

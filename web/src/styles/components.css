@@ -2499,6 +2499,108 @@
   box-shadow: 0 2px 4px rgba(255, 77, 77, 0.2);
 }
 
+/* Device detail tabs */
+.detail-tabs {
+  display: flex;
+  gap: 4px;
+  background: var(--bg-muted);
+  border-radius: 8px;
+  padding: 4px;
+}
+
+.detail-tab {
+  border: none;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.detail-tab svg {
+  width: 14px;
+  height: 14px;
+}
+
+.detail-tab:hover {
+  color: var(--text);
+}
+
+.detail-tab.active {
+  background: var(--accent, #3b82f6);
+  color: white;
+  box-shadow: 0 2px 4px rgba(59, 130, 246, 0.2);
+}
+
+/* Compact stat card */
+.detail-stat-mini {
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: var(--card);
+  border: 1px solid var(--border);
+}
+
+.detail-stat-mini__label {
+  color: var(--muted);
+  font-size: 11px;
+  margin-bottom: 2px;
+}
+
+.detail-stat-mini__value {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+/* Event list items */
+.event-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.event-item:last-child {
+  border-bottom: none;
+}
+
+.event-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.event-badge--info {
+  background: rgba(59, 130, 246, 0.1);
+  color: #3b82f6;
+}
+
+.event-badge--warning {
+  background: rgba(245, 158, 11, 0.1);
+  color: #f59e0b;
+}
+
+.event-badge--error {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+}
+
+.event-badge--critical {
+  background: rgba(220, 38, 38, 0.15);
+  color: #dc2626;
+}
+
 .agents-overview-grid {
   display: grid;
   gap: 14px;
@@ -3627,27 +3729,43 @@ input[type="range"]::-moz-range-thumb:hover {
   min-width: 100px;
 }
 
-/* === Fullscreen Wizard === */
-.wizard-fullscreen {
+/* === Wizard Dialog (borderless glassmorphism) === */
+.wizard-overlay {
   position: fixed;
   inset: 0;
   z-index: 1000;
-  background: var(--bg);
+  background: rgba(0, 0, 0, 0.5);
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   animation: fadeIn 0.2s ease;
 }
 
-.wizard-fullscreen__header {
+.wizard-dialog {
+  background: var(--bg);
+  border: none;
+  border-radius: 16px;
+  width: 92%;
+  max-width: 1100px;
+  max-height: 85vh;
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  animation: slideUp 0.3s ease;
   display: flex;
-  align-items: center;
-  padding: 12px 24px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-  gap: 16px;
+  flex-direction: column;
+  overflow: hidden;
 }
 
-.wizard-fullscreen__back {
+.wizard-dialog__header {
+  display: flex;
+  align-items: center;
+  padding: 16px 24px;
+  flex-shrink: 0;
+  gap: 12px;
+}
+
+.wizard-dialog__back {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -3661,43 +3779,25 @@ input[type="range"]::-moz-range-thumb:hover {
   transition: all 0.15s;
 }
 
-.wizard-fullscreen__back:hover {
+.wizard-dialog__back:hover {
   background: var(--bg-hover);
   color: var(--text);
 }
 
-.wizard-fullscreen__title {
-  font-size: 15px;
+.wizard-dialog__title {
+  font-size: 16px;
   font-weight: 600;
   color: var(--text);
 }
 
-.wizard-fullscreen__steps {
-  display: flex;
-  gap: 6px;
+.wizard-dialog__close {
   margin-left: auto;
 }
 
-.wizard-fullscreen__dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--border);
-  transition: background 0.2s;
-}
-
-.wizard-fullscreen__dot--active {
-  background: var(--primary, #3b82f6);
-}
-
-.wizard-fullscreen__dot--done {
-  background: var(--success, #22c55e);
-}
-
-.wizard-fullscreen__body {
+.wizard-dialog__body {
   flex: 1;
   overflow-y: auto;
-  padding: 24px 32px;
+  padding: 20px 28px;
 }
 
 /* Step 1: Template grid — 5 columns on wide screens */
@@ -3710,20 +3810,23 @@ input[type="range"]::-moz-range-thumb:hover {
 /* Step 2: Split panel */
 .wizard-split {
   display: grid;
-  grid-template-columns: 1fr 420px;
+  grid-template-columns: 1fr 440px;
   height: 100%;
 }
 
 .wizard-split__form {
   overflow-y: auto;
-  padding: 24px 32px;
+  padding: 20px 28px;
+  padding-bottom: 80px;
 }
 
 .wizard-split__overview {
   overflow-y: auto;
-  padding: 24px;
-  border-left: 1px solid var(--border);
+  margin: 16px;
+  padding: 20px;
+  border-radius: 14px;
   background: var(--card);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08), 0 0 0 1px var(--border);
 }
 
 /* Overview stats grid */
@@ -3799,17 +3902,17 @@ input[type="range"]::-moz-range-thumb:hover {
   white-space: nowrap;
 }
 
-/* Sticky form footer */
+/* Wizard footer — fixed at dialog bottom, outside scroll */
 .wizard-form-footer {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
   gap: 12px;
-  padding: 16px 32px;
+  padding: 14px 28px;
   border-top: 1px solid var(--border);
   background: var(--bg);
   flex-shrink: 0;
-  position: sticky;
-  bottom: 0;
+  border-radius: 0 0 16px 16px;
 }
 
 /* ===========================================

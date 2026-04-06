@@ -24,7 +24,7 @@ pub async fn context_middleware(
     let path = request.uri().path().to_string();
 
     // Try to extract and validate JWT token
-    let user_info = extract_user_from_jwt(request.headers()).unwrap_or_default();
+    let user_info = extract_user_from_jwt(request.headers(), request.uri()).unwrap_or_default();
 
     // Create context with user information
     let ctx = ReqCtx {
@@ -42,13 +42,31 @@ pub async fn context_middleware(
     Ok(next.run(request).await)
 }
 
-/// Extract user information from JWT token in headers
-fn extract_user_from_jwt(headers: &HeaderMap) -> Option<UserInfo> {
-    // Try to get Authorization header
-    let auth_header = headers.typed_get::<Authorization<Bearer>>()?;
+/// Extract bearer token from Authorization header or query string fallback
+fn extract_bearer_token<'a>(headers: &'a HeaderMap, uri: &'a axum::http::Uri) -> Option<String> {
+    // Try Authorization header first
+    if let Some(auth) = headers.typed_get::<Authorization<Bearer>>() {
+        return Some(auth.token().to_string());
+    }
+    // Fallback: query string ?token=xxx (needed for EventSource which can't set headers)
+    let query = uri.query()?;
+    for pair in query.split('&') {
+        let mut parts = pair.splitn(2, '=');
+        if parts.next() == Some("token") {
+            if let Some(val) = parts.next() {
+                return Some(val.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Extract user information from JWT token in headers or query string
+fn extract_user_from_jwt(headers: &HeaderMap, uri: &axum::http::Uri) -> Option<UserInfo> {
+    let token = extract_bearer_token(headers, uri)?;
 
     // Validate JWT token
-    let claims = validate_jwt(auth_header.token()).ok()?;
+    let claims = validate_jwt(&token).ok()?;
 
     // Convert claims to UserInfo
     Some(UserInfo {
@@ -72,11 +90,11 @@ pub async fn jwt_auth_middleware(mut request: Request, next: Next) -> Response {
     let uri = request.uri().to_string();
     tracing::debug!("JWT middleware called for: {}", uri);
 
-    // Extract Authorization header
-    let auth_header = request.headers().typed_get::<Authorization<Bearer>>();
+    // Extract token from Authorization header or query string ?token=xxx
+    let token = extract_bearer_token(request.headers(), request.uri());
 
-    if auth_header.is_none() {
-        tracing::warn!("No Authorization header found for: {}", uri);
+    let Some(token) = token else {
+        tracing::warn!("No authorization token found for: {}", uri);
         return (
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({
@@ -86,14 +104,12 @@ pub async fn jwt_auth_middleware(mut request: Request, next: Next) -> Response {
             })),
         )
             .into_response();
-    }
+    };
 
-    let auth_header = auth_header.unwrap();
-    let token = auth_header.token();
-    tracing::debug!("Found Authorization header for: {}, token length: {}", uri, token.len());
+    tracing::debug!("Found token for: {}, length: {}", uri, token.len());
 
     // Validate JWT token
-    match validate_jwt(token) {
+    match validate_jwt(&token) {
         Ok(claims) => {
             tracing::debug!("JWT validation successful for user: {} at: {}", claims.username, uri);
             // Add claims to request extensions for handlers to use

@@ -1,59 +1,26 @@
-# ============================================
-# Stage 1: Dependencies - 安装依赖
-# ============================================
-FROM node:22-alpine AS deps
+# syntax=docker/dockerfile:1
 
-RUN apk add --no-cache libc6-compat
-RUN corepack enable
+# ---- 构建阶段 ----
+FROM node:20-alpine AS builder
 
 WORKDIR /app
+ENV NODE_OPTIONS="--max-old-space-size=2048"
 
 COPY package.json pnpm-lock.yaml* ./
-RUN corepack install && pnpm install --frozen-lockfile --prod=false
+RUN npm install --legacy-peer-deps
 
-# ============================================
-# Stage 2: Builder - 构建应用
-# ============================================
-FROM node:22-alpine AS builder
-
-RUN corepack enable
-
-WORKDIR /app
-
-COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+RUN npm run build
 
-ENV NODE_ENV=production
-ENV NEXT_TELEMETRY_DISABLED=1
+# ---- 运行阶段 ----
+FROM nginx:alpine
 
-RUN pnpm run build
+COPY --from=builder /dist/ui /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-# ============================================
-# Stage 3: Runner - 运行时镜像（最小化）
-# ============================================
-FROM node:22-alpine AS runner
+EXPOSE 80
 
-WORKDIR /app
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget --quiet --tries=1 --spider http://localhost/ || exit 1
 
-ENV NODE_ENV=production
-ENV NEXT_TELEMETRY_DISABLED=1
-ENV PORT=3000
-ENV HOSTNAME="0.0.0.0"
-
-RUN addgroup -g 1001 nodejs && \
-    adduser -D -u 1001 -G nodejs nextjs && \
-    apk add --no-cache wget
-
-# 只复制必要的运行时文件
-COPY --from=builder --chown=nextjs:nodejs /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-
-USER nextjs
-
-EXPOSE 3000
-
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:3000 || exit 1
-
-CMD ["node", "server.js"]
+CMD ["nginx", "-g", "daemon off;"]
