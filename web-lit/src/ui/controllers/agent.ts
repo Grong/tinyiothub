@@ -115,11 +115,10 @@ function handleA2uiMessage(host: AppViewState, message: ChatMessage, a2uiMsg: A2
     case 'updateComponents':
       for (const surface of message.surfaces.values()) {
         for (const comp of a2uiMsg.components) {
-          const idx = surface.components.findIndex(c => c.id === comp.id)
-          if (idx >= 0) {
-            surface.components[idx] = comp
+          if (surface.components.some(c => c.id === comp.id)) {
+            surface.components = surface.components.map(c => c.id === comp.id ? comp : c)
           } else {
-            surface.components.push(comp)
+            surface.components = [...surface.components, comp]
           }
         }
       }
