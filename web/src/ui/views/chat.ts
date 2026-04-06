@@ -206,7 +206,10 @@ export class ChatView extends LitElement {
               class="chat-input"
               .value=${this.draft}
               @input=${(e: Event) => {
-                this.draft = (e.target as HTMLTextAreaElement).value;
+                const ta = e.target as HTMLTextAreaElement;
+                this.draft = ta.value;
+                ta.style.height = "auto";
+                ta.style.height = Math.min(ta.scrollHeight, 120) + "px";
               }}
               @keydown=${(e: KeyboardEvent) => {
                 if (e.key === "Enter" && !e.shiftKey) {
