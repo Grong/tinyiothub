@@ -96,6 +96,10 @@
   --glass-shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.12);
   --glass-shadow-hover: 0 4px 24px rgba(0, 0, 0, 0.24);
 
+  /* Chat input glass */
+  --glass-chat-input-bg: rgba(30, 30, 40, 0.7);
+  --glass-chat-abort-bg: rgba(255, 255, 255, 0.12);
+
   /* Radii - Slightly larger for friendlier feel */
   --radius-sm: 6px;
   --radius-md: 10px;
@@ -192,6 +196,10 @@
   --glass-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
   --glass-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.04);
   --glass-shadow-hover: 0 4px 20px rgba(0, 0, 0, 0.08);
+
+  /* Chat input glass */
+  --glass-chat-input-bg: rgba(255, 255, 255, 0.7);
+  --glass-chat-abort-bg: rgba(0, 0, 0, 0.08);
 
   color-scheme: light;
 }
