@@ -12,7 +12,7 @@ use crate::api::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, Too
 use crate::dto::entity::workspace::{
     Workspace, WorkspaceWithDeviceCount,
 };
-use crate::infrastructure::openclaw_agent::{OpenClawAgentClient, OpenClawAgentConfig};
+use crate::infrastructure::zeroclaw_agent::{AgentClient, AgentConfig};
 
 /// Tool input: List workspaces
 #[derive(Debug, Deserialize)]
@@ -174,7 +174,7 @@ impl ToolHandler for CreateWorkspaceHandler {
     }
 
     fn description(&self) -> &str {
-        "Create a new workspace. Automatically creates an associated OpenClaw AI agent."
+        "Create a new workspace. Automatically creates an associated AI agent."
     }
 
     fn input_schema(&self) -> InputSchema {
@@ -220,18 +220,13 @@ impl ToolHandler for CreateWorkspaceHandler {
         .await
         .map_err(|e| ToolError::Internal(format!("failed to create workspace: {}", e)))?;
 
-        // Try to create OpenClaw Agent
-        let openclaw_url = crate::infrastructure::config::get()
-            .openclaw
-            .as_ref()
-            .map(|c| c.url.clone())
-            .unwrap_or_else(|| "http://localhost:4010".to_string());
-
-        let client = crate::infrastructure::openclaw_agent::RealOpenClawAgentClient::new(openclaw_url);
+        // Try to create Agent
+        let client = crate::infrastructure::zeroclaw_agent::FallbackAgentClient::new();
         let agent_result = client
-            .create_agent(&OpenClawAgentConfig {
+            .create_agent(&AgentConfig {
                 workspace_id: workspace.id.clone(),
                 name: workspace.name.clone(),
+                ..Default::default()
             })
             .await;
 
@@ -259,7 +254,7 @@ impl ToolHandler for CreateWorkspaceHandler {
             }
             Err(e) => {
                 tracing::warn!(
-                    "Failed to create OpenClaw agent for workspace {}: {}",
+                    "Failed to create agent for workspace {}: {}",
                     workspace.id,
                     e
                 );
@@ -274,7 +269,7 @@ impl ToolHandler for CreateWorkspaceHandler {
                     device_count: Some(0),
                     warning: None,
                 };
-                (wc, Some(format!("OpenClaw unavailable: {}", e)))
+                (wc, Some(format!("Agent unavailable: {}", e)))
             }
         };
 
@@ -383,7 +378,7 @@ impl ToolHandler for DeleteWorkspaceHandler {
     }
 
     fn description(&self) -> &str {
-        "Delete a workspace. Also deletes the associated OpenClaw AI agent."
+        "Delete a workspace. Also deletes the associated AI agent."
     }
 
     fn input_schema(&self) -> InputSchema {
@@ -422,19 +417,13 @@ impl ToolHandler for DeleteWorkspaceHandler {
             ));
         }
 
-        // Try to delete OpenClaw Agent
+        // Try to delete Agent
         if let Some(agent_id) = workspace.agent_id {
-            let openclaw_url = crate::infrastructure::config::get()
-                .openclaw
-                .as_ref()
-                .map(|c| c.url.clone())
-                .unwrap_or_else(|| "http://localhost:4010".to_string());
-
             let client =
-                crate::infrastructure::openclaw_agent::RealOpenClawAgentClient::new(openclaw_url);
+                crate::infrastructure::zeroclaw_agent::FallbackAgentClient::new();
             if let Err(e) = client.delete_agent(&agent_id).await {
                 tracing::warn!(
-                    "Failed to delete OpenClaw agent {}: {}. Proceeding with workspace deletion.",
+                    "Failed to delete agent {}: {}. Proceeding with workspace deletion.",
                     agent_id,
                     e
                 );

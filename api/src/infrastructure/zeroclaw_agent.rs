@@ -12,11 +12,13 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
+use hex;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use sha2::{Sha256, Digest};
+use thiserror::Error;
 use tokio::sync::Mutex;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
-use thiserror::Error;
 
 /// Errors from Agent operations
 #[derive(Debug, Error)]
@@ -38,12 +40,55 @@ pub enum AgentError {
 pub struct AgentConfig {
     pub workspace_id: String,
     pub name: String,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub temperature: Option<f64>,
+    #[serde(default)]
+    pub max_tokens: Option<i32>,
+    #[serde(default)]
+    pub top_p: Option<f64>,
+    #[serde(default)]
+    pub system_prompt: Option<String>,
 }
 
 impl AgentConfig {
     pub fn to_json(&self) -> Option<String> {
         serde_json::to_string(self).ok()
     }
+}
+
+impl Default for AgentConfig {
+    fn default() -> Self {
+        Self {
+            workspace_id: String::new(),
+            name: String::new(),
+            model: None,
+            temperature: None,
+            max_tokens: None,
+            top_p: None,
+            system_prompt: None,
+        }
+    }
+}
+
+/// Default agent config returned when no persisted config exists
+fn default_agent_config() -> serde_json::Value {
+    serde_json::json!({
+        "model": "claude-sonnet-4-5",
+        "temperature": 0.7,
+        "maxTokens": 4096,
+        "topP": 1.0,
+        "systemPrompt": "",
+        "workspace": "default"
+    })
+}
+
+/// Compute SHA-256 hex digest of a string
+fn compute_hash(s: &str) -> String {
+    let mut hasher = Sha256::new();
+    Digest::update(&mut hasher, s.as_bytes());
+    hex::encode(hasher.finalize())
 }
 
 /// Agent info returned on creation
@@ -370,7 +415,7 @@ impl AgentClient for ZeroClawAgentClient {
             let run_id_clone = run_id.clone();
             let db_pool_clone = db_pool.clone();
 
-            let handle = tokio::spawn(async move {
+            let _handle = tokio::spawn(async move {
                 let mut full_text = String::new();
 
                 while let Some(msg) = read.next().await {
@@ -455,9 +500,6 @@ impl AgentClient for ZeroClawAgentClient {
                 }
             });
 
-            // Store the handle so chat_abort can cancel it
-            // Note: we don't store it since WS close is handled by dropping the stream
-
             // Convert the channel receiver into a stream, then into a reqwest::Response
             let stream = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
             let mapped = stream.map(|r| r.map(bytes::Bytes::from));
@@ -521,12 +563,7 @@ impl AgentClient for ZeroClawAgentClient {
         session_key: &str,
         _run_id: Option<&str>,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<(), AgentError>> + Send + '_>> {
-        // Abort by closing the active WS connection for this session
         let session_key = session_key.to_string();
-        let mut connections = std::pin::Pin::new(&mut Box::pin(async move {
-            // For now, abort is a no-op — the WS connection will close naturally
-            // when ZeroClaw finishes processing or the client disconnects
-        }));
 
         Box::pin(async move {
             // TODO: Implement WS connection tracking for mid-stream abort
@@ -554,14 +591,30 @@ impl AgentClient for ZeroClawAgentClient {
         agent_id: &str,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, AgentError>> + Send + '_>> {
         let agent_id = agent_id.to_string();
+        let db_pool = self.db_pool.clone();
+
         Box::pin(async move {
-            // Return default config wrapped in the expected format
-            let config = serde_json::json!({
-                "model": "claude-sonnet-4-5",
-                "workspace": "default",
-            });
+            // Try local SQLite first
+            let row = sqlx::query_as::<_, (String, String)>(
+                "SELECT config, config_hash FROM agent_configs WHERE agent_id = ?"
+            )
+            .bind(&agent_id)
+            .fetch_optional(&db_pool)
+            .await
+            .map_err(|e| AgentError::RequestFailed(format!("DB query failed: {}", e)))?;
+
+            if let Some((config_str, config_hash)) = row {
+                let config: serde_json::Value = serde_json::from_str(&config_str)
+                    .unwrap_or_else(|_| default_agent_config());
+                return Ok(serde_json::json!({
+                    "config": config,
+                    "baseHash": config_hash,
+                }));
+            }
+
+            // Return default config if not found
             Ok(serde_json::json!({
-                "config": config,
+                "config": default_agent_config(),
                 "baseHash": null,
             }))
         })
@@ -569,11 +622,38 @@ impl AgentClient for ZeroClawAgentClient {
 
     fn set_agent_config(
         &self,
-        _agent_id: &str,
-        _config: &str,
+        agent_id: &str,
+        config: &str,
         _base_hash: Option<&str>,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<(), AgentError>> + Send + '_>> {
-        Box::pin(async move { Ok(()) })
+        let agent_id = agent_id.to_string();
+        let config = config.to_string();
+        let db_pool = self.db_pool.clone();
+
+        Box::pin(async move {
+            // Validate JSON before storing
+            let _: serde_json::Value = serde_json::from_str(&config)
+                .map_err(|e| AgentError::RequestFailed(format!("Invalid config JSON: {}", e)))?;
+
+            let config_hash = compute_hash(&config);
+
+            sqlx::query(
+                "INSERT INTO agent_configs (agent_id, config, config_hash, updated_at)
+                 VALUES (?, ?, ?, datetime('now'))
+                 ON CONFLICT(agent_id) DO UPDATE SET
+                   config = excluded.config,
+                   config_hash = excluded.config_hash,
+                   updated_at = datetime('now')"
+            )
+            .bind(&agent_id)
+            .bind(&config)
+            .bind(&config_hash)
+            .execute(&db_pool)
+            .await
+            .map_err(|e| AgentError::RequestFailed(format!("DB upsert failed: {}", e)))?;
+
+            Ok(())
+        })
     }
 
     fn tools_catalog(
@@ -768,7 +848,12 @@ impl AgentClient for FallbackAgentClient {
         &self,
         _agent_id: &str,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, AgentError>> + Send + '_>> {
-        Box::pin(async move { Ok(serde_json::json!({})) })
+        Box::pin(async move {
+            Ok(serde_json::json!({
+                "config": default_agent_config(),
+                "baseHash": null,
+            }))
+        })
     }
 
     fn set_agent_config(
