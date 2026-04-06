@@ -230,6 +230,19 @@ pub struct ZeroClawAgentClient {
     active_connections: Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>,
 }
 
+impl Clone for ZeroClawAgentClient {
+    fn clone(&self) -> Self {
+        ZeroClawAgentClient {
+            http_client: self.http_client.clone(),
+            base_url: self.base_url.clone(),
+            ws_url: self.ws_url.clone(),
+            gateway_token: self.gateway_token.clone(),
+            db_pool: self.db_pool.clone(),
+            active_connections: Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+}
+
 impl ZeroClawAgentClient {
     pub fn new(base_url: String, ws_url: String, gateway_token: Option<String>, db_pool: sqlx::SqlitePool) -> Self {
         let http_client = Client::builder()
@@ -886,5 +899,94 @@ impl AgentClient for FallbackAgentClient {
         _enabled: bool,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<(), AgentError>> + Send + '_>> {
         Box::pin(async move { Ok(()) })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_agent_config_default() {
+        let config = AgentConfig {
+            workspace_id: "ws1".to_string(),
+            name: "test".to_string(),
+            model: None,
+            temperature: None,
+            max_tokens: None,
+            top_p: None,
+            system_prompt: None,
+        };
+        assert_eq!(config.workspace_id, "ws1");
+        assert_eq!(config.name, "test");
+        assert!(config.model.is_none());
+        assert!(config.temperature.is_none());
+    }
+
+    #[test]
+    fn test_agent_info_creation() {
+        let info = AgentInfo {
+            id: "agent-1".to_string(),
+            name: "Test Agent".to_string(),
+            status: "active".to_string(),
+            created_at: Some("2026-04-07T00:00:00Z".to_string()),
+        };
+        assert_eq!(info.id, "agent-1");
+        assert_eq!(info.status, "active");
+    }
+
+    #[test]
+    fn test_agent_error_display() {
+        let err = AgentError::Unavailable("connection refused".to_string());
+        assert!(err.to_string().contains("Agent unavailable"));
+        assert!(err.to_string().contains("connection refused"));
+    }
+
+    #[test]
+    fn test_agent_error_not_found() {
+        let err = AgentError::NotFound("missing-agent".to_string());
+        assert!(err.to_string().contains("agent not found"));
+        assert!(err.to_string().contains("missing-agent"));
+    }
+
+    #[test]
+    fn test_fallback_agent_client_chat_abort_returns_unavailable() {
+        let client = FallbackAgentClient::new();
+        let result = tokio::runtime::Runtime::new().unwrap().block_on(
+            client.chat_abort("agent1", "session1", None)
+        );
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AgentError::Unavailable(msg) => {
+                assert!(msg.contains("fallback"));
+                assert!(msg.contains("chat_abort"));
+            }
+            _ => panic!("expected Unavailable error"),
+        }
+    }
+
+    #[test]
+    fn test_fallback_agent_client_list_agents() {
+        let client = FallbackAgentClient::with_agents(vec![
+            AgentInfo {
+                id: "a1".to_string(),
+                name: "Agent One".to_string(),
+                status: "active".to_string(),
+                created_at: None,
+            },
+        ]);
+        let result = tokio::runtime::Runtime::new().unwrap().block_on(
+            client.list_agents()
+        );
+        let json = result.unwrap();
+        let agents = json.as_object().unwrap().get("agents").unwrap().as_array().unwrap();
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].get("id").unwrap(), "a1");
+    }
+
+    #[test]
+    fn test_zeroclaw_agent_client_clone() {
+        fn assert_clone<T: Clone>() {}
+        assert_clone::<ZeroClawAgentClient>();
     }
 }
