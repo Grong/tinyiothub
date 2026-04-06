@@ -1,52 +1,13 @@
 // web-lit/src/components/monitoring/device-status-card.ts
-import { LitElement, html, css } from 'lit'
+import { LitElement, html} from 'lit'
 import { customElement, property, state } from 'lit/decorators.js'
 import { deviceApi } from '../../services/devices'
 import type { DeviceOnlineStatus, DeviceMetrics } from '../../services/devices'
-import { hostStyles } from '../../styles/shared-host'
 
 @customElement('device-status-card')
 export class DeviceStatusCard extends LitElement {
-  static styles = [hostStyles, css`
-    :host { display: block; }
-    .card {
-      background: var(--card);
-      border-radius: var(--radius-lg);
-      padding: 16px;
-    }
-    .card-title {
-      font-size: 14px;
-      font-weight: 600;
-      margin-bottom: 16px;
-    }
-    .status-row {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      margin-bottom: 12px;
-    }
-    .status-icon {
-      width: 40px;
-      height: 40px;
-      border-radius: var(--radius-md);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .status-icon.online { background: var(--ok-subtle); color: var(--ok); }
-    .status-icon.offline { background: var(--bg-muted); color: var(--muted); }
-    .status-text { font-size: 16px; font-weight: 600; }
-    .status-sub { font-size: 12px; color: var(--muted); }
-    .metrics-row {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 12px;
-    }
-    .metric-item { text-align: center; }
-    .metric-value { font-size: 18px; font-weight: 600; }
-    .metric-label { font-size: 11px; color: var(--muted); }
-    .empty { text-align: center; padding: 24px; color: var(--muted); font-size: 13px; }
-  `]
+  createRenderRoot() { return this }
+  
 
   @property({ type: String }) deviceId = ''
   @state() private status: DeviceOnlineStatus | null = null

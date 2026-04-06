@@ -1,24 +1,12 @@
-import { LitElement, html, css } from 'lit'
+import { LitElement, html} from 'lit'
 import { customElement, property } from 'lit/decorators.js'
-import { hostStyles } from '../styles/shared-host'
 
 @customElement('logo-icon')
 export class LogoIcon extends LitElement {
+  createRenderRoot() { return this }
   @property({ type: String }) size = '24px'
 
-  static styles = [hostStyles, css`
-    :host {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      color: var(--accent);
-    }
-
-    svg {
-      width: var(--logo-size, 24px);
-      height: var(--logo-size, 24px);
-    }
-  `]
+  
 
   render() {
     return html`

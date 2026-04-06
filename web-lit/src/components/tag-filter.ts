@@ -1,65 +1,12 @@
 // web-lit/src/components/tag-filter.ts
-import { LitElement, html, css } from 'lit'
+import { LitElement, html} from 'lit'
 import { customElement, property, state } from 'lit/decorators.js'
 import { tagApi, type Tag } from '../services/tags'
-import { hostStyles } from '../styles/shared-host'
 
 @customElement('tag-filter')
 export class TagFilter extends LitElement {
-  static styles = [hostStyles, css`
-    :host { display: inline-flex; }
-    .filter-container {
-      position: relative;
-    }
-    .filter-btn {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 8px 12px;
-      background: var(--card);
-      border: none;
-      border-radius: var(--radius-md);
-      color: var(--text);
-      font-size: 13px;
-      cursor: pointer;
-      box-shadow: var(--glass-shadow-sm);
-    }
-    .filter-btn:hover { background: var(--bg-hover); }
-    .filter-btn.active { background: var(--accent-subtle); color: var(--accent); }
-    .dropdown {
-      position: absolute;
-      top: 100%;
-      left: 0;
-      margin-top: 4px;
-      min-width: 200px;
-      background: var(--card);
-      border-radius: var(--radius-md);
-      box-shadow: var(--shadow-lg);
-      z-index: 100;
-      padding: 8px;
-    }
-    .tag-item {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px;
-      border-radius: var(--radius-sm);
-      cursor: pointer;
-    }
-    .tag-item:hover { background: var(--bg-hover); }
-    .tag-item.selected { background: var(--accent-subtle); }
-    .tag-color {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-    }
-    .tag-name { font-size: 13px; color: var(--text); }
-    .tag-count {
-      margin-left: auto;
-      font-size: 11px;
-      color: var(--muted);
-    }
-  `]
+  createRenderRoot() { return this }
+  
 
   @property({ type: String }) value = ''
   @property({ type: String }) placeholder = '选择标签'

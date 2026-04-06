@@ -1,49 +1,14 @@
 // web-lit/src/components/monitoring/performance-chart.ts
-import { LitElement, html, css } from 'lit'
+import { LitElement, html} from 'lit'
 import { customElement, property, state } from 'lit/decorators.js'
 import { deviceApi, type PerformanceHistory } from '../../services/devices'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
-import { hostStyles } from '../../styles/shared-host'
 
 @customElement('performance-chart')
 export class PerformanceChart extends LitElement {
-  static styles = [hostStyles, css`
-    :host { display: block; }
-    .chart-container {
-      background: var(--card);
-      border-radius: var(--radius-lg);
-      padding: 16px;
-    }
-    .card-title {
-      font-size: 14px;
-      font-weight: 600;
-      margin-bottom: 16px;
-    }
-    .time-range {
-      display: flex;
-      gap: 8px;
-      margin-bottom: 16px;
-    }
-    .time-btn {
-      padding: 6px 12px;
-      border: none;
-      border-radius: var(--radius-md);
-      background: var(--bg-secondary);
-      color: var(--text);
-      font-size: 12px;
-      cursor: pointer;
-    }
-    .time-btn.active { background: var(--accent); color: white; }
-    .chart { width: 100%; height: 300px; }
-    .no-data {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      height: 200px;
-      color: var(--muted);
-    }
-  `]
+  createRenderRoot() { return this }
+  
 
   @property({ type: String }) deviceId = ''
   @property({ type: Number }) refreshInterval = 10000

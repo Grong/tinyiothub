@@ -3,39 +3,19 @@
  * Manages component lifecycle within a single A2UI surface
  */
 
-import { LitElement, html, css } from 'lit'
+import { LitElement, html} from 'lit'
 import { customElement, property, state } from 'lit/decorators.js'
 import type { A2uiComponentDescriptor } from '../../../types/agent-types'
-import { hostStyles } from '../../../styles/shared-host'
 
 @customElement('a2ui-surface')
 export class A2uiSurface extends LitElement {
+  createRenderRoot() { return this }
   @property({ type: String }) surfaceId = ''
   @property({ type: String }) title = ''
   @state() components: A2uiComponentDescriptor[] = []
   @state() dataModel: Record<string, unknown> = {}
 
-  static styles = [hostStyles, css`
-    :host { display: block; }
-    .surface {
-      background: var(--card);
-      box-shadow: var(--glass-shadow-sm);
-      border-radius: var(--radius);
-      padding: 12px;
-      overflow: hidden;
-    }
-    .surface-title {
-      font-size: 0.8125rem;
-      font-weight: 600;
-      margin-bottom: 8px;
-      color: var(--text-muted);
-    }
-    .components {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-  `]
+  
 
   /** Set components externally (from message-group) */
   setComponents(components: A2uiComponentDescriptor[]) {

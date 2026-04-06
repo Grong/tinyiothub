@@ -38,19 +38,7 @@ export class App extends LitElement {
   // References to store unsubscribe functions
   private unsubs: (() => void)[] = []
 
-  static styles = css`
-    tinyiothub-app {
-      display: block;
-      min-height: 100vh;
-    }
-
-    /* app-header occupies the topbar grid area */
-    app-header {
-      grid-area: topbar;
-      display: block;
-    }
-  `
-
+  
   connectedCallback() {
     super.connectedCallback()
     this.setupRouter()

@@ -3,31 +3,21 @@
  * Dynamically renders a single A2UI component by type
  */
 
-import { LitElement, html, css, nothing } from 'lit'
+import { LitElement, html, nothing } from 'lit'
 import { customElement, property } from 'lit/decorators.js'
 import type { A2uiComponentDescriptor } from '../../../types/agent-types'
 import { getTagName } from './catalog/index'
-import { hostStyles } from '../../../styles/shared-host'
 
 @customElement('a2ui-component')
 export class A2uiComponent extends LitElement {
+  createRenderRoot() { return this }
   @property({ type: Object }) descriptor: A2uiComponentDescriptor | null = null
 
   private _el: Element | null = null
   private _lastDescriptor: A2uiComponentDescriptor | null = null
   private _boundHandleAction: ((e: Event) => void) | null = null
 
-  static styles = [hostStyles, css`
-    :host { display: block; }
-    .unknown {
-      padding: 8px;
-      background: var(--bg-elevated);
-      border: 1px dashed var(--border);
-      border-radius: 4px;
-      font-size: 0.75rem;
-      color: var(--text-muted);
-    }
-  `]
+  
 
   private _cleanup() {
     if (this._el && this._boundHandleAction) {

@@ -1,4 +1,4 @@
-import { LitElement, html, css } from 'lit'
+import { LitElement, html} from 'lit'
 import { customElement, state } from 'lit/decorators.js'
 import {
   $currentWorkspaceId,
@@ -8,10 +8,10 @@ import {
   type Workspace,
 } from '../stores/workspace-store'
 import { workspaceApi } from '../services/workspace'
-import { hostStyles } from '../styles/shared-host'
 
 @customElement('workspace-picker')
 export class WorkspacePicker extends LitElement {
+  createRenderRoot() { return this }
   @state() private workspaces: Workspace[] = []
   @state() private currentId: string | null = null
   @state() private loading = true
@@ -24,169 +24,7 @@ export class WorkspacePicker extends LitElement {
   private _unsubWorkspaces: (() => void) | null = null
   private _unsubCurrentId: (() => void) | null = null
 
-  static styles = [hostStyles, css`
-    :host {
-      display: block;
-    }
-    .picker {
-      padding: 8px 12px;
-    }
-    .picker-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 4px;
-    }
-    .picker-label {
-      font-size: 11px;
-      font-weight: 600;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-    }
-    .picker-actions {
-      display: flex;
-      gap: 2px;
-    }
-    .icon-btn {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 24px;
-      height: 24px;
-      border: none;
-      border-radius: 6px;
-      background: transparent;
-      color: var(--muted);
-      cursor: pointer;
-      padding: 0;
-      transition: background 0.15s, color 0.15s;
-    }
-    .icon-btn:hover {
-      background: var(--bg-hover);
-      color: var(--text);
-    }
-    .icon-btn svg {
-      width: 14px;
-      height: 14px;
-    }
-    .picker select {
-      width: 100%;
-      padding: 6px 8px;
-      border-radius: 6px;
-      border: 1px solid var(--border-strong);
-      background: var(--bg-elevated);
-      color: var(--text);
-      font-size: 13px;
-      cursor: pointer;
-      outline: none;
-      transition: box-shadow 0.15s;
-    }
-    .picker select:focus {
-      box-shadow: 0 0 0 1px var(--accent);
-    }
-    .create-form {
-      margin-top: 8px;
-      padding: 10px;
-      border-radius: 8px;
-      background: var(--bg-elevated);
-      border: 1px solid var(--border-strong);
-    }
-    .create-form input {
-      width: 100%;
-      padding: 6px 8px;
-      border-radius: 6px;
-      border: 1px solid var(--border-strong);
-      background: var(--bg);
-      color: var(--text);
-      font-size: 13px;
-      outline: none;
-      box-sizing: border-box;
-      transition: box-shadow 0.15s;
-    }
-    .create-form input:focus {
-      box-shadow: 0 0 0 1px var(--accent);
-    }
-    .create-form input::placeholder {
-      color: var(--muted);
-    }
-    .form-actions {
-      display: flex;
-      gap: 6px;
-      margin-top: 8px;
-      justify-content: flex-end;
-    }
-    .btn {
-      padding: 4px 12px;
-      border-radius: 6px;
-      border: none;
-      font-size: 12px;
-      font-weight: 500;
-      cursor: pointer;
-      transition: background 0.15s, opacity 0.15s;
-    }
-    .btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-    .btn-primary {
-      background: var(--accent);
-      color: var(--text-on-accent);
-    }
-    .btn-primary:hover:not(:disabled) {
-      background: var(--accent-hover);
-    }
-    .btn-ghost {
-      background: transparent;
-      color: var(--muted);
-    }
-    .btn-ghost:hover:not(:disabled) {
-      background: var(--bg-hover);
-      color: var(--text);
-    }
-    .error-msg {
-      margin-top: 6px;
-      font-size: 12px;
-      color: var(--danger);
-    }
-    .workspace-row {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-    }
-    .workspace-row select {
-      flex: 1;
-      min-width: 0;
-    }
-    .delete-btn {
-      flex-shrink: 0;
-    }
-    .btn-create-empty {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      width: 100%;
-      padding: 8px 12px;
-      border: 1px dashed var(--border-strong);
-      border-radius: 8px;
-      background: transparent;
-      color: var(--muted);
-      font-size: 13px;
-      cursor: pointer;
-      transition: border-color 0.15s, color 0.15s, background 0.15s;
-    }
-    .btn-create-empty:hover {
-      border-color: var(--accent);
-      color: var(--accent);
-      background: var(--accent-subtle);
-    }
-    .btn-create-empty svg {
-      width: 16px;
-      height: 16px;
-      flex-shrink: 0;
-    }
-  `]
+  
 
   connectedCallback() {
     super.connectedCallback()

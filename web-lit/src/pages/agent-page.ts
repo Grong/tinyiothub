@@ -2,7 +2,7 @@
  * Agent page - AI chat interface with A2UI rendering
  */
 
-import { LitElement, html, css } from 'lit'
+import { LitElement, html} from 'lit'
 import { customElement, state } from 'lit/decorators.js'
 import {
   $chatMessages,
@@ -20,101 +20,17 @@ import { sendAgentMessage } from '../services/agent'
 import type { A2uiMessage } from '../types/agent-types'
 import '../components/agent/chat-thread'
 import '../components/agent/chat-input'
-import { hostStyles } from '../styles/shared-host'
 
 @customElement('agent-page')
 export class AgentPage extends LitElement {
+  createRenderRoot() { return this }
   @state() private messages = $chatMessages.get()
   @state() private streamingContent = $streamingContent.get()
   @state() private isStreaming = $isStreaming.get()
   private _abortController: AbortController | null = null
   private _unsubs: (() => void)[] = []
 
-  static styles = [hostStyles, css`
-    :host {
-      display: flex;
-      flex-direction: column;
-      height: 100%;
-      flex: 1;
-      min-height: 0;
-    }
-    .header {
-      padding: 12px 24px;
-      box-shadow: 0 1px 0 var(--card-highlight);
-      font-size: 0.9375rem;
-      font-weight: 600;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex-shrink: 0;
-      color: var(--text-strong);
-      background: var(--chrome);
-    }
-    .header svg { width: 20px; height: 20px; color: var(--accent); }
-    .main {
-      flex: 1;
-      overflow: hidden;
-      display: flex;
-      flex-direction: column;
-    }
-    /* Welcome state */
-    .welcome {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 40px 24px;
-      text-align: center;
-    }
-    .welcome-icon {
-      width: 64px;
-      height: 64px;
-      border-radius: 16px;
-      background: linear-gradient(135deg, var(--accent), var(--accent-hover));
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin-bottom: 16px;
-    }
-    .welcome-icon svg { width: 32px; height: 32px; color: #fff; }
-    .welcome h2 {
-      font-size: 1.25rem;
-      font-weight: 600;
-      margin: 0 0 8px;
-      color: var(--text-strong);
-    }
-    .welcome p {
-      font-size: 0.875rem;
-      color: var(--muted);
-      margin: 0 0 24px;
-    }
-    .suggestions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      justify-content: center;
-      max-width: 500px;
-    }
-    .suggestion {
-      padding: 8px 16px;
-      border: none;
-      border-radius: 20px;
-      font-size: 0.8125rem;
-      background: var(--card);
-      cursor: pointer;
-      color: var(--text);
-      box-shadow: var(--glass-shadow-sm);
-      transition: box-shadow var(--duration-normal) var(--ease-out), background 0.15s;
-    }
-    .suggestion:hover {
-      box-shadow: var(--glass-shadow-hover);
-      background: var(--bg-elevated);
-    }
-    @media (max-width: 768px) {
-      .suggestions { max-width: 100%; }
-    }
-  `]
+  
 
   firstUpdated() {
     loadMessagesFromStorage()

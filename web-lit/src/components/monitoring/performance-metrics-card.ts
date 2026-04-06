@@ -1,86 +1,13 @@
 // web-lit/src/components/monitoring/performance-metrics-card.ts
-import { LitElement, html, css } from 'lit'
+import { LitElement, html} from 'lit'
 import { customElement, property, state } from 'lit/decorators.js'
 import { deviceApi } from '../../services/devices'
 import type { DeviceOnlineStatus, DeviceMetrics } from '../../services/devices'
-import { hostStyles } from '../../styles/shared-host'
 
 @customElement('performance-metrics-card')
 export class PerformanceMetricsCard extends LitElement {
-  static styles = [hostStyles, css`
-    :host { display: block; }
-    .card {
-      background: var(--card);
-      border-radius: var(--radius-lg);
-      padding: 16px;
-    }
-    .card-title {
-      font-size: 14px;
-      font-weight: 600;
-      margin-bottom: 16px;
-    }
-    .status-row {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding-bottom: 16px;
-      margin-bottom: 16px;
-      box-shadow: 0 1px 0 var(--card-highlight);
-    }
-    .status-icon {
-      width: 36px;
-      height: 36px;
-      border-radius: var(--radius-md);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-    }
-    .status-icon.online { background: var(--ok-subtle); color: var(--ok); }
-    .status-icon.offline { background: var(--bg-muted); color: var(--muted); }
-    .status-info { flex: 1; }
-    .status-text { font-size: 14px; font-weight: 600; }
-    .status-sub { font-size: 12px; color: var(--muted); }
-    .status-quick-metrics {
-      display: flex;
-      gap: 20px;
-    }
-    .quick-metric { text-align: center; }
-    .quick-metric-value { font-size: 16px; font-weight: 600; }
-    .quick-metric-label { font-size: 11px; color: var(--muted); }
-    .metrics-grid {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 12px;
-    }
-    .metric-item {
-      background: var(--bg-muted);
-      border-radius: var(--radius-md);
-      padding: 12px;
-    }
-    .metric-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 8px;
-    }
-    .metric-label { font-size: 12px; color: var(--muted); }
-    .metric-value { font-size: 24px; font-weight: 600; }
-    .metric-unit { font-size: 12px; color: var(--muted); margin-left: 4px; }
-    .metric-bar {
-      height: 4px;
-      background: var(--border);
-      border-radius: 2px;
-      margin-top: 8px;
-      overflow: hidden;
-    }
-    .metric-bar-fill {
-      height: 100%;
-      border-radius: 2px;
-      transition: width 0.3s;
-    }
-    .empty { text-align: center; padding: 24px; color: var(--muted); font-size: 13px; }
-  `]
+  createRenderRoot() { return this }
+  
 
   @property({ type: String }) deviceId = ''
   @state() private status: DeviceOnlineStatus | null = null

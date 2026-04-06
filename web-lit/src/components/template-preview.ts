@@ -1,60 +1,12 @@
 // web-lit/src/components/template-preview.ts
-import { LitElement, html, css } from 'lit'
+import { LitElement, html} from 'lit'
 import { customElement, property, state } from 'lit/decorators.js'
 import type { ProcessedDeviceTemplate } from '../services/templates'
-import { hostStyles } from '../styles/shared-host'
 
 @customElement('template-preview')
 export class TemplatePreview extends LitElement {
-  static styles = [hostStyles, css`
-    :host { display: flex; flex-direction: column; height: 100%; }
-    .tabs {
-      display: flex;
-      box-shadow: 0 1px 0 var(--card-highlight);
-      padding: 0 16px;
-    }
-    .tab {
-      padding: 12px 16px;
-      font-size: 13px;
-      color: var(--muted);
-      cursor: pointer;
-      border-bottom: 2px solid transparent;
-      margin-bottom: -1px;
-    }
-    .tab.active {
-      color: var(--accent);
-      border-bottom-color: var(--accent);
-    }
-    .content { flex: 1; overflow-y: auto; padding: 16px; }
-    .property-item, .command-item {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 10px 12px;
-      background: var(--bg);
-      border-radius: var(--radius-md);
-      margin-bottom: 8px;
-    }
-    .property-name, .command-name {
-      font-size: 13px;
-      font-weight: 500;
-      color: var(--text);
-    }
-    .property-meta, .command-meta {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-    }
-    .badge {
-      font-size: 10px;
-      padding: 2px 6px;
-      border-radius: var(--radius-sm);
-      background: var(--bg-muted);
-      color: var(--muted);
-    }
-    .badge.readonly { background: var(--warn-subtle); color: var(--warn); }
-    .badge.writable { background: var(--ok-subtle); color: var(--ok); }
-  `]
+  createRenderRoot() { return this }
+  
 
   @property({ type: Object }) template!: ProcessedDeviceTemplate
   @state() activeTab: 'properties' | 'commands' = 'properties'

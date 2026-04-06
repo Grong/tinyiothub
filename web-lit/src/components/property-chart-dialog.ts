@@ -1,91 +1,13 @@
 // web-lit/src/components/property-chart-dialog.ts
-import { LitElement, html, css } from 'lit'
+import { LitElement, html} from 'lit'
 import { customElement, property, state } from 'lit/decorators.js'
 import { deviceApi } from '../services/devices'
 import type { DeviceProperty, PerformanceHistory } from '../services/devices'
-import { hostStyles } from '../styles/shared-host'
 
 @customElement('property-chart-dialog')
 export class PropertyChartDialog extends LitElement {
-  static styles = [hostStyles, css`
-    :host { display: block; }
-    .overlay {
-      position: fixed;
-      inset: 0;
-      z-index: 1000;
-      background: rgba(0, 0, 0, 0.6);
-      backdrop-filter: blur(4px);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .dialog {
-      background: var(--bg);
-      width: 90vw;
-      max-width: 800px;
-      max-height: 80vh;
-      border-radius: var(--radius-lg);
-      display: flex;
-      flex-direction: column;
-    }
-    .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 16px 20px;
-      box-shadow: 0 1px 0 var(--card-highlight);
-    }
-    .header h3 { margin: 0; font-size: 16px; }
-    .close-btn {
-      width: 32px; height: 32px;
-      display: flex; align-items: center; justify-content: center;
-      border: none; border-radius: var(--radius-md);
-      background: transparent; color: var(--muted); cursor: pointer;
-    }
-    .body { flex: 1; overflow-y: auto; padding: 20px; }
-    .time-range {
-      display: flex;
-      gap: 8px;
-      margin-bottom: 16px;
-    }
-    .prop-info {
-      background: var(--card);
-      border-radius: var(--radius-md);
-      padding: 12px 16px;
-      margin-bottom: 16px;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 16px;
-      font-size: 13px;
-    }
-    .prop-info-item { display: flex; gap: 6px; }
-    .prop-info-label { color: var(--muted); }
-    .prop-info-value { font-weight: 500; }
-    .time-btn {
-      padding: 6px 12px;
-      border: none;
-      border-radius: var(--radius-md);
-      background: var(--card);
-      color: var(--text);
-      font-size: 12px;
-      cursor: pointer;
-    }
-    .time-btn.active { background: var(--accent); color: white; }
-    .chart-container {
-      height: 300px;
-      background: var(--card);
-      border-radius: var(--radius-md);
-      padding: 16px;
-    }
-    .chart-svg { width: 100%; height: 100%; }
-    .no-data {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      height: 200px;
-      color: var(--muted);
-    }
-  `]
+  createRenderRoot() { return this }
+  
 
   @property({ type: Boolean }) open = false
   @property({ type: Object }) property!: DeviceProperty

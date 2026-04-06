@@ -2,93 +2,16 @@
  * Chat input - textarea with send/stop button
  */
 
-import { LitElement, html, css } from 'lit'
+import { LitElement, html} from 'lit'
 import { customElement, property, state } from 'lit/decorators.js'
-import { hostStyles } from '../../styles/shared-host'
 
 @customElement('chat-input')
 export class ChatInput extends LitElement {
+  createRenderRoot() { return this }
   @property({ type: Boolean }) isStreaming = false
   @state() private value = ''
 
-  static styles = [hostStyles, css`
-    :host { display: block; flex-shrink: 0; }
-    .input-area {
-      padding: 12px 24px 16px;
-      box-shadow: 0 -1px 0 var(--card-highlight);
-      background: var(--chrome);
-    }
-    .input-row {
-      display: flex;
-      gap: 8px;
-      align-items: flex-end;
-    }
-    textarea {
-      flex: 1;
-      resize: none;
-      border: none;
-      border-radius: 12px;
-      padding: 10px 14px;
-      font-size: 0.875rem;
-      font-family: inherit;
-      line-height: 1.5;
-      min-height: 42px;
-      max-height: 150px;
-      overflow-y: auto;
-      background: var(--card);
-      color: var(--text);
-      outline: none;
-      box-shadow: var(--glass-shadow-sm);
-      transition: box-shadow var(--duration-normal) var(--ease-out);
-    }
-    textarea:focus {
-      box-shadow: var(--focus-ring);
-    }
-    textarea:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-    textarea::placeholder {
-      color: var(--text-muted);
-    }
-    .send-btn {
-      width: 42px;
-      height: 42px;
-      border-radius: 50%;
-      border: none;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      flex-shrink: 0;
-      transition: background 0.15s;
-    }
-    .send-btn.send {
-      background: var(--accent);
-      color: var(--text-on-accent);
-    }
-    .send-btn.send:hover {
-      background: var(--accent-hover);
-    }
-    .send-btn.send:disabled {
-      opacity: 0.4;
-      cursor: not-allowed;
-    }
-    .send-btn.stop {
-      background: var(--danger);
-      color: var(--text-on-accent);
-    }
-    .send-btn.stop:hover {
-      background: var(--danger-hover);
-    }
-    .send-btn svg {
-      width: 18px;
-      height: 18px;
-    }
-    @media (max-width: 768px) {
-      .input-area { padding: 8px 12px 12px; }
-    }
-  `]
+  
 
   private _handleInput(e: Event) {
     const textarea = e.target as HTMLTextAreaElement

@@ -1,9 +1,9 @@
-import { LitElement, html, css } from 'lit'
+import { LitElement, html} from 'lit'
 import { customElement, property } from 'lit/decorators.js'
-import { hostStyles } from '../../../../styles/shared-host'
 
 @customElement('progress-indicator')
 export class ProgressIndicator extends LitElement {
+  createRenderRoot() { return this }
   @property({ type: Number }) value = 0
   @property({ type: String }) label = ''
   @property({ type: String }) status: 'running' | 'completed' | 'failed' | 'cancelled' = 'running'
@@ -11,48 +11,7 @@ export class ProgressIndicator extends LitElement {
   @property({ type: Number }) total = 0
   @property({ type: Boolean }) showCancel = false
 
-  static styles = [hostStyles, css`
-    :host { display: block; }
-    .container { padding: 8px 0; }
-    .bar-bg {
-      height: 6px;
-      background: var(--border);
-      border-radius: 3px;
-      overflow: hidden;
-    }
-    .bar-fill {
-      height: 100%;
-      border-radius: 3px;
-      transition: width 0.3s ease;
-    }
-    .bar-fill.running { background: var(--accent); }
-    .bar-fill.completed { background: var(--ok); }
-    .bar-fill.failed { background: var(--danger); }
-    .bar-fill.cancelled { background: var(--text-muted); }
-    .info {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-top: 6px;
-      font-size: 0.75rem;
-      color: var(--text-muted);
-    }
-    .status-label { }
-    .status-label.running { color: var(--accent); }
-    .status-label.completed { color: var(--ok); }
-    .status-label.failed { color: var(--danger); }
-    .status-label.cancelled { color: var(--text-muted); }
-    .pct { font-family: monospace; }
-    button {
-      font-size: 0.75rem;
-      padding: 2px 8px;
-      border-radius: 4px;
-      box-shadow: 0 0 0 1px var(--border);
-      background: transparent;
-      cursor: pointer;
-      color: var(--danger);
-    }
-  `]
+  
 
   private _statusLabels: Record<string, string> = {
     running: '进行中',

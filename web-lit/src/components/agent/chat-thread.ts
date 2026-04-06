@@ -2,14 +2,13 @@
  * Chat thread - scrollable message list
  */
 
-import { LitElement, html, css } from 'lit'
+import { LitElement, html} from 'lit'
 import { customElement, property } from 'lit/decorators.js'
 import { repeat } from 'lit/directives/repeat.js'
 import type { ChatMessage } from '../../types/agent-types'
 import { scheduleChatScroll, handleChatScroll, type ChatScrollHost } from '../../lib/chat-scroll'
 import './message-group'
 import './streaming-message'
-import { hostStyles } from '../../styles/shared-host'
 
 @customElement('chat-thread')
 export class ChatThread extends LitElement implements ChatScrollHost {
@@ -23,20 +22,7 @@ export class ChatThread extends LitElement implements ChatScrollHost {
   chatUserNearBottom = true
   chatNewMessagesBelow = false
 
-  static styles = [hostStyles, css`
-    :host { display: block; flex: 1; overflow: hidden; }
-    .chat-thread {
-      height: 100%;
-      overflow-y: auto;
-      padding: 16px 24px;
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
-    }
-    @media (max-width: 768px) {
-      .chat-thread { padding: 12px; gap: 12px; }
-    }
-  `]
+  
 
   disconnectedCallback() {
     super.disconnectedCallback()

@@ -1,73 +1,12 @@
 // web-lit/src/components/template-card.ts
-import { LitElement, html, css } from 'lit'
+import { LitElement, html} from 'lit'
 import { customElement, property } from 'lit/decorators.js'
 import type { ProcessedDeviceTemplate } from '../services/templates'
-import { hostStyles } from '../styles/shared-host'
 
 @customElement('template-card')
 export class TemplateCard extends LitElement {
-  static styles = [hostStyles, css`
-    :host { display: block; cursor: pointer; }
-    .card {
-      background: var(--card);
-      border-radius: var(--radius-lg);
-      padding: 16px;
-      border: 2px solid transparent;
-      transition: border-color 0.15s ease, transform 0.15s ease;
-    }
-    .card:hover {
-      border-color: var(--accent);
-      transform: translateY(-2px);
-    }
-    .card-header {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      margin-bottom: 8px;
-    }
-    .category-icon {
-      width: 40px;
-      height: 40px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: var(--radius-md);
-      font-size: 20px;
-      background: var(--bg-muted);
-    }
-    .template-name {
-      font-size: 14px;
-      font-weight: 600;
-      color: var(--text-strong);
-      margin: 0;
-    }
-    .template-meta {
-      font-size: 12px;
-      color: var(--muted);
-    }
-    .template-description {
-      font-size: 13px;
-      color: var(--text);
-      margin: 8px 0;
-      display: -webkit-box;
-      -webkit-line-clamp: 2;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
-    }
-    .template-tags {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 4px;
-      margin-top: 8px;
-    }
-    .tag {
-      font-size: 10px;
-      padding: 2px 6px;
-      border-radius: var(--radius-sm);
-      background: var(--bg-muted);
-      color: var(--muted);
-    }
-  `]
+  createRenderRoot() { return this }
+  
 
   @property({ type: Object }) template!: ProcessedDeviceTemplate
   @property({ type: Function }) onUse!: (t: ProcessedDeviceTemplate) => void

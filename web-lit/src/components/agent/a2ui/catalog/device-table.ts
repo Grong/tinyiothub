@@ -1,6 +1,5 @@
-import { LitElement, html, css } from 'lit'
+import { LitElement, html} from 'lit'
 import { customElement, property } from 'lit/decorators.js'
-import { hostStyles } from '../../../../styles/shared-host'
 
 interface TableColumn {
   key: string
@@ -13,56 +12,14 @@ interface TableRow {
 
 @customElement('device-table')
 export class DeviceTable extends LitElement {
+  createRenderRoot() { return this }
   @property({ type: Array }) columns: TableColumn[] = []
   @property({ type: Array }) rows: TableRow[] = []
   @property({ type: Number }) page = 1
   @property({ type: Number }) pageSize = 10
   @property({ type: Number }) totalCount = 0
 
-  static styles = [hostStyles, css`
-    :host { display: block; }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.8125rem;
-    }
-    th {
-      text-align: left;
-      padding: 6px 8px;
-      box-shadow: 0 2px 0 0 var(--border);
-      font-weight: 600;
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-    td {
-      padding: 6px 8px;
-      box-shadow: 0 1px 0 var(--card-highlight);
-    }
-    tbody tr { cursor: pointer; }
-    tr:hover td {
-      background: var(--bg-elevated);
-    }
-    .pagination {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-top: 8px;
-      font-size: 0.75rem;
-      color: var(--text-muted);
-    }
-    .pagination button {
-      padding: 3px 8px;
-      box-shadow: var(--glass-shadow-sm);
-      border-radius: 4px;
-      background: transparent;
-      cursor: pointer;
-      font-size: 0.75rem;
-      color: var(--text);
-    }
-    .pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
-  `]
+  
 
   private get totalPages(): number {
     return Math.ceil(this.totalCount / this.pageSize) || 1

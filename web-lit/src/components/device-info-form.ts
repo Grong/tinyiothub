@@ -1,66 +1,14 @@
 // web-lit/src/components/device-info-form.ts
-import { LitElement, html, css } from 'lit'
+import { LitElement, html} from 'lit'
 import { customElement, property, state } from 'lit/decorators.js'
 import { driverApi, type Driver, type DriverConfigOption } from '../services/drivers'
 import type { ProcessedDeviceTemplate } from '../services/templates'
 import { isFieldRequired } from '../services/templates'
-import { hostStyles } from '../styles/shared-host'
 
 @customElement('device-info-form')
 export class DeviceInfoForm extends LitElement {
-  static styles = [hostStyles, css`
-    :host { display: block; }
-    .form-group { margin-bottom: 16px; }
-    .form-label {
-      display: block;
-      font-size: 13px;
-      font-weight: 500;
-      color: var(--text);
-      margin-bottom: 6px;
-    }
-    .form-label .required { color: var(--danger); margin-left: 2px; }
-    .form-input, .form-select, .form-textarea {
-      width: 100%;
-      padding: 10px 12px;
-      background: var(--card);
-      border: none;
-      border-radius: var(--radius-md);
-      color: var(--text);
-      font-size: 14px;
-      box-sizing: border-box;
-      box-shadow: var(--glass-shadow-sm);
-      transition: box-shadow var(--duration-fast) ease;
-    }
-    .form-input:focus, .form-select:focus, .form-textarea:focus {
-      outline: none;
-      box-shadow: var(--focus-ring);
-    }
-    .form-textarea { resize: vertical; min-height: 80px; }
-    .form-error {
-      font-size: 12px;
-      color: var(--danger);
-      margin-top: 4px;
-    }
-    .form-hint {
-      font-size: 12px;
-      color: var(--muted);
-      margin-top: 4px;
-    }
-    .form-section-title {
-      font-size: 13px;
-      font-weight: 600;
-      color: var(--text-secondary);
-      margin: 20px 0 12px;
-      padding-bottom: 6px;
-      box-shadow: 0 1px 0 var(--card-highlight);
-    }
-    .loading {
-      text-align: center;
-      padding: 16px;
-      color: var(--muted);
-      font-size: 13px;
-    }
-  `]
+  createRenderRoot() { return this }
+  
 
   @property({ type: Object }) template!: ProcessedDeviceTemplate
   @property({ type: String }) value = ''
