@@ -2,6 +2,9 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import type { AgentsState, AgentsPanel, AgentConfig } from "../controllers/agents.js";
 import { createAgentsState, loadAgents, loadAgentConfig, saveAgentConfig, loadToolsCatalog, toggleTool } from "../controllers/agents.js";
+import { renderModelTab } from "./agents-model-tab.js";
+import { renderToolsTab } from "./agents-tools-tab.js";
+import { renderPlaceholder } from "./agents-placeholder.js";
 
 const panelLabels: Record<AgentsPanel, string> = {
   overview: "概览",
@@ -24,6 +27,7 @@ export class ViewAgents extends LitElement {
   connectedCallback(): void {
     super.connectedCallback();
     loadAgents(this.state).then(() => {
+      this.requestUpdate();
       if (this.state.selectedAgentId) {
         this.onAgentSelected(this.state.selectedAgentId);
       }
@@ -32,8 +36,10 @@ export class ViewAgents extends LitElement {
 
   private onAgentSelected(agentId: string): void {
     this.state = { ...this.state, selectedAgentId: agentId, activePanel: "overview" };
-    loadAgentConfig(this.state, agentId);
-    loadToolsCatalog(this.state, agentId);
+    Promise.all([
+      loadAgentConfig(this.state, agentId),
+      loadToolsCatalog(this.state, agentId),
+    ]).then(() => this.requestUpdate());
   }
 
   private async onSaveConfig(): Promise<void> {
@@ -51,96 +57,8 @@ export class ViewAgents extends LitElement {
     this.requestUpdate();
   }
 
-  private renderOverview(): ReturnType<typeof html> {
-    const config = this.state.config;
-    if (this.state.configLoading) {
-      return html`<div class="agent-panel-loading">加载中...</div>`;
-    }
-    if (!config) {
-      return html`<div class="agent-panel-empty">未找到配置</div>`;
-    }
-
-    const models = ["claude-sonnet-4-5", "claude-haiku-4-5", "gpt-4o", "gpt-4o-mini"];
-    const currentModel = config.model || models[0];
-
-    return html`
-      <div class="agent-overview">
-        <div class="agent-field">
-          <label>模型</label>
-          <div class="agent-model-chips">
-            ${models.map((m) => html`
-              <button class="agent-chip ${m === currentModel ? 'active' : ''}"
-                      @click=${() => {
-                        this.state = {
-                          ...this.state,
-                          config: { ...config, model: m },
-                          configDirty: true,
-                        };
-                      }}>
-                ${m}
-              </button>
-            `)}
-          </div>
-        </div>
-        <div class="agent-field">
-          <label>工作空间</label>
-          <span class="agent-value">${config.workspace || "默认"}</span>
-        </div>
-        <div class="agent-actions">
-          <button class="btn btn-primary" ?disabled=${!this.state.configDirty}
-                  @click=${() => this.onSaveConfig()}>
-            保存${this.state.configDirty ? " *" : ""}
-          </button>
-          <button class="btn" @click=${() => {
-            if (this.state.selectedAgentId) loadAgentConfig(this.state, this.state.selectedAgentId);
-          }}>重新加载</button>
-        </div>
-      </div>
-    `;
-  }
-
-  private renderTools(): ReturnType<typeof html> {
-    if (this.state.toolsCatalogLoading) {
-      return html`<div class="agent-panel-loading">加载工具目录...</div>`;
-    }
-    if (!this.state.toolsCatalog?.length) {
-      return html`<div class="agent-panel-empty">暂无可用工具</div>`;
-    }
-
-    return html`
-      <div class="agent-tools">
-        ${this.state.toolsCatalog.map((group) => html`
-          <div class="agent-tool-group">
-            <h4 class="agent-tool-group__title">${group.label || group.name}</h4>
-            <div class="agent-tool-list">
-              ${(group.tools || []).map((tool: Record<string, unknown>) => html`
-                <div class="agent-tool-item">
-                  <div class="agent-tool-info">
-                    <span class="agent-tool-name">${tool.name as string}</span>
-                    <span class="agent-tool-desc">${(tool.description as string) || ""}</span>
-                  </div>
-                  <label class="agent-toggle">
-                    <input type="checkbox"
-                           ?checked=${tool.enabled as boolean}
-                           @change=${(e: Event) => this.onToggleTool(tool.name as string, (e.target as HTMLInputElement).checked)} />
-                    <span class="agent-toggle__slider"></span>
-                  </label>
-                </div>
-              `)}
-            </div>
-          </div>
-        `)}
-      </div>
-    `;
-  }
-
-  private renderPlaceholder(title: string): ReturnType<typeof html> {
-    return html`
-      <div class="agent-panel-placeholder">
-        <span class="agent-placeholder-icon">⚡</span>
-        <p>${title} — 即将推出</p>
-      </div>
-    `;
+  private _patchState(patch: Partial<AgentsState>): void {
+    this.state = { ...this.state, ...patch };
   }
 
   render(): ReturnType<typeof html> {
@@ -160,14 +78,18 @@ export class ViewAgents extends LitElement {
         <div class="agents-header">
           <h2>Agent 管理</h2>
           <div class="agents-selector">
-            ${agents.map((a) => html`
-              <button class="agent-pill ${a.id === this.state.selectedAgentId ? 'active' : ''}"
-                      @click=${() => this.onAgentSelected(a.id)}>
-                ${a.name || a.id}
-              </button>
-            `)}
+            <select class="agent-dropdown"
+                    @change=${(e: Event) => this.onAgentSelected((e.target as HTMLSelectElement).value)}>
+              ${agents.map((a) => html`
+                <option value=${a.id} ?selected=${a.id === this.state.selectedAgentId}>
+                  ${a.name || a.id}
+                </option>
+              `)}
+            </select>
           </div>
         </div>
+
+        <div class="agents-sidebar"></div>
 
         <div class="agent-tabs">
           ${allPanels.map((panel) => html`
@@ -178,13 +100,13 @@ export class ViewAgents extends LitElement {
           `)}
         </div>
 
-        <div class="agent-panel-content">
-          ${this.state.activePanel === "overview" ? this.renderOverview() : nothing}
-          ${this.state.activePanel === "tools" ? this.renderTools() : nothing}
-          ${this.state.activePanel === "files" ? this.renderPlaceholder("文件管理") : nothing}
-          ${this.state.activePanel === "skills" ? this.renderPlaceholder("技能管理") : nothing}
-          ${this.state.activePanel === "channels" ? this.renderPlaceholder("渠道管理") : nothing}
-          ${this.state.activePanel === "cron" ? this.renderPlaceholder("定时任务") : nothing}
+        <div class="agents-main">
+          ${this.state.activePanel === "overview" ? renderModelTab(this.state, this._patchState.bind(this), this.onSaveConfig.bind(this), () => { if (this.state.selectedAgentId) loadAgentConfig(this.state, this.state.selectedAgentId).then(() => this.requestUpdate()); }) : nothing}
+          ${this.state.activePanel === "tools" ? renderToolsTab(this.state, this.searchFilter, (v) => { this.searchFilter = v; this.requestUpdate(); }, this.onToggleTool.bind(this)) : nothing}
+          ${this.state.activePanel === "files" ? renderPlaceholder("files") : nothing}
+          ${this.state.activePanel === "skills" ? renderPlaceholder("skills") : nothing}
+          ${this.state.activePanel === "channels" ? renderPlaceholder("channels") : nothing}
+          ${this.state.activePanel === "cron" ? renderPlaceholder("cron") : nothing}
         </div>
       </div>
     `;

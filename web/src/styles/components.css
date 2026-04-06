@@ -2298,6 +2298,7 @@
 .chat-layout {
   display: flex;
   height: 100%;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -2470,20 +2471,45 @@
 
 .agents-layout {
   display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+  grid-template-rows: auto auto 1fr;
   gap: 16px;
+  height: 100%;
+  min-height: 0;
+}
+
+.agents-header {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.agents-header h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.agent-tabs {
+  grid-column: 1 / -1;
 }
 
 .agents-sidebar {
   display: grid;
   gap: 12px;
-  align-self: start;
+  align-content: start;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .agents-main {
   display: grid;
   gap: 16px;
-  align-self: start;
+  align-content: start;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .agent-list {
