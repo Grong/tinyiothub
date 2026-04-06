@@ -9,12 +9,13 @@ import type { ChatMessage } from '../../types/agent-types'
 import { toSanitizedMarkdownHtml } from '../../lib/markdown'
 import './a2ui/a2ui-surface'
 import './a2ui/a2ui-component'
+import { hostStyles } from '../../styles/shared-host'
 
 @customElement('message-group')
 export class MessageGroup extends LitElement {
   @property({ type: Object }) message: ChatMessage | null = null
 
-  static styles = css`
+  static styles = [hostStyles, css`
     :host { display: block; }
     .group {
       display: flex;
@@ -36,12 +37,12 @@ export class MessageGroup extends LitElement {
       flex-shrink: 0;
     }
     .avatar.user {
-      background: var(--accent, #6366f1);
-      color: #fff;
+      background: var(--accent);
+      color: var(--accent-foreground);
     }
     .avatar.assistant {
-      background: var(--bg-elevated, #e2e8f0);
-      color: var(--text, #1a1a1a);
+      background: var(--bg-elevated);
+      color: var(--text);
     }
     .content {
       display: flex;
@@ -56,12 +57,13 @@ export class MessageGroup extends LitElement {
       line-height: 1.6;
     }
     .bubble.user {
-      background: var(--accent, #6366f1);
-      color: #fff;
+      background: var(--accent);
+      color: var(--accent-foreground);
     }
     .bubble.assistant {
-      background: var(--bg-elevated, #f8fafc);
-      color: var(--text, #1a1a1a);
+      background: var(--card);
+      color: var(--text);
+      box-shadow: var(--glass-shadow-sm);
     }
     .bubble :deep(pre) {
       background: rgba(0,0,0,0.1);
@@ -83,9 +85,12 @@ export class MessageGroup extends LitElement {
       margin: 8px 0;
     }
     .bubble :deep(th), .bubble :deep(td) {
-      border: 1px solid var(--border, #e2e8f0);
+      box-shadow: inset 0 0 0 1px var(--border);
       padding: 4px 8px;
       font-size: 0.8125rem;
+    }
+    .bubble :deep(th) {
+      background: var(--bg-elevated);
     }
     .timestamp {
       font-size: 0.6875rem;
@@ -98,7 +103,7 @@ export class MessageGroup extends LitElement {
       gap: 8px;
       margin-top: 4px;
     }
-  `
+  `]
 
   private _formatTime(ts: number): string {
     return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
