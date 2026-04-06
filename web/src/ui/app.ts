@@ -302,7 +302,7 @@ export class TinyIoTHubApp extends LitElement {
           ${this.renderNav()}
         </nav>
         <div class="content">
-          ${this.currentRoute.startsWith("devices/") ? nothing : html`
+          ${this.currentRoute.startsWith("devices/") || this.currentRoute === "chat" ? nothing : html`
           <section class="content-header">
             <div>
               <div class="page-title">${this.getPageTitle()}</div>

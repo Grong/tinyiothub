@@ -2297,15 +2297,9 @@
    =========================================== */
 .chat-layout {
   display: flex;
+  flex-direction: column;
   height: 100%;
   min-height: 0;
-  overflow: hidden;
-}
-
-.chat-main {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
   overflow: hidden;
 }
 
@@ -2313,40 +2307,6 @@
   flex: 1;
   overflow-y: auto;
   padding: 16px;
-}
-
-/* ===========================================
-   Chat view sidebar
-   =========================================== */
-.chat-sidebar {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px;
-  overflow: hidden;
-  transition: width 0.2s ease, padding 0.2s ease;
-}
-
-.chat-sidebar.collapsed {
-  min-width: 0;
-  width: 0;
-  padding: 8px 4px;
-  overflow: hidden;
-  border-right: none;
-}
-
-.chat-sidebar-toggle {
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  padding: 4px 8px;
-  font-size: 12px;
-  align-self: flex-start;
-}
-
-.chat-sidebar-toggle:hover {
-  color: var(--text);
 }
 
 /* ===========================================
