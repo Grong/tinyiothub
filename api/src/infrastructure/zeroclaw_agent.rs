@@ -1341,19 +1341,11 @@ mod tests {
         assert!(err.to_string().contains("missing-agent"));
     }
 
-    #[test]
-    fn test_fallback_agent_client_chat_abort_returns_unavailable() {
-        // Test chat_abort which still returns Unavailable in fallback
-        let client = FallbackAgentClient::with_agents(
-            sqlx::sqlite::SqlitePoolOptions::new()
-                .max_connections(1)
-                .connect("sqlite::memory:")
-                .unwrap(),
-            vec![],
-        );
-        let result = tokio::runtime::Runtime::new().unwrap().block_on(
-            client.chat_abort("agent1", "session1", None)
-        );
+    #[tokio::test]
+    async fn test_fallback_agent_client_chat_abort_returns_unavailable() {
+        let pool = create_test_pool().await;
+        let client = FallbackAgentClient::with_agents(pool, vec![]);
+        let result = client.chat_abort("agent1", "session1", None).await;
         assert!(result.is_err());
         match result.unwrap_err() {
             AgentError::Unavailable(msg) => {
@@ -1364,25 +1356,19 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_fallback_agent_client_list_agents() {
+    #[tokio::test]
+    async fn test_fallback_agent_client_list_agents() {
+        let pool = create_test_pool().await;
         let client = FallbackAgentClient::with_agents(
-            sqlx::sqlite::SqlitePoolOptions::new()
-                .max_connections(1)
-                .connect("sqlite::memory:")
-                .unwrap(),
-            vec![
-                AgentInfo {
-                    id: "a1".to_string(),
-                    name: "Agent One".to_string(),
-                    status: "active".to_string(),
-                    created_at: None,
-                },
-            ],
+            pool,
+            vec![AgentInfo {
+                id: "a1".to_string(),
+                name: "Agent One".to_string(),
+                status: "active".to_string(),
+                created_at: None,
+            }],
         );
-        let result = tokio::runtime::Runtime::new().unwrap().block_on(
-            client.list_agents()
-        );
+        let result = client.list_agents().await;
         let json = result.unwrap();
         let agents = json.as_object().unwrap().get("agents").unwrap().as_array().unwrap();
         assert_eq!(agents.len(), 1);
@@ -1670,7 +1656,7 @@ mod tests {
             let tools = group
                 .as_object()
                 .and_then(|v| v.get("tools"))
-                .and_then(|v| v.as_array())
+                .and_then(|v| v.as_array().cloned())
                 .unwrap_or_default();
 
             for tool in tools {
@@ -1815,7 +1801,7 @@ mod tests {
             let tools = group
                 .as_object()
                 .and_then(|v| v.get("tools"))
-                .and_then(|v| v.as_array())
+                .and_then(|v| v.as_array().cloned())
                 .unwrap_or_default();
 
             for tool in tools {
@@ -2460,7 +2446,7 @@ mod tests {
             let tools = group
                 .as_object()
                 .and_then(|v| v.get("tools"))
-                .and_then(|v| v.as_array())
+                .and_then(|v| v.as_array().cloned())
                 .unwrap_or_default();
 
             for tool in tools {
