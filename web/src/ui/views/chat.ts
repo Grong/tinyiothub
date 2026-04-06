@@ -13,6 +13,7 @@ import {
   renderStreamingGroup,
   renderReadingIndicatorGroup,
 } from "../chat/grouped-render.js";
+import { A2uiRendererEngine } from "../chat/a2ui/a2ui-renderer.js";
 
 @customElement("view-chat")
 export class ChatView extends LitElement {
@@ -24,6 +25,7 @@ export class ChatView extends LitElement {
   @state() agentId: string = "";
 
   private _pollTimer: ReturnType<typeof setInterval> | null = null;
+  private a2uiRenderer = new A2uiRendererEngine();
 
   createRenderRoot() {
     return this;
@@ -36,6 +38,7 @@ export class ChatView extends LitElement {
     this.agentId = "default"; // TODO: get from URL params or store
     this.sessionsList = [{ key: defaultKey, label: "新会话" }];
     this.chatState = createChatState(this.sessionKey, this.agentId);
+    this._bindA2uiCallback();
     loadChatHistory(this.chatState).then(() => this.requestUpdate());
   }
 
@@ -47,6 +50,8 @@ export class ChatView extends LitElement {
   private switchSession(key: string): void {
     this.sessionKey = key;
     this.chatState = createChatState(key, this.agentId);
+    this.a2uiRenderer.clear();
+    this._bindA2uiCallback();
     loadChatHistory(this.chatState).then(() => {
       this.requestUpdate();
       this.scrollToBottom();
@@ -70,11 +75,20 @@ export class ChatView extends LitElement {
     const newKey = crypto.randomUUID();
     this.sessionKey = newKey;
     this.chatState = createChatState(newKey, this.agentId);
+    this.a2uiRenderer.clear();
+    this._bindA2uiCallback();
     this.sessionsList = [
       ...this.sessionsList,
       { key: newKey, label: "新会话" },
     ];
     this.requestUpdate();
+  }
+
+  private _bindA2uiCallback(): void {
+    this.chatState.onA2ui = (jsonl: string) => {
+      this.a2uiRenderer.handleA2uiMessage(jsonl);
+      this.requestUpdate();
+    };
   }
 
   private _startStreamPolling(): void {
@@ -148,6 +162,7 @@ export class ChatView extends LitElement {
             ${this.chatState.chatSending && !this.chatState.chatStream
               ? renderReadingIndicatorGroup()
               : nothing}
+            ${this.a2uiRenderer.renderAllSurfaces()}
           </div>
           <div class="chat-input-area">
             <textarea

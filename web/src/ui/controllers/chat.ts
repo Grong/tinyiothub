@@ -29,6 +29,7 @@ export type ChatState = {
   chatStream: string | null;
   chatStreamStartedAt: number | null;
   lastError: string | null;
+  onA2ui?: (jsonl: string) => void;
 };
 
 export function createChatState(sessionKey: string, agentId: string): ChatState {
@@ -205,6 +206,10 @@ export function handleChatEvent(state: ChatState, payload: ChatEventPayload): vo
     state.chatStream = null;
     state.chatRunId = null;
     state.chatStreamStartedAt = null;
+  }
+
+  if (payload.a2ui && state.onA2ui) {
+    state.onA2ui(payload.a2ui);
   }
 }
 
