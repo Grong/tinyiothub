@@ -1122,65 +1122,64 @@ export class DevicesView extends LitElement {
     const categories = Object.keys(groups);
 
     return html`
-      <div style="padding: 20px 24px;">
-        <p style="text-align: center; color: var(--muted); font-size: 14px; margin: 0 0 16px;">
-          选择一个设备模板来快速创建和配置您的IoT设备
-        </p>
-        <!-- Search bar centered, 640px -->
-        <div style="display: flex; justify-content: center; margin-bottom: 20px;">
-          <div style="position: relative; width: 100%; max-width: 640px;">
-            <span style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--muted);">
-              ${icons.search}
-            </span>
-            <input
-              type="text"
-              placeholder="搜索设备模板..."
-              .value=${this.wizTemplateSearch}
-              @input=${(e: Event) => { this.wizTemplateSearch = (e.target as HTMLInputElement).value; }}
-              style="width: 100%; padding: 8px 12px 8px 34px; box-sizing: border-box; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 14px;"
-            />
-          </div>
+      <p style="text-align: center; color: var(--muted); font-size: 14px; margin: 0 0 20px;">
+        选择一个设备模板来快速创建和配置您的IoT设备
+      </p>
+      <!-- Search bar centered, max 640px -->
+      <div style="display: flex; justify-content: center; margin-bottom: 24px;">
+        <div style="position: relative; width: 100%; max-width: 640px;">
+          <span style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--muted);">
+            ${icons.search}
+          </span>
+          <input
+            type="text"
+            placeholder="搜索设备模板..."
+            .value=${this.wizTemplateSearch}
+            @input=${(e: Event) => { this.wizTemplateSearch = (e.target as HTMLInputElement).value; }}
+            style="width: 100%; padding: 10px 14px 10px 38px; box-sizing: border-box; border-radius: 10px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 14px;"
+          />
         </div>
-
-        ${this.wizTemplateLoading ? html`
-          <div style="display: flex; align-items: center; justify-content: center; padding: 40px;">
-            <span class="loading-spinner"></span>
-            <span style="margin-left: 8px; color: var(--muted);">加载中...</span>
-          </div>
-        ` : this.filteredWizardTemplates.length === 0 ? html`
-          <div style="text-align: center; padding: 40px;">
-            <div style="font-size: 48px; margin-bottom: 12px;">📦</div>
-            <div style="font-size: 16px; font-weight: 500; color: var(--text);">没有找到匹配的模板</div>
-            <div style="font-size: 13px; color: var(--muted); margin-top: 4px;">尝试调整搜索条件或浏览其他分类</div>
-          </div>
-        ` : html`
-          ${categories.map(cat => html`
-            <div style="margin-bottom: 24px;">
-              <div style="display: flex; align-items: center; margin-bottom: 12px;">
-                <span style="font-size: 16px; font-weight: 600;">${CATEGORY_LABELS[cat] || cat}</span>
-                <span style="font-size: 12px; color: var(--muted); margin-left: 12px;">${groups[cat].length} 个模板</span>
-              </div>
-              <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;">
-                ${groups[cat].map(t => this.renderTemplateCard(t))}
-              </div>
-            </div>
-          `)}
-        `}
       </div>
+
+      ${this.wizTemplateLoading ? html`
+        <div style="display: flex; align-items: center; justify-content: center; padding: 60px;">
+          <span class="loading-spinner"></span>
+          <span style="margin-left: 8px; color: var(--muted);">加载中...</span>
+        </div>
+      ` : this.filteredWizardTemplates.length === 0 ? html`
+        <div style="text-align: center; padding: 60px;">
+          <div style="font-size: 48px; margin-bottom: 12px;">📦</div>
+          <div style="font-size: 16px; font-weight: 500; color: var(--text);">没有找到匹配的模板</div>
+          <div style="font-size: 13px; color: var(--muted); margin-top: 4px;">尝试调整搜索条件或浏览其他分类</div>
+        </div>
+      ` : html`
+        ${categories.map(cat => html`
+          <div style="margin-bottom: 28px;">
+            <div style="display: flex; align-items: center; margin-bottom: 14px;">
+              <span style="font-size: 16px; font-weight: 600;">${CATEGORY_LABELS[cat] || cat}</span>
+              <span style="font-size: 12px; color: var(--muted); margin-left: 12px;">${groups[cat].length} 个模板</span>
+            </div>
+            <div class="wizard-template-grid">
+              ${groups[cat].map(t => this.renderTemplateCard(t))}
+            </div>
+          </div>
+        `)}
+      `}
     `;
   }
 
   renderTemplateCard(t: ProcessedTemplate) {
     const displayName = getLocalizedText(t.displayName, t.name);
-    const isSelected = this.wizSelectedTemplate?.id === t.id;
     return html`
       <div
         class="card"
-        style=${`padding: 14px; cursor: pointer; transition: border-color 0.15s; ${isSelected ? 'border-color: var(--primary, #3b82f6); box-shadow: 0 0 0 1px var(--primary, #3b82f6);' : ''}`}
+        style="padding: 16px; cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s;"
         @click=${() => this.selectTemplate(t)}
+        @mouseenter=${(e: Event) => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--primary, #3b82f6)'; (e.currentTarget as HTMLElement).style.boxShadow = '0 0 0 1px var(--primary, #3b82f6)'; }}
+        @mouseleave=${(e: Event) => { (e.currentTarget as HTMLElement).style.borderColor = ''; (e.currentTarget as HTMLElement).style.boxShadow = ''; }}
       >
-        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
-          <span style="font-size: 24px;">${CATEGORY_ICONS[t.category] || "📦"}</span>
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+          <span style="font-size: 28px;">${CATEGORY_ICONS[t.category] || "📦"}</span>
           <div style="min-width: 0; flex: 1;">
             <div style="font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${displayName}</div>
             ${t.manufacturer ? html`<div style="font-size: 11px; color: var(--muted);">${t.manufacturer}</div>` : nothing}
@@ -1191,6 +1190,10 @@ export class DevicesView extends LitElement {
           ${t.deviceType ? html`<span>${t.deviceType}</span>` : nothing}
           ${t.protocolType ? html`<span>${t.protocolType}</span>` : nothing}
           ${t.version ? html`<span>v${t.version}</span>` : nothing}
+        </div>
+        <div style="display: flex; gap: 12px; font-size: 11px; color: var(--muted); margin-top: 8px;">
+          <span>${t.properties.length} 属性</span>
+          <span>${t.commands.length} 命令</span>
         </div>
       </div>
     `;
