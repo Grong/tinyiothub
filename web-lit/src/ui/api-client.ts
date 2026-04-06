@@ -155,8 +155,8 @@ export const apiClient = {
   get: <T>(path: string, params?: Record<string, unknown>, headers?: Record<string, string>) =>
     request<T>('GET', path, { params, headers }),
 
-  post: <T>(path: string, body?: unknown, headers?: Record<string, string>) =>
-    request<T>('POST', path, { body, headers }),
+  post: <T>(path: string, body?: unknown, headers?: Record<string, string>, skipAuth?: boolean) =>
+    request<T>('POST', path, { body, headers, skipAuth }),
 
   put: <T>(path: string, body?: unknown, headers?: Record<string, string>) =>
     request<T>('PUT', path, { body, headers }),
@@ -169,7 +169,7 @@ export const apiClient = {
 }
 
 export const apiGet = apiClient.get
-export const apiPost = apiClient.post
+export const apiPost = apiClient.post as <T>(path: string, body?: unknown, headers?: Record<string, string>, skipAuth?: boolean) => Promise<ApiResponse<T>>
 export const apiPut = apiClient.put
 export const apiDelete = apiClient.delete
 export const apiPatch = apiClient.patch
