@@ -3,10 +3,11 @@ import { LitElement, html, css } from 'lit'
 import { customElement, property, state } from 'lit/decorators.js'
 import { deviceApi } from '../../services/devices'
 import type { DeviceOnlineStatus, DeviceMetrics } from '../../services/devices'
+import { hostStyles } from '../../styles/shared-host'
 
 @customElement('device-status-card')
 export class DeviceStatusCard extends LitElement {
-  static styles = css`
+  static styles = [hostStyles, css`
     :host { display: block; }
     .card {
       background: var(--card);
@@ -45,7 +46,7 @@ export class DeviceStatusCard extends LitElement {
     .metric-value { font-size: 18px; font-weight: 600; }
     .metric-label { font-size: 11px; color: var(--muted); }
     .empty { text-align: center; padding: 24px; color: var(--muted); font-size: 13px; }
-  `
+  `]
 
   @property({ type: String }) deviceId = ''
   @state() private status: DeviceOnlineStatus | null = null

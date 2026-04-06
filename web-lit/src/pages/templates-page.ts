@@ -41,27 +41,35 @@ export class TemplatesPage extends LitElement {
 
     .filter-select {
       padding: 10px 14px;
-      border: 1px solid var(--input);
+      border: none;
       border-radius: var(--radius-md);
       background: var(--card);
       color: var(--text);
       font-size: 13px;
       cursor: pointer;
+      box-shadow: var(--glass-shadow-sm);
+      transition: background var(--duration-fast) ease;
+    }
+
+    .filter-select:hover {
+      background: var(--bg-hover);
     }
 
     .search-input {
       padding: 10px 14px;
-      border: 1px solid var(--input);
+      border: none;
       border-radius: var(--radius-md);
-      background: var(--bg);
+      background: var(--card);
       color: var(--text);
       font-size: 14px;
       min-width: 240px;
+      box-shadow: var(--glass-shadow-sm);
+      transition: background var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
     }
 
     .search-input:focus {
       outline: none;
-      border-color: var(--accent);
+      box-shadow: var(--focus-ring);
     }
 
     /* Templates grid */

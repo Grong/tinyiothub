@@ -17,6 +17,7 @@ import { $user, $isAuthenticated } from '../stores/auth-store'
 import { $searchQuery, $currentRoute } from '../stores/app-state'
 import { navigate } from '../lib/navigate'
 import './logo-icon'
+import { hostStyles } from '../styles/shared-host'
 
 @customElement('app-header')
 export class AppHeader extends LitElement {
@@ -24,7 +25,7 @@ export class AppHeader extends LitElement {
   @state() showUserMenu = false
   @state() showMobileMenu = false
 
-  static styles = css`
+  static styles = [hostStyles, css`
     app-header {
       display: block;
     }
@@ -332,7 +333,7 @@ export class AppHeader extends LitElement {
         display: none;
       }
     }
-  `
+  `]
 
   connectedCallback() {
     super.connectedCallback()

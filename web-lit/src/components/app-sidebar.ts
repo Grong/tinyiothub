@@ -135,11 +135,6 @@ export class AppSidebar extends LitElement {
               </div>
             ` : ''}
           </div>
-          <button class="nav-collapse-toggle" @click=${this.toggleCollapse} title="${collapsed ? '展开' : '收起'}">
-            <span class="nav-collapse-toggle__icon">
-              ${this.renderIcon('collapse')}
-            </span>
-          </button>
         </div>
 
         <!-- Workspace picker -->

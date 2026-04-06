@@ -266,16 +266,18 @@ export class TagsPage extends LitElement {
     .form-input {
       width: 100%;
       padding: 10px 14px;
-      border: 1px solid var(--input);
+      border: none;
       border-radius: var(--radius-md);
-      background: var(--bg);
+      background: var(--card);
       color: var(--text);
       font-size: 14px;
+      box-shadow: var(--glass-shadow-sm);
+      transition: box-shadow var(--duration-fast) ease;
     }
 
     .form-input:focus {
       outline: none;
-      border-color: var(--accent);
+      box-shadow: var(--focus-ring);
     }
 
     .color-options {

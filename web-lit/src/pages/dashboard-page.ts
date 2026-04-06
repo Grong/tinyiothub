@@ -3,10 +3,11 @@ import { customElement, state } from 'lit/decorators.js'
 import { dashboardApi, type DashboardData, type RecentAlarm, type QuickDevice } from '../services/dashboard'
 import { navigate } from '../lib/navigate'
 import { $currentWorkspaceId } from '../stores/workspace-store'
+import { hostStyles } from '../styles/shared-host'
 
 @customElement('dashboard-page')
 export class DashboardPage extends LitElement {
-  static styles = css`
+  static styles = [hostStyles, css`
     dashboard-page {
       display: block;
     }
@@ -114,6 +115,15 @@ export class DashboardPage extends LitElement {
 
     .stat-change.positive {
       color: var(--ok);
+    }
+
+    .stat-card--danger {
+      border-left: 3px solid var(--danger);
+      background: color-mix(in srgb, var(--card) 92%, var(--danger) 8%);
+    }
+
+    .stat-card--danger .stat-value {
+      color: var(--danger);
     }
 
     /* Main grid */
@@ -380,7 +390,7 @@ export class DashboardPage extends LitElement {
       height: 100px;
       border-radius: var(--radius-lg);
     }
-  `
+  `]
 
   @state() data: DashboardData | null = null
   @state() loading = true
@@ -495,7 +505,7 @@ export class DashboardPage extends LitElement {
           <div class="stat-change">需要关注</div>
         </div>
 
-        <div class="stat-card">
+        <div class="stat-card stat-card--danger">
           <div class="stat-header">
             <span class="stat-label">严重告警</span>
             <div class="stat-icon critical">

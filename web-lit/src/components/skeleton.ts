@@ -1,10 +1,11 @@
 // web-lit/src/components/skeleton.ts
 import { LitElement, html, css } from 'lit'
 import { customElement, property } from 'lit/decorators.js'
+import { hostStyles } from '../styles/shared-host'
 
 @customElement('skeleton')
 export class Skeleton extends LitElement {
-  static styles = css`
+  static styles = [hostStyles, css`
     :host { display: block; }
     .skeleton {
       background: linear-gradient(90deg, var(--card) 25%, var(--bg-hover) 50%, var(--card) 75%);
@@ -28,7 +29,7 @@ export class Skeleton extends LitElement {
     .skeleton-card {
       height: 120px;
     }
-  `
+  `]
 
   @property({ type: String }) variant = 'text' // text, title, card
 

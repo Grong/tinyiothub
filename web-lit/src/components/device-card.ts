@@ -48,51 +48,69 @@ export class DeviceCard extends LitElement {
       position: relative;
       display: flex;
       flex-direction: column;
-      height: 160px;
       background: var(--card);
-      border: none;
-      border-radius: var(--radius-xl);
-      box-shadow: var(--shadow-sm);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--glass-shadow-sm);
       cursor: pointer;
-      transition: box-shadow 0.2s ease;
+      padding: 20px;
+      transition: box-shadow var(--duration-normal) var(--ease-out);
     }
     .card:hover {
-      box-shadow: var(--shadow-lg);
+      box-shadow: var(--glass-shadow-md);
     }
 
-    /* Header */
+    /* Header — icon + name+meta (left), badge (right) */
     .card-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .header-left {
       display: flex;
       align-items: center;
       gap: 12px;
-      height: 66px;
-      padding: 14px 14px 12px;
-      flex-shrink: 0;
+      min-width: 0;
+      flex: 1;
+    }
+    .header-info {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
     }
     .device-icon {
-      width: 40px;
-      height: 40px;
+      width: 48px;
+      height: 48px;
+      border-radius: var(--radius-md);
+      background: var(--accent-subtle);
       display: flex;
       align-items: center;
       justify-content: center;
-      border-radius: var(--radius-md);
-      background: var(--secondary);
-      box-shadow: var(--glass-shadow-sm);
       flex-shrink: 0;
     }
     .device-icon svg {
-      width: 16px;
-      height: 16px;
+      width: 20px;
+      height: 20px;
     }
-    .header-info {
-      flex: 1;
-      min-width: 0;
-      overflow: hidden;
+
+    /* Status badge */
+    .status-badge {
+      padding: 4px 8px;
+      border-radius: var(--radius-sm);
+      font-size: 11px;
+      font-weight: 500;
     }
+    .status-badge.online { background: var(--ok-subtle); color: var(--ok); }
+    .status-badge.offline { background: var(--bg-muted); color: var(--muted); }
+    .status-badge.error { background: var(--danger-subtle); color: var(--danger); }
+    .status-badge.maintenance { background: var(--warn-subtle); color: var(--warn); }
+
+    /* Name & meta (inside header) */
     .device-name {
-      font-size: 14px;
+      font-size: 15px;
       font-weight: 600;
-      color: var(--text);
+      color: var(--text-strong);
       margin: 0;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -102,54 +120,35 @@ export class DeviceCard extends LitElement {
       display: flex;
       align-items: center;
       gap: 4px;
-      font-size: 10px;
+      font-size: 12px;
       color: var(--muted);
       margin-top: 2px;
     }
-    .device-meta span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-    /* Status badge - top right */
-    .status-badge {
-      position: absolute;
-      top: 14px;
-      right: 14px;
-      display: inline-flex;
-      align-items: center;
-      padding: 2px 8px;
-      border-radius: 9999px;
-      font-size: 10px;
-      font-weight: 500;
-    }
-    .status-badge.online { background: rgba(34, 197, 94, 0.15); color: var(--ok); }
-    .status-badge.offline { background: var(--bg-muted); color: var(--muted); }
-    .status-badge.error { background: rgba(239, 68, 68, 0.15); color: var(--danger); }
-    .status-badge.maintenance { background: rgba(234, 179, 8, 0.15); color: var(--warn); }
-
-    /* Content - description and properties */
-    .card-content {
-      flex: 1;
-      padding: 0 14px;
+    .device-meta span {
       overflow: hidden;
-      min-height: 0;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
+
+    /* Description */
     .description {
-      font-size: 12px;
+      font-size: 13px;
       color: var(--muted);
       line-height: 1.5;
       display: -webkit-box;
       -webkit-line-clamp: 2;
       -webkit-box-orient: vertical;
       overflow: hidden;
-      margin-bottom: 8px;
+      margin-bottom: 12px;
     }
-    .description.empty {
-      color: var(--muted);
-      opacity: 0.6;
-    }
+    .description.empty { opacity: 0.6; }
+
+    /* Properties bar */
     .properties {
       display: flex;
       flex-wrap: wrap;
       gap: 4px;
+      margin-bottom: 16px;
     }
     .property-badge {
       display: inline-flex;
@@ -157,7 +156,7 @@ export class DeviceCard extends LitElement {
       padding: 2px 6px;
       border-radius: 4px;
       font-size: 10px;
-      background: rgba(59, 130, 246, 0.1);
+      background: var(--accent-subtle);
       color: var(--accent);
     }
     .property-more {
@@ -170,13 +169,32 @@ export class DeviceCard extends LitElement {
       color: var(--muted);
     }
 
-    /* Footer - tags and actions */
+    /* Meta bar (time) */
+    .meta-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .meta-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .meta-item svg {
+      width: 14px;
+      height: 14px;
+      flex-shrink: 0;
+    }
+
+    /* Footer — tags + actions */
     .card-footer {
       display: flex;
       align-items: center;
-      height: 42px;
-      padding: 4px 6px 6px 14px;
-      flex-shrink: 0;
+      margin-top: 12px;
+      padding-top: 12px;
+      box-shadow: 0 -1px 0 var(--card-highlight);
     }
     .tags-area {
       flex: 1;
@@ -186,9 +204,9 @@ export class DeviceCard extends LitElement {
     .divider {
       width: 1px;
       height: 14px;
-      background: var(--border);
       margin: 0 4px;
       flex-shrink: 0;
+      box-shadow: 1px 0 0 var(--card-highlight);
     }
     .actions {
       display: flex;
@@ -213,7 +231,7 @@ export class DeviceCard extends LitElement {
     .action-btn:hover { background: var(--bg-hover); color: var(--text); }
     .action-btn.danger:hover { background: var(--danger-subtle); color: var(--danger); }
 
-    /* Status dot colors */
+    /* Status icon colors */
     .icon-online { color: var(--ok); }
     .icon-offline { color: var(--muted); }
     .icon-error { color: var(--danger); }
@@ -226,8 +244,15 @@ export class DeviceCard extends LitElement {
   @state() private loadedTags: Tag[] = []
 
   private get status(): DeviceStatus {
-    // Device.status is already 'online' | 'offline' | 'error' | 'maintenance'
-    return (this.device.status || 'offline') as DeviceStatus
+    // status string is a computed property — may not be sent by API.
+    // Derive from state number: 1=online, 0=offline, 2=error, 3=maintenance, <0=error
+    if (this.device.status) return this.device.status as DeviceStatus
+    const s = this.device.state
+    if (s === 1) return 'online'
+    if (s === 2) return 'error'
+    if (s === 3) return 'maintenance'
+    if (s !== undefined && s < 0) return 'error'
+    return 'offline'
   }
 
   updated(changed: Map<string, unknown>) {
@@ -261,13 +286,13 @@ export class DeviceCard extends LitElement {
     const s = this.status
     switch (s) {
       case 'online':
-        return html`<svg class="icon-online" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.55a11 11 0 0 1 14.08 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/></svg>`
+        return html`<svg class="icon-online" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.55a11 11 0 0 1 14.08 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/></svg>`
       case 'error':
-        return html`<svg class="icon-error" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`
+        return html`<svg class="icon-error" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`
       case 'maintenance':
-        return html`<svg class="icon-maintenance" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`
+        return html`<svg class="icon-maintenance" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`
       default:
-        return html`<svg class="icon-offline" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="1" y1="1" x2="23" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55M5 12.55a10.94 10.94 0 0 1 5.17-2.39M10.71 5.05A16 16 0 0 1 22.58 9M1.42 9a15.91 15.91 0 0 1 4.7-2.88M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/></svg>`
+        return html`<svg class="icon-offline" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="1" y1="1" x2="23" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55M5 12.55a10.94 10.94 0 0 1 5.17-2.39M10.71 5.05A16 16 0 0 1 22.58 9M1.42 9a15.91 15.91 0 0 1 4.7-2.88M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/></svg>`
     }
   }
 
@@ -289,42 +314,48 @@ export class DeviceCard extends LitElement {
     const status = this.status
     const desc = this.device.description || ''
     const MAX_PROPS = 3
-
-    // 设备属性示例（实际来自 device.properties）
     const props: { name: string; value: string }[] = (this.device as any).properties?.slice(0, MAX_PROPS) || []
 
     return html`
       <div class="card" @click=${this.handleClick}>
-        <!-- Status badge - top right -->
-        <div class="status-badge ${status}">${getStatusLabel(status)}</div>
-
         <!-- Header -->
         <div class="card-header">
-          <div class="device-icon">${this.statusIcon}</div>
-          <div class="header-info">
-            <div class="device-name" title=${this.displayName}>${this.displayName}</div>
-            <div class="device-meta">
-              <span title=${this.productName}>${this.productName}</span>
-              <span>·</span>
-              <span title=${this.updatedTime}>${this.updatedTime ? `更新于 ${this.updatedTime}` : '无时间信息'}</span>
+          <div class="header-left">
+            <div class="device-icon">${this.statusIcon}</div>
+            <div class="header-info">
+              <div class="device-name" title=${this.displayName}>${this.displayName}</div>
+              <div class="device-meta">
+                <span title=${this.productName}>${this.productName}</span>
+              </div>
             </div>
           </div>
+          <span class="status-badge ${status}">${getStatusLabel(status)}</span>
         </div>
 
-        <!-- Content -->
-        <div class="card-content">
-          <div class="description ${!desc ? 'empty' : ''}" title=${desc}>
-            ${desc || '暂无描述'}
-          </div>
-          ${props.length > 0 ? html`
-            <div class="properties">
-              ${props.map(p => html`<span class="property-badge">${p.name}: ${p.value}</span>`)}
-              ${((this.device as any).properties?.length || 0) > MAX_PROPS ? html`
-                <span class="property-more">+${(this.device as any).properties.length - MAX_PROPS}</span>
-              ` : ''}
-            </div>
-          ` : ''}
+        <!-- Description -->
+        <div class="description ${!desc ? 'empty' : ''}" title=${desc}>
+          ${desc || '暂无描述'}
         </div>
+
+        <!-- Properties -->
+        ${props.length > 0 ? html`
+          <div class="properties">
+            ${props.map(p => html`<span class="property-badge">${p.name}: ${p.value}</span>`)}
+            ${((this.device as any).properties?.length || 0) > MAX_PROPS ? html`
+              <span class="property-more">+${(this.device as any).properties.length - MAX_PROPS}</span>
+            ` : ''}
+          </div>
+        ` : ''}
+
+        <!-- Meta bar -->
+        ${this.updatedTime ? html`
+          <div class="meta-bar">
+            <span class="meta-item">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              更新于 ${this.updatedTime}
+            </span>
+          </div>
+        ` : ''}
 
         <!-- Footer -->
         <div class="card-footer">

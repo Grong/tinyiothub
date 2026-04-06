@@ -3,10 +3,11 @@ import { LitElement, html, css } from 'lit'
 import { customElement, property, state } from 'lit/decorators.js'
 import { deviceApi } from '../../services/devices'
 import type { PerformanceAlert } from '../../services/devices'
+import { hostStyles } from '../../styles/shared-host'
 
 @customElement('performance-alerts')
 export class PerformanceAlerts extends LitElement {
-  static styles = css`
+  static styles = [hostStyles, css`
     :host { display: block; }
     .card {
       background: var(--card);
@@ -42,7 +43,7 @@ export class PerformanceAlerts extends LitElement {
     .alert-message { font-size: 13px; margin-bottom: 4px; }
     .alert-meta { font-size: 11px; color: var(--muted); }
     .empty { text-align: center; padding: 32px; color: var(--muted); }
-  `
+  `]
 
   @property({ type: String }) deviceId = ''
   @state() private alerts: PerformanceAlert[] = []

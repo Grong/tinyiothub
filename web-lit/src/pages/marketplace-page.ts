@@ -218,27 +218,35 @@ export class MarketplacePage extends LitElement {
       flex: 1;
       min-width: 200px;
       padding: 10px 14px;
-      border: 1px solid var(--input);
+      border: none;
       border-radius: var(--radius-md);
-      background: var(--bg);
+      background: var(--card);
       color: var(--text);
       font-size: 14px;
+      box-shadow: var(--glass-shadow-sm);
+      transition: background var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
     }
 
     .search-input:focus {
       outline: none;
-      border-color: var(--accent);
+      box-shadow: var(--focus-ring);
     }
 
     .filter-select {
       padding: 10px 14px;
-      border: 1px solid var(--input);
+      border: none;
       border-radius: var(--radius-md);
       background: var(--card);
       color: var(--text);
       font-size: 13px;
       cursor: pointer;
       min-width: 140px;
+      box-shadow: var(--glass-shadow-sm);
+      transition: background var(--duration-fast) ease;
+    }
+
+    .filter-select:hover {
+      background: var(--bg-hover);
     }
 
     /* Grid */

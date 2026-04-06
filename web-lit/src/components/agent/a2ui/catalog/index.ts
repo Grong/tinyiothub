@@ -31,7 +31,7 @@ registry.set('Button', 'a2ui-button')
 registry.set('Divider', 'a2ui-divider')
 
 // IoT Catalog
-registry.set('DeviceCard', 'device-card')
+registry.set('DeviceCard', 'a2ui-device-card')
 registry.set('DeviceTable', 'device-table')
 registry.set('DataChart', 'data-chart')
 registry.set('ControlPanel', 'control-panel')

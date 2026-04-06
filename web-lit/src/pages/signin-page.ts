@@ -6,12 +6,13 @@ import { setWorkspaces, selectWorkspace } from '../stores/workspace-store'
 import { workspaceApi } from '../services/workspace'
 import { navigate } from '../lib/navigate'
 import '../components/logo-icon'
+import { hostStyles } from '../styles/shared-host'
 
 type LoginMethod = 'account' | 'phone' | 'wechat'
 
 @customElement('signin-page')
 export class SigninPage extends LitElement {
-  static styles = css`
+  static styles = [hostStyles, css`
     :host {
       position: fixed;
       inset: 0;
@@ -390,7 +391,7 @@ export class SigninPage extends LitElement {
     .back-link:hover {
       color: var(--accent);
     }
-  `
+  `]
 
   @state() loginMethod: LoginMethod = 'account'
   @state() username = ''

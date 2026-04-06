@@ -2,10 +2,11 @@
 import { LitElement, html, css } from 'lit'
 import { customElement, property, state } from 'lit/decorators.js'
 import { tagApi, type Tag } from '../services/tags'
+import { hostStyles } from '../styles/shared-host'
 
 @customElement('tag-filter')
 export class TagFilter extends LitElement {
-  static styles = css`
+  static styles = [hostStyles, css`
     :host { display: inline-flex; }
     .filter-container {
       position: relative;
@@ -58,7 +59,7 @@ export class TagFilter extends LitElement {
       font-size: 11px;
       color: var(--muted);
     }
-  `
+  `]
 
   @property({ type: String }) value = ''
   @property({ type: String }) placeholder = '选择标签'

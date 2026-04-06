@@ -75,17 +75,17 @@ export class AlarmsPage extends LitElement {
 
     .filter-select {
       padding: 10px 14px;
-      border: 1px solid var(--input);
+      border: none;
       border-radius: var(--radius-md);
       background: var(--card);
       color: var(--text);
       font-size: 13px;
       cursor: pointer;
-      transition: border-color var(--duration-fast) ease, background var(--duration-fast) ease;
+      box-shadow: var(--glass-shadow-sm);
+      transition: background var(--duration-fast) ease;
     }
 
     .filter-select:hover {
-      border-color: var(--border-hover);
       background: var(--bg-hover);
     }
 

@@ -9,6 +9,7 @@ import type { ChatMessage } from '../../types/agent-types'
 import { scheduleChatScroll, handleChatScroll, type ChatScrollHost } from '../../lib/chat-scroll'
 import './message-group'
 import './streaming-message'
+import { hostStyles } from '../../styles/shared-host'
 
 @customElement('chat-thread')
 export class ChatThread extends LitElement implements ChatScrollHost {
@@ -22,7 +23,7 @@ export class ChatThread extends LitElement implements ChatScrollHost {
   chatUserNearBottom = true
   chatNewMessagesBelow = false
 
-  static styles = css`
+  static styles = [hostStyles, css`
     :host { display: block; flex: 1; overflow: hidden; }
     .chat-thread {
       height: 100%;
@@ -35,7 +36,7 @@ export class ChatThread extends LitElement implements ChatScrollHost {
     @media (max-width: 768px) {
       .chat-thread { padding: 12px; gap: 12px; }
     }
-  `
+  `]
 
   disconnectedCallback() {
     super.disconnectedCallback()

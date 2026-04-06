@@ -2,10 +2,11 @@
 import { LitElement, html, css } from 'lit'
 import { customElement, property } from 'lit/decorators.js'
 import type { ProcessedDeviceTemplate } from '../services/templates'
+import { hostStyles } from '../styles/shared-host'
 
 @customElement('template-card')
 export class TemplateCard extends LitElement {
-  static styles = css`
+  static styles = [hostStyles, css`
     :host { display: block; cursor: pointer; }
     .card {
       background: var(--card);
@@ -66,7 +67,7 @@ export class TemplateCard extends LitElement {
       background: var(--bg-muted);
       color: var(--muted);
     }
-  `
+  `]
 
   @property({ type: Object }) template!: ProcessedDeviceTemplate
   @property({ type: Function }) onUse!: (t: ProcessedDeviceTemplate) => void
