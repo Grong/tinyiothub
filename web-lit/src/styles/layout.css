@@ -90,7 +90,7 @@
   align-items: center;
   padding: 0 24px;
   min-height: 58px;
-  box-shadow: 0 1px 8px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 1px 8px var(--card-highlight);
   background: color-mix(in srgb, var(--bg) 82%, transparent);
   backdrop-filter: blur(12px) saturate(1.6);
   -webkit-backdrop-filter: blur(12px) saturate(1.6);
@@ -316,7 +316,7 @@
   display: flex;
   min-height: 100%;
   overflow: hidden;
-  border-right: none;
+  box-shadow: -1px 0 0 var(--card-highlight);
   transition: width var(--shell-focus-duration) var(--shell-focus-ease);
 }
 
@@ -331,13 +331,17 @@
   min-height: 0;
   min-width: 0;
   overflow: hidden;
-  background: color-mix(in srgb, var(--bg) 96%, var(--bg-elevated) 4%);
+  background: color-mix(in srgb, var(--bg) 92%, black 8%);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
 }
 
 :root[data-theme-mode="light"] .sidebar {
   background: color-mix(in srgb, var(--panel) 98%, white 2%);
+}
+
+:root[data-theme-mode="light"] .shell-nav {
+  border-right: 1px solid var(--border);
 }
 
 .sidebar-shell {
@@ -380,7 +384,7 @@
 
 .sidebar-shell__footer {
   padding: 12px 0 0;
-  box-shadow: 0 -1px 8px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 -1px 8px var(--card-highlight);
 }
 
 .sidebar-brand {

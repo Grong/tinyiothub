@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit'
 import { customElement, property } from 'lit/decorators.js'
+import { hostStyles } from '../../../../styles/shared-host'
 
 interface TableColumn {
   key: string
@@ -18,7 +19,7 @@ export class DeviceTable extends LitElement {
   @property({ type: Number }) pageSize = 10
   @property({ type: Number }) totalCount = 0
 
-  static styles = css`
+  static styles = [hostStyles, css`
     :host { display: block; }
     table {
       width: 100%;
@@ -28,20 +29,20 @@ export class DeviceTable extends LitElement {
     th {
       text-align: left;
       padding: 6px 8px;
-      border-bottom: 2px solid var(--border, #e2e8f0);
+      box-shadow: 0 2px 0 0 var(--border);
       font-weight: 600;
       font-size: 0.75rem;
-      color: var(--text-muted, #888);
+      color: var(--text-muted);
       text-transform: uppercase;
       letter-spacing: 0.05em;
     }
     td {
       padding: 6px 8px;
-      border-bottom: 1px solid var(--border, #e2e8f0);
+      box-shadow: 0 1px 0 var(--card-highlight);
     }
     tbody tr { cursor: pointer; }
     tr:hover td {
-      background: var(--bg-elevated, #f8fafc);
+      background: var(--bg-elevated);
     }
     .pagination {
       display: flex;
@@ -49,19 +50,19 @@ export class DeviceTable extends LitElement {
       align-items: center;
       margin-top: 8px;
       font-size: 0.75rem;
-      color: var(--text-muted, #888);
+      color: var(--text-muted);
     }
     .pagination button {
       padding: 3px 8px;
-      border: 1px solid var(--border, #e2e8f0);
+      box-shadow: var(--glass-shadow-sm);
       border-radius: 4px;
       background: transparent;
       cursor: pointer;
       font-size: 0.75rem;
-      color: var(--text, #1a1a1a);
+      color: var(--text);
     }
     .pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
-  `
+  `]
 
   private get totalPages(): number {
     return Math.ceil(this.totalCount / this.pageSize) || 1

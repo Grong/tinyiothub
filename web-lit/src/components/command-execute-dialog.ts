@@ -3,10 +3,11 @@ import { LitElement, html, css } from 'lit'
 import { customElement, property, state } from 'lit/decorators.js'
 import { deviceApi } from '../services/devices'
 import type { DeviceCommand } from '../services/devices'
+import { hostStyles } from '../styles/shared-host'
 
 @customElement('command-execute-dialog')
 export class CommandExecuteDialog extends LitElement {
-  static styles = css`
+  static styles = [hostStyles, css`
     :host { display: block; }
     .overlay {
       position: fixed;
@@ -28,7 +29,7 @@ export class CommandExecuteDialog extends LitElement {
       display: flex;
       justify-content: space-between;
       padding: 16px 20px;
-      border-bottom: 1px solid var(--border);
+      box-shadow: 0 1px 0 var(--card-highlight);
     }
     .header h3 { margin: 0; font-size: 16px; }
     .close-btn {
@@ -86,7 +87,7 @@ export class CommandExecuteDialog extends LitElement {
       justify-content: flex-end;
       gap: 12px;
       padding: 16px 20px;
-      border-top: 1px solid var(--border);
+      box-shadow: 0 -1px 0 var(--card-highlight);
     }
     .btn {
       padding: 8px 16px;
@@ -110,7 +111,7 @@ export class CommandExecuteDialog extends LitElement {
     }
     .toast.success { border-left: 4px solid var(--ok); }
     .toast.error { border-left: 4px solid var(--danger); }
-  `
+  `]
 
   @property({ type: Boolean }) open = false
   @property({ type: Object }) command!: DeviceCommand

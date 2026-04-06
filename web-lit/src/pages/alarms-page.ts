@@ -3,10 +3,11 @@ import { customElement, state } from 'lit/decorators.js'
 import { deviceApi, type DeviceAlarm } from '../services/devices'
 import { navigate } from '../lib/navigate'
 import { $currentWorkspaceId } from '../stores/workspace-store'
+import { hostStyles } from '../styles/shared-host'
 
 @customElement('alarms-page')
 export class AlarmsPage extends LitElement {
-  static styles = css`
+  static styles = [hostStyles, css`
     alarms-page {
       display: flex;
       flex-direction: column;
@@ -41,30 +42,27 @@ export class AlarmsPage extends LitElement {
       align-items: center;
       gap: 8px;
       padding: 10px 16px;
-      border: 1px solid var(--border);
+      box-shadow: var(--glass-shadow-sm);
       border-radius: var(--radius-md);
       background: var(--card);
       color: var(--text);
       font-size: 13px;
       font-weight: 500;
       cursor: pointer;
-      transition: border-color var(--duration-fast) ease, background var(--duration-fast) ease;
+      transition: background var(--duration-fast) ease;
     }
 
     .btn:hover {
       background: var(--bg-hover);
-      border-color: var(--border-strong);
     }
 
     .btn-primary {
       background: var(--accent);
-      border-color: var(--accent);
       color: var(--accent-foreground);
     }
 
     .btn-primary:hover {
       background: var(--accent-hover);
-      border-color: var(--accent-hover);
     }
 
     /* Filters */
@@ -83,12 +81,18 @@ export class AlarmsPage extends LitElement {
       color: var(--text);
       font-size: 13px;
       cursor: pointer;
+      transition: border-color var(--duration-fast) ease, background var(--duration-fast) ease;
+    }
+
+    .filter-select:hover {
+      border-color: var(--border-hover);
+      background: var(--bg-hover);
     }
 
     /* Alarm list */
     .alarm-list {
       background: var(--card);
-      border: 1px solid var(--border);
+      box-shadow: var(--glass-shadow-sm);
       border-radius: var(--radius-lg);
       overflow: hidden;
     }
@@ -98,12 +102,12 @@ export class AlarmsPage extends LitElement {
       align-items: flex-start;
       gap: 16px;
       padding: 16px 20px;
-      border-bottom: 1px solid var(--border);
+      box-shadow: 0 1px 0 var(--card-highlight);
       transition: background var(--duration-fast) ease;
     }
 
     .alarm-item:last-child {
-      border-bottom: none;
+      box-shadow: none;
     }
 
     .alarm-item:hover {
@@ -198,23 +202,21 @@ export class AlarmsPage extends LitElement {
 
     .action-btn {
       padding: 6px 12px;
-      border: 1px solid var(--border);
+      box-shadow: var(--glass-shadow-sm);
       border-radius: var(--radius-md);
       background: var(--card);
       color: var(--text);
       font-size: 12px;
       cursor: pointer;
-      transition: background var(--duration-fast) ease, border-color var(--duration-fast) ease;
+      transition: background var(--duration-fast) ease;
     }
 
     .action-btn:hover {
       background: var(--bg-hover);
-      border-color: var(--border-strong);
     }
 
     .action-btn.primary {
       background: var(--accent);
-      border-color: var(--accent);
       color: var(--accent-foreground);
     }
 
@@ -275,7 +277,7 @@ export class AlarmsPage extends LitElement {
       align-items: center;
       justify-content: space-between;
       padding: 16px 20px;
-      border-top: 1px solid var(--border);
+      box-shadow: 0 -1px 0 var(--card-highlight);
     }
 
     .pagination-info {
@@ -290,25 +292,24 @@ export class AlarmsPage extends LitElement {
 
     .page-btn {
       padding: 8px 12px;
-      border: 1px solid var(--border);
+      box-shadow: var(--glass-shadow-sm);
       border-radius: var(--radius-md);
       background: var(--card);
       color: var(--text);
       font-size: 13px;
       cursor: pointer;
-      transition: border-color var(--duration-fast) ease, background var(--duration-fast) ease;
+      transition: background var(--duration-fast) ease;
     }
 
     .page-btn:hover:not(:disabled) {
       background: var(--bg-hover);
-      border-color: var(--border-strong);
     }
 
     .page-btn:disabled {
       opacity: 0.5;
       cursor: not-allowed;
     }
-  `
+  `]
 
   @state() alarms: DeviceAlarm[] = []
   @state() loading = true

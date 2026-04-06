@@ -36,7 +36,7 @@ export class ChatInput extends LitElement {
       max-height: 150px;
       overflow-y: auto;
       background: var(--card);
-      color: var(--text, #1a1a1a);
+      color: var(--text);
       outline: none;
       box-shadow: var(--glass-shadow-sm);
       transition: box-shadow var(--duration-normal) var(--ease-out);
@@ -49,7 +49,7 @@ export class ChatInput extends LitElement {
       cursor: not-allowed;
     }
     textarea::placeholder {
-      color: var(--text-muted, #94a3b8);
+      color: var(--text-muted);
     }
     .send-btn {
       width: 42px;
@@ -65,7 +65,7 @@ export class ChatInput extends LitElement {
     }
     .send-btn.send {
       background: var(--accent);
-      color: #fff;
+      color: var(--text-on-accent);
     }
     .send-btn.send:hover {
       background: var(--accent-hover);
@@ -75,11 +75,11 @@ export class ChatInput extends LitElement {
       cursor: not-allowed;
     }
     .send-btn.stop {
-      background: var(--danger, #ef4444);
-      color: #fff;
+      background: var(--danger);
+      color: var(--text-on-accent);
     }
     .send-btn.stop:hover {
-      background: #dc2626;
+      background: var(--danger-hover);
     }
     .send-btn svg {
       width: 18px;

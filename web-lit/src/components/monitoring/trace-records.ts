@@ -2,10 +2,11 @@
 import { LitElement, html, css } from 'lit'
 import { customElement, property, state } from 'lit/decorators.js'
 import { deviceApi, type DeviceTrace } from '../../services/devices'
+import { hostStyles } from '../../styles/shared-host'
 
 @customElement('trace-records')
 export class TraceRecords extends LitElement {
-  static styles = css`
+  static styles = [hostStyles, css`
     :host { display: block; }
     .card {
       background: var(--card);
@@ -22,7 +23,7 @@ export class TraceRecords extends LitElement {
       align-items: flex-start;
       gap: 12px;
       padding: 10px 0;
-      border-bottom: 1px solid var(--border);
+      box-shadow: 0 1px 0 var(--card-highlight);
     }
     .trace-level {
       font-size: 10px;
@@ -38,7 +39,7 @@ export class TraceRecords extends LitElement {
     .trace-message { font-size: 12px; color: var(--muted); }
     .trace-time { font-size: 11px; color: var(--muted); white-space: nowrap; }
     .empty { text-align: center; padding: 32px; color: var(--muted); }
-  `
+  `]
 
   @property({ type: String }) deviceId = ''
   @state() traces: DeviceTrace[] = []

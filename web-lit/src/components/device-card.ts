@@ -6,6 +6,7 @@ import type { Tag } from '../types/tag'
 import { tagApi } from '../services/tags'
 import { navigate } from '../lib/navigate'
 import './tag-selector'
+import { hostStyles } from '../styles/shared-host'
 
 type DeviceStatus = 'online' | 'offline' | 'error' | 'maintenance'
 
@@ -40,7 +41,7 @@ function formatTime(isoString: string | undefined): string {
 
 @customElement('device-card')
 export class DeviceCard extends LitElement {
-  static styles = css`
+  static styles = [hostStyles, css`
     :host { display: block; }
 
     .card {
@@ -76,7 +77,7 @@ export class DeviceCard extends LitElement {
       justify-content: center;
       border-radius: var(--radius-md);
       background: var(--secondary);
-      border: 1px solid var(--border);
+      box-shadow: var(--glass-shadow-sm);
       flex-shrink: 0;
     }
     .device-icon svg {
@@ -217,7 +218,7 @@ export class DeviceCard extends LitElement {
     .icon-offline { color: var(--muted); }
     .icon-error { color: var(--danger); }
     .icon-maintenance { color: var(--warn); }
-  `
+  `]
 
   @property({ type: Object }) device!: Device
   @property({ type: Function }) onEdit!: (d: Device) => void

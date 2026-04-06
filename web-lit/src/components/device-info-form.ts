@@ -4,10 +4,11 @@ import { customElement, property, state } from 'lit/decorators.js'
 import { driverApi, type Driver, type DriverConfigOption } from '../services/drivers'
 import type { ProcessedDeviceTemplate } from '../services/templates'
 import { isFieldRequired } from '../services/templates'
+import { hostStyles } from '../styles/shared-host'
 
 @customElement('device-info-form')
 export class DeviceInfoForm extends LitElement {
-  static styles = css`
+  static styles = [hostStyles, css`
     :host { display: block; }
     .form-group { margin-bottom: 16px; }
     .form-label {
@@ -51,7 +52,7 @@ export class DeviceInfoForm extends LitElement {
       color: var(--text-secondary);
       margin: 20px 0 12px;
       padding-bottom: 6px;
-      border-bottom: 1px solid var(--border);
+      box-shadow: 0 1px 0 var(--card-highlight);
     }
     .loading {
       text-align: center;
@@ -59,7 +60,7 @@ export class DeviceInfoForm extends LitElement {
       color: var(--muted);
       font-size: 13px;
     }
-  `
+  `]
 
   @property({ type: Object }) template!: ProcessedDeviceTemplate
   @property({ type: String }) value = ''

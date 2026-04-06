@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit'
 import { customElement, property } from 'lit/decorators.js'
+import { hostStyles } from '../../../../styles/shared-host'
 
 interface DataPoint {
   x: number
@@ -21,24 +22,24 @@ export class DataChart extends LitElement {
   @property({ type: Number }) width = 400
   @property({ type: Number }) height = 200
 
-  static styles = css`
+  static styles = [hostStyles, css`
     :host { display: block; }
     .chart-container {
-      background: var(--card, #fff);
-      border: 1px solid var(--border, #e2e8f0);
-      border-radius: var(--radius, 8px);
+      background: var(--card);
+      box-shadow: var(--glass-shadow-sm);
+      border-radius: var(--radius);
       padding: 12px;
     }
     .title { font-size: 0.875rem; font-weight: 600; margin-bottom: 8px; }
     svg { width: 100%; height: 200px; }
-    .grid-line { stroke: var(--border, #e2e8f0); stroke-width: 0.5; }
+    .grid-line { stroke: var(--border); stroke-width: 0.5; }
     .data-line { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
     .data-point { r: 3; }
-    .label { font-size: 10px; fill: var(--text-muted, #888); }
+    .label { font-size: 10px; fill: var(--text-muted); }
     .tooltip {
       position: absolute;
-      background: var(--bg-elevated, #1a1a1a);
-      color: #fff;
+      background: var(--bg-elevated);
+      color: var(--text-on-accent);
       padding: 4px 8px;
       border-radius: 4px;
       font-size: 0.75rem;
@@ -49,10 +50,10 @@ export class DataChart extends LitElement {
       gap: 16px;
       margin-top: 8px;
       font-size: 0.75rem;
-      color: var(--text-muted, #888);
+      color: var(--text-muted);
     }
-    .stats span { font-family: monospace; color: var(--text, #1a1a1a); }
-  `
+    .stats span { font-family: monospace; color: var(--text); }
+  `]
 
   private _buildPath(dataPoints: DataPoint[], width: number, height: number, padding: number): string {
     if (dataPoints.length < 2) return ''

@@ -2,10 +2,11 @@ import { LitElement, html, css } from 'lit'
 import { customElement, state } from 'lit/decorators.js'
 import { dashboardApi, type DashboardMetrics } from '../services/dashboard'
 import { $currentWorkspaceId } from '../stores/workspace-store'
+import { hostStyles } from '../styles/shared-host'
 
 @customElement('monitoring-page')
 export class MonitoringPage extends LitElement {
-  static styles = css`
+  static styles = [hostStyles, css`
     monitoring-page {
       display: flex;
       flex-direction: column;
@@ -35,7 +36,7 @@ export class MonitoringPage extends LitElement {
       align-items: center;
       gap: 8px;
       padding: 10px 16px;
-      border: 1px solid var(--border);
+      box-shadow: var(--glass-shadow-sm);
       border-radius: var(--radius-md);
       background: var(--card);
       color: var(--text);
@@ -72,14 +73,9 @@ export class MonitoringPage extends LitElement {
 
     .metric-card {
       background: var(--card);
-      border: 1px solid var(--border);
+      box-shadow: var(--glass-shadow-sm);
       border-radius: var(--radius-lg);
       padding: 20px;
-      transition: border-color var(--duration-normal) ease;
-    }
-
-    .metric-card:hover {
-      border-color: var(--border-strong);
     }
 
     .metric-header {
@@ -110,23 +106,23 @@ export class MonitoringPage extends LitElement {
     }
 
     .metric-icon.cpu {
-      background: rgba(59, 130, 246, 0.1);
-      color: #3b82f6;
+      background: var(--info-subtle);
+      color: var(--info);
     }
 
     .metric-icon.memory {
-      background: rgba(139, 92, 246, 0.1);
-      color: #8b5cf6;
+      background: var(--accent-2-subtle);
+      color: var(--accent-2);
     }
 
     .metric-icon.disk {
-      background: rgba(249, 115, 22, 0.1);
-      color: #f97316;
+      background: var(--warn-subtle);
+      color: var(--warn);
     }
 
     .metric-icon.network {
-      background: rgba(34, 197, 94, 0.1);
-      color: #22c55e;
+      background: var(--ok-subtle);
+      color: var(--ok);
     }
 
     .metric-value {
@@ -172,7 +168,7 @@ export class MonitoringPage extends LitElement {
     /* Chart placeholder */
     .chart-card {
       background: var(--card);
-      border: 1px solid var(--border);
+      box-shadow: var(--glass-shadow-sm);
       border-radius: var(--radius-lg);
       overflow: hidden;
     }
@@ -182,7 +178,7 @@ export class MonitoringPage extends LitElement {
       align-items: center;
       justify-content: space-between;
       padding: 16px 20px;
-      border-bottom: 1px solid var(--border);
+      box-shadow: 0 1px 0 var(--card-highlight);
     }
 
     .chart-title {
@@ -247,7 +243,7 @@ export class MonitoringPage extends LitElement {
       text-align: center;
       padding: 64px 24px;
       background: var(--card);
-      border: 1px solid var(--border);
+      box-shadow: var(--glass-shadow-sm);
       border-radius: var(--radius-lg);
     }
 
@@ -262,7 +258,7 @@ export class MonitoringPage extends LitElement {
       margin: 0 0 16px;
       color: var(--muted);
     }
-  `
+  `]
 
   @state() metrics: DashboardMetrics | null = null
   @state() loading = true

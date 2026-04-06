@@ -1,26 +1,26 @@
 import { LitElement, html, css } from 'lit'
 import { customElement, property } from 'lit/decorators.js'
+import { hostStyles } from '../../../../../styles/shared-host'
 
 @customElement('a2ui-card')
 export class A2uiCard extends LitElement {
   @property({ type: String }) title = ''
 
-  static styles = css`
+  static styles = [hostStyles, css`
     :host { display: block; }
     .card {
-      background: var(--card, #fff);
-      border: 1px solid var(--border, #e2e8f0);
-      border-radius: var(--radius, 8px);
+      background: var(--card);
+      border-radius: var(--radius);
       padding: 16px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      box-shadow: var(--glass-shadow-sm);
     }
     .card-title {
       font-size: 0.875rem;
       font-weight: 600;
       margin-bottom: 8px;
-      color: var(--text, #1a1a1a);
+      color: var(--text);
     }
-  `
+  `]
 
   render() {
     return html`

@@ -35,7 +35,7 @@ export class StreamingMessage extends LitElement {
     }
     .indicator {
       font-size: 0.75rem;
-      color: var(--text-muted, #888);
+      color: var(--muted);
       margin-top: 4px;
     }
     /* Markdown styling */

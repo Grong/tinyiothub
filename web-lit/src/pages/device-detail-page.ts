@@ -12,10 +12,11 @@ import { driverApi, type Driver, type DriverConfigOption } from '../services/dri
 import { tagApi, type Tag } from '../services/tags'
 import { navigate } from '../lib/navigate'
 import { $currentWorkspaceId } from '../stores/workspace-store'
+import { hostStyles } from '../styles/shared-host'
 
 @customElement('device-detail-page')
 export class DeviceDetailPage extends LitElement {
-  static styles = css`
+  static styles = [hostStyles, css`
     :host {
       display: flex;
       flex-direction: column;
@@ -730,7 +731,7 @@ export class DeviceDetailPage extends LitElement {
       font-size: 10px;
       padding: 1px 6px;
       border-radius: 4px;
-      border: 1px solid var(--border);
+      box-shadow: var(--glass-shadow-sm);
       color: var(--muted);
       margin-left: 8px;
     }
@@ -786,7 +787,7 @@ export class DeviceDetailPage extends LitElement {
       display: flex;
       gap: 0;
       margin-bottom: 24px;
-      border-bottom: 1px solid var(--border);
+      box-shadow: 0 1px 0 var(--card-highlight);
     }
     .main-tab-item {
       padding: 10px 20px;
@@ -818,7 +819,7 @@ export class DeviceDetailPage extends LitElement {
     @media (max-width: 1100px) {
       .monitoring-row { grid-template-columns: 1fr; }
     }
-  `
+  `]
 
   @state() profile: DeviceProfile | null = null
   @state() loading = true

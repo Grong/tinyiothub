@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit'
 import { customElement, state } from 'lit/decorators.js'
+import { hostStyles } from '../styles/shared-host'
 
 interface InstalledItem {
   id: string
@@ -17,7 +18,7 @@ interface InstalledItem {
 
 @customElement('installed-marketplace-page')
 export class InstalledMarketplacePage extends LitElement {
-  static styles = css`
+  static styles = [hostStyles, css`
     installed-marketplace-page {
       display: flex;
       flex-direction: column;
@@ -52,30 +53,29 @@ export class InstalledMarketplacePage extends LitElement {
       align-items: center;
       gap: 8px;
       padding: 10px 16px;
-      border: 1px solid var(--border);
+      border: none;
+      box-shadow: var(--glass-shadow-sm);
       border-radius: var(--radius-md);
       background: var(--card);
       color: var(--text);
       font-size: 13px;
       font-weight: 500;
       cursor: pointer;
-      transition: border-color var(--duration-fast) ease, background var(--duration-fast) ease;
+      transition: box-shadow var(--duration-fast) ease, background var(--duration-fast) ease;
     }
 
     .btn:hover {
       background: var(--bg-hover);
-      border-color: var(--border-strong);
+      box-shadow: var(--glass-shadow-md);
     }
 
     .btn-primary {
       background: var(--accent);
-      border-color: var(--accent);
       color: var(--accent-foreground);
     }
 
     .btn-primary:hover {
       background: var(--accent-hover);
-      border-color: var(--accent-hover);
     }
 
     /* Tabs */
@@ -83,7 +83,7 @@ export class InstalledMarketplacePage extends LitElement {
       display: flex;
       gap: 4px;
       margin-bottom: 24px;
-      border-bottom: 1px solid var(--border);
+      box-shadow: 0 1px 0 var(--card-highlight);
     }
 
     .tab {
@@ -111,7 +111,7 @@ export class InstalledMarketplacePage extends LitElement {
     /* Items list */
     .items-list {
       background: var(--card);
-      border: 1px solid var(--border);
+      box-shadow: var(--glass-shadow-sm);
       border-radius: var(--radius-lg);
       overflow: hidden;
     }
@@ -121,12 +121,12 @@ export class InstalledMarketplacePage extends LitElement {
       align-items: center;
       gap: 16px;
       padding: 16px 20px;
-      border-bottom: 1px solid var(--border);
+      box-shadow: 0 1px 0 var(--card-highlight);
       transition: background var(--duration-fast) ease;
     }
 
     .item:last-child {
-      border-bottom: none;
+      box-shadow: none;
     }
 
     .item:hover {
@@ -212,29 +212,28 @@ export class InstalledMarketplacePage extends LitElement {
 
     .action-btn {
       padding: 6px 12px;
-      border: 1px solid var(--border);
+      border: none;
+      box-shadow: var(--glass-shadow-sm);
       border-radius: var(--radius-md);
       background: var(--card);
       color: var(--text);
       font-size: 12px;
       cursor: pointer;
-      transition: background var(--duration-fast) ease, border-color var(--duration-fast) ease;
+      transition: background var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
     }
 
     .action-btn:hover {
       background: var(--bg-hover);
-      border-color: var(--border-strong);
+      box-shadow: var(--glass-shadow-md);
     }
 
     .action-btn.danger:hover {
       background: var(--danger-subtle);
-      border-color: var(--danger);
       color: var(--danger);
     }
 
     .action-btn.primary {
       background: var(--accent);
-      border-color: var(--accent);
       color: var(--accent-foreground);
     }
 
@@ -288,7 +287,7 @@ export class InstalledMarketplacePage extends LitElement {
     @keyframes spin {
       to { transform: rotate(360deg); }
     }
-  `
+  `]
 
   @state() items: InstalledItem[] = []
   @state() loading = true

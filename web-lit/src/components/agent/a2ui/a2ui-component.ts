@@ -7,6 +7,7 @@ import { LitElement, html, css, nothing } from 'lit'
 import { customElement, property } from 'lit/decorators.js'
 import type { A2uiComponentDescriptor } from '../../../types/agent-types'
 import { getTagName } from './catalog/index'
+import { hostStyles } from '../../../styles/shared-host'
 
 @customElement('a2ui-component')
 export class A2uiComponent extends LitElement {
@@ -16,17 +17,17 @@ export class A2uiComponent extends LitElement {
   private _lastDescriptor: A2uiComponentDescriptor | null = null
   private _boundHandleAction: ((e: Event) => void) | null = null
 
-  static styles = css`
+  static styles = [hostStyles, css`
     :host { display: block; }
     .unknown {
       padding: 8px;
-      background: var(--bg-elevated, #f8fafc);
-      border: 1px dashed var(--border, #e2e8f0);
+      background: var(--bg-elevated);
+      border: 1px dashed var(--border);
       border-radius: 4px;
       font-size: 0.75rem;
-      color: var(--text-muted, #888);
+      color: var(--text-muted);
     }
-  `
+  `]
 
   private _cleanup() {
     if (this._el && this._boundHandleAction) {

@@ -67,7 +67,11 @@
   --danger: #ef4444;
   --danger-muted: rgba(239, 68, 68, 0.75);
   --danger-subtle: rgba(239, 68, 68, 0.08);
+  --danger-hover: #dc2626;
   --info: #3b82f6;
+  --info-subtle: rgba(59, 130, 246, 0.1);
+  --text-on-accent: #fafafa;
+  --overlay: rgba(0, 0, 0, 0.5);
 
   /* Focus */
   --focus: rgba(255, 92, 92, 0.2);
@@ -178,7 +182,11 @@
   --danger: #dc2626;
   --danger-muted: rgba(220, 38, 38, 0.75);
   --danger-subtle: rgba(220, 38, 38, 0.08);
+  --danger-hover: #b91c1c;
   --info: #2563eb;
+  --info-subtle: rgba(37, 99, 235, 0.08);
+  --text-on-accent: #ffffff;
+  --overlay: rgba(0, 0, 0, 0.3);
 
   --focus: rgba(220, 38, 38, 0.15);
   --focus-ring: 0 0 0 2px var(--bg), 0 0 0 3px color-mix(in srgb, var(--ring) 70%, transparent);
@@ -266,6 +274,10 @@
   --glass-shadow: 0 2px 16px rgba(0, 0, 0, 0.28);
   --glass-shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.2);
   --glass-shadow-hover: 0 4px 24px rgba(0, 0, 0, 0.36);
+
+  --danger-hover: #ef4444;
+  --text-on-accent: #fafafa;
+  --overlay: rgba(0, 0, 0, 0.5);
 }
 
 :root[data-theme="openknot-light"] {
@@ -328,6 +340,10 @@
   --glass-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
   --glass-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.04);
   --glass-shadow-hover: 0 4px 20px rgba(0, 0, 0, 0.08);
+
+  --danger-hover: #a8192a;
+  --text-on-accent: #ffffff;
+  --overlay: rgba(0, 0, 0, 0.3);
 }
 
 :root[data-theme="dash"] {
@@ -392,6 +408,10 @@
   --glass-shadow: 0 2px 16px rgba(10, 6, 4, 0.24);
   --glass-shadow-sm: 0 1px 4px rgba(10, 6, 4, 0.18);
   --glass-shadow-hover: 0 4px 24px rgba(10, 6, 4, 0.32);
+
+  --danger-hover: #ef4444;
+  --text-on-accent: #ece0d8;
+  --overlay: rgba(10, 6, 4, 0.5);
 }
 
 :root[data-theme="dash-light"] {
@@ -452,6 +472,10 @@
   --glass-shadow: 0 2px 12px rgba(60, 40, 20, 0.06);
   --glass-shadow-sm: 0 1px 3px rgba(60, 40, 20, 0.04);
   --glass-shadow-hover: 0 4px 20px rgba(60, 40, 20, 0.1);
+
+  --danger-hover: #5c3c20;
+  --text-on-accent: #ffffff;
+  --overlay: rgba(60, 40, 20, 0.3);
 }
 
 * {

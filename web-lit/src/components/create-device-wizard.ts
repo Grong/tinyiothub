@@ -5,12 +5,13 @@ import { templateApi, transformDeviceTemplate, type ProcessedDeviceTemplate, typ
 import './template-card'
 import './template-preview'
 import './device-info-form'
+import { hostStyles } from '../styles/shared-host'
 
 type WizardStep = 'template' | 'device'
 
 @customElement('create-device-wizard')
 export class CreateDeviceWizard extends LitElement {
-  static styles = css`
+  static styles = [hostStyles, css`
     :host { display: block; }
     .overlay {
       position: fixed;
@@ -38,7 +39,7 @@ export class CreateDeviceWizard extends LitElement {
       align-items: center;
       justify-content: space-between;
       padding: 20px 24px;
-      border-bottom: 1px solid var(--border);
+      box-shadow: 0 1px 0 var(--card-highlight);
     }
     .header h2 {
       font-size: 18px;
@@ -133,7 +134,7 @@ export class CreateDeviceWizard extends LitElement {
     }
     .preview-area {
       flex: 0 0 360px;
-      border-left: 1px solid var(--border);
+      box-shadow: 1px 0 0 var(--card-highlight);
       overflow-y: auto;
     }
     .footer {
@@ -141,7 +142,7 @@ export class CreateDeviceWizard extends LitElement {
       justify-content: flex-end;
       gap: 12px;
       padding: 16px 24px;
-      border-top: 1px solid var(--border);
+      box-shadow: 0 -1px 0 var(--card-highlight);
     }
     .btn {
       padding: 10px 20px;
@@ -197,7 +198,7 @@ export class CreateDeviceWizard extends LitElement {
       align-items: center;
       gap: 16px;
     }
-  `
+  `]
 
   @state() open = false
   @state() step: WizardStep = 'template'

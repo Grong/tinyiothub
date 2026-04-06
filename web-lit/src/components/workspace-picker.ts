@@ -8,6 +8,7 @@ import {
   type Workspace,
 } from '../stores/workspace-store'
 import { workspaceApi } from '../services/workspace'
+import { hostStyles } from '../styles/shared-host'
 
 @customElement('workspace-picker')
 export class WorkspacePicker extends LitElement {
@@ -23,7 +24,7 @@ export class WorkspacePicker extends LitElement {
   private _unsubWorkspaces: (() => void) | null = null
   private _unsubCurrentId: (() => void) | null = null
 
-  static styles = css`
+  static styles = [hostStyles, css`
     :host {
       display: block;
     }
@@ -39,7 +40,7 @@ export class WorkspacePicker extends LitElement {
     .picker-label {
       font-size: 11px;
       font-weight: 600;
-      color: var(--muted, #838387);
+      color: var(--muted);
       text-transform: uppercase;
       letter-spacing: 0.06em;
     }
@@ -56,14 +57,14 @@ export class WorkspacePicker extends LitElement {
       border: none;
       border-radius: 6px;
       background: transparent;
-      color: var(--muted, #838387);
+      color: var(--muted);
       cursor: pointer;
       padding: 0;
       transition: background 0.15s, color 0.15s;
     }
     .icon-btn:hover {
-      background: var(--bg-hover, #1f2330);
-      color: var(--text, #d4d4d8);
+      background: var(--bg-hover);
+      color: var(--text);
     }
     .icon-btn svg {
       width: 14px;
@@ -73,41 +74,41 @@ export class WorkspacePicker extends LitElement {
       width: 100%;
       padding: 6px 8px;
       border-radius: 6px;
-      border: 1px solid var(--border-strong, #2e3040);
-      background: var(--bg-elevated, #191c24);
-      color: var(--text, #d4d4d8);
+      border: 1px solid var(--border-strong);
+      background: var(--bg-elevated);
+      color: var(--text);
       font-size: 13px;
       cursor: pointer;
       outline: none;
-      transition: border-color 0.15s;
+      transition: box-shadow 0.15s;
     }
     .picker select:focus {
-      border-color: var(--accent, #ff5c5c);
+      box-shadow: 0 0 0 1px var(--accent);
     }
     .create-form {
       margin-top: 8px;
       padding: 10px;
       border-radius: 8px;
-      background: var(--bg-elevated, #191c24);
-      border: 1px solid var(--border-strong, #2e3040);
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-strong);
     }
     .create-form input {
       width: 100%;
       padding: 6px 8px;
       border-radius: 6px;
-      border: 1px solid var(--border-strong, #2e3040);
-      background: var(--bg, #0e1015);
-      color: var(--text, #d4d4d8);
+      border: 1px solid var(--border-strong);
+      background: var(--bg);
+      color: var(--text);
       font-size: 13px;
       outline: none;
       box-sizing: border-box;
-      transition: border-color 0.15s;
+      transition: box-shadow 0.15s;
     }
     .create-form input:focus {
-      border-color: var(--accent, #ff5c5c);
+      box-shadow: 0 0 0 1px var(--accent);
     }
     .create-form input::placeholder {
-      color: var(--muted, #838387);
+      color: var(--muted);
     }
     .form-actions {
       display: flex;
@@ -129,24 +130,24 @@ export class WorkspacePicker extends LitElement {
       cursor: not-allowed;
     }
     .btn-primary {
-      background: var(--accent, #ff5c5c);
-      color: #fff;
+      background: var(--accent);
+      color: var(--text-on-accent);
     }
     .btn-primary:hover:not(:disabled) {
-      background: var(--accent-hover, #ff7070);
+      background: var(--accent-hover);
     }
     .btn-ghost {
       background: transparent;
-      color: var(--muted, #838387);
+      color: var(--muted);
     }
     .btn-ghost:hover:not(:disabled) {
-      background: var(--bg-hover, #1f2330);
-      color: var(--text, #d4d4d8);
+      background: var(--bg-hover);
+      color: var(--text);
     }
     .error-msg {
       margin-top: 6px;
       font-size: 12px;
-      color: var(--danger, #ef4444);
+      color: var(--danger);
     }
     .workspace-row {
       display: flex;
@@ -167,25 +168,25 @@ export class WorkspacePicker extends LitElement {
       gap: 6px;
       width: 100%;
       padding: 8px 12px;
-      border: 1px dashed var(--border-strong, #2e3040);
+      border: 1px dashed var(--border-strong);
       border-radius: 8px;
       background: transparent;
-      color: var(--muted, #838387);
+      color: var(--muted);
       font-size: 13px;
       cursor: pointer;
       transition: border-color 0.15s, color 0.15s, background 0.15s;
     }
     .btn-create-empty:hover {
-      border-color: var(--accent, #ff5c5c);
-      color: var(--accent, #ff5c5c);
-      background: var(--accent-subtle, rgba(255, 92, 92, 0.06));
+      border-color: var(--accent);
+      color: var(--accent);
+      background: var(--accent-subtle);
     }
     .btn-create-empty svg {
       width: 16px;
       height: 16px;
       flex-shrink: 0;
     }
-  `
+  `]
 
   connectedCallback() {
     super.connectedCallback()

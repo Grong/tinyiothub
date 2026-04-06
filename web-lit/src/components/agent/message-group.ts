@@ -94,7 +94,7 @@ export class MessageGroup extends LitElement {
     }
     .timestamp {
       font-size: 0.6875rem;
-      color: var(--text-muted, #888);
+      color: var(--muted);
     }
     .group.user .timestamp { text-align: right; }
     .surfaces {

@@ -2,6 +2,7 @@ import { LitElement, html, css } from 'lit'
 import { customElement, state } from 'lit/decorators.js'
 import { apiGet, apiPost, apiDelete } from '../lib/api-client'
 import type { PaginatedResponse } from '../lib/api-client'
+import { hostStyles } from '../styles/shared-host'
 
 interface Tag {
   id: string
@@ -14,7 +15,7 @@ interface Tag {
 
 @customElement('tags-page')
 export class TagsPage extends LitElement {
-  static styles = css`
+  static styles = [hostStyles, css`
     tags-page {
       display: flex;
       flex-direction: column;
@@ -67,14 +68,13 @@ export class TagsPage extends LitElement {
 
     .tag-card {
       background: var(--card);
-      border: 1px solid var(--border);
+      box-shadow: var(--glass-shadow-sm);
       border-radius: var(--radius-lg);
       padding: 20px;
-      transition: border-color var(--duration-normal) ease;
     }
 
     .tag-card:hover {
-      border-color: var(--border-strong);
+      box-shadow: var(--glass-shadow-md);
     }
 
     .tag-header {
@@ -187,7 +187,7 @@ export class TagsPage extends LitElement {
     .modal-overlay {
       position: fixed;
       inset: 0;
-      background: rgba(0, 0, 0, 0.5);
+      background: var(--overlay);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -196,7 +196,7 @@ export class TagsPage extends LitElement {
 
     .modal {
       background: var(--card);
-      border: 1px solid var(--border);
+      box-shadow: var(--glass-shadow-sm);
       border-radius: var(--radius-lg);
       width: 100%;
       max-width: 480px;
@@ -219,7 +219,7 @@ export class TagsPage extends LitElement {
       align-items: center;
       justify-content: space-between;
       padding: 16px 20px;
-      border-bottom: 1px solid var(--border);
+      box-shadow: 0 1px 0 var(--card-highlight);
     }
 
     .modal-title {
@@ -306,12 +306,13 @@ export class TagsPage extends LitElement {
       justify-content: flex-end;
       gap: 12px;
       padding: 16px 20px;
-      border-top: 1px solid var(--border);
+      box-shadow: 0 -1px 0 var(--card-highlight);
     }
 
     .btn {
       padding: 10px 16px;
-      border: 1px solid var(--border);
+      box-shadow: var(--glass-shadow-sm);
+      border: none;
       border-radius: var(--radius-md);
       background: var(--card);
       color: var(--text);
@@ -326,14 +327,13 @@ export class TagsPage extends LitElement {
 
     .btn-primary {
       background: var(--accent);
-      border-color: var(--accent);
       color: var(--accent-foreground);
     }
 
     .btn-primary:hover {
       background: var(--accent-hover);
     }
-  `
+  `]
 
   @state() tags: Tag[] = []
   @state() loading = true

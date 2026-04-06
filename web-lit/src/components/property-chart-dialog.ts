@@ -3,10 +3,11 @@ import { LitElement, html, css } from 'lit'
 import { customElement, property, state } from 'lit/decorators.js'
 import { deviceApi } from '../services/devices'
 import type { DeviceProperty, PerformanceHistory } from '../services/devices'
+import { hostStyles } from '../styles/shared-host'
 
 @customElement('property-chart-dialog')
 export class PropertyChartDialog extends LitElement {
-  static styles = css`
+  static styles = [hostStyles, css`
     :host { display: block; }
     .overlay {
       position: fixed;
@@ -32,7 +33,7 @@ export class PropertyChartDialog extends LitElement {
       justify-content: space-between;
       align-items: center;
       padding: 16px 20px;
-      border-bottom: 1px solid var(--border);
+      box-shadow: 0 1px 0 var(--card-highlight);
     }
     .header h3 { margin: 0; font-size: 16px; }
     .close-btn {
@@ -84,7 +85,7 @@ export class PropertyChartDialog extends LitElement {
       height: 200px;
       color: var(--muted);
     }
-  `
+  `]
 
   @property({ type: Boolean }) open = false
   @property({ type: Object }) property!: DeviceProperty

@@ -3,10 +3,11 @@ import { customElement, state } from 'lit/decorators.js'
 import { tenantApi } from '../services/tenant'
 import { navigate } from '../lib/navigate'
 import '../components/logo-icon'
+import { hostStyles } from '../styles/shared-host'
 
 @customElement('register-page')
 export class RegisterPage extends LitElement {
-  static styles = css`
+  static styles = [hostStyles, css`
     :host {
       position: fixed;
       inset: 0;
@@ -34,7 +35,7 @@ export class RegisterPage extends LitElement {
 
     /* Branding side */
     .branding-side {
-      background: linear-gradient(135deg, var(--accent) 0%, #1e40af 100%);
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
       padding: 48px;
       display: flex;
       flex-direction: column;
@@ -273,7 +274,7 @@ export class RegisterPage extends LitElement {
     .terms a:hover {
       text-decoration: underline;
     }
-  `
+  `]
 
   @state() name = ''
   @state() slug = ''

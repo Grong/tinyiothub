@@ -1,10 +1,11 @@
 import { LitElement, html, css } from 'lit'
 import { customElement, state } from 'lit/decorators.js'
 import { navigate } from '../lib/navigate'
+import { hostStyles } from '../styles/shared-host'
 
 @customElement('home-page')
 export class HomePage extends LitElement {
-  static styles = css`
+  static styles = [hostStyles, css`
     home-page {
       display: block;
       min-height: 100vh;
@@ -19,7 +20,7 @@ export class HomePage extends LitElement {
       right: 0;
       z-index: 50;
       background: var(--chrome);
-      border-bottom: 1px solid var(--border);
+      box-shadow: 0 1px 0 var(--card-highlight);
       backdrop-filter: blur(12px);
     }
 
@@ -212,12 +213,11 @@ export class HomePage extends LitElement {
     .btn.secondary {
       background: var(--card);
       color: var(--text-strong);
-      border: 1px solid var(--border);
+      box-shadow: var(--glass-shadow-sm);
     }
 
     .btn.secondary:hover {
       background: var(--bg-hover);
-      border-color: var(--border-hover);
     }
 
     /* Protocols */
@@ -241,7 +241,7 @@ export class HomePage extends LitElement {
       gap: 8px;
       padding: 8px 16px;
       background: var(--card);
-      border: 1px solid var(--border);
+      box-shadow: var(--glass-shadow-sm);
       border-radius: var(--radius-md);
       font-size: 14px;
       font-weight: 500;
@@ -258,8 +258,7 @@ export class HomePage extends LitElement {
     .stats {
       padding: 60px 24px;
       background: var(--bg-accent);
-      border-top: 1px solid var(--border);
-      border-bottom: 1px solid var(--border);
+      box-shadow: 0 -1px 0 var(--card-highlight), 0 1px 0 var(--card-highlight);
     }
 
     .stats-inner {
@@ -350,13 +349,12 @@ export class HomePage extends LitElement {
     .feature-card {
       padding: 32px;
       background: var(--card);
-      border: 1px solid var(--border);
+      box-shadow: var(--glass-shadow-sm);
       border-radius: var(--radius-lg);
       transition: all 0.2s ease;
     }
 
     .feature-card:hover {
-      border-color: var(--border-hover);
       transform: translateY(-2px);
     }
 
@@ -421,7 +419,7 @@ export class HomePage extends LitElement {
     .agent-card {
       padding: 20px;
       background: var(--card);
-      border: 1px solid var(--border);
+      box-shadow: var(--glass-shadow-sm);
       border-radius: var(--radius-md);
       cursor: pointer;
       transition: all 0.15s ease;
@@ -429,7 +427,6 @@ export class HomePage extends LitElement {
 
     .agent-card:hover {
       background: var(--bg-hover);
-      border-color: var(--border-hover);
     }
 
     .agent-header {
@@ -494,7 +491,7 @@ export class HomePage extends LitElement {
     .footer {
       padding: 48px 24px;
       background: var(--bg-accent);
-      border-top: 1px solid var(--border);
+      box-shadow: 0 -1px 0 var(--card-highlight);
     }
 
     .footer-inner {
@@ -582,7 +579,7 @@ export class HomePage extends LitElement {
       max-width: 1200px;
       margin: 32px auto 0;
       padding-top: 24px;
-      border-top: 1px solid var(--border);
+      box-shadow: 0 -1px 0 var(--card-highlight);
       display: flex;
       justify-content: space-between;
       align-items: center;
@@ -610,7 +607,7 @@ export class HomePage extends LitElement {
     .footer-legal a:hover {
       color: var(--text-strong);
     }
-  `
+  `]
 
   render() {
     return html`

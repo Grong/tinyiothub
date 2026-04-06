@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit'
 import { customElement, property } from 'lit/decorators.js'
+import { hostStyles } from '../../../../styles/shared-host'
 
 @customElement('progress-indicator')
 export class ProgressIndicator extends LitElement {
@@ -10,12 +11,12 @@ export class ProgressIndicator extends LitElement {
   @property({ type: Number }) total = 0
   @property({ type: Boolean }) showCancel = false
 
-  static styles = css`
+  static styles = [hostStyles, css`
     :host { display: block; }
     .container { padding: 8px 0; }
     .bar-bg {
       height: 6px;
-      background: var(--border, #e2e8f0);
+      background: var(--border);
       border-radius: 3px;
       overflow: hidden;
     }
@@ -24,34 +25,34 @@ export class ProgressIndicator extends LitElement {
       border-radius: 3px;
       transition: width 0.3s ease;
     }
-    .bar-fill.running { background: var(--accent, #6366f1); }
-    .bar-fill.completed { background: var(--ok, #22c55e); }
-    .bar-fill.failed { background: var(--danger, #ef4444); }
-    .bar-fill.cancelled { background: var(--text-muted, #94a3b8); }
+    .bar-fill.running { background: var(--accent); }
+    .bar-fill.completed { background: var(--ok); }
+    .bar-fill.failed { background: var(--danger); }
+    .bar-fill.cancelled { background: var(--text-muted); }
     .info {
       display: flex;
       justify-content: space-between;
       align-items: center;
       margin-top: 6px;
       font-size: 0.75rem;
-      color: var(--text-muted, #888);
+      color: var(--text-muted);
     }
     .status-label { }
-    .status-label.running { color: var(--accent, #6366f1); }
-    .status-label.completed { color: var(--ok, #22c55e); }
-    .status-label.failed { color: var(--danger, #ef4444); }
-    .status-label.cancelled { color: var(--text-muted, #94a3b8); }
+    .status-label.running { color: var(--accent); }
+    .status-label.completed { color: var(--ok); }
+    .status-label.failed { color: var(--danger); }
+    .status-label.cancelled { color: var(--text-muted); }
     .pct { font-family: monospace; }
     button {
       font-size: 0.75rem;
       padding: 2px 8px;
       border-radius: 4px;
-      border: 1px solid var(--border, #e2e8f0);
+      box-shadow: 0 0 0 1px var(--border);
       background: transparent;
       cursor: pointer;
-      color: var(--danger, #ef4444);
+      color: var(--danger);
     }
-  `
+  `]
 
   private _statusLabels: Record<string, string> = {
     running: '进行中',

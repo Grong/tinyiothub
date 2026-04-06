@@ -2,10 +2,11 @@ import { LitElement, html, css } from 'lit'
 import { customElement, state } from 'lit/decorators.js'
 import { authApi, type UserProfile } from '../services/auth'
 import { $user, type User } from '../stores/auth-store'
+import { hostStyles } from '../styles/shared-host'
 
 @customElement('settings-page')
 export class SettingsPage extends LitElement {
-  static styles = css`
+  static styles = [hostStyles, css`
     settings-page {
       display: flex;
       flex-direction: column;
@@ -38,7 +39,7 @@ export class SettingsPage extends LitElement {
       display: flex;
       gap: 4px;
       margin-bottom: 24px;
-      border-bottom: 1px solid var(--border);
+      box-shadow: 0 1px 0 var(--card-highlight);
     }
 
     .tab {
@@ -66,7 +67,7 @@ export class SettingsPage extends LitElement {
     /* Card */
     .card {
       background: var(--card);
-      border: 1px solid var(--border);
+      box-shadow: var(--glass-shadow-sm);
       border-radius: var(--radius-lg);
       overflow: hidden;
       margin-bottom: 24px;
@@ -74,7 +75,7 @@ export class SettingsPage extends LitElement {
 
     .card-header {
       padding: 16px 20px;
-      border-bottom: 1px solid var(--border);
+      box-shadow: 0 1px 0 var(--card-highlight);
     }
 
     .card-title {
@@ -148,7 +149,7 @@ export class SettingsPage extends LitElement {
       justify-content: flex-end;
       gap: 12px;
       padding: 16px 20px;
-      border-top: 1px solid var(--border);
+      box-shadow: 0 -1px 0 var(--card-highlight);
       background: var(--bg);
     }
 
@@ -157,34 +158,30 @@ export class SettingsPage extends LitElement {
       align-items: center;
       gap: 8px;
       padding: 10px 20px;
-      border: 1px solid var(--border);
+      box-shadow: var(--glass-shadow-sm);
       border-radius: var(--radius-md);
       background: var(--card);
       color: var(--text);
       font-size: 13px;
       font-weight: 500;
       cursor: pointer;
-      transition: background var(--duration-fast) ease, border-color var(--duration-fast) ease;
+      transition: background var(--duration-fast) ease;
     }
 
     .btn:hover {
       background: var(--bg-hover);
-      border-color: var(--border-strong);
     }
 
     .btn-primary {
       background: var(--accent);
-      border-color: var(--accent);
       color: var(--accent-foreground);
     }
 
     .btn-primary:hover {
       background: var(--accent-hover);
-      border-color: var(--accent-hover);
     }
 
     .btn-danger {
-      border-color: var(--danger);
       color: var(--danger);
     }
 
@@ -203,13 +200,13 @@ export class SettingsPage extends LitElement {
     .message.success {
       background: var(--ok-subtle);
       color: var(--ok);
-      border: 1px solid var(--ok);
+      box-shadow: var(--glass-shadow-sm);
     }
 
     .message.error {
       background: var(--danger-subtle);
       color: var(--danger);
-      border: 1px solid var(--danger);
+      box-shadow: var(--glass-shadow-sm);
     }
 
     /* Avatar section */
@@ -247,13 +244,9 @@ export class SettingsPage extends LitElement {
     }
 
     /* Danger zone */
-    .danger-zone {
-      border-color: var(--danger);
-    }
-
     .danger-zone .card-header {
       background: var(--danger-subtle);
-      border-bottom-color: var(--danger);
+      box-shadow: 0 1px 0 var(--card-highlight);
     }
 
     .danger-zone .card-title {
@@ -263,7 +256,7 @@ export class SettingsPage extends LitElement {
     .danger-zone .btn-row {
       background: var(--danger-subtle);
     }
-  `
+  `]
 
   @state() activeTab = 'profile'
   @state() profile: UserProfile | null = null

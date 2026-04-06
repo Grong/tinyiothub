@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit'
 import { customElement, property } from 'lit/decorators.js'
+import { hostStyles } from '../../../../styles/shared-host'
 
 @customElement('real-time-toggle')
 export class RealTimeToggle extends LitElement {
@@ -7,7 +8,7 @@ export class RealTimeToggle extends LitElement {
   @property({ type: String }) label = '实时更新'
   @property({ type: String }) connectionStatus: 'connected' | 'connecting' | 'disconnected' = 'disconnected'
 
-  static styles = css`
+  static styles = [hostStyles, css`
     :host { display: inline-block; }
     .container {
       display: flex;
@@ -23,8 +24,8 @@ export class RealTimeToggle extends LitElement {
       position: relative;
       transition: background 0.2s;
     }
-    .toggle.on { background: var(--ok, #22c55e); }
-    .toggle.off { background: var(--border, #94a3b8); }
+    .toggle.on { background: var(--ok); }
+    .toggle.off { background: var(--border); }
     .toggle::after {
       content: '';
       position: absolute;
@@ -32,7 +33,7 @@ export class RealTimeToggle extends LitElement {
       width: 16px;
       height: 16px;
       border-radius: 50%;
-      background: #fff;
+      background: var(--card);
       transition: left 0.2s;
     }
     .toggle.on::after { left: 18px; }
@@ -43,10 +44,10 @@ export class RealTimeToggle extends LitElement {
       height: 6px;
       border-radius: 50%;
     }
-    .status-dot.connected { background: var(--ok, #22c55e); }
-    .status-dot.connecting { background: var(--warn, #f59e0b); }
-    .status-dot.disconnected { background: var(--text-muted, #94a3b8); }
-  `
+    .status-dot.connected { background: var(--ok); }
+    .status-dot.connecting { background: var(--warn); }
+    .status-dot.disconnected { background: var(--text-muted); }
+  `]
 
   private _handleToggle() {
     this.dispatchEvent(new CustomEvent('a2ui-action', {

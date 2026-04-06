@@ -1,6 +1,7 @@
 import { LitElement, html, css } from 'lit'
 import { customElement, state } from 'lit/decorators.js'
 import { navigate } from '../lib/navigate'
+import { hostStyles } from '../styles/shared-host'
 
 interface MarketplaceTemplate {
   id: string
@@ -38,7 +39,7 @@ interface MarketplaceDriver {
 
 @customElement('marketplace-page')
 export class MarketplacePage extends LitElement {
-  static styles = css`
+  static styles = [hostStyles, css`
     marketplace-page {
       display: flex;
       flex-direction: column;
@@ -53,7 +54,7 @@ export class MarketplacePage extends LitElement {
       top: 0;
       z-index: 50;
       background: var(--card);
-      border-bottom: 1px solid var(--border);
+      box-shadow: 0 1px 0 var(--card-highlight);
       padding: 0 24px;
     }
 
@@ -179,7 +180,7 @@ export class MarketplacePage extends LitElement {
     .tabs {
       display: flex;
       gap: 4px;
-      border-bottom: 1px solid var(--border);
+      box-shadow: 0 1px 0 var(--card-highlight);
       margin-bottom: 24px;
     }
 
@@ -256,14 +257,14 @@ export class MarketplacePage extends LitElement {
     /* Cards */
     .card {
       background: var(--card);
-      border: 1px solid var(--border);
+      box-shadow: var(--glass-shadow-sm);
       border-radius: var(--radius-lg);
       padding: 20px;
-      transition: border-color var(--duration-normal) ease;
+      transition: box-shadow var(--duration-normal) ease;
     }
 
     .card:hover {
-      border-color: var(--border-strong);
+      box-shadow: var(--glass-shadow-md);
     }
 
     .card-header {
@@ -408,7 +409,7 @@ export class MarketplacePage extends LitElement {
     @keyframes spin {
       to { transform: rotate(360deg); }
     }
-  `
+  `]
 
   @state() activeTab: 'templates' | 'drivers' = 'templates'
   @state() templates: MarketplaceTemplate[] = []

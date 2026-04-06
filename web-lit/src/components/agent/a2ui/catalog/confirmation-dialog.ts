@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit'
 import { customElement, property, state } from 'lit/decorators.js'
+import { hostStyles } from '../../../../styles/shared-host'
 
 @customElement('confirmation-dialog')
 export class ConfirmationDialog extends LitElement {
@@ -13,7 +14,7 @@ export class ConfirmationDialog extends LitElement {
 
   private _timer: number | null = null
 
-  static styles = css`
+  static styles = [hostStyles, css`
     :host { display: block; }
     .overlay {
       position: fixed;
@@ -25,29 +26,29 @@ export class ConfirmationDialog extends LitElement {
       z-index: 1000;
     }
     .dialog {
-      background: var(--card, #fff);
-      border-radius: var(--radius, 8px);
+      background: var(--card);
+      border-radius: var(--radius);
       padding: 20px;
       min-width: 300px;
       max-width: 400px;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+      box-shadow: var(--glass-shadow-sm);
     }
     .title { font-size: 1rem; font-weight: 600; margin-bottom: 8px; }
-    .message { font-size: 0.875rem; color: var(--text-muted, #666); margin-bottom: 16px; }
+    .message { font-size: 0.875rem; color: var(--text-muted); margin-bottom: 16px; }
     .buttons { display: flex; gap: 8px; justify-content: flex-end; }
     button {
       padding: 6px 16px;
       border-radius: 6px;
-      border: 1px solid var(--border, #e2e8f0);
+      box-shadow: var(--glass-shadow-sm);
       background: transparent;
       cursor: pointer;
       font-size: 0.8125rem;
     }
-    button.confirm { color: #fff; border-color: transparent; }
-    button.confirm.info { background: var(--accent, #6366f1); }
-    button.confirm.warning { background: var(--warn, #f59e0b); }
-    button.confirm.danger { background: var(--danger, #ef4444); }
-  `
+    button.confirm { color: var(--text-on-accent); box-shadow: none; }
+    button.confirm.info { background: var(--accent); }
+    button.confirm.warning { background: var(--warn); }
+    button.confirm.danger { background: var(--danger); }
+  `]
 
   connectedCallback() {
     super.connectedCallback()

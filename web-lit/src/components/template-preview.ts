@@ -2,14 +2,15 @@
 import { LitElement, html, css } from 'lit'
 import { customElement, property, state } from 'lit/decorators.js'
 import type { ProcessedDeviceTemplate } from '../services/templates'
+import { hostStyles } from '../styles/shared-host'
 
 @customElement('template-preview')
 export class TemplatePreview extends LitElement {
-  static styles = css`
+  static styles = [hostStyles, css`
     :host { display: flex; flex-direction: column; height: 100%; }
     .tabs {
       display: flex;
-      border-bottom: 1px solid var(--border);
+      box-shadow: 0 1px 0 var(--card-highlight);
       padding: 0 16px;
     }
     .tab {
@@ -53,7 +54,7 @@ export class TemplatePreview extends LitElement {
     }
     .badge.readonly { background: var(--warn-subtle); color: var(--warn); }
     .badge.writable { background: var(--ok-subtle); color: var(--ok); }
-  `
+  `]
 
   @property({ type: Object }) template!: ProcessedDeviceTemplate
   @state() activeTab: 'properties' | 'commands' = 'properties'

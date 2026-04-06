@@ -2,10 +2,11 @@
 import { LitElement, html, css } from 'lit'
 import { customElement, property, state } from 'lit/decorators.js'
 import { tagApi, type Tag } from '../services/tags'
+import { hostStyles } from '../styles/shared-host'
 
 @customElement('tag-selector')
 export class TagSelector extends LitElement {
-  static styles = css`
+  static styles = [hostStyles, css`
     :host { display: inline-block; position: relative; }
 
     .trigger {
@@ -70,7 +71,7 @@ export class TagSelector extends LitElement {
       width: 100%;
       padding: 10px 12px;
       border: none;
-      border-bottom: 1px solid var(--border);
+      box-shadow: 0 1px 0 var(--card-highlight);
       background: transparent;
       color: var(--text);
       font-size: 13px;
@@ -129,7 +130,7 @@ export class TagSelector extends LitElement {
       gap: 8px;
       padding: 8px;
       margin: 0 4px;
-      border-top: 1px solid var(--border);
+      box-shadow: 0 -1px 0 var(--card-highlight);
       cursor: pointer;
       font-size: 13px;
       color: var(--accent);
@@ -143,7 +144,7 @@ export class TagSelector extends LitElement {
       font-size: 13px;
       color: var(--muted);
     }
-  `
+  `]
 
   @property({ type: String }) targetId = ''
   @property({ type: Array }) initialTags: Tag[] = []

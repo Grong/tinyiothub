@@ -6,6 +6,7 @@
 import { LitElement, html, css } from 'lit'
 import { customElement, property, state } from 'lit/decorators.js'
 import type { A2uiComponentDescriptor } from '../../../types/agent-types'
+import { hostStyles } from '../../../styles/shared-host'
 
 @customElement('a2ui-surface')
 export class A2uiSurface extends LitElement {
@@ -14,12 +15,12 @@ export class A2uiSurface extends LitElement {
   @state() components: A2uiComponentDescriptor[] = []
   @state() dataModel: Record<string, unknown> = {}
 
-  static styles = css`
+  static styles = [hostStyles, css`
     :host { display: block; }
     .surface {
-      background: var(--card, #fff);
-      border: 1px solid var(--border, #e2e8f0);
-      border-radius: var(--radius, 8px);
+      background: var(--card);
+      box-shadow: var(--glass-shadow-sm);
+      border-radius: var(--radius);
       padding: 12px;
       overflow: hidden;
     }
@@ -27,14 +28,14 @@ export class A2uiSurface extends LitElement {
       font-size: 0.8125rem;
       font-weight: 600;
       margin-bottom: 8px;
-      color: var(--text-muted, #888);
+      color: var(--text-muted);
     }
     .components {
       display: flex;
       flex-direction: column;
       gap: 8px;
     }
-  `
+  `]
 
   /** Set components externally (from message-group) */
   setComponents(components: A2uiComponentDescriptor[]) {

@@ -2,10 +2,11 @@ import { LitElement, html, css } from 'lit'
 import { customElement, state } from 'lit/decorators.js'
 import { templateApi, type DeviceTemplate, type TemplateCategory } from '../services/templates'
 import { navigate } from '../lib/navigate'
+import { hostStyles } from '../styles/shared-host'
 
 @customElement('templates-page')
 export class TemplatesPage extends LitElement {
-  static styles = css`
+  static styles = [hostStyles, css`
     templates-page {
       display: flex;
       flex-direction: column;
@@ -72,15 +73,14 @@ export class TemplatesPage extends LitElement {
 
     .template-card {
       background: var(--card);
-      border: 1px solid var(--border);
+      box-shadow: var(--glass-shadow-sm);
       border-radius: var(--radius-lg);
       padding: 20px;
-      transition: border-color var(--duration-normal) ease;
       cursor: pointer;
     }
 
     .template-card:hover {
-      border-color: var(--border-strong);
+      box-shadow: var(--glass-shadow-md);
     }
 
     .template-header {
@@ -219,25 +219,25 @@ export class TemplatesPage extends LitElement {
 
     .page-btn {
       padding: 8px 12px;
-      border: 1px solid var(--border);
+      box-shadow: var(--glass-shadow-sm);
+      border: none;
       border-radius: var(--radius-md);
       background: var(--card);
       color: var(--text);
       font-size: 13px;
       cursor: pointer;
-      transition: border-color var(--duration-fast) ease, background var(--duration-fast) ease;
+      transition: background var(--duration-fast) ease;
     }
 
     .page-btn:hover:not(:disabled) {
       background: var(--bg-hover);
-      border-color: var(--border-strong);
     }
 
     .page-btn:disabled {
       opacity: 0.5;
       cursor: not-allowed;
     }
-  `
+  `]
 
   @state() templates: DeviceTemplate[] = []
   @state() categories: TemplateCategory[] = []

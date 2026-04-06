@@ -50,7 +50,7 @@ export class AgentPage extends LitElement {
       color: var(--text-strong);
       background: var(--chrome);
     }
-    .header svg { width: 20px; height: 20px; color: var(--accent, #6366f1); }
+    .header svg { width: 20px; height: 20px; color: var(--accent); }
     .main {
       flex: 1;
       overflow: hidden;
