@@ -1394,4 +1394,1096 @@ mod tests {
         fn assert_clone<T: Clone>() {}
         assert_clone::<ZeroClawAgentClient>();
     }
+
+    // ========================================================================
+    // Helper — create an in-memory SQLite pool with all required tables
+    // ========================================================================
+
+    async fn create_test_pool() -> sqlx::SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("failed to create in-memory SQLite pool");
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS chat_sessions (
+                session_key TEXT PRIMARY KEY,
+                agent_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )"
+        )
+        .execute(&pool)
+        .await
+        .expect("failed to create chat_sessions table");
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS chat_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_key TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                run_id TEXT NOT NULL
+            )"
+        )
+        .execute(&pool)
+        .await
+        .expect("failed to create chat_messages table");
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS agent_configs (
+                agent_id TEXT PRIMARY KEY,
+                config TEXT NOT NULL,
+                config_hash TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )"
+        )
+        .execute(&pool)
+        .await
+        .expect("failed to create agent_configs table");
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS agent_tools (
+                agent_id TEXT PRIMARY KEY,
+                tool_overrides TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )"
+        )
+        .execute(&pool)
+        .await
+        .expect("failed to create agent_tools table");
+
+        pool
+    }
+
+    // ========================================================================
+    // AgentConfig — serialization roundtrip and defaults
+    // ========================================================================
+
+    #[test]
+    fn test_agent_config_to_json_roundtrip() {
+        let config = AgentConfig {
+            workspace_id: "ws-test-001".to_string(),
+            name: "TestAgent".to_string(),
+            model: Some("claude-sonnet-4-5".to_string()),
+            temperature: Some(0.7),
+            max_tokens: Some(4096),
+            top_p: Some(1.0),
+            system_prompt: Some("You are a helpful assistant.".to_string()),
+        };
+
+        let json_str = config.to_json().expect("should serialize");
+        let parsed: AgentConfig = serde_json::from_str(&json_str).expect("should deserialize");
+
+        assert_eq!(parsed.workspace_id, "ws-test-001");
+        assert_eq!(parsed.name, "TestAgent");
+        assert_eq!(parsed.model.as_deref(), Some("claude-sonnet-4-5"));
+        assert_eq!(parsed.temperature, Some(0.7));
+        assert_eq!(parsed.max_tokens, Some(4096));
+        assert_eq!(parsed.top_p, Some(1.0));
+        assert_eq!(
+            parsed.system_prompt.as_deref(),
+            Some("You are a helpful assistant.")
+        );
+    }
+
+    #[test]
+    fn test_agent_config_to_json_partial_fields() {
+        let config = AgentConfig {
+            workspace_id: "ws-x".to_string(),
+            name: "MinimalAgent".to_string(),
+            model: None,
+            temperature: None,
+            max_tokens: None,
+            top_p: None,
+            system_prompt: None,
+        };
+
+        let json_str = config.to_json().expect("should serialize");
+        let parsed: AgentConfig = serde_json::from_str(&json_str).expect("should deserialize");
+
+        assert_eq!(parsed.workspace_id, "ws-x");
+        assert!(parsed.model.is_none());
+        assert!(parsed.system_prompt.is_none());
+    }
+
+    #[test]
+    fn test_agent_config_default_values() {
+        let config = AgentConfig::default();
+        assert_eq!(config.workspace_id, "");
+        assert_eq!(config.name, "");
+        assert!(config.model.is_none());
+        assert!(config.temperature.is_none());
+        assert!(config.max_tokens.is_none());
+        assert!(config.top_p.is_none());
+        assert!(config.system_prompt.is_none());
+    }
+
+    // ========================================================================
+    // Hash computation — deterministic and correct
+    // ========================================================================
+
+    #[test]
+    fn test_compute_hash_deterministic() {
+        let input = r#"{"model":"claude-sonnet-4-5","temperature":0.7}"#;
+        let hash1 = compute_hash(input);
+        let hash2 = compute_hash(input);
+        assert_eq!(hash1, hash2, "hash should be deterministic");
+        assert_eq!(hash1.len(), 64, "SHA-256 produces 64 hex chars");
+    }
+
+    #[test]
+    fn test_compute_hash_different_inputs_different_hashes() {
+        let hash1 = compute_hash(r#"{"model":"claude-sonnet-4-5"}"#);
+        let hash2 = compute_hash(r#"{"model":"claude-opus"}"#);
+        assert_ne!(hash1, hash2, "different inputs should produce different hashes");
+    }
+
+    #[test]
+    fn test_compute_hash_empty_string() {
+        let hash = compute_hash("");
+        assert_eq!(hash.len(), 64);
+        // Known SHA-256 of empty string
+        assert_eq!(
+            hash,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    // ========================================================================
+    // default_agent_config() — format verification
+    // ========================================================================
+
+    #[test]
+    fn test_default_agent_config_format() {
+        let config = default_agent_config();
+        let obj = config.as_object().expect("should be an object");
+
+        assert_eq!(
+            obj.get("model").and_then(|v| v.as_str()),
+            Some("claude-sonnet-4-5")
+        );
+        assert_eq!(
+            obj.get("temperature").and_then(|v| v.as_f64()),
+            Some(0.7)
+        );
+        assert_eq!(
+            obj.get("maxTokens").and_then(|v| v.as_i64()),
+            Some(4096)
+        );
+        assert_eq!(obj.get("topP").and_then(|v| v.as_f64()), Some(1.0));
+        assert_eq!(
+            obj.get("systemPrompt").and_then(|v| v.as_str()),
+            Some("")
+        );
+        assert_eq!(
+            obj.get("workspace").and_then(|v| v.as_str()),
+            Some("default")
+        );
+    }
+
+    // ========================================================================
+    // build_tools_catalog_json — structure verification
+    // ========================================================================
+
+    #[test]
+    fn test_tools_catalog_structure() {
+        let catalog = build_tools_catalog_json();
+        let obj = catalog.as_object().expect("should be an object");
+
+        let groups = obj
+            .get("groups")
+            .and_then(|v| v.as_array())
+            .expect("catalog should have 'groups' array");
+
+        assert!(
+            !groups.is_empty(),
+            "catalog should have at least one tool group"
+        );
+
+        // Verify at least the device and workspace groups exist
+        let group_ids: Vec<&str> = groups
+            .iter()
+            .filter_map(|g| g.get("id").and_then(|v| v.as_str()))
+            .collect();
+
+        assert!(
+            group_ids.contains(&"device"),
+            "catalog should have a 'device' group"
+        );
+        assert!(
+            group_ids.contains(&"workspace"),
+            "catalog should have a 'workspace' group"
+        );
+
+        // Verify each group has required fields
+        for group in groups {
+            let g_obj = group.as_object().expect("group should be an object");
+            assert!(
+                g_obj.contains_key("id"),
+                "group should have 'id' field"
+            );
+            assert!(
+                g_obj.contains_key("label"),
+                "group should have 'label' field"
+            );
+            assert!(
+                g_obj.contains_key("tools"),
+                "group should have 'tools' field"
+            );
+
+            let tools = g_obj
+                .get("tools")
+                .and_then(|v| v.as_array())
+                .expect("tools should be an array");
+
+            for tool in tools {
+                let t_obj = tool.as_object().expect("tool should be an object");
+                assert!(
+                    t_obj.contains_key("id"),
+                    "tool should have 'id' field"
+                );
+                assert!(
+                    t_obj.contains_key("danger"),
+                    "tool should have 'danger' field"
+                );
+                assert!(
+                    t_obj.contains_key("enabled"),
+                    "tool should have 'enabled' field"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_tools_catalog_dangerous_tools_are_disabled_by_default() {
+        let catalog = build_tools_catalog_json();
+        let groups = catalog
+            .as_object()
+            .and_then(|v| v.get("groups"))
+            .and_then(|v| v.as_array())
+            .expect("catalog should have groups");
+
+        for group in groups {
+            let tools = group
+                .as_object()
+                .and_then(|v| v.get("tools"))
+                .and_then(|v| v.as_array())
+                .unwrap_or_default();
+
+            for tool in tools {
+                let is_dangerous = tool
+                    .as_object()
+                    .and_then(|v| v.get("danger"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let is_enabled = tool
+                    .as_object()
+                    .and_then(|v| v.get("enabled"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                if is_dangerous {
+                    assert!(
+                        !is_enabled,
+                        "dangerous tool {:?} should be disabled by default",
+                        tool
+                    );
+                }
+            }
+        }
+    }
+
+    // ========================================================================
+    // FallbackAgentClient — chat_send returns synthetic SSE response
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_fallback_agent_client_chat_send_returns_sse_response() {
+        let pool = create_test_pool().await;
+        let client = FallbackAgentClient::new(pool);
+
+        let response = client
+            .chat_send("agent1", "session:test/123", "hello", "run-abc")
+            .await
+            .expect("should succeed (returns synthetic response, not an error)");
+
+        assert_eq!(response.status(), 200);
+        assert_eq!(
+            response
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok()),
+            Some("text/event-stream")
+        );
+    }
+
+    // ========================================================================
+    // FallbackAgentClient — get_agent_config returns default format
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_fallback_agent_client_get_agent_config_returns_default_format() {
+        let pool = create_test_pool().await;
+        let client = FallbackAgentClient::new(pool);
+
+        let result = client
+            .get_agent_config("any-agent-id")
+            .await
+            .expect("should succeed");
+
+        let obj = result.as_object().expect("should be an object");
+        assert!(obj.contains_key("config"), "response should have 'config' key");
+        assert!(
+            obj.contains_key("baseHash"),
+            "response should have 'baseHash' key"
+        );
+        assert!(
+            obj.get("baseHash").unwrap().is_null(),
+            "baseHash should be null for default"
+        );
+    }
+
+    // ========================================================================
+    // FallbackAgentClient — set_agent_config is a no-op that returns Ok
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_fallback_agent_client_set_agent_config_returns_ok() {
+        let pool = create_test_pool().await;
+        let client = FallbackAgentClient::new(pool);
+
+        let result = client
+            .set_agent_config("agent1", r#"{"model":"claude-opus"}"#, None)
+            .await;
+        assert!(
+            result.is_ok(),
+            "set_agent_config should be a no-op and return Ok"
+        );
+    }
+
+    // ========================================================================
+    // FallbackAgentClient — tools_catalog returns full catalog
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_fallback_agent_client_tools_catalog_returns_full_catalog() {
+        let pool = create_test_pool().await;
+        let client = FallbackAgentClient::new(pool);
+
+        let result = client.tools_catalog("agent1").await.expect("should succeed");
+
+        let obj = result.as_object().expect("should be an object");
+        let groups = obj
+            .get("groups")
+            .and_then(|v| v.as_array())
+            .expect("should have 'groups' key");
+        assert!(
+            !groups.is_empty(),
+            "fallback client should return full tools catalog"
+        );
+    }
+
+    // ========================================================================
+    // FallbackAgentClient — tools_effective returns filtered list
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_fallback_agent_client_tools_effective_returns_filtered_list() {
+        let pool = create_test_pool().await;
+        let client = FallbackAgentClient::new(pool);
+
+        let result = client
+            .tools_effective("agent1")
+            .await
+            .expect("should succeed");
+
+        let obj = result.as_object().expect("should be an object");
+        let groups = obj
+            .get("groups")
+            .and_then(|v| v.as_array())
+            .expect("should have 'groups' key");
+        assert!(
+            !groups.is_empty(),
+            "tools_effective should return groups"
+        );
+
+        // Every tool should have an "enabled" field
+        for group in groups {
+            let tools = group
+                .as_object()
+                .and_then(|v| v.get("tools"))
+                .and_then(|v| v.as_array())
+                .unwrap_or_default();
+
+            for tool in tools {
+                let t_obj = tool.as_object().expect("tool should be an object");
+                assert!(
+                    t_obj.contains_key("enabled"),
+                    "each tool should have 'enabled' field"
+                );
+            }
+        }
+    }
+
+    // ========================================================================
+    // FallbackAgentClient — tools_toggle is a no-op that returns Ok
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_fallback_agent_client_tools_toggle_returns_ok() {
+        let pool = create_test_pool().await;
+        let client = FallbackAgentClient::new(pool);
+
+        let result = client
+            .tools_toggle("agent1", "workspace_read", true)
+            .await;
+        assert!(
+            result.is_ok(),
+            "tools_toggle should be a no-op and return Ok"
+        );
+    }
+
+    // ========================================================================
+    // FallbackAgentClient — delete_agent returns NotFound for unknown agent
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_fallback_agent_client_delete_unknown_agent_returns_not_found() {
+        let pool = create_test_pool().await;
+        let client = FallbackAgentClient::new(pool);
+
+        let result = client.delete_agent("nonexistent-agent").await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AgentError::NotFound(id) => assert_eq!(id, "nonexistent-agent"),
+            other => panic!("expected NotFound error, got {:?}", other),
+        }
+    }
+
+    // ========================================================================
+    // FallbackAgentClient — get_agent returns NotFound for unknown agent
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_fallback_agent_client_get_unknown_agent_returns_not_found() {
+        let pool = create_test_pool().await;
+        let client = FallbackAgentClient::new(pool);
+
+        let result = client.get_agent("nonexistent-agent").await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AgentError::NotFound(id) => assert_eq!(id, "nonexistent-agent"),
+            other => panic!("expected NotFound error, got {:?}", other),
+        }
+    }
+
+    // ========================================================================
+    // FallbackAgentClient — create_agent returns a unique id
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_fallback_agent_client_create_agent_returns_unique_id() {
+        let pool = create_test_pool().await;
+        let client = FallbackAgentClient::new(pool);
+
+        let id1 = client
+            .create_agent(&AgentConfig::default())
+            .await
+            .expect("should succeed");
+        let id2 = client
+            .create_agent(&AgentConfig::default())
+            .await
+            .expect("should succeed");
+
+        assert_ne!(id1, id2, "each create_agent should return a unique id");
+        assert!(
+            id1.starts_with("agent-"),
+            "agent id should start with 'agent-'"
+        );
+    }
+
+    // ========================================================================
+    // FallbackAgentClient — chat_history with empty session (uses SQLite)
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_fallback_agent_client_chat_history_empty_session() {
+        let pool = create_test_pool().await;
+        let client = FallbackAgentClient::new(pool);
+
+        let result = client
+            .chat_history("default", "session:empty/test", 50)
+            .await
+            .expect("should succeed");
+
+        let obj = result.as_object().expect("should be an object");
+        let messages = obj.get("messages").expect("should have 'messages' key");
+        assert!(messages.is_array(), "'messages' should be an array");
+        assert!(
+            messages.as_array().unwrap().is_empty(),
+            "empty session should have no messages"
+        );
+    }
+
+    // ========================================================================
+    // FallbackAgentClient — chat_history with one message
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_fallback_agent_client_chat_history_with_message() {
+        let pool = create_test_pool().await;
+
+        let session_key = "session:user/test-history";
+        let msg_content = r#"[{"type":"text","text":"Hello, world!"}]"#;
+
+        sqlx::query(
+            "INSERT INTO chat_sessions (session_key, agent_id, created_at, updated_at)
+             VALUES (?, 'default', datetime('now'), datetime('now'))
+             ON CONFLICT(session_key) DO UPDATE SET updated_at = datetime('now')"
+        )
+        .bind(session_key)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO chat_messages (session_key, role, content, timestamp, run_id)
+             VALUES (?, 'user', ?, ?, ?)"
+        )
+        .bind(session_key)
+        .bind(msg_content)
+        .bind(chrono::Utc::now().timestamp_millis())
+        .bind("run-001")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let client = FallbackAgentClient::new(pool);
+        let result = client
+            .chat_history("default", session_key, 50)
+            .await
+            .expect("should succeed");
+
+        let obj = result.as_object().expect("should be an object");
+        let messages = obj.get("messages").unwrap().as_array().unwrap();
+        assert_eq!(messages.len(), 1, "should have exactly one message");
+        assert_eq!(
+            messages[0].get("role").and_then(|v| v.as_str()),
+            Some("user")
+        );
+        assert!(
+            messages[0].get("content").is_some(),
+            "message should have content"
+        );
+    }
+
+    // ========================================================================
+    // AgentError variants — coverage for all enum arms
+    // ========================================================================
+
+    #[test]
+    fn test_agent_error_request_failed() {
+        let err = AgentError::RequestFailed("connection reset".to_string());
+        assert!(err.to_string().contains("Agent API request failed"));
+        assert!(err.to_string().contains("connection reset"));
+    }
+
+    #[test]
+    fn test_agent_error_api_error() {
+        let err = AgentError::ApiError("invalid json".to_string());
+        assert!(err.to_string().contains("Agent API returned error"));
+        assert!(err.to_string().contains("invalid json"));
+    }
+
+    #[test]
+    fn test_agent_error_timeout() {
+        let err = AgentError::Timeout;
+        assert!(err.to_string().contains("Agent API timeout"));
+    }
+
+    // ========================================================================
+    // ZeroClawAgentClient — chat_history with empty session
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_zeroclaw_chat_history_empty_session() {
+        let pool = create_test_pool().await;
+        let client = ZeroClawAgentClient::new(
+            "http://localhost:8080".to_string(),
+            "ws://localhost:8080".to_string(),
+            None,
+            pool,
+        );
+
+        let result = client
+            .chat_history("default", "session:empty/test", 50)
+            .await
+            .expect("should succeed");
+
+        let obj = result.as_object().expect("should be an object");
+        let messages = obj.get("messages").expect("should have 'messages' key");
+        assert!(messages.is_array(), "'messages' should be an array");
+        assert!(
+            messages.as_array().unwrap().is_empty(),
+            "empty session should have no messages"
+        );
+    }
+
+    // ========================================================================
+    // ZeroClawAgentClient — chat_history with one message
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_zeroclaw_chat_history_with_message() {
+        let pool = create_test_pool().await;
+
+        let session_key = "session:user/test-history";
+        let msg_content = r#"[{"type":"text","text":"Hello, world!"}]"#;
+
+        sqlx::query(
+            "INSERT INTO chat_sessions (session_key, agent_id, created_at, updated_at)
+             VALUES (?, 'default', datetime('now'), datetime('now'))
+             ON CONFLICT(session_key) DO UPDATE SET updated_at = datetime('now')"
+        )
+        .bind(session_key)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO chat_messages (session_key, role, content, timestamp, run_id)
+             VALUES (?, 'user', ?, ?, ?)"
+        )
+        .bind(session_key)
+        .bind(msg_content)
+        .bind(chrono::Utc::now().timestamp_millis())
+        .bind("run-001")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let client = ZeroClawAgentClient::new(
+            "http://localhost:8080".to_string(),
+            "ws://localhost:8080".to_string(),
+            None,
+            pool,
+        );
+
+        let result = client
+            .chat_history("default", session_key, 50)
+            .await
+            .expect("should succeed");
+
+        let obj = result.as_object().expect("should be an object");
+        let messages = obj.get("messages").unwrap().as_array().unwrap();
+        assert_eq!(messages.len(), 1, "should have exactly one message");
+        assert_eq!(
+            messages[0].get("role").and_then(|v| v.as_str()),
+            Some("user")
+        );
+        assert!(
+            messages[0].get("content").is_some(),
+            "message should have content"
+        );
+    }
+
+    // ========================================================================
+    // ZeroClawAgentClient — chat_history respects limit parameter
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_zeroclaw_chat_history_respects_limit() {
+        let pool = create_test_pool().await;
+        let session_key = "session:limit/test";
+
+        sqlx::query(
+            "INSERT INTO chat_sessions (session_key, agent_id, created_at, updated_at)
+             VALUES (?, 'default', datetime('now'), datetime('now'))
+             ON CONFLICT(session_key) DO UPDATE SET updated_at = datetime('now')"
+        )
+        .bind(session_key)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Insert 5 messages
+        for i in 0..5 {
+            sqlx::query(
+                "INSERT INTO chat_messages (session_key, role, content, timestamp, run_id)
+                 VALUES (?, 'user', ?, ?, ?)"
+            )
+            .bind(session_key)
+            .bind(format!(r#"[{{"type":"text","text":"msg {}"}}]"#, i))
+            .bind((i + 1) as i64 * 1000)
+            .bind(format!("run-{:03}", i))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let client = ZeroClawAgentClient::new(
+            "http://localhost:8080".to_string(),
+            "ws://localhost:8080".to_string(),
+            None,
+            pool,
+        );
+
+        // Request only 3 messages
+        let result = client
+            .chat_history("default", session_key, 3)
+            .await
+            .expect("should succeed");
+
+        let messages = result
+            .as_object()
+            .unwrap()
+            .get("messages")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(messages.len(), 3, "should return at most 3 messages");
+    }
+
+    // ========================================================================
+    // ZeroClawAgentClient — get_agent_config returns default when not found
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_zeroclaw_get_agent_config_returns_default_when_not_found() {
+        let pool = create_test_pool().await;
+
+        let client = ZeroClawAgentClient::new(
+            "http://localhost:8080".to_string(),
+            "ws://localhost:8080".to_string(),
+            None,
+            pool,
+        );
+
+        let result = client
+            .get_agent_config("nonexistent-agent")
+            .await
+            .expect("should succeed (returns default config)");
+
+        let obj = result.as_object().expect("should be an object");
+        assert!(obj.contains_key("config"), "response should have 'config' key");
+        assert!(
+            obj.contains_key("baseHash"),
+            "response should have 'baseHash' key"
+        );
+        assert!(
+            obj.get("baseHash").unwrap().is_null(),
+            "baseHash should be null"
+        );
+        let config = obj.get("config").unwrap();
+        assert_eq!(
+            config.get("model").and_then(|v| v.as_str()),
+            Some("claude-sonnet-4-5")
+        );
+    }
+
+    // ========================================================================
+    // ZeroClawAgentClient — set + get agent_config roundtrip
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_zeroclaw_set_and_get_agent_config_roundtrip() {
+        let pool = create_test_pool().await;
+
+        let client = ZeroClawAgentClient::new(
+            "http://localhost:8080".to_string(),
+            "ws://localhost:8080".to_string(),
+            None,
+            pool,
+        );
+
+        let new_config = r#"{"model":"claude-opus-3","temperature":0.5,"maxTokens":8192,"topP":0.9,"systemPrompt":"Custom prompt","workspace":"ws-test"}"#;
+
+        client
+            .set_agent_config("agent-001", new_config, None)
+            .await
+            .expect("set_agent_config should succeed");
+
+        let result = client
+            .get_agent_config("agent-001")
+            .await
+            .expect("get_agent_config should succeed");
+
+        let obj = result.as_object().expect("should be an object");
+        let config = obj.get("config").expect("should have config");
+        assert_eq!(
+            config.get("model").and_then(|v| v.as_str()),
+            Some("claude-opus-3")
+        );
+        assert_eq!(
+            config.get("temperature").and_then(|v| v.as_f64()),
+            Some(0.5)
+        );
+        assert!(
+            obj.get("baseHash").unwrap().is_string(),
+            "baseHash should be populated after set"
+        );
+    }
+
+    // ========================================================================
+    // ZeroClawAgentClient — set_agent_config rejects invalid JSON
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_zeroclaw_set_agent_config_rejects_invalid_json() {
+        let pool = create_test_pool().await;
+
+        let client = ZeroClawAgentClient::new(
+            "http://localhost:8080".to_string(),
+            "ws://localhost:8080".to_string(),
+            None,
+            pool,
+        );
+
+        let result = client
+            .set_agent_config("agent-001", "not valid json {{{", None)
+            .await;
+        assert!(result.is_err(), "invalid JSON should return an error");
+        match result.unwrap_err() {
+            AgentError::RequestFailed(msg) => {
+                assert!(
+                    msg.contains("Invalid config JSON") || msg.contains("json"),
+                    "should be a JSON parse error, got: {}",
+                    msg
+                );
+            }
+            other => panic!(
+                "expected RequestFailed error for invalid JSON, got {:?}",
+                other
+            ),
+        }
+    }
+
+    // ========================================================================
+    // ZeroClawAgentClient — get_agent returns static info
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_zeroclaw_get_agent_returns_static_info() {
+        let pool = create_test_pool().await;
+
+        let client = ZeroClawAgentClient::new(
+            "http://localhost:8080".to_string(),
+            "ws://localhost:8080".to_string(),
+            None,
+            pool,
+        );
+
+        let info = client
+            .get_agent("any-agent-id")
+            .await
+            .expect("should succeed");
+        assert_eq!(info.name, "ZeroClaw Agent");
+        assert_eq!(info.status, "active");
+    }
+
+    // ========================================================================
+    // ZeroClawAgentClient — list_agents returns single default agent
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_zeroclaw_list_agents_returns_default() {
+        let pool = create_test_pool().await;
+
+        let client = ZeroClawAgentClient::new(
+            "http://localhost:8080".to_string(),
+            "ws://localhost:8080".to_string(),
+            None,
+            pool,
+        );
+
+        let result = client.list_agents().await.expect("should succeed");
+
+        let agents = result
+            .as_object()
+            .unwrap()
+            .get("agents")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(agents.len(), 1);
+        assert_eq!(
+            agents[0].get("id").and_then(|v| v.as_str()),
+            Some("default")
+        );
+        assert_eq!(
+            agents[0].get("status").and_then(|v| v.as_str()),
+            Some("active")
+        );
+    }
+
+    // ========================================================================
+    // ZeroClawAgentClient — create_agent returns "default"
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_zeroclaw_create_agent_returns_default() {
+        let pool = create_test_pool().await;
+
+        let client = ZeroClawAgentClient::new(
+            "http://localhost:8080".to_string(),
+            "ws://localhost:8080".to_string(),
+            None,
+            pool,
+        );
+
+        let id = client
+            .create_agent(&AgentConfig::default())
+            .await
+            .expect("should succeed");
+        assert_eq!(
+            id, "default",
+            "ZeroClaw is single-agent, always returns 'default'"
+        );
+    }
+
+    // ========================================================================
+    // ZeroClawAgentClient — chat_abort is a no-op placeholder
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_zeroclaw_chat_abort_returns_ok() {
+        let pool = create_test_pool().await;
+
+        let client = ZeroClawAgentClient::new(
+            "http://localhost:8080".to_string(),
+            "ws://localhost:8080".to_string(),
+            None,
+            pool,
+        );
+
+        // chat_abort is currently a no-op; returns Ok(()) as placeholder
+        let result = client
+            .chat_abort("default", "session:test", Some("run-abc"))
+            .await;
+        assert!(
+            result.is_ok(),
+            "chat_abort should be a no-op and return Ok"
+        );
+    }
+
+    // ========================================================================
+    // ZeroClawAgentClient — tools_toggle persists override to SQLite
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_zeroclaw_tools_toggle_persists_override() {
+        let pool = create_test_pool().await;
+
+        let client = ZeroClawAgentClient::new(
+            "http://localhost:8080".to_string(),
+            "ws://localhost:8080".to_string(),
+            None,
+            pool.clone(),
+        );
+
+        // Toggle device_delete from disabled -> enabled
+        client
+            .tools_toggle("agent-001", "device_delete", true)
+            .await
+            .expect("tools_toggle should succeed");
+
+        // Verify the override was persisted
+        let row: (String,) = sqlx::query_as(
+            "SELECT tool_overrides FROM agent_tools WHERE agent_id = ?"
+        )
+        .bind("agent-001")
+        .fetch_one(&pool)
+        .await
+        .expect("tool_overrides should be persisted");
+
+        let overrides: serde_json::Value =
+            serde_json::from_str(&row.0).expect("should parse as JSON");
+        let enabled_list: Vec<String> = overrides
+            .get("enabled")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        assert!(
+            enabled_list.contains(&"device_delete".to_string()),
+            "device_delete should be in enabled list after toggle"
+        );
+    }
+
+    // ========================================================================
+    // ZeroClawAgentClient — tools_effective respects per-agent overrides
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_zeroclaw_tools_effective_respects_overrides() {
+        let pool = create_test_pool().await;
+
+        // Pre-populate agent_tools with device_delete enabled
+        sqlx::query(
+            "INSERT INTO agent_tools (agent_id, tool_overrides, updated_at)
+             VALUES (?, ?, datetime('now'))"
+        )
+        .bind("agent-override-test")
+        .bind(r#"{"enabled":["device_delete"],"disabled":[]}"#)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let client = ZeroClawAgentClient::new(
+            "http://localhost:8080".to_string(),
+            "ws://localhost:8080".to_string(),
+            None,
+            pool,
+        );
+
+        let result = client
+            .tools_effective("agent-override-test")
+            .await
+            .expect("tools_effective should succeed");
+
+        let obj = result.as_object().expect("should be an object");
+        let groups = obj
+            .get("groups")
+            .and_then(|v| v.as_array())
+            .expect("should have groups");
+
+        // Find the device_delete tool
+        let mut found_delete = false;
+        for group in groups {
+            let tools = group
+                .as_object()
+                .and_then(|v| v.get("tools"))
+                .and_then(|v| v.as_array())
+                .unwrap_or_default();
+
+            for tool in tools {
+                let id = tool
+                    .as_object()
+                    .and_then(|v| v.get("id"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+
+                if id == "device_delete" {
+                    found_delete = true;
+                    let enabled = tool
+                        .as_object()
+                        .and_then(|v| v.get("enabled"))
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    assert!(
+                        enabled,
+                        "device_delete should be enabled due to override"
+                    );
+                }
+            }
+        }
+        assert!(found_delete, "device_delete tool should exist in catalog");
+    }
 }
