@@ -1,4 +1,4 @@
-import { html, nothing } from 'lit'
+import { html } from 'lit'
 import type { AppViewState } from './app-view-state'
 import { isPublicRoute } from './app-router'
 import { renderSidebar } from './components/sidebar'
