@@ -6,10 +6,11 @@ import { $currentWorkspaceId } from '../stores/workspace-store'
 import '../components/device-card'
 import '../components/tag-filter'
 import '../components/create-device-wizard'
+import { hostStyles } from '../styles/shared-host'
 
 @customElement('devices-page')
 export class DevicesPage extends LitElement {
-  static styles = css`
+  static styles = [hostStyles, css`
     :host {
       display: flex;
       flex-direction: column;
@@ -97,6 +98,11 @@ export class DevicesPage extends LitElement {
       font-size: 13px;
       cursor: pointer;
       box-shadow: var(--glass-shadow-sm);
+      transition: background var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
+    }
+
+    .filter-select:hover {
+      background: var(--bg-hover);
     }
 
     /* Device list */
@@ -107,23 +113,11 @@ export class DevicesPage extends LitElement {
       overflow: hidden;
     }
 
-    /* Device grid - responsive columns like original web */
+    /* Device grid — fluid auto-fill like templates */
     .device-grid {
       display: grid;
-      grid-template-columns: repeat(1, 1fr);
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
       gap: 16px;
-    }
-    @media (min-width: 768px) {
-      .device-grid { grid-template-columns: repeat(2, 1fr); }
-    }
-    @media (min-width: 1280px) {
-      .device-grid { grid-template-columns: repeat(4, 1fr); }
-    }
-    @media (min-width: 1536px) {
-      .device-grid { grid-template-columns: repeat(5, 1fr); }
-    }
-    @media (min-width: 2000px) {
-      .device-grid { grid-template-columns: repeat(6, 1fr); }
     }
 
     .empty-card {
@@ -577,7 +571,7 @@ export class DevicesPage extends LitElement {
       color: var(--danger);
       font-size: 13px;
     }
-  `
+  `]
 
   @state() devices: Device[] = []
   @state() loading = true
@@ -626,7 +620,7 @@ export class DevicesPage extends LitElement {
   }
 
   firstUpdated() {
-    this.wizardRef = this.shadowRoot?.querySelector('create-device-wizard')
+    this.wizardRef = this.querySelector('create-device-wizard')
   }
 
   async loadDevices() {

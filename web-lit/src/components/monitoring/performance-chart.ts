@@ -4,10 +4,11 @@ import { customElement, property, state } from 'lit/decorators.js'
 import { deviceApi, type PerformanceHistory } from '../../services/devices'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
+import { hostStyles } from '../../styles/shared-host'
 
 @customElement('performance-chart')
 export class PerformanceChart extends LitElement {
-  static styles = css`
+  static styles = [hostStyles, css`
     :host { display: block; }
     .chart-container {
       background: var(--card);
@@ -42,7 +43,7 @@ export class PerformanceChart extends LitElement {
       height: 200px;
       color: var(--muted);
     }
-  `
+  `]
 
   @property({ type: String }) deviceId = ''
   @property({ type: Number }) refreshInterval = 10000
@@ -79,12 +80,12 @@ export class PerformanceChart extends LitElement {
   }
 
   private renderChart() {
-    if (!this.data?.data?.length || !this.shadowRoot) return
+    if (!this.data?.data?.length) return
     const d = this.data.data
     const timestamps = d.map(p => p.timestamp / 1000)
     const values = d.map(p => p.value)
     const opts: uPlot.Options = {
-      width: this.shadowRoot.querySelector('.chart')?.clientWidth || 600,
+      width: this.querySelector('.chart')?.clientWidth || 600,
       height: 280,
       series: [
         {},
@@ -92,7 +93,7 @@ export class PerformanceChart extends LitElement {
       ],
     }
     if (this.chart) this.chart.destroy()
-    this.chart = new uPlot(opts, [timestamps, values], this.shadowRoot.querySelector('.chart') as HTMLElement)
+    this.chart = new uPlot(opts, [timestamps, values], this.querySelector('.chart') as HTMLElement)
   }
 
   private setTimeRange(h: number) {

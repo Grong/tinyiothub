@@ -91,9 +91,9 @@ export class A2uiComponent extends LitElement {
   updated() {
     if (this.descriptor !== this._lastDescriptor) {
       this._buildElement()
-      if (this._el && this.shadowRoot) {
+      if (this._el) {
         // Replace Lit's comment placeholder with the real element
-        const container = this.shadowRoot.querySelector('.host')
+        const container = this.querySelector('.host')
         if (container) {
           // Use remove() instead of innerHTML = '' so child LitElements
           // fire disconnectedCallback and clean up their listeners

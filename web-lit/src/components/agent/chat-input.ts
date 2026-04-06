@@ -121,7 +121,7 @@ export class ChatInput extends LitElement {
     }))
     this.value = ''
     // Reset textarea height
-    const textarea = this.shadowRoot?.querySelector('textarea')
+    const textarea = this.querySelector('textarea')
     if (textarea) {
       textarea.value = ''
       textarea.style.height = 'auto'
