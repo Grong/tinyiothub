@@ -159,7 +159,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
   private _boundCloseTagEditor = () => { this.editingTagsDeviceId = null; };
   private _boundHandleDeviceUpdated = (e: Event) => {
     const { deviceId } = (e as CustomEvent).detail as { deviceId: string; eventType: string; data: any };
+    console.log('[DevicesView] device-updated event:', deviceId, 'selectedDevice:', this.selectedDevice?.device?.id);
     if (this.selectedDevice?.device?.id === deviceId) {
+      console.log('[DevicesView] Refreshing detail page');
       this.loadDeviceDetail(deviceId);
     }
   };

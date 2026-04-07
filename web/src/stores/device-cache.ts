@@ -208,6 +208,7 @@ class DeviceCache {
   }
 
   private handleSseEvent(data: any): void {
+    console.log('[DeviceCache] SSE event:', data);
     if (this.fetchInProgress) {
       this.pendingSseEvents.push(data);
       return;
@@ -216,6 +217,7 @@ class DeviceCache {
     const map = this.$devicesMap.get();
     const updated = this.applySseEventToMap(map, data);
     if (updated) {
+      console.log('[DeviceCache] Map updated for device:', data.device_id);
       this.$devicesMap.set(updated);
 
       // 通知详情页需要刷新
@@ -225,6 +227,8 @@ class DeviceCache {
           detail: { deviceId, eventType: data.event_type, data },
         }));
       }
+    } else {
+      console.log('[DeviceCache] No map change, skipping dispatch');
     }
   }
 
