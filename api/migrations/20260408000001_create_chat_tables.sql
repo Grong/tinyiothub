@@ -24,19 +24,3 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 
 CREATE INDEX idx_chat_messages_session ON chat_messages(session_key);
 CREATE INDEX idx_chat_messages_run ON chat_messages(run_id);
-
-CREATE TABLE IF NOT EXISTS agent_configs (
-    agent_id TEXT PRIMARY KEY,
-    config TEXT NOT NULL,
-    config_hash TEXT NOT NULL,
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
--- Agent tool overrides: per-agent enabled/disabled tool settings
--- stored as JSON: { "enabled": ["tool_id1"], "disabled": ["tool_id2"] }
--- empty arrays mean default (all tools enabled except dangerous ones)
-CREATE TABLE IF NOT EXISTS agent_tools (
-    agent_id TEXT PRIMARY KEY,
-    tool_overrides TEXT NOT NULL DEFAULT '{"enabled": [], "disabled": []}',
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
