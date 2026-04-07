@@ -146,6 +146,7 @@ class DeviceCache {
   }
 
   private ensureConnected(): void {
+    console.log('[DeviceCache] ensureConnected() called, existing source:', this.eventSource != null);
     if (this.eventSource != null) return;
 
     this.$sseStatus.set('connecting');
@@ -160,6 +161,7 @@ class DeviceCache {
     const url = `${API_BASE}/events/sse?token=${encodeURIComponent(token)}&event_types=device.status_change,device.connection,device.property_change`;
 
     try {
+      console.log('[DeviceCache] Creating EventSource:', url);
       this.eventSource = new EventSource(url);
     } catch {
       this.$sseStatus.set('error');
@@ -168,6 +170,7 @@ class DeviceCache {
     }
 
     this.eventSource.onopen = () => {
+      console.log('[DeviceCache] SSE onopen! Connection established');
       this.$sseStatus.set('connected');
       this.reconnectAttempt = 0;
       this.hasConnectedOnce = true;
@@ -183,6 +186,7 @@ class DeviceCache {
     };
 
     this.eventSource.onerror = () => {
+      console.log('[DeviceCache] SSE onerror!');
       this.$sseStatus.set('error');
       this.eventSource?.close();
       this.eventSource = null;
