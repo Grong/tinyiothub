@@ -306,7 +306,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
   async loadAllTags() {
     try {
       const res = await tagApi.getTags();
-      this.allTags = res.result || [];
+      this.allTags = res.result?.data || [];
     } catch {
       // non-critical
     }
