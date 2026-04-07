@@ -326,7 +326,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       if (existing) {
         await tagApi.removeBinding(existing.id);
       } else {
-        await tagApi.createBinding({ tagId: tag.id, targetId: device.id });
+        await tagApi.createBinding({ tagId: tag.id, targetId: device.id, targetType: 'device' });
       }
       await this.loadDevices();
     } catch (err: any) {
