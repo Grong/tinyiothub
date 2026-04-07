@@ -32,6 +32,7 @@ export interface LoginResponse {
   tokenType: string;
   expiresIn: number;
   userInfo: User;
+  workspaceId?: string;
 }
 
 export interface CreateUserRequest {
@@ -76,6 +77,7 @@ export interface SmsLoginResponse {
   tokenType: string;
   expiresIn: number;
   userInfo: User;
+  workspaceId?: string;
 }
 
 // ==================== WeChat Auth ====================
@@ -95,6 +97,7 @@ export interface WechatLoginResponse {
   expiresIn: number;
   userInfo: User;
   isNewUser: boolean;
+  workspaceId?: string;
 }
 
 // ==================== Device ====================
@@ -605,14 +608,16 @@ export interface SystemHealth {
 }
 
 export interface SystemMetrics {
-  timestamp: string;
-  cpuUsage: number;
-  memoryUsage: number;
-  diskUsage: number;
-  networkIn: number;
-  networkOut: number;
-  activeConnections: number;
-  uptime: number;
+  timestamp?: string;
+  cpu: number;
+  memory: number;
+  disk: number;
+  network: {
+    inbound: number;
+    outbound: number;
+  };
+  activeConnections?: number;
+  uptime?: number;
 }
 
 export interface SystemFeatures {
@@ -628,7 +633,7 @@ export interface ComponentHealth {
   name: string;
   status: 'healthy' | 'degraded' | 'unhealthy';
   message?: string;
-  lastChecked: string;
+  lastChecked?: string;
 }
 
 export interface HealthStatus {

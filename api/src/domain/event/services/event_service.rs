@@ -31,7 +31,7 @@ impl EventService {
         content: RichContent,
     ) -> DomainResult<EventAggregate> {
         // Create event aggregate
-        let aggregate = EventAggregate::new(event_type, level, source, content)
+        let aggregate = EventAggregate::new(event_type, level, source, content, None)
             .map_err(|e| EventDomainError::validation(e.to_string()))?;
 
         // Validate according to business rules

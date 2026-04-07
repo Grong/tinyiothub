@@ -157,14 +157,6 @@ export class DevicesView extends SignalWatcher(LitElement) {
   @state() tagSearchKeyword = "";
   @state() tagSaving = false;
   private _boundCloseTagEditor = () => { this.editingTagsDeviceId = null; };
-  private _boundHandleDeviceUpdated = (e: Event) => {
-    const { deviceId } = (e as CustomEvent).detail as { deviceId: string; eventType: string; data: any };
-    console.log('[DevicesView] device-updated event:', deviceId, 'selectedDevice:', this.selectedDevice?.device?.id);
-    if (this.selectedDevice?.device?.id === deviceId) {
-      console.log('[DevicesView] Refreshing detail page');
-      this.loadDeviceDetail(deviceId);
-    }
-  };
 
   // Property history dialog
   @state() showHistoryDialog = false;
@@ -176,6 +168,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
   @state() historyCustomStart = "";
   @state() historyCustomEnd = "";
   private historyDeviceId = "";
+  private _boundHandleDeviceUpdated: EventListener = () => {};
 
   createRenderRoot() {
     return this;
@@ -190,13 +183,17 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   connectedCallback() {
     super.connectedCallback();
+    document.addEventListener("click", this._boundCloseTagEditor);
+    // SSE 推送时触发 Lit 重新渲染
+    this._boundHandleDeviceUpdated = () => {
+      this.requestUpdate();
+    };
+    document.addEventListener("device-updated", this._boundHandleDeviceUpdated);
     const path = window.location.pathname;
     if (path.startsWith("/devices/")) {
       const id = path.split("/")[2];
       if (id) {
         this.loadDeviceDetail(id);
-        document.addEventListener("click", this._boundCloseTagEditor);
-        document.addEventListener("device-updated", this._boundHandleDeviceUpdated);
         return;
       }
     }
@@ -204,8 +201,6 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.loadDevicesFromCache();
     this.loadDriverNames();
     this.loadAllTags();
-    document.addEventListener("click", this._boundCloseTagEditor);
-    document.addEventListener("device-updated", this._boundHandleDeviceUpdated);
   }
 
   disconnectedCallback() {
@@ -216,7 +211,6 @@ export class DevicesView extends SignalWatcher(LitElement) {
   }
 
   private async loadDevicesFromCache() {
-    console.log('[DevicesView] loadDevicesFromCache() called');
     this.loading = true;
     this.error = "";
     try {
@@ -262,8 +256,19 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.detailLoading = true;
     this.error = "";
     try {
-      const res = await deviceApi.getDeviceProfile(id);
-      this.selectedDevice = res.result || null;
+      // 触发 deviceCache 初始化（建立 SSE 连接），同时获取详情
+      const [profile] = await Promise.all([
+        deviceApi.getDeviceProfile(id),
+        deviceCache.getDevices(),
+      ]);
+      const result = profile.result || null;
+
+      // 将属性存入缓存，SSE 推送时只更新 currentValue
+      if (result?.properties?.length) {
+        deviceCache.setDeviceProperties(id, result.properties);
+      }
+
+      this.selectedDevice = result;
     } catch (err: any) {
       this.error = err.message || "加载设备详情失败";
     } finally {
@@ -915,7 +920,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
   // === Render ===
 
   render() {
-    // 列表页: 从缓存信号读取最新数据（SSE 更新时 SignalWatcher 自动触发 re-render）
+    // 列表页: 直接从信号读取，SSE 更新时 SignalWatcher 自动触发 re-render
     if (!this.selectedDevice) {
       const cachedDevices = deviceCache.$devicesList.get();
       if (cachedDevices.length > 0 || !this.loading) {
@@ -1012,6 +1017,8 @@ export class DevicesView extends SignalWatcher(LitElement) {
   }
 
   renderTableView() {
+    // Read directly from signal for SSE reactivity
+    const devices = deviceCache.$devicesList.get();
     return html`
       <div class="card" style="overflow: hidden;">
         <table style="width: 100%; border-collapse: collapse;">
@@ -1026,9 +1033,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
             </tr>
           </thead>
           <tbody>
-            ${this.devices.length === 0
+            ${devices.length === 0
               ? html`<tr><td colspan="6" style="padding: 40px; text-align: center; color: var(--muted);">暂无设备</td></tr>`
-              : this.devices.map(d => html`
+              : devices.map(d => html`
                 <tr style="border-bottom: 1px solid var(--border);">
                   <td style="padding: 12px 16px;">
                     <div style="font-weight: 500;">${d.displayName || d.name}</div>
@@ -1059,14 +1066,16 @@ export class DevicesView extends SignalWatcher(LitElement) {
   }
 
   renderGridView() {
-    if (this.devices.length === 0) {
+    // Read directly from signal for SSE reactivity
+    const devices = deviceCache.$devicesList.get();
+    if (devices.length === 0) {
       return html`
         <div class="card" style="padding: 40px; text-align: center; color: var(--muted);">暂无设备</div>
       `;
     }
     return html`
       <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px;">
-        ${this.devices.map(d => this.renderDeviceCard(d))}
+        ${devices.map(d => this.renderDeviceCard(d))}
       </div>
     `;
   }
@@ -1299,7 +1308,27 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   renderDetailProperties() {
     const profile = this.selectedDevice;
-    if (!profile || profile.properties.length === 0) {
+    if (!profile) return html`<div class="card" style="padding: 32px; text-align: center; color: var(--muted);">暂无属性数据</div>`;
+
+    // 从缓存读取（SSE 推送的实时数据），用 profile.properties 的元数据补充缺失字段
+    const cached = deviceCache.$devicesMap.get().get(profile.device.id);
+    let properties: DeviceProperty[] = [];
+
+    if (cached?.properties?.length) {
+      // 有缓存：用 API 属性元数据 + 缓存实时值
+      const apiMap = new Map((profile.properties ?? []).map(p => [p.name, p]));
+      properties = cached.properties.map(cachedProp => {
+        const apiProp = apiMap.get(cachedProp.name);
+        return apiProp
+          ? { ...apiProp, currentValue: cachedProp.currentValue ?? cachedProp.value, updatedAt: cachedProp.updatedAt }
+          : cachedProp;
+      });
+    } else if (profile.properties?.length) {
+      // 无缓存：用 API 属性
+      properties = profile.properties;
+    }
+
+    if (properties.length === 0) {
       return html`<div class="card" style="padding: 32px; text-align: center; color: var(--muted);">暂无属性数据</div>`;
     }
 
@@ -1308,31 +1337,37 @@ export class DevicesView extends SignalWatcher(LitElement) {
         <table style="width: 100%; border-collapse: collapse;">
           <thead>
             <tr style="border-bottom: 1px solid var(--border);">
-              <th style="padding: 6px 10px; text-align: left; font-size: 11px; color: var(--muted); font-weight: 600;">属性名</th>
+             <th style="padding: 6px 10px; text-align: left; font-size: 11px; color: var(--muted); font-weight: 600;">属性</th>
+              <th style="padding: 6px 10px; text-align: left; font-size: 11px; color: var(--muted); font-weight: 600;">名称</th>
               <th style="padding: 6px 10px; text-align: left; font-size: 11px; color: var(--muted); font-weight: 600;">当前值</th>
+          
+              <th style="padding: 6px 10px; text-align: center; font-size: 11px; color: var(--muted); font-weight: 600;"></th>
               <th style="padding: 6px 10px; text-align: left; font-size: 11px; color: var(--muted); font-weight: 600;">类型</th>
-              <th style="padding: 6px 10px; text-align: left; font-size: 11px; color: var(--muted); font-weight: 600;">单位</th>
               <th style="padding: 6px 10px; text-align: center; font-size: 11px; color: var(--muted); font-weight: 600;">读写</th>
               <th style="padding: 6px 10px; text-align: left; font-size: 11px; color: var(--muted); font-weight: 600;">更新时间</th>
             </tr>
           </thead>
           <tbody>
-            ${profile.properties.map((p: DeviceProperty) => html`
+            ${properties.map((p: DeviceProperty) => html`
               <tr style="border-bottom: 1px solid var(--border);">
+                <td style="padding: 6px 10px; font-size: 13px;">${p.name}</td>
                 <td style="padding: 6px 10px; font-size: 13px;">${p.displayName || p.name}</td>
                 <td style="padding: 6px 10px; font-size: 13px; font-weight: 500;">
                   ${p.currentValue ?? p.value ?? "-"}
+                  ${p.unit ? html`<span style="font-size: 11px; color: var(--muted); margin-left: 4px;">${p.unit}</span>` : nothing}
+                </td>
+                <td style="padding: 6px 10px; text-align: center;">
                   ${this.isNumericType(p.dataType) ? html`
                     <button
                       class="btn btn--icon btn--xs"
-                      title="查看历史曲线"
+                      title="曲线"
                       @click=${() => this.openPropertyHistory(p.name, p.unit || "")}
-                      style="margin-left: 4px; color: var(--accent); cursor: pointer; padding: 2px;"
+                      style="color: var(--accent); cursor: pointer; padding: 2px;"
                     >${icons.trendingUp}</button>
                   ` : nothing}
                 </td>
                 <td style="padding: 6px 10px; font-size: 12px; color: var(--muted);">${p.dataType}</td>
-                <td style="padding: 6px 10px; font-size: 12px; color: var(--muted);">${p.unit || "-"}</td>
+                
                 <td style="padding: 6px 10px; text-align: center;">
                   <span style="display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600;
                     background: ${p.isReadOnly ? 'rgba(107,114,128,0.1)' : 'rgba(16,185,129,0.1)'};

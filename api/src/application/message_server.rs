@@ -97,6 +97,7 @@ pub async fn add_message(msg: MessageDto, db: &Database, event_bus: Option<&Arc<
                     format: TextFormat::Plain,
                 }],
             ),
+            None,
         ) {
             Ok(event) => {
                 let event_bus_clone = event_bus.clone();
@@ -226,6 +227,7 @@ pub async fn add_device_message(
     title: String,
     content: String,
     level: EventLevel,
+    workspace_id: Option<String>,
     event_bus: Option<&Arc<EventBus>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(event_bus) = event_bus {
@@ -244,6 +246,7 @@ pub async fn add_device_message(
                 title,
                 vec![ContentElement::Text { content, format: TextFormat::Plain }],
             ),
+            workspace_id,
         )?;
 
         event_bus.publish(event).await?;

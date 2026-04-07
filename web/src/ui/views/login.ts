@@ -57,7 +57,7 @@ export class LoginView extends LitElement {
       const res = await authApi.login({ username: this.username, password: this.password });
       const token = res.result?.accessToken;
       if (!token) throw new Error("登录失败：未获取到令牌");
-      this.onLoginSuccess(token);
+      this.onLoginSuccess(token, res.result?.workspaceId);
     } catch (err: any) {
       this.error = err.message || "登录失败";
     } finally {
@@ -103,7 +103,7 @@ export class LoginView extends LitElement {
       const res = await authApi.smsLogin({ phone: this.phone.trim(), code: this.smsCode.trim() });
       const token = res.result?.accessToken;
       if (!token) throw new Error("登录失败：未获取到令牌");
-      this.onLoginSuccess(token);
+      this.onLoginSuccess(token, res.result?.workspaceId);
     } catch (err: any) {
       this.error = err.message || "短信登录失败";
     } finally {
@@ -131,9 +131,13 @@ export class LoginView extends LitElement {
 
   // ── Common ──
 
-  onLoginSuccess(token: string) {
+  onLoginSuccess(token: string, workspaceId?: string) {
     localStorage.setItem("auth-token", token);
     sessionStorage.setItem("auth-token", token);
+    if (workspaceId) {
+      localStorage.setItem("workspace-id", workspaceId);
+      sessionStorage.setItem("workspace-id", workspaceId);
+    }
     window.location.href = "/dashboard";
   }
 

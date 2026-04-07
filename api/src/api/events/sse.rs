@@ -49,6 +49,7 @@ pub async fn handle_sse_connection(
     let user_id = query.user_id.clone().unwrap_or_else(|| claims.user_id.clone());
 
     // Workspace: query param > X-Workspace-Id header > "default"
+    // Frontend must pass workspace_id in the SSE URL so events are correctly filtered.
     let workspace_id = query
         .workspace_id
         .clone()

@@ -1,7 +1,6 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import type { ChatState } from "../controllers/chat.js";
-import "../components/skeleton.js";
 import {
   createChatState,
   loadChatHistory,
@@ -120,9 +119,7 @@ export class ChatView extends LitElement {
     return html`
       <div class="chat-layout">
         <div class="chat-messages" id="chatMessages">
-          ${this.chatState.chatLoading
-            ? html`<skeleton-list .count=${3}></skeleton-list>`
-            : nothing}
+          ${this.chatState.chatLoading ? html`<div style="padding: 20px; text-align: center; color: var(--muted); font-size: 13px;">加载中...</div>` : nothing}
           ${groups.map((g) => renderMessageGroup(g, this.a2uiRenderer))}
           ${this.chatState.chatStream
             ? renderStreamingGroup(

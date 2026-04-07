@@ -63,6 +63,7 @@ pub struct LoginWithCodeResponse {
     pub token_type: String,
     pub expires_in: u64,
     pub user_info: UserInfo,
+    pub workspace_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -522,6 +523,15 @@ async fn login_with_code(
         }
     };
 
+    // 查找该租户的第一个 workspace 作为默认 workspace
+    let workspace_id: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM workspaces WHERE tenant_id = ? LIMIT 1"
+    )
+    .bind(default_tenant_id)
+    .fetch_optional(db.pool())
+    .await
+    .unwrap_or(None);
+
     ApiResponse::success(LoginWithCodeResponse {
         access_token: token,
         token_type: "Bearer".to_string(),
@@ -532,6 +542,7 @@ async fn login_with_code(
             username: Some(user.username),
             display_name: user.display_name,
         },
+        workspace_id,
     })
 }
 

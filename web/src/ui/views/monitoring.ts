@@ -39,6 +39,7 @@ export class MonitoringView extends LitElement {
         monitoringApi.getHealthStatus(),
       ]);
       this.metrics = metricsRes.result || undefined;
+      console.log('[Monitoring] metrics:', metricsRes.result);
       this.health = healthRes.result || undefined;
       this.lastUpdated = new Date().toLocaleTimeString();
     } catch (err: any) {
@@ -104,26 +105,26 @@ export class MonitoringView extends LitElement {
         <div style="font-weight: 600; margin-bottom: 16px;">系统资源</div>
         ${m ? html`
           <div style="display: flex; flex-direction: column; gap: 16px;">
-            ${this.renderBar("CPU", m.cpuUsage)}
-            ${this.renderBar("内存", m.memoryUsage)}
-            ${this.renderBar("磁盘", m.diskUsage)}
+            ${this.renderBar("CPU", m.cpu)}
+            ${this.renderBar("内存", m.memory)}
+            ${this.renderBar("磁盘", m.disk)}
           </div>
           <div style="margin-top: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
             <div>
               <div style="color: var(--muted); font-size: 12px;">网络入站</div>
-              <div style="font-size: 16px; font-weight: 600; margin-top: 4px;">${this.formatBytes(m.networkIn)}/s</div>
+              <div style="font-size: 16px; font-weight: 600; margin-top: 4px;">${this.formatBytes(m.network.inbound)}/s</div>
             </div>
             <div>
               <div style="color: var(--muted); font-size: 12px;">网络出站</div>
-              <div style="font-size: 16px; font-weight: 600; margin-top: 4px;">${this.formatBytes(m.networkOut)}/s</div>
+              <div style="font-size: 16px; font-weight: 600; margin-top: 4px;">${this.formatBytes(m.network.outbound)}/s</div>
             </div>
             <div>
               <div style="color: var(--muted); font-size: 12px;">活跃连接</div>
-              <div style="font-size: 16px; font-weight: 600; margin-top: 4px;">${m.activeConnections}</div>
+              <div style="font-size: 16px; font-weight: 600; margin-top: 4px;">${m.activeConnections ?? '-'}</div>
             </div>
             <div>
               <div style="color: var(--muted); font-size: 12px;">运行时间</div>
-              <div style="font-size: 16px; font-weight: 600; margin-top: 4px;">${this.formatUptime(m.uptime)}</div>
+              <div style="font-size: 16px; font-weight: 600; margin-top: 4px;">${m.uptime ? this.formatUptime(m.uptime) : '-'}</div>
             </div>
           </div>
         ` : html`<div style="color: var(--muted); text-align: center; padding: 20px;">暂无数据</div>`}
@@ -146,13 +147,14 @@ export class MonitoringView extends LitElement {
             </span>
           ` : nothing}
         </div>
-        ${h ? html`
+        ${h?.components?.length ? html`
           <div style="display: flex; flex-direction: column; gap: 8px;">
-            ${h.components.map((c: ComponentHealth) => html`
+            ${h.components!.map((c: ComponentHealth) => html`
               <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; background: var(--bg-subtle); border-radius: 8px;">
                 <div>
                   <div style="font-size: 14px; font-weight: 500;">${c.name}</div>
                   ${c.message ? html`<div style="font-size: 12px; color: var(--muted);">${c.message}</div>` : nothing}
+                  ${c.lastChecked ? html`<div style="font-size: 11px; color: var(--muted); margin-top: 2px;">${c.lastChecked}</div>` : nothing}
                 </div>
                 <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 13px;">
                   <span style="width: 8px; height: 8px; border-radius: 50%; background: ${statusColor(c.status)};"></span>
@@ -175,8 +177,8 @@ export class MonitoringView extends LitElement {
           <span>${label}</span>
           <span>${v.toFixed(1)}%</span>
         </div>
-        <div style="height: 6px; background: var(--border); border-radius: 3px; overflow: hidden;">
-          <div style="height: 100%; width: ${v}%; background: ${color}; border-radius: 3px; transition: width 0.3s;"></div>
+        <div style="height: 16px; background: #e5e7eb; border-radius: 3px; overflow: hidden;">
+          <div style="height: 100%; width: ${v}%; background: ${color}; border-radius: 2px; transition: width 0.3s;"></div>
         </div>
       </div>
     `;

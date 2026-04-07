@@ -9,7 +9,7 @@ import { signal, computed } from '@lit-labs/signals';
 import { deviceApi } from '../api/devices.js';
 import { API_BASE } from '../api/config.js';
 import { getAuthToken } from '../api/client.js';
-import type { Device } from '../types/index.js';
+import type { Device, DeviceProperty } from '../types/index.js';
 
 type SseStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
@@ -34,7 +34,6 @@ class DeviceCache {
    * 获取设备列表。首次调用触发 fetch + SSE 自动连接，后续直接返回缓存。
    */
   async getDevices(): Promise<Device[]> {
-    console.log('[DeviceCache] getDevices() called, initialized:', this.initialized);
     if (this.initialized) {
       return this.$devicesList.get();
     }
@@ -93,6 +92,31 @@ class DeviceCache {
   }
 
   /**
+   * 批量更新设备的完整属性（含元数据），用于详情页加载时初始化。
+   * 不触发 SSE 事件。
+   */
+  setDeviceProperties(deviceId: string, properties: DeviceProperty[]): void {
+    const map = this.$devicesMap.get();
+    const device = map.get(deviceId);
+    const updated = new Map(map);
+    updated.set(deviceId, {
+      ...(device ?? { id: deviceId, name: deviceId, status: 'online' }),
+      properties,
+    });
+    this.$devicesMap.set(updated);
+  }
+
+  /**
+   * 强制触发所有 $devicesMap 的订阅者 re-render。
+   * 在 SSE 推送更新后调用，确保 Lit 组件重新渲染。
+   */
+  touchForRerender(): void {
+    // 读写 signal 触发 SignalWatcher 检测变化
+    const map = this.$devicesMap.get();
+    this.$devicesMap.set(map);
+  }
+
+  /**
    * 清空缓存，关闭 SSE 连接。登出时调用。
    */
   clearCache(): void {
@@ -104,6 +128,8 @@ class DeviceCache {
     }
     this.$devicesMap.set(new Map());
     this.$sseStatus.set('disconnected');
+    localStorage.removeItem("workspace-id");
+    sessionStorage.removeItem("workspace-id");
     this.reconnectAttempt = 0;
     this.fetchInProgress = false;
     this.pendingSseEvents = [];
@@ -118,7 +144,7 @@ class DeviceCache {
     this.pendingSseEvents = [];
 
     try {
-      const response = await deviceApi.getDevices({ page: 1, pageSize: 100 });
+      const response = await deviceApi.getDevices({ page: 1, pageSize: 1000 });
       const devices = response.result?.data ?? [];
 
       const map = new Map<string, Device>();
@@ -146,22 +172,23 @@ class DeviceCache {
   }
 
   private ensureConnected(): void {
-    console.log('[DeviceCache] ensureConnected() called, existing source:', this.eventSource != null);
     if (this.eventSource != null) return;
 
     this.$sseStatus.set('connecting');
 
     const token =
       getAuthToken();
+    const workspaceId = localStorage.getItem("workspace-id")
+      ?? sessionStorage.getItem("workspace-id")
+      ?? "default";
     if (!token) {
       this.$sseStatus.set('disconnected');
       return;
     }
 
-    const url = `${API_BASE}/events/sse?token=${encodeURIComponent(token)}&event_types=device.status_change,device.connection,device.property_change`;
+    const url = `${API_BASE}/events/sse?token=${encodeURIComponent(token)}&workspace_id=${encodeURIComponent(workspaceId)}&event_types=device.status_change,device.connection,device.property_change`;
 
     try {
-      console.log('[DeviceCache] Creating EventSource:', url);
       this.eventSource = new EventSource(url);
     } catch {
       this.$sseStatus.set('error');
@@ -170,23 +197,21 @@ class DeviceCache {
     }
 
     this.eventSource.onopen = () => {
-      console.log('[DeviceCache] SSE onopen! Connection established');
       this.$sseStatus.set('connected');
       this.reconnectAttempt = 0;
       this.hasConnectedOnce = true;
     };
 
-    this.eventSource.onmessage = (ev) => {
+    this.eventSource.onmessage = async (ev) => {
       try {
         const data = JSON.parse(ev.data);
-        this.handleSseEvent(data);
+        await this.handleSseEvent(data);
       } catch {
         // ignore malformed events
       }
     };
 
     this.eventSource.onerror = () => {
-      console.log('[DeviceCache] SSE onerror!');
       this.$sseStatus.set('error');
       this.eventSource?.close();
       this.eventSource = null;
@@ -212,49 +237,54 @@ class DeviceCache {
     }, delay);
   }
 
-  private handleSseEvent(data: any): void {
-    console.log('[DeviceCache] SSE event:', data.event_type, data.device_id);
+  private async handleSseEvent(data: any): Promise<void> {
     if (this.fetchInProgress) {
-      console.log('[DeviceCache] fetch in progress, buffering event');
       this.pendingSseEvents.push(data);
       return;
     }
 
+    const deviceId: string | undefined = data.device_id;
+    const eventType: string = data.event_type ?? '';
     const map = this.$devicesMap.get();
-    console.log('[DeviceCache] current map device IDs:', Array.from(map.keys()));
-    const deviceInMap = map.get(data.device_id);
-    console.log('[DeviceCache] device in map:', deviceInMap ? 'yes, status=' + deviceInMap.status : 'no');
+
     const updated = this.applySseEventToMap(map, data);
     if (updated) {
-      console.log('[DeviceCache] Map updated, dispatching device-updated for:', data.device_id);
       this.$devicesMap.set(updated);
-
-      // 通知详情页需要刷新
-      const deviceId = data.device_id;
       if (deviceId) {
         window.dispatchEvent(new CustomEvent('device-updated', {
-          detail: { deviceId, eventType: data.event_type, data },
+          detail: { deviceId, eventType, data },
         }));
       }
-    } else {
-      console.log('[DeviceCache] No map change (device not in map or no relevant field changed)');
     }
   }
 
   /**
    * 将 SSE 事件应用到 Map 上，返回新 Map（若有变更）或 null。
+   * 事件数据直接构造设备，不需要额外 API 调用。
    */
   private applySseEventToMap(
     map: Map<string, Device>,
     data: any,
   ): Map<string, Device> | null {
-    console.log('[DeviceCache] applySseEventToMap called, event_type:', data.event_type, 'device_id:', data.device_id);
     const eventType: string = data.event_type ?? '';
     const deviceId: string | undefined = data.device_id;
-
     if (!deviceId) return null;
-    const device = map.get(deviceId);
-    if (!device) return null;
+
+    let device = map.get(deviceId);
+
+    // 设备不在缓存中，从事件数据构造最小设备
+    if (!device) {
+      const newDevice: Device = {
+        id: deviceId,
+        name: data.content?.title?.replace('Property Changed: ', '').split(' - ')[0] ?? deviceId,
+        status: 'online',
+        properties: [],
+      };
+      const updated = new Map(map);
+      updated.set(deviceId, newDevice);
+      map = updated;
+      device = newDevice;
+    }
 
     // device.connection / device.status_change
     if (eventType === 'device.connection' || eventType === 'device.status_change') {
@@ -264,25 +294,45 @@ class DeviceCache {
         updated.set(deviceId, { ...device, status: newStatus });
         return updated;
       }
+      return null;
     }
 
     // device.property_change
     if (eventType === 'device.property_change') {
       const propertyName: string | undefined = data.property_name;
       const newValue: string | undefined = data.new_value;
-      if (!propertyName || !device.properties) return null;
+      if (!propertyName) return null;
 
-      const prop = device.properties.find((p) => p.name === propertyName);
-      if (prop && prop.currentValue !== newValue) {
-        const updatedProps = device.properties.map((p) =>
-          p.name === propertyName
+      const props = device.properties ?? [];
+      const propIndex = props.findIndex((p) => p.name === propertyName);
+
+      let updatedProps: typeof props;
+      if (propIndex >= 0) {
+        // 属性已存在，更新值
+        updatedProps = props.map((p, i) =>
+          i === propIndex
             ? { ...p, currentValue: newValue, updatedAt: data.timestamp ?? new Date().toISOString() }
             : p,
         );
-        const updated = new Map(map);
-        updated.set(deviceId, { ...device, properties: updatedProps });
-        return updated;
+      } else {
+        // 属性不存在，新增
+        updatedProps = [
+          ...props,
+          {
+            id: data.property_id ?? `${deviceId}:${propertyName}`,
+            deviceId,
+            name: propertyName,
+            value: newValue,
+            currentValue: newValue,
+            dataType: 'unknown',
+            updatedAt: data.timestamp ?? new Date().toISOString(),
+          },
+        ];
       }
+
+      const updated = new Map(map);
+      updated.set(deviceId, { ...device, properties: updatedProps });
+      return updated;
     }
 
     return null;

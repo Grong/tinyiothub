@@ -85,23 +85,23 @@ impl SseConnectionManager {
     /// # Arguments
     /// * `event` - The event to broadcast
     pub async fn broadcast_event(&self, event: &Event) {
-        debug!("Broadcasting event to SSE connections");
-
         // Build dotted event_type string matching frontend expectations (e.g. "device.connection")
         let event_type_str = format!("{}.{}", event.event_type().type_string(), event.event_type().subtype_string());
 
         // Extract device_id from source if present
         let device_id = event.source().device_id().map(|s| s.to_string());
 
-        // Look up workspace_id from device cache so SSE filters can route events
-        let workspace_id = if let Some(ref dev_id) = device_id {
-            self.data_context
-                .as_ref()
-                .and_then(|dc| dc.get_device(dev_id))
-                .and_then(|d| d.workspace_id)
-        } else {
-            None
-        };
+        // Use workspace_id from the event itself (set at event creation from the device).
+        // Fall back to DataContext lookup only for events that predate this fix.
+        let workspace_id = event
+            .workspace_id()
+            .map(|s| s.to_string())
+            .or_else(|| {
+                self.data_context
+                    .as_ref()
+                    .and_then(|dc| device_id.as_ref().and_then(|id| dc.get_device(id)))
+                    .and_then(|d| d.workspace_id.clone())
+            });
 
         // Build base data payload
         let mut data = serde_json::json!({

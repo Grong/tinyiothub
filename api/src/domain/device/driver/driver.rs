@@ -561,6 +561,7 @@ impl DriverWrapper {
                         },
                     ],
                 ),
+                device.workspace_id.clone(),
             );
 
             if let Ok(event) = event {
@@ -600,6 +601,7 @@ impl DriverWrapper {
                 EventLevel::Warning,
                 EventSource::device(device.id.clone(), Some("driver".to_string())),
                 RichContent::new(format!("Device Offline: {}", device.name), elements),
+                device.workspace_id.clone(),
             );
 
             if let Ok(event) = event {
@@ -643,6 +645,7 @@ impl DriverWrapper {
                         },
                     ],
                 ),
+                device.workspace_id.clone(),
             );
 
             if let Ok(event) = event {
@@ -716,6 +719,7 @@ impl DriverWrapper {
                     format!("Property Changed: {} - {}", device.name, property_name),
                     elements,
                 ),
+                device.workspace_id.clone(),
             );
 
             if let Ok(event) = event {
@@ -792,6 +796,7 @@ impl DriverWrapper {
                 level,
                 EventSource::device(device.id.clone(), Some("driver".to_string())),
                 content,
+                device.workspace_id.clone(),
             );
 
             if let Ok(event) = event {
