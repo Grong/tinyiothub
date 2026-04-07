@@ -1142,7 +1142,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
     return html`
       <div style="position: relative;">
-        <div class="card" style="overflow: hidden; display: flex; flex-direction: column; height: 180px;">
+        <div class="card" style="padding: 2px; overflow: hidden; display: flex; flex-direction: column; height: 180px;">
           <!-- Header -->
           <div style="padding: 14px 16px 0; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;">
             <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
