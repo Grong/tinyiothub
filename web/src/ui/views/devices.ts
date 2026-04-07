@@ -939,15 +939,16 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   renderToolbar() {
     return html`
-      <div style="display: flex; gap: 12px; margin-bottom: 16px; align-items: center; flex-wrap: wrap;">
-        <input
-          type="text"
-          placeholder="搜索设备名称..."
-          .value=${this.searchName}
-          @input=${(e: Event) => { this.searchName = (e.target as HTMLInputElement).value; }}
-          @keydown=${(e: KeyboardEvent) => { if (e.key === "Enter") { this.page = 1; this.loadDevices(); } }}
-          style="flex: 1; min-width: 180px; max-width: 300px;"
-        />
+      <div style="display: flex; gap: 10px; margin-bottom: 16px; align-items: center; flex-wrap: wrap;">
+        <div class="field" style="flex: 1; min-width: 180px; max-width: 300px;">
+          <input
+            type="text"
+            placeholder="搜索设备名称..."
+            .value=${this.searchName}
+            @input=${(e: Event) => { this.searchName = (e.target as HTMLInputElement).value; }}
+            @keydown=${(e: KeyboardEvent) => { if (e.key === "Enter") { this.page = 1; this.loadDevices(); } }}
+          />
+        </div>
         <select class="select" style="width: auto; min-width: 120px;" .value=${this.filterStatus} @change=${(e: Event) => { this.filterStatus = (e.target as HTMLSelectElement).value; this.page = 1; this.loadDevices(); }}>
           <option value="">全部状态</option>
           <option value="online">在线</option>
