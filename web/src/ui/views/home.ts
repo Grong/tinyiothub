@@ -1,5 +1,6 @@
 import { LitElement, html } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import { getAuthToken } from "../../api/client.js";
 
 @customElement("view-home")
 export class HomeView extends LitElement {
@@ -23,7 +24,7 @@ export class HomeView extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
-    const token = sessionStorage.getItem("auth-token") || localStorage.getItem("auth-token");
+    const token = getAuthToken();
     this.isAuthenticated = !!token;
     window.addEventListener("scroll", this.scrollHandler, { passive: true });
   }

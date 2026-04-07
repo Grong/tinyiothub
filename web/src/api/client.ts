@@ -44,14 +44,14 @@ interface RequestOptions {
   params?: Record<string, any>;
 }
 
-// 获取认证 token
-const getAuthToken = (): string | null => {
+// 获取认证 token（供其他模块复用）
+export const getAuthToken = (): string | null => {
   if (typeof window === 'undefined') return null;
   return sessionStorage.getItem('auth-token') || localStorage.getItem('auth-token');
 };
 
-// 构建完整 URL
-const buildUrl = (endpoint: string): string => {
+// 构建完整 URL（供其他模块复用）
+export const buildUrl = (endpoint: string): string => {
   if (endpoint.startsWith('http://') || endpoint.startsWith('https://')) {
     return endpoint;
   }

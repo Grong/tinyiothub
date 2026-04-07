@@ -46,3 +46,6 @@ logs/*.log
 license
 
 api/wwwroot
+
+/dist
+/.gstack

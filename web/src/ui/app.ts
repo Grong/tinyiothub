@@ -1,12 +1,13 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
-import { ApiClient } from "../api/client.js";
+import { ApiClient, getAuthToken } from "../api/client.js";
 import { loadSettings, saveSettings, type UiSettings } from "./storage.js";
 import { startThemeTransition, type ThemeTransitionContext } from "./theme-transition.js";
 import { resolveTheme, type ThemeMode, type ResolvedTheme } from "./theme.js";
 import "./components/theme-toggle.js";
 import "./components/toast.js";
 import "./components/skeleton.js";
+import { deviceCache } from "../stores/device-cache.js";
 
 // Views — side-effect imports register custom elements
 import "./views/login.js";
@@ -96,6 +97,7 @@ export class TinyIoTHubApp extends LitElement {
       this.applyTheme();
     }
   };
+  private boundHandleRoute = () => this.handleRoute();
 
   createRenderRoot() {
     return this;
@@ -113,6 +115,7 @@ export class TinyIoTHubApp extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    window.removeEventListener("popstate", this.boundHandleRoute);
     if (this.themeMediaQuery) {
       this.themeMediaQuery.removeEventListener("change", this.themeChangeHandler);
     }
@@ -167,7 +170,7 @@ export class TinyIoTHubApp extends LitElement {
   // --- Auth ---
 
   checkAuth() {
-    const token = sessionStorage.getItem("auth-token") || localStorage.getItem("auth-token");
+    const token = getAuthToken();
     this.isAuthenticated = !!token;
   }
 
@@ -188,6 +191,7 @@ export class TinyIoTHubApp extends LitElement {
   logout() {
     sessionStorage.removeItem("auth-token");
     localStorage.removeItem("auth-token");
+    deviceCache.clearCache();
     this.isAuthenticated = false;
     this.navigate("login");
   }
@@ -195,7 +199,7 @@ export class TinyIoTHubApp extends LitElement {
   // --- Router ---
 
   setupRouter() {
-    window.addEventListener("popstate", () => this.handleRoute());
+    window.addEventListener("popstate", this.boundHandleRoute);
     this.handleRoute();
   }
 

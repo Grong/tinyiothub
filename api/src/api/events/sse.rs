@@ -10,6 +10,7 @@ use serde::Deserialize;
 use tracing::{info, warn};
 
 use crate::{
+    api::middleware::workspace::WorkspaceScope,
     dto::response::{api_response::ApiResponse, builder::ApiResponseBuilder},
     infrastructure::event::sse_manager::{SseConnectionInfo, SseOverview},
     shared::{app_state::AppState, security::jwt::Claims},
@@ -20,6 +21,9 @@ use crate::{
 pub struct SseConnectionQuery {
     /// User ID for the connection
     pub user_id: Option<String>,
+
+    /// Workspace ID to scope events to (fallback: X-Workspace-Id header)
+    pub workspace_id: Option<String>,
 
     /// Comma-separated list of event types to filter
     /// Example: "system.auth,device.connection,device.data"
@@ -38,12 +42,20 @@ pub struct SseConnectionQuery {
 pub async fn handle_sse_connection(
     Query(query): Query<SseConnectionQuery>,
     State(state): State<AppState>,
+    workspace_scope: WorkspaceScope,
     claims: Claims,
 ) -> Response {
     // Use user_id from query or fall back to JWT claims
     let user_id = query.user_id.clone().unwrap_or_else(|| claims.user_id.clone());
 
-    info!("New authenticated SSE connection from user: {}", user_id);
+    // Workspace: query param > X-Workspace-Id header > "default"
+    let workspace_id = query
+        .workspace_id
+        .clone()
+        .or(workspace_scope.0)
+        .unwrap_or_else(|| "default".to_string());
+
+    info!("New authenticated SSE connection from user: {} workspace: {}", user_id, workspace_id);
 
     // Parse event filters
     let event_types = parse_event_types(&query.event_types);
@@ -51,7 +63,7 @@ pub async fn handle_sse_connection(
 
     // Create SSE connection through the manager
     let sse_manager = state.get_sse_manager();
-    sse_manager.create_connection(user_id, event_types, event_levels).await
+    sse_manager.create_connection(user_id, workspace_id, event_types, event_levels).await
 }
 
 /// Handle public (unauthenticated) SSE connection
@@ -64,8 +76,9 @@ pub async fn handle_sse_connection_public(
     State(state): State<AppState>,
 ) -> Response {
     let user_id = query.user_id.clone().unwrap_or_else(|| "anonymous".to_string());
+    let workspace_id = query.workspace_id.clone().unwrap_or_else(|| "default".to_string());
 
-    warn!("New public (unauthenticated) SSE connection from user: {}", user_id);
+    warn!("New public (unauthenticated) SSE connection from user: {} workspace: {}", user_id, workspace_id);
 
     // Parse event filters
     let event_types = parse_event_types(&query.event_types);
@@ -73,7 +86,7 @@ pub async fn handle_sse_connection_public(
 
     // Create public SSE connection
     let sse_manager = state.get_sse_manager();
-    sse_manager.create_public_connection(user_id, event_types, event_levels).await
+    sse_manager.create_public_connection(user_id, workspace_id, event_types, event_levels).await
 }
 
 /// Get SSE connection overview

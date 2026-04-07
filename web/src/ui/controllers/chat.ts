@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from "../../api/client.js";
+import { apiGet, apiPost, buildUrl, getAuthToken } from "../../api/client.js";
 import type { ChatAttachment } from "../ui-types.js";
 
 export type ChatMessage = {
@@ -31,6 +31,8 @@ export type ChatState = {
   lastError: string | null;
   onA2ui?: (jsonl: string) => void;
   lastA2uiSurfaceId?: string;
+  /** 内部: 用于 abortChatRun 真正中断 fetch */
+  abortController?: AbortController;
 };
 
 export function createChatState(sessionKey: string, agentId: string): ChatState {
@@ -71,7 +73,7 @@ export function sendChatMessage(
   state: ChatState,
   message: string,
   attachments?: ChatAttachment[],
-): { runId: string; stream: EventSource | ReadableStream } | null {
+): { runId: string } | null {
   const msg = message.trim();
   if (!msg && (!attachments || attachments.length === 0)) return null;
 
@@ -94,16 +96,14 @@ export function sendChatMessage(
   state.chatStreamStartedAt = now;
 
   // POST to /chat/stream, read SSE response
-  const token = sessionStorage.getItem("auth-token") || localStorage.getItem("auth-token") || "";
-  const baseUrl = (import.meta as any).env?.VITE_API_BASE || "/api/v1";
-
   const controller = new AbortController();
+  state.abortController = controller;
 
-  fetch(`${baseUrl}/chat/stream`, {
+  fetch(buildUrl("/chat/stream"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${getAuthToken() || ""}`,
     },
     body: JSON.stringify({
       agent_id: state.agentId,
@@ -114,6 +114,14 @@ export function sendChatMessage(
     signal: controller.signal,
   })
     .then(async (response) => {
+      if (response.status === 401) {
+        sessionStorage.removeItem('auth-token');
+        localStorage.removeItem('auth-token');
+        window.dispatchEvent(new CustomEvent('auth-error', {
+          detail: { message: '认证已过期' },
+        }));
+        throw new Error('Unauthorized - 请重新登录');
+      }
       if (!response.ok) {
         let errMsg = `HTTP ${response.status}`;
         try {
@@ -161,7 +169,7 @@ export function sendChatMessage(
       state.chatSending = false;
     });
 
-  return { runId, stream: new ReadableStream() }; // caller can abort via controller
+  return { runId };
 }
 
 export function handleChatEvent(state: ChatState, payload: ChatEventPayload): void {
@@ -230,6 +238,11 @@ export function handleChatEvent(state: ChatState, payload: ChatEventPayload): vo
 }
 
 export async function abortChatRun(state: ChatState): Promise<boolean> {
+  // 真正中断正在进行的 fetch
+  if (state.abortController) {
+    state.abortController.abort();
+    state.abortController = undefined;
+  }
   try {
     await apiPost("/chat/abort", {
       agent_id: state.agentId,

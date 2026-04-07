@@ -8,6 +8,7 @@
 import { signal, computed } from '@lit-labs/signals';
 import { deviceApi } from '../api/devices.js';
 import { API_BASE } from '../api/config.js';
+import { getAuthToken } from '../api/client.js';
 import type { Device } from '../types/index.js';
 
 type SseStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
@@ -47,6 +48,7 @@ class DeviceCache {
    * 强制刷新设备列表。
    */
   async refreshDevices(): Promise<void> {
+    if (!this.initialized) return; // nothing to refresh if never initialized
     await this.fetchAndPopulate();
   }
 
@@ -127,10 +129,17 @@ class DeviceCache {
       for (const evt of this.pendingSseEvents) {
         this.applySseEventToMap(map, evt);
       }
-      this.pendingSseEvents = [];
 
       this.$devicesMap.set(map);
+    } catch {
+      // fetch 失败: 对旧数据也应用新事件（这些事件比旧缓存更新）
+      const map = this.$devicesMap.get();
+      for (const evt of this.pendingSseEvents) {
+        const updated = this.applySseEventToMap(map, evt);
+        if (updated) this.$devicesMap.set(updated);
+      }
     } finally {
+      this.pendingSseEvents = [];
       this.fetchInProgress = false;
     }
   }
@@ -141,7 +150,7 @@ class DeviceCache {
     this.$sseStatus.set('connecting');
 
     const token =
-      sessionStorage.getItem('auth-token') || localStorage.getItem('auth-token');
+      getAuthToken();
     if (!token) {
       this.$sseStatus.set('disconnected');
       return;

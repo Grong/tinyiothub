@@ -163,12 +163,24 @@ where
     type Rejection = AuthError;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        // 尝试从 Authorization header 中提取 JWT token
-        let auth_header =
-            parts.headers.typed_get::<Authorization<Bearer>>().ok_or(AuthError::MissingToken)?;
+        // Try Authorization header first
+        if let Some(auth_header) = parts.headers.typed_get::<Authorization<Bearer>>() {
+            return validate_jwt(auth_header.token()).map_err(AuthError::InvalidToken);
+        }
 
-        // 验证 JWT token
-        validate_jwt(auth_header.token()).map_err(AuthError::InvalidToken)
+        // Fallback: query string ?token=xxx (needed for EventSource which can't set headers)
+        if let Some(query) = parts.uri.query() {
+            for pair in query.split('&') {
+                let mut kv = pair.splitn(2, '=');
+                if kv.next() == Some("token") {
+                    if let Some(token) = kv.next() {
+                        return validate_jwt(token).map_err(AuthError::InvalidToken);
+                    }
+                }
+            }
+        }
+
+        Err(AuthError::MissingToken)
     }
 }
 
@@ -233,7 +245,7 @@ pub fn validate_jwt(token: &str) -> Result<Claims, String> {
 
     let jwt_claims = key.verify_token::<Claims>(token, None).map_err(|e| {
         tracing::warn!("JWT validation failed: {}", e);
-        "Your login has expired, please login again".to_string()
+        format!("JWT verification error: {}", e)
     })?;
 
     tracing::debug!("JWT token validated successfully");

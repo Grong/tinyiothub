@@ -501,6 +501,7 @@ mod tests {
             property_values: HashMap::new(),
             enabled_commands: vec!["read_temperature".to_string()],
             tenant_id: None,
+            workspace_id: None,
         }
     }
 
