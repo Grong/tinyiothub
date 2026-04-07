@@ -948,14 +948,14 @@ export class DevicesView extends SignalWatcher(LitElement) {
           @keydown=${(e: KeyboardEvent) => { if (e.key === "Enter") { this.page = 1; this.loadDevices(); } }}
           style="flex: 1; min-width: 180px; max-width: 300px;"
         />
-        <select .value=${this.filterStatus} @change=${(e: Event) => { this.filterStatus = (e.target as HTMLSelectElement).value; this.page = 1; this.loadDevices(); }}>
+        <select class="select" style="width: auto; min-width: 120px;" .value=${this.filterStatus} @change=${(e: Event) => { this.filterStatus = (e.target as HTMLSelectElement).value; this.page = 1; this.loadDevices(); }}>
           <option value="">全部状态</option>
           <option value="online">在线</option>
           <option value="offline">离线</option>
           <option value="error">故障</option>
           <option value="maintenance">维护</option>
         </select>
-        <select .value=${this.filterProtocol} @change=${(e: Event) => { this.filterProtocol = (e.target as HTMLSelectElement).value; this.page = 1; this.loadDevices(); }}>
+        <select class="select" style="width: auto; min-width: 120px;" .value=${this.filterProtocol} @change=${(e: Event) => { this.filterProtocol = (e.target as HTMLSelectElement).value; this.page = 1; this.loadDevices(); }}>
           <option value="">全部协议</option>
           <option value="modbus-tcp">Modbus TCP</option>
           <option value="modbus-rtu">Modbus RTU</option>
