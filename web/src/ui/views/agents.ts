@@ -76,7 +76,6 @@ export class ViewAgents extends LitElement {
     return html`
       <div class="agents-layout">
         <div class="agents-header">
-          <h2>Agent 管理</h2>
           <div class="agents-selector">
             <select class="agent-dropdown"
                     @change=${(e: Event) => this.onAgentSelected((e.target as HTMLSelectElement).value)}>

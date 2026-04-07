@@ -14,8 +14,8 @@ use crate::{
         value_objects::{EventLevel, EventType},
     },
     dto::{
-        request::pagination::{DataObjectWithPagination, PaginationQuery},
-        response::{builder::ApiResponseBuilder, ApiResponse},
+        request::pagination::PaginationQuery,
+        response::{builder::ApiResponseBuilder, ApiResponse, PaginatedResponse, PaginationInfo},
     },
     shared::{app_state::AppState, security::jwt::Claims},
 };
@@ -87,7 +87,7 @@ pub async fn get_events(
     Query(params): Query<EventQueryParams>,
     State(state): State<AppState>,
     _claims: Claims,
-) -> Json<ApiResponse<DataObjectWithPagination<EventResponse>>> {
+) -> Json<ApiResponse<PaginatedResponse<EventResponse>>> {
     tracing::info!("Getting events with params: {:?}", params);
 
     // Parse pagination parameters
@@ -200,8 +200,22 @@ pub async fn get_events(
                 })
                 .collect();
 
-            // Create paginated response
-            let paginated_data = DataObjectWithPagination::new(&event_responses, page, page_size);
+            // Create paginated response using standard PaginatedResponse
+            let total_count = event_responses.len() as u64;
+            let total_pages = if page_size > 0 {
+                ((total_count as f64) / (page_size as f64)).ceil() as u32
+            } else {
+                0
+            };
+            let paginated_data = PaginatedResponse {
+                data: event_responses,
+                pagination: PaginationInfo {
+                    page,
+                    page_size,
+                    total_pages,
+                    total_count,
+                },
+            };
 
             ApiResponseBuilder::success(paginated_data)
         }

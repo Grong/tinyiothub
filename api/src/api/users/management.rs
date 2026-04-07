@@ -8,9 +8,9 @@ use serde::Deserialize;
 use crate::{
     api::AppState,
     dto::{
-        entity::user::{CreateUserRequest, UpdateUserRequest, User, UserDto, UserStatisticsNew},
+        entity::user::{CreateUserRequest, UpdateUserRequest, User, UserDto, UserQueryParams, UserStatisticsNew},
         request::pagination::PaginationQuery,
-        response::ApiResponse,
+        response::{ApiResponse, PaginatedResponse, PaginationInfo},
     },
     shared::security::jwt::Claims,
 };
@@ -52,22 +52,53 @@ async fn list_users(
     State(state): State<AppState>,
     Query(query): Query<UserQuery>,
     _claims: Claims,
-) -> Json<ApiResponse<Vec<UserDto>>> {
+) -> Json<ApiResponse<PaginatedResponse<UserDto>>> {
     tracing::info!("list_users called with query: {:?}", query);
 
-    match User::find_with_filters(
-        state.database(),
-        query.enabled,
-        query.search,
-        Some(query.pagination.page.unwrap_or(1)),
-        Some(query.pagination.page_size.unwrap_or(20)),
-    )
-    .await
-    {
+    let params = UserQueryParams {
+        username: query.search.clone(),
+        email: None,
+        display_name: None,
+        is_enabled: query.enabled,
+        parent_id: None,
+        page: query.pagination.page,
+        page_size: query.pagination.page_size,
+    };
+
+    let page = query.pagination.page.unwrap_or(1);
+    let page_size = query.pagination.page_size.unwrap_or(20);
+
+    let (users_result, count_result) = tokio::join!(
+        User::find_with_filters(
+            state.database(),
+            query.enabled,
+            query.search,
+            Some(page),
+            Some(page_size),
+        ),
+        User::count(state.database(), &params),
+    );
+
+    match users_result {
         Ok(users) => {
             let user_dtos = User::to_dto_list(users);
+            let total = count_result.unwrap_or(0);
+            let total_count = total as u64;
+            let total_pages = if page_size > 0 {
+                ((total as f64) / (page_size as f64)).ceil() as u32
+            } else {
+                0
+            };
             tracing::info!("Retrieved {} users", user_dtos.len());
-            ApiResponse::success(user_dtos)
+            ApiResponse::success(PaginatedResponse {
+                data: user_dtos,
+                pagination: PaginationInfo {
+                    page,
+                    page_size,
+                    total_pages,
+                    total_count,
+                },
+            })
         }
         Err(e) => {
             tracing::error!("Failed to list users: {}", e);

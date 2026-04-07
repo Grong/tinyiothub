@@ -18,7 +18,7 @@ use crate::{
             CreateDeviceTemplateRequest, DeviceCreationInput, DevicePreview, DeviceTemplate,
             TemplateCategory, TemplateQueryParams, UpdateDeviceTemplateRequest,
         },
-        response::ApiResponse,
+        response::{ApiResponse, PaginatedResponse, PaginationInfo},
     },
     shared::security::jwt::Claims,
 };
@@ -52,7 +52,7 @@ async fn list_templates(
     State(state): State<AppState>,
     Query(query): Query<TemplateQuery>,
     _claims: Claims,
-) -> Json<ApiResponse<Vec<DeviceTemplate>>> {
+) -> Json<ApiResponse<PaginatedResponse<DeviceTemplate>>> {
     // 初始化模板服务
     let template_service = match initialize_template_service(&state).await {
         Ok(service) => service,
@@ -72,8 +72,34 @@ async fn list_templates(
         page_size: query.page_size,
     };
 
-    match template_service.get_repository().find_all(&params).await {
-        Ok(templates) => ApiResponse::success(templates),
+    let page = params.page.unwrap_or(1);
+    let page_size = params.page_size.unwrap_or(20);
+
+    let (templates_result, total_result) = tokio::join!(
+        template_service.get_repository().find_all(&params),
+        template_service.get_repository().count(&params),
+    );
+
+    match templates_result {
+        Ok(templates) => {
+            let total = total_result.unwrap_or(0) as u64;
+            let total_count = total;
+            let total_pages = if page_size > 0 {
+                ((total_count as f64) / (page_size as f64)).ceil() as u32
+            } else {
+                0
+            };
+
+            ApiResponse::success(PaginatedResponse {
+                data: templates,
+                pagination: PaginationInfo {
+                    page,
+                    page_size,
+                    total_pages,
+                    total_count,
+                },
+            })
+        }
         Err(e) => {
             tracing::error!("Failed to list templates: {}", e);
             ApiResponse::error("获取模板列表失败".to_string())

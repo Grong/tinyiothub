@@ -33,7 +33,10 @@ export class TagsView extends LitElement {
     this.error = "";
     try {
       const res = await tagApi.getTags();
-      this.tags = res.result || [];
+      const data = res.result;
+      if (data) {
+        this.tags = data.data || [];
+      }
     } catch (err: any) {
       this.error = err.message || "加载标签失败";
     } finally {
@@ -130,14 +133,15 @@ export class TagsView extends LitElement {
     }
 
     return html`
-      <div style="display: flex; gap: 12px; margin-bottom: 16px; align-items: center;">
-        <input
-          type="text"
-          placeholder="搜索标签名称、类型..."
-          .value=${this.searchKeyword}
-          @input=${(e: Event) => { this.searchKeyword = (e.target as HTMLInputElement).value; }}
-          style="flex: 1; max-width: 300px;"
-        />
+      <div style="display: flex; gap: 10px; margin-bottom: 16px; align-items: center; flex-wrap: wrap;">
+        <div class="field" style="flex: 1; max-width: 280px; min-width: 160px;">
+          <input
+            type="text"
+            placeholder="搜索标签名称、类型..."
+            .value=${this.searchKeyword}
+            @input=${(e: Event) => { this.searchKeyword = (e.target as HTMLInputElement).value; }}
+          />
+        </div>
         <button class="btn btn--primary" @click=${this.openCreate}>新建标签</button>
       </div>
       <div class="card" style="overflow: hidden;">
@@ -184,7 +188,7 @@ export class TagsView extends LitElement {
 
   renderModal() {
     return html`
-      <div class="modal-overlay" @click=${this.closeModal}>
+      <div class="modal-overlay" role="dialog" aria-modal="true" aria-label=${this.editingTag ? "编辑标签" : "新建标签"} @click=${this.closeModal}>
         <div class="modal" @click=${(e: Event) => e.stopPropagation()}>
           <div class="modal-header">${this.editingTag ? "编辑标签" : "新建标签"}</div>
           <div class="modal-body">

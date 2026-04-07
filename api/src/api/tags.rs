@@ -14,7 +14,7 @@ use crate::{
             BatchTagBindingRequest, CreateTagBindingRequest, CreateTagRequest, Tag, TagBinding,
             TagQuery, UpdateTagRequest,
         },
-        response::{api_response::ApiResponse, builder::ApiResponseBuilder},
+        response::{api_response::ApiResponse, builder::ApiResponseBuilder, PaginatedResponse, PaginationInfo},
     },
     shared::security::jwt::Claims,
 };
@@ -55,17 +55,42 @@ pub fn create_router() -> Router<AppState> {
 async fn list_tags(
     Query(query): Query<TagListQuery>,
     State(state): State<AppState>,
-) -> Result<Json<ApiResponse<Vec<Tag>>>, StatusCode> {
+) -> Result<Json<ApiResponse<PaginatedResponse<Tag>>>, StatusCode> {
     let tag_query = TagQuery {
-        name: query.name,
-        tag_type: query.tag_type,
+        name: query.name.clone(),
+        tag_type: query.tag_type.clone(),
         target_id: None,
         page: query.page,
         page_size: query.page_size,
     };
 
-    match Tag::find_all(state.database(), &tag_query).await {
-        Ok(tags) => Ok(ApiResponseBuilder::success(tags)),
+    let page = query.page.unwrap_or(1);
+    let page_size = query.page_size.unwrap_or(20);
+
+    let (tags_result, count_result) = tokio::join!(
+        Tag::find_all(state.database(), &tag_query),
+        Tag::count(state.database(), &tag_query),
+    );
+
+    match tags_result {
+        Ok(tags) => {
+            let total = count_result.unwrap_or(0);
+            let total_count = total as u64;
+            let total_pages = if page_size > 0 {
+                ((total as f64) / (page_size as f64)).ceil() as u32
+            } else {
+                0
+            };
+            Ok(ApiResponseBuilder::success(PaginatedResponse {
+                data: tags,
+                pagination: PaginationInfo {
+                    page,
+                    page_size,
+                    total_pages,
+                    total_count,
+                },
+            }))
+        }
         Err(e) => {
             tracing::error!("Failed to fetch tags: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
@@ -182,17 +207,42 @@ async fn delete_tag(
 async fn search_tags(
     Query(query): Query<TagListQuery>,
     State(state): State<AppState>,
-) -> Result<Json<ApiResponse<Vec<Tag>>>, StatusCode> {
+) -> Result<Json<ApiResponse<PaginatedResponse<Tag>>>, StatusCode> {
     let tag_query = TagQuery {
-        name: query.name,
-        tag_type: query.tag_type,
+        name: query.name.clone(),
+        tag_type: query.tag_type.clone(),
         target_id: None,
         page: query.page,
         page_size: query.page_size,
     };
 
-    match Tag::find_all(state.database(), &tag_query).await {
-        Ok(tags) => Ok(ApiResponseBuilder::success(tags)),
+    let page = query.page.unwrap_or(1);
+    let page_size = query.page_size.unwrap_or(20);
+
+    let (tags_result, count_result) = tokio::join!(
+        Tag::find_all(state.database(), &tag_query),
+        Tag::count(state.database(), &tag_query),
+    );
+
+    match tags_result {
+        Ok(tags) => {
+            let total = count_result.unwrap_or(0);
+            let total_count = total as u64;
+            let total_pages = if page_size > 0 {
+                ((total as f64) / (page_size as f64)).ceil() as u32
+            } else {
+                0
+            };
+            Ok(ApiResponseBuilder::success(PaginatedResponse {
+                data: tags,
+                pagination: PaginationInfo {
+                    page,
+                    page_size,
+                    total_pages,
+                    total_count,
+                },
+            }))
+        }
         Err(e) => {
             tracing::error!("Failed to search tags: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
@@ -318,9 +368,29 @@ async fn batch_delete_bindings(
 async fn get_target_bindings(
     Path(target_id): Path<String>,
     State(state): State<AppState>,
-) -> Result<Json<ApiResponse<Vec<Tag>>>, StatusCode> {
-    match Tag::find_by_target_id(state.database(), &target_id).await {
-        Ok(tags) => Ok(ApiResponseBuilder::success(tags)),
+) -> Result<Json<ApiResponse<PaginatedResponse<Tag>>>, StatusCode> {
+    let page = 1u32;
+    let page_size = 100u32;
+
+    let (tags_result, count_result) = tokio::join!(
+        Tag::find_by_target_id(state.database(), &target_id),
+        TagBinding::count_by_target_id(state.database(), &target_id),
+    );
+
+    match tags_result {
+        Ok(tags) => {
+            let total = count_result.unwrap_or(0);
+            let total_count = total as u64;
+            let total_pages = if page_size > 0 {
+                ((total as f64) / (page_size as f64)).ceil() as u32
+            } else {
+                0
+            };
+            Ok(ApiResponseBuilder::success(PaginatedResponse {
+                data: tags,
+                pagination: PaginationInfo { page, page_size, total_pages, total_count },
+            }))
+        }
         Err(e) => {
             tracing::error!("Failed to fetch target bindings: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
@@ -332,9 +402,29 @@ async fn get_target_bindings(
 async fn get_tag_bindings(
     Path(tag_id): Path<String>,
     State(state): State<AppState>,
-) -> Result<Json<ApiResponse<Vec<TagBinding>>>, StatusCode> {
-    match TagBinding::find_by_tag_id(state.database(), &tag_id).await {
-        Ok(bindings) => Ok(ApiResponseBuilder::success(bindings)),
+) -> Result<Json<ApiResponse<PaginatedResponse<TagBinding>>>, StatusCode> {
+    let page = 1u32;
+    let page_size = 100u32;
+
+    let (bindings_result, count_result) = tokio::join!(
+        TagBinding::find_by_tag_id(state.database(), &tag_id),
+        TagBinding::count_by_tag_id(state.database(), &tag_id),
+    );
+
+    match bindings_result {
+        Ok(bindings) => {
+            let total = count_result.unwrap_or(0);
+            let total_count = total as u64;
+            let total_pages = if page_size > 0 {
+                ((total as f64) / (page_size as f64)).ceil() as u32
+            } else {
+                0
+            };
+            Ok(ApiResponseBuilder::success(PaginatedResponse {
+                data: bindings,
+                pagination: PaginationInfo { page, page_size, total_pages, total_count },
+            }))
+        }
         Err(e) => {
             tracing::error!("Failed to fetch tag bindings: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)

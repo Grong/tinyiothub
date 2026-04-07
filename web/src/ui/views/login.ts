@@ -164,7 +164,7 @@ export class LoginView extends LitElement {
               <h1>TinyIoTHub</h1>
             </div>
             <p class="brand-tagline">
-              轻量级、高性能、企业级的物联网边缘网关系统。基于 Rust + AI 构建，为工业物联网场景提供可靠的设备接入、数据采集和边缘计算能力。
+              TinyIoTHub 是一个自包含的物联网边缘网关，支持 Modbus、ONVIF、SNMP、MQTT 等常见工业协议，无需额外部件即可采集设备数据并上传云端。
             </p>
             <div class="brand-features">
               <div class="brand-feature">
@@ -173,7 +173,7 @@ export class LoginView extends LitElement {
                     <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
                   </svg>
                 </div>
-                <span>内置人工智能，智能驱动匹配</span>
+                <span>Modbus / ONVIF / SNMP / MQTT 开箱即用</span>
               </div>
               <div class="brand-feature">
                 <div class="brand-feature-icon">
@@ -181,7 +181,7 @@ export class LoginView extends LitElement {
                     <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
                   </svg>
                 </div>
-                <span>接入即自治，运行即自愈</span>
+                <span>设备离线自动探测与告警</span>
               </div>
               <div class="brand-feature">
                 <div class="brand-feature-icon">
@@ -189,7 +189,7 @@ export class LoginView extends LitElement {
                     <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
                   </svg>
                 </div>
-                <span>9999+ 协议支持，开箱即用</span>
+                <span>内置告警规则引擎，支持多级告警</span>
               </div>
             </div>
           </div>
@@ -267,6 +267,8 @@ export class LoginView extends LitElement {
             required
           />
         </div>
+        <div class="form-group">
+        </div>
         <button type="submit" class="submit-btn" ?disabled=${this.loading}>
           ${this.loading ? "登录中..." : "登录"}
         </button>
@@ -310,6 +312,8 @@ export class LoginView extends LitElement {
               ${this.smsCountdown > 0 ? `${this.smsCountdown}s` : "发送验证码"}
             </button>
           </div>
+        </div>
+        <div class="form-group">
         </div>
         <button type="submit" class="submit-btn" ?disabled=${this.loading}>
           ${this.loading ? "登录中..." : "登录"}

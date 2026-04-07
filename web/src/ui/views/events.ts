@@ -93,15 +93,15 @@ export class EventsView extends LitElement {
     }
 
     return html`
-      <div style="display: flex; gap: 12px; margin-bottom: 16px;">
-        <select .value=${this.filterLevel} @change=${(e: Event) => { this.filterLevel = (e.target as HTMLSelectElement).value; this.page = 1; this.loadData(); }}>
+      <div style="display: flex; gap: 10px; margin-bottom: 16px; align-items: center; flex-wrap: wrap;">
+        <select class="select" style="width: auto; min-width: 120px;" .value=${this.filterLevel} @change=${(e: Event) => { this.filterLevel = (e.target as HTMLSelectElement).value; this.page = 1; this.loadData(); }}>
           <option value="">全部级别</option>
           <option value="critical">严重</option>
           <option value="error">错误</option>
           <option value="warning">警告</option>
           <option value="info">信息</option>
         </select>
-        <select .value=${this.filterType} @change=${(e: Event) => { this.filterType = (e.target as HTMLSelectElement).value; this.page = 1; this.loadData(); }}>
+        <select class="select" style="width: auto; min-width: 120px;" .value=${this.filterType} @change=${(e: Event) => { this.filterType = (e.target as HTMLSelectElement).value; this.page = 1; this.loadData(); }}>
           <option value="">全部类型</option>
           <option value="alarm">告警</option>
           <option value="warning">警告</option>

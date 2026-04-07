@@ -1,4 +1,4 @@
-import { html, type TemplateResult } from "lit";
+import { html, nothing, type TemplateResult } from "lit";
 import type { AgentsState } from "../controllers/agents.js";
 
 export function renderModelTab(
@@ -8,68 +8,145 @@ export function renderModelTab(
   onReload: () => void,
 ): TemplateResult {
   const config = state.config;
+
   if (state.configLoading) {
-    return html`<div class="agent-panel-loading">加载中...</div>`;
+    return html`<div class="callout info">加载配置...</div>`;
   }
   if (!config) {
-    return html`<div class="agent-panel-empty">未找到配置</div>`;
+    return html`<div class="callout info">未找到配置</div>`;
   }
 
-  const models: string[] = config.alternativeModels?.length
-    ? config.alternativeModels
-    : [config.model || "default"];
-  const currentModel = config.model || models[0];
+  const agent = state.agentsList?.agents.find(a => a.id === state.selectedAgentId);
+  const workspace = agent?.workspace || config.workspace || "default";
+  const primaryModel = config.model || agent?.model || "-";
+  const fallbacks: string[] = config.alternativeModels || [];
+  const isDirty = state.configDirty;
+
+  const removeFallback = (index: number) => {
+    const next = fallbacks.filter((_, i) => i !== index);
+    onStateChange({ config: { ...config, alternativeModels: next }, configDirty: true });
+  };
+
+  const addFallback = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed || fallbacks.includes(trimmed)) return;
+    onStateChange({
+      config: { ...config, alternativeModels: [...fallbacks, trimmed] },
+      configDirty: true,
+    });
+  };
+
+  const handleChipKeydown = (e: KeyboardEvent) => {
+    if (e.key === "Enter" || e.key === ",") {
+      e.preventDefault();
+      const input = e.target as HTMLInputElement;
+      addFallback(input.value);
+      input.value = "";
+    }
+  };
+
+  const handleChipBlur = (e: Event) => {
+    const input = e.target as HTMLInputElement;
+    addFallback(input.value);
+    input.value = "";
+  };
+
+  const updateModel = (value: string) => {
+    onStateChange({ config: { ...config, model: value || undefined }, configDirty: true });
+  };
 
   return html`
-    <div class="agent-model-tab">
-      <div class="agent-field">
-        <label class="agent-field__label">模型</label>
-        <select class="agent-model-dropdown"
-                .value=${currentModel}
-                @change=${(e: Event) => {
-                  onStateChange({
-                    config: { ...config, model: (e.target as HTMLSelectElement).value },
-                    configDirty: true,
-                  });
-                }}>
-          ${models.map((m) => html`<option value=${m} ?selected=${m === currentModel}>${m}</option>`)}
-        </select>
-      </div>
+    <section class="card">
+      <div class="card-title">概览</div>
+      <div class="card-sub">工作区路径和模型配置。</div>
 
-      <div class="agent-field">
-        <label class="agent-field__label">Temperature</label>
-        <div class="agent-slider-row">
-          <input type="range" class="agent-slider" min="0" max="2" step="0.1"
-                 .value=${String(config.temperature ?? 1.0)}
-                 @input=${(e: Event) => {
-                   onStateChange({
-                     config: { ...config, temperature: parseFloat((e.target as HTMLInputElement).value) },
-                     configDirty: true,
-                   });
-                 }} />
-          <span class="agent-slider-value">${((config.temperature ?? 1.0) as number).toFixed(1)}</span>
+      <div class="agents-overview-grid" style="margin-top: 16px;">
+        <div class="agent-kv">
+          <div class="label">工作区</div>
+          <div class="mono">${workspace}</div>
+        </div>
+        <div class="agent-kv">
+          <div class="label">主模型</div>
+          <div class="mono">${primaryModel}</div>
+        </div>
+        <div class="agent-kv">
+          <div class="label">备用模型</div>
+          <div>${fallbacks.length > 0 ? `${fallbacks.length} 个` : "无"}</div>
         </div>
       </div>
 
-      <div class="agent-field">
-        <label class="agent-field__label">System Prompt</label>
-        <textarea class="agent-system-prompt" rows="6"
-                  .value=${config.systemPrompt || ""}
-                  @input=${(e: Event) => {
-                    onStateChange({
-                      config: { ...config, systemPrompt: (e.target as HTMLTextAreaElement).value },
-                      configDirty: true,
-                    });
-                  }}></textarea>
-      </div>
+      ${isDirty
+        ? html`<div class="callout warn" style="margin-top: 16px;">
+            有未保存的更改。
+          </div>`
+        : nothing}
 
-      <div class="agent-actions">
-        <button class="btn btn-primary" ?disabled=${!state.configDirty}
-                @click=${onSave}>
-          保存${state.configDirty ? " *" : ""}
-        </button>
-        <button class="btn" @click=${onReload}>重新加载</button>
+      <div class="agent-model-select" style="margin-top: 20px;">
+        <div class="label">模型选择</div>
+        <div class="agent-model-fields">
+          <div class="field">
+            <span>主模型</span>
+            <select
+              class="select"
+              .value=${config.model || ""}
+              @change=${(e: Event) => updateModel((e.target as HTMLSelectElement).value)}
+            >
+              <option value="">默认 (${agent?.model || "无"})</option>
+              ${(config.alternativeModels || [config.model]).filter(Boolean).map((m) => html`
+                <option value=${m}>${m}</option>
+              `)}
+            </select>
+          </div>
+          <div class="field">
+            <span>备用模型 (按优先级排序)</span>
+            <div
+              class="agent-chip-input"
+              @click=${(e: Event) => {
+                const container = e.currentTarget as HTMLElement;
+                const input = container.querySelector("input");
+                if (input) input.focus();
+              }}
+            >
+              ${fallbacks.map((chip, i) => html`
+                <span class="chip">
+                  ${chip}
+                  <button
+                    type="button"
+                    class="chip-remove"
+                    @click=${() => removeFallback(i)}
+                  >
+                    &times;
+                  </button>
+                </span>
+              `)}
+              <input
+                placeholder=${fallbacks.length === 0 ? "输入模型名称后按回车添加，如 anthropic/claude-3-5-sonnet" : ""}
+                @keydown=${handleChipKeydown}
+                @blur=${handleChipBlur}
+              />
+            </div>
+          </div>
+        </div>
+
+        <div class="agent-model-actions" style="display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap;">
+          <button
+            type="button"
+            class="btn btn--sm"
+            ?disabled=${state.configLoading}
+            @click=${onReload}
+          >
+            重新加载
+          </button>
+          <button
+            type="button"
+            class="btn btn--sm primary"
+            ?disabled=${!isDirty}
+            @click=${onSave}
+          >
+            保存配置
+          </button>
+        </div>
       </div>
-    </div>
+    </section>
   `;
 }

@@ -3,24 +3,29 @@ use axum::{
     routing::{delete, get, post, put},
     Json, Router,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::{
     api::AppState,
-    dto::{entity::device_alarm_rule::DeviceAlarmRule, request::pagination::PaginationQuery, response::ApiResponse},
+    dto::{
+        entity::device_alarm_rule::{DeviceAlarmRule, DeviceAlarmRuleQuery},
+        response::{ApiResponse, builder::ApiResponseBuilder, PaginatedResponse, PaginationInfo},
+    },
     shared::security::jwt::Claims,
 };
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct AlarmRuleQuery {
     pub device_id: Option<String>,
-    pub enabled: Option<bool>,
-    #[serde(flatten)]
-    pub pagination: PaginationQuery,
+    pub rule_type: Option<String>,
+    pub alarm_level: Option<String>,
+    pub is_enabled: Option<bool>,
+    pub page: Option<u32>,
+    pub page_size: Option<u32>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct CreateAlarmRuleRequest {
     pub device_id: String,
@@ -51,15 +56,37 @@ pub fn create_router() -> Router<AppState> {
 
 /// 获取告警规则列表
 async fn list_alarm_rules(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Query(query): Query<AlarmRuleQuery>,
     _claims: Claims,
-) -> Json<ApiResponse<Vec<DeviceAlarmRule>>> {
-    // TODO: 实现告警规则查询逻辑
-    tracing::info!("Listing alarm rules with filters");
-    
-    let rules = vec![];
-    ApiResponse::success(rules)
+) -> Json<ApiResponse<PaginatedResponse<DeviceAlarmRule>>> {
+    let page = query.page.unwrap_or(1);
+    let page_size = query.page_size.unwrap_or(20);
+
+    let (rules_result, count_result) = tokio::join!(
+        DeviceAlarmRule::find_all(state.database(), &query),
+        DeviceAlarmRule::count(state.database(), &query),
+    );
+
+    match rules_result {
+        Ok(rules) => {
+            let total = count_result.unwrap_or(0);
+            let total_count = total as u64;
+            let total_pages = if page_size > 0 {
+                ((total as f64) / (page_size as f64)).ceil() as u32
+            } else {
+                0
+            };
+            ApiResponseBuilder::success(PaginatedResponse {
+                data: rules,
+                pagination: PaginationInfo { page, page_size, total_pages, total_count },
+            })
+        }
+        Err(e) => {
+            tracing::error!("Failed to fetch alarm rules: {}", e);
+            ApiResponseBuilder::error("获取告警规则列表失败")
+        }
+    }
 }
 
 /// 创建告警规则

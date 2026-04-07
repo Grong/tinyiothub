@@ -102,7 +102,7 @@ export class DashboardView extends LitElement {
       return html`
         <div style="display: flex; align-items: center; justify-content: center; padding: 60px;">
           <span class="loading-spinner"></span>
-          <span style="margin-left: 8px; color: var(--muted);">加载中...</span>
+          <span style="margin-left: 8px; color: var(--muted);">加载仪表盘...</span>
         </div>
       `;
     }
@@ -178,7 +178,7 @@ export class DashboardView extends LitElement {
             ${this.renderDistBar("故障", d.error, total, "var(--danger)")}
             ${this.renderDistBar("维护", d.maintenance, total, "var(--warning)")}
           </div>
-        ` : html`<div style="color: var(--muted); text-align: center; padding: 20px;">暂无数据</div>`}
+        ` : html`<div style="color: var(--muted); text-align: center; padding: 20px;">暂无分布数据</div>`}
       </div>
     `;
   }
@@ -212,7 +212,7 @@ export class DashboardView extends LitElement {
           <div style="margin-top: 16px; font-size: 13px; color: var(--muted);">
             网络: ↓ ${this.formatNumber(m.network?.inbound)} / ↑ ${this.formatNumber(m.network?.outbound)} bytes
           </div>
-        ` : html`<div style="color: var(--muted); text-align: center; padding: 20px;">暂无数据</div>`}
+        ` : html`<div style="color: var(--muted); text-align: center; padding: 20px;">暂无系统资源数据</div>`}
       </div>
     `;
   }
@@ -238,7 +238,14 @@ export class DashboardView extends LitElement {
       <div class="card" style="padding: 20px;">
         <div style="font-weight: 600; margin-bottom: 16px;">最近告警</div>
         ${this.recentAlarms.length === 0
-          ? html`<div style="color: var(--muted); text-align: center; padding: 20px;">暂无告警</div>`
+          ? html`<div style="color: var(--muted); text-align: center; padding: 20px;">
+              <div style="font-size: 24px; margin-bottom: 8px;">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity: 0.3; margin: 0 auto;">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+              </div>
+              <div style="font-size: 13px;">暂无告警，系统运行正常</div>
+            </div>`
           : html`
             <div style="display: flex; flex-direction: column; gap: 8px;">
               ${this.recentAlarms.slice(0, 5).map(a => html`
@@ -263,7 +270,15 @@ export class DashboardView extends LitElement {
       <div class="card" style="padding: 20px;">
         <div style="font-weight: 600; margin-bottom: 16px;">设备快捷入口</div>
         ${this.quickDevices.length === 0
-          ? html`<div style="color: var(--muted); text-align: center; padding: 20px;">暂无设备</div>`
+          ? html`<div style="color: var(--muted); text-align: center; padding: 20px;">
+              <div style="font-size: 24px; margin-bottom: 8px;">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity: 0.3; margin: 0 auto;">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                </svg>
+              </div>
+              <div style="font-size: 13px;">还没有设备</div>
+              <a href="/devices" @click=${(e: Event) => { e.preventDefault(); window.history.pushState({}, "", "/devices"); window.dispatchEvent(new PopStateEvent("popstate")); }} style="font-size: 13px; color: var(--accent); text-decoration: none; margin-top: 4px; display: inline-block;">去添加 →</a>
+            </div>`
           : html`
             <div style="display: flex; flex-direction: column; gap: 8px;">
               ${this.quickDevices.slice(0, 5).map(d => html`

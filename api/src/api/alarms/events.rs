@@ -3,26 +3,17 @@ use axum::{
     routing::{delete, get, post, put},
     Json, Router,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::{
     api::AppState,
-    dto::{entity::device_event_trigger::DeviceEventTrigger, request::pagination::PaginationQuery, response::ApiResponse},
+    dto::{
+        entity::device_event_trigger::{DeviceEventTrigger, DeviceEventTriggerQueryParams},
+        response::{ApiResponse, builder::ApiResponseBuilder, PaginatedResponse, PaginationInfo},
+    },
     shared::security::jwt::Claims,
 };
 
-#[derive(Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct EventTriggerQuery {
-    pub device_id: Option<String>,
-    pub event_type: Option<String>,
-    pub enabled: Option<bool>,
-    #[serde(flatten)]
-    pub pagination: PaginationQuery,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub struct CreateEventTriggerRequest {
     pub device_id: String,
     pub trigger_name: String,
@@ -32,8 +23,6 @@ pub struct CreateEventTriggerRequest {
     pub enabled: Option<bool>,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub struct UpdateEventTriggerRequest {
     pub trigger_name: Option<String>,
     pub event_type: Option<String>,
@@ -52,15 +41,37 @@ pub fn create_router() -> Router<AppState> {
 
 /// 获取事件触发器列表
 async fn list_event_triggers(
-    State(_state): State<AppState>,
-    Query(query): Query<EventTriggerQuery>,
+    State(state): State<AppState>,
+    Query(query): Query<DeviceEventTriggerQueryParams>,
     _claims: Claims,
-) -> Json<ApiResponse<Vec<DeviceEventTrigger>>> {
-    // TODO: 实现事件触发器查询逻辑
-    tracing::info!("Listing event triggers with filters");
-    
-    let triggers = vec![];
-    ApiResponse::success(triggers)
+) -> Json<ApiResponse<PaginatedResponse<DeviceEventTrigger>>> {
+    let page = query.page.unwrap_or(1);
+    let page_size = query.page_size.unwrap_or(20);
+
+    let (triggers_result, count_result) = tokio::join!(
+        DeviceEventTrigger::find_all(state.database(), &query),
+        DeviceEventTrigger::count(state.database(), &query),
+    );
+
+    match triggers_result {
+        Ok(triggers) => {
+            let total = count_result.unwrap_or(0);
+            let total_count = total as u64;
+            let total_pages = if page_size > 0 {
+                ((total as f64) / (page_size as f64)).ceil() as u32
+            } else {
+                0
+            };
+            ApiResponseBuilder::success(PaginatedResponse {
+                data: triggers,
+                pagination: PaginationInfo { page, page_size, total_pages, total_count },
+            })
+        }
+        Err(e) => {
+            tracing::error!("Failed to fetch event triggers: {}", e);
+            ApiResponseBuilder::error("获取事件触发器列表失败")
+        }
+    }
 }
 
 /// 创建事件触发器

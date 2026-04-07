@@ -9,24 +9,10 @@ use crate::{
     dto::{
         entity::{AlarmDto, AlarmStatisticsDto},
         request::{AlarmQueryParams, StatisticsQueryParams},
-        response::{api_response::ApiResponse, builder::ApiResponseBuilder},
+        response::{api_response::ApiResponse, builder::ApiResponseBuilder, PaginatedResponse, PaginationInfo},
     },
     shared::{app_state::AppState, error_handling::ErrorCode, security::jwt::Claims},
 };
-
-#[derive(serde::Serialize)]
-pub struct PaginatedResponse<T> {
-    pub data: Vec<T>,
-    pub pagination: PaginationInfo,
-}
-
-#[derive(serde::Serialize)]
-pub struct PaginationInfo {
-    pub page: u32,
-    pub page_size: u32,
-    pub total_pages: u32,
-    pub total_count: u64,
-}
 
 /// 查询报警列表
 pub async fn list_alarms(

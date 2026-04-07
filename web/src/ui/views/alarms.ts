@@ -177,14 +177,14 @@ export class AlarmsView extends LitElement {
 
     return html`
       ${this.renderStats()}
-      <div style="display: flex; gap: 12px; margin-bottom: 16px;">
-        <select .value=${this.filterStatus} @change=${(e: Event) => { this.filterStatus = (e.target as HTMLSelectElement).value; this.page = 1; this.loadData(); }}>
+      <div style="display: flex; gap: 10px; margin-bottom: 16px; align-items: center; flex-wrap: wrap;">
+        <select class="select" style="width: auto; min-width: 120px;" .value=${this.filterStatus} @change=${(e: Event) => { this.filterStatus = (e.target as HTMLSelectElement).value; this.page = 1; this.loadData(); }}>
           <option value="">全部状态</option>
           <option value="Active">活跃</option>
           <option value="Acknowledged">已确认</option>
           <option value="Resolved">已解决</option>
         </select>
-        <select .value=${this.filterLevel} @change=${(e: Event) => { this.filterLevel = (e.target as HTMLSelectElement).value; this.page = 1; this.loadData(); }}>
+        <select class="select" style="width: auto; min-width: 120px;" .value=${this.filterLevel} @change=${(e: Event) => { this.filterLevel = (e.target as HTMLSelectElement).value; this.page = 1; this.loadData(); }}>
           <option value="">全部级别</option>
           <option value="Critical">严重</option>
           <option value="Error">错误</option>
@@ -280,7 +280,7 @@ export class AlarmsView extends LitElement {
 
   renderAckModal() {
     return html`
-      <div class="modal-overlay" @click=${this.closeAckModal}>
+      <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="确认告警" @click=${this.closeAckModal}>
         <div class="modal" @click=${(e: Event) => e.stopPropagation()}>
           <div class="modal-header">确认告警</div>
           <div class="modal-body">
@@ -305,7 +305,7 @@ export class AlarmsView extends LitElement {
 
   renderResolveModal() {
     return html`
-      <div class="modal-overlay" @click=${this.closeResolveModal}>
+      <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="解决告警" @click=${this.closeResolveModal}>
         <div class="modal" @click=${(e: Event) => e.stopPropagation()}>
           <div class="modal-header">解决告警</div>
           <div class="modal-body">

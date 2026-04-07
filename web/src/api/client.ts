@@ -14,7 +14,7 @@ export interface ApiResponse<T = any> {
   result: T | null;
 }
 
-// 分页响应
+// 分页响应（keysToCamelCase 会将 total_pages → totalPages, total_count → totalCount）
 export interface PaginatedResponse<T> {
   data: T[];
   pagination: {

@@ -11,10 +11,11 @@ import type {
   BatchTagBindingRequest,
   TagStats,
 } from '../types/index.js';
+import type { PaginatedResponse } from './client.js';
 
 export const tagApi = {
-  async getTags(params?: { type?: string }) {
-    return apiGet<Tag[]>('/tags', params as Record<string, any>);
+  async getTags(params?: { type?: string; page?: number; page_size?: number }) {
+    return apiGet<PaginatedResponse<Tag>>('/tags', params as Record<string, any>);
   },
 
   async getTag(id: string) {

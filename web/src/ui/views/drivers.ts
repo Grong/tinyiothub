@@ -3,22 +3,63 @@ import { customElement, state } from "lit/decorators.js";
 import { driverApi } from "../../api/drivers.js";
 import { success, error as toastError } from "../components/toast.js";
 
-interface Driver {
+interface OptionDescriptor {
+  label?: string;
+  name: string;
+  default_value?: string;
+  option_type?: string;
+  required?: boolean;
+  description?: string | null;
+}
+
+interface ProcessedDriver {
   id: string;
   name: string;
-  displayName?: string;
-  protocolType?: string;
-  version?: string;
-  description?: string;
-  isEnabled?: boolean;
-  createdAt?: string;
+  version: string;
+  className: string;
+  deviceNum: number;
+  description: string;
+  optionsDescriptors: OptionDescriptor[];
+  location: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function parseJsonField<T>(jsonString: any, fallback: T): T {
+  if (!jsonString) return fallback;
+  if (typeof jsonString !== "string") return jsonString;
+  try {
+    return JSON.parse(jsonString);
+  } catch {
+    return fallback;
+  }
+}
+
+function transformDriver(raw: any): ProcessedDriver {
+  return {
+    id: raw.id,
+    name: raw.name,
+    version: raw.version || "",
+    className: raw.class_name || "",
+    deviceNum: raw.device_num || 0,
+    description: raw.description || "",
+    optionsDescriptors: parseJsonField<OptionDescriptor[]>(raw.options_descriptors, []),
+    location: raw.location || null,
+    createdAt: raw.created_at || "",
+    updatedAt: raw.updated_at || "",
+  };
+}
+
+function formatDate(dateStr: string): string {
+  if (!dateStr) return "-";
+  return dateStr.replace(" ", "T").slice(0, 16);
 }
 
 @customElement("view-drivers")
 export class DriversView extends LitElement {
   @state() loading = true;
   @state() error = "";
-  @state() drivers: Driver[] = [];
+  @state() drivers: ProcessedDriver[] = [];
   @state() page = 1;
   @state() pageSize = 20;
   @state() totalPages = 0;
@@ -26,13 +67,13 @@ export class DriversView extends LitElement {
   @state() searchKeyword = "";
 
   @state() showModal = false;
-  @state() editingDriver: Driver | null = null;
+  @state() editingDriver: ProcessedDriver | null = null;
   @state() saving = false;
   @state() formName = "";
-  @state() formDisplayName = "";
-  @state() formProtocolType = "";
   @state() formVersion = "";
   @state() formDescription = "";
+
+  @state() selectedDriver: ProcessedDriver | null = null;
 
   createRenderRoot() {
     return this;
@@ -50,11 +91,13 @@ export class DriversView extends LitElement {
       const res = await driverApi.getDrivers({ page: this.page, pageSize: this.pageSize });
       const data = res.result;
       if (Array.isArray(data)) {
-        this.drivers = data;
+        this.drivers = data.map(transformDriver);
+        this.totalPages = 1;
+        this.totalCount = data.length;
       } else if (data?.data) {
-        this.drivers = data.data;
-        this.totalPages = data.pagination?.totalPages || 0;
-        this.totalCount = data.pagination?.totalCount || 0;
+        this.drivers = (data.data || []).map(transformDriver);
+        this.totalPages = data.pagination?.totalPages || 1;
+        this.totalCount = data.pagination?.totalCount || data.data.length;
       }
     } catch (err: any) {
       this.error = err.message || "加载驱动列表失败";
@@ -63,31 +106,27 @@ export class DriversView extends LitElement {
     }
   }
 
-  get filteredDrivers(): Driver[] {
+  get filteredDrivers(): ProcessedDriver[] {
     if (!this.searchKeyword) return this.drivers;
     const kw = this.searchKeyword.toLowerCase();
     return this.drivers.filter(d =>
-      (d.displayName || d.name).toLowerCase().includes(kw) ||
       d.name.toLowerCase().includes(kw) ||
-      (d.protocolType || "").toLowerCase().includes(kw)
+      d.className.toLowerCase().includes(kw) ||
+      d.description.toLowerCase().includes(kw)
     );
   }
 
   openCreate() {
     this.editingDriver = null;
     this.formName = "";
-    this.formDisplayName = "";
-    this.formProtocolType = "";
     this.formVersion = "";
     this.formDescription = "";
     this.showModal = true;
   }
 
-  openEdit(d: Driver) {
+  openEdit(d: ProcessedDriver) {
     this.editingDriver = d;
     this.formName = d.name;
-    this.formDisplayName = d.displayName || "";
-    this.formProtocolType = d.protocolType || "";
     this.formVersion = d.version || "";
     this.formDescription = d.description || "";
     this.showModal = true;
@@ -104,8 +143,6 @@ export class DriversView extends LitElement {
     try {
       const payload: any = {
         name: this.formName,
-        displayName: this.formDisplayName || undefined,
-        protocolType: this.formProtocolType || undefined,
         version: this.formVersion || undefined,
         description: this.formDescription || undefined,
       };
@@ -125,8 +162,8 @@ export class DriversView extends LitElement {
     }
   }
 
-  async deleteDriver(d: Driver) {
-    if (!confirm(`确定要删除驱动 "${d.displayName || d.name}" 吗？`)) return;
+  async deleteDriver(d: ProcessedDriver) {
+    if (!confirm(`确定要删除驱动 "${d.name}" 吗？`)) return;
     try {
       await driverApi.deleteDriver(d.id);
       success("驱动已删除");
@@ -161,14 +198,15 @@ export class DriversView extends LitElement {
     }
 
     return html`
-      <div style="display: flex; gap: 12px; margin-bottom: 16px; align-items: center;">
-        <input
-          type="text"
-          placeholder="搜索驱动名称、协议..."
-          .value=${this.searchKeyword}
-          @input=${(e: Event) => { this.searchKeyword = (e.target as HTMLInputElement).value; }}
-          style="flex: 1; max-width: 300px;"
-        />
+      <div style="display: flex; gap: 10px; margin-bottom: 16px; align-items: center; flex-wrap: wrap;">
+        <div class="field" style="flex: 1; max-width: 280px; min-width: 160px;">
+          <input
+            type="text"
+            placeholder="搜索驱动名称、类名..."
+            .value=${this.searchKeyword}
+            @input=${(e: Event) => { this.searchKeyword = (e.target as HTMLInputElement).value; }}
+          />
+        </div>
         <button class="btn btn--primary" @click=${this.openCreate}>新建驱动</button>
       </div>
       <div class="card" style="overflow: hidden;">
@@ -176,32 +214,30 @@ export class DriversView extends LitElement {
           <thead>
             <tr style="border-bottom: 1px solid var(--border);">
               <th style="padding: 12px 16px; text-align: left; font-size: 13px; color: var(--muted); font-weight: 500;">驱动名称</th>
-              <th style="padding: 12px 16px; text-align: left; font-size: 13px; color: var(--muted); font-weight: 500;">协议类型</th>
               <th style="padding: 12px 16px; text-align: left; font-size: 13px; color: var(--muted); font-weight: 500;">版本</th>
-              <th style="padding: 12px 16px; text-align: left; font-size: 13px; color: var(--muted); font-weight: 500;">状态</th>
+              <th style="padding: 12px 16px; text-align: left; font-size: 13px; color: var(--muted); font-weight: 500;">关联设备</th>
               <th style="padding: 12px 16px; text-align: left; font-size: 13px; color: var(--muted); font-weight: 500;">描述</th>
               <th style="padding: 12px 16px; text-align: right; font-size: 13px; color: var(--muted); font-weight: 500;">操作</th>
             </tr>
           </thead>
           <tbody>
             ${this.filteredDrivers.length === 0
-              ? html`<tr><td colspan="6" style="padding: 40px; text-align: center; color: var(--muted);">暂无驱动</td></tr>`
+              ? html`<tr><td colspan="5" style="padding: 40px; text-align: center; color: var(--muted);">暂无驱动</td></tr>`
               : this.filteredDrivers.map(d => html`
-                <tr style="border-bottom: 1px solid var(--border);">
+                <tr style="border-bottom: 1px solid var(--border); cursor: pointer;" @click=${() => this.selectedDriver = d}>
                   <td style="padding: 12px 16px;">
-                    <div style="font-weight: 500;">${d.displayName || d.name}</div>
-                    <div style="font-size: 12px; color: var(--muted);">${d.name}</div>
+                    <div style="font-weight: 500;">${d.name}</div>
+                    <div style="font-size: 12px; color: var(--muted); font-family: monospace;">${d.className}</div>
                   </td>
-                  <td style="padding: 12px 16px; font-size: 13px;">${d.protocolType || "-"}</td>
                   <td style="padding: 12px 16px; font-size: 13px;">${d.version || "-"}</td>
-                  <td style="padding: 12px 16px;">
-                    <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 13px;">
-                      <span style="width: 8px; height: 8px; border-radius: 50%; background: ${d.isEnabled !== false ? 'var(--success)' : 'var(--muted)'};"></span>
-                      ${d.isEnabled !== false ? "已启用" : "已禁用"}
-                    </span>
+                  <td style="padding: 12px 16px; font-size: 13px;">
+                    ${d.deviceNum > 0
+                      ? html`<span style="color: var(--success);">${d.deviceNum} 台设备</span>`
+                      : html`<span style="color: var(--muted);">未关联</span>`
+                    }
                   </td>
-                  <td style="padding: 12px 16px; font-size: 13px; color: var(--muted); max-width: 300px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${d.description || "-"}</td>
-                  <td style="padding: 12px 16px; text-align: right;">
+                  <td style="padding: 12px 16px; font-size: 13px; color: var(--muted); max-width: 280px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${d.description || "-"}</td>
+                  <td style="padding: 12px 16px; text-align: right;" @click=${(e: Event) => e.stopPropagation()}>
                     <button class="btn btn--ghost btn--sm" style="font-size: 12px;" @click=${() => this.openEdit(d)}>编辑</button>
                     <button class="btn btn--ghost btn--sm" style="font-size: 12px; color: var(--danger);" @click=${() => this.deleteDriver(d)}>删除</button>
                   </td>
@@ -218,26 +254,19 @@ export class DriversView extends LitElement {
         </div>
       ` : ""}
       ${this.showModal ? this.renderModal() : nothing}
+      ${this.selectedDriver ? this.renderDetailModal() : nothing}
     `;
   }
 
   renderModal() {
     return html`
-      <div class="modal-overlay" @click=${this.closeModal}>
+      <div class="modal-overlay" role="dialog" aria-modal="true" aria-label=${this.editingDriver ? "编辑驱动" : "新建驱动"} @click=${this.closeModal}>
         <div class="modal" @click=${(e: Event) => e.stopPropagation()}>
           <div class="modal-header">${this.editingDriver ? "编辑驱动" : "新建驱动"}</div>
           <div class="modal-body">
             <div class="field">
               <span>驱动名称（标识符）</span>
-              <input type="text" placeholder="如 modbus-tcp" .value=${this.formName} @input=${(e: any) => { this.formName = e.target.value; }} />
-            </div>
-            <div class="field" style="margin-top: 12px;">
-              <span>显示名称</span>
-              <input type="text" placeholder="如 Modbus TCP" .value=${this.formDisplayName} @input=${(e: any) => { this.formDisplayName = e.target.value; }} />
-            </div>
-            <div class="field" style="margin-top: 12px;">
-              <span>协议类型</span>
-              <input type="text" placeholder="如 modbus, mqtt, onvif" .value=${this.formProtocolType} @input=${(e: any) => { this.formProtocolType = e.target.value; }} />
+              <input type="text" placeholder="如 ModbusDriver" .value=${this.formName} @input=${(e: any) => { this.formName = e.target.value; }} />
             </div>
             <div class="field" style="margin-top: 12px;">
               <span>版本</span>
@@ -253,6 +282,87 @@ export class DriversView extends LitElement {
             <button class="btn btn--primary" ?disabled=${this.saving || !this.formName.trim()} @click=${this.saveForm}>
               ${this.saving ? "保存中..." : "保存"}
             </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  renderDetailModal() {
+    const d = this.selectedDriver!;
+    return html`
+      <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="驱动详情" @click=${() => this.selectedDriver = null}>
+        <div class="modal" style="max-width: 580px; max-height: 80vh; overflow-y: auto;" @click=${(e: Event) => e.stopPropagation()}>
+          <div class="modal-header">${d.name}</div>
+          <div class="modal-body" style="padding: 16px 20px;">
+            <!-- Header -->
+            <div style="display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px;">
+              <span style="font-size: 32px;">⚙️</span>
+              <div style="flex: 1; min-width: 0;">
+                <div style="font-family: monospace; font-size: 11px; color: var(--muted); background: var(--bg); padding: 4px 8px; border-radius: 4px; word-break: break-all;">${d.className}</div>
+                <div style="margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px;">
+                  ${d.version ? html`<span style="font-size: 11px; padding: 3px 8px; border-radius: 6px; background: var(--bg); color: var(--muted);">v${d.version}</span>` : nothing}
+                  ${d.deviceNum > 0
+                    ? html`<span style="font-size: 11px; padding: 3px 8px; border-radius: 6px; background: var(--success); color: white; opacity: 0.85;">${d.deviceNum} 台设备</span>`
+                    : html`<span style="font-size: 11px; padding: 3px 8px; border-radius: 6px; background: var(--bg); color: var(--muted);">未关联</span>`
+                  }
+                </div>
+              </div>
+            </div>
+
+            ${d.description ? html`
+              <div style="font-size: 13px; color: var(--muted); line-height: 1.5; margin-bottom: 16px; padding: 10px 12px; background: var(--bg); border-radius: 8px;">
+                ${d.description}
+              </div>
+            ` : nothing}
+
+            <!-- Meta -->
+            <div style="font-size: 12px; color: var(--muted); margin-bottom: 16px;">
+              ${d.location ? html`<div style="margin-bottom: 4px;">位置: <span style="font-family: monospace;">${d.location}</span></div>` : nothing}
+              <div>创建: ${formatDate(d.createdAt)}</div>
+              <div>更新: ${formatDate(d.updatedAt)}</div>
+            </div>
+
+            <!-- Config options -->
+            ${d.optionsDescriptors.length > 0 ? html`
+              <div class="wizard-overview__section-title">配置参数</div>
+              <div style="overflow-x: auto;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 16px;">
+                  <thead>
+                    <tr style="border-bottom: 1px solid var(--border);">
+                      <th style="padding: 6px 10px; text-align: left; color: var(--muted); font-weight: 500; font-size: 12px;">参数名</th>
+                      <th style="padding: 6px 10px; text-align: left; color: var(--muted); font-weight: 500; font-size: 12px;">显示名</th>
+                      <th style="padding: 6px 10px; text-align: left; color: var(--muted); font-weight: 500; font-size: 12px;">类型</th>
+                      <th style="padding: 6px 10px; text-align: left; color: var(--muted); font-weight: 500; font-size: 12px;">默认值</th>
+                      <th style="padding: 6px 10px; text-align: left; color: var(--muted); font-weight: 500; font-size: 12px;">必填</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${d.optionsDescriptors.map(opt => html`
+                      <tr style="border-bottom: 1px solid var(--border);">
+                        <td style="padding: 7px 10px; font-family: monospace; font-size: 12px;">${opt.name}</td>
+                        <td style="padding: 7px 10px;">${opt.label || "-"}</td>
+                        <td style="padding: 7px 10px; color: var(--muted);">${opt.option_type || "string"}</td>
+                        <td style="padding: 7px 10px; color: var(--muted); font-family: monospace; font-size: 12px;">${opt.default_value ?? "-"}</td>
+                        <td style="padding: 7px 10px;">
+                          ${opt.required
+                            ? html`<span style="font-size: 10px; padding: 1px 5px; border-radius: 3px; background: var(--danger); color: white; opacity: 0.8;">是</span>`
+                            : html`<span style="font-size: 10px; padding: 1px 5px; border-radius: 3px; background: var(--bg); color: var(--muted);">否</span>`
+                          }
+                        </td>
+                      </tr>
+                    `)}
+                  </tbody>
+                </table>
+              </div>
+            ` : html`
+              <div style="text-align: center; padding: 24px; color: var(--muted); font-size: 13px;">
+                该驱动暂无配置参数
+              </div>
+            `}
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn--ghost" @click=${() => this.selectedDriver = null}>关闭</button>
           </div>
         </div>
       </div>

@@ -6,6 +6,7 @@ import { startThemeTransition, type ThemeTransitionContext } from "./theme-trans
 import { resolveTheme, type ThemeMode, type ResolvedTheme } from "./theme.js";
 import "./components/theme-toggle.js";
 import "./components/toast.js";
+import { error as toastError } from "./components/toast.js";
 import "./components/skeleton.js";
 import { deviceCache } from "../stores/device-cache.js";
 
@@ -98,6 +99,7 @@ export class TinyIoTHubApp extends LitElement {
     }
   };
   private boundHandleRoute = () => this.handleRoute();
+  private handleAuthError = () => this.logout();
 
   createRenderRoot() {
     return this;
@@ -108,6 +110,7 @@ export class TinyIoTHubApp extends LitElement {
     this.loadTheme();
     this.checkAuth();
     this.setupRouter();
+    window.addEventListener("auth-error", this.handleAuthError);
     if (this.isAuthenticated) {
       this.loadUserInfo();
     }
@@ -116,6 +119,7 @@ export class TinyIoTHubApp extends LitElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     window.removeEventListener("popstate", this.boundHandleRoute);
+    window.removeEventListener("auth-error", this.handleAuthError);
     if (this.themeMediaQuery) {
       this.themeMediaQuery.removeEventListener("change", this.themeChangeHandler);
     }
@@ -193,6 +197,7 @@ export class TinyIoTHubApp extends LitElement {
     localStorage.removeItem("auth-token");
     deviceCache.clearCache();
     this.isAuthenticated = false;
+    toastError("登录已过期，请重新登录");
     this.navigate("login");
   }
 
@@ -301,11 +306,14 @@ export class TinyIoTHubApp extends LitElement {
 
     return html`
       <div class="shell">
-        ${this.renderTopbar()}
-        <nav class="nav ${this.navCollapsed ? "nav--collapsed" : ""}">
+        <div class="topbar" role="banner">
+        ${this.renderTopbarInner()}
+        </div>
+        <nav class="nav ${this.navCollapsed ? "nav--collapsed" : ""}" aria-label="主导航" role="navigation">
           ${this.renderNav()}
         </nav>
-        <div class="content">
+        <div class="content" role="main" id="main-content"></parameter>
+
           ${this.currentRoute.startsWith("devices/") || this.currentRoute === "chat" ? nothing : html`
           <section class="content-header">
             <div>
@@ -321,9 +329,8 @@ export class TinyIoTHubApp extends LitElement {
     `;
   }
 
-  renderTopbar() {
+  renderTopbarInner() {
     return html`
-      <div class="topbar">
         <div class="topbar-left">
           <a href="/" class="brand" @click=${(e: Event) => { e.preventDefault(); this.navigate("dashboard"); }}
             style="cursor: pointer; text-decoration: none;">
@@ -359,9 +366,7 @@ export class TinyIoTHubApp extends LitElement {
                 </button>
               </div>
             ` : ""}
-          </div>
         </div>
-      </div>
     `;
   }
 

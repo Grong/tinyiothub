@@ -264,7 +264,7 @@ export class UsersView extends LitElement {
 
   renderModal() {
     return html`
-      <div class="modal-overlay" @click=${this.closeModal}>
+      <div class="modal-overlay" role="dialog" aria-modal="true" aria-label=${this.editingUser ? "编辑用户" : "新建用户"} @click=${this.closeModal}>
         <div class="modal" @click=${(e: Event) => e.stopPropagation()}>
           <div class="modal-header">${this.editingUser ? "编辑用户" : "新建用户"}</div>
           <div class="modal-body">
@@ -310,7 +310,7 @@ export class UsersView extends LitElement {
 
   renderPasswordModal() {
     return html`
-      <div class="modal-overlay" @click=${this.closePasswordModal}>
+      <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="修改密码" @click=${this.closePasswordModal}>
         <div class="modal" @click=${(e: Event) => e.stopPropagation()}>
           <div class="modal-header">修改密码 — ${this.passwordUser?.name}</div>
           <div class="modal-body">

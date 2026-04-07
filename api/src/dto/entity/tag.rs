@@ -345,7 +345,7 @@ impl TagBinding {
         Ok(result.rows_affected())
     }
 
-    /// 根据标签 ID 查询绑定
+    /// 根据标签 ID 查询绑定（带分页）
     pub async fn find_by_tag_id(
         db: &Database,
         tag_id: &str,
@@ -360,7 +360,7 @@ impl TagBinding {
         Ok(bindings)
     }
 
-    /// 根据目标 ID 查询绑定
+    /// 根据目标 ID 查询绑定（带分页）
     pub async fn find_by_target_id(
         db: &Database,
         target_id: &str,
@@ -373,6 +373,28 @@ impl TagBinding {
         .await?;
 
         Ok(bindings)
+    }
+
+    /// 统计标签的绑定数量
+    pub async fn count_by_tag_id(db: &Database, tag_id: &str) -> Result<i64, sqlx::Error> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM tag_bindings WHERE tag_id = ?"
+        )
+        .bind(tag_id)
+        .fetch_one(db.pool())
+        .await?;
+        Ok(count)
+    }
+
+    /// 统计目标的绑定数量
+    pub async fn count_by_target_id(db: &Database, target_id: &str) -> Result<i64, sqlx::Error> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM tag_bindings WHERE target_id = ?"
+        )
+        .bind(target_id)
+        .fetch_one(db.pool())
+        .await?;
+        Ok(count)
     }
 
     /// 检查标签绑定是否存在

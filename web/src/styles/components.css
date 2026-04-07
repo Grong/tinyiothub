@@ -527,15 +527,15 @@
 .field select,
 .select,
 .select-input {
-  border: none;
   background: var(--card);
-  border-radius: 8px;
-  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 11px 14px;
   outline: none;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-  transition:
-    box-shadow var(--duration-fast) ease;
+  box-shadow: var(--glass-shadow-sm);
+  transition: border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
   font-size: 14px;
+  line-height: 1.5;
   color: var(--text);
 }
 
@@ -544,7 +544,25 @@
 .field select:focus,
 .select:focus,
 .select-input:focus {
-  box-shadow: 0 0 0 3px rgba(255, 92, 92, 0.15);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+}
+
+.field input:hover:not(:focus):not(:disabled),
+.field textarea:hover:not(:focus):not(:disabled),
+.field select:hover:not(:focus):not(:disabled),
+.select:hover:not(:focus):not(:disabled),
+.select-input:hover:not(:focus):not(:disabled) {
+  border-color: var(--border-hover);
+}
+
+.field input:disabled,
+.field textarea:disabled,
+.field select:disabled,
+.select:disabled,
+.select-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .field select,
@@ -1038,12 +1056,12 @@
 :root[data-theme="light"] .field textarea,
 :root[data-theme="light"] .field select {
   background: var(--card);
-  border-color: var(--input);
+  border-color: var(--border);
 }
 
 :root[data-theme="light"] .btn {
   background: var(--bg);
-  border-color: var(--input);
+  border-color: var(--border);
 }
 
 :root[data-theme="light"] .btn:hover {
@@ -1105,6 +1123,12 @@
   background: linear-gradient(135deg, rgba(34, 197, 94, 0.08) 0%, rgba(34, 197, 94, 0.04) 100%);
   color: var(--ok);
   box-shadow: 0 2px 4px rgba(34, 197, 94, 0.1);
+}
+
+.callout.warn {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.08) 0%, rgba(245, 158, 11, 0.04) 100%);
+  color: var(--warning);
+  box-shadow: 0 2px 4px rgba(245, 158, 11, 0.1);
 }
 
 /* Compaction indicator */
@@ -2728,6 +2752,74 @@
   gap: 12px;
 }
 
+.agent-model-fields {
+  display: grid;
+  gap: 14px;
+}
+
+/* chip-input: inline chip editor for model fallback list */
+.agent-chip-input {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  cursor: text;
+  min-height: 42px;
+}
+
+.agent-chip-input:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+}
+
+.agent-chip-input .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.agent-chip-input input {
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 13px;
+  color: var(--text);
+  min-width: 140px;
+  flex: 1;
+  padding: 0;
+}
+
+.agent-chip-input input::placeholder {
+  color: var(--muted);
+}
+
+.chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  opacity: 0.6;
+  border-radius: 50%;
+  transition: opacity 0.15s;
+}
+
+.chip-remove:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.1);
+}
+
 .agent-model-tab {
   display: grid;
   gap: 20px;
@@ -2884,6 +2976,13 @@
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
+.filters {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .agent-tools-buttons {
   display: flex;
   gap: 8px;
@@ -2918,13 +3017,72 @@
 .agent-tool-row {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
-  padding: 6px 8px;
+  padding: 10px 12px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--card);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.agent-tool-row.agent-tool-item--danger {
+  border-left: 3px solid #e74c3c;
+  padding-left: 9px;
+}
+
+.agent-tool-row.agent-tool-item--danger .agent-tool-title {
+  color: #e74c3c;
+}
+
+/* cfg-toggle: switch-style toggle used in agent tools/skills */
+.cfg-toggle {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.cfg-toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.cfg-toggle__track {
+  width: 36px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--border);
+  transition: background 0.2s ease;
+  position: relative;
+}
+
+.cfg-toggle__track::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: white;
+  transition: transform 0.2s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.cfg-toggle input:checked + .cfg-toggle__track {
+  background: var(--accent);
+}
+
+.cfg-toggle input:checked + .cfg-toggle__track::after {
+  transform: translateX(16px);
+}
+
+.cfg-toggle input:disabled + .cfg-toggle__track {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .agent-tool-title {
@@ -4538,12 +4696,23 @@ input[type="range"]::-moz-range-thumb:hover {
 
 .usage-controls input[type="date"] {
   min-width: 140px;
-  padding: 8px 12px;
-  border: none;
-  border-radius: 8px;
-  background: var(--bg-muted);
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
   color: var(--text);
-  font-size: 13px;
+  font-size: 14px;
+  line-height: 1.5;
+  transition: border-color var(--duration-fast) ease;
+}
+
+.usage-controls input[type="date"]:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.usage-controls input[type="date"]:hover:not(:focus) {
+  border-color: var(--border-hover);
 }
 
 .usage-presets {
@@ -5537,14 +5706,6 @@ button:hover:not(:disabled):not(.unstyled) {
 .agent-tools-search:focus {
   border-color: var(--primary);
   box-shadow: 0 0 0 2px var(--primary-alpha);
-}
-
-.agent-tool-item--danger {
-  border-left: 3px solid #e74c3c;
-}
-
-.agent-tool-item--danger .agent-tool-name {
-  color: #e74c3c;
 }
 
 /* ── Agent Placeholder Tabs ── */
