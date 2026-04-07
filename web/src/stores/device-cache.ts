@@ -217,6 +217,14 @@ class DeviceCache {
     const updated = this.applySseEventToMap(map, data);
     if (updated) {
       this.$devicesMap.set(updated);
+
+      // 通知详情页需要刷新
+      const deviceId = data.device_id;
+      if (deviceId) {
+        window.dispatchEvent(new CustomEvent('device-updated', {
+          detail: { deviceId, eventType: data.event_type, data },
+        }));
+      }
     }
   }
 

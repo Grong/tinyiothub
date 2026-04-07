@@ -157,6 +157,12 @@ export class DevicesView extends SignalWatcher(LitElement) {
   @state() tagSearchKeyword = "";
   @state() tagSaving = false;
   private _boundCloseTagEditor = () => { this.editingTagsDeviceId = null; };
+  private _boundHandleDeviceUpdated = (e: Event) => {
+    const { deviceId } = (e as CustomEvent).detail as { deviceId: string; eventType: string; data: any };
+    if (this.selectedDevice?.device?.id === deviceId) {
+      this.loadDeviceDetail(deviceId);
+    }
+  };
 
   // Property history dialog
   @state() showHistoryDialog = false;
@@ -188,6 +194,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       if (id) {
         this.loadDeviceDetail(id);
         document.addEventListener("click", this._boundCloseTagEditor);
+        document.addEventListener("device-updated", this._boundHandleDeviceUpdated);
         return;
       }
     }
@@ -196,12 +203,14 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.loadDriverNames();
     this.loadAllTags();
     document.addEventListener("click", this._boundCloseTagEditor);
+    document.addEventListener("device-updated", this._boundHandleDeviceUpdated);
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     // 不断开 SSE — 缓存层管理连接生命周期
     document.removeEventListener("click", this._boundCloseTagEditor);
+    document.removeEventListener("device-updated", this._boundHandleDeviceUpdated);
   }
 
   private async loadDevicesFromCache() {
