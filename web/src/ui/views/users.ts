@@ -10,6 +10,10 @@ export class UsersView extends LitElement {
   @state() error = "";
   @state() users: User[] = [];
   @state() searchKeyword = "";
+  @state() page = 1;
+  @state() pageSize = 20;
+  @state() totalPages = 0;
+  @state() totalCount = 0;
 
   @state() showModal = false;
   @state() editingUser: User | null = null;
@@ -39,16 +43,23 @@ export class UsersView extends LitElement {
     this.loading = true;
     this.error = "";
     try {
-      const res = await userApi.getUsers();
+      const res = await userApi.getUsers({ page: this.page, pageSize: this.pageSize });
       const data = res.result;
       if (data) {
         this.users = data.data || [];
+        this.totalPages = data.pagination?.totalPages || 1;
+        this.totalCount = data.pagination?.totalCount || this.users.length;
       }
     } catch (err: any) {
       this.error = err.message || "加载用户列表失败";
     } finally {
       this.loading = false;
     }
+  }
+
+  goToPage(p: number) {
+    this.page = p;
+    this.loadData();
   }
 
   get filteredUsers(): User[] {
@@ -202,7 +213,7 @@ export class UsersView extends LitElement {
           type="text"
           placeholder="搜索用户名、邮箱、手机..."
           .value=${this.searchKeyword}
-          @input=${(e: Event) => { this.searchKeyword = (e.target as HTMLInputElement).value; }}
+          @input=${(e: Event) => { this.searchKeyword = (e.target as HTMLInputElement).value; this.page = 1; this.loadData(); }}
           style="flex: 1; max-width: 300px;"
         />
         <button class="btn btn--primary" @click=${this.openCreate}>新建用户</button>
@@ -257,6 +268,13 @@ export class UsersView extends LitElement {
           </tbody>
         </table>
       </div>
+      ${this.totalPages > 1 ? html`
+        <div class="pagination">
+          <button class="btn btn--ghost btn--sm" ?disabled=${this.page <= 1} @click=${() => this.goToPage(this.page - 1)}>上一页</button>
+          <span class="pagination-info">第 ${this.page} / ${this.totalPages} 页，共 ${this.totalCount} 条</span>
+          <button class="btn btn--ghost btn--sm" ?disabled=${this.page >= this.totalPages} @click=${() => this.goToPage(this.page + 1)}>下一页</button>
+        </div>
+      ` : ""}
       ${this.showModal ? this.renderModal() : nothing}
       ${this.showPasswordModal ? this.renderPasswordModal() : nothing}
     `;
