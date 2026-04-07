@@ -45,9 +45,6 @@ class DeviceCache {
     return this.$devicesList.get();
   }
 
-  private ensureConnected(): void {
-    console.log('[DeviceCache] ensureConnected() called');
-
   /**
    * 强制刷新设备列表。
    */
@@ -212,7 +209,7 @@ class DeviceCache {
   }
 
   private handleSseEvent(data: any): void {
-    console.log('[DeviceCache] SSE event:', data);
+    console.log('[DeviceCache] SSE event:', data.event_type, data.device_id);
     if (this.fetchInProgress) {
       this.pendingSseEvents.push(data);
       return;
@@ -221,7 +218,7 @@ class DeviceCache {
     const map = this.$devicesMap.get();
     const updated = this.applySseEventToMap(map, data);
     if (updated) {
-      console.log('[DeviceCache] Map updated for device:', data.device_id);
+      console.log('[DeviceCache] Map updated, dispatching device-updated for:', data.device_id);
       this.$devicesMap.set(updated);
 
       // 通知详情页需要刷新
@@ -231,8 +228,6 @@ class DeviceCache {
           detail: { deviceId, eventType: data.event_type, data },
         }));
       }
-    } else {
-      console.log('[DeviceCache] No map change, skipping dispatch');
     }
   }
 
