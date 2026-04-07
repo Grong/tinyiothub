@@ -630,6 +630,169 @@ find_by_prefix 查找
 
 ---
 
+## Code Quality Review
+
+### 严重程度分级
+
+| 级别 | 定义 | 影响 |
+|------|------|------|
+| CRITICAL | 安全漏洞，无认证或认证可绕过 | 跨 workspace 数据泄露 |
+| HIGH | 有认证但验证错误对象，或缺失关键验证 | 部分隔离失效 |
+| MEDIUM | 代码可工作但使用了错误字段，或 DRY 违规 | 可运行但逻辑错误 |
+| LOW | 代码风格、非关键问题 | 可运行，逻辑基本正确 |
+| INFO | 后续需注意的技术债 | 不影响上线 |
+
+### Issue 1: handlers.rs — 三处 JWT 认证需替换为 API Key
+
+**文件**: `api/src/api/mcp/handlers.rs`
+
+| 位置 | 当前问题 | 严重程度 |
+|------|---------|---------|
+| L25-28 | `MCP_CONTEXT` 存 `Claims`（含 user_id/tenant_id），应改为 `McpAuthContext`（仅 workspace_id） | CRITICAL |
+| L103-112 | `extract_jwt_claims` — 需替换为 API Key 提取 | CRITICAL |
+| L119-130 | 三个 handler 各有 JWT 提取 + context 设置，重复代码 3 处 | MEDIUM |
+
+**验证**：`get_mcp_context()` 在 3 个 handler 中调用方式一致，统一替换可行。
+
+---
+
+### Issue 2: batch.rs — workspace_id 完全无验证
+
+**文件**: `api/src/api/mcp/tools/batch.rs`
+
+| 工具 | 当前问题 | 严重程度 |
+|------|---------|---------|
+| `batch_command` | workspace_id 直接取 `input.workspace_id`（L149），没有任何验证。agent 可对任意 workspace 发命令 | CRITICAL |
+| `get_batch_status` | 调用 `get_mcp_context()` 获取 `_claims`（L232），但 `_claims` 未被使用，batch_id 无任何 workspace 验证 | CRITICAL |
+
+```rust
+// L123-124 当前注释说明完全是错的
+// Note: workspace_id access is verified via tenant ownership in the database
+// The MCP context provides tenant_id from JWT for authorization
+
+// L155 submitted_by 用 user_id，迁移后 API Key 无 user_id
+submitted_by: Some(claims.user_id.clone()),
+```
+
+**额外发现**：L857 测试有 typo：`vec!["read".to_string()]` → `vec!["read"]`
+
+---
+
+### Issue 3: device.rs — 8 个工具缺失 workspace 隔离
+
+**文件**: `api/src/api/mcp/tools/device.rs`
+
+| 工具 | 当前问题 | 严重程度 |
+|------|---------|---------|
+| `read_properties` (L472) | 无任何 workspace/tenant 验证，agent 可读任意设备属性 | CRITICAL |
+| `write_properties` (L546) | 无任何 workspace/tenant 验证，agent 可写任意设备属性 | CRITICAL |
+| `send_command` (L656) | 无任何 workspace/tenant 验证，agent 可控制任意设备 | CRITICAL |
+| `get_device_metrics` (L1056) | 无任何 workspace/tenant 验证 | CRITICAL |
+| `export_device_report` (L1117) | 无任何 workspace/tenant 验证 | CRITICAL |
+| `list_devices` (L281-295) | 用 `tenant_id` 过滤，`workspace_id = None`，应改为 `workspace_id = Some(ctx.workspace_id)` | HIGH |
+| `create_device` (L795) | `workspace_id: None`，新设备未绑定到任何 workspace | HIGH |
+| `get_device`/`get_device_status`/`update_device`/`delete_device`/`get_device_history` | 用 `tenant_id` 验证（LOW impact，因为 device 已有 tenant_id），但应改为 workspace_id | MEDIUM |
+
+**Device 字段确认**：`Device` 实体同时有 `tenant_id` 和 `workspace_id` 字段。设计要求使用 workspace_id 隔离。
+
+---
+
+### Issue 4: alarm_mcp.rs — 4 个工具 workspace 验证缺失
+
+**文件**: `api/src/api/mcp/tools/alarm_mcp.rs`
+
+| 工具 | 当前问题 | 严重程度 |
+|------|---------|---------|
+| `alarm_list` (L190-201) | `AlarmQueryCriteria` 无 workspace_id，alarm_service 无 workspace 过滤 | HIGH |
+| `alarm_statistics` (L285) | 无 workspace 过滤 | HIGH |
+| `alarm_rule_add` (L54) | input 接受 workspace_id 但工具内完全忽略输入（好），但也无 context.workspace_id 使用 | HIGH |
+| `alarm_acknowledge` (L341) | 用 `claims.user_id` 记录 ack 操作人，迁移后应改为固定字符串 "api_key" | MEDIUM |
+
+**alarm_service 依赖**：alarm_list/statistics 调用 `alarm_service.get_alarm_history/count_alarms/statistics`，这些方法签名需要加 workspace_id 参数。需确认 domain 层支持。
+
+---
+
+### Issue 5: job.rs — 3 个工具 workspace 验证缺失
+
+**文件**: `api/src/api/mcp/tools/job.rs`
+
+| 工具 | 当前问题 | 严重程度 |
+|------|---------|---------|
+| `list_schedules` (L106-112) | 调用 `Job::find_all` 传 `JobQueryParams`，但 params 无 workspace_id，find_all 可能不过滤 | HIGH |
+| `create_schedule` (L231-246) | 新建 schedule 未绑定 workspace_id | HIGH |
+| `delete_schedule` (L293-315) | 获取了 existing job（用于返回 name），但删前未验证 workspace_id | HIGH |
+
+**TODO 注释**：`L299` 有 `// TODO: Verify tenant ownership via claims.tenant_id when jobs have tenant_id`，说明作者已意识到问题但未修复。
+
+---
+
+### Issue 6: tenant.rs — ApiKey 实体需改造
+
+**文件**: `api/src/dto/entity/tenant.rs`
+
+| 项目 | 当前问题 | 严重程度 |
+|------|---------|---------|
+| `ApiKey` struct (L395-411) | `tenant_id: String`，应改为 `workspace_id: String` | CRITICAL |
+| `create()` 方法 (L437) | 传入 `tenant_id`，应改为 `workspace_id`，通过 workspace 反查 tenant_id | CRITICAL |
+| `find_by_tenant()` 方法 (L561) | 应改为 `find_by_workspace()` | MEDIUM |
+| `find_by_prefix()` (L528) | 返回 `Option<ApiKey>` 含 tenant_id，迁移后需返回含 workspace_id | MEDIUM |
+| `record_usage()` (L635) | 依赖 tenant_id，更新逻辑需同时更新 workspace_id | INFO |
+| 测试 L857 | `vec!["read".to_string()]` typo，应为 `vec!["read"]` | LOW |
+
+---
+
+### Issue 7: DeviceQueryParams 和 JobQueryParams 需加 workspace_id
+
+**文件**: `api/src/dto/entity/device.rs` 和 `api/src/dto/entity/job.rs`
+
+| 文件 | 当前状态 | 需改动 |
+|------|---------|--------|
+| `DeviceQueryParams` | 有 `workspace_id: Option<String>`（L295），但 list_devices 传 `None` | 改为 `Some(ctx.workspace_id)` |
+| `JobQueryParams` | 无 workspace_id 字段 | 需加 `workspace_id: Option<String>` |
+
+---
+
+### Issue 8: domain/service 层需支持 workspace_id 过滤
+
+以下服务方法需要加 workspace_id 参数或改用 workspace 隔离：
+
+| 方法 | 文件 | 需改动 |
+|------|------|--------|
+| `alarm_service.get_alarm_history` | `domain/alarm/` | `AlarmQueryCriteria` 加 workspace_id |
+| `alarm_service.count_alarms` | `domain/alarm/` | 同上 |
+| `alarm_service.get_alarm_statistics` | `domain/alarm/` | 同上 |
+| `alarm_service.acknowledge_alarm` | `domain/alarm/` | user_id 参数改为固定 "api_key" |
+| `alarm_service.create_rule` | `domain/alarm/` | 加 workspace_id 绑定 |
+| `Job::find_all` | `dto/entity/job.rs` | `JobQueryParams` 需支持 workspace_id |
+| `Job::create` | `dto/entity/job.rs` | 需接受 workspace_id |
+| `BatchCommandRepository::find_by_idempotency_key` | `infrastructure/batch_command/` | 需用 workspace_id 隔离 |
+
+---
+
+### Issue 9: AlarmRule::new 无 workspace_id 绑定
+
+**文件**: `domain/alarm/rule.rs`
+
+`AlarmRule::new` 签名不接受 workspace_id。alarm_rule_add 工具创建 rule 时无法绑定 workspace。需要确认 domain 层是否需要改造。
+
+---
+
+### Issue 10: API Key 认证的 rate_limit / request_count 更新
+
+**文件**: `tenant.rs` L635-708
+
+`record_usage()` 需要更新 api_key 的 `request_count`、`last_used_at`。迁移后需改为按 `workspace_id` 索引。更重要的是：认证流程中 validate_api_key 需要更新 `last_used_at` 和 `request_count`。
+
+---
+
+### 代码风格观察
+
+1. **DRY 违规**：`handlers.rs` 中 3 个 handler 各自复制 JWT 提取逻辑（~15 行重复 × 3）
+2. **Error 一致性**：handler 用 `ToolError`，但部分地方返回 `Internal("...")` 字符串拼接，可读性差
+3. **Test coverage**：`handlers.rs` 只有 JSON-RPC deserialize 测试，无集成测试
+
+---
+
 ## NOT in scope
 
 - SHA256 替换 DefaultHasher（安全增强，可后续迭代）
