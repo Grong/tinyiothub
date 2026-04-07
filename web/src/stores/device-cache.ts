@@ -211,11 +211,15 @@ class DeviceCache {
   private handleSseEvent(data: any): void {
     console.log('[DeviceCache] SSE event:', data.event_type, data.device_id);
     if (this.fetchInProgress) {
+      console.log('[DeviceCache] fetch in progress, buffering event');
       this.pendingSseEvents.push(data);
       return;
     }
 
     const map = this.$devicesMap.get();
+    console.log('[DeviceCache] current map device IDs:', Array.from(map.keys()));
+    const deviceInMap = map.get(data.device_id);
+    console.log('[DeviceCache] device in map:', deviceInMap ? 'yes, status=' + deviceInMap.status : 'no');
     const updated = this.applySseEventToMap(map, data);
     if (updated) {
       console.log('[DeviceCache] Map updated, dispatching device-updated for:', data.device_id);
@@ -228,6 +232,8 @@ class DeviceCache {
           detail: { deviceId, eventType: data.event_type, data },
         }));
       }
+    } else {
+      console.log('[DeviceCache] No map change (device not in map or no relevant field changed)');
     }
   }
 
@@ -238,6 +244,7 @@ class DeviceCache {
     map: Map<string, Device>,
     data: any,
   ): Map<string, Device> | null {
+    console.log('[DeviceCache] applySseEventToMap called, event_type:', data.event_type, 'device_id:', data.device_id);
     const eventType: string = data.event_type ?? '';
     const deviceId: string | undefined = data.device_id;
 
