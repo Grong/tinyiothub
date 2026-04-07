@@ -35,7 +35,7 @@ export class TagsView extends LitElement {
       const res = await tagApi.getTags();
       const data = res.result;
       if (data) {
-        this.tags = data.data || [];
+        this.tags = data?.data ?? [];
       }
     } catch (err: any) {
       this.error = err.message || "加载标签失败";
