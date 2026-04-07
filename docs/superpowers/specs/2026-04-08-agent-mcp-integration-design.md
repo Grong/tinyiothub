@@ -630,7 +630,7 @@ find_by_prefix 查找
 
 ---
 
-## Code Quality Review
+## Performance Review
 
 ### 严重程度分级
 
@@ -790,6 +790,71 @@ submitted_by: Some(claims.user_id.clone()),
 1. **DRY 违规**：`handlers.rs` 中 3 个 handler 各自复制 JWT 提取逻辑（~15 行重复 × 3）
 2. **Error 一致性**：handler 用 `ToolError`，但部分地方返回 `Internal("...")` 字符串拼接，可读性差
 3. **Test coverage**：`handlers.rs` 只有 JSON-RPC deserialize 测试，无集成测试
+
+---
+
+## Performance Review
+
+### N+1 查询风险
+
+| 工具 | 场景 | 问题 | 影响 |
+|------|------|------|------|
+| `batch_command` | device_ids 验证 | 每个 device_id 单独查询 `Device::find_by_id` | O(n) 查询，n = device_ids 数量 |
+| `compare_devices` | 多设备比较 | 每个 device_id 单独查询 | O(n) 查询 |
+| `list_devices` | 实时状态同步 | 遍历每个 device 查 DataContext | O(n) 查询 |
+
+**建议**：考虑批量查询 `Device::find_by_ids(&[device_ids])` 替代循环单查。
+
+### alarm_service 重复查询
+
+`alarm_list` 工具（L190-201, L203-228）先调用 `get_alarm_history` 再调用 `count_alarms`，两次查询。可以合并为一次（使用 `SELECT ... WITH ROLLUP` 或 `SELECT COUNT(*)` 作为子查询）。
+
+### Thread-Local MCP_CONTEXT 开销
+
+handlers.rs L26-28 使用 `thread_local!` + `RefCell`。在 async 上下文中，每个请求都克隆 `Claims`。虽然实现正确，但 `McpContextGuard` 依赖 RAII 模式在 Drop 时清理。
+
+**潜在风险**：如果 async task 在 set 后 panic 但 guard 未能正确 drop（极端情况），context 可能泄露。不过 Rust async runtime 通常能处理这种情况。
+
+### API Key 认证路径性能
+
+| 步骤 | 当前实现 | 预期性能 |
+|------|---------|---------|
+| header 解析 | `X-API-Key` header | < 1ms |
+| prefix 查库 | `SELECT * FROM api_keys WHERE prefix = ? AND is_revoked = 0` | 索引命中，< 5ms |
+| key hash 验证 | `DefaultHasher`（非 SHA256） | < 1ms |
+| workspace_id 解析 | 从 ApiKey 对象直接取 | < 1ms |
+
+总开销：< 10ms per request。认证层不是性能瓶颈。
+
+### 数据库索引
+
+设计文档已列出所有 migration 需加的索引。确认现有索引：
+- `devices.workspace_id` — 已有
+- `batch_commands.workspace_id` — 已有
+- `alarms.device_id` — 已有（通过 alarm_list subquery 命中）
+
+**新增索引**：
+- `api_keys.workspace_id` — 加速 API Key 按 workspace 查询
+- `alarms.workspace_id` — 加速 alarm_list
+- `alarm_rules.workspace_id` — 加速 alarm_rule 过滤
+- `job_schedules.workspace_id` — 加速 list_schedules
+
+### batch_command auto_execute 风险
+
+`batch_command` 工具（L163-189）在工具执行内部调用 `BatchCommandExecutor::execute`。这是一个同步操作，在 async handler 中直接 await。
+
+**如果批处理很大**（100+ 设备），可能阻塞请求。建议：
+1. 保持现状（auto_execute=true 作为默认），因为 ZeroClaw 场景设备数量通常有限
+2. 如果需要大规模并行，考虑将 auto_execute 改为异步后台任务（超出本次 scope）
+
+### 并行化策略对性能影响
+
+| 层 | 并行可行性 | 性能影响 |
+|----|---------|---------|
+| 第一层 | 必须串行 | Auth 层改动影响所有工具 |
+| 第二层 | 可并行（batch + device read/write） | 无交叉依赖 |
+| 第三层 A/B/C/D | 四组完全独立 | 可 4 个 worktree 并行开发 |
+| 第五层 | 前端独立 | 不影响后端性能 |
 
 ---
 
