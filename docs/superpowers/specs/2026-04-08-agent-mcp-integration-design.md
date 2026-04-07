@@ -25,89 +25,88 @@ MCP Tools (45+ tools, workspace-scoped)
 
 ## 改动清单
 
-### Phase 0: Critical 安全修复（必须在 API Key 实现前完成）
+### 第一层: Auth Foundation
 
-**问题**：`read_properties`、`write_properties`、`send_command`、`create_device`、`export_device_report`、`get_device_metrics` 没有任何认证检查。任何能调用 MCP 端点的人都可以操作任意设备。
+**必须先做。所有后续改动依赖第一层。**
 
-**修改文件**：`api/src/api/mcp/tools/device.rs`
-
-**改动**：所有工具统一从 `get_mcp_context().workspace_id` 获取当前 workspace，验证 `device.workspace_id` 匹配。
-
-```rust
-// read_properties
-let workspace_id = crate::api::mcp::handlers::get_mcp_context()
-    .workspace_id.as_ref()
-    .ok_or_else(|| ToolError::Unauthorized("No workspace context".into()))?;
-
-let device = Device::find_by_id(state.database(), &input.device_id).await
-    .ok_or_else(|| ToolError::NotFound(...))?;
-if device.workspace_id.as_ref() != Some(workspace_id) {
-    tracing::warn!("MCP read_properties: access denied to device {} for workspace {}", input.device_id, workspace_id);
-    return Err(ToolError::NotFound("Device not found".into()));
-}
-```
-
-`write_properties`、`send_command`、`export_device_report`、`get_device_metrics`、`create_device` 同理。
-
-`alarm_list` 和 `alarm_rule_add`：忽略输入参数中的 `workspace_id`，强制使用 context 中的 `workspace_id`。
-
-### Phase 1: 数据库迁移
+#### 1.1 数据库迁移
 
 **新增 migration: `YYYYMMDDHHMMSS_add_workspace_id_to_api_keys.sql`**
 
 ```sql
+-- api_keys：加 workspace_id，移除冗余的 tenant_id
 ALTER TABLE api_keys ADD COLUMN workspace_id TEXT;
-
+ALTER TABLE api_keys DROP COLUMN tenant_id;
 CREATE INDEX idx_api_keys_workspace ON api_keys(workspace_id);
+CREATE INDEX idx_api_keys_prefix ON api_keys(prefix);
+
+-- alarm 表加 workspace_id
+ALTER TABLE alarms ADD COLUMN workspace_id TEXT;
+CREATE INDEX idx_alarms_workspace ON alarms(workspace_id);
+
+-- alarm_rules 表加 workspace_id
+ALTER TABLE alarm_rules ADD COLUMN workspace_id TEXT;
+CREATE INDEX idx_alarm_rules_workspace ON alarm_rules(workspace_id);
+
+-- batch_commands 表已有 workspace_id（确认存在）
+-- job_schedules 表加 workspace_id
+ALTER TABLE job_schedules ADD COLUMN workspace_id TEXT;
+CREATE INDEX idx_job_schedules_workspace ON job_schedules(workspace_id);
 ```
 
 说明：
-- `workspace_id` 可为空（兼容旧的 tenant-only keys）
-- 有 `workspace_id` 的 key 按 workspace 隔离
-- 无 `workspace_id` 的 key 权限不变（deprecated）
+- `api_keys`：移除 `tenant_id`，只保留 `workspace_id`。tenant_id 从 workspace 关联获取，不再冗余存储
+- `alarms.workspace_id`、`alarm_rules.workspace_id`、`job_schedules.workspace_id`：数据归属
+- alarm 表需要 backfill：已有 alarm 根据关联 device 的 workspace_id 填充
 
-### Phase 2: 后端 - API Key 实体改造
+#### 1.2 ApiKey 实体改造
 
 **文件: `dto/entity/tenant.rs`**
 
-`ApiKey` 结构体新增字段：
+`ApiKey` 结构体改造：
 ```rust
-pub workspace_id: Option<String>,
+// 移除 tenant_id（从 workspace 关联获取，不再冗余存储）
+pub struct ApiKey {
+    pub id: String,
+    pub workspace_id: String,       // 替换 tenant_id
+    pub name: String,
+    pub key_hash: String,
+    pub prefix: String,
+    pub permissions: String,
+    pub rate_limit: i32,
+    pub is_enabled: bool,
+    pub is_revoked: bool,
+    pub last_used_at: Option<String>,
+    pub last_used_ip: Option<String>,
+    pub request_count: i64,
+    pub expires_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
 ```
 
 `ApiKey::find_by_prefix` 改造：
 - 从 header `X-API-Key` 提取 key prefix
 - 查找后验证 `is_enabled`、`is_revoked`、`expires_at`
-- 返回 `(ApiKey, workspace_id)` — 不再返回完整的 `Tenant` 和 `Workspace` 对象（避免额外 DB 查询）
-- **安全注意**：当前 `find_by_prefix` 使用 `DefaultHasher`（非 SHA256）。后续应改为 SHA256 哈希存储
+- 返回 `Option<ApiKey>` — workspace_id 直接从 ApiKey 获取
+- **安全注意**：当前使用 `DefaultHasher`（非 SHA256）。后续应改为 SHA256
 
 `ApiKey` 新增方法：
-- `create_with_workspace(db, tenant_id, workspace_id, req)` — 创建时绑定 workspace
+- `create_with_workspace(db, workspace_id, req)` — 传入 workspace_id，自动关联 tenant
 - `find_by_workspace(db, workspace_id)` — 按 workspace 查询 keys
 - `update_expiry(db, id, expires_at)` — 更新过期时间
 
-**Key 哈希安全性**：现有实现用 `std::collections::hash_map::DefaultHasher`，这不是加密哈希。建议后续改为 SHA256（和设计文档一致），但 Phase 2 保持兼容，先只加 `workspace_id` 字段。
-
-**文件: `dto/request/` — 新建 `api_key.rs`**
-
-```rust
-pub struct CreateApiKeyRequest {
-    pub name: String,                    // 必填，标识用途
-    pub workspace_id: String,            // 绑定到哪个 workspace
-    pub expires_in_days: Option<i32>,    // 可选过期天数
-}
-```
-
-### Phase 3: 后端 - MCP 端点认证改造
+#### 1.3 MCP_CONTEXT 重构
 
 **文件: `api/mcp/handlers.rs`**
 
-MCP 端点**只支持 API Key 认证**，不需要 JWT。前端 chat 走 Agent 间接调用，不直接调 /mcp。
+MCP 端点只支持 API Key 认证。
 
 ```rust
 // 新增结构体
 struct McpAuthContext {
     workspace_id: String,
+    // 注意：不保留 user_id。alarm_acknowledge 等记录操作用 "api_key" 而非 user
 }
 
 // 替换 extract_jwt_claims
@@ -116,8 +115,10 @@ fn extract_auth_context(headers: &HeaderMap) -> Result<McpAuthContext, ToolError
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| ToolError::Unauthorized("Missing X-API-Key header".into()))?;
 
-    let (api_key, workspace_id) = validate_api_key(key)?;
-    Ok(McpAuthContext { workspace_id })
+    let api_key = validate_api_key(key)?; // 返回 ApiKey，workspace_id 直接取自 ApiKey.workspace_id
+    Ok(McpAuthContext {
+        workspace_id: api_key.workspace_id,
+    })
 }
 ```
 
@@ -125,16 +126,212 @@ fn extract_auth_context(headers: &HeaderMap) -> Result<McpAuthContext, ToolError
 1. 提取 prefix，查询 `api_keys` 表
 2. 验证 `is_revoked = 0`、`is_enabled = 1`
 3. 验证 `expires_at` 未过期（如果设置了）
-4. 返回 `(ApiKey, workspace_id)`
+4. 返回 `ApiKey`（workspace_id 直接在对象里）
 
-`handle_mcp_request` 流程：
-1. 提取 `McpAuthContext`（含 `workspace_id`）
-2. 设置 `MCP_CONTEXT`（替换原有 `Claims` 为新的上下文结构）
-3. 执行工具，workspace 隔离由各工具内部保证
+**注意**：删除现有的 JWT 认证逻辑（`extract_jwt_claims`）。
 
-**注意**：删除现有的 JWT 认证逻辑（`extract_jwt_claims`），现有调用方必须改用 API Key。
+---
 
-### Phase 4: 后端 - API Key 管理端点
+### 第二层: Critical 高危修复（可与第一层并行）
+
+**这些工具完全没有认证或认证严重不足。**
+
+#### 2.1 batch_command / get_batch_status
+
+**文件: `api/src/api/mcp/tools/batch.rs`**
+
+当前问题：workspace_id 直接取自输入参数，没有任何验证。
+
+**修复**：
+```rust
+async fn execute(&self, args: Value) -> Result<Value, ToolError> {
+    let input: BatchCommandInput = serde_json::from_value(args)
+        .map_err(|e| ToolError::InvalidParams(e.to_string()))?;
+
+    // 从 MCP context 获取 workspace_id，禁止使用输入参数
+    let ctx = get_mcp_context()
+        .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".into()))?;
+
+    let state = crate::api::mcp::get_app_state()
+        .ok_or_else(|| ToolError::Internal("AppState not initialized".into()))?;
+    let db = state.database.clone();
+
+    // 使用 context 中的 workspace_id，忽略输入参数
+    let workspace_id = &ctx.workspace_id;
+
+    // 验证输入的 device_ids 属于当前 workspace
+    for device_id in &input.device_ids {
+        let device = Device::find_by_id(&db, device_id).await
+            .map_err(|e| ToolError::Internal(e.to_string()))?
+            .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", device_id)))?;
+        if device.workspace_id.as_ref() != Some(workspace_id) {
+            return Err(ToolError::NotFound("Device not found".into()));
+        }
+    }
+
+    // ... 后续逻辑不变
+}
+```
+
+`get_batch_status` 同理：查询 batch 后验证 batch.workspace_id 匹配。
+
+#### 2.2 read_properties / write_properties / send_command / create_device / export_device_report / get_device_metrics
+
+**文件: `api/src/api/mcp/tools/device.rs`**
+
+当前问题：没有任何认证检查。
+
+**修复**（所有 6 个工具统一）：
+```rust
+async fn execute(&self, args: Value) -> Result<Value, ToolError> {
+    // 解析参数...
+    let ctx = get_mcp_context()
+        .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".into()))?;
+
+    // 查询设备
+    let device = Device::find_by_id(state.database(), &input.device_id).await
+        .ok_or_else(|| ToolError::NotFound(...))?;
+
+    // 验证 workspace 匹配
+    if device.workspace_id.as_ref() != Some(&ctx.workspace_id) {
+        tracing::warn!("MCP {}: access denied to device {} for workspace {}",
+            self.name(), input.device_id, ctx.workspace_id);
+        return Err(ToolError::NotFound("Device not found".into()));
+    }
+    // ... 后续逻辑不变
+}
+```
+
+`create_device` 特殊处理：从 context 获取 workspace_id，自动绑定。
+```rust
+let request = CreateDeviceRequest {
+    // ... 其他字段
+    workspace_id: Some(ctx.workspace_id.clone()), // 自动绑定到当前 workspace
+};
+```
+
+---
+
+### 第三层: 其余 22 个工具（可独立并行修复）
+
+#### 3.1 list_devices
+
+**文件: `api/src/api/mcp/tools/device.rs`**
+
+当前：tenant_id 过滤，workspace_id = None。
+
+修复：
+```rust
+let ctx = get_mcp_context().ok_or_else(...)?;
+let params = DeviceQueryParams {
+    // ...
+    tenant_id: None,
+    workspace_id: Some(ctx.workspace_id.clone()), // 使用 context workspace_id
+};
+```
+
+#### 3.2 get_device / get_device_status / update_device / delete_device / get_device_history
+
+**文件: `api/src/api/mcp/tools/device.rs`**
+
+当前：验证 tenant_id。
+
+修复：替换为验证 workspace_id。
+```rust
+let ctx = get_mcp_context().ok_or_else(...)?;
+if device.workspace_id.as_ref() != Some(&ctx.workspace_id) {
+    tracing::warn!("MCP {}: access denied to device {} for workspace {}",
+        self.name(), input.id, ctx.workspace_id);
+    return Err(ToolError::NotFound("Device not found".into()));
+}
+```
+
+#### 3.3 compare_devices / diagnose_device
+
+**文件: `api/src/api/mcp/tools/device_enhanced.rs`**
+
+当前：_claims 验证通过但无 workspace 检查。
+
+修复：遍历所有输入 device_id，验证每个的 workspace_id 匹配。
+```rust
+for device_id in &input.device_ids {
+    let device = Device::find_by_id(state.database(), device_id).await...?;
+    if device.workspace_id.as_ref() != Some(&ctx.workspace_id) {
+        return Err(ToolError::NotFound("Device not found".into()));
+    }
+}
+```
+
+#### 3.4 alarm_list / alarm_statistics
+
+**文件: `api/src/api/mcp/tools/alarm_mcp.rs`**
+
+当前：接受 workspace_id 参数但不验证。
+
+修复：
+- 忽略输入参数中的 workspace_id
+- 使用 context 中的 workspace_id
+- 改动 `alarm_service.get_alarm_history` 和 `alarm_service.get_alarm_statistics`：加 workspace_id 过滤参数
+- 可能需要改 alarm_repository 加 workspace_id 条件
+
+#### 3.5 alarm_acknowledge
+
+**文件: `api/src/api/mcp/tools/alarm_mcp.rs`**
+
+当前：用 user_id 做 ack。
+
+修复：
+1. 验证 alarm 所属 device.workspace_id 匹配
+2. ack 操作记录 "api_key" 而非 user_id（因为 API Key 没有 user 概念）
+3. 需要改 `alarm_service.acknowledge_alarm` 的签名，或在 tool 里直接写 DB
+
+#### 3.6 alarm_rule_add
+
+**文件: `api/src/api/mcp/tools/alarm_mcp.rs`**
+
+当前：无认证。
+
+修复：忽略输入参数中的 workspace_id，使用 context.workspace_id。
+
+#### 3.7 list_schedules / create_schedule / delete_schedule
+
+**文件: `api/src/api/mcp/tools/job.rs`**
+
+当前：无认证。
+
+修复：
+- `list_schedules`：加 workspace_id 过滤
+- `create_schedule`：从 context 获取 workspace_id，自动绑定
+- `delete_schedule`：验证 schedule.workspace_id 匹配
+
+#### 3.8 workspace_list / workspace_get / workspace_update / workspace_delete / workspace_create
+
+**文件: `api/src/api/mcp/tools/workspace.rs`**
+
+当前：用 tenant_id 隔离。
+
+修复：API Key 认证场景下，Agent 只能访问绑定 workspace 本身。
+- `workspace_get`/`workspace_update`/`workspace_delete`：验证 workspace.id == context.workspace_id
+- `workspace_list`：只返回当前 workspace（直接返回 context.workspace_id 对应的 workspace）
+- `workspace_create`：Tenant 可通过 API Key 创建新 workspace（新建 workspace 的 tenant_id 继承自 API Key 对应 workspace 的 tenant_id）
+
+**说明**：由于 `api_keys` 表移除了 `tenant_id`，创建 API Key 时需要传入 workspace_id，再通过 workspace 反查 tenant_id。API Key 管理端点在创建 key 时需要这个关联。
+
+#### 3.9 self_heal_* / knowledge_*
+
+**文件: `api/src/api/mcp/tools/self_heal.rs`、`knowledge.rs`
+
+当前：用 tenant_id。
+
+修复：改为 workspace_id 隔离。
+
+#### 3.10 heartbeat_* / list_drivers / scan_serial
+
+这些工具不涉及数据隔离或只读系统状态，不需要 workspace 隔离。
+
+---
+
+### 第四层: API Key 管理端点
 
 **文件: `api/api_keys.rs` — 新建**
 
@@ -186,7 +383,9 @@ fn extract_auth_context(headers: &HeaderMap) -> Result<McpAuthContext, ToolError
 }
 ```
 
-### Phase 5: 前端 - API Key 管理页面
+---
+
+### 第五层: 前端 - API Key 管理页面
 
 **文件: `web/src/ui/views/api-keys.ts`**
 
@@ -209,9 +408,11 @@ fn extract_auth_context(headers: &HeaderMap) -> Result<McpAuthContext, ToolError
 - 一键复制按钮
 - 关闭按钮
 
-### Phase 6: ZeroClaw 配置文档
+---
 
-**文件: `docs/agent/zeroclaw-mcp-setup.md` — 新建（也在开发文档清单中）**
+### 第六层: ZeroClaw 配置文档
+
+**文件: `docs/agent/zeroclaw-mcp-setup.md` — 新建**
 
 ```toml
 [mcp]
@@ -228,7 +429,9 @@ tool_timeout_secs = 30
 
 说明：内网部署用 `localhost:3002`；docker 环境用 `tinyiothub-api:3002`。
 
-### Phase 7: Workspace 导航配置
+---
+
+### 第七层: Workspace 导航配置
 
 **文件: `web/src/ui/app.ts`**
 
@@ -238,6 +441,8 @@ tool_timeout_secs = 30
 ```
 
 仅在已选择 workspace 时显示。
+
+---
 
 ## 数据流
 
@@ -264,8 +469,10 @@ find_by_prefix 查找
     ↓
 设置 MCP_CONTEXT = { workspace_id: "ws-001" }
     ↓
-执行工具（workspace 隔离由工具内部保证）
+执行工具（workspace 隔离由各工具内部保证）
 ```
+
+---
 
 ## 安全性
 
@@ -276,68 +483,137 @@ find_by_prefix 查找
 - 支持过期时间自动失效
 - MCP 端点只接受 API Key 认证，删除 JWT 路径
 
-## MCP 工具安全隔离审查
+---
 
-### 审查结论
+## 完整工具清单与隔离方式
 
-通过代码审查（`api/src/api/mcp/tools/device.rs`、`alarm_mcp.rs`），所有工具统一用 `workspace_id` 隔离。
+| 工具 | 文件 | 隔离方式 | 优先级 |
+|------|------|---------|--------|
+| **batch_command** | batch.rs | 忽略输入 workspace_id，验证所有 device_ids 属于当前 ws | CRITICAL |
+| **get_batch_status** | batch.rs | 验证 batch.workspace_id == context.workspace_id | CRITICAL |
+| **read_properties** | device.rs | 验证 device.workspace_id == context.workspace_id | CRITICAL |
+| **write_properties** | device.rs | 同上 | CRITICAL |
+| **send_command** | device.rs | 同上 | CRITICAL |
+| **create_device** | device.rs | 从 context 获取 workspace_id，自动绑定 | CRITICAL |
+| **export_device_report** | device.rs | 验证 device.workspace_id == context.workspace_id | CRITICAL |
+| **get_device_metrics** | device.rs | 同上 | CRITICAL |
+| **alarm_list** | alarm_mcp.rs | 忽略输入参数，使用 context.workspace_id，加 repository 过滤 | HIGH |
+| **alarm_statistics** | alarm_mcp.rs | 同上 | HIGH |
+| **alarm_rule_add** | alarm_mcp.rs | 忽略输入参数，使用 context.workspace_id | HIGH |
+| **compare_devices** | device_enhanced.rs | 验证所有 device_ids 属于当前 ws | HIGH |
+| **diagnose_device** | device_enhanced.rs | 验证 device.workspace_id == context.workspace_id | HIGH |
+| **list_schedules** | job.rs | 加 workspace_id 过滤 | HIGH |
+| **create_schedule** | job.rs | 从 context 获取 workspace_id，自动绑定 | HIGH |
+| **delete_schedule** | job.rs | 验证 schedule.workspace_id == context.workspace_id | HIGH |
+| **alarm_acknowledge** | alarm_mcp.rs | 验证 alarm 所属 device.workspace_id 匹配 | MEDIUM |
+| **list_devices** | device.rs | 加 WHERE workspace_id = ? | MEDIUM |
+| **get_device** | device.rs | 替换 tenant_id 为 workspace_id 验证 | MEDIUM |
+| **get_device_status** | device.rs | 同上 | MEDIUM |
+| **update_device** | device.rs | 同上 | MEDIUM |
+| **delete_device** | device.rs | 同上 | MEDIUM |
+| **get_device_history** | device.rs | 同上 | MEDIUM |
+| **workspace_list** | workspace.rs | 只返回当前 workspace | MEDIUM |
+| **workspace_get** | workspace.rs | 验证 workspace.id == context.workspace_id | MEDIUM |
+| **workspace_create** | workspace.rs | 待定（见决策点） | MEDIUM |
+| **workspace_update** | workspace.rs | 验证 workspace.id == context.workspace_id | MEDIUM |
+| **workspace_delete** | workspace.rs | 同上 | MEDIUM |
+| **self_heal_*** | self_heal.rs | 改为 workspace_id 隔离 | LOW |
+| **knowledge_*** | knowledge.rs | 同上 | LOW |
+| **list_drivers** | driver.rs | 不涉及数据隔离 | NONE |
+| **heartbeat_*** | heartbeat.rs | 只读系统状态 | NONE |
+| **scan_serial** | device_enhanced.rs | 只读系统状态 | NONE |
 
-**已有 tenant_id 验证的工具**（需改为 workspace_id）：
-- `get_device` — 当前验证 `tenant_id`，改为验证 `workspace_id`
-- `get_device_status` — 同上
-- `update_device` — 同上
-- `delete_device` — 同上
-- `get_device_history` — 同上
+---
 
-**完全无认证的工具**（CRITICAL，必须在 Phase 0 修复）：
-- `read_properties` — 任何人都能读任意设备属性
-- `write_properties` — 任何人都能写任意设备属性
-- `send_command` — 任何人都能向任意设备发命令
-- `create_device` — 任何人都能创建设备
-- `export_device_report` — 任何人都能导出任意设备报告
-- `get_device_metrics` — 任何人都能查任意设备指标
+## 决策点
 
-**参数可伪造的工具**（需加固）：
-- `alarm_list` — 接受 `workspace_id` 参数但不验证
-- `alarm_rule_add` — 同上
+~~1. **workspace_create**：API Key 绑定到某个 workspace，能通过工具创建新 workspace 吗？如果能，新 workspace 属于哪个 tenant？~~ **已确认：继承 API Key 对应 workspace 的 tenant_id（见 2.7.4 `workspace_create`）**
 
-**各工具 workspace 隔离实现方式**：
+2. **backfill alarm.workspace_id**：已有 alarm 需要根据关联 device 填充 workspace_id，需要一次性 migration 脚本：
+   ```sql
+   -- alarm_worspace_backfill.sql
+   UPDATE alarms
+   SET workspace_id = (
+       SELECT d.workspace_id FROM devices d WHERE d.id = alarms.device_id
+   )
+   WHERE workspace_id IS NULL;
+   ```
+   执行时机：alarm 表加 workspace_id 列之后、主系统上线之前。
 
-| 工具 | 实现方式 |
-|------|---------|
-| `list_devices` | 加 `WHERE workspace_id = ?` |
-| `get_device` | 验证 `device.workspace_id == context.workspace_id` |
-| `read_properties` | 同上 |
-| `write_properties` | 同上 |
-| `send_command` | 同上 |
-| `create_device` | 从 context 获取 workspace_id，自动绑定 |
-| `export_device_report` | 同上 |
-| `get_device_metrics` | 同上 |
-| `alarm_list` | 忽略输入参数，强制使用 `context.workspace_id` |
-| `alarm_acknowledge` | 查询 alarm 所属 device，验证 workspace_id 匹配 |
-| `alarm_rule_add` | 忽略输入参数，强制使用 `context.workspace_id` |
+---
+
+## 现状（What Already Exists）
+
+在开始实施前，确认以下部分已存在，无需重复开发：
+
+| 组件 | 文件 | 状态 |
+|------|------|------|
+| MCP Server HTTP Transport | `api/src/api/mcp/` | 已有框架，需要改造认证 |
+| ToolHandler trait | `api/src/api/mcp/tool_registry.rs` | 已有完整定义 |
+| 所有 27 个工具实现 | `api/src/api/mcp/tools/*.rs` | 已有实现，需要加 workspace 隔离 |
+| devices 表 workspace_id 列 | SQL schema | **已有**，无需 migration |
+| batch_commands 表 workspace_id 列 | SQL schema | **已有**（已在 migration 确认） |
+| workspaces 表 | SQL schema | 已有 |
+| tenants 表 | SQL schema | 已有 |
+| ApiKey 实体 | `dto/entity/tenant.rs` | 已有，需改造成 `workspace_id` |
+| tools/list 实现 | `api/src/api/mcp/tools/mod.rs` | 已有 |
+
+**需要新增的**：仅 API Key 认证层（`validate_api_key`、MCP_CONTEXT、`X-API-Key` header 解析），以及各工具内的 workspace 隔离逻辑。
+
+---
+
+## 并行化策略
+
+七层之间部分可以并行实施：
+
+```
+第一层（Auth Foundation）— 必须先行
+  └─ 第二层（Critical 高危）— 依赖第一层产出
+        └─ 第三层（Medium/High）
+              └─ 第四层（Low + self_heal/knowledge）
+                    └─ 第五层（API Key 管理 CRUD）
+                          └─ 第六层（ZeroClaw 配置文档）
+                                └─ 第七层（Workspace 导航 UI）
+
+第三层可拆分并行：
+  - A 组：alarm_list、alarm_statistics、alarm_rule_add（alarm 隔离）
+  - B 组：diagnose_device、compare_devices（device 增强隔离）
+  - C 组：list_schedules、create_schedule、delete_schedule（job 隔离）
+  - D 组：list_devices、get_device、get_device_status、update_device、delete_device、get_device_history（基础 device 隔离）
+
+第一层 + 第二层 之后，可以开 4 个并行 worktree 各自做 A/B/C/D 组。
+```
+
+---
 
 ## 测试计划
 
-### Phase 0 安全验证
+### 第一层 + 第二层验证
 
-用有 tenant_id 上下文但无 workspace 隔离的调用测试（模拟过渡阶段）：
+1. 用 API Key 调用 `batch_command(ws-B 的设备)` 应返回 404
+2. 用 ws-A 的 Key 调用 `read_properties(ws-B 设备)` 应返回 404
+3. 用 ws-A 的 Key 调用 `write_properties(ws-B 设备, value)` 应返回 404
+4. 用 ws-A 的 Key 调用 `create_device` 应绑定到 ws-A
 
-1. 调用 `read_properties(ws-B 的设备)` 应返回 404
-2. 调用 `write_properties(ws-B 设备, value)` 应返回 404
-3. 调用 `send_command(ws-B 设备)` 应返回 404
-4. 调用 `create_device` 应绑定到当前 workspace
-5. 调用 `export_device_report(ws-B 设备)` 应返回 404
+### 第三层验证
 
-### Phase 3+ API Key 验证
+1. 用 ws-A 的 Key 调用 `list_devices`，验证只返回 ws-A 的设备
+2. 用 ws-A 的 Key 调用 `get_device(ws-B 设备ID)` 应返回 404
+3. 用 ws-A 的 Key 调用 `alarm_list`，验证只返回 ws-A 的告警
+4. 用 ws-A 的 Key 调用 `list_schedules`，验证只返回 ws-A 的任务
+
+### 第四层验证
 
 1. 创建 API Key，验证 raw_key 一次性显示
-2. 用 Key 调用 `POST /mcp`，验证 tools/list 返回 45+ 工具
-3. 用 ws-A 的 key 调用 `list_devices`，验证只返回 ws-A 的设备
-4. 用 ws-A 的 key 调用 `get_device(ws-B 设备ID)` 应返回 404
-5. 验证过期：设置过期时间为过去，调用返回 401
-6. 验证禁用：`is_enabled = false` 返回 401
-7. ZeroClaw 配置后，Agent 问「列出所有设备」能正确调用 list_devices 并返回结果
+2. 验证过期：设置过期时间为过去，调用返回 401
+3. 验证禁用：`is_enabled = false` 返回 401
+
+### 端到端验证
+
+1. 用 Key 调用 `POST /mcp`，验证 tools/list 返回 45+ 工具
+2. ZeroClaw 配置后，Agent 问「列出所有设备」能正确调用 list_devices 并返回结果
+
+---
 
 ## 开发文档
 
@@ -351,3 +627,11 @@ find_by_prefix 查找
 | API Key 认证说明 | `docs/agent/api-key-auth.md` | X-API-Key 认证流程、workspace 上下文传递、工具隔离原理 |
 | ZeroClaw MCP 配置 | `docs/agent/zeroclaw-mcp-setup.md` | config.toml 配置示例、HTTP transport、header 认证、内网/Docker 环境 URL、常见问题 |
 | 工具列表参考 | `docs/agent/tools-reference.md` | 所有 MCP 工具的 name/description/inputSchema，便于 Agent 理解可用能力 |
+
+---
+
+## NOT in scope
+
+- SHA256 替换 DefaultHasher（安全增强，可后续迭代）
+- JWT 认证路径（已删除）
+- alarm/history 表加 workspace_id（alarm 表已覆盖，history 按 alarm_id 关联）
