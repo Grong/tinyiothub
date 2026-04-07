@@ -216,6 +216,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
   }
 
   private async loadDevicesFromCache() {
+    console.log('[DevicesView] loadDevicesFromCache() called');
     this.loading = true;
     this.error = "";
     try {

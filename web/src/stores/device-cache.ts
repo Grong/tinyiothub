@@ -34,6 +34,7 @@ class DeviceCache {
    * 获取设备列表。首次调用触发 fetch + SSE 自动连接，后续直接返回缓存。
    */
   async getDevices(): Promise<Device[]> {
+    console.log('[DeviceCache] getDevices() called, initialized:', this.initialized);
     if (this.initialized) {
       return this.$devicesList.get();
     }
@@ -43,6 +44,9 @@ class DeviceCache {
     this.ensureConnected();
     return this.$devicesList.get();
   }
+
+  private ensureConnected(): void {
+    console.log('[DeviceCache] ensureConnected() called');
 
   /**
    * 强制刷新设备列表。
