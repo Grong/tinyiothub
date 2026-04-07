@@ -64,6 +64,7 @@ pub async fn list_alarms(
     let offset = (page - 1) * page_size;
 
     let criteria = AlarmQueryCriteria {
+        workspace_id: None,
         device_ids: params.device_ids,
         property_ids: None,
         alarm_levels,

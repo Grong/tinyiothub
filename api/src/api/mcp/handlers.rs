@@ -8,32 +8,53 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use headers::{authorization::Bearer, Authorization, HeaderMapExt};
+use headers::HeaderMapExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::RwLock;
 
 use crate::{
     dto::response::builder::ApiResponseBuilder,
-    shared::{app_state::AppState, security::jwt::Claims},
+    shared::app_state::AppState,
 };
 
 use super::tool_registry::{HandlerRegistry, ToolError, ToolMetadata};
 
-/// Thread-local storage for MCP request context (tenant_id from JWT)
+/// MCP auth context: workspace isolation for API Key authentication.
+/// Unlike JWT-based auth (which had user_id/tenant_id), API Keys are bound
+/// to a workspace and have no user identity.
+#[derive(Debug, Clone)]
+pub struct McpAuthContext {
+    pub workspace_id: String,
+    /// The API key ID used for this request (for audit logging)
+    pub api_key_id: String,
+    /// The API key name (for audit logging)
+    pub api_key_name: String,
+}
+
+impl McpAuthContext {
+    /// Returns "api_key" as the actor identifier, since API Keys
+    /// have no user identity. Used for alarm acknowledgements and similar.
+    pub fn actor_identifier(&self) -> &'static str {
+        "api_key"
+    }
+}
+
+/// Thread-local storage for MCP request context (workspace_id from API Key)
 thread_local! {
-    static MCP_CONTEXT: std::cell::RefCell<Option<Claims>> = const { std::cell::RefCell::new(None) };
+    static MCP_CONTEXT: std::cell::RefCell<Option<McpAuthContext>> = const {
+        std::cell::RefCell::new(None)
+    };
 }
 
-/// Set MCP context (tenant_id) for the current async task
-fn set_mcp_context(claims: Claims) {
-    MCP_CONTEXT.with(|ctx| *ctx.borrow_mut() = Some(claims));
+/// Set MCP context for the current async task
+fn set_mcp_context(ctx: McpAuthContext) {
+    MCP_CONTEXT.with(|c| *c.borrow_mut() = Some(ctx));
 }
 
-/// Get MCP context (tenant_id) for the current async task
-pub fn get_mcp_context() -> Option<Claims> {
+/// Get MCP context for the current async task
+pub fn get_mcp_context() -> Option<McpAuthContext> {
     MCP_CONTEXT.with(|ctx| ctx.borrow().clone())
 }
 
@@ -41,8 +62,8 @@ pub fn get_mcp_context() -> Option<Claims> {
 struct McpContextGuard;
 
 impl McpContextGuard {
-    fn new(claims: Claims) -> Self {
-        set_mcp_context(claims);
+    fn new(ctx: McpAuthContext) -> Self {
+        set_mcp_context(ctx);
         McpContextGuard
     }
 }
@@ -99,16 +120,71 @@ pub fn create_router() -> Router<AppState> {
         .route("/tools/call", post(handle_tools_call))
 }
 
-/// Extract JWT claims from request headers (reuses context.rs logic)
-fn extract_jwt_claims(
+/// Extract and validate API Key from X-API-Key header.
+/// Returns McpAuthContext on success, ToolError on failure.
+async fn extract_api_key(
     headers: &axum::http::HeaderMap,
-) -> Result<crate::shared::security::jwt::Claims, ToolError> {
-    let auth_header = headers.typed_get::<Authorization<Bearer>>().ok_or_else(|| {
-        ToolError::Unauthorized("Missing Authorization header".to_string())
-    })?;
+    db: &crate::infrastructure::persistence::database::Database,
+) -> Result<McpAuthContext, ToolError> {
+    let raw_key = headers
+        .get("X-API-Key")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| ToolError::Unauthorized("Missing X-API-Key header".into()))?;
 
-    crate::shared::security::jwt::validate_jwt(auth_header.token())
-        .map_err(|e| ToolError::Unauthorized(e.to_string()))
+    // Extract prefix from raw key (format: sk_live_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx)
+    let prefix = if raw_key.len() > 8 {
+        &raw_key[..16] // sk_live_ + 8 chars = 16 chars
+    } else {
+        raw_key
+    };
+
+    // Look up by prefix
+    let api_key = crate::dto::entity::tenant::ApiKey::find_by_prefix(db, prefix)
+        .await
+        .map_err(|e| ToolError::Internal(format!("Database error: {}", e)))?
+        .ok_or_else(|| ToolError::Unauthorized("Invalid API key".into()))?;
+
+    // Verify key is enabled
+    if !api_key.is_enabled {
+        return Err(ToolError::Unauthorized("API key is disabled".into()));
+    }
+
+    // Verify key is not revoked
+    if api_key.is_revoked {
+        return Err(ToolError::Unauthorized("API key has been revoked".into()));
+    }
+
+    // Verify key has not expired
+    if let Some(expires_at) = &api_key.expires_at {
+        if let Ok(expires) = chrono::DateTime::parse_from_rfc3339(expires_at) {
+            if expires < chrono::Utc::now() {
+                return Err(ToolError::Unauthorized("API key has expired".into()));
+            }
+        }
+    }
+
+    Ok(McpAuthContext {
+        workspace_id: api_key.workspace_id.clone(),
+        api_key_id: api_key.id.clone(),
+        api_key_name: api_key.name.clone(),
+    })
+}
+
+/// Shared helper: extract API key and set MCP context with RAII guard.
+/// All three handlers use this, eliminating the previous code duplication.
+async fn with_mcp_context<F, R>(
+    headers: axum::http::HeaderMap,
+    db: &crate::infrastructure::persistence::database::Database,
+    f: F,
+) -> R
+where
+    F: FnOnce(McpAuthContext) -> R,
+{
+    let ctx = extract_api_key(&headers, db)
+        .await
+        .expect("Caller handles errors");
+    let _guard = McpContextGuard::new(ctx.clone());
+    f(ctx)
 }
 
 /// Handle all MCP requests
@@ -116,26 +192,31 @@ async fn handle_mcp_request(
     headers: axum::http::HeaderMap,
     Json(request): Json<JsonRpcRequest>,
 ) -> Response {
-    // Validate JWT and set tenant context with RAII guard
-    let claims = match extract_jwt_claims(&headers) {
+    let state = match super::get_app_state() {
+        Some(s) => s,
+        None => {
+            return ApiResponseBuilder::error_with_code::<serde_json::Value>(
+                500, "MCP registry not initialized",
+            )
+            .into_response();
+        }
+    };
+
+    let db = state.database();
+    let ctx = match extract_api_key(&headers, db).await {
         Ok(c) => c,
         Err(e) => {
             return ApiResponseBuilder::error_with_code::<serde_json::Value>(401, e.to_string())
                 .into_response();
         }
     };
-    // Extract needed fields before passing ownership to guard
-    let user_id = claims.user_id.clone();
-    let tenant_id = claims.tenant_id.clone();
-    let _guard = McpContextGuard::new(claims);
+    let _guard = McpContextGuard::new(ctx.clone());
 
-    // Get registry from global state
     let registry = match super::get_mcp_registry() {
         Some(reg) => reg,
         None => {
             return ApiResponseBuilder::error_with_code::<serde_json::Value>(
-                500,
-                "MCP registry not initialized",
+                500, "MCP registry not initialized",
             )
             .into_response();
         }
@@ -173,21 +254,20 @@ async fn handle_mcp_request(
             (StatusCode::OK, Json(response)).into_response()
         }
         JsonRpcMethod::ToolsCall(params) => {
-            let tool = registry.get(&params.name);
-            // Clone args for logging before passing ownership to handler
             let args_for_log = params.arguments.clone();
             let sanitized_args = serde_json::to_string(&args_for_log)
                 .unwrap_or_else(|_| "<invalid JSON>".to_string());
             let start = Instant::now();
 
-            match tool {
+            match registry.get(&params.name) {
                 Some(handler) => match handler.execute(params.arguments).await {
                     Ok(result) => {
                         let latency_ms = start.elapsed().as_millis() as u64;
                         tracing::info!(
                             tool = %params.name,
-                            user_id = %user_id,
-                            tenant_id = %tenant_id,
+                            workspace_id = %ctx.workspace_id,
+                            api_key_id = %ctx.api_key_id,
+                            api_key_name = %ctx.api_key_name,
                             args = %sanitized_args,
                             latency_ms = %latency_ms,
                             success = true,
@@ -204,8 +284,9 @@ async fn handle_mcp_request(
                         let latency_ms = start.elapsed().as_millis() as u64;
                         tracing::error!(
                             tool = %params.name,
-                            user_id = %user_id,
-                            tenant_id = %tenant_id,
+                            workspace_id = %ctx.workspace_id,
+                            api_key_id = %ctx.api_key_id,
+                            api_key_id = %ctx.api_key_id,
                             args = %sanitized_args,
                             latency_ms = %latency_ms,
                             success = false,
@@ -229,8 +310,8 @@ async fn handle_mcp_request(
                     let latency_ms = start.elapsed().as_millis() as u64;
                     tracing::warn!(
                         tool = %params.name,
-                        user_id = %user_id,
-                        tenant_id = %tenant_id,
+                        workspace_id = %ctx.workspace_id,
+                        api_key_id = %ctx.api_key_id,
                         args = %sanitized_args,
                         latency_ms = %latency_ms,
                         success = false,
@@ -250,26 +331,31 @@ async fn handle_mcp_request(
 
 /// Handle tools/list endpoint
 async fn handle_tools_list(headers: axum::http::HeaderMap) -> Response {
-    // Validate JWT and set tenant context with RAII guard
-    let claims = match extract_jwt_claims(&headers) {
+    let state = match super::get_app_state() {
+        Some(s) => s,
+        None => {
+            return ApiResponseBuilder::error_with_code::<serde_json::Value>(
+                500, "MCP registry not initialized",
+            )
+            .into_response();
+        }
+    };
+
+    let db = state.database();
+    let ctx = match extract_api_key(&headers, db).await {
         Ok(c) => c,
         Err(e) => {
             return ApiResponseBuilder::error_with_code::<serde_json::Value>(401, e.to_string())
                 .into_response();
         }
     };
-    // Extract needed fields before passing ownership to guard
-    let _user_id = claims.user_id.clone();
-    let _tenant_id = claims.tenant_id.clone();
-    let _guard = McpContextGuard::new(claims);
+    let _guard = McpContextGuard::new(ctx);
 
-    // Get registry from global state
     let registry = match super::get_mcp_registry() {
         Some(reg) => reg,
         None => {
             return ApiResponseBuilder::error_with_code::<serde_json::Value>(
-                500,
-                "MCP registry not initialized",
+                500, "MCP registry not initialized",
             )
             .into_response();
         }
@@ -285,26 +371,31 @@ async fn handle_tools_call(
     headers: axum::http::HeaderMap,
     Json(params): Json<ToolCallParams>,
 ) -> Response {
-    // Validate JWT and set tenant context with RAII guard
-    let claims = match extract_jwt_claims(&headers) {
+    let state = match super::get_app_state() {
+        Some(s) => s,
+        None => {
+            return ApiResponseBuilder::error_with_code::<serde_json::Value>(
+                500, "MCP registry not initialized",
+            )
+            .into_response();
+        }
+    };
+
+    let db = state.database();
+    let ctx = match extract_api_key(&headers, db).await {
         Ok(c) => c,
         Err(e) => {
             return ApiResponseBuilder::error_with_code::<serde_json::Value>(401, e.to_string())
                 .into_response();
         }
     };
-    // Extract needed fields before passing ownership to guard
-    let user_id = claims.user_id.clone();
-    let tenant_id = claims.tenant_id.clone();
-    let _guard = McpContextGuard::new(claims);
+    let _guard = McpContextGuard::new(ctx.clone());
 
-    // Get registry from global state
     let registry = match super::get_mcp_registry() {
         Some(reg) => reg,
         None => {
             return ApiResponseBuilder::error_with_code::<serde_json::Value>(
-                500,
-                "MCP registry not initialized",
+                500, "MCP registry not initialized",
             )
             .into_response();
         }
@@ -312,21 +403,19 @@ async fn handle_tools_call(
 
     let registry = registry.read().await;
 
-    let tool = registry.get(&params.name);
-    // Clone args for logging before passing ownership to handler
     let args_for_log = params.arguments.clone();
     let sanitized_args = serde_json::to_string(&args_for_log)
         .unwrap_or_else(|_| "<invalid JSON>".to_string());
     let start = Instant::now();
 
-    match tool {
+    match registry.get(&params.name) {
         Some(handler) => match handler.execute(params.arguments).await {
             Ok(result) => {
                 let latency_ms = start.elapsed().as_millis() as u64;
                 tracing::info!(
                     tool = %params.name,
-                    user_id = %user_id,
-                    tenant_id = %tenant_id,
+                    workspace_id = %ctx.workspace_id,
+                    api_key_id = %ctx.api_key_id,
                     args = %sanitized_args,
                     latency_ms = %latency_ms,
                     success = true,
@@ -338,8 +427,8 @@ async fn handle_tools_call(
                 let latency_ms = start.elapsed().as_millis() as u64;
                 tracing::error!(
                     tool = %params.name,
-                    user_id = %user_id,
-                    tenant_id = %tenant_id,
+                    workspace_id = %ctx.workspace_id,
+                    api_key_id = %ctx.api_key_id,
                     args = %sanitized_args,
                     latency_ms = %latency_ms,
                     success = false,
@@ -363,8 +452,8 @@ async fn handle_tools_call(
             let latency_ms = start.elapsed().as_millis() as u64;
             tracing::warn!(
                 tool = %params.name,
-                user_id = %user_id,
-                tenant_id = %tenant_id,
+                workspace_id = %ctx.workspace_id,
+                api_key_id = %ctx.api_key_id,
                 args = %sanitized_args,
                 latency_ms = %latency_ms,
                 success = false,
@@ -399,7 +488,10 @@ mod tests {
         }
 
         fn input_schema(&self) -> crate::api::mcp::tool_registry::InputSchema {
-            crate::api::mcp::tool_registry::InputSchema::object(vec![], std::collections::HashMap::new())
+            crate::api::mcp::tool_registry::InputSchema::object(
+                vec![],
+                std::collections::HashMap::new(),
+            )
         }
 
         async fn execute(&self, args: Value) -> Result<Value, ToolError> {
@@ -419,5 +511,15 @@ mod tests {
         let json = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"test_tool","arguments":{"foo":"bar"}}}"#;
         let request: JsonRpcRequest = serde_json::from_str(json).unwrap();
         assert!(matches!(request.method, JsonRpcMethod::ToolsCall(_)));
+    }
+
+    #[test]
+    fn test_mcp_auth_context_actor_identifier() {
+        let ctx = McpAuthContext {
+            workspace_id: "ws-001".to_string(),
+            api_key_id: "key-001".to_string(),
+            api_key_name: "TestKey".to_string(),
+        };
+        assert_eq!(ctx.actor_identifier(), "api_key");
     }
 }

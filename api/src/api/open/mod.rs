@@ -37,10 +37,10 @@ pub fn create_open_router() -> Router<AppState> {
 async fn validate_api_key(
     state: &AppState,
     api_key: Option<String>,
-) -> Result<(ApiKey, Tenant), StatusCode> {
-    let key = api_key.ok_or(StatusCode::UNAUTHORIZED)?;
+) -> Result<(ApiKey, Tenant, String), StatusCode> {
+    let raw_key = api_key.ok_or(StatusCode::UNAUTHORIZED)?;
 
-    let key = ApiKey::find_by_prefix(&state.database, &key)
+    let key = ApiKey::find_by_prefix(&state.database, &raw_key)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::UNAUTHORIZED)?;
@@ -61,7 +61,13 @@ async fn validate_api_key(
         }
     }
 
-    let tenant = Tenant::find_by_id(&state.database, &key.tenant_id)
+    // Resolve tenant_id from workspace for quota check
+    let workspace = crate::dto::entity::workspace::Workspace::find_by_id(&state.database, &key.workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let tenant = Tenant::find_by_id(&state.database, &workspace.tenant_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -70,7 +76,7 @@ async fn validate_api_key(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    let can_proceed = Tenant::check_quota(&state.database, &key.tenant_id, "api_call")
+    let can_proceed = Tenant::check_quota(&state.database, &workspace.tenant_id, "api_call")
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -78,13 +84,14 @@ async fn validate_api_key(
         return Err(StatusCode::TOO_MANY_REQUESTS);
     }
 
-    Ok((key, tenant))
+    let workspace_id = key.workspace_id.clone();
+    Ok((key, tenant, workspace_id))
 }
 
 /// Record API usage
 async fn record_api_usage(
     state: &AppState,
-    tenant_id: &str,
+    workspace_id: &str,
     api_key_id: Option<&str>,
     method: &str,
     path: &str,
@@ -93,7 +100,7 @@ async fn record_api_usage(
 ) {
     let _ = ApiKey::record_usage(
         &state.database,
-        tenant_id,
+        workspace_id,
         api_key_id,
         method,
         path,
@@ -118,7 +125,7 @@ async fn open_health(State(state): State<AppState>) -> Result<Json<serde_json::V
 async fn list_devices(State(state): State<AppState>) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
-    let (key, tenant) = validate_api_key(&state, None).await?;
+    let (key, tenant, workspace_id) = validate_api_key(&state, None).await?;
 
     let sql = format!(
         "SELECT id, name, display_name, device_type, state, created_at FROM devices ORDER BY created_at DESC LIMIT 100"
@@ -144,7 +151,7 @@ async fn list_devices(State(state): State<AppState>) -> Result<Response<Body>, S
     let latency_ms = start.elapsed().as_millis() as i32;
     record_api_usage(
         &state,
-        &tenant.id,
+        &workspace_id,
         Some(&key.id),
         "GET",
         "/open/devices",
@@ -167,7 +174,7 @@ async fn get_device(
 ) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
-    let (key, tenant) = validate_api_key(&state, None).await?;
+    let (key, tenant, workspace_id) = validate_api_key(&state, None).await?;
 
     let row = sqlx::query(
         "SELECT id, name, display_name, device_type, address, state, protocol_type, created_at, updated_at FROM devices WHERE id = ? LIMIT 1"
@@ -205,7 +212,7 @@ async fn get_device(
     let latency_ms = start.elapsed().as_millis() as i32;
     record_api_usage(
         &state,
-        &tenant.id,
+        &workspace_id,
         Some(&key.id),
         "GET",
         &format!("/open/devices/{}", id),
@@ -228,7 +235,7 @@ async fn get_device_properties(
 ) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
-    let (key, tenant) = validate_api_key(&state, None).await?;
+    let (key, tenant, workspace_id) = validate_api_key(&state, None).await?;
 
     let rows = sqlx::query(
         "SELECT name, display_name, data_type, value, unit, updated_at FROM device_properties WHERE device_id = ? ORDER BY created_at DESC"
@@ -264,7 +271,7 @@ async fn get_device_properties(
     let latency_ms = start.elapsed().as_millis() as i32;
     record_api_usage(
         &state,
-        &tenant.id,
+        &workspace_id,
         Some(&key.id),
         "GET",
         &format!("/open/devices/{}/properties", id),
@@ -287,7 +294,7 @@ async fn list_commands(
 ) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
-    let (key, tenant) = validate_api_key(&state, None).await?;
+    let (key, tenant, workspace_id) = validate_api_key(&state, None).await?;
 
     let rows = sqlx::query(
         "SELECT id, name, display_name, description, command_type FROM device_commands WHERE device_id = ? ORDER BY created_at DESC"
@@ -322,7 +329,7 @@ async fn list_commands(
     let latency_ms = start.elapsed().as_millis() as i32;
     record_api_usage(
         &state,
-        &tenant.id,
+        &workspace_id,
         Some(&key.id),
         "GET",
         &format!("/open/devices/{}/commands", id),
@@ -346,7 +353,7 @@ async fn send_command(
 ) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
-    let (key, tenant) = validate_api_key(&state, None).await?;
+    let (key, tenant, workspace_id) = validate_api_key(&state, None).await?;
 
     let command_name =
         payload.get("command").and_then(|v| v.as_str()).ok_or(StatusCode::BAD_REQUEST)?;
@@ -379,7 +386,7 @@ async fn send_command(
     let latency_ms = start.elapsed().as_millis() as i32;
     record_api_usage(
         &state,
-        &tenant.id,
+        &workspace_id,
         Some(&key.id),
         "POST",
         &format!("/open/devices/{}/command", id),
@@ -402,7 +409,7 @@ async fn list_events(
 ) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
-    let (key, tenant) = validate_api_key(&state, None).await?;
+    let (key, tenant, workspace_id) = validate_api_key(&state, None).await?;
 
     let rows = sqlx::query(
         "SELECT id, event_type, event_level, message, created_at FROM events WHERE device_id = ? ORDER BY created_at DESC LIMIT 100"
@@ -432,7 +439,7 @@ async fn list_events(
     let latency_ms = start.elapsed().as_millis() as i32;
     record_api_usage(
         &state,
-        &tenant.id,
+        &workspace_id,
         Some(&key.id),
         "GET",
         &format!("/open/devices/{}/events", id),
@@ -452,7 +459,7 @@ async fn list_events(
 async fn list_all_events(State(state): State<AppState>) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
-    let (key, tenant) = validate_api_key(&state, None).await?;
+    let (key, tenant, workspace_id) = validate_api_key(&state, None).await?;
 
     let sql = "SELECT id, event_type, event_level, message, device_id, created_at FROM events ORDER BY created_at DESC LIMIT 100".to_string();
 
@@ -476,7 +483,7 @@ async fn list_all_events(State(state): State<AppState>) -> Result<Response<Body>
     let latency_ms = start.elapsed().as_millis() as i32;
     record_api_usage(
         &state,
-        &tenant.id,
+        &workspace_id,
         Some(&key.id),
         "GET",
         "/open/events",

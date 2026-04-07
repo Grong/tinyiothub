@@ -17,6 +17,11 @@ impl HealingExecutionRepository {
         Self { db }
     }
 
+    /// Get the database reference
+    pub fn database(&self) -> &Arc<Database> {
+        &self.db
+    }
+
     /// Save a healing execution to the database
     pub async fn save(&self, execution: &HealingExecution) -> std::result::Result<(), sqlx::Error> {
         let sql = r#"

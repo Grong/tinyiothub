@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
+use crate::dto::entity::workspace::Workspace;
 use crate::infrastructure::persistence::database::Database;
 
 /// 订阅计划
@@ -394,7 +395,7 @@ impl Tenant {
 #[serde(rename_all = "snake_case")]
 pub struct ApiKey {
     pub id: String,
-    pub tenant_id: String,
+    pub workspace_id: String,
     pub name: String,
     pub key_hash: String,
     pub prefix: String,
@@ -414,6 +415,7 @@ pub struct ApiKey {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct CreateApiKeyRequest {
+    pub workspace_id: String,
     pub name: String,
     pub permissions: Option<Vec<String>>,
     pub rate_limit: Option<i32>,
@@ -433,10 +435,10 @@ pub struct ApiUsageStats {
 }
 
 impl ApiKey {
-    /// 创建 API Key
+    /// 创建 API Key（绑定到 workspace）
     pub async fn create(
         db: &Database,
-        tenant_id: &str,
+        workspace_id: &str,
         req: &CreateApiKeyRequest,
     ) -> Result<(ApiKey, String), sqlx::Error> {
         let id = uuid::Uuid::new_v4().to_string();
@@ -472,12 +474,12 @@ impl ApiKey {
         // 使用参数化查询防止 SQL 注入
         sqlx::query(
             r#"
-            INSERT INTO api_keys (id, tenant_id, name, key_hash, prefix, permissions, rate_limit, is_enabled, is_revoked, expires_at, created_at, updated_at)
+            INSERT INTO api_keys (id, workspace_id, name, key_hash, prefix, permissions, rate_limit, is_enabled, is_revoked, expires_at, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?)
             "#,
         )
         .bind(&id)
-        .bind(tenant_id)
+        .bind(workspace_id)
         .bind(&req.name)
         .bind(&key_hash)
         .bind(&prefix)
@@ -504,7 +506,7 @@ impl ApiKey {
         if let Some(row) = row {
             Ok(Some(ApiKey {
                 id: row.try_get("id")?,
-                tenant_id: row.try_get("tenant_id")?,
+                workspace_id: row.try_get("workspace_id")?,
                 name: row.try_get("name")?,
                 key_hash: row.try_get("key_hash")?,
                 prefix: row.try_get("prefix")?,
@@ -537,7 +539,7 @@ impl ApiKey {
         if let Some(row) = row {
             Ok(Some(ApiKey {
                 id: row.try_get("id")?,
-                tenant_id: row.try_get("tenant_id")?,
+                workspace_id: row.try_get("workspace_id")?,
                 name: row.try_get("name")?,
                 key_hash: row.try_get("key_hash")?,
                 prefix: row.try_get("prefix")?,
@@ -557,16 +559,15 @@ impl ApiKey {
         }
     }
 
-    /// 获取租户的所有 Key
-    pub async fn find_by_tenant(
+    /// 获取 workspace 的所有 Key
+    pub async fn find_by_workspace(
         db: &Database,
-        tenant_id: &str,
+        workspace_id: &str,
     ) -> Result<Vec<ApiKey>, sqlx::Error> {
-        // 使用参数化查询防止 SQL 注入
-        let sql = "SELECT * FROM api_keys WHERE tenant_id = ? AND is_revoked = 0 ORDER BY created_at DESC";
+        let sql = "SELECT * FROM api_keys WHERE workspace_id = ? AND is_revoked = 0 ORDER BY created_at DESC";
 
         let mut rows = sqlx::query(sql)
-            .bind(tenant_id)
+            .bind(workspace_id)
             .fetch_all(db.pool())
             .await?;
 
@@ -574,7 +575,7 @@ impl ApiKey {
             .drain(..)
             .map(|row| ApiKey {
                 id: row.try_get("id").unwrap_or_default(),
-                tenant_id: row.try_get("tenant_id").unwrap_or_default(),
+                workspace_id: row.try_get("workspace_id").unwrap_or_default(),
                 name: row.try_get("name").unwrap_or_default(),
                 key_hash: row.try_get("key_hash").unwrap_or_default(),
                 prefix: row.try_get("prefix").unwrap_or_default(),
@@ -631,10 +632,10 @@ impl ApiKey {
         Ok(())
     }
 
-    /// 记录 API 使用
+    /// 记录 API 使用（基于 workspace_id）
     pub async fn record_usage(
         db: &Database,
-        tenant_id: &str,
+        workspace_id: &str,
         api_key_id: Option<&str>,
         method: &str,
         path: &str,
@@ -642,10 +643,17 @@ impl ApiKey {
         latency_ms: i32,
         ip_address: Option<&str>,
     ) -> Result<(), sqlx::Error> {
+        // Look up tenant_id from workspace (for analytics tables that still use tenant_id)
+        let tenant_id = Workspace::find_by_id(db, workspace_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|w| w.tenant_id)
+            .unwrap_or_default();
+
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-        // 使用参数化查询防止 SQL 注入
         sqlx::query(
             r#"
             INSERT INTO api_usage (id, tenant_id, api_key_id, method, path, status_code, latency_ms, ip_address, created_at)
@@ -653,7 +661,7 @@ impl ApiKey {
         "#,
         )
         .bind(&id)
-        .bind(tenant_id)
+        .bind(&tenant_id)
         .bind(api_key_id.unwrap_or(""))
         .bind(method)
         .bind(path)
@@ -682,7 +690,7 @@ impl ApiKey {
             .await?;
         }
 
-        // 更新租户使用统计
+        // 更新租户使用统计（使用从 workspace 解析的 tenant_id）
         let error_count = if status_code >= 400 { 1 } else { 0 };
         sqlx::query(
             r#"
@@ -696,13 +704,13 @@ impl ApiKey {
         "#,
         )
         .bind(uuid::Uuid::new_v4().to_string())
-        .bind(tenant_id)
+        .bind(&tenant_id)
         .bind(error_count)
         .bind(&now)
         .bind(error_count)
         .bind(&now)
         .execute(db.pool())
-        .await?;
+        .await;
 
         Ok(())
     }
@@ -830,7 +838,7 @@ mod tests {
     fn test_api_key_fields() {
         let key = ApiKey {
             id: "key-001".to_string(),
-            tenant_id: "tenant-001".to_string(),
+            workspace_id: "ws-001".to_string(),
             name: "Production API".to_string(),
             key_hash: "abc123".to_string(),
             prefix: "sk_live_abc".to_string(),
@@ -853,6 +861,7 @@ mod tests {
     #[test]
     fn test_create_api_key_request() {
         let req = CreateApiKeyRequest {
+            workspace_id: "ws-001".to_string(),
             name: "Test Key".to_string(),
             permissions: Some(vec!["read".to_string()]),
             rate_limit: Some(100),

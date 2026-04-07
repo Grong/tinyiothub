@@ -80,6 +80,7 @@ pub trait AlarmRuleRepository: Send + Sync {
 /// 报警查询条件
 #[derive(Debug, Clone, Default)]
 pub struct AlarmQueryCriteria {
+    pub workspace_id: Option<String>,
     pub device_ids: Option<Vec<String>>,
     pub property_ids: Option<Vec<String>>,
     pub alarm_levels: Option<Vec<AlarmLevel>>,

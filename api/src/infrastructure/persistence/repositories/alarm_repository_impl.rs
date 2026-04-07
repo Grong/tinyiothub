@@ -105,6 +105,13 @@ impl AlarmRepository for AlarmRepositoryImpl {
         let mut query = String::from("SELECT * FROM device_alarms WHERE 1=1");
         let mut bindings: Vec<String> = Vec::new();
 
+        // Filter by workspace_id if provided (Option B: workspace isolation)
+        if let Some(ref workspace_id) = criteria.workspace_id {
+            // Use subquery to filter by device's workspace for better isolation
+            query.push_str(" AND device_id IN (SELECT id FROM devices WHERE workspace_id = ?)");
+            bindings.push(workspace_id.clone());
+        }
+
         if let Some(device_ids) = &criteria.device_ids {
             if !device_ids.is_empty() {
                 let placeholders = vec!["?"; device_ids.len()].join(",");
@@ -234,6 +241,11 @@ impl AlarmRepository for AlarmRepositoryImpl {
     async fn count_by_criteria(&self, criteria: &AlarmQueryCriteria) -> AlarmResult<u64> {
         let mut query = String::from("SELECT COUNT(*) as count FROM device_alarms WHERE 1=1");
         let mut bindings: Vec<String> = Vec::new();
+
+        if let Some(ref workspace_id) = criteria.workspace_id {
+            query.push_str(" AND device_id IN (SELECT id FROM devices WHERE workspace_id = ?)");
+            bindings.push(workspace_id.clone());
+        }
 
         if let Some(device_ids) = &criteria.device_ids {
             if !device_ids.is_empty() {

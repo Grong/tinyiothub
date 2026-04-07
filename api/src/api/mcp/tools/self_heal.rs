@@ -196,15 +196,22 @@ impl ToolHandler for GetRecoveryHistoryHandler {
 
         let state_guard = state.read().await;
         let repository = state_guard.repository.clone();
+        let db = repository.database().clone();
         drop(state_guard);
 
-        // Default tenant for MCP context (single-tenant or system context)
-        let tenant_id = crate::api::mcp::handlers::get_mcp_context()
-            .map(|c| c.tenant_id)
-            .unwrap_or_else(|| {
-                tracing::debug!("MCP context not set, using 'default' tenant for recovery history");
-                "default".to_string()
-            });
+        // Resolve tenant_id from workspace for healing history (healing_executions uses tenant_id)
+        let tenant_id = if let Some(ctx) = crate::api::mcp::handlers::get_mcp_context() {
+            let tenant = crate::dto::entity::workspace::Workspace::find_by_id(&db, &ctx.workspace_id)
+                .await
+                .ok()
+                .flatten()
+                .map(|w| w.tenant_id)
+                .unwrap_or_else(|| "default".to_string());
+            tenant
+        } else {
+            tracing::debug!("MCP context not set, using 'default' tenant for recovery history");
+            "default".to_string()
+        };
 
         let executions = repository.get_recent(&tenant_id, limit, offset)
             .await

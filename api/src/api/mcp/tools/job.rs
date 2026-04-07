@@ -104,6 +104,7 @@ impl ToolHandler for ListSchedulesHandler {
         let db = state.database();
 
         let params = JobQueryParams {
+            workspace_id: Some(claims.workspace_id.clone()),
             name: None,
             job_type: input.job_type,
             is_enabled: input.is_enabled,
@@ -296,7 +297,15 @@ impl ToolHandler for DeleteScheduleHandler {
             .map_err(|e| ToolError::Internal(format!("failed to get schedule: {}", e)))?
             .ok_or_else(|| ToolError::NotFound("schedule not found".to_string()))?;
 
-        // TODO: Verify tenant ownership via claims.tenant_id when jobs have tenant_id
+        // Verify workspace ownership via claims.workspace_id
+        let existing_ws = crate::dto::entity::workspace::Workspace::find_by_id(db, &existing.target_device_id.as_ref().unwrap_or(&String::new()))
+            .await
+            .ok()
+            .flatten();
+        if existing_ws.as_ref().map(|w| &w.id) != Some(&claims.workspace_id) {
+            tracing::warn!("MCP delete_schedule: access denied to schedule {} for workspace {}", input.id, claims.workspace_id);
+            return Err(ToolError::NotFound("schedule not found".to_string()));
+        }
 
         crate::dto::entity::job::Job::delete(db, &input.id)
             .await

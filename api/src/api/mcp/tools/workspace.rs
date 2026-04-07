@@ -98,9 +98,17 @@ impl ToolHandler for ListWorkspacesHandler {
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
         let db = state.database();
 
+        // Resolve tenant_id from workspace for listing workspaces
+        let tenant_id = crate::dto::entity::workspace::Workspace::find_by_id(&db, &claims.workspace_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|w| w.tenant_id)
+            .unwrap_or_default();
+
         let workspaces = Workspace::find_by_tenant(
             &db,
-            &claims.tenant_id,
+            &tenant_id,
             input.page,
             input.page_size,
         )
@@ -153,8 +161,14 @@ impl ToolHandler for GetWorkspaceHandler {
             .map_err(|e| ToolError::Internal(format!("failed to get workspace: {}", e)))?
             .ok_or_else(|| ToolError::NotFound("workspace not found".to_string()))?;
 
-        // Verify tenant ownership
-        if workspace.tenant_id != claims.tenant_id {
+        // Verify tenant ownership (resolve tenant_id from claims workspace)
+        let ctx_tenant_id = Workspace::find_by_id(&db, &claims.workspace_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|w| w.tenant_id)
+            .unwrap_or_default();
+        if workspace.tenant_id != ctx_tenant_id {
             return Err(ToolError::Unauthorized(
                 "workspace does not belong to this tenant".to_string(),
             ));
@@ -208,10 +222,18 @@ impl ToolHandler for CreateWorkspaceHandler {
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
         let db = state.database();
 
+        // Resolve tenant_id from current workspace (new workspace inherits tenant)
+        let tenant_id = Workspace::find_by_id(&db, &claims.workspace_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|w| w.tenant_id)
+            .unwrap_or_default();
+
         // Create workspace in DB
         let workspace = Workspace::create(
             &db,
-            &claims.tenant_id,
+            &tenant_id,
             &input.name,
             input.description.as_deref(),
             None,
@@ -346,7 +368,14 @@ impl ToolHandler for UpdateWorkspaceHandler {
             .map_err(|e| ToolError::Internal(format!("failed to get workspace: {}", e)))?
             .ok_or_else(|| ToolError::NotFound("workspace not found".to_string()))?;
 
-        if existing.tenant_id != claims.tenant_id {
+        // Verify tenant ownership via workspace_id from claims
+        let ctx_tenant_id = Workspace::find_by_id(&db, &claims.workspace_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|w| w.tenant_id)
+            .unwrap_or_default();
+        if existing.tenant_id != ctx_tenant_id {
             return Err(ToolError::Unauthorized(
                 "workspace does not belong to this tenant".to_string(),
             ));
@@ -411,7 +440,14 @@ impl ToolHandler for DeleteWorkspaceHandler {
             .map_err(|e| ToolError::Internal(format!("failed to get workspace: {}", e)))?
             .ok_or_else(|| ToolError::NotFound("workspace not found".to_string()))?;
 
-        if workspace.tenant_id != claims.tenant_id {
+        // Verify tenant ownership via workspace_id from claims
+        let ctx_tenant_id = Workspace::find_by_id(&db, &claims.workspace_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|w| w.tenant_id)
+            .unwrap_or_default();
+        if workspace.tenant_id != ctx_tenant_id {
             return Err(ToolError::Unauthorized(
                 "workspace does not belong to this tenant".to_string(),
             ));

@@ -32,8 +32,8 @@ pub fn create_router() -> Router<AppState> {
         .route("/tenants/{id}/change-plan", post(change_plan))
         .route("/tenants/{id}/usage", get(get_tenant_usage))
         // API Keys
-        .route("/tenants/{tenant_id}/api-keys", get(list_api_keys))
-        .route("/tenants/{tenant_id}/api-keys", post(create_api_key))
+        .route("/tenants/{workspace_id}/api-keys", get(list_api_keys))
+        .route("/tenants/{workspace_id}/api-keys", post(create_api_key))
         // 撤销 API Key 是不可逆动作，保持 RPC 风格
         .route("/api-keys/{id}/revoke", post(revoke_api_key))
         // Usage
@@ -137,11 +137,11 @@ async fn get_tenant_usage(
 /// List API keys
 async fn list_api_keys(
     State(state): State<AppState>,
-    Path(tenant_id): Path<String>,
+    Path(workspace_id): Path<String>,
 ) -> Json<ApiResponse<Vec<ApiKey>>> {
     let db = state.database.clone();
 
-    match ApiKey::find_by_tenant(&db, &tenant_id).await {
+    match ApiKey::find_by_workspace(&db, &workspace_id).await {
         Ok(keys) => ApiResponseBuilder::success(keys),
         Err(e) => {
             tracing::error!("Failed to list api keys: {}", e);
@@ -153,12 +153,12 @@ async fn list_api_keys(
 /// Create API key
 async fn create_api_key(
     State(state): State<AppState>,
-    Path(tenant_id): Path<String>,
+    Path(workspace_id): Path<String>,
     Json(payload): Json<CreateApiKeyRequest>,
 ) -> Json<ApiResponse<serde_json::Value>> {
     let db = state.database.clone();
 
-    match ApiKey::create(&db, &tenant_id, &payload).await {
+    match ApiKey::create(&db, &workspace_id, &payload).await {
         Ok((key, raw_key)) => {
             ApiResponseBuilder::success(serde_json::json!({
                 "api_key": key,

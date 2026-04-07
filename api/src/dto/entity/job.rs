@@ -40,6 +40,7 @@ pub struct Job {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct JobQueryParams {
+    pub workspace_id: Option<String>,
     pub name: Option<String>,
     pub job_type: Option<String>,
     pub is_enabled: Option<bool>,
@@ -181,6 +182,12 @@ impl Job {
     pub async fn find_all(db: &Database, params: &JobQueryParams) -> Result<Vec<Job>, sqlx::Error> {
         // 使用 QueryBuilder 防止 SQL 注入
         let mut query_builder: sqlx::query_builder::QueryBuilder<'_, Sqlite> = sqlx::query_builder::QueryBuilder::new("SELECT * FROM jobs WHERE 1=1");
+
+        // Filter by workspace_id for MCP tool isolation
+        if let Some(ref workspace_id) = params.workspace_id {
+            query_builder.push(" AND workspace_id = ");
+            query_builder.push_bind(workspace_id);
+        }
 
         if let Some(ref name) = params.name {
             // 转义 LIKE 特殊字符防止注入

@@ -141,7 +141,7 @@ impl ToolHandler for AlarmListHandler {
         let input: ListAlarmsInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
-        let _claims = get_mcp_context().ok_or_else(|| {
+        let claims = get_mcp_context().ok_or_else(|| {
             ToolError::Unauthorized("MCP context not initialized".to_string())
         })?;
 
@@ -188,6 +188,7 @@ impl ToolHandler for AlarmListHandler {
         });
 
         let criteria = AlarmQueryCriteria {
+            workspace_id: Some(claims.workspace_id.clone()),
             device_ids: input.device_ids,
             property_ids: None,
             alarm_levels,
@@ -338,14 +339,14 @@ impl ToolHandler for AlarmAcknowledgeHandler {
 
         state
             .alarm_service
-            .acknowledge_alarm(&input.id, claims.user_id.clone(), input.note.map(|s| s.to_string()))
+            .acknowledge_alarm(&input.id, claims.actor_identifier().to_string(), input.note.map(|s| s.to_string()))
             .await
             .map_err(|e| ToolError::Internal(format!("Failed to acknowledge alarm: {}", e)))?;
 
         Ok(serde_json::json!({
             "success": true,
             "alarm_id": input.id,
-            "acknowledged_by": claims.user_id
+            "acknowledged_by": claims.actor_identifier()
         }).into())
     }
 }
