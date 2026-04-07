@@ -1127,15 +1127,26 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   renderDeviceCard(d: Device) {
     const deviceTags = d.tags || [];
+    const visibleTags = deviceTags.slice(0, 3);
+    const hiddenTagCount = deviceTags.length - 3;
     const isEditingTags = this.editingTagsDeviceId === d.id;
+
+    // Middle content for tooltip
+    const infoLines = [
+      d.deviceType || null,
+      d.protocolType || d.driverName || null,
+      d.address || null,
+    ].filter(Boolean);
+    const infoTooltip = infoLines.join('\n');
+
     return html`
       <div style="position: relative;">
-        <div class="card" style="overflow: hidden;">
+        <div class="card" style="overflow: hidden; display: flex; flex-direction: column; height: 180px;">
           <!-- Header -->
-          <div style="padding: 14px 16px 0; display: flex; align-items: center; justify-content: space-between;">
+          <div style="padding: 14px 16px 0; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;">
             <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
               <span style="width: 8px; height: 8px; border-radius: 50%; background: ${this.statusColor(d.status)}; flex-shrink: 0;"></span>
-              <span style="font-weight: 600; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${d.displayName || d.name}</span>
+              <span style="font-weight: 600; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${d.displayName || d.name}">${d.displayName || d.name}</span>
             </div>
             <div style="display: flex; gap: 2px; flex-shrink: 0;">
               <button
@@ -1153,26 +1164,32 @@ export class DevicesView extends SignalWatcher(LitElement) {
             </div>
           </div>
 
-          <!-- Info -->
+          <!-- Info (fixed height, truncated with tooltip) -->
           <div
-            style="padding: 10px 16px; cursor: pointer;"
+            style="padding: 10px 16px; cursor: pointer; overflow: hidden; flex: 1; min-height: 0;"
+            title="${infoTooltip}"
             @click=${() => this.navigateToDevice(d.id)}
           >
             <div style="display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted);">
-              ${d.deviceType ? html`<div>${d.deviceType}</div>` : nothing}
-              ${d.protocolType || d.driverName ? html`<div>${d.protocolType || d.driverName}</div>` : nothing}
-              ${d.address ? html`<div>${d.address}</div>` : nothing}
+              ${d.deviceType ? html`<div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${d.deviceType}</div>` : nothing}
+              ${d.protocolType || d.driverName ? html`<div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${d.protocolType || d.driverName}</div>` : nothing}
+              ${d.address ? html`<div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${d.address}</div>` : nothing}
             </div>
           </div>
 
-          <!-- Tags -->
-          <div style="padding: 0 16px 8px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center;">
-            ${deviceTags.map(t => html`
+          <!-- Tags (footer, fixed) -->
+          <div style="padding: 0 16px 8px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; flex-shrink: 0; overflow: hidden;">
+            ${visibleTags.map(t => html`
               <span style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 9999px; font-size: 11px; background: var(--bg-subtle); border: 1px solid var(--border);">
                 <span style="width: 6px; height: 6px; border-radius: 50%; background: ${t.color || 'var(--primary, #3b82f6)'};"></span>
                 ${t.name}
               </span>
             `)}
+            ${hiddenTagCount > 0 ? html`
+              <span style="padding: 2px 8px; border-radius: 9999px; font-size: 11px; background: var(--bg-subtle); border: 1px solid var(--border); color: var(--muted);" title="${deviceTags.slice(3).map(t => t.name).join(', ')}">
+                +${hiddenTagCount}
+              </span>
+            ` : nothing}
             ${deviceTags.length === 0 ? html`<span style="font-size: 11px; color: var(--muted);">无标签</span>` : nothing}
             <button
               class="btn btn--ghost btn--sm"
