@@ -3,9 +3,9 @@
 -- Date: 2026-04-09
 -- Description:
 --   - api_keys: replace tenant_id with workspace_id
---   - alarms: add workspace_id for isolation
---   - alarm_rules: add workspace_id for isolation
---   - job_schedules: add workspace_id for isolation
+--   - device_alarms: add workspace_id for isolation
+--   - device_alarm_rules: add workspace_id for isolation
+--   - jobs: add workspace_id for isolation
 --   - Add indexes for workspace_id lookups
 --
 -- This migration is designed for offline execution (requires downtime window).
@@ -22,14 +22,14 @@
 -- If any device has NULL workspace_id, the alarm backfill will produce orphan alarms
 -- SELECT COUNT(*) AS orphan_devices FROM devices WHERE workspace_id IS NULL;
 
--- Check 3: alarms must not have existing workspace_id (should be NULL)
--- SELECT COUNT(*) AS existing_workspace FROM alarms WHERE workspace_id IS NOT NULL;
+-- Check 3: device_alarms must not have existing workspace_id (should be NULL)
+-- SELECT COUNT(*) AS existing_workspace FROM device_alarms WHERE workspace_id IS NOT NULL;
 
--- Check 4: alarm_rules must not have existing workspace_id (should be NULL)
--- SELECT COUNT(*) AS existing_workspace FROM alarm_rules WHERE workspace_id IS NOT NULL;
+-- Check 4: device_alarm_rules must not have existing workspace_id (should be NULL)
+-- SELECT COUNT(*) AS existing_workspace FROM device_alarm_rules WHERE workspace_id IS NOT NULL;
 
--- Check 5: job_schedules must not have existing workspace_id (should be NULL)
--- SELECT COUNT(*) AS existing_workspace FROM job_schedules WHERE workspace_id IS NOT NULL;
+-- Check 5: jobs must not have existing workspace_id (should be NULL)
+-- SELECT COUNT(*) AS existing_workspace FROM jobs WHERE workspace_id IS NOT NULL;
 
 -- Check 6: No code should reference api_keys.tenant_id after this migration
 -- (Verify by grepping source code before running)
@@ -93,55 +93,55 @@ CREATE INDEX IF NOT EXISTS idx_api_keys_workspace ON api_keys(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(prefix);
 
 -- ============================================================================
--- STEP 2: Add workspace_id to alarms table
+-- STEP 2: Add workspace_id to device_alarms table
 -- ============================================================================
 
-ALTER TABLE alarms ADD COLUMN workspace_id TEXT;
+ALTER TABLE device_alarms ADD COLUMN workspace_id TEXT;
 
 -- Backfill: set workspace_id from device's workspace_id
 -- Alarms that reference deleted devices or devices with NULL workspace_id will get NULL
 -- These orphan alarms will be invisible to new queries (by design)
-UPDATE alarms
+UPDATE device_alarms
 SET workspace_id = (
-    SELECT d.workspace_id FROM devices d WHERE d.id = alarms.device_id
+    SELECT d.workspace_id FROM devices d WHERE d.id = device_alarms.device_id
 )
 WHERE workspace_id IS NULL;
 
-CREATE INDEX IF NOT EXISTS idx_alarms_workspace ON alarms(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_device_alarms_workspace ON device_alarms(workspace_id);
 
 -- ============================================================================
--- STEP 3: Add workspace_id to alarm_rules table
+-- STEP 3: Add workspace_id to device_alarm_rules table
 -- ============================================================================
 
-ALTER TABLE alarm_rules ADD COLUMN workspace_id TEXT;
+ALTER TABLE device_alarm_rules ADD COLUMN workspace_id TEXT;
 
 -- Backfill: if rule has device_id, use that device's workspace; else NULL
 -- Rules without device_id are considered tenant-global and will get NULL workspace_id
-UPDATE alarm_rules
+UPDATE device_alarm_rules
 SET workspace_id = (
-    SELECT d.workspace_id FROM devices d WHERE d.id = alarm_rules.device_id
+    SELECT d.workspace_id FROM devices d WHERE d.id = device_alarm_rules.device_id
 )
-WHERE workspace_id IS NULL AND alarm_rules.device_id IS NOT NULL;
+WHERE workspace_id IS NULL AND device_alarm_rules.device_id IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_alarm_rules_workspace ON alarm_rules(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_device_alarm_rules_workspace ON device_alarm_rules(workspace_id);
 
 -- ============================================================================
--- STEP 4: Add workspace_id to job_schedules table
+-- STEP 4: Add workspace_id to jobs table
 -- ============================================================================
 
-ALTER TABLE job_schedules ADD COLUMN workspace_id TEXT;
+ALTER TABLE jobs ADD COLUMN workspace_id TEXT;
 
--- Backfill: job_schedules created before this migration are considered tenant-global
+-- Backfill: jobs created before this migration are considered tenant-global
 -- Assign them to the default workspace of their tenant (via device if target_device_id exists)
 -- For jobs with target_device_id: use that device's workspace
 -- For jobs without: leave as NULL (no workspace binding)
-UPDATE job_schedules
+UPDATE jobs
 SET workspace_id = (
-    SELECT d.workspace_id FROM devices d WHERE d.id = job_schedules.target_device_id
+    SELECT d.workspace_id FROM devices d WHERE d.id = jobs.target_device_id
 )
-WHERE workspace_id IS NULL AND job_schedules.target_device_id IS NOT NULL;
+WHERE workspace_id IS NULL AND jobs.target_device_id IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_job_schedules_workspace ON job_schedules(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_workspace ON jobs(workspace_id);
 
 -- ============================================================================
 -- POST-CHECK: Verify migration results
@@ -155,6 +155,6 @@ CREATE INDEX IF NOT EXISTS idx_job_schedules_workspace ON job_schedules(workspac
 
 -- Verify indexes exist
 -- SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='api_keys';
--- SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='alarms';
--- SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='alarm_rules';
--- SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='job_schedules';
+-- SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='device_alarms';
+-- SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='device_alarm_rules';
+-- SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='jobs';

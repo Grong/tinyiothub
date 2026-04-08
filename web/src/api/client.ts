@@ -50,6 +50,12 @@ export const getAuthToken = (): string | null => {
   return sessionStorage.getItem('auth-token') || localStorage.getItem('auth-token');
 };
 
+// 获取 workspace id
+export const getWorkspaceId = (): string | null => {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem('workspace-id') || sessionStorage.getItem('workspace-id');
+};
+
 // 构建完整 URL（供其他模块复用）
 export const buildUrl = (endpoint: string): string => {
   if (endpoint.startsWith('http://') || endpoint.startsWith('https://')) {
@@ -88,6 +94,12 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
   const token = getAuthToken();
   if (token) {
     (config.headers as Record<string, string>)['Authorization'] = `Bearer ${token}`;
+  }
+
+  // 添加 workspace 上下文
+  const wsId = getWorkspaceId();
+  if (wsId) {
+    (config.headers as Record<string, string>)['X-Workspace-Id'] = wsId;
   }
 
   if (body && method !== 'GET') {

@@ -334,7 +334,7 @@ export class TinyIoTHubApp extends LitElement {
         <div class="topbar-left">
           <a href="/" class="brand" @click=${(e: Event) => { e.preventDefault(); this.navigate("dashboard"); }}
             style="cursor: pointer; text-decoration: none;">
-            <img src="/logo-gradient.svg" alt="TinyIoTHub" style="width: 36px; height: 36px;" onerror="this.style.display='none'" />
+            <img src="/logo.svg" alt="TinyIoTHub" style="width: 36px; height: 36px;" onerror="this.style.display='none'" />
             <div class="brand-text">
               <div class="brand-title">TinyIoTHub</div>
             </div>

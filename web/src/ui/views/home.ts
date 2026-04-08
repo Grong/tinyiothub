@@ -729,7 +729,7 @@ export class HomeView extends LitElement {
         <header class="header ${this.navVisible ? "" : "header--hidden"}">
           <div class="header-inner">
             <a href="/" class="logo" @click=${(e: Event) => { e.preventDefault(); this.navigate("/"); }}>
-              <img src="/logo-gradient.svg" alt="TinyIoTHub" onerror="this.style.display='none'" />
+              <img src="/logo.svg" alt="TinyIoTHub" onerror="this.style.display='none'" />
               TinyIoTHub
             </a>
             <nav class="nav-links">
@@ -950,7 +950,7 @@ export class HomeView extends LitElement {
         <footer class="footer">
           <div class="footer-inner">
             <div class="footer-brand">
-              <img src="/logo-gradient.svg" alt="TinyIoTHub" onerror="this.style.display='none'" />
+              <img src="/logo.svg" alt="TinyIoTHub" onerror="this.style.display='none'" />
               <div>
                 <div class="footer-brand-name">TinyIoTHub</div>
                 <p class="footer-brand-desc">开源物联网平台</p>

@@ -36,6 +36,7 @@ pub fn create_router() -> Router<AppState> {
         .route("/", get(list_users).post(create_user))
         .route("/test", get(test_users_endpoint))
         .route("/statistics", get(get_user_statistics))
+        .route("/me", get(get_current_user))
         .route("/:id", get(get_user).put(update_user).delete(delete_user))
         .route("/:id/enable", post(enable_user))
         .route("/:id/disable", post(disable_user))
@@ -188,11 +189,35 @@ async fn get_user_statistics(
 }
 
 /// 获取用户详情
+async fn get_current_user(
+    State(state): State<AppState>,
+    claims: Claims,
+) -> Json<ApiResponse<UserDto>> {
+    match User::find_by_id(state.database(), &claims.user_id).await {
+        Ok(Some(user)) => ApiResponse::success(user.to_dto()),
+        Ok(None) => ApiResponse::error("用户不存在".to_string()),
+        Err(e) => {
+            tracing::error!("Failed to get current user {}: {}", claims.user_id, e);
+            ApiResponse::error("获取用户信息失败".to_string())
+        }
+    }
+}
+
 async fn get_user(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<UserDto>> {
+    // 用户只能查看自己的信息（users 表无 tenant_id，暂以 user_id 限制）
+    if claims.user_id != id {
+        tracing::warn!(
+            "User {} attempted to access user {} without permission",
+            claims.user_id,
+            id
+        );
+        return ApiResponse::error("无权限查看此用户".to_string());
+    }
+
     match User::find_by_id(state.database(), &id).await {
         Ok(Some(user)) => {
             tracing::debug!("Retrieved user: {}", user.get_display_name());
@@ -210,9 +235,23 @@ async fn get_user(
 async fn update_user(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    _claims: Claims,
+    claims: Claims,
     Json(request): Json<UpdateUserRequest>,
 ) -> Json<ApiResponse<UserDto>> {
+    // 用户只能修改自己的信息（users 表无 tenant_id，暂以 user_id 限制）
+    let is_admin =
+        crate::shared::error_handling::AuthHelper::check_role(&state, &claims.user_id, "admin")
+            .await
+            .unwrap_or(false);
+    if claims.user_id != id && !is_admin {
+        tracing::warn!(
+            "User {} attempted to update user {} without permission",
+            claims.user_id,
+            id
+        );
+        return ApiResponse::error("无权限修改此用户".to_string());
+    }
+
     // 验证输入
     if let Some(username) = &request.username {
         if username.trim().is_empty() {
@@ -249,8 +288,25 @@ async fn update_user(
 async fn delete_user(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<bool>> {
+    // 用户不能删除自己，且需要管理员权限
+    if claims.user_id == id {
+        return ApiResponse::error("不能删除自己的账号".to_string());
+    }
+    let is_admin =
+        crate::shared::error_handling::AuthHelper::check_role(&state, &claims.user_id, "admin")
+            .await
+            .unwrap_or(false);
+    if !is_admin {
+        tracing::warn!(
+            "User {} attempted to delete user {} without admin permission",
+            claims.user_id,
+            id
+        );
+        return ApiResponse::error("无权限删除用户".to_string());
+    }
+
     match User::delete(state.database(), &id).await {
         Ok(rows_affected) => {
             if rows_affected > 0 {
@@ -271,8 +327,15 @@ async fn delete_user(
 async fn enable_user(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<bool>> {
+    let is_admin =
+        crate::shared::error_handling::AuthHelper::check_role(&state, &claims.user_id, "admin")
+            .await
+            .unwrap_or(false);
+    if !is_admin {
+        return ApiResponse::error("无权限启用用户".to_string());
+    }
     match User::update_enabled_status(state.database(), &id, true).await {
         Ok(_user) => {
             tracing::info!("User enabled: {}", id);
@@ -290,8 +353,15 @@ async fn enable_user(
 async fn disable_user(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<bool>> {
+    let is_admin =
+        crate::shared::error_handling::AuthHelper::check_role(&state, &claims.user_id, "admin")
+            .await
+            .unwrap_or(false);
+    if !is_admin {
+        return ApiResponse::error("无权限禁用用户".to_string());
+    }
     match User::update_enabled_status(state.database(), &id, false).await {
         Ok(_user) => {
             tracing::info!("User disabled: {}", id);

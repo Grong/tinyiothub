@@ -1,8 +1,21 @@
+use rand::RngCore;
+use sha2::{Digest, Sha256};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
 use crate::dto::entity::workspace::Workspace;
 use crate::infrastructure::persistence::database::Database;
+
+/// 生成密码学安全的随机密钥（base62 编码，48 字符）
+fn generate_secure_key() -> String {
+    let mut bytes = [0u8; 36]; // 36 bytes = 288 bits entropy
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    // base62 编码（a-zA-Z0-9）
+    const CHARS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    bytes.iter()
+        .map(|b| CHARS[(b % 62) as usize] as char)
+        .collect()
+}
 
 /// 订阅计划
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -444,18 +457,13 @@ impl ApiKey {
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-        // 生成随机密钥
-        let raw_key = format!("sk_live_{}", uuid::Uuid::new_v4().to_string().replace("-", ""));
-        let prefix = format!("sk_live_{}", &raw_key[8..16]);
+        // 生成密码学安全的随机密钥
+        let raw_key = format!("tinh_{}", generate_secure_key());
+        // prefix 取前12位：tinh_ + 前6位随机字符
+        let prefix = raw_key[..12].to_string();
 
-        // 计算 hash
-        use std::{
-            collections::hash_map::DefaultHasher,
-            hash::{Hash, Hasher},
-        };
-        let mut hasher = DefaultHasher::new();
-        raw_key.hash(&mut hasher);
-        let key_hash = format!("{:x}", hasher.finish());
+        // SHA-256 哈希（不可逆）
+        let key_hash = format!("{:x}", Sha256::digest(raw_key.as_bytes()));
 
         let permissions = req
             .permissions

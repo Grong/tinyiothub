@@ -159,6 +159,7 @@ mod tests {
             EventLevel::Info,
             EventSource::system("test".to_string(), None),
             RichContent::new_text("Test".to_string(), "Test content".to_string()),
+            None,
         )
         .expect("Failed to create test event")
     }

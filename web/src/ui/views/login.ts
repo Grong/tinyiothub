@@ -164,7 +164,7 @@ export class LoginView extends LitElement {
           <div class="orb orb-2"></div>
           <div class="brand-content">
             <div class="brand-logo">
-              <img src="/logo-gradient.svg" alt="TinyIoTHub" style="width: 48px; height: 48px;" />
+              <img src="/logo.svg" alt="TinyIoTHub" style="width: 48px; height: 48px;" />
               <h1>TinyIoTHub</h1>
             </div>
             <p class="brand-tagline">
@@ -203,7 +203,7 @@ export class LoginView extends LitElement {
         <div class="form-side">
           <div class="form-container">
             <div class="form-header">
-              <img src="/logo-gradient.svg" alt="TinyIoTHub" class="form-logo" />
+              <img src="/logo.svg" alt="TinyIoTHub" class="form-logo" />
               <h2 class="form-title">欢迎回来</h2>
               <p class="form-subtitle">请登录您的账户以继续</p>
             </div>

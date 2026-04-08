@@ -89,7 +89,7 @@ export class RegisterView extends LitElement {
           <div class="branding-side">
             <div class="brand-content">
               <div class="brand-logo">
-                <img src="/logo-gradient.svg" alt="TinyIoTHub" style="width: 48px; height: 48px;" />
+                <img src="/logo.svg" alt="TinyIoTHub" style="width: 48px; height: 48px;" />
                 <span class="brand-name">TinyIoTHub</span>
               </div>
               <h1 class="brand-headline">快速构建您的物联网平台</h1>
@@ -135,7 +135,7 @@ export class RegisterView extends LitElement {
           <div class="form-side">
             <div class="form-container">
               <div class="form-header">
-                <img src="/logo-gradient.svg" alt="TinyIoTHub" style="width: 48px; height: 48px; margin: 0 auto 16px; display: block;" />
+                <img src="/logo.svg" alt="TinyIoTHub" style="width: 48px; height: 48px; margin: 0 auto 16px; display: block;" />
                 <h2 class="form-title">创建账户</h2>
                 <p class="form-subtitle">
                   已有账户？<a href="/login" @click=${this.goToLogin}>立即登录</a>
