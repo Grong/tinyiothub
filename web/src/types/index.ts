@@ -6,7 +6,8 @@
 // ==================== User ====================
 export interface User {
   id: string;
-  name: string;
+  /** 后端返回 display_name，转换为 displayName */
+  displayName?: string;
   phone?: string;
   email?: string;
   avatar?: string;
@@ -478,6 +479,7 @@ export interface UpdateTagRequest {
 export interface CreateTagBindingRequest {
   tagId: string;
   targetId: string;
+  targetType: 'device';
 }
 
 export interface BatchTagBindingRequest {

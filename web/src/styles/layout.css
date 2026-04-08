@@ -428,7 +428,7 @@
 .nav-item.active {
   color: var(--accent);
   background: var(--accent-subtle);
-  box-shadow: 0 2px 4px rgba(255, 77, 77, 0.15);
+  box-shadow: 0 2px 4px rgba(0, 152, 255, 0.15);
 }
 
 .nav-item.active .nav-item__icon {

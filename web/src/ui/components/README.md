@@ -49,7 +49,7 @@ ${icon("Github", { category: "common" })}
 ${icon("Lock", { 
   category: "common",
   size: 24,
-  color: "#ff5c5c"
+  color: "#0098FF"
 })}
 ```
 

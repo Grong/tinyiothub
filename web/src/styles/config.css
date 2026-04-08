@@ -110,7 +110,7 @@
 }
 
 .config-search__input:focus {
-  box-shadow: 0 0 0 3px rgba(255, 92, 92, 0.15);
+  box-shadow: 0 0 0 3px rgba(0, 152, 255, 0.15);
   background: var(--bg-hover);
 }
 
@@ -174,7 +174,7 @@
 }
 
 .config-search__tag-picker[open] {
-  box-shadow: 0 0 0 3px rgba(255, 92, 92, 0.15);
+  box-shadow: 0 0 0 3px rgba(0, 152, 255, 0.15);
   background: var(--bg-hover);
 }
 
@@ -840,7 +840,7 @@
 }
 
 .cfg-input:focus {
-  box-shadow: 0 0 0 3px rgba(255, 92, 92, 0.15);
+  box-shadow: 0 0 0 3px rgba(0, 152, 255, 0.15);
   background: var(--bg-hover);
 }
 
@@ -898,7 +898,7 @@
 }
 
 .cfg-textarea:focus {
-  box-shadow: 0 0 0 3px rgba(255, 92, 92, 0.15);
+  box-shadow: 0 0 0 3px rgba(0, 152, 255, 0.15);
 }
 
 :root[data-theme="light"] .cfg-textarea {
