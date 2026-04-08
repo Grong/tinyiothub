@@ -849,7 +849,7 @@ mod tests {
             workspace_id: "ws-001".to_string(),
             name: "Production API".to_string(),
             key_hash: "abc123".to_string(),
-            prefix: "sk_live_abc".to_string(),
+            prefix: "sk_live_xxxx".to_string(),
             permissions: r#"["read", "write"]"#.to_string(),
             rate_limit: 60,
             is_enabled: true,

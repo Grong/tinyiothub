@@ -131,9 +131,9 @@ async fn extract_api_key(
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| ToolError::Unauthorized("Missing X-API-Key header".into()))?;
 
-    // Extract prefix from raw key (format: sk_live_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx)
+    // Extract prefix from raw key (format: sk_live_<prefix>)
     let prefix = if raw_key.len() > 8 {
-        &raw_key[..16] // sk_live_ + 8 chars = 16 chars
+        &raw_key[..16] // prefix (8 chars) + 8 chars = 16 chars
     } else {
         raw_key
     };
