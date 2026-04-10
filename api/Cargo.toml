@@ -1,7 +1,7 @@
 [package]
 name = "tinyiothub"
 version = "0.0.7"
-edition = "2021"
+edition = "2024"
 
 [workspace]
 members = ["derive"]
@@ -42,7 +42,7 @@ tracing-appender = "0.2"
 num_cpus = "1.16"
 
 # 数据库
-sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "chrono", "uuid"] }
+sqlx = { version = "0.9.0-alpha.1", features = ["runtime-tokio", "sqlite", "chrono", "uuid"] }
 
 # 存储插件依赖
 tokio-postgres = "0.7"
@@ -55,7 +55,7 @@ rumqttc = { version = "0.24", default-features = false, features = ["use-rustls"
 jwt-simple = { version = "0.12", default-features = false, features = ["pure-rust"] }
 
 # 网络工具
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 
 # 正则表达式
 regex = "1.10"
@@ -119,6 +119,11 @@ thiserror = "1.0"
 async-stream = "0.3"
 tokio-stream = "0.1"
 
+# WebSocket 支持 (ZeroClaw adapter)
+tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
+bytes = "1"
+http = "1"
+
 # Base64 编码 (用于邮件认证)
 base64 = "0.21"
 
@@ -142,7 +147,9 @@ validator = { version = "0.16", features = ["derive"] }
 # 性能优化
 smallvec = "1.11"
 
-
+# ZeroClaw Agent runtime (进程内集成)
+zeroclaw = { path = "vendor/zeroclaw" }
+zeroclaw-macros = { path = "vendor/zeroclaw-macros" }
 
 [features]
 default = []

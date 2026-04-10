@@ -20,6 +20,7 @@ use crate::domain::event::{
 pub struct SseConnection {
     pub connection_id: String,
     pub user_id: String,
+    pub workspace_id: String,
     pub connected_at: chrono::DateTime<chrono::Utc>,
     pub last_ping: chrono::DateTime<chrono::Utc>,
 }
@@ -49,11 +50,12 @@ impl SseNotificationChannel {
     }
 
     /// Create an SSE response for a client connection
-    pub async fn create_sse_stream(&self, user_id: String) -> Response {
+    pub async fn create_sse_stream(&self, user_id: String, workspace_id: String) -> Response {
         let connection_id = Uuid::new_v4().to_string();
         let connection = SseConnection {
             connection_id: connection_id.clone(),
             user_id: user_id.clone(),
+            workspace_id: workspace_id.clone(),
             connected_at: chrono::Utc::now(),
             last_ping: chrono::Utc::now(),
         };
@@ -70,6 +72,7 @@ impl SseNotificationChannel {
         let mut receiver = self.sender.subscribe();
         let connections_ref = self.connections.clone();
         let connection_id_clone = connection_id.clone();
+        let workspace_id_clone = workspace_id.clone();
 
         // Create the SSE stream
         let stream = async_stream::stream! {
@@ -91,10 +94,11 @@ impl SseNotificationChannel {
                         match msg {
                             Ok(sse_message) => {
                                 // Check if this message should be sent to this user
-                                if should_send_to_user(&user_id, &sse_message) {
+                                if should_send_to_user(&user_id, &workspace_id_clone, &sse_message) {
+                                    // Send as unnamed event so the browser EventSource.onmessage fires.
+                                    // The event_type is already included in the data JSON payload.
                                     let event = SseEvent::default()
                                         .id(&sse_message.id)
-                                        .event(&sse_message.event_type)
                                         .data(serde_json::to_string(&sse_message.data).unwrap_or_default());
 
                                     yield Ok(event);
@@ -201,8 +205,8 @@ impl SseNotificationChannel {
     }
 }
 
-/// Check if a message should be sent to a specific user
-fn should_send_to_user(user_id: &str, message: &SseMessage) -> bool {
+/// Check if a message should be sent to a specific connection
+fn should_send_to_user(user_id: &str, workspace_id: &str, message: &SseMessage) -> bool {
     // Check if message has a target user specified
     if let Some(target_user) = message.data.get("target_user") {
         if let Some(target_str) = target_user.as_str() {
@@ -213,12 +217,18 @@ fn should_send_to_user(user_id: &str, message: &SseMessage) -> bool {
     // Check if message has recipient information
     if let Some(recipient) = message.data.get("recipient") {
         if let Some(recipient_str) = recipient.as_str() {
-            // For now, simple string matching. In production, this could be more sophisticated
             return recipient_str == user_id || recipient_str == "admin" || recipient_str == "all";
         }
     }
 
-    // Default: send to all users (for broadcast messages)
+    // Filter by workspace_id — only send events belonging to the same workspace
+    if let Some(msg_workspace) = message.data.get("workspace_id") {
+        if let Some(msg_workspace_str) = msg_workspace.as_str() {
+            return msg_workspace_str == workspace_id;
+        }
+    }
+
+    // Messages without workspace_id are system-level events — send to all
     true
 }
 
@@ -367,8 +377,8 @@ mod tests {
             }),
         );
 
-        assert!(should_send_to_user("user1", &message_with_target));
-        assert!(!should_send_to_user("user2", &message_with_target));
+        assert!(should_send_to_user("user1", "ws_a", &message_with_target));
+        assert!(!should_send_to_user("user2", "ws_a", &message_with_target));
 
         let message_with_recipient = SseMessage::new(
             "test".to_string(),
@@ -378,8 +388,8 @@ mod tests {
             }),
         );
 
-        assert!(should_send_to_user("admin", &message_with_recipient));
-        assert!(should_send_to_user("any_user", &message_with_recipient)); // admin messages go to all
+        assert!(should_send_to_user("admin", "ws_a", &message_with_recipient));
+        assert!(should_send_to_user("any_user", "ws_a", &message_with_recipient)); // admin messages go to all
 
         let broadcast_message = SseMessage::new(
             "test".to_string(),
@@ -388,7 +398,19 @@ mod tests {
             }),
         );
 
-        assert!(should_send_to_user("any_user", &broadcast_message));
+        assert!(should_send_to_user("any_user", "ws_a", &broadcast_message));
+
+        // Workspace isolation: message for ws_a should not reach ws_b
+        let workspace_message = SseMessage::new(
+            "test".to_string(),
+            serde_json::json!({
+                "workspace_id": "ws_a",
+                "content": "device event"
+            }),
+        );
+
+        assert!(should_send_to_user("user1", "ws_a", &workspace_message));
+        assert!(!should_send_to_user("user1", "ws_b", &workspace_message));
     }
 
     #[tokio::test]
@@ -406,6 +428,7 @@ mod tests {
                 SseConnection {
                     connection_id: "stale_connection".to_string(),
                     user_id: "test_user".to_string(),
+                    workspace_id: "ws_a".to_string(),
                     connected_at: chrono::Utc::now() - chrono::Duration::hours(2),
                     last_ping: chrono::Utc::now() - chrono::Duration::hours(1),
                 },

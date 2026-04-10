@@ -95,12 +95,12 @@ pub async fn check_system_initialization(state: &AppState) -> Result<bool, sqlx:
     Ok(users.is_empty())
 }
 
-/// 自动创建默认管理员用户（如果不存在）
+/// 自动创建默认管理员用户（如果不存在），并确保默认租户和工作空间
 pub async fn ensure_default_admin_user(state: &AppState) -> Result<(), sqlx::Error> {
     // 先查找 admin 用户是否已存在
     let admin_user = User::find_by_username(state.database(), "admin").await?;
 
-    if let Some(user) = admin_user {
+    let admin_user_id = if let Some(user) = admin_user {
         // admin 用户已存在，检查密码哈希是否是迁移脚本里的假哈希
         if user.password_hash == "FIX_ME_admin_hash" || user.password_hash == "hashed_admin123" {
             tracing::info!("[init] Admin user has invalid password hash from migration, fixing...");
@@ -114,13 +114,13 @@ pub async fn ensure_default_admin_user(state: &AppState) -> Result<(), sqlx::Err
                 }
             }
         }
-        // 密码哈希正确则不修改
+        user.id
     } else {
         // 创建默认管理员用户
         tracing::info!("[init] No admin user found, creating default admin...");
         let create_request = CreateUserRequest {
             username: "admin".to_string(),
-            password: "admin123".to_string(), // 默认密码，生产环境应该要求用户修改
+            password: "admin123".to_string(),
             phone: None,
             email: Some("admin@tinyiothub.local".to_string()),
             display_name: Some("Administrator".to_string()),
@@ -138,13 +138,110 @@ pub async fn ensure_default_admin_user(state: &AppState) -> Result<(), sqlx::Err
                 tracing::warn!(
                     "Default admin password is 'admin123', please change it immediately!"
                 );
+                admin_user.id
             }
             Err(e) => {
                 tracing::error!("Failed to create default admin user: {}", e);
                 return Err(e);
             }
         }
+    };
+
+    // 确保默认租户存在
+    ensure_default_tenant(state, &admin_user_id).await?;
+
+    Ok(())
+}
+
+/// 确保默认租户、租户用户关联和默认工作空间存在
+async fn ensure_default_tenant(state: &AppState, admin_user_id: &str) -> Result<(), sqlx::Error> {
+    let pool = state.database().pool();
+
+    // 检查 admin 是否已有租户
+    let has_tenant: bool = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM tenant_users WHERE user_id = ?)"
+    )
+    .bind(admin_user_id)
+    .fetch_one(pool)
+    .await?;
+
+    if has_tenant {
+        tracing::debug!("[init] Admin user already has a tenant, skipping bootstrap");
+        return Ok(());
     }
+
+    tracing::info!("[init] Admin user has no tenant, bootstrapping default tenant...");
+
+    // 检查是否有任何租户
+    let tenant_exists: bool = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM tenants WHERE id = 'tenant-default-001')"
+    )
+    .fetch_one(pool)
+    .await?;
+
+    if !tenant_exists {
+        // 创建默认租户
+        sqlx::query(
+            r#"INSERT INTO tenants
+               (id, name, slug, status, plan_id, subscription_status,
+                billing_email, timezone, locale, created_at, updated_at)
+               VALUES
+               ('tenant-default-001', 'Default Organization', 'default', 'active',
+                'plan_free', 'active', 'admin@tinyiothub.local', 'UTC', 'zh-CN',
+                datetime('now'), datetime('now'))"#
+        )
+        .execute(pool)
+        .await?;
+        tracing::info!("[init] Created default tenant");
+    }
+
+    // 关联 admin 用户到默认租户
+    let tenant_user_id = format!("tu-{}", admin_user_id);
+    sqlx::query(
+        r#"INSERT OR IGNORE INTO tenant_users
+           (id, tenant_id, user_id, role, invitation_status, joined_at, created_at, updated_at)
+           VALUES (?, 'tenant-default-001', ?, 'owner', 'accepted',
+                   datetime('now'), datetime('now'), datetime('now'))"#
+    )
+    .bind(&tenant_user_id)
+    .bind(admin_user_id)
+    .execute(pool)
+    .await?;
+    tracing::info!("[init] Linked admin user to default tenant");
+
+    // 确保默认工作空间存在
+    let ws_exists: bool = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM workspaces WHERE tenant_id = 'tenant-default-001')"
+    )
+    .fetch_one(pool)
+    .await?;
+
+    if !ws_exists {
+        sqlx::query(
+            r#"INSERT INTO workspaces
+               (id, name, description, tenant_id, created_at, updated_at)
+               VALUES
+               ('ws-default-001', '默认工作空间', '系统自动创建的默认工作空间',
+                'tenant-default-001', datetime('now'), datetime('now'))"#
+        )
+        .execute(pool)
+        .await?;
+        tracing::info!("[init] Created default workspace");
+    }
+
+    // 将未分配的设备归属到默认租户和工作空间
+    sqlx::query(
+        "UPDATE devices SET tenant_id = 'tenant-default-001' WHERE tenant_id IS NULL"
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "UPDATE devices SET workspace_id = 'ws-default-001' WHERE workspace_id IS NULL AND tenant_id = 'tenant-default-001'"
+    )
+    .execute(pool)
+    .await?;
+    tracing::info!("[init] Assigned orphan devices to default tenant/workspace");
 
     Ok(())
 }

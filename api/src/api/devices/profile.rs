@@ -95,7 +95,7 @@ async fn get_device_profile(
     tracing::debug!("Getting complete profile for device: {}", device_id);
 
     // 从DataContext缓存获取设备信息（包含实时数据）
-    let device = match state.get_device(&device_id) {
+    let mut device = match state.get_device(&device_id) {
         Some(device) => device,
         None => {
             // 如果内存中没有，尝试从数据库加载并加入缓存
@@ -144,6 +144,11 @@ async fn get_device_profile(
             }
         }
     };
+
+    // 加载设备标签
+    if let Err(e) = device.load_tags(state.database()).await {
+        tracing::warn!("Failed to load tags for device {}: {}", device_id, e);
+    }
 
     // 从缓存的设备对象中获取属性和指令（已包含实时数据）
     let properties = device.properties.clone().unwrap_or_default();

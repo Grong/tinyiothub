@@ -9,11 +9,11 @@ phase_info:
     - troubleshooting: ✅ 完整
     - self_healing: ⚠️ 部分（execute_self_heal_action, get_recovery_history 为 Phase 2）
   phase_2: |
-    Phase 2 计划：
-    - execute_self_heal_action: 执行自愈动作
-    - get_recovery_history: 恢复历史记录
-    - add_knowledge_entry: 知识条目管理
-    - get_device_manual: 设备手册查询
+    Phase 2 实现状态：
+    - execute_self_heal_action: ✅ 完整
+    - get_recovery_history: ✅ 完整
+    - add_knowledge_entry: ✅ 完整
+    - get_device_manual: ✅ 完整
 
 skills:
   - name: system_context
@@ -108,8 +108,8 @@ skills:
       可用工具：
       - get_heartbeat_status: 获取网关心跳状态（CPU、内存、磁盘、网络）
       - get_self_heal_policy: 获取自愈策略配置
-      - execute_self_heal_action: 执行自愈动作（Phase 2 可用）
-      - get_recovery_history: 查看恢复历史（Phase 2 可用）
+      - execute_self_heal_action: 执行自愈动作
+      - get_recovery_history: 查看恢复历史
 
       健康状态阈值：
       - CPU: warning > 70%, critical > 90%

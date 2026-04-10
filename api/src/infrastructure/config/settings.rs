@@ -56,14 +56,35 @@ pub struct ApplicationSettings {
     #[serde(default)]
     pub redis: Option<RedisConfig>,
     #[serde(default)]
-    pub openclaw: Option<OpenClawConfig>,
+    pub agent: Option<GatewayConfig>,
+    /// MiniMax GLM provider for built-in Agent
+    #[serde(default)]
+    pub minimax: Option<MinimaxConfig>,
 }
 
-/// OpenClaw Agent configuration
+/// Gateway (ZeroClaw) Agent configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct OpenClawConfig {
+pub struct GatewayConfig {
     pub url: String,
+    #[serde(default)]
+    pub ws_url: Option<String>,
+    #[serde(default)]
+    pub gateway_token: Option<String>,
+}
+
+/// MiniMax GLM provider configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct MinimaxConfig {
+    pub base_url: String,
+    pub auth_token: String,
+    #[serde(default = "default_minimax_model")]
+    pub model: String,
+}
+
+fn default_minimax_model() -> String {
+    "MiniMax-M2.7-highspeed".to_string()
 }
 
 /// Event system configuration

@@ -19,7 +19,7 @@ use crate::{
         CreateJobRequest, Job, JobExecution, JobExecutionQueryParams, JobQueryParams,
         JobStatistics, UpdateJobRequest,
     },
-    dto::response::{ApiResponse, builder::ApiResponseBuilder},
+    dto::response::{ApiResponse, builder::ApiResponseBuilder, PaginatedResponse, PaginationInfo},
     infrastructure::persistence::database::Database,
     shared::app_state::AppState,
 };
@@ -397,21 +397,32 @@ async fn get_statistics(State(state): State<AppState>) -> Json<ApiResponse<JobSt
 async fn list_all_executions(
     State(state): State<AppState>,
     Query(params): Query<JobExecutionQueryParams>,
-) -> Json<ApiResponse<Vec<JobExecution>>> {
-    let db = state.database.clone();
+) -> Json<ApiResponse<PaginatedResponse<JobExecution>>> {
+    let page = params.page.unwrap_or(1);
+    let page_size = params.page_size.unwrap_or(20);
 
-    // 如果指定了 job_id，使用 entity 的方法
-    if let Some(ref job_id) = params.job_id {
-        let limit = params.page_size.unwrap_or(20) as i32;
-        match JobExecution::find_by_job(&db, job_id, limit).await {
-            Ok(executions) => return ApiResponseBuilder::success(executions),
-            Err(e) => {
-                tracing::error!("Failed to list executions: {}", e);
-                return ApiResponseBuilder::error("获取执行记录失败");
-            }
+    let (executions_result, count_result) = tokio::join!(
+        JobExecution::find_all(&state.database, &params),
+        JobExecution::count(&state.database, &params),
+    );
+
+    match executions_result {
+        Ok(executions) => {
+            let total = count_result.unwrap_or(0);
+            let total_count = total as u64;
+            let total_pages = if page_size > 0 {
+                ((total as f64) / (page_size as f64)).ceil() as u32
+            } else {
+                0
+            };
+            ApiResponseBuilder::success(PaginatedResponse {
+                data: executions,
+                pagination: PaginationInfo { page, page_size, total_pages, total_count },
+            })
+        }
+        Err(e) => {
+            tracing::error!("Failed to list executions: {}", e);
+            ApiResponseBuilder::error("获取执行记录失败")
         }
     }
-
-    // 否则返回空列表（简化实现）
-    ApiResponseBuilder::success(vec![])
 }

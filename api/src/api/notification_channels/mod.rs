@@ -15,7 +15,7 @@ use crate::{
         ChannelStatistics, CreateNotificationChannelRequest, NotificationChannel,
         NotificationChannelQueryParams, SendMessageRequest, UpdateNotificationChannelRequest,
     },
-    dto::response::{ApiResponse, builder::ApiResponseBuilder},
+    dto::response::{ApiResponse, builder::ApiResponseBuilder, PaginatedResponse, PaginationInfo},
     shared::app_state::AppState,
 };
 
@@ -38,11 +38,29 @@ pub fn create_router() -> Router<AppState> {
 async fn list_channels(
     State(state): State<AppState>,
     Query(params): Query<NotificationChannelQueryParams>,
-) -> Json<ApiResponse<Vec<NotificationChannel>>> {
-    let db = state.database.clone();
+) -> Json<ApiResponse<PaginatedResponse<NotificationChannel>>> {
+    let page = params.page.unwrap_or(1);
+    let page_size = params.page_size.unwrap_or(20);
 
-    match NotificationChannel::find_all(&db, &params).await {
-        Ok(channels) => ApiResponseBuilder::success(channels),
+    let (channels_result, count_result) = tokio::join!(
+        NotificationChannel::find_all(&state.database, &params),
+        NotificationChannel::count(&state.database, &params),
+    );
+
+    match channels_result {
+        Ok(channels) => {
+            let total = count_result.unwrap_or(0);
+            let total_count = total as u64;
+            let total_pages = if page_size > 0 {
+                ((total as f64) / (page_size as f64)).ceil() as u32
+            } else {
+                0
+            };
+            ApiResponseBuilder::success(PaginatedResponse {
+                data: channels,
+                pagination: PaginationInfo { page, page_size, total_pages, total_count },
+            })
+        }
         Err(e) => {
             tracing::error!("Failed to list channels: {}", e);
             ApiResponseBuilder::error("获取通知渠道列表失败")

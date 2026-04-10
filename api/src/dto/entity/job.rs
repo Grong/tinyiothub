@@ -40,6 +40,7 @@ pub struct Job {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct JobQueryParams {
+    pub workspace_id: Option<String>,
     pub name: Option<String>,
     pub job_type: Option<String>,
     pub is_enabled: Option<bool>,
@@ -180,7 +181,13 @@ impl Job {
     /// 查询所有（带分页）
     pub async fn find_all(db: &Database, params: &JobQueryParams) -> Result<Vec<Job>, sqlx::Error> {
         // 使用 QueryBuilder 防止 SQL 注入
-        let mut query_builder: sqlx::query_builder::QueryBuilder<'_, Sqlite> = sqlx::query_builder::QueryBuilder::new("SELECT * FROM jobs WHERE 1=1");
+        let mut query_builder: sqlx::query_builder::QueryBuilder<Sqlite> = sqlx::query_builder::QueryBuilder::new("SELECT * FROM jobs WHERE 1=1");
+
+        // Filter by workspace_id for MCP tool isolation
+        if let Some(ref workspace_id) = params.workspace_id {
+            query_builder.push(" AND workspace_id = ");
+            query_builder.push_bind(workspace_id);
+        }
 
         if let Some(ref name) = params.name {
             // 转义 LIKE 特殊字符防止注入
@@ -203,9 +210,9 @@ impl Job {
         let offset = (page - 1) * page_size;
         query_builder.push(&format!(" LIMIT {} OFFSET {}", page_size, offset));
 
-        let sql = query_builder.build().sql();
+        let sql = query_builder.build();
         let mut rows = db
-            .query(sql, |row| {
+            .query(sql.sql().as_str(), |row| {
                 Ok(Job {
                     id: row.try_get("id")?,
                     name: row.try_get("name")?,
@@ -492,6 +499,84 @@ impl Job {
 }
 
 impl JobExecution {
+    /// 查询所有执行记录（带分页）
+    pub async fn find_all(
+        db: &Database,
+        params: &JobExecutionQueryParams,
+    ) -> Result<Vec<JobExecution>, sqlx::Error> {
+        let mut query_builder: sqlx::query_builder::QueryBuilder<Sqlite> =
+            sqlx::query_builder::QueryBuilder::new("SELECT * FROM job_executions WHERE 1=1");
+
+        if let Some(ref job_id) = params.job_id {
+            query_builder.push(" AND job_id = ");
+            query_builder.push_bind(job_id);
+        }
+        if let Some(ref status) = params.status {
+            query_builder.push(" AND status = ");
+            query_builder.push_bind(status);
+        }
+        if let Some(ref trigger_type) = params.trigger_type {
+            query_builder.push(" AND trigger_type = ");
+            query_builder.push_bind(trigger_type);
+        }
+
+        query_builder.push(" ORDER BY started_at DESC");
+
+        let page = params.page.unwrap_or(1);
+        let page_size = params.page_size.unwrap_or(20);
+        let offset = (page - 1) * page_size;
+        query_builder.push(&format!(" LIMIT {} OFFSET {}", page_size, offset));
+
+        let sql = query_builder.build();
+        let rows = db.query(sql.sql().as_str(), |row| {
+            Ok(JobExecution {
+                id: row.try_get("id")?,
+                job_id: row.try_get("job_id")?,
+                started_at: row.try_get("started_at")?,
+                ended_at: row.try_get("ended_at")?,
+                duration_ms: row.try_get("duration_ms")?,
+                status: row.try_get("status")?,
+                result: row.try_get("result")?,
+                error_message: row.try_get("error_message")?,
+                error_trace: row.try_get("error_trace")?,
+                trigger_type: row.try_get("trigger_type")?,
+                triggered_by: row.try_get("triggered_by")?,
+                worker_id: row.try_get("worker_id")?,
+                memory_usage_bytes: row.try_get("memory_usage_bytes")?,
+                cpu_time_ms: row.try_get("cpu_time_ms")?,
+                created_at: row.try_get("created_at")?,
+            })
+        }).await?;
+
+        Ok(rows)
+    }
+
+    /// 统计执行记录数量
+    pub async fn count(
+        db: &Database,
+        params: &JobExecutionQueryParams,
+    ) -> Result<i64, sqlx::Error> {
+        let mut query_builder: sqlx::query_builder::QueryBuilder<Sqlite> =
+            sqlx::query_builder::QueryBuilder::new("SELECT COUNT(*) FROM job_executions WHERE 1=1");
+
+        if let Some(ref job_id) = params.job_id {
+            query_builder.push(" AND job_id = ");
+            query_builder.push_bind(job_id);
+        }
+        if let Some(ref status) = params.status {
+            query_builder.push(" AND status = ");
+            query_builder.push_bind(status);
+        }
+        if let Some(ref trigger_type) = params.trigger_type {
+            query_builder.push(" AND trigger_type = ");
+            query_builder.push_bind(trigger_type);
+        }
+
+        let sql = query_builder.build();
+        let row = db.query_first(sql.sql().as_str(), |row| row.try_get::<i64, _>(0)).await?;
+        Ok(row.unwrap_or(0))
+    }
+
     /// 创建执行记录
     pub async fn create(
         db: &Database,

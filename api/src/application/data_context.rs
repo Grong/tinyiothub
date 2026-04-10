@@ -261,10 +261,12 @@ impl DataContext {
         value: &str,
         event_bus: Option<&Arc<EventBus>>,
     ) -> Result<(), Error> {
-        // 验证设备是否存在
-        if self.get_device(device_id).is_none() {
+        // 验证设备是否存在并获取 workspace_id
+        let device = self.get_device(device_id);
+        if device.is_none() {
             return Err(Error::NotFound);
         }
+        let workspace_id = device.and_then(|d| d.workspace_id.clone());
 
         let db = self.database();
 
@@ -338,6 +340,7 @@ impl DataContext {
                     "context".to_string(),
                 ),
                 RichContent::new(format!("Property Changed: {}", property.name), elements),
+                workspace_id,
             );
 
             if let Ok(event) = event {

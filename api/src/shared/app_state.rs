@@ -5,6 +5,7 @@ use tokio::sync::OnceCell;
 use crate::{
     application::data_context::DataContext,
     domain::{
+        agent::memory_service::MemoryService,
         device::{
             monitoring_service::DeviceMonitoringService,
             performance_service::DevicePerformanceService, service::DeviceService,
@@ -29,12 +30,12 @@ use crate::{
         persistence::{
             repositories::{
                 NotificationHistoryRepositoryImpl, SqliteEventRepository,
-                SqliteRealTimeEventRepository,
+                SqliteRealTimeEventRepository, SqliteDeviceMemoryRepository,
             },
             Database,
         },
         redis::RedisClient,
-        openclaw_agent::OpenClawAgentClient,
+        zeroclaw_agent::AgentClient,
     },
     shared::error::Error,
 };
@@ -100,8 +101,14 @@ pub struct AppState {
     /// 报警服务 - 报警规则和报警管理
     pub alarm_service: Arc<crate::domain::alarm::AlarmService>,
 
-    /// OpenClaw Agent 客户端
-    pub openclaw_agent: Arc<dyn OpenClawAgentClient>,
+    /// Agent 客户端 (ZeroClaw)
+    pub agent_client: Arc<dyn AgentClient>,
+
+    /// Concrete TinyIoTHubAgentClient for tool refresh
+    pub tinyiothub_agent: Arc<crate::infrastructure::zeroclaw_runtime::TinyIoTHubAgentClient>,
+
+    /// Agent Memory Service - 设备状态快照记忆
+    pub memory_service: Arc<MemoryService>,
 }
 
 impl AppState {
@@ -144,8 +151,8 @@ impl AppState {
         let alarm_rule_repository = Arc::new(AlarmRuleRepositoryImpl::new(database.clone()));
         let alarm_service = Arc::new(AlarmService::new(alarm_repository, alarm_rule_repository));
 
-        // 创建SSE管理器
-        let sse_manager = Arc::new(SseConnectionManager::new());
+        // 创建SSE管理器（带 DataContext 用于设备 workspace 查找）
+        let sse_manager = Arc::new(SseConnectionManager::with_data_context(data_context.clone()));
 
         // 注册事件处理器将在异步初始化中完成
         // 这里只创建事件总线，处理器注册推迟到 register_event_handlers() 方法
@@ -173,9 +180,6 @@ impl AppState {
         let template_engine =
             Arc::new(TemplateEngine::new(template_repository, template_validator));
 
-        // 创建SSE管理器
-        let sse_manager = Arc::new(SseConnectionManager::new());
-
         // 创建安全事件服务 - 可选服务，依赖配置
         // Note: Secure event service requires async initialization, so we'll create it lazily
         let secure_event_service = OnceCell::new();
@@ -187,16 +191,26 @@ impl AppState {
             .map(|config| RedisClient::new(&config.url).ok())
             .flatten();
 
-        // OpenClaw Agent 客户端 - 从配置读取 URL
-        let openclaw_url = crate::infrastructure::config::get()
-            .openclaw
-            .as_ref()
-            .map(|c| c.url.clone())
-            .unwrap_or_else(|| "http://localhost:4010".to_string());
-        let openclaw_agent: Arc<dyn OpenClawAgentClient> =
-            Arc::new(crate::infrastructure::openclaw_agent::RealOpenClawAgentClient::new(
-                openclaw_url,
-            ));
+        // Agent 客户端 - 使用 zeroclaw 内置的 OpenAiCompatibleProvider (MiniMax)
+        let minimax_config = crate::infrastructure::config::get().minimax.clone()
+            .expect("minimax config is required - set [minimax] in app_settings.toml");
+        let provider = zeroclaw::providers::create_provider("minimaxi", Some(&minimax_config.auth_token))
+            .expect("failed to create MiniMax provider");
+        tracing::info!("TinyIoTHub Agent initialized with zeroclaw MiniMax provider");
+        let tinyiothub_agent: Arc<crate::infrastructure::zeroclaw_runtime::TinyIoTHubAgentClient> = Arc::new(
+            crate::infrastructure::zeroclaw_runtime::TinyIoTHubAgentClient::new(
+                database.pool().clone(),
+                provider,
+                minimax_config.model,
+            ).expect("failed to build TinyIoTHubAgentClient")
+        );
+        // Clone for trait object (used by API handlers)
+        let agent_client: Arc<dyn AgentClient> = tinyiothub_agent.clone();
+
+        // Agent Memory Service
+        let memory_repo =
+            Arc::new(SqliteDeviceMemoryRepository::new(database.pool().clone()));
+        let memory_service = Arc::new(MemoryService::new(memory_repo));
 
         Self {
             data_context,
@@ -215,7 +229,9 @@ impl AppState {
             sse_manager,
             secure_event_service,
             alarm_service,
-            openclaw_agent,
+            agent_client,
+            tinyiothub_agent,
+            memory_service,
         }
     }
 
@@ -380,6 +396,28 @@ impl AppState {
         // In a full implementation, we would load rules from the database here
 
         Ok(Arc::new(notification_manager))
+    }
+
+    /// 同步检查 Agent 是否可用（启动时调用一次）
+    fn check_openclaw_available(url: &str) -> bool {
+        // 从 URL 中提取 host:port
+        let parsed = match reqwest::Url::parse(url) {
+            Ok(u) => u,
+            Err(_) => return false,
+        };
+        let host = match parsed.host_str() {
+            Some(h) => h.to_string(),
+            None => return false,
+        };
+        let port = parsed.port_or_known_default().unwrap_or(42617);
+        let addr = format!("{}:{}", host, port);
+
+        // 快速 TCP 连接检查（2秒超时）
+        std::net::TcpStream::connect_timeout(
+            &addr.parse().unwrap_or_else(|_| "127.0.0.1:42617".parse().unwrap()),
+            std::time::Duration::from_secs(2),
+        )
+        .is_ok()
     }
 
     /// Create AppState for testing

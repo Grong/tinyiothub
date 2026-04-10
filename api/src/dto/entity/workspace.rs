@@ -33,6 +33,7 @@ pub struct WorkspaceWithDeviceCount {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub device_count: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[sqlx(default)]
     pub warning: Option<String>,
 }
 
@@ -207,7 +208,7 @@ impl Workspace {
 
         query.push_str(" WHERE id = ?");
 
-        let mut q = sqlx::query(&query);
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(query.clone()));
         q = q.bind(&now);
         if let Some(n) = name {
             q = q.bind(n);

@@ -165,6 +165,7 @@ impl DeviceService {
                         },
                     ],
                 ),
+                device.workspace_id.clone(),
             );
 
             if let Ok(event) = event {
@@ -237,6 +238,7 @@ impl DeviceService {
                         Some("device_service".to_string()),
                     ),
                     RichContent::new(format!("Device Updated: {}", updated_device.name), elements),
+                    updated_device.workspace_id.clone(),
                 )
                 .map_err(|e| Error::IOError(format!("Failed to create event: {}", e)))?;
 
@@ -287,6 +289,7 @@ impl DeviceService {
                             },
                         ],
                     ),
+                    device.workspace_id.clone(),
                 )
                 .map_err(|e| Error::IOError(format!("Failed to create event: {}", e)))?;
 
@@ -338,6 +341,7 @@ impl DeviceService {
                                 },
                             ],
                         ),
+                        updated_device.workspace_id.clone(),
                     )
                     .map_err(|e| Error::IOError(format!("Failed to create event: {}", e)))?;
 
@@ -575,6 +579,7 @@ impl DeviceService {
                             },
                         ],
                     ),
+                    device.workspace_id.clone(),
                 )
                 .map_err(|e| Error::IOError(format!("Failed to create event: {}", e)))?;
 
@@ -627,6 +632,7 @@ impl DeviceService {
                             },
                         ],
                     ),
+                    device.workspace_id.clone(),
                 )
                 .map_err(|e| Error::IOError(format!("Failed to create event: {}", e)))?;
 
@@ -808,6 +814,7 @@ impl DeviceService {
                         },
                     ],
                 ),
+                device.workspace_id.clone(),
             );
             if let Ok(event) = event {
                 let event_bus_clone = event_bus.clone();

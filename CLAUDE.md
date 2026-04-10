@@ -189,3 +189,83 @@ docs/drivers/        # 驱动开发
 3. 所有敏感配置通过环境变量，不硬编码
 4. JWT secret 在生产环境必须设置，不允许默认密钥
 5. API 错误必须带用户可读消息
+
+## web-lit 前端开发规范
+
+> web-lit 是基于 Lit 3 的 Web Components 前端，使用 Vite 构建，nanostore 管理状态。
+
+### 1. Lit 组件生命周期
+
+- **首次数据加载**用 `firstUpdated()`，不用 `connectedCallback()`（此时 shadow DOM 尚未渲染，querySelector 返回 null）
+- `updated()` 必须是同步的，Lit 不 await 它
+- `disconnectedCallback()` 中必须清理 interval、subscription、event listener
+
+### 2. 事件监听器
+
+- **禁止** `addEventListener('x', this.handler.bind(this))`——`.bind()` 每次创建新引用，`removeEventListener` 永远失败
+- 使用箭头函数属性或保存 bound 引用：
+  ```ts
+  // 方式一：箭头函数属性（推荐）
+  private handleClick = () => { ... }
+
+  // 方式二：保存 bound 引用
+  private _boundHandleClick = this.handleClick.bind(this)
+  connectedCallback() {
+    el.addEventListener('click', this._boundHandleClick)
+  }
+  disconnectedCallback() {
+    el.removeEventListener('click', this._boundHandleClick)
+  }
+  ```
+
+### 3. Nanostore 订阅
+
+- 必须保存 `subscribe()` 返回的 unsubscribe 函数
+- 在 `disconnectedCallback()` 中调用 unsubscribe
+- 模块级订阅（如 auth-store）不需要清理，但加注释说明
+
+### 4. 路由
+
+- 使用 `navigate()` 函数（`import { navigate } from '../lib/navigate'`）
+- **禁止**直接操作 `window.history.pushState` 或 `window.location.href`
+- 路由解析只取 pathname，query string 用 URLSearchParams 单独处理
+
+### 5. API 调用
+
+- 路径**不带** `/api/v1/` 前缀（由 `buildUrl()` 统一添加）
+- 使用 `apiGet`/`apiPost`/`apiPut`/`apiDelete`/`apiPatch`（从 `lib/api-client` 导出）
+- 异步操作需防竞态：用 AbortController 或 generation counter
+- Token 刷新有内置 mutex，多个并发 401 共享同一个 refresh promise
+
+### 6. Shadow DOM
+
+- CSS 选择器用 `:host` 而非标签名（如 `:host { display: block; }` 而非 `device-card { ... }`）
+- 全局 CSS（base.css、layout.css）不穿透 Shadow DOM，组件内必须内联 styles
+- `createRenderRoot()` 返回 `this` 表示不使用 Shadow DOM（仅 app-sidebar 等需要全局样式的组件）
+
+### 7. 类型定义
+
+- 以 `types/` 目录为 single source of truth
+- services 层禁止重复定义已在 `types/` 中存在的接口
+- 需要扩展类型时在 `types/` 中修改并 re-export
+
+### 8. CSS 设计令牌
+
+- 新增 CSS 变量**必须同时**定义在 dark 和 light 主题中（`base.css` 的 `:root` 和 `:root[data-theme-mode="light"]`）
+- 主题切换通过 `data-theme-mode` 和 `data-theme` 属性
+
+### 9. 可访问性
+
+- `outline: none` 必须配合视觉焦点指示（`border-bottom-color` 变化、`box-shadow: var(--focus-ring)` 等）
+- 全局 `:focus-visible` 规则在 base.css 中已定义，组件内表单控件需额外处理 `:focus` 样式
+
+### 10. 命名规范
+
+| 上下文 | 格式 | 示例 |
+|--------|------|------|
+| Lit 组件文件 | kebab-case | `device-card.ts` |
+| 自定义元素名 | kebab-case | `<device-card>` |
+| Lit 类名 | PascalCase | `DeviceCard` |
+| CSS 类名 | BEM-like | `.card-header`, `.nav-item__icon` |
+| 事件名 | camelCase | `deviceSelected` |
+| nanostore 变量 | `$` 前缀 | `$currentRoute`, `$token` |

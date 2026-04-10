@@ -100,7 +100,7 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
                 base_sql.push_str(" AND acknowledged = ?");
                 base_sql.push_str(" ORDER BY timestamp DESC");
 
-                let mut q = sqlx::query(&base_sql);
+                let mut q = sqlx::query(sqlx::AssertSqlSafe(base_sql.clone()));
                 for device_id in device_ids {
                     q = q.bind(device_id);
                 }
@@ -112,7 +112,7 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
                 base_sql.push_str(&format!(" AND device_id IN ({})", placeholders));
                 base_sql.push_str(" ORDER BY timestamp DESC");
 
-                let mut q = sqlx::query(&base_sql);
+                let mut q = sqlx::query(sqlx::AssertSqlSafe(base_sql.clone()));
                 for device_id in device_ids {
                     q = q.bind(device_id);
                 }
@@ -124,12 +124,12 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
             {
                 base_sql.push_str(" AND acknowledged = ?");
                 base_sql.push_str(" ORDER BY timestamp DESC");
-                sqlx::query(&base_sql).bind(acknowledged)
+                sqlx::query(sqlx::AssertSqlSafe(base_sql.clone())).bind(acknowledged)
             }
             // Neither is set
             _ => {
                 base_sql.push_str(" ORDER BY timestamp DESC");
-                sqlx::query(&base_sql)
+                sqlx::query(sqlx::AssertSqlSafe(base_sql.clone()))
             }
         };
 

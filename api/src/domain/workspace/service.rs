@@ -3,21 +3,21 @@
 use std::sync::Arc;
 
 use crate::domain::workspace::entity::{AssignDeviceInput, CreateWorkspaceInput, UpdateWorkspaceInput, Workspace};
-use crate::infrastructure::openclaw_agent::{OpenClawAgentClient, OpenClawAgentConfig};
+use crate::infrastructure::zeroclaw_agent::{AgentClient, AgentConfig};
 use crate::shared::error::Error;
 
-/// Workspace service — coordinates workspace operations with OpenClaw Agent lifecycle
+/// Workspace service — coordinates workspace operations with Agent lifecycle
 pub struct WorkspaceService {
-    agent_client: Arc<dyn OpenClawAgentClient>,
+    agent_client: Arc<dyn AgentClient>,
 }
 
 impl WorkspaceService {
-    pub fn new(agent_client: Arc<dyn OpenClawAgentClient>) -> Self {
+    pub fn new(agent_client: Arc<dyn AgentClient>) -> Self {
         Self { agent_client }
     }
 
-    /// Create a workspace with synchronized OpenClaw Agent creation
-    /// Returns (workspace, warning) — warning is Some if OpenClaw was unavailable
+    /// Create a workspace with synchronized Agent creation
+    /// Returns (workspace, warning) — warning is Some if Agent was unavailable
     pub async fn create_workspace(
         &self,
         tenant_id: String,
@@ -25,10 +25,11 @@ impl WorkspaceService {
     ) -> Result<(Workspace, Option<String>), Error> {
         let workspace_id = format!("ws-{}", uuid::Uuid::new_v4());
 
-        // Create OpenClaw Agent
-        let agent_config = OpenClawAgentConfig {
+        // Create Agent
+        let agent_config = AgentConfig {
             workspace_id: workspace_id.clone(),
             name: input.name.clone(),
+            ..Default::default()
         };
 
         let agent_result = self.agent_client.create_agent(&agent_config).await;
@@ -36,8 +37,8 @@ impl WorkspaceService {
         let (agent_id, warning) = match agent_result {
             Ok(agent_id) => (Some(agent_id), None),
             Err(e) => {
-                tracing::warn!("Failed to create OpenClaw agent: {}. Workspace will be created with NULL agent_id.", e);
-                (None, Some(format!("OpenClaw unavailable: {}. Agent pending.", e)))
+                tracing::warn!("Failed to create agent: {}. Workspace will be created with NULL agent_id.", e);
+                (None, Some(format!("Agent unavailable: {}. Agent pending.", e)))
             }
         };
 
@@ -89,11 +90,11 @@ impl WorkspaceService {
         Ok(warning)
     }
 
-    /// Delete workspace with synchronized OpenClaw Agent deletion
+    /// Delete workspace with synchronized Agent deletion
     pub async fn delete_workspace(&self, workspace: &Workspace) -> Result<(), Error> {
         if let Some(agent_id) = &workspace.agent_id {
             if let Err(e) = self.agent_client.delete_agent(agent_id).await {
-                tracing::warn!("Failed to delete OpenClaw agent {}: {}. Proceeding with workspace deletion.", agent_id, e);
+                tracing::warn!("Failed to delete agent {}: {}. Proceeding with workspace deletion.", agent_id, e);
             }
         }
         Ok(())

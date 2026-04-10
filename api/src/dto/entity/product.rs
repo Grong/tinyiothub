@@ -342,7 +342,7 @@ impl Product {
             query_str.push_str(&format!(" LIMIT {}", limit));
         }
 
-        let products = sqlx::query_as::<_, Product>(&query_str)
+        let products = sqlx::query_as::<_, Product>(sqlx::AssertSqlSafe(query_str.clone()))
             .bind(&search_pattern)
             .bind(&search_pattern)
             .bind(&search_pattern)

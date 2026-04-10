@@ -225,6 +225,7 @@ mod tests {
             EventLevel::Info,
             EventSource::system("auth-service".to_string(), None),
             RichContent::new_text("Login".to_string(), "User logged in".to_string()),
+            None,
         )
         .unwrap()
     }
@@ -238,6 +239,7 @@ mod tests {
                 "Connection Lost".to_string(),
                 "Device connection lost".to_string(),
             ),
+            None,
         )
         .unwrap()
     }
@@ -316,6 +318,7 @@ mod tests {
                 "Critical Error".to_string(),
                 "Critical error occurred".to_string(),
             ),
+            None,
         )
         .unwrap();
 
@@ -328,6 +331,7 @@ mod tests {
             EventLevel::Debug,
             EventSource::system("auth-service".to_string(), None),
             RichContent::new_text("Debug".to_string(), "Debug message".to_string()),
+            None,
         )
         .unwrap();
 

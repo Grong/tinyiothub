@@ -123,6 +123,29 @@ impl NotificationChannel {
         }
     }
 
+    /// Count channels with filters
+    pub async fn count(
+        db: &Database,
+        params: &NotificationChannelQueryParams,
+    ) -> Result<i64, sqlx::Error> {
+        let mut query_builder = sqlx::query_builder::QueryBuilder::new(
+            "SELECT COUNT(*) FROM notification_channels WHERE 1=1",
+        );
+
+        if let Some(ref channel_type) = params.channel_type {
+            query_builder.push(" AND channel_type = ");
+            query_builder.push_bind(channel_type);
+        }
+        if let Some(is_enabled) = params.is_enabled {
+            query_builder.push(" AND is_enabled = ");
+            query_builder.push_bind(if is_enabled { 1 } else { 0 });
+        }
+
+        let row = query_builder.build().fetch_one(db.pool()).await?;
+        let count: i64 = row.try_get(0)?;
+        Ok(count)
+    }
+
     /// 查询所有
     pub async fn find_all(
         db: &Database,

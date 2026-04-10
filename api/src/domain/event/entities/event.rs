@@ -15,6 +15,8 @@ pub struct Event {
     timestamp: DateTime<Utc>,
     source: EventSource,
     content: RichContent,
+    /// Workspace ID for SSE routing. Populated at event creation from the device.
+    workspace_id: Option<String>,
 }
 
 impl Event {
@@ -24,12 +26,12 @@ impl Event {
         level: EventLevel,
         source: EventSource,
         content: RichContent,
+        workspace_id: Option<String>,
     ) -> Result<Self> {
         // Validate content size
         content.validate_size()?;
 
-        let event =
-            Self { id: EventId::new(), event_type, level, timestamp: Utc::now(), source, content };
+        let event = Self { id: EventId::new(), event_type, level, timestamp: Utc::now(), source, content, workspace_id };
 
         // Additional business rule validations
         event.validate()?;
@@ -45,8 +47,9 @@ impl Event {
         timestamp: DateTime<Utc>,
         source: EventSource,
         content: RichContent,
+        workspace_id: Option<String>,
     ) -> Self {
-        Self { id, event_type, level, timestamp, source, content }
+        Self { id, event_type, level, timestamp, source, content, workspace_id }
     }
 
     /// Get event ID
@@ -77,6 +80,11 @@ impl Event {
     /// Get event content
     pub fn content(&self) -> &RichContent {
         &self.content
+    }
+
+    /// Get workspace ID (for SSE routing)
+    pub fn workspace_id(&self) -> Option<&str> {
+        self.workspace_id.as_deref()
     }
 
     /// Update event content (business rule: only within 5 minutes)
@@ -176,7 +184,7 @@ impl Event {
         source: EventSource,
         content: RichContent,
     ) -> Result<Self> {
-        Self::new(EventType::System(system_type), level, source, content)
+        Self::new(EventType::System(system_type), level, source, content, None)
     }
 
     /// Create a device event
@@ -185,8 +193,9 @@ impl Event {
         level: EventLevel,
         source: EventSource,
         content: RichContent,
+        workspace_id: Option<String>,
     ) -> Result<Self> {
-        Self::new(EventType::Device(device_type), level, source, content)
+        Self::new(EventType::Device(device_type), level, source, content, workspace_id)
     }
 
     /// Create a device connection event
@@ -196,6 +205,7 @@ impl Event {
         connection_status: crate::domain::event::value_objects::ConnectionStatus,
         source: EventSource,
         content: RichContent,
+        workspace_id: Option<String>,
     ) -> Result<Self> {
         let level = match connection_status {
             crate::domain::event::value_objects::ConnectionStatus::Online => EventLevel::Info,
@@ -208,6 +218,7 @@ impl Event {
             level,
             source,
             content,
+            workspace_id,
         )
     }
 
@@ -216,12 +227,14 @@ impl Event {
         _device_id: String,
         source: EventSource,
         content: RichContent,
+        workspace_id: Option<String>,
     ) -> Result<Self> {
         Self::new_device_event(
             crate::domain::event::value_objects::DeviceEventType::DeviceAlarm,
             EventLevel::Warning,
             source,
             content,
+            workspace_id,
         )
     }
 
@@ -230,12 +243,14 @@ impl Event {
         _device_id: String,
         source: EventSource,
         content: RichContent,
+        workspace_id: Option<String>,
     ) -> Result<Self> {
         Self::new_device_event(
             crate::domain::event::value_objects::DeviceEventType::DeviceNormal,
             EventLevel::Info,
             source,
             content,
+            workspace_id,
         )
     }
 
@@ -245,12 +260,14 @@ impl Event {
         _property_id: String,
         source: EventSource,
         content: RichContent,
+        workspace_id: Option<String>,
     ) -> Result<Self> {
         Self::new_device_event(
             crate::domain::event::value_objects::DeviceEventType::PropertyChange,
             EventLevel::Debug,
             source,
             content,
+            workspace_id,
         )
     }
 
@@ -261,12 +278,14 @@ impl Event {
         source: EventSource,
         content: RichContent,
         level: EventLevel, // 允许指定报警级别
+        workspace_id: Option<String>,
     ) -> Result<Self> {
         Self::new_device_event(
             crate::domain::event::value_objects::DeviceEventType::PropertyAlarm,
             level,
             source,
             content,
+            workspace_id,
         )
     }
 
@@ -276,12 +295,14 @@ impl Event {
         _property_id: String,
         source: EventSource,
         content: RichContent,
+        workspace_id: Option<String>,
     ) -> Result<Self> {
         Self::new_device_event(
             crate::domain::event::value_objects::DeviceEventType::PropertyNormal,
             EventLevel::Info,
             source,
             content,
+            workspace_id,
         )
     }
 
@@ -291,12 +312,14 @@ impl Event {
         _command_id: String,
         source: EventSource,
         content: RichContent,
+        workspace_id: Option<String>,
     ) -> Result<Self> {
         Self::new_device_event(
             crate::domain::event::value_objects::DeviceEventType::CommandStarted,
             EventLevel::Debug,
             source,
             content,
+            workspace_id,
         )
     }
 
@@ -306,12 +329,14 @@ impl Event {
         _command_id: String,
         source: EventSource,
         content: RichContent,
+        workspace_id: Option<String>,
     ) -> Result<Self> {
         Self::new_device_event(
             crate::domain::event::value_objects::DeviceEventType::CommandCompleted,
             EventLevel::Info,
             source,
             content,
+            workspace_id,
         )
     }
 
@@ -321,12 +346,14 @@ impl Event {
         _command_id: String,
         source: EventSource,
         content: RichContent,
+        workspace_id: Option<String>,
     ) -> Result<Self> {
         Self::new_device_event(
             crate::domain::event::value_objects::DeviceEventType::CommandFailed,
             EventLevel::Error,
             source,
             content,
+            workspace_id,
         )
     }
 }

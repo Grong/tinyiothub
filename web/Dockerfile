@@ -1,59 +1,39 @@
-# ============================================
-# Stage 1: Dependencies - 安装依赖
-# ============================================
-FROM node:22-alpine AS deps
-
-RUN apk add --no-cache libc6-compat
-RUN corepack enable
-
-WORKDIR /app
-
-COPY package.json pnpm-lock.yaml* ./
-RUN corepack install && pnpm install --frozen-lockfile --prod=false
+# syntax=docker/dockerfile:1
 
 # ============================================
-# Stage 2: Builder - 构建应用
+# Stage 1: Frontend Builder - 构建 Lit SPA 静态文件
 # ============================================
-FROM node:22-alpine AS builder
+FROM node:20-alpine AS frontend-builder
 
-RUN corepack enable
+WORKDIR /frontend
 
-WORKDIR /app
+# 安装 pnpm
+RUN npm install -g pnpm
 
-COPY --from=deps /app/node_modules ./node_modules
-COPY . .
+# 复制 package 文件
+COPY web/package.json web/pnpm-lock.yaml* ./
+RUN pnpm install --frozen-lockfile
 
-ENV NODE_ENV=production
-ENV NEXT_TELEMETRY_DISABLED=1
+# 复制前端源码
+COPY web/ ./
 
-RUN pnpm run build
+# 构建静态文件（输出到 dist/ui）
+RUN pnpm build
 
 # ============================================
-# Stage 3: Runner - 运行时镜像（最小化）
+# Stage 2: Runtime - Nginx 服务静态文件
 # ============================================
-FROM node:22-alpine AS runner
+FROM nginx:alpine
 
-WORKDIR /app
+# 复制构建产物
+COPY --from=frontend-builder /frontend/dist/ui /usr/share/nginx/html
 
-ENV NODE_ENV=production
-ENV NEXT_TELEMETRY_DISABLED=1
-ENV PORT=3000
-ENV HOSTNAME="0.0.0.0"
+# 复制 Nginx SPA 配置
+COPY web/nginx.conf /etc/nginx/conf.d/default.conf
 
-RUN addgroup -g 1001 nodejs && \
-    adduser -D -u 1001 -G nodejs nextjs && \
-    apk add --no-cache wget
+EXPOSE 80
 
-# 只复制必要的运行时文件
-COPY --from=builder --chown=nextjs:nodejs /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget --quiet --tries=1 --spider http://localhost/ || exit 1
 
-USER nextjs
-
-EXPOSE 3000
-
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:3000 || exit 1
-
-CMD ["node", "server.js"]
+CMD ["nginx", "-g", "daemon off;"]
