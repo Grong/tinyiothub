@@ -79,6 +79,7 @@ pub struct WeChatLoginResponse {
     pub expires_in: u64,
     pub user_info: SocialUserInfo,
     pub is_new_user: bool,
+    pub workspace_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -297,13 +298,22 @@ async fn wechat_callback(
         tracing::warn!("Failed to save social binding: {:?}", e);
     }
 
+    // 查找该租户的第一个 workspace 作为默认 workspace
+    let workspace_id: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM workspaces WHERE tenant_id = ? LIMIT 1"
+    )
+    .bind(&tenant_id)
+    .fetch_optional(db.pool())
+    .await
+    .unwrap_or(None);
+
     // 返回成功页面，通过 postMessage 发送 token
     let html = format!(
         r#"<!DOCTYPE html><html><body><script>
-        window.opener.postMessage({{type:'wechat_callback',code:'{}',access_token:'{}'}},window.location.origin);
+        window.opener.postMessage({{type:'wechat_callback',code:'{}',access_token:'{}',workspace_id:'{}'}},window.location.origin);
         window.close();
     </script></body></html>"#,
-        code, jwt_token
+        code, jwt_token, workspace_id.unwrap_or_default()
     );
 
     Html(html).into_response()
@@ -344,6 +354,14 @@ async fn wechat_login(
     // );
 
     // 这里返回模拟响应（开发阶段）
+    // 查找默认 workspace
+    let workspace_id: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM workspaces LIMIT 1"
+    )
+    .fetch_optional(db.pool())
+    .await
+    .unwrap_or(None);
+
     ApiResponse::success(WeChatLoginResponse {
         access_token: "mock_token".to_string(),
         token_type: "Bearer".to_string(),
@@ -357,6 +375,7 @@ async fn wechat_login(
             phone: None,
         },
         is_new_user: true,
+        workspace_id,
     })
 }
 
@@ -390,6 +409,14 @@ async fn wechat_miniprogram_login(
     // TODO: 调用微信小程序 API 换取 session_key 和 openid
     // let api_url = "https://api.weixin.qq.com/sns/jscode2session";
 
+    // 查找默认 workspace
+    let workspace_id: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM workspaces LIMIT 1"
+    )
+    .fetch_optional(db.pool())
+    .await
+    .unwrap_or(None);
+
     ApiResponse::success(WeChatLoginResponse {
         access_token: "mock_mp_token".to_string(),
         token_type: "Bearer".to_string(),
@@ -403,6 +430,7 @@ async fn wechat_miniprogram_login(
             phone: None,
         },
         is_new_user: true,
+        workspace_id,
     })
 }
 

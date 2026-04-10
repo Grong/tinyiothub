@@ -38,8 +38,14 @@ logs/*.log
 # Worktrees
 .worktrees/
 
+# OMC tool state
+.omc/
+
 # 其他
 /web-dify
 license
 
 api/wwwroot
+
+/dist
+/.gstack

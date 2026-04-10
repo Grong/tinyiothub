@@ -12,6 +12,8 @@ pub struct LoginResponse {
     pub expires_in: i64,
     /// 用户信息
     pub user_info: UserInfo,
+    /// 当前用户的默认 workspace ID（用于 SSE 等场景）
+    pub workspace_id: Option<String>,
 }
 
 /// 用户信息（登录响应中的用户信息）

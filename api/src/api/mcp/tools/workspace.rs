@@ -12,7 +12,7 @@ use crate::api::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, Too
 use crate::dto::entity::workspace::{
     Workspace, WorkspaceWithDeviceCount,
 };
-use crate::infrastructure::openclaw_agent::{OpenClawAgentClient, OpenClawAgentConfig};
+use crate::infrastructure::zeroclaw_agent::{AgentClient, AgentConfig};
 
 /// Tool input: List workspaces
 #[derive(Debug, Deserialize)]
@@ -98,9 +98,17 @@ impl ToolHandler for ListWorkspacesHandler {
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
         let db = state.database();
 
+        // Resolve tenant_id from workspace for listing workspaces
+        let tenant_id = crate::dto::entity::workspace::Workspace::find_by_id(&db, &claims.workspace_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|w| w.tenant_id)
+            .unwrap_or_default();
+
         let workspaces = Workspace::find_by_tenant(
             &db,
-            &claims.tenant_id,
+            &tenant_id,
             input.page,
             input.page_size,
         )
@@ -153,8 +161,14 @@ impl ToolHandler for GetWorkspaceHandler {
             .map_err(|e| ToolError::Internal(format!("failed to get workspace: {}", e)))?
             .ok_or_else(|| ToolError::NotFound("workspace not found".to_string()))?;
 
-        // Verify tenant ownership
-        if workspace.tenant_id != claims.tenant_id {
+        // Verify tenant ownership (resolve tenant_id from claims workspace)
+        let ctx_tenant_id = Workspace::find_by_id(&db, &claims.workspace_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|w| w.tenant_id)
+            .unwrap_or_default();
+        if workspace.tenant_id != ctx_tenant_id {
             return Err(ToolError::Unauthorized(
                 "workspace does not belong to this tenant".to_string(),
             ));
@@ -174,7 +188,7 @@ impl ToolHandler for CreateWorkspaceHandler {
     }
 
     fn description(&self) -> &str {
-        "Create a new workspace. Automatically creates an associated OpenClaw AI agent."
+        "Create a new workspace. Automatically creates an associated AI agent."
     }
 
     fn input_schema(&self) -> InputSchema {
@@ -208,10 +222,18 @@ impl ToolHandler for CreateWorkspaceHandler {
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
         let db = state.database();
 
+        // Resolve tenant_id from current workspace (new workspace inherits tenant)
+        let tenant_id = Workspace::find_by_id(&db, &claims.workspace_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|w| w.tenant_id)
+            .unwrap_or_default();
+
         // Create workspace in DB
         let workspace = Workspace::create(
             &db,
-            &claims.tenant_id,
+            &tenant_id,
             &input.name,
             input.description.as_deref(),
             None,
@@ -220,18 +242,13 @@ impl ToolHandler for CreateWorkspaceHandler {
         .await
         .map_err(|e| ToolError::Internal(format!("failed to create workspace: {}", e)))?;
 
-        // Try to create OpenClaw Agent
-        let openclaw_url = crate::infrastructure::config::get()
-            .openclaw
-            .as_ref()
-            .map(|c| c.url.clone())
-            .unwrap_or_else(|| "http://localhost:4010".to_string());
-
-        let client = crate::infrastructure::openclaw_agent::RealOpenClawAgentClient::new(openclaw_url);
+        // Try to create Agent
+        let client = crate::infrastructure::zeroclaw_agent::FallbackAgentClient::new(db.pool().clone());
         let agent_result = client
-            .create_agent(&OpenClawAgentConfig {
+            .create_agent(&AgentConfig {
                 workspace_id: workspace.id.clone(),
                 name: workspace.name.clone(),
+                ..Default::default()
             })
             .await;
 
@@ -259,7 +276,7 @@ impl ToolHandler for CreateWorkspaceHandler {
             }
             Err(e) => {
                 tracing::warn!(
-                    "Failed to create OpenClaw agent for workspace {}: {}",
+                    "Failed to create agent for workspace {}: {}",
                     workspace.id,
                     e
                 );
@@ -274,7 +291,7 @@ impl ToolHandler for CreateWorkspaceHandler {
                     device_count: Some(0),
                     warning: None,
                 };
-                (wc, Some(format!("OpenClaw unavailable: {}", e)))
+                (wc, Some(format!("Agent unavailable: {}", e)))
             }
         };
 
@@ -351,7 +368,14 @@ impl ToolHandler for UpdateWorkspaceHandler {
             .map_err(|e| ToolError::Internal(format!("failed to get workspace: {}", e)))?
             .ok_or_else(|| ToolError::NotFound("workspace not found".to_string()))?;
 
-        if existing.tenant_id != claims.tenant_id {
+        // Verify tenant ownership via workspace_id from claims
+        let ctx_tenant_id = Workspace::find_by_id(&db, &claims.workspace_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|w| w.tenant_id)
+            .unwrap_or_default();
+        if existing.tenant_id != ctx_tenant_id {
             return Err(ToolError::Unauthorized(
                 "workspace does not belong to this tenant".to_string(),
             ));
@@ -383,7 +407,7 @@ impl ToolHandler for DeleteWorkspaceHandler {
     }
 
     fn description(&self) -> &str {
-        "Delete a workspace. Also deletes the associated OpenClaw AI agent."
+        "Delete a workspace. Also deletes the associated AI agent."
     }
 
     fn input_schema(&self) -> InputSchema {
@@ -416,25 +440,26 @@ impl ToolHandler for DeleteWorkspaceHandler {
             .map_err(|e| ToolError::Internal(format!("failed to get workspace: {}", e)))?
             .ok_or_else(|| ToolError::NotFound("workspace not found".to_string()))?;
 
-        if workspace.tenant_id != claims.tenant_id {
+        // Verify tenant ownership via workspace_id from claims
+        let ctx_tenant_id = Workspace::find_by_id(&db, &claims.workspace_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|w| w.tenant_id)
+            .unwrap_or_default();
+        if workspace.tenant_id != ctx_tenant_id {
             return Err(ToolError::Unauthorized(
                 "workspace does not belong to this tenant".to_string(),
             ));
         }
 
-        // Try to delete OpenClaw Agent
+        // Try to delete Agent
         if let Some(agent_id) = workspace.agent_id {
-            let openclaw_url = crate::infrastructure::config::get()
-                .openclaw
-                .as_ref()
-                .map(|c| c.url.clone())
-                .unwrap_or_else(|| "http://localhost:4010".to_string());
-
             let client =
-                crate::infrastructure::openclaw_agent::RealOpenClawAgentClient::new(openclaw_url);
+                crate::infrastructure::zeroclaw_agent::FallbackAgentClient::new(db.pool().clone());
             if let Err(e) = client.delete_agent(&agent_id).await {
                 tracing::warn!(
-                    "Failed to delete OpenClaw agent {}: {}. Proceeding with workspace deletion.",
+                    "Failed to delete agent {}: {}. Proceeding with workspace deletion.",
                     agent_id,
                     e
                 );

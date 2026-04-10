@@ -7,6 +7,7 @@ use tokio::sync::OnceCell as TokioOnceCell;
 use tokio::sync::RwLock;
 
 pub mod handlers;
+pub mod tool_metadata;
 pub mod tool_registry;
 pub mod tools;
 
@@ -14,6 +15,7 @@ pub mod tools;
 mod tests; // Integration tests in tests/ directory
 
 // Re-export types for use in other modules
+pub use tool_metadata::{IoTToolMetadata, PermissionLevel};
 pub use tool_registry::{HandlerRegistry, ToolError, ToolHandler, ToolMetadata};
 pub use handlers::{create_router, ToolCallParams};
 

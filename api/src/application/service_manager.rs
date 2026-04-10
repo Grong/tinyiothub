@@ -66,6 +66,13 @@ impl ServiceManager {
         // 注册为事件处理器
         app_state.event_bus.register_handler(data_server.clone()).await;
 
+        // 注册 SSE 事件处理器 - 将事件实时推送到前端
+        let sse_handler = Arc::new(
+            crate::infrastructure::event::handlers::SseEventHandler::new(app_state.sse_manager.clone()),
+        );
+        app_state.event_bus.register_handler(sse_handler).await;
+        info!("✅ SseEventHandler registered");
+
         // 保存到 AppState
         app_state.set_data_server(data_server.clone());
 

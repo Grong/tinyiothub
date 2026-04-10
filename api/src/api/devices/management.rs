@@ -6,6 +6,7 @@ use axum::{
 use serde::Deserialize;
 
 use crate::{
+    api::middleware::WorkspaceScope,
     domain::device::service::DeviceService,
     dto::{
         entity::{
@@ -17,7 +18,7 @@ use crate::{
             template_error::ValidationResult,
         },
         request::pagination::PaginationQuery,
-        response::{builder::ApiResponseBuilder, ApiResponse},
+        response::{builder::ApiResponseBuilder, ApiResponse, PaginatedResponse, PaginationInfo},
     },
     shared::{app_state::AppState, security::jwt::Claims},
 };
@@ -122,7 +123,8 @@ async fn list_devices(
     State(state): State<AppState>,
     Query(query): Query<DeviceQuery>,
     claims: Claims,
-) -> Json<ApiResponse<Vec<Device>>> {
+    WorkspaceScope(workspace_id): WorkspaceScope,
+) -> Json<ApiResponse<PaginatedResponse<Device>>> {
     let params = DeviceQueryParams {
         name: query.name,
         display_name: None,
@@ -135,9 +137,20 @@ async fn list_devices(
         page: query.pagination.page,
         page_size: query.pagination.page_size,
         tenant_id: Some(claims.tenant_id), // Enforce tenant isolation
+        workspace_id,
     };
 
     let include_properties = query.include_properties.unwrap_or(false);
+    let page = query.pagination.page.unwrap_or(1);
+    let page_size = query.pagination.page_size.unwrap_or(20);
+
+    // Get total count for pagination
+    let total_count = Device::count(state.database(), &params).await.unwrap_or(0) as u64;
+    let total_pages = if page_size > 0 {
+        ((total_count as f64) / (page_size as f64)).ceil() as u32
+    } else {
+        0
+    };
 
     match Device::find_all_with_tags(state.database(), &params).await {
         Ok(mut devices) => {
@@ -166,7 +179,15 @@ async fn list_devices(
                 }
             }
 
-            ApiResponseBuilder::success(devices)
+            ApiResponseBuilder::success(PaginatedResponse {
+                data: devices,
+                pagination: PaginationInfo {
+                    page,
+                    page_size,
+                    total_pages,
+                    total_count,
+                },
+            })
         }
         Err(e) => {
             tracing::error!("Failed to list devices: {}", e);
@@ -179,6 +200,7 @@ async fn list_devices(
 async fn create_device(
     State(state): State<AppState>,
     claims: Claims,
+    WorkspaceScope(workspace_id): WorkspaceScope,
     Json(req): Json<CreateDeviceApiRequest>,
 ) -> Json<ApiResponse<Device>> {
     let request = CreateDeviceRequest {
@@ -197,6 +219,7 @@ async fn create_device(
         parent_id: req.parent_id,
         product_id: req.product_id,
         tenant_id: Some(claims.tenant_id), // Set from authenticated user's tenant
+        workspace_id,
     };
 
     // 使用DeviceService创建设备，传入event_bus以触发事件
@@ -304,6 +327,7 @@ async fn update_device(
         parent_id: req.parent_id,
         product_id: req.product_id,
         tenant_id: None, // Tenant cannot be changed
+        workspace_id: None, // Workspace change via separate API
     };
 
     // 使用DeviceService更新设备，传入event_bus以触发事件
@@ -421,6 +445,7 @@ async fn disable_device(
 async fn create_device_from_template(
     State(state): State<AppState>,
     claims: Claims,
+    WorkspaceScope(workspace_id): WorkspaceScope,
     Json(req): Json<CreateDeviceFromTemplateRequest>,
 ) -> Json<ApiResponse<Device>> {
     // 使用 DeviceService 创建设备（包含所有业务逻辑）
@@ -430,6 +455,7 @@ async fn create_device_from_template(
     // Set tenant_id from authenticated user's claims
     let mut device_input = req.device_input;
     device_input.tenant_id = Some(claims.tenant_id);
+    device_input.workspace_id = workspace_id;
 
     match device_service
         .create_device_from_template(state.template_engine(), &req.template_id, &device_input)

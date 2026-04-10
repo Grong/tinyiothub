@@ -73,6 +73,7 @@ impl SecureEventService {
                 event.timestamp(),
                 event.source().clone(),
                 encrypted_rich_content,
+            event.workspace_id().map(|s| s.to_string()),
             );
         }
 
@@ -135,6 +136,7 @@ impl SecureEventService {
                                     event.timestamp(),
                                     event.source().clone(),
                                     decrypted_content,
+                                event.workspace_id().map(|s| s.to_string()),
                                 );
                             }
                         }
@@ -197,6 +199,7 @@ impl SecureEventService {
                                         event.timestamp(),
                                         event.source().clone(),
                                         decrypted_content,
+                                    event.workspace_id().map(|s| s.to_string()),
                                     );
                                 }
                             }
@@ -270,6 +273,7 @@ impl SecureEventService {
                 updated_event.timestamp(),
                 updated_event.source().clone(),
                 encrypted_rich_content,
+            updated_event.workspace_id().map(|s| s.to_string()),
             );
         }
 

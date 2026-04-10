@@ -8,6 +8,22 @@ pub struct ApiResponse<T> {
     pub result: Option<T>,
 }
 
+/// 分页响应包装类型
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PaginatedResponse<T> {
+    pub data: Vec<T>,
+    pub pagination: PaginationInfo,
+}
+
+/// 分页元数据
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PaginationInfo {
+    pub page: u32,
+    pub page_size: u32,
+    pub total_pages: u32,
+    pub total_count: u64,
+}
+
 impl<T> ApiResponse<T>
 where
     T: Serialize,

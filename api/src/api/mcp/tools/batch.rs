@@ -152,7 +152,7 @@ impl ToolHandler for BatchCommandHandler {
             command_type: input.command_type.clone(),
             parameters: input.parameters.clone(),
             device_ids: input.device_ids.clone(),
-            submitted_by: Some(claims.user_id.clone()),
+            submitted_by: Some(claims.actor_identifier().to_string()),
         };
 
         let batch_with_items = BatchCommandRepository::create(&db, &request)

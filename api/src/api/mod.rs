@@ -1,10 +1,11 @@
 // API Layer
 // Contains all HTTP API handlers and middleware
 
-use axum::{middleware as axum_middleware, routing::get, Router};
+use axum::{middleware as axum_middleware, routing::{get, post, put}, Router};
 
 use crate::{application::data_context::DataContext, shared::app_state::AppState};
 
+pub mod chat;
 pub mod alarm_rules;
 pub mod alarms;
 pub mod auth;
@@ -51,6 +52,14 @@ pub fn create_router() -> Router<AppState> {
         .nest("/self-healing", self_healing::create_router()) // 自愈端点
         .nest("/workspaces", workspaces::create_router()) // 工作空间端点
         .nest("/mcp", mcp::create_router()) // MCP 工具端点
+        .nest("/chat", chat::create_router()) // Chat 代理端点
+        // API Keys — 直接在 /v1/api-keys/ 下，不嵌套在 /tenants 下
+        .nest("/api-keys", tenants::create_api_key_router())
+        .route("/agents", get(chat::proxy::list_agents))
+        .route("/agents/:id/config", get(chat::proxy::get_agent_config).put(chat::proxy::set_agent_config))
+        .route("/tools/catalog", get(chat::proxy::tools_catalog))
+        .route("/tools/effective", get(chat::proxy::tools_effective))
+        .route("/tools/toggle", post(chat::proxy::tools_toggle))
         .nest("/auth", auth::session::create_router()) // 需要认证的会话路由
         .route("/test-auth", get(test_auth_endpoint))
         .layer(axum_middleware::from_fn(crate::api::middleware::context::jwt_auth_middleware));

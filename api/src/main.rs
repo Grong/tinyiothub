@@ -71,7 +71,7 @@ async fn main_impl() -> std::io::Result<()> {
     // Set default log level if not specified
     if std::env::var_os("RUST_LOG").is_none() {
         let log_level = config::get().logging.level.clone();
-        std::env::set_var("RUST_LOG", log_level);
+        unsafe { std::env::set_var("RUST_LOG", log_level); }
     }
 
     // Initialize logging system
@@ -144,6 +144,10 @@ async fn main_impl() -> std::io::Result<()> {
         use std::sync::Arc;
         crate::api::mcp::init_app_state(Arc::new(app_state.clone()));
         crate::api::mcp::register_tools().await;
+        // Refresh agent tools after MCP registration
+        if let Err(e) = app_state.tinyiothub_agent.refresh_tools().await {
+            tracing::error!("Failed to refresh agent tools: {}", e);
+        }
         let api_router = crate::api::create_router();
         Router::new()
             .nest("/api", api_router)
@@ -261,6 +265,11 @@ async fn create_app_router(app_state: crate::shared::app_state::AppState) -> Rou
     crate::api::mcp::init_app_state(Arc::new(app_state.clone()));
     crate::api::mcp::register_tools().await;
     tracing::info!("MCP tools initialized");
+
+    // Refresh agent tools after MCP registration
+    if let Err(e) = app_state.tinyiothub_agent.refresh_tools().await {
+        tracing::error!("Failed to refresh agent tools: {}", e);
+    }
 
     // Initialize self-healing state
     let db = app_state.database.clone();

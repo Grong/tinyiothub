@@ -64,7 +64,7 @@ impl TemplateSearchService {
     /// 构建搜索条件
     fn build_search_conditions<'a>(
         &self,
-        query: &mut QueryBuilder<'a, sqlx::Sqlite>,
+        query: &mut QueryBuilder<sqlx::Sqlite>,
         params: &'a TemplateQueryParams,
     ) {
         // 分类筛选
@@ -127,7 +127,7 @@ impl TemplateSearchService {
             query_str.push_str(&format!(" LIMIT {}", limit));
         }
 
-        let templates = sqlx::query_as::<_, DeviceTemplate>(&query_str)
+        let templates = sqlx::query_as::<_, DeviceTemplate>(sqlx::AssertSqlSafe(query_str.clone()))
             .bind(category)
             .fetch_all(self.database.pool())
             .await?;
@@ -160,7 +160,7 @@ impl TemplateSearchService {
             query_str.push_str(&format!(" LIMIT {}", limit));
         }
 
-        let templates = sqlx::query_as::<_, DeviceTemplate>(&query_str)
+        let templates = sqlx::query_as::<_, DeviceTemplate>(sqlx::AssertSqlSafe(query_str.clone()))
             .bind(manufacturer)
             .fetch_all(self.database.pool())
             .await?;
@@ -192,7 +192,7 @@ impl TemplateSearchService {
             query_str.push_str(&format!(" LIMIT {}", limit));
         }
 
-        let templates = sqlx::query_as::<_, DeviceTemplate>(&query_str)
+        let templates = sqlx::query_as::<_, DeviceTemplate>(sqlx::AssertSqlSafe(query_str.clone()))
             .bind(protocol_type)
             .fetch_all(self.database.pool())
             .await?;

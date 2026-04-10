@@ -19,12 +19,12 @@ use crate::{
 /// Create workspaces router
 pub fn create_router() -> Router<AppState> {
     Router::new()
-        .route("/workspaces", get(list_workspaces))
-        .route("/workspaces", post(create_workspace))
-        .route("/workspaces/{id}", get(get_workspace))
-        .route("/workspaces/{id}", put(update_workspace))
-        .route("/workspaces/{id}", delete(delete_workspace))
-        .route("/workspaces/{id}/devices", post(assign_device))
+        .route("/", get(list_workspaces))
+        .route("/", post(create_workspace))
+        .route("/{id}", get(get_workspace))
+        .route("/{id}", put(update_workspace))
+        .route("/{id}", delete(delete_workspace))
+        .route("/{id}/devices", post(assign_device))
 }
 
 /// List workspaces for current tenant
@@ -68,7 +68,7 @@ async fn get_workspace(
     }
 }
 
-/// Create workspace (synchronously creates OpenClaw Agent)
+/// Create workspace (synchronously creates Agent)
 async fn create_workspace(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
@@ -94,12 +94,13 @@ async fn create_workspace(
         }
     };
 
-    // Try to create OpenClaw Agent
+    // Try to create Agent
     let agent_result = state
-        .openclaw_agent
-        .create_agent(&crate::infrastructure::openclaw_agent::OpenClawAgentConfig {
+        .agent_client
+        .create_agent(&crate::infrastructure::zeroclaw_agent::AgentConfig {
             workspace_id: workspace.id.clone(),
             name: workspace.name.clone(),
+            ..Default::default()
         })
         .await;
 
@@ -127,7 +128,7 @@ async fn create_workspace(
         }
         Err(e) => {
             tracing::warn!(
-                "Failed to create OpenClaw agent for workspace {}: {}. Workspace created with NULL agent_id.",
+                "Failed to create agent for workspace {}: {}. Workspace created with NULL agent_id.",
                 workspace.id,
                 e
             );
@@ -142,7 +143,7 @@ async fn create_workspace(
                 device_count: Some(0),
                 warning: None,
             };
-            (wc, Some(format!("OpenClaw unavailable: {}. Agent pending.", e)))
+            (wc, Some(format!("Agent unavailable: {}. Agent pending.", e)))
         }
     };
 
@@ -202,7 +203,7 @@ async fn update_workspace(
     }
 }
 
-/// Delete workspace (synchronously deletes OpenClaw Agent)
+/// Delete workspace (synchronously deletes Agent)
 async fn delete_workspace(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
@@ -225,11 +226,11 @@ async fn delete_workspace(
         }
     };
 
-    // Try to delete OpenClaw Agent
+    // Try to delete Agent
     if let Some(agent_id) = workspace.agent_id {
-        if let Err(e) = state.openclaw_agent.delete_agent(&agent_id).await {
+        if let Err(e) = state.agent_client.delete_agent(&agent_id).await {
             tracing::warn!(
-                "Failed to delete OpenClaw agent {}: {}. Proceeding with workspace deletion.",
+                "Failed to delete agent {}: {}. Proceeding with workspace deletion.",
                 agent_id,
                 e
             );

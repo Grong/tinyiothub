@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
+use sqlx::{FromRow, QueryBuilder, Row, Sqlite};
+
+use crate::infrastructure::persistence::database::Database;
 
 /// Device alarm rule entity - 设备告警规则实体
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -59,6 +61,79 @@ pub struct UpdateDeviceAlarmRuleRequest {
 }
 
 impl DeviceAlarmRule {
+    /// Find all alarm rules with pagination
+    pub async fn find_all(
+        db: &Database,
+        params: &DeviceAlarmRuleQuery,
+    ) -> Result<Vec<DeviceAlarmRule>, sqlx::Error> {
+        let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(
+            "SELECT id, device_id, property_id, rule_name, rule_type, condition, alarm_level, is_enabled, created_at, updated_at, description FROM device_alarm_rules WHERE 1=1",
+        );
+
+        if let Some(ref device_id) = params.device_id {
+            query_builder.push(" AND device_id = ").push_bind(device_id);
+        }
+        if let Some(ref property_id) = params.property_id {
+            query_builder.push(" AND property_id = ").push_bind(property_id);
+        }
+        if let Some(ref rule_name) = params.rule_name {
+            query_builder.push(" AND rule_name LIKE ").push_bind(format!("%{}%", rule_name));
+        }
+        if let Some(ref rule_type) = params.rule_type {
+            query_builder.push(" AND rule_type = ").push_bind(rule_type);
+        }
+        if let Some(ref alarm_level) = params.alarm_level {
+            query_builder.push(" AND alarm_level = ").push_bind(alarm_level);
+        }
+        if let Some(is_enabled) = params.is_enabled {
+            query_builder.push(" AND is_enabled = ").push_bind(if is_enabled { 1 } else { 0 });
+        }
+
+        query_builder.push(" ORDER BY created_at DESC");
+
+        if let Some(page_size) = params.page_size {
+            let offset = params.page.unwrap_or(1).saturating_sub(1) * page_size;
+            query_builder.push(" LIMIT ").push_bind(page_size as i64);
+            query_builder.push(" OFFSET ").push_bind(offset as i64);
+        }
+
+        let rules = query_builder.build_query_as::<DeviceAlarmRule>().fetch_all(db.pool()).await?;
+        Ok(rules)
+    }
+
+    /// Count alarm rules with filters
+    pub async fn count(
+        db: &Database,
+        params: &DeviceAlarmRuleQuery,
+    ) -> Result<i64, sqlx::Error> {
+        let mut query_builder: QueryBuilder<Sqlite> = QueryBuilder::new(
+            "SELECT COUNT(*) FROM device_alarm_rules WHERE 1=1",
+        );
+
+        if let Some(ref device_id) = params.device_id {
+            query_builder.push(" AND device_id = ").push_bind(device_id);
+        }
+        if let Some(ref property_id) = params.property_id {
+            query_builder.push(" AND property_id = ").push_bind(property_id);
+        }
+        if let Some(ref rule_name) = params.rule_name {
+            query_builder.push(" AND rule_name LIKE ").push_bind(format!("%{}%", rule_name));
+        }
+        if let Some(ref rule_type) = params.rule_type {
+            query_builder.push(" AND rule_type = ").push_bind(rule_type);
+        }
+        if let Some(ref alarm_level) = params.alarm_level {
+            query_builder.push(" AND alarm_level = ").push_bind(alarm_level);
+        }
+        if let Some(is_enabled) = params.is_enabled {
+            query_builder.push(" AND is_enabled = ").push_bind(if is_enabled { 1 } else { 0 });
+        }
+
+        let row = query_builder.build().fetch_one(db.pool()).await?;
+        let count: i64 = row.get(0);
+        Ok(count)
+    }
+
     /// Create a new device alarm rule
     pub fn new(request: CreateDeviceAlarmRuleRequest) -> Self {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();

@@ -143,7 +143,7 @@ impl EventRepository for SqliteEventRepository {
         }
 
         // Build query with parameters
-        let mut query = sqlx::query(&sql);
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql.clone()));
 
         // Bind time range parameters
         if let Some(start_time) = criteria.start_time {
@@ -363,7 +363,7 @@ impl SqliteEventRepository {
             })?
         };
 
-        Ok(Event::reconstruct(id, event_type, level, timestamp, source, content))
+        Ok(Event::reconstruct(id, event_type, level, timestamp, source, content, None))
     }
 
     async fn get_total_count(&self) -> Result<u64> {

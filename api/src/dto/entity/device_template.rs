@@ -155,6 +155,7 @@ pub struct DeviceCreationInput {
     pub property_values: HashMap<String, String>, // 属性默认值覆盖
     pub enabled_commands: Vec<String>,            // 用户选择启用的命令
     pub tenant_id: Option<String>,               // Will be set from claims, not from request
+    pub workspace_id: Option<String>,            // Will be set from X-Workspace-Id header
 }
 
 /// 设备预览
@@ -600,7 +601,7 @@ impl DeviceTemplate {
             query_str.push_str(&format!(" LIMIT {}", limit));
         }
 
-        let templates = sqlx::query_as::<_, DeviceTemplate>(&query_str)
+        let templates = sqlx::query_as::<_, DeviceTemplate>(sqlx::AssertSqlSafe(query_str.clone()))
             .bind(&search_pattern)
             .bind(&search_pattern)
             .bind(&search_pattern)

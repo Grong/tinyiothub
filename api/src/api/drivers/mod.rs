@@ -13,21 +13,12 @@ use crate::{
     domain::device::driver::get_driver_list,
     dto::{
         entity::component::{Component, ComponentOption},
-        response::ApiResponse,
+        response::{ApiResponse, PaginatedResponse, PaginationInfo},
     },
     shared::app_state::AppState,
 };
 
 pub mod dynamic;
-
-/// 驱动列表响应
-#[derive(Serialize, Deserialize)]
-pub struct DriverListResponse {
-    /// 驱动列表
-    pub drivers: Vec<Component>,
-    /// 总数量
-    pub total: usize,
-}
 
 /// 驱动详情响应
 #[derive(Serialize, Deserialize)]
@@ -65,7 +56,7 @@ pub fn create_router() -> Router<AppState> {
 /// 获取驱动列表的处理函数
 async fn list_drivers(
     Query(params): Query<HashMap<String, String>>,
-) -> Json<ApiResponse<DriverListResponse>> {
+) -> Json<ApiResponse<PaginatedResponse<Component>>> {
     tracing::info!("Getting driver list, params: {:?}", params);
 
     // 获取静态驱动列表
@@ -85,10 +76,31 @@ async fn list_drivers(
     }
 
     let total = drivers.len();
+    let page: u32 = params.get("page").and_then(|s| s.parse().ok()).unwrap_or(1);
+    let page_size: u32 = params.get("page_size").and_then(|s| s.parse().ok()).unwrap_or(20);
 
-    tracing::info!("Found {} drivers (static + dynamic)", total);
+    let total_count = total as u64;
+    let total_pages = if page_size > 0 {
+        ((total as f64) / (page_size as f64)).ceil() as u32
+    } else {
+        0
+    };
 
-    api_success!(DriverListResponse { drivers, total })
+    let start = ((page.saturating_sub(1)) * page_size) as usize;
+    let end = (start + page_size as usize).min(total);
+    let paged = if start < total { &drivers[start..end] } else { &[] };
+
+    tracing::info!("Found {} drivers (static + dynamic), page {} of {}", total, page, total_pages);
+
+    api_success!(PaginatedResponse {
+        data: paged.to_vec(),
+        pagination: PaginationInfo {
+            page,
+            page_size,
+            total_pages,
+            total_count,
+        },
+    })
 }
 
 /// 获取驱动详情的处理函数
@@ -114,16 +126,21 @@ async fn get_driver_detail(Path(name): Path<String>) -> Json<ApiResponse<DriverD
 }
 
 /// 检查驱动支持状态的处理函数
-async fn check_driver_support(Path(name): Path<String>) -> Json<ApiResponse<DriverListResponse>> {
+async fn check_driver_support(Path(name): Path<String>) -> Json<ApiResponse<PaginatedResponse<Component>>> {
     tracing::info!("Checking if driver is supported: {}", name);
 
     // 检查静态和动态驱动
     let is_supported = crate::domain::device::driver::has_driver(&name);
 
-    let response = if is_supported {
-        DriverListResponse { drivers: vec![], total: 1 }
-    } else {
-        DriverListResponse { drivers: vec![], total: 0 }
+    let total_count = if is_supported { 1 } else { 0 };
+    let response = PaginatedResponse {
+        data: vec![],
+        pagination: PaginationInfo {
+            page: 1,
+            page_size: 1,
+            total_pages: 1,
+            total_count,
+        },
     };
 
     tracing::info!("Driver {} support status: {}", name, is_supported);
@@ -166,7 +183,7 @@ async fn get_driver_config(Path(name): Path<String>) -> Json<ApiResponse<DriverC
 }
 
 /// 获取支持的驱动名称列表的处理函数
-async fn list_driver_names() -> Json<ApiResponse<DriverListResponse>> {
+async fn list_driver_names() -> Json<ApiResponse<Vec<Component>>> {
     tracing::info!("Getting supported driver names");
 
     // 获取所有驱动名称（静态+动态）
@@ -192,9 +209,7 @@ async fn list_driver_names() -> Json<ApiResponse<DriverListResponse>> {
         })
         .collect();
 
-    let total = drivers.len();
+    tracing::info!("Found {} supported driver names (static + dynamic)", drivers.len());
 
-    tracing::info!("Found {} supported driver names (static + dynamic)", total);
-
-    api_success!(DriverListResponse { drivers, total })
+    api_success!(drivers)
 }

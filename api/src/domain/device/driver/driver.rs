@@ -561,12 +561,15 @@ impl DriverWrapper {
                         },
                     ],
                 ),
+                device.workspace_id.clone(),
             );
 
-            // if let Ok(event) = event {
-            //     let event_bus_clone = event_bus.clone();
-            //     crate::utils::publish_event_safe(event_bus_clone, event).await;
-            // }
+            if let Ok(event) = event {
+                let event_bus_clone = event_bus.clone();
+                tokio::spawn(async move {
+                    crate::utils::publish_event_safe(event_bus_clone, event).await;
+                });
+            }
         }
 
         tracing::info!("Device '{}' connected successfully", self.display_name());
@@ -598,12 +601,15 @@ impl DriverWrapper {
                 EventLevel::Warning,
                 EventSource::device(device.id.clone(), Some("driver".to_string())),
                 RichContent::new(format!("Device Offline: {}", device.name), elements),
+                device.workspace_id.clone(),
             );
 
-            // if let Ok(event) = event {
-            //     let event_bus_clone = event_bus.clone();
-            //     crate::utils::publish_event_safe(event_bus_clone, event).await;
-            // }
+            if let Ok(event) = event {
+                let event_bus_clone = event_bus.clone();
+                tokio::spawn(async move {
+                    crate::utils::publish_event_safe(event_bus_clone, event).await;
+                });
+            }
         }
 
         if let Some(reason) = reason {
@@ -639,12 +645,15 @@ impl DriverWrapper {
                         },
                     ],
                 ),
+                device.workspace_id.clone(),
             );
 
-            // if let Ok(event) = event {
-            //     let event_bus_clone = event_bus.clone();
-            //     crate::utils::publish_event_safe(event_bus_clone, event).await;
-            // }
+            if let Ok(event) = event {
+                let event_bus_clone = event_bus.clone();
+                tokio::spawn(async move {
+                    crate::utils::publish_event_safe(event_bus_clone, event).await;
+                });
+            }
         }
 
         tracing::error!("Device '{}' connection failed: {}", self.display_name(), error_message);
@@ -710,12 +719,15 @@ impl DriverWrapper {
                     format!("Property Changed: {} - {}", device.name, property_name),
                     elements,
                 ),
+                device.workspace_id.clone(),
             );
 
-            // if let Ok(event) = event {
-            //     let event_bus_clone = event_bus.clone();
-            //     crate::utils::publish_event_safe(event_bus_clone, event).await;
-            // }
+            if let Ok(event) = event {
+                let event_bus_clone = event_bus.clone();
+                tokio::spawn(async move {
+                    crate::utils::publish_event_safe(event_bus_clone, event).await;
+                });
+            }
         }
     }
 
@@ -784,12 +796,15 @@ impl DriverWrapper {
                 level,
                 EventSource::device(device.id.clone(), Some("driver".to_string())),
                 content,
+                device.workspace_id.clone(),
             );
 
-            // if let Ok(event) = event {
-            //     let event_bus_clone = event_bus.clone();
-            //     crate::utils::publish_event_safe(event_bus_clone, event).await;
-            // }
+            if let Ok(event) = event {
+                let event_bus_clone = event_bus.clone();
+                tokio::spawn(async move {
+                    crate::utils::publish_event_safe(event_bus_clone, event).await;
+                });
+            }
         }
     }
 

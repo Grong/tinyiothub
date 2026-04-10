@@ -10,6 +10,6 @@ pub mod login;
 // Re-export commonly used types
 
 pub use alarm::*;
-pub use api_response::{ApiResponse, ReqCtx, UserInfo};
+pub use api_response::{ApiResponse, PaginatedResponse, PaginationInfo, ReqCtx, UserInfo};
 pub use dashboard::*;
 pub use device_command::DeviceCommandResponse;

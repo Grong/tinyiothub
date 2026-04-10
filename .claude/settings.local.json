@@ -7,7 +7,17 @@
       "Bash(git commit:*)",
       "Bash(DATABASE_URL=\"sqlite:tinyiothub.db\" cargo sqlx migrate run)",
       "Bash(cargo check:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(curl -s http://localhost:4173/assets/index-DfrCychD.js)",
+      "Bash(curl -s http://localhost:5173/)",
+      "Bash(pnpm add:*)",
+      "Bash(npx vite:*)",
+      "Bash(npm test:*)",
+      "Bash(npm run:*)",
+      "Bash(git -C /Users/chenguorong/code/my/tinyiothub show 9369a5a:web-lit/src/styles/components.css)",
+      "Bash(git ls-tree:*)",
+      "mcp__plugin_oh-my-claudecode_t__lsp_diagnostics",
+      "Bash(gh api:*)"
     ]
   }
 }

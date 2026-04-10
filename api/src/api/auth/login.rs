@@ -86,6 +86,21 @@ async fn login(
                 user.id
             );
 
+            // 查找该租户的第一个 workspace 作为默认 workspace
+            let workspace_id: Option<String> = sqlx::query_scalar(
+                "SELECT id FROM workspaces WHERE tenant_id = ? LIMIT 1"
+            )
+            .bind(&tenant_id)
+            .fetch_optional(state.database().pool())
+            .await
+            .unwrap_or(None);
+
+            tracing::debug!(
+                "Found default workspace_id {:?} for tenant {}",
+                workspace_id,
+                tenant_id
+            );
+
             // 生成 JWT 令牌（HarmonyOS 会自动使用 HMAC-SHA256）
             match jwt::generate_token(&user.id, user.get_display_name(), &tenant_id) {
                 Ok(token) => {
@@ -94,6 +109,7 @@ async fn login(
                         token_type: "Bearer".to_string(),
                         expires_in: 24 * 60 * 60, // 24小时
                         user_info: UserInfo::from(user),
+                        workspace_id,
                     };
 
                     tracing::info!("User {} logged in successfully", request.username);

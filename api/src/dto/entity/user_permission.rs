@@ -356,7 +356,7 @@ impl UserPermission {
             query_str.push_str(" AND target_id IS NULL");
         }
 
-        let mut query = sqlx::query(&query_str);
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(query_str.clone()));
         for param in &params {
             query = query.bind(param);
         }

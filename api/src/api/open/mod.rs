@@ -37,10 +37,10 @@ pub fn create_open_router() -> Router<AppState> {
 async fn validate_api_key(
     state: &AppState,
     api_key: Option<String>,
-) -> Result<(ApiKey, Tenant), StatusCode> {
-    let key = api_key.ok_or(StatusCode::UNAUTHORIZED)?;
+) -> Result<(ApiKey, Tenant, String), StatusCode> {
+    let raw_key = api_key.ok_or(StatusCode::UNAUTHORIZED)?;
 
-    let key = ApiKey::find_by_prefix(&state.database, &key)
+    let key = ApiKey::find_by_prefix(&state.database, &raw_key)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::UNAUTHORIZED)?;
@@ -61,7 +61,13 @@ async fn validate_api_key(
         }
     }
 
-    let tenant = Tenant::find_by_id(&state.database, &key.tenant_id)
+    // Resolve tenant_id from workspace for quota check
+    let workspace = crate::dto::entity::workspace::Workspace::find_by_id(&state.database, &key.workspace_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let tenant = Tenant::find_by_id(&state.database, &workspace.tenant_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -70,7 +76,7 @@ async fn validate_api_key(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    let can_proceed = Tenant::check_quota(&state.database, &key.tenant_id, "api_call")
+    let can_proceed = Tenant::check_quota(&state.database, &workspace.tenant_id, "api_call")
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -78,13 +84,14 @@ async fn validate_api_key(
         return Err(StatusCode::TOO_MANY_REQUESTS);
     }
 
-    Ok((key, tenant))
+    let workspace_id = key.workspace_id.clone();
+    Ok((key, tenant, workspace_id))
 }
 
 /// Record API usage
 async fn record_api_usage(
     state: &AppState,
-    tenant_id: &str,
+    workspace_id: &str,
     api_key_id: Option<&str>,
     method: &str,
     path: &str,
@@ -93,7 +100,7 @@ async fn record_api_usage(
 ) {
     let _ = ApiKey::record_usage(
         &state.database,
-        tenant_id,
+        workspace_id,
         api_key_id,
         method,
         path,
@@ -118,7 +125,7 @@ async fn open_health(State(state): State<AppState>) -> Result<Json<serde_json::V
 async fn list_devices(State(state): State<AppState>) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
-    let (key, tenant) = validate_api_key(&state, None).await?;
+    let (key, tenant, workspace_id) = validate_api_key(&state, None).await?;
 
     let sql = format!(
         "SELECT id, name, display_name, device_type, state, created_at FROM devices ORDER BY created_at DESC LIMIT 100"
@@ -144,7 +151,7 @@ async fn list_devices(State(state): State<AppState>) -> Result<Response<Body>, S
     let latency_ms = start.elapsed().as_millis() as i32;
     record_api_usage(
         &state,
-        &tenant.id,
+        &workspace_id,
         Some(&key.id),
         "GET",
         "/open/devices",
@@ -167,37 +174,45 @@ async fn get_device(
 ) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
-    let (key, tenant) = validate_api_key(&state, None).await?;
+    let (key, tenant, workspace_id) = validate_api_key(&state, None).await?;
 
-    let sql = format!(
-        "SELECT id, name, display_name, device_type, address, state, protocol_type, created_at, updated_at FROM devices WHERE id = '{}' LIMIT 1",
-        id
-    );
+    let row = sqlx::query(
+        "SELECT id, name, display_name, device_type, address, state, protocol_type, created_at, updated_at FROM devices WHERE id = ? LIMIT 1"
+    )
+    .bind(&id)
+    .fetch_optional(state.database.pool())
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let mut rows = state
-        .database
-        .query(&sql, |row| {
-            Ok(serde_json::json!({
-                "id": row.try_get::<String, _>("id")?,
-                "name": row.try_get::<String, _>("name")?,
-                "display_name": row.try_get::<Option<String>, _>("display_name")?,
-                "device_type": row.try_get::<Option<String>, _>("device_type")?,
-                "address": row.try_get::<Option<String>, _>("address")?,
-                "state": row.try_get::<i32, _>("state")?,
-                "protocol_type": row.try_get::<Option<String>, _>("protocol_type")?,
-                "created_at": row.try_get::<String, _>("created_at")?,
-                "updated_at": row.try_get::<String, _>("updated_at")?,
-            }))
+    let row = row.ok_or(StatusCode::NOT_FOUND)?;
+    let device = {
+        use sqlx::Row;
+        let get = |col: &str| -> Result<String, StatusCode> {
+            row.try_get::<String, _>(col).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        };
+        let get_opt = |col: &str| -> Result<Option<String>, StatusCode> {
+            row.try_get::<Option<String>, _>(col).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        };
+        let get_i32 = |col: &str| -> Result<i32, StatusCode> {
+            row.try_get::<i32, _>(col).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        };
+        serde_json::json!({
+            "id": get("id")?,
+            "name": get("name")?,
+            "display_name": get_opt("display_name")?,
+            "device_type": get_opt("device_type")?,
+            "address": get_opt("address")?,
+            "state": get_i32("state")?,
+            "protocol_type": get_opt("protocol_type")?,
+            "created_at": get("created_at")?,
+            "updated_at": get("updated_at")?,
         })
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let device = rows.pop().ok_or(StatusCode::NOT_FOUND)?;
+    };
 
     let latency_ms = start.elapsed().as_millis() as i32;
     record_api_usage(
         &state,
-        &tenant.id,
+        &workspace_id,
         Some(&key.id),
         "GET",
         &format!("/open/devices/{}", id),
@@ -220,34 +235,43 @@ async fn get_device_properties(
 ) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
-    let (key, tenant) = validate_api_key(&state, None).await?;
+    let (key, tenant, workspace_id) = validate_api_key(&state, None).await?;
 
-    let sql = format!(
-        "SELECT name, display_name, data_type, value, unit, updated_at FROM device_properties WHERE device_id = '{}' ORDER BY created_at DESC",
-        id
-    );
+    let rows = sqlx::query(
+        "SELECT name, display_name, data_type, value, unit, updated_at FROM device_properties WHERE device_id = ? ORDER BY created_at DESC"
+    )
+    .bind(&id)
+    .fetch_all(state.database.pool())
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let rows = state
-        .database
-        .query(&sql, |row| {
+    let properties: Vec<_> = rows
+        .into_iter()
+        .map(|row| {
+            use sqlx::Row;
+            let get = |r: &sqlx::sqlite::SqliteRow, col: &str| -> Result<String, StatusCode> {
+                r.try_get::<String, _>(col).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+            };
+            let get_opt =
+                |r: &sqlx::sqlite::SqliteRow, col: &str| -> Result<Option<String>, StatusCode> {
+                    r.try_get::<Option<String>, _>(col)
+                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+                };
             Ok(serde_json::json!({
-                "name": row.try_get::<String, _>("name")?,
-                "display_name": row.try_get::<Option<String>, _>("display_name")?,
-                "data_type": row.try_get::<String, _>("data_type")?,
-                "value": row.try_get::<Option<String>, _>("value")?,
-                "unit": row.try_get::<Option<String>, _>("unit")?,
-                "updated_at": row.try_get::<String, _>("updated_at")?,
+                "name": get(&row, "name")?,
+                "display_name": get_opt(&row, "display_name")?,
+                "data_type": get(&row, "data_type")?,
+                "value": get_opt(&row, "value")?,
+                "unit": get_opt(&row, "unit")?,
+                "updated_at": get(&row, "updated_at")?,
             }))
         })
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let properties: Vec<_> = rows.into_iter().map(|r| r).collect();
+        .collect::<Result<Vec<_>, StatusCode>>()?;
 
     let latency_ms = start.elapsed().as_millis() as i32;
     record_api_usage(
         &state,
-        &tenant.id,
+        &workspace_id,
         Some(&key.id),
         "GET",
         &format!("/open/devices/{}/properties", id),
@@ -270,33 +294,42 @@ async fn list_commands(
 ) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
-    let (key, tenant) = validate_api_key(&state, None).await?;
+    let (key, tenant, workspace_id) = validate_api_key(&state, None).await?;
 
-    let sql = format!(
-        "SELECT id, name, display_name, description, command_type FROM device_commands WHERE device_id = '{}' ORDER BY created_at DESC",
-        id
-    );
+    let rows = sqlx::query(
+        "SELECT id, name, display_name, description, command_type FROM device_commands WHERE device_id = ? ORDER BY created_at DESC"
+    )
+    .bind(&id)
+    .fetch_all(state.database.pool())
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let rows = state
-        .database
-        .query(&sql, |row| {
+    let commands: Vec<_> = rows
+        .into_iter()
+        .map(|row| {
+            use sqlx::Row;
+            let get = |r: &sqlx::sqlite::SqliteRow, col: &str| -> Result<String, StatusCode> {
+                r.try_get::<String, _>(col).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+            };
+            let get_opt =
+                |r: &sqlx::sqlite::SqliteRow, col: &str| -> Result<Option<String>, StatusCode> {
+                    r.try_get::<Option<String>, _>(col)
+                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+                };
             Ok(serde_json::json!({
-                "id": row.try_get::<String, _>("id")?,
-                "name": row.try_get::<String, _>("name")?,
-                "display_name": row.try_get::<Option<String>, _>("display_name")?,
-                "description": row.try_get::<Option<String>, _>("description")?,
-                "command_type": row.try_get::<String, _>("command_type")?,
+                "id": get(&row, "id")?,
+                "name": get(&row, "name")?,
+                "display_name": get_opt(&row, "display_name")?,
+                "description": get_opt(&row, "description")?,
+                "command_type": get(&row, "command_type")?,
             }))
         })
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let commands: Vec<_> = rows.into_iter().map(|r| r).collect();
+        .collect::<Result<Vec<_>, StatusCode>>()?;
 
     let latency_ms = start.elapsed().as_millis() as i32;
     record_api_usage(
         &state,
-        &tenant.id,
+        &workspace_id,
         Some(&key.id),
         "GET",
         &format!("/open/devices/{}/commands", id),
@@ -320,7 +353,7 @@ async fn send_command(
 ) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
-    let (key, tenant) = validate_api_key(&state, None).await?;
+    let (key, tenant, workspace_id) = validate_api_key(&state, None).await?;
 
     let command_name =
         payload.get("command").and_then(|v| v.as_str()).ok_or(StatusCode::BAD_REQUEST)?;
@@ -331,20 +364,18 @@ async fn send_command(
     let cmd_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-    let sql = format!(
-        r#"
-        INSERT INTO device_commands (id, device_id, name, command_type, parameters, status, created_at, updated_at)
-        VALUES ('{}', '{}', '{}', 'custom', '{}', 'pending', '{}', '{}')
-    "#,
-        cmd_id,
-        id,
-        command_name,
-        command_params.unwrap_or_default(),
-        now,
-        now
-    );
-
-    state.database.execute(&sql).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    sqlx::query(
+        "INSERT INTO device_commands (id, device_id, name, command_type, parameters, status, created_at, updated_at) VALUES (?, ?, ?, 'custom', ?, 'pending', ?, ?)"
+    )
+    .bind(&cmd_id)
+    .bind(&id)
+    .bind(command_name)
+    .bind(command_params.unwrap_or_default())
+    .bind(&now)
+    .bind(&now)
+    .execute(state.database.pool())
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let result = serde_json::json!({
         "command_id": cmd_id,
@@ -355,7 +386,7 @@ async fn send_command(
     let latency_ms = start.elapsed().as_millis() as i32;
     record_api_usage(
         &state,
-        &tenant.id,
+        &workspace_id,
         Some(&key.id),
         "POST",
         &format!("/open/devices/{}/command", id),
@@ -378,33 +409,37 @@ async fn list_events(
 ) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
-    let (key, tenant) = validate_api_key(&state, None).await?;
+    let (key, tenant, workspace_id) = validate_api_key(&state, None).await?;
 
-    let sql = format!(
-        "SELECT id, event_type, event_level, message, created_at FROM events WHERE device_id = '{}' ORDER BY created_at DESC LIMIT 100",
-        id
-    );
+    let rows = sqlx::query(
+        "SELECT id, event_type, event_level, message, created_at FROM events WHERE device_id = ? ORDER BY created_at DESC LIMIT 100"
+    )
+    .bind(&id)
+    .fetch_all(state.database.pool())
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let rows = state
-        .database
-        .query(&sql, |row| {
+    let events: Vec<_> = rows
+        .into_iter()
+        .map(|row| {
+            use sqlx::Row;
+            let get = |r: &sqlx::sqlite::SqliteRow, col: &str| -> Result<String, StatusCode> {
+                r.try_get::<String, _>(col).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+            };
             Ok(serde_json::json!({
-                "id": row.try_get::<String, _>("id")?,
-                "event_type": row.try_get::<String, _>("event_type")?,
-                "event_level": row.try_get::<String, _>("event_level")?,
-                "message": row.try_get::<String, _>("message")?,
-                "created_at": row.try_get::<String, _>("created_at")?,
+                "id": get(&row, "id")?,
+                "event_type": get(&row, "event_type")?,
+                "event_level": get(&row, "event_level")?,
+                "message": get(&row, "message")?,
+                "created_at": get(&row, "created_at")?,
             }))
         })
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let events: Vec<_> = rows.into_iter().map(|r| r).collect();
+        .collect::<Result<Vec<_>, StatusCode>>()?;
 
     let latency_ms = start.elapsed().as_millis() as i32;
     record_api_usage(
         &state,
-        &tenant.id,
+        &workspace_id,
         Some(&key.id),
         "GET",
         &format!("/open/devices/{}/events", id),
@@ -424,7 +459,7 @@ async fn list_events(
 async fn list_all_events(State(state): State<AppState>) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
-    let (key, tenant) = validate_api_key(&state, None).await?;
+    let (key, tenant, workspace_id) = validate_api_key(&state, None).await?;
 
     let sql = "SELECT id, event_type, event_level, message, device_id, created_at FROM events ORDER BY created_at DESC LIMIT 100".to_string();
 
@@ -448,7 +483,7 @@ async fn list_all_events(State(state): State<AppState>) -> Result<Response<Body>
     let latency_ms = start.elapsed().as_millis() as i32;
     record_api_usage(
         &state,
-        &tenant.id,
+        &workspace_id,
         Some(&key.id),
         "GET",
         "/open/events",

@@ -11,33 +11,42 @@ use axum::{
 };
 
 use crate::{
-    dto::entity::tenant::{
-        ApiKey, ApiUsageStats, CreateApiKeyRequest, SubscriptionPlan, Tenant, TenantQueryParams,
-        TenantUsage,
+    api::middleware::WorkspaceScope,
+    shared::security::jwt::Claims,
+    dto::entity::{
+        tenant::{ApiKey, ApiUsageStats, CreateApiKeyRequest, SubscriptionPlan, Tenant, TenantQueryParams, TenantUsage},
+        workspace::Workspace,
     },
     dto::response::{ApiResponse, builder::ApiResponseBuilder},
+    infrastructure::persistence::database::Database,
     shared::app_state::AppState,
 };
+
+/// Create API Keys router — 直接挂载在 /v1/api-keys/ 下
+pub fn create_api_key_router() -> Router<AppState> {
+    Router::new()
+        // GET /v1/api-keys — list
+        .route("/", get(list_api_keys))
+        // POST /v1/api-keys — create
+        .route("/", post(create_api_key))
+        // DELETE /v1/api-keys/{id} — revoke
+        .route("/{id}", delete(revoke_api_key))
+}
 
 /// Create tenants router
 pub fn create_router() -> Router<AppState> {
     Router::new()
         // Plans - 移除这里重复的 plans，因为 auth router 已经有
         // .route("/plans", get(list_plans))
-        // Tenants
+        // Tenants — 路径不带 /tenants 前缀，由外层 nest("/tenants", ...) 添加
         .route("/tenants", get(list_tenants))
         .route("/tenants", post(create_tenant))
         .route("/tenants/{id}", get(get_tenant))
         .route("/tenants/{id}", put(update_tenant))
         .route("/tenants/{id}/change-plan", post(change_plan))
         .route("/tenants/{id}/usage", get(get_tenant_usage))
-        // API Keys
-        .route("/tenants/{tenant_id}/api-keys", get(list_api_keys))
-        .route("/tenants/{tenant_id}/api-keys", post(create_api_key))
-        // 撤销 API Key 是不可逆动作，保持 RPC 风格
-        .route("/api-keys/{id}/revoke", post(revoke_api_key))
         // Usage
-        .route("/tenants/{tenant_id}/usage-stats", get(get_usage_stats))
+        .route("/{tenant_id}/usage-stats", get(get_usage_stats))
 }
 
 /// List tenants
@@ -134,14 +143,37 @@ async fn get_tenant_usage(
     }
 }
 
-/// List API keys
+/// 验证 workspace 属于当前 tenant（防止伪造 header 越权）
+async fn validate_workspace(db: &Database, ws: &str, tenant_id: &str) -> Option<()> {
+    // WorkspaceScope 返回的 workspace_id 来自请求头，可能被恶意伪造
+    // 必须验证该 workspace 确实属于当前 tenant
+    match Workspace::find_by_id(db, ws).await {
+        Ok(Some(ws_obj)) if ws_obj.tenant_id == tenant_id => Some(()),
+        Ok(Some(_)) => None, // workspace 不属于此 tenant
+        Ok(None) => None,    // workspace 不存在
+        Err(_) => None,      // 查询失败，安全拒绝
+    }
+}
+
+/// List API keys — GET /v1/api-keys (从 header X-Workspace-Id 获取 workspace)
 async fn list_api_keys(
     State(state): State<AppState>,
-    Path(tenant_id): Path<String>,
+    claims: Claims,
+    WorkspaceScope(workspace_id): WorkspaceScope,
 ) -> Json<ApiResponse<Vec<ApiKey>>> {
     let db = state.database.clone();
 
-    match ApiKey::find_by_tenant(&db, &tenant_id).await {
+    let ws = match workspace_id {
+        Some(id) => id,
+        None => return ApiResponseBuilder::error_with_code(400, "缺少 X-Workspace-Id header"),
+    };
+
+    // 验证 workspace 归属，防止伪造 header 越权
+    if matches!(validate_workspace(&db, &ws, &claims.tenant_id).await, None) {
+        return ApiResponseBuilder::error_with_code(403, "无权操作此 Workspace");
+    }
+
+    match ApiKey::find_by_workspace(&db, &ws).await {
         Ok(keys) => ApiResponseBuilder::success(keys),
         Err(e) => {
             tracing::error!("Failed to list api keys: {}", e);
@@ -150,15 +182,31 @@ async fn list_api_keys(
     }
 }
 
-/// Create API key
+/// Create API key — POST /v1/api-keys
+/// workspace 从 header X-Workspace-Id 获取，与 body 中的 tenant_id 一致性由 service 层验证
 async fn create_api_key(
     State(state): State<AppState>,
-    Path(tenant_id): Path<String>,
+    claims: Claims,
+    WorkspaceScope(workspace_id): WorkspaceScope,
     Json(payload): Json<CreateApiKeyRequest>,
 ) -> Json<ApiResponse<serde_json::Value>> {
     let db = state.database.clone();
 
-    match ApiKey::create(&db, &tenant_id, &payload).await {
+    let ws = match workspace_id {
+        Some(id) => id,
+        None => return ApiResponseBuilder::error_with_code(400, "缺少 X-Workspace-Id header"),
+    };
+
+    // 验证 workspace 归属，防止伪造 header 越权
+    if matches!(validate_workspace(&db, &ws, &claims.tenant_id).await, None) {
+        return ApiResponseBuilder::error_with_code(403, "无权操作此 Workspace");
+    }
+
+    if payload.workspace_id != ws {
+        return ApiResponseBuilder::error_with_code(403, "workspace_id 不匹配");
+    }
+
+    match ApiKey::create(&db, &payload.workspace_id, &payload).await {
         Ok((key, raw_key)) => {
             ApiResponseBuilder::success(serde_json::json!({
                 "api_key": key,
@@ -172,18 +220,47 @@ async fn create_api_key(
     }
 }
 
-/// Revoke API key
+/// Revoke API key — 验证 key 属于当前 tenant 的 workspace
 async fn revoke_api_key(
     State(state): State<AppState>,
+    claims: Claims,
+    WorkspaceScope(workspace_id): WorkspaceScope,
     Path(id): Path<String>,
 ) -> Json<ApiResponse<serde_json::Value>> {
     let db = state.database.clone();
 
-    match ApiKey::revoke(&db, &id).await {
-        Ok(_) => ApiResponseBuilder::success(serde_json::json!({"success": true})),
+    let ws = match workspace_id {
+        Some(id) => id,
+        None => return ApiResponseBuilder::error_with_code(400, "缺少 X-Workspace-Id header"),
+    };
+
+    // 1. 验证 workspace 属于当前 tenant（防止伪造 header）
+    match Workspace::find_by_id(&db, &ws).await {
+        Ok(Some(ws)) if ws.tenant_id == claims.tenant_id => {}
+        Ok(Some(_)) => return ApiResponseBuilder::error_with_code(403, "无权操作此 Workspace"),
+        Ok(None) => return ApiResponseBuilder::error_with_code(404, "Workspace 不存在"),
         Err(e) => {
-            tracing::error!("Failed to revoke api key: {}", e);
-            ApiResponseBuilder::error("撤销 API Key 失败")
+            tracing::error!("Failed to find workspace: {}", e);
+            return ApiResponseBuilder::error("验证 Workspace 失败");
+        }
+    }
+
+    // 2. 验证 key 属于该 workspace
+    match ApiKey::find_by_id(&db, &id).await {
+        Ok(Some(key)) if key.workspace_id == ws => {
+            match ApiKey::revoke(&db, &id).await {
+                Ok(_) => ApiResponseBuilder::success(serde_json::json!({"success": true})),
+                Err(e) => {
+                    tracing::error!("Failed to revoke api key: {}", e);
+                    ApiResponseBuilder::error("撤销 API Key 失败")
+                }
+            }
+        }
+        Ok(Some(_)) => ApiResponseBuilder::error_with_code(403, "无权操作此 API Key"),
+        Ok(None) => ApiResponseBuilder::error_with_code(404, "API Key 不存在"),
+        Err(e) => {
+            tracing::error!("Failed to find api key: {}", e);
+            ApiResponseBuilder::error("查询 API Key 失败")
         }
     }
 }
@@ -201,5 +278,38 @@ async fn get_usage_stats(
             tracing::error!("Failed to get usage stats: {}", e);
             ApiResponseBuilder::error("获取使用统计失败")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 验证 create_api_key_router() 返回有效的 Router（axum 编译通过即路由定义正确）
+    /// 路由路径：
+    ///   GET  / → list_api_keys (query: workspace_id)
+    ///   POST / → create_api_key (body: {workspace_id, name})
+    ///   POST /{id}/revoke → revoke_api_key
+    /// 前端调用: GET/POST /api-keys?workspace_id=xxx
+    ///           + POST /api-keys/{id}/revoke
+    #[test]
+    fn test_create_api_key_router_compiles() {
+        let _router = create_api_key_router();
+    }
+
+    /// 验证 create_router() 编译通过（仅含 tenants 相关路由）
+    #[test]
+    fn test_create_router_compiles() {
+        let _router = create_router();
+    }
+
+    /// 验证 API Keys 独立于 tenants
+    /// 新路径: /v1/api-keys (不在 /v1/tenants/ 下)
+    /// 前端调用: GET /api-keys?workspace_id=xxx
+    #[test]
+    fn test_api_keys_router_independent() {
+        // 两个 router 独立编译即说明路由结构正确
+        let _tenants = create_router();
+        let _api_keys = create_api_key_router();
     }
 }

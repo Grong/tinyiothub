@@ -31,7 +31,7 @@ impl EventService {
         content: RichContent,
     ) -> DomainResult<EventAggregate> {
         // Create event aggregate
-        let aggregate = EventAggregate::new(event_type, level, source, content)
+        let aggregate = EventAggregate::new(event_type, level, source, content, None)
             .map_err(|e| EventDomainError::validation(e.to_string()))?;
 
         // Validate according to business rules
@@ -292,6 +292,7 @@ mod tests {
             level,
             EventSource::system("test".to_string(), None),
             RichContent::new_text("Test".to_string(), "Test content".to_string()),
+            None,
         )
         .unwrap()
     }
@@ -351,6 +352,7 @@ mod tests {
             EventLevel::Error,
             EventSource::device("device-1".to_string(), Some("Device 1".to_string())),
             RichContent::new_text("Error".to_string(), "Connection lost".to_string()),
+            None,
         )
         .unwrap();
 
@@ -403,6 +405,7 @@ mod tests {
                     EventLevel::Error,
                     source.clone(),
                     RichContent::new_text("Error".to_string(), "Test error".to_string()),
+                    None,
                 )
                 .unwrap()
             })
