@@ -69,10 +69,10 @@ async fn get_recent_alarms_list(db: &Database, limit: i32, workspace_id: Option<
         sqlx::query_as(
             r#"
         SELECT
-            da.alarm_id,
+            da.id,
             da.device_id,
             d.name,
-            da.alarm_type,
+            da.alarm_message,
             da.alarm_level,
             da.alarm_time,
             da.is_acknowledged,
@@ -91,10 +91,10 @@ async fn get_recent_alarms_list(db: &Database, limit: i32, workspace_id: Option<
         sqlx::query_as(
             r#"
         SELECT
-            da.alarm_id,
+            da.id,
             da.device_id,
             d.name,
-            da.alarm_type,
+            da.alarm_message,
             da.alarm_level,
             da.alarm_time,
             da.is_acknowledged,

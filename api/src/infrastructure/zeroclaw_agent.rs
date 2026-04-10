@@ -1695,7 +1695,7 @@ mod tests {
         let client = FallbackAgentClient::new(pool);
 
         let response = client
-            .chat_send("agent1", "session:test/123", "hello", "run-abc")
+            .chat_send("agent1", "session:test/123", "hello", "run-abc", "")
             .await
             .expect("should succeed (returns synthetic response, not an error)");
 

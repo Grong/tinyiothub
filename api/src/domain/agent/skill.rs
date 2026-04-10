@@ -142,31 +142,75 @@ impl AgentSkill {
 
 /// 简单的 glob 匹配（仅支持 * 和 ?）
 fn glob_match(pattern: &str, path: &str) -> bool {
-    let mut pattern_chars = pattern.chars().peekable();
-    let mut path_chars = path.chars().peekable();
+    let p: Vec<char> = pattern.chars().collect();
+    let s: Vec<char> = path.chars().collect();
+    glob_match_vec(&p, &s, 0, 0)
+}
 
-    while pattern_chars.peek().is_some() || path_chars.peek().is_some() {
-        match (pattern_chars.next(), path_chars.next()) {
-            (Some('*'), _) => {
-                // * 匹配零个或多个字符
-                if pattern_chars.peek().is_none() {
+fn glob_match_vec(p: &[char], s: &[char], pi: usize, si: usize) -> bool {
+    // Handle ** globstar at pattern position
+    if pi < p.len() && pi + 1 < p.len() && p[pi] == '*' && p[pi + 1] == '*' {
+        // ** at end of pattern matches everything
+        if pi + 2 >= p.len() {
+            return true;
+        }
+        // ** followed by /
+        if pi + 2 < p.len() && p[pi + 2] == '/' {
+            let rest_pattern = &p[pi + 3..];
+            let path_string: String = s.iter().collect();
+            let path_segments: Vec<&str> = path_string.split('/').collect();
+            // Try matching with 0, 1, 2, ... directories skipped
+            for i in 0..=path_segments.len() {
+                let rest_path: String = path_segments[i..].join("/");
+                let rest_path_chars: Vec<char> = rest_path.chars().collect();
+                if glob_match_vec(rest_pattern, &rest_path_chars, 0, 0) {
                     return true;
                 }
-                while path_chars.peek().is_some() {
-                    if glob_match(&pattern_chars.clone().collect::<String>(), &path_chars.clone().collect::<String>()) {
-                        return true;
-                    }
-                    path_chars.next();
-                }
-                return false;
             }
-            (Some('?'), Some(_)) => {}
-            (Some(p), Some(a)) if p == a => {}
-            (None, None) => return true,
-            _ => return false,
+            return false;
         }
+        // ** not followed by / - treat as two single *
+        return glob_match_vec(p, s, pi + 1, si);
     }
-    true
+
+    // Both patterns and string exhausted
+    if pi >= p.len() && si >= s.len() {
+        return true;
+    }
+    // Pattern exhausted but string not
+    if pi >= p.len() {
+        return false;
+    }
+    // String exhausted but pattern not (and not just * or ** left)
+    if si >= s.len() {
+        if p[pi] == '*' {
+            return glob_match_vec(p, s, pi + 1, si);
+        }
+        return false;
+    }
+
+    match p[pi] {
+        '*' => {
+            // * matches zero or more chars within a segment
+            if pi + 1 < p.len() && p[pi + 1] == '/' {
+                // * followed by / - don't cross directory boundary
+                glob_match_vec(p, s, pi + 1, si)
+            } else {
+                // Try matching * with zero chars
+                if glob_match_vec(p, s, pi + 1, si) {
+                    return true;
+                }
+                // Try matching * with one or more chars (but not crossing /)
+                if s[si] != '/' && glob_match_vec(p, s, pi, si + 1) {
+                    return true;
+                }
+                false
+            }
+        }
+        '?' => glob_match_vec(p, s, pi + 1, si + 1),
+        c if c == s[si] => glob_match_vec(p, s, pi + 1, si + 1),
+        _ => false,
+    }
 }
 
 #[cfg(test)]
