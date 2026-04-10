@@ -7,6 +7,7 @@ import {
   sendChatMessage,
   abortChatRun,
 } from "../controllers/chat.js";
+import { apiGet } from "../../api/client.js";
 import {
   groupMessages,
   renderMessageGroup,
@@ -33,9 +34,23 @@ export class ChatView extends LitElement {
   connectedCallback(): void {
     super.connectedCallback();
     this.agentId = "default"; // TODO: get from URL params or store
-    this.chatState = createChatState(crypto.randomUUID(), this.agentId);
-    this._bindA2uiCallback();
-    loadChatHistory(this.chatState).then(() => this.requestUpdate());
+    // Persist session key so chat history loads correctly across page reloads
+    const sessionKey = localStorage.getItem("tinyiothub_chat_session_key") || crypto.randomUUID();
+    localStorage.setItem("tinyiothub_chat_session_key", sessionKey);
+    // Load agent config to get systemPrompt, then create chat state
+    apiGet<{ config: { systemPrompt?: string } }>(`/agents/${this.agentId}/config`)
+      .then((res) => {
+        const systemPrompt = res.result?.config?.systemPrompt;
+        this.chatState = createChatState(sessionKey, this.agentId, systemPrompt);
+        this._bindA2uiCallback();
+        loadChatHistory(this.chatState).then(() => this.requestUpdate());
+      })
+      .catch(() => {
+        // ZeroClaw not connected or config unavailable — still allow chat
+        this.chatState = createChatState(sessionKey, this.agentId);
+        this._bindA2uiCallback();
+        loadChatHistory(this.chatState).then(() => this.requestUpdate());
+      });
   }
 
   disconnectedCallback(): void {
@@ -121,13 +136,16 @@ export class ChatView extends LitElement {
         <div class="chat-messages" id="chatMessages">
           ${this.chatState.chatLoading ? html`<div style="padding: 20px; text-align: center; color: var(--muted); font-size: 13px;">加载中...</div>` : nothing}
           ${groups.map((g) => renderMessageGroup(g, this.a2uiRenderer))}
-          ${this.chatState.chatStream
+          ${this.chatState.chatSending && (this.chatState.chatStream !== null || this.chatState.toolStreamOrder.length > 0)
             ? renderStreamingGroup(
-                this.chatState.chatStream,
-                this.chatState.chatStreamStartedAt || Date.now(),
+                this.chatState.chatStreamSegments,
+                this.chatState.toolStreamOrder,
+                this.chatState.toolStreamById,
+                this.chatState.chatStream || "",
+                this.a2uiRenderer,
               )
             : nothing}
-          ${this.chatState.chatSending && !this.chatState.chatStream
+          ${this.chatState.chatSending && !this.chatState.chatStream && this.chatState.toolStreamOrder.length === 0
             ? renderReadingIndicatorGroup()
             : nothing}
         </div>

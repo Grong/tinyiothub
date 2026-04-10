@@ -4,36 +4,6 @@ use sqlx::SqlitePool;
 
 use crate::domain::agent::device_memory::DeviceMemory;
 
-/// Device Memory Repository trait
-pub trait DeviceMemoryRepository: Send + Sync {
-    /// 保存设备快照
-    async fn save(&self, memory: &DeviceMemory) -> Result<(), sqlx::Error>;
-
-    /// 获取设备的最新快照
-    async fn get_latest(
-        &self,
-        workspace_id: &str,
-        agent_id: &str,
-        device_id: &str,
-    ) -> Result<Option<DeviceMemory>, sqlx::Error>;
-
-    /// 获取 Agent 的所有设备快照
-    async fn get_all_for_agent(
-        &self,
-        workspace_id: &str,
-        agent_id: &str,
-    ) -> Result<Vec<DeviceMemory>, sqlx::Error>;
-
-    /// 删除旧快照
-    async fn delete_old(
-        &self,
-        workspace_id: &str,
-        agent_id: &str,
-        device_id: &str,
-        keep_count: i64,
-    ) -> Result<u64, sqlx::Error>;
-}
-
 /// SQLite 实现
 pub struct SqliteDeviceMemoryRepository {
     pool: SqlitePool,
@@ -43,10 +13,9 @@ impl SqliteDeviceMemoryRepository {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
-}
 
-impl DeviceMemoryRepository for SqliteDeviceMemoryRepository {
-    async fn save(&self, memory: &DeviceMemory) -> Result<(), sqlx::Error> {
+    /// 保存设备快照
+    pub async fn save(&self, memory: &DeviceMemory) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
             INSERT INTO device_memory (workspace_id, agent_id, device_id, snapshot_data, snapshot_time)
@@ -68,7 +37,8 @@ impl DeviceMemoryRepository for SqliteDeviceMemoryRepository {
         Ok(())
     }
 
-    async fn get_latest(
+    /// 获取设备的最新快照
+    pub async fn get_latest(
         &self,
         workspace_id: &str,
         agent_id: &str,
@@ -100,7 +70,8 @@ impl DeviceMemoryRepository for SqliteDeviceMemoryRepository {
         }))
     }
 
-    async fn get_all_for_agent(
+    /// 获取 Agent 的所有设备快照
+    pub async fn get_all_for_agent(
         &self,
         workspace_id: &str,
         agent_id: &str,
@@ -132,7 +103,8 @@ impl DeviceMemoryRepository for SqliteDeviceMemoryRepository {
             .collect())
     }
 
-    async fn delete_old(
+    /// 删除旧快照
+    pub async fn delete_old(
         &self,
         workspace_id: &str,
         agent_id: &str,

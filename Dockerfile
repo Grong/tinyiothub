@@ -78,8 +78,8 @@ COPY --from=backend-builder /build/api/target/release/tinyiothub /app/
 COPY --from=backend-builder /build/api/migrations /app/migrations
 COPY --from=backend-builder /build/api/templates /app/templates
 
-# 从 frontend-builder 复制静态文件
-COPY --from=frontend-builder /frontend/out /app/wwwroot
+# 从 frontend-builder 复制静态文件（Vite 输出到 dist/ui）
+COPY --from=frontend-builder /frontend/dist/ui /app/wwwroot
 
 # 复制配置文件作为默认配置
 COPY api/app_settings.example.toml /app/app_settings.toml

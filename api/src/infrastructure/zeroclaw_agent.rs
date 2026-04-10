@@ -73,7 +73,7 @@ impl Default for AgentConfig {
 }
 
 /// Default agent config returned when no persisted config exists
-fn default_agent_config() -> serde_json::Value {
+pub fn default_agent_config() -> serde_json::Value {
     serde_json::json!({
         "model": "claude-sonnet-4-5",
         "temperature": 0.7,
@@ -85,7 +85,7 @@ fn default_agent_config() -> serde_json::Value {
 }
 
 /// Compute SHA-256 hex digest of a string
-fn compute_hash(s: &str) -> String {
+pub fn compute_hash(s: &str) -> String {
     let mut hasher = Sha256::new();
     Digest::update(&mut hasher, s.as_bytes());
     hex::encode(hasher.finalize())
@@ -141,6 +141,7 @@ pub trait AgentClient: Send + Sync {
         session_key: &str,
         message: &str,
         run_id: &str,
+        system_prompt: &str,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<reqwest::Response, AgentError>> + Send + '_>>;
 
     /// Get chat history
@@ -375,6 +376,7 @@ impl AgentClient for ZeroClawAgentClient {
         session_key: &str,
         message: &str,
         run_id: &str,
+        _system_prompt: &str,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<reqwest::Response, AgentError>> + Send + '_>> {
         let ws_url = self.build_ws_url(session_key);
         let message = message.to_string();
@@ -830,7 +832,7 @@ impl AgentClient for ZeroClawAgentClient {
 }
 
 /// Returns the static catalog of all available TinyIoTHub tools grouped by category.
-fn build_tools_catalog_json() -> serde_json::Value {
+pub fn build_tools_catalog_json() -> serde_json::Value {
     serde_json::json!({
         "groups": [
             {
@@ -1020,6 +1022,7 @@ impl AgentClient for FallbackAgentClient {
         session_key: &str,
         _message: &str,
         run_id: &str,
+        _system_prompt: &str,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<reqwest::Response, AgentError>> + Send + '_>> {
         let session_key = session_key.to_string();
         let run_id = run_id.to_string();
@@ -2471,5 +2474,64 @@ mod tests {
             }
         }
         assert!(found_delete, "device_delete tool should exist in catalog");
+    }
+}
+
+/// Layer 1: Platform base prompt — fixed TinyIoTHub identity, protocols, and operations
+pub fn platform_base_prompt() -> String {
+    r#"你是 TinyIoTHub 智能网关的 AI 助手。
+
+## 平台身份
+你运行在 TinyIoTHub 边缘网关上，管理物联网设备。
+
+## 支持的设备类型
+- Modbus (工业寄存器读写)
+- ONVIF (网络摄像头)
+- SNMP (网络设备监控)
+- MQTT (消息订阅发布)
+
+## 统一操作规范
+- 读取：使用 read_register / get_device_status / subscribe_topic
+- 控制：使用 write_register / publish_command
+- 告警：使用 create_alarm_rule / get_alarm_events
+
+## UI 组件渲染规范
+当需要向用户展示结构化数据时，使用 canvas 工具推送 A2UI 组件：
+
+**canvas 工具参数：**
+- action: "a2ui_push"
+- jsonl: A2UI JSONL 格式的组件描述
+
+**A2UI 消息格式（JSONL）：**
+```
+{"createSurface":{"id":"<唯一ID>","surfaceKind":"inline"}}
+{"updateComponents":{"components":[{"id":"comp1","componentKind":"DeviceCard","dataModel":{"deviceId":"001","name":"温度传感器","status":"online"}}]}}
+{"updateDataModel":{"componentId":"comp1","dataModel":{"temperature":25.5}}}
+```
+
+**可用组件类型：**
+- Text: 文本显示
+- Button: 按钮
+- Card: 卡片容器
+- Row/Column: 布局
+- DeviceCard: 设备卡片
+- DeviceTable: 设备表格
+- DataChart: 数据图表
+
+**示例：展示设备列表**
+```json
+{"createSurface":{"id":"device-list","surfaceKind":"inline"}}
+{"updateComponents":{"components":[{"id":"table1","componentKind":"DeviceTable","dataModel":{"columns":["名称","状态","温度"],"rows":[["传感器1","在线","25°C"],["传感器2","离线","--"]]}]}}
+```
+"#.to_string()
+}
+
+/// Build the full system prompt by combining Layer 1 (platform base) + Layer 2 (user persona)
+pub fn build_full_system_prompt(user_persona: &str) -> String {
+    let base = platform_base_prompt();
+    if user_persona.trim().is_empty() {
+        base
+    } else {
+        format!("{}\n\n## Agent 灵魂设定（用户配置）\n{}\n", base, user_persona)
     }
 }

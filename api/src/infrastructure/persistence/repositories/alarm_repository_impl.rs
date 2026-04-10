@@ -127,7 +127,7 @@ impl AlarmRepository for AlarmRepositoryImpl {
                 let placeholders = vec!["?"; levels.len()].join(",");
                 query.push_str(&format!(" AND alarm_level IN ({})", placeholders));
                 for level in levels {
-                    bindings.push(level.as_str().to_string());
+                    bindings.push(level.clone().to_string());
                 }
             }
         }
@@ -176,7 +176,7 @@ impl AlarmRepository for AlarmRepositoryImpl {
         }
 
         // Build and execute query with bindings
-        let mut sqlx_query = sqlx::query(&query);
+        let mut sqlx_query = sqlx::query(sqlx::AssertSqlSafe(query.clone()));
         for binding in &bindings {
             sqlx_query = sqlx_query.bind(binding);
         }
@@ -262,7 +262,7 @@ impl AlarmRepository for AlarmRepositoryImpl {
                 let placeholders = vec!["?"; levels.len()].join(",");
                 query.push_str(&format!(" AND alarm_level IN ({})", placeholders));
                 for level in levels {
-                    bindings.push(level.as_str().to_string());
+                    bindings.push(level.clone().to_string());
                 }
             }
         }
@@ -298,7 +298,7 @@ impl AlarmRepository for AlarmRepositoryImpl {
             bindings.push(time_range.end.to_rfc3339());
         }
 
-        let mut sqlx_query = sqlx::query(&query);
+        let mut sqlx_query = sqlx::query(sqlx::AssertSqlSafe(query.clone()));
         for binding in &bindings {
             sqlx_query = sqlx_query.bind(binding);
         }
@@ -333,7 +333,7 @@ impl AlarmRepository for AlarmRepositoryImpl {
             placeholders
         );
 
-        let mut sqlx_query = sqlx::query(&query)
+        let mut sqlx_query = sqlx::query(sqlx::AssertSqlSafe(query.clone()))
             .bind(is_resolved)
             .bind(is_acknowledged);
         for id in alarm_ids {

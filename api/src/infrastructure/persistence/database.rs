@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use serde::{de::DeserializeOwned, Serialize};
-use sqlx::{sqlite::SqliteRow, Error as SqlxError, Row, SqlitePool};
+use sqlx::{sqlite::SqliteRow, AssertSqlSafe, Error as SqlxError, Row, SqlitePool};
 
 /// Database abstraction layer for SQLx
 #[derive(Debug, Clone)]
@@ -24,9 +24,9 @@ impl Database {
     where
         F: Fn(&SqliteRow) -> Result<T, SqlxError>,
     {
-        tracing::debug!("Executing query: {}", sql);
+        tracing::debug!("Executing query");
 
-        let rows = sqlx::query(sql).fetch_all(&self.pool).await?;
+        let rows = sqlx::query(AssertSqlSafe(sql)).fetch_all(&self.pool).await?;
 
         rows.iter().map(mapper).collect()
     }
@@ -37,9 +37,9 @@ impl Database {
     where
         F: Fn(&SqliteRow) -> Result<T, SqlxError>,
     {
-        tracing::debug!("Executing query_first: {}", sql);
+        tracing::debug!("Executing query_first");
 
-        let row = sqlx::query(sql).fetch_optional(&self.pool).await?;
+        let row = sqlx::query(AssertSqlSafe(sql)).fetch_optional(&self.pool).await?;
 
         row.map(|r| mapper(&r)).transpose()
     }
@@ -47,9 +47,9 @@ impl Database {
     /// Execute a statement (INSERT, UPDATE, DELETE)
 
     pub async fn execute(&self, sql: &str) -> Result<u64, SqlxError> {
-        tracing::debug!("Executing statement: {}", sql);
+        tracing::debug!("Executing statement");
 
-        let result = sqlx::query(sql).execute(&self.pool).await?;
+        let result = sqlx::query(AssertSqlSafe(sql)).execute(&self.pool).await?;
 
         Ok(result.rows_affected())
     }
@@ -57,9 +57,9 @@ impl Database {
     /// Execute a statement with parameters
 
     pub async fn execute_with_params(&self, sql: &str, params: &[&str]) -> Result<u64, SqlxError> {
-        tracing::debug!("Executing statement with params: {}", sql);
+        tracing::debug!("Executing statement with params");
 
-        let mut query = sqlx::query(sql);
+        let mut query = sqlx::query(AssertSqlSafe(sql));
 
         for param in params {
             query = query.bind(*param);
@@ -89,7 +89,7 @@ where
 {
     tracing::debug!("Legacy query: {}", sql);
 
-    let rows = sqlx::query(sql).fetch_all(pool).await?;
+    let rows = sqlx::query(AssertSqlSafe(sql)).fetch_all(pool).await?;
 
     let mut rst: Vec<T> = Vec::new();
 
@@ -116,7 +116,7 @@ where
 {
     tracing::debug!("Legacy query_first: {}", sql);
 
-    let row = sqlx::query(sql).fetch_optional(pool).await?;
+    let row = sqlx::query(AssertSqlSafe(sql)).fetch_optional(pool).await?;
 
     match row {
         Some(r) => {
@@ -132,7 +132,7 @@ where
 pub async fn execute(pool: &SqlitePool, sql: &str) -> Result<u64, SqlxError> {
     tracing::debug!("Legacy execute: {}", sql);
 
-    let result = sqlx::query(sql).execute(pool).await?;
+    let result = sqlx::query(AssertSqlSafe(sql)).execute(pool).await?;
 
     Ok(result.rows_affected())
 }

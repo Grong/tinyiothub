@@ -208,7 +208,7 @@ impl Workspace {
 
         query.push_str(" WHERE id = ?");
 
-        let mut q = sqlx::query(&query);
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(query.clone()));
         q = q.bind(&now);
         if let Some(n) = name {
             q = q.bind(n);

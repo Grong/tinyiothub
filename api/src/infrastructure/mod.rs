@@ -18,6 +18,9 @@ pub mod redis;
 // Agent client (ZeroClaw adapter)
 pub mod zeroclaw_agent;
 
+// ZeroClaw runtime integration (embedded)
+pub mod zeroclaw_runtime;
+
 // Batch command infrastructure
 pub mod batch_command;
 

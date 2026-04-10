@@ -1,13 +1,20 @@
 import { apiGet, apiPost, apiPut } from "../../api/client.js";
 import type { AgentsListResult, ToolCatalogGroup } from "../types.js";
 
-export type AgentsPanel = "overview" | "files" | "tools" | "skills" | "channels" | "cron";
+export type AgentsPanel = "overview" | "tools";
 
 export type AgentConfig = {
   model?: string;
   alternativeModels?: string[];
   workspace?: string;
   skills?: string[];
+  // Agent 灵魂设定
+  systemPrompt?: string;
+  personaPreset?: string;
+  // ZeroClaw 层
+  temperature?: number;
+  maxTokens?: number;
+  topP?: number;
   tools?: {
     profile?: string;
     allow?: string[];

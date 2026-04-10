@@ -181,7 +181,7 @@ impl Job {
     /// 查询所有（带分页）
     pub async fn find_all(db: &Database, params: &JobQueryParams) -> Result<Vec<Job>, sqlx::Error> {
         // 使用 QueryBuilder 防止 SQL 注入
-        let mut query_builder: sqlx::query_builder::QueryBuilder<'_, Sqlite> = sqlx::query_builder::QueryBuilder::new("SELECT * FROM jobs WHERE 1=1");
+        let mut query_builder: sqlx::query_builder::QueryBuilder<Sqlite> = sqlx::query_builder::QueryBuilder::new("SELECT * FROM jobs WHERE 1=1");
 
         // Filter by workspace_id for MCP tool isolation
         if let Some(ref workspace_id) = params.workspace_id {
@@ -210,9 +210,9 @@ impl Job {
         let offset = (page - 1) * page_size;
         query_builder.push(&format!(" LIMIT {} OFFSET {}", page_size, offset));
 
-        let sql = query_builder.build().sql();
+        let sql = query_builder.build();
         let mut rows = db
-            .query(sql, |row| {
+            .query(sql.sql().as_str(), |row| {
                 Ok(Job {
                     id: row.try_get("id")?,
                     name: row.try_get("name")?,
@@ -504,7 +504,7 @@ impl JobExecution {
         db: &Database,
         params: &JobExecutionQueryParams,
     ) -> Result<Vec<JobExecution>, sqlx::Error> {
-        let mut query_builder: sqlx::query_builder::QueryBuilder<'_, Sqlite> =
+        let mut query_builder: sqlx::query_builder::QueryBuilder<Sqlite> =
             sqlx::query_builder::QueryBuilder::new("SELECT * FROM job_executions WHERE 1=1");
 
         if let Some(ref job_id) = params.job_id {
@@ -527,8 +527,8 @@ impl JobExecution {
         let offset = (page - 1) * page_size;
         query_builder.push(&format!(" LIMIT {} OFFSET {}", page_size, offset));
 
-        let sql = query_builder.build().sql();
-        let rows = db.query(sql, |row| {
+        let sql = query_builder.build();
+        let rows = db.query(sql.sql().as_str(), |row| {
             Ok(JobExecution {
                 id: row.try_get("id")?,
                 job_id: row.try_get("job_id")?,
@@ -556,7 +556,7 @@ impl JobExecution {
         db: &Database,
         params: &JobExecutionQueryParams,
     ) -> Result<i64, sqlx::Error> {
-        let mut query_builder: sqlx::query_builder::QueryBuilder<'_, Sqlite> =
+        let mut query_builder: sqlx::query_builder::QueryBuilder<Sqlite> =
             sqlx::query_builder::QueryBuilder::new("SELECT COUNT(*) FROM job_executions WHERE 1=1");
 
         if let Some(ref job_id) = params.job_id {
@@ -572,8 +572,8 @@ impl JobExecution {
             query_builder.push_bind(trigger_type);
         }
 
-        let sql = query_builder.build().sql();
-        let row = db.query_first(sql, |row| row.try_get::<i64, _>(0)).await?;
+        let sql = query_builder.build();
+        let row = db.query_first(sql.sql().as_str(), |row| row.try_get::<i64, _>(0)).await?;
         Ok(row.unwrap_or(0))
     }
 

@@ -929,7 +929,7 @@ impl Device {
             query_str.push_str(&format!(" LIMIT {}", limit));
         }
 
-        let devices = sqlx::query_as::<_, Device>(&query_str)
+        let devices = sqlx::query_as::<_, Device>(sqlx::AssertSqlSafe(query_str.clone()))
             .bind(&search_pattern)
             .bind(&search_pattern)
             .bind(&search_pattern)

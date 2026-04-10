@@ -99,7 +99,7 @@ export function renderToolsTab(
               </div>
               <div class="agent-tools-list">
                 ${filtered.map((tool) => {
-                  const enabled = tool.defaultProfiles?.includes("full" as any) ?? true;
+                  const enabled = tool.enabled ?? true;
                   return html`
                     <div class="agent-tool-row ${DANGEROUS_TOOLS.has(tool.id) ? 'agent-tool-item--danger' : ''}">
                       <div>

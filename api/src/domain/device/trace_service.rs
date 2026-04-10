@@ -126,11 +126,12 @@ impl DeviceTraceService {
         // 按时间倒序排列并分页
         query.push_str(&format!(" ORDER BY created_at DESC LIMIT {} OFFSET {}", limit, offset));
 
-        // 动态绑定参数
-        let mut query_builder = sqlx::query_as::<_, DeviceTrace>(&query);
-        for value in &bind_values {
-            query_builder = query_builder.bind(value);
-        }
+        // 动态绑定参数 - 使用 fold 避免 let mut 生命周期问题
+        // AssertSqlSafe<String> 满足 SqlSafeStr，但 &String 不满足
+        let query_builder = bind_values.iter().fold(
+            sqlx::query_as::<_, DeviceTrace>(sqlx::AssertSqlSafe(query.clone())),
+            |qb, value| qb.bind(value)
+        );
 
         // 执行查询
         match query_builder.fetch_all(self.database.pool()).await {
@@ -263,11 +264,11 @@ impl DeviceTraceService {
             }
         }
 
-        // 动态绑定参数
-        let mut query_builder = sqlx::query(&query);
-        for value in &bind_values {
-            query_builder = query_builder.bind(value);
-        }
+        // 动态绑定参数 - 使用 fold 避免 let mut 生命周期问题
+        let query_builder = bind_values.iter().fold(
+            sqlx::query(sqlx::AssertSqlSafe(query.clone())),
+            |qb, value| qb.bind(value)
+        );
 
         // 执行删除操作
         match query_builder.execute(self.database.pool()).await {

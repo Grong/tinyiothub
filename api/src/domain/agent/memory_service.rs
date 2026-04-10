@@ -4,15 +4,15 @@
 use std::sync::Arc;
 
 use crate::domain::agent::device_memory::DeviceMemory;
-use crate::infrastructure::persistence::repositories::device_memory_repository_impl::DeviceMemoryRepository;
+use crate::infrastructure::persistence::repositories::device_memory_repository_impl::SqliteDeviceMemoryRepository;
 
 /// Memory Service - 管理设备状态快照
 pub struct MemoryService {
-    repo: Arc<dyn DeviceMemoryRepository>,
+    repo: Arc<SqliteDeviceMemoryRepository>,
 }
 
 impl MemoryService {
-    pub fn new(repo: Arc<dyn DeviceMemoryRepository>) -> Self {
+    pub fn new(repo: Arc<SqliteDeviceMemoryRepository>) -> Self {
         Self { repo }
     }
 
@@ -43,8 +43,7 @@ impl MemoryService {
         agent_id: &str,
         device_id: &str,
     ) -> Result<Option<serde_json::Value>, String> {
-        let memory = self
-            .repo
+        let memory = self.repo
             .get_latest(workspace_id, agent_id, device_id)
             .await
             .map_err(|e| e.to_string())?;
@@ -57,8 +56,7 @@ impl MemoryService {
         workspace_id: &str,
         agent_id: &str,
     ) -> Result<String, String> {
-        let memories = self
-            .repo
+        let memories = self.repo
             .get_all_for_agent(workspace_id, agent_id)
             .await
             .map_err(|e| e.to_string())?;

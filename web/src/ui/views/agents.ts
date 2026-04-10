@@ -4,21 +4,15 @@ import type { AgentsState, AgentsPanel } from "../controllers/agents.js";
 import { createAgentsState, loadAgents, loadAgentConfig, saveAgentConfig, loadToolsCatalog, toggleTool } from "../controllers/agents.js";
 import { renderModelTab } from "./agents-model-tab.js";
 import { renderToolsTab } from "./agents-tools-tab.js";
-import { renderPlaceholder } from "./agents-placeholder.js";
 
 const panelLabels: Record<AgentsPanel, string> = {
-  overview: "概览",
-  files: "文件",
-  tools: "工具",
-  skills: "技能",
-  channels: "渠道",
-  cron: "定时任务",
+  overview: "配置",
+  tools: "工具权限",
 };
 
 @customElement("view-agents")
 export class ViewAgents extends LitElement {
   @state() state: AgentsState = createAgentsState();
-  @state() searchFilter: string = "";
 
   createRenderRoot() {
     return this;
@@ -71,7 +65,11 @@ export class ViewAgents extends LitElement {
       return html`<div class="agents-layout"><div class="agent-panel-error">${this.state.agentsError}</div></div>`;
     }
 
-    const allPanels: AgentsPanel[] = ["overview", "files", "tools", "skills", "channels", "cron"];
+    const allPanels: AgentsPanel[] = ["overview", "tools"];
+
+    // Tools tab search — local state to avoid re-render on other panels
+    const searchFilter = (this as any)._searchFilter || "";
+    const setSearchFilter = (v: string) => { (this as any)._searchFilter = v; this.requestUpdate(); };
 
     return html`
       <div class="agents-layout">
@@ -99,11 +97,7 @@ export class ViewAgents extends LitElement {
 
         <div class="agents-main">
           ${this.state.activePanel === "overview" ? renderModelTab(this.state, this._patchState.bind(this), this.onSaveConfig.bind(this), () => { if (this.state.selectedAgentId) loadAgentConfig(this.state, this.state.selectedAgentId).then(() => this.requestUpdate()); }) : nothing}
-          ${this.state.activePanel === "tools" ? renderToolsTab(this.state, this.searchFilter, (v) => { this.searchFilter = v; this.requestUpdate(); }, this.onToggleTool.bind(this)) : nothing}
-          ${this.state.activePanel === "files" ? renderPlaceholder("files") : nothing}
-          ${this.state.activePanel === "skills" ? renderPlaceholder("skills") : nothing}
-          ${this.state.activePanel === "channels" ? renderPlaceholder("channels") : nothing}
-          ${this.state.activePanel === "cron" ? renderPlaceholder("cron") : nothing}
+          ${this.state.activePanel === "tools" ? renderToolsTab(this.state, searchFilter, setSearchFilter, this.onToggleTool.bind(this)) : nothing}
         </div>
       </div>
     `;

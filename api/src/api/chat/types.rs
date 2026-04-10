@@ -7,6 +7,9 @@ pub struct ChatStreamRequest {
     pub session_key: String,
     pub message: String,
     pub run_id: String,
+    /// Full system prompt (Layer1 platform base + Layer2 user persona) to inject into ZeroClaw
+    #[serde(default)]
+    pub system_prompt: Option<String>,
 }
 
 /// Query parameters for GET /api/v1/chat/history

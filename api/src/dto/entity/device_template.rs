@@ -601,7 +601,7 @@ impl DeviceTemplate {
             query_str.push_str(&format!(" LIMIT {}", limit));
         }
 
-        let templates = sqlx::query_as::<_, DeviceTemplate>(&query_str)
+        let templates = sqlx::query_as::<_, DeviceTemplate>(sqlx::AssertSqlSafe(query_str.clone()))
             .bind(&search_pattern)
             .bind(&search_pattern)
             .bind(&search_pattern)

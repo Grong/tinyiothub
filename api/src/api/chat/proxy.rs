@@ -21,9 +21,21 @@ pub async fn chat_stream(
     _claims: Claims,
     Json(req): Json<ChatStreamRequest>,
 ) -> Response {
+    // 后端自行读取 agent 配置获取 system_prompt
+    let agent_config = state.agent_client.get_agent_config(&req.agent_id).await
+        .map(|v| v.get("config").cloned().unwrap_or_default())
+        .unwrap_or_default();
+    let user_persona = agent_config.get("systemPrompt")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let full_prompt = crate::infrastructure::zeroclaw_agent::build_full_system_prompt(user_persona);
+    // 只传递原始用户消息，不混入系统提示词（系统提示词由 Agent 内部处理）
+    let original_message = req.message.clone();
+
     let response = match state
         .agent_client
-        .chat_send(&req.agent_id, &req.session_key, &req.message, &req.run_id)
+        .chat_send(&req.agent_id, &req.session_key, &original_message, &req.run_id, &full_prompt)
         .await
     {
         Ok(resp) => resp,

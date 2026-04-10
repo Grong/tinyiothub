@@ -88,7 +88,7 @@ async fn get_total_devices_count(db: &Database, workspace_id: Option<&str>) -> R
         Some(wid) => ("SELECT COUNT(*) FROM devices WHERE workspace_id = ?", Some(wid)),
         None => ("SELECT COUNT(*) FROM devices", None),
     };
-    let mut q = sqlx::query_scalar(query_str);
+    let mut q = sqlx::query_scalar(sqlx::AssertSqlSafe(query_str));
     if let Some(w) = wid { q = q.bind(w); }
     let count: i64 = q.fetch_one(db.pool()).await?;
     Ok(count)
@@ -100,7 +100,7 @@ async fn get_online_devices_count(db: &Database, workspace_id: Option<&str>) -> 
         Some(wid) => ("SELECT COUNT(*) FROM devices WHERE state = 1 AND workspace_id = ?", Some(wid)),
         None => ("SELECT COUNT(*) FROM devices WHERE state = 1", None),
     };
-    let mut q = sqlx::query_scalar(query_str);
+    let mut q = sqlx::query_scalar(sqlx::AssertSqlSafe(query_str));
     if let Some(w) = wid { q = q.bind(w); }
     let count: i64 = q.fetch_one(db.pool()).await?;
     Ok(count)
@@ -115,7 +115,7 @@ async fn get_active_alarms_count(db: &Database, workspace_id: Option<&str>) -> R
         ),
         None => ("SELECT COUNT(*) FROM device_alarms WHERE is_resolved = 0", None),
     };
-    let mut q = sqlx::query_scalar(query_str);
+    let mut q = sqlx::query_scalar(sqlx::AssertSqlSafe(query_str));
     if let Some(w) = wid { q = q.bind(w); }
     let count: i64 = q.fetch_one(db.pool()).await?;
     Ok(count)

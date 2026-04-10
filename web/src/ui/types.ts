@@ -336,12 +336,14 @@ export type ToolCatalogProfile = {
 
 export type ToolCatalogEntry = {
   id: string;
+  name?: string;
   label: string;
   description: string;
   source: "core" | "plugin";
   pluginId?: string;
   optional?: boolean;
-  defaultProfiles: Array<"minimal" | "coding" | "messaging" | "full">;
+  danger?: boolean;
+  enabled?: boolean;
 };
 
 export type ToolCatalogGroup = {

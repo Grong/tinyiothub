@@ -9,7 +9,7 @@ pub mod real_time_event_repository_impl;
 
 // Re-export implementations
 pub use alarm_repository_impl::{AlarmRepositoryImpl, AlarmRuleRepositoryImpl};
-pub use device_memory_repository_impl::{DeviceMemoryRepository, SqliteDeviceMemoryRepository};
+pub use device_memory_repository_impl::SqliteDeviceMemoryRepository;
 pub use event_repository_impl::SqliteEventRepository;
 pub use notification_history_repository_impl::NotificationHistoryRepositoryImpl;
 pub use real_time_event_repository_impl::SqliteRealTimeEventRepository;

@@ -65,12 +65,49 @@ async fn get_recent_alarms_list(db: &Database, limit: i32, workspace_id: Option<
         workspace_filter
     );
 
-    let mut q = sqlx::query_as::<_, (String, String, Option<String>, String, String, chrono::NaiveDateTime, bool, bool)>(&query_str);
-    if let Some(wid) = workspace_id { q = q.bind(wid); }
-    let alarms = q
+    let alarms: Vec<(String, String, Option<String>, String, String, chrono::NaiveDateTime, bool, bool)> = if let Some(wid) = workspace_id {
+        sqlx::query_as(
+            r#"
+        SELECT
+            da.alarm_id,
+            da.device_id,
+            d.name,
+            da.alarm_type,
+            da.alarm_level,
+            da.alarm_time,
+            da.is_acknowledged,
+            da.is_resolved
+        FROM device_alarms da
+        LEFT JOIN devices d ON da.device_id = d.id
+        WHERE da.workspace_id = ?
+        ORDER BY da.alarm_time DESC
+        LIMIT ?"#,
+        )
+        .bind(wid)
         .bind(limit)
         .fetch_all(db.pool())
-        .await?;
+        .await?
+    } else {
+        sqlx::query_as(
+            r#"
+        SELECT
+            da.alarm_id,
+            da.device_id,
+            d.name,
+            da.alarm_type,
+            da.alarm_level,
+            da.alarm_time,
+            da.is_acknowledged,
+            da.is_resolved
+        FROM device_alarms da
+        LEFT JOIN devices d ON da.device_id = d.id
+        ORDER BY da.alarm_time DESC
+        LIMIT ?"#,
+        )
+        .bind(limit)
+        .fetch_all(db.pool())
+        .await?
+    };
 
     let recent_alarms = alarms
         .into_iter()

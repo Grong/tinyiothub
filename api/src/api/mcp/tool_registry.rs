@@ -124,7 +124,7 @@ impl ToolMetadata {
 /// Handler registry for managing MCP tools
 #[derive(Default)]
 pub struct HandlerRegistry {
-    handlers: HashMap<String, Box<dyn ToolHandler>>,
+    handlers: HashMap<String, std::sync::Arc<dyn ToolHandler>>,
 }
 
 impl HandlerRegistry {
@@ -135,13 +135,18 @@ impl HandlerRegistry {
 
     /// Register a tool handler
     pub fn register<H: ToolHandler + 'static>(&mut self, handler: H) -> &mut Self {
-        self.handlers.insert(handler.name().to_string(), Box::new(handler));
+        self.handlers.insert(handler.name().to_string(), std::sync::Arc::new(handler));
         self
     }
 
     /// Get a tool handler by name
     pub fn get(&self, name: &str) -> Option<&dyn ToolHandler> {
         self.handlers.get(name).map(|h| h.as_ref())
+    }
+
+    /// Get a cloned tool handler by name
+    pub fn get_owned(&self, name: &str) -> Option<std::sync::Arc<dyn ToolHandler>> {
+        self.handlers.get(name).map(|h| h.clone())
     }
 
     /// List all registered tool names

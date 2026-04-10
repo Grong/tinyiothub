@@ -1,22 +1,38 @@
 import { apiGet, apiPost, buildUrl, getAuthToken } from "../../api/client.js";
 import type { ChatAttachment } from "../ui-types.js";
 
+// ============================================================================
+// Types
+// ============================================================================
+
 export type ChatMessage = {
   role: string;
-  content: Array<{ type: string; text?: string; [key: string]: unknown }>;
+  content: Array<{ type: string; text?: string; name?: string; args?: unknown; result?: string; [key: string]: unknown }>;
   timestamp?: number;
   toolCallId?: string;
   toolName?: string;
   senderLabel?: string;
 };
 
+export type ToolStreamEntry = {
+  toolCallId: string;
+  toolName: string;
+  toolArgs: string;
+  toolResult?: string;
+  startedAt: number;
+};
+
 export type ChatEventPayload = {
   runId: string;
   sessionKey: string;
-  state: "delta" | "final" | "aborted" | "error";
+  state: "delta" | "final" | "aborted" | "error" | "tool_call_start" | "tool_call_delta" | "tool_call_end" | "tool_result";
   message?: ChatMessage;
   errorMessage?: string;
   a2ui?: string;
+  toolName?: string;
+  toolArgs?: string;
+  toolResults?: Array<{ toolName: string; toolArgs: string; result: string }>;
+  result?: string;
 };
 
 export type ChatState = {
@@ -26,16 +42,26 @@ export type ChatState = {
   chatMessages: ChatMessage[];
   chatSending: boolean;
   chatRunId: string | null;
+  // 流式文本（当前正在接收的）
   chatStream: string | null;
   chatStreamStartedAt: number | null;
+  // 已 committed 的流式文本片段（工具调用之前的文本）
+  chatStreamSegments: Array<{ text: string; ts: number }>;
+  // 工具调用流
+  toolStreamById: Map<string, ToolStreamEntry>;
+  toolStreamOrder: string[];
   lastError: string | null;
   onA2ui?: (jsonl: string) => void;
   lastA2uiSurfaceId?: string;
-  /** 内部: 用于 abortChatRun 真正中断 fetch */
   abortController?: AbortController;
+  systemPrompt?: string;
 };
 
-export function createChatState(sessionKey: string, agentId: string): ChatState {
+// ============================================================================
+// State
+// ============================================================================
+
+export function createChatState(sessionKey: string, agentId: string, systemPrompt?: string): ChatState {
   return {
     sessionKey,
     agentId,
@@ -45,9 +71,17 @@ export function createChatState(sessionKey: string, agentId: string): ChatState 
     chatRunId: null,
     chatStream: null,
     chatStreamStartedAt: null,
+    chatStreamSegments: [],
+    toolStreamById: new Map(),
+    toolStreamOrder: [],
     lastError: null,
+    systemPrompt,
   };
 }
+
+// ============================================================================
+// History
+// ============================================================================
 
 export async function loadChatHistory(state: ChatState): Promise<void> {
   state.chatLoading = true;
@@ -59,15 +93,27 @@ export async function loadChatHistory(state: ChatState): Promise<void> {
       limit: 200,
     });
     const messages = Array.isArray(res.result?.messages) ? res.result.messages : [];
-    state.chatMessages = messages.filter((m) => !isSilentReply(m));
+    // Filter out system messages and silent replies
+    state.chatMessages = messages.filter((m) => {
+      const role = (m.role || "").toLowerCase();
+      if (role === "system") return false; // Exclude system messages
+      return !isSilentReply(m);
+    });
     state.chatStream = null;
     state.chatStreamStartedAt = null;
+    state.chatStreamSegments = [];
+    state.toolStreamById = new Map();
+    state.toolStreamOrder = [];
   } catch (err) {
     state.lastError = String(err);
   } finally {
     state.chatLoading = false;
   }
 }
+
+// ============================================================================
+// Send
+// ============================================================================
 
 export function sendChatMessage(
   state: ChatState,
@@ -89,13 +135,16 @@ export function sendChatMessage(
     { role: "user", content: contentBlocks, timestamp: now },
   ];
 
+  // Reset streaming state
   state.chatSending = true;
   state.lastError = null;
   state.chatRunId = runId;
   state.chatStream = "";
   state.chatStreamStartedAt = now;
+  state.chatStreamSegments = [];
+  state.toolStreamById = new Map();
+  state.toolStreamOrder = [];
 
-  // POST to /chat/stream, read SSE response
   const controller = new AbortController();
   state.abortController = controller;
 
@@ -110,26 +159,23 @@ export function sendChatMessage(
       session_key: state.sessionKey,
       message: msg,
       run_id: runId,
+      system_prompt: null,
     }),
     signal: controller.signal,
   })
     .then(async (response) => {
       if (response.status === 401) {
-        sessionStorage.removeItem('auth-token');
-        localStorage.removeItem('auth-token');
-        window.dispatchEvent(new CustomEvent('auth-error', {
-          detail: { message: '认证已过期' },
-        }));
-        throw new Error('Unauthorized - 请重新登录');
+        sessionStorage.removeItem("auth-token");
+        localStorage.removeItem("auth-token");
+        window.dispatchEvent(new CustomEvent("auth-error", { detail: { message: "认证已过期" } }));
+        throw new Error("Unauthorized - 请重新登录");
       }
       if (!response.ok) {
         let errMsg = `HTTP ${response.status}`;
         try {
           const errData = await response.json();
           errMsg = errData?.msg || errData?.message || errMsg;
-        } catch {
-          // not JSON
-        }
+        } catch { /* not JSON */ }
         throw new Error(errMsg);
       }
       if (!response.body) throw new Error("No response body");
@@ -151,9 +197,7 @@ export function sendChatMessage(
             try {
               const payload: ChatEventPayload = JSON.parse(data);
               handleChatEvent(state, payload);
-            } catch {
-              // skip non-JSON lines
-            }
+            } catch { /* skip non-JSON */ }
           }
         }
       }
@@ -172,10 +216,14 @@ export function sendChatMessage(
   return { runId };
 }
 
+// ============================================================================
+// Event Handler
+// ============================================================================
+
 export function handleChatEvent(state: ChatState, payload: ChatEventPayload): void {
   if (payload.sessionKey !== state.sessionKey) return;
 
-  // Cross-run final event
+  // Cross-run: final from a different run → append as message
   if (payload.runId && state.chatRunId && payload.runId !== state.chatRunId) {
     if (payload.state === "final" && payload.message && !isSilentReply(payload.message)) {
       state.chatMessages = [...state.chatMessages, payload.message];
@@ -183,62 +231,139 @@ export function handleChatEvent(state: ChatState, payload: ChatEventPayload): vo
     return;
   }
 
-  if (payload.state === "delta") {
-    const text = extractText(payload.message);
-    if (text && !isSilentReplyText(text)) {
-      state.chatStream = text;
+  switch (payload.state) {
+    case "delta": {
+      const text = extractText(payload.message);
+      if (text && !isSilentReplyText(text)) {
+        state.chatStream = (state.chatStream || "") + text;
+      }
+      break;
     }
-  } else if (payload.state === "final") {
-    if (payload.message && !isSilentReply(payload.message)) {
-      state.chatMessages = [...state.chatMessages, payload.message];
-    } else if (state.chatStream?.trim() && !isSilentReplyText(state.chatStream)) {
-      state.chatMessages = [
-        ...state.chatMessages,
-        {
-          role: "assistant",
-          content: [{ type: "text", text: state.chatStream }],
-          timestamp: Date.now(),
-        },
-      ];
-    }
-    state.chatStream = null;
-    state.chatRunId = null;
-    state.chatStreamStartedAt = null;
-  } else if (payload.state === "aborted") {
-    if (payload.message && !isSilentReply(payload.message)) {
-      state.chatMessages = [...state.chatMessages, payload.message];
-    } else if (state.chatStream?.trim()) {
-      state.chatMessages = [
-        ...state.chatMessages,
-        {
-          role: "assistant",
-          content: [{ type: "text", text: state.chatStream }],
-          timestamp: Date.now(),
-        },
-      ];
-    }
-    state.chatStream = null;
-    state.chatRunId = null;
-    state.chatStreamStartedAt = null;
-  } else if (payload.state === "error") {
-    state.lastError = payload.errorMessage || "Unknown error";
-    state.chatStream = null;
-    state.chatRunId = null;
-    state.chatStreamStartedAt = null;
-  }
 
-  if (payload.a2ui && state.onA2ui) {
-    // Track the last surface ID from A2UI messages
-    const surfaceId = extractA2uiSurfaceId(payload.a2ui);
-    if (surfaceId) {
-      state.lastA2uiSurfaceId = surfaceId;
+    case "final": {
+      flushStreamingToSegments(state);
+      const toolMsgs = buildToolMessages(state);
+      if (payload.message && !isSilentReply(payload.message)) {
+        state.chatMessages = [...state.chatMessages, ...toolMsgs, payload.message];
+      } else if (state.chatStreamSegments.length > 0 || state.chatStream?.trim()) {
+        const allText = [
+          ...state.chatStreamSegments.map((s) => s.text),
+          state.chatStream || "",
+        ].join("");
+        if (!isSilentReplyText(allText)) {
+          state.chatMessages = [
+            ...state.chatMessages,
+            ...toolMsgs,
+            { role: "assistant", content: [{ type: "text", text: allText }], timestamp: Date.now() },
+          ];
+        } else {
+          state.chatMessages = [...state.chatMessages, ...toolMsgs];
+        }
+      } else if (toolMsgs.length > 0) {
+        state.chatMessages = [...state.chatMessages, ...toolMsgs];
+      }
+      state.chatStream = null;
+      state.chatStreamSegments = [];
+      state.toolStreamById = new Map();
+      state.toolStreamOrder = [];
+      state.chatRunId = null;
+      state.chatStreamStartedAt = null;
+      break;
     }
-    state.onA2ui(payload.a2ui);
+
+    case "aborted": {
+      flushStreamingToSegments(state);
+      if (payload.message && !isSilentReply(payload.message)) {
+        const toolMsgs = buildToolMessages(state);
+        state.chatMessages = [...state.chatMessages, ...toolMsgs, payload.message];
+      } else if (state.chatStream?.trim()) {
+        const allText = [...state.chatStreamSegments.map((s) => s.text), state.chatStream].join("");
+        if (!isSilentReplyText(allText)) {
+          const toolMsgs = buildToolMessages(state);
+          state.chatMessages = [
+            ...state.chatMessages,
+            ...toolMsgs,
+            { role: "assistant", content: [{ type: "text", text: allText }], timestamp: Date.now() },
+          ];
+        }
+      }
+      state.chatStream = null;
+      state.chatStreamSegments = [];
+      state.toolStreamById = new Map();
+      state.toolStreamOrder = [];
+      state.chatRunId = null;
+      state.chatStreamStartedAt = null;
+      break;
+    }
+
+    case "error": {
+      state.lastError = payload.errorMessage || "Unknown error";
+      state.chatStream = null;
+      state.chatStreamSegments = [];
+      state.toolStreamById = new Map();
+      state.toolStreamOrder = [];
+      state.chatRunId = null;
+      state.chatStreamStartedAt = null;
+      break;
+    }
+
+    case "tool_call_start": {
+      // Pause streaming text: commit current stream as a segment
+      flushStreamingToSegments(state);
+      const toolName = payload.toolName || "unknown";
+      const toolCallId = `tc_${Date.now()}_${state.toolStreamOrder.length}`;
+      state.toolStreamById.set(toolCallId, {
+        toolCallId,
+        toolName,
+        toolArgs: payload.toolArgs || "",
+        startedAt: Date.now(),
+      });
+      state.toolStreamOrder.push(toolCallId);
+      state.chatStream = null;
+
+      // Handle A2UI canvas events from canvas tool
+      if (payload.a2ui && state.onA2ui) {
+        const surfaceId = extractA2uiSurfaceId(payload.a2ui);
+        if (surfaceId) state.lastA2uiSurfaceId = surfaceId;
+        state.onA2ui(payload.a2ui);
+      }
+      break;
+    }
+
+    case "tool_call_end":
+    case "tool_result": {
+      // Attach tool results - handle both old tool_call_end format and new tool_result format
+      if (payload.toolResults) {
+        for (const result of payload.toolResults) {
+          // Find matching tool call by name and most recent
+          const lastTcId = state.toolStreamOrder[state.toolStreamOrder.length - 1];
+          if (lastTcId) {
+            const tc = state.toolStreamById.get(lastTcId);
+            if (tc) {
+              tc.toolResult = result.result;
+            }
+          }
+        }
+      } else if (payload.state === "tool_result" && payload.toolName) {
+        // Backend sends tool_result with toolName and result directly
+        const lastTcId = state.toolStreamOrder[state.toolStreamOrder.length - 1];
+        if (lastTcId) {
+          const tc = state.toolStreamById.get(lastTcId);
+          if (tc && tc.toolName === payload.toolName) {
+            tc.toolResult = (payload as unknown as { result?: string }).result || "完成";
+          }
+        }
+      }
+      break;
+    }
   }
 }
 
+// ============================================================================
+// Abort
+// ============================================================================
+
 export async function abortChatRun(state: ChatState): Promise<boolean> {
-  // 真正中断正在进行的 fetch
   if (state.abortController) {
     state.abortController.abort();
     state.abortController = undefined;
@@ -255,6 +380,10 @@ export async function abortChatRun(state: ChatState): Promise<boolean> {
     return false;
   }
 }
+
+// ============================================================================
+// Helpers
+// ============================================================================
 
 const SILENT_REPLY_PATTERN = /^\s*NO_REPLY\s*$/;
 
@@ -281,15 +410,42 @@ function extractText(message: ChatMessage | undefined | null): string {
   return "";
 }
 
+/// Commit any in-progress streaming text as a segment
+function flushStreamingToSegments(state: ChatState): void {
+  if (state.chatStream && state.chatStream.trim().length > 0) {
+    state.chatStreamSegments.push({ text: state.chatStream, ts: Date.now() });
+    state.chatStream = null;
+    state.chatStreamStartedAt = null;
+  }
+}
+
+/// Build ChatMessage objects from accumulated tool stream state
+function buildToolMessages(state: ChatState): ChatMessage[] {
+  return state.toolStreamOrder.map((id) => {
+    const tc = state.toolStreamById.get(id);
+    if (!tc) {
+      return { role: "assistant", content: [{ type: "text", text: "" }], timestamp: Date.now() };
+    }
+    return {
+      role: "assistant",
+      toolCallId: tc.toolCallId,
+      toolName: tc.toolName,
+      content: [
+        { type: "toolcall", name: tc.toolName, args: tc.toolArgs ? JSON.parse(tc.toolArgs) : {} },
+        ...(tc.toolResult ? [{ type: "toolresult", name: tc.toolName, result: tc.toolResult }] : []),
+      ],
+      timestamp: tc.startedAt,
+    };
+  });
+}
+
 function extractA2uiSurfaceId(jsonl: string): string | null {
   const lines = jsonl.split("\n").filter((l) => l.trim());
   for (const line of lines) {
     try {
       const msg = JSON.parse(line);
       if (msg.createSurface?.id) return msg.createSurface.id as string;
-    } catch {
-      // skip non-JSON lines
-    }
+    } catch { /* skip */ }
   }
   return null;
 }

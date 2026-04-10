@@ -2797,6 +2797,48 @@
   color: var(--muted);
 }
 
+/* Agent 预设模板卡片 */
+.agent-preset-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.agent-preset-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  background: var(--bg-secondary);
+}
+
+.agent-preset-card:hover {
+  border-color: var(--accent);
+  background: var(--bg-tertiary);
+}
+
+.agent-preset-card--active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-secondary));
+}
+
+.agent-preset-card__label {
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.agent-preset-card--active .agent-preset-card__label {
+  color: var(--accent);
+}
+
+.agent-preset-card__desc {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
 .chip-remove {
   display: inline-flex;
   align-items: center;
