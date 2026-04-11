@@ -77,7 +77,11 @@ async fn login(
             .bind(&user.id)
             .fetch_optional(state.database().pool())
             .await
-            .unwrap_or(None)
+            .map_err(|e| {
+                tracing::error!("DB error fetching tenant_id: {}", e);
+            })
+            .ok()
+            .flatten()
             .unwrap_or_else(|| "default".to_string());
 
             tracing::debug!(
@@ -93,7 +97,11 @@ async fn login(
             .bind(&tenant_id)
             .fetch_optional(state.database().pool())
             .await
-            .unwrap_or(None);
+            .map_err(|e| {
+                tracing::error!("DB error fetching workspace_id: {}", e);
+            })
+            .ok()
+            .flatten();
 
             tracing::debug!(
                 "Found default workspace_id {:?} for tenant {}",

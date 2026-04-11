@@ -9,6 +9,7 @@ use axum::{
     Json, Router,
 };
 use headers::HeaderMapExt;
+use sha2::Digest;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
@@ -131,15 +132,11 @@ async fn extract_api_key(
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| ToolError::Unauthorized("Missing X-API-Key header".into()))?;
 
-    // Extract prefix from raw key (format: sk_live_<prefix>)
-    let prefix = if raw_key.len() > 8 {
-        &raw_key[..16] // prefix (8 chars) + 8 chars = 16 chars
-    } else {
-        raw_key
-    };
+    // Hash the incoming key for secure lookup
+    let key_hash = format!("{:x}", sha2::Sha256::digest(raw_key.as_bytes()));
 
-    // Look up by prefix
-    let api_key = crate::dto::entity::tenant::ApiKey::find_by_prefix(db, prefix)
+    // Look up by hash (secure, no prefix collision possible)
+    let api_key = crate::dto::entity::tenant::ApiKey::find_by_hash(db, &key_hash)
         .await
         .map_err(|e| ToolError::Internal(format!("Database error: {}", e)))?
         .ok_or_else(|| ToolError::Unauthorized("Invalid API key".into()))?;

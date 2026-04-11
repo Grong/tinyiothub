@@ -534,13 +534,46 @@ impl ApiKey {
         }
     }
 
-    /// 根据 prefix 获取
+    /// 根据 prefix 获取（仅用于 key 展示，不可用于认证）
     pub async fn find_by_prefix(
         db: &Database,
         prefix: &str,
     ) -> Result<Option<ApiKey>, sqlx::Error> {
         let row = sqlx::query("SELECT * FROM api_keys WHERE prefix = ? AND is_revoked = 0 LIMIT 1")
             .bind(prefix)
+            .fetch_optional(db.pool())
+            .await?;
+
+        if let Some(row) = row {
+            Ok(Some(ApiKey {
+                id: row.try_get("id")?,
+                workspace_id: row.try_get("workspace_id")?,
+                name: row.try_get("name")?,
+                key_hash: row.try_get("key_hash")?,
+                prefix: row.try_get("prefix")?,
+                permissions: row.try_get("permissions")?,
+                rate_limit: row.try_get("rate_limit")?,
+                is_enabled: row.try_get::<i32, _>("is_enabled")? != 0,
+                is_revoked: row.try_get::<i32, _>("is_revoked")? != 0,
+                last_used_at: row.try_get("last_used_at")?,
+                last_used_ip: row.try_get("last_used_ip")?,
+                request_count: row.try_get("request_count")?,
+                expires_at: row.try_get("expires_at")?,
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// 根据 key_hash（SHA-256）查找有效的 API Key
+    pub async fn find_by_hash(
+        db: &Database,
+        key_hash: &str,
+    ) -> Result<Option<ApiKey>, sqlx::Error> {
+        let row = sqlx::query("SELECT * FROM api_keys WHERE key_hash = ? AND is_revoked = 0 LIMIT 1")
+            .bind(key_hash)
             .fetch_optional(db.pool())
             .await?;
 

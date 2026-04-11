@@ -711,9 +711,14 @@ fn validate_phone(phone: &str) -> bool {
 
 /// 生成随机验证码
 fn generate_code() -> String {
+    const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     let mut rng = rand::thread_rng();
-    let code: u32 = rng.gen_range(0..1_000_000);
-    format!("{:06}", code)
+    (0..8)
+        .map(|_| {
+            let idx = rng.gen_range(0..CHARSET.len());
+            CHARSET[idx] as char
+        })
+        .collect()
 }
 
 /// 根据手机号查找或创建用户

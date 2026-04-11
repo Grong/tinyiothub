@@ -10,7 +10,7 @@ use headers::{authorization::Bearer, Authorization, HeaderMapExt};
 use hmac::{Hmac, Mac};
 use jwt_simple::prelude::*;
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
+use sha2::{Sha256, Digest};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -260,6 +260,27 @@ pub fn validate_jwt(token: &str) -> Result<Claims, String> {
         tenant_id: jwt_claims.custom.tenant_id,
         exp,
     })
+}
+
+// 检查 token 是否在黑名单中（使用阻塞 DB 调用）
+pub fn is_token_blacklisted_sync(
+    db: &crate::infrastructure::persistence::database::Database,
+    token: &str,
+) -> bool {
+    let token_hash = format!("{:x}", Sha256::digest(token.as_bytes()));
+
+    // Use try_with to check if we're in a Tokio runtime
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        handle.block_on(async {
+            let row = sqlx::query("SELECT 1 FROM token_blacklist WHERE token_hash = ? LIMIT 1")
+                .bind(&token_hash)
+                .fetch_optional(db.pool())
+                .await;
+            row.map(|r| r.is_some()).unwrap_or(false)
+        })
+    } else {
+        false
+    }
 }
 
 // 生成 JWT token 的便捷函数
