@@ -387,4 +387,5 @@ Some detailed content here."#;
         assert_eq!(fm.get("name").unwrap().as_str().unwrap(), "alarm-management");
         assert!(body.trim().contains("Alarm Management"));
     }
+
 }
