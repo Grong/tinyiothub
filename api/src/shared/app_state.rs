@@ -21,6 +21,7 @@ use crate::{
     },
     dto::entity::DeviceProperty,
     infrastructure::{
+        agent::AgentRuntime,
         event::{
             channels::NotificationChannelFactory,
             handlers::{PersistenceEventHandler, RealTimeStatusHandler, SseEventHandler},
@@ -35,7 +36,6 @@ use crate::{
             Database,
         },
         redis::RedisClient,
-        zeroclaw_agent::AgentClient,
     },
     shared::error::Error,
 };
@@ -101,11 +101,8 @@ pub struct AppState {
     /// 报警服务 - 报警规则和报警管理
     pub alarm_service: Arc<crate::domain::alarm::AlarmService>,
 
-    /// Agent 客户端 (ZeroClaw)
-    pub agent_client: Arc<dyn AgentClient>,
-
-    /// Concrete TinyIoTHubAgentClient for tool refresh
-    pub tinyiothub_agent: Arc<crate::infrastructure::zeroclaw_runtime::TinyIoTHubAgentClient>,
+    /// Agent Runtime - consolidated agent interface
+    pub agent_runtime: Arc<dyn AgentRuntime>,
 
     /// Agent Memory Service - 设备状态快照记忆
     pub memory_service: Arc<MemoryService>,
@@ -191,21 +188,19 @@ impl AppState {
             .map(|config| RedisClient::new(&config.url).ok())
             .flatten();
 
-        // Agent 客户端 - 使用 zeroclaw 内置的 OpenAiCompatibleProvider (MiniMax)
+        // Agent Runtime - 使用 zeroclaw 内置的 OpenAiCompatibleProvider (MiniMax)
         let minimax_config = crate::infrastructure::config::get().minimax.clone()
             .expect("minimax config is required - set [minimax] in app_settings.toml");
         let provider = zeroclaw::providers::create_provider("minimaxi", Some(&minimax_config.auth_token))
             .expect("failed to create MiniMax provider");
         tracing::info!("TinyIoTHub Agent initialized with zeroclaw MiniMax provider");
-        let tinyiothub_agent: Arc<crate::infrastructure::zeroclaw_runtime::TinyIoTHubAgentClient> = Arc::new(
+        let agent_runtime: Arc<dyn AgentRuntime> = Arc::new(
             crate::infrastructure::zeroclaw_runtime::TinyIoTHubAgentClient::new(
                 database.pool().clone(),
                 provider,
                 minimax_config.model,
             ).expect("failed to build TinyIoTHubAgentClient")
         );
-        // Clone for trait object (used by API handlers)
-        let agent_client: Arc<dyn AgentClient> = tinyiothub_agent.clone();
 
         // Agent Memory Service
         let memory_repo =
@@ -229,8 +224,7 @@ impl AppState {
             sse_manager,
             secure_event_service,
             alarm_service,
-            agent_client,
-            tinyiothub_agent,
+            agent_runtime,
             memory_service,
         }
     }

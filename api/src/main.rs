@@ -145,7 +145,7 @@ async fn main_impl() -> std::io::Result<()> {
         crate::api::mcp::init_app_state(Arc::new(app_state.clone()));
         crate::api::mcp::register_tools().await;
         // Refresh agent tools after MCP registration
-        if let Err(e) = app_state.tinyiothub_agent.refresh_tools().await {
+        if let Err(e) = app_state.agent_runtime.refresh_tools().await {
             tracing::error!("Failed to refresh agent tools: {}", e);
         }
         let api_router = crate::api::create_router();
@@ -267,7 +267,7 @@ async fn create_app_router(app_state: crate::shared::app_state::AppState) -> Rou
     tracing::info!("MCP tools initialized");
 
     // Refresh agent tools after MCP registration
-    if let Err(e) = app_state.tinyiothub_agent.refresh_tools().await {
+    if let Err(e) = app_state.agent_runtime.refresh_tools().await {
         tracing::error!("Failed to refresh agent tools: {}", e);
     }
 
