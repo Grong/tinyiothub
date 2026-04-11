@@ -31,6 +31,11 @@ impl ToolHandler for GetSelfHealPolicyHandler {
     }
 
     async fn execute(&self, _args: Value) -> Result<Value, ToolError> {
+        // SECURITY: Verify authentication
+        let _claims = crate::api::mcp::handlers::get_mcp_context().ok_or_else(|| {
+            ToolError::Unauthorized("MCP context not initialized".to_string())
+        })?;
+
         let state = get_self_healing_state()
             .ok_or_else(|| ToolError::Internal("Self-healing not initialized".to_string()))?;
 
@@ -84,6 +89,11 @@ impl ToolHandler for ExecuteSelfHealActionHandler {
     async fn execute(&self, args: Value) -> Result<Value, ToolError> {
         let request: ExecuteSelfHealRequest = serde_json::from_value(args)
             .map_err(|e| ToolError::InvalidParams(e.to_string()))?;
+
+        // SECURITY: Verify authentication
+        let _claims = crate::api::mcp::handlers::get_mcp_context().ok_or_else(|| {
+            ToolError::Unauthorized("MCP context not initialized".to_string())
+        })?;
 
         let state = get_self_healing_state()
             .ok_or_else(|| ToolError::Internal("Self-healing not initialized".to_string()))?;

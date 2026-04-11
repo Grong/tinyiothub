@@ -219,13 +219,28 @@ impl ToolHandler for CreateScheduleHandler {
         let input: CreateScheduleInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
-        let _claims = get_mcp_context().ok_or_else(|| {
+        let claims = get_mcp_context().ok_or_else(|| {
             ToolError::Unauthorized("MCP context not initialized".to_string())
         })?;
 
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
         let db = state.database();
+
+        // SECURITY: Verify target_device_id belongs to authenticated workspace if provided
+        if let Some(ref device_id) = input.target_device_id {
+            let device = crate::dto::entity::device::Device::find_by_id(db, device_id)
+                .await
+                .map_err(|e| ToolError::Internal(format!("failed to verify device: {}", e)))?
+                .ok_or_else(|| ToolError::NotFound(format!("device {} not found", device_id)))?;
+
+            if device.workspace_id.as_ref() != Some(&claims.workspace_id) {
+                tracing::warn!("MCP create_schedule: access denied to device {} for workspace {}", device_id, claims.workspace_id);
+                return Err(ToolError::Forbidden(
+                    "Access denied: target device does not belong to authenticated workspace".to_string()
+                ));
+            }
+        }
 
         let config = input.config.unwrap_or_else(|| "{}".to_string());
 
@@ -297,14 +312,25 @@ impl ToolHandler for DeleteScheduleHandler {
             .map_err(|e| ToolError::Internal(format!("failed to get schedule: {}", e)))?
             .ok_or_else(|| ToolError::NotFound("schedule not found".to_string()))?;
 
-        // Verify workspace ownership via claims.workspace_id
-        let existing_ws = crate::dto::entity::workspace::Workspace::find_by_id(db, &existing.target_device_id.as_ref().unwrap_or(&String::new()))
-            .await
-            .ok()
-            .flatten();
-        if existing_ws.as_ref().map(|w| &w.id) != Some(&claims.workspace_id) {
-            tracing::warn!("MCP delete_schedule: access denied to schedule {} for workspace {}", input.id, claims.workspace_id);
-            return Err(ToolError::NotFound("schedule not found".to_string()));
+        // SECURITY: Verify the job's target device belongs to authenticated workspace
+        if let Some(ref device_id) = existing.target_device_id {
+            let device = crate::dto::entity::device::Device::find_by_id(db, device_id)
+                .await
+                .map_err(|e| ToolError::Internal(format!("failed to verify device: {}", e)))?
+                .ok_or_else(|| ToolError::NotFound("schedule not found".to_string()))?;
+
+            if device.workspace_id.as_ref() != Some(&claims.workspace_id) {
+                tracing::warn!("MCP delete_schedule: access denied to schedule {} for workspace {}", input.id, claims.workspace_id);
+                return Err(ToolError::Forbidden(
+                    "Access denied: schedule does not belong to authenticated workspace".to_string()
+                ));
+            }
+        } else {
+            // Job has no target device - cannot verify workspace ownership
+            tracing::warn!("MCP delete_schedule: cannot verify workspace for schedule {} (no target_device_id)", input.id);
+            return Err(ToolError::Forbidden(
+                "Access denied: cannot verify schedule ownership".to_string()
+            ));
         }
 
         crate::dto::entity::job::Job::delete(db, &input.id)
