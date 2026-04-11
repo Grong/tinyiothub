@@ -1,6 +1,6 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { type AgentsState } from "../controllers/agents.js";
-import { loadSkills, removeSkill, createSkillApi, updateSkillApi } from "../controllers/agents.js";
+import { removeSkill, createSkillApi, updateSkillApi } from "../controllers/agents.js";
 
 export function renderSkillsTab(
   state: AgentsState,
@@ -78,7 +78,7 @@ export function renderSkillsTab(
                         if (ok) { patchState({ activeSkillsPanel: "list", editingSkill: null, skillDraft: "" }); onSave(); }
                       } else {
                         const data = { skill_content: draft };
-                        const ok = await updateSkillApi(state, editing?.name, data);
+                        const ok = await updateSkillApi(state, editing?.name ?? "", data);
                         if (ok) { patchState({ activeSkillsPanel: "list", editingSkill: null, skillDraft: "" }); onSave(); }
                       }
                     }}>
@@ -125,5 +125,5 @@ export function renderSkillsTab(
     `;
   }
 
-  return nothing;
+  return html``;
 }

@@ -30,8 +30,6 @@ export function renderAlarmCard(
   const message = String(data.message || "");
   const status = String(data.status || "active");
   const createdAt = data.created_at as string | undefined;
-  const acknowledgedAt = data.acknowledged_at as string | undefined;
-  const resolvedAt = data.resolved_at as string | undefined;
 
   const levelColor = LEVEL_COLORS[level] || "#95a5a6";
   const levelLabel = LEVEL_LABELS[level] || level;

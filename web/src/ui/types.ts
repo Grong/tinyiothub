@@ -1,12 +1,39 @@
-export type UpdateAvailable = import("../../../src/infra/update-startup.js").UpdateAvailable;
-import type { CronJobBase } from "../../../src/cron/types-shared.js";
-import type { ConfigUiHints } from "../../../src/shared/config-ui-hints-types.js";
-import type {
-  GatewayAgentRow as SharedGatewayAgentRow,
-  SessionsListResultBase,
-  SessionsPatchResultBase,
-} from "../../../src/shared/session-types.js";
-export type { ConfigUiHints } from "../../../src/shared/config-ui-hints-types.js";
+// ─── Inline stub types for OpenClaw ghost imports ────────────────────────────
+
+// Stub: was ../../../src/infra/update-startup.js
+export type UpdateAvailable = { version: string; notes?: string };
+
+// Stub: was ../../../src/cron/types-shared.js
+export type CronJobBase<S = unknown, T = unknown, W = unknown, P = unknown, D = unknown, F = unknown> = {
+  id: string;
+  schedule: S;
+  target: T;
+  wakeMode: W;
+  payload: P;
+  delivery: D;
+  failureAlert: F | false;
+};
+
+// Stub: was ../../../src/shared/config-ui-hints-types.js
+export type ConfigUiHints = Record<string, unknown>;
+
+// Stub: was ../../../src/shared/session-types.js
+export type GatewayAgentRow = {
+  id: string;
+  agentId: string;
+  name: string;
+  model?: string;
+};
+
+export type SessionsListResultBase<D = unknown, R = unknown> = {
+  defaults: D;
+  rows: R[];
+  total?: number;
+};
+
+export type SessionsPatchResultBase<R = unknown> = {
+  session: R;
+};
 
 export type ChannelsStatusSnapshot = {
   ts: number;
@@ -320,8 +347,6 @@ export type GatewaySessionsDefaults = {
   contextTokens: number | null;
 };
 
-export type GatewayAgentRow = SharedGatewayAgentRow;
-
 export type AgentsListResult = {
   defaultId: string;
   mainKey: string;
@@ -431,15 +456,54 @@ export type SessionsPatchResult = SessionsPatchResultBase<{
   elevatedLevel?: string;
 }>;
 
-export type {
-  CostUsageDailyEntry,
-  CostUsageSummary,
-  SessionsUsageEntry,
-  SessionsUsageResult,
-  SessionsUsageTotals,
-  SessionUsageTimePoint,
-  SessionUsageTimeSeries,
-} from "./usage-types.ts";
+// ─── Usage types (was usage-types.ts) ─────────────────────────────────────────
+export type CostUsageDailyEntry = {
+  date: string;
+  cost: number;
+  inputTokens: number;
+  outputTokens: number;
+};
+
+export type CostUsageSummary = {
+  totalCost: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  dailyEntries: CostUsageDailyEntry[];
+};
+
+export type SessionsUsageEntry = {
+  sessionKey: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  ts: number;
+};
+
+export type SessionsUsageResult = {
+  entries: SessionsUsageEntry[];
+  totals: SessionsUsageTotals;
+};
+
+export type SessionsUsageTotals = {
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalTokens: number;
+  totalCost: number;
+};
+
+export type SessionUsageTimePoint = {
+  ts: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  cost: number;
+};
+
+export type SessionUsageTimeSeries = {
+  points: SessionUsageTimePoint[];
+  granularity: "hourly" | "daily";
+};
 
 export type CronSchedule =
   | { kind: "at"; at: string }

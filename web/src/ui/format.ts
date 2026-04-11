@@ -1,6 +1,26 @@
-import { formatDurationHuman } from "../../../src/infra/format-time/format-duration.ts";
-import { formatRelativeTimestamp } from "../../../src/infra/format-time/format-relative.ts";
-import { stripAssistantInternalScaffolding } from "../../../src/shared/text/assistant-visible-text.js";
+// ─── Inline stubs for missing infra/format-time helpers ─────────────────────
+
+function formatDurationHuman(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ${m % 60}m`;
+  return `${Math.floor(h / 24)}d ${h % 24}h`;
+}
+
+function formatRelativeTimestamp(ts: number): string {
+  const diff = Date.now() - ts;
+  if (diff < 60000) return "just now";
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+  return `${Math.floor(diff / 86400000)}d ago`;
+}
+
+function stripAssistantInternalScaffolding(text: string): string {
+  return text.replace(/<[^>]+>/g, "").trim();
+}
 
 export { formatRelativeTimestamp, formatDurationHuman };
 

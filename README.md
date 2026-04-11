@@ -29,7 +29,7 @@
 - 🤖 **鸿蒙系统原生支持**
 - ⚙️ **专业配置系统**（层次化配置，环境感知）
 - 🔒 **安全加固**（配置验证，权限控制）
-- 🎨 **现代化前端界面**（Next.js + TypeScript + TailwindCSS）
+- 🎨 **现代化前端界面**（Lit 3 + TypeScript + Vite）
 
 ## 项目结构
 
@@ -43,9 +43,12 @@ tinyiothub/
 │   ├── vendor/               # 第三方依赖
 │   ├── Cargo.toml            # Rust 项目配置
 │   └── tinyiothub.db         # SQLite 数据库
-├── web/                      # Next.js 前端应用
-│   ├── app/                  # 页面和组件
-│   ├── service/              # API 服务层
+├── web/                      # Lit 3 前端应用 (Web Components)
+│   ├── src/                  # 源代码
+│   │   ├── ui/              # Lit 组件
+│   │   ├── api/             # API 客户端
+│   │   ├── i18n/           # 国际化
+│   │   └── styles/          # CSS 样式
 │   └── package.json          # Node.js 项目配置
 ├── sdks/                     # SDK 开发包
 │   └── driver-sdk/           # 驱动开发 SDK
@@ -65,7 +68,7 @@ tinyiothub/
 ### 环境要求
 
 **后端**:
-- **Rust**: 1.70+ (2021 Edition)
+- **Rust**: 1.85+ (2024 Edition)
 - **操作系统**: Linux, Windows, HarmonyOS
 - **数据库**: SQLite (内置)
 - **网络**: MQTT Broker (可选)
@@ -319,23 +322,17 @@ api/
 
 ```
 web/
-├── app/                      # Next.js App Router
-│   ├── components/           # React 组件
-│   │   ├── base/             # 基础组件
-│   │   ├── devices/          # 设备相关组件
-│   │   ├── templates/        # 模板相关组件
-│   │   └── workflow/         # 工作流组件
-│   ├── (dashboard)/          # 仪表板页面
-│   └── globals.css           # 全局样式
-├── lib/                      # 工具库
-│   ├── api-client.ts         # 统一API客户端
-│   └── query-keys.ts         # React Query 键管理
-├── service/                  # API服务层
-│   ├── auth.ts               # 认证服务
-│   ├── devices.ts            # 设备服务
-│   └── drivers.ts            # 驱动服务
-├── types/                    # TypeScript 类型定义
-└── package.json              # 项目配置
+├── src/
+│   ├── ui/                  # Lit Web Components
+│   │   ├── components/       # 组件
+│   │   ├── views/           # 页面视图
+│   │   ├── controllers/     # 状态控制器
+│   │   └── chat/           # 聊天/A2UI
+│   ├── api/                # API 客户端
+│   ├── i18n/               # 国际化
+│   └── styles/             # CSS 样式
+├── package.json
+└── vite.config.ts
 ```
 
 ## API 接口
@@ -589,8 +586,8 @@ gateway/{sn}/alarm            # 告警消息
 - **鸿蒙系统适配**: 硬件抽象层，资源优化配置
 
 🔧 **技术栈**:
-- **后端**: Rust 2021 + Axum + SQLite + Tokio
-- **前端**: Next.js 14 + TypeScript + TailwindCSS + React Query
+- **后端**: Rust 2024 + Axum + SQLite + Tokio
+- **前端**: Lit 3 + TypeScript + Vite + Nanostore
 - **数据库**: SQLite + SQLx (自动迁移)
 - **认证**: JWT + 会话管理
 - **通信协议**: MQTT, HTTP, Modbus RTU/TCP, ONVIF, SNMP

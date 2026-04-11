@@ -12,8 +12,6 @@ export type ChatQueueItem = {
   refreshSessions?: boolean;
 };
 
-export const CRON_CHANNEL_LAST = "last";
-
 export type CronFormState = {
   name: string;
   description: string;
