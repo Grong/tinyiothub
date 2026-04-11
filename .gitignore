@@ -1,7 +1,6 @@
 # Rust 编译输出
 /api/target
 /api/Cargo.lock
-/mcp/target
 /sdks/driver-sdk/target
 /examples/example-plugin/target
 /examples/bacnet-driver/target
