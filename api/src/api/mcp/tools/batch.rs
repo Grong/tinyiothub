@@ -116,12 +116,17 @@ impl ToolHandler for BatchCommandHandler {
             ToolError::Unauthorized("MCP context not initialized".to_string())
         })?;
 
+        // SECURITY: Verify workspace_id matches the authenticated context
+        // Prevents IDOR attacks where a user tries to access another workspace's resources
+        if input.workspace_id != claims.workspace_id {
+            return Err(ToolError::Forbidden(
+                "Access denied: workspace_id does not match authenticated workspace".to_string()
+            ));
+        }
+
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
         let db = state.database.clone();
-
-        // Note: workspace_id access is verified via tenant ownership in the database
-        // The MCP context provides tenant_id from JWT for authorization
 
         // Check idempotency - return existing if found
         if let Some(existing) =
@@ -229,7 +234,7 @@ impl ToolHandler for GetBatchStatusHandler {
         let input: GetBatchStatusInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
-        let _claims = get_mcp_context().ok_or_else(|| {
+        let claims = get_mcp_context().ok_or_else(|| {
             ToolError::Unauthorized("MCP context not initialized".to_string())
         })?;
 
@@ -241,6 +246,14 @@ impl ToolHandler for GetBatchStatusHandler {
             .await
             .map_err(|e| ToolError::Internal(format!("DB error: {}", e)))?
             .ok_or_else(|| ToolError::NotFound("Batch not found".to_string()))?;
+
+        // SECURITY: Verify batch belongs to the authenticated workspace
+        // Prevents IDOR attacks where a user tries to access another workspace's batch data
+        if batch_with_items.batch.workspace_id != claims.workspace_id {
+            return Err(ToolError::Forbidden(
+                "Access denied: batch does not belong to authenticated workspace".to_string()
+            ));
+        }
 
         Ok(serde_json::to_value(batch_with_items).unwrap())
     }

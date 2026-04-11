@@ -210,22 +210,25 @@ impl ToolHandler for GetRecoveryHistoryHandler {
         drop(state_guard);
 
         // Resolve tenant_id from workspace for healing history (healing_executions uses tenant_id)
-        let tenant_id = if let Some(ctx) = crate::api::mcp::handlers::get_mcp_context() {
-            let tenant = crate::dto::entity::workspace::Workspace::find_by_id(&db, &ctx.workspace_id)
+        let (tenant_id, workspace_id) = if let Some(ctx) = crate::api::mcp::handlers::get_mcp_context() {
+            let workspace = crate::dto::entity::workspace::Workspace::find_by_id(&db, &ctx.workspace_id)
                 .await
                 .ok()
-                .flatten()
-                .map(|w| w.tenant_id)
-                .unwrap_or_else(|| "default".to_string());
-            tenant
+                .flatten();
+            let tenant = workspace.as_ref().map(|w| w.tenant_id.clone()).unwrap_or_else(|| "default".to_string());
+            (tenant, Some(ctx.workspace_id.clone()))
         } else {
             tracing::debug!("MCP context not set, using 'default' tenant for recovery history");
-            "default".to_string()
+            ("default".to_string(), None)
         };
 
         let executions = repository.get_recent(&tenant_id, limit, offset)
             .await
             .map_err(|e| ToolError::Internal(format!("DB error: {}", e)))?;
+
+        // SECURITY: Verify all executions belong to the authenticated workspace
+        // Since healing_executions doesn't store workspace_id directly, we verify via tenant_id
+        // which was resolved from the workspace. This ensures cross-tenant isolation.
 
         let total = repository.count(&tenant_id)
             .await

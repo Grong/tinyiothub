@@ -32,7 +32,7 @@ struct DiagnoseDeviceInput {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ScanSerialInput {
-    workspace_id: Option<String>,
+    // No workspace_id needed - serial scanning is hardware-level
 }
 
 /// Compare devices tool handler
@@ -188,15 +188,8 @@ impl ToolHandler for ScanSerialHandler {
     }
 
     fn input_schema(&self) -> InputSchema {
-        let mut props = HashMap::new();
-        props.insert(
-            "workspaceId".to_string(),
-            PropertySchema {
-                prop_type: "string".to_string(),
-                description: Some("Workspace ID (optional, for scoping)".to_string()),
-            },
-        );
-        InputSchema::object(vec![], props)
+        // Serial scanning is hardware-level, no workspace scoping needed
+        InputSchema::object(vec![], HashMap::new())
     }
 
     async fn execute(&self, args: Value) -> Result<Value, ToolError> {

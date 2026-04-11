@@ -356,7 +356,9 @@ impl ToolHandler for GetDeviceHandler {
         if let Some(ref ws_id) = workspace_id {
             if device.workspace_id.as_ref() != Some(&ws_id) {
                 tracing::warn!("MCP get_device: access denied to device {} for workspace {}", input.id, ws_id);
-                return Err(ToolError::NotFound(format!("Device {} not found", input.id)));
+                return Err(ToolError::Forbidden(
+                    "Access denied: device does not belong to authenticated workspace".to_string()
+                ));
             }
         }
 
@@ -415,7 +417,9 @@ impl ToolHandler for GetDeviceStatusHandler {
         if let Some(ref ws_id) = workspace_id {
             if device.workspace_id.as_ref() != Some(&ws_id) {
                 tracing::warn!("MCP get_device_status: access denied to device {} for workspace {}", input.id, ws_id);
-                return Err(ToolError::NotFound(format!("Device {} not found", input.id)));
+                return Err(ToolError::Forbidden(
+                    "Access denied: device does not belong to authenticated workspace".to_string()
+                ));
             }
         }
 
@@ -482,7 +486,9 @@ impl ToolHandler for ReadPropertiesHandler {
         if let Some(ref ws_id) = workspace_id {
             if device.workspace_id.as_ref() != Some(&ws_id) {
                 tracing::warn!("MCP read_properties: access denied to device {} for workspace {}", input.device_id, ws_id);
-                return Err(ToolError::NotFound(format!("Device {} not found", input.device_id)));
+                return Err(ToolError::Forbidden(
+                    "Access denied: device does not belong to authenticated workspace".to_string()
+                ));
             }
         }
 
@@ -569,7 +575,9 @@ impl ToolHandler for WritePropertiesHandler {
         if let Some(ref ws_id) = workspace_id {
             if device.workspace_id.as_ref() != Some(&ws_id) {
                 tracing::warn!("MCP write_properties: access denied to device {} for workspace {}", input.device_id, ws_id);
-                return Err(ToolError::NotFound(format!("Device {} not found", input.device_id)));
+                return Err(ToolError::Forbidden(
+                    "Access denied: device does not belong to authenticated workspace".to_string()
+                ));
             }
         }
 
@@ -690,7 +698,9 @@ impl ToolHandler for SendCommandHandler {
         if let Some(ref ws_id) = workspace_id {
             if device.workspace_id.as_ref() != Some(&ws_id) {
                 tracing::warn!("MCP send_command: access denied to device {} for workspace {}", input.device_id, ws_id);
-                return Err(ToolError::NotFound(format!("Device {} not found", input.device_id)));
+                return Err(ToolError::Forbidden(
+                    "Access denied: device does not belong to authenticated workspace".to_string()
+                ));
             }
         }
 
@@ -1040,7 +1050,9 @@ impl ToolHandler for GetDeviceHistoryHandler {
         if let Some(ref ws_id) = workspace_id {
             if device.workspace_id.as_ref() != Some(&ws_id) {
                 tracing::warn!("MCP get_device_history: access denied to device {} for workspace {}", input.device_id, ws_id);
-                return Err(ToolError::NotFound(format!("Device {} not found", input.device_id)));
+                return Err(ToolError::Forbidden(
+                    "Access denied: device does not belong to authenticated workspace".to_string()
+                ));
             }
         }
 
@@ -1103,7 +1115,9 @@ impl ToolHandler for GetDeviceMetricsHandler {
         if let Some(ref ws_id) = workspace_id {
             if device.workspace_id.as_ref() != Some(&ws_id) {
                 tracing::warn!("MCP get_device_metrics: access denied to device {} for workspace {}", input.device_id, ws_id);
-                return Err(ToolError::NotFound(format!("Device {} not found", input.device_id)));
+                return Err(ToolError::Forbidden(
+                    "Access denied: device does not belong to authenticated workspace".to_string()
+                ));
             }
         }
 
@@ -1176,7 +1190,9 @@ impl ToolHandler for ExportDeviceReportHandler {
         if let Some(ref ws_id) = workspace_id {
             if device.workspace_id.as_ref() != Some(&ws_id) {
                 tracing::warn!("MCP export_device_report: access denied to device {} for workspace {}", input.device_id, ws_id);
-                return Err(ToolError::NotFound(format!("Device {} not found", input.device_id)));
+                return Err(ToolError::Forbidden(
+                    "Access denied: device does not belong to authenticated workspace".to_string()
+                ));
             }
         }
 
