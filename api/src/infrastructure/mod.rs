@@ -21,6 +21,9 @@ pub mod zeroclaw_agent;
 // ZeroClaw runtime integration (embedded)
 pub mod zeroclaw_runtime;
 
+// Agent runtime module (consolidated interface)
+pub mod agent;
+
 // Batch command infrastructure
 pub mod batch_command;
 

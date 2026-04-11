@@ -3,17 +3,18 @@
 use std::sync::Arc;
 
 use crate::domain::workspace::entity::{AssignDeviceInput, CreateWorkspaceInput, UpdateWorkspaceInput, Workspace};
-use crate::infrastructure::zeroclaw_agent::{AgentClient, AgentConfig};
+use crate::infrastructure::agent::AgentRuntime;
+use crate::infrastructure::zeroclaw_agent::AgentConfig;
 use crate::shared::error::Error;
 
 /// Workspace service — coordinates workspace operations with Agent lifecycle
 pub struct WorkspaceService {
-    agent_client: Arc<dyn AgentClient>,
+    agent_runtime: Arc<dyn AgentRuntime>,
 }
 
 impl WorkspaceService {
-    pub fn new(agent_client: Arc<dyn AgentClient>) -> Self {
-        Self { agent_client }
+    pub fn new(agent_runtime: Arc<dyn AgentRuntime>) -> Self {
+        Self { agent_runtime }
     }
 
     /// Create a workspace with synchronized Agent creation
@@ -32,7 +33,7 @@ impl WorkspaceService {
             ..Default::default()
         };
 
-        let agent_result = self.agent_client.create_agent(&agent_config).await;
+        let agent_result = self.agent_runtime.create_agent(&agent_config).await;
 
         let (agent_id, warning) = match agent_result {
             Ok(agent_id) => (Some(agent_id), None),
@@ -81,7 +82,7 @@ impl WorkspaceService {
 
             // If workspace has an agent, update it
             if let Some(agent_id) = &workspace.agent_id {
-                if let Err(e) = self.agent_client.update_agent(agent_id, &config).await {
+                if let Err(e) = self.agent_runtime.update_agent(agent_id, &config).await {
                     warning = Some(format!("Agent update failed: {}. Changes saved locally.", e));
                 }
             }
@@ -93,7 +94,7 @@ impl WorkspaceService {
     /// Delete workspace with synchronized Agent deletion
     pub async fn delete_workspace(&self, workspace: &Workspace) -> Result<(), Error> {
         if let Some(agent_id) = &workspace.agent_id {
-            if let Err(e) = self.agent_client.delete_agent(agent_id).await {
+            if let Err(e) = self.agent_runtime.delete_agent(agent_id).await {
                 tracing::warn!("Failed to delete agent {}: {}. Proceeding with workspace deletion.", agent_id, e);
             }
         }

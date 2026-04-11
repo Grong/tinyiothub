@@ -22,7 +22,7 @@ pub async fn chat_stream(
     Json(req): Json<ChatStreamRequest>,
 ) -> Response {
     // 后端自行读取 agent 配置获取 system_prompt
-    let agent_config = state.agent_client.get_agent_config(&req.agent_id).await
+    let agent_config = state.agent_runtime.get_agent_config(&req.agent_id).await
         .map(|v| v.get("config").cloned().unwrap_or_default())
         .unwrap_or_default();
     let user_persona = agent_config.get("systemPrompt")
@@ -41,7 +41,7 @@ pub async fn chat_stream(
     let original_message = req.message.clone();
 
     let response = match state
-        .agent_client
+        .agent_runtime
         .chat_send(&req.agent_id, &req.session_key, &original_message, &req.run_id, &full_prompt)
         .await
     {
@@ -95,7 +95,7 @@ pub async fn chat_history(
 ) -> Json<ApiResponse<serde_json::Value>> {
     let limit = query.limit.unwrap_or(200);
     match state
-        .agent_client
+        .agent_runtime
         .chat_history(&query.agent_id, &query.session_key, limit)
         .await
     {
@@ -112,7 +112,7 @@ pub async fn chat_abort(
 ) -> Json<ApiResponse<serde_json::Value>> {
     let run_id_ref = req.run_id.as_deref();
     match state
-        .agent_client
+        .agent_runtime
         .chat_abort(&req.agent_id, &req.session_key, run_id_ref)
         .await
     {
@@ -126,7 +126,7 @@ pub async fn list_agents(
     State(state): State<AppState>,
     _claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    match state.agent_client.list_agents().await {
+    match state.agent_runtime.list_agents().await {
         Ok(data) => ApiResponseBuilder::success(data),
         Err(e) => ApiResponseBuilder::error(&format!("Failed to list agents: {}", e)),
     }
@@ -138,7 +138,7 @@ pub async fn get_agent_config(
     Path(agent_id): Path<String>,
     _claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    match state.agent_client.get_agent_config(&agent_id).await {
+    match state.agent_runtime.get_agent_config(&agent_id).await {
         Ok(data) => ApiResponseBuilder::success(data),
         Err(e) => ApiResponseBuilder::error(&format!("Failed to get agent config: {}", e)),
     }
@@ -154,7 +154,7 @@ pub async fn set_agent_config(
     let config_str = serde_json::to_string(&req.config).unwrap_or_default();
     let base_hash_ref = req.base_hash.as_deref();
     match state
-        .agent_client
+        .agent_runtime
         .set_agent_config(&agent_id, &config_str, base_hash_ref)
         .await
     {
@@ -170,7 +170,7 @@ pub async fn tools_catalog(
     _claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
     let agent_id = params.get("agent_id").map(|s| s.as_str()).unwrap_or("");
-    match state.agent_client.tools_catalog(agent_id).await {
+    match state.agent_runtime.tools_catalog(agent_id).await {
         Ok(data) => ApiResponseBuilder::success(data),
         Err(e) => ApiResponseBuilder::error(&format!("Failed to get tools catalog: {}", e)),
     }
@@ -183,7 +183,7 @@ pub async fn tools_effective(
     _claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
     let agent_id = params.get("agent_id").map(|s| s.as_str()).unwrap_or("");
-    match state.agent_client.tools_effective(agent_id).await {
+    match state.agent_runtime.tools_effective(agent_id).await {
         Ok(data) => ApiResponseBuilder::success(data),
         Err(e) => ApiResponseBuilder::error(&format!("Failed to get effective tools: {}", e)),
     }
@@ -196,7 +196,7 @@ pub async fn tools_toggle(
     Json(req): Json<ToolToggleRequest>,
 ) -> Json<ApiResponse<serde_json::Value>> {
     match state
-        .agent_client
+        .agent_runtime
         .tools_toggle(&req.agent_id, &req.tool_name, req.enabled)
         .await
     {

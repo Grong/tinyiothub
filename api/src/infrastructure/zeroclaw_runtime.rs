@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 use async_trait::async_trait;
 
 use crate::infrastructure::zeroclaw_agent::{AgentClient, AgentConfig, AgentError, AgentInfo};
+use crate::infrastructure::agent::AgentRuntime;
 use crate::api::mcp::tool_metadata::{name_infers_concurrency_safe, name_infers_destructive, name_infers_read_only, IoTToolMetadata, PermissionLevel};
 use crate::api::mcp::tool_registry::ToolHandler;
 use zeroclaw::tools::traits::{Tool, ToolResult};
@@ -606,6 +607,16 @@ impl AgentClient for TinyIoTHubAgentClient {
 
             Ok(())
         })
+    }
+}
+
+// ============================================================================
+// AgentRuntime Implementation
+// ============================================================================
+
+impl AgentRuntime for TinyIoTHubAgentClient {
+    fn refresh_tools(&self) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>> {
+        Box::pin(async move { self.refresh_tools().await })
     }
 }
 

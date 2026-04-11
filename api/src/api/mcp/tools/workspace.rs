@@ -246,7 +246,7 @@ impl ToolHandler for CreateWorkspaceHandler {
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
         let agent_result = state
-            .agent_client
+            .agent_runtime
             .create_agent(&AgentConfig {
                 workspace_id: workspace.id.clone(),
                 name: workspace.name.clone(),
@@ -457,7 +457,7 @@ impl ToolHandler for DeleteWorkspaceHandler {
 
         // Try to delete Agent using AppState's agent client
         if let Some(agent_id) = workspace.agent_id {
-            if let Err(e) = state.agent_client.delete_agent(&agent_id).await {
+            if let Err(e) = state.agent_runtime.delete_agent(&agent_id).await {
                 tracing::warn!(
                     "Failed to delete agent {}: {}. Proceeding with workspace deletion.",
                     agent_id,

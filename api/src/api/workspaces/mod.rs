@@ -96,7 +96,7 @@ async fn create_workspace(
 
     // Try to create Agent
     let agent_result = state
-        .agent_client
+        .agent_runtime
         .create_agent(&crate::infrastructure::zeroclaw_agent::AgentConfig {
             workspace_id: workspace.id.clone(),
             name: workspace.name.clone(),
@@ -228,7 +228,7 @@ async fn delete_workspace(
 
     // Try to delete Agent
     if let Some(agent_id) = workspace.agent_id {
-        if let Err(e) = state.agent_client.delete_agent(&agent_id).await {
+        if let Err(e) = state.agent_runtime.delete_agent(&agent_id).await {
             tracing::warn!(
                 "Failed to delete agent {}: {}. Proceeding with workspace deletion.",
                 agent_id,
