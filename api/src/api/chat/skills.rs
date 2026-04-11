@@ -233,3 +233,158 @@ pub struct SkillInfoDto {
 pub struct ListSkillsQuery {
     pub workspace_id: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::domain::agent::skill::AgentSkill;
+
+    #[test]
+    fn skill_with_frontmatter_parsing() {
+        let content = r#"---
+name: alarm-management
+description: Manage alarms
+version: 1.0.0
+---
+
+# Alarm Management"#;
+
+        let (fm, body) = AgentSkill::parse_frontmatter(content);
+        assert!(fm.is_some());
+        let fm = fm.unwrap();
+        assert_eq!(fm.get("name").unwrap().as_str().unwrap(), "alarm-management");
+        assert_eq!(fm.get("description").unwrap().as_str().unwrap(), "Manage alarms");
+        assert_eq!(fm.get("version").unwrap().as_str().unwrap(), "1.0.0");
+        assert!(body.contains("Alarm Management"));
+    }
+
+    #[test]
+    fn skill_without_frontmatter() {
+        let content = "# Plain skill without frontmatter";
+        let (fm, body) = AgentSkill::parse_frontmatter(content);
+        assert!(fm.is_none());
+        assert_eq!(body.trim(), "# Plain skill without frontmatter");
+    }
+
+    #[test]
+    fn skill_parse_returns_correct_body() {
+        let content = r#"---
+name: test
+description: desc
+---
+
+# Title
+
+Some body content here."#;
+
+        let (_fm, body) = AgentSkill::parse_frontmatter(content);
+        let body = body.trim();
+        assert!(body.starts_with("# Title"));
+        assert!(body.contains("Some body content here."));
+    }
+
+    #[test]
+    fn skill_name_from_filename() {
+        let file_name = "device-onboarding.md";
+        let skill_name = file_name.trim_end_matches(".md");
+        assert_eq!(skill_name, "device-onboarding");
+    }
+
+    #[test]
+    fn skill_name_with_dashes_and_underscores() {
+        let file_name = "device-onboarding_v2.md";
+        let skill_name = file_name.trim_end_matches(".md");
+        assert_eq!(skill_name, "device-onboarding_v2");
+    }
+
+    #[test]
+    fn path_traversal_rejected_in_validation() {
+        fn validate(workspace_id: &str, skill_name: &str) -> Result<(), String> {
+            if workspace_id.contains("..") || skill_name.contains("..") {
+                return Err("traversal not allowed".into());
+            }
+            if workspace_id.starts_with('/') || skill_name.starts_with('/') {
+                return Err("absolute paths not allowed".into());
+            }
+            Ok(())
+        }
+
+        assert!(validate("..", "foo").is_err());
+        assert!(validate("tinyiothub", "../etc/passwd").is_err());
+        assert!(validate("/", "foo").is_err());
+        assert!(validate("tinyiothub", "/etc/passwd").is_err());
+        assert!(validate("tinyiothub", "foo").is_ok());
+    }
+
+    #[test]
+    fn skill_files_sorted_deterministically() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        let ws_dir = dir.path().join("tinyiothub");
+        fs::create_dir_all(&ws_dir).unwrap();
+
+        fs::write(ws_dir.join("z-skill.md"), "---\nname: z\n---\n\nZ").unwrap();
+        fs::write(ws_dir.join("a-skill.md"), "---\nname: a\n---\n\nA").unwrap();
+        fs::write(ws_dir.join("m-skill.md"), "---\nname: m\n---\n\nM").unwrap();
+
+        let mut entries: Vec<_> = fs::read_dir(&ws_dir).unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+            .collect();
+        entries.sort_by_key(|e| e.file_name().to_string_lossy().to_string());
+
+        let names: Vec<_> = entries.iter()
+            .map(|e| e.file_name().to_string_lossy().trim_end_matches(".md").to_string())
+            .collect();
+        assert_eq!(names, vec!["a-skill", "m-skill", "z-skill"]);
+    }
+
+    #[test]
+    fn create_and_read_skill_file() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        let ws_dir = dir.path().join("tinyiothub");
+        fs::create_dir_all(&ws_dir).unwrap();
+
+        let file_path = ws_dir.join("test-skill.md");
+        let content = "---\nname: test\ndescription: Test skill\n---\n\n# Test";
+        fs::write(&file_path, content).unwrap();
+
+        let read = fs::read_to_string(&file_path).unwrap();
+        assert!(read.contains("Test skill"));
+    }
+
+    #[test]
+    fn skill_file_yaml_roundtrip() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        let ws_dir = dir.path().join("tinyiothub");
+        fs::create_dir_all(&ws_dir).unwrap();
+
+        let file_path = ws_dir.join("alarm-management.md");
+        let content = r#"---
+name: alarm-management
+description: Manage alarms
+version: 1.0.0
+---
+
+# Alarm Management
+
+Some detailed content here."#;
+
+        fs::write(&file_path, content).unwrap();
+
+        let read = fs::read_to_string(&file_path).unwrap();
+        let (fm, body) = AgentSkill::parse_frontmatter(&read);
+
+        assert!(fm.is_some());
+        let fm = fm.unwrap();
+        assert_eq!(fm.get("name").unwrap().as_str().unwrap(), "alarm-management");
+        assert!(body.trim().contains("Alarm Management"));
+    }
+}
