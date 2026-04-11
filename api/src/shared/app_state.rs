@@ -195,7 +195,7 @@ impl AppState {
             .expect("failed to create MiniMax provider");
         tracing::info!("TinyIoTHub Agent initialized with zeroclaw MiniMax provider");
         let agent_runtime: Arc<dyn AgentRuntime> = Arc::new(
-            crate::infrastructure::zeroclaw_runtime::TinyIoTHubAgentClient::new(
+            crate::infrastructure::agent::AgentRuntimeImpl::new(
                 database.pool().clone(),
                 provider,
                 minimax_config.model,

@@ -12,7 +12,7 @@ use crate::api::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, Too
 use crate::dto::entity::workspace::{
     Workspace, WorkspaceWithDeviceCount,
 };
-use crate::infrastructure::zeroclaw_agent::{AgentClient, AgentConfig};
+use crate::infrastructure::agent::{AgentClient, AgentConfig};
 
 /// Tool input: List workspaces
 #[derive(Debug, Deserialize)]

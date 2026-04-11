@@ -3,8 +3,7 @@
 use std::sync::Arc;
 
 use crate::domain::workspace::entity::{AssignDeviceInput, CreateWorkspaceInput, UpdateWorkspaceInput, Workspace};
-use crate::infrastructure::agent::AgentRuntime;
-use crate::infrastructure::zeroclaw_agent::AgentConfig;
+use crate::infrastructure::agent::{AgentRuntime, AgentConfig};
 use crate::shared::error::Error;
 
 /// Workspace service — coordinates workspace operations with Agent lifecycle

@@ -1,13 +1,15 @@
-// TinyIoTHub × ZeroClaw 深度集成运行时
+// Agent Runtime Implementation
 //
-// 使用 zeroclaw Agent::turn_streamed() 实现完整的多轮工具调用循环。
+// This module provides the AgentRuntimeImpl which implements the AgentRuntime trait
+// using zeroclaw for AI Agent functionality.
 
 use std::sync::Arc;
 use std::pin::Pin;
 use tokio::sync::mpsc;
 use async_trait::async_trait;
 
-use crate::infrastructure::zeroclaw_agent::{AgentClient, AgentConfig, AgentError, AgentInfo};
+use crate::infrastructure::agent::config::{AgentConfig, AgentError, AgentInfo};
+use crate::infrastructure::agent::AgentClient;
 use crate::infrastructure::agent::AgentRuntime;
 use crate::api::mcp::tool_metadata::{name_infers_concurrency_safe, name_infers_destructive, name_infers_read_only, IoTToolMetadata, PermissionLevel};
 use crate::api::mcp::tool_registry::ToolHandler;
@@ -19,33 +21,29 @@ use zeroclaw::agent::TurnEvent;
 use zeroclaw::providers::traits::ToolCall;
 
 // ============================================================================
-// TinyIoTHubAgentClient - zeroclaw Agent 驱动
+// AgentRuntimeImpl - zeroclaw Agent driver
 // ============================================================================
 
-/// TinyIoTHub 内置 Agent 客户端
-pub struct TinyIoTHubAgentClient {
+/// TinyIoTHub built-in Agent runtime implementation
+pub struct AgentRuntimeImpl {
     db_pool: sqlx::SqlitePool,
-    /// Provider 和 model 存储用于重建 Agent
+    /// Provider and model stored for rebuilding Agent
     provider: Arc<std::sync::Mutex<Option<Box<dyn zeroclaw::providers::traits::Provider>>>>,
     model_name: String,
-    /// zeroclaw Agent（需要 &mut 调用 turn_streamed）
+    /// zeroclaw Agent (needs &mut to call turn_streamed)
     agent: Arc<tokio::sync::Mutex<zeroclaw::agent::Agent>>,
 }
 
-impl TinyIoTHubAgentClient {
-    /// 使用 zeroclaw 内置的 OpenAiCompatibleProvider（MiniMax 支持 system prompt merge）
+impl AgentRuntimeImpl {
+    /// Create using zeroclaw's built-in OpenAiCompatibleProvider (MiniMax supports system prompt merge)
     pub fn new(
         db_pool: sqlx::SqlitePool,
         provider: Box<dyn zeroclaw::providers::traits::Provider>,
         model_name: String,
     ) -> anyhow::Result<Self> {
-        // 初始构建（工具列表可能为空，因为 MCP 还未注册）
+        // Initial build (tool list may be empty because MCP not yet registered)
         let mut tool_boxed: Vec<Box<dyn Tool>> = Vec::new();
         tool_boxed.push(Box::new(CanvasTool));
-
-        // 尝试从 MCP registry 加载工具（可能失败，如果 registry 未初始化）
-        // 注意：这里使用 try_write 因为需要在同步上下文中获取锁
-        // 如果失败，工具将在后续调用 refresh_tools() 时加载
 
         let memory: Arc<dyn Memory> = Arc::new(zeroclaw::memory::NoneMemory::new());
         let observer: Arc<dyn Observer> = Arc::new(zeroclaw::observability::NoopObserver);
@@ -69,18 +67,18 @@ impl TinyIoTHubAgentClient {
         })
     }
 
-    /// 从当前 MCP registry 重新构建 Agent（注册完工具后调用）
+    /// Rebuild Agent from current MCP registry (call after tool registration)
     ///
     /// # Safety
-    /// 此方法应在 MCP 工具注册完成后调用，且不应在 Agent 正在处理请求时调用
-    pub async fn refresh_tools(&self) -> anyhow::Result<()> {
-        // 构建工具列表
+    /// This should be called after MCP tool registration completes, and not while Agent is processing
+    pub async fn refresh_tools_impl(&self) -> anyhow::Result<()> {
+        // Build tool list
         let mut tool_boxed: Vec<Box<dyn Tool>> = Vec::new();
 
-        // 添加 canvas 工具
+        // Add canvas tool
         tool_boxed.push(Box::new(CanvasTool));
 
-        // 从 MCP registry 添加 IoT 工具
+        // Add IoT tools from MCP registry
         if let Some(registry) = crate::api::mcp::get_mcp_registry() {
             let reg = registry.write().await;
             let tool_metas = reg.list_tools();
@@ -103,8 +101,7 @@ impl TinyIoTHubAgentClient {
         let observer: Arc<dyn Observer> = Arc::new(zeroclaw::observability::NoopObserver);
         let tool_dispatcher = Box::new(NativeToolDispatcher);
 
-        // 获取当前 provider - 需要从现有 agent 中提取或重新创建
-        // 由于 Provider trait 没有 Clone，我们需要重新创建
+        // Get current provider - need to recreate since Provider trait doesn't have Clone
         let minimax_config = crate::infrastructure::config::get()
             .minimax
             .clone()
@@ -134,7 +131,7 @@ impl TinyIoTHubAgentClient {
     }
 }
 
-impl AgentClient for TinyIoTHubAgentClient {
+impl AgentClient for AgentRuntimeImpl {
     fn create_agent(&self, _config: &AgentConfig) -> Pin<Box<dyn std::future::Future<Output = Result<String, AgentError>> + Send + '_>> {
         Box::pin(async move { Ok("default".to_string()) })
     }
@@ -170,7 +167,7 @@ impl AgentClient for TinyIoTHubAgentClient {
         let system_prompt = system_prompt.to_string();
 
         Box::pin(async move {
-            // 保存用户消息
+            // Save user message
             let user_content = serde_json::json!([{ "type": "text", "text": message }]);
             sqlx::query(
                 "INSERT INTO chat_sessions (session_key, agent_id, created_at, updated_at)
@@ -194,7 +191,7 @@ impl AgentClient for TinyIoTHubAgentClient {
             .await
             .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
 
-            // 设置 system prompt（仅首次）
+            // Set system prompt (only first time)
             {
                 let mut ag = agent.lock().await;
                 if ag.history().is_empty() && !system_prompt.is_empty() {
@@ -214,18 +211,16 @@ impl AgentClient for TinyIoTHubAgentClient {
             let run_id_clone = run_id.clone();
             let db_pool_clone = db_pool.clone();
 
-            // 在后台运行 Agent::turn_streamed
+            // Run Agent::turn_streamed in background
             tokio::spawn(async move {
                 let mut ag = agent.lock().await;
 
-                // 发送 channel 给 turn_streamed（使用 mpsc）
+                // Send channel to turn_streamed (using mpsc)
                 let (event_tx, event_rx) = tokio::sync::mpsc::channel::<TurnEvent>(32);
-                // 用 Arc<Mutex<>> 包装 receiver 以便主任务和 forwarder 都能访问
                 let event_rx_shared = Arc::new(tokio::sync::Mutex::new(event_rx));
                 let event_rx_main = Arc::clone(&event_rx_shared);
                 let event_rx_fwd = Arc::clone(&event_rx_shared);
 
-                // Helper closures that clone what's needed
                 let forward_sse = |evt: &TurnEvent, forward_run: &str, forward_session: &str| -> bytes::Bytes {
                     let sse_data = match evt {
                         TurnEvent::Chunk { delta } => {
@@ -248,7 +243,7 @@ impl AgentClient for TinyIoTHubAgentClient {
                             })
                         }
                         TurnEvent::ToolCall { name, args } => {
-                            // 打印工具并发安全信息（基于工具名称推断）
+                            // Log tool concurrency safety info (inferred from tool name)
                             let is_safe = name_infers_concurrency_safe(name);
                             let is_readonly = name_infers_read_only(name);
                             let is_destructive = name_infers_destructive(name);
@@ -287,7 +282,7 @@ impl AgentClient for TinyIoTHubAgentClient {
                     bytes::Bytes::from(format!("data: {}\n", sse_data))
                 };
 
-                // 独立任务：event_rx_fwd → SSE（不阻塞主循环）
+                // Separate task: event_rx_fwd -> SSE (doesn't block main loop)
                 let forward_tx = tx_stream.clone();
                 let forward_run = run_id_clone.clone();
                 let forward_session = session_key_clone.clone();
@@ -299,7 +294,7 @@ impl AgentClient for TinyIoTHubAgentClient {
                     }
                 });
 
-                // 运行 turn_streamed（会内部执行工具循环），加 120s 超时保护
+                // Run turn_streamed (executes tool loop internally), with 120s timeout
                 match tokio::time::timeout(std::time::Duration::from_secs(120), ag.turn_streamed(&message, event_tx)).await {
                     Ok(Ok(final_text)) => {
                         // Drain any remaining tool result events from the main receiver
@@ -311,7 +306,7 @@ impl AgentClient for TinyIoTHubAgentClient {
                             }
                         }
 
-                        // 保存 assistant 消息
+                        // Save assistant message
                         let assistant_content = serde_json::json!([{ "type": "text", "text": final_text }]);
                         let _ = sqlx::query(
                             "INSERT INTO chat_messages (session_key, role, content, timestamp, run_id)
@@ -345,7 +340,7 @@ impl AgentClient for TinyIoTHubAgentClient {
                         let _ = tx_stream.send(Ok(bytes::Bytes::from(format!("data: {}\n\n", err_json))));
                     }
                     Err(_) => {
-                        // 超时
+                        // Timeout
                         let err_json = serde_json::json!({
                             "runId": run_id_clone,
                             "sessionKey": session_key_clone,
@@ -447,11 +442,11 @@ impl AgentClient for TinyIoTHubAgentClient {
 
             if let Some((config_str, config_hash)) = row {
                 let config: serde_json::Value = serde_json::from_str(&config_str)
-                    .unwrap_or_else(|_| crate::infrastructure::zeroclaw_agent::default_agent_config());
+                    .unwrap_or_else(|_| crate::infrastructure::agent::config::default_agent_config());
                 return Ok(serde_json::json!({ "config": config, "baseHash": config_hash }));
             }
             Ok(serde_json::json!({
-                "config": crate::infrastructure::zeroclaw_agent::default_agent_config(),
+                "config": crate::infrastructure::agent::config::default_agent_config(),
                 "baseHash": null,
             }))
         })
@@ -464,7 +459,7 @@ impl AgentClient for TinyIoTHubAgentClient {
         Box::pin(async move {
             let _: serde_json::Value = serde_json::from_str(&config)
                 .map_err(|e| AgentError::RequestFailed(format!("Invalid config: {}", e)))?;
-            let config_hash = crate::infrastructure::zeroclaw_agent::compute_hash(&config);
+            let config_hash = crate::infrastructure::agent::config::compute_hash(&config);
             sqlx::query(
                 "INSERT INTO agent_configs (agent_id, config, config_hash, updated_at)
                  VALUES (?, ?, ?, datetime('now'))
@@ -485,7 +480,7 @@ impl AgentClient for TinyIoTHubAgentClient {
 
     fn tools_catalog(&self, _agent_id: &str) -> Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, AgentError>> + Send + '_>> {
         Box::pin(async move {
-            Ok(crate::infrastructure::zeroclaw_agent::build_tools_catalog_json())
+            Ok(crate::infrastructure::agent::build_tools_catalog_json())
         })
     }
 
@@ -517,7 +512,7 @@ impl AgentClient for TinyIoTHubAgentClient {
                 .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
                 .unwrap_or_default();
 
-            let catalog = crate::infrastructure::zeroclaw_agent::build_tools_catalog_json();
+            let catalog = crate::infrastructure::agent::build_tools_catalog_json();
             let groups = catalog.get("groups").and_then(|v| v.as_array()).cloned().unwrap_or_default();
 
             let filtered_groups: Vec<serde_json::Value> = groups
@@ -614,14 +609,14 @@ impl AgentClient for TinyIoTHubAgentClient {
 // AgentRuntime Implementation
 // ============================================================================
 
-impl AgentRuntime for TinyIoTHubAgentClient {
+impl AgentRuntime for AgentRuntimeImpl {
     fn refresh_tools(&self) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>> {
-        Box::pin(async move { self.refresh_tools().await })
+        Box::pin(async move { self.refresh_tools_impl().await })
     }
 }
 
 // ============================================================================
-// CanvasTool - A2UI 工具
+// CanvasTool - A2UI Tool
 // ============================================================================
 
 pub struct CanvasTool;
@@ -629,7 +624,7 @@ pub struct CanvasTool;
 #[async_trait]
 impl Tool for CanvasTool {
     fn name(&self) -> &str { "canvas" }
-    fn description(&self) -> &str { "推送 A2UI 组件到前端渲染。使用此工具创建用户界面。" }
+    fn description(&self) -> &str { "Push A2UI components to frontend rendering. Use this tool to create user interfaces." }
     fn parameters_schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
@@ -652,7 +647,7 @@ impl Tool for CanvasTool {
 }
 
 // ============================================================================
-// IoTToolAdapter - MCP ToolHandler → zeroclaw Tool
+// IoTToolAdapter - MCP ToolHandler -> zeroclaw Tool
 // ============================================================================
 
 pub struct IoTToolAdapter {
@@ -703,34 +698,28 @@ impl IoTToolMetadata for IoTToolAdapter {
     fn description(&self) -> &str { &self.description }
     fn input_schema(&self) -> serde_json::Value { self.input_schema.clone() }
 
-    fn is_concurrency_safe(&self, input: &serde_json::Value) -> bool {
+    fn is_concurrency_safe(&self, _input: &serde_json::Value) -> bool {
         name_infers_concurrency_safe(&self.name)
     }
 
-    fn is_read_only(&self, input: &serde_json::Value) -> bool {
+    fn is_read_only(&self, _input: &serde_json::Value) -> bool {
         name_infers_read_only(&self.name)
     }
 
-    fn is_destructive(&self, input: &serde_json::Value) -> bool {
+    fn is_destructive(&self, _input: &serde_json::Value) -> bool {
         name_infers_destructive(&self.name)
     }
 
     fn permission_level(&self, input: &serde_json::Value) -> PermissionLevel {
-        // 危险操作需要询问
+        // Dangerous operations require asking
         if self.is_destructive(input) {
             PermissionLevel::Ask
-        // 只读操作默认允许
+        // Read-only operations allowed by default
         } else if self.is_read_only(input) {
             PermissionLevel::Allow
-        // 其他操作询问
+        // Other operations require asking
         } else {
             PermissionLevel::Ask
         }
     }
 }
-
-// ============================================================================
-// Re-exports
-// ============================================================================
-
-pub use crate::infrastructure::zeroclaw_agent::{compute_hash, default_agent_config, platform_base_prompt, build_full_system_prompt};
