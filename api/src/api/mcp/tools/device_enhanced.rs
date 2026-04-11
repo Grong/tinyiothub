@@ -71,7 +71,7 @@ impl ToolHandler for CompareDevicesHandler {
         let input: CompareDevicesInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
-        let _claims = get_mcp_context().ok_or_else(|| {
+        let claims = get_mcp_context().ok_or_else(|| {
             ToolError::Unauthorized("MCP context not initialized".to_string())
         })?;
 
@@ -86,6 +86,22 @@ impl ToolHandler for CompareDevicesHandler {
             return Err(ToolError::InvalidParams(
                 "Need at least 2 devices to compare".to_string(),
             ));
+        }
+
+        // SECURITY: Verify all devices belong to authenticated workspace
+        let db = state.database();
+        for device_id in &input.device_ids {
+            let device = crate::dto::entity::device::Device::find_by_id(db, device_id)
+                .await
+                .map_err(|e| ToolError::Internal(format!("failed to verify device: {}", e)))?
+                .ok_or_else(|| ToolError::NotFound(format!("device {} not found", device_id)))?;
+
+            if device.workspace_id.as_ref() != Some(&claims.workspace_id) {
+                tracing::warn!("MCP compare_devices: access denied to device {} for workspace {}", device_id, claims.workspace_id);
+                return Err(ToolError::Forbidden(
+                    "Access denied: one or more devices do not belong to authenticated workspace".to_string()
+                ));
+            }
         }
 
         let comparison = DiagnosticsService::compare_properties(
@@ -129,12 +145,26 @@ impl ToolHandler for DiagnoseDeviceHandler {
         let input: DiagnoseDeviceInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
-        let _claims = get_mcp_context().ok_or_else(|| {
+        let claims = get_mcp_context().ok_or_else(|| {
             ToolError::Unauthorized("MCP context not initialized".to_string())
         })?;
 
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
+
+        // SECURITY: Verify device belongs to authenticated workspace
+        let db = state.database();
+        let device = crate::dto::entity::device::Device::find_by_id(db, &input.device_id)
+            .await
+            .map_err(|e| ToolError::Internal(format!("failed to verify device: {}", e)))?
+            .ok_or_else(|| ToolError::NotFound(format!("device {} not found", input.device_id)))?;
+
+        if device.workspace_id.as_ref() != Some(&claims.workspace_id) {
+            tracing::warn!("MCP diagnose_device: access denied to device {} for workspace {}", input.device_id, claims.workspace_id);
+            return Err(ToolError::Forbidden(
+                "Access denied: device does not belong to authenticated workspace".to_string()
+            ));
+        }
 
         let diagnosis = DiagnosticsService::diagnose_device(&state, &input.device_id)
             .await
@@ -173,6 +203,7 @@ impl ToolHandler for ScanSerialHandler {
         let _input: ScanSerialInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
+        // SECURITY: Verify authentication (system-level operation, no workspace check needed)
         let _claims = get_mcp_context().ok_or_else(|| {
             ToolError::Unauthorized("MCP context not initialized".to_string())
         })?;

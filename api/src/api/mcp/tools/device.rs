@@ -468,11 +468,23 @@ impl ToolHandler for ReadPropertiesHandler {
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
-        // First check if device exists
-        Device::find_by_id(state.database(), &input.device_id)
+        // Get workspace_id from MCP context for access control
+        let workspace_id = crate::api::mcp::handlers::get_mcp_context()
+            .map(|c| c.workspace_id);
+
+        // First check if device exists and belongs to user's workspace
+        let device = Device::find_by_id(state.database(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.device_id)))?;
+
+        // Verify device belongs to user's workspace
+        if let Some(ref ws_id) = workspace_id {
+            if device.workspace_id.as_ref() != Some(&ws_id) {
+                tracing::warn!("MCP read_properties: access denied to device {} for workspace {}", input.device_id, ws_id);
+                return Err(ToolError::NotFound(format!("Device {} not found", input.device_id)));
+            }
+        }
 
         // Get properties from DataContext (real-time values)
         let property_values = if let Some(cached) = state.data_context.get_device(&input.device_id) {
@@ -543,11 +555,23 @@ impl ToolHandler for WritePropertiesHandler {
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
-        // Check device exists
-        Device::find_by_id(state.database(), &input.device_id)
+        // Get workspace_id from MCP context for access control
+        let workspace_id = crate::api::mcp::handlers::get_mcp_context()
+            .map(|c| c.workspace_id);
+
+        // Check device exists and belongs to user's workspace
+        let device = Device::find_by_id(state.database(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.device_id)))?;
+
+        // Verify device belongs to user's workspace
+        if let Some(ref ws_id) = workspace_id {
+            if device.workspace_id.as_ref() != Some(&ws_id) {
+                tracing::warn!("MCP write_properties: access denied to device {} for workspace {}", input.device_id, ws_id);
+                return Err(ToolError::NotFound(format!("Device {} not found", input.device_id)));
+            }
+        }
 
         // Get device properties definition
         let device_properties = DeviceProperty::find_by_device_id(state.database(), &input.device_id)
@@ -652,11 +676,23 @@ impl ToolHandler for SendCommandHandler {
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
-        // Check device exists and is online
+        // Get workspace_id from MCP context for access control
+        let workspace_id = crate::api::mcp::handlers::get_mcp_context()
+            .map(|c| c.workspace_id);
+
+        // Check device exists and belongs to user's workspace
         let device = Device::find_by_id(state.database(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.device_id)))?;
+
+        // Verify device belongs to user's workspace
+        if let Some(ref ws_id) = workspace_id {
+            if device.workspace_id.as_ref() != Some(&ws_id) {
+                tracing::warn!("MCP send_command: access denied to device {} for workspace {}", input.device_id, ws_id);
+                return Err(ToolError::NotFound(format!("Device {} not found", input.device_id)));
+            }
+        }
 
         // Check if device is online
         let is_online = state.data_context.get_device(&input.device_id)
@@ -1053,11 +1089,23 @@ impl ToolHandler for GetDeviceMetricsHandler {
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
-        // Check device exists
-        Device::find_by_id(state.database(), &input.device_id)
+        // Get workspace_id from MCP context for access control
+        let workspace_id = crate::api::mcp::handlers::get_mcp_context()
+            .map(|c| c.workspace_id);
+
+        // Check device exists and belongs to user's workspace
+        let device = Device::find_by_id(state.database(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.device_id)))?;
+
+        // Verify device belongs to user's workspace
+        if let Some(ref ws_id) = workspace_id {
+            if device.workspace_id.as_ref() != Some(&ws_id) {
+                tracing::warn!("MCP get_device_metrics: access denied to device {} for workspace {}", input.device_id, ws_id);
+                return Err(ToolError::NotFound(format!("Device {} not found", input.device_id)));
+            }
+        }
 
         // Get metrics from monitoring service
         let metrics: DeviceMetrics = state.monitoring_service
@@ -1114,11 +1162,23 @@ impl ToolHandler for ExportDeviceReportHandler {
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
+        // Get workspace_id from MCP context for access control
+        let workspace_id = crate::api::mcp::handlers::get_mcp_context()
+            .map(|c| c.workspace_id);
+
         // Get device
         let mut device = Device::find_by_id_with_tags(state.database(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.device_id)))?;
+
+        // Verify device belongs to user's workspace
+        if let Some(ref ws_id) = workspace_id {
+            if device.workspace_id.as_ref() != Some(&ws_id) {
+                tracing::warn!("MCP export_device_report: access denied to device {} for workspace {}", input.device_id, ws_id);
+                return Err(ToolError::NotFound(format!("Device {} not found", input.device_id)));
+            }
+        }
 
         // Get properties
         let properties = DeviceProperty::find_by_device_id(state.database(), &input.device_id)
