@@ -17,7 +17,9 @@
       "Bash(git -C /Users/chenguorong/code/my/tinyiothub show 9369a5a:web-lit/src/styles/components.css)",
       "Bash(git ls-tree:*)",
       "mcp__plugin_oh-my-claudecode_t__lsp_diagnostics",
-      "Bash(gh api:*)"
+      "Bash(gh api:*)",
+      "Bash(cargo build:*)",
+      "Bash(cargo report:*)"
     ]
   }
 }
