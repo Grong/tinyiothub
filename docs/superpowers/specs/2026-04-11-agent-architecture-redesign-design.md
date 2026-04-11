@@ -808,3 +808,114 @@ impl AgentRuntime {
 - 不改变数据库表结构（复用现有 `chat_sessions`、`chat_messages` 表）
 - zeroclaw 作为底层引擎保持不变，仅上层命名去 zeroclaw 化
 - SessionRepository 使用 SQLite 实现（复用现有表结构）
+
+---
+
+## 11. 评审更新 (2026-04-11)
+
+### 11.1 CEO 评审决议
+
+**评审模式**: SELECTIVE EXPANSION
+**已接受扩展**:
+1. Typing indicator during thinking phases
+2. Tool execution progress bars
+3. Inline confirmation for destructive operations (L3 self-heal)
+4. Chat export (markdown/JSON)
+5. Multi-agent preparation in AgentRuntime design
+6. Session auto-titles
+
+**关键决策**:
+- 保留 `AgentClient` trait 用于测试 (撤销原删除决定)
+- 全面审计所有 11 个 MCP 工具的 workspace 隔离
+- Skills Shell 必须先完成安全规范才能实施
+- 验证 zeroclaw Memory trait 能力后再进行 Memory 增强
+
+### 11.2 工程评审更新
+
+**架构更新**:
+1. **AgentRuntime API 增加超时处理**
+   ```rust
+   pub async fn turn_streamed(
+       &self,
+       session: &Session,
+       user_message: &str,
+       system_prompt: &str,
+       history: &[ChatMessage],
+   ) -> Result<impl Stream<Item = TurnEvent>, AgentError> {
+       // 添加 30s 超时 + 1 次重试
+       match tokio::time::timeout(Duration::from_secs(30), self.agent.turn(...)).await {
+           Ok(result) => result,
+           Err(_) => Err(AgentError::Timeout),
+       }
+   }
+   ```
+
+2. **AppState 简化设计** (解决 double-agent 问题)
+   ```rust
+   pub struct AppState {
+       // 合并为一个字段，trait 用于测试时 mock
+       pub agent_runtime: Arc<dyn AgentRuntime>,
+       // 不再需要单独的 tinyiothub_agent 字段
+   }
+   ```
+
+**安全更新 (P0)**:
+
+根据 outside voice 审查，以下 IDOR 漏洞必须在 Phase 1 立即修复:
+
+1. **GetBatchStatusHandler** (`batch.rs:228-246`)
+   - 问题: 仅验证 batch 存在，不验证 workspace 归属
+   - 修复: 添加 `batch.workspace_id == claims.workspace_id` 校验
+
+2. **BatchCommandHandler** (`batch.rs:111-200`)
+   - 问题: 信任 client 提供的 `workspace_id` 参数
+   - 修复: 使用 `claims.workspace_id`，忽略输入参数中的 workspace_id
+
+3. **全面审计清单** (所有 11 个 MCP 工具):
+   - [ ] batch.rs - GetBatchStatusHandler
+   - [ ] batch.rs - BatchCommandHandler
+   - [ ] alarm_mcp.rs - AlarmStatisticsHandler
+   - [ ] alarm_mcp.rs - AlarmRuleAddHandler
+   - [ ] device.rs - 所有 device 工具
+   - [ ] job.rs - 所有 job 工具
+   - [ ] schedule_mcp.rs - 所有 schedule 工具
+   - [ ] self_heal.rs - 所有 self-heal 工具
+   - [ ] diagnostics.rs - 所有 diagnostics 工具
+   - [ ] workspace.rs - 所有 workspace 工具
+   - [ ] mod.rs - 其他工具
+
+**Phase 2 前置条件**:
+
+1. **现有 memory_service.rs 调查** (阻塞项)
+   - 文件: `domain/agent/memory_service.rs`
+   - 任务: 文档化现有功能，明确与新 AgentMemoryService 的关系
+   - 决策: 合并、扩展或重命名避免冲突
+
+2. **Skills Shell 安全规范** (阻塞项)
+   - 必须在实现前完成
+   - 内容: 沙箱策略、命令白名单、审计日志、权限模型
+
+**测试计划**:
+
+见 `~/.gstack/projects/Grong-tinyiothub/test-plan-2026-04-11-eng-review.md`
+
+关键测试:
+1. 所有 11 个 MCP 工具的 workspace 隔离测试
+2. End-to-end chat 流程测试
+3. LLM 超时和错误处理测试
+4. Session compact (>20 messages) 测试
+
+### 11.3 风险评估更新
+
+**原风险**: Medium
+**更新后风险**: High (短期) → Medium (长期)
+
+**新增风险**:
+1. IDOR 漏洞需要立即修复，可能延迟 Phase 1
+2. 现有 memory_service.rs 可能显著改变 Phase 2 设计
+3. Skills Shell 安全规范可能复杂度超预期
+
+**风险缓解**:
+1. IDOR 修复作为独立 hotfix 先合并
+2. Phase 2 开始前完成 memory_service.rs 调查
+3. Skills Shell 移至 Phase 3 或独立项目
