@@ -242,9 +242,11 @@ impl ToolHandler for CreateWorkspaceHandler {
         .await
         .map_err(|e| ToolError::Internal(format!("failed to create workspace: {}", e)))?;
 
-        // Try to create Agent
-        let client = crate::infrastructure::zeroclaw_agent::FallbackAgentClient::new(db.pool().clone());
-        let agent_result = client
+        // Try to create Agent using AppState's agent client
+        let state = crate::api::mcp::get_app_state()
+            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
+        let agent_result = state
+            .agent_client
             .create_agent(&AgentConfig {
                 workspace_id: workspace.id.clone(),
                 name: workspace.name.clone(),
@@ -453,11 +455,9 @@ impl ToolHandler for DeleteWorkspaceHandler {
             ));
         }
 
-        // Try to delete Agent
+        // Try to delete Agent using AppState's agent client
         if let Some(agent_id) = workspace.agent_id {
-            let client =
-                crate::infrastructure::zeroclaw_agent::FallbackAgentClient::new(db.pool().clone());
-            if let Err(e) = client.delete_agent(&agent_id).await {
+            if let Err(e) = state.agent_client.delete_agent(&agent_id).await {
                 tracing::warn!(
                     "Failed to delete agent {}: {}. Proceeding with workspace deletion.",
                     agent_id,
