@@ -97,7 +97,7 @@ async fn create_workspace(
     // Try to create Agent
     let agent_result = state
         .agent_runtime
-        .create_agent(&crate::infrastructure::zeroclaw_agent::AgentConfig {
+        .create_agent(&crate::infrastructure::agent::AgentConfig {
             workspace_id: workspace.id.clone(),
             name: workspace.name.clone(),
             ..Default::default()
