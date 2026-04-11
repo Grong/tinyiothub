@@ -2549,30 +2549,41 @@ pub fn build_full_system_prompt(
 }
 
 /// Load skill files from the skills/ directory and format as Layer 3 prompt
+/// Priority: skills/<ws>/<ag>/prompts/ > skills/<ws>/prompts/ > skills/<ws>/ > skills/tinyiothub/prompts/
 fn load_skills_prompt(workspace_id: Option<&str>, agent_id: Option<&str>) -> String {
     use crate::domain::agent::skill::AgentSkill;
 
-    // Determine skills directory relative to the crate root
-    let skills_base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("skills");
+    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("skills");
+    let ws = workspace_id.unwrap_or("tinyiothub");
 
-    let skill_dir = match (workspace_id, agent_id) {
-        (Some(ws), Some(ag)) => skills_base.join(ws).join(ag),
-        (Some(ws), None) => skills_base.join(ws),
-        _ => skills_base.join("tinyiothub"),
+    // Try in order: prompts subdir first, then flat directory
+    let candidates: Vec<std::path::PathBuf> = match (workspace_id, agent_id) {
+        (Some(w), Some(a)) => vec![
+            base.join(w).join(a).join("prompts"),
+            base.join(w).join("prompts"),
+            base.join(w).join(a),
+            base.join(w),
+        ],
+        (Some(_w), None) => vec![
+            base.join(ws).join("prompts"),
+            base.join(ws),
+        ],
+        _ => vec![
+            base.join("tinyiothub").join("prompts"),
+            base.join("tinyiothub"),
+        ],
     };
 
-    // Try skill_dir first, fall back to tinyiothub root
-    let dir_to_read = if skill_dir.exists() {
-        skill_dir
-    } else {
-        let fallback = skills_base.join("tinyiothub");
-        if !fallback.exists() {
-            return String::new();
+    for dir in candidates {
+        if dir.exists() {
+            let result = read_skill_dir(&dir);
+            if !result.is_empty() {
+                return result;
+            }
         }
-        fallback
-    };
+    }
 
-    read_skill_dir(&dir_to_read)
+    String::new()
 }
 
 fn read_skill_dir(dir: &std::path::Path) -> String {
