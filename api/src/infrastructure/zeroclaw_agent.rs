@@ -11,6 +11,7 @@
 use std::pin::Pin;
 use std::time::Duration;
 
+use crate::domain::agent::skill::AgentSkill;
 use futures_util::{SinkExt, StreamExt};
 use hex;
 use reqwest::Client;
@@ -2526,12 +2527,118 @@ pub fn platform_base_prompt() -> String {
 "#.to_string()
 }
 
-/// Build the full system prompt by combining Layer 1 (platform base) + Layer 2 (user persona)
-pub fn build_full_system_prompt(user_persona: &str) -> String {
+/// Build the full system prompt by combining Layer 1 (platform base) + Layer 2 (user persona) + Layer 3 (skills)
+pub fn build_full_system_prompt(
+    user_persona: &str,
+    workspace_id: Option<&str>,
+    agent_id: Option<&str>,
+) -> String {
     let base = platform_base_prompt();
-    if user_persona.trim().is_empty() {
-        base
+
+    // Layer 2: user persona
+    let layer2 = if user_persona.trim().is_empty() {
+        String::new()
     } else {
-        format!("{}\n\n## Agent 灵魂设定（用户配置）\n{}\n", base, user_persona)
+        format!("\n\n## Agent 灵魂设定（用户配置）\n{}\n", user_persona)
+    };
+
+    // Layer 3: skills loaded from filesystem
+    let layer3 = load_skills_prompt(workspace_id, agent_id);
+
+    format!("{}{}{}", base, layer2, layer3)
+}
+
+/// Load skill files from the skills/ directory and format as Layer 3 prompt
+fn load_skills_prompt(workspace_id: Option<&str>, agent_id: Option<&str>) -> String {
+    use crate::domain::agent::skill::AgentSkill;
+
+    // Determine skills directory relative to the crate root
+    let skills_base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("skills");
+
+    let skill_dir = match (workspace_id, agent_id) {
+        (Some(ws), Some(ag)) => skills_base.join(ws).join(ag),
+        (Some(ws), None) => skills_base.join(ws),
+        _ => skills_base.join("tinyiothub"),
+    };
+
+    // Try skill_dir first, fall back to tinyiothub root
+    let dir_to_read = if skill_dir.exists() {
+        skill_dir
+    } else {
+        let fallback = skills_base.join("tinyiothub");
+        if !fallback.exists() {
+            return String::new();
+        }
+        fallback
+    };
+
+    read_skill_dir(&dir_to_read)
+}
+
+fn read_skill_dir(dir: &std::path::Path) -> String {
+    use crate::domain::agent::skill::AgentSkill;
+
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::warn!("Failed to read skills directory {:?}: {}", dir, e);
+            return String::new();
+        }
+    };
+
+    let mut skill_files: Vec<_> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+        .collect();
+
+    skill_files.sort_by_key(|e| e.file_name());
+
+    let mut all_skills = String::new();
+
+    for entry in skill_files {
+        let content = match std::fs::read_to_string(entry.path()) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        let file_name = entry.file_name().to_string_lossy();
+        let skill_name = file_name.trim_end_matches(".md");
+
+        let (fm, body) = AgentSkill::parse_frontmatter(&content);
+        let body = body.trim();
+
+        if body.is_empty() {
+            continue;
+        }
+
+        let description = fm
+            .as_ref()
+            .and_then(|f| f.get("description"))
+            .and_then(|v| v.as_str())
+            .unwrap_or(skill_name);
+
+        let version = fm
+            .as_ref()
+            .and_then(|f| f.get("version"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        all_skills.push_str(&format!(
+            "### {}{}\n{}\n{}\n",
+            skill_name,
+            if version.is_empty() {
+                String::new()
+            } else {
+                format!(" (v{})", version)
+            },
+            description,
+            body
+        ));
+    }
+
+    if all_skills.is_empty() {
+        String::new()
+    } else {
+        format!("\n\n## 技能（Skills）\n你可以使用以下技能来完成任务：\n\n{}\n", all_skills)
     }
 }

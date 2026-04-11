@@ -1191,6 +1191,137 @@
   100% { background-position: -200% 0; }
 }
 
+/* Alarm Card */
+.a2ui-alarm-card {
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 12px;
+  margin: 4px 0;
+}
+.a2ui-alarm-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.a2ui-alarm-card__message {
+  font-size: 13px;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.a2ui-alarm-card__meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--muted);
+}
+.a2ui-alarm-card__actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+}
+
+/* Alarm Table */
+.a2ui-alarm-table {
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow-x: auto;
+  margin: 4px 0;
+}
+.a2ui-alarm-table__title {
+  font-size: 13px;
+  font-weight: 500;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.a2ui-alarm-table__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.a2ui-alarm-table__table th {
+  text-align: left;
+  padding: 8px 10px;
+  background: var(--bg);
+  color: var(--muted);
+  font-weight: 500;
+  border-bottom: 1px solid var(--border);
+}
+.a2ui-alarm-table__table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+.a2ui-alarm-table__table tr:last-child td {
+  border-bottom: none;
+}
+
+/* Skills Panel */
+.skills-panel__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+.skills-list { display: flex; flex-direction: column; gap: 6px; }
+.skill-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.skill-item__name { font-size: 13px; font-weight: 500; }
+.skill-item__desc { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.skill-item__actions { display: flex; gap: 6px; }
+.skills-empty { padding: 20px; text-align: center; color: var(--muted); font-size: 13px; }
+
+/* Skills Editor */
+.skills-editor { display: flex; flex-direction: column; height: 100%; animation: fadeIn 0.2s ease-out; }
+.skills-editor__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  font-size: 13px;
+}
+.skills-editor__textarea {
+  flex: 1;
+  min-height: 300px;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 12px;
+  background: var(--bg-subtle);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  resize: vertical;
+}
+@media (max-width: 768px) {
+  .skills-editor__textarea {
+    min-height: 200px;
+    font-size: 11px;
+  }
+}
+
+/* Danger button variant */
+.a2ui-btn--danger {
+  background: #dc2626;
+  color: white;
+  border-color: #dc2626;
+}
+.a2ui-btn--danger:hover {
+  background: #b91c1c;
+  border-color: #b91c1c;
+}
+
 /* Modal */
 .modal-overlay {
   position: fixed;
