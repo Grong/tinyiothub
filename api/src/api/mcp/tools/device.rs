@@ -903,7 +903,9 @@ impl ToolHandler for UpdateDeviceHandler {
                 }
                 Ok(Some(_)) => {
                     tracing::warn!("MCP update_device: access denied to device {} for workspace {}", input.id, ws_id);
-                    return Err(ToolError::NotFound(format!("Device {} not found", input.id)));
+                    return Err(ToolError::Forbidden(
+                        "Access denied: device does not belong to authenticated workspace".to_string()
+                    ));
                 }
                 Ok(None) => {
                     tracing::warn!("MCP update_device: device {} not found for workspace {}", input.id, ws_id);
@@ -983,7 +985,9 @@ impl ToolHandler for DeleteDeviceHandler {
                 }
                 Ok(Some(_)) => {
                     tracing::warn!("MCP delete_device: access denied to device {} for workspace {}", input.id, ws_id);
-                    return Err(ToolError::NotFound(format!("Device {} not found", input.id)));
+                    return Err(ToolError::Forbidden(
+                        "Access denied: device does not belong to authenticated workspace".to_string()
+                    ));
                 }
                 Ok(None) => {
                     tracing::warn!("MCP delete_device: device {} not found for workspace {}", input.id, ws_id);
