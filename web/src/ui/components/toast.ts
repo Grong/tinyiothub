@@ -124,11 +124,11 @@ export class ToastContainer extends LitElement {
     this.toasts = [...this.toasts, toast];
     
     if (duration > 0) {
-      setTimeout(() => this.remove(id), duration);
+      setTimeout(() => this.removeToast(id), duration);
     }
   }
 
-  remove(id: number) {
+  removeToast(id: number) {
     const toast = this.toasts.find(t => t.id === id);
     if (toast) {
       // 添加 removing class 进行动画
@@ -158,13 +158,13 @@ export class ToastContainer extends LitElement {
         <div 
           class="toast ${toast.type}" 
           data-id="${toast.id}"
-          @click=${() => this.remove(toast.id)}
+          @click=${() => this.removeToast(toast.id)}
         >
           <span class="toast-icon">${this.icons[toast.type]}</span>
           <span>${toast.message}</span>
           <button class="toast-close" @click=${(e: Event) => {
             e.stopPropagation();
-            this.remove(toast.id);
+            this.removeToast(toast.id);
           }}>×</button>
         </div>
       `)}
