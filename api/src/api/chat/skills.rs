@@ -126,14 +126,6 @@ pub async fn create_skill(
     std::fs::create_dir_all(file_path.parent().unwrap())
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // Disk-space check before write (skip if < 1MB available)
-    if let Ok(metadata) = std::fs::metadata(file_path.parent().unwrap()) {
-        if metadata.available_space() < req.skill_content.len() as u64 {
-            tracing::warn!("Disk full when writing skill: {:?}", file_path);
-            return Err(StatusCode::INSUFFICIENT_STORAGE);
-        }
-    }
-
     std::fs::write(&file_path, &req.skill_content)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 

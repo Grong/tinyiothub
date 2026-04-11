@@ -2602,7 +2602,7 @@ fn read_skill_dir(dir: &std::path::Path) -> String {
         .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
         .collect();
 
-    skill_files.sort_by_key(|e| e.file_name());
+    skill_files.sort_by_key(|e| e.file_name().to_string_lossy().to_string());
 
     let mut all_skills = String::new();
 
@@ -2612,7 +2612,7 @@ fn read_skill_dir(dir: &std::path::Path) -> String {
             Err(_) => continue,
         };
 
-        let file_name = entry.file_name().to_string_lossy();
+        let file_name = entry.file_name().to_string_lossy().into_owned();
         let skill_name = file_name.trim_end_matches(".md");
 
         let (fm, body) = AgentSkill::parse_frontmatter(&content);
