@@ -1,4 +1,5 @@
 pub mod proxy;
+pub mod skills;
 pub mod types;
 
 use axum::{routing::{get, post, put}, Router};

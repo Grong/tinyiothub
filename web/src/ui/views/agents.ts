@@ -1,13 +1,15 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import type { AgentsState, AgentsPanel } from "../controllers/agents.js";
-import { createAgentsState, loadAgents, loadAgentConfig, saveAgentConfig, loadToolsCatalog, toggleTool } from "../controllers/agents.js";
+import { createAgentsState, loadAgents, loadAgentConfig, saveAgentConfig, loadToolsCatalog, toggleTool, loadSkills } from "../controllers/agents.js";
 import { renderModelTab } from "./agents-model-tab.js";
 import { renderToolsTab } from "./agents-tools-tab.js";
+import { renderSkillsTab } from "./agents-skills-tab.js";
 
 const panelLabels: Record<AgentsPanel, string> = {
   overview: "配置",
   tools: "工具权限",
+  skills: "技能",
 };
 
 @customElement("view-agents")
@@ -20,7 +22,10 @@ export class ViewAgents extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
-    loadAgents(this.state).then(() => {
+    Promise.all([
+      loadAgents(this.state),
+      loadSkills(this.state),
+    ]).then(() => {
       this.requestUpdate();
       if (this.state.selectedAgentId) {
         this.onAgentSelected(this.state.selectedAgentId);
@@ -33,6 +38,7 @@ export class ViewAgents extends LitElement {
     Promise.all([
       loadAgentConfig(this.state, agentId),
       loadToolsCatalog(this.state, agentId),
+      loadSkills(this.state),
     ]).then(() => this.requestUpdate());
   }
 
@@ -65,7 +71,7 @@ export class ViewAgents extends LitElement {
       return html`<div class="agents-layout"><div class="agent-panel-error">${this.state.agentsError}</div></div>`;
     }
 
-    const allPanels: AgentsPanel[] = ["overview", "tools"];
+    const allPanels: AgentsPanel[] = ["overview", "tools", "skills"];
 
     // Tools tab search — local state to avoid re-render on other panels
     const searchFilter = (this as any)._searchFilter || "";
@@ -98,6 +104,11 @@ export class ViewAgents extends LitElement {
         <div class="agents-main">
           ${this.state.activePanel === "overview" ? renderModelTab(this.state, this._patchState.bind(this), this.onSaveConfig.bind(this), () => { if (this.state.selectedAgentId) loadAgentConfig(this.state, this.state.selectedAgentId).then(() => this.requestUpdate()); }) : nothing}
           ${this.state.activePanel === "tools" ? renderToolsTab(this.state, searchFilter, setSearchFilter, this.onToggleTool.bind(this)) : nothing}
+          ${this.state.activePanel === "skills" ? renderSkillsTab(
+            this.state,
+            this._patchState.bind(this),
+            () => { if (this.state.selectedAgentId) loadSkills(this.state).then(() => this.requestUpdate()); }
+          ) : nothing}
         </div>
       </div>
     `;

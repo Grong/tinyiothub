@@ -53,6 +53,7 @@ pub fn create_router() -> Router<AppState> {
         .nest("/workspaces", workspaces::create_router()) // 工作空间端点
         .nest("/mcp", mcp::create_router()) // MCP 工具端点
         .nest("/chat", chat::create_router()) // Chat 代理端点
+        .nest("/chat/skills", chat::skills::create_router()) // Skills CRUD 端点
         // API Keys — 直接在 /v1/api-keys/ 下，不嵌套在 /tenants 下
         .nest("/api-keys", tenants::create_api_key_router())
         .route("/agents", get(chat::proxy::list_agents))

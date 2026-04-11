@@ -1,7 +1,9 @@
 import { apiGet, apiPost, apiPut } from "../../api/client.js";
 import type { AgentsListResult, ToolCatalogGroup } from "../types.js";
+import type { Skill, CreateSkillRequest, UpdateSkillRequest } from "../../api/client.js";
+import { listSkills, createSkill, updateSkill, deleteSkill } from "../../api/client.js";
 
-export type AgentsPanel = "overview" | "tools";
+export type AgentsPanel = "overview" | "tools" | "skills";
 
 export type AgentConfig = {
   model?: string;
@@ -36,6 +38,13 @@ export type AgentsState = {
   configBaseHash: string | null;
   toolsCatalog: ToolCatalogGroup[] | null;
   toolsCatalogLoading: boolean;
+  skillsList?: Skill[];
+  skillsLoading?: boolean;
+  skillsError?: string | null;
+  activeSkillsPanel?: string;
+  editingSkill?: Skill | null;
+  skillDraft?: string;
+  pendingDelete?: string | null;
 };
 
 export function createAgentsState(): AgentsState {
@@ -113,4 +122,65 @@ export async function loadToolsCatalog(state: AgentsState, agentId: string): Pro
 
 export async function toggleTool(agentId: string, toolName: string, enabled: boolean): Promise<void> {
   await apiPost("/tools/toggle", { agentId, toolName, enabled });
+}
+
+export async function loadSkills(state: AgentsState): Promise<void> {
+  state.skillsLoading = true;
+  state.skillsError = null;
+  try {
+    const res = await listSkills();
+    state.skillsList = res.result || [];
+  } catch (err) {
+    state.skillsError = String(err);
+  } finally {
+    state.skillsLoading = false;
+  }
+}
+
+export async function saveSkill(state: AgentsState, skill: CreateSkillRequest, name?: string): Promise<boolean> {
+  try {
+    if (name) {
+      await updateSkill(name, { skill_content: skill.skill_content }, skill.workspace_id);
+    } else {
+      await createSkill(skill);
+    }
+    await loadSkills(state);
+    return true;
+  } catch (err) {
+    state.skillsError = String(err);
+    return false;
+  }
+}
+
+export async function removeSkill(state: AgentsState, name: string, workspaceId?: string): Promise<boolean> {
+  try {
+    await deleteSkill(name, workspaceId);
+    await loadSkills(state);
+    return true;
+  } catch (err) {
+    state.skillsError = String(err);
+    return false;
+  }
+}
+
+export async function createSkillApi(state: AgentsState, data: CreateSkillRequest): Promise<boolean> {
+  try {
+    await createSkill(data);
+    await loadSkills(state);
+    return true;
+  } catch (err) {
+    state.skillsError = String(err);
+    return false;
+  }
+}
+
+export async function updateSkillApi(state: AgentsState, name: string, data: UpdateSkillRequest, workspaceId?: string): Promise<boolean> {
+  try {
+    await updateSkill(name, data, workspaceId);
+    await loadSkills(state);
+    return true;
+  } catch (err) {
+    state.skillsError = String(err);
+    return false;
+  }
 }
