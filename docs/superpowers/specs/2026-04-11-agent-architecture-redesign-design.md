@@ -748,12 +748,28 @@ impl AgentRuntime {
 }
 ```
 
+**Phase 1 新增的显式迁移步骤（来自工程评审）**:
+
+1. **更新 `app_state.rs`**
+   - 将 `agent_client: Arc<dyn AgentClient>` 和 `tinyiothub_agent: Arc<TinyIoTHubAgentClient>`
+   - 合并为单个字段 `agent_runtime: Arc<AgentRuntime>`
+   - 更新 `AppState::new()` 中的初始化逻辑
+
+2. **更新 `workspace.rs`**
+   - `create_workspace_handler` (line ~246): 从 `FallbackAgentClient::new()` 改为 `AgentRuntime::new()`
+   - `delete_workspace_handler` (line ~458): 从 `FallbackAgentClient::new()` 改为 `AgentRuntime::new()`
+   - 注意: `AgentRuntime` 的 `create_agent`/`delete_agent` 返回 stub 值 "default" — 确认这是单 Agent 设计的预期行为
+
 **验收标准**:
-- `zeroclaw_agent.rs` 从 2655 行减少到 < 1000 行
+- 删除 `ZeroClawAgentClient` + `FallbackAgentClient` + `AgentClient` trait
 - `cargo check` 通过
 - 所有"待修复"工具通过 workspace 隔离安全测试
-- `batch_command` IDOR 修复通过验证（跨 workspace 调用被拒绝）
+  - `batch_command` IDOR 修复（验证：跨 workspace 调用返回 `ToolError::Forbidden`）
+  - `alarm_statistics` 添加 `workspace_id` 过滤（验证：仅返回当前 workspace 的统计数据）
+  - `alarm_rule_add` 添加 `workspace_id` 绑定（验证：规则创建后仅可在当前 workspace 查询）
 - Phase 1 结束后跑通基本 chat SSE 流程
+
+**风险**: Medium — 删除代码量大（含 ~1350 行测试），但有 `cargo check` + 端到端测试保底
 
 **风险**: Medium — 删除代码量大（含 ~670 行测试），但有 `cargo check` + 端到端测试保底
 
