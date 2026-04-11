@@ -199,7 +199,7 @@ impl AppState {
                 database.pool().clone(),
                 provider,
                 minimax_config.model,
-            ).expect("failed to build TinyIoTHubAgentClient")
+            ).expect("failed to build AgentRuntimeImpl")
         );
 
         // Agent Memory Service
