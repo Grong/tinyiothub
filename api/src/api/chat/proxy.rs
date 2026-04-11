@@ -29,7 +29,14 @@ pub async fn chat_stream(
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
-    let full_prompt = crate::infrastructure::zeroclaw_agent::build_full_system_prompt(user_persona);
+    // session_key format: agent:<agentId>:<mainKey>/<sess_uuid>
+    // Extract workspace_id from the second colon-separated segment
+    let workspace_id = req.session_key.split(':').nth(1).map(|s| s.split('/').next()).flatten();
+    let full_prompt = crate::infrastructure::zeroclaw_agent::build_full_system_prompt(
+        user_persona,
+        workspace_id,
+        None,
+    );
     // 只传递原始用户消息，不混入系统提示词（系统提示词由 Agent 内部处理）
     let original_message = req.message.clone();
 

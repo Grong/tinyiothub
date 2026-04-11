@@ -11,6 +11,8 @@ import { renderDataChart } from "./data-chart.js";
 import { renderControlPanel } from "./control-panel.js";
 import { renderProgressIndicator } from "./progress-indicator.js";
 import { renderConfirmationDialog } from "./confirmation-dialog.js";
+import { renderAlarmCard } from "./alarm-card.js";
+import { renderAlarmTable } from "./alarm-table.js";
 
 export type A2uiRenderer = (data: Record<string, unknown>, onAction?: (fn: string, args: Record<string, unknown>) => void) => TemplateResult;
 
@@ -27,4 +29,6 @@ export const a2uiCatalog: Record<string, A2uiRenderer> = {
   ControlPanel: renderControlPanel,
   ProgressIndicator: renderProgressIndicator,
   ConfirmationDialog: renderConfirmationDialog,
+  AlarmCard: renderAlarmCard,
+  AlarmTable: renderAlarmTable,
 };
