@@ -135,15 +135,15 @@ impl EventRepository for SqliteEventRepository {
 
         // Add pagination
         if let Some(limit) = criteria.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            sql.push_str(" LIMIT ?");
 
             if let Some(offset) = criteria.offset {
-                sql.push_str(&format!(" OFFSET {}", offset));
+                sql.push_str(" OFFSET ?");
             }
         }
 
         // Build query with parameters
-        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql.clone()));
+        let mut query = sqlx::query(&sql);
 
         // Bind time range parameters
         if let Some(start_time) = criteria.start_time {
@@ -175,6 +175,15 @@ impl EventRepository for SqliteEventRepository {
             let search_pattern = format!("%{}%", search_text);
             query = query.bind(search_pattern.clone());
             query = query.bind(search_pattern);
+        }
+
+        // Bind pagination parameters
+        if let Some(limit) = criteria.limit {
+            query = query.bind(limit as i64);
+
+            if let Some(offset) = criteria.offset {
+                query = query.bind(offset as i64);
+            }
         }
 
         // Execute query
