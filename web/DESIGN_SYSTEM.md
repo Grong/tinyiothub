@@ -57,6 +57,122 @@ This document defines the design tokens and CSS architecture for the `web/` fron
 | `--muted-fill-10` | `rgba(107,114,128,0.10)` | `rgba(113,113,122,0.10)` |
 | `--ok-fill-10` | `rgba(16,185,129,0.10)` | `rgba(22,163,74,0.10)` |
 
+### Tuya Visual Language Tokens
+
+The UI adopts a deep-space IoT dashboard aesthetic inspired by Tuya: dark navy canvases, cyan-to-violet accents, subtle glows, and glassmorphism.
+
+| Token | Value | Usage |
+|-------|-------|-------|
+| `--accent-gradient` | `linear-gradient(135deg, #00d4ff 0%, #0098FF 50%, #7b61ff 100%)` | Primary gradients: buttons, metric bars, stat values |
+| `--accent-gradient-soft` | `linear-gradient(135deg, rgba(0,212,255,0.9) 0%, rgba(0,152,255,0.9) 60%, rgba(123,97,255,0.8) 100%)` | Hover states, softer glows |
+| `--accent-glow` | `rgba(0, 212, 255, 0.35)` | Standard glow shadow color |
+| `--accent-glow-strong` | `rgba(0, 212, 255, 0.45)` | Intense glows, pulsing dots |
+| `--glass-bg` | `rgba(26, 29, 37, 0.65)` | Glass card backgrounds |
+| `--glass-border` | `rgba(255, 255, 255, 0.08)` | Glass edge borders |
+| `--glass-blur` | `blur(20px) saturate(180%)` | Backdrop-filter for glass panels |
+| `--bg-deep-space` | layered radial gradients over `--bg` | Page background: faint cyan/purple orbs |
+
+## Visual Patterns
+
+### Deep Space Background
+
+The global page background uses layered radial gradients to create an immersive dark-space atmosphere without hurting readability.
+
+```css
+body {
+  background: var(--bg-deep-space);
+}
+```
+
+`--bg-deep-space` is defined in `base.css` as two large radial orbs (cyan top-left, violet bottom-right) over the base `--bg` color. Opacity is kept very low (4-6%) so data remains the hero.
+
+### Gradient Border Cards
+
+Cards that need a premium edge use a 1px gradient border implemented with `mask-composite: exclude`.
+
+```css
+.card--gradient-border {
+  position: relative;
+  background: var(--card);
+  border-radius: var(--radius-lg);
+}
+
+.card--gradient-border::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(255,255,255,0.12), rgba(255,255,255,0.03));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+```
+
+Used on: `.device-card`, `.template-card`, `.alarm-summary`, and any card that needs to feel "premium".
+
+### Glowing Status Dots
+
+Status indicators are small gradient circles with soft neon glows and a slow pulse animation.
+
+```css
+.status-dot--success {
+  background: linear-gradient(135deg, #00d4ff 0%, #22c55e 100%);
+  box-shadow: 0 0 8px rgba(0, 212, 255, 0.5);
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+```
+
+Variants: `--success`, `--warning` (amber-to-red), `--danger` (red), and `--glow` (accent cyan). Never use flat background colors for status dots in the Tuya style.
+
+### Metric Bar Shine
+
+Progress/metric bars use the accent gradient plus a sweeping light reflection that animates continuously.
+
+```css
+.metric-bar__fill {
+  background: var(--accent-gradient);
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+
+.metric-bar__fill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.25), transparent);
+  transform: translateX(-100%);
+  animation: bar-shine 3s ease-in-out infinite;
+}
+```
+
+### Gradient Text for Stats
+
+Large numbers and headings can use gradient text to draw attention without adding extra layout weight.
+
+```css
+.stat-card__value {
+  background: var(--accent-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+```
+
+### Glassmorphism Panels
+
+Floating panels (modals, toasts, dropdowns) use a semi-transparent dark background with heavy blur so they feel like they sit above the deep-space canvas.
+
+```css
+.glass-panel {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+}
+```
+
 ## CSS File Organization
 
 `styles.css` is an import-only manifest. All app-specific rules live in partials under `src/styles/`.
@@ -110,3 +226,9 @@ src/styles/
    - Focus restoration to the trigger element on close
 
 5. **Performance hints**: apply `contain: layout style` to cards and `will-change` to animated properties (modal opacity, metric-bar width).
+
+6. **Tuya visual language**: when adding premium surfaces, use the established deep-space + glow system:
+   - Gradient borders via `::before` + `mask-composite: exclude`
+   - Accent gradients (`--accent-gradient`) for primary actions, metric bars, and hero stats
+   - Glowing status dots instead of flat colors
+   - Keep glow opacity modest so text readability stays first

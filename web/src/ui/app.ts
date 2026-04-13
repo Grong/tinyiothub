@@ -312,7 +312,7 @@ export class TinyIoTHubApp extends LitElement {
         <nav class="nav ${this.navCollapsed ? "nav--collapsed" : ""}" aria-label="主导航" role="navigation">
           ${this.renderNav()}
         </nav>
-        <div class="content" role="main" id="main-content"></parameter>
+        <div class="content" role="main" id="main-content">
 
           ${this.currentRoute.startsWith("devices/") || this.currentRoute === "chat" ? nothing : html`
           <section class="content-header">

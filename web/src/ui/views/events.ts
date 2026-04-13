@@ -76,32 +76,32 @@ export class EventsView extends LitElement {
   render() {
     if (this.loading) {
       return html`
-        <div style="display: flex; align-items: center; justify-content: center; padding: 60px;">
+        <div class="page-loading">
           <span class="loading-spinner"></span>
-          <span style="margin-left: 8px; color: var(--muted);">加载中...</span>
+          <span>加载中...</span>
         </div>
       `;
     }
 
     if (this.error) {
       return html`
-        <div style="text-align: center; padding: 60px;">
-          <div style="color: var(--danger); margin-bottom: 12px;">${this.error}</div>
+        <div class="page-error">
+          <div class="page-error__message">${this.error}</div>
           <button class="btn btn--primary" @click=${this.loadData}>重试</button>
         </div>
       `;
     }
 
     return html`
-      <div style="display: flex; gap: 10px; margin-bottom: 16px; align-items: center; flex-wrap: wrap;">
-        <select class="select" style="width: auto; min-width: 120px;" .value=${this.filterLevel} @change=${(e: Event) => { this.filterLevel = (e.target as HTMLSelectElement).value; this.page = 1; this.loadData(); }}>
+      <div class="filter-bar">
+        <select class="select filter-bar__select" .value=${this.filterLevel} @change=${(e: Event) => { this.filterLevel = (e.target as HTMLSelectElement).value; this.page = 1; this.loadData(); }}>
           <option value="">全部级别</option>
           <option value="critical">严重</option>
           <option value="error">错误</option>
           <option value="warning">警告</option>
           <option value="info">信息</option>
         </select>
-        <select class="select" style="width: auto; min-width: 120px;" .value=${this.filterType} @change=${(e: Event) => { this.filterType = (e.target as HTMLSelectElement).value; this.page = 1; this.loadData(); }}>
+        <select class="select filter-bar__select" .value=${this.filterType} @change=${(e: Event) => { this.filterType = (e.target as HTMLSelectElement).value; this.page = 1; this.loadData(); }}>
           <option value="">全部类型</option>
           <option value="alarm">告警</option>
           <option value="warning">警告</option>
@@ -111,32 +111,32 @@ export class EventsView extends LitElement {
           <option value="command_executed">命令执行</option>
         </select>
       </div>
-      <div class="card" style="overflow: hidden;">
-        <table style="width: 100%; border-collapse: collapse;">
+      <div class="card table-container">
+        <table class="data-table">
           <thead>
-            <tr style="border-bottom: 1px solid var(--border);">
-              <th style="padding: 12px 16px; text-align: left; font-size: 13px; color: var(--muted); font-weight: 500;">级别</th>
-              <th style="padding: 12px 16px; text-align: left; font-size: 13px; color: var(--muted); font-weight: 500;">类型</th>
-              <th style="padding: 12px 16px; text-align: left; font-size: 13px; color: var(--muted); font-weight: 500;">标题</th>
-              <th style="padding: 12px 16px; text-align: left; font-size: 13px; color: var(--muted); font-weight: 500;">消息</th>
-              <th style="padding: 12px 16px; text-align: left; font-size: 13px; color: var(--muted); font-weight: 500;">时间</th>
+            <tr>
+              <th>级别</th>
+              <th>类型</th>
+              <th>标题</th>
+              <th>消息</th>
+              <th>时间</th>
             </tr>
           </thead>
           <tbody>
             ${this.events.length === 0
-              ? html`<tr><td colspan="5" style="padding: 40px; text-align: center; color: var(--muted);">暂无事件</td></tr>`
+              ? html`<tr><td colspan="5" class="empty-hint">暂无事件</td></tr>`
               : this.events.map(ev => html`
-                <tr style="border-bottom: 1px solid var(--border);">
-                  <td style="padding: 12px 16px;">
-                    <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 13px;">
-                      <span style="width: 8px; height: 8px; border-radius: 50%; background: ${this.levelColor(ev.level)};"></span>
-                      ${ev.level}
+                <tr>
+                  <td>
+                    <span class="status-badge">
+                      <span class="status-dot" style="background: ${this.levelColor(ev.level)};"></span>
+                      <span class="status-badge__label">${ev.level}</span>
                     </span>
                   </td>
-                  <td style="padding: 12px 16px; font-size: 13px;">${this.eventTypeLabel(ev.eventType)}</td>
-                  <td style="padding: 12px 16px; font-size: 13px;">${ev.title}</td>
-                  <td style="padding: 12px 16px; font-size: 13px; max-width: 300px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${ev.message}</td>
-                  <td style="padding: 12px 16px; font-size: 13px; color: var(--muted);">${ev.createdAt?.slice(0, 16)}</td>
+                  <td class="data-table__cell-sm">${this.eventTypeLabel(ev.eventType)}</td>
+                  <td class="data-table__cell-sm">${ev.title}</td>
+                  <td class="cell-truncate data-table__cell-sm">${ev.message}</td>
+                  <td class="cell-muted">${ev.createdAt?.slice(0, 16)}</td>
                 </tr>
               `)}
           </tbody>
