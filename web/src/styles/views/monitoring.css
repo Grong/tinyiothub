@@ -1,0 +1,130 @@
+/* ===== Dashboard Patterns ===== */
+.stats-grid {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  margin-bottom: var(--space-4);
+}
+.cell-muted {
+  font-size: 13px;
+  color: var(--muted);
+}
+.btn--success-text {
+  color: var(--success);
+}
+
+.stat-card {
+  padding: var(--space-5);
+}
+
+.stat-card__label {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.stat-card__value {
+  font-size: 28px;
+  font-weight: 700;
+  margin: 8px 0;
+}
+
+.stat-card__meta {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.metric-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.metric-bar__header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  margin-bottom: var(--space-1);
+}
+
+.metric-bar__track {
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.metric-bar__fill {
+  height: 100%;
+  will-change: width;
+  border-radius: 3px;
+}
+
+/* Metric meta grid */
+.metric-meta-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+.metric-meta-item__label {
+  color: var(--muted);
+  font-size: 12px;
+}
+.metric-meta-item__value {
+  font-size: 16px;
+  font-weight: 600;
+  margin-top: var(--space-1);
+}
+
+/* Health list */
+.health-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  contain: layout;
+}
+.health-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: var(--bg-subtle);
+  border-radius: 8px;
+}
+.health-item__info {
+  min-width: 0;
+}
+.health-item__name {
+  font-size: 14px;
+  font-weight: 500;
+}
+.health-item__message {
+  font-size: 12px;
+  color: var(--muted);
+}
+.health-item__checked {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.health-item__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+
+@media (max-width: 768px) {
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .metric-meta-grid {
+    grid-template-columns: 1fr;
+  }
+  .health-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+}
