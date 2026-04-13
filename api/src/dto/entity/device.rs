@@ -905,18 +905,18 @@ impl Device {
         let search_pattern = format!("%{}%", keyword);
         let exact_pattern = format!("{}%", keyword);
 
-        let mut query_str = String::from(
+        let mut builder = sqlx::QueryBuilder::new(
             r#"
             SELECT id, name, display_name, device_type, address, description, position,
                    driver_name, device_model, protocol_type, factory_name, linked_data,
                    driver_options, state, parent_id, product_id, tenant_id, workspace_id, created_at, updated_at
             FROM devices WHERE
-                name LIKE ? OR 
-                display_name LIKE ? OR 
-                address LIKE ? OR 
+                name LIKE ? OR
+                display_name LIKE ? OR
+                address LIKE ? OR
                 description LIKE ?
-            ORDER BY 
-                CASE 
+            ORDER BY
+                CASE
                     WHEN name LIKE ? THEN 1
                     WHEN display_name LIKE ? THEN 2
                     WHEN address LIKE ? THEN 3
@@ -925,20 +925,20 @@ impl Device {
             "#,
         );
 
+        builder.push_bind(&search_pattern);
+        builder.push_bind(&search_pattern);
+        builder.push_bind(&search_pattern);
+        builder.push_bind(&search_pattern);
+        builder.push_bind(&exact_pattern);
+        builder.push_bind(&exact_pattern);
+        builder.push_bind(&exact_pattern);
+
         if let Some(limit) = limit {
-            query_str.push_str(&format!(" LIMIT {}", limit));
+            builder.push(" LIMIT ");
+            builder.push_bind(limit as i64);
         }
 
-        let devices = sqlx::query_as::<_, Device>(sqlx::AssertSqlSafe(query_str.clone()))
-            .bind(&search_pattern)
-            .bind(&search_pattern)
-            .bind(&search_pattern)
-            .bind(&search_pattern)
-            .bind(&exact_pattern)
-            .bind(&exact_pattern)
-            .bind(&exact_pattern)
-            .fetch_all(db.pool())
-            .await?;
+        let devices = builder.build_query_as::<Device>().fetch_all(db.pool()).await?;
 
         Ok(devices)
     }
