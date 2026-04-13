@@ -168,15 +168,17 @@ impl AlarmRepository for AlarmRepositoryImpl {
         query.push_str(" ORDER BY alarm_time DESC");
 
         if let Some(limit) = criteria.limit {
-            query.push_str(&format!(" LIMIT {}", limit));
+            query.push_str(" LIMIT ?");
+            bindings.push(limit.to_string());
         }
 
         if let Some(offset) = criteria.offset {
-            query.push_str(&format!(" OFFSET {}", offset));
+            query.push_str(" OFFSET ?");
+            bindings.push(offset.to_string());
         }
 
         // Build and execute query with bindings
-        let mut sqlx_query = sqlx::query(sqlx::AssertSqlSafe(query.clone()));
+        let mut sqlx_query = sqlx::query(&query);
         for binding in &bindings {
             sqlx_query = sqlx_query.bind(binding);
         }
@@ -298,7 +300,7 @@ impl AlarmRepository for AlarmRepositoryImpl {
             bindings.push(time_range.end.to_rfc3339());
         }
 
-        let mut sqlx_query = sqlx::query(sqlx::AssertSqlSafe(query.clone()));
+        let mut sqlx_query = sqlx::query(&query);
         for binding in &bindings {
             sqlx_query = sqlx_query.bind(binding);
         }
