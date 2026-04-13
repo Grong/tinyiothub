@@ -15,6 +15,7 @@ use crate::{
 };
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 #[serde(rename_all = "snake_case")]
 pub struct ProductQuery {
     pub device_type: Option<String>,

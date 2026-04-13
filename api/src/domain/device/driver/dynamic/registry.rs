@@ -1,4 +1,5 @@
 //! 统一驱动注册表
+#![allow(dead_code, deprecated)] // Deprecated public API preserved for backward compatibility
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -8,7 +9,7 @@ use tracing::{debug, info, warn};
 use super::loader::DynamicDriverLoader;
 use crate::{
     application::data_context::DataContext,
-    domain::device::driver::{create_driver_by_name, DeviceDriver},
+    domain::device::driver::DeviceDriver,
     dto::entity::{component::Component, Device},
     shared::error::Error,
 };

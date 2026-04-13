@@ -18,6 +18,7 @@ pub struct TimeTask {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 struct JobSchedule {
     pub job: Job,
     pub schedule: Schedule,

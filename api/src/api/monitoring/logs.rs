@@ -30,6 +30,7 @@ pub struct LogLevel {
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 #[serde(rename_all = "snake_case")]
 pub struct LogQuery {
     pub level: Option<String>,

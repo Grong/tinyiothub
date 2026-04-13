@@ -150,6 +150,9 @@ async fn verify_captcha(_ticket: &str, _randstr: &str, _ip: &str) -> Result<bool
     Ok(captcha_config.enabled)
 }
 
+#![allow(dead_code)]
+// Conditionally compiled code triggers dead_code in debug builds
+
 // ============== 阿里云 SMS ==============
 
 use hmac::{Hmac, Mac};

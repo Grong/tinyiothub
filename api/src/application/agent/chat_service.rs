@@ -17,9 +17,9 @@ use thiserror::Error;
 use tokio::sync::mpsc;
 
 use crate::application::agent::memory_service::{AgentMemoryService, MemoryContext};
-use crate::application::agent::session_service::{SessionRepository, CompactedSession};
+use crate::application::agent::session_service::SessionRepository;
 use crate::domain::agent::compact_service::CompactService;
-use crate::infrastructure::agent::{AgentRuntime, AgentError, AgentConfig};
+use crate::infrastructure::agent::{AgentRuntime, AgentError};
 
 /// Errors that can occur during chat operations
 #[derive(Debug, Error)]
@@ -239,6 +239,7 @@ impl Stream for ChatStream {
 }
 
 /// Core chat orchestration service
+#[allow(dead_code)]
 pub struct ChatService {
     runtime: Arc<dyn AgentRuntime>,
     session_repo: Arc<dyn SessionRepository>,

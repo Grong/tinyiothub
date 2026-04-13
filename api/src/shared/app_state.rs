@@ -24,7 +24,6 @@ use crate::{
         agent::AgentRuntime,
         event::{
             channels::NotificationChannelFactory,
-            handlers::{PersistenceEventHandler, RealTimeStatusHandler, SseEventHandler},
             security::{EventSecurityFactory, SecureEventService},
             EventBus, SseConnectionManager,
         },
@@ -393,6 +392,7 @@ impl AppState {
     }
 
     /// 同步检查 Agent 是否可用（启动时调用一次）
+    #[allow(dead_code)]
     fn check_openclaw_available(url: &str) -> bool {
         // 从 URL 中提取 host:port
         let parsed = match reqwest::Url::parse(url) {

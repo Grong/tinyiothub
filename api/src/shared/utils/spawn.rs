@@ -5,7 +5,7 @@
 use std::future::Future;
 use std::panic;
 
-use tracing::{error, warn};
+use tracing::error;
 
 /// Spawn a task with panic protection
 ///

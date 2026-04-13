@@ -124,9 +124,9 @@ impl PersistenceEventHandler {
                     })
                 }));
 
-                if let Err(e) = result {
-                    error!("Event flush task panicked: {:?}", e);
-                }
+                let Err(e) = result;
+                error!("Event flush task panicked: {:?}", e);
+            });
             });
         }
     }

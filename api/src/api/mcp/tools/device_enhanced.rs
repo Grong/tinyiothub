@@ -4,14 +4,12 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::api::mcp::handlers::get_mcp_context;
 use crate::api::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
-use crate::infrastructure::diagnostics::{
-    DiagnosticsService, DeviceDiagnosis, PropertyComparison, SerialPortInfo,
-};
+use crate::infrastructure::diagnostics::DiagnosticsService;
 
 /// Tool input: Compare devices
 #[derive(Debug, Deserialize)]

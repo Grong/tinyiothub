@@ -1,7 +1,6 @@
-use std::collections::HashMap;
 
 use super::entity::{
-    HealingCondition, LevelPolicy, ProbeFinding, ProbeResult, ProbeType, SelfHealingPolicy,
+    LevelPolicy, ProbeFinding, ProbeResult, SelfHealingPolicy,
     SeverityLevel,
 };
 

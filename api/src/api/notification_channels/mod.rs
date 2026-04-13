@@ -1,7 +1,6 @@
 // Notification Channels API Module
 // 通知渠道配置 API
 
-use std::str::FromStr;
 
 use axum::{
     extract::{Path, Query, State},

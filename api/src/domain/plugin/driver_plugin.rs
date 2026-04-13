@@ -65,7 +65,6 @@ impl PluginHandler for DriverPluginHandler {
     }
 }
 
-use std::collections::HashMap;
 
 /// 注册内置驱动到插件注册表
 pub fn register_builtin_drivers(registry: &crate::domain::plugin::PluginRegistry) {
@@ -121,7 +120,7 @@ pub fn register_builtin_drivers(registry: &crate::domain::plugin::PluginRegistry
 /// 此函数在应用启动时调用，负责：
 /// 1. 注册内置驱动（SimulatedDriver, ModbusDriver, SnmpDriver）到插件注册表
 /// 2. 从 api/plugins/ 目录加载 TOML 格式的插件配置
-pub fn init_plugins(context: Arc<AppContext>) -> Result<(), Error> {
+pub fn init_plugins(_context: Arc<AppContext>) -> Result<(), Error> {
     let registry = crate::domain::plugin::get_global_registry();
 
     // 1. 注册内置驱动为插件
