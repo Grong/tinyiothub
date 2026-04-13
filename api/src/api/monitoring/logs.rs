@@ -29,6 +29,7 @@ pub struct LogLevel {
     pub description: String,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct LogQuery {

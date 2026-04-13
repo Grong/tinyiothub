@@ -17,6 +17,8 @@ use crate::{
 use super::super::config::MqttConfig;
 use crate::domain::plugin::{PluginHandler, PluginManifest, PluginType};
 
+// config field kept for future protocol configuration usage
+#[allow(dead_code)]
 pub struct MqttSubscribeHandler {
     config: MqttConfig,
     mapping: HashMap<String, String>,

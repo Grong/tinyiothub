@@ -6,7 +6,7 @@ pub mod handlers;
 pub mod config;
 
 pub use config::{FeishuConfig, DingtalkConfig};
-pub use handlers::{NotificationHandler, FeishuHandler, DingtalkHandler};
+pub use handlers::{FeishuHandler, DingtalkHandler};
 
 use crate::domain::plugin::{PluginHandler, AppContext};
 use crate::shared::error::Error;

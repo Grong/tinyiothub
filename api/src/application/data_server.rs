@@ -66,7 +66,7 @@ impl DataServer {
     /// 核心数据处理循环（简化版）
     pub async fn run(
         &self,
-        mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
+        shutdown_rx: tokio::sync::broadcast::Receiver<()>,
     ) -> Result<(), Error> {
         // 按协议类型分组启动处理任务
         let driver_groups = self.group_drivers_by_protocol();
@@ -264,22 +264,6 @@ impl DataServer {
                     // 更新驱动和上下文
                     *driver.device_mut() = device.clone();
                     context.update_device_value(device);
-                }
-            }
-        }
-    }
-
-    /// 更新设备属性值
-    fn update_device_properties(
-        device: &mut Device,
-        values: &[crate::domain::device::driver::ResultValue],
-    ) {
-        if let Some(ref mut properties) = device.properties {
-            for property in properties.iter_mut() {
-                if let Some(result_value) = values.iter().find(|v| v.name == property.name) {
-                    if let Some(ref value_str) = result_value.value {
-                        property.set_current_value(value_str.clone());
-                    }
                 }
             }
         }

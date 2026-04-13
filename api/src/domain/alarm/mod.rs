@@ -15,7 +15,6 @@ pub mod value_objects;
 
 pub use entity::{Alarm, AlarmRule, RuleType};
 pub use errors::{AlarmError, AlarmResult};
-pub use handlers::AlarmEventHandler;
 pub use repository::{
     AlarmQueryCriteria, AlarmRepository, AlarmRuleRepository, SortOrder, TimeRange,
 };

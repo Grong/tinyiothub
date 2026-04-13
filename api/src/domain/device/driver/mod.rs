@@ -4,7 +4,6 @@ pub use driver::{DeviceDriver, DriverWrapper, ResultValue};
 pub use drivers::{snmp_driver::SnmpDriver, ModbusDriver, SimulatedDriver};
 pub use status::DeviceOverview;
 // 重新导出SDK类型以保持向后兼容
-pub use tinyiothub_driver_sdk::{ComponentInfo, ComponentOption, CreateComponentRequest};
 
 use crate::{application::data_context::DataContext, dto::entity::Device, shared::error::Error};
 

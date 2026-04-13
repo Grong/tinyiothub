@@ -93,6 +93,7 @@ impl PersistenceEventHandler {
     }
 
     /// 启动定时刷新任务
+    #[allow(irrefutable_let_patterns)]
     fn start_flush_task(
         buffer: Arc<RwLock<EventBuffer>>,
         repository: Arc<dyn EventRepository>,

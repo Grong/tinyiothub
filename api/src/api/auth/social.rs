@@ -159,7 +159,7 @@ async fn get_wechat_qrcode(
         }
     };
 
-    let app_secret = match &wechat_config.app_secret {
+    let _app_secret = match &wechat_config.app_secret {
         Some(secret) => secret.clone(),
         None => {
             return ApiResponse::error("微信 AppSecret 未配置".to_string());
@@ -340,7 +340,7 @@ async fn wechat_login(
         }
     };
 
-    let (app_id, app_secret) = match (config.app_id, config.app_secret) {
+    let (_app_id, _app_secret) = match (config.app_id, config.app_secret) {
         (Some(id), Some(secret)) => (id, secret),
         _ => {
             return ApiResponse::error("微信配置不完整".to_string());
@@ -399,7 +399,7 @@ async fn wechat_miniprogram_login(
     let db = state.database();
 
     // 获取微信配置
-    let config = match get_wechat_config(db).await {
+    let _config = match get_wechat_config(db).await {
         Some(c) => c,
         None => {
             return ApiResponse::error("微信登录未配置".to_string());
@@ -436,8 +436,8 @@ async fn wechat_miniprogram_login(
 
 /// 绑定社交账号
 async fn bind_social_account(
-    State(state): State<AppState>,
-    Json(request): Json<BindSocialRequest>,
+    State(_state): State<AppState>,
+    Json(_request): Json<BindSocialRequest>,
 ) -> Json<ApiResponse<String>> {
     // TODO: 实现绑定逻辑
 
@@ -446,8 +446,8 @@ async fn bind_social_account(
 
 /// 解绑社交账号
 async fn unbind_social_account(
-    State(state): State<AppState>,
-    Json(request): Json<UnbindSocialRequest>,
+    State(_state): State<AppState>,
+    Json(_request): Json<UnbindSocialRequest>,
 ) -> Json<ApiResponse<String>> {
     // TODO: 实现解绑逻辑
 
@@ -542,19 +542,6 @@ struct WechatOAuthConfig {
     app_secret: String,
 }
 
-/// 生成并存储 OAuth state 参数到 Redis
-async fn generate_oauth_state(redis: &Option<RedisClient>, state: &str) -> Result<(), StatusCode> {
-    let redis = redis.as_ref().ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let key = format!("wechat:state:{}", state);
-    redis
-        .set_ex(&key, "1", 300)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(())
-}
-
 /// 验证并删除 OAuth state 参数
 async fn verify_oauth_state(
     redis: &Option<RedisClient>,
@@ -617,6 +604,8 @@ async fn exchange_wechat_code(
         .map_err(|e| format!("Parse error: {}", e))
 }
 
+// WeChat token response structure; fields kept for API completeness
+#[allow(dead_code)]
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
 struct WechatTokenResponse {

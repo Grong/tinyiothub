@@ -135,7 +135,7 @@ impl PluginRegistry {
         Ok(arc_handler)
     }
 
-    fn create_dynamic_plugin(&self, name: &str, path: &Path) -> Result<Box<dyn PluginHandler>, Error> {
+    fn create_dynamic_plugin(&self, name: &str, _path: &Path) -> Result<Box<dyn PluginHandler>, Error> {
         Err(Error::Unsupported(format!("Dynamic plugin loading not implemented yet: {}", name)))
     }
 
