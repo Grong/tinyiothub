@@ -3,14 +3,14 @@
 **版本**: v1.1.0  
 **官方网站**: https://tinyiothub.com  
 **仓库地址**: https://github.com/Grong/tinyiothub  
-**Docker Hub**: https://hub.docker.com/r/chenguorongz/tinyiothub  
+**Docker Hub**: https://hub.docker.com/r/grong/tinyiothub  
 **发布日期**: 2026-01-19
 
 基于 Rust 的物联网边缘网关系统，专为鸿蒙系统优化，支持多种设备协议和数据采集。
 
 ## 版本说明
 
-本项目基于 Rust 2021 Edition，针对鸿蒙系统进行了优化。
+本项目基于 Rust 2024 Edition，针对鸿蒙系统进行了优化。
 
 ## 特性
 
@@ -24,7 +24,7 @@
 - 🎯 **事件驱动架构**（设备联动和规则引擎）
 - 💾 **SQLite 数据存储**（支持自动迁移）
 - 🔄 **自动重连和故障恢复**
-- 🤖 **AI Agent 集成**（MCP Server，29+ 工具，Claude Desktop/Cursor 支持）
+- 🤖 **AI Agent 集成**（内嵌 MCP Server + A2UI 聊天，Claude Desktop/Cursor 支持）
 - 🔧 **自愈引擎**（探测调度器 + 自动故障恢复，支持 system/device/task 探针）
 - 🤖 **鸿蒙系统原生支持**
 - ⚙️ **专业配置系统**（层次化配置，环境感知）
@@ -45,11 +45,13 @@ tinyiothub/
 │   └── tinyiothub.db         # SQLite 数据库
 ├── web/                      # Lit 3 前端应用 (Web Components)
 │   ├── src/                  # 源代码
-│   │   ├── ui/              # Lit 组件
+│   │   ├── ui/              # Lit 组件、页面、聊天/A2UI
 │   │   ├── api/             # API 客户端
-│   │   ├── i18n/           # 国际化
-│   │   └── styles/          # CSS 样式
-│   └── package.json          # Node.js 项目配置
+│   │   ├── i18n/            # 国际化
+│   │   ├── styles/          # CSS 样式
+│   │   └── stores/          # nanostore 状态管理
+│   ├── package.json          # Node.js 项目配置
+│   └── vite.config.ts       # Vite 构建配置
 ├── sdks/                     # SDK 开发包
 │   └── driver-sdk/           # 驱动开发 SDK
 ├── examples/                 # 示例项目
@@ -60,7 +62,8 @@ tinyiothub/
 │   └── templates/            # 模板市场
 ├── scripts/                  # 工具脚本
 ├── docs/                     # 项目文档
-└── .kiro/                    # 开发规范
+├── .kiro/                    # 开发规范
+└── skills/                   # AI prompts / skills
 ```
 
 ## 快速开始
@@ -301,12 +304,15 @@ api/
 │   │   ├── devices/          # 设备管理 API
 │   │   ├── drivers/          # 驱动管理 API
 │   │   ├── alarms/           # 告警管理 API
+│   │   ├── chat/             # AI Agent 聊天 API
+│   │   ├── mcp/              # 内嵌 MCP Server
 │   │   ├── users/            # 用户管理 API
 │   │   ├── system/           # 系统管理 API
 │   │   ├── monitoring/       # 监控 API
 │   │   ├── templates/        # 设备模板 API
 │   │   └── middleware/       # 中间件
 │   ├── application/          # 应用服务层
+│   │   └── agent/            # Agent 会话、聊天、记忆服务
 │   ├── domain/               # 领域层
 │   ├── dto/                  # 数据传输对象
 │   ├── infrastructure/       # 基础设施层
@@ -324,13 +330,14 @@ api/
 web/
 ├── src/
 │   ├── ui/                  # Lit Web Components
-│   │   ├── components/       # 组件
+│   │   ├── components/      # 通用组件
 │   │   ├── views/           # 页面视图
 │   │   ├── controllers/     # 状态控制器
-│   │   └── chat/           # 聊天/A2UI
-│   ├── api/                # API 客户端
-│   ├── i18n/               # 国际化
-│   └── styles/             # CSS 样式
+│   │   └── chat/            # AI 聊天 / A2UI 组件
+│   ├── api/                 # API 客户端
+│   ├── i18n/                # 国际化
+│   ├── styles/              # CSS 样式
+│   └── stores/              # nanostore 状态管理
 ├── package.json
 └── vite.config.ts
 ```
@@ -383,9 +390,14 @@ web/
 - `GET /api/v1/monitoring/metrics` - 系统指标
 - `GET /api/v1/monitoring/dashboard/stats` - 仪表板统计
 
-### MCP Server（AI Agent）
+### AI Agent 聊天
+- `POST /api/v1/chat/stream` - SSE 流式聊天
+- `POST /api/v1/chat/skills` - Agent 技能调用
+- `GET /api/v1/chat/history` - 获取聊天历史
+
+### MCP Server（内嵌）
 - `POST /mcp` - MCP JSON-RPC 统一端点（tools/list、tools/call）
-- `POST /mcp/tools/list` - 列出可用工具（29 工具）
+- `POST /mcp/tools/list` - 列出可用工具
 - `POST /mcp/tools/call` - 调用指定工具
 
 ## 开发指南
@@ -440,17 +452,14 @@ impl DeviceDriver for MyCustomDriver {
 
 ### 前端开发
 
-#### 创建新Service
+#### API 客户端
 
-1. 在 `web/service/` 目录创建service文件
-2. 使用统一的API客户端
-3. 创建对应的React Query hooks
+1. 在 `web/src/api/` 目录创建 API 封装
+2. 使用统一的 API 客户端
 
 ```typescript
-// web/service/items.ts
-import { apiGet, apiPost } from '@/lib/api-client'
-import { useQuery, useMutation } from '@tanstack/react-query'
-import { queryKeys } from '@/lib/query-keys'
+// web/src/api/items.ts
+import { apiGet, apiPost } from './client'
 
 export interface Item {
   id: string
@@ -464,44 +473,37 @@ export const itemApi = {
   createItem: (data: CreateItemRequest) => 
     apiPost<Item>('items', data),
 }
-
-export const useItems = (params?: { page?: number }) => {
-  return useQuery({
-    queryKey: queryKeys.items.list(params || {}),
-    queryFn: async () => {
-      const response = await itemApi.getItems(params)
-      return response.result || []
-    },
-  })
-}
 ```
 
 #### 创建新组件
 
-1. 在 `web/app/components/` 相应目录创建组件
-2. 使用service层提供的hooks
+1. 在 `web/src/ui/views/` 或 `web/src/ui/components/` 创建组件
+2. 使用 `api/` 层提供的 API 客户端
 3. 遵循组件命名规范
 
 ```typescript
-// web/app/components/items/item-list.tsx
-import { useItems } from '@/service/items'
+// web/src/ui/views/item-list.ts
+import { LitElement, html, css } from 'lit'
+import { customElement, state } from 'lit/decorators.js'
+import { itemApi } from '../../api/items'
 
-const ItemList: React.FC = () => {
-  const { data: items, isLoading, error } = useItems({ page: 1 })
+@customElement('item-list')
+export class ItemList extends LitElement {
+  @state() private items: Item[] = []
   
-  if (isLoading) return <div>加载中...</div>
-  if (error) return <div>加载失败: {error.message}</div>
+  async firstUpdated() {
+    const response = await itemApi.getItems()
+    this.items = response.result || []
+  }
   
-  return (
-    <div>
-      {items?.map(item => (
-        <div key={item.id}>{item.name}</div>
-      ))}
-    </div>
-  )
+  render() {
+    return html`
+      <div>
+        ${this.items.map(item => html`<div>${item.name}</div>`)}
+      </div>
+    `
+  }
 }
-
-export default ItemList
 ```
 
 ### 开发工具
@@ -517,10 +519,10 @@ cargo clippy       # 代码检查
 
 # 前端
 cd web
-pnpm lint          # ESLint检查
-pnpm lint:fix      # 自动修复
-pnpm format        # Prettier格式化
-pnpm type-check    # TypeScript检查
+pnpm dev           # 开发服务器
+pnpm build         # 生产构建
+pnpm test          # 运行测试
+pnpm preview       # 预览生产构建
 ```
 
 #### API测试
@@ -568,16 +570,17 @@ gateway/{sn}/alarm            # 告警消息
 ## 项目状态
 
 ✅ **最新完成的工作**:
+- **AI Agent 架构重构**: 内嵌 MCP Server + A2UI 聊天界面，支持 SSE 流式对话和 Agent 技能调用
+- **前端架构迁移**: 从 Next.js 迁移到 Lit 3 + Vite，采用 Web Components 和 nanostore 状态管理
 - **API 规范统一**: 建立完整的前后端API开发规范，确保数据对接一致性
 - **统一响应格式**: 所有API使用 `ApiResponse<T>` 包装格式
-- **前端架构优化**: 统一API客户端，service层规范，React Query集成
 - **设备创建向导**: 完整的模板选择和设备配置流程
 - **驱动管理系统**: 动态驱动加载，配置参数管理
 - **多语言支持**: 模板和界面的国际化处理
 
 ✅ **核心功能**:
 - **REST API 系统**: 基于 Axum 的现代化 API，统一响应格式
-- **前端界面**: Next.js + TypeScript + TailwindCSS 现代化界面
+- **前端界面**: Lit 3 + TypeScript + Vite 现代化界面
 - **设备驱动系统**: 支持重试机制和状态管理的驱动框架
 - **设备模板系统**: 模板化设备创建，支持验证和预览
 - **配置管理**: 多源配置加载，环境变量覆盖，配置验证
@@ -587,10 +590,11 @@ gateway/{sn}/alarm            # 告警消息
 
 🔧 **技术栈**:
 - **后端**: Rust 2024 + Axum + SQLite + Tokio
-- **前端**: Lit 3 + TypeScript + Vite + Nanostore
+- **前端**: Lit 3 + TypeScript + Vite + nanostore
 - **数据库**: SQLite + SQLx (自动迁移)
 - **认证**: JWT + 会话管理
 - **通信协议**: MQTT, HTTP, Modbus RTU/TCP, ONVIF, SNMP
+- **AI 集成**: 内嵌 MCP Server + A2UI (SSE 流式)
 - **包管理**: pnpm (前端)，Cargo (后端)
 
 
