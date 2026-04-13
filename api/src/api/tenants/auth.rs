@@ -34,8 +34,7 @@ fn verify_signature(payload: &str, signature: &str, secret: &str) -> bool {
 }
 
 use crate::{
-    dto::entity::tenant::{CreateTenantRequest, SubscriptionPlan, Tenant},
-    dto::entity::workspace::Workspace,
+    dto::entity::tenant::CreateTenantRequest,
     shared::app_state::AppState,
 };
 
@@ -72,17 +71,15 @@ pub struct LoginRequest {
 #[serde(rename_all = "snake_case")]
 pub struct LoginResponse {
     pub token: String,
-    pub tenant: Tenant,
+    pub tenant: crate::dto::entity::tenant::Tenant,
     pub user: serde_json::Value,
 }
 
 /// List subscription plans (public)
 async fn list_plans(
     State(state): State<AppState>,
-) -> Result<Json<Vec<SubscriptionPlan>>, StatusCode> {
-    let db = state.database.clone();
-
-    match SubscriptionPlan::find_all(&db).await {
+) -> Result<Json<Vec<crate::dto::entity::tenant::SubscriptionPlan>>, StatusCode> {
+    match state.tenant_service.find_all_plans().await {
         Ok(plans) => Ok(Json(plans)),
         Err(e) => {
             tracing::error!("Failed to list plans: {}", e);
@@ -107,8 +104,6 @@ async fn register_tenant(
     State(state): State<AppState>,
     Json(payload): Json<RegisterRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let db = state.database.clone();
-
     // 输入验证
     let slug = payload.slug.trim().to_lowercase();
     let email = payload.email.trim().to_lowercase();
@@ -129,7 +124,7 @@ async fn register_tenant(
     }
 
     // 检查 slug 是否已存在（使用参数化查询）
-    if Tenant::find_by_slug(&db, &slug)
+    if state.tenant_service.find_tenant_by_slug(&slug)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .is_some()
@@ -147,10 +142,12 @@ async fn register_tenant(
         locale: None,
     };
 
-    let tenant = Tenant::create(&db, &tenant_req).await.map_err(|e| {
+    let tenant = state.tenant_service.create_tenant(&tenant_req).await.map_err(|e| {
         tracing::error!("Failed to create tenant: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
+
+    let db = state.database.clone();
 
     // 创建用户 - 使用参数化查询
     let user_id = uuid::Uuid::new_v4().to_string();
@@ -190,7 +187,7 @@ async fn register_tenant(
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // 创建默认工作空间
-    Workspace::create(&db, &tenant.id, "默认工作空间", Some("系统自动创建的默认工作空间"), None, None)
+    state.workspace_service.create(&tenant.id, "默认工作空间", Some("系统自动创建的默认工作空间"), None, None)
         .await
         .map_err(|e| {
             tracing::error!("Failed to create default workspace: {}", e);
@@ -253,8 +250,8 @@ async fn login(
 
     // 查找租户 - 使用参数化查询
     let tenant_rows = sqlx::query(
-        "SELECT t.* FROM tenants t 
-         INNER JOIN tenant_users tu ON t.id = tu.tenant_id 
+        "SELECT t.* FROM tenants t
+         INNER JOIN tenant_users tu ON t.id = tu.tenant_id
          WHERE tu.user_id = ? LIMIT 1",
     )
     .bind(&user_id)
@@ -264,7 +261,7 @@ async fn login(
 
     let tenant_row = tenant_rows.into_iter().next().ok_or(StatusCode::NOT_FOUND)?;
 
-    let tenant = Tenant {
+    let tenant = crate::dto::entity::tenant::Tenant {
         id: tenant_row.try_get("id").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
         name: tenant_row.try_get("name").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
         slug: tenant_row.try_get("slug").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,

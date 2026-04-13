@@ -68,8 +68,8 @@ async fn list_tags(
     let page_size = query.page_size.unwrap_or(20);
 
     let (tags_result, count_result) = tokio::join!(
-        Tag::find_all(state.database(), &tag_query),
-        Tag::count(state.database(), &tag_query),
+        state.tag_service.find_all_tags(&tag_query),
+        state.tag_service.count_tags(&tag_query),
     );
 
     match tags_result {
@@ -103,7 +103,7 @@ async fn get_tag(
     Path(id): Path<String>,
     State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<Tag>>, StatusCode> {
-    match Tag::find_by_id(state.database(), &id).await {
+    match state.tag_service.find_tag_by_id(&id).await {
         Ok(Some(tag)) => Ok(ApiResponseBuilder::success(tag)),
         Ok(None) => Err(StatusCode::NOT_FOUND),
         Err(e) => {
@@ -119,8 +119,7 @@ async fn create_tag(
     State(state): State<AppState>,
     Json(request): Json<CreateTagRequest>,
 ) -> Result<Json<ApiResponse<Tag>>, StatusCode> {
-    // 检查标签名称是否已存在（在同一类型下）
-    match Tag::exists_by_name_and_type(state.database(), &request.name, &request.tag_type).await {
+    match state.tag_service.tag_exists_by_name_and_type(&request.name, &request.tag_type).await {
         Ok(true) => return Err(StatusCode::CONFLICT),
         Ok(false) => {}
         Err(e) => {
@@ -129,7 +128,7 @@ async fn create_tag(
         }
     }
 
-    match Tag::create(state.database(), &request, &claims.user_id).await {
+    match state.tag_service.create_tag(&request, &claims.user_id).await {
         Ok(tag) => Ok(ApiResponseBuilder::success_with_message(tag, "Tag created successfully")),
         Err(e) => {
             tracing::error!("Failed to create tag: {}", e);
@@ -144,10 +143,8 @@ async fn update_tag(
     State(state): State<AppState>,
     Json(request): Json<UpdateTagRequest>,
 ) -> Result<Json<ApiResponse<Tag>>, StatusCode> {
-    // 如果更新名称，检查是否与其他标签冲突
     if let Some(name) = &request.name {
-        // 先获取当前标签信息以获取类型
-        let current_tag = match Tag::find_by_id(state.database(), &id).await {
+        let current_tag = match state.tag_service.find_tag_by_id(&id).await {
             Ok(Some(tag)) => tag,
             Ok(None) => return Err(StatusCode::NOT_FOUND),
             Err(e) => {
@@ -156,13 +153,9 @@ async fn update_tag(
             }
         };
 
-        match Tag::exists_by_name_and_type_exclude_id(
-            state.database(),
-            name,
-            &current_tag.tag_type,
-            &id,
-        )
-        .await
+        match state.tag_service
+            .tag_exists_by_name_and_type_exclude_id(name, &current_tag.tag_type, &id)
+            .await
         {
             Ok(true) => return Err(StatusCode::CONFLICT),
             Ok(false) => {}
@@ -173,9 +166,9 @@ async fn update_tag(
         }
     }
 
-    match Tag::update(state.database(), &id, &request).await {
+    match state.tag_service.update_tag(&id, &request).await {
         Ok(tag) => Ok(ApiResponseBuilder::success_with_message(tag, "Tag updated successfully")),
-        Err(sqlx::Error::RowNotFound) => Err(StatusCode::NOT_FOUND),
+        Err(crate::shared::error::Error::NotFound) => Err(StatusCode::NOT_FOUND),
         Err(e) => {
             tracing::error!("Failed to update tag {}: {}", id, e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
@@ -188,7 +181,7 @@ async fn delete_tag(
     Path(id): Path<String>,
     State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<()>>, StatusCode> {
-    match Tag::delete(state.database(), &id).await {
+    match state.tag_service.delete_tag(&id).await {
         Ok(rows_affected) => {
             if rows_affected > 0 {
                 Ok(ApiResponseBuilder::success_with_message((), "Tag deleted successfully"))
@@ -220,8 +213,8 @@ async fn search_tags(
     let page_size = query.page_size.unwrap_or(20);
 
     let (tags_result, count_result) = tokio::join!(
-        Tag::find_all(state.database(), &tag_query),
-        Tag::count(state.database(), &tag_query),
+        state.tag_service.find_all_tags(&tag_query),
+        state.tag_service.count_tags(&tag_query),
     );
 
     match tags_result {
@@ -256,7 +249,7 @@ async fn get_tag_stats(
 ) -> Result<Json<ApiResponse<serde_json::Value>>, StatusCode> {
     let tag_query = TagQuery::default();
 
-    match Tag::count(state.database(), &tag_query).await {
+    match state.tag_service.count_tags(&tag_query).await {
         Ok(total) => {
             let stats = serde_json::json!({
                 "total": total,
@@ -280,8 +273,7 @@ async fn create_tag_binding(
     State(state): State<AppState>,
     Json(request): Json<CreateTagBindingRequest>,
 ) -> Result<Json<ApiResponse<TagBinding>>, StatusCode> {
-    // 检查绑定是否已存在
-    match TagBinding::exists(state.database(), &request.tag_id, &request.target_id).await {
+    match state.tag_service.binding_exists(&request.tag_id, &request.target_id).await {
         Ok(true) => return Err(StatusCode::CONFLICT),
         Ok(false) => {}
         Err(e) => {
@@ -290,7 +282,7 @@ async fn create_tag_binding(
         }
     }
 
-    match TagBinding::create(state.database(), &request, &claims.user_id).await {
+    match state.tag_service.create_binding(&request, &claims.user_id).await {
         Ok(binding) => Ok(ApiResponseBuilder::success_with_message(
             binding,
             "Tag binding created successfully",
@@ -307,7 +299,8 @@ async fn delete_tag_binding(
     Query(query): Query<DeleteTagBindingQuery>,
     State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<()>>, StatusCode> {
-    match TagBinding::delete_by_tag_and_target(state.database(), &query.tag_id, &query.target_id)
+    match state.tag_service
+        .delete_binding_by_tag_and_target(&query.tag_id, &query.target_id)
         .await
     {
         Ok(rows_affected) => {
@@ -336,7 +329,7 @@ async fn batch_create_bindings(
         .map(|tag_id| CreateTagBindingRequest { tag_id, target_id: request.target_id.clone(), target_type: request.target_type.clone() })
         .collect();
 
-    match TagBinding::create_batch(state.database(), &bindings, &claims.user_id).await {
+    match state.tag_service.create_bindings_batch(&bindings, &claims.user_id).await {
         Ok(created_bindings) => Ok(ApiResponseBuilder::success_with_message(
             created_bindings,
             "Tag bindings created successfully",
@@ -353,7 +346,7 @@ async fn batch_delete_bindings(
     Query(query): Query<TagBindingQuery>,
     State(state): State<AppState>,
 ) -> Result<Json<ApiResponse<()>>, StatusCode> {
-    match TagBinding::delete_all_by_target_id(state.database(), &query.target_id).await {
+    match state.tag_service.delete_all_bindings_by_target_id(&query.target_id).await {
         Ok(_) => {
             Ok(ApiResponseBuilder::success_with_message((), "Tag bindings deleted successfully"))
         }
@@ -373,8 +366,8 @@ async fn get_target_bindings(
     let page_size = 100u32;
 
     let (tags_result, count_result) = tokio::join!(
-        Tag::find_by_target_id(state.database(), &target_id),
-        TagBinding::count_by_target_id(state.database(), &target_id),
+        state.tag_service.find_tags_by_target_id(&target_id),
+        state.tag_service.count_bindings_by_target_id(&target_id),
     );
 
     match tags_result {
@@ -407,8 +400,8 @@ async fn get_tag_bindings(
     let page_size = 100u32;
 
     let (bindings_result, count_result) = tokio::join!(
-        TagBinding::find_by_tag_id(state.database(), &tag_id),
-        TagBinding::count_by_tag_id(state.database(), &tag_id),
+        state.tag_service.find_bindings_by_tag_id(&tag_id),
+        state.tag_service.count_bindings_by_tag_id(&tag_id),
     );
 
     match bindings_result {

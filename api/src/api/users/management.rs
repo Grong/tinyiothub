@@ -8,7 +8,7 @@ use serde::Deserialize;
 use crate::{
     api::AppState,
     dto::{
-        entity::user::{CreateUserRequest, UpdateUserRequest, User, UserDto, UserQueryParams, UserStatisticsNew},
+        entity::user::{CreateUserRequest, UpdateUserRequest, UserDto},
         request::pagination::PaginationQuery,
         response::{ApiResponse, PaginatedResponse, PaginationInfo},
     },
@@ -56,34 +56,12 @@ async fn list_users(
 ) -> Json<ApiResponse<PaginatedResponse<UserDto>>> {
     tracing::info!("list_users called with query: {:?}", query);
 
-    let params = UserQueryParams {
-        username: query.search.clone(),
-        email: None,
-        display_name: None,
-        is_enabled: query.enabled,
-        parent_id: None,
-        page: query.pagination.page,
-        page_size: query.pagination.page_size,
-    };
-
     let page = query.pagination.page.unwrap_or(1);
     let page_size = query.pagination.page_size.unwrap_or(20);
 
-    let (users_result, count_result) = tokio::join!(
-        User::find_with_filters(
-            state.database(),
-            query.enabled,
-            query.search,
-            Some(page),
-            Some(page_size),
-        ),
-        User::count(state.database(), &params),
-    );
-
-    match users_result {
-        Ok(users) => {
-            let user_dtos = User::to_dto_list(users);
-            let total = count_result.unwrap_or(0);
+    match state.user_service.list_users(query.enabled, query.search, page, page_size).await {
+        Ok((users, total)) => {
+            let user_dtos = crate::dto::entity::user::User::to_dto_list(users);
             let total_count = total as u64;
             let total_pages = if page_size > 0 {
                 ((total as f64) / (page_size as f64)).ceil() as u32
@@ -147,7 +125,7 @@ async fn create_user(
     }
 
     // 检查用户名是否已存在
-    match User::exists_by_username(state.database(), &request.username).await {
+    match state.user_service.exists_by_username(&request.username).await {
         Ok(true) => {
             return ApiResponse::error("用户名已存在".to_string());
         }
@@ -159,7 +137,7 @@ async fn create_user(
     }
 
     // 创建用户
-    match User::create(state.database(), &request).await {
+    match state.user_service.create_user(&request).await {
         Ok(user) => {
             tracing::info!("User created: {}", user.get_display_name());
             ApiResponse::success(user.to_dto())
@@ -175,8 +153,8 @@ async fn create_user(
 async fn get_user_statistics(
     State(state): State<AppState>,
     _claims: Claims,
-) -> Json<ApiResponse<UserStatisticsNew>> {
-    match User::get_user_statistics(state.database()).await {
+) -> Json<ApiResponse<crate::dto::entity::user::UserStatisticsNew>> {
+    match state.user_service.get_user_statistics().await {
         Ok(statistics) => {
             tracing::debug!("Retrieved user statistics");
             ApiResponse::success(statistics)
@@ -193,7 +171,7 @@ async fn get_current_user(
     State(state): State<AppState>,
     claims: Claims,
 ) -> Json<ApiResponse<UserDto>> {
-    match User::find_by_id(state.database(), &claims.user_id).await {
+    match state.user_service.get_user_by_id(&claims.user_id).await {
         Ok(Some(user)) => ApiResponse::success(user.to_dto()),
         Ok(None) => ApiResponse::error("用户不存在".to_string()),
         Err(e) => {
@@ -218,7 +196,7 @@ async fn get_user(
         return ApiResponse::error("无权限查看此用户".to_string());
     }
 
-    match User::find_by_id(state.database(), &id).await {
+    match state.user_service.get_user_by_id(&id).await {
         Ok(Some(user)) => {
             tracing::debug!("Retrieved user: {}", user.get_display_name());
             ApiResponse::success(user.to_dto())
@@ -259,7 +237,7 @@ async fn update_user(
         }
 
         // 检查用户名是否已被其他用户使用
-        match User::find_by_username(state.database(), username).await {
+        match state.user_service.get_user_by_username(username).await {
             Ok(Some(existing_user)) if existing_user.id != id => {
                 return ApiResponse::error("用户名已存在".to_string());
             }
@@ -271,12 +249,12 @@ async fn update_user(
         }
     }
 
-    match User::update(state.database(), &id, &request).await {
+    match state.user_service.update_user(&id, &request).await {
         Ok(user) => {
             tracing::info!("User updated: {}", user.get_display_name());
             ApiResponse::success(user.to_dto())
         }
-        Err(sqlx::Error::RowNotFound) => ApiResponse::error("用户不存在".to_string()),
+        Err(crate::shared::error::Error::NotFound) => ApiResponse::error("用户不存在".to_string()),
         Err(e) => {
             tracing::error!("Failed to update user {}: {}", id, e);
             ApiResponse::error("更新用户失败".to_string())
@@ -307,7 +285,7 @@ async fn delete_user(
         return ApiResponse::error("无权限删除用户".to_string());
     }
 
-    match User::delete(state.database(), &id).await {
+    match state.user_service.delete_user(&id).await {
         Ok(rows_affected) => {
             if rows_affected > 0 {
                 tracing::info!("User deleted: {}", id);
@@ -336,12 +314,12 @@ async fn enable_user(
     if !is_admin {
         return ApiResponse::error("无权限启用用户".to_string());
     }
-    match User::update_enabled_status(state.database(), &id, true).await {
+    match state.user_service.update_enabled_status(&id, true).await {
         Ok(_user) => {
             tracing::info!("User enabled: {}", id);
             ApiResponse::success(true)
         }
-        Err(sqlx::Error::RowNotFound) => ApiResponse::error("用户不存在".to_string()),
+        Err(crate::shared::error::Error::NotFound) => ApiResponse::error("用户不存在".to_string()),
         Err(e) => {
             tracing::error!("Failed to enable user {}: {}", id, e);
             ApiResponse::error("启用用户失败".to_string())
@@ -362,12 +340,12 @@ async fn disable_user(
     if !is_admin {
         return ApiResponse::error("无权限禁用用户".to_string());
     }
-    match User::update_enabled_status(state.database(), &id, false).await {
+    match state.user_service.update_enabled_status(&id, false).await {
         Ok(_user) => {
             tracing::info!("User disabled: {}", id);
             ApiResponse::success(true)
         }
-        Err(sqlx::Error::RowNotFound) => ApiResponse::error("用户不存在".to_string()),
+        Err(crate::shared::error::Error::NotFound) => ApiResponse::error("用户不存在".to_string()),
         Err(e) => {
             tracing::error!("Failed to disable user {}: {}", id, e);
             ApiResponse::error("禁用用户失败".to_string())
@@ -408,7 +386,7 @@ async fn change_user_password(
     }
 
     // 获取用户信息
-    let user = match User::find_by_id(state.database(), &id).await {
+    let user = match state.user_service.get_user_by_id(&id).await {
         Ok(Some(user)) => user,
         Ok(None) => {
             return ApiResponse::error("用户不存在".to_string());
@@ -420,12 +398,19 @@ async fn change_user_password(
     };
 
     // 验证旧密码
-    if !user.verify_password(&request.old_password) {
-        return ApiResponse::error("旧密码错误".to_string());
+    match user.verify_password(&request.old_password) {
+        Ok(true) => {}
+        Ok(false) => {
+            return ApiResponse::error("旧密码错误".to_string());
+        }
+        Err(e) => {
+            tracing::error!("Password verification failed for user {}: {}", id, e);
+            return ApiResponse::error("密码验证失败".to_string());
+        }
     }
 
     // 更新密码
-    match User::update_password(state.database(), &id, &request.new_password).await {
+    match state.user_service.update_password(&id, &request.new_password).await {
         Ok(()) => {
             tracing::info!("Password changed for user: {}", id);
             ApiResponse::success(true)

@@ -37,8 +37,7 @@ async fn list_roles(
     Query(query): Query<RoleQuery>,
     _claims: Claims,
 ) -> Json<ApiResponse<Vec<Role>>> {
-    match Role::find_with_filters(
-        state.database(),
+    match state.role_service.find_with_filters(
         None, // enabled parameter not used for roles
         query.search.as_deref(),
         query.pagination.page.unwrap_or(1),
@@ -69,7 +68,7 @@ async fn create_role(
     }
 
     // 检查角色名称是否已存在
-    match Role::exists_by_name(state.database(), &request.name).await {
+    match state.role_service.exists_by_name(&request.name).await {
         Ok(true) => {
             return ApiResponse::error("角色名称已存在".to_string());
         }
@@ -81,7 +80,7 @@ async fn create_role(
     }
 
     // 创建角色
-    match Role::create(state.database(), &request).await {
+    match state.role_service.create(&request).await {
         Ok(role) => {
             tracing::info!("Role created: {}", role.name);
             ApiResponse::success(role)
@@ -99,7 +98,7 @@ async fn get_role(
     Path(id): Path<String>,
     _claims: Claims,
 ) -> Json<ApiResponse<Role>> {
-    match Role::find_by_id(state.database(), &id).await {
+    match state.role_service.find_by_id(&id).await {
         Ok(Some(role)) => {
             tracing::debug!("Retrieved role: {}", role.name);
             ApiResponse::success(role)
@@ -126,7 +125,7 @@ async fn update_role(
         }
 
         // 检查角色名称是否已被其他角色使用
-        match Role::exists_by_name_exclude_id(state.database(), name, &id).await {
+        match state.role_service.exists_by_name_exclude_id(name, &id).await {
             Ok(true) => {
                 return ApiResponse::error("角色名称已存在".to_string());
             }
@@ -138,12 +137,12 @@ async fn update_role(
         }
     }
 
-    match Role::update(state.database(), &id, &request).await {
+    match state.role_service.update(&id, &request).await {
         Ok(role) => {
             tracing::info!("Role updated: {}", role.name);
             ApiResponse::success(role)
         }
-        Err(sqlx::Error::RowNotFound) => ApiResponse::error("角色不存在".to_string()),
+        Err(crate::shared::error::Error::NotFound) => ApiResponse::error("角色不存在".to_string()),
         Err(e) => {
             tracing::error!("Failed to update role {}: {}", id, e);
             ApiResponse::error("更新角色失败".to_string())
@@ -157,7 +156,7 @@ async fn delete_role(
     Path(id): Path<String>,
     _claims: Claims,
 ) -> Json<ApiResponse<bool>> {
-    match Role::delete(state.database(), &id).await {
+    match state.role_service.delete(&id).await {
         Ok(rows_affected) => {
             if rows_affected > 0 {
                 tracing::info!("Role deleted: {}", id);

@@ -146,8 +146,9 @@ async fn get_device_profile(
     };
 
     // 加载设备标签
-    if let Err(e) = device.load_tags(state.database()).await {
-        tracing::warn!("Failed to load tags for device {}: {}", device_id, e);
+    match state.tag_service.find_tags_by_target_id(&device_id).await {
+        Ok(tags) => device.tags = Some(tags),
+        Err(e) => tracing::warn!("Failed to load tags for device {}: {}", device_id, e),
     }
 
     // 从缓存的设备对象中获取属性和指令（已包含实时数据）

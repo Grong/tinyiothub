@@ -101,7 +101,6 @@ impl ToolHandler for ListSchedulesHandler {
 
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
-        let db = state.database();
 
         let params = JobQueryParams {
             workspace_id: Some(claims.workspace_id.clone()),
@@ -112,7 +111,7 @@ impl ToolHandler for ListSchedulesHandler {
             page_size: input.page_size,
         };
 
-        let jobs = crate::dto::entity::job::Job::find_all(db, &params)
+        let jobs = state.job_service.find_all(&params)
             .await
             .map_err(|e| ToolError::Internal(format!("failed to list schedules: {}", e)))?;
 
@@ -261,7 +260,7 @@ impl ToolHandler for CreateScheduleHandler {
             alert_config: Some("{}".to_string()),
         };
 
-        let job = crate::dto::entity::job::Job::create(db, &request)
+        let job = state.job_service.create(&request)
             .await
             .map_err(|e| ToolError::Internal(format!("failed to create schedule: {}", e)))?;
 
@@ -307,7 +306,7 @@ impl ToolHandler for DeleteScheduleHandler {
         let db = state.database();
 
         // Verify the job exists first
-        let existing = crate::dto::entity::job::Job::find_by_id(db, &input.id)
+        let existing = state.job_service.find_by_id(&input.id)
             .await
             .map_err(|e| ToolError::Internal(format!("failed to get schedule: {}", e)))?
             .ok_or_else(|| ToolError::NotFound("schedule not found".to_string()))?;
@@ -333,15 +332,11 @@ impl ToolHandler for DeleteScheduleHandler {
             ));
         }
 
-        crate::dto::entity::job::Job::delete(db, &input.id)
+        state.job_service.delete(&input.id)
             .await
             .map_err(|e| ToolError::Internal(format!("failed to delete schedule: {}", e)))?;
 
-        // Delete associated executions
-        let _ = sqlx::query("DELETE FROM job_executions WHERE job_id = ?")
-            .bind(&input.id)
-            .execute(db.pool())
-            .await;
+        let _ = state.job_execution_service.delete_by_job_id(&input.id).await;
 
         Ok(serde_json::json!({
             "success": true,

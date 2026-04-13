@@ -37,7 +37,7 @@ async fn list_permissions(
     _claims: Claims,
 ) -> Json<ApiResponse<Vec<Permission>>> {
     let query = PermissionQuery::default();
-    match Permission::find_all(state.database(), &query).await {
+    match state.permission_service.find_all_permissions(&query).await {
         Ok(permissions) => ApiResponse::success(permissions),
         Err(e) => {
             tracing::error!("Failed to list permissions: {}", e);

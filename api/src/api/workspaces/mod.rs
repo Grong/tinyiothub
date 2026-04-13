@@ -9,7 +9,7 @@ use axum::{
 
 use crate::{
     dto::entity::workspace::{
-        AssignDeviceRequest, CreateWorkspaceRequest, UpdateWorkspaceRequest, Workspace,
+        AssignDeviceRequest, CreateWorkspaceRequest, UpdateWorkspaceRequest,
         WorkspaceQueryParams, WorkspaceWithDeviceCount,
     },
     dto::response::{ApiResponse, builder::ApiResponseBuilder},
@@ -33,9 +33,7 @@ async fn list_workspaces(
     Extension(claims): Extension<Claims>,
     Query(params): Query<WorkspaceQueryParams>,
 ) -> Json<ApiResponse<Vec<WorkspaceWithDeviceCount>>> {
-    let db = state.database.clone();
-
-    match Workspace::find_by_tenant(&db, &claims.tenant_id, params.page, params.page_size).await {
+    match state.workspace_service.find_by_tenant(&claims.tenant_id, params.page, params.page_size).await {
         Ok(workspaces) => ApiResponseBuilder::success(workspaces),
         Err(e) => {
             tracing::error!("Failed to list workspaces: {}", e);
@@ -50,10 +48,8 @@ async fn get_workspace(
     Extension(claims): Extension<Claims>,
     Path(id): Path<String>,
 ) -> Json<ApiResponse<WorkspaceWithDeviceCount>> {
-    let db = state.database.clone();
-
     // Verify workspace belongs to user's tenant
-    match Workspace::find_by_id(&db, &id).await {
+    match state.workspace_service.find_by_id(&id).await {
         Ok(Some(workspace)) => {
             if workspace.tenant_id != claims.tenant_id {
                 return ApiResponseBuilder::error_with_code(403, "无权访问此工作空间");
@@ -74,11 +70,8 @@ async fn create_workspace(
     Extension(claims): Extension<Claims>,
     Json(payload): Json<CreateWorkspaceRequest>,
 ) -> Json<ApiResponse<WorkspaceWithDeviceCount>> {
-    let db = state.database.clone();
-
     // Create workspace in DB first (without agent_id)
-    let workspace = match Workspace::create(
-        &db,
+    let workspace = match state.workspace_service.create(
         &claims.tenant_id,
         &payload.name,
         payload.description.as_deref(),
@@ -108,7 +101,7 @@ async fn create_workspace(
         Ok(_agent_id) => {
             // Update workspace with agent_id
             if let Ok(Some(updated)) =
-                Workspace::update(&db, &workspace.id, None, None, None).await
+                state.workspace_service.update(&workspace.id, None, None, None).await
             {
                 (updated, None)
             } else {
@@ -169,10 +162,8 @@ async fn update_workspace(
     Path(id): Path<String>,
     Json(payload): Json<UpdateWorkspaceRequest>,
 ) -> Json<ApiResponse<WorkspaceWithDeviceCount>> {
-    let db = state.database.clone();
-
     // Verify workspace belongs to user's tenant
-    match Workspace::find_by_id(&db, &id).await {
+    match state.workspace_service.find_by_id(&id).await {
         Ok(Some(workspace)) => {
             if workspace.tenant_id != claims.tenant_id {
                 return ApiResponseBuilder::error_with_code(403, "无权访问此工作空间");
@@ -185,8 +176,7 @@ async fn update_workspace(
         }
     }
 
-    match Workspace::update(
-        &db,
+    match state.workspace_service.update(
         &id,
         payload.name.as_deref(),
         payload.description.as_deref(),
@@ -209,10 +199,8 @@ async fn delete_workspace(
     Extension(claims): Extension<Claims>,
     Path(id): Path<String>,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    let db = state.database.clone();
-
     // Get workspace to find agent_id
-    let workspace = match Workspace::find_by_id(&db, &id).await {
+    let workspace = match state.workspace_service.find_by_id(&id).await {
         Ok(Some(ws)) => {
             if ws.tenant_id != claims.tenant_id {
                 return ApiResponseBuilder::error_with_code(403, "无权访问此工作空间");
@@ -238,7 +226,7 @@ async fn delete_workspace(
     }
 
     // Delete workspace from DB
-    match Workspace::delete(&db, &id).await {
+    match state.workspace_service.delete(&id).await {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({"success": true})),
         Err(e) => {
             tracing::error!("Failed to delete workspace: {}", e);
@@ -254,10 +242,8 @@ async fn assign_device(
     Path(workspace_id): Path<String>,
     Json(payload): Json<AssignDeviceRequest>,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    let db = state.database.clone();
-
     // Verify workspace exists and belongs to user's tenant
-    match Workspace::find_by_id(&db, &workspace_id).await {
+    match state.workspace_service.find_by_id(&workspace_id).await {
         Ok(Some(workspace)) => {
             if workspace.tenant_id != claims.tenant_id {
                 return ApiResponseBuilder::error_with_code(403, "无权访问此工作空间");
@@ -270,8 +256,8 @@ async fn assign_device(
         }
     };
 
-    match Workspace::assign_device(&db, &payload.device_id, &workspace_id).await {
+    match state.workspace_service.assign_device(&payload.device_id, &workspace_id).await {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({"success": true})),
-        Err(msg) => ApiResponseBuilder::error_with_code(409, &msg),
+        Err(e) => ApiResponseBuilder::error_with_code(409, &e.to_string()),
     }
 }
