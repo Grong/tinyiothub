@@ -1,10 +1,13 @@
 use std::sync::Arc;
 
 use crate::{
-    domain::event::{
-        entities::Event as DomainEvent,
-        value_objects::{
-            ContentElement, DeviceEventType, EventLevel, EventSource, RichContent, TextFormat,
+    domain::{
+        device::repository::{DeviceCriteria, DeviceRepository},
+        event::{
+            entities::Event as DomainEvent,
+            value_objects::{
+                ContentElement, DeviceEventType, EventLevel, EventSource, RichContent, TextFormat,
+            },
         },
     },
     dto::{
@@ -22,18 +25,21 @@ use crate::{
 /// 设备服务
 /// 负责设备的业务逻辑和事件发布
 pub struct DeviceService {
+    repository: Arc<dyn DeviceRepository>,
+    /// 临时保留：用于尚未迁移到 Repository 的 Property/Command/Tag 调用
+    /// TODO: Phase 3 完成后移除
     database: Arc<Database>,
     event_bus: Option<Arc<EventBus>>,
 }
 
 impl DeviceService {
-    pub fn new(database: Arc<Database>) -> Self {
-        Self { database, event_bus: None }
+    pub fn new(repository: Arc<dyn DeviceRepository>, database: Arc<Database>) -> Self {
+        Self { repository, database, event_bus: None }
     }
 
     /// Create device service with event bus
-    pub fn with_event_bus(database: Arc<Database>, event_bus: Arc<EventBus>) -> Self {
-        Self { database, event_bus: Some(event_bus) }
+    pub fn with_event_bus(repository: Arc<dyn DeviceRepository>, database: Arc<Database>, event_bus: Arc<EventBus>) -> Self {
+        Self { repository, database, event_bus: Some(event_bus) }
     }
 
     /// 创建设备
@@ -41,12 +47,15 @@ impl DeviceService {
         tracing::info!("Creating device: {}", request.name);
 
         // 验证设备名称唯一性
-        if Device::exists_by_name(&self.database, &request.name).await.unwrap_or(false) {
+        if self.repository.exists_by_name(&request.name).await.unwrap_or(false) {
             return Err(Error::ValidationError("设备名称已存在".to_string()));
         }
 
         // 创建设备
-        let created_device = Device::create_with_tags(&self.database, request).await?;
+        let created_device = self.repository.create(request).await?;
+
+        // TODO: 加载标签（当前 repository 不处理标签，需要在 repository 层扩展或在此手动加载）
+        // publish_device_created_event 不需要标签
 
         // 发布设备创建事件
         self.publish_device_created_event(&created_device).await;
@@ -69,7 +78,7 @@ impl DeviceService {
         );
 
         // 验证设备名称唯一性
-        if Device::exists_by_name(&self.database, &device_input.name).await.unwrap_or(false) {
+        if self.repository.exists_by_name(&device_input.name).await.unwrap_or(false) {
             return Err(Error::ValidationError("设备名称已存在".to_string()));
         }
 
@@ -80,7 +89,7 @@ impl DeviceService {
             .map_err(|e| Error::ValidationError(format!("模板应用失败: {}", e)))?;
 
         // 创建设备
-        let created_device = Device::create_with_tags(&self.database, &device_request).await?;
+        let created_device = self.repository.create(&device_request).await?;
 
         // 获取模板
         let template = template_engine
@@ -97,8 +106,9 @@ impl DeviceService {
         {
             Ok(properties) => {
                 if !properties.is_empty() {
-                    if let Err(e) = DeviceProperty::create_batch(&self.database, &properties).await
-                    {
+                    // TODO: DeviceProperty 的批量创建仍直接依赖 Database，后续应提取到 repository
+                    let db = self.database.clone();
+                    if let Err(e) = DeviceProperty::create_batch(&db, &properties).await {
                         tracing::warn!("Failed to create device properties: {}", e);
                     }
                 }
@@ -115,7 +125,9 @@ impl DeviceService {
         {
             Ok(commands) => {
                 if !commands.is_empty() {
-                    if let Err(e) = DeviceCommand::bulk_create(&self.database, &commands).await {
+                    // TODO: 同上，临时使用 Database 直接调用
+                    let db = self.database.clone();
+                    if let Err(e) = DeviceCommand::bulk_create(&db, &commands).await {
                         tracing::warn!("Failed to create device commands: {}", e);
                     }
                 }
@@ -185,10 +197,12 @@ impl DeviceService {
 
         // 获取旧设备信息
         let old_device =
-            Device::find_by_id(&self.database, device_id).await?.ok_or(Error::NotFound)?;
+            self.repository.find_by_id(device_id).await?.ok_or(Error::NotFound)?;
 
         // 更新设备
-        let updated_device = Device::update_with_tags(&self.database, device_id, request).await?;
+        let updated_device = self.repository.update(device_id, request).await?;
+
+        // TODO: 标签处理暂由调用方负责，当前 repository 不处理标签
 
         // 发布设备更新事件
         if let Some(ref event_bus) = self.event_bus {
@@ -256,10 +270,10 @@ impl DeviceService {
         tracing::info!("Deleting device: {}", device_id);
 
         // 获取设备信息（用于事件）
-        let device = Device::find_by_id(&self.database, device_id).await?.ok_or(Error::NotFound)?;
+        let device = self.repository.find_by_id(device_id).await?.ok_or(Error::NotFound)?;
 
         // 删除设备
-        let deleted_count = Device::delete(&self.database, device_id).await?;
+        let deleted_count = self.repository.delete(device_id).await?;
         let success = deleted_count > 0;
 
         if success {
@@ -306,16 +320,16 @@ impl DeviceService {
     /// 更新设备状态
     pub async fn update_device_state(&self, device_id: &str, new_state: i32) -> Result<(), Error> {
         // 获取当前状态
-        let device = Device::find_by_id(&self.database, device_id).await?.ok_or(Error::NotFound)?;
+        let device = self.repository.find_by_id(device_id).await?.ok_or(Error::NotFound)?;
 
         let old_state = device.state.unwrap_or(0);
 
         if old_state != new_state {
             // 更新数据库中的状态
-            Device::update_state(&self.database, device_id, new_state).await?;
+            self.repository.update_state(device_id, new_state).await?;
 
             // 获取更新后的设备信息
-            if let Ok(Some(updated_device)) = Device::find_by_id(&self.database, device_id).await {
+            if let Ok(Some(updated_device)) = self.repository.find_by_id(device_id).await {
                 // 发布设备状态更新事件
                 if let Some(ref event_bus) = self.event_bus {
                     let event = DomainEvent::new_device_event(
@@ -365,7 +379,8 @@ impl DeviceService {
 
     /// 根据ID获取设备
     pub async fn get_device_by_id(&self, device_id: &str) -> Result<Option<Device>, Error> {
-        Device::find_by_id(&self.database, device_id)
+        self.repository
+            .find_by_id(device_id)
             .await
             .map_err(|e| Error::IOError(e.to_string()))
     }
@@ -375,19 +390,22 @@ impl DeviceService {
         &self,
         device_id: &str,
     ) -> Result<Option<Device>, Error> {
-        Device::find_by_id_with_tags(&self.database, device_id)
+        // TODO: repository 当前不处理标签，先调用 find_by_id，后续扩展 repository 或在此手动加载标签
+        self.repository
+            .find_by_id(device_id)
             .await
             .map_err(|e| Error::IOError(e.to_string()))
     }
 
     /// 根据名称获取设备
     pub async fn get_device_by_name(&self, name: &str) -> Result<Option<Device>, Error> {
-        Device::find_by_name(&self.database, name).await.map_err(|e| Error::IOError(e.to_string()))
+        self.repository.find_by_name(name).await.map_err(|e| Error::IOError(e.to_string()))
     }
 
     /// 查询设备列表
     pub async fn get_devices(&self, params: &DeviceQueryParams) -> Result<Vec<Device>, Error> {
-        Device::find_all(&self.database, params).await.map_err(|e| Error::IOError(e.to_string()))
+        let criteria = params_to_criteria(params);
+        self.repository.find_all(&criteria).await.map_err(|e| Error::IOError(e.to_string()))
     }
 
     /// 查询设备列表（包含标签）
@@ -395,9 +413,8 @@ impl DeviceService {
         &self,
         params: &DeviceQueryParams,
     ) -> Result<Vec<Device>, Error> {
-        Device::find_all_with_tags(&self.database, params)
-            .await
-            .map_err(|e| Error::IOError(e.to_string()))
+        // TODO: repository 当前不处理标签，先调用 find_all，后续扩展 repository 或在此手动加载标签
+        self.get_devices(params).await
     }
 
     /// 分页查询设备
@@ -421,35 +438,40 @@ impl DeviceService {
         keyword: &str,
         limit: Option<u32>,
     ) -> Result<Vec<Device>, Error> {
-        Device::search(&self.database, keyword, limit)
+        self.repository
+            .search(keyword, limit)
             .await
             .map_err(|e| Error::IOError(e.to_string()))
     }
 
     /// 根据父设备ID获取子设备
     pub async fn get_child_devices(&self, parent_id: &str) -> Result<Vec<Device>, Error> {
-        Device::find_children(&self.database, parent_id)
+        self.repository
+            .find_children(parent_id)
             .await
             .map_err(|e| Error::IOError(e.to_string()))
     }
 
     /// 根据产品ID获取设备
     pub async fn get_devices_by_product(&self, product_id: &str) -> Result<Vec<Device>, Error> {
-        Device::find_by_product_id(&self.database, product_id)
+        self.repository
+            .find_by_product_id(product_id)
             .await
             .map_err(|e| Error::IOError(e.to_string()))
     }
 
     /// 根据驱动名称获取设备
     pub async fn get_devices_by_driver(&self, driver_name: &str) -> Result<Vec<Device>, Error> {
-        Device::find_by_driver_name(&self.database, driver_name)
+        self.repository
+            .find_by_driver_name(driver_name)
             .await
             .map_err(|e| Error::IOError(e.to_string()))
     }
 
     /// 获取设备树结构
     pub async fn get_device_tree(&self, root_id: Option<&str>) -> Result<Vec<Device>, Error> {
-        Device::get_device_tree(&self.database, root_id)
+        self.repository
+            .get_device_tree(root_id)
             .await
             .map_err(|e| Error::IOError(e.to_string()))
     }
@@ -461,7 +483,9 @@ impl DeviceService {
         &self,
         device_id: &str,
     ) -> Result<Vec<DeviceProperty>, Error> {
-        DeviceProperty::find_by_device_id(&self.database, device_id)
+        // TODO: DeviceProperty 尚未提取到 repository，暂时仍直接调用 Database
+        let db = self.database.clone();
+        DeviceProperty::find_by_device_id(&db, device_id)
             .await
             .map_err(|e| Error::IOError(e.to_string()))
     }
@@ -498,7 +522,9 @@ impl DeviceService {
 
     /// 获取设备命令列表
     pub async fn get_device_commands(&self, device_id: &str) -> Result<Vec<DeviceCommand>, Error> {
-        DeviceCommand::find_by_device_id(&self.database, device_id)
+        // TODO: DeviceCommand 尚未提取到 repository，暂时仍直接调用 Database
+        let db = self.database.clone();
+        DeviceCommand::find_by_device_id(&db, device_id)
             .await
             .map_err(|e| Error::IOError(e.to_string()))
     }
@@ -517,17 +543,17 @@ impl DeviceService {
 
     /// 获取设备统计信息
     pub async fn get_device_stats(&self) -> Result<crate::dto::entity::device::DeviceStats, Error> {
-        Device::get_stats(&self.database).await.map_err(|e| Error::IOError(e.to_string()))
+        self.repository.get_stats().await.map_err(|e| Error::IOError(e.to_string()))
     }
 
     /// 按类型统计设备
     pub async fn get_device_stats_by_type(&self) -> Result<Vec<(String, i64)>, Error> {
-        Device::get_stats_by_type(&self.database).await.map_err(|e| Error::IOError(e.to_string()))
+        self.repository.get_stats_by_type().await.map_err(|e| Error::IOError(e.to_string()))
     }
 
     /// 按驱动统计设备
     pub async fn get_device_stats_by_driver(&self) -> Result<Vec<(String, i64)>, Error> {
-        Device::get_stats_by_driver(&self.database).await.map_err(|e| Error::IOError(e.to_string()))
+        self.repository.get_stats_by_driver().await.map_err(|e| Error::IOError(e.to_string()))
     }
 
     // === 批量操作 ===
@@ -541,13 +567,13 @@ impl DeviceService {
 
         // 验证设备名称唯一性
         for request in requests {
-            if Device::exists_by_name(&self.database, &request.name).await.unwrap_or(false) {
+            if self.repository.exists_by_name(&request.name).await.unwrap_or(false) {
                 return Err(Error::ValidationError(format!("设备名称 '{}' 已存在", request.name)));
             }
         }
 
         // 批量创建设备
-        let created_devices = Device::create_batch(&self.database, requests).await?;
+        let created_devices = self.repository.create_batch(requests).await?;
 
         // 发布批量设备创建事件
         if let Some(ref event_bus) = self.event_bus {
@@ -597,10 +623,10 @@ impl DeviceService {
         tracing::info!("Deleting {} devices in batch", device_ids.len());
 
         // 获取设备信息（用于事件）
-        let devices = Device::find_by_ids(&self.database, device_ids).await?;
+        let devices = self.repository.find_by_ids(device_ids).await?;
 
         // 批量删除设备
-        let deleted_count = Device::delete_by_ids(&self.database, device_ids).await?;
+        let deleted_count = self.repository.delete_by_ids(device_ids).await?;
 
         // 发布批量设备删除事件
         if let Some(ref event_bus) = self.event_bus {
@@ -652,7 +678,7 @@ impl DeviceService {
     ) -> Result<u64, Error> {
         tracing::info!("Updating {} device states in batch", updates.len());
 
-        let updated_count = Device::update_states_batch(&self.database, updates).await?;
+        let updated_count = self.repository.update_states_batch(updates).await?;
 
         // 发布设备更新事件（简化版，只记录日志）
         for (device_id, new_state) in updates {
@@ -675,7 +701,8 @@ impl DeviceService {
 
     /// 检查设备名称是否存在
     pub async fn device_name_exists(&self, name: &str) -> Result<bool, Error> {
-        Device::exists_by_name(&self.database, name)
+        self.repository
+            .exists_by_name(name)
             .await
             .map_err(|e| Error::IOError(e.to_string()))
     }
@@ -707,13 +734,13 @@ impl DeviceService {
     /// 加载完整的设备信息（包含属性和命令）
     pub async fn load_complete_device(&self, device_id: &str) -> Result<Option<Device>, Error> {
         // 从数据库加载设备基本信息
-        let mut device = match Device::find_by_id(&self.database, device_id).await? {
+        let mut device = match self.repository.find_by_id(device_id).await? {
             Some(device) => device,
             None => return Ok(None),
         };
 
         // 加载设备属性
-        match DeviceProperty::find_by_device_id(&self.database, device_id).await {
+        match self.get_device_properties(device_id).await {
             Ok(properties) => {
                 device.properties = Some(properties);
             }
@@ -724,7 +751,7 @@ impl DeviceService {
         }
 
         // 加载设备指令
-        match DeviceCommand::find_by_device_id(&self.database, device_id).await {
+        match self.get_device_commands(device_id).await {
             Ok(commands) => {
                 device.commands = Some(commands);
             }
@@ -769,7 +796,7 @@ impl DeviceService {
         params: Option<String>,
     ) -> Result<String, Error> {
         // 验证设备存在
-        let device = Device::find_by_id(&self.database, device_id).await?
+        let device = self.repository.find_by_id(device_id).await?
             .ok_or(Error::NotFound)?;
 
         let command_id = uuid::Uuid::new_v4().to_string();
@@ -790,7 +817,10 @@ impl DeviceService {
             description: Some(format!("Automation command: {} via {}", command_name, command_type)),
             parameters: params,
         };
-        let _ = DeviceCommand::create(&self.database, &create_request).await;
+        // TODO: DeviceCommand 尚未提取到 repository，暂时仍直接调用 Database
+        let db = self.database.clone();
+        let _ = DeviceCommand::create(&db, &create_request,
+        ).await;
 
         // 发布命令执行事件（DataServer 会处理实际执行）
         if let Some(ref event_bus) = self.event_bus {
@@ -823,5 +853,26 @@ impl DeviceService {
         }
 
         Ok(command_id)
+    }
+}
+
+/// 将 DeviceQueryParams 转换为 DeviceCriteria
+fn params_to_criteria(params: &DeviceQueryParams) -> DeviceCriteria {
+    DeviceCriteria {
+        name: params.name.clone(),
+        display_name: params.display_name.clone(),
+        device_type: params.device_type.clone(),
+        address: params.address.clone(),
+        driver_name: params.driver_name.clone(),
+        state: params.state,
+        parent_id: params.parent_id.clone(),
+        product_id: params.product_id.clone(),
+        tenant_id: params.tenant_id.clone(),
+        workspace_id: params.workspace_id.clone(),
+        search_text: None,
+        sort_by: crate::domain::device::repository::DeviceSortBy::CreatedAt,
+        sort_order: crate::domain::device::repository::DeviceSortOrder::Descending,
+        limit: params.page_size,
+        offset: params.page.map(|p| p.saturating_sub(1) * params.page_size.unwrap_or(0)),
     }
 }

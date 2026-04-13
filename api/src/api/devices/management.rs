@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::{
     extract::{Path, Query, State},
     routing::{get, post},
@@ -223,8 +225,12 @@ async fn create_device(
     };
 
     // 使用DeviceService创建设备，传入event_bus以触发事件
+    let device_repository: Arc<dyn crate::domain::device::repository::DeviceRepository> =
+        Arc::new(crate::infrastructure::persistence::repositories::SqliteDeviceRepository::new(
+            state.database.as_ref().clone(),
+        ));
     let device_service =
-        DeviceService::with_event_bus(state.database.clone(), state.event_bus.clone());
+        DeviceService::with_event_bus(device_repository, state.database.clone(), state.event_bus.clone());
 
     match device_service.create_device(&request).await {
         Ok(created_device) => ApiResponseBuilder::success(created_device),
@@ -331,8 +337,12 @@ async fn update_device(
     };
 
     // 使用DeviceService更新设备，传入event_bus以触发事件
+    let device_repository: Arc<dyn crate::domain::device::repository::DeviceRepository> =
+        Arc::new(crate::infrastructure::persistence::repositories::SqliteDeviceRepository::new(
+            state.database.as_ref().clone(),
+        ));
     let device_service =
-        DeviceService::with_event_bus(state.database.clone(), state.event_bus.clone());
+        DeviceService::with_event_bus(device_repository, state.database.clone(), state.event_bus.clone());
 
     match device_service.update_device(&id, &update_request).await {
         Ok(updated_device) => ApiResponseBuilder::success(updated_device),
@@ -361,8 +371,12 @@ async fn delete_device(
     }
 
     // 使用DeviceService删除设备，传入event_bus以触发事件
+    let device_repository: Arc<dyn crate::domain::device::repository::DeviceRepository> =
+        Arc::new(crate::infrastructure::persistence::repositories::SqliteDeviceRepository::new(
+            state.database.as_ref().clone(),
+        ));
     let device_service =
-        DeviceService::with_event_bus(state.database.clone(), state.event_bus.clone());
+        DeviceService::with_event_bus(device_repository, state.database.clone(), state.event_bus.clone());
 
     match device_service.delete_device(&id).await {
         Ok(success) => {
@@ -449,8 +463,12 @@ async fn create_device_from_template(
     Json(req): Json<CreateDeviceFromTemplateRequest>,
 ) -> Json<ApiResponse<Device>> {
     // 使用 DeviceService 创建设备（包含所有业务逻辑）
+    let device_repository: Arc<dyn crate::domain::device::repository::DeviceRepository> =
+        Arc::new(crate::infrastructure::persistence::repositories::SqliteDeviceRepository::new(
+            state.database.as_ref().clone(),
+        ));
     let device_service =
-        DeviceService::with_event_bus(state.database.clone(), state.event_bus.clone());
+        DeviceService::with_event_bus(device_repository, state.database.clone(), state.event_bus.clone());
 
     // Set tenant_id from authenticated user's claims
     let mut device_input = req.device_input;
