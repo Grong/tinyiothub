@@ -8,7 +8,9 @@ use crate::{
         agent::memory_service::MemoryService,
         device::{
             monitoring_service::DeviceMonitoringService,
-            performance_service::DevicePerformanceService, service::DeviceService,
+            performance_service::DevicePerformanceService,
+            query_service::DeviceQueryService,
+            service::DeviceService,
             trace_service::DeviceTraceService,
         },
         event::{
@@ -70,6 +72,9 @@ pub struct AppState {
 
     /// 设备追踪服务 - 操作日志和审计
     pub trace_service: Arc<DeviceTraceService>,
+
+    /// 设备查询服务 - 报表和只读查询
+    pub device_query_service: Arc<dyn DeviceQueryService>,
 
     /// 模板引擎 - 设备模板管理
     pub template_engine: Arc<TemplateEngine>,
@@ -160,6 +165,10 @@ impl AppState {
             ));
         let device_service =
             Arc::new(DeviceService::with_event_bus(device_repository, database.clone(), event_bus.clone()));
+        let device_query_service: Arc<dyn DeviceQueryService> =
+            Arc::new(crate::infrastructure::persistence::repositories::SqliteDeviceQueryService::new(
+                database.as_ref().clone(),
+            ));
 
         // 监控服务 - 依赖数据库和上下文
         let monitoring_service =
@@ -215,6 +224,7 @@ impl AppState {
             database,
             data_server: None, // DataServer 由 ServiceManager 设置
             device_service,
+            device_query_service,
             monitoring_service,
             performance_service,
             trace_service,

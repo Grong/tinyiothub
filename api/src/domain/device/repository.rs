@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::dto::entity::device::{
-    CreateDeviceRequest, Device, DeviceStats, DeviceStatusUpdate, UpdateDeviceRequest,
+    CreateDeviceRequest, Device, DeviceStatusUpdate, UpdateDeviceRequest,
 };
 use crate::shared::error::Result;
 
@@ -59,21 +59,6 @@ pub trait DeviceRepository: Send + Sync {
 
     /// Find devices by a list of IDs
     async fn find_by_ids(&self, ids: &[String]) -> Result<Vec<Device>>;
-
-    /// Search devices by keyword across multiple fields
-    async fn search(&self, keyword: &str, limit: Option<u32>) -> Result<Vec<Device>>;
-
-    /// Get overall device statistics
-    async fn get_stats(&self) -> Result<DeviceStats>;
-
-    /// Get device statistics grouped by device type
-    async fn get_stats_by_type(&self) -> Result<Vec<(String, i64)>>;
-
-    /// Get device statistics grouped by driver name
-    async fn get_stats_by_driver(&self) -> Result<Vec<(String, i64)>>;
-
-    /// Get the device tree starting from an optional root ID
-    async fn get_device_tree(&self, root_id: Option<&str>) -> Result<Vec<Device>>;
 
     /// Find devices with enabled/search filters and pagination
     async fn find_with_filters(

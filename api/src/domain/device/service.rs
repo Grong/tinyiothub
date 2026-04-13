@@ -444,18 +444,6 @@ impl DeviceService {
         Ok(DataObjectWithPagination::new(&devices, page_no, page_size))
     }
 
-    /// 搜索设备（模糊匹配）
-    pub async fn search_devices(
-        &self,
-        keyword: &str,
-        limit: Option<u32>,
-    ) -> Result<Vec<Device>, Error> {
-        self.repository
-            .search(keyword, limit)
-            .await
-            .map_err(|e| Error::IOError(e.to_string()))
-    }
-
     /// 根据父设备ID获取子设备
     pub async fn get_child_devices(&self, parent_id: &str) -> Result<Vec<Device>, Error> {
         self.repository
@@ -476,14 +464,6 @@ impl DeviceService {
     pub async fn get_devices_by_driver(&self, driver_name: &str) -> Result<Vec<Device>, Error> {
         self.repository
             .find_by_driver_name(driver_name)
-            .await
-            .map_err(|e| Error::IOError(e.to_string()))
-    }
-
-    /// 获取设备树结构
-    pub async fn get_device_tree(&self, root_id: Option<&str>) -> Result<Vec<Device>, Error> {
-        self.repository
-            .get_device_tree(root_id)
             .await
             .map_err(|e| Error::IOError(e.to_string()))
     }
@@ -549,23 +529,6 @@ impl DeviceService {
     ) -> Result<Option<DeviceCommand>, Error> {
         let commands = self.get_device_commands(device_id).await?;
         Ok(commands.into_iter().find(|c| c.name == command_name))
-    }
-
-    // === 统计查询 ===
-
-    /// 获取设备统计信息
-    pub async fn get_device_stats(&self) -> Result<crate::dto::entity::device::DeviceStats, Error> {
-        self.repository.get_stats().await.map_err(|e| Error::IOError(e.to_string()))
-    }
-
-    /// 按类型统计设备
-    pub async fn get_device_stats_by_type(&self) -> Result<Vec<(String, i64)>, Error> {
-        self.repository.get_stats_by_type().await.map_err(|e| Error::IOError(e.to_string()))
-    }
-
-    /// 按驱动统计设备
-    pub async fn get_device_stats_by_driver(&self) -> Result<Vec<(String, i64)>, Error> {
-        self.repository.get_stats_by_driver().await.map_err(|e| Error::IOError(e.to_string()))
     }
 
     // === 批量操作 ===
