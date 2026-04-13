@@ -41,94 +41,88 @@ fn parse_driver_attributes(
 
     for attr in attrs {
         if attr.path.is_ident("driver") {
-            match attr.parse_meta()? {
-                Meta::List(meta_list) => {
-                    for nested in meta_list.nested {
-                        match nested {
-                            NestedMeta::Meta(Meta::NameValue(nv)) if nv.path.is_ident("name") => {
-                                if let Lit::Str(lit_str) = nv.lit {
-                                    name = Some(lit_str.value());
-                                }
+            if let Meta::List(meta_list) = attr.parse_meta()? {
+                for nested in meta_list.nested {
+                    match nested {
+                        NestedMeta::Meta(Meta::NameValue(nv)) if nv.path.is_ident("name") => {
+                            if let Lit::Str(lit_str) = nv.lit {
+                                name = Some(lit_str.value());
                             }
-                            NestedMeta::Meta(Meta::NameValue(nv))
-                                if nv.path.is_ident("version") =>
-                            {
-                                if let Lit::Str(lit_str) = nv.lit {
-                                    version = Some(lit_str.value());
-                                }
-                            }
-                            NestedMeta::Meta(Meta::NameValue(nv))
-                                if nv.path.is_ident("description") =>
-                            {
-                                if let Lit::Str(lit_str) = nv.lit {
-                                    description = Some(lit_str.value());
-                                }
-                            }
-                            _ => {}
                         }
+                        NestedMeta::Meta(Meta::NameValue(nv))
+                            if nv.path.is_ident("version") =>
+                        {
+                            if let Lit::Str(lit_str) = nv.lit {
+                                version = Some(lit_str.value());
+                            }
+                        }
+                        NestedMeta::Meta(Meta::NameValue(nv))
+                            if nv.path.is_ident("description") =>
+                        {
+                            if let Lit::Str(lit_str) = nv.lit {
+                                description = Some(lit_str.value());
+                            }
+                        }
+                        _ => {}
                     }
                 }
-                _ => {}
             }
         } else if attr.path.is_ident("driver_option") {
-            match attr.parse_meta()? {
-                Meta::List(meta_list) => {
-                    let mut opt_label = None;
-                    let mut opt_name = None;
-                    let mut opt_default = None;
-                    let mut opt_type = None;
-                    let mut opt_required = false;
+            if let Meta::List(meta_list) = attr.parse_meta()? {
+                let mut opt_label = None;
+                let mut opt_name = None;
+                let mut opt_default = None;
+                let mut opt_type = None;
+                let mut opt_required = false;
 
-                    for nested in meta_list.nested {
-                        match nested {
-                            NestedMeta::Meta(Meta::NameValue(nv)) if nv.path.is_ident("label") => {
-                                if let Lit::Str(lit_str) = nv.lit {
-                                    opt_label = Some(lit_str.value());
-                                }
+                for nested in meta_list.nested {
+                    match nested {
+                        NestedMeta::Meta(Meta::NameValue(nv)) if nv.path.is_ident("label") => {
+                            if let Lit::Str(lit_str) = nv.lit {
+                                opt_label = Some(lit_str.value());
                             }
-                            NestedMeta::Meta(Meta::NameValue(nv)) if nv.path.is_ident("name") => {
-                                if let Lit::Str(lit_str) = nv.lit {
-                                    opt_name = Some(lit_str.value());
-                                }
-                            }
-                            NestedMeta::Meta(Meta::NameValue(nv))
-                                if nv.path.is_ident("default") =>
-                            {
-                                if let Lit::Str(lit_str) = nv.lit {
-                                    opt_default = Some(lit_str.value());
-                                }
-                            }
-                            NestedMeta::Meta(Meta::NameValue(nv))
-                                if nv.path.is_ident("option_type") =>
-                            {
-                                if let Lit::Str(lit_str) = nv.lit {
-                                    opt_type = Some(lit_str.value());
-                                }
-                            }
-                            NestedMeta::Meta(Meta::NameValue(nv))
-                                if nv.path.is_ident("required") =>
-                            {
-                                if let Lit::Bool(lit_bool) = nv.lit {
-                                    opt_required = lit_bool.value;
-                                }
-                            }
-                            _ => {}
                         }
-                    }
-
-                    if let (Some(label), Some(name), Some(default), Some(option_type)) =
-                        (opt_label, opt_name, opt_default, opt_type)
-                    {
-                        options.push(DriverOption {
-                            label,
-                            name,
-                            default_value: default,
-                            option_type,
-                            required: opt_required,
-                        });
+                        NestedMeta::Meta(Meta::NameValue(nv)) if nv.path.is_ident("name") => {
+                            if let Lit::Str(lit_str) = nv.lit {
+                                opt_name = Some(lit_str.value());
+                            }
+                        }
+                        NestedMeta::Meta(Meta::NameValue(nv))
+                            if nv.path.is_ident("default") =>
+                        {
+                            if let Lit::Str(lit_str) = nv.lit {
+                                opt_default = Some(lit_str.value());
+                            }
+                        }
+                        NestedMeta::Meta(Meta::NameValue(nv))
+                            if nv.path.is_ident("option_type") =>
+                        {
+                            if let Lit::Str(lit_str) = nv.lit {
+                                opt_type = Some(lit_str.value());
+                            }
+                        }
+                        NestedMeta::Meta(Meta::NameValue(nv))
+                            if nv.path.is_ident("required") =>
+                        {
+                            if let Lit::Bool(lit_bool) = nv.lit {
+                                opt_required = lit_bool.value;
+                            }
+                        }
+                        _ => {}
                     }
                 }
-                _ => {}
+
+                if let (Some(label), Some(name), Some(default), Some(option_type)) =
+                    (opt_label, opt_name, opt_default, opt_type)
+                {
+                    options.push(DriverOption {
+                        label,
+                        name,
+                        default_value: default,
+                        option_type,
+                        required: opt_required,
+                    });
+                }
             }
         }
     }
