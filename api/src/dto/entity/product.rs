@@ -326,28 +326,27 @@ impl Product {
     ) -> Result<Vec<Product>, sqlx::Error> {
         let search_pattern = format!("%{}%", keyword);
 
-        let mut query_str = String::from(
+        let mut query = QueryBuilder::new(
             r#"
-            SELECT id, name, description, version, manufacturer, device_type, 
+            SELECT id, name, description, version, manufacturer, device_type,
                    protocol_type, created_at, updated_at
-            FROM products WHERE 
-                name LIKE ? OR 
-                description LIKE ? OR 
-                manufacturer LIKE ?
-            ORDER BY name
+            FROM products WHERE
+                name LIKE
             "#,
         );
 
+        query.push_bind(&search_pattern);
+        query.push(" OR description LIKE ");
+        query.push_bind(&search_pattern);
+        query.push(" OR manufacturer LIKE ");
+        query.push_bind(&search_pattern);
+        query.push(" ORDER BY name");
+
         if let Some(limit) = limit {
-            query_str.push_str(&format!(" LIMIT {}", limit));
+            query.push(" LIMIT ").push_bind(limit as i64);
         }
 
-        let products = sqlx::query_as::<_, Product>(sqlx::AssertSqlSafe(query_str.clone()))
-            .bind(&search_pattern)
-            .bind(&search_pattern)
-            .bind(&search_pattern)
-            .fetch_all(db.pool())
-            .await?;
+        let products = query.build_query_as::<Product>().fetch_all(db.pool()).await?;
 
         Ok(products)
     }
