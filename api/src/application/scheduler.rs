@@ -147,8 +147,6 @@ impl TimeTask {
     }
 }
 
-unsafe impl Send for TimeTask {}
-unsafe impl Sync for TimeTask {}
 
 impl Clone for TimeTask {
     fn clone(&self) -> Self {
