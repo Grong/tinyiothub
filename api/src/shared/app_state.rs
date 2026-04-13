@@ -110,6 +110,33 @@ pub struct AppState {
 
     /// Agent Memory Service - 设备状态快照记忆
     pub memory_service: Arc<MemoryService>,
+
+    /// 用户服务 - CRUD 操作
+    pub user_service: Arc<crate::domain::user::service::UserService>,
+
+    /// 租户服务 - CRUD 操作
+    pub tenant_service: Arc<crate::domain::tenant::service::TenantService>,
+
+    /// 工作空间服务 - CRUD 操作
+    pub workspace_service: Arc<crate::domain::workspace::service::WorkspaceService>,
+
+    /// 标签服务 - CRUD 操作
+    pub tag_service: Arc<crate::domain::tag::service::TagService>,
+
+    /// 角色服务 - CRUD 操作
+    pub role_service: Arc<crate::domain::role::service::RoleService>,
+
+    /// 权限服务 - CRUD 操作
+    pub permission_service: Arc<crate::domain::permission::service::PermissionService>,
+
+    /// 产品服务 - CRUD 操作
+    pub product_service: Arc<crate::domain::product::service::ProductService>,
+
+    /// 任务服务 - CRUD 操作
+    pub job_service: Arc<crate::domain::job::service::JobService>,
+
+    /// 任务执行服务 - CRUD 操作
+    pub job_execution_service: Arc<crate::domain::job::service::JobExecutionService>,
 }
 
 impl AppState {
@@ -219,6 +246,79 @@ impl AppState {
             Arc::new(SqliteDeviceMemoryRepository::new(database.pool().clone()));
         let memory_service = Arc::new(MemoryService::new(memory_repo));
 
+        // 用户服务
+        let user_repository: Arc<dyn crate::domain::user::repository::UserRepository> =
+            Arc::new(crate::infrastructure::persistence::repositories::SqliteUserRepository::new(
+                database.as_ref().clone(),
+            ));
+        let user_service = Arc::new(crate::domain::user::service::UserService::new(user_repository));
+
+        // 租户服务
+        let tenant_repository: Arc<dyn crate::domain::tenant::repository::TenantRepository> =
+            Arc::new(crate::infrastructure::persistence::repositories::SqliteTenantRepository::new(
+                database.as_ref().clone(),
+            ));
+        let tenant_service = Arc::new(crate::domain::tenant::service::TenantService::new(tenant_repository));
+
+        // 工作空间服务
+        let workspace_repository: Arc<dyn crate::domain::workspace::repository::WorkspaceRepository> =
+            Arc::new(crate::infrastructure::persistence::repositories::SqliteWorkspaceRepository::new(
+                database.as_ref().clone(),
+            ));
+        let workspace_service = Arc::new(crate::domain::workspace::service::WorkspaceService::new(workspace_repository));
+
+        // 标签服务
+        let tag_repository: Arc<dyn crate::domain::tag::repository::TagRepository> =
+            Arc::new(crate::infrastructure::persistence::repositories::SqliteTagRepository::new(
+                database.as_ref().clone(),
+            ));
+        let tag_binding_repository: Arc<dyn crate::domain::tag::repository::TagBindingRepository> =
+            Arc::new(crate::infrastructure::persistence::repositories::SqliteTagBindingRepository::new(
+                database.as_ref().clone(),
+            ));
+        let tag_service = Arc::new(crate::domain::tag::service::TagService::new(tag_repository, tag_binding_repository));
+
+        // 角色服务
+        let role_repository: Arc<dyn crate::domain::role::repository::RoleRepository> =
+            Arc::new(crate::infrastructure::persistence::repositories::SqliteRoleRepository::new(
+                database.as_ref().clone(),
+            ));
+        let role_service = Arc::new(crate::domain::role::service::RoleService::new(role_repository));
+
+        // 权限服务
+        let permission_repository: Arc<dyn crate::domain::permission::repository::PermissionRepository> =
+            Arc::new(crate::infrastructure::persistence::repositories::SqlitePermissionRepository::new(
+                database.as_ref().clone(),
+            ));
+        let permission_group_repository: Arc<dyn crate::domain::permission::repository::PermissionGroupRepository> =
+            Arc::new(crate::infrastructure::persistence::repositories::SqlitePermissionGroupRepository::new(
+                database.as_ref().clone(),
+            ));
+        let permission_service = Arc::new(crate::domain::permission::service::PermissionService::new(
+            permission_repository,
+            permission_group_repository,
+        ));
+
+        // 产品服务
+        let product_repository: Arc<dyn crate::domain::product::repository::ProductRepository> =
+            Arc::new(crate::infrastructure::persistence::repositories::SqliteProductRepository::new(
+                database.as_ref().clone(),
+            ));
+        let product_service = Arc::new(crate::domain::product::service::ProductService::new(product_repository));
+
+        // 任务服务
+        let job_repository: Arc<dyn crate::domain::job::repository::JobRepository> =
+            Arc::new(crate::infrastructure::persistence::repositories::SqliteJobRepository::new(
+                database.as_ref().clone(),
+            ));
+        let job_service = Arc::new(crate::domain::job::service::JobService::new(job_repository));
+
+        let job_execution_repository: Arc<dyn crate::domain::job::repository::JobExecutionRepository> =
+            Arc::new(crate::infrastructure::persistence::repositories::SqliteJobExecutionRepository::new(
+                database.as_ref().clone(),
+            ));
+        let job_execution_service = Arc::new(crate::domain::job::service::JobExecutionService::new(job_execution_repository));
+
         Self {
             data_context,
             database,
@@ -239,6 +339,15 @@ impl AppState {
             alarm_service,
             agent_runtime,
             memory_service,
+            user_service,
+            tenant_service,
+            workspace_service,
+            tag_service,
+            role_service,
+            permission_service,
+            product_service,
+            job_service,
+            job_execution_service,
         }
     }
 

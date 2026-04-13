@@ -15,11 +15,11 @@ use std::sync::Arc;
 use crate::{
     domain::device::service::DeviceService,
     dto::entity::job::{
-        CreateJobRequest, Job, JobExecution, JobExecutionQueryParams, JobQueryParams,
+        CreateJobRequest, Job, JobExecutionQueryParams, JobQueryParams,
         JobStatistics, UpdateJobRequest,
     },
     dto::response::{ApiResponse, builder::ApiResponseBuilder, PaginatedResponse, PaginationInfo},
-    shared::app_state::AppState,
+    shared::{app_state::AppState, error::Error},
 };
 
 /// Create jobs router
@@ -45,10 +45,8 @@ pub fn create_router() -> Router<AppState> {
 async fn list_jobs(
     State(state): State<AppState>,
     Query(params): Query<JobQueryParams>,
-) -> Json<ApiResponse<Vec<Job>>> {
-    let db = state.database.clone();
-
-    match Job::find_all(&db, &params).await {
+) -> Json<ApiResponse<Vec<crate::dto::entity::job::Job>>> {
+    match state.job_service.find_all(&params).await {
         Ok(jobs) => ApiResponseBuilder::success(jobs),
         Err(e) => {
             tracing::error!("Failed to list jobs: {}", e);
@@ -62,9 +60,7 @@ async fn get_job(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Json<ApiResponse<Job>> {
-    let db = state.database.clone();
-
-    match Job::find_by_id(&db, &id).await {
+    match state.job_service.find_by_id(&id).await {
         Ok(Some(job)) => ApiResponseBuilder::success(job),
         Ok(None) => ApiResponseBuilder::error_with_code(404, "任务不存在"),
         Err(e) => {
@@ -79,20 +75,14 @@ async fn create_job(
     State(state): State<AppState>,
     Json(payload): Json<CreateJobRequest>,
 ) -> Json<ApiResponse<Job>> {
-    let db = state.database.clone();
-
     // 验证 cron 表达式
     if let Err(e) = cron::Schedule::from_str(&payload.cron_expression) {
         tracing::error!("Invalid cron expression: {}", e);
         return ApiResponseBuilder::error_with_code(400, "无效的 Cron 表达式");
     }
 
-    match Job::create(&db, &payload).await {
+    match state.job_service.create(&payload).await {
         Ok(job) => {
-            // TODO: 通知调度器添加任务
-            // if let Some(ref scheduler) = *state.time_task.lock().unwrap() {
-            //     scheduler.add_job(job.clone());
-            // }
             ApiResponseBuilder::success(job)
         }
         Err(e) => {
@@ -108,8 +98,6 @@ async fn update_job(
     Path(id): Path<String>,
     Json(payload): Json<UpdateJobRequest>,
 ) -> Json<ApiResponse<Job>> {
-    let db = state.database.clone();
-
     // 如果更新了 cron 表达式，验证它
     if let Some(ref cron) = payload.cron_expression {
         if let Err(e) = cron::Schedule::from_str(cron) {
@@ -118,15 +106,11 @@ async fn update_job(
         }
     }
 
-    match Job::update(&db, &id, &payload).await {
+    match state.job_service.update(&id, &payload).await {
         Ok(job) => {
-            // TODO: 通知调度器更新任务
-            // if let Some(ref scheduler) = *state.time_task.lock().unwrap() {
-            //     scheduler.upd_job(job.clone());
-            // }
             ApiResponseBuilder::success(job)
         }
-        Err(sqlx::Error::RowNotFound) => ApiResponseBuilder::error_with_code(404, "任务不存在"),
+        Err(Error::NotFound) => ApiResponseBuilder::error_with_code(404, "任务不存在"),
         Err(e) => {
             tracing::error!("Failed to update job: {}", e);
             ApiResponseBuilder::error("更新任务失败")
@@ -139,20 +123,9 @@ async fn delete_job(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Json<ApiResponse<bool>> {
-    let db = state.database.clone();
-
-    match Job::delete(&db, &id).await {
+    match state.job_service.delete(&id).await {
         Ok(_) => {
-            // TODO: 通知调度器删除任务
-            // if let Some(ref scheduler) = *state.time_task.lock().unwrap() {
-            //     scheduler.del_job(id.clone());
-            // }
-            // 删除关联的执行记录 - 使用参数化查询防止 SQL 注入
-            if let Err(e) = sqlx::query("DELETE FROM job_executions WHERE job_id = ?")
-                .bind(&id)
-                .execute(db.pool())
-                .await
-            {
+            if let Err(e) = state.job_execution_service.delete_by_job_id(&id).await {
                 tracing::error!("Failed to delete job executions: {}", e);
                 return ApiResponseBuilder::error("删除任务执行记录失败");
             }
@@ -169,11 +142,9 @@ async fn delete_job(
 async fn run_job_now(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Json<ApiResponse<JobExecution>> {
-    let db = state.database.clone();
-
+) -> Json<ApiResponse<crate::dto::entity::job::JobExecution>> {
     // 检查 job 是否存在
-    let job = match Job::find_by_id(&db, &id).await {
+    let job = match state.job_service.find_by_id(&id).await {
         Ok(Some(j)) => j,
         Ok(None) => return ApiResponseBuilder::error_with_code(404, "任务不存在"),
         Err(e) => {
@@ -188,7 +159,7 @@ async fn run_job_now(
     }
 
     // 创建执行记录
-    let execution = match JobExecution::create(&db, &id, "manual", Some("user")).await {
+    let execution = match state.job_execution_service.create(&id, "manual", Some("user")).await {
         Ok(e) => e,
         Err(e) => {
             tracing::error!("Failed to create execution: {}", e);
@@ -197,10 +168,11 @@ async fn run_job_now(
     };
 
     // 设置 job 为运行中
-    let _ = Job::set_running(&db, &id, true).await;
+    let _ = state.job_service.set_running(&id, true).await;
 
-    // 在后台执行任务（这里简化处理，实际应该用 tokio::spawn）
-    let db_clone = db.clone();
+    // 在后台执行任务
+    let job_service = state.job_service.clone();
+    let job_execution_service = state.job_execution_service.clone();
     let job_clone = job.clone();
     let exec_id = execution.id.clone();
     let device_service = state.device_service.clone();
@@ -212,8 +184,7 @@ async fn run_job_now(
         let status = if result.is_ok() { "success" } else { "failed" };
         let error = result.err();
 
-        let _ = JobExecution::update_status(
-            &db_clone,
+        let _ = job_execution_service.update_status(
             &exec_id,
             status,
             None,
@@ -223,7 +194,7 @@ async fn run_job_now(
         .await;
 
         // 更新 job 统计
-        let _ = Job::update_run_stats(&db_clone, &job_clone.id, status, error.as_deref()).await;
+        let _ = job_service.update_run_stats(&job_clone.id, status, error.as_deref()).await;
     });
 
     ApiResponseBuilder::success(execution)
@@ -251,7 +222,6 @@ async fn execute_http_job(job: &Job) -> Result<String, String> {
 
     let method = config.get("method").and_then(|v| v.as_str()).unwrap_or("GET");
 
-    // 构建完整 URL（这里简化处理，实际应该支持完整的 URL）
     let full_url =
         if url.starts_with("http") { url.to_string() } else { format!("http://localhost{}", url) };
 
@@ -295,7 +265,6 @@ async fn execute_script_job(job: &Job) -> Result<String, String> {
 
     let interpreter = config.get("interpreter").and_then(|v| v.as_str()).unwrap_or("bash");
 
-    // 根据解释器执行脚本
     let output = match interpreter {
         "python" => Command::new("python")
             .arg("-c")
@@ -335,7 +304,6 @@ async fn execute_device_command_job(job: &Job, device_service: Arc<DeviceService
     let command_name = job.target_command_name.as_ref()
         .ok_or_else(|| "Missing target_command_name in job".to_string())?;
 
-    // Get parameters from config JSON or target_command_params
     let params = job.target_command_params.clone();
 
     match device_service.send_command(device_id, command_name, "custom", params).await {
@@ -354,8 +322,6 @@ async fn execute_sql_job(job: &Job) -> Result<String, String> {
 
     let sql = config.get("sql").and_then(|v| v.as_str()).ok_or("Missing SQL in config")?;
 
-    // 注意：实际执行需要数据库连接
-    // 这里只做验证
     Ok(format!("SQL would execute: {}", sql))
 }
 
@@ -364,12 +330,10 @@ async fn list_job_executions(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Query(params): Query<JobExecutionQueryParams>,
-) -> Json<ApiResponse<Vec<JobExecution>>> {
-    let db = state.database.clone();
-
+) -> Json<ApiResponse<Vec<crate::dto::entity::job::JobExecution>>> {
     let limit = params.page_size.unwrap_or(20) as i32;
 
-    match JobExecution::find_by_job(&db, &id, limit).await {
+    match state.job_execution_service.find_by_job(&id, limit).await {
         Ok(executions) => ApiResponseBuilder::success(executions),
         Err(e) => {
             tracing::error!("Failed to list executions: {}", e);
@@ -380,9 +344,7 @@ async fn list_job_executions(
 
 /// Get job statistics
 async fn get_statistics(State(state): State<AppState>) -> Json<ApiResponse<JobStatistics>> {
-    let db = state.database.clone();
-
-    match Job::get_statistics(&db).await {
+    match state.job_service.get_statistics().await {
         Ok(stats) => ApiResponseBuilder::success(stats),
         Err(e) => {
             tracing::error!("Failed to get statistics: {}", e);
@@ -395,13 +357,13 @@ async fn get_statistics(State(state): State<AppState>) -> Json<ApiResponse<JobSt
 async fn list_all_executions(
     State(state): State<AppState>,
     Query(params): Query<JobExecutionQueryParams>,
-) -> Json<ApiResponse<PaginatedResponse<JobExecution>>> {
+) -> Json<ApiResponse<PaginatedResponse<crate::dto::entity::job::JobExecution>>> {
     let page = params.page.unwrap_or(1);
     let page_size = params.page_size.unwrap_or(20);
 
     let (executions_result, count_result) = tokio::join!(
-        JobExecution::find_all(&state.database, &params),
-        JobExecution::count(&state.database, &params),
+        state.job_execution_service.find_all(&params),
+        state.job_execution_service.count(&params),
     );
 
     match executions_result {

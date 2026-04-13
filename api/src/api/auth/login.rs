@@ -4,7 +4,6 @@ use serde::Deserialize;
 use crate::{
     api::AppState,
     dto::{
-        entity::user::User,
         response::{
             login::{LoginResponse, UserInfo},
             ApiResponse,
@@ -45,12 +44,12 @@ async fn login(
     tracing::debug!("Authenticating user: {}", request.username);
 
     // 验证用户凭据
-    match User::authenticate(state.database(), &request.username, &request.password).await {
+    match state.user_service.authenticate(&request.username, &request.password).await {
         Ok(Some(user)) => {
             tracing::debug!("User authenticated: {}", user.id);
 
             // 检查用户是否被禁用
-            if !user.enabled() {
+            if !user.is_enabled() {
                 return ApiResponse::error("用户账户已被禁用".to_string());
             }
 
@@ -59,7 +58,7 @@ async fn login(
             // Skip database write on HarmonyOS (causes Signal 11)
             if !crate::infrastructure::config::get().harmonyos.enabled {
                 // 更新最后登录时间
-                if let Err(e) = User::update_last_logon(state.database(), &user.id).await {
+                if let Err(e) = state.user_service.update_last_login(&user.id).await {
                     tracing::warn!("Failed to update last logon time for user {}: {}", user.id, e);
                 }
             } else {

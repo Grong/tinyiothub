@@ -15,10 +15,8 @@ use crate::{
     shared::security::jwt::Claims,
     dto::entity::{
         tenant::{ApiKey, ApiUsageStats, CreateApiKeyRequest, Tenant, TenantQueryParams, TenantUsage},
-        workspace::Workspace,
     },
     dto::response::{ApiResponse, builder::ApiResponseBuilder},
-    infrastructure::persistence::database::Database,
     shared::app_state::AppState,
 };
 
@@ -51,11 +49,9 @@ pub fn create_router() -> Router<AppState> {
 
 /// List tenants
 async fn list_tenants(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     Query(_params): Query<TenantQueryParams>,
 ) -> Json<ApiResponse<Vec<Tenant>>> {
-    let _db = state.database.clone();
-
     // 简化实现：返回空列表（需要管理权限）
     ApiResponseBuilder::success(vec![])
 }
@@ -65,9 +61,7 @@ async fn create_tenant(
     State(state): State<AppState>,
     Json(payload): Json<crate::dto::entity::tenant::CreateTenantRequest>,
 ) -> Json<ApiResponse<Tenant>> {
-    let db = state.database.clone();
-
-    match Tenant::create(&db, &payload).await {
+    match state.tenant_service.create_tenant(&payload).await {
         Ok(tenant) => ApiResponseBuilder::success(tenant),
         Err(e) => {
             tracing::error!("Failed to create tenant: {}", e);
@@ -81,9 +75,7 @@ async fn get_tenant(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Json<ApiResponse<Tenant>> {
-    let db = state.database.clone();
-
-    match Tenant::find_by_id(&db, &id).await {
+    match state.tenant_service.find_tenant_by_id(&id).await {
         Ok(Some(tenant)) => ApiResponseBuilder::success(tenant),
         Ok(None) => ApiResponseBuilder::error_with_code(404, "租户不存在"),
         Err(e) => {
@@ -95,12 +87,10 @@ async fn get_tenant(
 
 /// Update tenant
 async fn update_tenant(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     Path(_id): Path<String>,
     Json(_payload): Json<crate::dto::entity::tenant::UpdateTenantRequest>,
 ) -> Json<ApiResponse<Tenant>> {
-    let _db = state.database.clone();
-
     // 简化实现
     ApiResponseBuilder::error_with_code(501, "功能未实现")
 }
@@ -111,14 +101,12 @@ async fn change_plan(
     Path(id): Path<String>,
     Json(payload): Json<serde_json::Value>,
 ) -> Json<ApiResponse<Tenant>> {
-    let db = state.database.clone();
-
     let plan_id = match payload.get("plan_id").and_then(|v| v.as_str()) {
         Some(id) => id,
         None => return ApiResponseBuilder::error_with_code(400, "缺少 plan_id 参数"),
     };
 
-    match Tenant::change_plan(&db, &id, plan_id).await {
+    match state.tenant_service.change_plan(&id, plan_id).await {
         Ok(tenant) => ApiResponseBuilder::success(tenant),
         Err(e) => {
             tracing::error!("Failed to change plan: {}", e);
@@ -132,9 +120,7 @@ async fn get_tenant_usage(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Json<ApiResponse<Option<TenantUsage>>> {
-    let db = state.database.clone();
-
-    match Tenant::get_usage(&db, &id).await {
+    match state.tenant_service.get_tenant_usage(&id).await {
         Ok(usage) => ApiResponseBuilder::success(usage),
         Err(e) => {
             tracing::error!("Failed to get tenant usage: {}", e);
@@ -144,10 +130,10 @@ async fn get_tenant_usage(
 }
 
 /// 验证 workspace 属于当前 tenant（防止伪造 header 越权）
-async fn validate_workspace(db: &Database, ws: &str, tenant_id: &str) -> Option<()> {
+async fn validate_workspace(state: &AppState, ws: &str, tenant_id: &str) -> Option<()> {
     // WorkspaceScope 返回的 workspace_id 来自请求头，可能被恶意伪造
     // 必须验证该 workspace 确实属于当前 tenant
-    match Workspace::find_by_id(db, ws).await {
+    match state.workspace_service.find_by_id(ws).await {
         Ok(Some(ws_obj)) if ws_obj.tenant_id == tenant_id => Some(()),
         Ok(Some(_)) => None, // workspace 不属于此 tenant
         Ok(None) => None,    // workspace 不存在
@@ -161,19 +147,17 @@ async fn list_api_keys(
     claims: Claims,
     WorkspaceScope(workspace_id): WorkspaceScope,
 ) -> Json<ApiResponse<Vec<ApiKey>>> {
-    let db = state.database.clone();
-
     let ws = match workspace_id {
         Some(id) => id,
         None => return ApiResponseBuilder::error_with_code(400, "缺少 X-Workspace-Id header"),
     };
 
     // 验证 workspace 归属，防止伪造 header 越权
-    if matches!(validate_workspace(&db, &ws, &claims.tenant_id).await, None) {
+    if matches!(validate_workspace(&state, &ws, &claims.tenant_id).await, None) {
         return ApiResponseBuilder::error_with_code(403, "无权操作此 Workspace");
     }
 
-    match ApiKey::find_by_workspace(&db, &ws).await {
+    match state.tenant_service.find_api_keys_by_workspace(&ws).await {
         Ok(keys) => ApiResponseBuilder::success(keys),
         Err(e) => {
             tracing::error!("Failed to list api keys: {}", e);
@@ -190,15 +174,13 @@ async fn create_api_key(
     WorkspaceScope(workspace_id): WorkspaceScope,
     Json(payload): Json<CreateApiKeyRequest>,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    let db = state.database.clone();
-
     let ws = match workspace_id {
         Some(id) => id,
         None => return ApiResponseBuilder::error_with_code(400, "缺少 X-Workspace-Id header"),
     };
 
     // 验证 workspace 归属，防止伪造 header 越权
-    if matches!(validate_workspace(&db, &ws, &claims.tenant_id).await, None) {
+    if matches!(validate_workspace(&state, &ws, &claims.tenant_id).await, None) {
         return ApiResponseBuilder::error_with_code(403, "无权操作此 Workspace");
     }
 
@@ -206,7 +188,7 @@ async fn create_api_key(
         return ApiResponseBuilder::error_with_code(403, "workspace_id 不匹配");
     }
 
-    match ApiKey::create(&db, &payload.workspace_id, &payload).await {
+    match state.tenant_service.create_api_key(&payload.workspace_id, &payload).await {
         Ok((key, raw_key)) => {
             ApiResponseBuilder::success(serde_json::json!({
                 "api_key": key,
@@ -227,15 +209,13 @@ async fn revoke_api_key(
     WorkspaceScope(workspace_id): WorkspaceScope,
     Path(id): Path<String>,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    let db = state.database.clone();
-
     let ws = match workspace_id {
         Some(id) => id,
         None => return ApiResponseBuilder::error_with_code(400, "缺少 X-Workspace-Id header"),
     };
 
     // 1. 验证 workspace 属于当前 tenant（防止伪造 header）
-    match Workspace::find_by_id(&db, &ws).await {
+    match state.workspace_service.find_by_id(&ws).await {
         Ok(Some(ws)) if ws.tenant_id == claims.tenant_id => {}
         Ok(Some(_)) => return ApiResponseBuilder::error_with_code(403, "无权操作此 Workspace"),
         Ok(None) => return ApiResponseBuilder::error_with_code(404, "Workspace 不存在"),
@@ -246,9 +226,9 @@ async fn revoke_api_key(
     }
 
     // 2. 验证 key 属于该 workspace
-    match ApiKey::find_by_id(&db, &id).await {
+    match state.tenant_service.find_api_key_by_id(&id).await {
         Ok(Some(key)) if key.workspace_id == ws => {
-            match ApiKey::revoke(&db, &id).await {
+            match state.tenant_service.revoke_api_key(&id).await {
                 Ok(_) => ApiResponseBuilder::success(serde_json::json!({"success": true})),
                 Err(e) => {
                     tracing::error!("Failed to revoke api key: {}", e);
@@ -270,9 +250,7 @@ async fn get_usage_stats(
     State(state): State<AppState>,
     Path(tenant_id): Path<String>,
 ) -> Json<ApiResponse<ApiUsageStats>> {
-    let db = state.database.clone();
-
-    match ApiKey::get_usage_stats(&db, &tenant_id, 30).await {
+    match state.tenant_service.get_api_usage_stats(&tenant_id, 30).await {
         Ok(stats) => ApiResponseBuilder::success(stats),
         Err(e) => {
             tracing::error!("Failed to get usage stats: {}", e);

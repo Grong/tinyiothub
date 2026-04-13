@@ -122,7 +122,7 @@ pub fn create_router() -> Router<AppState> {
 /// Returns McpAuthContext on success, ToolError on failure.
 async fn extract_api_key(
     headers: &axum::http::HeaderMap,
-    db: &crate::infrastructure::persistence::database::Database,
+    state: &AppState,
 ) -> Result<McpAuthContext, ToolError> {
     let raw_key = headers
         .get("X-API-Key")
@@ -133,7 +133,7 @@ async fn extract_api_key(
     let key_hash = format!("{:x}", sha2::Sha256::digest(raw_key.as_bytes()));
 
     // Look up by hash (secure, no prefix collision possible)
-    let api_key = crate::dto::entity::tenant::ApiKey::find_by_hash(db, &key_hash)
+    let api_key = state.tenant_service.find_api_key_by_hash(&key_hash)
         .await
         .map_err(|e| ToolError::Internal(format!("Database error: {}", e)))?
         .ok_or_else(|| ToolError::Unauthorized("Invalid API key".into()))?;
@@ -169,13 +169,13 @@ async fn extract_api_key(
 #[allow(dead_code)]
 async fn with_mcp_context<F, R>(
     headers: axum::http::HeaderMap,
-    db: &crate::infrastructure::persistence::database::Database,
+    state: &AppState,
     f: F,
 ) -> R
 where
     F: FnOnce(McpAuthContext) -> R,
 {
-    let ctx = extract_api_key(&headers, db)
+    let ctx = extract_api_key(&headers, state)
         .await
         .expect("Caller handles errors");
     let _guard = McpContextGuard::new(ctx.clone());
@@ -197,8 +197,7 @@ async fn handle_mcp_request(
         }
     };
 
-    let db = state.database();
-    let ctx = match extract_api_key(&headers, db).await {
+    let ctx = match extract_api_key(&headers, &state).await {
         Ok(c) => c,
         Err(e) => {
             return ApiResponseBuilder::error_with_code::<serde_json::Value>(401, e.to_string())
@@ -337,8 +336,7 @@ async fn handle_tools_list(headers: axum::http::HeaderMap) -> Response {
         }
     };
 
-    let db = state.database();
-    let ctx = match extract_api_key(&headers, db).await {
+    let ctx = match extract_api_key(&headers, &state).await {
         Ok(c) => c,
         Err(e) => {
             return ApiResponseBuilder::error_with_code::<serde_json::Value>(401, e.to_string())
@@ -377,8 +375,7 @@ async fn handle_tools_call(
         }
     };
 
-    let db = state.database();
-    let ctx = match extract_api_key(&headers, db).await {
+    let ctx = match extract_api_key(&headers, &state).await {
         Ok(c) => c,
         Err(e) => {
             return ApiResponseBuilder::error_with_code::<serde_json::Value>(401, e.to_string())

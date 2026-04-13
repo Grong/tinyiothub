@@ -13,7 +13,6 @@ use sqlx::Row;
 
 use crate::{
     dto::{
-        entity::tenant::{ApiKey, Tenant},
         response::{api_response::ApiResponse, builder::ApiResponseBuilder},
     },
     shared::app_state::AppState,
@@ -37,10 +36,10 @@ pub fn create_open_router() -> Router<AppState> {
 async fn validate_api_key(
     state: &AppState,
     api_key: Option<String>,
-) -> Result<(ApiKey, Tenant, String), StatusCode> {
+) -> Result<(crate::dto::entity::tenant::ApiKey, crate::dto::entity::tenant::Tenant, String), StatusCode> {
     let raw_key = api_key.ok_or(StatusCode::UNAUTHORIZED)?;
 
-    let key = ApiKey::find_by_prefix(&state.database, &raw_key)
+    let key = state.tenant_service.find_api_key_by_prefix(&raw_key)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::UNAUTHORIZED)?;
@@ -62,12 +61,12 @@ async fn validate_api_key(
     }
 
     // Resolve tenant_id from workspace for quota check
-    let workspace = crate::dto::entity::workspace::Workspace::find_by_id(&state.database, &key.workspace_id)
+    let workspace = state.workspace_service.find_by_id(&key.workspace_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let tenant = Tenant::find_by_id(&state.database, &workspace.tenant_id)
+    let tenant = state.tenant_service.find_tenant_by_id(&workspace.tenant_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -76,7 +75,7 @@ async fn validate_api_key(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    let can_proceed = Tenant::check_quota(&state.database, &workspace.tenant_id, "api_call")
+    let can_proceed = state.tenant_service.check_quota(&workspace.tenant_id, "api_call")
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -98,8 +97,7 @@ async fn record_api_usage(
     status_code: StatusCode,
     latency_ms: i32,
 ) {
-    let _ = ApiKey::record_usage(
-        &state.database,
+    let _ = state.tenant_service.record_api_usage(
         workspace_id,
         api_key_id,
         method,

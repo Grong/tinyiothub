@@ -280,8 +280,10 @@ impl Device {
 
     /// 加载设备的标签
     pub async fn load_tags(&mut self, db: &Database) -> Result<(), sqlx::Error> {
-        use crate::dto::entity::tag::Tag;
-        let tags = Tag::find_by_target_id(db, &self.id).await?;
+        use crate::domain::tag::repository::TagRepository;
+        use crate::infrastructure::persistence::repositories::SqliteTagRepository;
+        let tag_repo = SqliteTagRepository::new(db.clone());
+        let tags = tag_repo.find_by_target_id(&self.id).await.map_err(|_| sqlx::Error::RowNotFound)?;
         self.tags = Some(tags);
         Ok(())
     }
@@ -291,10 +293,12 @@ impl Device {
         db: &Database,
         devices: &mut [Device],
     ) -> Result<(), sqlx::Error> {
-        use crate::dto::entity::tag::Tag;
+        use crate::domain::tag::repository::TagRepository;
+        use crate::infrastructure::persistence::repositories::SqliteTagRepository;
+        let tag_repo = SqliteTagRepository::new(db.clone());
 
         for device in devices {
-            let tags = Tag::find_by_target_id(db, &device.id).await?;
+            let tags = tag_repo.find_by_target_id(&device.id).await.map_err(|_| sqlx::Error::RowNotFound)?;
             device.tags = Some(tags);
         }
 

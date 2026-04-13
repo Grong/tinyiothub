@@ -9,9 +9,7 @@ use serde_json::Value;
 
 use crate::api::mcp::handlers::get_mcp_context;
 use crate::api::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
-use crate::dto::entity::workspace::{
-    Workspace, WorkspaceWithDeviceCount,
-};
+use crate::dto::entity::workspace::WorkspaceWithDeviceCount;
 use crate::infrastructure::agent::AgentConfig;
 
 /// Tool input: List workspaces
@@ -99,15 +97,14 @@ impl ToolHandler for ListWorkspacesHandler {
         let db = state.database();
 
         // Resolve tenant_id from workspace for listing workspaces
-        let tenant_id = crate::dto::entity::workspace::Workspace::find_by_id(&db, &claims.workspace_id)
+        let tenant_id = state.workspace_service.find_by_id(&claims.workspace_id)
             .await
             .ok()
             .flatten()
             .map(|w| w.tenant_id)
             .unwrap_or_default();
 
-        let workspaces = Workspace::find_by_tenant(
-            &db,
+        let workspaces = state.workspace_service.find_by_tenant(
             &tenant_id,
             input.page,
             input.page_size,
@@ -156,13 +153,13 @@ impl ToolHandler for GetWorkspaceHandler {
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
         let db = state.database();
 
-        let workspace = Workspace::find_by_id(&db, &input.id)
+        let workspace = state.workspace_service.find_by_id(&input.id)
             .await
             .map_err(|e| ToolError::Internal(format!("failed to get workspace: {}", e)))?
             .ok_or_else(|| ToolError::NotFound("workspace not found".to_string()))?;
 
         // Verify tenant ownership (resolve tenant_id from claims workspace)
-        let ctx_tenant_id = Workspace::find_by_id(&db, &claims.workspace_id)
+        let ctx_tenant_id = state.workspace_service.find_by_id(&claims.workspace_id)
             .await
             .ok()
             .flatten()
@@ -223,7 +220,7 @@ impl ToolHandler for CreateWorkspaceHandler {
         let db = state.database();
 
         // Resolve tenant_id from current workspace (new workspace inherits tenant)
-        let tenant_id = Workspace::find_by_id(&db, &claims.workspace_id)
+        let tenant_id = state.workspace_service.find_by_id(&claims.workspace_id)
             .await
             .ok()
             .flatten()
@@ -231,8 +228,7 @@ impl ToolHandler for CreateWorkspaceHandler {
             .unwrap_or_default();
 
         // Create workspace in DB
-        let workspace = Workspace::create(
-            &db,
+        let workspace = state.workspace_service.create(
             &tenant_id,
             &input.name,
             input.description.as_deref(),
@@ -243,8 +239,6 @@ impl ToolHandler for CreateWorkspaceHandler {
         .map_err(|e| ToolError::Internal(format!("failed to create workspace: {}", e)))?;
 
         // Try to create Agent using AppState's agent client
-        let state = crate::api::mcp::get_app_state()
-            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
         let agent_result = state
             .agent_runtime
             .create_agent(&AgentConfig {
@@ -258,7 +252,7 @@ impl ToolHandler for CreateWorkspaceHandler {
             Ok(_agent_id) => {
                 // Update workspace with agent_id
                 if let Ok(Some(updated)) =
-                    Workspace::update(&db, &workspace.id, None, None, None).await
+                    state.workspace_service.update(&workspace.id, None, None, None).await
                 {
                     (updated, None)
                 } else {
@@ -365,13 +359,13 @@ impl ToolHandler for UpdateWorkspaceHandler {
         let db = state.database();
 
         // Verify workspace exists and belongs to tenant
-        let existing = Workspace::find_by_id(&db, &input.id)
+        let existing = state.workspace_service.find_by_id(&input.id)
             .await
             .map_err(|e| ToolError::Internal(format!("failed to get workspace: {}", e)))?
             .ok_or_else(|| ToolError::NotFound("workspace not found".to_string()))?;
 
         // Verify tenant ownership via workspace_id from claims
-        let ctx_tenant_id = Workspace::find_by_id(&db, &claims.workspace_id)
+        let ctx_tenant_id = state.workspace_service.find_by_id(&claims.workspace_id)
             .await
             .ok()
             .flatten()
@@ -384,8 +378,7 @@ impl ToolHandler for UpdateWorkspaceHandler {
         }
 
         // Update workspace
-        let workspace = Workspace::update(
-            &db,
+        let workspace = state.workspace_service.update(
             &input.id,
             input.name.as_deref(),
             input.description.as_deref(),
@@ -437,13 +430,13 @@ impl ToolHandler for DeleteWorkspaceHandler {
         let db = state.database();
 
         // Get workspace to find agent_id
-        let workspace = Workspace::find_by_id(&db, &input.id)
+        let workspace = state.workspace_service.find_by_id(&input.id)
             .await
             .map_err(|e| ToolError::Internal(format!("failed to get workspace: {}", e)))?
             .ok_or_else(|| ToolError::NotFound("workspace not found".to_string()))?;
 
         // Verify tenant ownership via workspace_id from claims
-        let ctx_tenant_id = Workspace::find_by_id(&db, &claims.workspace_id)
+        let ctx_tenant_id = state.workspace_service.find_by_id(&claims.workspace_id)
             .await
             .ok()
             .flatten()
@@ -467,7 +460,7 @@ impl ToolHandler for DeleteWorkspaceHandler {
         }
 
         // Delete workspace from DB
-        Workspace::delete(&db, &input.id)
+        state.workspace_service.delete(&input.id)
             .await
             .map_err(|e| ToolError::Internal(format!("failed to delete workspace: {}", e)))?;
 

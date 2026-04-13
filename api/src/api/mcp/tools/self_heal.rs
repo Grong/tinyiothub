@@ -10,6 +10,7 @@ use serde_json::Value;
 use crate::api::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
 use crate::api::self_healing::get_self_healing_state;
 use crate::domain::self_healing::{RecoveryActionType, SeverityLevel};
+use crate::domain::workspace::repository::WorkspaceRepository;
 use crate::dto::entity::self_healing::{ExecuteSelfHealRequest, SelfHealingPolicyDto};
 
 /// Get self-heal policy tool handler
@@ -210,7 +211,8 @@ impl ToolHandler for GetRecoveryHistoryHandler {
 
         // Resolve tenant_id from workspace for healing history (healing_executions uses tenant_id)
         let (tenant_id, _workspace_id) = if let Some(ctx) = crate::api::mcp::handlers::get_mcp_context() {
-            let workspace = crate::dto::entity::workspace::Workspace::find_by_id(&db, &ctx.workspace_id)
+            let repo = crate::infrastructure::persistence::repositories::SqliteWorkspaceRepository::new(db.as_ref().clone());
+            let workspace = repo.find_by_id(&ctx.workspace_id)
                 .await
                 .ok()
                 .flatten();

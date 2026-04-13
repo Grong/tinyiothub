@@ -81,7 +81,11 @@ impl ServiceManager {
         // 2. 启动定时任务调度器
         #[cfg(not(feature = "harmonyos"))]
         {
-            let time_task = TimeTask::new();
+            let time_task = TimeTask::new()
+                .with_services(
+                    app_state.job_service.clone(),
+                    app_state.job_execution_service.clone(),
+                );
             // 在后台启动调度器
             tokio::spawn(async move {
                 time_task.run().await;
