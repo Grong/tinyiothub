@@ -143,7 +143,7 @@ impl EventRepository for SqliteEventRepository {
         }
 
         // Build query with parameters
-        let mut query = sqlx::query(&sql);
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
 
         // Bind time range parameters
         if let Some(start_time) = criteria.start_time {

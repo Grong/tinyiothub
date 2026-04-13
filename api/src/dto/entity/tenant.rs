@@ -750,25 +750,8 @@ impl ApiKey {
         .bind(&now)
         .bind(error_count)
         .bind(&now)
-        let _ = sqlx::query(
-            r#"
-            INSERT INTO tenant_usage (id, tenant_id, api_call_count, total_api_calls, total_api_errors, updated_at)
-            VALUES (?, ?, 1, 1, ?, ?)
-            ON CONFLICT(tenant_id) DO UPDATE SET
-                api_call_count = api_call_count + 1,
-                total_api_calls = total_api_calls + 1,
-                total_api_errors = total_api_errors + ?,
-                updated_at = ?
-        "#,
-        )
-        .bind(uuid::Uuid::new_v4().to_string())
-        .bind(&tenant_id)
-        .bind(error_count)
-        .bind(&now)
-        .bind(error_count)
-        .bind(&now)
         .execute(db.pool())
-        .await;
+        .await?;
 
         Ok(())
     }
