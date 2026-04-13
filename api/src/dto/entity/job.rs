@@ -208,7 +208,7 @@ impl Job {
         let page = params.page.unwrap_or(1);
         let page_size = params.page_size.unwrap_or(20);
         let offset = (page - 1) * page_size;
-        query_builder.push(&format!(" LIMIT {} OFFSET {}", page_size, offset));
+        query_builder.push(" LIMIT ").push_bind(page_size as i64).push(" OFFSET ").push_bind(offset as i64);
 
         let sql = query_builder.build();
         let rows = db
@@ -525,7 +525,7 @@ impl JobExecution {
         let page = params.page.unwrap_or(1);
         let page_size = params.page_size.unwrap_or(20);
         let offset = (page - 1) * page_size;
-        query_builder.push(&format!(" LIMIT {} OFFSET {}", page_size, offset));
+        query_builder.push(" LIMIT ").push_bind(page_size as i64).push(" OFFSET ").push_bind(offset as i64);
 
         let sql = query_builder.build();
         let rows = db.query(sql.sql().as_str(), |row| {
