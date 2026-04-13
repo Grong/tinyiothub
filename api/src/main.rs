@@ -1,9 +1,3 @@
-// 禁用开发阶段的常见警告
-#![allow(dead_code)]
-#![allow(unused_imports)]
-#![allow(unused_variables)]
-#![allow(unused_mut)]
-
 use axum::Router;
 use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
@@ -319,7 +313,7 @@ async fn create_app_router(app_state: crate::shared::app_state::AppState) -> Rou
         http::{StatusCode, Uri},
         response::{IntoResponse, Response},
     };
-    use tower_http::services::{ServeDir, ServeFile};
+    use tower_http::services::ServeDir;
 
     tracing::info!("Serving static files from wwwroot/ (SPA mode)");
 
