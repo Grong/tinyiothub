@@ -57,7 +57,7 @@ export class HomeView extends LitElement {
           padding: 16px 24px;
           background: var(--glass-bg);
           backdrop-filter: var(--glass-blur);
-          border-bottom: 1px solid var(--glass-border);
+          border-bottom: none;
           transition: transform 0.3s ease;
         }
 
@@ -299,7 +299,7 @@ export class HomeView extends LitElement {
           gap: 6px;
           border-radius: 12px;
           padding: 10px 20px;
-          border: 1px solid var(--glass-border);
+          border: none;
           background: var(--glass-bg);
           box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
         }
@@ -347,7 +347,6 @@ export class HomeView extends LitElement {
           padding: 48px;
           background: var(--glass-bg);
           backdrop-filter: var(--glass-blur);
-          border: 1px solid var(--glass-border);
           box-shadow: 0 8px 32px rgba(0,0,0,0.15);
         }
 
@@ -434,14 +433,13 @@ export class HomeView extends LitElement {
           border-radius: 16px;
           padding: 28px;
           background: var(--glass-bg);
-          border: 1px solid var(--glass-border);
+          border: none;
           transition: box-shadow var(--duration-normal) var(--ease-out), transform var(--duration-normal) var(--ease-out);
         }
 
         view-home .core-card:hover {
           box-shadow: 0 8px 32px var(--accent-glow);
           transform: translateY(-4px);
-          border-color: rgba(0, 212, 255, 0.18);
         }
 
         view-home .core-icon {
@@ -481,14 +479,13 @@ export class HomeView extends LitElement {
           border-radius: 16px;
           padding: 32px;
           background: var(--glass-bg);
-          border: 1px solid var(--glass-border);
+          border: none;
           transition: box-shadow var(--duration-normal) var(--ease-out), transform var(--duration-normal) var(--ease-out);
         }
 
         view-home .agent-card:hover {
           box-shadow: 0 8px 32px var(--accent-glow);
           transform: translateY(-4px);
-          border-color: rgba(0, 212, 255, 0.18);
         }
 
         view-home .agent-icon {
@@ -540,19 +537,18 @@ export class HomeView extends LitElement {
           padding: 28px;
           text-align: center;
           background: var(--glass-bg);
-          border: 1px solid var(--glass-border);
+          border: none;
           transition: box-shadow var(--duration-normal) var(--ease-out), transform var(--duration-normal) var(--ease-out);
         }
 
         :root[data-theme="light"] view-home .scenario-card {
           background: var(--glass-bg);
-          border: 1px solid var(--glass-border);
+          border: none;
         }
 
         view-home .scenario-card:hover {
           box-shadow: 0 8px 32px var(--accent-glow);
           transform: translateY(-4px);
-          border-color: rgba(0, 212, 255, 0.18);
         }
 
         view-home .scenario-card h4 {
@@ -606,7 +602,7 @@ export class HomeView extends LitElement {
           padding: 64px;
           background: var(--glass-bg);
           backdrop-filter: var(--glass-blur);
-          border: 1px solid var(--glass-border);
+          border: none;
           box-shadow: 0 16px 64px rgba(0,0,0,0.2);
           z-index: 1;
         }
@@ -637,7 +633,7 @@ export class HomeView extends LitElement {
         /* Footer */
         view-home .footer {
           padding: 60px 24px 30px;
-          border-top: 1px solid var(--glass-border);
+          border-top: none;
           background: transparent;
         }
 
