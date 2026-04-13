@@ -417,6 +417,18 @@ impl DeviceService {
         self.get_devices(params).await
     }
 
+    /// 统计设备数量
+    pub async fn count_devices(&self, params: &DeviceQueryParams) -> Result<i64, Error> {
+        let criteria = params_to_criteria(params);
+        self.repository.count(&criteria).await.map_err(|e| Error::IOError(e.to_string()))
+    }
+
+    /// 更新设备启用状态
+    pub async fn update_device_enabled_status(&self, device_id: &str, enabled: bool) -> Result<bool, Error> {
+        tracing::info!("Updating device enabled status: device_id={}, enabled={}", device_id, enabled);
+        self.repository.update_enabled_status(device_id, enabled).await.map_err(|e| Error::IOError(e.to_string()))
+    }
+
     /// 分页查询设备
     pub async fn get_devices_page(
         &self,
