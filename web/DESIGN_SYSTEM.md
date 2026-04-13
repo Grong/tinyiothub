@@ -2,7 +2,45 @@
 
 This document defines the design tokens and CSS architecture for the `web/` frontend.
 
-## Token Reference
+---
+
+## 1. CSS Architecture
+
+### 1.1 No Inline CSS Monoliths
+
+**Rule**: If a Lit component’s inline `<style>` exceeds ~200 lines, extract it into a dedicated `.css` file in the same directory and import it.
+
+```ts
+// Good
+import "./home.css";
+
+// Bad: 1400 lines of CSS inside render()
+```
+
+**Why**: Vite can optimize, cache, and compress standalone CSS files. Inline styles bloat JS bundles and hurt first paint.
+
+### 1.2 View-Scoped Tokens
+
+Views that need their own aesthetic layer (e.g., landing pages, dashboards) should define scoped custom properties under their root selector:
+
+```css
+view-home {
+  --home-bg-deep: #02040a;
+  --home-surface: rgba(10, 14, 22, 0.85);
+  --home-accent-cyan: #00d4ff;
+  --home-accent-violet: #7b61ff;
+  --home-shadow-1: 0 4px 20px rgba(0,0,0,0.35);
+  --home-shadow-2: 0 16px 60px rgba(0,0,0,0.28);
+  --home-shadow-3: 0 40px 100px rgba(0,212,255,0.04);
+  --home-shadow-inset: inset 0 0 0 1px rgba(255,255,255,0.04);
+}
+```
+
+**Rule**: No hardcoded colors/shadows repeated 5+ times in a view. Tokenize them.
+
+---
+
+## 2. Token Reference
 
 ### Spacing Scale
 
@@ -63,7 +101,7 @@ The UI adopts a deep-space IoT dashboard aesthetic inspired by Tuya: dark navy c
 
 | Token | Value | Usage |
 |-------|-------|-------|
-| `--accent-gradient` | `linear-gradient(135deg, #00d4ff 0%, #0098FF 50%, #7b61ff 100%)` | Primary gradients: buttons, metric bars, stat values |
+| `--accent-gradient` | `linear-gradient(135deg, #00d4ff 0%, #7b61ff 100%)` | Primary gradients: buttons, metric bars, stat values |
 | `--accent-gradient-soft` | `linear-gradient(135deg, rgba(0,212,255,0.9) 0%, rgba(0,152,255,0.9) 60%, rgba(123,97,255,0.8) 100%)` | Hover states, softer glows |
 | `--accent-glow` | `rgba(0, 212, 255, 0.35)` | Standard glow shadow color |
 | `--accent-glow-strong` | `rgba(0, 212, 255, 0.45)` | Intense glows, pulsing dots |
@@ -72,9 +110,11 @@ The UI adopts a deep-space IoT dashboard aesthetic inspired by Tuya: dark navy c
 | `--glass-blur` | `blur(20px) saturate(180%)` | Backdrop-filter for glass panels |
 | `--bg-deep-space` | layered radial gradients over `--bg` | Page background: faint cyan/purple orbs |
 
-## Visual Patterns
+---
 
-### Deep Space Background
+## 3. Visual Patterns
+
+### 3.1 Deep Space Background
 
 The global page background uses layered radial gradients to create an immersive dark-space atmosphere without hurting readability.
 
@@ -86,7 +126,7 @@ body {
 
 `--bg-deep-space` is defined in `base.css` as two large radial orbs (cyan top-left, violet bottom-right) over the base `--bg` color. Opacity is kept very low (4-6%) so data remains the hero.
 
-### Gradient Border Cards
+### 3.2 Gradient Border Cards
 
 Cards that need a premium edge use a 1px gradient border implemented with `mask-composite: exclude`.
 
@@ -113,7 +153,7 @@ Cards that need a premium edge use a 1px gradient border implemented with `mask-
 
 Used on: `.device-card`, `.template-card`, `.alarm-summary`, and any card that needs to feel "premium".
 
-### Glowing Status Dots
+### 3.3 Glowing Status Dots
 
 Status indicators are small gradient circles with soft neon glows and a slow pulse animation.
 
@@ -127,7 +167,7 @@ Status indicators are small gradient circles with soft neon glows and a slow pul
 
 Variants: `--success`, `--warning` (amber-to-red), `--danger` (red), and `--glow` (accent cyan). Never use flat background colors for status dots in the Tuya style.
 
-### Metric Bar Shine
+### 3.4 Metric Bar Shine
 
 Progress/metric bars use the accent gradient plus a sweeping light reflection that animates continuously.
 
@@ -147,7 +187,7 @@ Progress/metric bars use the accent gradient plus a sweeping light reflection th
 }
 ```
 
-### Gradient Text for Stats
+### 3.5 Gradient Text for Stats
 
 Large numbers and headings can use gradient text to draw attention without adding extra layout weight.
 
@@ -160,7 +200,7 @@ Large numbers and headings can use gradient text to draw attention without addin
 }
 ```
 
-### Glassmorphism Panels
+### 3.6 Glassmorphism Panels
 
 Floating panels (modals, toasts, dropdowns) use a semi-transparent dark background with heavy blur so they feel like they sit above the deep-space canvas.
 
@@ -173,7 +213,132 @@ Floating panels (modals, toasts, dropdowns) use a semi-transparent dark backgrou
 }
 ```
 
-## CSS File Organization
+### 3.7 Floating Card Shadow (Home-Panel Style)
+
+For premium landing-page cards, use a 3-layer shadow stack plus a subtle inset highlight to create levitation without borders.
+
+```css
+.floating-card {
+  background: rgba(10, 14, 22, 0.85);
+  border: none;
+  box-shadow:
+    0 4px 20px rgba(0,0,0,0.35),
+    0 16px 60px rgba(0,0,0,0.28),
+    0 40px 100px rgba(0,212,255,0.04),
+    inset 0 0 0 1px rgba(255,255,255,0.04);
+  transition: all 0.3s ease;
+}
+
+.floating-card:hover {
+  background: rgba(10, 14, 22, 0.95);
+  transform: translateY(-4px);
+  box-shadow:
+    0 8px 30px rgba(0,0,0,0.4),
+    0 20px 70px rgba(0,0,0,0.32),
+    0 50px 120px rgba(0,212,255,0.06),
+    inset 0 0 0 1px rgba(255,255,255,0.06);
+}
+```
+
+**Rule**: Floating cards must not have visible `border` — the inset shadow creates the edge.
+
+### 3.8 Header Glassmorphism
+
+Fixed headers should gain a frosted-glass effect on scroll.
+
+```css
+.header--scrolled {
+  background: rgba(2, 4, 10, 0.72);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.25);
+}
+```
+
+The scroll class must be dynamically applied via component state (e.g., `headerScrolled`) rather than relying solely on CSS `:hover` or `position: sticky` tricks.
+
+---
+
+## 4. Motion & Accessibility
+
+### 4.1 Scroll-Triggered Reveals
+
+Use `IntersectionObserver` to fade-in elements as they enter the viewport.
+
+```css
+.reveal {
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.6s var(--ease-out), transform 0.6s var(--ease-out);
+  will-change: opacity, transform;
+}
+
+.reveal.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.reveal-delay-1 { transition-delay: 0.1s; }
+.reveal-delay-2 { transition-delay: 0.2s; }
+.reveal-delay-3 { transition-delay: 0.3s; }
+```
+
+**Rule**: Any view section that renders below the fold should be wrapped in `.reveal`.
+
+### 4.2 Reduced Motion
+
+All continuous animations (orbits, pulses, drifts, spins) must respect `prefers-reduced-motion`.
+
+```css
+@media (prefers-reduced-motion: reduce) {
+  .sphere-scene,
+  .orbit-particle,
+  .ambient-orb,
+  .reveal {
+    animation: none !important;
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+```
+
+---
+
+## 5. Gradient Rules
+
+### 5.1 Prefer Smooth 2-Stop Gradients
+
+Avoid 3-stop gradients with hard middle anchors. They often create banding or muddy transitions.
+
+```css
+/* Good */
+background: linear-gradient(135deg, #00d4ff 0%, #7b61ff 100%);
+
+/* Bad: middle #0098FF at 50% creates a muddy transition zone */
+background: linear-gradient(135deg, #00d4ff 0%, #0098FF 50%, #7b61ff 100%);
+```
+
+### 5.2 Brand Gradients Must Survive Theme Switch
+
+Light theme should not drop the violet endpoint. Keep the brand gradient recognizable in both modes.
+
+```css
+/* Dark */
+.btn--primary {
+  background: linear-gradient(135deg, #00d4ff 0%, #7b61ff 100%);
+}
+
+/* Light */
+.btn--primary {
+  background: linear-gradient(135deg, #0099cc 0%, #7b61ff 100%);
+}
+```
+
+---
+
+## 6. CSS File Organization
 
 `styles.css` is an import-only manifest. All app-specific rules live in partials under `src/styles/`.
 
@@ -207,7 +372,22 @@ src/styles/
     wizard.css      # Wizard dialogs, template cards
 ```
 
-## Rules
+### View-Local CSS
+
+If a single view is complex enough (e.g., `view-home`), it may own a co-located `.css` file:
+
+```
+src/ui/views/
+  home.ts
+  home.css
+  home-panel.ts
+```
+
+These files are imported directly by the view component and should be scoped with the view tag (e.g., `view-home .card`).
+
+---
+
+## 7. Rules
 
 1. **No hardcoded pixel values in view CSS** except for:
    - `1px` borders
@@ -232,3 +412,9 @@ src/styles/
    - Accent gradients (`--accent-gradient`) for primary actions, metric bars, and hero stats
    - Glowing status dots instead of flat colors
    - Keep glow opacity modest so text readability stays first
+
+7. **No inline CSS monoliths**: A Lit component with >200 lines of CSS must import a dedicated `.css` file.
+
+8. **Floating cards are borderless**: Use the 4-layer shadow stack (3 drop-shadows + 1 inset) instead of `border`.
+
+9. **Respect reduced motion**: Any `animation` that runs continuously must be disabled inside `@media (prefers-reduced-motion: reduce)`.
