@@ -17,6 +17,8 @@ api/
 │   └── main.rs               # 程序入口
 ├── derive/                   # 自定义宏
 ├── migrations/               # 数据库迁移文件
+├── derive/                   # 自定义宏
+├── migrations/               # 数据库迁移文件
 ├── drivers/                  # 驱动实现
 ├── templates/                # 设备模板
 ├── vendor/                   # 第三方依赖（本地 fork）

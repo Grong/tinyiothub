@@ -1,3 +1,5 @@
+> ⚠️ **已弃用**：本文档描述的独立 `mcp/` crate 参数设计已过时。MCP Server 现已内嵌到 `api/src/api/mcp/` 中，直接调用内部服务。本文件仅保留供历史参考。
+
 # TinyIoTHub MCP 协议支持 - 详细参数设计
 
 > 基于现有 TinyIoTHub DTO 结构复用设计

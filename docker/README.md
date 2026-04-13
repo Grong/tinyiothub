@@ -484,7 +484,7 @@ hdc -t $DEVICE_ID shell "docker run -d \
 当前配置已优化：
 - 多阶段构建，分离编译和运行环境
 - Alpine 基础镜像（最小化）
-- Next.js 静态导出
+- Vite 静态构建
 - 单一容器部署，减少网络开销
 
 ### 运行时优化

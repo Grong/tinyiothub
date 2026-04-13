@@ -34,9 +34,9 @@
 | 组件路径 | 问题 | 状态 | 替代方案 |
 |---------|------|------|---------|
 | `shared/utilities/cmd_util.rs` | 疑似重复命令封装 | ❌ 勿复用 | 用 `shared/command.rs` |
-| `utils/validation.rs` | 分散的验证逻辑 | ❌ 勿复用 | 统一到 domain 验证 |
-| `utils/sql_security.rs` | SQL 注入防护工具 | ❌ 勿复用 | 用 SQLx 参数化查询即可 |
-| `utils/trace_util.rs` | 追踪工具 | ❌ 勿复用 | 用 shared/tracing 统一入口 |
+| `shared/utils/validation.rs` | 分散的验证逻辑 | ❌ 勿复用 | 统一到 domain 验证 |
+| `shared/utils/sql_security.rs` | SQL 注入防护工具 | ❌ 勿复用 | 用 SQLx 参数化查询即可 |
+| `shared/utils/trace_util.rs` | 追踪工具 | ❌ 勿复用 | 用 shared/tracing 统一入口 |
 
 ---
 

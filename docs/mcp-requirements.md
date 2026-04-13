@@ -1,3 +1,5 @@
+> ⚠️ **已弃用**：本文档描述的独立 MCP Server 需求调研已过时。MCP Server 已实现并内嵌到 `api/src/api/mcp/` 中。本文件仅保留供历史参考。
+
 # TinyIoTHub MCP 协议支持 - 需求调研
 
 ## 一、背景

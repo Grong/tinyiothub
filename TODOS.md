@@ -4,7 +4,7 @@
 
 ## Edge Intelligence Agent
 
-**Completed:
+**Completed:**
 
 - **Correct tool count in plan doc:** The plan doc already reflected 28 tools (was updated in prior session). Log message in `mod.rs` incorrectly said "13 device tools" — fixed to "12".
   **Completed:** (fix: change 13 to 12 in mod.rs:93)

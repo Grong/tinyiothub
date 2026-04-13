@@ -1,3 +1,5 @@
+> ⚠️ **已弃用**：本文档描述的独立 `mcp/` crate 架构已删除。MCP Server 现已内嵌到 `api/src/api/mcp/` 中。本文件仅保留供历史参考。
+
 # TinyIoTHub MCP 协议支持 - 技术方案设计
 
 ## 一、架构设计
