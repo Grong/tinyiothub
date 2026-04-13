@@ -134,10 +134,10 @@ impl EventRepository for SqliteEventRepository {
         }
 
         // Add pagination
-        if let Some(limit) = criteria.limit {
+        if let Some(_limit) = criteria.limit {
             sql.push_str(" LIMIT ?");
 
-            if let Some(offset) = criteria.offset {
+            if let Some(_offset) = criteria.offset {
                 sql.push_str(" OFFSET ?");
             }
         }
