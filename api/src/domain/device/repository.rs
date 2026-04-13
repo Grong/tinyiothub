@@ -4,8 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::dto::entity::device::{
     CreateDeviceRequest, Device, DeviceStats, DeviceStatusUpdate, UpdateDeviceRequest,
 };
-
-type Result<T> = std::result::Result<T, crate::shared::error::Error>;
+use crate::shared::error::Result;
 
 /// Repository interface for device persistence (defined in domain layer)
 #[async_trait]
@@ -90,7 +89,7 @@ pub trait DeviceRepository: Send + Sync {
 }
 
 /// Criteria for querying devices
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceCriteria {
     pub name: Option<String>,
     pub display_name: Option<String>,
@@ -104,7 +103,7 @@ pub struct DeviceCriteria {
     pub workspace_id: Option<String>,
     pub search_text: Option<String>,
     pub sort_by: DeviceSortBy,
-    pub sort_order: SortOrder,
+    pub sort_order: DeviceSortOrder,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
 }
@@ -120,9 +119,9 @@ pub enum DeviceSortBy {
     State,
 }
 
-/// Sort order
+/// Sort order for devices
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub enum SortOrder {
+pub enum DeviceSortOrder {
     Ascending,
     Descending,
 }
@@ -133,9 +132,31 @@ impl Default for DeviceSortBy {
     }
 }
 
-impl Default for SortOrder {
+impl Default for DeviceSortOrder {
     fn default() -> Self {
         Self::Descending
+    }
+}
+
+impl Default for DeviceCriteria {
+    fn default() -> Self {
+        Self {
+            name: None,
+            display_name: None,
+            device_type: None,
+            address: None,
+            driver_name: None,
+            state: None,
+            parent_id: None,
+            product_id: None,
+            tenant_id: None,
+            workspace_id: None,
+            search_text: None,
+            sort_by: DeviceSortBy::default(),
+            sort_order: DeviceSortOrder::default(),
+            limit: None,
+            offset: None,
+        }
     }
 }
 
@@ -212,7 +233,7 @@ impl DeviceCriteria {
     }
 
     /// Set sorting
-    pub fn with_sort(mut self, sort_by: DeviceSortBy, sort_order: SortOrder) -> Self {
+    pub fn with_sort(mut self, sort_by: DeviceSortBy, sort_order: DeviceSortOrder) -> Self {
         self.sort_by = sort_by;
         self.sort_order = sort_order;
         self
@@ -298,7 +319,7 @@ impl DeviceCriteriaBuilder {
         self
     }
 
-    pub fn sort_order(mut self, sort_order: SortOrder) -> Self {
+    pub fn sort_order(mut self, sort_order: DeviceSortOrder) -> Self {
         self.criteria.sort_order = sort_order;
         self
     }
@@ -337,7 +358,7 @@ mod tests {
             .state(1)
             .workspace_id("ws-1".to_string())
             .sort_by(DeviceSortBy::Name)
-            .sort_order(SortOrder::Ascending)
+            .sort_order(DeviceSortOrder::Ascending)
             .limit(100)
             .offset(0)
             .build();
@@ -348,7 +369,7 @@ mod tests {
         assert_eq!(criteria.state, Some(1));
         assert_eq!(criteria.workspace_id, Some("ws-1".to_string()));
         assert!(matches!(criteria.sort_by, DeviceSortBy::Name));
-        assert!(matches!(criteria.sort_order, SortOrder::Ascending));
+        assert!(matches!(criteria.sort_order, DeviceSortOrder::Ascending));
         assert_eq!(criteria.limit, Some(100));
         assert_eq!(criteria.offset, Some(0));
     }
@@ -358,13 +379,13 @@ mod tests {
         let criteria = DeviceCriteria::default()
             .with_name("sensor-02".to_string())
             .with_state(0)
-            .with_sort(DeviceSortBy::State, SortOrder::Descending)
+            .with_sort(DeviceSortBy::State, DeviceSortOrder::Descending)
             .with_pagination(50, 10);
 
         assert_eq!(criteria.name, Some("sensor-02".to_string()));
         assert_eq!(criteria.state, Some(0));
         assert!(matches!(criteria.sort_by, DeviceSortBy::State));
-        assert!(matches!(criteria.sort_order, SortOrder::Descending));
+        assert!(matches!(criteria.sort_order, DeviceSortOrder::Descending));
         assert_eq!(criteria.limit, Some(50));
         assert_eq!(criteria.offset, Some(10));
     }
