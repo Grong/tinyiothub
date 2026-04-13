@@ -13,6 +13,7 @@ use crate::{
 };
 
 /// SQLite implementation of DeviceRepository
+#[derive(Debug, Clone)]
 pub struct SqliteDeviceRepository {
     database: Database,
 }
@@ -216,8 +217,6 @@ impl DeviceRepository for SqliteDeviceRepository {
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-        let mut tx = self.database.pool().begin().await?;
-
         sqlx::query(
             r#"
             INSERT INTO devices (
@@ -247,10 +246,8 @@ impl DeviceRepository for SqliteDeviceRepository {
         .bind(&request.workspace_id)
         .bind(&now)
         .bind(&now)
-        .execute(&mut *tx)
+        .execute(self.database.pool())
         .await?;
-
-        tx.commit().await?;
 
         self.find_by_id(&id)
             .await?
@@ -258,6 +255,8 @@ impl DeviceRepository for SqliteDeviceRepository {
     }
 
     async fn update(&self, id: &str, request: &UpdateDeviceRequest) -> Result<Device> {
+        let mut tx = self.database.pool().begin().await?;
+
         let mut builder = QueryBuilder::new("UPDATE devices SET ");
         let mut has_updates = false;
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
@@ -389,12 +388,26 @@ impl DeviceRepository for SqliteDeviceRepository {
         builder.push(", updated_at = ").push_bind(&now);
         builder.push(" WHERE id = ").push_bind(id);
 
-        let result = builder.build().execute(self.database.pool()).await?;
+        let result = builder.build().execute(&mut *tx).await?;
         if result.rows_affected() == 0 {
             return Err(Error::NotFound);
         }
 
-        self.find_by_id(id).await?.ok_or(Error::NotFound)
+        let sql = format!(
+            "SELECT {} FROM devices WHERE id = ?",
+            Self::SELECT_COLUMNS
+        );
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await;
+
+        tx.commit().await?;
+
+        match row {
+            Ok(row) => self.row_to_device(row),
+            Err(_) => Err(Error::NotFound),
+        }
     }
 
     async fn delete(&self, id: &str) -> Result<u64> {
@@ -768,7 +781,7 @@ impl DeviceRepository for SqliteDeviceRepository {
         }
 
         if let Some(search) = search {
-            criteria.name = Some(search.to_string());
+            criteria.search_text = Some(search.to_string());
         }
 
         self.find_all(&criteria).await
