@@ -9,6 +9,8 @@ use crate::{
     shared::error::Result,
 };
 
+use super::device_row_mapper;
+
 /// SQLite implementation of DeviceQueryService
 #[derive(Debug, Clone)]
 pub struct SqliteDeviceQueryService {
@@ -19,42 +21,6 @@ impl SqliteDeviceQueryService {
     pub fn new(database: Database) -> Self {
         Self { database }
     }
-
-    const SELECT_COLUMNS: &str = r#"
-        id, name, display_name, device_type, address, description, position,
-        driver_name, device_model, protocol_type, factory_name, linked_data,
-        driver_options, state, parent_id, product_id, tenant_id, workspace_id, created_at, updated_at
-    "#;
-
-    fn row_to_device(&self, row: sqlx::sqlite::SqliteRow) -> Result<Device> {
-        Ok(Device {
-            id: row.get("id"),
-            name: row.get("name"),
-            display_name: row.get("display_name"),
-            device_type: row.get("device_type"),
-            address: row.get("address"),
-            description: row.get("description"),
-            position: row.get("position"),
-            driver_name: row.get("driver_name"),
-            device_model: row.get("device_model"),
-            protocol_type: row.get("protocol_type"),
-            factory_name: row.get("factory_name"),
-            linked_data: row.get("linked_data"),
-            driver_options: row.get("driver_options"),
-            state: row.get("state"),
-            parent_id: row.get("parent_id"),
-            product_id: row.get("product_id"),
-            tenant_id: row.get("tenant_id"),
-            workspace_id: row.get("workspace_id"),
-            created_at: row.get("created_at"),
-            updated_at: row.get("updated_at"),
-            tags: None,
-            properties: None,
-            commands: None,
-            is_online: false,
-            last_heartbeat: None,
-        })
-    }
 }
 
 #[async_trait]
@@ -64,7 +30,7 @@ impl DeviceQueryService for SqliteDeviceQueryService {
         let exact_pattern = format!("{}%", keyword);
 
         let mut builder = QueryBuilder::new("SELECT ");
-        builder.push(Self::SELECT_COLUMNS);
+        builder.push(device_row_mapper::SELECT_COLUMNS);
         builder.push(
             " FROM devices WHERE name LIKE ? OR display_name LIKE ? OR address LIKE ? OR description LIKE ?
              ORDER BY CASE
@@ -90,7 +56,7 @@ impl DeviceQueryService for SqliteDeviceQueryService {
         let rows = builder.build().fetch_all(self.database.pool()).await?;
         let mut devices = Vec::new();
         for row in rows {
-            devices.push(self.row_to_device(row)?);
+            devices.push(device_row_mapper::row_to_device(row)?);
         }
         Ok(devices)
     }
@@ -161,7 +127,7 @@ impl DeviceQueryService for SqliteDeviceQueryService {
 
     async fn get_device_tree(&self, root_id: Option<&str>) -> Result<Vec<Device>> {
         let mut builder = QueryBuilder::new("SELECT ");
-        builder.push(Self::SELECT_COLUMNS);
+        builder.push(device_row_mapper::SELECT_COLUMNS);
         builder.push(" FROM devices WHERE ");
 
         if let Some(root_id) = root_id {
@@ -175,7 +141,7 @@ impl DeviceQueryService for SqliteDeviceQueryService {
         let rows = builder.build().fetch_all(self.database.pool()).await?;
         let mut devices = Vec::new();
         for row in rows {
-            devices.push(self.row_to_device(row)?);
+            devices.push(device_row_mapper::row_to_device(row)?);
         }
         Ok(devices)
     }
@@ -184,51 +150,27 @@ impl DeviceQueryService for SqliteDeviceQueryService {
         &self,
         workspace_id: Option<&str>,
     ) -> Result<DeviceStatusDistribution> {
-        let online: i64 = if let Some(wid) = workspace_id {
-            sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE state = 1 AND workspace_id = ?")
-                .bind(wid)
-                .fetch_one(self.database.pool())
-                .await?
-        } else {
-            sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE state = 1")
-                .fetch_one(self.database.pool())
-                .await?
-        };
+        let mut builder = QueryBuilder::new(
+            "SELECT
+                SUM(CASE WHEN state = 1 THEN 1 ELSE 0 END) as online,
+                SUM(CASE WHEN state = 0 THEN 1 ELSE 0 END) as offline,
+                SUM(CASE WHEN state < 0 THEN 1 ELSE 0 END) as error_count,
+                SUM(CASE WHEN state = 2 THEN 1 ELSE 0 END) as maintenance
+            FROM devices",
+        );
 
-        let offline: i64 = if let Some(wid) = workspace_id {
-            sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE state = 0 AND workspace_id = ?")
-                .bind(wid)
-                .fetch_one(self.database.pool())
-                .await?
-        } else {
-            sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE state = 0")
-                .fetch_one(self.database.pool())
-                .await?
-        };
+        if let Some(wid) = workspace_id {
+            builder.push(" WHERE workspace_id = ").push_bind(wid);
+        }
 
-        let error: i64 = if let Some(wid) = workspace_id {
-            sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE state < 0 AND workspace_id = ?")
-                .bind(wid)
-                .fetch_one(self.database.pool())
-                .await?
-        } else {
-            sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE state < 0")
-                .fetch_one(self.database.pool())
-                .await?
-        };
+        let row = builder.build().fetch_one(self.database.pool()).await?;
 
-        let maintenance: i64 = if let Some(wid) = workspace_id {
-            sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE state = 2 AND workspace_id = ?")
-                .bind(wid)
-                .fetch_one(self.database.pool())
-                .await?
-        } else {
-            sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE state = 2")
-                .fetch_one(self.database.pool())
-                .await?
-        };
-
-        Ok(DeviceStatusDistribution { online, offline, error, maintenance })
+        Ok(DeviceStatusDistribution {
+            online: row.get("online"),
+            offline: row.get("offline"),
+            error: row.get("error_count"),
+            maintenance: row.get("maintenance"),
+        })
     }
 
     async fn get_quick_devices_list(
@@ -236,44 +178,29 @@ impl DeviceQueryService for SqliteDeviceQueryService {
         limit: i32,
         workspace_id: Option<&str>,
     ) -> Result<Vec<QuickDevice>> {
-        let devices: Vec<(String, String, Option<String>, i32, chrono::NaiveDateTime)> = if let Some(wid) = workspace_id {
-            sqlx::query_as(
-                r#"
-                SELECT id, name, device_type, state, updated_at
-                FROM devices WHERE workspace_id = ?
-                ORDER BY
-                    CASE
-                        WHEN state = 1 THEN 0
-                        WHEN state = 0 THEN 1
-                        WHEN state < 0 THEN 2
-                        ELSE 3
-                    END,
-                    updated_at DESC
-                LIMIT ?"#,
-            )
-            .bind(wid)
-            .bind(limit)
-            .fetch_all(self.database.pool())
-            .await?
-        } else {
-            sqlx::query_as(
-                r#"
-                SELECT id, name, device_type, state, updated_at
-                FROM devices
-                ORDER BY
-                    CASE
-                        WHEN state = 1 THEN 0
-                        WHEN state = 0 THEN 1
-                        WHEN state < 0 THEN 2
-                        ELSE 3
-                    END,
-                    updated_at DESC
-                LIMIT ?"#,
-            )
-            .bind(limit)
-            .fetch_all(self.database.pool())
-            .await?
-        };
+        let mut builder = QueryBuilder::new(
+            "SELECT id, name, device_type, state, updated_at FROM devices",
+        );
+
+        if let Some(wid) = workspace_id {
+            builder.push(" WHERE workspace_id = ").push_bind(wid);
+        }
+
+        builder.push(
+            " ORDER BY
+                CASE
+                    WHEN state = 1 THEN 0
+                    WHEN state = 0 THEN 1
+                    WHEN state < 0 THEN 2
+                    ELSE 3
+                END,
+                updated_at DESC
+            LIMIT ",
+        );
+        builder.push_bind(limit);
+
+        let devices: Vec<(String, String, Option<String>, i32, chrono::NaiveDateTime)> =
+            builder.build_query_as().fetch_all(self.database.pool()).await?;
 
         let quick_devices = devices
             .into_iter()

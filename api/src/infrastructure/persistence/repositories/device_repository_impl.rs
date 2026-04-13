@@ -12,6 +12,8 @@ use crate::{
     shared::error::{Error, Result},
 };
 
+use super::device_row_mapper;
+
 /// SQLite implementation of DeviceRepository
 #[derive(Debug, Clone)]
 pub struct SqliteDeviceRepository {
@@ -22,70 +24,33 @@ impl SqliteDeviceRepository {
     pub fn new(database: Database) -> Self {
         Self { database }
     }
-
-    const SELECT_COLUMNS: &str = r#"
-        id, name, display_name, device_type, address, description, position,
-        driver_name, device_model, protocol_type, factory_name, linked_data,
-        driver_options, state, parent_id, product_id, tenant_id, workspace_id, created_at, updated_at
-    "#;
-
-    fn row_to_device(&self, row: sqlx::sqlite::SqliteRow) -> Result<Device> {
-        use sqlx::Row;
-        Ok(Device {
-            id: row.get("id"),
-            name: row.get("name"),
-            display_name: row.get("display_name"),
-            device_type: row.get("device_type"),
-            address: row.get("address"),
-            description: row.get("description"),
-            position: row.get("position"),
-            driver_name: row.get("driver_name"),
-            device_model: row.get("device_model"),
-            protocol_type: row.get("protocol_type"),
-            factory_name: row.get("factory_name"),
-            linked_data: row.get("linked_data"),
-            driver_options: row.get("driver_options"),
-            state: row.get("state"),
-            parent_id: row.get("parent_id"),
-            product_id: row.get("product_id"),
-            tenant_id: row.get("tenant_id"),
-            workspace_id: row.get("workspace_id"),
-            created_at: row.get("created_at"),
-            updated_at: row.get("updated_at"),
-            tags: None,
-            properties: None,
-            commands: None,
-            is_online: false,
-            last_heartbeat: None,
-        })
-    }
 }
 
 #[async_trait]
 impl DeviceRepository for SqliteDeviceRepository {
     async fn find_by_id(&self, id: &str) -> Result<Option<Device>> {
-        let sql = format!("SELECT {} FROM devices WHERE id = ?", Self::SELECT_COLUMNS);
+        let sql = format!("SELECT {} FROM devices WHERE id = ?", device_row_mapper::SELECT_COLUMNS);
         let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(id)
             .fetch_optional(self.database.pool())
             .await?;
 
         if let Some(row) = row {
-            Ok(Some(self.row_to_device(row)?))
+            Ok(Some(device_row_mapper::row_to_device(row)?))
         } else {
             Ok(None)
         }
     }
 
     async fn find_by_name(&self, name: &str) -> Result<Option<Device>> {
-        let sql = format!("SELECT {} FROM devices WHERE name = ?", Self::SELECT_COLUMNS);
+        let sql = format!("SELECT {} FROM devices WHERE name = ?", device_row_mapper::SELECT_COLUMNS);
         let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(name)
             .fetch_optional(self.database.pool())
             .await?;
 
         if let Some(row) = row {
-            Ok(Some(self.row_to_device(row)?))
+            Ok(Some(device_row_mapper::row_to_device(row)?))
         } else {
             Ok(None)
         }
@@ -93,7 +58,7 @@ impl DeviceRepository for SqliteDeviceRepository {
 
     async fn find_all(&self, criteria: &DeviceCriteria) -> Result<Vec<Device>> {
         let mut builder = QueryBuilder::new("SELECT ");
-        builder.push(Self::SELECT_COLUMNS);
+        builder.push(device_row_mapper::SELECT_COLUMNS);
         builder.push(" FROM devices WHERE 1=1");
 
         if let Some(tenant_id) = &criteria.tenant_id {
@@ -160,7 +125,7 @@ impl DeviceRepository for SqliteDeviceRepository {
         let rows = builder.build().fetch_all(self.database.pool()).await?;
         let mut devices = Vec::new();
         for row in rows {
-            devices.push(self.row_to_device(row)?);
+            devices.push(device_row_mapper::row_to_device(row)?);
         }
         Ok(devices)
     }
@@ -395,7 +360,7 @@ impl DeviceRepository for SqliteDeviceRepository {
 
         let sql = format!(
             "SELECT {} FROM devices WHERE id = ?",
-            Self::SELECT_COLUMNS
+            device_row_mapper::SELECT_COLUMNS
         );
         let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(id)
@@ -405,7 +370,7 @@ impl DeviceRepository for SqliteDeviceRepository {
         tx.commit().await?;
 
         match row {
-            Ok(row) => self.row_to_device(row),
+            Ok(row) => device_row_mapper::row_to_device(row),
             Err(_) => Err(Error::NotFound),
         }
     }
@@ -565,7 +530,7 @@ impl DeviceRepository for SqliteDeviceRepository {
     async fn find_children(&self, parent_id: &str) -> Result<Vec<Device>> {
         let sql = format!(
             "SELECT {} FROM devices WHERE parent_id = ? ORDER BY name",
-            Self::SELECT_COLUMNS
+            device_row_mapper::SELECT_COLUMNS
         );
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(parent_id)
@@ -574,7 +539,7 @@ impl DeviceRepository for SqliteDeviceRepository {
 
         let mut devices = Vec::new();
         for row in rows {
-            devices.push(self.row_to_device(row)?);
+            devices.push(device_row_mapper::row_to_device(row)?);
         }
         Ok(devices)
     }
@@ -582,7 +547,7 @@ impl DeviceRepository for SqliteDeviceRepository {
     async fn find_by_product_id(&self, product_id: &str) -> Result<Vec<Device>> {
         let sql = format!(
             "SELECT {} FROM devices WHERE product_id = ? ORDER BY name",
-            Self::SELECT_COLUMNS
+            device_row_mapper::SELECT_COLUMNS
         );
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(product_id)
@@ -591,7 +556,7 @@ impl DeviceRepository for SqliteDeviceRepository {
 
         let mut devices = Vec::new();
         for row in rows {
-            devices.push(self.row_to_device(row)?);
+            devices.push(device_row_mapper::row_to_device(row)?);
         }
         Ok(devices)
     }
@@ -599,7 +564,7 @@ impl DeviceRepository for SqliteDeviceRepository {
     async fn find_by_driver_name(&self, driver_name: &str) -> Result<Vec<Device>> {
         let sql = format!(
             "SELECT {} FROM devices WHERE driver_name = ? ORDER BY name",
-            Self::SELECT_COLUMNS
+            device_row_mapper::SELECT_COLUMNS
         );
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(driver_name)
@@ -608,7 +573,7 @@ impl DeviceRepository for SqliteDeviceRepository {
 
         let mut devices = Vec::new();
         for row in rows {
-            devices.push(self.row_to_device(row)?);
+            devices.push(device_row_mapper::row_to_device(row)?);
         }
         Ok(devices)
     }
@@ -628,7 +593,7 @@ impl DeviceRepository for SqliteDeviceRepository {
         }
 
         let mut builder = QueryBuilder::new("SELECT ");
-        builder.push(Self::SELECT_COLUMNS);
+        builder.push(device_row_mapper::SELECT_COLUMNS);
         builder.push(" FROM devices WHERE id IN (");
         let mut separated = builder.separated(", ");
         for id in ids {
@@ -639,7 +604,7 @@ impl DeviceRepository for SqliteDeviceRepository {
         let rows = builder.build().fetch_all(self.database.pool()).await?;
         let mut devices = Vec::new();
         for row in rows {
-            devices.push(self.row_to_device(row)?);
+            devices.push(device_row_mapper::row_to_device(row)?);
         }
         Ok(devices)
     }
