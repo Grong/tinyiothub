@@ -1,9 +1,9 @@
 // API Layer
 // Contains all HTTP API handlers and middleware
 
-use axum::{middleware as axum_middleware, routing::{get, post, put}, Router};
+use axum::{middleware as axum_middleware, routing::{get, post}, Router};
 
-use crate::{application::data_context::DataContext, shared::app_state::AppState};
+use crate::shared::app_state::AppState;
 
 pub mod chat;
 pub mod alarm_rules;

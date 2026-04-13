@@ -9,7 +9,6 @@ use axum::{
     Json,
     Router,
 };
-use serde::Deserialize;
 
 use std::sync::Arc;
 
@@ -20,7 +19,6 @@ use crate::{
         JobStatistics, UpdateJobRequest,
     },
     dto::response::{ApiResponse, builder::ApiResponseBuilder, PaginatedResponse, PaginationInfo},
-    infrastructure::persistence::database::Database,
     shared::app_state::AppState,
 };
 

@@ -4,7 +4,7 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::Json,
-    routing::{delete, get, post},
+    routing::get,
     Router,
 };
 use serde::Deserialize;
@@ -109,7 +109,7 @@ pub async fn create_skill(
 ) -> Result<Json<ApiResponse<SkillInfoDto>>, StatusCode> {
     // Validate path
     validate_skill_path(&req.workspace_id, &req.skill_name)
-        .map_err(|e| StatusCode::BAD_REQUEST)?;
+        .map_err(|_e| StatusCode::BAD_REQUEST)?;
 
     let file_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("skills")

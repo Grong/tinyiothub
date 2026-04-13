@@ -24,6 +24,7 @@ struct WeComSendRequest {
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 struct WeComAccessTokenResponse {
     access_token: String,
     expires_in: i64,

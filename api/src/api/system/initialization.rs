@@ -90,6 +90,7 @@ async fn initialize_system(
 }
 
 /// 检查系统是否需要初始化
+#[allow(dead_code)]
 pub async fn check_system_initialization(state: &AppState) -> Result<bool, sqlx::Error> {
     let users = User::find_all(state.database(), &Default::default()).await?;
     Ok(users.is_empty())

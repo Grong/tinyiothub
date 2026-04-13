@@ -26,6 +26,7 @@ pub struct TimeTask {
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 #[serde(rename_all = "snake_case")]
 pub struct TaskQuery {
     pub enabled: Option<bool>,
@@ -46,6 +47,7 @@ pub struct CreateTaskRequest {
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 #[serde(rename_all = "snake_case")]
 pub struct UpdateTaskRequest {
     pub name: Option<String>,

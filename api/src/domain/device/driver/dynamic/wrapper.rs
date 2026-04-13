@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use tracing::{debug, error};
+use tracing::debug;
 
 use super::loader::DynamicDriverLoader;
 use crate::{

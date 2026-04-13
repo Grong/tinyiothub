@@ -55,6 +55,7 @@ struct ConfigOption {
 
 /// Match driver request
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 #[serde(rename_all = "camelCase")]
 struct MatchDriverInput {
     manufacturer: Option<String>, // Factory name / brand
