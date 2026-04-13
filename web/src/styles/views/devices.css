@@ -1,0 +1,194 @@
+/* ===== Device Patterns ===== */
+.device-card {
+  padding: 2px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  height: 180px;
+}
+
+.device-card__header {
+  padding: 14px 16px 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.device-card__body {
+  padding: 10px 16px;
+  cursor: pointer;
+  overflow: hidden;
+  flex: 1;
+  min-height: 0;
+}
+
+.device-card__footer {
+  padding: 0 16px 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  align-items: center;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.device-list-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-radius: 6px;
+  background: var(--bg-subtle);
+  text-decoration: none;
+  color: inherit;
+}
+
+/* ===== Detail view wrappers ===== */
+.prop-table-wrap {
+  padding: 16px 20px;
+}
+.command-list-wrap {
+  padding: 16px 20px;
+}
+.events-list-wrap {
+  padding: 16px 20px;
+}
+.alarm-card-wrap {
+  padding: var(--space-5);
+}
+
+/* Device detail */
+.detail-header {
+  padding: 16px 20px;
+  margin-bottom: var(--space-3);
+}
+.detail-header__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.detail-header__main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.detail-header__title {
+  margin: 0;
+  font-size: 18px;
+}
+.detail-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-bottom: var(--space-3);
+}
+@media (max-width: 768px) {
+  .detail-stat-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* Device type tag */
+.type-tag {
+  display: inline-flex;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+/* Command list item */
+.command-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  contain: layout;
+}
+.command-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: var(--bg-subtle);
+  border-radius: 8px;
+}
+.command-item__name {
+  font-weight: 500;
+  font-size: 13px;
+}
+.command-item__desc {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Property table value cell */
+.prop-value {
+  font-size: 13px;
+  font-weight: 500;
+}
+.prop-unit {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: var(--space-1);
+}
+.prop-type {
+  font-size: 12px;
+  color: var(--muted);
+}
+.prop-ro-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  background: rgba(107,114,128,0.1);
+  color: var(--muted);
+}
+.prop-rw-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  background: rgba(16,185,129,0.1);
+  color: var(--success);
+}
+
+/* Tag editor popover */
+.tag-popover {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 100;
+  margin-top: var(--space-1);
+  min-width: 220px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: var(--space-2);
+  background: var(--bg);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+.tag-popover__search {
+  width: 100%;
+  font-size: 12px;
+  padding: 4px 8px;
+  margin-bottom: 6px;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+}
+.tag-popover__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  max-height: 120px;
+  overflow-y: auto;
+}
+

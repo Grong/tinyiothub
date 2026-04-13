@@ -1,0 +1,410 @@
+/* ===========================================
+   A2UI Surfaces
+   =========================================== */
+
+.a2ui-surface {
+  margin: var(--space-2) 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--bg-muted);
+}
+
+.a2ui-surface--overlay {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1000;
+  background: var(--card);
+  box-shadow: var(--shadow-lg);
+  max-width: 600px;
+  width: 90%;
+}
+
+/* ===========================================
+   A2UI Basic Components
+   =========================================== */
+
+.a2ui-text { margin: var(--space-1) 0; }
+.a2ui-heading { margin: var(--space-2) 0 var(--space-1); font-size: 1.1em; font-weight: 600; }
+.a2ui-subtitle { margin: var(--space-1) 0; color: var(--muted); }
+.a2ui-caption { color: var(--muted); font-size: 0.85em; }
+
+.a2ui-btn {
+  padding: 6px var(--space-4);
+  border-radius: var(--radius-sm);
+  border: none;
+  cursor: pointer;
+  font-size: 0.9em;
+  font-weight: 500;
+  transition: opacity var(--duration-fast);
+}
+.a2ui-btn:hover { opacity: 0.85; }
+.a2ui-btn--primary { background: var(--accent); color: white; }
+.a2ui-btn--secondary { background: var(--bg-muted); color: var(--text); border: 1px solid var(--border); }
+.a2ui-btn--danger { background: #e74c3c; color: white; }
+
+.a2ui-divider { border: none; border-top: 1px solid var(--border); margin: 8px 0; }
+
+/* ===========================================
+   A2UI IoT Components
+   =========================================== */
+
+.a2ui-device-card {
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--card);
+}
+.a2ui-device-card__header { display: flex; align-items: center; gap: var(--space-2); }
+.a2ui-device-card__status {
+  width: var(--radius-md); height: var(--radius-md); border-radius: 50%;
+}
+.a2ui-device-card__status.online { background: #2ecc71; }
+.a2ui-device-card__status.offline { background: #95a5a6; }
+.a2ui-device-card__name { font-weight: 600; }
+.a2ui-device-card__id { font-size: 0.8em; color: var(--muted); margin-top: 4px; }
+
+.a2ui-device-card__badge {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.a2ui-device-card__telemetry {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.a2ui-device-card__metric {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+}
+
+.a2ui-device-card__metric-key {
+  color: var(--muted);
+}
+
+.a2ui-device-card__metric-value {
+  font-weight: 600;
+}
+
+.a2ui-device-card__sparkline {
+  margin-top: 8px;
+}
+
+.a2ui-device-card__last-seen {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.a2ui-device-card__actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.a2ui-btn--sm {
+  padding: 3px var(--space-2);
+  font-size: 12px;
+}
+
+.a2ui-unknown {
+  padding: var(--space-2);
+  border: 1px dashed var(--border);
+  color: var(--muted);
+  font-size: 0.85em;
+  border-radius: 4px;
+}
+
+.agent-dropdown {
+  padding: 6px var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  min-width: 200px;
+}
+
+.agent-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4var(--space-2) 2var(--space-1);
+  text-align: center;
+  color: var(--muted);
+}
+
+.agent-placeholder__icon {
+  font-size: 32px;
+  margin-bottom: 12px;
+}
+
+.agent-placeholder__desc {
+  font-size: 14px;
+  max-width: 320px;
+  line-height: 1.5;
+}
+
+/* ===========================================
+   A2UI DeviceTable
+   =========================================== */
+
+.a2ui-device-table__title {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+.a2ui-device-table__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.a2ui-device-table__table th {
+  text-align: left;
+  padding: var(--space-2) var(--space-2);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--border);
+}
+
+.a2ui-device-table__table td {
+  padding: var(--space-2) var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.a2ui-device-table__status {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.a2ui-device-table__actions {
+  display: flex;
+  gap: var(--space-1);
+}
+
+/* ── Agent Tools Tab ── */
+
+.agent-tools-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.agent-tools-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.agent-tools-search {
+  flex: 1;
+  padding: 6px var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--fg);
+  font-size: 13px;
+  outline: none;
+}
+
+.agent-tools-search:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-alpha);
+}
+
+/* ── Agent Placeholder Tabs ── */
+
+.agent-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4var(--space-2) 2var(--space-1);
+  text-align: center;
+  color: var(--muted);
+}
+
+.agent-placeholder__icon {
+  font-size: 36px;
+  margin-bottom: 12px;
+  opacity: 0.7;
+}
+
+.agent-placeholder__desc {
+  font-size: 14px;
+  line-height: 1.6;
+  max-width: 320px;
+  margin: 0;
+}
+
+/* ── A2UI DataChart ── */
+
+.a2ui-data-chart {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  background: var(--card);
+}
+
+.a2ui-data-chart__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.a2ui-data-chart__title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.a2ui-data-chart__range {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.a2ui-data-chart__svg {
+  display: block;
+}
+
+.a2ui-data-chart__legend {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.a2ui-data-chart__legend-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.a2ui-data-chart__legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+/* ── A2UI ControlPanel ── */
+
+.a2ui-control-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  background: var(--card);
+}
+
+.a2ui-control-panel__header {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.a2ui-control-panel__field {
+  margin-bottom: 12px;
+}
+
+.a2ui-control-panel__label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.a2ui-control-panel__slider-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.a2ui-control-panel__slider {
+  flex: 1;
+  accent-color: var(--accent, #3b82f6);
+}
+
+.a2ui-control-panel__range-label {
+  font-size: 11px;
+  color: var(--muted);
+  min-width: 24px;
+}
+
+.a2ui-control-panel__toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.a2ui-control-panel__toggle input {
+  display: none;
+}
+
+.a2ui-control-panel__toggle-slider {
+  width: 36px;
+  height: 20px;
+  background: var(--border);
+  border-radius: var(--radius-md);
+  position: relative;
+  transition: background var(--duration-normal);
+  flex-shrink: 0;
+}
+
+.a2ui-control-panel__toggle-slider::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: var(--card, #fff);
+  border-radius: 50%;
+  transition: transform var(--duration-normal);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+
+.a2ui-control-panel__toggle input:checked + .a2ui-control-panel__toggle-slider {
+  background: var(--accent, #3b82f6);
+}
+
+.a2ui-control-panel__toggle input:checked + .a2ui-control-panel__toggle-slider::after {
+  transform: translateX(16px);
+}
+
+.a2ui-control-panel__toggle-label {
+  color: var(--text);
+}
+
+.a2ui-control-panel__choices {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.a2ui-control-panel__choice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 13px;
+  cursor: pointer;
+}
+

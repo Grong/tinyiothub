@@ -66,6 +66,10 @@
   --danger-subtle: rgba(239, 68, 68, 0.12);
   --info: #3b82f6;
 
+  /* Semantic aliases used across views */
+  --success: var(--ok);
+  --warning: var(--warn);
+
   /* Focus - With glow */
   --focus: rgba(0, 152, 255, 0.25);
   --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--ring);
@@ -81,8 +85,8 @@
   /* Typography */
   --mono:
     "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace;
-  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-display: var(--font-body);
+  --font-body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Space Grotesk", "Inter", sans-serif;
 
   /* Shadows - Richer with subtle color */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
@@ -115,6 +119,30 @@
   --duration-fast: 120ms;
   --duration-normal: 200ms;
   --duration-slow: 350ms;
+
+  /* Spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 60px;
+
+  /* Missing surface tokens */
+  --bg-subtle: rgba(255, 255, 255, 0.03);
+
+  /* Elevation overlays */
+  --overlay-backdrop: rgba(0, 0, 0, 0.5);
+  --overlay-hover: rgba(0, 0, 0, 0.2);
+
+  /* Semantic fills */
+  --danger-fill-5: rgba(239, 68, 68, 0.05);
+  --danger-line-15: rgba(239, 68, 68, 0.15);
+  --muted-fill-10: rgba(107, 114, 128, 0.10);
+  --ok-fill-10: rgba(16, 185, 129, 0.10);
 
   color-scheme: dark;
 }
@@ -179,6 +207,34 @@
   --danger-muted: rgba(220, 38, 38, 0.75);
   --danger-subtle: rgba(220, 38, 38, 0.1);
   --info: #2563eb;
+
+  /* Spacing scale (theme agnostic) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 60px;
+
+  /* Missing surface tokens — light */
+  --bg-subtle: rgba(0, 0, 0, 0.03);
+
+  /* Elevation overlays */
+  --overlay-backdrop: rgba(0, 0, 0, 0.5);
+  --overlay-hover: rgba(0, 0, 0, 0.2);
+
+  /* Semantic fills */
+  --danger-fill-5: rgba(220, 38, 38, 0.05);
+  --danger-line-15: rgba(220, 38, 38, 0.15);
+  --muted-fill-10: rgba(113, 113, 122, 0.10);
+  --ok-fill-10: rgba(22, 163, 74, 0.10);
+
+  /* Semantic aliases used across views */
+  --success: var(--ok);
+  --warning: var(--warn);
 
   --focus: rgba(0, 152, 255, 0.2);
   --focus-glow: 0 0 0 2px var(--bg), 0 0 0 4px var(--ring), 0 0 16px var(--accent-glow);

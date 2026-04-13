@@ -1,0 +1,318 @@
+/* ===== Wizard patterns ===== */
+.wizard-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-9);
+}
+.wizard-loading--compact {
+  padding: var(--space-5);
+}
+.inline-muted--spaced {
+  margin-left: var(--space-2);
+}
+.wizard-loading__text {
+  margin-left: var(--space-2);
+  color: var(--muted);
+}
+.wizard-empty {
+  text-align: center;
+  padding: var(--space-9);
+}
+.wizard-empty__icon {
+  font-size: 48px;
+  margin-bottom: var(--space-3);
+}
+.wizard-empty__title {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text);
+}
+.wizard-empty__hint {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: var(--space-1);
+}
+.wizard-category {
+  margin-bottom: 28px;
+}
+.wizard-category__header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 14px;
+}
+.wizard-category__title {
+  font-size: 16px;
+  font-weight: 600;
+}
+.wizard-category__count {
+  font-size: 12px;
+  color: var(--muted);
+  margin-left: var(--space-3);
+}
+.wizard-form-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-4);
+}
+.wizard-form-header__title {
+  font-size: 14px;
+  font-weight: 600;
+}
+.wizard-form-section {
+  margin-top: var(--space-4);
+}
+.wizard-form-section__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: var(--space-3);
+}
+.wizard-form-section__title {
+  font-size: 14px;
+  font-weight: 600;
+}
+.wizard-form-section__meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ===== Template overview ===== */
+.template-overview__summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.template-overview__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  color: var(--accent);
+}
+.template-overview__title-wrap {
+  min-width: 0;
+  flex: 1;
+}
+.template-overview__title {
+  font-weight: 600;
+  font-size: 16px;
+}
+.template-overview__meta {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.template-overview__badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.template-overview__desc {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+  margin-bottom: var(--space-4);
+  padding: 10px 12px;
+  background: var(--bg);
+  border-radius: 8px;
+}
+.template-overview__meta-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+.template-overview__meta-tag {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--muted);
+}
+.template-overview__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: var(--space-4);
+}
+.template-overview__tag {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--primary);
+  color: white;
+  opacity: 0.8;
+}
+.template-overview__list {
+  max-height: 240px;
+  overflow-y: auto;
+}
+.template-overview__list--commands {
+  max-height: 200px;
+}
+.template-overview__list-item-inner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.template-overview__list-badge-ro {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--bg-subtle);
+  color: var(--muted);
+}
+.template-overview__list-badge-rw {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--primary);
+  color: white;
+  opacity: 0.7;
+}
+.template-overview__param-count {
+  font-size: 10px;
+  color: var(--muted);
+}
+.template-overview__range {
+  opacity: 0.7;
+}
+
+/* ===== Responsive wizard ===== */
+@media (max-width: 768px) {
+  .wizard-dialog {
+    max-width: 100%;
+    margin: 0 16px;
+  }
+}
+/* Wizard template card hover (replaces JS mouseenter/mouseleave inline styles) */
+.template-card {
+  padding: var(--space-4);
+  cursor: pointer;
+  transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+}
+.template-card:hover {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary);
+}
+.template-card__header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.template-card__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: var(--accent);
+}
+.template-card__title-wrap {
+  min-width: 0;
+  flex: 1;
+}
+.template-card__title {
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.template-card__meta {
+  display: flex;
+  gap: var(--space-2);
+  font-size: 11px;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+.template-card__stats {
+  display: flex;
+  gap: var(--space-3);
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: var(--space-2);
+}
+.template-card__badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-subtle);
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+/* Wizard search box */
+.wizard-search {
+  position: relative;
+  margin-bottom: 20px;
+}
+.wizard-search__icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+}
+.wizard-search__input {
+  width: 100%;
+  padding: 10px 14px 10px 38px;
+  box-sizing: border-box;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-subtle);
+  color: var(--text);
+  font-size: 14px;
+}
+
+/* Template summary chip in wizard */
+.template-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-subtle);
+  margin-bottom: var(--space-4);
+}
+.template-chip__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  color: var(--accent);
+}
+.template-chip__title-wrap {
+  min-width: 0;
+  flex: 1;
+}
+.template-chip__title {
+  font-weight: 600;
+  font-size: 14px;
+}
+.template-chip__meta {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.template-chip__badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--muted);
+  text-transform: uppercase;
+}
+

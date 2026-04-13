@@ -1,0 +1,12 @@
+/* ===========================================
+   Animations for appearing elements
+   =========================================== */
+
+.create-form {
+  animation: fade-in var(--duration-slow) var(--ease-out);
+}
+
+.modal {
+  animation: scale-in var(--duration-normal) var(--ease-out);
+}
+

@@ -127,42 +127,42 @@
   color: var(--text);
 }
 
+.signin-page-wrapper .brand-headline {
+  font-family: var(--font-display);
+  font-size: 48px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  color: var(--text-strong);
+  margin: 24px 0 16px;
+}
+
 .signin-page-wrapper .brand-tagline {
-  font-size: 20px;
+  font-size: 16px;
   line-height: 1.6;
   color: var(--muted);
-  max-width: 400px;
+  max-width: 420px;
   margin-bottom: 48px;
 }
 
-.signin-page-wrapper .brand-features {
+.signin-page-wrapper .brand-stats {
   display: flex;
-  flex-direction: column;
-  gap: 16px;
+  gap: 32px;
 }
 
-.signin-page-wrapper .brand-feature {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+.signin-page-wrapper .brand-stat__num {
+  font-family: var(--font-display);
   font-size: 14px;
-  color: var(--text);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--text-strong);
+  text-transform: uppercase;
 }
 
-.signin-page-wrapper .brand-feature-icon {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  background: var(--accent-subtle);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--accent);
-}
-
-.signin-page-wrapper .brand-feature-icon svg {
-  width: 16px;
-  height: 16px;
+.signin-page-wrapper .brand-stat__label {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
 }
 
 /* Decorative orbs */

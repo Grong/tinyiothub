@@ -1,0 +1,126 @@
+/* ===========================================
+   Tables (Grid-based for list items)
+   =========================================== */
+
+.table {
+  display: grid;
+  gap: 6px;
+}
+
+.table-head,
+.table-row {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 0.8fr 0.7fr 0.8fr 0.8fr 0.8fr 0.8fr 0.6fr;
+  gap: var(--space-3);
+  align-items: center;
+}
+
+.table-head {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  padding: 0 var(--space-3);
+}
+
+.table-row {
+  border: none;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  transition: box-shadow var(--duration-fast) ease, transform var(--duration-fast) ease;
+  box-shadow: var(--shadow-sm);
+  margin-bottom: 4px;
+}
+
+.table-row:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateX(4px);
+}
+
+/* ===========================================
+   HTML Tables (for structured data)
+   =========================================== */
+
+.html-table,
+.models-table,
+.usage-models-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+
+.html-table thead,
+.models-table thead,
+.usage-models-table thead {
+  border-bottom: 1px solid var(--border);
+}
+
+.html-table th,
+.models-table th,
+.usage-models-table th {
+  text-align: left;
+  padding: var(--space-3) var(--space-4);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.html-table tbody tr,
+.models-table tbody tr,
+.usage-models-table tbody tr {
+  border-bottom: 1px solid var(--border);
+  transition: background var(--duration-fast) ease;
+}
+
+.html-table tbody tr:last-child,
+.models-table tbody tr:last-child,
+.usage-models-table tbody tr:last-child {
+  border-bottom: none;
+}
+
+.html-table tbody tr:hover,
+.models-table tbody tr:hover:not(.row--disabled),
+.usage-models-table tbody tr:hover {
+  background: var(--bg-hover);
+}
+
+.html-table td,
+.models-table td,
+.usage-models-table td {
+  padding: 1var(--space-1) var(--space-4);
+  font-size: 14px;
+}
+
+.html-table td.muted {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.session-link {
+  text-decoration: none;
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.session-link:hover {
+  text-decoration: underline;
+}
+
+.session-key-cell {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.session-key-cell .session-link,
+.session-key-display-name {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.session-key-display-name {
+  font-size: 11px;
+}
+
