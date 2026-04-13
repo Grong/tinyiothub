@@ -6,7 +6,7 @@ pub mod handlers;
 pub mod config;
 
 pub use config::SchedulerConfig;
-pub use handlers::CronHandler;
+pub use handlers::{SchedulerHandler, CronHandler};
 
 use crate::domain::plugin::PluginHandler;
 use crate::shared::error::Error;

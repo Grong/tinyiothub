@@ -6,10 +6,11 @@ pub mod handlers;
 pub mod config;
 
 pub use config::{HttpPollConfig, MqttConfig};
-pub use handlers::{HttpPollHandler, MqttSubscribeHandler};
+pub use handlers::{ProtocolHandler, HttpPollHandler, MqttSubscribeHandler};
 
-use crate::domain::plugin::PluginHandler;
+use crate::domain::plugin::{PluginHandler, AppContext};
 use crate::shared::error::Error;
+use std::sync::Arc;
 
 /// 创建协议处理器
 pub fn create_handler(config: &toml::Value) -> Result<Box<dyn PluginHandler>, Error> {

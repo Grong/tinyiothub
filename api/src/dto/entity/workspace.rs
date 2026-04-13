@@ -251,7 +251,7 @@ impl Workspace {
         .await
         .map_err(|e| format!("database error: {}", e))?;
 
-        let (_current_id, current_ws) = device.ok_or("device not found")?;
+        let (current_id, current_ws) = device.ok_or("device not found")?;
 
         if let Some(current_workspace) = current_ws {
             if current_workspace != workspace_id {

@@ -8,7 +8,7 @@ use axum::{
 use serde::Deserialize;
 
 use crate::{
-    api::self_healing::get_self_healing_state,
+    api::self_healing::{get_self_healing_state, SelfHealingState},
     domain::self_healing::PolicyEvaluator,
     dto::{
         entity::self_healing::{
@@ -150,7 +150,7 @@ async fn execute_action(
 /// GET /self-healing/executions - Get recovery history
 async fn get_executions(
     State(_state): State<AppState>,
-    _claims: Claims,
+    claims: Claims,
     Query(params): Query<HistoryQuery>,
 ) -> Json<ApiResponse<Vec<HealingExecutionDto>>> {
     let state = match get_self_healing_state() {

@@ -359,7 +359,7 @@ impl AlarmRepository for AlarmRepositoryImpl {
 impl AlarmRepositoryImpl {
     fn row_to_alarm(&self, row: sqlx::sqlite::SqliteRow) -> AlarmResult<Alarm> {
         use sqlx::Row;
-        
+        use chrono::TimeZone;
 
         use crate::domain::alarm::value_objects::{AlarmLevel, AlarmType, AlarmStatus, ResolutionType};
 

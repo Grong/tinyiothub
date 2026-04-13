@@ -733,7 +733,7 @@ impl ApiKey {
 
         // 更新租户使用统计（使用从 workspace 解析的 tenant_id）
         let error_count = if status_code >= 400 { 1 } else { 0 };
-        let _ = sqlx::query(
+        sqlx::query(
             r#"
             INSERT INTO tenant_usage (id, tenant_id, api_call_count, total_api_calls, total_api_errors, updated_at)
             VALUES (?, ?, 1, 1, ?, ?)

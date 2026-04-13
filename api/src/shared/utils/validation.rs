@@ -2,6 +2,7 @@
 // 提供常用的输入验证函数
 
 use regex::Regex;
+use validator::Validate;
 
 /// 验证邮箱格式
 pub fn is_valid_email(email: &str) -> bool {

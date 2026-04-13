@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use sqlx::{Row, SqlitePool};
 use thiserror::Error;
 use uuid::Uuid;
 

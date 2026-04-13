@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::api::mcp::handlers::get_mcp_context;
@@ -12,7 +12,7 @@ use crate::api::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, Too
 use crate::dto::entity::workspace::{
     Workspace, WorkspaceWithDeviceCount,
 };
-use crate::infrastructure::agent::AgentConfig;
+use crate::infrastructure::agent::{AgentClient, AgentConfig};
 
 /// Tool input: List workspaces
 #[derive(Debug, Deserialize)]
@@ -255,7 +255,7 @@ impl ToolHandler for CreateWorkspaceHandler {
             .await;
 
         let (final_workspace, warning) = match agent_result {
-            Ok(_agent_id) => {
+            Ok(agent_id) => {
                 // Update workspace with agent_id
                 if let Ok(Some(updated)) =
                     Workspace::update(&db, &workspace.id, None, None, None).await

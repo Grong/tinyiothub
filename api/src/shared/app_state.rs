@@ -24,6 +24,7 @@ use crate::{
         agent::AgentRuntime,
         event::{
             channels::NotificationChannelFactory,
+            handlers::{PersistenceEventHandler, RealTimeStatusHandler, SseEventHandler},
             security::{EventSecurityFactory, SecureEventService},
             EventBus, SseConnectionManager,
         },
@@ -389,6 +390,28 @@ impl AppState {
         // In a full implementation, we would load rules from the database here
 
         Ok(Arc::new(notification_manager))
+    }
+
+    /// 同步检查 Agent 是否可用（启动时调用一次）
+    fn check_openclaw_available(url: &str) -> bool {
+        // 从 URL 中提取 host:port
+        let parsed = match reqwest::Url::parse(url) {
+            Ok(u) => u,
+            Err(_) => return false,
+        };
+        let host = match parsed.host_str() {
+            Some(h) => h.to_string(),
+            None => return false,
+        };
+        let port = parsed.port_or_known_default().unwrap_or(42617);
+        let addr = format!("{}:{}", host, port);
+
+        // 快速 TCP 连接检查（2秒超时）
+        std::net::TcpStream::connect_timeout(
+            &addr.parse().unwrap_or_else(|_| "127.0.0.1:42617".parse().unwrap()),
+            std::time::Duration::from_secs(2),
+        )
+        .is_ok()
     }
 
     /// Create AppState for testing

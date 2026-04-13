@@ -23,8 +23,6 @@ struct WeComSendRequest {
     text: serde_json::Value,
 }
 
-// WeCom access-token fields kept for API completeness
-#[allow(dead_code)]
 #[derive(Deserialize)]
 struct WeComAccessTokenResponse {
     access_token: String,

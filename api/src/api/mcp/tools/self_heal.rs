@@ -2,9 +2,10 @@
 // MCP tools for system self-healing and recovery
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use async_trait::async_trait;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::api::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
@@ -209,7 +210,7 @@ impl ToolHandler for GetRecoveryHistoryHandler {
         drop(state_guard);
 
         // Resolve tenant_id from workspace for healing history (healing_executions uses tenant_id)
-        let (tenant_id, _workspace_id) = if let Some(ctx) = crate::api::mcp::handlers::get_mcp_context() {
+        let (tenant_id, workspace_id) = if let Some(ctx) = crate::api::mcp::handlers::get_mcp_context() {
             let workspace = crate::dto::entity::workspace::Workspace::find_by_id(&db, &ctx.workspace_id)
                 .await
                 .ok()

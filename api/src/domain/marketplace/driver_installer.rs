@@ -3,6 +3,7 @@ use std::{path::PathBuf, sync::Arc};
 use super::{
     client::MarketplaceClient,
     error::{MarketplaceError, Result},
+    metadata::DriverMetadata,
 };
 use crate::domain::device::driver;
 

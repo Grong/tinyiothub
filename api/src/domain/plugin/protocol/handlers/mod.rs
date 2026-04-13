@@ -7,6 +7,7 @@ use crate::{
     shared::error::Error,
 };
 
+use super::config::{HttpPollConfig, MqttConfig};
 
 #[async_trait]
 pub trait ProtocolHandler: Send + Sync {

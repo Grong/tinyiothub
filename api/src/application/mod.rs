@@ -20,3 +20,6 @@ pub use data_server::DataServer;
 pub use service_manager::ServiceManager;
 
 // Re-export agent application services
+pub use agent::{ChatService, ChatRequest, ChatEvent, ChatError, ChatStream};
+pub use agent::{SessionService, SessionRepository, Session, ChatMessage, CompactedSession};
+pub use agent::{AgentMemoryService, MemoryContext, DeviceSnapshot, AgentMemoryItem};

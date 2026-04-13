@@ -9,7 +9,6 @@ use crate::{
     shared::security::jwt::Claims,
 };
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct TrendQuery {
     period: Option<String>, // "24h", "7d", "30d"

@@ -89,8 +89,6 @@ async fn initialize_system(
     }
 }
 
-// Public API kept for future health-check usage
-#[allow(dead_code)]
 /// 检查系统是否需要初始化
 pub async fn check_system_initialization(state: &AppState) -> Result<bool, sqlx::Error> {
     let users = User::find_all(state.database(), &Default::default()).await?;

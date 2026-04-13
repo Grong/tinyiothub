@@ -8,7 +8,7 @@ pub mod driver_plugin;
 
 #[cfg(test)] mod tests;
 
-pub use registry::{get_global_registry, PluginRegistry, PluginManifest, PluginType, PluginHandler, PluginFactory};
+pub use registry::{get_global_registry, PluginRegistry, PluginEntry, PluginManifest, PluginType, PluginHandler, PluginFactory};
 pub use crate::application::AppContext;
 
 use std::sync::Arc;

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration};
 
 #[cfg(feature = "serial")]
 use serialport::SerialPort;
@@ -69,7 +69,6 @@ impl SnmpDriver {
         })
     }
 
-    #[allow(dead_code)]
     fn get_slave_id(&self) -> u8 {
         let opts = self.device.driver_options.clone().unwrap_or_default();
         if let Ok(parsed) = serde_json::from_str::<HashMap<String, String>>(&opts) {
@@ -99,7 +98,6 @@ impl SnmpDriver {
         Ok(conn)
     }
 
-    #[allow(dead_code)]
     fn handle_read_command(
         &self,
         prop: &DeviceProperty,

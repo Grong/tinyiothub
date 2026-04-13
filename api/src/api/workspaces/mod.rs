@@ -105,7 +105,7 @@ async fn create_workspace(
         .await;
 
     let (final_workspace, warning) = match agent_result {
-        Ok(_agent_id) => {
+        Ok(agent_id) => {
             // Update workspace with agent_id
             if let Ok(Some(updated)) =
                 Workspace::update(&db, &workspace.id, None, None, None).await
