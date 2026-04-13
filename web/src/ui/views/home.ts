@@ -153,24 +153,24 @@ export class HomeView extends LitElement {
         }
 
         view-home .btn--primary {
-          background: var(--accent);
+          background: var(--accent-gradient);
           color: var(--accent-foreground);
-          box-shadow: 0 2px 8px var(--accent-glow);
+          box-shadow: 0 2px 10px var(--accent-glow);
         }
 
         view-home .btn--primary:hover {
-          background: var(--accent-hover);
+          background: var(--accent-gradient-soft);
           transform: translateY(-2px);
-          box-shadow: 0 4px 12px var(--accent-glow);
+          box-shadow: 0 4px 16px var(--accent-glow-strong);
         }
 
         :root[data-theme="light"] view-home .btn--primary {
-          background: var(--accent);
+          background: var(--accent-gradient);
           color: var(--accent-foreground);
         }
 
         :root[data-theme="light"] view-home .btn--primary:hover {
-          background: var(--accent-hover);
+          background: var(--accent-gradient-soft);
         }
 
         view-home .btn--lg {
@@ -189,17 +189,17 @@ export class HomeView extends LitElement {
         view-home .hero::before {
           content: '';
           position: absolute;
-          top: 0;
+          top: -200px;
           left: 50%;
           transform: translateX(-50%);
-          width: 800px;
-          height: 800px;
-          background: radial-gradient(circle, var(--accent-subtle) 0%, transparent 70%);
+          width: 1000px;
+          height: 1000px;
+          background: radial-gradient(circle, rgba(0, 212, 255, 0.12) 0%, rgba(123, 97, 255, 0.06) 40%, transparent 70%);
           pointer-events: none;
         }
 
         :root[data-theme="light"] view-home .hero::before {
-          background: radial-gradient(circle, rgba(220, 38, 38, 0.08) 0%, transparent 70%);
+          background: radial-gradient(circle, rgba(0, 152, 255, 0.10) 0%, rgba(123, 97, 255, 0.05) 40%, transparent 70%);
         }
 
         view-home .hero-content {
@@ -214,18 +214,19 @@ export class HomeView extends LitElement {
           align-items: center;
           gap: 8px;
           padding: 6px 16px;
-          background: var(--accent-subtle);
+          background: rgba(0, 212, 255, 0.08);
           border-radius: 9999px;
           font-size: 13px;
           font-weight: 500;
           color: var(--accent);
           margin-bottom: 24px;
-          box-shadow: 0 2px 4px var(--accent-glow);
-          border: 1px solid transparent;
+          box-shadow: 0 0 12px var(--accent-glow);
+          border: 1px solid rgba(0, 212, 255, 0.25);
         }
 
         :root[data-theme="light"] view-home .badge {
           border-color: var(--accent);
+          background: rgba(0, 152, 255, 0.08);
         }
 
         view-home .badge-dot {
@@ -233,8 +234,9 @@ export class HomeView extends LitElement {
           width: 8px;
           height: 8px;
           border-radius: 50%;
-          background: var(--accent);
-          animation: home-pulse 2s infinite;
+          background: var(--accent-gradient);
+          box-shadow: 0 0 8px var(--accent-glow-strong);
+          animation: pulse-glow 2s ease-in-out infinite;
         }
 
         view-home .hero h1 {
@@ -316,23 +318,20 @@ export class HomeView extends LitElement {
         view-home .protocol-highlight {
           border-radius: 12px;
           padding: 10px 20px;
-          background: var(--accent-subtle);
-          border: 1px solid var(--accent-muted);
+          background: var(--accent-gradient);
+          border: 1px solid rgba(0, 212, 255, 0.35);
+          box-shadow: 0 2px 10px var(--accent-glow);
         }
 
         :root[data-theme="light"] view-home .protocol-highlight {
-          background: var(--accent);
-          border-color: var(--accent);
-        }
-
-        :root[data-theme="light"] view-home .protocol-highlight-text {
-          color: var(--accent-foreground);
+          background: var(--accent-gradient);
+          border-color: rgba(0, 152, 255, 0.35);
         }
 
         view-home .protocol-highlight-text {
           font-size: 14px;
           font-weight: 600;
-          color: var(--accent);
+          color: var(--accent-foreground);
         }
 
         /* Stats */
@@ -341,13 +340,25 @@ export class HomeView extends LitElement {
         }
 
         view-home .stats-inner {
+          position: relative;
           max-width: 1200px;
           margin: 0 auto;
           border-radius: 24px;
           padding: 48px;
-          border: 1px solid var(--border);
           background: var(--card);
-          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+        }
+
+        view-home .stats-inner::before {
+          content: '';
+          position: absolute;
+          inset: 0;
+          border-radius: inherit;
+          padding: 1px;
+          background: linear-gradient(135deg, rgba(255,255,255,0.12), rgba(255,255,255,0.03));
+          -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+          -webkit-mask-composite: xor;
+          mask-composite: exclude;
+          pointer-events: none;
         }
 
         view-home .stats-grid {
@@ -360,7 +371,10 @@ export class HomeView extends LitElement {
         view-home .stat-value {
           font-size: 48px;
           font-weight: 800;
-          color: var(--text-strong);
+          background: var(--accent-gradient);
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          background-clip: text;
           line-height: 1;
         }
 
@@ -426,16 +440,28 @@ export class HomeView extends LitElement {
         }
 
         view-home .core-card {
+          position: relative;
           border-radius: 16px;
           padding: 28px;
-          border: 1px solid var(--border);
           background: var(--card);
-          transition: all 0.3s;
-          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+          transition: box-shadow var(--duration-normal) var(--ease-out), transform var(--duration-normal) var(--ease-out);
+        }
+
+        view-home .core-card::before {
+          content: '';
+          position: absolute;
+          inset: 0;
+          border-radius: inherit;
+          padding: 1px;
+          background: linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.03));
+          -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+          -webkit-mask-composite: xor;
+          mask-composite: exclude;
+          pointer-events: none;
         }
 
         view-home .core-card:hover {
-          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+          box-shadow: 0 8px 32px var(--accent-glow);
           transform: translateY(-4px);
         }
 
@@ -446,6 +472,8 @@ export class HomeView extends LitElement {
           color: #fff;
           margin-bottom: 16px;
           font-size: 20px;
+          background: var(--accent-gradient);
+          box-shadow: 0 4px 12px var(--accent-glow);
         }
 
         view-home .core-card h3 {
@@ -470,16 +498,28 @@ export class HomeView extends LitElement {
         }
 
         view-home .agent-card {
+          position: relative;
           border-radius: 16px;
           padding: 32px;
-          border: 1px solid var(--border);
           background: var(--card);
-          transition: all 0.3s;
-          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+          transition: box-shadow var(--duration-normal) var(--ease-out), transform var(--duration-normal) var(--ease-out);
+        }
+
+        view-home .agent-card::before {
+          content: '';
+          position: absolute;
+          inset: 0;
+          border-radius: inherit;
+          padding: 1px;
+          background: linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.03));
+          -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+          -webkit-mask-composite: xor;
+          mask-composite: exclude;
+          pointer-events: none;
         }
 
         view-home .agent-card:hover {
-          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+          box-shadow: 0 8px 32px var(--accent-glow);
           transform: translateY(-4px);
         }
 
@@ -490,6 +530,8 @@ export class HomeView extends LitElement {
           color: #fff;
           margin-bottom: 24px;
           font-size: 20px;
+          background: var(--accent-gradient);
+          box-shadow: 0 4px 12px var(--accent-glow);
         }
 
         view-home .agent-card h3 {
@@ -588,15 +630,27 @@ export class HomeView extends LitElement {
         }
 
         view-home .cta-inner {
+          position: relative;
           max-width: 700px;
           margin: 0 auto;
           border-radius: 24px;
           padding: 64px;
-          border: 1px solid var(--border);
           background: var(--card);
-          box-shadow: 0 16px 64px rgba(0, 0, 0, 0.08);
           position: relative;
           z-index: 1;
+        }
+
+        view-home .cta-inner::before {
+          content: '';
+          position: absolute;
+          inset: 0;
+          border-radius: inherit;
+          padding: 1px;
+          background: linear-gradient(135deg, rgba(255,255,255,0.12), rgba(255,255,255,0.03));
+          -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+          -webkit-mask-composite: xor;
+          mask-composite: exclude;
+          pointer-events: none;
         }
 
         view-home .cta h2 {
@@ -841,22 +895,22 @@ export class HomeView extends LitElement {
             <!-- Core Features -->
             <div class="core-features">
               <div class="core-card">
-                <div class="core-icon" style="background: var(--accent); box-shadow: 0 4px 12px var(--accent-glow);">&#10024;</div>
+                <div class="core-icon">&#10024;</div>
                 <h3>接入即自治</h3>
                 <p>自然语言描述设备，自动完成驱动匹配与生成</p>
               </div>
               <div class="core-card">
-                <div class="core-icon" style="background: #22c55e; box-shadow: 0 4px 12px rgba(34,197,94,0.4);">&#128260;</div>
+                <div class="core-icon">&#128260;</div>
                 <h3>运行即自愈</h3>
                 <p>分级自愈机制，主动发现并修复故障</p>
               </div>
               <div class="core-card">
-                <div class="core-icon" style="background: #a855f7; box-shadow: 0 4px 12px rgba(168,85,247,0.4);">&#128225;</div>
+                <div class="core-icon">&#128225;</div>
                 <h3>LoRa无线化</h3>
                 <p>免布线施工，改造无需停产</p>
               </div>
               <div class="core-card">
-                <div class="core-icon" style="background: #f97316; box-shadow: 0 4px 12px rgba(249,115,22,0.4);">&#127760;</div>
+                <div class="core-icon">&#127760;</div>
                 <h3>持续进化</h3>
                 <p>云端驱动库与知识库不断积累</p>
               </div>
@@ -865,32 +919,32 @@ export class HomeView extends LitElement {
             <!-- Agent Features -->
             <div class="agent-features">
               <div class="agent-card">
-                <div class="agent-icon" style="background: var(--accent); box-shadow: 0 4px 12px var(--accent-glow);">&#128187;</div>
+                <div class="agent-icon">&#128187;</div>
                 <h3>自然语言交互</h3>
                 <p>用日常语言配置设备、查询状态，无需专业背景</p>
               </div>
               <div class="agent-card">
-                <div class="agent-icon" style="background: #22c55e; box-shadow: 0 4px 12px rgba(34,197,94,0.4);">&#129504;</div>
+                <div class="agent-icon">&#129504;</div>
                 <h3>智能驱动匹配</h3>
                 <p>AI自动匹配驱动库，无匹配则自动生成并测试验证</p>
               </div>
               <div class="agent-card">
-                <div class="agent-icon" style="background: #a855f7; box-shadow: 0 4px 12px rgba(168,85,247,0.4);">&#128737;</div>
+                <div class="agent-icon">&#128737;</div>
                 <h3>分级自愈机制</h3>
                 <p>L0-L3分级处理，从被动响应到主动运维</p>
               </div>
               <div class="agent-card">
-                <div class="agent-icon" style="background: #f97316; box-shadow: 0 4px 12px rgba(249,115,22,0.4);">&#9889;</div>
+                <div class="agent-icon">&#9889;</div>
                 <h3>心跳探针</h3>
                 <p>定期自检网关与子设备，提前发现隐患</p>
               </div>
               <div class="agent-card">
-                <div class="agent-icon" style="background: #ef4444; box-shadow: 0 4px 12px rgba(239,68,68,0.4);">&#9729;</div>
+                <div class="agent-icon">&#9729;</div>
                 <h3>云端协同</h3>
                 <p>状态上报、工单联动、知识闭环</p>
               </div>
               <div class="agent-card">
-                <div class="agent-icon" style="background: var(--accent); box-shadow: 0 4px 12px var(--accent-glow);">&#128241;</div>
+                <div class="agent-icon">&#128241;</div>
                 <h3>LoRa无线接入</h3>
                 <p>内置LoRa网关，远距离低功耗免布线</p>
               </div>

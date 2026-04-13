@@ -78,25 +78,6 @@ export class DashboardView extends LitElement {
     return n.toLocaleString();
   }
 
-  levelColor(level: string): string {
-    switch (level) {
-      case "critical": return "var(--danger)";
-      case "error": return "var(--danger)";
-      case "warning": return "var(--warning)";
-      default: return "var(--muted)";
-    }
-  }
-
-  statusColor(status: string): string {
-    switch (status) {
-      case "online": return "var(--success)";
-      case "offline": return "var(--muted)";
-      case "error": return "var(--danger)";
-      case "maintenance": return "var(--warning)";
-      default: return "var(--muted)";
-    }
-  }
-
   render() {
     if (this.loading) {
       return html`
@@ -129,30 +110,43 @@ export class DashboardView extends LitElement {
     `;
   }
 
+  dotClassForStatus(status?: string): string {
+    if (status === 'healthy' || status === 'online') return 'status-dot status-dot--success';
+    if (status === 'warning') return 'status-dot status-dot--warning';
+    if (status === 'danger' || status === 'error' || status === 'critical') return 'status-dot status-dot--danger';
+    return 'status-dot';
+  }
+
+  dotClassForLevel(level?: string): string {
+    if (level === 'critical' || level === 'error') return 'status-dot status-dot--danger';
+    if (level === 'warning') return 'status-dot status-dot--warning';
+    return 'status-dot status-dot--glow';
+  }
+
   renderStatsCards() {
     const s = this.stats;
     return html`
       <div class="stats-grid">
-        <div class="card stat-card">
+        <div class="card card--gradient-border stat-card">
           <div class="stat-card__label">设备总数</div>
           <div class="stat-card__value">${this.formatNumber(s?.totalDevices)}</div>
           <div class="stat-card__meta" style="color: var(--success);">${this.formatNumber(s?.onlineDevices)} 在线</div>
         </div>
-        <div class="card stat-card">
+        <div class="card card--gradient-border stat-card">
           <div class="stat-card__label">活跃告警</div>
           <div class="stat-card__value" style="color: ${(s?.activeAlarms ?? 0) > 0 ? 'var(--danger)' : 'inherit'};">
             ${this.formatNumber(s?.activeAlarms)}
           </div>
           <div class="stat-card__meta">需要处理</div>
         </div>
-        <div class="card stat-card">
+        <div class="card card--gradient-border stat-card">
           <div class="stat-card__label">今日消息</div>
           <div class="stat-card__value">${this.formatNumber(s?.todayMessages)}</div>
           <div class="stat-card__meta">
             ${s?.monthlyGrowth?.messages != null ? `月增长 ${s.monthlyGrowth.messages}%` : ""}
           </div>
         </div>
-        <div class="card stat-card">
+        <div class="card card--gradient-border stat-card">
           <div class="stat-card__label">系统状态</div>
           <div class="stat-card__value" style="color: ${s?.systemStatus === 'healthy' ? 'var(--success)' : s?.systemStatus === 'warning' ? 'var(--warning)' : 'var(--danger)'};">
             ${s?.systemStatus === 'healthy' ? '正常' : s?.systemStatus === 'warning' ? '告警' : '异常'}
@@ -169,21 +163,21 @@ export class DashboardView extends LitElement {
     const d = this.distribution;
     const total = (d?.online ?? 0) + (d?.offline ?? 0) + (d?.error ?? 0) + (d?.maintenance ?? 0);
     return html`
-      <div class="card" style="padding: 20px;">
+      <div class="card card--gradient-border" style="padding: 20px;">
         <div style="font-weight: 600; margin-bottom: 16px;">设备状态分布</div>
         ${d ? html`
           <div style="display: flex; flex-direction: column; gap: 12px;">
-            ${this.renderDistBar("在线", d.online, total, "var(--success)")}
-            ${this.renderDistBar("离线", d.offline, total, "var(--muted)")}
-            ${this.renderDistBar("故障", d.error, total, "var(--danger)")}
-            ${this.renderDistBar("维护", d.maintenance, total, "var(--warning)")}
+            ${this.renderDistBar("在线", d.online, total)}
+            ${this.renderDistBar("离线", d.offline, total)}
+            ${this.renderDistBar("故障", d.error, total)}
+            ${this.renderDistBar("维护", d.maintenance, total)}
           </div>
         ` : html`<div style="color: var(--muted); text-align: center; padding: 20px;">暂无分布数据</div>`}
       </div>
     `;
   }
 
-  renderDistBar(label: string, value: number, total: number, color: string) {
+  renderDistBar(label: string, value: number, total: number) {
     const pct = total > 0 ? (value / total) * 100 : 0;
     return html`
       <div>
@@ -192,7 +186,7 @@ export class DashboardView extends LitElement {
           <span>${value} (${pct.toFixed(1)}%)</span>
         </div>
         <div class="metric-bar__track">
-          <div class="metric-bar__fill" style="width: ${pct}%; background: ${color};"></div>
+          <div class="metric-bar__fill" style="width: ${pct}%;"></div>
         </div>
       </div>
     `;
@@ -201,7 +195,7 @@ export class DashboardView extends LitElement {
   renderSystemMetrics() {
     const m = this.metrics;
     return html`
-      <div class="card" style="padding: 20px;">
+      <div class="card card--gradient-border" style="padding: 20px;">
         <div style="font-weight: 600; margin-bottom: 16px;">系统资源</div>
         ${m ? html`
           <div style="display: flex; flex-direction: column; gap: 12px;">
@@ -219,7 +213,6 @@ export class DashboardView extends LitElement {
 
   renderMetricBar(label: string, value?: number) {
     const v = value ?? 0;
-    const color = v > 90 ? "var(--danger)" : v > 70 ? "var(--warning)" : "var(--success)";
     return html`
       <div>
         <div class="metric-bar__header">
@@ -227,7 +220,7 @@ export class DashboardView extends LitElement {
           <span>${v.toFixed(1)}%</span>
         </div>
         <div class="metric-bar__track">
-          <div class="metric-bar__fill" style="width: ${v}%; background: ${color};"></div>
+          <div class="metric-bar__fill" style="width: ${v}%;"></div>
         </div>
       </div>
     `;
@@ -235,7 +228,7 @@ export class DashboardView extends LitElement {
 
   renderRecentAlarms() {
     return html`
-      <div class="card" style="padding: 20px;">
+      <div class="card card--gradient-border" style="padding: 20px;">
         <div style="font-weight: 600; margin-bottom: 16px;">最近告警</div>
         ${this.recentAlarms.length === 0
           ? html`
@@ -251,7 +244,7 @@ export class DashboardView extends LitElement {
             <div style="display: flex; flex-direction: column; gap: 8px;">
               ${this.recentAlarms.slice(0, 5).map(a => html`
                 <div style="display: flex; align-items: center; gap: 8px; padding: 8px; border-radius: 6px; background: var(--bg-subtle);">
-                  <span class="status-dot" style="background: ${this.levelColor(a.level)};"></span>
+                  <span class="${this.dotClassForLevel(a.level)}"></span>
                   <div style="flex: 1; min-width: 0;">
                     <div style="font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${a.message}</div>
                     <div style="font-size: 12px; color: var(--muted);">${a.deviceName}</div>
@@ -268,7 +261,7 @@ export class DashboardView extends LitElement {
 
   renderQuickDevices() {
     return html`
-      <div class="card" style="padding: 20px;">
+      <div class="card card--gradient-border" style="padding: 20px;">
         <div style="font-weight: 600; margin-bottom: 16px;">设备快捷入口</div>
         ${this.quickDevices.length === 0
           ? html`
@@ -288,7 +281,7 @@ export class DashboardView extends LitElement {
                   class="device-list-item"
                   @click=${(e: Event) => { e.preventDefault(); window.history.pushState({}, "", `/devices/${d.id}`); window.dispatchEvent(new PopStateEvent("popstate")); }}
                 >
-                  <span style="width: 8px; height: 8px; border-radius: 50%; background: ${this.statusColor(d.status)}; flex-shrink: 0;"></span>
+                  <span class="${this.dotClassForStatus(d.status)}" style="flex-shrink: 0;"></span>
                   <div style="flex: 1;">
                     <div style="font-size: 13px;">${d.name}</div>
                     <div style="font-size: 12px; color: var(--muted);">${d.type}</div>
