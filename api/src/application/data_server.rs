@@ -390,8 +390,10 @@ impl DataServer {
     /// 重新加载设备（从数据库加载最新数据并更新context和驱动）
     pub async fn reload_device(&self, ids: Vec<String>) -> Result<(), Error> {
         // 使用DeviceService加载完整设备信息
-        let device_service =
-            crate::domain::device::service::DeviceService::new(Arc::new(self.context.database()));
+        let db = self.context.database();
+        let device_repository: Arc<dyn crate::domain::device::repository::DeviceRepository> =
+            Arc::new(crate::infrastructure::persistence::repositories::SqliteDeviceRepository::new(db.clone()));
+        let device_service = crate::domain::device::service::DeviceService::new(device_repository, Arc::new(db));
 
         let devices = device_service.load_complete_devices(&ids).await?;
 

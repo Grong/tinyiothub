@@ -154,8 +154,12 @@ impl AppState {
         // 这里只创建事件总线，处理器注册推迟到 register_event_handlers() 方法
 
         // 基础服务 - 使用事件总线
+        let device_repository: Arc<dyn crate::domain::device::repository::DeviceRepository> =
+            Arc::new(crate::infrastructure::persistence::repositories::SqliteDeviceRepository::new(
+                database.as_ref().clone(),
+            ));
         let device_service =
-            Arc::new(DeviceService::with_event_bus(database.clone(), event_bus.clone()));
+            Arc::new(DeviceService::with_event_bus(device_repository, database.clone(), event_bus.clone()));
 
         // 监控服务 - 依赖数据库和上下文
         let monitoring_service =
