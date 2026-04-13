@@ -1,6 +1,7 @@
 // SQL 注入防护模块
 // 提供安全的 SQL 查询辅助函数
 
+use sqlx::{Database, Pool, Row};
 
 /// 安全地将字符串插入 SQL 查询（转义单引号）
 pub fn escape_sql_string(input: &str) -> String {

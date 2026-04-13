@@ -5,8 +5,8 @@
 pub mod handlers;
 pub mod config;
 
-pub use config::{PostgresConfig, InfluxdbConfig};
-pub use handlers::{PostgresHandler, InfluxdbHandler};
+pub use config::{StorageConfig, PostgresConfig, InfluxdbConfig};
+pub use handlers::{StorageHandler, PostgresHandler, InfluxdbHandler};
 
 use crate::domain::plugin::{PluginHandler, AppContext};
 use crate::shared::error::Error;

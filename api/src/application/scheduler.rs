@@ -17,8 +17,6 @@ pub struct TimeTask {
     running: Mutex<bool>,
 }
 
-// Fields kept for scheduler cache entries
-#[allow(dead_code)]
 #[derive(Clone)]
 struct JobSchedule {
     pub job: Job,

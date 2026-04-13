@@ -5,8 +5,8 @@
 pub mod handlers;
 pub mod config;
 
-pub use config::{WechatConfig, WeComConfig};
-pub use handlers::{WechatHandler, WeComHandler};
+pub use config::{IntegrationConfig, WechatConfig, WeComConfig};
+pub use handlers::{IntegrationHandler, WechatHandler, WeComHandler};
 
 use crate::domain::plugin::{PluginHandler, AppContext};
 use crate::shared::error::Error;

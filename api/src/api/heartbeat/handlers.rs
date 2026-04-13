@@ -2,7 +2,7 @@
 // HTTP endpoint handlers for heartbeat management
 
 use axum::{
-    extract::State,
+    extract::{Extension, State},
     routing::{get, post},
     Json, Router,
 };
@@ -13,7 +13,7 @@ use crate::{
     api::mcp::tools::heartbeat::{get_heartbeat_config, get_heartbeat_status},
     dto::{
         entity::heartbeat::{
-            ConfigureHeartbeatRequest, HeartbeatConfig, HeartbeatStatus,
+            ConfigureHeartbeatRequest, HeartbeatConfig, HeartbeatStatus, ReportHeartbeatRequest,
             ReportHeartbeatResponse,
         },
         response::{builder::ApiResponseBuilder, ApiResponse},
@@ -29,7 +29,6 @@ pub fn create_router() -> Router<AppState> {
 }
 
 /// Request to report heartbeat via API
-#[allow(dead_code)]
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReportHeartbeatApiRequest {

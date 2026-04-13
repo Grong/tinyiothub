@@ -211,7 +211,7 @@ impl Job {
         query_builder.push(&format!(" LIMIT {} OFFSET {}", page_size, offset));
 
         let sql = query_builder.build();
-        let rows = db
+        let mut rows = db
             .query(sql.sql().as_str(), |row| {
                 Ok(Job {
                     id: row.try_get("id")?,

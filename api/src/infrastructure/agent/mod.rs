@@ -8,11 +8,12 @@
 // - AgentRuntimeImpl: the concrete implementation using zeroclaw
 
 use std::pin::Pin;
+use serde::{Deserialize, Serialize};
 
 pub mod config;
 pub mod runtime;
 
-pub use config::{AgentConfig, AgentInfo, AgentError};
+pub use config::{AgentConfig, AgentInfo, AgentError, compute_hash, default_agent_config};
 pub use runtime::AgentRuntimeImpl;
 
 /// Trait for Agent operations — implemented by AgentRuntimeImpl
@@ -279,7 +280,7 @@ pub fn build_full_system_prompt(
 /// Load skill files from the skills/ directory and format as Layer 3 prompt
 /// Priority: skills/<ws>/<ag>/prompts/ > skills/<ws>/prompts/ > skills/<ws>/ > skills/tinyiothub/prompts/
 fn load_skills_prompt(workspace_id: Option<&str>, agent_id: Option<&str>) -> String {
-    
+    use crate::domain::agent::skill::AgentSkill;
 
     let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("skills");
     let ws = workspace_id.unwrap_or("tinyiothub");

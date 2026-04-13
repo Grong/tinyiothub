@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// MCP tool execution errors

@@ -54,9 +54,9 @@ impl HealingExecutionRepository {
     /// Get recent healing executions for a tenant
     pub async fn get_recent(
         &self,
-        _tenant_id: &str,
-        _limit: u32,
-        _offset: u32,
+        tenant_id: &str,
+        limit: u32,
+        offset: u32,
     ) -> std::result::Result<Vec<HealingExecution>, sqlx::Error> {
         let sql = r#"
             SELECT id, tenant_id, timestamp, level, action_type, target, result, logs
@@ -126,7 +126,7 @@ impl HealingExecutionRepository {
     }
 
     /// Count total healing executions for a tenant
-    pub async fn count(&self, _tenant_id: &str) -> std::result::Result<u32, sqlx::Error> {
+    pub async fn count(&self, tenant_id: &str) -> std::result::Result<u32, sqlx::Error> {
         let sql = r#"
             SELECT COUNT(*) as cnt FROM healing_executions WHERE tenant_id = ?
         "#;

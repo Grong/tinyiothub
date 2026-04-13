@@ -170,7 +170,7 @@ pub async fn rate_limit_middleware(
         RateLimitResult::Blocked { retry_after, message } => {
             tracing::warn!("Rate limit exceeded for client: {} on {}", client_id, path);
 
-            let response = Response::builder()
+            let mut response = Response::builder()
                 .status(StatusCode::TOO_MANY_REQUESTS)
                 .header("Content-Type", "application/json")
                 .header("Retry-After", retry_after)

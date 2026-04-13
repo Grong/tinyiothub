@@ -25,7 +25,6 @@ pub struct TimeTask {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[allow(dead_code)]
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct TaskQuery {
@@ -46,7 +45,6 @@ pub struct CreateTaskRequest {
     pub enabled: Option<bool>,
 }
 
-#[allow(dead_code)]
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct UpdateTaskRequest {

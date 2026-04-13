@@ -9,3 +9,5 @@ pub mod gpio;
 #[cfg(feature = "harmonyos")]
 pub mod harmonyos;
 
+#[cfg(not(feature = "harmonyos"))]
+pub use gpio::*;

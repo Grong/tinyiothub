@@ -21,8 +21,6 @@ struct WechatSendRequest {
     text: serde_json::Value,
 }
 
-// WeChat access-token fields kept for API completeness
-#[allow(dead_code)]
 #[derive(Deserialize)]
 struct WechatAccessTokenResponse {
     access_token: String,

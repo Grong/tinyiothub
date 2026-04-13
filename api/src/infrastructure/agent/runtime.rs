@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 use std::pin::Pin;
+use tokio::sync::mpsc;
 use async_trait::async_trait;
 
 use crate::infrastructure::agent::config::{AgentConfig, AgentError, AgentInfo};
@@ -17,6 +18,7 @@ use zeroclaw::memory::Memory;
 use zeroclaw::observability::Observer;
 use zeroclaw::agent::dispatcher::NativeToolDispatcher;
 use zeroclaw::agent::TurnEvent;
+use zeroclaw::providers::traits::ToolCall;
 
 // ============================================================================
 // AgentRuntimeImpl - zeroclaw Agent driver
@@ -25,6 +27,8 @@ use zeroclaw::agent::TurnEvent;
 /// TinyIoTHub built-in Agent runtime implementation
 pub struct AgentRuntimeImpl {
     db_pool: sqlx::SqlitePool,
+    /// Provider and model stored for rebuilding Agent
+    provider: Arc<std::sync::Mutex<Option<Box<dyn zeroclaw::providers::traits::Provider>>>>,
     model_name: String,
     /// zeroclaw Agent (needs &mut to call turn_streamed)
     agent: Arc<tokio::sync::Mutex<zeroclaw::agent::Agent>>,
@@ -57,6 +61,7 @@ impl AgentRuntimeImpl {
 
         Ok(Self {
             db_pool,
+            provider: Arc::new(std::sync::Mutex::new(None)),
             model_name,
             agent: Arc::new(tokio::sync::Mutex::new(agent)),
         })

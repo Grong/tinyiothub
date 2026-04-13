@@ -14,7 +14,6 @@ use crate::{
     shared::{app_state::AppState, security::jwt::Claims},
 };
 
-#[allow(dead_code)]
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct ProductQuery {

@@ -7,13 +7,13 @@ use std::sync::OnceLock;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::RwLock;
 
 use crate::api::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
 use crate::dto::entity::heartbeat::{
-    HeartbeatConfig, HeartbeatStatus,
+    ConfigureHeartbeatRequest, HeartbeatConfig, HeartbeatStatus, ReportHeartbeatRequest,
     ReportHeartbeatResponse,
 };
 
@@ -44,7 +44,6 @@ pub fn get_heartbeat_config() -> Option<Arc<RwLock<HeartbeatConfig>>> {
 }
 
 /// Tool input: Report heartbeat
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ReportHeartbeatInput {
@@ -59,7 +58,6 @@ struct ReportHeartbeatInput {
 }
 
 /// Tool input: Get heartbeat status
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GetHeartbeatStatusInput {

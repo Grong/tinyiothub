@@ -2,6 +2,7 @@
 // MCP tools for device management
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -15,7 +16,6 @@ use crate::domain::device::monitoring_service::DeviceMetrics;
 use crate::domain::device::performance_service::DevicePerformanceMetrics;
 
 /// Tool input: List devices with pagination and filtering
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ListDevicesInput {

@@ -14,7 +14,7 @@ use crate::{
     api::middleware::WorkspaceScope,
     shared::security::jwt::Claims,
     dto::entity::{
-        tenant::{ApiKey, ApiUsageStats, CreateApiKeyRequest, Tenant, TenantQueryParams, TenantUsage},
+        tenant::{ApiKey, ApiUsageStats, CreateApiKeyRequest, SubscriptionPlan, Tenant, TenantQueryParams, TenantUsage},
         workspace::Workspace,
     },
     dto::response::{ApiResponse, builder::ApiResponseBuilder},
@@ -52,9 +52,9 @@ pub fn create_router() -> Router<AppState> {
 /// List tenants
 async fn list_tenants(
     State(state): State<AppState>,
-    Query(_params): Query<TenantQueryParams>,
+    Query(params): Query<TenantQueryParams>,
 ) -> Json<ApiResponse<Vec<Tenant>>> {
-    let _db = state.database.clone();
+    let db = state.database.clone();
 
     // 简化实现：返回空列表（需要管理权限）
     ApiResponseBuilder::success(vec![])
@@ -96,10 +96,10 @@ async fn get_tenant(
 /// Update tenant
 async fn update_tenant(
     State(state): State<AppState>,
-    Path(_id): Path<String>,
-    Json(_payload): Json<crate::dto::entity::tenant::UpdateTenantRequest>,
+    Path(id): Path<String>,
+    Json(payload): Json<crate::dto::entity::tenant::UpdateTenantRequest>,
 ) -> Json<ApiResponse<Tenant>> {
-    let _db = state.database.clone();
+    let db = state.database.clone();
 
     // 简化实现
     ApiResponseBuilder::error_with_code(501, "功能未实现")

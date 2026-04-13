@@ -1,6 +1,7 @@
 // Batch Command API Module
 // REST API for batch command management
 
+use std::sync::Arc;
 
 use axum::{
     extract::{Path, Query, State},

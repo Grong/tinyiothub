@@ -15,8 +15,9 @@ pub mod tools;
 mod tests; // Integration tests in tests/ directory
 
 // Re-export types for use in other modules
-pub use tool_registry::HandlerRegistry;
-pub use handlers::create_router;
+pub use tool_metadata::{IoTToolMetadata, PermissionLevel};
+pub use tool_registry::{HandlerRegistry, ToolError, ToolHandler, ToolMetadata};
+pub use handlers::{create_router, ToolCallParams};
 
 /// Global MCP tool registry (shared across requests)
 static MCP_REGISTRY: std::sync::OnceLock<Arc<RwLock<HandlerRegistry>>> =

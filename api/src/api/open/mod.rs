@@ -112,7 +112,7 @@ async fn record_api_usage(
 }
 
 /// Open API health check
-async fn open_health(State(_state): State<AppState>) -> Result<Json<serde_json::Value>, StatusCode> {
+async fn open_health(State(state): State<AppState>) -> Result<Json<serde_json::Value>, StatusCode> {
     Ok(Json(serde_json::json!({
         "status": "ok",
         "service": "TinyIoTHub Open API",
@@ -125,7 +125,7 @@ async fn open_health(State(_state): State<AppState>) -> Result<Json<serde_json::
 async fn list_devices(State(state): State<AppState>) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
-    let (key, _tenant, workspace_id) = validate_api_key(&state, None).await?;
+    let (key, tenant, workspace_id) = validate_api_key(&state, None).await?;
 
     let sql = format!(
         "SELECT id, name, display_name, device_type, state, created_at FROM devices ORDER BY created_at DESC LIMIT 100"
@@ -174,7 +174,7 @@ async fn get_device(
 ) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
-    let (key, _tenant, workspace_id) = validate_api_key(&state, None).await?;
+    let (key, tenant, workspace_id) = validate_api_key(&state, None).await?;
 
     let row = sqlx::query(
         "SELECT id, name, display_name, device_type, address, state, protocol_type, created_at, updated_at FROM devices WHERE id = ? LIMIT 1"
@@ -235,7 +235,7 @@ async fn get_device_properties(
 ) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
-    let (key, _tenant, workspace_id) = validate_api_key(&state, None).await?;
+    let (key, tenant, workspace_id) = validate_api_key(&state, None).await?;
 
     let rows = sqlx::query(
         "SELECT name, display_name, data_type, value, unit, updated_at FROM device_properties WHERE device_id = ? ORDER BY created_at DESC"
@@ -294,7 +294,7 @@ async fn list_commands(
 ) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
-    let (key, _tenant, workspace_id) = validate_api_key(&state, None).await?;
+    let (key, tenant, workspace_id) = validate_api_key(&state, None).await?;
 
     let rows = sqlx::query(
         "SELECT id, name, display_name, description, command_type FROM device_commands WHERE device_id = ? ORDER BY created_at DESC"
@@ -353,7 +353,7 @@ async fn send_command(
 ) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
-    let (key, _tenant, workspace_id) = validate_api_key(&state, None).await?;
+    let (key, tenant, workspace_id) = validate_api_key(&state, None).await?;
 
     let command_name =
         payload.get("command").and_then(|v| v.as_str()).ok_or(StatusCode::BAD_REQUEST)?;
@@ -409,7 +409,7 @@ async fn list_events(
 ) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
-    let (key, _tenant, workspace_id) = validate_api_key(&state, None).await?;
+    let (key, tenant, workspace_id) = validate_api_key(&state, None).await?;
 
     let rows = sqlx::query(
         "SELECT id, event_type, event_level, message, created_at FROM events WHERE device_id = ? ORDER BY created_at DESC LIMIT 100"
@@ -459,7 +459,7 @@ async fn list_events(
 async fn list_all_events(State(state): State<AppState>) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
-    let (key, _tenant, workspace_id) = validate_api_key(&state, None).await?;
+    let (key, tenant, workspace_id) = validate_api_key(&state, None).await?;
 
     let sql = "SELECT id, event_type, event_level, message, device_id, created_at FROM events ORDER BY created_at DESC LIMIT 100".to_string();
 
