@@ -99,7 +99,7 @@ async fn get_device_profile(
         Some(device) => device,
         None => {
             // 如果内存中没有，尝试从数据库加载并加入缓存
-            match Device::find_by_id(state.database(), &device_id).await {
+            match state.device_service.get_device_by_id(&device_id).await {
                 Ok(Some(mut device)) => {
                     // 加载设备属性和指令
                     match DeviceProperty::find_by_device_id(state.database(), &device_id).await {

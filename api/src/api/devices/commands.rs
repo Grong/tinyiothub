@@ -52,7 +52,7 @@ async fn execute_device_command(
 
     // 验证设备是否存在
     let _device =
-        match crate::dto::entity::device::Device::find_by_id(state.database(), &device_id).await {
+        match state.device_service.get_device_by_id(&device_id).await {
             Ok(Some(d)) => d,
             Ok(None) => return ApiResponseBuilder::error("设备不存在"),
             Err(e) => {
