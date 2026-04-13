@@ -6,7 +6,7 @@ use crate::{
         DeviceCriteria, DeviceRepository, DeviceSortBy, DeviceSortOrder,
     },
     dto::entity::device::{
-        CreateDeviceRequest, Device, DeviceStats, DeviceStatusUpdate, UpdateDeviceRequest,
+        CreateDeviceRequest, Device, DeviceStatusUpdate, UpdateDeviceRequest,
     },
     infrastructure::persistence::Database,
     shared::error::{Error, Result},
@@ -635,127 +635,6 @@ impl DeviceRepository for SqliteDeviceRepository {
             separated.push_bind(id);
         }
         separated.push_unseparated(")");
-
-        let rows = builder.build().fetch_all(self.database.pool()).await?;
-        let mut devices = Vec::new();
-        for row in rows {
-            devices.push(self.row_to_device(row)?);
-        }
-        Ok(devices)
-    }
-
-    async fn search(&self, keyword: &str, limit: Option<u32>) -> Result<Vec<Device>> {
-        let search_pattern = format!("%{}%", keyword);
-        let exact_pattern = format!("{}%", keyword);
-
-        let mut builder = QueryBuilder::new("SELECT ");
-        builder.push(Self::SELECT_COLUMNS);
-        builder.push(
-            " FROM devices WHERE name LIKE ? OR display_name LIKE ? OR address LIKE ? OR description LIKE ?
-             ORDER BY CASE
-                WHEN name LIKE ? THEN 1
-                WHEN display_name LIKE ? THEN 2
-                WHEN address LIKE ? THEN 3
-                ELSE 4
-             END, name",
-        );
-
-        builder.push_bind(&search_pattern);
-        builder.push_bind(&search_pattern);
-        builder.push_bind(&search_pattern);
-        builder.push_bind(&search_pattern);
-        builder.push_bind(&exact_pattern);
-        builder.push_bind(&exact_pattern);
-        builder.push_bind(&exact_pattern);
-
-        if let Some(limit) = limit {
-            builder.push(" LIMIT ").push_bind(limit as i64);
-        }
-
-        let rows = builder.build().fetch_all(self.database.pool()).await?;
-        let mut devices = Vec::new();
-        for row in rows {
-            devices.push(self.row_to_device(row)?);
-        }
-        Ok(devices)
-    }
-
-    async fn get_stats(&self) -> Result<DeviceStats> {
-        let row = sqlx::query(
-            r#"
-            SELECT
-                COUNT(*) as total_devices,
-                COUNT(CASE WHEN state = 1 THEN 1 END) as online_devices,
-                COUNT(CASE WHEN state = 0 OR state = 3 THEN 1 END) as offline_devices,
-                COUNT(CASE WHEN state = 2 THEN 1 END) as alarm_devices
-            FROM devices
-            "#,
-        )
-        .fetch_one(self.database.pool())
-        .await?;
-
-        Ok(DeviceStats {
-            total_devices: row.get("total_devices"),
-            online_devices: row.get("online_devices"),
-            offline_devices: row.get("offline_devices"),
-            alarm_devices: row.get("alarm_devices"),
-        })
-    }
-
-    async fn get_stats_by_type(&self) -> Result<Vec<(String, i64)>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT COALESCE(device_type, 'Unknown') as device_type, COUNT(*) as count
-            FROM devices
-            GROUP BY device_type
-            ORDER BY count DESC
-            "#,
-        )
-        .fetch_all(self.database.pool())
-        .await?;
-
-        let mut stats = Vec::new();
-        for row in rows {
-            let device_type: String = row.get("device_type");
-            let count: i64 = row.get("count");
-            stats.push((device_type, count));
-        }
-        Ok(stats)
-    }
-
-    async fn get_stats_by_driver(&self) -> Result<Vec<(String, i64)>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT COALESCE(driver_name, 'Unknown') as driver_name, COUNT(*) as count
-            FROM devices
-            GROUP BY driver_name
-            ORDER BY count DESC
-            "#,
-        )
-        .fetch_all(self.database.pool())
-        .await?;
-
-        let mut stats = Vec::new();
-        for row in rows {
-            let driver_name: String = row.get("driver_name");
-            let count: i64 = row.get("count");
-            stats.push((driver_name, count));
-        }
-        Ok(stats)
-    }
-
-    async fn get_device_tree(&self, root_id: Option<&str>) -> Result<Vec<Device>> {
-        let mut builder = QueryBuilder::new("SELECT ");
-        builder.push(Self::SELECT_COLUMNS);
-        builder.push(" FROM devices WHERE ");
-
-        if let Some(root_id) = root_id {
-            builder.push("parent_id = ").push_bind(root_id);
-        } else {
-            builder.push("parent_id IS NULL");
-        }
-
-        builder.push(" ORDER BY name");
 
         let rows = builder.build().fetch_all(self.database.pool()).await?;
         let mut devices = Vec::new();
