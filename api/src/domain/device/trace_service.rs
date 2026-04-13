@@ -124,12 +124,13 @@ impl DeviceTraceService {
         }
 
         // 按时间倒序排列并分页
-        query.push_str(&format!(" ORDER BY created_at DESC LIMIT {} OFFSET {}", limit, offset));
+        query.push_str(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
+        bind_values.push(limit.to_string());
+        bind_values.push(offset.to_string());
 
         // 动态绑定参数 - 使用 fold 避免 let mut 生命周期问题
-        // AssertSqlSafe<String> 满足 SqlSafeStr，但 &String 不满足
         let query_builder = bind_values.iter().fold(
-            sqlx::query_as::<_, DeviceTrace>(sqlx::AssertSqlSafe(query.clone())),
+            sqlx::query_as::<_, DeviceTrace>(&query),
             |qb, value| qb.bind(value)
         );
 
