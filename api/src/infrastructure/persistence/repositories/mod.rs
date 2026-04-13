@@ -4,6 +4,7 @@ pub mod alarm_repository_impl;
 pub mod device_memory_repository_impl;
 pub mod device_query_service_impl;
 pub mod device_repository_impl;
+pub mod device_row_mapper;
 pub mod event_repository_impl;
 pub mod notification_history_repository_impl;
 pub mod notification_rule_repository_impl;
