@@ -102,7 +102,7 @@ async fn get_device_profile(
             match state.device_service.get_device_by_id(&device_id).await {
                 Ok(Some(mut device)) => {
                     // 加载设备属性和指令
-                    match DeviceProperty::find_by_device_id(state.database(), &device_id).await {
+                    match state.device_service.get_device_properties(&device_id).await {
                         Ok(properties) => device.properties = Some(properties),
                         Err(e) => {
                             tracing::warn!(
@@ -114,7 +114,7 @@ async fn get_device_profile(
                         }
                     }
 
-                    match DeviceCommand::find_by_device_id(state.database(), &device_id).await {
+                    match state.device_service.get_device_commands(&device_id).await {
                         Ok(commands) => device.commands = Some(commands),
                         Err(e) => {
                             tracing::warn!(
