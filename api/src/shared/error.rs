@@ -50,9 +50,11 @@ impl std::convert::From<std::io::Error> for Error {
 }
 
 impl From<sqlx::Error> for Error {
-    fn from(_err: sqlx::Error) -> Self {
-        // Map to a generic error to avoid leaking table/column names
-        Error::Internal("Database operation failed".to_string())
+    fn from(err: sqlx::Error) -> Self {
+        match err {
+            sqlx::Error::RowNotFound => Error::NotFound,
+            _ => Error::DatabaseError(err.to_string()),
+        }
     }
 }
 
