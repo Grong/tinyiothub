@@ -178,7 +178,7 @@ impl AlarmRepository for AlarmRepositoryImpl {
         }
 
         // Build and execute query with bindings
-        let mut sqlx_query = sqlx::query(&query);
+        let mut sqlx_query = sqlx::query(sqlx::AssertSqlSafe(query));
         for binding in &bindings {
             sqlx_query = sqlx_query.bind(binding);
         }
@@ -300,7 +300,7 @@ impl AlarmRepository for AlarmRepositoryImpl {
             bindings.push(time_range.end.to_rfc3339());
         }
 
-        let mut sqlx_query = sqlx::query(&query);
+        let mut sqlx_query = sqlx::query(sqlx::AssertSqlSafe(query));
         for binding in &bindings {
             sqlx_query = sqlx_query.bind(binding);
         }

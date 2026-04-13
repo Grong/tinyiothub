@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // 短信验证码认证模块
 // 支持手机验证码登录/注册
 
@@ -149,9 +150,6 @@ async fn verify_captcha(_ticket: &str, _randstr: &str, _ip: &str) -> Result<bool
     tracing::warn!("[CAPTCHA] Tencent CAPTCHA verification not fully implemented");
     Ok(captcha_config.enabled)
 }
-
-#![allow(dead_code)]
-// Conditionally compiled code triggers dead_code in debug builds
 
 // ============== 阿里云 SMS ==============
 

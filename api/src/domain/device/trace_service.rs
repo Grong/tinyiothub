@@ -130,7 +130,7 @@ impl DeviceTraceService {
 
         // 动态绑定参数 - 使用 fold 避免 let mut 生命周期问题
         let query_builder = bind_values.iter().fold(
-            sqlx::query_as::<_, DeviceTrace>(&query),
+            sqlx::query_as::<_, DeviceTrace>(sqlx::AssertSqlSafe(query)),
             |qb, value| qb.bind(value)
         );
 
