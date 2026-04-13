@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::domain::self_healing::{
-    ExecutionResult, HealingCondition, HealingExecution, LevelPolicy,
-    RecoveryAction, RecoveryActionType, SelfHealingPolicy, SeverityLevel,
+    HealingCondition, HealingExecution, LevelPolicy,
+    RecoveryAction, SelfHealingPolicy,
 };
 
 /// Recovery action DTO

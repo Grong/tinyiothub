@@ -6,7 +6,7 @@ use axum::{
     Json, Router,
 };
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::{
     domain::{

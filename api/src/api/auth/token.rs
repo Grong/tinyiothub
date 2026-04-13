@@ -8,7 +8,7 @@ use sha2::Digest;
 use crate::{
     api::AppState,
     dto::response::ApiResponse,
-    shared::security::jwt::{generate_token, validate_jwt, Claims},
+    shared::security::jwt::{generate_token, validate_jwt},
 };
 
 pub fn create_router() -> Router<AppState> {

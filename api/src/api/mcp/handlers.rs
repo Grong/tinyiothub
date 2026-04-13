@@ -2,17 +2,14 @@
 // HTTP endpoint handlers for MCP protocol (tools/list + tools/call)
 
 use axum::{
-    extract::Extension,
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::post,
     Json, Router,
 };
-use headers::HeaderMapExt;
 use sha2::Digest;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::Arc;
 use std::time::Instant;
 
 use crate::{
@@ -20,7 +17,7 @@ use crate::{
     shared::app_state::AppState,
 };
 
-use super::tool_registry::{HandlerRegistry, ToolError, ToolMetadata};
+use super::tool_registry::{ToolError, ToolMetadata};
 
 /// MCP auth context: workspace isolation for API Key authentication.
 /// Unlike JWT-based auth (which had user_id/tenant_id), API Keys are bound
@@ -42,7 +39,7 @@ impl McpAuthContext {
     }
 }
 
-/// Thread-local storage for MCP request context (workspace_id from API Key)
+// Thread-local storage for MCP request context (workspace_id from API Key)
 thread_local! {
     static MCP_CONTEXT: std::cell::RefCell<Option<McpAuthContext>> = const {
         std::cell::RefCell::new(None)
@@ -165,23 +162,6 @@ async fn extract_api_key(
         api_key_id: api_key.id.clone(),
         api_key_name: api_key.name.clone(),
     })
-}
-
-/// Shared helper: extract API key and set MCP context with RAII guard.
-/// All three handlers use this, eliminating the previous code duplication.
-async fn with_mcp_context<F, R>(
-    headers: axum::http::HeaderMap,
-    db: &crate::infrastructure::persistence::database::Database,
-    f: F,
-) -> R
-where
-    F: FnOnce(McpAuthContext) -> R,
-{
-    let ctx = extract_api_key(&headers, db)
-        .await
-        .expect("Caller handles errors");
-    let _guard = McpContextGuard::new(ctx.clone());
-    f(ctx)
 }
 
 /// Handle all MCP requests

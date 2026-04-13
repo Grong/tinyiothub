@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::domain::workspace::entity::{AssignDeviceInput, CreateWorkspaceInput, UpdateWorkspaceInput, Workspace};
+use crate::domain::workspace::entity::{CreateWorkspaceInput, UpdateWorkspaceInput, Workspace};
 use crate::infrastructure::agent::{AgentRuntime, AgentConfig};
 use crate::shared::error::Error;
 

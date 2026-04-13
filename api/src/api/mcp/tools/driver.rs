@@ -54,6 +54,7 @@ struct ConfigOption {
 }
 
 /// Match driver request
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MatchDriverInput {

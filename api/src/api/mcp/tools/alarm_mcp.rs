@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::api::mcp::handlers::get_mcp_context;
@@ -17,6 +17,7 @@ use crate::domain::alarm::{
 use crate::domain::alarm::SortOrder;
 
 /// Tool input: List alarms
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ListAlarmsInput {
@@ -48,6 +49,7 @@ struct AcknowledgeAlarmInput {
 }
 
 /// Tool input: Create alarm rule
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CreateAlarmRuleInput {
