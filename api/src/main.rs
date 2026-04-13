@@ -54,12 +54,6 @@ async fn main_impl() -> std::io::Result<()> {
         std::process::exit(1);
     }
 
-    // Set default log level if not specified
-    if std::env::var_os("RUST_LOG").is_none() {
-        let log_level = config::get().logging.level.clone();
-        unsafe { std::env::set_var("RUST_LOG", log_level); }
-    }
-
     // Initialize logging system
     initialize_logging().await?;
 
