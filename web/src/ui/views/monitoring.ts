@@ -65,33 +65,33 @@ export class MonitoringView extends LitElement {
   render() {
     if (this.loading) {
       return html`
-        <div style="display: flex; align-items: center; justify-content: center; padding: 60px;">
+        <div class="page-loading">
           <span class="loading-spinner"></span>
-          <span style="margin-left: 8px; color: var(--muted);">加载中...</span>
+          <span>加载中...</span>
         </div>
       `;
     }
 
     if (this.error) {
       return html`
-        <div style="text-align: center; padding: 60px;">
-          <div style="color: var(--danger); margin-bottom: 12px;">${this.error}</div>
+        <div class="page-error">
+          <div class="page-error__message">${this.error}</div>
           <button class="btn btn--primary" @click=${this.loadData}>重试</button>
         </div>
       `;
     }
 
     return html`
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-        <div></div>
-        <div style="display: flex; align-items: center; gap: 12px;">
+      <div class="toolbar">
+        <div class="toolbar__spacer"></div>
+        <div class="toolbar__meta">
           ${this.lastUpdated ? html`
-            <span style="font-size: 13px; color: var(--muted);">上次更新: ${this.lastUpdated}</span>
+            <span class="last-updated">上次更新: ${this.lastUpdated}</span>
           ` : nothing}
-          <button class="btn btn--ghost" style="padding: 6px 12px; font-size: 13px;" @click=${this.loadData}>刷新</button>
+          <button class="btn btn--ghost btn--sm" @click=${this.loadData}>刷新</button>
         </div>
       </div>
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+      <div class="grid grid-cols-2 gap-4">
         ${this.renderMetrics()}
         ${this.renderHealth()}
       </div>
@@ -101,84 +101,83 @@ export class MonitoringView extends LitElement {
   renderMetrics() {
     const m = this.metrics;
     return html`
-      <div class="card" style="padding: 20px;">
-        <div style="font-weight: 600; margin-bottom: 16px;">系统资源</div>
+      <div class="card card--p-5">
+        <div class="card__title">系统资源</div>
         ${m ? html`
-          <div style="display: flex; flex-direction: column; gap: 16px;">
+          <div class="metric-group">
             ${this.renderBar("CPU", m.cpu)}
             ${this.renderBar("内存", m.memory)}
             ${this.renderBar("磁盘", m.disk)}
           </div>
-          <div style="margin-top: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <div class="metric-meta-grid">
             <div>
-              <div style="color: var(--muted); font-size: 12px;">网络入站</div>
-              <div style="font-size: 16px; font-weight: 600; margin-top: 4px;">${this.formatBytes(m.network.inbound)}/s</div>
+              <div class="metric-meta-item__label">网络入站</div>
+              <div class="metric-meta-item__value">${this.formatBytes(m.network.inbound)}/s</div>
             </div>
             <div>
-              <div style="color: var(--muted); font-size: 12px;">网络出站</div>
-              <div style="font-size: 16px; font-weight: 600; margin-top: 4px;">${this.formatBytes(m.network.outbound)}/s</div>
+              <div class="metric-meta-item__label">网络出站</div>
+              <div class="metric-meta-item__value">${this.formatBytes(m.network.outbound)}/s</div>
             </div>
             <div>
-              <div style="color: var(--muted); font-size: 12px;">活跃连接</div>
-              <div style="font-size: 16px; font-weight: 600; margin-top: 4px;">${m.activeConnections ?? '-'}</div>
+              <div class="metric-meta-item__label">活跃连接</div>
+              <div class="metric-meta-item__value">${m.activeConnections ?? '-'}</div>
             </div>
             <div>
-              <div style="color: var(--muted); font-size: 12px;">运行时间</div>
-              <div style="font-size: 16px; font-weight: 600; margin-top: 4px;">${m.uptime ? this.formatUptime(m.uptime) : '-'}</div>
+              <div class="metric-meta-item__label">运行时间</div>
+              <div class="metric-meta-item__value">${m.uptime ? this.formatUptime(m.uptime) : '-'}</div>
             </div>
           </div>
-        ` : html`<div style="color: var(--muted); text-align: center; padding: 20px;">暂无数据</div>`}
+        ` : html`<div class="empty-hint--sm">暂无数据</div>`}
       </div>
     `;
   }
 
   renderHealth() {
     const h = this.health;
-    const statusColor = (s: string) => s === "healthy" ? "var(--success)" : s === "degraded" ? "var(--warning)" : "var(--danger)";
+    const statusDotClass = (s: string) => s === "healthy" ? "status-dot status-dot--success" : s === "degraded" ? "status-dot status-dot--warning" : "status-dot status-dot--danger";
     const statusLabel = (s: string) => s === "healthy" ? "正常" : s === "degraded" ? "降级" : "异常";
     return html`
-      <div class="card" style="padding: 20px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-          <div style="font-weight: 600;">健康状态</div>
+      <div class="card card--p-5">
+        <div class="health-header">
+          <div class="card__title card__title--flush">健康状态</div>
           ${h ? html`
-            <span style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 9999px; font-size: 13px; background: var(--bg-subtle);">
-              <span style="width: 8px; height: 8px; border-radius: 50%; background: ${statusColor(h.status)};"></span>
-              ${statusLabel(h.status)}
+            <span class="status-badge status-badge--subtle">
+              <span class="${statusDotClass(h.status)}"></span>
+              <span class="status-badge__label">${statusLabel(h.status)}</span>
             </span>
           ` : nothing}
         </div>
         ${h?.components?.length ? html`
-          <div style="display: flex; flex-direction: column; gap: 8px;">
+          <div class="health-list">
             ${h.components!.map((c: ComponentHealth) => html`
-              <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; background: var(--bg-subtle); border-radius: 8px;">
-                <div>
-                  <div style="font-size: 14px; font-weight: 500;">${c.name}</div>
-                  ${c.message ? html`<div style="font-size: 12px; color: var(--muted);">${c.message}</div>` : nothing}
-                  ${c.lastChecked ? html`<div style="font-size: 11px; color: var(--muted); margin-top: 2px;">${c.lastChecked}</div>` : nothing}
+              <div class="health-item">
+                <div class="health-item__info">
+                  <div class="health-item__name">${c.name}</div>
+                  ${c.message ? html`<div class="health-item__message">${c.message}</div>` : nothing}
+                  ${c.lastChecked ? html`<div class="health-item__checked">${c.lastChecked}</div>` : nothing}
                 </div>
-                <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 13px;">
-                  <span style="width: 8px; height: 8px; border-radius: 50%; background: ${statusColor(c.status)};"></span>
+                <span class="health-item__status">
+                  <span class="${statusDotClass(c.status)}"></span>
                   ${statusLabel(c.status)}
                 </span>
               </div>
             `)}
           </div>
-        ` : html`<div style="color: var(--muted); text-align: center; padding: 20px;">暂无数据</div>`}
+        ` : html`<div class="empty-hint--sm">暂无数据</div>`}
       </div>
     `;
   }
 
   renderBar(label: string, value?: number) {
     const v = value ?? 0;
-    const color = v > 90 ? "var(--danger)" : v > 70 ? "var(--warning)" : "var(--success)";
     return html`
       <div>
-        <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px;">
+        <div class="metric-bar__header">
           <span>${label}</span>
           <span>${v.toFixed(1)}%</span>
         </div>
-        <div style="height: 16px; background: #e5e7eb; border-radius: 3px; overflow: hidden;">
-          <div style="height: 100%; width: ${v}%; background: ${color}; border-radius: 2px; transition: width 0.3s;"></div>
+        <div class="metric-bar__track metric-bar__track--md">
+          <div class="metric-bar__fill" style="width: ${v}%;"></div>
         </div>
       </div>
     `;

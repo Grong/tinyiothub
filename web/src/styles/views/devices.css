@@ -1,10 +1,31 @@
 /* ===== Device Patterns ===== */
 .device-card {
-  padding: 2px;
+  position: relative;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   height: 180px;
+  background: var(--card);
+  border-radius: var(--radius-lg);
+}
+
+.device-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.03));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.device-card:hover {
+  box-shadow: 0 8px 32px var(--accent-glow);
+  transform: translateY(-2px);
+  transition: box-shadow var(--duration-normal) var(--ease-out), transform var(--duration-normal) var(--ease-out);
 }
 
 .device-card__header {

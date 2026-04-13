@@ -196,13 +196,30 @@
 }
 /* Wizard template card hover (replaces JS mouseenter/mouseleave inline styles) */
 .template-card {
+  position: relative;
   padding: var(--space-4);
   cursor: pointer;
-  transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+  background: var(--card);
+  border-radius: var(--radius-lg);
+  transition: box-shadow var(--duration-fast), transform var(--duration-fast);
 }
+
+.template-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.03));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
 .template-card:hover {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 1px var(--primary);
+  box-shadow: 0 8px 32px var(--accent-glow);
+  transform: translateY(-2px);
 }
 .template-card__header {
   display: flex;

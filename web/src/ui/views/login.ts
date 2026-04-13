@@ -167,33 +167,22 @@ export class LoginView extends LitElement {
               <img src="/logo.svg" alt="TinyIoTHub" style="width: 48px; height: 48px;" />
               <h1>TinyIoTHub</h1>
             </div>
+            <h2 class="brand-headline">物联网<br />边缘网关</h2>
             <p class="brand-tagline">
-              TinyIoTHub 是一个自包含的物联网边缘网关，支持 Modbus、ONVIF、SNMP、MQTT 等常见工业协议，无需额外部件即可采集设备数据并上传云端。
+              自包含、多协议、可观测。在边缘侧快速接入 Modbus、ONVIF、SNMP 与 MQTT 设备，实时采集并上传云端。
             </p>
-            <div class="brand-features">
-              <div class="brand-feature">
-                <div class="brand-feature-icon">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                </div>
-                <span>Modbus / ONVIF / SNMP / MQTT 开箱即用</span>
+            <div class="brand-stats">
+              <div class="brand-stat">
+                <div class="brand-stat__num">Modbus</div>
+                <div class="brand-stat__label">工业协议</div>
               </div>
-              <div class="brand-feature">
-                <div class="brand-feature-icon">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                </div>
-                <span>设备离线自动探测与告警</span>
+              <div class="brand-stat">
+                <div class="brand-stat__num">MQTT</div>
+                <div class="brand-stat__label">消息协议</div>
               </div>
-              <div class="brand-feature">
-                <div class="brand-feature-icon">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                </div>
-                <span>内置告警规则引擎，支持多级告警</span>
+              <div class="brand-stat">
+                <div class="brand-stat__num">ONVIF</div>
+                <div class="brand-stat__label">视频协议</div>
               </div>
             </div>
           </div>
