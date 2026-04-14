@@ -109,7 +109,7 @@ src/domain/alarm/
 
 - **后端**: Rust + Axum + SQLx + Tokio
 - **数据库**: SQLite
-- **前端**: TypeScript + React + Next.js + React Query
+- **前端**: TypeScript + Lit 3 + Vite + nanostore
 - **架构**: DDD + Event-Driven + Clean Architecture
 
 ## 参考文档
