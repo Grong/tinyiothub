@@ -42,3 +42,18 @@ pub struct ToolToggleRequest {
     pub tool_name: String,
     pub enabled: bool,
 }
+
+/// Query parameters for GET /api/v1/chat/sessions
+#[derive(Debug, Deserialize)]
+pub struct ChatSessionsQuery {
+    pub workspace_id: Option<String>,
+    pub agent_id: Option<String>,
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
+}
+
+/// Request body for POST /api/v1/chat/sessions/:session_key/label
+#[derive(Debug, Deserialize)]
+pub struct UpdateSessionLabelRequest {
+    pub label: String,
+}

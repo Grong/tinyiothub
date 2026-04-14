@@ -36,6 +36,7 @@ pub trait TagBindingRepository: Send + Sync {
     async fn count_by_tag_id(&self, tag_id: &str) -> Result<i64>;
     async fn count_by_target_id(&self, target_id: &str) -> Result<i64>;
     async fn exists(&self, tag_id: &str, target_id: &str) -> Result<bool>;
+    async fn find_by_tag_and_target(&self, tag_id: &str, target_id: &str) -> Result<Option<TagBinding>>;
     async fn create_batch(
         &self,
         bindings: &[CreateTagBindingRequest],

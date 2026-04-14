@@ -252,7 +252,7 @@ impl ToolHandler for CreateWorkspaceHandler {
             Ok(_agent_id) => {
                 // Update workspace with agent_id
                 if let Ok(Some(updated)) =
-                    state.workspace_service.update(&workspace.id, None, None, None).await
+                    state.workspace_service.update(&workspace.id, None, None, Some(&_agent_id), None).await
                 {
                     (updated, None)
                 } else {
@@ -382,6 +382,7 @@ impl ToolHandler for UpdateWorkspaceHandler {
             &input.id,
             input.name.as_deref(),
             input.description.as_deref(),
+            None,
             input.agent_config.as_deref(),
         )
         .await

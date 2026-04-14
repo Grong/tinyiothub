@@ -129,6 +129,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         id: &str,
         name: Option<&str>,
         description: Option<&str>,
+        agent_id: Option<&str>,
         agent_config: Option<&str>,
     ) -> Result<Option<WorkspaceWithDeviceCount>> {
         let mut builder = QueryBuilder::new("UPDATE workspaces SET ");
@@ -148,6 +149,14 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
                 builder.push(", ");
             }
             builder.push("description = ").push_bind(d);
+            has_updates = true;
+        }
+
+        if let Some(aid) = agent_id {
+            if has_updates {
+                builder.push(", ");
+            }
+            builder.push("agent_id = ").push_bind(aid);
             has_updates = true;
         }
 

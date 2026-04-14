@@ -9,6 +9,7 @@ use crate::{
                 ContentElement, DeviceEventType, EventLevel, EventSource, RichContent, TextFormat,
             },
         },
+        tag::repository::TagRepository,
     },
     dto::{
         entity::{
@@ -30,16 +31,23 @@ pub struct DeviceService {
     /// TODO: Phase 3 完成后移除
     database: Arc<Database>,
     event_bus: Option<Arc<EventBus>>,
+    tag_repository: Option<Arc<dyn TagRepository>>,
 }
 
 impl DeviceService {
     pub fn new(repository: Arc<dyn DeviceRepository>, database: Arc<Database>) -> Self {
-        Self { repository, database, event_bus: None }
+        Self { repository, database, event_bus: None, tag_repository: None }
     }
 
     /// Create device service with event bus
     pub fn with_event_bus(repository: Arc<dyn DeviceRepository>, database: Arc<Database>, event_bus: Arc<EventBus>) -> Self {
-        Self { repository, database, event_bus: Some(event_bus) }
+        Self { repository, database, event_bus: Some(event_bus), tag_repository: None }
+    }
+
+    /// Set tag repository for loading device tags
+    pub fn with_tag_repository(mut self, tag_repository: Arc<dyn TagRepository>) -> Self {
+        self.tag_repository = Some(tag_repository);
+        self
     }
 
     /// 创建设备
@@ -413,8 +421,21 @@ impl DeviceService {
         &self,
         params: &DeviceQueryParams,
     ) -> Result<Vec<Device>, Error> {
-        // TODO: repository 当前不处理标签，先调用 find_all，后续扩展 repository 或在此手动加载标签
-        self.get_devices(params).await
+        let mut devices = self.get_devices(params).await?;
+
+        if let Some(tag_repo) = &self.tag_repository {
+            for device in &mut devices {
+                match tag_repo.find_by_target_id(&device.id).await {
+                    Ok(tags) => device.tags = Some(tags),
+                    Err(e) => {
+                        tracing::warn!("Failed to load tags for device {}: {}", device.id, e);
+                        device.tags = Some(vec![]);
+                    }
+                }
+            }
+        }
+
+        Ok(devices)
     }
 
     /// 统计设备数量
