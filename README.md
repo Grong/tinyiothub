@@ -244,16 +244,15 @@ export const userApi = {
     apiPost<User>('users', data),
 }
 
-// React Query Hooks
-export const useUsers = (params?: { page?: number; pageSize?: number }) => {
-  return useQuery({
-    queryKey: queryKeys.users.list(params || {}),
-    queryFn: async () => {
-      const response = await userApi.getUsers(params)
-      return response.result || []
-    },
-  })
-}
+// nanostore 状态管理
+import { atom, task } from 'nanostores'
+
+export const $users = atom<User[]>([])
+
+export const loadUsers = task(async (params?: { page?: number; pageSize?: number }) => {
+  const response = await userApi.getUsers(params)
+  $users.set(response.result || [])
+})
 ```
 
 详细的API开发规范请参考：[API开发规范](.kiro/steering/api-standards.md)
@@ -264,7 +263,7 @@ export const useUsers = (params?: { page?: number; pageSize?: number }) => {
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Next.js UI    │    │   REST API      │    │   MQTT Client   │
+│   Lit 3 UI      │    │   REST API      │    │   MQTT Client   │
 │   (web/)        │    │   (api/)        │    │   (rumqttc)     │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
          │                       │                       │
@@ -314,8 +313,22 @@ api/
 │   ├── application/          # 应用服务层
 │   │   └── agent/            # Agent 会话、聊天、记忆服务
 │   ├── domain/               # 领域层
-│   ├── dto/                  # 数据传输对象
+│   │   ├── device/           # 设备领域
+│   │   ├── alarm/            # 告警领域
+│   │   ├── job/              # 任务领域
+│   │   ├── product/          # 产品领域
+│   │   ├── permission/       # 权限领域
+│   │   ├── role/             # 角色领域
+│   │   ├── tag/              # 标签领域
+│   │   ├── tenant/           # 租户领域
+│   │   ├── user/             # 用户领域
+│   │   └── workspace/        # 工作空间领域
+│   │       ├── repository.rs # Repository trait
+│   │       └── service.rs    # 领域服务
+│   ├── dto/                  # 数据传输对象（纯结构体）
 │   ├── infrastructure/       # 基础设施层
+│   │   └── persistence/
+│   │       └── repositories/ # Repository 实现
 │   ├── shared/               # 共享组件
 │   └── main.rs               # 程序入口
 ├── migrations/               # 数据库迁移
