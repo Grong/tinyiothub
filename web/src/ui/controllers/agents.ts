@@ -2,8 +2,9 @@ import { apiGet, apiPost, apiPut } from "../../api/client.js";
 import type { AgentsListResult, ToolCatalogGroup } from "../types.js";
 import type { Skill, CreateSkillRequest, UpdateSkillRequest } from "../../api/client.js";
 import { listSkills, createSkill, updateSkill, deleteSkill } from "../../api/client.js";
+import type { HeartbeatConfig, HeartbeatLogsResponse, HeartbeatTask } from "../views/agents-heartbeat-tab.js";
 
-export type AgentsPanel = "overview" | "tools" | "skills";
+export type AgentsPanel = "overview" | "tools" | "skills" | "heartbeat";
 
 export type AgentConfig = {
   model?: string;
@@ -45,6 +46,10 @@ export type AgentsState = {
   editingSkill?: Skill | null;
   skillDraft?: string;
   pendingDelete?: string | null;
+  heartbeatConfig?: HeartbeatConfig | null;
+  heartbeatLogs?: HeartbeatLogsResponse["logs"];
+  heartbeatLoading?: boolean;
+  heartbeatError?: string | null;
 };
 
 export function createAgentsState(): AgentsState {
@@ -181,6 +186,64 @@ export async function updateSkillApi(state: AgentsState, name: string, data: Upd
     return true;
   } catch (err) {
     state.skillsError = String(err);
+    return false;
+  }
+}
+
+export async function loadHeartbeatConfig(state: AgentsState, agentId: string): Promise<void> {
+  state.heartbeatLoading = true;
+  state.heartbeatError = null;
+  try {
+    const res = await apiGet<HeartbeatConfig>(`/chat/agents/${agentId}/heartbeat/config`);
+    state.heartbeatConfig = res.result || null;
+  } catch (err) {
+    state.heartbeatError = String(err);
+  } finally {
+    state.heartbeatLoading = false;
+  }
+}
+
+export async function loadHeartbeatLogs(state: AgentsState, agentId: string): Promise<void> {
+  try {
+    const res = await apiGet<HeartbeatLogsResponse>(`/chat/agents/${agentId}/heartbeat/logs`);
+    state.heartbeatLogs = res.result?.logs ?? undefined;
+  } catch (err) {
+    state.heartbeatError = String(err);
+  }
+}
+
+export async function updateHeartbeatConfig(
+  state: AgentsState,
+  agentId: string,
+  enabled?: boolean,
+  intervalMinutes?: number
+): Promise<boolean> {
+  try {
+    await apiPut(`/chat/agents/${agentId}/heartbeat/config`, {
+      enabled,
+      intervalMinutes,
+    });
+    // Reload config to get the latest state
+    await loadHeartbeatConfig(state, agentId);
+    return true;
+  } catch (err) {
+    state.heartbeatError = String(err);
+    return false;
+  }
+}
+
+export async function updateHeartbeatTasks(
+  state: AgentsState,
+  agentId: string,
+  tasks: HeartbeatTask[]
+): Promise<boolean> {
+  try {
+    await apiPut(`/chat/agents/${agentId}/heartbeat/tasks`, { tasks });
+    // Reload config to get the updated tasks list
+    await loadHeartbeatConfig(state, agentId);
+    return true;
+  } catch (err) {
+    state.heartbeatError = String(err);
     return false;
   }
 }

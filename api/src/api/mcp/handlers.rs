@@ -32,10 +32,34 @@ pub struct McpAuthContext {
 }
 
 impl McpAuthContext {
-    /// Returns "api_key" as the actor identifier, since API Keys
-    /// have no user identity. Used for alarm acknowledgements and similar.
+    /// Returns the actor identifier based on how the context was authenticated.
+    /// - "api_key" for API Key authenticated requests
+    /// - "jwt" for JWT authenticated user requests
+    /// - "heartbeat" for system-initiated heartbeat tasks
     pub fn actor_identifier(&self) -> &'static str {
-        "api_key"
+        match self.api_key_id.as_str() {
+            "heartbeat" => "heartbeat",
+            "jwt" => "jwt",
+            _ => "api_key",
+        }
+    }
+
+    /// Create context for JWT-authenticated user requests
+    pub fn for_jwt(workspace_id: String, user_id: String) -> Self {
+        Self {
+            workspace_id,
+            api_key_id: "jwt".to_string(),
+            api_key_name: user_id,
+        }
+    }
+
+    /// Create context for heartbeat system tasks
+    pub fn for_heartbeat(workspace_id: String, agent_id: String) -> Self {
+        Self {
+            workspace_id,
+            api_key_id: "heartbeat".to_string(),
+            api_key_name: agent_id,
+        }
     }
 }
 
@@ -57,10 +81,10 @@ pub fn get_mcp_context() -> Option<McpAuthContext> {
 }
 
 /// RAII guard for MCP context - clears on drop
-struct McpContextGuard;
+pub(crate) struct McpContextGuard;
 
 impl McpContextGuard {
-    fn new(ctx: McpAuthContext) -> Self {
+    pub fn new(ctx: McpAuthContext) -> Self {
         set_mcp_context(ctx);
         McpContextGuard
     }

@@ -137,6 +137,15 @@ pub struct AppState {
 
     /// 任务执行服务 - CRUD 操作
     pub job_execution_service: Arc<crate::domain::job::service::JobExecutionService>,
+
+    /// 会话服务 - Agent 聊天会话管理
+    pub session_service: Arc<crate::application::agent::SessionService>,
+
+    /// Agent 记忆服务 - 构建设备快照等上下文
+    pub agent_memory_service: Arc<crate::application::agent::AgentMemoryService>,
+
+    /// 聊天服务 - Agent 聊天编排
+    pub chat_service: Arc<crate::application::agent::ChatService>,
 }
 
 impl AppState {
@@ -185,13 +194,25 @@ impl AppState {
         // 注册事件处理器将在异步初始化中完成
         // 这里只创建事件总线，处理器注册推迟到 register_event_handlers() 方法
 
+        // 标签仓库（提前创建，供 DeviceService 使用）
+        let tag_repository: Arc<dyn crate::domain::tag::repository::TagRepository> =
+            Arc::new(crate::infrastructure::persistence::repositories::SqliteTagRepository::new(
+                database.as_ref().clone(),
+            ));
+        let tag_binding_repository: Arc<dyn crate::domain::tag::repository::TagBindingRepository> =
+            Arc::new(crate::infrastructure::persistence::repositories::SqliteTagBindingRepository::new(
+                database.as_ref().clone(),
+            ));
+
         // 基础服务 - 使用事件总线
         let device_repository: Arc<dyn crate::domain::device::repository::DeviceRepository> =
             Arc::new(crate::infrastructure::persistence::repositories::SqliteDeviceRepository::new(
                 database.as_ref().clone(),
             ));
-        let device_service =
-            Arc::new(DeviceService::with_event_bus(device_repository, database.clone(), event_bus.clone()));
+        let device_service = Arc::new(
+            DeviceService::with_event_bus(device_repository, database.clone(), event_bus.clone())
+                .with_tag_repository(tag_repository.clone()),
+        );
         let device_query_service: Arc<dyn DeviceQueryService> =
             Arc::new(crate::infrastructure::persistence::repositories::SqliteDeviceQueryService::new(
                 database.as_ref().clone(),
@@ -230,21 +251,27 @@ impl AppState {
         // Agent Runtime - 使用 zeroclaw 内置的 OpenAiCompatibleProvider (MiniMax)
         let minimax_config = crate::infrastructure::config::get().minimax.clone()
             .expect("minimax config is required - set [minimax] in app_settings.toml");
+        let agent_settings = crate::infrastructure::config::get().agent.clone();
         let provider = zeroclaw::providers::create_provider("minimaxi", Some(&minimax_config.auth_token))
             .expect("failed to create MiniMax provider");
-        tracing::info!("TinyIoTHub Agent initialized with zeroclaw MiniMax provider");
+        tracing::info!("TinyIoTHub Agent initialized with zeroclaw MiniMax provider (memory_backend={}, observer_backend={})",
+            agent_settings.memory_backend, agent_settings.observer_backend);
         let agent_runtime: Arc<dyn AgentRuntime> = Arc::new(
             crate::infrastructure::agent::AgentRuntimeImpl::new(
                 database.pool().clone(),
                 provider,
                 minimax_config.model,
+                &agent_settings,
             ).expect("failed to build AgentRuntimeImpl")
         );
 
         // Agent Memory Service
         let memory_repo =
             Arc::new(SqliteDeviceMemoryRepository::new(database.pool().clone()));
-        let memory_service = Arc::new(MemoryService::new(memory_repo));
+        let memory_service = Arc::new(MemoryService::new(Arc::clone(&memory_repo)));
+        let agent_memory_service = Arc::new(
+            crate::application::agent::AgentMemoryService::new(memory_repo)
+        );
 
         // 用户服务
         let user_repository: Arc<dyn crate::domain::user::repository::UserRepository> =
@@ -268,15 +295,10 @@ impl AppState {
         let workspace_service = Arc::new(crate::domain::workspace::service::WorkspaceService::new(workspace_repository));
 
         // 标签服务
-        let tag_repository: Arc<dyn crate::domain::tag::repository::TagRepository> =
-            Arc::new(crate::infrastructure::persistence::repositories::SqliteTagRepository::new(
-                database.as_ref().clone(),
-            ));
-        let tag_binding_repository: Arc<dyn crate::domain::tag::repository::TagBindingRepository> =
-            Arc::new(crate::infrastructure::persistence::repositories::SqliteTagBindingRepository::new(
-                database.as_ref().clone(),
-            ));
-        let tag_service = Arc::new(crate::domain::tag::service::TagService::new(tag_repository, tag_binding_repository));
+        let tag_service = Arc::new(crate::domain::tag::service::TagService::new(
+            tag_repository,
+            tag_binding_repository,
+        ));
 
         // 角色服务
         let role_repository: Arc<dyn crate::domain::role::repository::RoleRepository> =
@@ -319,6 +341,27 @@ impl AppState {
             ));
         let job_execution_service = Arc::new(crate::domain::job::service::JobExecutionService::new(job_execution_repository));
 
+        // 会话服务 - 用于 Agent 聊天会话管理
+        let session_repository: Arc<dyn crate::application::agent::SessionRepository> =
+            Arc::new(crate::infrastructure::persistence::repositories::SqliteSessionRepository::new(
+                database.as_ref().clone(),
+            ));
+        let session_service = Arc::new(crate::application::agent::SessionService::new(Arc::clone(&session_repository)));
+
+        // 聊天服务 - 编排 Agent 聊天、会话、记忆上下文
+        let compact_service = Arc::new(crate::domain::agent::compact_service::CompactService);
+        let chat_service = Arc::new(crate::application::agent::ChatService::new(
+            agent_runtime.clone(),
+            session_repository,
+            agent_memory_service.clone(),
+            compact_service,
+            crate::application::agent::ChatServiceConfig {
+                system_prompts: agent_settings.system_prompts.clone(),
+                max_messages_before_compact: agent_settings.max_messages_before_compact,
+                enable_compaction: agent_settings.enable_compaction,
+            },
+        ));
+
         Self {
             data_context,
             database,
@@ -348,6 +391,9 @@ impl AppState {
             product_service,
             job_service,
             job_execution_service,
+            session_service,
+            agent_memory_service,
+            chat_service,
         }
     }
 

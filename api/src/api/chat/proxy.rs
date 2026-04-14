@@ -6,9 +6,10 @@ use axum::{
     Json,
 };
 use async_stream::stream;
-use futures::StreamExt;
 
 use crate::{
+    application::agent::ChatRequest,
+    api::mcp::handlers::{McpAuthContext, McpContextGuard},
     dto::response::{api_response::ApiResponse, builder::ApiResponseBuilder},
     shared::{app_state::AppState, security::jwt::Claims},
 };
@@ -18,7 +19,7 @@ use super::types::*;
 /// POST /api/v1/chat/stream — SSE streaming chat
 pub async fn chat_stream(
     State(state): State<AppState>,
-    _claims: Claims,
+    claims: Claims,
     Json(req): Json<ChatStreamRequest>,
 ) -> Response {
     // 后端自行读取 agent 配置获取 system_prompt
@@ -32,55 +33,41 @@ pub async fn chat_stream(
     // session_key format: agent:<agentId>:<mainKey>/<sess_uuid>
     // Extract workspace_id from the second colon-separated segment
     let workspace_id = req.session_key.split(':').nth(1).map(|s| s.split('/').next()).flatten();
+    let system_prompts = &crate::infrastructure::config::get().agent.system_prompts;
     let full_prompt = crate::infrastructure::agent::build_full_system_prompt(
+        system_prompts,
         user_persona,
         workspace_id,
         None,
     );
-    // 只传递原始用户消息，不混入系统提示词（系统提示词由 Agent 内部处理）
-    let original_message = req.message.clone();
 
-    let response = match state
-        .agent_runtime
-        .chat_send(&req.agent_id, &req.session_key, &original_message, &req.run_id, &full_prompt)
-        .await
-    {
-        Ok(resp) => resp,
+    // Set MCP context for in-process tool calls (JWT-authenticated)
+    let mcp_ctx = McpAuthContext::for_jwt(
+        workspace_id.map(|s| s.to_string()).unwrap_or_default(),
+        claims.user_id.clone(),
+    );
+    let _guard = McpContextGuard::new(mcp_ctx);
+
+    let chat_request = ChatRequest {
+        session_key: req.session_key,
+        message: req.message,
+        run_id: req.run_id,
+        system_prompt_override: req.system_prompt.or(Some(full_prompt)),
+    };
+
+    let mut chat_stream = match state.chat_service.chat(chat_request).await {
+        Ok(stream) => stream,
         Err(e) => {
             let err: Json<ApiResponse<()>> = ApiResponseBuilder::error(&format!("Chat stream failed: {}", e));
             return err.into_response();
         }
     };
 
-    // Forward the SSE stream from the agent to the client
-    let byte_stream = response.bytes_stream();
     let event_stream = stream! {
-        let mut stream = byte_stream;
-        while let Some(chunk) = stream.next().await {
-            match chunk {
-                Ok(bytes) => {
-                    if let Ok(text) = String::from_utf8(bytes.to_vec()) {
-                        for line in text.lines() {
-                            let trimmed = line.trim();
-                            if trimmed.is_empty() {
-                                continue;
-                            }
-                            // ZeroClaw already sends SSE-formatted lines ("data: {...}")
-                            // Extract the payload to avoid double "data:" prefix
-                            let payload = if let Some(rest) = trimmed.strip_prefix("data: ") {
-                                rest.to_string()
-                            } else {
-                                trimmed.to_string()
-                            };
-                            yield Ok::<_, std::io::Error>(SseEvent::default().data(payload));
-                        }
-                    }
-                }
-                Err(e) => {
-                    yield Ok(SseEvent::default().data(format!("error: {}", e)));
-                    break;
-                }
-            }
+        use futures::StreamExt;
+        while let Some(event) = chat_stream.next().await {
+            let payload = serde_json::to_string(&event).unwrap_or_default();
+            yield Ok::<_, std::io::Error>(SseEvent::default().data(payload));
         }
     };
 
@@ -94,11 +81,7 @@ pub async fn chat_history(
     _claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
     let limit = query.limit.unwrap_or(200);
-    match state
-        .agent_runtime
-        .chat_history(&query.agent_id, &query.session_key, limit)
-        .await
-    {
+    match state.chat_service.get_history(&query.session_key, limit).await {
         Ok(data) => ApiResponseBuilder::success(data),
         Err(e) => ApiResponseBuilder::error(&format!("Failed to load chat history: {}", e)),
     }
@@ -111,13 +94,57 @@ pub async fn chat_abort(
     Json(req): Json<ChatAbortRequest>,
 ) -> Json<ApiResponse<serde_json::Value>> {
     let run_id_ref = req.run_id.as_deref();
-    match state
-        .agent_runtime
-        .chat_abort(&req.agent_id, &req.session_key, run_id_ref)
-        .await
-    {
+    match state.chat_service.abort_chat(&req.session_key, run_id_ref).await {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({"aborted": true})),
         Err(e) => ApiResponseBuilder::error(&format!("Abort failed: {}", e)),
+    }
+}
+
+/// GET /api/v1/chat/sessions
+pub async fn list_sessions(
+    State(state): State<AppState>,
+    Query(query): Query<ChatSessionsQuery>,
+    _claims: Claims,
+) -> Json<ApiResponse<serde_json::Value>> {
+    let limit = query.limit.unwrap_or(50);
+    let offset = query.offset.unwrap_or(0);
+    match state
+        .session_service
+        .list_sessions(
+            query.workspace_id.as_deref(),
+            query.agent_id.as_deref(),
+            limit,
+            offset,
+        )
+        .await
+    {
+        Ok(sessions) => ApiResponseBuilder::success(serde_json::json!({ "sessions": sessions })),
+        Err(e) => ApiResponseBuilder::error(&format!("Failed to list sessions: {}", e)),
+    }
+}
+
+/// POST /api/v1/chat/sessions/:session_key/label
+pub async fn update_session_label(
+    State(state): State<AppState>,
+    Path(session_key): Path<String>,
+    _claims: Claims,
+    Json(req): Json<UpdateSessionLabelRequest>,
+) -> Json<ApiResponse<serde_json::Value>> {
+    match state.session_service.update_label(&session_key, &req.label).await {
+        Ok(session) => ApiResponseBuilder::success(serde_json::json!({ "session": session })),
+        Err(e) => ApiResponseBuilder::error(&format!("Failed to update session label: {}", e)),
+    }
+}
+
+/// DELETE /api/v1/chat/sessions/:session_key
+pub async fn delete_session(
+    State(state): State<AppState>,
+    Path(session_key): Path<String>,
+    _claims: Claims,
+) -> Json<ApiResponse<serde_json::Value>> {
+    match state.session_service.delete_session(&session_key).await {
+        Ok(()) => ApiResponseBuilder::success(serde_json::json!({ "deleted": true })),
+        Err(e) => ApiResponseBuilder::error(&format!("Failed to delete session: {}", e)),
     }
 }
 

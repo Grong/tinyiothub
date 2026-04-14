@@ -97,6 +97,47 @@ impl ServiceManager {
         #[cfg(not(feature = "harmonyos"))]
         self.start_health_monitor(app_state.data_context.clone()).await?;
 
+        // 4. 启动 Heartbeat 服务
+        #[cfg(not(feature = "harmonyos"))]
+        {
+            let agent_settings = crate::infrastructure::config::get().agent.clone();
+            let workspace_dir = std::path::PathBuf::from(&agent_settings.workspace_dir);
+            let heartbeat_config = zeroclaw::config::schema::HeartbeatConfig {
+                enabled: agent_settings.heartbeat_enabled,
+                interval_minutes: agent_settings.heartbeat_interval_minutes,
+                two_phase: false,
+                message: None,
+                target: None,
+                to: None,
+                adaptive: false,
+                min_interval_minutes: 5,
+                max_interval_minutes: 120,
+                deadman_timeout_minutes: 0,
+                deadman_channel: None,
+                deadman_to: None,
+                max_run_history: 100,
+                load_session_context: false,
+                task_timeout_secs: 600,
+            };
+            let mut observer_config = zeroclaw::config::schema::ObservabilityConfig::default();
+            observer_config.backend = agent_settings.observer_backend.clone();
+            let heartbeat_observer: std::sync::Arc<dyn zeroclaw::observability::Observer> =
+                std::sync::Arc::from(zeroclaw::observability::create_observer(&observer_config));
+            let heartbeat_service = crate::infrastructure::agent::HeartbeatService::new(
+                workspace_dir,
+                heartbeat_config,
+                heartbeat_observer,
+                app_state.chat_service.clone(),
+                "default".to_string(),
+                "default".to_string(),
+                agent_settings.system_prompts.heartbeat.clone(),
+            );
+            tokio::spawn(async move {
+                heartbeat_service.run().await;
+            });
+            info!("✅ HeartbeatService started");
+        }
+
         // 更新状态为运行中
         *self.status.write().await = ServiceStatus::Running;
 

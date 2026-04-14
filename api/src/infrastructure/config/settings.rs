@@ -56,21 +56,156 @@ pub struct ApplicationSettings {
     #[serde(default)]
     pub redis: Option<RedisConfig>,
     #[serde(default)]
-    pub agent: Option<GatewayConfig>,
+    pub agent: AgentSettings,
     /// MiniMax GLM provider for built-in Agent
     #[serde(default)]
     pub minimax: Option<MinimaxConfig>,
 }
 
-/// Gateway (ZeroClaw) Agent configuration
+/// System prompts configuration for AI agents
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct GatewayConfig {
-    pub url: String,
+pub struct SystemPromptsConfig {
+    /// Layer 1: Platform base prompt — TinyIoTHub identity, protocols, A2UI rendering
+    #[serde(default = "default_system_prompt_base")]
+    pub base: String,
+    /// Layer 2: Default persona for all agents (can be overridden per-agent via systemPrompt)
+    #[serde(default = "default_system_prompt_persona")]
+    pub persona: String,
+    /// Layer 3: Additional context injected after persona (device state summary, etc.)
     #[serde(default)]
-    pub ws_url: Option<String>,
+    pub context: String,
+    /// Heartbeat system prompt — injected before each heartbeat task
+    #[serde(default = "default_system_prompt_heartbeat")]
+    pub heartbeat: String,
+}
+
+impl Default for SystemPromptsConfig {
+    fn default() -> Self {
+        Self {
+            base: default_system_prompt_base(),
+            persona: default_system_prompt_persona(),
+            context: String::new(),
+            heartbeat: default_system_prompt_heartbeat(),
+        }
+    }
+}
+
+fn default_system_prompt_base() -> String {
+    r#"你是 TinyIoTHub 智能网关的 AI 助手。
+
+## 平台身份
+你运行在 TinyIoTHub 边缘网关上，管理物联网设备。
+
+## 支持的设备类型
+- Modbus (工业寄存器读写)
+- ONVIF (网络摄像头)
+- SNMP (网络设备监控)
+- MQTT (消息订阅发布)
+
+## 统一操作规范
+- 读取：使用 read_register / get_device_status / subscribe_topic
+- 控制：使用 write_register / publish_command
+- 告警：使用 create_alarm_rule / get_alarm_events
+
+## UI 组件渲染规范
+当需要向用户展示结构化数据时，使用 canvas 工具推送 A2UI 组件：
+
+**canvas 工具参数：**
+- action: "a2ui_push"
+- jsonl: A2UI JSONL 格式的组件描述
+
+**A2UI 消息格式（JSONL）：**
+```
+{"createSurface":{"id":"<唯一ID>","surfaceKind":"inline"}}
+{"updateComponents":{"components":[{"id":"comp1","componentKind":"DeviceCard","dataModel":{"deviceId":"001","name":"温度传感器","status":"online"}}]}}
+{"updateDataModel":{"componentId":"comp1","dataModel":{"temperature":25.5}}}
+```
+
+**可用组件类型：**
+- Text: 文本显示
+- Button: 按钮
+- Card: 卡片容器
+- Row/Column: 布局
+- DeviceCard: 设备卡片
+- DeviceTable: 设备表格
+- DataChart: 数据图表
+
+**示例：展示设备列表**
+```
+{"createSurface":{"id":"device-list","surfaceKind":"inline"}}
+{"updateComponents":{"components":[{"id":"table1","componentKind":"DeviceTable","dataModel":{"columns":["名称","状态","温度"],"rows":[["传感器1","在线","25°C"],["传感器2","离线","--"]]}}]}}
+```"#
+        .to_string()
+}
+
+fn default_system_prompt_persona() -> String {
+    "你是一个乐于助人的 IoT 助手。".to_string()
+}
+
+fn default_system_prompt_heartbeat() -> String {
+    r#"你是一个IoT边缘网关的维护助手。执行巡检任务时：
+1. 只返回结构化的执行结果，不返回多余的分析过程
+2. 如果任务无法完成，说明原因即可，不要编造数据
+3. 重点关注设备的离线状态、告警堆积、数据异常"#
+        .to_string()
+}
+
+/// Agent runtime configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentSettings {
+    #[serde(default = "default_agent_memory_backend")]
+    pub memory_backend: String,
+    #[serde(default = "default_agent_observer_backend")]
+    pub observer_backend: String,
+    #[serde(default = "default_true")]
+    pub heartbeat_enabled: bool,
+    #[serde(default = "default_heartbeat_interval")]
+    pub heartbeat_interval_minutes: u32,
+    #[serde(default = "default_max_messages_before_compact")]
+    pub max_messages_before_compact: usize,
+    #[serde(default = "default_true")]
+    pub enable_compaction: bool,
+    #[serde(default = "default_agent_workspace_dir")]
+    pub workspace_dir: String,
     #[serde(default)]
-    pub gateway_token: Option<String>,
+    pub system_prompts: SystemPromptsConfig,
+}
+
+impl Default for AgentSettings {
+    fn default() -> Self {
+        Self {
+            memory_backend: default_agent_memory_backend(),
+            observer_backend: default_agent_observer_backend(),
+            heartbeat_enabled: true,
+            heartbeat_interval_minutes: default_heartbeat_interval(),
+            max_messages_before_compact: default_max_messages_before_compact(),
+            enable_compaction: true,
+            workspace_dir: default_agent_workspace_dir(),
+            system_prompts: SystemPromptsConfig::default(),
+        }
+    }
+}
+
+fn default_agent_memory_backend() -> String {
+    "sqlite".to_string()
+}
+
+fn default_agent_observer_backend() -> String {
+    "log".to_string()
+}
+
+fn default_heartbeat_interval() -> u32 {
+    30
+}
+
+fn default_max_messages_before_compact() -> usize {
+    50
+}
+
+fn default_agent_workspace_dir() -> String {
+    "./data/agents/default".to_string()
 }
 
 /// MiniMax GLM provider configuration
