@@ -264,9 +264,11 @@ export class DevicesView extends SignalWatcher(LitElement) {
   connectedCallback() {
     super.connectedCallback();
     document.addEventListener("click", this._boundCloseTagEditor);
-    // SSE 推送时触发 Lit 重新渲染
+    // SSE 推送时刷新当前分页数据
     this._boundHandleDeviceUpdated = () => {
-      this.requestUpdate();
+      if (!this.selectedDevice) {
+        this.loadDevices();
+      }
     };
     document.addEventListener("device-updated", this._boundHandleDeviceUpdated);
     const path = window.location.pathname;
@@ -277,8 +279,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
         return;
       }
     }
-    // 从缓存加载设备（首次触发 fetch + SSE 自动连接）
-    this.loadDevicesFromCache();
+    // 分页加载设备列表，同时在后台初始化 SSE 缓存
+    this.loadDevices();
+    deviceCache.getDevices().catch(() => {});
     this.loadDriverNames();
     this.loadAllTags();
   }
@@ -288,20 +291,6 @@ export class DevicesView extends SignalWatcher(LitElement) {
     // 不断开 SSE — 缓存层管理连接生命周期
     document.removeEventListener("click", this._boundCloseTagEditor);
     document.removeEventListener("device-updated", this._boundHandleDeviceUpdated);
-  }
-
-  private async loadDevicesFromCache() {
-    this.loading = true;
-    this.error = "";
-    try {
-      const devices = await deviceCache.getDevices();
-      this.devices = devices;
-      this.total = devices.length;
-    } catch (err: any) {
-      this.error = err.message || "加载设备列表失败";
-    } finally {
-      this.loading = false;
-    }
   }
 
   // === Data Loading ===
@@ -322,7 +311,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       const data = res.result;
       if (data) {
         this.devices = data.data || [];
-        this.totalPages = data.pagination?.totalPages || 0;
+        this.totalPages = data.pagination?.totalPages || (this.devices.length > 0 ? 1 : 0);
         this.total = data.pagination?.totalCount || this.devices.length;
       }
     } catch (err: any) {
@@ -716,6 +705,21 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.loadDevices();
   }
 
+  private getPaginationItems(): (number | string)[] {
+    const total = this.totalPages;
+    const current = this.page;
+    if (total <= 7) {
+      return Array.from({ length: total }, (_, i) => i + 1);
+    }
+    if (current <= 4) {
+      return [1, 2, 3, 4, 5, '...', total];
+    }
+    if (current >= total - 3) {
+      return [1, '...', total - 4, total - 3, total - 2, total - 1, total];
+    }
+    return [1, '...', current - 1, current, current + 1, '...', total];
+  }
+
   // === Helpers ===
 
   statusLabel(status?: string): string {
@@ -1032,15 +1036,6 @@ export class DevicesView extends SignalWatcher(LitElement) {
   // === Render ===
 
   render() {
-    // 列表页: 直接从信号读取，SSE 更新时 SignalWatcher 自动触发 re-render
-    if (!this.selectedDevice) {
-      const cachedDevices = deviceCache.$devicesList.get();
-      if (cachedDevices.length > 0 || !this.loading) {
-        this.devices = cachedDevices;
-        this.total = cachedDevices.length;
-      }
-    }
-
     if (this.loading) {
       return html`
         <div class="page-loading">
@@ -1113,23 +1108,59 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   renderDeviceList() {
     return html`
-      ${this.renderToolbar()}
-      ${this.viewMode === "table" ? this.renderTableView() : this.renderGridView()}
-      ${this.totalPages > 1 ? html`
-        <div class="pagination">
-          <button class="btn btn--ghost btn--sm" ?disabled=${this.page <= 1} @click=${() => this.goToPage(this.page - 1)}>上一页</button>
-          <span class="pagination-info">第 ${this.page} / ${this.totalPages} 页，共 ${this.total} 条</span>
-          <button class="btn btn--ghost btn--sm" ?disabled=${this.page >= this.totalPages} @click=${() => this.goToPage(this.page + 1)}>下一页</button>
+      <div class="device-list">
+        ${this.renderToolbar()}
+        <div class="device-list__content">
+          ${this.viewMode === "table" ? this.renderTableView() : this.renderGridView()}
         </div>
-      ` : ""}
-      ${this.showModal ? this.renderModal() : nothing}
-      ${this.showWizard ? this.renderWizard() : nothing}
+        ${this.renderPagination()}
+        ${this.showModal ? this.renderModal() : nothing}
+        ${this.showWizard ? this.renderWizard() : nothing}
+      </div>
+    `;
+  }
+
+  renderPagination() {
+    if (this.total === 0) return nothing;
+    const items = this.getPaginationItems();
+    return html`
+      <div class="pagination">
+        <button
+          class="pagination__btn pagination__btn--arrow"
+          ?disabled=${this.page <= 1}
+          @click=${() => this.goToPage(this.page - 1)}
+          aria-label="上一页"
+        >‹</button>
+        <div class="pagination__pages">
+          ${items.map(item => {
+            if (item === '...') {
+              return html`<span class="pagination__ellipsis">…</span>`;
+            }
+            const p = item as number;
+            const isActive = p === this.page;
+            return html`
+              <button
+                class="pagination__btn ${isActive ? 'pagination__btn--active' : ''}"
+                @click=${() => this.goToPage(p)}
+                aria-label="第 ${p} 页"
+                aria-current=${isActive ? 'page' : nothing}
+              >${p}</button>
+            `;
+          })}
+        </div>
+        <button
+          class="pagination__btn pagination__btn--arrow"
+          ?disabled=${this.page >= this.totalPages}
+          @click=${() => this.goToPage(this.page + 1)}
+          aria-label="下一页"
+        >›</button>
+        <span class="pagination__meta">${this.page} / ${this.totalPages}</span>
+      </div>
     `;
   }
 
   renderTableView() {
-    // Read directly from signal for SSE reactivity
-    const devices = deviceCache.$devicesList.get();
+    const devices = this.devices;
     return html`
       <div class="card table-container">
         <table class="data-table">
@@ -1177,8 +1208,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
   }
 
   renderGridView() {
-    // Read directly from signal for SSE reactivity
-    const devices = deviceCache.$devicesList.get();
+    const devices = this.devices;
     if (devices.length === 0) {
       return html`
         <div class="card empty-hint">暂无设备</div>

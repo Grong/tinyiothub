@@ -255,7 +255,7 @@
   border: none;
   background: var(--card);
   border-radius: var(--radius-lg);
-  padding: var(--space-2) 1var(--space-1);
+  padding: var(--space-2) var(--space-3);
   min-width: 0;
 }
 
@@ -571,7 +571,7 @@
 
 .chat-compose__field textarea {
   min-height: 72px;
-  padding: var(--space-2) 1var(--space-1);
+  padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-lg);
   resize: vertical;
   white-space: pre-wrap;
@@ -617,9 +617,9 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: 2var(--space-1) var(--space-5);
+  padding: var(--space-2) var(--space-5);
   margin: 0 var(--space-4) var(--space-4);
-  border-radius: 1var(--radius-sm);
+  border-radius: var(--radius-sm);
   background: var(--glass-chat-input-bg, rgba(30, 30, 40, 0.7));
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
@@ -647,7 +647,7 @@
 
 .chat-send-btn,
 .chat-abort-btn {
-  padding: var(--space-2) 1var(--space-2);
+  padding: var(--space-2) var(--space-2);
   border: none;
   border-radius: var(--radius-md);
   font-size: 14px;

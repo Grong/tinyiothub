@@ -89,7 +89,7 @@
 .html-table td,
 .models-table td,
 .usage-models-table td {
-  padding: 1var(--space-1) var(--space-4);
+  padding: var(--space-3) var(--space-4);
   font-size: 14px;
 }
 

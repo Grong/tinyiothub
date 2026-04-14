@@ -140,7 +140,7 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 4var(--space-2) 2var(--space-1);
+  padding: var(--space-7) var(--space-2);
   text-align: center;
   color: var(--muted);
 }
@@ -235,7 +235,7 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 4var(--space-2) 2var(--space-1);
+  padding: var(--space-7) var(--space-2);
   text-align: center;
   color: var(--muted);
 }
