@@ -89,7 +89,7 @@
   background: var(--card);
   border-radius: var(--radius-lg);
   box-shadow: var(--glass-shadow-sm) !important;
-  padding: 1var(--space-1) var(--space-4);
+  padding: var(--space-3) var(--space-4);
   border: none;
   transition:
     box-shadow var(--duration-normal) var(--ease-out),
@@ -291,7 +291,7 @@
    =========================================== */
 
 .callout {
-  padding: 1var(--space-1) var(--space-4);
+  padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-lg);
   background: var(--secondary);
   border: none;
@@ -334,7 +334,7 @@
   gap: 6px;
   font-size: 13px;
   line-height: 1.2;
-  padding: 6px 1var(--space-1);
+  padding: 6px var(--space-3);
   margin-bottom: 8px;
   border-radius: 999px;
   border: none;
@@ -848,7 +848,7 @@
 .wizard-dialog {
   background: var(--bg);
   border: none;
-  border-radius: 1var(--radius-sm);
+  border-radius: var(--radius-sm);
   width: 92%;
   max-width: 1100px;
   max-height: 85vh;
@@ -864,7 +864,7 @@
 .wizard-dialog__header {
   display: flex;
   align-items: center;
-  padding: var(--space-4) 2var(--space-1);
+  padding: var(--space-4) var(--space-2);
   flex-shrink: 0;
   gap: var(--space-3);
 }
@@ -901,7 +901,7 @@
 .wizard-dialog__body {
   flex: 1;
   overflow-y: auto;
-  padding: var(--space-5) 2var(--space-2);
+  padding: var(--space-5) var(--space-4);
 }
 
 /* Step 1: Template grid — 5 columns on wide screens */
@@ -920,7 +920,7 @@
 
 .wizard-split__form {
   overflow-y: auto;
-  padding: var(--space-5) 2var(--space-2);
+  padding: var(--space-5) var(--space-4);
   padding-bottom: 80px;
 }
 
@@ -1012,11 +1012,11 @@
   justify-content: space-between;
   align-items: center;
   gap: var(--space-3);
-  padding: 1var(--space-1) 2var(--space-2);
+  padding: var(--space-3) var(--space-4);
   border-top: 1px solid var(--border);
   background: var(--bg);
   flex-shrink: 0;
-  border-radius: 0 0 1var(--radius-sm) 1var(--radius-sm);
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
 }
 
 /* ===========================================
@@ -1147,15 +1147,97 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-4);
-  margin-top: 20px;
-  padding-top: 20px;
+  gap: var(--space-2);
+  margin-top: auto;
+  padding-top: var(--space-4);
+  padding-bottom: var(--space-2);
   border-top: 1px solid var(--border);
 }
 
 .pagination-info {
   font-size: 14px;
   color: var(--muted);
+}
+
+.pagination__pages {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pagination__btn {
+  min-width: 30px;
+  height: 30px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.pagination__btn:hover:not(:disabled) {
+  background: var(--bg-subtle);
+  border-color: var(--border);
+  color: var(--accent);
+}
+
+.pagination__btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.pagination__btn--active {
+  background: var(--accent-subtle);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.pagination__btn--active:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+.pagination__btn--arrow {
+  font-size: 16px;
+  padding: 0 8px;
+  color: var(--text);
+}
+
+.pagination__ellipsis {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 30px;
+  font-size: 12px;
+  color: var(--muted);
+  user-select: none;
+}
+
+.pagination__meta {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  margin-left: var(--space-2);
+  padding-left: var(--space-2);
+  border-left: 1px solid var(--border);
+}
+
+@media (max-width: 640px) {
+  .pagination {
+    gap: var(--space-1);
+    padding-top: var(--space-3);
+  }
+  .pagination__meta {
+    margin-left: var(--space-1);
+    padding-left: var(--space-1);
+  }
 }
 
 .usage-header {
@@ -1273,7 +1355,7 @@
 
 .usage-controls input[type="date"] {
   min-width: 140px;
-  padding: var(--space-2) 1var(--space-1);
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--card);
@@ -1321,7 +1403,7 @@
 }
 
 .chart-toggle .toggle-btn {
-  padding: 6px 1var(--space-1);
+  padding: 6px var(--space-3);
   font-size: 13px;
   background: transparent;
   border: none;
@@ -1510,7 +1592,7 @@
   background: var(--card);
   border: none;
   border-radius: var(--radius-md);
-  padding: var(--space-2) 1var(--space-1);
+  padding: var(--space-2) var(--space-3);
   font-size: 12px;
   white-space: nowrap;
   z-index: 100;
@@ -1564,7 +1646,7 @@
 }
 
 .usage-models-table td {
-  padding: 1var(--space-1) var(--space-4);
+  padding: var(--space-3) var(--space-4);
   border: none;
   background: var(--bg-muted);
 }
@@ -1657,7 +1739,7 @@
   border: none;
   background: var(--card);
   border-radius: var(--radius-lg);
-  padding: 2var(--space-1);
+  padding: var(--space-2);
   box-shadow: var(--shadow-sm);
   margin-bottom: 24px;
   transition: box-shadow var(--duration-normal) ease, transform var(--duration-normal) ease;
