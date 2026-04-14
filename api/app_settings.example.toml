@@ -232,3 +232,17 @@ redirect_uri = ""    # 授权回调地址
 enabled = false
 app_id = ""          # 小程序AppID
 app_secret = ""      # 小程序AppSecret
+
+[agent]
+memory_backend = "sqlite"
+observer_backend = "log"
+heartbeat_enabled = true
+heartbeat_interval_minutes = 30
+max_messages_before_compact = 50
+enable_compaction = true
+workspace_dir = "./data/agents/default"
+
+[minimax]
+base_url = "https://api.minimax.chat/v1"
+auth_token = ""
+model = "MiniMax-M2.7-highspeed"

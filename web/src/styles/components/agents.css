@@ -1812,3 +1812,592 @@ button:hover:not(:disabled):not(.unstyled) {
   gap: var(--space-2);
 }
 
+/* Heartbeat Tab */
+.heartbeat-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.heartbeat-section {
+  background: var(--card);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow var(--duration-fast);
+}
+
+.heartbeat-section.heartbeat-active {
+  box-shadow: 0 0 0 1px var(--border), var(--shadow-sm);
+}
+
+.heartbeat-section h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.heartbeat-header-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.heartbeat-pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex-shrink: 0;
+}
+
+.heartbeat-pulse-dot.active {
+  background: var(--success);
+  animation: pulse-ring 2s ease-out infinite;
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 currentColor;
+    opacity: 1;
+  }
+  70% {
+    box-shadow: 0 0 0 6px transparent;
+    opacity: 0.6;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+    opacity: 1;
+  }
+}
+
+/* Controls Row */
+.heartbeat-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+}
+
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggle-input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-track {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  background: var(--bg-muted);
+  border-radius: 12px;
+  transition: background var(--duration-fast);
+  flex-shrink: 0;
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  background: var(--text-tertiary);
+  border-radius: 50%;
+  transition: transform var(--duration-fast), background var(--duration-fast);
+}
+
+.toggle-input:checked + .toggle-track {
+  background: rgba(var(--success-rgb, 34, 197, 94), 0.15);
+}
+
+.toggle-input:checked + .toggle-track .toggle-thumb {
+  transform: translateX(20px);
+  background: var(--success);
+}
+
+.toggle-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  min-width: 48px;
+}
+
+.interval-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+
+.interval-prefix {
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+}
+
+.interval-select {
+  padding: var(--space-2) var(--space-3);
+  padding-right: var(--space-6);
+  font-size: 13px;
+  background: var(--bg-muted);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%23888' stroke-width='1.5'%3E%3Cpath d='M3 4.5l3 3 3-3'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  transition: border-color var(--duration-fast);
+}
+
+.interval-select:hover {
+  border-color: var(--border-hover);
+}
+
+.interval-select:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+/* Divider */
+.heartbeat-divider {
+  height: 1px;
+  background: var(--border);
+  margin: var(--space-4) 0;
+}
+
+/* Task List */
+.heartbeat-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.heartbeat-task-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: var(--space-1);
+}
+
+.heartbeat-tasks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.heartbeat-tasks > li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--bg-muted);
+  border-radius: var(--radius-md);
+  transition: background var(--duration-fast);
+}
+
+.heartbeat-tasks > li:hover {
+  background: var(--bg-hover);
+}
+
+.task-priority {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.task-priority.high {
+  background: var(--danger);
+}
+
+.task-priority.medium {
+  background: var(--warning);
+}
+
+.task-priority.low {
+  background: var(--muted);
+}
+
+/* Task Item — Editable Row */
+.heartbeat-tasks li.task-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0;
+}
+
+.heartbeat-tasks li.task-item.paused {
+  opacity: 0.6;
+}
+
+/* Pause Button */
+.task-pause-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--bg-muted);
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--duration-fast), color var(--duration-fast);
+}
+
+.task-pause-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.task-pause-btn.paused {
+  color: var(--warning);
+}
+
+/* Priority Select */
+.task-priority-select {
+  appearance: none;
+  background: var(--bg-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  min-width: 90px;
+  flex-shrink: 0;
+  transition: border-color var(--duration-fast);
+}
+
+.task-priority-select:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.task-priority-select.high {
+  color: var(--danger);
+}
+
+.task-priority-select.medium {
+  color: var(--warning);
+}
+
+.task-priority-select.low {
+  color: var(--muted);
+}
+
+/* Task Text Input */
+.task-text-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  padding: 4px 0;
+  font-size: 13px;
+  color: var(--text-primary);
+  min-width: 0;
+  transition: border-color var(--duration-fast);
+}
+
+.task-text-input:focus {
+  outline: none;
+  border-bottom-color: var(--primary);
+}
+
+.task-text-input::placeholder {
+  color: var(--muted);
+}
+
+/* Remove Button */
+.task-remove-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity var(--duration-fast), background var(--duration-fast), color var(--duration-fast);
+}
+
+.heartbeat-tasks li:hover .task-remove-btn {
+  opacity: 1;
+}
+
+.task-remove-btn:hover {
+  background: var(--bg-muted);
+  color: var(--danger);
+}
+
+/* Add Task Button */
+.task-add-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color var(--duration-fast), color var(--duration-fast), background var(--duration-fast);
+}
+
+.task-add-btn:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: var(--bg-muted);
+}
+
+/* Task Empty State */
+.task-empty {
+  font-size: 13px;
+  color: var(--muted);
+  text-align: center;
+  padding: var(--space-4);
+  font-style: italic;
+}
+
+/* Count Badge */
+.heartbeat-count {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  background: var(--bg-muted);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+/* Empty State */
+.heartbeat-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-8) var(--space-4);
+  text-align: center;
+  gap: var(--space-2);
+}
+
+.heartbeat-empty-icon {
+  width: 48px;
+  height: 48px;
+  color: var(--muted);
+  opacity: 0.5;
+  margin-bottom: var(--space-2);
+}
+
+.heartbeat-empty-state > span:first-of-type {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.heartbeat-empty-sub {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Timeline */
+.heartbeat-timeline {
+  display: flex;
+  flex-direction: column;
+}
+
+.heartbeat-timeline-item {
+  display: flex;
+  gap: var(--space-3);
+  padding-bottom: var(--space-4);
+  animation: fadeSlideIn 300ms ease-out both;
+  animation-delay: var(--delay, 0ms);
+}
+
+.heartbeat-timeline-item:last-child {
+  padding-bottom: 0;
+}
+
+@keyframes fadeSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.timeline-indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.timeline-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--bg-muted);
+  border: 2px solid var(--border);
+  flex-shrink: 0;
+}
+
+.timeline-dot.success {
+  background: var(--success);
+  border-color: var(--success);
+}
+
+.timeline-dot.error {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+.timeline-line {
+  width: 2px;
+  flex: 1;
+  background: var(--border);
+  margin-top: var(--space-1);
+}
+
+.timeline-content {
+  flex: 1;
+  min-width: 0;
+  padding-top: 0;
+}
+
+.timeline-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+
+.timeline-time {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.timeline-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.timeline-badge.success {
+  background: rgba(34, 197, 94, 0.12);
+  color: var(--success);
+}
+
+.timeline-badge.error {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--danger);
+}
+
+.timeline-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.timeline-tasks {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.timeline-error {
+  font-size: 11px;
+  color: var(--danger);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: rgba(239, 68, 68, 0.08);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+/* Skeleton Loading */
+.heartbeat-skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.heartbeat-skeleton-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.heartbeat-skeleton {
+  background: linear-gradient(90deg, var(--bg-muted) 25%, var(--bg-hover) 50%, var(--bg-muted) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+  border-radius: var(--radius-md);
+}
+
+.skeleton-toggle {
+  width: 80px;
+  height: 24px;
+}
+
+.skeleton-select {
+  width: 100px;
+  height: 32px;
+}
+
+.skeleton-row {
+  height: 48px;
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}

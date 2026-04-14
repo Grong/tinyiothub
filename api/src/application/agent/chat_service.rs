@@ -20,6 +20,7 @@ use crate::application::agent::memory_service::{AgentMemoryService, MemoryContex
 use crate::application::agent::session_service::SessionRepository;
 use crate::domain::agent::compact_service::CompactService;
 use crate::infrastructure::agent::{AgentRuntime, AgentError};
+use crate::infrastructure::config::SystemPromptsConfig;
 
 /// Errors that can occur during chat operations
 #[derive(Debug, Error)]
@@ -200,8 +201,8 @@ impl ChatEvent {
 /// Configuration for the ChatService
 #[derive(Debug, Clone)]
 pub struct ChatServiceConfig {
-    /// Default system prompt to use if none provided
-    pub default_system_prompt: String,
+    /// System prompts for all AI interactions
+    pub system_prompts: SystemPromptsConfig,
     /// Maximum messages before compaction
     pub max_messages_before_compact: usize,
     /// Enable conversation compaction
@@ -211,7 +212,7 @@ pub struct ChatServiceConfig {
 impl Default for ChatServiceConfig {
     fn default() -> Self {
         Self {
-            default_system_prompt: String::from("You are a helpful IoT assistant."),
+            system_prompts: SystemPromptsConfig::default(),
             max_messages_before_compact: 50,
             enable_compaction: true,
         }
@@ -371,21 +372,12 @@ impl ChatService {
         memory_context: &MemoryContext,
     ) -> String {
         let base_prompt = override_prompt
-            .unwrap_or(&self.config.default_system_prompt);
+            .unwrap_or(&self.config.system_prompts.base);
 
         let mut full_prompt = base_prompt.to_string();
 
-        // Add memory context if available
-        if !memory_context.device_snapshots.is_empty() {
-            full_prompt.push_str("\n\n## Device Context\n");
-            for snapshot in &memory_context.device_snapshots {
-                full_prompt.push_str(&format!(
-                    "- {}: {}\n",
-                    snapshot.device_id,
-                    snapshot.snapshot_data
-                ));
-            }
-        }
+        // Append full memory context (device snapshots, preferences, summaries)
+        full_prompt.push_str(&memory_context.to_prompt_fragment());
 
         full_prompt
     }
@@ -418,6 +410,8 @@ impl ChatService {
             .await
             .map_err(|e| ChatError::RepositoryError(e.to_string()))?;
 
+        let session_repo = Arc::clone(&self.session_repo);
+
         tokio::spawn(async move {
             // Initiate chat with runtime
             match runtime
@@ -426,7 +420,9 @@ impl ChatService {
             {
                 Ok(response) => {
                     // Process SSE response and forward events
-                    if let Err(e) = Self::process_sse_response(response, &tx, &run_id, &session_key).await {
+                    if let Err(e) = Self::process_sse_response(
+                        session_repo, response, &tx, &run_id, &session_key
+                    ).await {
                         let _ = tx.send(ChatEvent::Error {
                             run_id: run_id.clone(),
                             session_key: session_key.clone(),
@@ -449,6 +445,7 @@ impl ChatService {
 
     /// Process SSE response from the runtime and convert to ChatEvents
     async fn process_sse_response(
+        session_repo: Arc<dyn SessionRepository>,
         response: reqwest::Response,
         tx: &mpsc::UnboundedSender<ChatEvent>,
         run_id: &str,
@@ -471,10 +468,28 @@ impl ChatService {
                             if let Ok(event_value) = serde_json::from_str::<Value>(data) {
                                 // Convert runtime event to ChatEvent
                                 if let Some(event) = Self::convert_runtime_event(
-                                    event_value,
+                                    event_value.clone(),
                                     run_id,
                                     session_key,
                                 ) {
+                                    // Save assistant message on final event
+                                    if let ChatEvent::Final { message, .. } = &event {
+                                        if let Some(content) = message.get("content").and_then(|v| v.as_array()) {
+                                            let content_json = serde_json::json!(content);
+                                            let _ = session_repo.add_message(
+                                                session_key,
+                                                crate::application::agent::session_service::ChatMessage {
+                                                    role: "assistant".to_string(),
+                                                    content: content_json.to_string(),
+                                                    timestamp: Some(chrono::Utc::now().timestamp_millis()),
+                                                    run_id: Some(run_id.to_string()),
+                                                    tool_call_id: None,
+                                                    tool_name: None,
+                                                },
+                                            ).await;
+                                        }
+                                    }
+
                                     if tx.send(event).is_err() {
                                         // Receiver dropped, stop processing
                                         return Ok(());
@@ -631,7 +646,7 @@ mod tests {
     #[test]
     fn test_chat_service_config_default() {
         let config = ChatServiceConfig::default();
-        assert!(!config.default_system_prompt.is_empty());
+        assert!(!config.system_prompts.base.is_empty());
         assert_eq!(config.max_messages_before_compact, 50);
         assert!(config.enable_compaction);
     }
