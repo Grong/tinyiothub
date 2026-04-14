@@ -13,6 +13,7 @@ pub mod permission_repository_impl;
 pub mod product_repository_impl;
 pub mod real_time_event_repository_impl;
 pub mod role_repository_impl;
+pub mod session_repository_impl;
 pub mod tag_repository_impl;
 pub mod tenant_repository_impl;
 pub mod user_repository_impl;
@@ -30,6 +31,7 @@ pub use permission_repository_impl::{SqlitePermissionGroupRepository, SqlitePerm
 pub use product_repository_impl::SqliteProductRepository;
 pub use real_time_event_repository_impl::SqliteRealTimeEventRepository;
 pub use role_repository_impl::SqliteRoleRepository;
+pub use session_repository_impl::SqliteSessionRepository;
 pub use tag_repository_impl::{SqliteTagBindingRepository, SqliteTagRepository};
 pub use tenant_repository_impl::SqliteTenantRepository;
 pub use user_repository_impl::SqliteUserRepository;

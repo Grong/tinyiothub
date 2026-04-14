@@ -267,15 +267,20 @@ async fn get_tag_stats(
     }
 }
 
-/// 创建标签绑定
+/// 创建标签绑定（幂等：已存在则返回现有绑定）
 async fn create_tag_binding(
     claims: Claims,
     State(state): State<AppState>,
     Json(request): Json<CreateTagBindingRequest>,
 ) -> Result<Json<ApiResponse<TagBinding>>, StatusCode> {
-    match state.tag_service.binding_exists(&request.tag_id, &request.target_id).await {
-        Ok(true) => return Err(StatusCode::CONFLICT),
-        Ok(false) => {}
+    match state.tag_service.find_binding_by_tag_and_target(&request.tag_id, &request.target_id).await {
+        Ok(Some(existing)) => {
+            return Ok(ApiResponseBuilder::success_with_message(
+                existing,
+                "Tag binding already exists",
+            ));
+        }
+        Ok(None) => {}
         Err(e) => {
             tracing::error!("Failed to check tag binding existence: {}", e);
             return Err(StatusCode::INTERNAL_SERVER_ERROR);

@@ -314,6 +314,18 @@ impl TagBindingRepository for SqliteTagBindingRepository {
         Ok(count > 0)
     }
 
+    async fn find_by_tag_and_target(&self, tag_id: &str, target_id: &str) -> Result<Option<TagBinding>> {
+        let binding = sqlx::query_as::<_, TagBinding>(
+            "SELECT id, tag_id, target_id, created_by, created_at FROM tag_bindings WHERE tag_id = ? AND target_id = ? LIMIT 1",
+        )
+        .bind(tag_id)
+        .bind(target_id)
+        .fetch_optional(self.database.pool())
+        .await?;
+
+        Ok(binding)
+    }
+
     async fn create_batch(
         &self,
         bindings: &[CreateTagBindingRequest],

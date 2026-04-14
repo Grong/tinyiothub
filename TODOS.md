@@ -1,5 +1,10 @@
 # TODOS
 
+> **最新完整 TODO 清单已迁移至:** `docs/superpowers/plans/2026-04-14-todo-audit-and-cleanup-plan.md`
+> 本文档保留 Edge Intelligence Agent 历史记录，新项目 TODO 请查阅上方计划。
+
+---
+
 > Organized by skill/component, then priority (P0 at top through P4, then Completed at bottom)
 
 ## Edge Intelligence Agent

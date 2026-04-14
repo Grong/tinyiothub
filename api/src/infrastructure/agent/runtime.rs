@@ -30,6 +30,12 @@ pub struct AgentRuntimeImpl {
     model_name: String,
     /// zeroclaw Agent (needs &mut to call turn_streamed)
     agent: Arc<tokio::sync::Mutex<zeroclaw::agent::Agent>>,
+    /// Persistent memory (SqliteMemory) — survives tool refresh
+    memory: Arc<dyn zeroclaw::memory::Memory>,
+    /// Observability observer — survives tool refresh
+    observer: Arc<dyn zeroclaw::observability::Observer>,
+    /// Active chat run handles for abort support
+    chat_handles: Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
 }
 
 impl AgentRuntimeImpl {
@@ -38,20 +44,36 @@ impl AgentRuntimeImpl {
         db_pool: sqlx::SqlitePool,
         provider: Box<dyn zeroclaw::providers::traits::Provider>,
         model_name: String,
+        agent_settings: &crate::infrastructure::config::AgentSettings,
     ) -> anyhow::Result<Self> {
         // Initial build (tool list may be empty because MCP not yet registered)
         let mut tool_boxed: Vec<Box<dyn Tool>> = Vec::new();
         tool_boxed.push(Box::new(CanvasTool));
 
-        let memory: Arc<dyn Memory> = Arc::new(zeroclaw::memory::NoneMemory::new());
-        let observer: Arc<dyn Observer> = Arc::new(zeroclaw::observability::NoopObserver);
+        let workspace_dir = std::path::PathBuf::from(&agent_settings.workspace_dir);
+        std::fs::create_dir_all(&workspace_dir).ok();
+
+        let mut memory_config = zeroclaw::config::schema::MemoryConfig::default();
+        memory_config.backend = agent_settings.memory_backend.clone();
+        memory_config.auto_save = true;
+        memory_config.hygiene_enabled = true;
+
+        let memory = zeroclaw::memory::create_memory(&memory_config, &workspace_dir, None)
+            .map_err(|e| anyhow::anyhow!("Failed to create memory backend '{}': {}", agent_settings.memory_backend, e))?;
+        let memory: Arc<dyn Memory> = Arc::from(memory);
+
+        let mut observer_config = zeroclaw::config::schema::ObservabilityConfig::default();
+        observer_config.backend = agent_settings.observer_backend.clone();
+        let observer = zeroclaw::observability::create_observer(&observer_config);
+        let observer: Arc<dyn Observer> = Arc::from(observer);
+
         let tool_dispatcher = Box::new(NativeToolDispatcher);
 
         let agent = zeroclaw::agent::Agent::builder()
             .provider(provider)
             .tools(tool_boxed)
-            .memory(memory)
-            .observer(observer)
+            .memory(Arc::clone(&memory))
+            .observer(Arc::clone(&observer))
             .tool_dispatcher(tool_dispatcher)
             .model_name(model_name.clone())
             .build()
@@ -62,6 +84,9 @@ impl AgentRuntimeImpl {
             _provider: Arc::new(std::sync::Mutex::new(None)),
             model_name,
             agent: Arc::new(tokio::sync::Mutex::new(agent)),
+            memory,
+            observer,
+            chat_handles: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         })
     }
 
@@ -95,8 +120,8 @@ impl AgentRuntimeImpl {
             tracing::warn!("MCP registry not available, no IoT tools loaded");
         }
 
-        let memory: Arc<dyn Memory> = Arc::new(zeroclaw::memory::NoneMemory::new());
-        let observer: Arc<dyn Observer> = Arc::new(zeroclaw::observability::NoopObserver);
+        let memory = Arc::clone(&self.memory);
+        let observer = Arc::clone(&self.observer);
         let tool_dispatcher = Box::new(NativeToolDispatcher);
 
         // Get current provider - need to recreate since Provider trait doesn't have Clone
@@ -130,18 +155,71 @@ impl AgentRuntimeImpl {
 }
 
 impl AgentClient for AgentRuntimeImpl {
-    fn create_agent(&self, _config: &AgentConfig) -> Pin<Box<dyn std::future::Future<Output = Result<String, AgentError>> + Send + '_>> {
-        Box::pin(async move { Ok("default".to_string()) })
+    fn create_agent(&self, config: &AgentConfig) -> Pin<Box<dyn std::future::Future<Output = Result<String, AgentError>> + Send + '_>> {
+        let db_pool = self.db_pool.clone();
+        let workspace_id = config.workspace_id.clone();
+        let name = config.name.clone();
+        Box::pin(async move {
+            let agent_id = uuid::Uuid::new_v4().to_string();
+            sqlx::query(
+                "INSERT INTO agents (agent_id, workspace_id, name, status, created_at, updated_at)
+                 VALUES (?, ?, ?, 'active', datetime('now'), datetime('now'))",
+            )
+            .bind(&agent_id)
+            .bind(&workspace_id)
+            .bind(&name)
+            .execute(&db_pool)
+            .await
+            .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
+            Ok(agent_id)
+        })
     }
 
-    fn delete_agent(&self, _agent_id: &str) -> Pin<Box<dyn std::future::Future<Output = Result<(), AgentError>> + Send + '_>> {
-        Box::pin(async move { Ok(()) })
+    fn delete_agent(&self, agent_id: &str) -> Pin<Box<dyn std::future::Future<Output = Result<(), AgentError>> + Send + '_>> {
+        let agent_id = agent_id.to_string();
+        let db_pool = self.db_pool.clone();
+        Box::pin(async move {
+            let result = sqlx::query("DELETE FROM agents WHERE agent_id = ?")
+                .bind(&agent_id)
+                .execute(&db_pool)
+                .await
+                .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
+            if result.rows_affected() == 0 {
+                return Err(AgentError::NotFound(agent_id));
+            }
+            let _ = sqlx::query("DELETE FROM agent_configs WHERE agent_id = ?")
+                .bind(&agent_id)
+                .execute(&db_pool)
+                .await;
+            let _ = sqlx::query("DELETE FROM agent_tools WHERE agent_id = ?")
+                .bind(&agent_id)
+                .execute(&db_pool)
+                .await;
+            Ok(())
+        })
     }
 
     fn get_agent(&self, agent_id: &str) -> Pin<Box<dyn std::future::Future<Output = Result<AgentInfo, AgentError>> + Send + '_>> {
         let agent_id = agent_id.to_string();
+        let db_pool = self.db_pool.clone();
         Box::pin(async move {
-            Ok(AgentInfo { id: agent_id, name: "TinyIoTHub Built-in Agent".to_string(), status: "active".to_string(), created_at: None })
+            let row: Option<(String, String, String, String)> = sqlx::query_as(
+                "SELECT agent_id, workspace_id, name, status FROM agents WHERE agent_id = ?"
+            )
+            .bind(&agent_id)
+            .fetch_optional(&db_pool)
+            .await
+            .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
+
+            match row {
+                Some((id, _workspace, name, status)) => Ok(AgentInfo {
+                    id,
+                    name,
+                    status,
+                    created_at: None,
+                }),
+                None => Err(AgentError::NotFound(agent_id)),
+            }
         })
     }
 
@@ -160,35 +238,11 @@ impl AgentClient for AgentRuntimeImpl {
         let session_key = session_key.to_string();
         let message = message.to_string();
         let run_id = run_id.to_string();
-        let db_pool = self.db_pool.clone();
         let agent = Arc::clone(&self.agent);
         let system_prompt = system_prompt.to_string();
+        let chat_handles = Arc::clone(&self.chat_handles);
 
         Box::pin(async move {
-            // Save user message
-            let user_content = serde_json::json!([{ "type": "text", "text": message }]);
-            sqlx::query(
-                "INSERT INTO chat_sessions (session_key, agent_id, created_at, updated_at)
-                 VALUES (?, 'default', datetime('now'), datetime('now'))
-                 ON CONFLICT(session_key) DO UPDATE SET updated_at = datetime('now')",
-            )
-            .bind(&session_key)
-            .execute(&db_pool)
-            .await
-            .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
-
-            sqlx::query(
-                "INSERT INTO chat_messages (session_key, role, content, timestamp, run_id)
-                 VALUES (?, 'user', ?, ?, ?)",
-            )
-            .bind(&session_key)
-            .bind(user_content.to_string())
-            .bind(chrono::Utc::now().timestamp_millis())
-            .bind(&run_id)
-            .execute(&db_pool)
-            .await
-            .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
-
             // Set system prompt (only first time)
             {
                 let mut ag = agent.lock().await;
@@ -207,10 +261,32 @@ impl AgentClient for AgentRuntimeImpl {
             let tx_stream = tx.clone();
             let session_key_clone = session_key.clone();
             let run_id_clone = run_id.clone();
-            let db_pool_clone = db_pool.clone();
+
+            // Guard to clean up chat_handles entry when the task finishes or is aborted
+            struct ChatRunGuard {
+                chat_handles: Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
+                run_id: String,
+            }
+            impl Drop for ChatRunGuard {
+                fn drop(&mut self) {
+                    let chat_handles = self.chat_handles.clone();
+                    let run_id = self.run_id.clone();
+                    tokio::spawn(async move {
+                        chat_handles.lock().await.remove(&run_id);
+                    });
+                }
+            }
+
+            let chat_handles_for_spawn = chat_handles.clone();
+            let run_id_for_spawn = run_id.clone();
 
             // Run Agent::turn_streamed in background
-            tokio::spawn(async move {
+            let handle = tokio::spawn(async move {
+                let _guard = ChatRunGuard {
+                    chat_handles: chat_handles_for_spawn.clone(),
+                    run_id: run_id_for_spawn.clone(),
+                };
+
                 let mut ag = agent.lock().await;
 
                 // Send channel to turn_streamed (using mpsc)
@@ -304,19 +380,6 @@ impl AgentClient for AgentRuntimeImpl {
                             }
                         }
 
-                        // Save assistant message
-                        let assistant_content = serde_json::json!([{ "type": "text", "text": final_text }]);
-                        let _ = sqlx::query(
-                            "INSERT INTO chat_messages (session_key, role, content, timestamp, run_id)
-                             VALUES (?, 'assistant', ?, ?, ?)",
-                        )
-                        .bind(&session_key_clone)
-                        .bind(assistant_content.to_string())
-                        .bind(chrono::Utc::now().timestamp_millis())
-                        .bind(&run_id_clone)
-                        .execute(&db_pool_clone)
-                        .await;
-
                         let sse_final = serde_json::json!({
                             "runId": run_id_clone,
                             "sessionKey": session_key_clone,
@@ -349,6 +412,8 @@ impl AgentClient for AgentRuntimeImpl {
                     }
                 }
             });
+
+            chat_handles.lock().await.insert(run_id, handle);
 
             let http_response = http::Response::builder()
                 .status(200)
@@ -409,20 +474,48 @@ impl AgentClient for AgentRuntimeImpl {
         })
     }
 
-    fn chat_abort(&self, _agent_id: &str, _session_key: &str, _run_id: Option<&str>) -> Pin<Box<dyn std::future::Future<Output = Result<(), AgentError>> + Send + '_>> {
-        Box::pin(async move { Ok(()) })
+    fn chat_abort(
+        &self,
+        _agent_id: &str,
+        _session_key: &str,
+        run_id: Option<&str>,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<(), AgentError>> + Send + '_>> {
+        let run_id = run_id.map(String::from);
+        let chat_handles = Arc::clone(&self.chat_handles);
+        Box::pin(async move {
+            if let Some(rid) = run_id {
+                if let Some(handle) = chat_handles.lock().await.remove(&rid) {
+                    handle.abort();
+                    tracing::info!("Aborted chat run {}", rid);
+                }
+            }
+            Ok(())
+        })
     }
 
     fn list_agents(&self) -> Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, AgentError>> + Send + '_>> {
+        let db_pool = self.db_pool.clone();
         Box::pin(async move {
-            Ok(serde_json::json!({
-                "agents": [{
-                    "id": "default",
-                    "name": "TinyIoTHub Built-in Agent",
-                    "status": "active",
-                    "created_at": null,
-                }]
-            }))
+            let rows: Vec<(String, String, String, String)> = sqlx::query_as(
+                "SELECT agent_id, workspace_id, name, status FROM agents ORDER BY created_at DESC"
+            )
+            .fetch_all(&db_pool)
+            .await
+            .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
+
+            let agents: Vec<serde_json::Value> = rows
+                .into_iter()
+                .map(|(id, _workspace, name, status)| {
+                    serde_json::json!({
+                        "id": id,
+                        "name": name,
+                        "status": status,
+                        "created_at": null,
+                    })
+                })
+                .collect();
+
+            Ok(serde_json::json!({ "agents": agents }))
         })
     }
 

@@ -125,6 +125,14 @@ impl TagService {
         self.tag_binding_repository.exists(tag_id, target_id).await
     }
 
+    pub async fn find_binding_by_tag_and_target(
+        &self,
+        tag_id: &str,
+        target_id: &str,
+    ) -> Result<Option<TagBinding>> {
+        self.tag_binding_repository.find_by_tag_and_target(tag_id, target_id).await
+    }
+
     pub async fn create_bindings_batch(
         &self,
         bindings: &[CreateTagBindingRequest],

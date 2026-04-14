@@ -148,13 +148,13 @@ pub async fn ensure_default_admin_user(state: &AppState) -> Result<()> {
         }
     };
 
-    // 确保默认租户存在
+    // 确保默认租户和工作空间/Agent 存在
     ensure_default_tenant(state, &admin_user_id).await?;
 
     Ok(())
 }
 
-/// 确保默认租户、租户用户关联和默认工作空间存在
+/// 确保默认租户、租户用户关联和默认工作空间/Agent 存在
 async fn ensure_default_tenant(state: &AppState, admin_user_id: &str) -> Result<()> {
     let pool = state.database().pool();
 
@@ -167,56 +167,80 @@ async fn ensure_default_tenant(state: &AppState, admin_user_id: &str) -> Result<
     .await
     .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
 
-    if has_tenant {
-        tracing::debug!("[init] Admin user already has a tenant, skipping bootstrap");
-        return Ok(());
-    }
+    if !has_tenant {
+        tracing::info!("[init] Admin user has no tenant, bootstrapping default tenant...");
 
-    tracing::info!("[init] Admin user has no tenant, bootstrapping default tenant...");
-
-    // 检查是否有任何租户
-    let tenant_exists: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM tenants WHERE id = 'tenant-default-001')"
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
-
-    if !tenant_exists {
-        // 创建默认租户
-        sqlx::query(
-            r#"INSERT INTO tenants
-               (id, name, slug, status, plan_id, subscription_status,
-                billing_email, timezone, locale, created_at, updated_at)
-               VALUES
-               ('tenant-default-001', 'Default Organization', 'default', 'active',
-                'plan_free', 'active', 'admin@tinyiothub.local', 'UTC', 'zh-CN',
-                datetime('now'), datetime('now'))"#
+        // 检查是否有任何租户
+        let tenant_exists: bool = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM tenants WHERE id = 'tenant-default-001')"
         )
+        .fetch_one(pool)
+        .await
+        .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
+
+        if !tenant_exists {
+            // 创建默认租户
+            sqlx::query(
+                r#"INSERT INTO tenants
+                   (id, name, slug, status, plan_id, subscription_status,
+                    billing_email, timezone, locale, created_at, updated_at)
+                   VALUES
+                   ('tenant-default-001', 'Default Organization', 'default', 'active',
+                    'plan_free', 'active', 'admin@tinyiothub.local', 'UTC', 'zh-CN',
+                    datetime('now'), datetime('now'))"#
+            )
+            .execute(pool)
+            .await
+            .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
+            tracing::info!("[init] Created default tenant");
+        }
+
+        // 关联 admin 用户到默认租户
+        let tenant_user_id = format!("tu-{}", admin_user_id);
+        sqlx::query(
+            r#"INSERT OR IGNORE INTO tenant_users
+               (id, tenant_id, user_id, role, invitation_status, joined_at, created_at, updated_at)
+               VALUES (?, 'tenant-default-001', ?, 'owner', 'accepted',
+                       datetime('now'), datetime('now'), datetime('now'))"#
+        )
+        .bind(&tenant_user_id)
+        .bind(admin_user_id)
         .execute(pool)
         .await
         .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
-        tracing::info!("[init] Created default tenant");
+        tracing::info!("[init] Linked admin user to default tenant");
     }
 
-    // 关联 admin 用户到默认租户
-    let tenant_user_id = format!("tu-{}", admin_user_id);
+    // 确保默认工作空间和 Agent 存在（无论租户是否新建）
+    ensure_default_workspace_and_agent(state, pool).await?;
+
+    // 将未分配的设备归属到默认租户和工作空间
     sqlx::query(
-        r#"INSERT OR IGNORE INTO tenant_users
-           (id, tenant_id, user_id, role, invitation_status, joined_at, created_at, updated_at)
-           VALUES (?, 'tenant-default-001', ?, 'owner', 'accepted',
-                   datetime('now'), datetime('now'), datetime('now'))"#
+        "UPDATE devices SET tenant_id = 'tenant-default-001' WHERE tenant_id IS NULL"
     )
-    .bind(&tenant_user_id)
-    .bind(admin_user_id)
     .execute(pool)
     .await
     .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
-    tracing::info!("[init] Linked admin user to default tenant");
 
-    // 确保默认工作空间存在
+    sqlx::query(
+        "UPDATE devices SET workspace_id = 'ws-default-001' WHERE workspace_id IS NULL AND tenant_id = 'tenant-default-001'"
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
+    tracing::info!("[init] Assigned orphan devices to default tenant/workspace");
+
+    Ok(())
+}
+
+/// 确保默认工作空间存在，若无则创建并同步创建 Agent；若存在但缺少 agent_id 则 backfill
+async fn ensure_default_workspace_and_agent(
+    state: &AppState,
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+) -> Result<()> {
+    // 检查默认工作空间是否存在
     let ws_exists: bool = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM workspaces WHERE tenant_id = 'tenant-default-001')"
+        "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = 'ws-default-001')"
     )
     .fetch_one(pool)
     .await
@@ -236,21 +260,41 @@ async fn ensure_default_tenant(state: &AppState, admin_user_id: &str) -> Result<
         tracing::info!("[init] Created default workspace");
     }
 
-    // 将未分配的设备归属到默认租户和工作空间
-    sqlx::query(
-        "UPDATE devices SET tenant_id = 'tenant-default-001' WHERE tenant_id IS NULL"
+    // 检查 workspace 是否缺少 agent_id
+    let needs_agent: bool = sqlx::query_scalar::<_, bool>(
+        "SELECT (agent_id IS NULL OR agent_id = '') FROM workspaces WHERE id = 'ws-default-001'"
     )
-    .execute(pool)
+    .fetch_one(pool)
     .await
     .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
 
-    sqlx::query(
-        "UPDATE devices SET workspace_id = 'ws-default-001' WHERE workspace_id IS NULL AND tenant_id = 'tenant-default-001'"
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
-    tracing::info!("[init] Assigned orphan devices to default tenant/workspace");
+    if needs_agent {
+        let agent_result = state
+            .agent_runtime
+            .create_agent(&crate::infrastructure::agent::AgentConfig {
+                workspace_id: "ws-default-001".to_string(),
+                name: "默认工作空间".to_string(),
+                ..Default::default()
+            })
+            .await;
+
+        match agent_result {
+            Ok(agent_id) => {
+                sqlx::query("UPDATE workspaces SET agent_id = ? WHERE id = 'ws-default-001'")
+                    .bind(&agent_id)
+                    .execute(pool)
+                    .await
+                    .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
+                tracing::info!("[init] Created agent {} for default workspace", agent_id);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "[init] Failed to create agent for default workspace: {}. Workspace created without agent_id.",
+                    e
+                );
+            }
+        }
+    }
 
     Ok(())
 }

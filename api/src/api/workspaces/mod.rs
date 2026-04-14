@@ -101,7 +101,7 @@ async fn create_workspace(
         Ok(_agent_id) => {
             // Update workspace with agent_id
             if let Ok(Some(updated)) =
-                state.workspace_service.update(&workspace.id, None, None, None).await
+                state.workspace_service.update(&workspace.id, None, None, Some(&_agent_id), None).await
             {
                 (updated, None)
             } else {
@@ -180,6 +180,7 @@ async fn update_workspace(
         &id,
         payload.name.as_deref(),
         payload.description.as_deref(),
+        None,
         payload.agent_config.as_deref(),
     )
     .await
