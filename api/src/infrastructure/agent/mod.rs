@@ -209,64 +209,170 @@ pub fn build_tools_catalog_json() -> serde_json::Value {
     })
 }
 
-/// Build the full system prompt by combining Layer 1 (platform base) + Layer 2 (user persona) + Layer 3 (skills)
+/// Build the full system prompt by combining workspace files + skills + dynamic context
 ///
-/// - layer1: from SystemPromptsConfig.base (platform identity, protocols, A2UI)
-/// - layer2: user persona (from agent config systemPrompt field)
-/// - layer3: skills loaded from filesystem
+/// Prompt layers (in order):
+/// 1. [Identity]    — from IDENTITY.md (who am I)
+/// 2. [Principles]  — from SOUL.md (how I behave)
+/// 3. [Capabilities] — from TOOLS.md (what I can do)
+/// 4. [Skills]      — from skills/*.md (specialized workflows)
+/// 5. [Memory]      — from MEMORY.md (curated long-term memory)
+/// 6. [User]        — from USER.md (who I'm helping)
+/// 7. [Persona]     — user persona override or default from config
+/// 8. [Context]     — dynamic context (device snapshots, etc.)
 pub fn build_full_system_prompt(
     system_prompts: &crate::infrastructure::config::SystemPromptsConfig,
     user_persona: &str,
     workspace_id: Option<&str>,
     agent_id: Option<&str>,
 ) -> String {
-    let base = &system_prompts.base;
+    let workspace_dir = get_workspace_dir(system_prompts, workspace_id);
 
-    // Layer 2: user persona — falls back to config persona if not provided
-    let layer2 = if !user_persona.trim().is_empty() {
-        format!("\n\n## Agent 灵魂设定（用户配置）\n{}\n", user_persona)
-    } else if !system_prompts.persona.is_empty() {
-        format!("\n\n## Agent 设定\n{}\n", system_prompts.persona)
+    // Layer 1-6: Load from workspace files
+    let workspace_prompt = load_workspace_prompt(&workspace_dir);
+
+    // Layer 7: Persona override (user can override the default persona from config)
+    // Only add persona layer if user provided one explicitly (via systemPrompt field)
+    let persona_layer = if !user_persona.trim().is_empty() {
+        format!("\n\n## Agent Persona（用户配置）\n{}\n", user_persona)
     } else {
         String::new()
     };
 
-    // Layer 3: skills loaded from filesystem
-    let layer3 = load_skills_prompt(workspace_id, agent_id);
+    // Skills from skills/ directory (existing behavior)
+    let skills_layer = load_skills_prompt(workspace_id, agent_id);
 
-    // Layer 4: additional context from config
-    let layer4 = if !system_prompts.context.is_empty() {
+    // Layer 8: Additional context from config (device snapshots injected at runtime)
+    let context_layer = if !system_prompts.context.is_empty() {
         format!("\n\n## 当前状态上下文\n{}\n", system_prompts.context)
     } else {
         String::new()
     };
 
-    format!("{}{}{}{}", base, layer2, layer3, layer4)
+    format!("{}{}{}{}", workspace_prompt, persona_layer, skills_layer, context_layer)
 }
 
-/// Load skill files from the skills/ directory and format as Layer 3 prompt
-/// Priority: skills/<ws>/<ag>/prompts/ > skills/<ws>/prompts/ > skills/<ws>/ > skills/tinyiothub/prompts/
+/// Get the workspace directory path for a given workspace_id
+fn get_workspace_dir(system_prompts: &crate::infrastructure::config::SystemPromptsConfig, workspace_id: Option<&str>) -> std::path::PathBuf {
+    let base = std::path::Path::new(&system_prompts.workspace_dir);
+    let ws = workspace_id.unwrap_or("default");
+    base.join(ws)
+}
+
+/// Load workspace prompt files and concatenate them into a single prompt
+///
+/// Files loaded (in order):
+/// - IDENTITY.md  → [Identity] section
+/// - SOUL.md      → [Principles] section
+/// - TOOLS.md     → [Capabilities] section
+/// - USER.md      → [User Context] section
+/// - MEMORY.md    → [Memory] section
+///
+/// Each file is wrapped with a markdown header indicating its section.
+fn load_workspace_prompt(workspace_dir: &std::path::Path) -> String {
+    let mut sections = Vec::new();
+
+    // Define workspace files and their section names
+    let files = [
+        ("IDENTITY.md", "Identity"),
+        ("SOUL.md", "Principles"),
+        ("TOOLS.md", "Capabilities"),
+        ("USER.md", "User Context"),
+        ("MEMORY.md", "Memory"),
+    ];
+
+    for (filename, section_name) in files {
+        let file_path = workspace_dir.join(filename);
+        if file_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&file_path) {
+                let trimmed = content.trim();
+                if !trimmed.is_empty() {
+                    sections.push(format!("## {}\n{}\n", section_name, trimmed));
+                }
+            }
+        }
+    }
+
+    if sections.is_empty() {
+        // Fallback to template files if workspace is empty
+        return load_template_fallback();
+    }
+
+    sections.join("\n")
+}
+
+/// Fallback: load from embedded template files when workspace directory has no files
+fn load_template_fallback() -> String {
+    let mut sections = Vec::new();
+
+    let files = [
+        ("IDENTITY.md", "Identity"),
+        ("SOUL.md", "Principles"),
+        ("TOOLS.md", "Capabilities"),
+        ("USER.md", "User Context"),
+        ("MEMORY.md", "Memory"),
+    ];
+
+    for (filename, section_name) in files {
+        // Templates are embedded at compile time in scaffold_service
+        let content = get_embedded_template(filename);
+        if let Some(c) = content {
+            let trimmed = c.trim();
+            if !trimmed.is_empty() {
+                sections.push(format!("## {}\n{}\n", section_name, trimmed));
+            }
+        }
+    }
+
+    sections.join("\n")
+}
+
+/// Get embedded template content by filename
+fn get_embedded_template(filename: &str) -> Option<&'static str> {
+    match filename {
+        "IDENTITY.md" => Some(include_str!("../../../templates/agent/IDENTITY.md")),
+        "SOUL.md" => Some(include_str!("../../../templates/agent/SOUL.md")),
+        "TOOLS.md" => Some(include_str!("../../../templates/agent/TOOLS.md")),
+        "USER.md" => Some(include_str!("../../../templates/agent/USER.md")),
+        "MEMORY.md" => Some(include_str!("../../../templates/agent/MEMORY.md")),
+        _ => None,
+    }
+}
+
+/// Load skill files and format as Layer 3 prompt.
+///
+/// Skills directory structure:
+/// - Workspace-specific: ./data/agents/{workspace_id}/skills/  (priority)
+/// - Global fallback:    ./data/skills/                         (all workspaces share)
+///
+/// For workspace-specific skills, also checks agent subdirectory:
+/// - ./data/agents/{workspace_id}/{agent_id}/skills/
+/// - ./data/agents/{workspace_id}/skills/
 fn load_skills_prompt(workspace_id: Option<&str>, agent_id: Option<&str>) -> String {
-    
+    // CARGO_MANIFEST_DIR = /path/to/tinyiothub/api
+    // data/skills is at: <api>/data/skills/
+    // data/agents/<ws>/skills is at: <api>/data/agents/<ws>/skills/
+    let api_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let ws = workspace_id.unwrap_or("default");
 
-    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("skills");
-    let ws = workspace_id.unwrap_or("tinyiothub");
-
-    // Try in order: prompts subdir first, then flat directory
+    // Build candidate paths: workspace-specific first, then global
     let candidates: Vec<std::path::PathBuf> = match (workspace_id, agent_id) {
         (Some(w), Some(a)) => vec![
-            base.join(w).join(a).join("prompts"),
-            base.join(w).join("prompts"),
-            base.join(w).join(a),
-            base.join(w),
+            // Workspace + agent specific skills
+            api_root.join("data/agents").join(w).join(a).join("skills"),
+            api_root.join("data/agents").join(w).join("skills"),
+            // Global skills
+            api_root.join("data/skills"),
         ],
-        (Some(_w), None) => vec![
-            base.join(ws).join("prompts"),
-            base.join(ws),
+        (Some(w), None) => vec![
+            // Workspace-specific skills (no agent)
+            api_root.join("data/agents").join(w).join("skills"),
+            // Global skills
+            api_root.join("data/skills"),
         ],
         _ => vec![
-            base.join("tinyiothub").join("prompts"),
-            base.join("tinyiothub"),
+            // No workspace: just global skills
+            api_root.join("data/skills"),
         ],
     };
 

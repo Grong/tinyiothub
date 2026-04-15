@@ -63,16 +63,21 @@ pub struct ApplicationSettings {
 }
 
 /// System prompts configuration
+///
+/// Prompt content is now loaded from workspace files (IDENTITY.md, SOUL.md, etc.)
+/// This config provides fallback defaults and runtime context injection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct SystemPromptsConfig {
-    /// Layer 1: Platform base prompt — TinyIoTHub identity, protocols, A2UI rendering
-    #[serde(default = "default_system_prompt_base")]
-    pub base: String,
-    /// Layer 2: Default persona for all agents (can be overridden per-agent via systemPrompt)
+    /// Workspace directory containing prompt files (IDENTITY.md, SOUL.md, etc.)
+    /// Falls back to embedded templates if directory is empty or missing
+    #[serde(default = "default_system_prompts_workspace_dir")]
+    pub workspace_dir: String,
+    /// Default persona for all agents (can be overridden per-agent via systemPrompt)
+    /// Used as fallback when workspace has no USER.md with persona content
     #[serde(default = "default_system_prompt_persona")]
     pub persona: String,
-    /// Layer 3: Additional context injected after persona (device state summary, etc.)
+    /// Additional context injected after persona (device state summary, etc.)
     #[serde(default)]
     pub context: String,
     /// Heartbeat system prompt — injected before each heartbeat task
@@ -83,7 +88,7 @@ pub struct SystemPromptsConfig {
 impl Default for SystemPromptsConfig {
     fn default() -> Self {
         Self {
-            base: default_system_prompt_base(),
+            workspace_dir: default_system_prompts_workspace_dir(),
             persona: default_system_prompt_persona(),
             context: String::new(),
             heartbeat: default_system_prompt_heartbeat(),
@@ -91,52 +96,8 @@ impl Default for SystemPromptsConfig {
     }
 }
 
-fn default_system_prompt_base() -> String {
-    r#"你是 TinyIoTHub 智能网关的 AI 助手。
-
-## 平台身份
-你运行在 TinyIoTHub 边缘网关上，管理物联网设备。
-
-## 支持的设备类型
-- Modbus (工业寄存器读写)
-- ONVIF (网络摄像头)
-- SNMP (网络设备监控)
-- MQTT (消息订阅发布)
-
-## 统一操作规范
-- 读取：使用 read_register / get_device_status / subscribe_topic
-- 控制：使用 write_register / publish_command
-- 告警：使用 create_alarm_rule / get_alarm_events
-
-## UI 组件渲染规范
-当需要向用户展示结构化数据时，使用 canvas 工具推送 A2UI 组件：
-
-**canvas 工具参数：**
-- action: "a2ui_push"
-- jsonl: A2UI JSONL 格式的组件描述
-
-**A2UI 消息格式（JSONL）：**
-```
-{"createSurface":{"id":"<唯一ID>","surfaceKind":"inline"}}
-{"updateComponents":{"components":[{"id":"comp1","componentKind":"DeviceCard","dataModel":{"deviceId":"001","name":"温度传感器","status":"online"}}]}}
-{"updateDataModel":{"componentId":"comp1","dataModel":{"temperature":25.5}}}
-```
-
-**可用组件类型：**
-- Text: 文本显示
-- Button: 按钮
-- Card: 卡片容器
-- Row/Column: 布局
-- DeviceCard: 设备卡片
-- DeviceTable: 设备表格
-- DataChart: 数据图表
-
-**示例：展示设备列表**
-```
-{"createSurface":{"id":"device-list","surfaceKind":"inline"}}
-{"updateComponents":{"components":[{"id":"table1","componentKind":"DeviceTable","dataModel":{"columns":["名称","状态","温度"],"rows":[["传感器1","在线","25°C"],["传感器2","离线","--"]]}}]}}
-```"#
-        .to_string()
+fn default_system_prompts_workspace_dir() -> String {
+    "./data/agents/default".to_string()
 }
 
 fn default_system_prompt_persona() -> String {

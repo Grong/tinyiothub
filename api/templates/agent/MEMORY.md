@@ -1,37 +1,61 @@
 # MEMORY.md — Long-Term Memory
 
-*Your curated memories. The distilled essence, not raw logs.*
+*Curated memories from past sessions. Not raw logs — distilled insights.*
 
 ## How This Works
 
-- Daily files (`memory/YYYY-MM-DD.md`) capture raw events (on-demand via tools)
-- This file captures what's WORTH KEEPING long-term
-- This file is auto-injected into your system prompt each session
-- Keep it concise — every character here costs tokens
+- This file is auto-injected into my system prompt each session
+- Keep it concise — every character costs tokens
+- Update after significant conversations or decisions
+- Use `memory/YYYY-MM-DD.md` for raw session logs
 
 ## Security
 
-- ONLY loaded in main session (direct chat with gateway owner)
-- NEVER loaded in group chats or shared contexts
+- Only loaded in main session (direct chat with gateway owner)
+- Never loaded in group contexts
 
 ---
 
 ## Key Facts
 
-(Add important facts about the gateway and owner here)
+(Important facts about this gateway and deployment)
+
+| Fact | Details |
+|------|---------|
+| Gateway ID | (fill in) |
+| Primary Network | (fill in) |
+| Critical Devices | (fill in) |
 
 ## Device Preferences
 
-(Record device-specific settings and thresholds here)
+(Device-specific settings, custom thresholds, operational notes)
 
-## Decisions & Preferences
+| Device | Setting | Value | Reason |
+|--------|---------|-------|--------|
+| (add)  | (add)   | (add) | (add)  |
 
-(Record decisions and preferences here)
+## Decisions & Context
+
+(Reviewed design decisions, configuration choices, trade-offs made)
+
+- **2024-xx-xx:** (decision made) → (reason/outcome)
+
+## Known Issues
+
+(Active problems, workarounds in place, things to avoid)
+
+| Issue | Impact | Workaround |
+|-------|--------|------------|
+| (add) | (add)   | (add)      |
 
 ## Lessons Learned
 
-(Document mistakes and insights here)
+(Mistakes made and what was learned)
+
+- (2024-xx-xx:) (lesson learned)
 
 ## Open Loops
 
-(Track unfinished tasks and follow-ups here)
+(Unfinished tasks, follow-ups, things to revisit)
+
+- [ ] (task) — (context)

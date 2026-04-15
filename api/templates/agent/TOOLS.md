@@ -1,47 +1,80 @@
-# TOOLS.md — IoT-Specific Notes
+# TOOLS.md — What I Can Do
 
-Skills define HOW tools work. This file is for YOUR specifics —
-the stuff that's unique to your gateway setup.
+These are my capabilities — use them naturally as you work.
 
-## Device Notes
+## Device Management
 
-Things like:
+**Onboarding new devices**
+- Scan available serial ports
+- Match device brand/model to supported drivers (Modbus, ONVIF, SNMP, MQTT)
+- Configure connection parameters and test communication
+- Register device and report its online status
 
-- Device nicknames and locations
-- Custom property mappings
-- Alert thresholds specific to your setup
-- SSH hosts for remote diagnostics
+**Reading & Writing**
+- Read current sensor values and properties
+- Write control values to actuators
+- Batch read multiple devices for comparison
+- Subscribe to MQTT topics for real-time updates
 
-## Available MCP Tools
+## Alarm & Self-Healing
 
-### Device Management
+**Alarm Management**
+- View active alarms filtered by device, level, or time
+- Acknowledge and close alarms
+- Create alarm rules with threshold/range/change/duration conditions
+- View alarm statistics and trends
 
-- `read_register` — Read Modbus register values
-- `write_register` — Write Modbus register values
-- `get_device_status` — Get ONVIF/SNMP device status
-- `subscribe_topic` — Subscribe to MQTT topic
-- `publish_command` — Publish MQTT command
+**Self-Healing**
+- Check self-heal policy (L0-L3 levels)
+- Trigger manual recovery actions (restart driver, reconnect device)
+- View recovery action history
 
-### Data & Alerts
+## Diagnostics
 
-- `get_device_properties` — Get device properties
-- `get_device_telemetry` — Get device telemetry data
-- `create_alarm_rule` — Create alarm rule
-- `get_alarm_events` — Get alarm events
+**Device Health**
+- Run fault diagnosis on a single device
+- Compare property values across multiple devices
+- Scan serial ports for available connections
+- View device trace logs (errors, warnings, info)
 
-### Memory
+**System Health**
+- Check gateway system status (CPU, memory, disk)
+- View driver loading states
+- Analyze event logs
 
-- `memory_store` — Save to memory
-  - Use when: preserving device preferences, decisions, key context
-- `memory_recall` — Search memory
-  - Use when: you need prior decisions, user preferences, historical context
-- `memory_forget` — Delete a memory entry
-  - Use when: memory is incorrect, stale, or explicitly requested to be removed
+## Data & History
 
-## Gateway Info
+**Telemetry**
+- Query historical data for any property
+- Get min/max/average over time ranges (max 7 days per query)
+- Identify outliers and anomalies
 
-- (Add gateway-specific info here)
+## UI Rendering (A2UI)
+
+Use the `canvas` tool to push rich UI components:
+
+```
+canvas(toolCallId, {
+  action: "a2ui_push",
+  jsonl: JSON.stringify({createSurface:{id:"s1",surfaceKind:"inline"}})+"\n"+
+         JSON.stringify({updateComponents:{components:[...]}})
+})
+```
+
+**When to use A2UI:**
+- Device lists → `DeviceTable` or `DeviceCard`
+- KPIs/metrics → `StatCard` with trend
+- Time-series data → `DataChart`
+- Alarms → `AlarmTable` or `AlarmCard`
+- Control interfaces → `ControlPanel`
+
+## Memory
+
+Use memory tools to persist information across sessions:
+- `memory_store` — remember device preferences, decisions, context
+- `memory_recall` — retrieve prior context when needed
+- `memory_forget` — remove stale/incorrect memories
 
 ---
 
-*Add whatever helps you do your job. This is your cheat sheet.*
+*This file describes what I can do. See skills/ for specialized workflows.*
