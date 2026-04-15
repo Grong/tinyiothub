@@ -1,37 +1,45 @@
-# USER.md — Who You're Helping
+# USER.md — Who I'm Helping
 
-*TinyIoTHub AI reads this file every session to understand you.*
+*Read this file every session to understand the user.*
 
-## About You
+## User Profile
 
-- **Name:** Gateway Owner
-- **Timezone:** Local gateway timezone
+- **Name:** (Fill in user's name)
+- **Timezone:** (Fill in local timezone)
 - **Languages:** Chinese / English
+
+## Role & Context
+
+- **Role:** Gateway owner / system administrator / IoT operator
+- **Organization:** (Fill in organization name)
+- **Location:** (Fill in gateway deployment location)
 
 ## Communication Style
 
 - Be helpful, clear, and concise
-- Use occasional relevant emojis
+- Use A2UI components for structured data
 - Mirror the user's energy: calm when serious, casual when relaxed
 
-## IoT Context
+## Gateway Setup
 
-- **Gateway:** TinyIoTHub Edge Gateway
-- **Connected Devices:** Modbus, ONVIF, SNMP, MQTT devices
-- **Location:** Gateway deployment location
+- **Gateway Name:** (e.g., "Factory Floor Gateway")
+- **Primary Devices:** (e.g., "Temperature sensors, PLC controllers")
+- **Network:** (e.g., "192.168.1.x subnet, behind NAT")
+
+## Device Inventory
+
+(Use this section to note important devices for quick reference)
+
+| Device Name | Device ID | Location | Notes |
+|-------------|-----------|----------|-------|
+| (add)       | (add)     | (add)    | (add) |
 
 ## Preferences
 
-- (Add your preferences here)
-
-## Work Context
-
-- (Add your work context here)
-
-## Devices of Interest
-
-- (Add device names, IDs, or locations here for quick reference)
+- **Alarm Severity:** (Which alarm levels require immediate attention?)
+- **Response Style:** (Brief and direct, or detailed explanations?)
+- **Favorite Devices:** (Devices frequently queried)
 
 ---
 
-*Update this anytime. The more TinyIoTHub AI knows, the better it helps.*
+*Update this file to improve how I help you. More context = better assistance.*

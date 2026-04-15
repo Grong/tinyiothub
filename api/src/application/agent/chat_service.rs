@@ -366,18 +366,24 @@ impl ChatService {
     }
 
     /// Build the complete system prompt
+    ///
+    /// Note: The actual prompt building (from workspace files + skills) is done in
+    /// `build_full_system_prompt()` in `proxy.rs`. This method adds memory context.
     fn build_system_prompt(
         &self,
         override_prompt: Option<&str>,
         memory_context: &MemoryContext,
     ) -> String {
-        let base_prompt = override_prompt
-            .unwrap_or(&self.config.system_prompts.base);
+        // override_prompt is already the fully built prompt from build_full_system_prompt()
+        let base_prompt = override_prompt.unwrap_or("");
 
         let mut full_prompt = base_prompt.to_string();
 
         // Append full memory context (device snapshots, preferences, summaries)
-        full_prompt.push_str(&memory_context.to_prompt_fragment());
+        // Only append if we have actual content
+        if !memory_context.is_empty() {
+            full_prompt.push_str(&memory_context.to_prompt_fragment());
+        }
 
         full_prompt
     }
@@ -646,7 +652,8 @@ mod tests {
     #[test]
     fn test_chat_service_config_default() {
         let config = ChatServiceConfig::default();
-        assert!(!config.system_prompts.base.is_empty());
+        // Workspace dir should be set by default
+        assert!(!config.system_prompts.workspace_dir.is_empty());
         assert_eq!(config.max_messages_before_compact, 50);
         assert!(config.enable_compaction);
     }
