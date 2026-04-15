@@ -403,9 +403,23 @@ web/
 - `GET /api/v1/monitoring/metrics` - 系统指标
 - `GET /api/v1/monitoring/dashboard/stats` - 仪表板统计
 
-### AI Agent 聊天
+### AI Agent
+- `GET /api/v1/agents` - 获取 Agent 列表
+- `GET /api/v1/agents/{id}/config` - 获取 Agent 配置
+- `PUT /api/v1/agents/{id}/config` - 更新 Agent 配置
+- `GET /api/v1/agents/{id}/heartbeat/config` - 获取心跳配置
+- `PUT /api/v1/agents/{id}/heartbeat/config` - 更新心跳配置
+- `GET /api/v1/agents/{id}/heartbeat/logs` - 获取心跳执行日志
+- `GET /api/v1/agents/{id}/heartbeat/tasks` - 获取心跳任务列表
+- `PUT /api/v1/agents/{id}/heartbeat/tasks` - 更新心跳任务
+- `GET /api/v1/agents/{id}/files` - 列出工作空间文件
+- `GET /api/v1/agents/{id}/files/{name}` - 读取工作空间文件
+- `PUT /api/v1/agents/{id}/files/{name}` - 写入工作空间文件
+- `POST /api/v1/agents/skills` - 创建/更新技能
+- `GET /api/v1/agents/skills` - 获取技能列表
+- `GET /api/v1/agents/skills/{name}` - 获取技能内容
+- `DELETE /api/v1/agents/skills/{name}` - 删除技能
 - `POST /api/v1/chat/stream` - SSE 流式聊天
-- `POST /api/v1/chat/skills` - Agent 技能调用
 - `GET /api/v1/chat/history` - 获取聊天历史
 
 ### MCP Server（内嵌）
