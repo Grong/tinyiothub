@@ -28,7 +28,7 @@ pub struct UserPermission {
 pub fn create_router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_permissions))
-        .route("/:id/permissions", get(get_user_permissions))
+        .route("/{id}/permissions", get(get_user_permissions))
 }
 
 /// 获取所有权限列表

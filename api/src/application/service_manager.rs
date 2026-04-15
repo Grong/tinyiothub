@@ -102,6 +102,20 @@ impl ServiceManager {
         {
             let agent_settings = crate::infrastructure::config::get().agent.clone();
             let workspace_dir = std::path::PathBuf::from(&agent_settings.workspace_dir);
+
+            // Initialize workspace with template files
+            let scaffold_result = crate::infrastructure::agent::scaffold_service::scaffold_workspace(&workspace_dir).await;
+            match scaffold_result {
+                Ok(result) => {
+                    if result.created_files > 0 || result.created_dirs > 0 {
+                        info!("✅ Workspace scaffolded: {}", result);
+                    }
+                }
+                Err(e) => {
+                    warn!("⚠️ Workspace scaffolding failed: {}", e);
+                }
+            }
+
             let heartbeat_config = zeroclaw::config::schema::HeartbeatConfig {
                 enabled: agent_settings.heartbeat_enabled,
                 interval_minutes: agent_settings.heartbeat_interval_minutes,

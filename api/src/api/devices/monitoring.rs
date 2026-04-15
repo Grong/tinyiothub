@@ -34,12 +34,12 @@ pub struct DeviceOnlineStatus {
 pub fn create_router() -> Router<AppState> {
     Router::new()
         // 设备状态相关
-        .route("/:device_id/status", get(get_device_online_status))
-        .route("/:device_id/metrics", get(get_device_metrics))
+        .route("/{device_id}/status", get(get_device_online_status))
+        .route("/{device_id}/metrics", get(get_device_metrics))
         // 性能监控相关
-        .route("/:device_id/performance", get(get_device_performance_metrics))
-        .route("/:device_id/performance/history", get(get_device_performance_history))
-        .route("/:device_id/performance/alerts", get(get_device_performance_alerts))
+        .route("/{device_id}/performance", get(get_device_performance_metrics))
+        .route("/{device_id}/performance/history", get(get_device_performance_history))
+        .route("/{device_id}/performance/alerts", get(get_device_performance_alerts))
         // 系统级监控
         .route("/overview", get(get_system_overview))
         .route("/performance/overview", get(get_system_performance_overview))

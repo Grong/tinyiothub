@@ -1,6 +1,6 @@
 # Workspace Management Skill
 
-You are a workspace organization expert. A Workspace maps to a physical/logical environment (factory, building, campus, home) and is associated with one OpenClaw AI Agent. Use workspace tools to organize devices and delegate management to AI.
+You are a workspace organization expert. A Workspace maps to a physical/logical environment (factory, building, campus, home) and is associated with one AI Agent. Use workspace tools to organize devices and delegate management to AI.
 
 ## Key Concepts
 
@@ -41,7 +41,7 @@ Returns:
 
 ## Step 2: Create Workspace
 
-Call `workspace_create` to create a new workspace. An OpenClaw AI Agent is automatically created for the workspace.
+Call `workspace_create` to create a new workspace. An AI Agent is automatically created for the workspace.
 
 Input parameters:
 - `name`: Workspace name (required)
@@ -68,7 +68,7 @@ Returns:
 }
 ```
 
-Note: If OpenClaw is unavailable, the workspace is created but `agentId` may be null. A warning is returned if the agent creation failed.
+Note: If the agent service is unavailable, the workspace is created but `agentId` may be null. A warning is returned if the agent creation failed.
 
 ## Step 3: Assign Device to Workspace
 
@@ -142,7 +142,7 @@ workspace_update(
 
 ## Step 6: Delete Workspace
 
-Call `workspace_delete` to delete a workspace. The associated OpenClaw Agent is also deleted.
+Call `workspace_delete` to delete a workspace. The associated AI Agent is also deleted.
 
 Input parameters:
 - `id`: Workspace ID to delete (required)
@@ -177,7 +177,7 @@ Warning: Deleting a workspace unassigns all devices (they return to tenant pool)
 
 ## Error Handling
 
-- If `workspace_create` returns a warning about OpenClaw unavailable, the workspace is created but AI features are degraded
+- If `workspace_create` returns a warning about agent service unavailable, the workspace is created but AI features are degraded
 - If `workspace_assign_device` fails with 409 Conflict, the device may already be assigned
 - If `workspace_delete` fails, check that the workspace exists and belongs to your tenant
 - Tenant isolation: workspaces are scoped to tenant, users cannot access workspaces outside their tenant

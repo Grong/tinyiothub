@@ -37,10 +37,10 @@ pub fn create_router() -> Router<AppState> {
         .route("/test", get(test_users_endpoint))
         .route("/statistics", get(get_user_statistics))
         .route("/me", get(get_current_user))
-        .route("/:id", get(get_user).put(update_user).delete(delete_user))
-        .route("/:id/enable", post(enable_user))
-        .route("/:id/disable", post(disable_user))
-        .route("/:id/password", put(change_user_password))
+        .route("/{id}", get(get_user).put(update_user).delete(delete_user))
+        .route("/{id}/enable", post(enable_user))
+        .route("/{id}/disable", post(disable_user))
+        .route("/{id}/password", put(change_user_password))
 }
 
 /// 测试用户端点

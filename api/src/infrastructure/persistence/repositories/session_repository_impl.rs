@@ -32,7 +32,7 @@ impl SqliteSessionRepository {
         ];
         for fmt in &formats {
             if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(s, fmt) {
-                return Some(dt.timestamp() * 1000);
+                return Some(dt.and_utc().timestamp() * 1000);
             }
         }
         if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
