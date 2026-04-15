@@ -1,4 +1,4 @@
-// File-based skills CRUD — writes to skills/<workspace_id>/<skill_name>.md
+// File-based skills CRUD — writes to data/agents/<workspace_id>/skills/<skill_name>.md
 
 use axum::{
     extract::{Path, State},
@@ -11,7 +11,7 @@ use serde::Deserialize;
 use std::sync::Mutex;
 use std::path::PathBuf;
 
-use crate::{api::AppState, dto::response::{api_response::ApiResponse, builder::ApiResponseBuilder}, shared::security::jwt::Claims};
+use crate::{api::AppState, dto::response::{api_response::ApiResponse, builder::ApiResponseBuilder}, shared::{paths::{self, workspace_skills_dir, global_skills_dir}, security::jwt::Claims}};
 
 #[derive(Debug, Deserialize)]
 pub struct CreateSkillRequest {
@@ -30,7 +30,7 @@ lazy_static::lazy_static! {
     static ref SKILL_WRITE_MUTEX: Mutex<()> = Mutex::new(());
 }
 
-fn validate_skill_path(workspace_id: &str, skill_name: &str) -> Result<PathBuf, String> {
+fn skill_file_path(workspace_id: &str, skill_name: &str) -> Result<PathBuf, String> {
     // Reject path traversal attempts
     if workspace_id.contains("..") || skill_name.contains("..") {
         return Err("Invalid path: traversal not allowed".to_string());
@@ -39,11 +39,11 @@ fn validate_skill_path(workspace_id: &str, skill_name: &str) -> Result<PathBuf, 
         return Err("Invalid path: absolute paths not allowed".to_string());
     }
 
-    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("skills");
-    let file_path = base.join(workspace_id).join(format!("{}.md", skill_name));
+    // Workspace-specific skills: data/agents/<ws>/skills/<name>.md
+    let dir = workspace_skills_dir(workspace_id);
+    let file_path = dir.join(format!("{}.md", skill_name));
 
-    // Verify the resolved path is still under skills/ (defense in depth)
-    // Use components() to avoid needing the file to exist
+    // Verify the resolved path is still under the skills directory (defense in depth)
     for component in file_path.components() {
         match component {
             std::path::Component::ParentDir => {
@@ -68,12 +68,19 @@ pub async fn list_skills(
     _claims: Claims,
     axum::extract::Query(q): axum::extract::Query<ListSkillsQuery>,
 ) -> Json<ApiResponse<Vec<SkillInfoDto>>> {
-    let workspace_id = q.workspace_id.as_deref().unwrap_or("tinyiothub");
-    let skills_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("skills").join(workspace_id);
+    let workspace_id = q.workspace_id.as_deref().unwrap_or(paths::DEFAULT_WORKSPACE_ID);
+    // List workspace-specific skills
+    let ws_skills = list_skill_files(&workspace_skills_dir(workspace_id));
+    // Also include global skills (read-only)
+    let global = list_skill_files(&global_skills_dir());
 
-    let skills = list_skill_files(&skills_dir);
-    ApiResponseBuilder::success(skills)
+    let mut all_skills = ws_skills;
+    for skill in global {
+        if !all_skills.iter().any(|s| s.name == skill.name) {
+            all_skills.push(skill);
+        }
+    }
+    ApiResponseBuilder::success(all_skills)
 }
 
 // GET /api/v1/agents/skills/{name}?workspace_id=
@@ -83,8 +90,8 @@ pub async fn get_skill(
     _claims: Claims,
     axum::extract::Query(q): axum::extract::Query<ListSkillsQuery>,
 ) -> Result<Json<ApiResponse<SkillInfoDto>>, StatusCode> {
-    let workspace_id = q.workspace_id.as_deref().unwrap_or("tinyiothub");
-    let file_path = validate_skill_path(workspace_id, &name)
+    let workspace_id = q.workspace_id.as_deref().unwrap_or(paths::DEFAULT_WORKSPACE_ID);
+    let file_path = skill_file_path(workspace_id, &name)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
     match std::fs::read_to_string(&file_path) {
@@ -112,13 +119,8 @@ pub async fn create_skill(
     Json(req): Json<CreateSkillRequest>,
 ) -> Result<Json<ApiResponse<SkillInfoDto>>, StatusCode> {
     // Validate path
-    validate_skill_path(&req.workspace_id, &req.skill_name)
-        .map_err(|_e| StatusCode::BAD_REQUEST)?;
-
-    let file_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("skills")
-        .join(&req.workspace_id)
-        .join(format!("{}.md", req.skill_name));
+    let file_path = skill_file_path(&req.workspace_id, &req.skill_name)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
 
     // Concurrent write guard
     let _guard = SKILL_WRITE_MUTEX.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -153,8 +155,8 @@ pub async fn update_skill(
     axum::extract::Query(q): axum::extract::Query<ListSkillsQuery>,
     Json(req): Json<UpdateSkillRequest>,
 ) -> Result<Json<ApiResponse<SkillInfoDto>>, StatusCode> {
-    let workspace_id = q.workspace_id.as_deref().unwrap_or("tinyiothub");
-    let file_path = validate_skill_path(workspace_id, &name)
+    let workspace_id = q.workspace_id.as_deref().unwrap_or(paths::DEFAULT_WORKSPACE_ID);
+    let file_path = skill_file_path(workspace_id, &name)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
     let _guard = SKILL_WRITE_MUTEX.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -182,8 +184,8 @@ pub async fn delete_skill(
     _claims: Claims,
     axum::extract::Query(q): axum::extract::Query<ListSkillsQuery>,
 ) -> Result<Json<ApiResponse<()>>, StatusCode> {
-    let workspace_id = q.workspace_id.as_deref().unwrap_or("tinyiothub");
-    let file_path = validate_skill_path(workspace_id, &name)
+    let workspace_id = q.workspace_id.as_deref().unwrap_or(paths::DEFAULT_WORKSPACE_ID);
+    let file_path = skill_file_path(workspace_id, &name)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
     let _guard = SKILL_WRITE_MUTEX.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -240,7 +242,7 @@ pub struct ListSkillsQuery {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_skill_path;
+    use super::skill_file_path;
     use crate::domain::agent::skill::AgentSkill;
 
     #[test]
@@ -303,11 +305,11 @@ Some body content here."#;
 
     #[test]
     fn path_traversal_rejected_in_validation() {
-        assert!(validate_skill_path("..", "foo").is_err());
-        assert!(validate_skill_path("tinyiothub", "../etc/passwd").is_err());
-        assert!(validate_skill_path("/", "foo").is_err());
-        assert!(validate_skill_path("tinyiothub", "/etc/passwd").is_err());
-        assert!(validate_skill_path("tinyiothub", "foo").is_ok());
+        assert!(skill_file_path("..", "foo").is_err());
+        assert!(skill_file_path("tinyiothub", "../etc/passwd").is_err());
+        assert!(skill_file_path("/", "foo").is_err());
+        assert!(skill_file_path("tinyiothub", "/etc/passwd").is_err());
+        assert!(skill_file_path("tinyiothub", "foo").is_ok());
     }
 
     #[test]

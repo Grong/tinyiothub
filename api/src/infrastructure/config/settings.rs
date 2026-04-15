@@ -97,7 +97,7 @@ impl Default for SystemPromptsConfig {
 }
 
 fn default_system_prompts_workspace_dir() -> String {
-    "./data/agents/default".to_string()
+    "./data/agents".to_string()
 }
 
 fn default_system_prompt_persona() -> String {

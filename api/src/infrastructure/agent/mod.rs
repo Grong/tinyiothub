@@ -252,11 +252,18 @@ pub fn build_full_system_prompt(
     format!("{}{}{}{}", workspace_prompt, persona_layer, skills_layer, context_layer)
 }
 
-/// Get the workspace directory path for a given workspace_id
+/// Get the workspace directory path for loading prompt files.
+///
+/// Uses system_prompts.workspace_dir as the base path and appends workspace_id.
 fn get_workspace_dir(system_prompts: &crate::infrastructure::config::SystemPromptsConfig, workspace_id: Option<&str>) -> std::path::PathBuf {
-    let base = std::path::Path::new(&system_prompts.workspace_dir);
-    let ws = workspace_id.unwrap_or("default");
-    base.join(ws)
+    use crate::shared::paths::DEFAULT_WORKSPACE_ID;
+    let ws = workspace_id.unwrap_or(DEFAULT_WORKSPACE_ID);
+    let base = &system_prompts.workspace_dir;
+    if base.is_empty() {
+        crate::shared::paths::workspace_dir(ws)
+    } else {
+        std::path::PathBuf::from(base).join(ws)
+    }
 }
 
 /// Load workspace prompt files and concatenate them into a single prompt
@@ -349,30 +356,28 @@ fn get_embedded_template(filename: &str) -> Option<&'static str> {
 /// - ./data/agents/{workspace_id}/{agent_id}/skills/
 /// - ./data/agents/{workspace_id}/skills/
 fn load_skills_prompt(workspace_id: Option<&str>, agent_id: Option<&str>) -> String {
-    // CARGO_MANIFEST_DIR = /path/to/tinyiothub/api
-    // data/skills is at: <api>/data/skills/
-    // data/agents/<ws>/skills is at: <api>/data/agents/<ws>/skills/
-    let api_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let ws = workspace_id.unwrap_or("default");
+    use crate::shared::paths::{global_skills_dir, workspace_skills_dir, agent_skills_dir, DEFAULT_WORKSPACE_ID};
+
+    let ws = workspace_id.unwrap_or(DEFAULT_WORKSPACE_ID);
 
     // Build candidate paths: workspace-specific first, then global
     let candidates: Vec<std::path::PathBuf> = match (workspace_id, agent_id) {
         (Some(w), Some(a)) => vec![
             // Workspace + agent specific skills
-            api_root.join("data/agents").join(w).join(a).join("skills"),
-            api_root.join("data/agents").join(w).join("skills"),
+            agent_skills_dir(w, a),
+            workspace_skills_dir(w),
             // Global skills
-            api_root.join("data/skills"),
+            global_skills_dir(),
         ],
         (Some(w), None) => vec![
             // Workspace-specific skills (no agent)
-            api_root.join("data/agents").join(w).join("skills"),
+            workspace_skills_dir(w),
             // Global skills
-            api_root.join("data/skills"),
+            global_skills_dir(),
         ],
         _ => vec![
             // No workspace: just global skills
-            api_root.join("data/skills"),
+            global_skills_dir(),
         ],
     };
 
