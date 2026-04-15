@@ -1296,12 +1296,12 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
     return html`
       <div class="device-card__wrap">
-        <div class="card device-card">
+        <div class="device-card">
           <!-- Header -->
           <div class="device-card__header">
-            <div class="flex-mid gap-2">
-              <span class="status-dot" style="background: ${this.statusColor(d.status)};"></span>
-              <span class="cell-truncate device-card__title" title="${d.displayName || d.name}">${d.displayName || d.name}</span>
+            <div class="device-card__header-left">
+              <span class="status-dot status-dot--sm" style="background: ${this.statusColor(d.status)};"></span>
+              <span class="device-card__title" title="${d.displayName || d.name}">${d.displayName || d.name}</span>
             </div>
             <div class="device-card__actions">
               <button
@@ -1317,20 +1317,35 @@ export class DevicesView extends SignalWatcher(LitElement) {
             </div>
           </div>
 
-          <!-- Info (fixed height, truncated with tooltip) -->
+          <!-- Info -->
           <div
             class="device-card__body"
             title="${infoTooltip}"
             @click=${() => this.navigateToDevice(d.id)}
           >
             <div class="device-card__info">
-              ${d.deviceType ? html`<div class="cell-truncate">${d.deviceType}</div>` : nothing}
-              ${d.protocolType || d.driverName ? html`<div class="cell-truncate">${d.protocolType || d.driverName}</div>` : nothing}
-              ${d.address ? html`<div class="cell-truncate">${d.address}</div>` : nothing}
+              ${d.deviceType ? html`
+                <div class="device-card__info-row">
+                  <span class="device-card__info-label">类型</span>
+                  <span class="device-card__info-value">${d.deviceType}</span>
+                </div>
+              ` : nothing}
+              ${d.protocolType || d.driverName ? html`
+                <div class="device-card__info-row">
+                  <span class="device-card__info-label">协议</span>
+                  <span class="device-card__info-value">${d.protocolType || d.driverName}</span>
+                </div>
+              ` : nothing}
+              ${d.address ? html`
+                <div class="device-card__info-row">
+                  <span class="device-card__info-label">地址</span>
+                  <span class="device-card__info-value">${d.address}</span>
+                </div>
+              ` : nothing}
             </div>
           </div>
 
-          <!-- Tags (footer, fixed) -->
+          <!-- Footer -->
           <div class="device-card__footer">
             ${visibleTags.map(t => html`
               <span class="tag-pill">
@@ -1343,7 +1358,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
                 +${hiddenTagCount}
               </span>
             ` : nothing}
-            ${deviceTags.length === 0 ? html`<span class="inline-muted">无标签</span>` : nothing}
+            ${deviceTags.length === 0 ? html`<span class="inline-muted" style="font-size: 12px;">无标签</span>` : nothing}
             <button
               class="btn btn--ghost btn--sm tag-btn--edit-card"
               title="管理标签"
@@ -1352,7 +1367,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
           </div>
         </div>
 
-        <!-- Tag editor popover — floats outside the card -->
+        <!-- Tag editor popover -->
         ${isEditingTags ? this.renderTagPopover(d, deviceTags) : nothing}
       </div>
     `;

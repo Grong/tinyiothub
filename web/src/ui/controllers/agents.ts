@@ -4,7 +4,7 @@ import type { Skill, CreateSkillRequest, UpdateSkillRequest } from "../../api/cl
 import { listSkills, createSkill, updateSkill, deleteSkill } from "../../api/client.js";
 import type { HeartbeatConfig, HeartbeatLogsResponse, HeartbeatTask } from "../views/agents-heartbeat-tab.js";
 
-export type AgentsPanel = "overview" | "tools" | "skills" | "heartbeat";
+export type AgentsPanel = "overview" | "tools" | "skills" | "heartbeat" | "files";
 
 export type AgentConfig = {
   model?: string;
@@ -194,7 +194,13 @@ export async function loadHeartbeatConfig(state: AgentsState, agentId: string): 
   state.heartbeatLoading = true;
   state.heartbeatError = null;
   try {
-    const res = await apiGet<HeartbeatConfig>(`/chat/agents/${agentId}/heartbeat/config`);
+    const res = await apiGet<HeartbeatConfig>(`/agents/${agentId}/heartbeat/config`);
+    if (res.result) {
+      // Parse tasks if it's a JSON string (same as templates/devices pattern)
+      if (typeof res.result.tasks === "string") {
+        res.result.tasks = JSON.parse(res.result.tasks);
+      }
+    }
     state.heartbeatConfig = res.result || null;
   } catch (err) {
     state.heartbeatError = String(err);
@@ -205,7 +211,7 @@ export async function loadHeartbeatConfig(state: AgentsState, agentId: string): 
 
 export async function loadHeartbeatLogs(state: AgentsState, agentId: string): Promise<void> {
   try {
-    const res = await apiGet<HeartbeatLogsResponse>(`/chat/agents/${agentId}/heartbeat/logs`);
+    const res = await apiGet<HeartbeatLogsResponse>(`/agents/${agentId}/heartbeat/logs`);
     state.heartbeatLogs = res.result?.logs ?? undefined;
   } catch (err) {
     state.heartbeatError = String(err);
@@ -219,7 +225,7 @@ export async function updateHeartbeatConfig(
   intervalMinutes?: number
 ): Promise<boolean> {
   try {
-    await apiPut(`/chat/agents/${agentId}/heartbeat/config`, {
+    await apiPut(`/agents/${agentId}/heartbeat/config`, {
       enabled,
       intervalMinutes,
     });
@@ -238,12 +244,51 @@ export async function updateHeartbeatTasks(
   tasks: HeartbeatTask[]
 ): Promise<boolean> {
   try {
-    await apiPut(`/chat/agents/${agentId}/heartbeat/tasks`, { tasks });
+    await apiPut(`/agents/${agentId}/heartbeat/tasks`, { tasks });
     // Reload config to get the updated tasks list
     await loadHeartbeatConfig(state, agentId);
     return true;
   } catch (err) {
     state.heartbeatError = String(err);
     return false;
+  }
+}
+
+// Workspace Files API
+export interface WorkspaceFile {
+  name: string;
+  content: string;
+}
+
+export interface WorkspaceFilesListResponse {
+  files: { name: string }[];
+}
+
+export async function loadWorkspaceFiles(state: AgentsState, agentId: string): Promise<void> {
+  (state as any).workspaceFilesLoading = true;
+  (state as any).workspaceFilesError = null;
+  try {
+    const filesState: Record<string, WorkspaceFile> = {};
+    // Load all workspace files in parallel
+    const fileNames = ["IDENTITY.md", "SOUL.md", "AGENTS.md", "USER.md", "TOOLS.md", "MEMORY.md", "HEARTBEAT.md", "BOOTSTRAP.md"];
+    await Promise.all(
+      fileNames.map(async (name) => {
+        try {
+          const res = await apiGet<WorkspaceFile>(`/agents/${agentId}/files/${name}`);
+          if (res.result) {
+            filesState[name] = res.result;
+          }
+        } catch {
+          // File might not exist yet, create empty content
+          filesState[name] = { name, content: "" };
+        }
+      })
+    );
+    (state as any).workspaceFiles = filesState;
+    (state as any).selectedWorkspaceFile = fileNames[0];
+  } catch (err) {
+    (state as any).workspaceFilesError = String(err);
+  } finally {
+    (state as any).workspaceFilesLoading = false;
   }
 }

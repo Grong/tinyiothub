@@ -6,12 +6,15 @@ import { renderModelTab } from "./agents-model-tab.js";
 import { renderToolsTab } from "./agents-tools-tab.js";
 import { renderSkillsTab } from "./agents-skills-tab.js";
 import { renderHeartbeatTab, type HeartbeatTask } from "./agents-heartbeat-tab.js";
+import { renderFilesTab } from "./agents-files-tab.js";
+import { loadWorkspaceFiles } from "../controllers/agents.js";
 
 const panelLabels: Record<AgentsPanel, string> = {
   overview: "配置",
   tools: "工具权限",
   skills: "技能",
   heartbeat: "心跳",
+  files: "工作区文件",
 };
 
 @customElement("view-agents")
@@ -43,6 +46,7 @@ export class ViewAgents extends LitElement {
       loadSkills(this.state),
       loadHeartbeatConfig(this.state, agentId),
       loadHeartbeatLogs(this.state, agentId),
+      loadWorkspaceFiles(this.state, agentId),
     ]).then(() => this.requestUpdate());
   }
 
@@ -125,7 +129,7 @@ export class ViewAgents extends LitElement {
       return html`<div class="agents-layout"><div class="agent-panel-error">${this.state.agentsError}</div></div>`;
     }
 
-    const allPanels: AgentsPanel[] = ["overview", "tools", "skills", "heartbeat"];
+    const allPanels: AgentsPanel[] = ["overview", "tools", "skills", "heartbeat", "files"];
 
     // Tools tab search — local state to avoid re-render on other panels
     const searchFilter = (this as any)._searchFilter || "";
@@ -171,6 +175,11 @@ export class ViewAgents extends LitElement {
             this.onAddHeartbeatTask.bind(this),
             this.onRemoveHeartbeatTask.bind(this),
             this.onUpdateHeartbeatTask.bind(this)
+          ) : nothing}
+          ${this.state.activePanel === "files" && this.state.selectedAgentId ? renderFilesTab(
+            this.state,
+            this.state.selectedAgentId,
+            this.requestUpdate.bind(this)
           ) : nothing}
         </div>
       </div>

@@ -87,6 +87,7 @@ export class TemplatesView extends LitElement {
   @state() showModal = false;
   @state() editingTemplate: ProcessedTemplate | null = null;
   @state() selectedTemplate: ProcessedTemplate | null = null;
+  @state() detailTab = "props";
   @state() saving = false;
   @state() formName = "";
   @state() formDisplayName = "";
@@ -231,8 +232,8 @@ export class TemplatesView extends LitElement {
     }
 
     return html`
-      <div style="display: flex; gap: 10px; margin-bottom: 16px; align-items: center; flex-wrap: wrap;">
-        <div class="field" style="flex: 1; max-width: 280px; min-width: 160px;">
+      <div class="templates-toolbar">
+        <div class="field templates-toolbar__search">
           <input
             type="text"
             placeholder="搜索模板名称、分类、协议..."
@@ -243,42 +244,45 @@ export class TemplatesView extends LitElement {
         </div>
         <button class="btn btn--primary" @click=${this.openCreate}>新建模板</button>
       </div>
-      <div class="card" style="overflow: hidden;">
-        <table style="width: 100%; border-collapse: collapse;">
+      <div class="card templates-card">
+        <table class="templates-table">
           <thead>
-            <tr style="border-bottom: 1px solid var(--border);">
-              <th style="padding: 12px 16px; text-align: left; font-size: 13px; color: var(--muted); font-weight: 500;">模板名称</th>
-              <th style="padding: 12px 16px; text-align: left; font-size: 13px; color: var(--muted); font-weight: 500;">分类</th>
-              <th style="padding: 12px 16px; text-align: left; font-size: 13px; color: var(--muted); font-weight: 500;">版本</th>
-              <th style="padding: 12px 16px; text-align: left; font-size: 13px; color: var(--muted); font-weight: 500;">协议</th>
-              <th style="padding: 12px 16px; text-align: left; font-size: 13px; color: var(--muted); font-weight: 500;">标签</th>
-              <th style="padding: 12px 16px; text-align: left; font-size: 13px; color: var(--muted); font-weight: 500;">属性数</th>
-              <th style="padding: 12px 16px; text-align: right; font-size: 13px; color: var(--muted); font-weight: 500;">操作</th>
+            <tr>
+              <th>模板名称</th>
+              <th>分类</th>
+              <th>版本</th>
+              <th>协议</th>
+              <th>标签</th>
+              <th>属性</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody>
             ${this.templates.length === 0
-              ? html`<tr><td colspan="8" style="padding: 40px; text-align: center; color: var(--muted);">暂无模板</td></tr>`
+              ? html`<tr><td colspan="7" class="templates-empty">暂无模板，点击「新建模板」创建</td></tr>`
               : this.templates.map(t => html`
-                <tr style="border-bottom: 1px solid var(--border); cursor: pointer;" @click=${() => this.selectedTemplate = t}>
-                  <td style="padding: 12px 16px;">
-                    <div style="font-weight: 500;">${getLocalizedText(t.displayName, t.name)}</div>
-                    <div style="font-size: 12px; color: var(--muted);">${t.name}</div>
+                <tr @click=${() => this.selectedTemplate = t}>
+                  <td>
+                    <div class="templates-table__name-primary">
+                      <span class="templates-table__icon">${CATEGORY_ICONS[t.category] || "📦"}</span>
+                      ${getLocalizedText(t.displayName, t.name)}
+                    </div>
+                    <div class="templates-table__name-sub">${t.name}</div>
                   </td>
-                  <td style="padding: 12px 16px; font-size: 13px;">${t.category || "-"}</td>
-                  <td style="padding: 12px 16px; font-size: 13px;">${t.version}</td>
-                  <td style="padding: 12px 16px; font-size: 13px;">${t.protocolType || "-"}</td>
-                  <td style="padding: 12px 16px;">
+                  <td>${CATEGORY_LABELS[t.category] || t.category || "—"}</td>
+                  <td>v${t.version}</td>
+                  <td>${t.protocolType || "—"}</td>
+                  <td>
                     ${t.tags && t.tags.length > 0
-                      ? t.tags.slice(0, 3).map(tag => html`<span style="font-size: 11px; padding: 2px 7px; border-radius: 4px; background: var(--bg); color: var(--text); border: 1px solid var(--border); margin-right: 4px; display: inline-block;">${tag}</span>`)
-                      : html`<span style="color: var(--muted);">-</span>`
+                      ? t.tags.slice(0, 3).map(tag => html`<span class="tag-pill" style="font-size: 11px;">${tag}</span>`)
+                      : html`<span style="color: var(--muted);">—</span>`
                     }
                   </td>
-                  <td style="padding: 12px 16px; font-size: 13px;">${t.properties?.length ?? 0}</td>
-                  <td style="padding: 12px 16px; text-align: right;" @click=${(e: Event) => e.stopPropagation()}>
+                  <td>${t.properties?.length ?? 0}</td>
+                  <td class="templates-table__actions" @click=${(e: Event) => e.stopPropagation()}>
                     ${!t.isBuiltin ? html`
-                      <button class="btn btn--ghost btn--sm" style="font-size: 12px;" @click=${() => this.openEdit(t)}>编辑</button>
-                      <button class="btn btn--ghost btn--sm" style="font-size: 12px; color: var(--danger);" @click=${() => this.deleteTemplate(t)}>删除</button>
+                      <button class="btn btn--ghost btn--sm" @click=${() => this.openEdit(t)}>编辑</button>
+                      <button class="btn btn--ghost btn--sm" style="color: var(--danger);" @click=${() => this.deleteTemplate(t)}>删除</button>
                     ` : html`<span style="font-size: 12px; color: var(--muted);">内置</span>`}
                   </td>
                 </tr>
@@ -286,10 +290,10 @@ export class TemplatesView extends LitElement {
           </tbody>
         </table>
       </div>
-      ${this.totalPages > 1 ? html`
-        <div class="pagination">
+      ${this.totalCount > 0 ? html`
+        <div class="templates-pagination">
           <button class="btn btn--ghost btn--sm" ?disabled=${this.page <= 1} @click=${() => this.goToPage(this.page - 1)}>上一页</button>
-          <span class="pagination-info">第 ${this.page} / ${this.totalPages} 页，共 ${this.totalCount} 条</span>
+          <span class="page-meta">第 ${this.page} / ${this.totalPages} 页，共 ${this.totalCount} 条</span>
           <button class="btn btn--ghost btn--sm" ?disabled=${this.page >= this.totalPages} @click=${() => this.goToPage(this.page + 1)}>下一页</button>
         </div>
       ` : ""}
@@ -356,128 +360,128 @@ export class TemplatesView extends LitElement {
     const t = this.selectedTemplate!;
     const displayName = getLocalizedText(t.displayName, t.name);
     const description = getLocalizedText(t.description ?? undefined, "");
-    const totalProps = t.properties.length;
-    const totalCmds = t.commands.length;
-    const readonlyProps = t.properties.filter((p: any) => p.accessMode === "r" || p.accessMode === "R").length;
+    const props = parseJsonField(t.properties, []);
+    const cmds = parseJsonField(t.commands, []);
+    const totalProps = props.length;
+    const totalCmds = cmds.length;
+    const readonlyProps = props.filter((p: any) => p.isReadOnly === true || p.accessMode === "r" || p.accessMode === "R").length;
     const writableProps = totalProps - readonlyProps;
 
     return html`
-      <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="模板详情" @click=${() => this.selectedTemplate = null}>
-        <div class="modal" style="max-width: 640px; max-height: 80vh; overflow-y: auto;" @click=${(e: Event) => e.stopPropagation()}>
-          <div class="modal-header">${displayName}</div>
-          <div class="modal-body" style="padding: 16px 20px;">
-            <!-- Header info -->
-            <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
-              <span style="font-size: 28px;">${CATEGORY_ICONS[t.category] || "📦"}</span>
-              <div style="flex: 1; min-width: 0;">
-                <div style="font-size: 12px; color: var(--muted);">
-                  ${t.manufacturer ? html`${t.manufacturer} · ` : nothing}${t.deviceType || t.category}${t.version ? html` · v${t.version}` : nothing}
-                </div>
+      <div class="modal-overlay template-detail-overlay" role="dialog" aria-modal="true" aria-label="模板详情" @click=${() => this.selectedTemplate = null}>
+        <div class="template-detail-card" @click=${(e: Event) => e.stopPropagation()}>
+          <!-- Fixed Header -->
+          <div class="tdc-header">
+            <div class="tdc-header__icon">${CATEGORY_ICONS[t.category] || "📦"}</div>
+            <div class="tdc-header__info">
+              <div class="tdc-header__title">${displayName}</div>
+              <div class="tdc-header__meta">
+                ${t.manufacturer ? html`<span>${t.manufacturer}</span>` : nothing}
+                ${t.manufacturer && (t.deviceType || CATEGORY_LABELS[t.category]) ? html`<span class="tdc-dot">·</span>` : nothing}
+                <span>${t.deviceType || CATEGORY_LABELS[t.category] || t.category}</span>
+                ${t.version ? html`<span class="tdc-dot">·</span><span>v${t.version}</span>` : nothing}
               </div>
-              ${t.isBuiltin ? html`<span style="font-size: 10px; padding: 2px 8px; border-radius: 4px; background: var(--bg); color: var(--muted);">内置</span>` : nothing}
+            </div>
+            ${t.isBuiltin ? html`<span class="tdc-badge tdc-badge--builtin">内置</span>` : nothing}
+          </div>
+
+          <!-- Scrollable Body -->
+          <div class="tdc-body">
+            <!-- Chips -->
+            <div class="tdc-chips">
+              ${t.protocolType ? html`<span class="tdc-chip">协议: ${t.protocolType}</span>` : nothing}
+              ${t.driverName ? html`<span class="tdc-chip">驱动: ${t.driverName}</span>` : nothing}
+              ${t.category ? html`<span class="tdc-chip">${CATEGORY_LABELS[t.category] || t.category}</span>` : nothing}
+              ${t.tags && t.tags.length > 0 ? t.tags.map(tag => html`<span class="tdc-chip tdc-chip--accent">${tag}</span>`) : nothing}
             </div>
 
-            ${description ? html`
-              <div style="font-size: 13px; color: var(--muted); line-height: 1.5; margin-bottom: 14px; padding: 10px 12px; background: var(--bg); border-radius: 8px;">
-                ${description}
-              </div>
-            ` : nothing}
-
-            <!-- Meta chips -->
-            <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px;">
-              ${t.protocolType ? html`<span style="font-size: 11px; padding: 3px 8px; border-radius: 6px; background: var(--bg); color: var(--muted);">协议: ${t.protocolType}</span>` : nothing}
-              ${t.driverName ? html`<span style="font-size: 11px; padding: 3px 8px; border-radius: 6px; background: var(--bg); color: var(--muted);">驱动: ${t.driverName}</span>` : nothing}
-              ${t.category ? html`<span style="font-size: 11px; padding: 3px 8px; border-radius: 6px; background: var(--bg); color: var(--muted);">${CATEGORY_LABELS[t.category] || t.category}</span>` : nothing}
-            </div>
-
-            <!-- Tags -->
-            ${t.tags && t.tags.length > 0 ? html`
-              <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px;">
-                ${t.tags.map(tag => html`<span style="font-size: 11px; padding: 2px 8px; border-radius: 4px; background: var(--accent); color: var(--accent-foreground); opacity: 0.85;">${tag}</span>`)}
-              </div>
-            ` : nothing}
+            ${description ? html`<div class="tdc-desc">${description}</div>` : nothing}
 
             <!-- Stats -->
-            <div class="wizard-overview__stats">
-              <div class="wizard-overview__stat">
-                <div class="wizard-overview__stat-value">${totalProps}</div>
-                <div class="wizard-overview__stat-label">属性数</div>
+            <div class="tdc-stats">
+              <div class="tdc-stat">
+                <span class="tdc-stat__num">${totalProps}</span>
+                <span class="tdc-stat__label">属性</span>
               </div>
-              <div class="wizard-overview__stat">
-                <div class="wizard-overview__stat-value">${totalCmds}</div>
-                <div class="wizard-overview__stat-label">命令数</div>
+              <div class="tdc-stat">
+                <span class="tdc-stat__num">${totalCmds}</span>
+                <span class="tdc-stat__label">命令</span>
               </div>
-              <div class="wizard-overview__stat">
-                <div class="wizard-overview__stat-value">${readonlyProps}</div>
-                <div class="wizard-overview__stat-label">只读属性</div>
+              <div class="tdc-stat tdc-stat--ok">
+                <span class="tdc-stat__num">${writableProps}</span>
+                <span class="tdc-stat__label">可写</span>
               </div>
-              <div class="wizard-overview__stat">
-                <div class="wizard-overview__stat-value">${writableProps}</div>
-                <div class="wizard-overview__stat-label">可写属性</div>
+              <div class="tdc-stat tdc-stat--muted">
+                <span class="tdc-stat__num">${readonlyProps}</span>
+                <span class="tdc-stat__label">只读</span>
               </div>
             </div>
 
-            <!-- Properties table -->
-            ${totalProps > 0 ? html`
-              <div class="wizard-overview__section-title">属性列表</div>
-              <div style="overflow-x: auto; margin-bottom: 16px;">
-                <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
-                  <thead>
-                    <tr style="border-bottom: 1px solid var(--border);">
-                      <th style="padding: 6px 10px; text-align: left; color: var(--muted); font-weight: 500; font-size: 12px;">名称</th>
-                      <th style="padding: 6px 10px; text-align: left; color: var(--muted); font-weight: 500; font-size: 12px;">类型</th>
-                      <th style="padding: 6px 10px; text-align: left; color: var(--muted); font-weight: 500; font-size: 12px;">单位</th>
-                      <th style="padding: 6px 10px; text-align: left; color: var(--muted); font-weight: 500; font-size: 12px;">默认值</th>
-                      <th style="padding: 6px 10px; text-align: left; color: var(--muted); font-weight: 500; font-size: 12px;">访问</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${t.properties.map((p: any) => html`
-                      <tr style="border-bottom: 1px solid var(--border);">
-                        <td style="padding: 7px 10px;">${p.displayName || p.name || "unnamed"}</td>
-                        <td style="padding: 7px 10px; color: var(--muted);">${p.dataType || "-"}</td>
-                        <td style="padding: 7px 10px; color: var(--muted);">${p.unit || "-"}</td>
-                        <td style="padding: 7px 10px; color: var(--muted);">${p.defaultValue ?? "-"}</td>
-                        <td style="padding: 7px 10px;">
-                          ${p.accessMode === "r" || p.accessMode === "R"
-                            ? html`<span style="font-size: 10px; padding: 1px 5px; border-radius: 3px; background: var(--bg); color: var(--muted);">只读</span>`
-                            : html`<span style="font-size: 10px; padding: 1px 5px; border-radius: 3px; background: var(--accent); color: var(--accent-foreground); opacity: 0.8;">读写</span>`
-                          }
-                        </td>
-                      </tr>
+            <!-- Tab bar -->
+            <div class="tdc-tabs">
+              <button
+                class="tdc-tab ${this.detailTab === 'props' ? 'active' : ''}"
+                @click=${() => { this.detailTab = 'props'; this.requestUpdate(); }}
+              >
+                属性
+                ${totalProps > 0 ? html`<span class="tdc-tab__count">${totalProps}</span>` : nothing}
+              </button>
+              <button
+                class="tdc-tab ${this.detailTab === 'cmds' ? 'active' : ''}"
+                @click=${() => { this.detailTab = 'cmds'; this.requestUpdate(); }}
+              >
+                命令
+                ${totalCmds > 0 ? html`<span class="tdc-tab__count">${totalCmds}</span>` : nothing}
+              </button>
+            </div>
+
+            <!-- Tab content -->
+            <div class="tdc-tab-content">
+              ${this.detailTab === 'props' ? html`
+                ${totalProps > 0 ? html`
+                  <div class="tdc-props">
+                    ${props.map((p: any) => html`
+                      <div class="tdc-prop">
+                        <div class="tdc-prop__name">${getLocalizedText(p.displayName, p.name || "unnamed")}</div>
+                        <div class="tdc-prop__meta">
+                          <span class="tdc-prop__type">${p.dataType || "—"}</span>
+                          ${p.unit ? html`<span class="tdc-prop__unit">${p.unit}</span>` : nothing}
+                          ${p.defaultValue !== undefined ? html`<span class="tdc-prop__default">=${p.defaultValue}</span>` : nothing}
+                        </div>
+                        <span class="tdc-prop__badge ${p.isReadOnly === true || p.accessMode === "r" || p.accessMode === "R" ? 'tdc-prop__badge--ro' : 'tdc-prop__badge--rw'}">
+                          ${p.isReadOnly === true || p.accessMode === "r" || p.accessMode === "R" ? 'R' : 'RW'}
+                        </span>
+                      </div>
                     `)}
-                  </tbody>
-                </table>
-              </div>
-            ` : nothing}
-
-            <!-- Commands list -->
-            ${totalCmds > 0 ? html`
-              <div class="wizard-overview__section-title">命令列表</div>
-              <ul class="wizard-overview__list" style="max-height: 200px; overflow-y: auto;">
-                ${t.commands.map((c: any) => html`
-                  <li class="wizard-overview__list-item" style="flex-wrap: wrap; gap: 4px;">
-                    <div style="display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0;">
-                      <span class="wizard-overview__list-item-name">${c.name || "unnamed"}</span>
-                      ${c.parameters && c.parameters.length > 0
-                        ? html`<span style="font-size: 10px; color: var(--muted);">${c.parameters.length} 参数</span>`
-                        : nothing
-                      }
-                    </div>
-                    <span class="wizard-overview__list-item-meta">${c.description || ""}</span>
-                  </li>
-                `)}
-              </ul>
-            ` : nothing}
-
-            ${totalProps === 0 && totalCmds === 0 ? html`
-              <div style="text-align: center; padding: 24px; color: var(--muted); font-size: 13px;">
-                该模板暂无属性和命令定义
-              </div>
-            ` : nothing}
+                  </div>
+                ` : html`<div class="tdc-empty-inline">无属性定义</div>`}
+              ` : html`
+                ${totalCmds > 0 ? html`
+                  <div class="tdc-props">
+                    ${cmds.map((c: any) => {
+                      const params = parseJsonField(c.parameters, []);
+                      return html`
+                        <div class="tdc-prop">
+                          <div class="tdc-prop__name">${getLocalizedText(c.displayName, c.name || "unnamed")}</div>
+                          <div class="tdc-prop__meta">
+                            ${params.length > 0 ? params.map((param: any) => html`
+                              <span class="tdc-prop__type">${param.name}</span>
+                              <span class="tdc-prop__unit">${param.dataType}</span>
+                            `) : html`<span class="tdc-prop__type" style="opacity: 0.4;">无参数</span>`}
+                          </div>
+                          <span class="tdc-prop__badge tdc-prop__badge--cmd">→</span>
+                        </div>
+                      `;})}
+                  </div>
+                ` : html`<div class="tdc-empty-inline">无命令定义</div>`}
+              `}
+            </div>
           </div>
-          <div class="modal-footer">
+
+          <!-- Fixed Footer -->
+          <div class="tdc-footer">
             <button class="btn btn--ghost" @click=${() => this.selectedTemplate = null}>关闭</button>
+            ${!t.isBuiltin ? html`<button class="btn btn--primary btn--sm" @click=${() => { this.openEdit(t); this.selectedTemplate = null; }}>编辑模板</button>` : nothing}
           </div>
         </div>
       </div>
