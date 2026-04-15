@@ -6,6 +6,8 @@ pub mod identifier;
 
 pub mod network;
 
+pub mod paths;
+
 pub mod scripting;
 
 pub mod security;
