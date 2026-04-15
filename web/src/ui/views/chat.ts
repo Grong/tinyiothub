@@ -35,19 +35,24 @@ export class ChatView extends LitElement {
     super.connectedCallback();
     this.agentId = "default"; // TODO: get from URL params or store
     // Persist session key so chat history loads correctly across page reloads
-    const sessionKey = localStorage.getItem("tinyiothub_chat_session_key") || crypto.randomUUID();
-    localStorage.setItem("tinyiothub_chat_session_key", sessionKey);
+    // Format: agent:<workspace_id>:<agent_id>/<session_uuid>
+    const storedKey = localStorage.getItem("tinyiothub_chat_session_key");
+    let sessionKey = storedKey;
+    if (!storedKey || !storedKey.includes('/')) {
+      sessionKey = `agent:default:${this.agentId}/${crypto.randomUUID()}`;
+      localStorage.setItem("tinyiothub_chat_session_key", sessionKey);
+    }
     // Load agent config to get systemPrompt, then create chat state
     apiGet<{ config: { systemPrompt?: string } }>(`/agents/${this.agentId}/config`)
       .then((res) => {
         const systemPrompt = res.result?.config?.systemPrompt;
-        this.chatState = createChatState(sessionKey, this.agentId, systemPrompt);
+        this.chatState = createChatState(sessionKey || "", this.agentId, systemPrompt);
         this._bindA2uiCallback();
         loadChatHistory(this.chatState).then(() => this.requestUpdate());
       })
       .catch(() => {
         // ZeroClaw not connected or config unavailable — still allow chat
-        this.chatState = createChatState(sessionKey, this.agentId);
+        this.chatState = createChatState(sessionKey || "", this.agentId);
         this._bindA2uiCallback();
         loadChatHistory(this.chatState).then(() => this.requestUpdate());
       });

@@ -47,72 +47,392 @@
 .a2ui-divider { border: none; border-top: 1px solid var(--border); margin: 8px 0; }
 
 /* ===========================================
-   A2UI IoT Components
+   A2UI IoT Components — Industrial IoT Control Room
    =========================================== */
 
+/* ── Device Card ── */
 .a2ui-device-card {
-  padding: var(--space-3);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-  background: var(--card);
+  --status-color: #6b7280;
+  --status-glow: rgba(107, 114, 128, 0.3);
+
+  position: relative;
+  padding: var(--space-4);
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(10, 14, 22, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.4),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  overflow: hidden;
+  transition: transform var(--duration-normal) var(--ease-out),
+              box-shadow var(--duration-normal) var(--ease-out);
 }
-.a2ui-device-card__header { display: flex; align-items: center; gap: var(--space-2); }
+
+:root[data-theme="light"] .a2ui-device-card {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: rgba(0, 0, 0, 0.06);
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.06),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.04);
+}
+
+.a2ui-device-card:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.5),
+    0 0 24px var(--status-glow),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.a2ui-device-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.a2ui-device-card__identity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 1;
+}
+
 .a2ui-device-card__status {
-  width: var(--radius-md); height: var(--radius-md); border-radius: 50%;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--status-color);
+  flex-shrink: 0;
+  box-shadow: 0 0 8px var(--status-glow);
 }
-.a2ui-device-card__status.online { background: #2ecc71; }
-.a2ui-device-card__status.offline { background: #95a5a6; }
-.a2ui-device-card__name { font-weight: 600; }
-.a2ui-device-card__id { font-size: 0.8em; color: var(--muted); margin-top: 4px; }
+
+.a2ui-device-card__status--pulse {
+  animation: statusPulse 2s ease-in-out infinite;
+}
+
+@keyframes statusPulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 6px var(--status-glow); }
+  50% { opacity: 0.6; box-shadow: 0 0 12px var(--status-color); }
+}
+
+.a2ui-device-card__name {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 0 20px var(--status-glow);
+}
 
 .a2ui-device-card__badge {
-  margin-left: auto;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
+  color: var(--status-color);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
 }
 
+/* Properties List */
+.a2ui-device-card__props {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-3);
+  margin-bottom: var(--space-3);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+:root[data-theme="light"] .a2ui-device-card__props {
+  background: rgba(0, 0, 0, 0.02);
+  border-color: rgba(0, 0, 0, 0.04);
+}
+
+.a2ui-device-card__prop {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  gap: var(--space-2);
+}
+
+.a2ui-device-card__prop-key {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.a2ui-device-card__prop-val {
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.a2ui-device-card__prop-unit {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+/* Telemetry Grid */
 .a2ui-device-card__telemetry {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 6px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
+  gap: 8px;
+  padding-top: var(--space-3);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  margin-bottom: var(--space-2);
+}
+
+:root[data-theme="light"] .a2ui-device-card__telemetry {
+  border-color: rgba(0, 0, 0, 0.06);
 }
 
 .a2ui-device-card__metric {
   display: flex;
-  justify-content: space-between;
-  font-size: 13px;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+:root[data-theme="light"] .a2ui-device-card__metric {
+  background: rgba(0, 0, 0, 0.02);
+  border-color: rgba(0, 0, 0, 0.04);
 }
 
 .a2ui-device-card__metric-key {
+  font-size: 11px;
   color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
-.a2ui-device-card__metric-value {
-  font-weight: 600;
+.a2ui-device-card__metric-val {
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-weight: 700;
+  font-size: 16px;
+  color: var(--status-color);
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+}
+
+.a2ui-device-card__metric-unit {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 400;
 }
 
 .a2ui-device-card__sparkline {
-  margin-top: 8px;
+  margin: var(--space-3) 0;
+  padding: var(--space-2) 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  display: flex;
+  justify-content: center;
 }
 
-.a2ui-device-card__last-seen {
-  margin-top: 6px;
-  font-size: 11px;
-  color: var(--muted);
+:root[data-theme="light"] .a2ui-device-card__sparkline {
+  border-color: rgba(0, 0, 0, 0.04);
 }
 
 .a2ui-device-card__actions {
   display: flex;
   gap: 6px;
-  margin-top: 10px;
+  margin-top: var(--space-3);
+  flex-wrap: wrap;
 }
 
+.a2ui-device-card__footer {
+  margin-top: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+:root[data-theme="light"] .a2ui-device-card__footer {
+  border-color: rgba(0, 0, 0, 0.04);
+}
+
+.a2ui-device-card__id {
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+
+/* ── Stat Card ── */
+.a2ui-stat-card {
+  --card-accent: var(--accent);
+
+  position: relative;
+  padding: var(--space-4);
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(10, 14, 22, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.4),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  overflow: hidden;
+  transition: transform var(--duration-normal) var(--ease-out),
+              box-shadow var(--duration-normal) var(--ease-out);
+}
+
+:root[data-theme="light"] .a2ui-stat-card {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: rgba(0, 0, 0, 0.06);
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.06),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.04);
+}
+
+.a2ui-stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.5),
+    0 0 24px rgba(var(--card-accent), 0.15),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.a2ui-stat-card__inner {
+  position: relative;
+  z-index: 1;
+}
+
+.a2ui-stat-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+
+.a2ui-stat-card__label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.a2ui-stat-card__icon {
+  font-size: 18px;
+  opacity: 0.7;
+}
+
+.a2ui-stat-card__body {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.a2ui-stat-card__value {
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 36px;
+  font-weight: 800;
+  background: linear-gradient(135deg, var(--card-accent) 0%, color-mix(in srgb, var(--card-accent) 60%, white) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  line-height: 1;
+  text-shadow: 0 0 40px var(--card-accent);
+}
+
+.a2ui-stat-card__unit {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.a2ui-stat-card__trend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  margin-top: var(--space-1);
+}
+
+.a2ui-stat-card__trend-arrow {
+  font-size: 14px;
+}
+
+.a2ui-stat-card__trend-val {
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+}
+
+.a2ui-stat-card__trend-label {
+  color: var(--muted);
+  font-weight: 400;
+  margin-left: 4px;
+}
+
+.a2ui-stat-card__desc {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: var(--space-2);
+  line-height: 1.4;
+}
+
+.a2ui-stat-card__actions {
+  display: flex;
+  gap: 6px;
+  margin-top: var(--space-3);
+}
+
+.a2ui-stat-card__glow {
+  position: absolute;
+  top: -20px;
+  right: -20px;
+  width: 100px;
+  height: 100px;
+  background: radial-gradient(circle, var(--card-accent) 0%, transparent 70%);
+  opacity: 0.08;
+  pointer-events: none;
+}
+
+/* Button Sizes */
 .a2ui-btn--sm {
   padding: 3px var(--space-2);
   font-size: 12px;
+}
+
+.a2ui-btn--xs {
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: 6px;
+}
+
+.a2ui-btn--outline {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--text-secondary);
+  transition: all var(--duration-fast);
+}
+
+:root[data-theme="light"] .a2ui-btn--outline {
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+.a2ui-btn--outline:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .a2ui-unknown {

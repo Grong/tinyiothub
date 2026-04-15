@@ -188,7 +188,7 @@ export function renderHeartbeatTab(
                     class="task-text-input"
                     .value=${task.text}
                     placeholder="描述任务..."
-                    @input=${(e: Event) => {
+                    @change=${(e: Event) => {
                       const newText = (e.target as HTMLInputElement).value;
                       onUpdateTask(index, { text: newText });
                     }}
