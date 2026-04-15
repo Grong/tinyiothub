@@ -23,12 +23,12 @@ pub fn create_router() -> Router<AppState> {
     Router::new()
         // 模板市场
         .route("/templates", get(proxy_marketplace_templates))
-        .route("/templates/:id", get(proxy_marketplace_template))
-        .route("/templates/:id/install", post(install_marketplace_template))
+        .route("/templates/{id}", get(proxy_marketplace_template))
+        .route("/templates/{id}/install", post(install_marketplace_template))
         // 驱动市场
         .route("/drivers", get(proxy_marketplace_drivers))
-        .route("/drivers/:id", get(proxy_marketplace_driver))
-        .route("/drivers/:id/install", post(install_marketplace_driver))
+        .route("/drivers/{id}", get(proxy_marketplace_driver))
+        .route("/drivers/{id}/install", post(install_marketplace_driver))
 }
 
 /// 外部市场 API 地址

@@ -94,7 +94,6 @@ impl ToolHandler for ListWorkspacesHandler {
 
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
-        let db = state.database();
 
         // Resolve tenant_id from workspace for listing workspaces
         let tenant_id = state.workspace_service.find_by_id(&claims.workspace_id)
@@ -151,7 +150,6 @@ impl ToolHandler for GetWorkspaceHandler {
 
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
-        let db = state.database();
 
         let workspace = state.workspace_service.find_by_id(&input.id)
             .await
@@ -217,7 +215,6 @@ impl ToolHandler for CreateWorkspaceHandler {
 
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
-        let db = state.database();
 
         // Resolve tenant_id from current workspace (new workspace inherits tenant)
         let tenant_id = state.workspace_service.find_by_id(&claims.workspace_id)
@@ -356,7 +353,6 @@ impl ToolHandler for UpdateWorkspaceHandler {
 
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
-        let db = state.database();
 
         // Verify workspace exists and belongs to tenant
         let existing = state.workspace_service.find_by_id(&input.id)
@@ -428,7 +424,6 @@ impl ToolHandler for DeleteWorkspaceHandler {
 
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
-        let db = state.database();
 
         // Get workspace to find agent_id
         let workspace = state.workspace_service.find_by_id(&input.id)

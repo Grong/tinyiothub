@@ -434,13 +434,18 @@ impl AgentClient for AgentRuntimeImpl {
         let db_pool = self.db_pool.clone();
         Box::pin(async move {
             // First check for any system messages (for debugging)
-            let system_count: (i64,) = sqlx::query_as(
+            let system_count: (i64,) = match sqlx::query_as(
                 "SELECT COUNT(*) FROM chat_messages WHERE session_key = ? AND role = 'system'",
             )
             .bind(&session_key)
             .fetch_one(&db_pool)
-            .await
-            .unwrap_or((0,));
+            .await {
+                Ok(count) => count,
+                Err(e) => {
+                    tracing::warn!("Failed to count system messages: {}", e);
+                    (0,)
+                }
+            };
 
             if system_count.0 > 0 {
                 tracing::warn!("Found {} system messages in session {}", system_count.0, session_key);

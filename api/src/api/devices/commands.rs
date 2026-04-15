@@ -33,7 +33,7 @@ pub struct CommandExecution {
 }
 
 pub fn create_router() -> Router<AppState> {
-    Router::new().route("/:device_id/commands/:command_id/execute", post(execute_device_command))
+    Router::new().route("/{device_id}/commands/{command_id}/execute", post(execute_device_command))
 }
 
 /// 执行设备指令

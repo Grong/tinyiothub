@@ -43,12 +43,12 @@ pub fn create_router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_drivers))
         .route("/names", get(list_driver_names))
-        .route("/:name", get(get_driver_detail))
-        .route("/:name/config", get(get_driver_config))
-        .route("/:name/supported", get(check_driver_support))
+        .route("/{name}", get(get_driver_detail))
+        .route("/{name}/config", get(get_driver_config))
+        .route("/{name}/supported", get(check_driver_support))
         // 动态驱动管理
         .route("/dynamic/load", post(dynamic::load_driver))
-        .route("/dynamic/:name/unload", delete(dynamic::unload_driver))
+        .route("/dynamic/{name}/unload", delete(dynamic::unload_driver))
         .route("/dynamic/list", get(dynamic::list_all_drivers))
         .route("/dynamic/reload", post(dynamic::reload_drivers_dir))
 }
