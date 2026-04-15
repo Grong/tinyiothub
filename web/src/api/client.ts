@@ -252,27 +252,27 @@ export interface UpdateSkillRequest {
 export async function listSkills(workspaceId?: string): Promise<ApiResponse<Skill[]>> {
   const params = new URLSearchParams();
   if (workspaceId) params.set("workspace_id", workspaceId);
-  return apiGet(`/chat/skills?${params}`);
+  return apiGet(`/agents/skills?${params}`);
 }
 
 export async function getSkill(name: string, workspaceId?: string): Promise<ApiResponse<Skill>> {
   const params = new URLSearchParams();
   if (workspaceId) params.set("workspace_id", workspaceId);
-  return apiGet(`/chat/skills/${encodeURIComponent(name)}?${params}`);
+  return apiGet(`/agents/skills/${encodeURIComponent(name)}?${params}`);
 }
 
 export async function createSkill(data: CreateSkillRequest): Promise<ApiResponse<Skill>> {
-  return apiPost("/chat/skills", data);
+  return apiPost("/agents/skills", data);
 }
 
 export async function updateSkill(name: string, data: UpdateSkillRequest, workspaceId?: string): Promise<ApiResponse<Skill>> {
   const params = new URLSearchParams();
   if (workspaceId) params.set("workspace_id", workspaceId);
-  return apiPut(`/chat/skills/${encodeURIComponent(name)}?${params}`, data);
+  return apiPut(`/agents/skills/${encodeURIComponent(name)}?${params}`, data);
 }
 
 export async function deleteSkill(name: string, workspaceId?: string): Promise<ApiResponse<void>> {
   const params = new URLSearchParams();
   if (workspaceId) params.set("workspace_id", workspaceId);
-  return apiDelete(`/chat/skills/${encodeURIComponent(name)}?${params}`);
+  return apiDelete(`/agents/skills/${encodeURIComponent(name)}?${params}`);
 }
