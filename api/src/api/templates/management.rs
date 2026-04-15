@@ -38,13 +38,13 @@ pub struct TemplateQuery {
 pub fn create_router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_templates))
-        .route("/:id", get(get_template))
+        .route("/{id}", get(get_template))
         .route("/", post(create_template))
-        .route("/:id", put(update_template))
-        .route("/:id", delete(delete_template))
+        .route("/{id}", put(update_template))
+        .route("/{id}", delete(delete_template))
         .route("/categories", get(get_template_categories))
-        .route("/:id/validate", post(validate_template_input))
-        .route("/:id/preview", post(preview_device_from_template))
+        .route("/{id}/validate", post(validate_template_input))
+        .route("/{id}/preview", post(preview_device_from_template))
 }
 
 /// 获取模板列表

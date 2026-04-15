@@ -62,7 +62,7 @@ pub struct ApplicationSettings {
     pub minimax: Option<MinimaxConfig>,
 }
 
-/// System prompts configuration for AI agents
+/// System prompts configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct SystemPromptsConfig {

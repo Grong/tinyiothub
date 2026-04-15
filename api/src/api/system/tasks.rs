@@ -61,10 +61,10 @@ pub struct UpdateTaskRequest {
 pub fn create_router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_tasks).post(create_task))
-        .route("/:id", get(get_task).put(update_task).delete(delete_task))
-        .route("/:id/enable", post(enable_task))
-        .route("/:id/disable", post(disable_task))
-        .route("/:id/run", post(run_task_now))
+        .route("/{id}", get(get_task).put(update_task).delete(delete_task))
+        .route("/{id}/enable", post(enable_task))
+        .route("/{id}/disable", post(disable_task))
+        .route("/{id}/run", post(run_task_now))
 }
 
 /// 获取定时任务列表

@@ -27,8 +27,8 @@ pub struct RoleQuery {
 pub fn create_router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_roles).post(create_role))
-        .route("/:id", get(get_role).put(update_role).delete(delete_role))
-        .route("/:id/permissions", get(get_role_permissions).put(update_role_permissions))
+        .route("/{id}", get(get_role).put(update_role).delete(delete_role))
+        .route("/{id}/permissions", get(get_role_permissions).put(update_role_permissions))
 }
 
 /// 获取角色列表

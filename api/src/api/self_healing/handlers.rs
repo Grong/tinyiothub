@@ -27,7 +27,7 @@ pub fn create_router() -> Router<AppState> {
         .route("/policies", get(get_policy))
         .route("/policies", put(update_policy))
         // Actions
-        .route("/actions/:level", post(execute_action))
+        .route("/actions/{level}", post(execute_action))
         // History
         .route("/executions", get(get_executions))
         // Probe
@@ -75,7 +75,7 @@ async fn update_policy(
     ApiResponseBuilder::success(SelfHealingPolicyDto::from(&state.policy))
 }
 
-/// POST /self-healing/actions/:level - Execute recovery action
+/// POST /self-healing/actions/{level} - Execute recovery action
 async fn execute_action(
     State(_state): State<AppState>,
     _claims: Claims,

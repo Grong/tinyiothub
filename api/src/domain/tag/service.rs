@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::dto::entity::tag::{
-    BatchTagBindingRequest, CreateTagBindingRequest, CreateTagRequest, Tag, TagBinding,
+    CreateTagBindingRequest, CreateTagRequest, Tag, TagBinding,
     TagQuery, UpdateTagRequest,
 };
 use crate::shared::error::Result;

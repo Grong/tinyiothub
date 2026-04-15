@@ -7,7 +7,6 @@
 use std::sync::Arc;
 
 use futures::StreamExt;
-use tokio::sync::RwLock;
 
 use zeroclaw::heartbeat::engine::{HeartbeatEngine, TaskPriority};
 use crate::api::mcp::handlers::{McpAuthContext, McpContextGuard};

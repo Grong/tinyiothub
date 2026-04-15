@@ -12,6 +12,7 @@ use std::pin::Pin;
 pub mod config;
 pub mod heartbeat_service;
 pub mod runtime;
+pub mod scaffold_service;
 
 pub use config::{AgentConfig, AgentInfo, AgentError, compute_hash, default_agent_config};
 pub use heartbeat_service::HeartbeatService;

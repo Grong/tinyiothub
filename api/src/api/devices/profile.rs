@@ -11,7 +11,7 @@ use crate::{
         value_objects::EventType,
     },
     dto::{
-        entity::{device::Device, device_command::DeviceCommand, device_property::DeviceProperty},
+        entity::{device::Device, device_property::DeviceProperty},
         response::{builder::ApiResponseBuilder, ApiResponse, DeviceCommandResponse},
     },
     shared::{app_state::AppState, security::jwt::Claims},
@@ -83,7 +83,7 @@ pub struct DeviceProfileOverview {
 }
 
 pub fn create_router() -> Router<AppState> {
-    Router::new().route("/:id/profile", get(get_device_profile))
+    Router::new().route("/{id}/profile", get(get_device_profile))
 }
 
 /// 获取设备完整配置文件

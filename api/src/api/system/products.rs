@@ -29,7 +29,7 @@ pub struct ProductQuery {
 pub fn create_router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_products).post(create_product))
-        .route("/:id", get(get_product).put(update_product).delete(delete_product))
+        .route("/{id}", get(get_product).put(update_product).delete(delete_product))
 }
 
 /// 获取产品列表
