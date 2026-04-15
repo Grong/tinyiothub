@@ -34,9 +34,9 @@ pub struct UpdateEventTriggerRequest {
 pub fn create_router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_event_triggers).post(create_event_trigger))
-        .route("/:id", get(get_event_trigger).put(update_event_trigger).delete(delete_event_trigger))
-        .route("/:id/enable", post(enable_event_trigger))
-        .route("/:id/disable", post(disable_event_trigger))
+        .route("/{id}", get(get_event_trigger).put(update_event_trigger).delete(delete_event_trigger))
+        .route("/{id}/enable", post(enable_event_trigger))
+        .route("/{id}/disable", post(disable_event_trigger))
 }
 
 /// 获取事件触发器列表

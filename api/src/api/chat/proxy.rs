@@ -15,6 +15,7 @@ use crate::{
 };
 
 use super::types::*;
+use crate::api::agents::types::{AgentConfigUpdateRequest, ToolToggleRequest};
 
 /// POST /api/v1/chat/stream — SSE streaming chat
 pub async fn chat_stream(
@@ -123,7 +124,7 @@ pub async fn list_sessions(
     }
 }
 
-/// POST /api/v1/chat/sessions/:session_key/label
+/// POST /api/v1/chat/sessions/{session_key}/label
 pub async fn update_session_label(
     State(state): State<AppState>,
     Path(session_key): Path<String>,
@@ -136,7 +137,7 @@ pub async fn update_session_label(
     }
 }
 
-/// DELETE /api/v1/chat/sessions/:session_key
+/// DELETE /api/v1/chat/sessions/{session_key}
 pub async fn delete_session(
     State(state): State<AppState>,
     Path(session_key): Path<String>,
@@ -159,7 +160,7 @@ pub async fn list_agents(
     }
 }
 
-/// GET /api/v1/agents/:id/config
+/// GET /api/v1/agents/{id}/config
 pub async fn get_agent_config(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
@@ -171,7 +172,7 @@ pub async fn get_agent_config(
     }
 }
 
-/// PUT /api/v1/agents/:id/config
+/// PUT /api/v1/agents/{id}/config
 pub async fn set_agent_config(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,

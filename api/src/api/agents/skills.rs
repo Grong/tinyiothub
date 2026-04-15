@@ -43,10 +43,14 @@ fn validate_skill_path(workspace_id: &str, skill_name: &str) -> Result<PathBuf, 
     let file_path = base.join(workspace_id).join(format!("{}.md", skill_name));
 
     // Verify the resolved path is still under skills/ (defense in depth)
-    let canonical = file_path.canonicalize().map_err(|_| "Invalid path")?;
-    let skills_canonical = base.canonicalize().map_err(|_| "Invalid skills directory")?;
-    if !canonical.starts_with(&skills_canonical) {
-        return Err("Invalid path: escape detected".to_string());
+    // Use components() to avoid needing the file to exist
+    for component in file_path.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                return Err("Invalid path: escape detected".to_string());
+            }
+            _ => {}
+        }
     }
 
     Ok(file_path)
@@ -55,10 +59,10 @@ fn validate_skill_path(workspace_id: &str, skill_name: &str) -> Result<PathBuf, 
 pub fn create_router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_skills).post(create_skill))
-        .route("/:name", get(get_skill).put(update_skill).delete(delete_skill))
+        .route("/{name}", get(get_skill).put(update_skill).delete(delete_skill))
 }
 
-// GET /api/v1/chat/skills?workspace_id=
+// GET /api/v1/agents/skills?workspace_id=
 pub async fn list_skills(
     _state: State<AppState>,
     _claims: Claims,
@@ -72,7 +76,7 @@ pub async fn list_skills(
     ApiResponseBuilder::success(skills)
 }
 
-// GET /api/v1/chat/skills/:name?workspace_id=
+// GET /api/v1/agents/skills/{name}?workspace_id=
 pub async fn get_skill(
     _state: State<AppState>,
     Path(name): Path<String>,
@@ -101,7 +105,7 @@ pub async fn get_skill(
     }
 }
 
-// POST /api/v1/chat/skills
+// POST /api/v1/agents/skills
 pub async fn create_skill(
     _state: State<AppState>,
     _claims: Claims,
@@ -141,7 +145,7 @@ pub async fn create_skill(
     ))
 }
 
-// PUT /api/v1/chat/skills/:name
+// PUT /api/v1/agents/skills/{name}
 pub async fn update_skill(
     _state: State<AppState>,
     Path(name): Path<String>,
@@ -171,7 +175,7 @@ pub async fn update_skill(
     }))
 }
 
-// DELETE /api/v1/chat/skills/:name?workspace_id=
+// DELETE /api/v1/agents/skills/{name}?workspace_id=
 pub async fn delete_skill(
     _state: State<AppState>,
     Path(name): Path<String>,
@@ -236,6 +240,7 @@ pub struct ListSkillsQuery {
 
 #[cfg(test)]
 mod tests {
+    use super::validate_skill_path;
     use crate::domain::agent::skill::AgentSkill;
 
     #[test]
@@ -298,21 +303,11 @@ Some body content here."#;
 
     #[test]
     fn path_traversal_rejected_in_validation() {
-        fn validate(workspace_id: &str, skill_name: &str) -> Result<(), String> {
-            if workspace_id.contains("..") || skill_name.contains("..") {
-                return Err("traversal not allowed".into());
-            }
-            if workspace_id.starts_with('/') || skill_name.starts_with('/') {
-                return Err("absolute paths not allowed".into());
-            }
-            Ok(())
-        }
-
-        assert!(validate("..", "foo").is_err());
-        assert!(validate("tinyiothub", "../etc/passwd").is_err());
-        assert!(validate("/", "foo").is_err());
-        assert!(validate("tinyiothub", "/etc/passwd").is_err());
-        assert!(validate("tinyiothub", "foo").is_ok());
+        assert!(validate_skill_path("..", "foo").is_err());
+        assert!(validate_skill_path("tinyiothub", "../etc/passwd").is_err());
+        assert!(validate_skill_path("/", "foo").is_err());
+        assert!(validate_skill_path("tinyiothub", "/etc/passwd").is_err());
+        assert!(validate_skill_path("tinyiothub", "foo").is_ok());
     }
 
     #[test]

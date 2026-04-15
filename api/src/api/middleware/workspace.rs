@@ -9,7 +9,6 @@ use std::convert::Infallible;
 /// 未提供时返回 None（显示整个租户的数据，向后兼容）
 pub struct WorkspaceScope(pub Option<String>);
 
-#[axum::async_trait]
 impl<S> FromRequestParts<S> for WorkspaceScope
 where
     S: Send + Sync,

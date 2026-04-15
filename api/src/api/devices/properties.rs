@@ -21,9 +21,9 @@ pub struct UpdatePropertyValueRequest {
 
 pub fn create_router() -> Router<AppState> {
     Router::new()
-        .route("/:device_id/properties", get(get_device_properties))
-        .route("/:device_id/properties/:property_id/value", put(update_property_value))
-        .route("/by-name/:device_name/properties/:property_name", get(get_device_property_by_name))
+        .route("/{device_id}/properties", get(get_device_properties))
+        .route("/{device_id}/properties/{property_id}/value", put(update_property_value))
+        .route("/by-name/{device_name}/properties/{property_name}", get(get_device_property_by_name))
 }
 
 /// 获取设备属性列表

@@ -49,9 +49,9 @@ pub struct UpdateAlarmRuleRequest {
 pub fn create_router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_alarm_rules).post(create_alarm_rule))
-        .route("/:id", get(get_alarm_rule).put(update_alarm_rule).delete(delete_alarm_rule))
-        .route("/:id/enable", post(enable_alarm_rule))
-        .route("/:id/disable", post(disable_alarm_rule))
+        .route("/{id}", get(get_alarm_rule).put(update_alarm_rule).delete(delete_alarm_rule))
+        .route("/{id}/enable", post(enable_alarm_rule))
+        .route("/{id}/disable", post(disable_alarm_rule))
 }
 
 /// 获取告警规则列表
