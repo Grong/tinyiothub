@@ -8,7 +8,7 @@ use axum::{
     Router,
 };
 use serde::Deserialize;
-use std::sync::Mutex;
+use tokio::sync::Mutex;
 use std::path::PathBuf;
 use tokio::fs;
 
@@ -124,7 +124,7 @@ pub async fn create_skill(
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
     // Concurrent write guard
-    let _guard = SKILL_WRITE_MUTEX.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let _guard = SKILL_WRITE_MUTEX.lock().await;
 
     if file_path.exists() {
         return Err(StatusCode::CONFLICT); // File already exists
@@ -162,7 +162,7 @@ pub async fn update_skill(
     let file_path = skill_file_path(workspace_id, &name)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    let _guard = SKILL_WRITE_MUTEX.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let _guard = SKILL_WRITE_MUTEX.lock().await;
 
     if fs::metadata(&file_path).await.is_err() {
         return Err(StatusCode::NOT_FOUND);
@@ -192,7 +192,7 @@ pub async fn delete_skill(
     let file_path = skill_file_path(workspace_id, &name)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    let _guard = SKILL_WRITE_MUTEX.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let _guard = SKILL_WRITE_MUTEX.lock().await;
 
     if fs::metadata(&file_path).await.is_ok() {
         fs::remove_file(&file_path).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
