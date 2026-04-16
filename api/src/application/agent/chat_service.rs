@@ -221,12 +221,12 @@ impl Default for ChatServiceConfig {
 
 /// Chat stream that yields ChatEvent items
 pub struct ChatStream {
-    receiver: mpsc::UnboundedReceiver<ChatEvent>,
+    receiver: mpsc::Receiver<ChatEvent>,
 }
 
 impl ChatStream {
     /// Create a new chat stream from a receiver
-    pub fn new(receiver: mpsc::UnboundedReceiver<ChatEvent>) -> Self {
+    pub fn new(receiver: mpsc::Receiver<ChatEvent>) -> Self {
         Self { receiver }
     }
 }
@@ -307,8 +307,8 @@ impl ChatService {
             &memory_context,
         );
 
-        // Create channel for streaming events
-        let (tx, rx) = mpsc::unbounded_channel::<ChatEvent>();
+        // Create channel for streaming events (bounded for backpressure)
+        let (tx, rx) = mpsc::channel::<ChatEvent>(100);
 
         // Spawn the chat processing
         self.spawn_chat_task(
@@ -395,7 +395,7 @@ impl ChatService {
         parsed_key: ParsedSessionKey,
         system_prompt: String,
         _should_compact: bool,
-        tx: mpsc::UnboundedSender<ChatEvent>,
+        tx: mpsc::Sender<ChatEvent>,
     ) -> Result<(), ChatError> {
         let runtime = Arc::clone(&self.runtime);
         let session_key = request.session_key.clone();
@@ -433,7 +433,7 @@ impl ChatService {
                             run_id: run_id.clone(),
                             session_key: session_key.clone(),
                             error: format!("SSE processing error: {}", e),
-                        });
+                        }).await;
                     }
                 }
                 Err(e) => {
@@ -441,7 +441,7 @@ impl ChatService {
                         run_id: run_id.clone(),
                         session_key: session_key.clone(),
                         error: format!("Chat send failed: {}", e),
-                    });
+                    }).await;
                 }
             }
         });
@@ -453,7 +453,7 @@ impl ChatService {
     async fn process_sse_response(
         session_repo: Arc<dyn SessionRepository>,
         response: reqwest::Response,
-        tx: &mpsc::UnboundedSender<ChatEvent>,
+        tx: &mpsc::Sender<ChatEvent>,
         run_id: &str,
         session_key: &str,
     ) -> Result<(), ChatError> {
@@ -496,7 +496,7 @@ impl ChatService {
                                         }
                                     }
 
-                                    if tx.send(event).is_err() {
+                                    if tx.send(event).await.is_err() {
                                         // Receiver dropped, stop processing
                                         return Ok(());
                                     }

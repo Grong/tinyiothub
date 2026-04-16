@@ -40,7 +40,7 @@ pub async fn chat_stream(
         user_persona,
         workspace_id,
         None,
-    );
+    ).await;
 
     // Set MCP context for in-process tool calls (JWT-authenticated)
     let mcp_ctx = McpAuthContext::for_jwt(
