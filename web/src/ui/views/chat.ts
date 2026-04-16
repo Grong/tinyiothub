@@ -13,6 +13,7 @@ import {
   renderMessageGroup,
   renderStreamingGroup,
   renderReadingIndicatorGroup,
+  setChipToggleCallback,
 } from "../chat/grouped-render.js";
 import { A2uiRendererEngine } from "../chat/a2ui/a2ui-renderer.js";
 
@@ -34,6 +35,8 @@ export class ChatView extends LitElement {
   connectedCallback(): void {
     super.connectedCallback();
     this.agentId = "default"; // TODO: get from URL params or store
+    // Register chip toggle callback for Lit re-render
+    setChipToggleCallback(() => this.requestUpdate());
     // Persist session key so chat history loads correctly across page reloads
     // Format: agent:<workspace_id>:<agent_id>/<session_uuid>
     const storedKey = localStorage.getItem("tinyiothub_chat_session_key");
