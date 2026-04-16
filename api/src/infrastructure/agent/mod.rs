@@ -130,11 +130,12 @@ pub fn build_tools_catalog_json() -> serde_json::Value {
                 "label": "设备管理",
                 "source": "core",
                 "tools": [
-                    { "id": "device_list",         "name": "device_list",         "label": "获取设备列表",       "description": "分页查询设备列表，支持按名称、类型、状态等过滤",          "danger": false, "enabled": true  },
+                    { "id": "device_list",          "name": "device_list",          "label": "获取设备列表",       "description": "分页查询设备列表，支持按名称、类型、状态等过滤",          "danger": false, "enabled": true  },
                     { "id": "device_profile",       "name": "device_profile",       "label": "获取设备 Profile",   "description": "获取设备完整信息，包含属性定义和当前值",                 "danger": false, "enabled": true  },
                     { "id": "device_property_get",  "name": "device_property_get",  "label": "获取属性详情",       "description": "获取设备指定属性的定义信息（类型、单位、读写权限等）",    "danger": false, "enabled": true  },
-                    { "id": "device_create",        "name": "device_create",        "label": "根据模板创建设备",   "description": "基于设备模板创建新设备",                                "danger": false, "enabled": true  },
+                    { "id": "device_create",        "name": "device_create",        "label": "根据模板创建设备",   "description": "基于设备模板创建新设备，需先查询模板列表获取template_id", "danger": false, "enabled": true  },
                     { "id": "device_command",       "name": "device_command",       "label": "执行设备命令",       "description": "向设备下发控制命令并获取执行结果",                        "danger": false, "enabled": true  },
+                    { "id": "device_template_list", "name": "device_template_list", "label": "查询设备模板列表",   "description": "列出系统中所有可用的设备模板，用于创建设备前查询template_id", "danger": false, "enabled": true },
                 ]
             },
             {

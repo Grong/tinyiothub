@@ -63,6 +63,7 @@ pub async fn register_tools() {
     reg.register(tools::device::DevicePropertyGetHandler);
     reg.register(tools::device::CreateDeviceHandler);
     reg.register(tools::device::DeviceCommandHandler);
+    reg.register(tools::device::DeviceTemplateListHandler);
 
     // Register driver tools (Task 3)
     reg.register(tools::driver::ListDriversHandler);
