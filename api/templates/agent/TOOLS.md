@@ -61,22 +61,59 @@ These are my capabilities — use them naturally as you work.
 
 ## UI Rendering (A2UI)
 
-Use the `canvas` tool to push rich UI components:
+Use the `canvas` tool to push rich UI components after getting data from tools.
+
+### Canvas Tool Call
 
 ```
 canvas(toolCallId, {
   action: "a2ui_push",
   jsonl: JSON.stringify({createSurface:{id:"s1",surfaceKind:"inline"}})+"\n"+
-         JSON.stringify({updateComponents:{components:[...]}})
+         JSON.stringify({updateComponents:{components:[{id:"card1",componentKind:"DeviceCard",dataModel:{}}]}})
 })
 ```
 
-**When to use A2UI:**
-- Device lists → `DeviceTable` or `DeviceCard`
-- KPIs/metrics → `StatCard` with trend
-- Time-series data → `DataChart`
-- Alarms → `AlarmTable` or `AlarmCard`
-- Control interfaces → `ControlPanel`
+### Device Card Example
+
+After `device_profile`, map the result to a `DeviceCard`:
+
+```
+const deviceData = await tool_results_of_device_profile;
+const state = deviceData.state === 1 ? "online" : deviceData.state === 2 ? "warning" : "offline";
+const surfaceId = "device-" + Date.now();
+canvas(tool_call_id, {
+  action: "a2ui_push",
+  jsonl:
+    JSON.stringify({createSurface:{id:surfaceId,surfaceKind:"inline"}})+"\n"+
+    JSON.stringify({updateComponents:{components:[{
+      id:"card1",
+      componentKind:"DeviceCard",
+      dataModel:{
+        deviceId: deviceData.id,
+        name: deviceData.display_name || deviceData.name,
+        status: state,
+        properties: deviceData.properties?.map(p => ({
+          key: p.display_name || p.name,
+          value: p.current_value || p.default_value || "-",
+          unit: p.unit || ""
+        })) || []
+      }
+    }]}})
+});
+```
+
+### Component Reference
+
+| Component | Use For |
+|-----------|---------|
+| `DeviceCard` | Single device overview with status and properties |
+| `DeviceTable` | Multiple devices with columns |
+| `StatCard` | KPIs and single metrics |
+| `DataChart` | Time-series data visualization |
+| `AlarmCard` | Single alarm details |
+| `AlarmTable` | Alarm list with filters |
+| `ControlPanel` | Device control interface |
+| `Text`, `Column`, `Row`, `Divider` | Layout primitives |
 
 ## Memory
 
