@@ -10,6 +10,7 @@ use axum::{
 use serde::Deserialize;
 use std::sync::Mutex;
 use std::path::PathBuf;
+use tokio::fs;
 
 use crate::{api::AppState, dto::response::{api_response::ApiResponse, builder::ApiResponseBuilder}, shared::{paths::{self, workspace_skills_dir, global_skills_dir}, security::jwt::Claims}};
 
@@ -70,9 +71,9 @@ pub async fn list_skills(
 ) -> Json<ApiResponse<Vec<SkillInfoDto>>> {
     let workspace_id = q.workspace_id.as_deref().unwrap_or(paths::DEFAULT_WORKSPACE_ID);
     // List workspace-specific skills
-    let ws_skills = list_skill_files(&workspace_skills_dir(workspace_id));
+    let ws_skills = list_skill_files(&workspace_skills_dir(workspace_id)).await;
     // Also include global skills (read-only)
-    let global = list_skill_files(&global_skills_dir());
+    let global = list_skill_files(&global_skills_dir()).await;
 
     let mut all_skills = ws_skills;
     for skill in global {
@@ -94,7 +95,7 @@ pub async fn get_skill(
     let file_path = skill_file_path(workspace_id, &name)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    match std::fs::read_to_string(&file_path) {
+    match fs::read_to_string(&file_path).await {
         Ok(content) => {
             let (fm, body) = crate::domain::agent::skill::AgentSkill::parse_frontmatter(&content);
             let skill_name = name.clone();
@@ -129,10 +130,12 @@ pub async fn create_skill(
         return Err(StatusCode::CONFLICT); // File already exists
     }
 
-    std::fs::create_dir_all(file_path.parent().unwrap())
+    fs::create_dir_all(file_path.parent().unwrap())
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    std::fs::write(&file_path, &req.skill_content)
+    fs::write(&file_path, &req.skill_content)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     tracing::info!("Skill saved: {}/{} -> {:?}", req.workspace_id, req.skill_name, file_path);
@@ -161,11 +164,12 @@ pub async fn update_skill(
 
     let _guard = SKILL_WRITE_MUTEX.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    if !file_path.exists() {
+    if fs::metadata(&file_path).await.is_err() {
         return Err(StatusCode::NOT_FOUND);
     }
 
-    std::fs::write(&file_path, &req.skill_content)
+    fs::write(&file_path, &req.skill_content)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     tracing::info!("Skill updated: {:?}", file_path);
@@ -190,28 +194,28 @@ pub async fn delete_skill(
 
     let _guard = SKILL_WRITE_MUTEX.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    if file_path.exists() {
-        std::fs::remove_file(&file_path).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if fs::metadata(&file_path).await.is_ok() {
+        fs::remove_file(&file_path).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         tracing::info!("Skill deleted: {:?}", file_path);
     }
 
     Ok(ApiResponseBuilder::success_with_message((), "Skill deleted"))
 }
 
-fn list_skill_files(dir: &std::path::Path) -> Vec<SkillInfoDto> {
+async fn list_skill_files(dir: &std::path::Path) -> Vec<SkillInfoDto> {
     let mut skills = Vec::new();
     if !dir.exists() { return skills; }
 
-    let entries = match std::fs::read_dir(dir) {
+    let mut entries = match fs::read_dir(dir).await {
         Ok(e) => e,
         Err(_) => return skills,
     };
 
-    for entry in entries.filter_map(|e| e.ok()) {
+    while let Some(entry) = entries.next_entry().await.unwrap_or(None) {
         let path = entry.path();
         if path.extension().map_or(false, |e| e == "md") {
             let file_name = path.file_stem().unwrap().to_string_lossy().to_string();
-            let content = std::fs::read_to_string(&path).unwrap_or_default();
+            let content = fs::read_to_string(&path).await.unwrap_or_default();
             let (fm, body) = crate::domain::agent::skill::AgentSkill::parse_frontmatter(&content);
             let description = fm.as_ref()
                 .and_then(|f| f.get("description"))

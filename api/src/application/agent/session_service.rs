@@ -246,8 +246,15 @@ pub trait SessionRepository: Send + Sync {
             agent_id,
         );
 
-        self.create(&session).await?;
-        Ok(session)
+        match self.create(&session).await {
+            Ok(()) => Ok(session),
+            Err(SessionError::RepositoryError(ref e)) if e.contains("UNIQUE") => {
+                // Another request created it concurrently — fetch and return
+                self.get(session_key).await?
+                    .ok_or_else(|| SessionError::NotFound(session_key.to_string()))
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Add a message to a session

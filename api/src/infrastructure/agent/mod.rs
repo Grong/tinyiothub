@@ -220,7 +220,7 @@ pub fn build_tools_catalog_json() -> serde_json::Value {
 /// 6. [User]        — from USER.md (who I'm helping)
 /// 7. [Persona]     — user persona override or default from config
 /// 8. [Context]     — dynamic context (device snapshots, etc.)
-pub fn build_full_system_prompt(
+pub async fn build_full_system_prompt(
     system_prompts: &crate::infrastructure::config::SystemPromptsConfig,
     user_persona: &str,
     workspace_id: Option<&str>,
@@ -229,7 +229,7 @@ pub fn build_full_system_prompt(
     let workspace_dir = get_workspace_dir(system_prompts, workspace_id);
 
     // Layer 1-6: Load from workspace files
-    let workspace_prompt = load_workspace_prompt(&workspace_dir);
+    let workspace_prompt = load_workspace_prompt(&workspace_dir).await;
 
     // Layer 7: Persona override (user can override the default persona from config)
     // Only add persona layer if user provided one explicitly (via systemPrompt field)
@@ -240,7 +240,7 @@ pub fn build_full_system_prompt(
     };
 
     // Skills from skills/ directory (existing behavior)
-    let skills_layer = load_skills_prompt(workspace_id, agent_id);
+    let skills_layer = load_skills_prompt(workspace_id, agent_id).await;
 
     // Layer 8: Additional context from config (device snapshots injected at runtime)
     let context_layer = if !system_prompts.context.is_empty() {
@@ -276,7 +276,9 @@ fn get_workspace_dir(system_prompts: &crate::infrastructure::config::SystemPromp
 /// - MEMORY.md    → [Memory] section
 ///
 /// Each file is wrapped with a markdown header indicating its section.
-fn load_workspace_prompt(workspace_dir: &std::path::Path) -> String {
+async fn load_workspace_prompt(workspace_dir: &std::path::Path) -> String {
+    use tokio::fs;
+
     let mut sections = Vec::new();
 
     // Define workspace files and their section names
@@ -291,7 +293,7 @@ fn load_workspace_prompt(workspace_dir: &std::path::Path) -> String {
     for (filename, section_name) in files {
         let file_path = workspace_dir.join(filename);
         if file_path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&file_path) {
+            if let Ok(content) = fs::read_to_string(&file_path).await {
                 let trimmed = content.trim();
                 if !trimmed.is_empty() {
                     sections.push(format!("## {}\n{}\n", section_name, trimmed));
@@ -355,10 +357,11 @@ fn get_embedded_template(filename: &str) -> Option<&'static str> {
 /// For workspace-specific skills, also checks agent subdirectory:
 /// - ./data/agents/{workspace_id}/{agent_id}/skills/
 /// - ./data/agents/{workspace_id}/skills/
-fn load_skills_prompt(workspace_id: Option<&str>, agent_id: Option<&str>) -> String {
+async fn load_skills_prompt(workspace_id: Option<&str>, agent_id: Option<&str>) -> String {
     use crate::shared::paths::{global_skills_dir, workspace_skills_dir, agent_skills_dir, DEFAULT_WORKSPACE_ID};
+    use tokio::fs;
 
-    let ws = workspace_id.unwrap_or(DEFAULT_WORKSPACE_ID);
+    let _ws = workspace_id.unwrap_or(DEFAULT_WORKSPACE_ID);
 
     // Build candidate paths: workspace-specific first, then global
     let candidates: Vec<std::path::PathBuf> = match (workspace_id, agent_id) {
@@ -383,7 +386,7 @@ fn load_skills_prompt(workspace_id: Option<&str>, agent_id: Option<&str>) -> Str
 
     for dir in candidates {
         if dir.exists() {
-            let result = read_skill_dir(&dir);
+            let result = read_skill_dir(&dir).await;
             if !result.is_empty() {
                 return result;
             }
@@ -393,10 +396,11 @@ fn load_skills_prompt(workspace_id: Option<&str>, agent_id: Option<&str>) -> Str
     String::new()
 }
 
-fn read_skill_dir(dir: &std::path::Path) -> String {
+async fn read_skill_dir(dir: &std::path::Path) -> String {
     use crate::domain::agent::skill::AgentSkill;
+    use tokio::fs;
 
-    let entries = match std::fs::read_dir(dir) {
+    let mut entries = match fs::read_dir(dir).await {
         Ok(e) => e,
         Err(e) => {
             tracing::warn!("Failed to read skills directory {:?}: {}", dir, e);
@@ -404,17 +408,19 @@ fn read_skill_dir(dir: &std::path::Path) -> String {
         }
     };
 
-    let mut skill_files: Vec<_> = entries
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
-        .collect();
+    let mut skill_files: Vec<_> = Vec::new();
+    while let Some(entry) = entries.next_entry().await.unwrap_or(None) {
+        if entry.path().extension().map_or(false, |ext| ext == "md") {
+            skill_files.push(entry);
+        }
+    }
 
     skill_files.sort_by_key(|e| e.file_name().to_string_lossy().to_string());
 
     let mut all_skills = String::new();
 
     for entry in skill_files {
-        let content = match std::fs::read_to_string(entry.path()) {
+        let content = match fs::read_to_string(entry.path()).await {
             Ok(c) => c,
             Err(_) => continue,
         };
