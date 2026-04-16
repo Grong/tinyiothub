@@ -130,17 +130,11 @@ pub fn build_tools_catalog_json() -> serde_json::Value {
                 "label": "设备管理",
                 "source": "core",
                 "tools": [
-                    { "id": "device_list",           "name": "device_list",           "label": "查询设备列表",     "description": "列出所有已注册的IoT设备，支持分页和过滤",           "danger": false, "enabled": true  },
-                    { "id": "device_get",             "name": "device_get",             "label": "获取设备详情",     "description": "根据设备ID获取设备完整信息",                          "danger": false, "enabled": true  },
-                    { "id": "device_create",          "name": "device_create",          "label": "创建设备",         "description": "注册一个新的IoT设备到系统",                           "danger": false, "enabled": true  },
-                    { "id": "device_update",          "name": "device_update",          "label": "更新设备",         "description": "更新已有设备的基本信息或配置",                       "danger": false, "enabled": true  },
-                    { "id": "device_delete",          "name": "device_delete",          "label": "删除设备",         "description": "永久删除一个设备及其所有数据",                        "danger": true,  "enabled": false },
-                    { "id": "device_read",            "name": "device_read",            "label": "读取设备属性",     "description": "从设备读取当前属性/遥测数据",                       "danger": false, "enabled": true  },
-                    { "id": "device_write",           "name": "device_write",           "label": "写入设备属性",     "description": "向设备写入属性值或下发控制指令",                    "danger": false, "enabled": true  },
-                    { "id": "device_batch_read",      "name": "device_batch_read",      "label": "批量读取设备",     "description": "批量读取多个设备的属性数据",                       "danger": false, "enabled": true  },
-                    { "id": "batch_command_execute",  "name": "batch_command_execute",  "label": "批量执行命令",     "description": "向多个设备批量下发控制命令",                        "danger": true,  "enabled": false },
-                    { "id": "batch_property_write",   "name": "batch_property_write",   "label": "批量写入属性",     "description": "批量写入多个设备的属性值",                          "danger": true,  "enabled": false },
-                    { "id": "device_template_list",   "name": "device_template_list",   "label": "查询设备模板",     "description": "列出系统中所有设备模板",                            "danger": false, "enabled": true  },
+                    { "id": "device_list",         "name": "device_list",         "label": "获取设备列表",       "description": "分页查询设备列表，支持按名称、类型、状态等过滤",          "danger": false, "enabled": true  },
+                    { "id": "device_profile",       "name": "device_profile",       "label": "获取设备 Profile",   "description": "获取设备完整信息，包含属性定义和当前值",                 "danger": false, "enabled": true  },
+                    { "id": "device_property_get",  "name": "device_property_get",  "label": "获取属性详情",       "description": "获取设备指定属性的定义信息（类型、单位、读写权限等）",    "danger": false, "enabled": true  },
+                    { "id": "device_create",        "name": "device_create",        "label": "根据模板创建设备",   "description": "基于设备模板创建新设备",                                "danger": false, "enabled": true  },
+                    { "id": "device_command",       "name": "device_command",       "label": "执行设备命令",       "description": "向设备下发控制命令并获取执行结果",                        "danger": false, "enabled": true  },
                 ]
             },
             {
@@ -153,19 +147,6 @@ pub fn build_tools_catalog_json() -> serde_json::Value {
                     { "id": "alarm_ack",       "name": "alarm_ack",       "label": "确认告警",      "description": "确认并关闭一条告警",                      "danger": false, "enabled": true },
                     { "id": "alarm_rule_list", "name": "alarm_rule_list", "label": "查询告警规则",  "description": "列出系统中所有告警规则",                  "danger": false, "enabled": true },
                     { "id": "alarm_stats",     "name": "alarm_stats",     "label": "告警统计",      "description": "获取告警统计摘要（总数、等级分布等）",      "danger": false, "enabled": true },
-                ]
-            },
-            {
-                "id": "workspace",
-                "label": "工作空间",
-                "source": "core",
-                "tools": [
-                    { "id": "workspace_list",    "name": "workspace_list",    "label": "查询工作空间", "description": "列出当前用户所属的所有工作空间",           "danger": false, "enabled": true },
-                    { "id": "workspace_get",    "name": "workspace_get",    "label": "获取工作空间", "description": "获取指定工作空间的详细信息",           "danger": false, "enabled": true },
-                    { "id": "workspace_create", "name": "workspace_create", "label": "创建工作空间", "description": "创建一个新的工作空间",                   "danger": false, "enabled": true },
-                    { "id": "workspace_update", "name": "workspace_update", "label": "更新工作空间", "description": "更新工作空间的名称、描述等",           "danger": false, "enabled": true },
-                    { "id": "workspace_delete", "name": "workspace_delete", "label": "删除工作空间", "description": "删除指定工作空间（不可恢复）",           "danger": true,  "enabled": false },
-                    { "id": "agent_list",       "name": "agent_list",       "label": "查询 Agent",   "description": "列出当前工作空间中的所有 Agent 实例",   "danger": false, "enabled": true },
                 ]
             },
             {
@@ -194,15 +175,6 @@ pub fn build_tools_catalog_json() -> serde_json::Value {
                     { "id": "job_list",   "name": "job_list",   "label": "查询任务列表", "description": "列出系统中所有调度任务",                    "danger": false, "enabled": true },
                     { "id": "job_get",    "name": "job_get",    "label": "获取任务详情", "description": "获取指定任务的执行状态和历史记录",          "danger": false, "enabled": true },
                     { "id": "job_cancel", "name": "job_cancel", "label": "取消任务",     "description": "取消一个正在等待或运行中的调度任务",        "danger": true,  "enabled": false },
-                ]
-            },
-            {
-                "id": "mcp",
-                "label": "MCP 工具",
-                "source": "plugin",
-                "tools": [
-                    { "id": "mcp_workspace_list", "name": "mcp_workspace_list", "label": "查询 MCP 工作空间", "description": "列出 AI Agent 可用的 MCP 工作空间资源", "danger": false, "enabled": true },
-                    { "id": "mcp_workspace_read", "name": "mcp_workspace_read", "label": "读取 MCP 资源",      "description": "读取 MCP 工作空间中的文件或配置资源",  "danger": false, "enabled": true },
                 ]
             },
         ]
@@ -359,7 +331,6 @@ fn get_embedded_template(filename: &str) -> Option<&'static str> {
 /// - ./data/agents/{workspace_id}/skills/
 async fn load_skills_prompt(workspace_id: Option<&str>, agent_id: Option<&str>) -> String {
     use crate::shared::paths::{global_skills_dir, workspace_skills_dir, agent_skills_dir, DEFAULT_WORKSPACE_ID};
-    use tokio::fs;
 
     let _ws = workspace_id.unwrap_or(DEFAULT_WORKSPACE_ID);
 
