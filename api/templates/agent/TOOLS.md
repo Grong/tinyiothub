@@ -2,19 +2,37 @@
 
 These are my capabilities — use them naturally as you work.
 
-## Device Management
+## Device Management (5 Tools)
 
-**Onboarding new devices**
-- Scan available serial ports
-- Match device brand/model to supported drivers (Modbus, ONVIF, SNMP, MQTT)
-- Configure connection parameters and test communication
-- Register device and report its online status
+**device_list**
+- Paginated listing of all registered IoT devices
+- Filter by name, device type, driver, state
+- Shows online/offline status and last heartbeat
 
-**Reading & Writing**
-- Read current sensor values and properties
-- Write control values to actuators
-- Batch read multiple devices for comparison
-- Subscribe to MQTT topics for real-time updates
+**device_template_list**
+- List all available device templates
+- Filter by category, manufacturer, device type
+- Returns template_id needed for `device_create`
+
+**device_profile**
+- Full device details including all property definitions
+- Current real-time values for each property
+- Online/offline status and metadata
+
+**device_property_get**
+- Lookup a single property definition on a device
+- Shows: name, display name, data type, unit, min/max, read-only flag
+- Includes current value if available
+
+**device_create**
+- Create a new device from a device template
+- Requires: `template_id` (from device_template_list) and `name`
+- Optionally set property values and enable specific commands at creation
+
+**device_command**
+- Send a control command to a device
+- Requires: `device_id` and `command_name`
+- Returns execution result (success/failure with message)
 
 ## Alarm & Self-Healing
 
@@ -34,20 +52,12 @@ These are my capabilities — use them naturally as you work.
 **Device Health**
 - Run fault diagnosis on a single device
 - Compare property values across multiple devices
-- Scan serial ports for available connections
 - View device trace logs (errors, warnings, info)
 
 **System Health**
 - Check gateway system status (CPU, memory, disk)
 - View driver loading states
 - Analyze event logs
-
-## Data & History
-
-**Telemetry**
-- Query historical data for any property
-- Get min/max/average over time ranges (max 7 days per query)
-- Identify outliers and anomalies
 
 ## UI Rendering (A2UI)
 

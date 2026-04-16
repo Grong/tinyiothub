@@ -794,6 +794,91 @@ impl ToolHandler for DeviceCommandHandler {
     }
 }
 
+// === Device Template List Handler ===
+pub struct DeviceTemplateListHandler;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TemplateListInput {
+    category: Option<String>,
+    manufacturer: Option<String>,
+    device_type: Option<String>,
+}
+
+#[async_trait]
+impl ToolHandler for DeviceTemplateListHandler {
+    fn name(&self) -> &str {
+        "device_template_list"
+    }
+
+    fn description(&self) -> &str {
+        "List all available device templates for creating new devices"
+    }
+
+    fn input_schema(&self) -> InputSchema {
+        let mut props = HashMap::new();
+        props.insert("category".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Filter by template category".to_string()) });
+        props.insert("manufacturer".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Filter by manufacturer".to_string()) });
+        props.insert("deviceType".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Filter by device type".to_string()) });
+        InputSchema::object(vec![], props)
+    }
+
+    async fn execute(&self, args: Value) -> Result<Value, ToolError> {
+        let input: TemplateListInput = serde_json::from_value(args)
+            .map_err(|e| ToolError::InvalidParams(e.to_string()))?;
+
+        let state = crate::api::mcp::get_app_state()
+            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
+
+        let params = crate::dto::entity::device_template::TemplateQueryParams {
+            category: input.category,
+            manufacturer: input.manufacturer,
+            device_type: input.device_type,
+            ..Default::default()
+        };
+
+        let templates = crate::dto::entity::device_template::DeviceTemplate::find_all(
+            state.database(),
+            &params,
+        )
+        .await
+        .map_err(|e| ToolError::Internal(e.to_string()))?;
+
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct TemplateSummary {
+            id: String,
+            name: String,
+            display_name: String,
+            description: Option<String>,
+            version: String,
+            category: String,
+            manufacturer: Option<String>,
+            device_type: String,
+            protocol_type: Option<String>,
+            driver_name: Option<String>,
+        }
+
+        let result: Vec<TemplateSummary> = templates
+            .into_iter()
+            .map(|t| TemplateSummary {
+                id: t.id,
+                name: t.name,
+                display_name: t.display_name,
+                description: t.description,
+                version: t.version,
+                category: t.category,
+                manufacturer: t.manufacturer,
+                device_type: t.device_type,
+                protocol_type: t.protocol_type,
+                driver_name: t.driver_name,
+            })
+            .collect();
+
+        Ok(serde_json::to_value(result).unwrap())
+    }
+}
+
 // === Create Device Handler ===
 pub struct CreateDeviceHandler;
 
