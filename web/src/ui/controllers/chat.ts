@@ -311,11 +311,25 @@ export function handleChatEvent(state: ChatState, payload: ChatEventPayload): vo
       // Pause streaming text: commit current stream as a segment
       flushStreamingToSegments(state);
       const toolName = payload.toolName || "unknown";
+      const toolArgs = payload.toolArgs || "";
+      // Deduplicate: skip if we have already seen this (name, args) pair
+      const seen = new Set(state.toolStreamOrder.map((id) => {
+        const tc = state.toolStreamById.get(id);
+        return tc ? `${tc.toolName}::${tc.toolArgs}` : "";
+      }));
+      const key = `${toolName}::${toolArgs}`;
+      if (seen.has(key)) {
+        // Duplicate — skip adding to stream state, but still process A2UI
+        if (payload.a2ui && state.onA2ui) {
+          state.onA2ui(payload.a2ui);
+        }
+        break;
+      }
       const toolCallId = `tc_${Date.now()}_${state.toolStreamOrder.length}`;
       state.toolStreamById.set(toolCallId, {
         toolCallId,
         toolName,
-        toolArgs: payload.toolArgs || "",
+        toolArgs,
         startedAt: Date.now(),
       });
       state.toolStreamOrder.push(toolCallId);
@@ -332,25 +346,24 @@ export function handleChatEvent(state: ChatState, payload: ChatEventPayload): vo
 
     case "tool_call_end":
     case "tool_result": {
-      // Attach tool results - handle both old tool_call_end format and new tool_result format
+      // Attach tool results — match results to calls by sequential order
       if (payload.toolResults) {
         for (const result of payload.toolResults) {
-          // Find matching tool call by name and most recent
-          const lastTcId = state.toolStreamOrder[state.toolStreamOrder.length - 1];
-          if (lastTcId) {
-            const tc = state.toolStreamById.get(lastTcId);
-            if (tc) {
+          for (const id of state.toolStreamOrder) {
+            const tc = state.toolStreamById.get(id);
+            if (tc && !tc.toolResult) {
               tc.toolResult = result.result;
+              break;
             }
           }
         }
       } else if (payload.state === "tool_result" && payload.toolName) {
-        // Backend sends tool_result with toolName and result directly
-        const lastTcId = state.toolStreamOrder[state.toolStreamOrder.length - 1];
-        if (lastTcId) {
-          const tc = state.toolStreamById.get(lastTcId);
-          if (tc && tc.toolName === payload.toolName) {
+        // Backend sends tool_result with toolName and result directly — match by sequential order
+        for (const id of state.toolStreamOrder) {
+          const tc = state.toolStreamById.get(id);
+          if (tc && !tc.toolResult && tc.toolName === payload.toolName) {
             tc.toolResult = (payload as unknown as { result?: string }).result || "完成";
+            break;
           }
         }
       }

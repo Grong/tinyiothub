@@ -70,13 +70,26 @@ export function renderMessageGroup(
       ? "chat-avatar--assistant"
       : "chat-avatar--tool";
 
+  // For tool groups: merge and deduplicate cards from all messages in group
+  if (isTool) {
+    const allCards = extractToolCardsFromGroup(group.messages);
+    return html`
+      <div class="chat-group ${group.role}">
+        <div class="chat-avatar ${avatarClass}">${avatarIcon}</div>
+        <div class="chat-group-messages">
+          ${allCards.length > 0
+            ? html`<div class="chat-tool-flow">${allCards.map((tc) => renderToolCallChip(tc.name, tc.args, tc.result))}</div>`
+            : group.messages.map((msg) => renderToolCard(msg))}
+        </div>
+      </div>
+    `;
+  }
+
   return html`
     <div class="chat-group ${group.role}">
       <div class="chat-avatar ${avatarClass}">${avatarIcon}</div>
       <div class="chat-group-messages">
-        ${isTool
-          ? group.messages.map((msg) => renderToolCard(msg))
-          : group.messages.map((msg) => renderAssistantMessage(msg, a2uiRenderer))}
+        ${group.messages.map((msg) => renderAssistantMessage(msg, a2uiRenderer))}
       </div>
     </div>
   `;
@@ -103,7 +116,7 @@ export function renderStreamingGroup(
   for (const id of toolOrder) {
     const tc = toolById.get(id);
     if (tc) {
-      allSegments.push(renderToolCallCard(tc.toolName, tc.toolArgs, tc.toolResult));
+      allSegments.push(renderToolCallChip(tc.toolName, tc.toolArgs, tc.toolResult));
     }
   }
 
@@ -200,7 +213,7 @@ function renderAssistantMessage(msg: ChatMessage, a2uiRenderer?: A2uiRendererEng
       ${surfaceContent}
       ${toolCards.length > 0
         ? html`<div class="chat-tool-cards">
-            ${toolCards.map((tc) => renderToolCallCard(tc.name, tc.args, tc.result))}
+            ${toolCards.map((tc) => renderToolCallChip(tc.name, tc.args, tc.result))}
           </div>`
         : nothing}
       ${msg.timestamp
@@ -211,99 +224,228 @@ function renderAssistantMessage(msg: ChatMessage, a2uiRenderer?: A2uiRendererEng
 }
 
 // ============================================================================
-// Tool Cards
+// Tool Cards — Compact Flow Style
 // ============================================================================
 
 type ToolCard = { name: string; args: string; result?: string };
 
+// Tool type icons (SVG paths) and categories
+const TOOL_ICONS: Record<string, string> = {
+  // Device operations
+  get_device: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41"/></svg>',
+  list_devices: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>',
+  get_device_properties: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h4M3 7h8M3 11h6M3 15h4"/></svg>',
+  set_device_property: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v10M3 8h10"/></svg>',
+  execute_command: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l6 4-6 4V4z"/></svg>',
+  get_device_history: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12l3-3 2 2 4-5 3 3"/><rect x="2" y="2" width="12" height="12" rx="2"/></svg>',
+  // Alarm operations
+  list_alarms: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2a5 5 0 00-5 5v3l-1.5 2h13L13 10v-3a5 5 0 00-5-5zM5 13a1 1 0 106 0M9 13a1 1 0 106 0"/></svg>',
+  acknowledge_alarm: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8l3 3 7-7"/></svg>',
+  resolve_alarm: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M5 8l2 2 4-4"/></svg>',
+  // Data/Query
+  query_data: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5l3 3"/></svg>',
+  aggregate_data: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 14V8M6 14V5M10 14V9M14 14V2"/></svg>',
+  // System
+  system_info: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/></svg>',
+  // Canvas (A2UI) — skip rendering
+  canvas: "",
+  // Default
+};
+
+const TOOL_CATEGORY_LABELS: Record<string, string> = {
+  device: "设备",
+  alarm: "告警",
+  data: "数据",
+  system: "系统",
+  default: "工具",
+};
+
+function getToolCategory(name: string): string {
+  const n = name.toLowerCase();
+  if (n.includes("device")) return "device";
+  if (n.includes("alarm")) return "alarm";
+  if (n.includes("query") || n.includes("data") || n.includes("aggregate")) return "data";
+  if (n.includes("system")) return "system";
+  return "default";
+}
+
+function getToolIcon(name: string): string {
+  return TOOL_ICONS[name] || "⚙";
+}
+
 function extractToolCards(msg: ChatMessage): ToolCard[] {
-  const cards: ToolCard[] = [];
+  // Sequential pairing: toolcall[0] ↔ toolresult[0], toolcall[1] ↔ toolresult[1], ...
+  const calls: Array<{ name: string; args: string }> = [];
+  const results: Array<string> = [];
   for (const block of msg.content) {
     if (block.type === "toolcall" && block.name) {
-      // Skip canvas tool - A2UI components are rendered separately
       if (block.name === "canvas") continue;
-      cards.push({
+      calls.push({
         name: block.name,
         args: typeof block.args === "string" ? block.args : JSON.stringify(block.args || {}, null, 2),
-        result: undefined,
       });
     }
     if (block.type === "toolresult" && block.result) {
-      if (cards.length > 0 && !cards[cards.length - 1].result) {
-        cards[cards.length - 1].result = typeof block.result === "string" ? block.result : JSON.stringify(block.result, null, 2);
-      }
+      results.push(typeof block.result === "string" ? block.result : JSON.stringify(block.result, null, 2));
     }
   }
-  // Fallback: toolName/toolCallId on message
-  if (cards.length === 0 && msg.toolName) {
-    // Skip canvas tool
-    if (msg.toolName === "canvas") return cards;
+  if (calls.length === 0 && msg.toolName && msg.toolName !== "canvas") {
     const text = msg.content.find((c) => c.type === "text" && c.text)?.text;
-    cards.push({ name: msg.toolName, args: "{}", result: text });
+    return [{ name: msg.toolName, args: "{}", result: text }];
   }
-  return cards;
+  return calls.map((call, i) => ({
+    name: call.name,
+    args: call.args,
+    result: results[i] ?? undefined,
+  }));
+}
+
+// Track expanded chips per unique key
+const expandedChips = new Map<string, boolean>();
+let _chipVersion = 0;
+let _onChipToggle: (() => void) | null = null;
+
+export function setChipToggleCallback(cb: () => void): void {
+  _onChipToggle = cb;
+}
+
+export function toggleToolChip(name: string, args: string): void {
+  const key = `${name}::${args}`;
+  expandedChips.set(key, !expandedChips.get(key));
+  _chipVersion++;
+  _onChipToggle?.();
 }
 
 function renderToolCard(msg: ChatMessage): TemplateResult {
   const cards = extractToolCards(msg);
-  return html`<div class="chat-tool-cards">${cards.map((tc) => renderToolCallCard(tc.name, tc.args, tc.result))}</div>`;
+  if (cards.length === 0) return html``;
+  return html`<div class="chat-tool-flow">${cards.map((tc) => renderToolCallChip(tc.name, tc.args, tc.result))}</div>`;
 }
 
-function renderToolCallCard(name: string, args: string, result?: string): TemplateResult {
-  // Skip canvas tool - A2UI components are rendered separately
-  if (name === "canvas") {
-    return html``;
-  }
+/// Extract and deduplicate tool cards from a group of messages
+function extractToolCardsFromGroup(messages: ChatMessage[]): ToolCard[] {
+  // Collect all tool calls and results in order across all messages
+  const calls: Array<{ name: string; args: string }> = [];
+  const results: Array<string> = [];
 
-  // Parse args for display
-  let argsSummary = "";
-  let hasArgs = false;
-  try {
-    const parsed = JSON.parse(args);
-    hasArgs = Object.keys(parsed).length > 0;
-    // Create a brief summary of args
-    const keys = Object.keys(parsed);
-    if (keys.length > 0) {
-      argsSummary = keys.slice(0, 3).map(k => `${k}=${JSON.stringify(parsed[k]).slice(0, 20)}`).join(", ");
-      if (keys.length > 3) argsSummary += "...";
+  for (const msg of messages) {
+    for (const block of msg.content) {
+      if (block.type === "toolcall" && block.name) {
+        if (block.name === "canvas") continue;
+        calls.push({
+          name: block.name,
+          args: typeof block.args === "string" ? block.args : JSON.stringify(block.args || {}, null, 2),
+        });
+      }
+      if (block.type === "toolresult" && block.result) {
+        results.push(typeof block.result === "string" ? block.result : JSON.stringify(block.result, null, 2));
+      }
     }
-  } catch {
-    hasArgs = args.trim().length > 0;
-    argsSummary = args.slice(0, 50);
-  }
-
-  // Format result - truncate if too long
-  let resultDisplay = result || "";
-  const isResultJson = result && (result.startsWith("[") || result.startsWith("{"));
-  if (result && result.length > 500) {
-    if (isResultJson) {
-      resultDisplay = result.slice(0, 500) + "... (点击展开查看全部)";
+    // Fallback: toolName on message
+    if (msg.toolName && msg.toolName !== "canvas" && calls.length === 0 && results.length === 0) {
+      const text = msg.content.find((c) => c.type === "text" && c.text)?.text;
+      return [{ name: msg.toolName, args: "{}", result: text }];
     }
   }
+
+  // Pair calls with results by order (sequential pairing)
+  return calls.map((call, i) => ({
+    name: call.name,
+    args: call.args,
+    result: results[i] ?? undefined,
+  }));
+}
+
+/// Render a single tool call as a compact inline chip (Lit-controlled expand state)
+function renderToolCallChip(name: string, args: string, result?: string): TemplateResult {
+  if (name === "canvas") return html``;
+
+  const icon = getToolIcon(name);
+  const hasResult = Boolean(result);
+  const hasArgs = tryParseArgs(args).length > 0;
+  const parsedArgs = tryParseArgs(args);
+  const argsPreview = buildArgsPreview(parsedArgs);
+
+  // Use args JSON as stable key (same tool+args = same key)
+  const chipKey = `${name}::${args}`;
+  const isExpanded = expandedChips.get(chipKey) ?? false;
 
   return html`
-    <details class="chat-tool-card">
-      <summary class="chat-tool-card__header">
-        <span class="chat-tool-card__icon">⚙</span>
-        <span class="chat-tool-card__name">${name}</span>
-        ${result
-          ? html`<span class="chat-tool-card__status chat-tool-card__status--ok">✓</span>`
-          : html`<span class="chat-tool-card__status chat-tool-card__status--running">⟳</span>`}
-        ${hasArgs ? html`<span class="chat-tool-card__args-hint">${argsSummary}</span>` : nothing}
-      </summary>
-      <div class="chat-tool-card__body">
-        ${hasArgs
-          ? html`<div class="chat-tool-card__args-section">
-              <div class="chat-tool-card__args-label">参数</div>
-              <pre class="chat-tool-card__args">${args}</pre>
-            </div>`
-          : nothing}
-        ${result
-          ? html`<div class="chat-tool-card__result">${unsafeHTML(toMarkdownHtml(resultDisplay))}</div>`
-          : html`<div class="chat-tool-card__result chat-tool-card__result--loading">等待结果...</div>`}
+    <div class="chat-tool-chip ${isExpanded ? 'expanded' : ''}">
+      <div
+        class="chat-tool-chip__summary"
+        role="button"
+        tabindex="0"
+        @click=${() => {
+          toggleToolChip(name, args);
+        }}
+        @keydown=${(e: KeyboardEvent) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            toggleToolChip(name, args);
+          }
+        }}
+      >
+        <span class="chat-tool-chip__icon">${unsafeHTML(icon)}</span>
+        <span class="chat-tool-chip__name">${name}</span>
+        ${hasArgs ? html`<span class="chat-tool-chip__preview">${argsPreview}</span>` : nothing}
+        <span class="chat-tool-chip__status ${hasResult ? 'ok' : 'pending'}">
+          ${hasResult
+            ? html`<svg viewBox="0 0 16 16" fill="currentColor" width="10" height="10"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg>`
+            : html`<svg class="spin" viewBox="0 0 16 16" fill="currentColor" width="10" height="10"><path d="M8 3a5 5 0 11-5 5h1.5A3.5 3.5 0 008 5.5 3.5 3.5 0 0111.5 5v.5a.5.5 0 01-1 0V5A5.5 5.5 0 008 0a5 5 0 000 3z"/></svg>`}
+        </span>
       </div>
-    </details>
+      ${isExpanded ? html`
+        <div class="chat-tool-chip__body">
+          ${hasArgs ? html`
+            <div class="chat-tool-chip__section">
+              <span class="chat-tool-chip__section-label">参数</span>
+              <pre class="chat-tool-chip__args">${args}</pre>
+            </div>
+          ` : nothing}
+          ${result ? html`
+            <div class="chat-tool-chip__section">
+              <span class="chat-tool-chip__section-label">结果</span>
+              <div class="chat-tool-chip__result">${unsafeHTML(toMarkdownHtml(truncateResult(result)))}</div>
+            </div>
+          ` : html`
+            <div class="chat-tool-chip__section chat-tool-chip__section--pending">
+              <span>等待执行结果...</span>
+            </div>
+          `}
+        </div>
+      ` : nothing}
+    </div>
   `;
+}
+
+function tryParseArgs(args: string): Record<string, unknown> {
+  try {
+    return JSON.parse(args);
+  } catch {
+    return {};
+  }
+}
+
+function buildArgsPreview(parsed: Record<string, unknown>): string {
+  const keys = Object.keys(parsed);
+  if (keys.length === 0) return "";
+  const preview = keys.slice(0, 2).map(k => {
+    const v = parsed[k];
+    if (typeof v === "string") return v.length > 15 ? v.slice(0, 15) + "…" : v;
+    if (typeof v === "number") return String(v);
+    return "";
+  }).filter(Boolean).join(" · ");
+  return preview || "";
+}
+
+function truncateResult(result: string, maxLen = 400): string {
+  if (result.length <= maxLen) return result;
+  const isJson = result.trimStart().startsWith("{") || result.trimStart().startsWith("[");
+  if (isJson) {
+    return result.slice(0, maxLen) + "\n…(结果已截断，点击展开查看全部)";
+  }
+  return result.slice(0, maxLen) + "…(结果已截断)";
 }
 
 // ============================================================================
