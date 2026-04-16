@@ -8,7 +8,6 @@ use axum::{
     Router,
 };
 use serde::Deserialize;
-use tokio::sync::Mutex;
 use std::path::PathBuf;
 use tokio::fs;
 
@@ -24,11 +23,6 @@ pub struct CreateSkillRequest {
 #[derive(Debug, Deserialize)]
 pub struct UpdateSkillRequest {
     pub skill_content: String,
-}
-
-// Mutex for concurrent file writes
-lazy_static::lazy_static! {
-    static ref SKILL_WRITE_MUTEX: Mutex<()> = Mutex::new(());
 }
 
 fn skill_file_path(workspace_id: &str, skill_name: &str) -> Result<PathBuf, String> {
@@ -123,9 +117,6 @@ pub async fn create_skill(
     let file_path = skill_file_path(&req.workspace_id, &req.skill_name)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    // Concurrent write guard
-    let _guard = SKILL_WRITE_MUTEX.lock().await;
-
     if file_path.exists() {
         return Err(StatusCode::CONFLICT); // File already exists
     }
@@ -162,8 +153,6 @@ pub async fn update_skill(
     let file_path = skill_file_path(workspace_id, &name)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    let _guard = SKILL_WRITE_MUTEX.lock().await;
-
     if fs::metadata(&file_path).await.is_err() {
         return Err(StatusCode::NOT_FOUND);
     }
@@ -191,8 +180,6 @@ pub async fn delete_skill(
     let workspace_id = q.workspace_id.as_deref().unwrap_or(paths::DEFAULT_WORKSPACE_ID);
     let file_path = skill_file_path(workspace_id, &name)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-
-    let _guard = SKILL_WRITE_MUTEX.lock().await;
 
     if fs::metadata(&file_path).await.is_ok() {
         fs::remove_file(&file_path).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
