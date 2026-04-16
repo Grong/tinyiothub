@@ -146,10 +146,11 @@ impl ServiceManager {
                 "default".to_string(),
                 agent_settings.system_prompts.heartbeat.clone(),
             );
-            let handle = tokio::spawn(async move {
+            let handle: tokio::task::JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                 heartbeat_service.run().await;
+                Ok(())
             });
-            self.service_handles.write().await.push(handle.map(|_| Ok(())));
+            self.service_handles.write().await.push(handle);
             info!("✅ HeartbeatService started");
         }
 
