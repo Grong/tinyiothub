@@ -2,16 +2,14 @@
 // HTTP endpoint handlers for MCP protocol (tools/list + tools/call)
 
 use axum::{
-    extract::Extension,
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::post,
     Json, Router,
 };
-use headers::HeaderMapExt;
+use sha2::Digest;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::Arc;
 use std::time::Instant;
 
 use crate::{
@@ -19,7 +17,7 @@ use crate::{
     shared::app_state::AppState,
 };
 
-use super::tool_registry::{HandlerRegistry, ToolError, ToolMetadata};
+use super::tool_registry::{ToolError, ToolMetadata};
 
 /// MCP auth context: workspace isolation for API Key authentication.
 /// Unlike JWT-based auth (which had user_id/tenant_id), API Keys are bound
@@ -34,14 +32,38 @@ pub struct McpAuthContext {
 }
 
 impl McpAuthContext {
-    /// Returns "api_key" as the actor identifier, since API Keys
-    /// have no user identity. Used for alarm acknowledgements and similar.
+    /// Returns the actor identifier based on how the context was authenticated.
+    /// - "api_key" for API Key authenticated requests
+    /// - "jwt" for JWT authenticated user requests
+    /// - "heartbeat" for system-initiated heartbeat tasks
     pub fn actor_identifier(&self) -> &'static str {
-        "api_key"
+        match self.api_key_id.as_str() {
+            "heartbeat" => "heartbeat",
+            "jwt" => "jwt",
+            _ => "api_key",
+        }
+    }
+
+    /// Create context for JWT-authenticated user requests
+    pub fn for_jwt(workspace_id: String, user_id: String) -> Self {
+        Self {
+            workspace_id,
+            api_key_id: "jwt".to_string(),
+            api_key_name: user_id,
+        }
+    }
+
+    /// Create context for heartbeat system tasks
+    pub fn for_heartbeat(workspace_id: String, agent_id: String) -> Self {
+        Self {
+            workspace_id,
+            api_key_id: "heartbeat".to_string(),
+            api_key_name: agent_id,
+        }
     }
 }
 
-/// Thread-local storage for MCP request context (workspace_id from API Key)
+// Thread-local storage for MCP request context (workspace_id from API Key)
 thread_local! {
     static MCP_CONTEXT: std::cell::RefCell<Option<McpAuthContext>> = const {
         std::cell::RefCell::new(None)
@@ -59,10 +81,10 @@ pub fn get_mcp_context() -> Option<McpAuthContext> {
 }
 
 /// RAII guard for MCP context - clears on drop
-struct McpContextGuard;
+pub(crate) struct McpContextGuard;
 
 impl McpContextGuard {
-    fn new(ctx: McpAuthContext) -> Self {
+    pub fn new(ctx: McpAuthContext) -> Self {
         set_mcp_context(ctx);
         McpContextGuard
     }
@@ -124,22 +146,18 @@ pub fn create_router() -> Router<AppState> {
 /// Returns McpAuthContext on success, ToolError on failure.
 async fn extract_api_key(
     headers: &axum::http::HeaderMap,
-    db: &crate::infrastructure::persistence::database::Database,
+    state: &AppState,
 ) -> Result<McpAuthContext, ToolError> {
     let raw_key = headers
         .get("X-API-Key")
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| ToolError::Unauthorized("Missing X-API-Key header".into()))?;
 
-    // Extract prefix from raw key (format: sk_live_<prefix>)
-    let prefix = if raw_key.len() > 8 {
-        &raw_key[..16] // prefix (8 chars) + 8 chars = 16 chars
-    } else {
-        raw_key
-    };
+    // Hash the incoming key for secure lookup
+    let key_hash = format!("{:x}", sha2::Sha256::digest(raw_key.as_bytes()));
 
-    // Look up by prefix
-    let api_key = crate::dto::entity::tenant::ApiKey::find_by_prefix(db, prefix)
+    // Look up by hash (secure, no prefix collision possible)
+    let api_key = state.tenant_service.find_api_key_by_hash(&key_hash)
         .await
         .map_err(|e| ToolError::Internal(format!("Database error: {}", e)))?
         .ok_or_else(|| ToolError::Unauthorized("Invalid API key".into()))?;
@@ -172,15 +190,16 @@ async fn extract_api_key(
 
 /// Shared helper: extract API key and set MCP context with RAII guard.
 /// All three handlers use this, eliminating the previous code duplication.
+#[allow(dead_code)]
 async fn with_mcp_context<F, R>(
     headers: axum::http::HeaderMap,
-    db: &crate::infrastructure::persistence::database::Database,
+    state: &AppState,
     f: F,
 ) -> R
 where
     F: FnOnce(McpAuthContext) -> R,
 {
-    let ctx = extract_api_key(&headers, db)
+    let ctx = extract_api_key(&headers, state)
         .await
         .expect("Caller handles errors");
     let _guard = McpContextGuard::new(ctx.clone());
@@ -202,8 +221,7 @@ async fn handle_mcp_request(
         }
     };
 
-    let db = state.database();
-    let ctx = match extract_api_key(&headers, db).await {
+    let ctx = match extract_api_key(&headers, &state).await {
         Ok(c) => c,
         Err(e) => {
             return ApiResponseBuilder::error_with_code::<serde_json::Value>(401, e.to_string())
@@ -297,6 +315,7 @@ async fn handle_mcp_request(
                             ToolError::InvalidParams(_) => 400,
                             ToolError::NotImplemented(_) => 501,
                             ToolError::Unauthorized(_) => 401,
+                            ToolError::Forbidden(_) => 403,
                             ToolError::NotFound(_) => 404,
                             ToolError::RateLimited(_) => 429,
                             ToolError::ApiError(_, _) => 500,
@@ -341,8 +360,7 @@ async fn handle_tools_list(headers: axum::http::HeaderMap) -> Response {
         }
     };
 
-    let db = state.database();
-    let ctx = match extract_api_key(&headers, db).await {
+    let ctx = match extract_api_key(&headers, &state).await {
         Ok(c) => c,
         Err(e) => {
             return ApiResponseBuilder::error_with_code::<serde_json::Value>(401, e.to_string())
@@ -381,8 +399,7 @@ async fn handle_tools_call(
         }
     };
 
-    let db = state.database();
-    let ctx = match extract_api_key(&headers, db).await {
+    let ctx = match extract_api_key(&headers, &state).await {
         Ok(c) => c,
         Err(e) => {
             return ApiResponseBuilder::error_with_code::<serde_json::Value>(401, e.to_string())
@@ -439,6 +456,7 @@ async fn handle_tools_call(
                     ToolError::InvalidParams(_) => 400,
                     ToolError::NotImplemented(_) => 501,
                     ToolError::Unauthorized(_) => 401,
+                    ToolError::Forbidden(_) => 403,
                     ToolError::NotFound(_) => 404,
                     ToolError::RateLimited(_) => 429,
                     ToolError::ApiError(code, _) => *code,

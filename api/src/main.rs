@@ -1,9 +1,3 @@
-// 禁用开发阶段的常见警告
-#![allow(dead_code)]
-#![allow(unused_imports)]
-#![allow(unused_variables)]
-#![allow(unused_mut)]
-
 use axum::Router;
 use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
@@ -14,18 +8,10 @@ use tracing_appender::{
 };
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use crate::{
+use tinyiothub::{
     application::{DataContext, ServiceManager},
     infrastructure::config,
 };
-
-mod api;
-mod application;
-mod domain; // 恢复域模块
-mod dto;
-mod infrastructure;
-mod shared;
-mod utils;
 
 #[cfg(feature = "harmonyos")]
 #[tokio::main(flavor = "current_thread")]
@@ -68,12 +54,6 @@ async fn main_impl() -> std::io::Result<()> {
         std::process::exit(1);
     }
 
-    // Set default log level if not specified
-    if std::env::var_os("RUST_LOG").is_none() {
-        let log_level = config::get().logging.level.clone();
-        unsafe { std::env::set_var("RUST_LOG", log_level); }
-    }
-
     // Initialize logging system
     initialize_logging().await?;
 
@@ -85,20 +65,20 @@ async fn main_impl() -> std::io::Result<()> {
     info!("CPUs: {}", num_cpus::get());
 
     // === 2. 初始化数据库 ===
-    use crate::infrastructure::persistence::DatabaseConfig;
+    use tinyiothub::infrastructure::persistence::DatabaseConfig;
     let db_config = DatabaseConfig::from_settings(config::get());
     let data_context = DataContext::new(db_config).await.expect("Failed to initialize DataContext");
     info!("✅ DataContext initialized");
 
     // === 3. 创建 AppState（包含所有核心组件）===
-    let mut app_state = crate::shared::app_state::AppState::new(data_context);
+    let mut app_state = tinyiothub::shared::app_state::AppState::new(data_context);
     info!("✅ AppState created");
 
     // === 4. 自动加载动态驱动 ===
     if config::get().device.drivers.auto_load_on_startup {
         let drivers_dir = &config::get().device.drivers.dynamic_drivers_dir;
         info!("🔌 Auto-loading drivers from: {}", drivers_dir);
-        match crate::domain::device::driver::dynamic::auto_load_drivers(drivers_dir) {
+        match tinyiothub::domain::device::driver::dynamic::auto_load_drivers(drivers_dir) {
             Ok(loaded) => {
                 if loaded.is_empty() {
                     info!("No drivers found in directory");
@@ -123,7 +103,7 @@ async fn main_impl() -> std::io::Result<()> {
     // === 5. 确保默认管理员用户存在 ===
     #[cfg(not(feature = "harmonyos"))]
     {
-        if let Err(e) = crate::api::system::ensure_default_admin_user(&app_state).await {
+        if let Err(e) = tinyiothub::api::system::ensure_default_admin_user(&app_state).await {
             error!("Failed to ensure default admin user: {}", e);
         }
     }
@@ -131,7 +111,7 @@ async fn main_impl() -> std::io::Result<()> {
     // === 6. 设置优雅关闭处理 ===
     #[cfg(not(feature = "harmonyos"))]
     let shutdown_handle = tokio::spawn(async move {
-        crate::application::service_manager::setup_graceful_shutdown().await;
+        tinyiothub::application::service_manager::setup_graceful_shutdown().await;
     });
 
     // === 7. 创建并启动 Web 服务器 ===
@@ -142,13 +122,13 @@ async fn main_impl() -> std::io::Result<()> {
         use tower_http::services::ServeDir;
         // Initialize MCP tools with AppState for harmonyos
         use std::sync::Arc;
-        crate::api::mcp::init_app_state(Arc::new(app_state.clone()));
-        crate::api::mcp::register_tools().await;
+        tinyiothub::api::mcp::init_app_state(Arc::new(app_state.clone()));
+        tinyiothub::api::mcp::register_tools().await;
         // Refresh agent tools after MCP registration
-        if let Err(e) = app_state.tinyiothub_agent.refresh_tools().await {
+        if let Err(e) = app_state.agent_runtime.refresh_tools().await {
             tracing::error!("Failed to refresh agent tools: {}", e);
         }
-        let api_router = crate::api::create_router();
+        let api_router = tinyiothub::api::create_router();
         Router::new()
             .nest("/api", api_router)
             .nest_service("/", ServeDir::new("wwwroot"))
@@ -254,7 +234,7 @@ async fn initialize_logging() -> std::io::Result<()> {
 }
 
 /// Create the main application router
-async fn create_app_router(app_state: crate::shared::app_state::AppState) -> Router {
+async fn create_app_router(app_state: tinyiothub::shared::app_state::AppState) -> Router {
     use tower_http::cors::{AllowOrigin, CorsLayer};
 
     tracing::info!("Creating CORS layer...");
@@ -262,20 +242,20 @@ async fn create_app_router(app_state: crate::shared::app_state::AppState) -> Rou
     // Initialize MCP tools with AppState
     tracing::info!("Initializing MCP tools...");
     use std::sync::Arc;
-    crate::api::mcp::init_app_state(Arc::new(app_state.clone()));
-    crate::api::mcp::register_tools().await;
+    tinyiothub::api::mcp::init_app_state(Arc::new(app_state.clone()));
+    tinyiothub::api::mcp::register_tools().await;
     tracing::info!("MCP tools initialized");
 
     // Refresh agent tools after MCP registration
-    if let Err(e) = app_state.tinyiothub_agent.refresh_tools().await {
+    if let Err(e) = app_state.agent_runtime.refresh_tools().await {
         tracing::error!("Failed to refresh agent tools: {}", e);
     }
 
     // Initialize self-healing state
     let db = app_state.database.clone();
-    let _self_healing_state = crate::api::self_healing::init_self_healing_state(db);
+    let _self_healing_state = tinyiothub::api::self_healing::init_self_healing_state(db);
     // 创建CORS层 - 使用配置中的origins，支持credentials
-    let config = crate::infrastructure::config::get();
+    let config = tinyiothub::infrastructure::config::get();
     let cors_origins = &config.server.cors_origins;
 
     let allowed_headers = [
@@ -310,7 +290,7 @@ async fn create_app_router(app_state: crate::shared::app_state::AppState) -> Rou
         .allow_headers(allowed_headers);
 
     tracing::info!("Creating API router...");
-    let api_router = crate::api::create_router();
+    let api_router = tinyiothub::api::create_router();
 
     tracing::info!("Building main router...");
 
@@ -319,7 +299,6 @@ async fn create_app_router(app_state: crate::shared::app_state::AppState) -> Rou
         http::{StatusCode, Uri},
         response::{IntoResponse, Response},
     };
-    use tower_http::services::{ServeDir, ServeFile};
 
     tracing::info!("Serving static files from wwwroot/ (SPA mode)");
 

@@ -1,12 +1,6 @@
 // TinyIoTHub Library
 // This enables testing of internal modules
 
-// 禁用开发阶段的常见警告，保持编译输出清晰
-#![allow(dead_code)]
-#![allow(unused_imports)]
-#![allow(unused_variables)]
-#![allow(unused_mut)]
-
 pub mod api;
 pub mod application;
 pub mod domain;

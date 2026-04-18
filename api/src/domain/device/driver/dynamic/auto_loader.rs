@@ -2,9 +2,21 @@
 
 use std::path::Path;
 
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::shared::error::Error;
+
+/// 根据当前平台返回对应的动态库扩展名
+fn platform_library_extension() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "dll"
+    } else if cfg!(target_os = "linux") {
+        "so"
+    } else {
+        // macOS and others
+        "dylib"
+    }
+}
 
 /// 自动加载指定目录下的所有动态驱动
 pub fn auto_load_drivers<P: AsRef<Path>>(dir: P) -> Result<Vec<String>, Error> {
@@ -36,10 +48,12 @@ pub fn auto_load_drivers<P: AsRef<Path>>(dir: P) -> Result<Vec<String>, Error> {
 
         let path = entry.path();
 
-        // 只加载 .dll (Windows) 或 .so (Linux) 文件
+        // 只加载当前平台支持的动态库格式
         if let Some(ext) = path.extension() {
             let ext_str = ext.to_string_lossy();
-            if ext_str != "dll" && ext_str != "so" && ext_str != "dylib" {
+            let platform_ext = platform_library_extension();
+            if ext_str != platform_ext {
+                debug!("Skipping {} (expected .{})", path.display(), platform_ext);
                 continue;
             }
         } else {

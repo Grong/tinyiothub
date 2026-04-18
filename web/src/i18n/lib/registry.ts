@@ -1,4 +1,4 @@
-import type { Locale, TranslationMap } from "./types.ts";
+import type { Locale, TranslationMap } from "./types";
 
 type LazyLocale = Exclude<Locale, "en">;
 type LocaleModule = Record<string, TranslationMap>;
@@ -15,19 +15,19 @@ const LAZY_LOCALES: readonly LazyLocale[] = ["zh-CN", "zh-TW", "pt-BR", "de"];
 const LAZY_LOCALE_REGISTRY: Record<LazyLocale, LazyLocaleRegistration> = {
   "zh-CN": {
     exportName: "zh_CN",
-    loader: () => import("../locales/zh-CN.ts"),
+    loader: () => import("../locales/zh-CN"),
   },
   "zh-TW": {
     exportName: "zh_TW",
-    loader: () => import("../locales/zh-TW.ts"),
+    loader: () => import("../locales/zh-TW"),
   },
   "pt-BR": {
     exportName: "pt_BR",
-    loader: () => import("../locales/pt-BR.ts"),
+    loader: () => import("../locales/pt-BR"),
   },
   de: {
     exportName: "de",
-    loader: () => import("../locales/de.ts"),
+    loader: () => import("../locales/de"),
   },
 };
 

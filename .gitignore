@@ -40,6 +40,10 @@ logs/*.log
 # OMC tool state
 .omc/
 
+# Claude Code artifacts
+.claude/
+scheduled_tasks.lock
+
 # 其他
 /web-dify
 license

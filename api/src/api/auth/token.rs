@@ -3,11 +3,12 @@
 
 use axum::{extract::State, response::Json, routing::post, Router};
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 
 use crate::{
     api::AppState,
     dto::response::ApiResponse,
-    shared::security::jwt::{generate_token, validate_jwt, Claims},
+    shared::security::jwt::{generate_token, validate_jwt},
 };
 
 pub fn create_router() -> Router<AppState> {
@@ -84,12 +85,15 @@ async fn logout(
             .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
             .unwrap_or_default();
 
-        // 使用参数化查询
+        // Store hashed token in blacklist
+        use sha2::Sha256;
+        let token_hash = format!("{:x}", Sha256::digest(token.as_bytes()));
+
         let result = sqlx::query(
-            "INSERT INTO token_blacklist (id, token, expires_at, created_at) VALUES (?, ?, ?, ?)",
+            "INSERT INTO token_blacklist (id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?)",
         )
         .bind(&id)
-        .bind(&token)
+        .bind(&token_hash)
         .bind(&expires_at)
         .bind(&now)
         .execute(db.pool())

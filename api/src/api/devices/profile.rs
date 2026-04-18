@@ -11,7 +11,7 @@ use crate::{
         value_objects::EventType,
     },
     dto::{
-        entity::{device::Device, device_command::DeviceCommand, device_property::DeviceProperty},
+        entity::{device::Device, device_property::DeviceProperty},
         response::{builder::ApiResponseBuilder, ApiResponse, DeviceCommandResponse},
     },
     shared::{app_state::AppState, security::jwt::Claims},
@@ -83,15 +83,22 @@ pub struct DeviceProfileOverview {
 }
 
 pub fn create_router() -> Router<AppState> {
-    Router::new().route("/:id/profile", get(get_device_profile))
+    Router::new().route("/{id}/profile", get(get_device_profile))
 }
 
 /// 获取设备完整配置文件
 async fn get_device_profile(
     State(state): State<AppState>,
     Path(device_id): Path<String>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<DeviceProfile>> {
+    if let Err(e) = super::verify_device_tenant(&state, &device_id, &claims.tenant_id).await {
+        return match e {
+            crate::shared::error::Error::NotFound => ApiResponseBuilder::error("设备不存在"),
+            _ => ApiResponseBuilder::error("查询设备失败"),
+        };
+    }
+
     tracing::debug!("Getting complete profile for device: {}", device_id);
 
     // 从DataContext缓存获取设备信息（包含实时数据）
@@ -99,10 +106,10 @@ async fn get_device_profile(
         Some(device) => device,
         None => {
             // 如果内存中没有，尝试从数据库加载并加入缓存
-            match Device::find_by_id(state.database(), &device_id).await {
+            match state.device_service.get_device_by_id(&device_id).await {
                 Ok(Some(mut device)) => {
                     // 加载设备属性和指令
-                    match DeviceProperty::find_by_device_id(state.database(), &device_id).await {
+                    match state.device_service.get_device_properties(&device_id).await {
                         Ok(properties) => device.properties = Some(properties),
                         Err(e) => {
                             tracing::warn!(
@@ -114,7 +121,7 @@ async fn get_device_profile(
                         }
                     }
 
-                    match DeviceCommand::find_by_device_id(state.database(), &device_id).await {
+                    match state.device_service.get_device_commands(&device_id).await {
                         Ok(commands) => device.commands = Some(commands),
                         Err(e) => {
                             tracing::warn!(
@@ -146,8 +153,9 @@ async fn get_device_profile(
     };
 
     // 加载设备标签
-    if let Err(e) = device.load_tags(state.database()).await {
-        tracing::warn!("Failed to load tags for device {}: {}", device_id, e);
+    match state.tag_service.find_tags_by_target_id(&device_id, &claims.tenant_id).await {
+        Ok(tags) => device.tags = Some(tags),
+        Err(e) => tracing::warn!("Failed to load tags for device {}: {}", device_id, e),
     }
 
     // 从缓存的设备对象中获取属性和指令（已包含实时数据）

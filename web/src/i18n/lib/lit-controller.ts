@@ -1,5 +1,5 @@
 import type { ReactiveController, ReactiveControllerHost } from "lit";
-import { i18n } from "./translate.ts";
+import { i18n } from "./translate";
 
 export class I18nController implements ReactiveController {
   private host: ReactiveControllerHost;

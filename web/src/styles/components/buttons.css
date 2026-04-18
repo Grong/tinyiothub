@@ -1,0 +1,302 @@
+/* ===========================================
+   Theme Toggle
+   =========================================== */
+
+.theme-toggle {
+  --theme-item: 28px;
+  --theme-gap: 2px;
+  --theme-pad: 4px;
+  position: relative;
+}
+
+.theme-toggle__track {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, var(--theme-item));
+  gap: var(--theme-gap);
+  padding: var(--theme-pad);
+  border-radius: var(--radius-full);
+  border: none;
+  background: var(--secondary);
+}
+
+.theme-toggle__indicator {
+  position: absolute;
+  top: 50%;
+  left: var(--theme-pad);
+  width: var(--theme-item);
+  height: var(--theme-item);
+  border-radius: var(--radius-full);
+  transform: translateY(-50%)
+    translateX(calc(var(--theme-index, 0) * (var(--theme-item) + var(--theme-gap))));
+  background: var(--accent);
+  transition: transform var(--duration-normal) var(--ease-out);
+  z-index: 0;
+}
+
+.theme-toggle__button {
+  height: var(--theme-item);
+  width: var(--theme-item);
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  position: relative;
+  z-index: 1;
+  transition: color var(--duration-fast) ease;
+}
+
+.theme-toggle__button:hover {
+  color: var(--text);
+}
+
+.theme-toggle__button.active {
+  color: var(--accent-foreground);
+}
+
+.theme-toggle__button.active .theme-icon {
+  stroke: var(--accent-foreground);
+}
+
+.theme-icon {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.5px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ===========================================
+   Buttons - Tactile with personality (BORDERLESS DESIGN)
+   =========================================== */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  border: none;
+  background: var(--bg-muted);
+  padding: 9px var(--space-4);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+  box-shadow: var(--shadow-sm);
+}
+
+.btn:hover {
+  background: var(--bg-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.btn:active {
+  background: var(--secondary);
+  transform: translateY(0);
+  box-shadow: var(--shadow-sm);
+}
+
+.btn svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.5px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex-shrink: 0;
+}
+
+.btn--icon {
+  padding: var(--space-2);
+  width: 36px;
+  height: 36px;
+}
+
+.btn.primary {
+  background: var(--accent-gradient);
+  color: var(--primary-foreground);
+  box-shadow: 0 2px 10px var(--accent-glow);
+  border: none;
+}
+
+.btn.primary:hover {
+  background: var(--accent-gradient-soft);
+  box-shadow: 0 4px 16px var(--accent-glow-strong);
+  transform: translateY(-1px);
+}
+
+/* Keyboard shortcut badge (shadcn style) */
+.btn-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  padding: 2px 5px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  border-radius: var(--radius-sm);
+  background: var(--glass-chat-abort-bg);
+  color: inherit;
+  opacity: 0.8;
+}
+
+.btn.primary .btn-kbd {
+  background: var(--glass-chat-abort-bg);
+}
+
+:root[data-theme="light"] .btn-kbd {
+  background: var(--glass-chat-abort-bg);
+}
+
+:root[data-theme="light"] .btn.primary .btn-kbd {
+  background: var(--glass-chat-abort-bg);
+}
+
+.btn.active {
+  background: var(--accent-subtle);
+  color: var(--accent);
+  box-shadow: 0 2px 4px var(--accent-subtle);
+}
+
+.btn.danger {
+  background: var(--danger-subtle);
+  color: var(--danger);
+  box-shadow: 0 1px 3px var(--danger-subtle);
+}
+
+.btn.danger:hover {
+  background: var(--danger-line-15);
+  box-shadow: 0 2px 8px var(--danger-subtle);
+  transform: translateY(-1px);
+}
+
+.btn-success {
+  background: var(--ok-subtle);
+  color: var(--ok);
+  box-shadow: 0 1px 3px var(--ok-subtle);
+}
+
+.btn-success:hover {
+  background: var(--ok-fill-10);
+  box-shadow: 0 2px 8px var(--ok-subtle);
+  transform: translateY(-1px);
+}
+
+.btn-warning {
+  background: var(--warn-subtle);
+  color: var(--warn);
+  box-shadow: 0 1px 3px var(--warn-subtle);
+}
+
+.btn-warning:hover {
+  background: var(--warn-subtle);
+  box-shadow: 0 2px 8px var(--warn-subtle);
+  transform: translateY(-1px);
+}
+
+.btn--sm {
+  padding: 6px var(--space-2);
+  font-size: 12px;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ===========================================
+   Toggle Switch (Borderless Design)
+   =========================================== */
+
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 48px;
+  height: 24px;
+  cursor: pointer;
+}
+
+/* 大号开关 - 更明显 */
+.toggle-switch-large {
+  width: 56px;
+  height: 28px;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--muted);
+  border-radius: var(--radius-full);
+  transition: all var(--duration-slow) ease;
+  box-shadow: var(--shadow-sm);
+}
+
+.toggle-slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: var(--text-inverse);
+  border-radius: 50%;
+  transition: all var(--duration-slow) ease;
+  box-shadow: var(--shadow-sm);
+}
+
+/* 大号开关的滑块 */
+.toggle-switch-large .toggle-slider:before {
+  height: 22px;
+  width: 22px;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background: var(--ok);
+  box-shadow: 0 2px 8px var(--ok-glow-sm);
+}
+
+.toggle-switch input:checked + .toggle-slider:before {
+  transform: translateX(24px);
+}
+
+/* 大号开关的选中状态 */
+.toggle-switch-large input:checked + .toggle-slider:before {
+  transform: translateX(28px);
+}
+
+.toggle-switch:hover .toggle-slider {
+  box-shadow: var(--shadow-md);
+}
+
+.toggle-switch input:checked:hover + .toggle-slider {
+  box-shadow: 0 3px 10px var(--ok-glow-sm);
+}
+
+.toggle-switch input:disabled + .toggle-slider {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+

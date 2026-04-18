@@ -81,7 +81,7 @@
     background 150ms ease-out,
     color 150ms ease-out,
     border-color 150ms ease-out;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-md);
 }
 
 .chat-focus-exit:hover {
@@ -191,7 +191,7 @@
   border-radius: 50%;
   border: none;
   background: rgba(0, 0, 0, 0.7);
-  color: #fff;
+  color: var(--text-inverse);
   font-size: 12px;
   line-height: 1;
   cursor: pointer;
@@ -207,7 +207,7 @@
 }
 
 .chat-attachment__remove:hover {
-  background: rgba(220, 38, 38, 0.9);
+  background: var(--danger-muted);
 }
 
 .chat-attachment__remove svg {
@@ -226,7 +226,7 @@
 
 :root[data-theme="light"] .chat-attachment {
   border-color: rgba(16, 24, 40, 0.15);
-  background: #fff;
+  background: var(--text-inverse);
 }
 
 :root[data-theme="light"] .chat-attachment__remove {
@@ -374,28 +374,28 @@
 
 /* Light theme icon button overrides */
 :root[data-theme="light"] .btn--icon {
-  background: #ffffff;
+  background: var(--text-inverse);
   border-color: var(--border);
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.05);
+  box-shadow: var(--shadow-sm);
   color: var(--muted);
 }
 
 :root[data-theme="light"] .btn--icon:hover {
-  background: #ffffff;
+  background: var(--text-inverse);
   border-color: var(--border-strong);
   color: var(--text);
 }
 
 /* Light theme icon button overrides */
 :root[data-theme="light"] .btn--icon {
-  background: #ffffff;
+  background: var(--text-inverse);
   border-color: var(--border);
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.05);
+  box-shadow: var(--shadow-sm);
   color: var(--muted);
 }
 
 :root[data-theme="light"] .btn--icon:hover {
-  background: #ffffff;
+  background: var(--text-inverse);
   border-color: var(--border-strong);
   color: var(--text);
 }

@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 
 /// MCP tool execution errors
@@ -14,8 +14,10 @@ pub enum ToolError {
     NotImplemented(String),
     /// Invalid parameters
     InvalidParams(String),
-    /// Unauthorized access
+    /// Unauthorized access (authentication failed)
     Unauthorized(String),
+    /// Forbidden access (authenticated but not authorized for this resource)
+    Forbidden(String),
     /// Resource not found
     NotFound(String),
     /// Rate limited
@@ -32,6 +34,7 @@ impl std::fmt::Display for ToolError {
             ToolError::NotImplemented(msg) => write!(f, "Not implemented: {}", msg),
             ToolError::InvalidParams(msg) => write!(f, "Invalid params: {}", msg),
             ToolError::Unauthorized(msg) => write!(f, "Unauthorized: {}", msg),
+            ToolError::Forbidden(msg) => write!(f, "Forbidden: {}", msg),
             ToolError::NotFound(msg) => write!(f, "Not found: {}", msg),
             ToolError::RateLimited(msg) => write!(f, "Rate limited: {}", msg),
             ToolError::ApiError(code, msg) => write!(f, "API error {}: {}", code, msg),

@@ -1,10 +1,15 @@
 # TODOS
 
+> **最新完整 TODO 清单已迁移至:** `docs/superpowers/plans/2026-04-14-todo-audit-and-cleanup-plan.md`
+> 本文档保留 Edge Intelligence Agent 历史记录，新项目 TODO 请查阅上方计划。
+
+---
+
 > Organized by skill/component, then priority (P0 at top through P4, then Completed at bottom)
 
 ## Edge Intelligence Agent
 
-**Completed:
+**Completed:**
 
 - **Correct tool count in plan doc:** The plan doc already reflected 28 tools (was updated in prior session). Log message in `mod.rs` incorrectly said "13 device tools" — fixed to "12".
   **Completed:** (fix: change 13 to 12 in mod.rs:93)

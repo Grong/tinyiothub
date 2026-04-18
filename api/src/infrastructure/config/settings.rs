@@ -56,21 +56,117 @@ pub struct ApplicationSettings {
     #[serde(default)]
     pub redis: Option<RedisConfig>,
     #[serde(default)]
-    pub agent: Option<GatewayConfig>,
+    pub agent: AgentSettings,
     /// MiniMax GLM provider for built-in Agent
     #[serde(default)]
     pub minimax: Option<MinimaxConfig>,
 }
 
-/// Gateway (ZeroClaw) Agent configuration
+/// System prompts configuration
+///
+/// Prompt content is now loaded from workspace files (IDENTITY.md, SOUL.md, etc.)
+/// This config provides fallback defaults and runtime context injection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct GatewayConfig {
-    pub url: String,
+pub struct SystemPromptsConfig {
+    /// Workspace directory containing prompt files (IDENTITY.md, SOUL.md, etc.)
+    /// Falls back to embedded templates if directory is empty or missing
+    #[serde(default = "default_system_prompts_workspace_dir")]
+    pub workspace_dir: String,
+    /// Default persona for all agents (can be overridden per-agent via systemPrompt)
+    /// Used as fallback when workspace has no USER.md with persona content
+    #[serde(default = "default_system_prompt_persona")]
+    pub persona: String,
+    /// Additional context injected after persona (device state summary, etc.)
     #[serde(default)]
-    pub ws_url: Option<String>,
+    pub context: String,
+    /// Heartbeat system prompt — injected before each heartbeat task
+    #[serde(default = "default_system_prompt_heartbeat")]
+    pub heartbeat: String,
+}
+
+impl Default for SystemPromptsConfig {
+    fn default() -> Self {
+        Self {
+            workspace_dir: default_system_prompts_workspace_dir(),
+            persona: default_system_prompt_persona(),
+            context: String::new(),
+            heartbeat: default_system_prompt_heartbeat(),
+        }
+    }
+}
+
+fn default_system_prompts_workspace_dir() -> String {
+    "./data/agents".to_string()
+}
+
+fn default_system_prompt_persona() -> String {
+    "你是一个乐于助人的 IoT 助手。".to_string()
+}
+
+fn default_system_prompt_heartbeat() -> String {
+    r#"你是一个IoT边缘网关的维护助手。执行巡检任务时：
+1. 只返回结构化的执行结果，不返回多余的分析过程
+2. 如果任务无法完成，说明原因即可，不要编造数据
+3. 重点关注设备的离线状态、告警堆积、数据异常"#
+        .to_string()
+}
+
+/// Agent runtime configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentSettings {
+    #[serde(default = "default_agent_memory_backend")]
+    pub memory_backend: String,
+    #[serde(default = "default_agent_observer_backend")]
+    pub observer_backend: String,
+    #[serde(default = "default_true")]
+    pub heartbeat_enabled: bool,
+    #[serde(default = "default_heartbeat_interval")]
+    pub heartbeat_interval_minutes: u32,
+    #[serde(default = "default_max_messages_before_compact")]
+    pub max_messages_before_compact: usize,
+    #[serde(default = "default_true")]
+    pub enable_compaction: bool,
+    #[serde(default = "default_agent_workspace_dir")]
+    pub workspace_dir: String,
     #[serde(default)]
-    pub gateway_token: Option<String>,
+    pub system_prompts: SystemPromptsConfig,
+}
+
+impl Default for AgentSettings {
+    fn default() -> Self {
+        Self {
+            memory_backend: default_agent_memory_backend(),
+            observer_backend: default_agent_observer_backend(),
+            heartbeat_enabled: true,
+            heartbeat_interval_minutes: default_heartbeat_interval(),
+            max_messages_before_compact: default_max_messages_before_compact(),
+            enable_compaction: true,
+            workspace_dir: default_agent_workspace_dir(),
+            system_prompts: SystemPromptsConfig::default(),
+        }
+    }
+}
+
+fn default_agent_memory_backend() -> String {
+    "sqlite".to_string()
+}
+
+fn default_agent_observer_backend() -> String {
+    "log".to_string()
+}
+
+fn default_heartbeat_interval() -> u32 {
+    30
+}
+
+fn default_max_messages_before_compact() -> usize {
+    50
+}
+
+fn default_agent_workspace_dir() -> String {
+    "./data/agents/default".to_string()
 }
 
 /// MiniMax GLM provider configuration
@@ -521,10 +617,12 @@ fn default_sms_provider() -> String {
     "aliyun".to_string()
 }
 
+#[allow(dead_code)]
 fn default_sms_rate_limit() -> u32 {
     5
 }
 
+#[allow(dead_code)]
 fn default_sms_expire() -> u64 {
     300
 }

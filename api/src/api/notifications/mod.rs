@@ -19,7 +19,7 @@ pub fn create_router() -> Router<AppState> {
         // Notification rules management
         .route("/rules", get(get_notification_rules).post(create_notification_rule))
         .route(
-            "/rules/:rule_id",
+            "/rules/{rule_id}",
             get(get_notification_rule)
                 .put(update_notification_rule)
                 .delete(delete_notification_rule),

@@ -86,12 +86,48 @@ const CATEGORY_LABELS: Record<string, string> = {
   others: "其他",
 };
 
-const CATEGORY_ICONS: Record<string, string> = {
-  sensors: "🌡️",
-  controllers: "🎛️",
-  cameras: "📷",
-  gateways: "🌐",
-  others: "📦",
+const CATEGORY_ICONS: Record<string, ReturnType<typeof html>> = {
+  sensors: html`
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+      <path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z" />
+    </svg>
+  `,
+  controllers: html`
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+      <line x1="4" x2="4" y1="21" y2="14" />
+      <line x1="4" x2="4" y1="10" y2="3" />
+      <line x1="12" x2="12" y1="21" y2="12" />
+      <line x1="12" x2="12" y1="8" y2="3" />
+      <line x1="20" x2="20" y1="21" y2="16" />
+      <line x1="20" x2="20" y1="12" y2="3" />
+      <line x1="1" x2="7" y1="14" y2="14" />
+      <line x1="9" x2="15" y1="8" y2="8" />
+      <line x1="17" x2="23" y1="16" y2="16" />
+    </svg>
+  `,
+  cameras: html`
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+      <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" />
+      <circle cx="12" cy="13" r="3" />
+    </svg>
+  `,
+  gateways: html`
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+      <rect x="3" y="3" width="18" height="12" rx="2" />
+      <line x1="8" x2="8" y1="21" y2="15" />
+      <line x1="16" x2="16" y1="21" y2="15" />
+      <line x1="12" x2="12" y1="21" y2="15" />
+      <circle cx="8" cy="9" r="1" fill="currentColor" />
+      <circle cx="16" cy="9" r="1" fill="currentColor" />
+    </svg>
+  `,
+  others: html`
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+      <path d="m7.5 4.27 9 5.15" />
+      <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l2.53-1.45" />
+      <line x1="1" x2="23" y1="1" y2="23" />
+    </svg>
+  `,
 };
 
 type ViewMode = "table" | "grid";
@@ -170,6 +206,50 @@ export class DevicesView extends SignalWatcher(LitElement) {
   private historyDeviceId = "";
   private _boundHandleDeviceUpdated: EventListener = () => {};
 
+  // Focus management for modals
+  private modalLastFocus?: Element;
+  private historyLastFocus?: Element;
+  private wizardLastFocus?: Element;
+
+  private handleModalKeydown(e: KeyboardEvent, closeFn: () => void) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeFn();
+      return;
+    }
+    if (e.key !== "Tab") return;
+    const container = e.currentTarget as HTMLElement;
+    if (!container) return;
+    const focusables = Array.from(
+      container.querySelectorAll<HTMLElement>(
+        'a[href], button, textarea, input:not([type="hidden"]), select, [tabindex]:not([tabindex="-1"])'
+      )
+    ).filter(el => !el.hasAttribute("disabled") && (el as HTMLElement).offsetParent !== null);
+    if (focusables.length === 0) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (e.shiftKey) {
+      if (document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      }
+    } else {
+      if (document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  }
+
+  private focusFirst(container: HTMLElement, delay = 0) {
+    setTimeout(() => {
+      const el = container.querySelector<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      el?.focus();
+    }, delay);
+  }
+
   createRenderRoot() {
     return this;
   }
@@ -184,9 +264,11 @@ export class DevicesView extends SignalWatcher(LitElement) {
   connectedCallback() {
     super.connectedCallback();
     document.addEventListener("click", this._boundCloseTagEditor);
-    // SSE 推送时触发 Lit 重新渲染
+    // SSE 推送时刷新当前分页数据
     this._boundHandleDeviceUpdated = () => {
-      this.requestUpdate();
+      if (!this.selectedDevice) {
+        this.loadDevices();
+      }
     };
     document.addEventListener("device-updated", this._boundHandleDeviceUpdated);
     const path = window.location.pathname;
@@ -197,8 +279,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
         return;
       }
     }
-    // 从缓存加载设备（首次触发 fetch + SSE 自动连接）
-    this.loadDevicesFromCache();
+    // 分页加载设备列表，同时在后台初始化 SSE 缓存
+    this.loadDevices();
+    deviceCache.getDevices().catch(() => {});
     this.loadDriverNames();
     this.loadAllTags();
   }
@@ -208,20 +291,6 @@ export class DevicesView extends SignalWatcher(LitElement) {
     // 不断开 SSE — 缓存层管理连接生命周期
     document.removeEventListener("click", this._boundCloseTagEditor);
     document.removeEventListener("device-updated", this._boundHandleDeviceUpdated);
-  }
-
-  private async loadDevicesFromCache() {
-    this.loading = true;
-    this.error = "";
-    try {
-      const devices = await deviceCache.getDevices();
-      this.devices = devices;
-      this.total = devices.length;
-    } catch (err: any) {
-      this.error = err.message || "加载设备列表失败";
-    } finally {
-      this.loading = false;
-    }
   }
 
   // === Data Loading ===
@@ -242,7 +311,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       const data = res.result;
       if (data) {
         this.devices = data.data || [];
-        this.totalPages = data.pagination?.totalPages || 0;
+        this.totalPages = data.pagination?.totalPages || (this.devices.length > 0 ? 1 : 0);
         this.total = data.pagination?.totalCount || this.devices.length;
       }
     } catch (err: any) {
@@ -382,6 +451,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     const deviceId = this.selectedDevice?.device?.id;
     if (!deviceId) return;
 
+    this.historyLastFocus = document.activeElement ?? undefined;
     this.showHistoryDialog = true;
     this.historyPropertyName = name;
     this.historyPropertyUnit = unit;
@@ -391,6 +461,10 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.historyCustomEnd = "";
     this.historyData = [];
     this.loadHistoryData();
+    requestAnimationFrame(() => {
+      const overlay = this.querySelector(".modal-overlay[role='dialog']");
+      if (overlay) this.focusFirst(overlay as HTMLElement, 50);
+    });
   }
 
   async loadHistoryData() {
@@ -471,6 +545,11 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.historyCustomStart = "";
     this.historyCustomEnd = "";
     this.historyDeviceId = "";
+    const el = this.historyLastFocus as HTMLElement | undefined;
+    if (el?.focus) {
+      requestAnimationFrame(() => el.focus());
+    }
+    this.historyLastFocus = undefined;
   }
 
   renderHistoryDialog() {
@@ -485,49 +564,46 @@ export class DevicesView extends SignalWatcher(LitElement) {
     ];
 
     return html`
-      <div class="modal-overlay" @click=${this.closeHistoryDialog}>
-        <div class="modal" style="max-width: 720px; width: 90vw;" @click=${(e: Event) => e.stopPropagation()}>
+      <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="历史曲线" @click=${this.closeHistoryDialog} @keydown=${(e: KeyboardEvent) => this.handleModalKeydown(e, this.closeHistoryDialog)}>
+        <div class="modal modal--wide" @click=${(e: Event) => e.stopPropagation()}>
           <div class="modal-header">
             <span>${this.historyPropertyName}${this.historyPropertyUnit ? ` (${this.historyPropertyUnit})` : ""} — 历史曲线</span>
-            <button class="btn btn--icon" @click=${this.closeHistoryDialog} style="margin-left: auto;">×</button>
+            <button class="btn btn--icon" aria-label="关闭" @click=${this.closeHistoryDialog}>×</button>
           </div>
-          <div class="modal-body" style="min-height: 300px; padding: 16px;">
+          <div class="modal-body history-modal-body">
             <!-- Time range selector -->
-            <div style="display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; align-items: center;">
+            <div class="time-range-bar">
               ${ranges.map(r => html`
                 <button
-                  class="btn"
-                  style="padding: 4px 12px; font-size: 12px; border-radius: 16px; ${this.historyRange === r.key
-                    ? "background: var(--accent); color: #fff; border-color: var(--accent);"
-                    : "background: var(--bg-subtle); border-color: var(--border); color: var(--text);"}"
+                  class="time-range-btn ${this.historyRange === r.key ? 'time-range-btn--active' : ''}"
                   @click=${() => this.onHistoryRangeChange(r.key)}
                 >${r.label}</button>
               `)}
             </div>
             ${this.historyRange === "custom" ? html`
-              <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 14px; flex-wrap: wrap;">
-                <label style="font-size: 12px; color: var(--muted);">开始</label>
-                <input type="datetime-local" style="font-size: 12px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text);"
+              <div class="time-range-inputs">
+                <label>开始</label>
+                <input type="datetime-local"
                   .value=${this.historyCustomStart}
                   @change=${(e: Event) => { this.historyCustomStart = (e.target as HTMLInputElement).value; }}
                 />
-                <label style="font-size: 12px; color: var(--muted);">结束</label>
-                <input type="datetime-local" style="font-size: 12px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text);"
+                <label>结束</label>
+                <input type="datetime-local"
                   .value=${this.historyCustomEnd}
                   @change=${(e: Event) => { this.historyCustomEnd = (e.target as HTMLInputElement).value; }}
                 />
-                <button class="btn" style="font-size: 12px; padding: 4px 12px; border-radius: 6px; background: var(--accent); color: #fff; border-color: var(--accent);"
+                <button class="btn time-range-query-btn"
                   @click=${this.onHistoryCustomTimeApply}
                 >查询</button>
               </div>
             ` : nothing}
             <!-- Chart -->
             ${this.historyLoading
-              ? html`<div style="display: flex; align-items: center; justify-content: center; height: 260px; color: var(--muted);">加载中...</div>`
+              ? html`<div class="history-chart-placeholder">加载中...</div>`
               : this.historyData.length === 0
-                ? html`<div style="display: flex; align-items: center; justify-content: center; height: 260px; color: var(--muted);">暂无历史数据</div>`
-                : html`<div id="history-chart-container" style="width: 100%; height: 280px; position: relative;">
-                    <canvas id="history-chart" style="width: 100%; height: 100%;"></canvas>
+                ? html`<div class="history-chart-placeholder">暂无历史数据</div>`
+                : html`<div id="history-chart-container" class="history-chart-container">
+                    <canvas id="history-chart"></canvas>
                   </div>`
             }
           </div>
@@ -629,6 +705,21 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.loadDevices();
   }
 
+  private getPaginationItems(): (number | string)[] {
+    const total = this.totalPages;
+    const current = this.page;
+    if (total <= 7) {
+      return Array.from({ length: total }, (_, i) => i + 1);
+    }
+    if (current <= 4) {
+      return [1, 2, 3, 4, 5, '...', total];
+    }
+    if (current >= total - 3) {
+      return [1, '...', total - 4, total - 3, total - 2, total - 1, total];
+    }
+    return [1, '...', current - 1, current, current + 1, '...', total];
+  }
+
   // === Helpers ===
 
   statusLabel(status?: string): string {
@@ -654,6 +745,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
   // === Edit Modal ===
 
   openCreate() {
+    this.modalLastFocus = document.activeElement ?? undefined;
     this.editingDevice = null;
     this.formName = "";
     this.formType = "";
@@ -663,9 +755,14 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.formModel = "";
     this.formProtocol = "";
     this.showModal = true;
+    requestAnimationFrame(() => {
+      const overlay = this.querySelector(".modal-overlay[role='dialog']");
+      if (overlay) this.focusFirst(overlay as HTMLElement, 50);
+    });
   }
 
   openEdit(d: Device) {
+    this.modalLastFocus = document.activeElement ?? undefined;
     this.editingDevice = d;
     this.formName = d.name;
     this.formType = d.deviceType || "";
@@ -675,11 +772,20 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.formModel = d.deviceModel || "";
     this.formProtocol = d.protocolType || "";
     this.showModal = true;
+    requestAnimationFrame(() => {
+      const overlay = this.querySelector(".modal-overlay[role='dialog']");
+      if (overlay) this.focusFirst(overlay as HTMLElement, 50);
+    });
   }
 
   closeModal() {
     this.showModal = false;
     this.editingDevice = null;
+    const el = this.modalLastFocus as HTMLElement | undefined;
+    if (el?.focus) {
+      requestAnimationFrame(() => el.focus());
+    }
+    this.modalLastFocus = undefined;
   }
 
   async saveForm() {
@@ -739,6 +845,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
   // === Wizard (2-step template-based) ===
 
   openWizard() {
+    this.wizardLastFocus = document.activeElement ?? undefined;
     this.wizardStep = "template";
     this.wizSelectedTemplate = null;
     this.wizTemplateSearch = "";
@@ -753,10 +860,19 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.wizardSaving = false;
     this.showWizard = true;
     this.loadTemplates();
+    requestAnimationFrame(() => {
+      const overlay = this.querySelector(".wizard-overlay[role='dialog']");
+      if (overlay) this.focusFirst(overlay as HTMLElement, 50);
+    });
   }
 
   closeWizard() {
     this.showWizard = false;
+    const el = this.wizardLastFocus as HTMLElement | undefined;
+    if (el?.focus) {
+      requestAnimationFrame(() => el.focus());
+    }
+    this.wizardLastFocus = undefined;
   }
 
   async loadTemplates() {
@@ -920,28 +1036,19 @@ export class DevicesView extends SignalWatcher(LitElement) {
   // === Render ===
 
   render() {
-    // 列表页: 直接从信号读取，SSE 更新时 SignalWatcher 自动触发 re-render
-    if (!this.selectedDevice) {
-      const cachedDevices = deviceCache.$devicesList.get();
-      if (cachedDevices.length > 0 || !this.loading) {
-        this.devices = cachedDevices;
-        this.total = cachedDevices.length;
-      }
-    }
-
     if (this.loading) {
       return html`
-        <div style="display: flex; align-items: center; justify-content: center; padding: 60px;">
+        <div class="page-loading">
           <span class="loading-spinner"></span>
-          <span style="margin-left: 8px; color: var(--muted);">加载中...</span>
+          <span>加载中...</span>
         </div>
       `;
     }
 
     if (this.error) {
       return html`
-        <div style="text-align: center; padding: 60px;">
-          <div style="color: var(--danger); margin-bottom: 12px;">${this.error}</div>
+        <div class="page-error">
+          <div class="page-error__message">${this.error}</div>
           <button class="btn btn--primary" @click=${() => this.selectedDevice ? this.loadDeviceDetail(this.selectedDevice.device.id) : this.loadDevices()}>重试</button>
         </div>
       `;
@@ -956,8 +1063,8 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   renderToolbar() {
     return html`
-      <div style="display: flex; gap: 10px; margin-bottom: 16px; align-items: center; flex-wrap: wrap;">
-        <div class="field" style="flex: 1; min-width: 180px; max-width: 300px;">
+      <div class="toolbar">
+        <div class="field filter-bar__search">
           <input
             type="text"
             placeholder="搜索设备名称..."
@@ -966,14 +1073,14 @@ export class DevicesView extends SignalWatcher(LitElement) {
             @keydown=${(e: KeyboardEvent) => { if (e.key === "Enter") { this.page = 1; this.loadDevices(); } }}
           />
         </div>
-        <select class="select" style="width: auto; min-width: 120px;" .value=${this.filterStatus} @change=${(e: Event) => { this.filterStatus = (e.target as HTMLSelectElement).value; this.page = 1; this.loadDevices(); }}>
+        <select class="select filter-bar__select" .value=${this.filterStatus} @change=${(e: Event) => { this.filterStatus = (e.target as HTMLSelectElement).value; this.page = 1; this.loadDevices(); }}>
           <option value="">全部状态</option>
           <option value="online">在线</option>
           <option value="offline">离线</option>
           <option value="error">故障</option>
           <option value="maintenance">维护</option>
         </select>
-        <select class="select" style="width: auto; min-width: 120px;" .value=${this.filterProtocol} @change=${(e: Event) => { this.filterProtocol = (e.target as HTMLSelectElement).value; this.page = 1; this.loadDevices(); }}>
+        <select class="select filter-bar__select" .value=${this.filterProtocol} @change=${(e: Event) => { this.filterProtocol = (e.target as HTMLSelectElement).value; this.page = 1; this.loadDevices(); }}>
           <option value="">全部协议</option>
           <option value="modbus-tcp">Modbus TCP</option>
           <option value="modbus-rtu">Modbus RTU</option>
@@ -981,16 +1088,15 @@ export class DevicesView extends SignalWatcher(LitElement) {
           <option value="onvif">ONVIF</option>
           <option value="snmp">SNMP</option>
         </select>
-        <div style="display: flex; gap: 4px; margin-left: auto;">
+        <div class="toolbar__spacer"></div>
+        <div class="view-toggle">
           <button
-            class="btn btn--ghost btn--sm"
-            style=${`padding: 6px 10px; ${this.viewMode === 'table' ? 'background: var(--bg-subtle);' : ''}`}
+            class="btn btn--ghost btn--sm view-toggle__btn ${this.viewMode === 'table' ? 'view-toggle__btn--active' : ''}"
             @click=${() => { this.viewMode = "table"; }}
             title="列表视图"
           >&#9776;</button>
           <button
-            class="btn btn--ghost btn--sm"
-            style=${`padding: 6px 10px; ${this.viewMode === 'grid' ? 'background: var(--bg-subtle);' : ''}`}
+            class="btn btn--ghost btn--sm view-toggle__btn ${this.viewMode === 'grid' ? 'view-toggle__btn--active' : ''}"
             @click=${() => { this.viewMode = "grid"; }}
             title="卡片视图"
           >&#9638;</button>
@@ -1002,60 +1108,96 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   renderDeviceList() {
     return html`
-      ${this.renderToolbar()}
-      ${this.viewMode === "table" ? this.renderTableView() : this.renderGridView()}
-      ${this.totalPages > 1 ? html`
-        <div class="pagination">
-          <button class="btn btn--ghost btn--sm" ?disabled=${this.page <= 1} @click=${() => this.goToPage(this.page - 1)}>上一页</button>
-          <span class="pagination-info">第 ${this.page} / ${this.totalPages} 页，共 ${this.total} 条</span>
-          <button class="btn btn--ghost btn--sm" ?disabled=${this.page >= this.totalPages} @click=${() => this.goToPage(this.page + 1)}>下一页</button>
+      <div class="device-list">
+        ${this.renderToolbar()}
+        <div class="device-list__content">
+          ${this.viewMode === "table" ? this.renderTableView() : this.renderGridView()}
         </div>
-      ` : ""}
-      ${this.showModal ? this.renderModal() : nothing}
-      ${this.showWizard ? this.renderWizard() : nothing}
+        ${this.renderPagination()}
+        ${this.showModal ? this.renderModal() : nothing}
+        ${this.showWizard ? this.renderWizard() : nothing}
+      </div>
+    `;
+  }
+
+  renderPagination() {
+    if (this.total === 0) return nothing;
+    const items = this.getPaginationItems();
+    return html`
+      <div class="pagination">
+        <button
+          class="pagination__btn pagination__btn--arrow"
+          ?disabled=${this.page <= 1}
+          @click=${() => this.goToPage(this.page - 1)}
+          aria-label="上一页"
+        >‹</button>
+        <div class="pagination__pages">
+          ${items.map(item => {
+            if (item === '...') {
+              return html`<span class="pagination__ellipsis">…</span>`;
+            }
+            const p = item as number;
+            const isActive = p === this.page;
+            return html`
+              <button
+                class="pagination__btn ${isActive ? 'pagination__btn--active' : ''}"
+                @click=${() => this.goToPage(p)}
+                aria-label="第 ${p} 页"
+                aria-current=${isActive ? 'page' : nothing}
+              >${p}</button>
+            `;
+          })}
+        </div>
+        <button
+          class="pagination__btn pagination__btn--arrow"
+          ?disabled=${this.page >= this.totalPages}
+          @click=${() => this.goToPage(this.page + 1)}
+          aria-label="下一页"
+        >›</button>
+        <span class="pagination__meta">${this.page} / ${this.totalPages}</span>
+      </div>
     `;
   }
 
   renderTableView() {
-    // Read directly from signal for SSE reactivity
-    const devices = deviceCache.$devicesList.get();
+    const devices = this.devices;
     return html`
-      <div class="card" style="overflow: hidden;">
-        <table style="width: 100%; border-collapse: collapse;">
+      <div class="card table-container">
+        <table class="data-table">
           <thead>
-            <tr style="border-bottom: 1px solid var(--border);">
-              <th style="padding: 12px 16px; text-align: left; font-size: 13px; color: var(--muted); font-weight: 500;">设备名称</th>
-              <th style="padding: 12px 16px; text-align: left; font-size: 13px; color: var(--muted); font-weight: 500;">类型</th>
-              <th style="padding: 12px 16px; text-align: left; font-size: 13px; color: var(--muted); font-weight: 500;">协议</th>
-              <th style="padding: 12px 16px; text-align: left; font-size: 13px; color: var(--muted); font-weight: 500;">状态</th>
-              <th style="padding: 12px 16px; text-align: left; font-size: 13px; color: var(--muted); font-weight: 500;">标签</th>
-              <th style="padding: 12px 16px; text-align: right; font-size: 13px; color: var(--muted); font-weight: 500;">操作</th>
+            <tr>
+              <th>设备名称</th>
+              <th>类型</th>
+              <th>协议</th>
+              <th>状态</th>
+              <th>标签</th>
+              <th class="cell-actions">操作</th>
             </tr>
           </thead>
           <tbody>
             ${devices.length === 0
-              ? html`<tr><td colspan="6" style="padding: 40px; text-align: center; color: var(--muted);">暂无设备</td></tr>`
+              ? html`<tr><td colspan="6" class="empty-hint">暂无设备</td></tr>`
               : devices.map(d => html`
-                <tr style="border-bottom: 1px solid var(--border);">
-                  <td style="padding: 12px 16px;">
-                    <div style="font-weight: 500;">${d.displayName || d.name}</div>
-                    <div style="font-size: 12px; color: var(--muted);">${d.name}</div>
+                <tr>
+                  <td>
+                    <div class="data-table__primary">${d.displayName || d.name}</div>
+                    <div class="data-table__secondary">${d.name}</div>
                   </td>
-                  <td style="padding: 12px 16px; font-size: 13px;">${d.deviceType || "-"}</td>
-                  <td style="padding: 12px 16px; font-size: 13px;">${d.protocolType || d.driverName || "-"}</td>
-                  <td style="padding: 12px 16px;">
-                    <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 13px;">
-                      <span style="width: 8px; height: 8px; border-radius: 50%; background: ${this.statusColor(d.status)};"></span>
-                      ${this.statusLabel(d.status)}
+                  <td class="data-table__cell-sm">${d.deviceType || "-"}</td>
+                  <td class="data-table__cell-sm">${d.protocolType || d.driverName || "-"}</td>
+                  <td>
+                    <span class="status-badge">
+                      <span class="status-dot" style="background: ${this.statusColor(d.status)};"></span>
+                      <span class="status-badge__label">${this.statusLabel(d.status)}</span>
                     </span>
                   </td>
-                  <td style="padding: 12px 16px; position: relative;">
+                  <td class="cell-actions">
                     ${this.renderTableCellTags(d)}
                   </td>
-                  <td style="padding: 12px 16px; text-align: right;">
-                    <button class="btn btn--ghost btn--sm" style="font-size: 12px;" @click=${() => this.navigateToDevice(d.id)}>详情</button>
-                    <button class="btn btn--ghost btn--sm" style="font-size: 12px;" @click=${() => this.openEdit(d)}>编辑</button>
-                    <button class="btn btn--ghost btn--sm" style="font-size: 12px; color: var(--danger);" @click=${() => this.deleteDevice(d)}>删除</button>
+                  <td class="cell-actions">
+                    <button class="btn btn--ghost btn--sm" @click=${() => this.navigateToDevice(d.id)}>详情</button>
+                    <button class="btn btn--ghost btn--sm" @click=${() => this.openEdit(d)}>编辑</button>
+                    <button class="btn btn--ghost btn--sm btn--danger-text" @click=${() => this.deleteDevice(d)}>删除</button>
                   </td>
                 </tr>
               `)}
@@ -1066,15 +1208,14 @@ export class DevicesView extends SignalWatcher(LitElement) {
   }
 
   renderGridView() {
-    // Read directly from signal for SSE reactivity
-    const devices = deviceCache.$devicesList.get();
+    const devices = this.devices;
     if (devices.length === 0) {
       return html`
-        <div class="card" style="padding: 40px; text-align: center; color: var(--muted);">暂无设备</div>
+        <div class="card empty-hint">暂无设备</div>
       `;
     }
     return html`
-      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px;">
+      <div class="model-grid">
         ${devices.map(d => this.renderDeviceCard(d))}
       </div>
     `;
@@ -1084,18 +1225,17 @@ export class DevicesView extends SignalWatcher(LitElement) {
     const deviceTags = d.tags || [];
     const isEditingTags = this.editingTagsDeviceId === d.id;
     return html`
-      <div style="display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center;">
+      <div class="tag-editor-trigger">
         ${deviceTags.slice(0, 3).map(t => html`
-          <span style="display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px; border-radius: 9999px; font-size: 11px; background: var(--bg-subtle); border: 1px solid var(--border);">
-            <span style="width: 5px; height: 5px; border-radius: 50%; background: ${t.color || 'var(--primary, #3b82f6)'};"></span>
+          <span class="tag-pill tag-pill--xs">
+            <span class="tag-pill__dot tag-pill__dot--xs" style="background: ${t.color || 'var(--primary)'};"></span>
             ${t.name}
           </span>
         `)}
-        ${deviceTags.length > 3 ? html`<span style="font-size: 11px; color: var(--muted);">+${deviceTags.length - 3}</span>` : nothing}
-        ${deviceTags.length === 0 ? html`<span style="font-size: 11px; color: var(--muted);">-</span>` : nothing}
+        ${deviceTags.length > 3 ? html`<span class="tag-overflow-count">+${deviceTags.length - 3}</span>` : nothing}
+        ${deviceTags.length === 0 ? html`<span class="tag-overflow-count">-</span>` : nothing}
         <button
-          class="btn btn--ghost btn--sm"
-          style="padding: 1px 3px; font-size: 11px;"
+          class="btn btn--ghost btn--sm tag-btn--edit"
           title="管理标签"
           @click=${(e: Event) => { e.stopPropagation(); this.toggleTagEditor(d.id); }}
         >${icons.tag}</button>
@@ -1106,33 +1246,26 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   renderTagPopover(d: Device, deviceTags: Tag[]) {
     return html`
-      <div
-        style="position: absolute; top: 100%; left: 0; z-index: 100; margin-top: 4px; min-width: 220px;
-          border: 1px solid var(--border); border-radius: 8px; padding: 8px;
-          background: var(--bg); box-shadow: 0 4px 12px rgba(0,0,0,0.15);"
-        @click=${(e: Event) => e.stopPropagation()}
-      >
+      <div class="tag-popover" @click=${(e: Event) => e.stopPropagation()}>
         <input
           type="text"
+          class="tag-popover__search"
           placeholder="搜索标签..."
           .value=${this.tagSearchKeyword}
           @input=${(e: Event) => { this.tagSearchKeyword = (e.target as HTMLInputElement).value; }}
-          style="width: 100%; font-size: 12px; padding: 4px 8px; margin-bottom: 6px; box-sizing: border-box;"
         />
-        <div style="display: flex; flex-wrap: wrap; gap: 4px; max-height: 120px; overflow-y: auto;">
+        <div class="tag-popover__list">
           ${this.allTags
             .filter(t => !this.tagSearchKeyword || t.name.toLowerCase().includes(this.tagSearchKeyword.toLowerCase()))
             .map(t => {
               const bound = deviceTags.some(dt => dt.id === t.id);
               return html`
                 <button
-                  class="btn btn--sm"
-                  style=${`font-size: 11px; padding: 2px 8px; border-radius: 9999px;
-                    ${bound ? 'background: var(--primary, #3b82f6); color: #fff; border-color: var(--primary, #3b82f6);' : 'background: var(--bg-subtle); border: 1px solid var(--border);'}`}
+                  class="btn btn--sm tag-btn ${bound ? 'tag-btn--bound' : 'tag-btn--unbound'}"
                   ?disabled=${this.tagSaving}
                   @click=${() => this.toggleTag(d, t)}
                 >
-                  <span style="display: inline-flex; align-items: center; gap: 4px;">
+                  <span class="flex-mid gap-1">
                     ${bound ? icons.check : icons.plus}
                     ${t.name}
                   </span>
@@ -1140,7 +1273,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
               `;
             })}
           ${this.allTags.filter(t => !this.tagSearchKeyword || t.name.toLowerCase().includes(this.tagSearchKeyword.toLowerCase())).length === 0
-            ? html`<span style="font-size: 11px; color: var(--muted); padding: 4px;">无匹配标签</span>`
+            ? html`<span class="tag-no-match">无匹配标签</span>`
             : nothing}
         </div>
       </div>
@@ -1162,67 +1295,79 @@ export class DevicesView extends SignalWatcher(LitElement) {
     const infoTooltip = infoLines.join('\n');
 
     return html`
-      <div style="position: relative;">
-        <div class="card" style="padding: 2px; overflow: hidden; display: flex; flex-direction: column; height: 180px;">
+      <div class="device-card__wrap">
+        <div class="device-card">
           <!-- Header -->
-          <div style="padding: 14px 16px 0; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;">
-            <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
-              <span style="width: 8px; height: 8px; border-radius: 50%; background: ${this.statusColor(d.status)}; flex-shrink: 0;"></span>
-              <span style="font-weight: 600; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${d.displayName || d.name}">${d.displayName || d.name}</span>
+          <div class="device-card__header">
+            <div class="device-card__header-left">
+              <span class="status-dot status-dot--sm" style="background: ${this.statusColor(d.status)};"></span>
+              <span class="device-card__title" title="${d.displayName || d.name}">${d.displayName || d.name}</span>
             </div>
-            <div style="display: flex; gap: 2px; flex-shrink: 0;">
+            <div class="device-card__actions">
               <button
-                class="btn btn--ghost btn--sm"
-                style="padding: 4px 6px; color: var(--muted);"
+                class="btn btn--ghost btn--sm device-card__action-btn"
                 title="编辑"
                 @click=${(e: Event) => { e.stopPropagation(); this.openEdit(d); }}
               >${icons.edit}</button>
               <button
-                class="btn btn--ghost btn--sm"
-                style="padding: 4px 6px; color: var(--danger);"
+                class="btn btn--ghost btn--sm device-card__action-btn btn--danger-text"
                 title="删除"
                 @click=${(e: Event) => { e.stopPropagation(); this.deleteDevice(d); }}
               >${icons.trash2}</button>
             </div>
           </div>
 
-          <!-- Info (fixed height, truncated with tooltip) -->
+          <!-- Info -->
           <div
-            style="padding: 10px 16px; cursor: pointer; overflow: hidden; flex: 1; min-height: 0;"
+            class="device-card__body"
             title="${infoTooltip}"
             @click=${() => this.navigateToDevice(d.id)}
           >
-            <div style="display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted);">
-              ${d.deviceType ? html`<div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${d.deviceType}</div>` : nothing}
-              ${d.protocolType || d.driverName ? html`<div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${d.protocolType || d.driverName}</div>` : nothing}
-              ${d.address ? html`<div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${d.address}</div>` : nothing}
+            <div class="device-card__info">
+              ${d.deviceType ? html`
+                <div class="device-card__info-row">
+                  <span class="device-card__info-label">类型</span>
+                  <span class="device-card__info-value">${d.deviceType}</span>
+                </div>
+              ` : nothing}
+              ${d.protocolType || d.driverName ? html`
+                <div class="device-card__info-row">
+                  <span class="device-card__info-label">协议</span>
+                  <span class="device-card__info-value">${d.protocolType || d.driverName}</span>
+                </div>
+              ` : nothing}
+              ${d.address ? html`
+                <div class="device-card__info-row">
+                  <span class="device-card__info-label">地址</span>
+                  <span class="device-card__info-value">${d.address}</span>
+                </div>
+              ` : nothing}
             </div>
           </div>
 
-          <!-- Tags (footer, fixed) -->
-          <div style="padding: 0 16px 8px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; flex-shrink: 0; overflow: hidden;">
+          <!-- Footer -->
+          <div class="device-card__footer">
             ${visibleTags.map(t => html`
-              <span style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 9999px; font-size: 11px; background: var(--bg-subtle); border: 1px solid var(--border);">
-                <span style="width: 6px; height: 6px; border-radius: 50%; background: ${t.color || 'var(--primary, #3b82f6)'};"></span>
+              <span class="tag-pill">
+                <span class="tag-pill__dot" style="background: ${t.color || 'var(--primary)'};"></span>
                 ${t.name}
               </span>
             `)}
             ${hiddenTagCount > 0 ? html`
-              <span style="padding: 2px 8px; border-radius: 9999px; font-size: 11px; background: var(--bg-subtle); border: 1px solid var(--border); color: var(--muted);" title="${deviceTags.slice(3).map(t => t.name).join(', ')}">
+              <span class="tag-pill tag-pill--muted" title="${deviceTags.slice(3).map(t => t.name).join(', ')}">
                 +${hiddenTagCount}
               </span>
             ` : nothing}
-            ${deviceTags.length === 0 ? html`<span style="font-size: 11px; color: var(--muted);">无标签</span>` : nothing}
+            ${deviceTags.length === 0 ? html`<span class="inline-muted" style="font-size: 12px;">无标签</span>` : nothing}
             <button
-              class="btn btn--ghost btn--sm"
-              style="padding: 2px 4px; font-size: 11px;"
+              class="btn btn--ghost btn--sm tag-btn--edit-card"
               title="管理标签"
               @click=${(e: Event) => { e.stopPropagation(); this.toggleTagEditor(d.id); }}
             >${icons.tag}</button>
           </div>
         </div>
 
-        <!-- Tag editor popover — floats outside the card -->
+        <!-- Tag editor popover -->
         ${isEditingTags ? this.renderTagPopover(d, deviceTags) : nothing}
       </div>
     `;
@@ -1237,30 +1382,28 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
     return html`
       <!-- Header: name, status, type, tags, edit -->
-      <div class="card" style="padding: 16px 20px; margin-bottom: 12px;">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-          <div style="display: flex; align-items: center; gap: 12px;">
-            <button class="btn btn--ghost btn--sm" @click=${this.backToList} style="padding: 4px 8px;">
+      <div class="card detail-header">
+        <div class="detail-header__row">
+          <div class="detail-header__main">
+            <button class="btn btn--ghost btn--sm detail-header__back" @click=${this.backToList}>
               &larr; 返回
             </button>
-            <h2 style="margin: 0; font-size: 18px;">${d.displayName || d.name}</h2>
-            <span style="display: inline-flex; align-items: center; gap: 5px; padding: 2px 10px; border-radius: 9999px; font-size: 12px; background: var(--bg-subtle);">
-              <span style="width: 7px; height: 7px; border-radius: 50%; background: ${this.statusColor(d.status)};"></span>
-              ${this.statusLabel(d.status)}
+            <h2 class="detail-header__title">${d.displayName || d.name}</h2>
+            <span class="status-badge status-badge--subtle">
+              <span class="status-dot status-dot--sm" style="background: ${this.statusColor(d.status)};"></span>
+              <span class="status-badge__label">${this.statusLabel(d.status)}</span>
             </span>
             ${d.deviceType ? html`
-              <span style="display: inline-flex; padding: 2px 8px; border-radius: 4px; font-size: 11px; background: var(--accent-subtle, rgba(59,130,246,0.08)); color: var(--accent, #3b82f6);">
-                ${d.deviceType}
-              </span>
+              <span class="type-tag">${d.deviceType}</span>
             ` : nothing}
           </div>
           <button class="btn btn--ghost btn--sm" @click=${() => this.openEdit(d)}>编辑</button>
         </div>
         ${deviceTags.length > 0 ? html`
-          <div style="padding-top: 8px; display: flex; flex-wrap: wrap; gap: 4px;">
+          <div class="detail-header__tags">
             ${deviceTags.map((t: Tag) => html`
-              <span style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 9999px; font-size: 11px; background: var(--bg-subtle); border: 1px solid var(--border);">
-                <span style="width: 6px; height: 6px; border-radius: 50%; background: ${t.color || 'var(--primary, #3b82f6)'};"></span>
+              <span class="tag-pill">
+                <span class="tag-pill__dot" style="background: ${t.color || 'var(--primary)'};"></span>
                 ${t.name}
               </span>
             `)}
@@ -1269,14 +1412,14 @@ export class DevicesView extends SignalWatcher(LitElement) {
       </div>
 
       <!-- Mini stat grid -->
-      <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 12px;">
+      <div class="detail-stat-grid">
         <div class="detail-stat-mini">
           <div class="detail-stat-mini__label">属性总数</div>
           <div class="detail-stat-mini__value">${ov.totalProperties}</div>
         </div>
         <div class="detail-stat-mini">
           <div class="detail-stat-mini__label">在线属性</div>
-          <div class="detail-stat-mini__value" style="color: var(--success);">${ov.onlineProperties}</div>
+          <div class="detail-stat-mini__value detail-stat-mini__value--success">${ov.onlineProperties}</div>
         </div>
         <div class="detail-stat-mini">
           <div class="detail-stat-mini__label">命令数</div>
@@ -1289,7 +1432,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       </div>
 
       <!-- Tab bar -->
-      <div class="detail-tabs" style="margin-bottom: 12px;">
+      <div class="detail-tabs">
         <button class="detail-tab ${this.detailTab === 'properties' ? 'active' : ''}" @click=${() => this.switchDetailTab('properties')}>${icons.barChart} 属性</button>
         <button class="detail-tab ${this.detailTab === 'commands' ? 'active' : ''}" @click=${() => this.switchDetailTab('commands')}>${icons.zap} 命令</button>
         <button class="detail-tab ${this.detailTab === 'events' ? 'active' : ''}" @click=${() => this.switchDetailTab('events')}>${icons.scrollText} 事件</button>
@@ -1308,7 +1451,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   renderDetailProperties() {
     const profile = this.selectedDevice;
-    if (!profile) return html`<div class="card" style="padding: 32px; text-align: center; color: var(--muted);">暂无属性数据</div>`;
+    if (!profile) return html`<div class="card empty-center">暂无属性数据</div>`;
 
     // 从缓存读取（SSE 推送的实时数据），用 profile.properties 的元数据补充缺失字段
     const cached = deviceCache.$devicesMap.get().get(profile.device.id);
@@ -1329,53 +1472,49 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }
 
     if (properties.length === 0) {
-      return html`<div class="card" style="padding: 32px; text-align: center; color: var(--muted);">暂无属性数据</div>`;
+      return html`<div class="card empty-center">暂无属性数据</div>`;
     }
 
     return html`
-      <div class="card" style="padding: 16px 20px;">
-        <table style="width: 100%; border-collapse: collapse;">
+      <div class="card prop-table-wrap">
+        <table class="data-table--compact">
           <thead>
-            <tr style="border-bottom: 1px solid var(--border);">
-             <th style="padding: 6px 10px; text-align: left; font-size: 11px; color: var(--muted); font-weight: 600;">属性</th>
-              <th style="padding: 6px 10px; text-align: left; font-size: 11px; color: var(--muted); font-weight: 600;">名称</th>
-              <th style="padding: 6px 10px; text-align: left; font-size: 11px; color: var(--muted); font-weight: 600;">当前值</th>
-          
-              <th style="padding: 6px 10px; text-align: center; font-size: 11px; color: var(--muted); font-weight: 600;"></th>
-              <th style="padding: 6px 10px; text-align: left; font-size: 11px; color: var(--muted); font-weight: 600;">类型</th>
-              <th style="padding: 6px 10px; text-align: center; font-size: 11px; color: var(--muted); font-weight: 600;">读写</th>
-              <th style="padding: 6px 10px; text-align: left; font-size: 11px; color: var(--muted); font-weight: 600;">更新时间</th>
+            <tr>
+              <th>属性</th>
+              <th>名称</th>
+              <th>当前值</th>
+              <th></th>
+              <th>类型</th>
+              <th class="cell-actions">读写</th>
+              <th>更新时间</th>
             </tr>
           </thead>
           <tbody>
             ${properties.map((p: DeviceProperty) => html`
-              <tr style="border-bottom: 1px solid var(--border);">
-                <td style="padding: 6px 10px; font-size: 13px;">${p.name}</td>
-                <td style="padding: 6px 10px; font-size: 13px;">${p.displayName || p.name}</td>
-                <td style="padding: 6px 10px; font-size: 13px; font-weight: 500;">
-                  ${p.currentValue ?? p.value ?? "-"}
-                  ${p.unit ? html`<span style="font-size: 11px; color: var(--muted); margin-left: 4px;">${p.unit}</span>` : nothing}
+              <tr>
+                <td>${p.name}</td>
+                <td>${p.displayName || p.name}</td>
+                <td>
+                  <span class="prop-value">${p.currentValue ?? p.value ?? "-"}</span>
+                  ${p.unit ? html`<span class="prop-unit">${p.unit}</span>` : nothing}
                 </td>
-                <td style="padding: 6px 10px; text-align: center;">
+                <td class="cell-actions">
                   ${this.isNumericType(p.dataType) ? html`
                     <button
                       class="btn btn--icon btn--xs"
                       title="曲线"
+                      aria-label="历史曲线"
                       @click=${() => this.openPropertyHistory(p.name, p.unit || "")}
-                      style="color: var(--accent); cursor: pointer; padding: 2px;"
                     >${icons.trendingUp}</button>
                   ` : nothing}
                 </td>
-                <td style="padding: 6px 10px; font-size: 12px; color: var(--muted);">${p.dataType}</td>
-                
-                <td style="padding: 6px 10px; text-align: center;">
-                  <span style="display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600;
-                    background: ${p.isReadOnly ? 'rgba(107,114,128,0.1)' : 'rgba(16,185,129,0.1)'};
-                    color: ${p.isReadOnly ? 'var(--muted)' : 'var(--success)'};">
+                <td class="prop-type">${p.dataType}</td>
+                <td class="cell-actions">
+                  <span class="${p.isReadOnly ? 'prop-ro-badge' : 'prop-rw-badge'}">
                     ${p.isReadOnly ? '只读' : '读写'}
                   </span>
                 </td>
-                <td style="padding: 6px 10px; font-size: 12px; color: var(--muted);">${p.updatedAt?.slice(0, 16) || "-"}</td>
+                <td class="prop-type">${p.updatedAt?.slice(0, 16) || "-"}</td>
               </tr>
             `)}
           </tbody>
@@ -1390,17 +1529,17 @@ export class DevicesView extends SignalWatcher(LitElement) {
     const d = profile.device;
 
     if (profile.commands.length === 0) {
-      return html`<div class="card" style="padding: 32px; text-align: center; color: var(--muted);">暂无命令</div>`;
+      return html`<div class="card empty-center">暂无命令</div>`;
     }
 
     return html`
-      <div class="card" style="padding: 16px 20px;">
-        <div style="display: flex; flex-direction: column; gap: 8px;">
+      <div class="card command-list-wrap">
+        <div class="command-list">
           ${profile.commands.map(c => html`
-            <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; background: var(--bg-subtle); border-radius: 8px;">
+            <div class="command-item">
               <div>
-                <div style="font-weight: 500; font-size: 13px;">${c.name}</div>
-                <div style="font-size: 12px; color: var(--muted);">${c.description || "无描述"}</div>
+                <div class="command-item__name">${c.name}</div>
+                <div class="command-item__desc">${c.description || "无描述"}</div>
               </div>
               <button
                 class="btn btn--primary btn--sm"
@@ -1422,7 +1561,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
     const events = profile.recentEvents || [];
     if (events.length === 0) {
-      return html`<div class="card" style="padding: 32px; text-align: center; color: var(--muted);">暂无事件记录</div>`;
+      return html`<div class="card empty-center">暂无事件记录</div>`;
     }
 
     const levelClass = (level: string) => {
@@ -1446,15 +1585,15 @@ export class DevicesView extends SignalWatcher(LitElement) {
     };
 
     return html`
-      <div class="card" style="padding: 16px 20px;">
+      <div class="card events-list-wrap">
         ${events.map((ev: DeviceEvent) => html`
           <div class="event-item">
             <span class="event-badge ${levelClass(ev.level)}">${levelLabel(ev.level)}</span>
-            <div style="flex: 1; min-width: 0;">
-              <div style="font-size: 13px; font-weight: 500;">${ev.title}</div>
-              ${ev.message ? html`<div style="font-size: 12px; color: var(--muted); margin-top: 2px;">${ev.message}</div>` : nothing}
+            <div class="event-item__body">
+              <div class="event-item__title">${ev.title}</div>
+              ${ev.message ? html`<div class="event-item__message">${ev.message}</div>` : nothing}
             </div>
-            <span style="font-size: 11px; color: var(--muted); flex-shrink: 0; margin-top: 2px;">${ev.createdAt?.slice(0, 16)}</span>
+            <span class="event-item__time">${ev.createdAt?.slice(0, 16)}</span>
           </div>
         `)}
       </div>
@@ -1467,21 +1606,21 @@ export class DevicesView extends SignalWatcher(LitElement) {
     const ov = profile.overview;
 
     return html`
-      <div class="card" style="padding: 20px;">
-        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
-          <div style="font-size: 36px; font-weight: 700; color: ${ov.activeAlarms > 0 ? 'var(--danger)' : 'var(--success)'};">
+      <div class="card alarm-card-wrap">
+        <div class="alarm-summary">
+          <div class="alarm-summary__count" style="color: ${ov.activeAlarms > 0 ? 'var(--danger)' : 'var(--success)'};">
             ${ov.activeAlarms}
           </div>
           <div>
-            <div style="font-size: 14px; font-weight: 500;">活跃告警</div>
-            <div style="font-size: 12px; color: var(--muted);">需要处理的告警数量</div>
+            <div class="alarm-summary__label">活跃告警</div>
+            <div class="alarm-summary__hint">需要处理的告警数量</div>
           </div>
         </div>
         ${ov.activeAlarms === 0
-          ? html`<div style="padding: 20px; text-align: center; color: var(--success); font-size: 14px;">暂无活跃告警</div>`
+          ? html`<div class="alarm-summary__success">暂无活跃告警</div>`
           : html`
-            <div style="padding: 12px; background: rgba(239,68,68,0.05); border-radius: 8px; border: 1px solid rgba(239,68,68,0.15);">
-              <div style="font-size: 13px; color: var(--danger);">存在 ${ov.activeAlarms} 个活跃告警需要处理</div>
+            <div class="alarm-summary__warn">
+              <div>存在 ${ov.activeAlarms} 个活跃告警需要处理</div>
             </div>
           `
         }
@@ -1491,35 +1630,35 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   renderModal() {
     return html`
-      <div class="modal-overlay" @click=${this.closeModal}>
+      <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="${this.editingDevice ? '编辑设备' : '新建设备'}" @click=${this.closeModal} @keydown=${(e: KeyboardEvent) => this.handleModalKeydown(e, this.closeModal)}>
         <div class="modal" @click=${(e: Event) => e.stopPropagation()}>
           <div class="modal-header">${this.editingDevice ? "编辑设备" : "新建设备"}</div>
-          <div class="modal-body">
+          <div class="modal-body modal-fields">
             <div class="field">
               <span>设备名称</span>
               <input type="text" placeholder="设备名称" .value=${this.formName} @input=${(e: any) => { this.formName = e.target.value; }} />
             </div>
-            <div class="field" style="margin-top: 12px;">
+            <div class="field">
               <span>设备类型</span>
               <input type="text" placeholder="如 sensor, gateway" .value=${this.formType} @input=${(e: any) => { this.formType = e.target.value; }} />
             </div>
-            <div class="field" style="margin-top: 12px;">
+            <div class="field">
               <span>地址</span>
               <input type="text" placeholder="如 192.168.1.100" .value=${this.formAddress} @input=${(e: any) => { this.formAddress = e.target.value; }} />
             </div>
-            <div class="field" style="margin-top: 12px;">
+            <div class="field">
               <span>协议</span>
               <input type="text" placeholder="如 modbus-tcp, mqtt" .value=${this.formProtocol} @input=${(e: any) => { this.formProtocol = e.target.value; }} />
             </div>
-            <div class="field" style="margin-top: 12px;">
+            <div class="field">
               <span>厂商</span>
               <input type="text" placeholder="可选" .value=${this.formManufacturer} @input=${(e: any) => { this.formManufacturer = e.target.value; }} />
             </div>
-            <div class="field" style="margin-top: 12px;">
+            <div class="field">
               <span>型号</span>
               <input type="text" placeholder="可选" .value=${this.formModel} @input=${(e: any) => { this.formModel = e.target.value; }} />
             </div>
-            <div class="field" style="margin-top: 12px;">
+            <div class="field">
               <span>描述</span>
               <input type="text" placeholder="可选描述" .value=${this.formDescription} @input=${(e: any) => { this.formDescription = e.target.value; }} />
             </div>
@@ -1538,16 +1677,16 @@ export class DevicesView extends SignalWatcher(LitElement) {
   renderWizard() {
     const isStep1 = this.wizardStep === "template";
     return html`
-      <div class="wizard-overlay" @click=${(e: Event) => { if ((e.target as HTMLElement).classList.contains('wizard-overlay')) this.closeWizard(); }}>
+      <div class="wizard-overlay" role="dialog" aria-modal="true" aria-label="设备创建向导" @click=${(e: Event) => { if ((e.target as HTMLElement).classList.contains('wizard-overlay')) this.closeWizard(); }} @keydown=${(e: KeyboardEvent) => this.handleModalKeydown(e, this.closeWizard)}>
         <div class="wizard-dialog">
           <!-- Header -->
           <div class="wizard-dialog__header">
-            <button class="wizard-dialog__back" @click=${isStep1 ? this.closeWizard : this.wizardBack}>
-              <span style="transform: rotate(90deg); display: inline-flex;">${icons.arrowDown}</span>
+            <button class="wizard-dialog__back" aria-label="返回" @click=${isStep1 ? this.closeWizard : this.wizardBack}>
+              <span class="rotate-90">${icons.arrowDown}</span>
               <span>${isStep1 ? "返回设备列表" : "返回模板选择"}</span>
             </button>
             <span class="wizard-dialog__title">${isStep1 ? "选择设备模板" : "填写设备信息"}</span>
-            <button class="modal-close wizard-dialog__close" @click=${this.closeWizard}>✕</button>
+            <button class="modal-close wizard-dialog__close" aria-label="关闭" @click=${this.closeWizard}>✕</button>
           </div>
           <!-- Body -->
           <div class="wizard-dialog__body">
@@ -1572,36 +1711,36 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
     return html`
       <!-- Search bar -->
-      <div style="position: relative; margin-bottom: 20px;">
-        <span style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--muted);">
+      <div class="wizard-search">
+        <span class="wizard-search__icon">
           ${icons.search}
         </span>
         <input
           type="text"
+          class="wizard-search__input"
           placeholder="搜索设备模板..."
           .value=${this.wizTemplateSearch}
           @input=${(e: Event) => { this.wizTemplateSearch = (e.target as HTMLInputElement).value; }}
-          style="width: 100%; padding: 10px 14px 10px 38px; box-sizing: border-box; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-subtle); color: var(--text); font-size: 14px;"
         />
       </div>
 
       ${this.wizTemplateLoading ? html`
-        <div style="display: flex; align-items: center; justify-content: center; padding: 60px;">
+        <div class="wizard-loading">
           <span class="loading-spinner"></span>
-          <span style="margin-left: 8px; color: var(--muted);">加载中...</span>
+          <span class="wizard-loading__text">加载中...</span>
         </div>
       ` : this.filteredWizardTemplates.length === 0 ? html`
-        <div style="text-align: center; padding: 60px;">
-          <div style="font-size: 48px; margin-bottom: 12px;">📦</div>
-          <div style="font-size: 16px; font-weight: 500; color: var(--text);">没有找到匹配的模板</div>
-          <div style="font-size: 13px; color: var(--muted); margin-top: 4px;">尝试调整搜索条件或浏览其他分类</div>
+        <div class="wizard-empty">
+          <div class="wizard-empty__icon">📦</div>
+          <div class="wizard-empty__title">没有找到匹配的模板</div>
+          <div class="wizard-empty__hint">尝试调整搜索条件或浏览其他分类</div>
         </div>
       ` : html`
         ${categories.map(cat => html`
-          <div style="margin-bottom: 28px;">
-            <div style="display: flex; align-items: center; margin-bottom: 14px;">
-              <span style="font-size: 16px; font-weight: 600;">${CATEGORY_LABELS[cat] || cat}</span>
-              <span style="font-size: 12px; color: var(--muted); margin-left: 12px;">${groups[cat].length} 个模板</span>
+          <div class="wizard-category">
+            <div class="wizard-category__header">
+              <span class="wizard-category__title">${CATEGORY_LABELS[cat] || cat}</span>
+              <span class="wizard-category__count">${groups[cat].length} 个模板</span>
             </div>
             <div class="wizard-template-grid">
               ${groups[cat].map(t => this.renderTemplateCard(t))}
@@ -1616,26 +1755,23 @@ export class DevicesView extends SignalWatcher(LitElement) {
     const displayName = getLocalizedText(t.displayName, t.name);
     return html`
       <div
-        class="card"
-        style="padding: 16px; cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s;"
+        class="card template-card"
         @click=${() => this.selectTemplate(t)}
-        @mouseenter=${(e: Event) => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--primary, #3b82f6)'; (e.currentTarget as HTMLElement).style.boxShadow = '0 0 0 1px var(--primary, #3b82f6)'; }}
-        @mouseleave=${(e: Event) => { (e.currentTarget as HTMLElement).style.borderColor = ''; (e.currentTarget as HTMLElement).style.boxShadow = ''; }}
       >
-        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-          <span style="font-size: 28px;">${CATEGORY_ICONS[t.category] || "📦"}</span>
-          <div style="min-width: 0; flex: 1;">
-            <div style="font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${displayName}</div>
-            ${t.manufacturer ? html`<div style="font-size: 11px; color: var(--muted);">${t.manufacturer}</div>` : nothing}
+        <div class="template-card__header">
+          <span class="template-card__icon">${CATEGORY_ICONS[t.category] || CATEGORY_ICONS.others}</span>
+          <div class="template-card__title-wrap">
+            <div class="template-card__title">${displayName}</div>
+            ${t.manufacturer ? html`<div class="inline-muted">${t.manufacturer}</div>` : nothing}
           </div>
-          ${t.isBuiltin ? html`<span style="font-size: 10px; padding: 1px 6px; border-radius: 4px; background: var(--bg-subtle); color: var(--muted); text-transform: uppercase;">内置</span>` : nothing}
+          ${t.isBuiltin ? html`<span class="template-card__badge">内置</span>` : nothing}
         </div>
-        <div style="display: flex; gap: 8px; font-size: 11px; color: var(--muted); flex-wrap: wrap;">
+        <div class="template-card__meta">
           ${t.deviceType ? html`<span>${t.deviceType}</span>` : nothing}
           ${t.protocolType ? html`<span>${t.protocolType}</span>` : nothing}
           ${t.version ? html`<span>v${t.version}</span>` : nothing}
         </div>
-        <div style="display: flex; gap: 12px; font-size: 11px; color: var(--muted); margin-top: 8px;">
+        <div class="template-card__stats">
           <span>${t.properties.length} 属性</span>
           <span>${t.commands.length} 命令</span>
         </div>
@@ -1653,69 +1789,66 @@ export class DevicesView extends SignalWatcher(LitElement) {
     return html`
       <div class="wizard-split">
         <!-- Left panel: form -->
-        <div class="wizard-split__form">
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
-            <div style="font-size: 14px; font-weight: 600;">填写设备信息</div>
-            <button class="btn btn--ghost" style="font-size: 12px; padding: 4px 10px;" @click=${this.wizardBack}>切换模板</button>
+        <div class="wizard-split__form wizard-fields">
+          <div class="wizard-form-header">
+            <div class="wizard-form-header__title">填写设备信息</div>
+            <button class="btn btn--ghost btn--sm" @click=${this.wizardBack}>切换模板</button>
           </div>
 
           <!-- Template summary chip -->
-          <div style="display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-subtle); margin-bottom: 16px;">
-            <span style="font-size: 24px;">${CATEGORY_ICONS[t.category] || "📦"}</span>
-            <div style="min-width: 0; flex: 1;">
-              <div style="font-weight: 600; font-size: 14px;">${displayName}</div>
-              <div style="font-size: 12px; color: var(--muted); margin-top: 2px;">
+          <div class="template-chip">
+            <span class="template-chip__icon">${CATEGORY_ICONS[t.category] || CATEGORY_ICONS.others}</span>
+            <div class="template-chip__title-wrap">
+              <div class="template-chip__title">${displayName}</div>
+              <div class="template-chip__meta">
                 ${t.manufacturer ? html`<span>${t.manufacturer} · </span>` : nothing}
                 <span>${t.deviceType || t.category}</span>
                 ${t.version ? html` · v${t.version}` : nothing}
               </div>
             </div>
-            ${t.isBuiltin ? html`<span style="font-size: 10px; padding: 2px 8px; border-radius: 4px; background: var(--bg); color: var(--muted); text-transform: uppercase;">内置</span>` : nothing}
+            ${t.isBuiltin ? html`<span class="template-chip__badge">内置</span>` : nothing}
           </div>
 
           <!-- Device name -->
-          <div class="field">
-            <span>设备名称 <span style="color: var(--danger);">*</span></span>
+          <div class="field ${hasError('deviceName') ? 'field--error' : ''}">
+            <span>设备名称 <span class="form-label-required">*</span></span>
             <input
               type="text"
               placeholder="请输入设备名称"
               .value=${this.wizName}
               @input=${(e: any) => { this.wizName = e.target.value; }}
-              style=${hasError("deviceName") ? "border-color: var(--danger);" : ""}
             />
-            ${hasError("deviceName") ? html`<div style="font-size: 12px; color: var(--danger); margin-top: 4px;">${getError("deviceName")}</div>` : nothing}
+            ${hasError("deviceName") ? html`<div class="form-error">${getError("deviceName")}</div>` : nothing}
           </div>
 
           <!-- Device description -->
-          <div class="field" style="margin-top: 12px;">
-            <span>设备描述 <span style="font-size: 11px; color: var(--muted);">(可选)</span></span>
+          <div class="field">
+            <span>设备描述 <span class="inline-muted">(可选)</span></span>
             <textarea
               placeholder="请输入设备描述"
               rows="2"
               .value=${this.wizDescription}
               @input=${(e: any) => { this.wizDescription = e.target.value; }}
-              style="resize: none;"
             ></textarea>
           </div>
 
           <!-- Device address -->
-          <div class="field" style="margin-top: 12px;">
+          <div class="field ${hasError('deviceAddress') ? 'field--error' : ''}">
             <span>设备地址 ${isFieldRequired(t.deviceInfo, "address")
-              ? html`<span style="color: var(--danger);">*</span>`
-              : html`<span style="font-size: 11px; color: var(--muted);">(可选)</span>`}</span>
+              ? html`<span class="form-label-required">*</span>`
+              : html`<span class="inline-muted">(可选)</span>`}</span>
             <input
               type="text"
               placeholder="请输入设备IP地址或连接地址"
               .value=${this.wizAddress}
               @input=${(e: any) => { this.wizAddress = e.target.value; }}
-              style=${hasError("deviceAddress") ? "border-color: var(--danger);" : ""}
             />
-            ${hasError("deviceAddress") ? html`<div style="font-size: 12px; color: var(--danger); margin-top: 4px;">${getError("deviceAddress")}</div>` : nothing}
+            ${hasError("deviceAddress") ? html`<div class="form-error">${getError("deviceAddress")}</div>` : nothing}
           </div>
 
           <!-- Device position -->
-          <div class="field" style="margin-top: 12px;">
-            <span>安装位置 <span style="font-size: 11px; color: var(--muted);">(可选)</span></span>
+          <div class="field">
+            <span>安装位置 <span class="inline-muted">(可选)</span></span>
             <input
               type="text"
               placeholder="请输入设备安装位置"
@@ -1725,33 +1858,33 @@ export class DevicesView extends SignalWatcher(LitElement) {
           </div>
 
           <!-- Driver select -->
-          <div class="field" style="margin-top: 12px;">
-            <span>设备驱动 <span style="font-size: 11px; color: var(--muted);">(选择适合的驱动程序)</span></span>
+          <div class="field">
+            <span>设备驱动 <span class="inline-muted">(选择适合的驱动程序)</span></span>
             <select .value=${this.wizDriver} @change=${(e: Event) => this.onWizardDriverSelect((e.target as HTMLSelectElement).value)}>
               <option value="">请选择驱动</option>
               ${this.driverNames.map(name => html`<option value=${name}>${name}</option>`)}
             </select>
             ${t.driverName && this.wizDriver !== t.driverName ? html`
-              <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">模板默认驱动: ${t.driverName}</div>
+              <div class="form-hint">模板默认驱动: ${t.driverName}</div>
             ` : nothing}
           </div>
 
           <!-- Driver config -->
           ${this.wizDriver ? html`
-            <div style="margin-top: 16px;">
-              <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 12px;">
-                <span style="font-size: 14px; font-weight: 600;">驱动配置</span>
-                <span style="font-size: 12px; color: var(--muted);">(${this.wizDriver})</span>
+            <div class="wizard-form-section">
+              <div class="wizard-form-section__header">
+                <span class="wizard-form-section__title">驱动配置</span>
+                <span class="wizard-form-section__meta">(${this.wizDriver})</span>
               </div>
               ${this.wizConfigLoading ? html`
-                <div style="display: flex; align-items: center; justify-content: center; padding: 20px;">
+                <div class="wizard-loading wizard-loading--compact">
                   <span class="loading-spinner"></span>
-                  <span style="margin-left: 8px; color: var(--muted);">加载驱动配置参数...</span>
+                  <span class="wizard-loading__text">加载驱动配置参数...</span>
                 </div>
               ` : this.wizConfigOptions.length > 0 ? html`
                 ${this.wizConfigOptions.map(opt => this.renderWizardConfigField(opt))}
               ` : html`
-                <div style="padding: 12px; border: 1px solid var(--border); border-radius: 8px; color: var(--muted); font-size: 13px; text-align: center;">
+                <div class="empty-hint--sm">
                   该驱动无需额外配置参数
                 </div>
               `}
@@ -1774,11 +1907,11 @@ export class DevicesView extends SignalWatcher(LitElement) {
     const placeholder = opt.defaultValue ? `默认: ${opt.defaultValue}` : `请输入${opt.label}`;
 
     return html`
-      <div class="field" style="margin-bottom: 10px;">
+      <div class="field ${hasError ? 'field--error' : ''}">
         <span>
           ${opt.label}
-          ${opt.required ? html`<span style="color: var(--danger);">*</span>` : html`<span style="font-size: 11px; color: var(--muted);">(可选)</span>`}
-          ${opt.defaultValue ? html`<span style="font-size: 11px; color: var(--muted); margin-left: 8px;">· 默认: ${opt.defaultValue}</span>` : nothing}
+          ${opt.required ? html`<span class="form-label-required">*</span>` : html`<span class="inline-muted">(可选)</span>`}
+          ${opt.defaultValue ? html`<span class="inline-muted inline-muted--spaced">· 默认: ${opt.defaultValue}</span>` : nothing}
         </span>
         ${opt.optionType === "boolean" ? html`
           <select .value=${value || (opt.defaultValue === "true" ? "true" : "false")} @change=${(e: Event) => {
@@ -1791,13 +1924,13 @@ export class DevicesView extends SignalWatcher(LitElement) {
         ` : opt.optionType === "number" ? html`
           <input type="number" .value=${value} placeholder=${placeholder} @input=${(e: any) => {
             this.wizDriverConfig = { ...this.wizDriverConfig, [opt.name]: e.target.value };
-          }} style=${hasError ? "border-color: var(--danger);" : ""} />
+          }} />
         ` : html`
           <input type="text" .value=${value} placeholder=${placeholder} @input=${(e: any) => {
             this.wizDriverConfig = { ...this.wizDriverConfig, [opt.name]: e.target.value };
-          }} style=${hasError ? "border-color: var(--danger);" : ""} />
+          }} />
         `}
-        ${hasError ? html`<div style="font-size: 12px; color: var(--danger); margin-top: 4px;">${errorMsg}</div>` : nothing}
+        ${hasError ? html`<div class="form-error">${errorMsg}</div>` : nothing}
       </div>
     `;
   }
@@ -1814,35 +1947,35 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
     return html`
       <!-- Template summary -->
-      <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
-        <span style="font-size: 32px;">${CATEGORY_ICONS[t.category] || "📦"}</span>
-        <div style="min-width: 0; flex: 1;">
-          <div style="font-weight: 600; font-size: 16px;">${displayName}</div>
-          <div style="font-size: 12px; color: var(--muted); margin-top: 2px;">
+      <div class="template-overview__summary">
+        <span class="template-overview__icon">${CATEGORY_ICONS[t.category] || CATEGORY_ICONS.others}</span>
+        <div class="template-overview__title-wrap">
+          <div class="template-overview__title">${displayName}</div>
+          <div class="template-overview__meta">
             ${t.manufacturer ? html`${t.manufacturer} · ` : nothing}${t.deviceType || t.category}${t.version ? html` · v${t.version}` : nothing}
           </div>
         </div>
-        ${t.isBuiltin ? html`<span style="font-size: 10px; padding: 2px 8px; border-radius: 4px; background: var(--bg); color: var(--muted); text-transform: uppercase;">内置</span>` : nothing}
+        ${t.isBuiltin ? html`<span class="template-overview__badge">内置</span>` : nothing}
       </div>
 
       <!-- Description -->
       ${description ? html`
-        <div style="font-size: 13px; color: var(--muted); line-height: 1.5; margin-bottom: 16px; padding: 10px 12px; background: var(--bg); border-radius: 8px;">
+        <div class="template-overview__desc">
           ${description}
         </div>
       ` : nothing}
 
       <!-- Meta info -->
-      <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px;">
-        ${t.protocolType ? html`<span style="font-size: 11px; padding: 3px 8px; border-radius: 6px; background: var(--bg); color: var(--muted);">协议: ${t.protocolType}</span>` : nothing}
-        ${t.driverName ? html`<span style="font-size: 11px; padding: 3px 8px; border-radius: 6px; background: var(--bg); color: var(--muted);">驱动: ${t.driverName}</span>` : nothing}
-        ${t.category ? html`<span style="font-size: 11px; padding: 3px 8px; border-radius: 6px; background: var(--bg); color: var(--muted);">${CATEGORY_LABELS[t.category] || t.category}</span>` : nothing}
+      <div class="template-overview__meta-tags">
+        ${t.protocolType ? html`<span class="template-overview__meta-tag">协议: ${t.protocolType}</span>` : nothing}
+        ${t.driverName ? html`<span class="template-overview__meta-tag">驱动: ${t.driverName}</span>` : nothing}
+        ${t.category ? html`<span class="template-overview__meta-tag">${CATEGORY_LABELS[t.category] || t.category}</span>` : nothing}
       </div>
 
       <!-- Tags -->
       ${t.tags && t.tags.length > 0 ? html`
-        <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px;">
-          ${t.tags.map(tag => html`<span style="font-size: 11px; padding: 2px 8px; border-radius: 4px; background: var(--primary, #3b82f6); color: white; opacity: 0.8;">${tag}</span>`)}
+        <div class="template-overview__tags">
+          ${t.tags.map(tag => html`<span class="template-overview__tag">${tag}</span>`)}
         </div>
       ` : nothing}
 
@@ -1869,20 +2002,20 @@ export class DevicesView extends SignalWatcher(LitElement) {
       <!-- Property list -->
       ${totalProps > 0 ? html`
         <div class="wizard-overview__section-title">属性列表</div>
-        <ul class="wizard-overview__list" style="max-height: 240px; overflow-y: auto;">
+        <ul class="wizard-overview__list template-overview__list">
           ${t.properties.map((p: any) => html`
-            <li class="wizard-overview__list-item" style="flex-wrap: wrap; gap: 4px;">
-              <div style="display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0;">
+            <li class="wizard-overview__list-item">
+              <div class="template-overview__list-item-inner">
                 <span class="wizard-overview__list-item-name">${p.name || p.displayName || "unnamed"}</span>
                 ${p.accessMode === "r" || p.accessMode === "R"
-                  ? html`<span style="font-size: 10px; padding: 1px 5px; border-radius: 3px; background: var(--bg-subtle); color: var(--muted);">R</span>`
-                  : html`<span style="font-size: 10px; padding: 1px 5px; border-radius: 3px; background: var(--primary, #3b82f6); color: white; opacity: 0.7;">RW</span>`
+                  ? html`<span class="template-overview__list-badge-ro">R</span>`
+                  : html`<span class="template-overview__list-badge-rw">RW</span>`
                 }
               </div>
               <span class="wizard-overview__list-item-meta">
                 ${p.dataType || ""}${p.unit ? ` ${p.unit}` : ""}
                 ${p.minValue != null || p.maxValue != null
-                  ? html` <span style="opacity: 0.7;">[${p.minValue ?? '–'}~${p.maxValue ?? '–'}]</span>`
+                  ? html` <span class="template-overview__range">[${p.minValue ?? '–'}~${p.maxValue ?? '–'}]</span>`
                   : nothing
                 }
               </span>
@@ -1894,13 +2027,13 @@ export class DevicesView extends SignalWatcher(LitElement) {
       <!-- Command list -->
       ${totalCmds > 0 ? html`
         <div class="wizard-overview__section-title">命令列表</div>
-        <ul class="wizard-overview__list" style="max-height: 200px; overflow-y: auto;">
+        <ul class="wizard-overview__list template-overview__list--commands">
           ${t.commands.map((c: any) => html`
-            <li class="wizard-overview__list-item" style="flex-wrap: wrap; gap: 4px;">
-              <div style="display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0;">
+            <li class="wizard-overview__list-item">
+              <div class="template-overview__list-item-inner">
                 <span class="wizard-overview__list-item-name">${c.name || "unnamed"}</span>
                 ${c.parameters && c.parameters.length > 0
-                  ? html`<span style="font-size: 10px; color: var(--muted);">${c.parameters.length} 参数</span>`
+                  ? html`<span class="template-overview__param-count">${c.parameters.length} 参数</span>`
                   : nothing
                 }
               </div>
@@ -1911,7 +2044,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       ` : nothing}
 
       ${totalProps === 0 && totalCmds === 0 ? html`
-        <div style="text-align: center; padding: 24px; color: var(--muted); font-size: 13px;">
+        <div class="empty-hint--sm">
           该模板暂无属性和命令定义
         </div>
       ` : nothing}

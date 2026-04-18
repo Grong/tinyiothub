@@ -7,5 +7,6 @@ pub mod wrapper;
 
 pub use auto_loader::auto_load_drivers;
 pub use loader::DynamicDriverLoader;
+#[allow(deprecated)]
 pub use registry::UnifiedDriverRegistry;
 pub use wrapper::DynamicDriverWrapper;

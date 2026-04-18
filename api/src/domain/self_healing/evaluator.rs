@@ -1,8 +1,6 @@
-use std::collections::HashMap;
 
 use super::entity::{
-    HealingCondition, LevelPolicy, ProbeFinding, ProbeResult, ProbeType, SelfHealingPolicy,
-    SeverityLevel,
+    LevelPolicy, ProbeFinding, ProbeResult, SelfHealingPolicy, SeverityLevel,
 };
 
 /// Evaluates probe results against self-healing policies
@@ -86,6 +84,7 @@ impl PolicyEvaluator {
 
 #[cfg(test)]
 mod tests {
+    use crate::domain::self_healing::entity::{HealingCondition, ProbeType};
     use super::*;
     use chrono::Utc;
     use std::collections::HashMap;

@@ -9,10 +9,10 @@ export class SkeletonLoader extends LitElement {
     }
     
     .skeleton {
-      background: linear-gradient(90deg, #262a35 25%, #323842 50%, #262a35 75%);
+      background: linear-gradient(90deg, var(--bg-hover, #262a35) 25%, var(--bg-elevated, #323842) 50%, var(--bg-hover, #262a35) 75%);
       background-size: 200% 100%;
       animation: skeleton-loading 1.5s infinite;
-      border-radius: 4px;
+      border-radius: var(--radius-sm, 4px);
     }
     
     @keyframes skeleton-loading {
@@ -83,14 +83,14 @@ export class SkeletonList extends LitElement {
       display: flex;
       gap: 12px;
       padding: 12px;
-      border-bottom: 1px solid #27272a;
+      border-bottom: 1px solid var(--border, #27272a);
     }
     
     .skeleton {
-      background: linear-gradient(90deg, #262a35 25%, #323842 50%, #262a35 75%);
+      background: linear-gradient(90deg, var(--bg-hover, #262a35) 25%, var(--bg-elevated, #323842) 50%, var(--bg-hover, #262a35) 75%);
       background-size: 200% 100%;
       animation: skeleton-loading 1.5s infinite;
-      border-radius: 4px;
+      border-radius: var(--radius-sm, 4px);
     }
     
     @keyframes skeleton-loading {
@@ -147,10 +147,10 @@ export class SkeletonTable extends LitElement {
     }
     
     .skeleton {
-      background: linear-gradient(90deg, #262a35 25%, #323842 50%, #262a35 75%);
+      background: linear-gradient(90deg, var(--bg-hover, #262a35) 25%, var(--bg-elevated, #323842) 50%, var(--bg-hover, #262a35) 75%);
       background-size: 200% 100%;
       animation: skeleton-loading 1.5s infinite;
-      border-radius: 4px;
+      border-radius: var(--radius-sm, 4px);
     }
     
     @keyframes skeleton-loading {
@@ -162,7 +162,7 @@ export class SkeletonTable extends LitElement {
       display: grid;
       gap: 12px;
       padding: 14px 0;
-      border-bottom: 1px solid #27272a;
+      border-bottom: 1px solid var(--border, #27272a);
       grid-template-columns: repeat(var(--cols, 4), 1fr);
     }
     

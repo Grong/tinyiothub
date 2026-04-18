@@ -1,0 +1,730 @@
+/* ===========================================
+   A2UI Surfaces
+   =========================================== */
+
+.a2ui-surface {
+  margin: var(--space-2) 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--bg-muted);
+}
+
+.a2ui-surface--overlay {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1000;
+  background: var(--card);
+  box-shadow: var(--shadow-lg);
+  max-width: 600px;
+  width: 90%;
+}
+
+/* ===========================================
+   A2UI Basic Components
+   =========================================== */
+
+.a2ui-text { margin: var(--space-1) 0; }
+.a2ui-heading { margin: var(--space-2) 0 var(--space-1); font-size: 1.1em; font-weight: 600; }
+.a2ui-subtitle { margin: var(--space-1) 0; color: var(--muted); }
+.a2ui-caption { color: var(--muted); font-size: 0.85em; }
+
+.a2ui-btn {
+  padding: 6px var(--space-4);
+  border-radius: var(--radius-sm);
+  border: none;
+  cursor: pointer;
+  font-size: 0.9em;
+  font-weight: 500;
+  transition: opacity var(--duration-fast);
+}
+.a2ui-btn:hover { opacity: 0.85; }
+.a2ui-btn--primary { background: var(--accent); color: white; }
+.a2ui-btn--secondary { background: var(--bg-muted); color: var(--text); border: 1px solid var(--border); }
+.a2ui-btn--danger { background: #e74c3c; color: white; }
+
+.a2ui-divider { border: none; border-top: 1px solid var(--border); margin: 8px 0; }
+
+/* ===========================================
+   A2UI IoT Components — Industrial IoT Control Room
+   =========================================== */
+
+/* ── Device Card ── */
+.a2ui-device-card {
+  --status-color: #6b7280;
+  --status-glow: rgba(107, 114, 128, 0.3);
+
+  position: relative;
+  padding: var(--space-4);
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(10, 14, 22, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.4),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  overflow: hidden;
+  transition: transform var(--duration-normal) var(--ease-out),
+              box-shadow var(--duration-normal) var(--ease-out);
+}
+
+:root[data-theme="light"] .a2ui-device-card {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: rgba(0, 0, 0, 0.06);
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.06),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.04);
+}
+
+.a2ui-device-card:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.5),
+    0 0 24px var(--status-glow),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.a2ui-device-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.a2ui-device-card__identity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 1;
+}
+
+.a2ui-device-card__status {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--status-color);
+  flex-shrink: 0;
+  box-shadow: 0 0 8px var(--status-glow);
+}
+
+.a2ui-device-card__status--pulse {
+  animation: statusPulse 2s ease-in-out infinite;
+}
+
+@keyframes statusPulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 6px var(--status-glow); }
+  50% { opacity: 0.6; box-shadow: 0 0 12px var(--status-color); }
+}
+
+.a2ui-device-card__name {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 0 20px var(--status-glow);
+}
+
+.a2ui-device-card__badge {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--status-color);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+}
+
+/* Properties List */
+.a2ui-device-card__props {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-3);
+  margin-bottom: var(--space-3);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+:root[data-theme="light"] .a2ui-device-card__props {
+  background: rgba(0, 0, 0, 0.02);
+  border-color: rgba(0, 0, 0, 0.04);
+}
+
+.a2ui-device-card__prop {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  gap: var(--space-2);
+}
+
+.a2ui-device-card__prop-key {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.a2ui-device-card__prop-val {
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.a2ui-device-card__prop-unit {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+/* Telemetry Grid */
+.a2ui-device-card__telemetry {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding-top: var(--space-3);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  margin-bottom: var(--space-2);
+}
+
+:root[data-theme="light"] .a2ui-device-card__telemetry {
+  border-color: rgba(0, 0, 0, 0.06);
+}
+
+.a2ui-device-card__metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+:root[data-theme="light"] .a2ui-device-card__metric {
+  background: rgba(0, 0, 0, 0.02);
+  border-color: rgba(0, 0, 0, 0.04);
+}
+
+.a2ui-device-card__metric-key {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.a2ui-device-card__metric-val {
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-weight: 700;
+  font-size: 16px;
+  color: var(--status-color);
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+}
+
+.a2ui-device-card__metric-unit {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.a2ui-device-card__sparkline {
+  margin: var(--space-3) 0;
+  padding: var(--space-2) 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  display: flex;
+  justify-content: center;
+}
+
+:root[data-theme="light"] .a2ui-device-card__sparkline {
+  border-color: rgba(0, 0, 0, 0.04);
+}
+
+.a2ui-device-card__actions {
+  display: flex;
+  gap: 6px;
+  margin-top: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.a2ui-device-card__footer {
+  margin-top: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+:root[data-theme="light"] .a2ui-device-card__footer {
+  border-color: rgba(0, 0, 0, 0.04);
+}
+
+.a2ui-device-card__id {
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+
+/* ── Stat Card ── */
+.a2ui-stat-card {
+  --card-accent: var(--accent);
+
+  position: relative;
+  padding: var(--space-4);
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(10, 14, 22, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.4),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  overflow: hidden;
+  transition: transform var(--duration-normal) var(--ease-out),
+              box-shadow var(--duration-normal) var(--ease-out);
+}
+
+:root[data-theme="light"] .a2ui-stat-card {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: rgba(0, 0, 0, 0.06);
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.06),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.04);
+}
+
+.a2ui-stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.5),
+    0 0 24px rgba(var(--card-accent), 0.15),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.a2ui-stat-card__inner {
+  position: relative;
+  z-index: 1;
+}
+
+.a2ui-stat-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+
+.a2ui-stat-card__label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.a2ui-stat-card__icon {
+  font-size: 18px;
+  opacity: 0.7;
+}
+
+.a2ui-stat-card__body {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.a2ui-stat-card__value {
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 36px;
+  font-weight: 800;
+  background: linear-gradient(135deg, var(--card-accent) 0%, color-mix(in srgb, var(--card-accent) 60%, white) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  line-height: 1;
+  text-shadow: 0 0 40px var(--card-accent);
+}
+
+.a2ui-stat-card__unit {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.a2ui-stat-card__trend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  margin-top: var(--space-1);
+}
+
+.a2ui-stat-card__trend-arrow {
+  font-size: 14px;
+}
+
+.a2ui-stat-card__trend-val {
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+}
+
+.a2ui-stat-card__trend-label {
+  color: var(--muted);
+  font-weight: 400;
+  margin-left: 4px;
+}
+
+.a2ui-stat-card__desc {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: var(--space-2);
+  line-height: 1.4;
+}
+
+.a2ui-stat-card__actions {
+  display: flex;
+  gap: 6px;
+  margin-top: var(--space-3);
+}
+
+.a2ui-stat-card__glow {
+  position: absolute;
+  top: -20px;
+  right: -20px;
+  width: 100px;
+  height: 100px;
+  background: radial-gradient(circle, var(--card-accent) 0%, transparent 70%);
+  opacity: 0.08;
+  pointer-events: none;
+}
+
+/* Button Sizes */
+.a2ui-btn--sm {
+  padding: 3px var(--space-2);
+  font-size: 12px;
+}
+
+.a2ui-btn--xs {
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: 6px;
+}
+
+.a2ui-btn--outline {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--text-secondary);
+  transition: all var(--duration-fast);
+}
+
+:root[data-theme="light"] .a2ui-btn--outline {
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+.a2ui-btn--outline:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.a2ui-unknown {
+  padding: var(--space-2);
+  border: 1px dashed var(--border);
+  color: var(--muted);
+  font-size: 0.85em;
+  border-radius: 4px;
+}
+
+.agent-dropdown {
+  padding: 6px var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  min-width: 200px;
+}
+
+.agent-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-7) var(--space-2);
+  text-align: center;
+  color: var(--muted);
+}
+
+.agent-placeholder__icon {
+  font-size: 32px;
+  margin-bottom: 12px;
+}
+
+.agent-placeholder__desc {
+  font-size: 14px;
+  max-width: 320px;
+  line-height: 1.5;
+}
+
+/* ===========================================
+   A2UI DeviceTable
+   =========================================== */
+
+.a2ui-device-table__title {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+.a2ui-device-table__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.a2ui-device-table__table th {
+  text-align: left;
+  padding: var(--space-2) var(--space-2);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--border);
+}
+
+.a2ui-device-table__table td {
+  padding: var(--space-2) var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.a2ui-device-table__status {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.a2ui-device-table__actions {
+  display: flex;
+  gap: var(--space-1);
+}
+
+/* ── Agent Tools Tab ── */
+
+.agent-tools-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.agent-tools-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.agent-tools-search {
+  flex: 1;
+  padding: 6px var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--fg);
+  font-size: 13px;
+  outline: none;
+}
+
+.agent-tools-search:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-alpha);
+}
+
+/* ── Agent Placeholder Tabs ── */
+
+.agent-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-7) var(--space-2);
+  text-align: center;
+  color: var(--muted);
+}
+
+.agent-placeholder__icon {
+  font-size: 36px;
+  margin-bottom: 12px;
+  opacity: 0.7;
+}
+
+.agent-placeholder__desc {
+  font-size: 14px;
+  line-height: 1.6;
+  max-width: 320px;
+  margin: 0;
+}
+
+/* ── A2UI DataChart ── */
+
+.a2ui-data-chart {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  background: var(--card);
+}
+
+.a2ui-data-chart__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.a2ui-data-chart__title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.a2ui-data-chart__range {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.a2ui-data-chart__svg {
+  display: block;
+}
+
+.a2ui-data-chart__legend {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.a2ui-data-chart__legend-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.a2ui-data-chart__legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+/* ── A2UI ControlPanel ── */
+
+.a2ui-control-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  background: var(--card);
+}
+
+.a2ui-control-panel__header {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.a2ui-control-panel__field {
+  margin-bottom: 12px;
+}
+
+.a2ui-control-panel__label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.a2ui-control-panel__slider-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.a2ui-control-panel__slider {
+  flex: 1;
+  accent-color: var(--accent, #3b82f6);
+}
+
+.a2ui-control-panel__range-label {
+  font-size: 11px;
+  color: var(--muted);
+  min-width: 24px;
+}
+
+.a2ui-control-panel__toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.a2ui-control-panel__toggle input {
+  display: none;
+}
+
+.a2ui-control-panel__toggle-slider {
+  width: 36px;
+  height: 20px;
+  background: var(--border);
+  border-radius: var(--radius-md);
+  position: relative;
+  transition: background var(--duration-normal);
+  flex-shrink: 0;
+}
+
+.a2ui-control-panel__toggle-slider::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: var(--card, #fff);
+  border-radius: 50%;
+  transition: transform var(--duration-normal);
+  box-shadow: var(--shadow-sm);
+}
+
+.a2ui-control-panel__toggle input:checked + .a2ui-control-panel__toggle-slider {
+  background: var(--accent, #3b82f6);
+}
+
+.a2ui-control-panel__toggle input:checked + .a2ui-control-panel__toggle-slider::after {
+  transform: translateX(16px);
+}
+
+.a2ui-control-panel__toggle-label {
+  color: var(--text);
+}
+
+.a2ui-control-panel__choices {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.a2ui-control-panel__choice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 13px;
+  cursor: pointer;
+}
+

@@ -9,12 +9,12 @@ use headers::{authorization::Bearer, Authorization, HeaderMapExt};
 
 use crate::{
     dto::response::{ReqCtx, UserInfo},
-    shared::security::jwt::validate_jwt,
+    shared::security::jwt::{validate_jwt, is_token_blacklisted_sync},
 };
 
 /// Context middleware for request processing with Axum
 pub async fn context_middleware(
-    State(_state): State<crate::shared::app_state::AppState>,
+    State(state): State<crate::shared::app_state::AppState>,
     mut request: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
@@ -24,7 +24,7 @@ pub async fn context_middleware(
     let path = request.uri().path().to_string();
 
     // Try to extract and validate JWT token
-    let user_info = extract_user_from_jwt(request.headers(), request.uri()).unwrap_or_default();
+    let user_info = extract_user_from_jwt(request.headers(), request.uri(), Some(&state.database)).unwrap_or_default();
 
     // Create context with user information
     let ctx = ReqCtx {
@@ -62,8 +62,16 @@ fn extract_bearer_token<'a>(headers: &'a HeaderMap, uri: &'a axum::http::Uri) ->
 }
 
 /// Extract user information from JWT token in headers or query string
-fn extract_user_from_jwt(headers: &HeaderMap, uri: &axum::http::Uri) -> Option<UserInfo> {
+fn extract_user_from_jwt(headers: &HeaderMap, uri: &axum::http::Uri, db: Option<&crate::infrastructure::persistence::database::Database>) -> Option<UserInfo> {
     let token = extract_bearer_token(headers, uri)?;
+
+    // Check token blacklist if DB is available
+    if let Some(database) = db {
+        if is_token_blacklisted_sync(database, &token) {
+            tracing::warn!("Rejected blacklisted token");
+            return None;
+        }
+    }
 
     // Validate JWT token
     let claims = validate_jwt(&token).ok()?;
@@ -78,6 +86,7 @@ fn extract_user_from_jwt(headers: &HeaderMap, uri: &axum::http::Uri) -> Option<U
 }
 
 /// Extract body data from request (helper function)
+#[allow(dead_code)]
 async fn extract_body_data(body: &[u8]) -> Result<String, String> {
     match std::str::from_utf8(body) {
         Ok(text) => Ok(text.to_string()),

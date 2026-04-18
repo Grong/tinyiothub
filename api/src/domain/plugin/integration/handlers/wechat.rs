@@ -22,6 +22,7 @@ struct WechatSendRequest {
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 struct WechatAccessTokenResponse {
     access_token: String,
     expires_in: i64,

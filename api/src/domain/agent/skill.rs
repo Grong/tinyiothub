@@ -114,7 +114,10 @@ impl AgentSkill {
             for (key, value) in obj {
                 let placeholder = format!("${{{}}}", key);
                 let replacement = match value {
-                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::String(s) => {
+                        // Escape ${} in values to prevent parameter injection on re-execution
+                        s.replace("${", "${'${'}")
+                    }
                     _ => value.to_string(),
                 };
                 content = content.replace(&placeholder, &replacement);

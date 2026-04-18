@@ -1,7 +1,10 @@
 import { apiGet, apiPost, apiPut } from "../../api/client.js";
 import type { AgentsListResult, ToolCatalogGroup } from "../types.js";
+import type { Skill, CreateSkillRequest, UpdateSkillRequest } from "../../api/client.js";
+import { listSkills, createSkill, updateSkill, deleteSkill } from "../../api/client.js";
+import type { HeartbeatConfig, HeartbeatLogsResponse, HeartbeatTask } from "../views/agents-heartbeat-tab.js";
 
-export type AgentsPanel = "overview" | "tools";
+export type AgentsPanel = "overview" | "tools" | "skills" | "heartbeat" | "files";
 
 export type AgentConfig = {
   model?: string;
@@ -36,6 +39,17 @@ export type AgentsState = {
   configBaseHash: string | null;
   toolsCatalog: ToolCatalogGroup[] | null;
   toolsCatalogLoading: boolean;
+  skillsList?: Skill[];
+  skillsLoading?: boolean;
+  skillsError?: string | null;
+  activeSkillsPanel?: string;
+  editingSkill?: Skill | null;
+  skillDraft?: string;
+  pendingDelete?: string | null;
+  heartbeatConfig?: HeartbeatConfig | null;
+  heartbeatLogs?: HeartbeatLogsResponse["logs"];
+  heartbeatLoading?: boolean;
+  heartbeatError?: string | null;
 };
 
 export function createAgentsState(): AgentsState {
@@ -113,4 +127,168 @@ export async function loadToolsCatalog(state: AgentsState, agentId: string): Pro
 
 export async function toggleTool(agentId: string, toolName: string, enabled: boolean): Promise<void> {
   await apiPost("/tools/toggle", { agentId, toolName, enabled });
+}
+
+export async function loadSkills(state: AgentsState): Promise<void> {
+  state.skillsLoading = true;
+  state.skillsError = null;
+  try {
+    const res = await listSkills();
+    state.skillsList = res.result || [];
+  } catch (err) {
+    state.skillsError = String(err);
+  } finally {
+    state.skillsLoading = false;
+  }
+}
+
+export async function saveSkill(state: AgentsState, skill: CreateSkillRequest, name?: string): Promise<boolean> {
+  try {
+    if (name) {
+      await updateSkill(name, { skill_content: skill.skill_content }, skill.workspace_id);
+    } else {
+      await createSkill(skill);
+    }
+    await loadSkills(state);
+    return true;
+  } catch (err) {
+    state.skillsError = String(err);
+    return false;
+  }
+}
+
+export async function removeSkill(state: AgentsState, name: string, workspaceId?: string): Promise<boolean> {
+  try {
+    await deleteSkill(name, workspaceId);
+    await loadSkills(state);
+    return true;
+  } catch (err) {
+    state.skillsError = String(err);
+    return false;
+  }
+}
+
+export async function createSkillApi(state: AgentsState, data: CreateSkillRequest): Promise<boolean> {
+  try {
+    await createSkill(data);
+    await loadSkills(state);
+    return true;
+  } catch (err) {
+    state.skillsError = String(err);
+    return false;
+  }
+}
+
+export async function updateSkillApi(state: AgentsState, name: string, data: UpdateSkillRequest, workspaceId?: string): Promise<boolean> {
+  try {
+    await updateSkill(name, data, workspaceId);
+    await loadSkills(state);
+    return true;
+  } catch (err) {
+    state.skillsError = String(err);
+    return false;
+  }
+}
+
+export async function loadHeartbeatConfig(state: AgentsState, agentId: string): Promise<void> {
+  state.heartbeatLoading = true;
+  state.heartbeatError = null;
+  try {
+    const res = await apiGet<HeartbeatConfig>(`/agents/${agentId}/heartbeat/config`);
+    if (res.result) {
+      // Parse tasks if it's a JSON string (same as templates/devices pattern)
+      if (typeof res.result.tasks === "string") {
+        res.result.tasks = JSON.parse(res.result.tasks);
+      }
+    }
+    state.heartbeatConfig = res.result || null;
+  } catch (err) {
+    state.heartbeatError = String(err);
+  } finally {
+    state.heartbeatLoading = false;
+  }
+}
+
+export async function loadHeartbeatLogs(state: AgentsState, agentId: string): Promise<void> {
+  try {
+    const res = await apiGet<HeartbeatLogsResponse>(`/agents/${agentId}/heartbeat/logs`);
+    state.heartbeatLogs = res.result?.logs ?? undefined;
+  } catch (err) {
+    state.heartbeatError = String(err);
+  }
+}
+
+export async function updateHeartbeatConfig(
+  state: AgentsState,
+  agentId: string,
+  enabled?: boolean,
+  intervalMinutes?: number
+): Promise<boolean> {
+  try {
+    await apiPut(`/agents/${agentId}/heartbeat/config`, {
+      enabled,
+      intervalMinutes,
+    });
+    // Reload config to get the latest state
+    await loadHeartbeatConfig(state, agentId);
+    return true;
+  } catch (err) {
+    state.heartbeatError = String(err);
+    return false;
+  }
+}
+
+export async function updateHeartbeatTasks(
+  state: AgentsState,
+  agentId: string,
+  tasks: HeartbeatTask[]
+): Promise<boolean> {
+  try {
+    await apiPut(`/agents/${agentId}/heartbeat/tasks`, { tasks });
+    // Reload config to get the updated tasks list
+    await loadHeartbeatConfig(state, agentId);
+    return true;
+  } catch (err) {
+    state.heartbeatError = String(err);
+    return false;
+  }
+}
+
+// Workspace Files API
+export interface WorkspaceFile {
+  name: string;
+  content: string;
+}
+
+export interface WorkspaceFilesListResponse {
+  files: { name: string }[];
+}
+
+export async function loadWorkspaceFiles(state: AgentsState, agentId: string): Promise<void> {
+  (state as any).workspaceFilesLoading = true;
+  (state as any).workspaceFilesError = null;
+  try {
+    const filesState: Record<string, WorkspaceFile> = {};
+    // Load all workspace files in parallel
+    const fileNames = ["IDENTITY.md", "SOUL.md", "AGENTS.md", "USER.md", "TOOLS.md", "MEMORY.md", "HEARTBEAT.md", "BOOTSTRAP.md"];
+    await Promise.all(
+      fileNames.map(async (name) => {
+        try {
+          const res = await apiGet<WorkspaceFile>(`/agents/${agentId}/files/${name}`);
+          if (res.result) {
+            filesState[name] = res.result;
+          }
+        } catch {
+          // File might not exist yet, create empty content
+          filesState[name] = { name, content: "" };
+        }
+      })
+    );
+    (state as any).workspaceFiles = filesState;
+    (state as any).selectedWorkspaceFile = fileNames[0];
+  } catch (err) {
+    (state as any).workspaceFilesError = String(err);
+  } finally {
+    (state as any).workspaceFilesLoading = false;
+  }
 }

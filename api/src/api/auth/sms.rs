@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // 短信验证码认证模块
 // 支持手机验证码登录/注册
 
@@ -712,8 +713,7 @@ fn validate_phone(phone: &str) -> bool {
 /// 生成随机验证码
 fn generate_code() -> String {
     let mut rng = rand::thread_rng();
-    let code: u32 = rng.gen_range(0..1_000_000);
-    format!("{:06}", code)
+    format!("{:06}", rng.gen_range(0..1_000_000))
 }
 
 /// 根据手机号查找或创建用户

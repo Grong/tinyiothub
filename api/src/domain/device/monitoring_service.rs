@@ -144,8 +144,12 @@ impl DeviceMonitoringService {
     pub async fn get_device_metrics(&self, device_id: &str) -> Option<DeviceMetrics> {
         if let Some(_device) = self.context.get_device(device_id) {
             // 使用 DeviceService 获取真实的属性和指令数据
+            let device_repository: Arc<dyn crate::domain::device::repository::DeviceRepository> =
+                Arc::new(crate::infrastructure::persistence::repositories::SqliteDeviceRepository::new(
+                    self.database.as_ref().clone(),
+                ));
             let device_service =
-                crate::domain::device::service::DeviceService::new(self.database.clone());
+                crate::domain::device::service::DeviceService::new(device_repository, self.database.clone());
 
             let properties = match device_service.get_device_properties(device_id).await {
                 Ok(props) => props,

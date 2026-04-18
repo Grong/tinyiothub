@@ -26,6 +26,7 @@ import "./views/users.js";
 import "./views/settings.js";
 import "./views/chat.js";
 import "./views/agents.js";
+import "./views/cron.js";
 
 interface NavItem {
   route: string;
@@ -59,6 +60,7 @@ const NAV_GROUPS: NavGroup[] = [
       { route: "alarms", label: "告警中心", icon: "M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01" },
       { route: "events", label: "事件日志", icon: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" },
       { route: "monitoring", label: "系统监控", icon: "M18 20V10M12 20V4M6 20v-6" },
+      { route: "cron", label: "定时任务", icon: "M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm1-8h4v2H11V6h2z" },
     ],
   },
   {
@@ -257,6 +259,7 @@ export class TinyIoTHubApp extends LitElement {
       marketplace: "市场",
       chat: "AI 聊天",
       agents: "Agent 管理",
+      cron: "定时任务",
     };
     // Handle /devices/:id
     if (this.currentRoute.startsWith("devices/")) return "设备详情";
@@ -278,6 +281,7 @@ export class TinyIoTHubApp extends LitElement {
       marketplace: "驱动和模板市场",
       chat: "与 AI Agent 对话",
       agents: "管理和配置 Agent",
+      cron: "管理定时执行的任务和作业",
     };
     if (this.currentRoute.startsWith("devices/")) return "查看设备属性、命令和事件";
     return subs[this.currentRoute] || "";
@@ -312,7 +316,7 @@ export class TinyIoTHubApp extends LitElement {
         <nav class="nav ${this.navCollapsed ? "nav--collapsed" : ""}" aria-label="主导航" role="navigation">
           ${this.renderNav()}
         </nav>
-        <div class="content" role="main" id="main-content"></parameter>
+        <div class="content" role="main" id="main-content">
 
           ${this.currentRoute.startsWith("devices/") || this.currentRoute === "chat" ? nothing : html`
           <section class="content-header">
@@ -417,6 +421,7 @@ export class TinyIoTHubApp extends LitElement {
     if (route === "settings") return html`<view-settings></view-settings>`;
     if (route === "chat") return html`<view-chat></view-chat>`;
     if (route === "agents") return html`<view-agents></view-agents>`;
+    if (route === "cron") return html`<view-cron></view-cron>`;
     return html`<div style="padding: 40px; text-align: center; color: var(--muted);">页面不存在</div>`;
   }
 }

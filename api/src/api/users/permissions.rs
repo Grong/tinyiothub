@@ -28,7 +28,7 @@ pub struct UserPermission {
 pub fn create_router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_permissions))
-        .route("/:id/permissions", get(get_user_permissions))
+        .route("/{id}/permissions", get(get_user_permissions))
 }
 
 /// 获取所有权限列表
@@ -37,7 +37,7 @@ async fn list_permissions(
     _claims: Claims,
 ) -> Json<ApiResponse<Vec<Permission>>> {
     let query = PermissionQuery::default();
-    match Permission::find_all(state.database(), &query).await {
+    match state.permission_service.find_all_permissions(&query).await {
         Ok(permissions) => ApiResponse::success(permissions),
         Err(e) => {
             tracing::error!("Failed to list permissions: {}", e);

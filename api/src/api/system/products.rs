@@ -15,6 +15,7 @@ use crate::{
 };
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 #[serde(rename_all = "snake_case")]
 pub struct ProductQuery {
     pub device_type: Option<String>,
@@ -28,7 +29,7 @@ pub struct ProductQuery {
 pub fn create_router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_products).post(create_product))
-        .route("/:id", get(get_product).put(update_product).delete(delete_product))
+        .route("/{id}", get(get_product).put(update_product).delete(delete_product))
 }
 
 /// 获取产品列表
@@ -37,8 +38,7 @@ async fn list_products(
     Query(query): Query<ProductQuery>,
     _claims: Claims,
 ) -> Json<ApiResponse<Vec<Product>>> {
-    match Product::find_with_filters(
-        state.database(),
+    match state.product_service.find_with_filters(
         query.search,
         None, // manufacturer
         None, // device_type
@@ -70,7 +70,7 @@ async fn create_product(
     }
 
     // 检查产品名称是否已存在
-    match Product::exists_by_name(state.database(), &request.name).await {
+    match state.product_service.exists_by_name(&request.name).await {
         Ok(true) => {
             return ApiResponse::error("产品名称已存在".to_string());
         }
@@ -82,7 +82,7 @@ async fn create_product(
     }
 
     // 创建产品
-    match Product::create(state.database(), &request).await {
+    match state.product_service.create(&request).await {
         Ok(product) => {
             tracing::info!("Product created: {}", product.name);
             ApiResponse::success(product)
@@ -100,7 +100,7 @@ async fn get_product(
     Path(id): Path<String>,
     _claims: Claims,
 ) -> Json<ApiResponse<Product>> {
-    match Product::find_by_id(state.database(), &id).await {
+    match state.product_service.find_by_id(&id).await {
         Ok(Some(product)) => {
             tracing::debug!("Retrieved product: {}", product.name);
             ApiResponse::success(product)
@@ -127,7 +127,7 @@ async fn update_product(
         }
 
         // 检查产品名称是否已被其他产品使用
-        match Product::exists_by_name_excluding_id(state.database(), name, &id).await {
+        match state.product_service.exists_by_name_excluding_id(name, &id).await {
             Ok(true) => {
                 return ApiResponse::error("产品名称已存在".to_string());
             }
@@ -139,12 +139,12 @@ async fn update_product(
         }
     }
 
-    match Product::update(state.database(), &id, &request).await {
+    match state.product_service.update(&id, &request).await {
         Ok(product) => {
             tracing::info!("Product updated: {}", product.name);
             ApiResponse::success(product)
         }
-        Err(sqlx::Error::RowNotFound) => ApiResponse::error("产品不存在".to_string()),
+        Err(crate::shared::error::Error::NotFound) => ApiResponse::error("产品不存在".to_string()),
         Err(e) => {
             tracing::error!("Failed to update product {}: {}", id, e);
             ApiResponse::error("更新产品失败".to_string())
@@ -158,7 +158,7 @@ async fn delete_product(
     Path(id): Path<String>,
     _claims: Claims,
 ) -> Json<ApiResponse<bool>> {
-    match Product::delete(state.database(), &id).await {
+    match state.product_service.delete(&id).await {
         Ok(rows_affected) => {
             if rows_affected > 0 {
                 tracing::info!("Product deleted: {}", id);
