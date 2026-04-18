@@ -127,7 +127,7 @@ impl CronJobRepository for SqliteCronJobRepository {
         created_by: Option<&str>,
     ) -> Result<CronJob> {
         let id = uuid::Uuid::new_v4().to_string();
-        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
         let timeout_seconds = job.timeout_seconds.unwrap_or(300);
         let max_retries = job.max_retries.unwrap_or(3);
         let next_run_at = compute_next_run_at(&job.cron_expression);
@@ -169,7 +169,7 @@ impl CronJobRepository for SqliteCronJobRepository {
         workspace_id: &str,
         req: &UpdateCronJobRequest,
     ) -> Result<CronJob> {
-        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         let mut builder = QueryBuilder::<sqlx::Sqlite>::new("UPDATE cron_jobs SET updated_at = ");
         builder.push_bind(&now);
@@ -196,6 +196,10 @@ impl CronJobRepository for SqliteCronJobRepository {
         if let Some(ref cron_expression) = req.cron_expression {
             builder.push(", cron_expression = ");
             builder.push_bind(cron_expression);
+            if let Some(next) = compute_next_run_at(cron_expression) {
+                builder.push(", next_run_at = ");
+                builder.push_bind(next);
+            }
             has_updates = true;
         }
 
@@ -261,7 +265,7 @@ impl CronJobRepository for SqliteCronJobRepository {
         status: &str,
         error: Option<&str>,
     ) -> Result<bool> {
-        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
         let success_inc = if status == "success" { 1 } else { 0 };
         let fail_inc = if status == "failed" { 1 } else { 0 };
 
@@ -293,7 +297,7 @@ impl CronJobRepository for SqliteCronJobRepository {
     }
 
     async fn set_running(&self, id: &str, workspace_id: &str, running: bool) -> Result<bool> {
-        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         let result = sqlx::query(
             "UPDATE cron_jobs SET is_running = ?, updated_at = ? WHERE id = ? AND workspace_id = ?",
@@ -338,9 +342,12 @@ impl CronJobRepository for SqliteCronJobRepository {
     }
 
     async fn clear_all_running(&self, workspace_id: Option<&str>) -> Result<u64> {
+        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
         let mut builder = QueryBuilder::<sqlx::Sqlite>::new(
-            "UPDATE cron_jobs SET is_running = 0, updated_at = datetime('now') WHERE is_running = 1",
+            "UPDATE cron_jobs SET is_running = 0, updated_at = ",
         );
+        builder.push_bind(&now);
+        builder.push(" WHERE is_running = 1");
 
         if let Some(ws_id) = workspace_id {
             builder.push(" AND workspace_id = ");
@@ -367,7 +374,7 @@ impl CronJobRepository for SqliteCronJobRepository {
         workspace_id: &str,
         next_run_at: Option<&str>,
     ) -> Result<bool> {
-        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         let result = sqlx::query(
             "UPDATE cron_jobs SET next_run_at = ?, updated_at = ? WHERE id = ? AND workspace_id = ?",

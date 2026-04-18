@@ -45,7 +45,7 @@ impl CronRunRepository for SqliteCronRunRepository {
         triggered_by: Option<&str>,
     ) -> Result<CronRun> {
         let id = uuid::Uuid::new_v4().to_string();
-        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         sqlx::query(
             r#"
@@ -73,12 +73,13 @@ impl CronRunRepository for SqliteCronRunRepository {
     async fn complete(
         &self,
         id: &str,
+        workspace_id: &str,
         status: &str,
         output: Option<&str>,
         error: Option<&str>,
         duration_ms: i64,
     ) -> Result<CronRun> {
-        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         let result = sqlx::query(
             r#"
@@ -88,7 +89,7 @@ impl CronRunRepository for SqliteCronRunRepository {
                 error_message = ?,
                 duration_ms = ?,
                 ended_at = ?
-            WHERE id = ?
+            WHERE id = ? AND workspace_id = ?
             "#,
         )
         .bind(status)
@@ -97,6 +98,7 @@ impl CronRunRepository for SqliteCronRunRepository {
         .bind(duration_ms)
         .bind(&now)
         .bind(id)
+        .bind(workspace_id)
         .execute(self.database.pool())
         .await?;
 
@@ -104,15 +106,16 @@ impl CronRunRepository for SqliteCronRunRepository {
             return Err(crate::shared::error::Error::NotFound);
         }
 
-        // Fetch the run back to get workspace_id for the response
+        // Fetch the run back to return the updated entity
         let row = sqlx::query(
             r#"
             SELECT id, job_id, workspace_id, started_at, ended_at, duration_ms, status,
                    output, error_message, trigger_type, triggered_by, created_at
-            FROM cron_runs WHERE id = ? LIMIT 1
+            FROM cron_runs WHERE id = ? AND workspace_id = ? LIMIT 1
             "#,
         )
         .bind(id)
+        .bind(workspace_id)
         .fetch_one(self.database.pool())
         .await?;
 
