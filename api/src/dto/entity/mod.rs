@@ -15,6 +15,8 @@ pub mod device_property;
 
 pub mod job;
 
+pub mod cron_job;
+
 pub mod menu;
 
 pub mod message;
