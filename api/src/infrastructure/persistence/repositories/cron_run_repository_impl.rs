@@ -1,0 +1,215 @@
+use async_trait::async_trait;
+use sqlx::{QueryBuilder, Row};
+
+use crate::domain::cron::repository::CronRunRepository;
+use crate::dto::entity::cron_job::{CronRun, CronRunQuery};
+use crate::infrastructure::persistence::database::Database;
+use crate::shared::error::Result;
+
+pub struct SqliteCronRunRepository {
+    database: Database,
+}
+
+impl SqliteCronRunRepository {
+    pub fn new(database: Database) -> Self {
+        Self { database }
+    }
+}
+
+fn map_cron_run_row(
+    row: &sqlx::sqlite::SqliteRow,
+) -> std::result::Result<CronRun, sqlx::Error> {
+    Ok(CronRun {
+        id: row.try_get("id")?,
+        job_id: row.try_get("job_id")?,
+        workspace_id: row.try_get("workspace_id")?,
+        started_at: row.try_get("started_at")?,
+        ended_at: row.try_get("ended_at")?,
+        duration_ms: row.try_get("duration_ms")?,
+        status: row.try_get("status")?,
+        output: row.try_get("output")?,
+        error_message: row.try_get("error_message")?,
+        trigger_type: row.try_get("trigger_type")?,
+        triggered_by: row.try_get("triggered_by")?,
+        created_at: row.try_get("created_at")?,
+    })
+}
+
+#[async_trait]
+impl CronRunRepository for SqliteCronRunRepository {
+    async fn create(
+        &self,
+        job_id: &str,
+        workspace_id: &str,
+        trigger_type: &str,
+        triggered_by: Option<&str>,
+    ) -> Result<CronRun> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+
+        sqlx::query(
+            r#"
+            INSERT INTO cron_runs (
+                id, job_id, workspace_id, started_at, status,
+                trigger_type, triggered_by, created_at
+            ) VALUES (?, ?, ?, ?, 'running', ?, ?, ?)
+            "#,
+        )
+        .bind(&id)
+        .bind(job_id)
+        .bind(workspace_id)
+        .bind(&now)
+        .bind(trigger_type)
+        .bind(triggered_by)
+        .bind(&now)
+        .execute(self.database.pool())
+        .await?;
+
+        self.find_by_id(&id, workspace_id)
+            .await?
+            .ok_or(crate::shared::error::Error::NotFound)
+    }
+
+    async fn complete(
+        &self,
+        id: &str,
+        status: &str,
+        output: Option<&str>,
+        error: Option<&str>,
+        duration_ms: i64,
+    ) -> Result<CronRun> {
+        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+
+        let result = sqlx::query(
+            r#"
+            UPDATE cron_runs SET
+                status = ?,
+                output = ?,
+                error_message = ?,
+                duration_ms = ?,
+                ended_at = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(status)
+        .bind(output)
+        .bind(error)
+        .bind(duration_ms)
+        .bind(&now)
+        .bind(id)
+        .execute(self.database.pool())
+        .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(crate::shared::error::Error::NotFound);
+        }
+
+        // Fetch the run back to get workspace_id for the response
+        let row = sqlx::query(
+            r#"
+            SELECT id, job_id, workspace_id, started_at, ended_at, duration_ms, status,
+                   output, error_message, trigger_type, triggered_by, created_at
+            FROM cron_runs WHERE id = ? LIMIT 1
+            "#,
+        )
+        .bind(id)
+        .fetch_one(self.database.pool())
+        .await?;
+
+        Ok(map_cron_run_row(&row)?)
+    }
+
+    async fn find_by_job_id(
+        &self,
+        job_id: &str,
+        query: &CronRunQuery,
+    ) -> Result<Vec<CronRun>> {
+        let mut builder = QueryBuilder::<sqlx::Sqlite>::new(
+            r#"
+            SELECT id, job_id, workspace_id, started_at, ended_at, duration_ms, status,
+                   output, error_message, trigger_type, triggered_by, created_at
+            FROM cron_runs WHERE job_id = ?
+            "#,
+        );
+        builder.push_bind(job_id);
+
+        if let Some(ref status) = query.status {
+            builder.push(" AND status = ");
+            builder.push_bind(status);
+        }
+
+        if let Some(ref trigger_type) = query.trigger_type {
+            builder.push(" AND trigger_type = ");
+            builder.push_bind(trigger_type);
+        }
+
+        builder.push(" ORDER BY started_at DESC");
+
+        let page = query.page.unwrap_or(1);
+        let page_size = query.page_size.unwrap_or(20).min(100);
+        let offset = (page.saturating_sub(1)) * page_size;
+        builder.push(" LIMIT ").push_bind(page_size as i64);
+        builder.push(" OFFSET ").push_bind(offset as i64);
+
+        let rows = builder.build().fetch_all(self.database.pool()).await?;
+        let mut runs = Vec::new();
+        for row in rows {
+            runs.push(map_cron_run_row(&row)?);
+        }
+        Ok(runs)
+    }
+
+    async fn find_by_id(&self, id: &str, workspace_id: &str) -> Result<Option<CronRun>> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, job_id, workspace_id, started_at, ended_at, duration_ms, status,
+                   output, error_message, trigger_type, triggered_by, created_at
+            FROM cron_runs WHERE id = ? AND workspace_id = ? LIMIT 1
+            "#,
+        )
+        .bind(id)
+        .bind(workspace_id)
+        .fetch_optional(self.database.pool())
+        .await?;
+
+        Ok(row.map(|r| map_cron_run_row(&r)).transpose()?)
+    }
+
+    async fn delete_by_job_id(&self, job_id: &str, workspace_id: &str) -> Result<u64> {
+        let result = sqlx::query(
+            "DELETE FROM cron_runs WHERE job_id = ? AND workspace_id = ?",
+        )
+        .bind(job_id)
+        .bind(workspace_id)
+        .execute(self.database.pool())
+        .await?;
+
+        Ok(result.rows_affected())
+    }
+
+    async fn count_by_job_id(&self, job_id: &str, workspace_id: &str) -> Result<i64> {
+        let row = sqlx::query(
+            "SELECT COUNT(*) as count FROM cron_runs WHERE job_id = ? AND workspace_id = ?",
+        )
+        .bind(job_id)
+        .bind(workspace_id)
+        .fetch_one(self.database.pool())
+        .await?;
+
+        let count: i64 = row.get("count");
+        Ok(count)
+    }
+
+    async fn count_by_status(&self, workspace_id: &str, status: &str) -> Result<i64> {
+        let row = sqlx::query(
+            "SELECT COUNT(*) as count FROM cron_runs WHERE workspace_id = ? AND status = ?",
+        )
+        .bind(workspace_id)
+        .bind(status)
+        .fetch_one(self.database.pool())
+        .await?;
+
+        let count: i64 = row.get("count");
+        Ok(count)
+    }
+}
