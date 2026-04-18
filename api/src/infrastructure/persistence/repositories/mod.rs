@@ -1,6 +1,8 @@
 // Infrastructure implementations of domain repository interfaces
 
 pub mod alarm_repository_impl;
+pub mod cron_job_repository_impl;
+pub mod cron_run_repository_impl;
 pub mod device_memory_repository_impl;
 pub mod device_query_service_impl;
 pub mod device_repository_impl;
@@ -21,6 +23,8 @@ pub mod workspace_repository_impl;
 
 // Re-export implementations
 pub use alarm_repository_impl::{AlarmRepositoryImpl, AlarmRuleRepositoryImpl};
+pub use cron_job_repository_impl::SqliteCronJobRepository;
+pub use cron_run_repository_impl::SqliteCronRunRepository;
 pub use device_memory_repository_impl::SqliteDeviceMemoryRepository;
 pub use device_query_service_impl::SqliteDeviceQueryService;
 pub use device_repository_impl::SqliteDeviceRepository;
