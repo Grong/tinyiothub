@@ -55,6 +55,14 @@ pub trait CronJobRepository: Send + Sync {
 
     /// Count total cron jobs in a workspace.
     async fn count(&self, workspace_id: &str) -> Result<i64>;
+
+    /// Update the `next_run_at` field for a job.
+    async fn update_next_run_at(
+        &self,
+        id: &str,
+        workspace_id: &str,
+        next_run_at: Option<&str>,
+    ) -> Result<bool>;
 }
 
 /// Repository for cron job execution records.
