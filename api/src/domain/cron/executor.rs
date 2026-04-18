@@ -3,7 +3,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 use serde_json::Value;
 use tokio::process::Command;
-use tokio::time::{timeout, Duration};
+use tokio::time::timeout;
 
 use crate::dto::entity::cron_job::CronJob;
 
@@ -59,7 +59,7 @@ impl JobExecutor for ShellExecutor {
     async fn execute(
         &self,
         job: &CronJob,
-        _run_id: &str,
+        run_id: &str,
     ) -> std::result::Result<ExecutionResult, ExecutorError> {
         let config: Value =
             serde_json::from_str(&job.config).map_err(|e| ExecutorError::InvalidConfig(e.to_string()))?;
@@ -74,17 +74,27 @@ impl JobExecutor for ShellExecutor {
             .and_then(|v| v.as_str())
             .unwrap_or("sh");
 
+        // Whitelist interpreters to prevent command injection.
+        let allowed = match interpreter {
+            "sh" | "bash" | "python" | "python3" | "powershell" | "cmd" | "node" => interpreter,
+            other => {
+                return Err(ExecutorError::InvalidConfig(format!(
+                    "interpreter '{other}' is not allowed"
+                )));
+            }
+        };
+
+        let working_dir = config.get("working_dir").and_then(|v| v.as_str());
         let timeout_secs = job.timeout_seconds.max(1) as u64;
         let start = Instant::now();
 
-        let result = timeout(
-            Duration::from_secs(timeout_secs),
-            Command::new(interpreter)
-                .arg("-c")
-                .arg(script)
-                .output(),
-        )
-        .await;
+        let mut cmd = Command::new(allowed);
+        cmd.arg("-c").arg(script);
+        if let Some(dir) = working_dir {
+            cmd.current_dir(dir);
+        }
+
+        let result = timeout(std::time::Duration::from_secs(timeout_secs), cmd.output()).await;
 
         let duration_ms = start.elapsed().as_millis() as i64;
 
@@ -101,7 +111,10 @@ impl JobExecutor for ShellExecutor {
                         duration_ms,
                     })
                 } else {
-                    Err(ExecutorError::CommandFailed(stderr))
+                    let exit = output.status.code().map_or("unknown".to_string(), |c| c.to_string());
+                    Err(ExecutorError::CommandFailed(format!(
+                        "exit code {exit}, run_id={run_id}, stdout={stdout}, stderr={stderr}"
+                    )))
                 }
             }
             Ok(Err(e)) => Err(ExecutorError::Io(e)),
@@ -136,7 +149,7 @@ impl JobExecutor for AgentExecutor {
         let start = Instant::now();
 
         let result = timeout(
-            Duration::from_secs(timeout_secs),
+            std::time::Duration::from_secs(timeout_secs),
             async {
                 // Stub: simulate async work
                 tokio::task::yield_now().await;
@@ -183,7 +196,7 @@ impl JobExecutor for DeviceCommandExecutor {
         let start = Instant::now();
 
         let result = timeout(
-            Duration::from_secs(timeout_secs),
+            std::time::Duration::from_secs(timeout_secs),
             async {
                 // Stub: simulate async work
                 tokio::task::yield_now().await;
@@ -254,7 +267,7 @@ mod tests {
             description: None,
             job_type: "shell".to_string(),
             cron_expression: "* * * * *".to_string(),
-            config: format!(r#"{{"script":"{script}"}}"#),
+            config: serde_json::json!({"script": script }).to_string(),
             timeout_seconds: timeout,
             max_retries: 0,
             is_enabled: true,
@@ -280,7 +293,7 @@ mod tests {
             description: None,
             job_type: "agent".to_string(),
             cron_expression: "* * * * *".to_string(),
-            config: format!(r#"{{"task":"{task}"}}"#),
+            config: serde_json::json!({"task": task }).to_string(),
             timeout_seconds: timeout,
             max_retries: 0,
             is_enabled: true,
@@ -306,9 +319,11 @@ mod tests {
             description: None,
             job_type: "device_command".to_string(),
             cron_expression: "* * * * *".to_string(),
-            config: format!(
-                r#"{{"device_id":"{device_id}","command_name":"{command_name}"}}"#
-            ),
+            config: serde_json::json!({
+                "device_id": device_id,
+                "command_name": command_name
+            })
+            .to_string(),
             timeout_seconds: timeout,
             max_retries: 0,
             is_enabled: true,
@@ -420,11 +435,25 @@ mod tests {
     #[tokio::test]
     async fn test_shell_executor_missing_script() {
         let mut job = make_shell_job("echo hello", 10);
-        job.config = r#"{"interpreter":"bash"}"#.to_string();
+        job.config = serde_json::json!({"interpreter": "bash"}).to_string();
         let exec = ShellExecutor;
         let err = exec.execute(&job, "run-1").await.unwrap_err();
         match err {
             ExecutorError::InvalidConfig(_) => {}
+            other => panic!("expected InvalidConfig, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_shell_executor_disallowed_interpreter() {
+        let mut job = make_shell_job("echo hello", 10);
+        job.config = serde_json::json!({"script": "echo hello", "interpreter": "rm"}).to_string();
+        let exec = ShellExecutor;
+        let err = exec.execute(&job, "run-1").await.unwrap_err();
+        match err {
+            ExecutorError::InvalidConfig(msg) => {
+                assert!(msg.contains("interpreter 'rm' is not allowed"));
+            }
             other => panic!("expected InvalidConfig, got {other:?}"),
         }
     }
