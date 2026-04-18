@@ -1,7 +1,8 @@
-// Job Tools Module
+// Job Tools Module — Compatibility layer over new cron system
 // MCP tools for scheduled job management
 
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -9,7 +10,9 @@ use serde_json::Value;
 
 use crate::api::mcp::handlers::get_mcp_context;
 use crate::api::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
-use crate::dto::entity::job::{CreateJobRequest, JobQueryParams};
+use crate::dto::entity::cron_job::{
+    CreateCronJobRequest, CronJobQuery, UpdateCronJobRequest,
+};
 
 /// Tool input: List schedules
 #[derive(Debug, Deserialize)]
@@ -35,7 +38,7 @@ struct CreateScheduleInput {
     config: Option<String>,
     timeout_seconds: Option<i32>,
     retry_count: Option<i32>,
-    tags: Option<String>,
+    is_enabled: Option<bool>,
 }
 
 /// Tool input: Delete schedule
@@ -44,6 +47,103 @@ struct CreateScheduleInput {
 struct DeleteScheduleInput {
     id: String,
 }
+
+/// Tool input: Update schedule
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateScheduleInput {
+    id: String,
+    name: Option<String>,
+    description: Option<String>,
+    job_type: Option<String>,
+    cron_expression: Option<String>,
+    target_device_id: Option<String>,
+    target_command_name: Option<String>,
+    target_command_params: Option<String>,
+    config: Option<String>,
+    timeout_seconds: Option<i32>,
+    retry_count: Option<i32>,
+    is_enabled: Option<bool>,
+}
+
+// ─── Mapping helpers ───────────────────────────────────────────────────────
+
+fn build_config_from_input(input: &CreateScheduleInput) -> String {
+    if input.job_type == "device_command" {
+        let mut cfg = serde_json::Map::new();
+        if let Some(ref did) = input.target_device_id {
+            cfg.insert("device_id".to_string(), serde_json::Value::String(did.clone()));
+        }
+        if let Some(ref cn) = input.target_command_name {
+            cfg.insert("command_name".to_string(), serde_json::Value::String(cn.clone()));
+        }
+        if let Some(ref params) = input.target_command_params {
+            cfg.insert("params".to_string(), serde_json::Value::String(params.clone()));
+        }
+        serde_json::Value::Object(cfg).to_string()
+    } else {
+        input.config.clone().unwrap_or_else(|| "{}".to_string())
+    }
+}
+
+fn map_create_input(input: &CreateScheduleInput) -> CreateCronJobRequest {
+    let job_type = if input.job_type == "script" {
+        "shell".to_string()
+    } else {
+        input.job_type.clone()
+    };
+
+    CreateCronJobRequest {
+        name: input.name.clone(),
+        description: input.description.clone(),
+        job_type,
+        cron_expression: input.cron_expression.clone(),
+        config: build_config_from_input(input),
+        timeout_seconds: input.timeout_seconds,
+        max_retries: input.retry_count,
+    }
+}
+
+fn map_update_input(input: &UpdateScheduleInput) -> UpdateCronJobRequest {
+    let job_type = input.job_type.as_ref().map(|t| {
+        if t == "script" { "shell".to_string() } else { t.clone() }
+    });
+
+    let config = input.config.clone().or_else(|| {
+        if job_type.as_deref() == Some("device_command") {
+            let mut cfg = serde_json::Map::new();
+            if let Some(ref did) = input.target_device_id {
+                cfg.insert("device_id".to_string(), serde_json::Value::String(did.clone()));
+            }
+            if let Some(ref cn) = input.target_command_name {
+                cfg.insert("command_name".to_string(), serde_json::Value::String(cn.clone()));
+            }
+            if let Some(ref params) = input.target_command_params {
+                cfg.insert("params".to_string(), serde_json::Value::String(params.clone()));
+            }
+            if !cfg.is_empty() {
+                Some(serde_json::Value::Object(cfg).to_string())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    });
+
+    UpdateCronJobRequest {
+        name: input.name.clone(),
+        description: input.description.clone(),
+        job_type,
+        cron_expression: input.cron_expression.clone(),
+        config,
+        timeout_seconds: input.timeout_seconds,
+        max_retries: input.retry_count,
+        is_enabled: input.is_enabled,
+    }
+}
+
+// ─── Handlers ──────────────────────────────────────────────────────────────
 
 /// List schedules tool handler
 pub struct ListSchedulesHandler;
@@ -55,7 +155,7 @@ impl ToolHandler for ListSchedulesHandler {
     }
 
     fn description(&self) -> &str {
-        "List all scheduled jobs (cron jobs) for the current tenant."
+        "List all scheduled jobs (cron jobs) for the current workspace."
     }
 
     fn input_schema(&self) -> InputSchema {
@@ -78,7 +178,7 @@ impl ToolHandler for ListSchedulesHandler {
             "jobType".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some("Filter by job type (e.g., device_command, http, script)".to_string()),
+                description: Some("Filter by job type (e.g., device_command, shell, agent)".to_string()),
             },
         );
         props.insert(
@@ -102,7 +202,7 @@ impl ToolHandler for ListSchedulesHandler {
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
-        let params = JobQueryParams {
+        let query = CronJobQuery {
             workspace_id: Some(claims.workspace_id.clone()),
             name: None,
             job_type: input.job_type,
@@ -111,7 +211,9 @@ impl ToolHandler for ListSchedulesHandler {
             page_size: input.page_size,
         };
 
-        let jobs = state.job_service.find_all(&params)
+        let jobs = state
+            .cron_job_repo
+            .find_all(&query)
             .await
             .map_err(|e| ToolError::Internal(format!("failed to list schedules: {}", e)))?;
 
@@ -152,7 +254,7 @@ impl ToolHandler for CreateScheduleHandler {
             "jobType".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some("Job type: device_command, http, script, sql".to_string()),
+                description: Some("Job type: device_command, shell, agent".to_string()),
             },
         );
         props.insert(
@@ -201,14 +303,7 @@ impl ToolHandler for CreateScheduleHandler {
             "retryCount".to_string(),
             PropertySchema {
                 prop_type: "integer".to_string(),
-                description: Some("Number of retries on failure (default: 0)".to_string()),
-            },
-        );
-        props.insert(
-            "tags".to_string(),
-            PropertySchema {
-                prop_type: "string".to_string(),
-                description: Some("Tags as JSON array string".to_string()),
+                description: Some("Number of retries on failure (default: 3)".to_string()),
             },
         );
         InputSchema::object(vec!["name".to_string(), "jobType".to_string(), "cronExpression".to_string()], props)
@@ -224,10 +319,10 @@ impl ToolHandler for CreateScheduleHandler {
 
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
-        let db = state.database();
 
         // SECURITY: Verify target_device_id belongs to authenticated workspace if provided
         if let Some(ref device_id) = input.target_device_id {
+            let db = state.database();
             let device = crate::dto::entity::device::Device::find_by_id(db, device_id)
                 .await
                 .map_err(|e| ToolError::Internal(format!("failed to verify device: {}", e)))?
@@ -241,28 +336,93 @@ impl ToolHandler for CreateScheduleHandler {
             }
         }
 
-        let config = input.config.unwrap_or_else(|| "{}".to_string());
+        // Validate cron expression
+        if let Err(e) = cron::Schedule::from_str(&input.cron_expression) {
+            return Err(ToolError::InvalidParams(format!("Invalid cron expression: {}", e)));
+        }
 
-        let request = CreateJobRequest {
-            name: input.name,
-            description: input.description,
-            job_type: input.job_type,
-            cron_expression: input.cron_expression,
-            config,
-            timeout_seconds: input.timeout_seconds,
-            retry_count: input.retry_count,
-            retry_delay_seconds: Some(60),
-            concurrency: Some(1),
-            target_device_id: input.target_device_id,
-            target_command_name: input.target_command_name,
-            target_command_params: input.target_command_params,
-            tags: input.tags,
-            alert_config: Some("{}".to_string()),
-        };
+        let req = map_create_input(&input);
 
-        let job = state.job_service.create(&request)
+        let job = state
+            .cron_job_repo
+            .create(&req, &claims.workspace_id, Some(&claims.api_key_name))
             .await
             .map_err(|e| ToolError::Internal(format!("failed to create schedule: {}", e)))?;
+
+        Ok(serde_json::to_value(job).unwrap())
+    }
+}
+
+/// Update schedule tool handler
+pub struct UpdateScheduleHandler;
+
+#[async_trait]
+impl ToolHandler for UpdateScheduleHandler {
+    fn name(&self) -> &str {
+        "update_schedule"
+    }
+
+    fn description(&self) -> &str {
+        "Update an existing scheduled job."
+    }
+
+    fn input_schema(&self) -> InputSchema {
+        let mut props = HashMap::new();
+        props.insert(
+            "id".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("Schedule ID to update".to_string()),
+            },
+        );
+        props.insert(
+            "name".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("Job name".to_string()),
+            },
+        );
+        props.insert(
+            "cronExpression".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("Cron expression".to_string()),
+            },
+        );
+        props.insert(
+            "isEnabled".to_string(),
+            PropertySchema {
+                prop_type: "boolean".to_string(),
+                description: Some("Enable or disable the job".to_string()),
+            },
+        );
+        InputSchema::object(vec!["id".to_string()], props)
+    }
+
+    async fn execute(&self, args: Value) -> Result<Value, ToolError> {
+        let input: UpdateScheduleInput =
+            serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
+
+        let claims = get_mcp_context().ok_or_else(|| {
+            ToolError::Unauthorized("MCP context not initialized".to_string())
+        })?;
+
+        let state = crate::api::mcp::get_app_state()
+            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
+
+        if let Some(ref cron) = input.cron_expression {
+            if let Err(e) = cron::Schedule::from_str(cron) {
+                return Err(ToolError::InvalidParams(format!("Invalid cron expression: {}", e)));
+            }
+        }
+
+        let req = map_update_input(&input);
+
+        let job = state
+            .cron_job_repo
+            .update(&input.id, &claims.workspace_id, &req)
+            .await
+            .map_err(|e| ToolError::Internal(format!("failed to update schedule: {}", e)))?;
 
         Ok(serde_json::to_value(job).unwrap())
     }
@@ -303,40 +463,25 @@ impl ToolHandler for DeleteScheduleHandler {
 
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
-        let db = state.database();
 
-        // Verify the job exists first
-        let existing = state.job_service.find_by_id(&input.id)
+        // Verify the job exists and belongs to the workspace
+        let existing = state
+            .cron_job_repo
+            .find_by_id(&input.id, &claims.workspace_id)
             .await
             .map_err(|e| ToolError::Internal(format!("failed to get schedule: {}", e)))?
             .ok_or_else(|| ToolError::NotFound("schedule not found".to_string()))?;
 
-        // SECURITY: Verify the job's target device belongs to authenticated workspace
-        if let Some(ref device_id) = existing.target_device_id {
-            let device = crate::dto::entity::device::Device::find_by_id(db, device_id)
-                .await
-                .map_err(|e| ToolError::Internal(format!("failed to verify device: {}", e)))?
-                .ok_or_else(|| ToolError::NotFound("schedule not found".to_string()))?;
-
-            if device.workspace_id.as_ref() != Some(&claims.workspace_id) {
-                tracing::warn!("MCP delete_schedule: access denied to schedule {} for workspace {}", input.id, claims.workspace_id);
-                return Err(ToolError::Forbidden(
-                    "Access denied: schedule does not belong to authenticated workspace".to_string()
-                ));
-            }
-        } else {
-            // Job has no target device - cannot verify workspace ownership
-            tracing::warn!("MCP delete_schedule: cannot verify workspace for schedule {} (no target_device_id)", input.id);
-            return Err(ToolError::Forbidden(
-                "Access denied: cannot verify schedule ownership".to_string()
-            ));
-        }
-
-        state.job_service.delete(&input.id)
+        state
+            .cron_job_repo
+            .delete(&input.id, &claims.workspace_id)
             .await
             .map_err(|e| ToolError::Internal(format!("failed to delete schedule: {}", e)))?;
 
-        let _ = state.job_execution_service.delete_by_job_id(&input.id).await;
+        let _ = state
+            .cron_run_repo
+            .delete_by_job_id(&input.id, &claims.workspace_id)
+            .await;
 
         Ok(serde_json::json!({
             "success": true,
