@@ -76,7 +76,7 @@
   grid-area: topbar;
   position: sticky;
   top: 0;
-  z-index: 40;
+  z-index: var(--z-sticky);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -84,10 +84,10 @@
   padding: 0 20px;
   height: var(--shell-topbar-height);
   border-bottom: none;
-  background: rgba(18, 20, 26, 0.7);
+  background: var(--glass-bg);
   backdrop-filter: blur(12px) saturate(1.6);
   -webkit-backdrop-filter: blur(12px) saturate(1.6);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--shadow-sm);
 }
 
 .topbar-left {
@@ -167,7 +167,7 @@
   height: 32px;
   box-sizing: border-box;
   border: none;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--shadow-sm);
 }
 
 .topbar-status .pill .mono {
@@ -202,7 +202,7 @@
   overflow-y: auto;
   overflow-x: hidden;
   padding: 16px 12px;
-  background: rgba(18, 20, 26, 0.5);
+  background: var(--glass-bg);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   scrollbar-width: none; /* Firefox */
@@ -245,7 +245,7 @@
   justify-content: center;
   background: transparent;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   transition:
     background var(--duration-fast) ease,
@@ -255,7 +255,7 @@
 
 .nav-collapse-toggle:hover {
   background: var(--bg-hover);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--shadow-sm);
 }
 
 .nav-collapse-toggle__icon {
@@ -360,7 +360,7 @@
   justify-content: flex-start;
   gap: 10px;
   padding: 9px 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   border: none;
   background: transparent;
   color: var(--muted);
@@ -405,7 +405,7 @@
   font-size: 10px;
   font-weight: 600;
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--accent-subtle);
   color: var(--accent);
   text-transform: uppercase;
@@ -418,7 +418,7 @@
   background: var(--bg-hover);
   text-decoration: none;
   transform: translateX(2px);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--shadow-sm);
 }
 
 .nav-item:hover .nav-item__icon {
@@ -428,7 +428,7 @@
 .nav-item.active {
   color: var(--accent);
   background: var(--accent-subtle);
-  box-shadow: 0 2px 4px rgba(0, 152, 255, 0.15);
+  box-shadow: 0 2px 4px var(--accent-subtle);
 }
 
 .nav-item.active .nav-item__icon {
@@ -633,7 +633,7 @@
     border-right: none;
     border-bottom: none;
     padding: 10px 14px;
-    background: rgba(18, 20, 26, 0.5);
+    background: var(--glass-bg);
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
   }
@@ -671,9 +671,9 @@
 
 /* Light theme glass overrides */
 :root[data-theme="light"] .topbar {
-  background: rgba(250, 250, 250, 0.8);
+  background: var(--glass-bg);
 }
 
 :root[data-theme="light"] .nav {
-  background: rgba(245, 245, 245, 0.7);
+  background: var(--glass-bg);
 }

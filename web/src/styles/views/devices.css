@@ -20,7 +20,7 @@
   background: rgba(10, 14, 22, 0.75);
   border-radius: 20px;
   box-shadow:
-    0 4px 20px rgba(0, 0, 0, 0.35),
+    0 4px 20px var(--overlay-hover),
     0 16px 60px rgba(0, 0, 0, 0.28),
     0 40px 100px rgba(0, 212, 255, 0.04),
     inset 0 0 0 1px rgba(255, 255, 255, 0.04);
@@ -34,7 +34,7 @@
   background: rgba(255, 255, 255, 0.8);
   box-shadow:
     0 4px 20px rgba(0, 0, 0, 0.06),
-    0 16px 60px rgba(0, 0, 0, 0.05),
+    0 16px 60px var(--shadow-sm),
     inset 0 0 0 1px rgba(0, 0, 0, 0.04);
 }
 
@@ -42,7 +42,7 @@
   transform: translateY(-3px);
   box-shadow:
     0 8px 32px rgba(0, 0, 0, 0.4),
-    0 24px 80px rgba(0, 0, 0, 0.3),
+    0 24px 80px var(--overlay-hover),
     0 60px 140px rgba(0, 212, 255, 0.06),
     inset 0 0 0 1px rgba(255, 255, 255, 0.06);
 }
@@ -316,7 +316,7 @@
   border-radius: 4px;
   font-size: 10px;
   font-weight: 600;
-  background: rgba(107,114,128,0.1);
+  background: var(--muted-fill-10);
   color: var(--muted);
 }
 .prop-rw-badge {
@@ -325,7 +325,7 @@
   border-radius: 4px;
   font-size: 10px;
   font-weight: 600;
-  background: rgba(16,185,129,0.1);
+  background: var(--ok-fill-10);
   color: var(--success);
 }
 
@@ -341,7 +341,7 @@
   border-radius: 8px;
   padding: var(--space-2);
   background: var(--bg);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  box-shadow: var(--shadow-md);
 }
 .tag-popover__search {
   width: 100%;

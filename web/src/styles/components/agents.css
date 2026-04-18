@@ -117,7 +117,7 @@
 
 .agent-row.active {
   background: rgba(0, 152, 255, 0.1);
-  box-shadow: 0 0 0 2px rgba(0, 152, 255, 0.2);
+  box-shadow: 0 0 0 2px var(--accent-subtle);
 }
 
 .agent-avatar {
@@ -160,13 +160,13 @@
   background: rgba(0, 152, 255, 0.1);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  box-shadow: 0 1px 2px rgba(0, 152, 255, 0.1);
+  box-shadow: var(--shadow-sm);
 }
 
 .agent-pill.warn {
   color: var(--warn);
   background: var(--warn-subtle);
-  box-shadow: 0 1px 2px rgba(245, 158, 11, 0.1);
+  box-shadow: var(--shadow-sm);
 }
 
 .agent-pill.muted {
@@ -196,7 +196,7 @@
 .agent-tab.active {
   background: var(--accent);
   color: white;
-  box-shadow: 0 2px 4px rgba(0, 152, 255, 0.2);
+  box-shadow: var(--shadow-sm);
 }
 
 /* Device detail tabs */
@@ -235,7 +235,7 @@
 .detail-tab.active {
   background: var(--accent);
   color: white;
-  box-shadow: 0 2px 4px rgba(0, 152, 255, 0.2);
+  box-shadow: var(--shadow-sm);
 }
 
 /* Compact stat card */
@@ -544,7 +544,7 @@
 
 .agent-file-row.active {
   background: rgba(0, 152, 255, 0.1);
-  box-shadow: 0 0 0 2px rgba(0, 152, 255, 0.2);
+  box-shadow: 0 0 0 2px var(--accent-subtle);
 }
 
 .agent-file-name {
@@ -687,7 +687,7 @@
   border-radius: 50%;
   background: white;
   transition: transform var(--duration-normal) ease;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-sm);
 }
 
 .cfg-toggle input:checked + .cfg-toggle__track {
@@ -1121,7 +1121,7 @@
 
 .agent-row.active {
   background: rgba(0, 152, 255, 0.1);
-  box-shadow: 0 0 0 2px rgba(0, 152, 255, 0.2);
+  box-shadow: 0 0 0 2px var(--accent-subtle);
 }
 
 /* Agent Tabs */
@@ -1142,7 +1142,7 @@
 .agent-tab.active {
   background: var(--accent);
   color: white;
-  box-shadow: 0 2px 4px rgba(0, 152, 255, 0.2);
+  box-shadow: var(--shadow-sm);
 }
 
 /* Agent Pills */
@@ -1151,7 +1151,7 @@
   border-radius: var(--radius-lg);
   background: rgba(0, 152, 255, 0.1);
   color: #0098FF;
-  box-shadow: 0 1px 2px rgba(0, 152, 255, 0.1);
+  box-shadow: var(--shadow-sm);
 }
 
 .agent-pill.muted {
@@ -1186,13 +1186,13 @@ input[type="range"]::-webkit-slider-thumb {
   background: #0098FF;
   border-radius: 50%;
   cursor: pointer;
-  box-shadow: 0 2px 4px rgba(0, 152, 255, 0.3);
+  box-shadow: var(--shadow-sm);
   transition: all var(--duration-normal);
 }
 
 input[type="range"]::-webkit-slider-thumb:hover {
   transform: scale(1.1);
-  box-shadow: 0 4px 8px rgba(255, 77, 77, 0.4);
+  box-shadow: var(--shadow-sm);
 }
 
 input[type="range"]::-moz-range-thumb {
@@ -1202,13 +1202,13 @@ input[type="range"]::-moz-range-thumb {
   border: none;
   border-radius: 50%;
   cursor: pointer;
-  box-shadow: 0 2px 4px rgba(0, 152, 255, 0.3);
+  box-shadow: var(--shadow-sm);
   transition: all var(--duration-normal);
 }
 
 input[type="range"]::-moz-range-thumb:hover {
   transform: scale(1.1);
-  box-shadow: 0 4px 8px rgba(255, 77, 77, 0.4);
+  box-shadow: var(--shadow-sm);
 }
 
 /* Channels Grid */
@@ -1286,13 +1286,13 @@ input[type="range"]::-moz-range-thumb:hover {
 .status-healthy {
   background: rgba(34, 197, 94, 0.1);
   color: #22c55e;
-  box-shadow: 0 2px 4px rgba(34, 197, 94, 0.15);
+  box-shadow: var(--shadow-sm);
 }
 
 .status-unhealthy {
   background: rgba(239, 68, 68, 0.1);
   color: #ef4444;
-  box-shadow: 0 2px 4px rgba(239, 68, 68, 0.15);
+  box-shadow: var(--shadow-sm);
 }
 
 .status-unknown {
@@ -1465,12 +1465,12 @@ input[type="range"]::-moz-range-thumb:hover {
   font-weight: 500;
   cursor: pointer;
   transition: all var(--duration-normal);
-  box-shadow: 0 2px 8px rgba(0, 152, 255, 0.25);
+  box-shadow: var(--shadow-sm);
 }
 
 .btn-retry:hover {
   background: var(--accent-hover);
-  box-shadow: 0 4px 12px rgba(0, 152, 255, 0.3);
+  box-shadow: var(--shadow-md);
   transform: translateY(-1px);
 }
 
@@ -1605,7 +1605,7 @@ input[type="range"]::-moz-range-thumb:hover {
   font-size: 14px;
   font-weight: 700;
   flex-shrink: 0;
-  box-shadow: 0 2px 4px rgba(0, 152, 255, 0.2);
+  box-shadow: var(--shadow-sm);
 }
 
 .step-content {
@@ -1712,7 +1712,7 @@ select {
 input:focus:not([type="checkbox"]):not([type="radio"]),
 textarea:focus,
 select:focus {
-  box-shadow: 0 0 0 3px rgba(0, 152, 255, 0.15) !important;
+  box-shadow: 0 0 0 3px var(--accent-subtle) !important;
 }
 
 /* Buttons */
@@ -1724,7 +1724,7 @@ button:not(.unstyled) {
 
 .btn.primary,
 button.primary {
-  box-shadow: 0 2px 8px rgba(0, 152, 255, 0.25) !important;
+  box-shadow: var(--shadow-sm) !important;
 }
 
 .btn:hover:not(:disabled),
@@ -1763,7 +1763,7 @@ button:hover:not(:disabled):not(.unstyled) {
   border: none;
   background: rgba(34, 197, 94, 0.1);
   color: #22c55e;
-  box-shadow: 0 1px 2px rgba(34, 197, 94, 0.15);
+  box-shadow: var(--shadow-sm);
 }
 
 .channel-share-form {
@@ -1802,7 +1802,7 @@ button:hover:not(:disabled):not(.unstyled) {
 
 .channel-share-form .share-field input:focus {
   outline: none;
-  box-shadow: 0 0 0 3px rgba(0, 152, 255, 0.15);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
 }
 
 .channel-share-actions {

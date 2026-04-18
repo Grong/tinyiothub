@@ -74,7 +74,7 @@
   height: 56px;
   border-radius: 50%;
   background: linear-gradient(135deg, var(--accent), var(--accent-hover));
-  color: white;
+  color: var(--text-inverse);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -164,7 +164,7 @@
 }
 
 .api-key-status.active {
-  color: #22c55e;
+  color: var(--ok);
 }
 
 .api-key-status.revoked {
@@ -203,13 +203,13 @@
 }
 
 .api-key-btn-delete:hover {
-  border-color: #dc2626;
-  background: rgba(220, 38, 38, 0.1);
-  color: #dc2626;
+  border-color: var(--danger);
+  background: var(--danger-subtle);
+  color: var(--danger);
 }
 
 .api-key-btn-copy-done {
-  color: #22c55e;
+  color: var(--ok);
 }
 
 /* Empty state */

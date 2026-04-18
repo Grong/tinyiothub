@@ -643,3 +643,106 @@ export interface HealthStatus {
   components: ComponentHealth[];
   timestamp: string;
 }
+
+// ==================== Cron Job ====================
+export interface Job {
+  id: string;
+  name: string;
+  description?: string;
+  jobType: string;
+  cronExpression: string;
+  config: string;
+  timeoutSeconds: number;
+  retryCount: number;
+  retryDelaySeconds: number;
+  concurrency: number;
+  targetDeviceId?: string;
+  targetCommandName?: string;
+  targetCommandParams?: string;
+  isEnabled: boolean;
+  isRunning: boolean;
+  lastRunAt?: string;
+  lastRunStatus?: string;
+  lastRunError?: string;
+  nextRunAt?: string;
+  runCount: number;
+  successCount: number;
+  failCount: number;
+  tags?: string;
+  alertConfig?: string;
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: string;
+}
+
+export interface JobExecution {
+  id: string;
+  jobId: string;
+  startedAt: string;
+  endedAt?: string;
+  durationMs?: number;
+  status: string;
+  result?: string;
+  errorMessage?: string;
+  errorTrace?: string;
+  triggerType: string;
+  triggeredBy?: string;
+  workerId?: string;
+  memoryUsageBytes?: number;
+  cpuTimeMs?: number;
+  createdAt: string;
+}
+
+export interface JobStatistics {
+  totalJobs: number;
+  enabledJobs: number;
+  disabledJobs: number;
+  runningJobs: number;
+  totalExecutions: number;
+  successExecutions: number;
+  failedExecutions: number;
+  avgDurationMs: number;
+}
+
+export interface JobQueryParams {
+  page?: number;
+  pageSize?: number;
+  name?: string;
+  jobType?: string;
+  isEnabled?: boolean;
+}
+
+export interface CreateJobRequest {
+  name: string;
+  description?: string;
+  jobType: string;
+  cronExpression: string;
+  config: string;
+  timeoutSeconds?: number;
+  retryCount?: number;
+  retryDelaySeconds?: number;
+  concurrency?: number;
+  targetDeviceId?: string;
+  targetCommandName?: string;
+  targetCommandParams?: string;
+  tags?: string;
+  alertConfig?: string;
+}
+
+export interface UpdateJobRequest {
+  name?: string;
+  description?: string;
+  jobType?: string;
+  cronExpression?: string;
+  config?: string;
+  timeoutSeconds?: number;
+  retryCount?: number;
+  retryDelaySeconds?: number;
+  concurrency?: number;
+  targetDeviceId?: string;
+  targetCommandName?: string;
+  targetCommandParams?: string;
+  isEnabled?: boolean;
+  tags?: string;
+  alertConfig?: string;
+}

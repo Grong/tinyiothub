@@ -362,9 +362,12 @@ function renderToolCallChip(name: string, args: string, result?: string): Templa
 
   const icon = getToolIcon(name);
   const hasResult = Boolean(result);
-  const hasArgs = tryParseArgs(args).length > 0;
   const parsedArgs = tryParseArgs(args);
-  const argsPreview = buildArgsPreview(parsedArgs);
+  const hasArgs = Object.keys(parsedArgs).length > 0;
+  // Fallback: if args is non-JSON string, show it as preview
+  const argsPreview = hasArgs
+    ? buildArgsPreview(parsedArgs)
+    : (args.trim() ? args.trim() : "");
 
   // Use args JSON as stable key (same tool+args = same key)
   const chipKey = `${name}::${args}`;
@@ -430,13 +433,16 @@ function tryParseArgs(args: string): Record<string, unknown> {
 function buildArgsPreview(parsed: Record<string, unknown>): string {
   const keys = Object.keys(parsed);
   if (keys.length === 0) return "";
-  const preview = keys.slice(0, 2).map(k => {
+  // Show all args as key=value, truncated overall
+  const parts = keys.map(k => {
     const v = parsed[k];
-    if (typeof v === "string") return v.length > 15 ? v.slice(0, 15) + "…" : v;
-    if (typeof v === "number") return String(v);
-    return "";
-  }).filter(Boolean).join(" · ");
-  return preview || "";
+    if (typeof v === "string") return `${k}=${v.length > 20 ? v.slice(0, 20) + "…" : v}`;
+    if (typeof v === "number") return `${k}=${v}`;
+    if (typeof v === "boolean") return `${k}=${v}`;
+    return `${k}=${JSON.stringify(v).slice(0, 20)}`;
+  });
+  const full = parts.join(" · ");
+  return full.length > 60 ? full.slice(0, 60) + "…" : full;
 }
 
 function truncateResult(result: string, maxLen = 400): string {

@@ -1,7 +1,93 @@
 /* ===========================================
-   Form Fields
+   Form Fields — Unified system
    =========================================== */
 
+/* Block layout variant (legacy .form-group, now unified) */
+.form-group {
+  margin-bottom: var(--space-5);
+}
+
+.form-group:last-of-type {
+  margin-bottom: 0;
+}
+
+.form-group label,
+.field > label,
+.field > span:first-child {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.form-group input,
+.form-group select,
+.field input,
+.field select,
+.field textarea,
+.select,
+.select-input {
+  width: 100%;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 11px var(--space-3);
+  outline: none;
+  box-shadow: var(--glass-shadow-sm);
+  transition: border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.form-group input:focus,
+.form-group select:focus,
+.field input:focus,
+.field textarea:focus,
+.field select:focus,
+.select:focus,
+.select-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+}
+
+.form-group input:hover:not(:focus):not(:disabled),
+.form-group select:hover:not(:focus):not(:disabled),
+.field input:hover:not(:focus):not(:disabled),
+.field textarea:hover:not(:focus):not(:disabled),
+.field select:hover:not(:focus):not(:disabled),
+.select:hover:not(:focus):not(:disabled),
+.select-input:hover:not(:focus):not(:disabled) {
+  border-color: var(--border-hover);
+}
+
+.form-group input:disabled,
+.form-group select:disabled,
+.field input:disabled,
+.field textarea:disabled,
+.field select:disabled,
+.select:disabled,
+.select-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.form-group input::placeholder,
+.field input::placeholder,
+.field textarea::placeholder {
+  color: var(--muted);
+}
+
+.form-group small {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+/* Grid layout (canonical .field) */
 .field {
   display: grid;
   gap: 6px;
@@ -15,49 +101,6 @@
   color: var(--muted);
   font-size: 13px;
   font-weight: 500;
-}
-
-.field input,
-.field textarea,
-.field select,
-.select,
-.select-input {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: 11px var(--space-3);
-  outline: none;
-  box-shadow: var(--glass-shadow-sm);
-  transition: border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
-  font-size: 14px;
-  line-height: 1.5;
-  color: var(--text);
-}
-
-.field input:focus,
-.field textarea:focus,
-.field select:focus,
-.select:focus,
-.select-input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-subtle);
-}
-
-.field input:hover:not(:focus):not(:disabled),
-.field textarea:hover:not(:focus):not(:disabled),
-.field select:hover:not(:focus):not(:disabled),
-.select:hover:not(:focus):not(:disabled),
-.select-input:hover:not(:focus):not(:disabled) {
-  border-color: var(--border-hover);
-}
-
-.field input:disabled,
-.field textarea:disabled,
-.field select:disabled,
-.select:disabled,
-.select-input:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .field select,
@@ -264,7 +307,7 @@
   border-color: var(--danger);
   box-shadow:
     inset 0 1px 0 var(--card-highlight),
-    0 0 0 1px rgba(239, 68, 68, 0.2);
+    0 0 0 1px var(--danger-subtle);
 }
 
 .cron-form-status {
@@ -433,7 +476,7 @@
 
 .cron-filter-dropdown__panel {
   position: absolute;
-  z-index: 30;
+  z-index: var(--z-dropdown);
   top: calc(100% + 8px);
   left: 0;
   width: min(360px, calc(100vw - 48px));

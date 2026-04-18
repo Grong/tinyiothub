@@ -4,6 +4,8 @@ import { getAuthToken } from "../../api/client.js";
 import { loadSettings, saveSettings, type UiSettings } from "../storage.js";
 import { resolveTheme, type ThemeMode, type ResolvedTheme } from "../theme.js";
 import "../components/theme-toggle.js";
+import "../components/point-earth.js";
+import "../components/showcase-viz.js";
 import "./home-panel.js";
 import "./home.css";
 
@@ -202,28 +204,7 @@ export class HomeView extends LitElement {
             </div>
           </div>
           <div class="hero-visual">
-            <div class="sphere-scene">
-              <div class="sphere-glow"></div>
-              <div class="ring-3d ring-3d--1"><div class="ring-vertex"></div></div>
-              <div class="ring-3d ring-3d--2"><div class="ring-vertex ring-vertex--alt"></div></div>
-              <div class="ring-3d ring-3d--3"><div class="ring-vertex"></div></div>
-              <div class="ring-3d ring-3d--4"><div class="ring-vertex ring-vertex--alt"></div></div>
-              <div class="ring-3d ring-3d--5"><div class="ring-vertex"></div></div>
-              <div class="ring-3d ring-3d--6"><div class="ring-vertex ring-vertex--alt"></div></div>
-              <div class="ring-3d ring-3d--7"><div class="ring-vertex"></div></div>
-              <div class="ring-3d ring-3d--8"><div class="ring-vertex ring-vertex--alt"></div></div>
-              <div class="ring-3d ring-3d--9"><div class="ring-vertex"></div></div>
-              <div class="sphere-core"></div>
-              <div class="orbit-particle orbit-particle--1"></div>
-              <div class="orbit-particle orbit-particle--2"></div>
-              <div class="orbit-particle orbit-particle--3"></div>
-              <div class="data-stream data-stream--1" style="--r:30deg"></div>
-              <div class="data-stream data-stream--2" style="--r:90deg"></div>
-              <div class="data-stream data-stream--3" style="--r:150deg"></div>
-              <div class="data-stream data-stream--4" style="--r:210deg"></div>
-              <div class="data-stream data-stream--5" style="--r:270deg"></div>
-              <div class="data-stream data-stream--6" style="--r:330deg"></div>
-            </div>
+            <point-earth></point-earth>
           </div>
         </section>
 
@@ -330,20 +311,7 @@ export class HomeView extends LitElement {
             </div>
             <div class="showcase-grid">
               <div class="showcase-visual reveal reveal-delay-1">
-                <div class="cityscape">
-                  <div class="building"></div>
-                  <div class="building"></div>
-                  <div class="building"></div>
-                  <div class="building"></div>
-                  <div class="building"></div>
-                  <div class="building"></div>
-                  <div class="building"></div>
-                  <div class="city-glow"></div>
-                  <div class="city-particle city-particle--1"></div>
-                  <div class="city-particle city-particle--2"></div>
-                  <div class="city-particle city-particle--3"></div>
-                  <div class="city-particle city-particle--4"></div>
-                </div>
+                <showcase-viz></showcase-viz>
               </div>
               <div class="showcase-content">
                 <p class="section-desc" style="text-align: left; margin: 0 0 28px 0;">

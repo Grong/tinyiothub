@@ -148,63 +148,63 @@
   font-size: 11px;
   font-weight: 500;
   line-height: 1;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.15);
+  border-radius: var(--radius-sm);
+  background: var(--glass-chat-abort-bg);
   color: inherit;
   opacity: 0.8;
 }
 
 .btn.primary .btn-kbd {
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--glass-chat-abort-bg);
 }
 
 :root[data-theme="light"] .btn-kbd {
-  background: rgba(0, 0, 0, 0.08);
+  background: var(--glass-chat-abort-bg);
 }
 
 :root[data-theme="light"] .btn.primary .btn-kbd {
-  background: rgba(255, 255, 255, 0.25);
+  background: var(--glass-chat-abort-bg);
 }
 
 .btn.active {
   background: var(--accent-subtle);
   color: var(--accent);
-  box-shadow: 0 2px 4px rgba(0, 152, 255, 0.15);
+  box-shadow: 0 2px 4px var(--accent-subtle);
 }
 
 .btn.danger {
   background: var(--danger-subtle);
   color: var(--danger);
-  box-shadow: 0 1px 3px rgba(239, 68, 68, 0.1);
+  box-shadow: 0 1px 3px var(--danger-subtle);
 }
 
 .btn.danger:hover {
-  background: rgba(239, 68, 68, 0.15);
-  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.25);
+  background: var(--danger-line-15);
+  box-shadow: 0 2px 8px var(--danger-subtle);
   transform: translateY(-1px);
 }
 
 .btn-success {
-  background: rgba(34, 197, 94, 0.1);
-  color: #22c55e;
-  box-shadow: 0 1px 3px rgba(34, 197, 94, 0.1);
+  background: var(--ok-subtle);
+  color: var(--ok);
+  box-shadow: 0 1px 3px var(--ok-subtle);
 }
 
 .btn-success:hover {
-  background: rgba(34, 197, 94, 0.15);
-  box-shadow: 0 2px 8px rgba(34, 197, 94, 0.25);
+  background: var(--ok-fill-10);
+  box-shadow: 0 2px 8px var(--ok-subtle);
   transform: translateY(-1px);
 }
 
 .btn-warning {
-  background: rgba(245, 158, 11, 0.1);
-  color: #f59e0b;
-  box-shadow: 0 1px 3px rgba(245, 158, 11, 0.1);
+  background: var(--warn-subtle);
+  color: var(--warn);
+  box-shadow: 0 1px 3px var(--warn-subtle);
 }
 
 .btn-warning:hover {
-  background: rgba(245, 158, 11, 0.15);
-  box-shadow: 0 2px 8px rgba(245, 158, 11, 0.25);
+  background: var(--warn-subtle);
+  box-shadow: 0 2px 8px var(--warn-subtle);
   transform: translateY(-1px);
 }
 
@@ -251,7 +251,7 @@
   background-color: var(--muted);
   border-radius: var(--radius-full);
   transition: all var(--duration-slow) ease;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-sm);
 }
 
 .toggle-slider:before {
@@ -261,10 +261,10 @@
   width: 18px;
   left: 3px;
   bottom: 3px;
-  background-color: white;
+  background-color: var(--text-inverse);
   border-radius: 50%;
   transition: all var(--duration-slow) ease;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-sm);
 }
 
 /* 大号开关的滑块 */
@@ -274,8 +274,8 @@
 }
 
 .toggle-switch input:checked + .toggle-slider {
-  background: linear-gradient(135deg, var(--success) 0%, #10b981 100%);
-  box-shadow: 0 2px 8px rgba(34, 197, 94, 0.4);
+  background: var(--ok);
+  box-shadow: 0 2px 8px var(--ok-glow-sm);
 }
 
 .toggle-switch input:checked + .toggle-slider:before {
@@ -288,11 +288,11 @@
 }
 
 .toggle-switch:hover .toggle-slider {
-  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-md);
 }
 
 .toggle-switch input:checked:hover + .toggle-slider {
-  box-shadow: 0 3px 10px rgba(34, 197, 94, 0.5);
+  box-shadow: 0 3px 10px var(--ok-glow-sm);
 }
 
 .toggle-switch input:disabled + .toggle-slider {

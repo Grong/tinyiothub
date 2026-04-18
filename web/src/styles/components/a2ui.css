@@ -123,7 +123,7 @@
 .a2ui-device-card__name {
   font-weight: 600;
   font-size: 15px;
-  color: var(--text-primary);
+  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -173,7 +173,7 @@
   font-family: "JetBrains Mono", "Fira Code", monospace;
   font-weight: 600;
   font-size: 13px;
-  color: var(--text-primary);
+  color: var(--text);
   display: flex;
   align-items: center;
   gap: 4px;
@@ -700,7 +700,7 @@
   background: var(--card, #fff);
   border-radius: 50%;
   transition: transform var(--duration-normal);
-  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  box-shadow: var(--shadow-sm);
 }
 
 .a2ui-control-panel__toggle input:checked + .a2ui-control-panel__toggle-slider {

@@ -38,7 +38,7 @@
 .chat-tool-chip:hover {
   border-color: var(--accent);
   background: var(--bg-hover);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--shadow-sm);
 }
 
 /* Summary = inline chip content */
@@ -74,9 +74,10 @@
 .chat-tool-chip__preview {
   font-size: 11px;
   color: var(--muted);
+  max-width: 300px;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 180px;
 }
 
 .chat-tool-chip__status {
@@ -206,7 +207,7 @@
 
 .a2ui-surface--overlay {
   border-color: var(--accent);
-  box-shadow: 0 4px 20px rgba(0, 152, 255, 0.15);
+  box-shadow: var(--shadow-sm);
 }
 
 .a2ui-unknown {

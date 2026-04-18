@@ -188,7 +188,7 @@
 .tdc-tab.active {
   color: var(--text);
   background: var(--card);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-sm);
 }
 
 .tdc-tab__count {
@@ -279,13 +279,13 @@
 }
 
 .tdc-prop__badge--rw {
-  background: rgba(16, 185, 129, 0.1);
+  background: var(--ok-fill-10);
   color: var(--success);
 }
 
 .tdc-prop__badge--cmd {
-  background: rgba(59, 130, 246, 0.1);
-  color: #3b82f6;
+  background: var(--info-subtle);
+  color: var(--info);
 }
 
 /* Empty */
@@ -572,7 +572,7 @@
 }
 
 .template-badge--rw {
-  background: rgba(16, 185, 129, 0.1);
+  background: var(--ok-fill-10);
   color: var(--success);
 }
 
@@ -622,7 +622,7 @@
 }
 
 .template-tags-input:focus-within {
-  box-shadow: 0 0 0 3px rgba(0, 152, 255, 0.15);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
 }
 
 .template-tags-input__tag {
