@@ -78,25 +78,6 @@ export class DashboardView extends LitElement {
     return n.toLocaleString();
   }
 
-  levelColor(level: string): string {
-    switch (level) {
-      case "critical": return "var(--danger)";
-      case "error": return "var(--danger)";
-      case "warning": return "var(--warning)";
-      default: return "var(--muted)";
-    }
-  }
-
-  statusColor(status: string): string {
-    switch (status) {
-      case "online": return "var(--success)";
-      case "offline": return "var(--muted)";
-      case "error": return "var(--danger)";
-      case "maintenance": return "var(--warning)";
-      default: return "var(--muted)";
-    }
-  }
-
   render() {
     if (this.loading) {
       return html`
@@ -118,46 +99,59 @@ export class DashboardView extends LitElement {
 
     return html`
       ${this.renderStatsCards()}
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px;">
+      <div class="grid grid-cols-2" style="margin-top: 16px;">
         ${this.renderDeviceDistribution()}
         ${this.renderSystemMetrics()}
       </div>
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px;">
+      <div class="grid grid-cols-2" style="margin-top: 16px;">
         ${this.renderRecentAlarms()}
         ${this.renderQuickDevices()}
       </div>
     `;
   }
 
+  dotClassForStatus(status?: string): string {
+    if (status === 'healthy' || status === 'online') return 'status-dot status-dot--success';
+    if (status === 'warning') return 'status-dot status-dot--warning';
+    if (status === 'danger' || status === 'error' || status === 'critical') return 'status-dot status-dot--danger';
+    return 'status-dot';
+  }
+
+  dotClassForLevel(level?: string): string {
+    if (level === 'critical' || level === 'error') return 'status-dot status-dot--danger';
+    if (level === 'warning') return 'status-dot status-dot--warning';
+    return 'status-dot status-dot--glow';
+  }
+
   renderStatsCards() {
     const s = this.stats;
     return html`
-      <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;">
-        <div class="card" style="padding: 20px;">
-          <div style="color: var(--muted); font-size: 13px;">设备总数</div>
-          <div style="font-size: 28px; font-weight: 700; margin: 8px 0;">${this.formatNumber(s?.totalDevices)}</div>
-          <div style="color: var(--success); font-size: 13px;">${this.formatNumber(s?.onlineDevices)} 在线</div>
+      <div class="stats-grid">
+        <div class="card card--gradient-border stat-card">
+          <div class="stat-card__label">设备总数</div>
+          <div class="stat-card__value">${this.formatNumber(s?.totalDevices)}</div>
+          <div class="stat-card__meta" style="color: var(--success);">${this.formatNumber(s?.onlineDevices)} 在线</div>
         </div>
-        <div class="card" style="padding: 20px;">
-          <div style="color: var(--muted); font-size: 13px;">活跃告警</div>
-          <div style="font-size: 28px; font-weight: 700; margin: 8px 0; color: ${(s?.activeAlarms ?? 0) > 0 ? 'var(--danger)' : 'inherit'}">
+        <div class="card card--gradient-border stat-card">
+          <div class="stat-card__label">活跃告警</div>
+          <div class="stat-card__value" style="color: ${(s?.activeAlarms ?? 0) > 0 ? 'var(--danger)' : 'inherit'};">
             ${this.formatNumber(s?.activeAlarms)}
           </div>
-          <div style="color: var(--muted); font-size: 13px;">需要处理</div>
+          <div class="stat-card__meta">需要处理</div>
         </div>
-        <div class="card" style="padding: 20px;">
-          <div style="color: var(--muted); font-size: 13px;">今日消息</div>
-          <div style="font-size: 28px; font-weight: 700; margin: 8px 0;">${this.formatNumber(s?.todayMessages)}</div>
-          <div style="font-size: 13px; color: var(--muted);">
+        <div class="card card--gradient-border stat-card">
+          <div class="stat-card__label">今日消息</div>
+          <div class="stat-card__value">${this.formatNumber(s?.todayMessages)}</div>
+          <div class="stat-card__meta">
             ${s?.monthlyGrowth?.messages != null ? `月增长 ${s.monthlyGrowth.messages}%` : ""}
           </div>
         </div>
-        <div class="card" style="padding: 20px;">
-          <div style="color: var(--muted); font-size: 13px;">系统状态</div>
-          <div style="font-size: 28px; font-weight: 700; margin: 8px 0; color: ${s?.systemStatus === 'healthy' ? 'var(--success)' : s?.systemStatus === 'warning' ? 'var(--warning)' : 'var(--danger)'}">
+        <div class="card card--gradient-border stat-card">
+          <div class="stat-card__label">系统状态</div>
+          <div class="stat-card__value" style="color: ${s?.systemStatus === 'healthy' ? 'var(--success)' : s?.systemStatus === 'warning' ? 'var(--warning)' : 'var(--danger)'};">
             ${s?.systemStatus === 'healthy' ? '正常' : s?.systemStatus === 'warning' ? '告警' : '异常'}
           </div>
-          <div style="font-size: 13px; color: var(--muted);">
+          <div class="stat-card__meta">
             ${s?.systemUptime != null ? `运行 ${this.formatUptime(s.systemUptime)}` : ""}
           </div>
         </div>
@@ -169,30 +163,30 @@ export class DashboardView extends LitElement {
     const d = this.distribution;
     const total = (d?.online ?? 0) + (d?.offline ?? 0) + (d?.error ?? 0) + (d?.maintenance ?? 0);
     return html`
-      <div class="card" style="padding: 20px;">
+      <div class="card card--gradient-border" style="padding: 20px;">
         <div style="font-weight: 600; margin-bottom: 16px;">设备状态分布</div>
         ${d ? html`
           <div style="display: flex; flex-direction: column; gap: 12px;">
-            ${this.renderDistBar("在线", d.online, total, "var(--success)")}
-            ${this.renderDistBar("离线", d.offline, total, "var(--muted)")}
-            ${this.renderDistBar("故障", d.error, total, "var(--danger)")}
-            ${this.renderDistBar("维护", d.maintenance, total, "var(--warning)")}
+            ${this.renderDistBar("在线", d.online, total)}
+            ${this.renderDistBar("离线", d.offline, total)}
+            ${this.renderDistBar("故障", d.error, total)}
+            ${this.renderDistBar("维护", d.maintenance, total)}
           </div>
         ` : html`<div style="color: var(--muted); text-align: center; padding: 20px;">暂无分布数据</div>`}
       </div>
     `;
   }
 
-  renderDistBar(label: string, value: number, total: number, color: string) {
+  renderDistBar(label: string, value: number, total: number) {
     const pct = total > 0 ? (value / total) * 100 : 0;
     return html`
       <div>
-        <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px;">
+        <div class="metric-bar__header">
           <span>${label}</span>
           <span>${value} (${pct.toFixed(1)}%)</span>
         </div>
-        <div style="height: 6px; background: var(--border); border-radius: 3px; overflow: hidden;">
-          <div style="height: 100%; width: ${pct}%; background: ${color}; border-radius: 3px;"></div>
+        <div class="metric-bar__track">
+          <div class="metric-bar__fill" style="width: ${pct}%;"></div>
         </div>
       </div>
     `;
@@ -201,7 +195,7 @@ export class DashboardView extends LitElement {
   renderSystemMetrics() {
     const m = this.metrics;
     return html`
-      <div class="card" style="padding: 20px;">
+      <div class="card card--gradient-border" style="padding: 20px;">
         <div style="font-weight: 600; margin-bottom: 16px;">系统资源</div>
         ${m ? html`
           <div style="display: flex; flex-direction: column; gap: 12px;">
@@ -219,15 +213,14 @@ export class DashboardView extends LitElement {
 
   renderMetricBar(label: string, value?: number) {
     const v = value ?? 0;
-    const color = v > 90 ? "var(--danger)" : v > 70 ? "var(--warning)" : "var(--success)";
     return html`
       <div>
-        <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px;">
+        <div class="metric-bar__header">
           <span>${label}</span>
           <span>${v.toFixed(1)}%</span>
         </div>
-        <div style="height: 6px; background: var(--border); border-radius: 3px; overflow: hidden;">
-          <div style="height: 100%; width: ${v}%; background: ${color}; border-radius: 3px;"></div>
+        <div class="metric-bar__track">
+          <div class="metric-bar__fill" style="width: ${v}%;"></div>
         </div>
       </div>
     `;
@@ -235,22 +228,23 @@ export class DashboardView extends LitElement {
 
   renderRecentAlarms() {
     return html`
-      <div class="card" style="padding: 20px;">
+      <div class="card card--gradient-border" style="padding: 20px;">
         <div style="font-weight: 600; margin-bottom: 16px;">最近告警</div>
         ${this.recentAlarms.length === 0
-          ? html`<div style="color: var(--muted); text-align: center; padding: 20px;">
-              <div style="font-size: 24px; margin-bottom: 8px;">
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity: 0.3; margin: 0 auto;">
+          ? html`
+            <div class="empty-center">
+              <div class="empty-center__icon">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
                 </svg>
               </div>
-              <div style="font-size: 13px;">暂无告警，系统运行正常</div>
+              <div class="empty-center__text">暂无告警，系统运行正常</div>
             </div>`
           : html`
             <div style="display: flex; flex-direction: column; gap: 8px;">
               ${this.recentAlarms.slice(0, 5).map(a => html`
                 <div style="display: flex; align-items: center; gap: 8px; padding: 8px; border-radius: 6px; background: var(--bg-subtle);">
-                  <span style="width: 8px; height: 8px; border-radius: 50%; background: ${this.levelColor(a.level)}; flex-shrink: 0;"></span>
+                  <span class="${this.dotClassForLevel(a.level)}"></span>
                   <div style="flex: 1; min-width: 0;">
                     <div style="font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${a.message}</div>
                     <div style="font-size: 12px; color: var(--muted);">${a.deviceName}</div>
@@ -267,26 +261,27 @@ export class DashboardView extends LitElement {
 
   renderQuickDevices() {
     return html`
-      <div class="card" style="padding: 20px;">
+      <div class="card card--gradient-border" style="padding: 20px;">
         <div style="font-weight: 600; margin-bottom: 16px;">设备快捷入口</div>
         ${this.quickDevices.length === 0
-          ? html`<div style="color: var(--muted); text-align: center; padding: 20px;">
-              <div style="font-size: 24px; margin-bottom: 8px;">
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity: 0.3; margin: 0 auto;">
+          ? html`
+            <div class="empty-center">
+              <div class="empty-center__icon">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
                 </svg>
               </div>
-              <div style="font-size: 13px;">还没有设备</div>
+              <div class="empty-center__text">还没有设备</div>
               <a href="/devices" @click=${(e: Event) => { e.preventDefault(); window.history.pushState({}, "", "/devices"); window.dispatchEvent(new PopStateEvent("popstate")); }} style="font-size: 13px; color: var(--accent); text-decoration: none; margin-top: 4px; display: inline-block;">去添加 →</a>
             </div>`
           : html`
             <div style="display: flex; flex-direction: column; gap: 8px;">
               ${this.quickDevices.slice(0, 5).map(d => html`
                 <a href="/devices/${d.id}"
-                  style="display: flex; align-items: center; gap: 8px; padding: 8px; border-radius: 6px; background: var(--bg-subtle); text-decoration: none; color: inherit;"
+                  class="device-list-item"
                   @click=${(e: Event) => { e.preventDefault(); window.history.pushState({}, "", `/devices/${d.id}`); window.dispatchEvent(new PopStateEvent("popstate")); }}
                 >
-                  <span style="width: 8px; height: 8px; border-radius: 50%; background: ${this.statusColor(d.status)}; flex-shrink: 0;"></span>
+                  <span class="${this.dotClassForStatus(d.status)}" style="flex-shrink: 0;"></span>
                   <div style="flex: 1;">
                     <div style="font-size: 13px;">${d.name}</div>
                     <div style="font-size: 12px; color: var(--muted);">${d.type}</div>

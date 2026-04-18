@@ -1,0 +1,313 @@
+/* ===== Settings Page ===== */
+
+.settings-page {
+  width: 100%;
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+}
+
+.settings-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 200px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 12px;
+}
+
+.settings-tab {
+  padding: 10px 16px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--duration-fast) ease;
+  text-align: left;
+}
+
+.settings-tab:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.settings-tab.active {
+  color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.settings-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-section {
+  background: var(--card);
+  border-radius: var(--radius-lg);
+  padding: 28px;
+  box-shadow: var(--glass-shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.settings-section-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-strong);
+  margin: 0 0 4px;
+}
+
+.settings-avatar-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-bottom: var(--space-2);
+}
+
+.settings-avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+  color: var(--text-inverse);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  font-weight: 700;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.settings-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* === API Keys === */
+
+.settings-section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.settings-section-header > div:first-child {
+  min-width: 0;
+}
+
+.settings-section-header button {
+  white-space: nowrap;
+}
+
+.settings-section-desc {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 4px 0 0;
+}
+
+/* Key list */
+.api-key-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.api-key-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--bg-elevated);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  transition: border-color var(--duration-fast) ease;
+}
+
+.api-key-card:hover {
+  border-color: var(--accent);
+}
+
+.api-key-card-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.api-key-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: var(--space-1);
+}
+
+.api-key-prefix {
+  font-size: 12px;
+  color: var(--muted);
+  font-family: monospace;
+}
+
+.api-key-card-meta {
+  flex-shrink: 0;
+  text-align: right;
+}
+
+.api-key-status {
+  font-size: 12px;
+  margin-bottom: var(--space-1);
+}
+
+.api-key-status.active {
+  color: var(--ok);
+}
+
+.api-key-status.revoked {
+  color: var(--muted);
+}
+
+.api-key-date {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.api-key-actions {
+  display: flex;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+.api-key-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--duration-fast) ease;
+}
+
+.api-key-btn:hover {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.api-key-btn-delete:hover {
+  border-color: var(--danger);
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+
+.api-key-btn-copy-done {
+  color: var(--ok);
+}
+
+/* Empty state */
+.api-key-empty {
+  text-align: center;
+  padding: 48px 20px;
+}
+
+.api-key-empty-icon {
+  font-size: 48px;
+  margin-bottom: var(--space-4);
+  opacity: 0.5;
+}
+
+.api-key-empty-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: var(--space-2);
+}
+
+.api-key-empty-desc {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* Skeleton */
+.api-key-card.skeleton {
+  pointer-events: none;
+}
+
+.skeleton-line {
+  background: linear-gradient(90deg, var(--bg-elevated) 25%, var(--bg-hover) 50%, var(--bg-elevated) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s infinite;
+  border-radius: 4px;
+}
+
+/* Skills Panel */
+.skills-panel__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  margin-bottom: var(--space-2);
+  font-size: 13px;
+}
+.skills-list { display: flex; flex-direction: column; gap: 6px; }
+.skill-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.skill-item__name { font-size: 13px; font-weight: 500; }
+.skill-item__desc { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.skill-item__actions { display: flex; gap: 6px; }
+.skills-empty { padding: var(--space-5); text-align: center; color: var(--muted); font-size: 13px; }
+
+/* Skills Editor */
+.skills-editor { display: flex; flex-direction: column; height: 100%; animation: fade-in var(--duration-normal) var(--ease-out); }
+.skills-editor__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  font-size: 13px;
+}
+.skills-editor__textarea {
+  flex: 1;
+  min-height: 300px;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  padding: var(--space-3);
+  background: var(--bg-subtle);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  resize: vertical;
+}
+
+@media (max-width: 768px) {
+  .skills-editor__textarea {
+    min-height: 200px;
+    font-size: 11px;
+  }
+
+  .settings-section {
+    padding: var(--space-4);
+    gap: var(--space-3);
+  }
+
+  .settings-avatar-row {
+    flex-wrap: wrap;
+  }
+}
+

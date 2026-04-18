@@ -66,7 +66,7 @@ export class UsersView extends LitElement {
     if (!this.searchKeyword) return this.users;
     const kw = this.searchKeyword.toLowerCase();
     return this.users.filter(u =>
-      u.name.toLowerCase().includes(kw) ||
+      (u.displayName || u.id).toLowerCase().includes(kw) ||
       (u.email || "").toLowerCase().includes(kw) ||
       (u.phone || "").toLowerCase().includes(kw)
     );
@@ -85,7 +85,7 @@ export class UsersView extends LitElement {
 
   openEdit(u: User) {
     this.editingUser = u;
-    this.formName = u.name;
+    this.formName = u.displayName || "";
     this.formUsername = "";
     this.formPassword = "";
     this.formEmail = u.email || "";
@@ -138,7 +138,7 @@ export class UsersView extends LitElement {
 
   async toggleDisable(u: User) {
     const action = u.isDisabled ? "启用" : "禁用";
-    if (!confirm(`确定要${action}用户 "${u.name}" 吗？`)) return;
+    if (!confirm(`确定要${action}用户 "${u.displayName || u.id}" 吗？`)) return;
     try {
       await userApi.updateUser(u.id, { isDisabled: !u.isDisabled });
       success(`用户已${action}`);
@@ -149,7 +149,7 @@ export class UsersView extends LitElement {
   }
 
   async deleteUser(u: User) {
-    if (!confirm(`确定要删除用户 "${u.name}" 吗？此操作不可撤销。`)) return;
+    if (!confirm(`确定要删除用户 "${u.displayName || u.id}" 吗？此操作不可撤销。`)) return;
     try {
       await userApi.deleteUser(u.id);
       success("用户已删除");
@@ -238,10 +238,10 @@ export class UsersView extends LitElement {
                   <td style="padding: 12px 16px;">
                     <div style="display: flex; align-items: center; gap: 10px;">
                       <span style="width: 32px; height: 32px; border-radius: 50%; background: var(--accent-subtle, var(--primary)); color: var(--accent, #fff); display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600;">
-                        ${(u.name || u.id).charAt(0).toUpperCase()}
+                        ${(u.displayName || u.id).charAt(0).toUpperCase()}
                       </span>
                       <div>
-                        <div style="font-weight: 500;">${u.name}</div>
+                        <div style="font-weight: 500;">${u.displayName || u.id}</div>
                         <div style="font-size: 12px; color: var(--muted);">${u.id}</div>
                       </div>
                     </div>
@@ -330,7 +330,7 @@ export class UsersView extends LitElement {
     return html`
       <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="修改密码" @click=${this.closePasswordModal}>
         <div class="modal" @click=${(e: Event) => e.stopPropagation()}>
-          <div class="modal-header">修改密码 — ${this.passwordUser?.name}</div>
+          <div class="modal-header">修改密码 — ${this.passwordUser?.displayName || this.passwordUser?.id}</div>
           <div class="modal-body">
             <div class="field">
               <span>旧密码</span>

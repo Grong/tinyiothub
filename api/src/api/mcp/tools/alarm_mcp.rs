@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::api::mcp::handlers::get_mcp_context;
@@ -18,6 +18,7 @@ use crate::domain::alarm::SortOrder;
 
 /// Tool input: List alarms
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 #[serde(rename_all = "camelCase")]
 struct ListAlarmsInput {
     workspace_id: Option<String>,
@@ -49,6 +50,7 @@ struct AcknowledgeAlarmInput {
 
 /// Tool input: Create alarm rule
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 #[serde(rename_all = "camelCase")]
 struct CreateAlarmRuleInput {
     workspace_id: String,
@@ -266,9 +268,19 @@ impl ToolHandler for AlarmStatisticsHandler {
         let input: AlarmStatisticsInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
-        let _claims = get_mcp_context().ok_or_else(|| {
+        let claims = get_mcp_context().ok_or_else(|| {
             ToolError::Unauthorized("MCP context not initialized".to_string())
         })?;
+
+        // SECURITY: Reject if user tries to specify a different workspace_id
+        // The statistics should only be for the authenticated workspace
+        if let Some(ref ws_id) = input.workspace_id {
+            if ws_id != &claims.workspace_id {
+                return Err(ToolError::Forbidden(
+                    "Access denied: cannot query statistics for other workspaces".to_string()
+                ));
+            }
+        }
 
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
@@ -337,6 +349,28 @@ impl ToolHandler for AlarmAcknowledgeHandler {
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
+        // SECURITY: Verify alarm belongs to the authenticated workspace before acknowledging
+        // 1. Fetch the alarm
+        let alarm = state.alarm_service.get_alarm_by_id(&input.id)
+            .await
+            .map_err(|e| ToolError::Internal(format!("Failed to fetch alarm: {}", e)))?
+            .ok_or_else(|| ToolError::NotFound("Alarm not found".to_string()))?;
+
+        // 2. Get the device to check its workspace
+        let device = state.device_service.get_device_by_id(&alarm.device_id)
+            .await
+            .map_err(|e| ToolError::Internal(format!("Failed to fetch device: {}", e)))?
+            .ok_or_else(|| ToolError::NotFound("Device associated with alarm not found".to_string()))?;
+
+        // 3. Verify workspace isolation
+        let device_workspace = device.workspace_id.as_deref().unwrap_or("");
+        if device_workspace != claims.workspace_id {
+            return Err(ToolError::Forbidden(
+                "Access denied: alarm does not belong to authenticated workspace".to_string()
+            ));
+        }
+
+        // 4. Now safe to acknowledge
         state
             .alarm_service
             .acknowledge_alarm(&input.id, claims.actor_identifier().to_string(), input.note.map(|s| s.to_string()))
@@ -444,9 +478,17 @@ impl ToolHandler for AlarmRuleAddHandler {
         let input: CreateAlarmRuleInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
-        let _claims = get_mcp_context().ok_or_else(|| {
+        let claims = get_mcp_context().ok_or_else(|| {
             ToolError::Unauthorized("MCP context not initialized".to_string())
         })?;
+
+        // SECURITY: Verify workspace_id matches the authenticated context
+        // Prevents creating rules in other workspaces
+        if input.workspace_id != claims.workspace_id {
+            return Err(ToolError::Forbidden(
+                "Access denied: workspace_id does not match authenticated workspace".to_string()
+            ));
+        }
 
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;

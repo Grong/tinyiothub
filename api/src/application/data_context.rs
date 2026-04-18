@@ -107,8 +107,10 @@ impl DataContext {
     /// 初始化设备缓存
     async fn init_device_cache(&self) -> Result<(), Error> {
         // 使用 DeviceService 加载设备
-        let device_service =
-            crate::domain::device::service::DeviceService::new(Arc::new(self.database()));
+        let db = self.database();
+        let device_repository: Arc<dyn crate::domain::device::repository::DeviceRepository> =
+            Arc::new(crate::infrastructure::persistence::repositories::SqliteDeviceRepository::new(db.clone()));
+        let device_service = crate::domain::device::service::DeviceService::new(device_repository, Arc::new(db));
 
         match device_service.get_devices(&Default::default()).await {
             Ok(devices) => {
@@ -392,8 +394,10 @@ impl DataContext {
 
     /// 刷新单个设备缓存
     pub async fn refresh_device(&self, device_id: &str) -> Result<(), Error> {
-        let device_service =
-            crate::domain::device::service::DeviceService::new(Arc::new(self.database()));
+        let db = self.database();
+        let device_repository: Arc<dyn crate::domain::device::repository::DeviceRepository> =
+            Arc::new(crate::infrastructure::persistence::repositories::SqliteDeviceRepository::new(db.clone()));
+        let device_service = crate::domain::device::service::DeviceService::new(device_repository, Arc::new(db));
 
         match device_service.load_complete_device(device_id).await? {
             Some(device) => {

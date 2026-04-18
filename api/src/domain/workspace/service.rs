@@ -1,129 +1,18 @@
-// Workspace domain service
-
 use std::sync::Arc;
+use crate::dto::entity::workspace::{Workspace, WorkspaceWithDeviceCount};
+use crate::shared::error::Result;
+use super::repository::WorkspaceRepository;
 
-use crate::domain::workspace::entity::{AssignDeviceInput, CreateWorkspaceInput, UpdateWorkspaceInput, Workspace};
-use crate::infrastructure::zeroclaw_agent::{AgentClient, AgentConfig};
-use crate::shared::error::Error;
-
-/// Workspace service — coordinates workspace operations with Agent lifecycle
 pub struct WorkspaceService {
-    agent_client: Arc<dyn AgentClient>,
+    repository: Arc<dyn WorkspaceRepository>,
 }
 
 impl WorkspaceService {
-    pub fn new(agent_client: Arc<dyn AgentClient>) -> Self {
-        Self { agent_client }
-    }
-
-    /// Create a workspace with synchronized Agent creation
-    /// Returns (workspace, warning) — warning is Some if Agent was unavailable
-    pub async fn create_workspace(
-        &self,
-        tenant_id: String,
-        input: CreateWorkspaceInput,
-    ) -> Result<(Workspace, Option<String>), Error> {
-        let workspace_id = format!("ws-{}", uuid::Uuid::new_v4());
-
-        // Create Agent
-        let agent_config = AgentConfig {
-            workspace_id: workspace_id.clone(),
-            name: input.name.clone(),
-            ..Default::default()
-        };
-
-        let agent_result = self.agent_client.create_agent(&agent_config).await;
-
-        let (agent_id, warning) = match agent_result {
-            Ok(agent_id) => (Some(agent_id), None),
-            Err(e) => {
-                tracing::warn!("Failed to create agent: {}. Workspace will be created with NULL agent_id.", e);
-                (None, Some(format!("Agent unavailable: {}. Agent pending.", e)))
-            }
-        };
-
-        let mut workspace = Workspace::new(
-            workspace_id,
-            input.name,
-            input.description,
-            tenant_id,
-        );
-
-        if let Some(config) = agent_config.to_json() {
-            workspace = workspace.with_config(config);
-        }
-
-        if let Some(aid) = agent_id {
-            workspace = workspace.with_agent(aid);
-        }
-
-        Ok((workspace, warning))
-    }
-
-    /// Update workspace metadata and/or agent config
-    pub async fn update_workspace(
-        &self,
-        workspace: &mut Workspace,
-        input: UpdateWorkspaceInput,
-    ) -> Result<Option<String>, Error> {
-        let mut warning = None;
-
-        if let Some(name) = input.name {
-            workspace.name = name;
-        }
-
-        if let Some(desc) = input.description {
-            workspace.description = Some(desc);
-        }
-
-        if let Some(config) = input.agent_config {
-            workspace.agent_config = Some(config.clone());
-
-            // If workspace has an agent, update it
-            if let Some(agent_id) = &workspace.agent_id {
-                if let Err(e) = self.agent_client.update_agent(agent_id, &config).await {
-                    warning = Some(format!("Agent update failed: {}. Changes saved locally.", e));
-                }
-            }
-        }
-
-        Ok(warning)
-    }
-
-    /// Delete workspace with synchronized Agent deletion
-    pub async fn delete_workspace(&self, workspace: &Workspace) -> Result<(), Error> {
-        if let Some(agent_id) = &workspace.agent_id {
-            if let Err(e) = self.agent_client.delete_agent(agent_id).await {
-                tracing::warn!("Failed to delete agent {}: {}. Proceeding with workspace deletion.", agent_id, e);
-            }
-        }
-        Ok(())
-    }
-
-    /// Assign a device to this workspace
-    /// Returns error if device is already assigned to another workspace
-    pub fn assign_device(
-        &self,
-        workspace: &Workspace,
-        device_workspace_id: Option<String>,
-    ) -> Result<(), Error> {
-        if let Some(existing_ws) = device_workspace_id {
-            if existing_ws != workspace.id {
-                return Err(Error::InvalidArgument(format!(
-                    "device already assigned to workspace {}",
-                    existing_ws
-                )));
-            }
-            // Already assigned to this workspace — no-op
-            return Ok(());
-        }
-        // Free device — allowed
-        Ok(())
-    }
-}
-
-impl Workspace {
-    pub fn update_timestamp(&mut self) {
-        self.updated_at = chrono::Utc::now().to_rfc3339();
-    }
+    pub fn new(repository: Arc<dyn WorkspaceRepository>) -> Self { Self { repository } }
+    pub async fn find_by_id(&self, id: &str) -> Result<Option<WorkspaceWithDeviceCount>> { self.repository.find_by_id(id).await }
+    pub async fn find_by_tenant(&self, tenant_id: &str, page: Option<u32>, page_size: Option<u32>) -> Result<Vec<WorkspaceWithDeviceCount>> { self.repository.find_by_tenant(tenant_id, page, page_size).await }
+    pub async fn create(&self, tenant_id: &str, name: &str, description: Option<&str>, agent_id: Option<&str>, agent_config: Option<&str>) -> Result<Workspace> { self.repository.create(tenant_id, name, description, agent_id, agent_config).await }
+    pub async fn update(&self, id: &str, name: Option<&str>, description: Option<&str>, agent_id: Option<&str>, agent_config: Option<&str>) -> Result<Option<WorkspaceWithDeviceCount>> { self.repository.update(id, name, description, agent_id, agent_config).await }
+    pub async fn delete(&self, id: &str) -> Result<()> { self.repository.delete(id).await }
+    pub async fn assign_device(&self, device_id: &str, workspace_id: &str) -> Result<()> { self.repository.assign_device(device_id, workspace_id).await }
 }

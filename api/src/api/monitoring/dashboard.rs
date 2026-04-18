@@ -10,6 +10,7 @@ use crate::{
 };
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct TrendQuery {
     period: Option<String>, // "24h", "7d", "30d"
 }

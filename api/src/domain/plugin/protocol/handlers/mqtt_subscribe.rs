@@ -18,7 +18,7 @@ use super::super::config::MqttConfig;
 use crate::domain::plugin::{PluginHandler, PluginManifest, PluginType};
 
 pub struct MqttSubscribeHandler {
-    config: MqttConfig,
+    _config: MqttConfig,
     mapping: HashMap<String, String>,
     last_message: Arc<RwLock<Option<String>>>,
     manifest: PluginManifest,
@@ -27,7 +27,7 @@ pub struct MqttSubscribeHandler {
 impl MqttSubscribeHandler {
     pub fn new(config: MqttConfig, mapping: HashMap<String, String>) -> Self {
         Self {
-            config,
+            _config: config,
             mapping,
             last_message: Arc::new(RwLock::new(None)),
             manifest: PluginManifest {

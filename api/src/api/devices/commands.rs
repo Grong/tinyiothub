@@ -33,14 +33,14 @@ pub struct CommandExecution {
 }
 
 pub fn create_router() -> Router<AppState> {
-    Router::new().route("/:device_id/commands/:command_id/execute", post(execute_device_command))
+    Router::new().route("/{device_id}/commands/{command_id}/execute", post(execute_device_command))
 }
 
 /// 执行设备指令
 async fn execute_device_command(
     State(state): State<AppState>,
     Path((device_id, command_id)): Path<(String, String)>,
-    _claims: Claims,
+    claims: Claims,
     Json(req): Json<ExecuteCommandRequest>,
 ) -> Json<ApiResponse<CommandExecution>> {
     tracing::info!(
@@ -50,16 +50,13 @@ async fn execute_device_command(
         req.parameters
     );
 
-    // 验证设备是否存在
-    let _device =
-        match crate::dto::entity::device::Device::find_by_id(state.database(), &device_id).await {
-            Ok(Some(d)) => d,
-            Ok(None) => return ApiResponseBuilder::error("设备不存在"),
-            Err(e) => {
-                tracing::error!("Failed to find device {}: {}", device_id, e);
-                return ApiResponseBuilder::error("查询设备失败");
-            }
+    // 验证设备存在且属于当前租户
+    if let Err(e) = super::verify_device_tenant(&state, &device_id, &claims.tenant_id).await {
+        return match e {
+            crate::shared::error::Error::NotFound => ApiResponseBuilder::error("设备不存在"),
+            _ => ApiResponseBuilder::error("查询设备失败"),
         };
+    }
 
     // 验证指令是否存在
     let command = match DeviceCommand::find_by_id(state.database(), &command_id).await {

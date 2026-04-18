@@ -64,10 +64,9 @@ ls web/service/
 
 | 组件位置 | 用途 | 禁止做的事 |
 |---------|------|-----------|
-| `web/lib/api-client.ts` | HTTP 请求 | 禁止直接 `fetch()` |
-| `web/service/*.ts` | API 调用封装 | 禁止在组件里直接调 API |
-| `web/hooks/*.ts` | React Query hooks | 禁止在组件里直接用 `useQuery` |
-| `web/lib/query-keys.ts` | 查询缓存 key | 禁止自己拼接 query key |
+| `web/src/api/client.ts` | HTTP 请求 | 禁止直接 `fetch()` |
+| `web/src/api/*.ts` | API 调用封装 | 禁止在组件里直接调 API |
+| `web/src/stores/*.ts` | nanostore 状态管理 | 禁止在组件里直接管理全局状态 |
 
 ---
 
@@ -126,33 +125,55 @@ let device = conn.query_row("SELECT * FROM devices", [], ...)?;
 
 ### 5.1 API 调用流程（禁止绕过）
 ```
-组件 → hooks → service → api-client → fetch
+组件 → stores / service → api-client → fetch
 ```
 
 **禁止：**
 - ❌ 组件里直接 `fetch('/api/v1/...')`
 - ❌ 组件里直接 `axios.post(...)`
-- ❌ 组件里直接用 `useQuery`
+- ❌ 组件里直接管理全局状态（绕过 nanostore）
 
 **正确：**
 ```typescript
-// 1. 在 service/ 创建或使用现有 service
-// web/service/devices.ts
-export const deviceService = {
-  getList: (params) => apiGet('/api/v1/devices', params),
-  create: (data) => apiPost('/api/v1/devices', data),
+// 1. 在 api/ 创建或使用现有 API 封装
+// web/src/api/devices.ts
+export const deviceApi = {
+  getList: (params?: { page?: number; pageSize?: number }) =>
+    apiGet<Device[]>('devices', params),
+  create: (data: CreateDeviceRequest) => apiPost<Device>('devices', data),
 };
 
-// 2. 在 hooks/ 创建或使用现有 hook
-// web/hooks/use-devices.ts
-export const useDevices = (params) => useQuery({
-  queryKey: queryKeys.devices.list(params),
-  queryFn: () => deviceService.getList(params),
-});
+// 2. 在 stores/ 创建或使用现有 store（需要时）
+// web/src/stores/devices.ts
+import { atom } from 'nanostores'
 
-// 3. 组件只调用 hook
-// DeviceList.tsx
-const { data } = useDevices(params);
+export const $deviceList = atom<Device[]>([])
+
+export async function loadDevices(params?: { page?: number; pageSize?: number }) {
+  const response = await deviceApi.getList(params)
+  $deviceList.set(response.result || [])
+}
+
+// 3. 组件中调用 store 或 api 层
+// web/src/ui/views/device-list.ts
+import { $deviceList, loadDevices } from '../../stores/devices'
+
+export class DeviceList extends LitElement {
+  @state() private devices: Device[] = []
+
+  connectedCallback() {
+    super.connectedCallback()
+    this._unsubscribe = $deviceList.subscribe((list) => {
+      this.devices = list
+    })
+    loadDevices()
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback()
+    this._unsubscribe?.()
+  }
+}
 ```
 
 ### 5.2 组件规范

@@ -2,7 +2,6 @@
 // MCP tools for device management
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -12,11 +11,13 @@ use crate::api::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, Too
 use crate::dto::entity::device::{CreateDeviceRequest, Device, DeviceQueryParams, UpdateDeviceRequest};
 use crate::dto::entity::device_command::DeviceCommand;
 use crate::dto::entity::device_property::DeviceProperty;
+use crate::dto::entity::device_template::{CreateDeviceFromTemplateRequest, DeviceCreationInput};
 use crate::domain::device::monitoring_service::DeviceMetrics;
 use crate::domain::device::performance_service::DevicePerformanceMetrics;
 
 /// Tool input: List devices with pagination and filtering
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 #[serde(rename_all = "camelCase")]
 struct ListDevicesInput {
     page: Option<u32>,
@@ -69,10 +70,13 @@ struct SendCommandInput {
     parameters: Option<HashMap<String, String>>,
 }
 
-/// Tool input: Create device
+/// Tool input: Create device from template
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CreateDeviceInput {
+    /// Template ID — required for template-based creation
+    template_id: Option<String>,
+    /// Device name (required)
     name: String,
     display_name: Option<String>,
     device_type: Option<String>,
@@ -87,6 +91,10 @@ struct CreateDeviceInput {
     connection_config: Option<String>,
     parent_id: Option<String>,
     product_id: Option<String>,
+    /// Property values to set at creation time
+    property_values: Option<HashMap<String, String>>,
+    /// Commands to enable at creation time
+    enabled_commands: Option<Vec<String>>,
 }
 
 /// Tool input: Update device
@@ -314,17 +322,17 @@ impl ToolHandler for ListDevicesHandler {
     }
 }
 
-// === Get Device Handler ===
-pub struct GetDeviceHandler;
+// === Get Device Profile Handler ===
+pub struct DeviceProfileHandler;
 
 #[async_trait]
-impl ToolHandler for GetDeviceHandler {
+impl ToolHandler for DeviceProfileHandler {
     fn name(&self) -> &str {
-        "get_device"
+        "device_profile"
     }
 
     fn description(&self) -> &str {
-        "Get detailed information about a single device"
+        "Get detailed information about a single device, including its property definitions and current values"
     }
 
     fn input_schema(&self) -> InputSchema {
@@ -356,7 +364,9 @@ impl ToolHandler for GetDeviceHandler {
         if let Some(ref ws_id) = workspace_id {
             if device.workspace_id.as_ref() != Some(&ws_id) {
                 tracing::warn!("MCP get_device: access denied to device {} for workspace {}", input.id, ws_id);
-                return Err(ToolError::NotFound(format!("Device {} not found", input.id)));
+                return Err(ToolError::Forbidden(
+                    "Access denied: device does not belong to authenticated workspace".to_string()
+                ));
             }
         }
 
@@ -415,7 +425,9 @@ impl ToolHandler for GetDeviceStatusHandler {
         if let Some(ref ws_id) = workspace_id {
             if device.workspace_id.as_ref() != Some(&ws_id) {
                 tracing::warn!("MCP get_device_status: access denied to device {} for workspace {}", input.id, ws_id);
-                return Err(ToolError::NotFound(format!("Device {} not found", input.id)));
+                return Err(ToolError::Forbidden(
+                    "Access denied: device does not belong to authenticated workspace".to_string()
+                ));
             }
         }
 
@@ -441,78 +453,98 @@ impl ToolHandler for GetDeviceStatusHandler {
     }
 }
 
-// === Read Properties Handler ===
-pub struct ReadPropertiesHandler;
+// === Device Property Get Handler ===
+pub struct DevicePropertyGetHandler;
 
 #[async_trait]
-impl ToolHandler for ReadPropertiesHandler {
+impl ToolHandler for DevicePropertyGetHandler {
     fn name(&self) -> &str {
-        "read_properties"
+        "device_property_get"
     }
 
     fn description(&self) -> &str {
-        "Batch read device properties. If property_names is not provided, reads all properties."
+        "Get the definition and current value of a specific property on a device"
     }
 
     fn input_schema(&self) -> InputSchema {
         let mut props = HashMap::new();
         props.insert("deviceId".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device ID (required)".to_string()) });
-        props.insert("propertyNames".to_string(), PropertySchema { prop_type: "array".to_string(), description: Some("List of property names to read. If not provided, reads all properties.".to_string()) });
-        InputSchema::object(vec!["deviceId".to_string()], props)
+        props.insert("propertyName".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Property name (required)".to_string()) });
+        InputSchema::object(vec!["deviceId".to_string(), "propertyName".to_string()], props)
     }
 
     async fn execute(&self, args: Value) -> Result<Value, ToolError> {
-        let input: ReadPropertiesInput = serde_json::from_value(args)
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Input {
+            device_id: String,
+            property_name: String,
+        }
+
+        let input: Input = serde_json::from_value(args)
             .map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
-        // First check if device exists
-        Device::find_by_id(state.database(), &input.device_id)
+        let workspace_id = crate::api::mcp::handlers::get_mcp_context()
+            .map(|c| c.workspace_id);
+
+        let device = Device::find_by_id(state.database(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.device_id)))?;
 
-        // Get properties from DataContext (real-time values)
-        let property_values = if let Some(cached) = state.data_context.get_device(&input.device_id) {
-            cached.properties.unwrap_or_default()
-        } else {
-            // Fall back to database
-            DeviceProperty::find_by_device_id(state.database(), &input.device_id)
-                .await
-                .map_err(|e| ToolError::Internal(e.to_string()))?
-        };
+        if let Some(ref ws_id) = workspace_id {
+            if device.workspace_id.as_ref() != Some(&ws_id) {
+                return Err(ToolError::Forbidden(
+                    "Access denied: device does not belong to authenticated workspace".to_string()
+                ));
+            }
+        }
 
-        let properties: Vec<PropertyValue> = if let Some(names) = input.property_names {
-            property_values
-                .into_iter()
-                .filter(|p| names.contains(&p.name))
-                .map(|p| PropertyValue {
-                    name: p.name.clone(),
-                    value: p.current_value.or(p.default_value),
-                    unit: p.unit,
-                    timestamp: p.updated_at,
-                })
-                .collect()
-        } else {
-            property_values
-                .into_iter()
-                .map(|p| PropertyValue {
-                    name: p.name.clone(),
-                    value: p.current_value.or(p.default_value),
-                    unit: p.unit,
-                    timestamp: p.updated_at,
-                })
-                .collect()
-        };
+        let all_properties = DeviceProperty::find_by_device_id(state.database(), &input.device_id)
+            .await
+            .map_err(|e| ToolError::Internal(e.to_string()))?;
 
-        let response = PropertyReadResponse {
+        let prop = all_properties.iter()
+            .find(|p| p.name == input.property_name)
+            .ok_or_else(|| ToolError::NotFound(format!("Property '{}' not found on device {}", input.property_name, input.device_id)))?;
+
+        let current_value = state.data_context.get_device(&input.device_id)
+            .and_then(|d| d.properties)
+            .and_then(|props| props.into_iter().find(|p| p.name == input.property_name))
+            .and_then(|p| p.current_value);
+
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct PropertyDetailResponse {
+            device_id: String,
+            property_name: String,
+            display_name: Option<String>,
+            description: Option<String>,
+            data_type: Option<String>,
+            unit: Option<String>,
+            min_value: Option<f64>,
+            max_value: Option<f64>,
+            default_value: Option<String>,
+            is_read_only: bool,
+            current_value: Option<String>,
+        }
+
+        Ok(serde_json::to_value(PropertyDetailResponse {
             device_id: input.device_id,
-            properties,
-        };
-
-        Ok(serde_json::to_value(response).unwrap())
+            property_name: prop.name.clone(),
+            display_name: prop.display_name.clone(),
+            description: prop.description.clone(),
+            data_type: prop.data_type.clone(),
+            unit: prop.unit.clone(),
+            min_value: prop.min_value,
+            max_value: prop.max_value,
+            default_value: prop.default_value.clone(),
+            is_read_only: prop.is_read_only == 1,
+            current_value,
+        }).unwrap())
     }
 }
 
@@ -543,11 +575,25 @@ impl ToolHandler for WritePropertiesHandler {
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
-        // Check device exists
-        Device::find_by_id(state.database(), &input.device_id)
+        // Get workspace_id from MCP context for access control
+        let workspace_id = crate::api::mcp::handlers::get_mcp_context()
+            .map(|c| c.workspace_id);
+
+        // Check device exists and belongs to user's workspace
+        let device = Device::find_by_id(state.database(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.device_id)))?;
+
+        // Verify device belongs to user's workspace
+        if let Some(ref ws_id) = workspace_id {
+            if device.workspace_id.as_ref() != Some(&ws_id) {
+                tracing::warn!("MCP write_properties: access denied to device {} for workspace {}", input.device_id, ws_id);
+                return Err(ToolError::Forbidden(
+                    "Access denied: device does not belong to authenticated workspace".to_string()
+                ));
+            }
+        }
 
         // Get device properties definition
         let device_properties = DeviceProperty::find_by_device_id(state.database(), &input.device_id)
@@ -624,13 +670,13 @@ impl ToolHandler for WritePropertiesHandler {
     }
 }
 
-// === Send Command Handler ===
-pub struct SendCommandHandler;
+// === Device Command Handler ===
+pub struct DeviceCommandHandler;
 
 #[async_trait]
-impl ToolHandler for SendCommandHandler {
+impl ToolHandler for DeviceCommandHandler {
     fn name(&self) -> &str {
-        "send_command"
+        "device_command"
     }
 
     fn description(&self) -> &str {
@@ -652,11 +698,25 @@ impl ToolHandler for SendCommandHandler {
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
-        // Check device exists and is online
+        // Get workspace_id from MCP context for access control
+        let workspace_id = crate::api::mcp::handlers::get_mcp_context()
+            .map(|c| c.workspace_id);
+
+        // Check device exists and belongs to user's workspace
         let device = Device::find_by_id(state.database(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.device_id)))?;
+
+        // Verify device belongs to user's workspace
+        if let Some(ref ws_id) = workspace_id {
+            if device.workspace_id.as_ref() != Some(&ws_id) {
+                tracing::warn!("MCP send_command: access denied to device {} for workspace {}", input.device_id, ws_id);
+                return Err(ToolError::Forbidden(
+                    "Access denied: device does not belong to authenticated workspace".to_string()
+                ));
+            }
+        }
 
         // Check if device is online
         let is_online = state.data_context.get_device(&input.device_id)
@@ -734,6 +794,91 @@ impl ToolHandler for SendCommandHandler {
     }
 }
 
+// === Device Template List Handler ===
+pub struct DeviceTemplateListHandler;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TemplateListInput {
+    category: Option<String>,
+    manufacturer: Option<String>,
+    device_type: Option<String>,
+}
+
+#[async_trait]
+impl ToolHandler for DeviceTemplateListHandler {
+    fn name(&self) -> &str {
+        "device_template_list"
+    }
+
+    fn description(&self) -> &str {
+        "List all available device templates for creating new devices"
+    }
+
+    fn input_schema(&self) -> InputSchema {
+        let mut props = HashMap::new();
+        props.insert("category".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Filter by template category".to_string()) });
+        props.insert("manufacturer".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Filter by manufacturer".to_string()) });
+        props.insert("deviceType".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Filter by device type".to_string()) });
+        InputSchema::object(vec![], props)
+    }
+
+    async fn execute(&self, args: Value) -> Result<Value, ToolError> {
+        let input: TemplateListInput = serde_json::from_value(args)
+            .map_err(|e| ToolError::InvalidParams(e.to_string()))?;
+
+        let state = crate::api::mcp::get_app_state()
+            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
+
+        let params = crate::dto::entity::device_template::TemplateQueryParams {
+            category: input.category,
+            manufacturer: input.manufacturer,
+            device_type: input.device_type,
+            ..Default::default()
+        };
+
+        let templates = crate::dto::entity::device_template::DeviceTemplate::find_all(
+            state.database(),
+            &params,
+        )
+        .await
+        .map_err(|e| ToolError::Internal(e.to_string()))?;
+
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct TemplateSummary {
+            id: String,
+            name: String,
+            display_name: String,
+            description: Option<String>,
+            version: String,
+            category: String,
+            manufacturer: Option<String>,
+            device_type: String,
+            protocol_type: Option<String>,
+            driver_name: Option<String>,
+        }
+
+        let result: Vec<TemplateSummary> = templates
+            .into_iter()
+            .map(|t| TemplateSummary {
+                id: t.id,
+                name: t.name,
+                display_name: t.display_name,
+                description: t.description,
+                version: t.version,
+                category: t.category,
+                manufacturer: t.manufacturer,
+                device_type: t.device_type,
+                protocol_type: t.protocol_type,
+                driver_name: t.driver_name,
+            })
+            .collect();
+
+        Ok(serde_json::to_value(result).unwrap())
+    }
+}
+
 // === Create Device Handler ===
 pub struct CreateDeviceHandler;
 
@@ -749,21 +894,14 @@ impl ToolHandler for CreateDeviceHandler {
 
     fn input_schema(&self) -> InputSchema {
         let mut props = HashMap::new();
+        props.insert("templateId".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device template ID (required for template-based creation)".to_string()) });
         props.insert("name".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device name (required)".to_string()) });
         props.insert("displayName".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Display name".to_string()) });
-        props.insert("deviceType".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device type".to_string()) });
         props.insert("address".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device address".to_string()) });
         props.insert("description".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device description".to_string()) });
         props.insert("position".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device position/location".to_string()) });
-        props.insert("driverName".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Driver name".to_string()) });
-        props.insert("deviceModel".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device model".to_string()) });
-        props.insert("protocolType".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Protocol type (modbus, onvif, snmp, mqtt)".to_string()) });
-        props.insert("factoryName".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Factory name".to_string()) });
-        props.insert("linkedData".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Linked data".to_string()) });
-        props.insert("connectionConfig".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Connection configuration (JSON)".to_string()) });
-        props.insert("parentId".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Parent device ID".to_string()) });
-        props.insert("productId".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Product ID".to_string()) });
-        props.insert("organizationId".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Organization ID".to_string()) });
+        props.insert("propertyValues".to_string(), PropertySchema { prop_type: "object".to_string(), description: Some("Property values to set at creation (property name -> value)".to_string()) });
+        props.insert("enabledCommands".to_string(), PropertySchema { prop_type: "array".to_string(), description: Some("Commands to enable at creation".to_string()) });
         InputSchema::object(vec!["name".to_string()], props)
     }
 
@@ -776,30 +914,58 @@ impl ToolHandler for CreateDeviceHandler {
 
         let workspace_id = crate::api::mcp::handlers::get_mcp_context()
             .map(|c| c.workspace_id);
-        let request = CreateDeviceRequest {
-            name: input.name,
-            display_name: input.display_name,
-            device_type: input.device_type,
-            address: input.address,
-            description: input.description,
-            position: input.position,
-            driver_name: input.driver_name,
-            device_model: input.device_model,
-            protocol_type: input.protocol_type,
-            factory_name: input.factory_name,
-            linked_data: input.linked_data,
-            driver_options: input.connection_config,
-            parent_id: input.parent_id,
-            product_id: input.product_id,
-            tenant_id: None,
-            workspace_id,
-        };
 
         let device_service = state.device_service.as_ref();
 
-        match device_service.create_device(&request).await {
-            Ok(device) => Ok(serde_json::to_value(device).unwrap()),
-            Err(e) => Err(ToolError::Internal(format!("Failed to create device: {}", e))),
+        if let Some(template_id) = &input.template_id {
+            // Template-based creation
+            let device_input = DeviceCreationInput {
+                name: input.name,
+                display_name: input.display_name,
+                description: input.description,
+                position: input.position,
+                address: input.address,
+                driver_name: input.driver_name,
+                driver_options: input.connection_config,
+                parent_id: input.parent_id,
+                product_id: input.product_id,
+                property_values: input.property_values.unwrap_or_default(),
+                enabled_commands: input.enabled_commands.unwrap_or_default(),
+                tenant_id: None,
+                workspace_id,
+            };
+            let request = CreateDeviceFromTemplateRequest {
+                template_id: template_id.clone(),
+                device_input,
+            };
+            match device_service.create_device_from_template(state.template_engine(), &request.template_id, &request.device_input).await {
+                Ok(device) => Ok(serde_json::to_value(device).unwrap()),
+                Err(e) => Err(ToolError::Internal(format!("Failed to create device from template: {}", e))),
+            }
+        } else {
+            // Direct creation (non-template)
+            let request = CreateDeviceRequest {
+                name: input.name,
+                display_name: input.display_name,
+                device_type: input.device_type,
+                address: input.address,
+                description: input.description,
+                position: input.position,
+                driver_name: input.driver_name,
+                device_model: input.device_model,
+                protocol_type: input.protocol_type,
+                factory_name: input.factory_name,
+                linked_data: input.linked_data,
+                driver_options: input.connection_config,
+                parent_id: input.parent_id,
+                product_id: input.product_id,
+                tenant_id: None,
+                workspace_id,
+            };
+            match device_service.create_device(&request).await {
+                Ok(device) => Ok(serde_json::to_value(device).unwrap()),
+                Err(e) => Err(ToolError::Internal(format!("Failed to create device: {}", e))),
+            }
         }
     }
 }
@@ -857,7 +1023,9 @@ impl ToolHandler for UpdateDeviceHandler {
                 }
                 Ok(Some(_)) => {
                     tracing::warn!("MCP update_device: access denied to device {} for workspace {}", input.id, ws_id);
-                    return Err(ToolError::NotFound(format!("Device {} not found", input.id)));
+                    return Err(ToolError::Forbidden(
+                        "Access denied: device does not belong to authenticated workspace".to_string()
+                    ));
                 }
                 Ok(None) => {
                     tracing::warn!("MCP update_device: device {} not found for workspace {}", input.id, ws_id);
@@ -937,7 +1105,9 @@ impl ToolHandler for DeleteDeviceHandler {
                 }
                 Ok(Some(_)) => {
                     tracing::warn!("MCP delete_device: access denied to device {} for workspace {}", input.id, ws_id);
-                    return Err(ToolError::NotFound(format!("Device {} not found", input.id)));
+                    return Err(ToolError::Forbidden(
+                        "Access denied: device does not belong to authenticated workspace".to_string()
+                    ));
                 }
                 Ok(None) => {
                     tracing::warn!("MCP delete_device: device {} not found for workspace {}", input.id, ws_id);
@@ -1004,7 +1174,9 @@ impl ToolHandler for GetDeviceHistoryHandler {
         if let Some(ref ws_id) = workspace_id {
             if device.workspace_id.as_ref() != Some(&ws_id) {
                 tracing::warn!("MCP get_device_history: access denied to device {} for workspace {}", input.device_id, ws_id);
-                return Err(ToolError::NotFound(format!("Device {} not found", input.device_id)));
+                return Err(ToolError::Forbidden(
+                    "Access denied: device does not belong to authenticated workspace".to_string()
+                ));
             }
         }
 
@@ -1053,11 +1225,25 @@ impl ToolHandler for GetDeviceMetricsHandler {
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
-        // Check device exists
-        Device::find_by_id(state.database(), &input.device_id)
+        // Get workspace_id from MCP context for access control
+        let workspace_id = crate::api::mcp::handlers::get_mcp_context()
+            .map(|c| c.workspace_id);
+
+        // Check device exists and belongs to user's workspace
+        let device = Device::find_by_id(state.database(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.device_id)))?;
+
+        // Verify device belongs to user's workspace
+        if let Some(ref ws_id) = workspace_id {
+            if device.workspace_id.as_ref() != Some(&ws_id) {
+                tracing::warn!("MCP get_device_metrics: access denied to device {} for workspace {}", input.device_id, ws_id);
+                return Err(ToolError::Forbidden(
+                    "Access denied: device does not belong to authenticated workspace".to_string()
+                ));
+            }
+        }
 
         // Get metrics from monitoring service
         let metrics: DeviceMetrics = state.monitoring_service
@@ -1114,11 +1300,25 @@ impl ToolHandler for ExportDeviceReportHandler {
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
+        // Get workspace_id from MCP context for access control
+        let workspace_id = crate::api::mcp::handlers::get_mcp_context()
+            .map(|c| c.workspace_id);
+
         // Get device
         let mut device = Device::find_by_id_with_tags(state.database(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.device_id)))?;
+
+        // Verify device belongs to user's workspace
+        if let Some(ref ws_id) = workspace_id {
+            if device.workspace_id.as_ref() != Some(&ws_id) {
+                tracing::warn!("MCP export_device_report: access denied to device {} for workspace {}", input.device_id, ws_id);
+                return Err(ToolError::Forbidden(
+                    "Access denied: device does not belong to authenticated workspace".to_string()
+                ));
+            }
+        }
 
         // Get properties
         let properties = DeviceProperty::find_by_device_id(state.database(), &input.device_id)

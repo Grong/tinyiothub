@@ -34,12 +34,12 @@ pub struct DeviceOnlineStatus {
 pub fn create_router() -> Router<AppState> {
     Router::new()
         // 设备状态相关
-        .route("/:device_id/status", get(get_device_online_status))
-        .route("/:device_id/metrics", get(get_device_metrics))
+        .route("/{device_id}/status", get(get_device_online_status))
+        .route("/{device_id}/metrics", get(get_device_metrics))
         // 性能监控相关
-        .route("/:device_id/performance", get(get_device_performance_metrics))
-        .route("/:device_id/performance/history", get(get_device_performance_history))
-        .route("/:device_id/performance/alerts", get(get_device_performance_alerts))
+        .route("/{device_id}/performance", get(get_device_performance_metrics))
+        .route("/{device_id}/performance/history", get(get_device_performance_history))
+        .route("/{device_id}/performance/alerts", get(get_device_performance_alerts))
         // 系统级监控
         .route("/overview", get(get_system_overview))
         .route("/performance/overview", get(get_system_performance_overview))
@@ -50,8 +50,14 @@ pub fn create_router() -> Router<AppState> {
 async fn get_device_online_status(
     State(state): State<AppState>,
     Path(device_id): Path<String>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<DeviceOnlineStatus>> {
+    if let Err(e) = super::verify_device_tenant(&state, &device_id, &claims.tenant_id).await {
+        return match e {
+            crate::shared::error::Error::NotFound => ApiResponseBuilder::error("设备不存在"),
+            _ => ApiResponseBuilder::error("查询设备失败"),
+        };
+    }
     let is_online = state.monitoring_service.is_device_online(&device_id);
     let connection_quality = state.monitoring_service.get_device_connection_quality(&device_id);
 
@@ -69,8 +75,14 @@ async fn get_device_online_status(
 async fn get_device_metrics(
     State(state): State<AppState>,
     Path(device_id): Path<String>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<Option<DeviceMetrics>>> {
+    if let Err(e) = super::verify_device_tenant(&state, &device_id, &claims.tenant_id).await {
+        return match e {
+            crate::shared::error::Error::NotFound => ApiResponseBuilder::error("设备不存在"),
+            _ => ApiResponseBuilder::error("查询设备失败"),
+        };
+    }
     match state.monitoring_service.get_device_metrics(&device_id).await {
         Some(stats) => ApiResponseBuilder::success(Some(stats)),
         None => ApiResponseBuilder::success(None),
@@ -90,8 +102,14 @@ async fn get_system_overview(
 async fn get_device_performance_metrics(
     State(state): State<AppState>,
     Path(device_id): Path<String>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<Option<DevicePerformanceMetrics>>> {
+    if let Err(e) = super::verify_device_tenant(&state, &device_id, &claims.tenant_id).await {
+        return match e {
+            crate::shared::error::Error::NotFound => ApiResponseBuilder::error("设备不存在"),
+            _ => ApiResponseBuilder::error("查询设备失败"),
+        };
+    }
     match state.performance_service.get_device_performance_metrics(&device_id).await {
         Some(metrics) => ApiResponseBuilder::success(Some(metrics)),
         None => ApiResponseBuilder::success(None),
@@ -103,8 +121,14 @@ async fn get_device_performance_history(
     State(state): State<AppState>,
     Path(device_id): Path<String>,
     Query(params): Query<PerformanceHistoryQuery>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<Vec<DevicePerformanceMetrics>>> {
+    if let Err(e) = super::verify_device_tenant(&state, &device_id, &claims.tenant_id).await {
+        return match e {
+            crate::shared::error::Error::NotFound => ApiResponseBuilder::error("设备不存在"),
+            _ => ApiResponseBuilder::error("查询设备失败"),
+        };
+    }
     let hours = params.hours.unwrap_or(24); // 默认24小时
     match state.performance_service.get_device_performance_history(&device_id, hours).await {
         Ok(history) => ApiResponseBuilder::success(history),
@@ -131,8 +155,14 @@ async fn get_system_performance_overview(
 async fn get_device_performance_alerts(
     State(state): State<AppState>,
     Path(device_id): Path<String>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<Vec<PerformanceAlert>>> {
+    if let Err(e) = super::verify_device_tenant(&state, &device_id, &claims.tenant_id).await {
+        return match e {
+            crate::shared::error::Error::NotFound => ApiResponseBuilder::error("设备不存在"),
+            _ => ApiResponseBuilder::error("查询设备失败"),
+        };
+    }
     let alerts = state.performance_service.check_device_performance_alerts(&device_id).await;
     ApiResponseBuilder::success(alerts)
 }

@@ -1,12 +1,12 @@
-import { en } from "../locales/en.ts";
+import { en } from "../locales/en";
 import {
   DEFAULT_LOCALE,
   SUPPORTED_LOCALES,
   isSupportedLocale,
   loadLazyLocaleTranslation,
   resolveNavigatorLocale,
-} from "./registry.ts";
-import type { Locale, TranslationMap } from "./types.ts";
+} from "./registry";
+import type { Locale, TranslationMap } from "./types";
 
 type Subscriber = (locale: Locale) => void;
 

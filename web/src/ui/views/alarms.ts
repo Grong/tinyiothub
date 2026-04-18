@@ -159,17 +159,17 @@ export class AlarmsView extends LitElement {
   render() {
     if (this.loading) {
       return html`
-        <div style="display: flex; align-items: center; justify-content: center; padding: 60px;">
+        <div class="page-loading">
           <span class="loading-spinner"></span>
-          <span style="margin-left: 8px; color: var(--muted);">加载中...</span>
+          <span>加载中...</span>
         </div>
       `;
     }
 
     if (this.error) {
       return html`
-        <div style="text-align: center; padding: 60px;">
-          <div style="color: var(--danger); margin-bottom: 12px;">${this.error}</div>
+        <div class="page-error">
+          <div class="page-error__message">${this.error}</div>
           <button class="btn btn--primary" @click=${this.loadData}>重试</button>
         </div>
       `;
@@ -177,14 +177,14 @@ export class AlarmsView extends LitElement {
 
     return html`
       ${this.renderStats()}
-      <div style="display: flex; gap: 10px; margin-bottom: 16px; align-items: center; flex-wrap: wrap;">
-        <select class="select" style="width: auto; min-width: 120px;" .value=${this.filterStatus} @change=${(e: Event) => { this.filterStatus = (e.target as HTMLSelectElement).value; this.page = 1; this.loadData(); }}>
+      <div class="filter-bar">
+        <select class="select filter-bar__select" .value=${this.filterStatus} @change=${(e: Event) => { this.filterStatus = (e.target as HTMLSelectElement).value; this.page = 1; this.loadData(); }}>
           <option value="">全部状态</option>
           <option value="Active">活跃</option>
           <option value="Acknowledged">已确认</option>
           <option value="Resolved">已解决</option>
         </select>
-        <select class="select" style="width: auto; min-width: 120px;" .value=${this.filterLevel} @change=${(e: Event) => { this.filterLevel = (e.target as HTMLSelectElement).value; this.page = 1; this.loadData(); }}>
+        <select class="select filter-bar__select" .value=${this.filterLevel} @change=${(e: Event) => { this.filterLevel = (e.target as HTMLSelectElement).value; this.page = 1; this.loadData(); }}>
           <option value="">全部级别</option>
           <option value="Critical">严重</option>
           <option value="Error">错误</option>
@@ -192,48 +192,48 @@ export class AlarmsView extends LitElement {
           <option value="Info">信息</option>
         </select>
       </div>
-      <div class="card" style="overflow: hidden;">
-        <table style="width: 100%; border-collapse: collapse;">
+      <div class="card table-container">
+        <table class="data-table">
           <thead>
-            <tr style="border-bottom: 1px solid var(--border);">
-              <th style="padding: 12px 16px; text-align: left; font-size: 13px; color: var(--muted); font-weight: 500;">级别</th>
-              <th style="padding: 12px 16px; text-align: left; font-size: 13px; color: var(--muted); font-weight: 500;">设备</th>
-              <th style="padding: 12px 16px; text-align: left; font-size: 13px; color: var(--muted); font-weight: 500;">告警信息</th>
-              <th style="padding: 12px 16px; text-align: left; font-size: 13px; color: var(--muted); font-weight: 500;">状态</th>
-              <th style="padding: 12px 16px; text-align: left; font-size: 13px; color: var(--muted); font-weight: 500;">时间</th>
-              <th style="padding: 12px 16px; text-align: right; font-size: 13px; color: var(--muted); font-weight: 500;">操作</th>
+            <tr>
+              <th>级别</th>
+              <th>设备</th>
+              <th>告警信息</th>
+              <th>状态</th>
+              <th>时间</th>
+              <th class="cell-actions">操作</th>
             </tr>
           </thead>
           <tbody>
             ${this.alarms.length === 0
-              ? html`<tr><td colspan="6" style="padding: 40px; text-align: center; color: var(--muted);">暂无告警</td></tr>`
+              ? html`<tr><td colspan="6" class="empty-hint">暂无告警</td></tr>`
               : this.alarms.map(a => html`
-                <tr style="border-bottom: 1px solid var(--border);">
-                  <td style="padding: 12px 16px;">
-                    <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 13px;">
-                      <span style="width: 8px; height: 8px; border-radius: 50%; background: ${this.levelColor(a.alarmLevel)};"></span>
-                      ${this.levelLabel(a.alarmLevel)}
+                <tr>
+                  <td>
+                    <span class="status-badge">
+                      <span class="status-dot" style="background: ${this.levelColor(a.alarmLevel)};"></span>
+                      <span class="status-badge__label">${this.levelLabel(a.alarmLevel)}</span>
                     </span>
                   </td>
-                  <td style="padding: 12px 16px; font-size: 13px;">${a.deviceName || "-"}</td>
-                  <td style="padding: 12px 16px; font-size: 13px; max-width: 300px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${a.message}</td>
-                  <td style="padding: 12px 16px;">
-                    <span style="display: inline-flex; align-items: center; gap: 6px; font-size: 13px;">
-                      <span style="width: 8px; height: 8px; border-radius: 50%; background: ${a.status === 'Active' ? 'var(--danger)' : a.status === 'Acknowledged' ? 'var(--warning)' : 'var(--success)'};"></span>
-                      ${this.statusLabel(a.status)}
+                  <td class="data-table__cell-sm">${a.deviceName || "-"}</td>
+                  <td class="cell-truncate data-table__cell-sm">${a.message}</td>
+                  <td>
+                    <span class="status-badge">
+                      <span class="status-dot" style="background: ${a.status === 'Active' ? 'var(--danger)' : a.status === 'Acknowledged' ? 'var(--warning)' : 'var(--success)'};"></span>
+                      <span class="status-badge__label">${this.statusLabel(a.status)}</span>
                     </span>
                   </td>
-                  <td style="padding: 12px 16px; font-size: 13px; color: var(--muted);">${a.alarmTime?.slice(0, 16) || a.createdAt?.slice(0, 16)}</td>
-                  <td style="padding: 12px 16px; text-align: right;">
+                  <td class="cell-muted">${a.alarmTime?.slice(0, 16) || a.createdAt?.slice(0, 16)}</td>
+                  <td class="cell-actions">
                     ${a.status === "Active" ? html`
-                      <button class="btn btn--ghost btn--sm" style="font-size: 12px;" @click=${() => this.openAck(a)}>确认</button>
-                      <button class="btn btn--ghost btn--sm" style="font-size: 12px; color: var(--success);" @click=${() => this.openResolve(a)}>解决</button>
+                      <button class="btn btn--ghost btn--sm" @click=${() => this.openAck(a)}>确认</button>
+                      <button class="btn btn--ghost btn--sm btn--success-text" @click=${() => this.openResolve(a)}>解决</button>
                     ` : nothing}
                     ${a.status === "Acknowledged" ? html`
-                      <button class="btn btn--ghost btn--sm" style="font-size: 12px; color: var(--success);" @click=${() => this.openResolve(a)}>解决</button>
+                      <button class="btn btn--ghost btn--sm btn--success-text" @click=${() => this.openResolve(a)}>解决</button>
                     ` : nothing}
                     ${a.status === "Resolved" ? html`
-                      <span style="font-size: 12px; color: var(--muted);">-</span>
+                      <span class="inline-muted">-</span>
                     ` : nothing}
                   </td>
                 </tr>
@@ -257,22 +257,22 @@ export class AlarmsView extends LitElement {
     const s = this.stats;
     if (!s) return nothing;
     return html`
-      <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px;">
-        <div class="card" style="padding: 16px;">
-          <div style="color: var(--muted); font-size: 12px;">总告警数</div>
-          <div style="font-size: 24px; font-weight: 700; margin-top: 4px;">${s.totalCount}</div>
+      <div class="stats-grid">
+        <div class="card stat-card">
+          <div class="stat-card__label">总告警数</div>
+          <div class="stat-card__value">${s.totalCount}</div>
         </div>
-        <div class="card" style="padding: 16px;">
-          <div style="color: var(--muted); font-size: 12px;">活跃告警</div>
-          <div style="font-size: 24px; font-weight: 700; margin-top: 4px; color: var(--danger);">${s.activeCount}</div>
+        <div class="card stat-card">
+          <div class="stat-card__label">活跃告警</div>
+          <div class="stat-card__value" style="color: var(--danger);">${s.activeCount}</div>
         </div>
-        <div class="card" style="padding: 16px;">
-          <div style="color: var(--muted); font-size: 12px;">已确认</div>
-          <div style="font-size: 24px; font-weight: 700; margin-top: 4px; color: var(--warning);">${s.acknowledgedCount}</div>
+        <div class="card stat-card">
+          <div class="stat-card__label">已确认</div>
+          <div class="stat-card__value" style="color: var(--warning);">${s.acknowledgedCount}</div>
         </div>
-        <div class="card" style="padding: 16px;">
-          <div style="color: var(--muted); font-size: 12px;">已解决</div>
-          <div style="font-size: 24px; font-weight: 700; margin-top: 4px; color: var(--success);">${s.resolvedCount}</div>
+        <div class="card stat-card">
+          <div class="stat-card__label">已解决</div>
+          <div class="stat-card__value" style="color: var(--success);">${s.resolvedCount}</div>
         </div>
       </div>
     `;
@@ -283,10 +283,8 @@ export class AlarmsView extends LitElement {
       <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="确认告警" @click=${this.closeAckModal}>
         <div class="modal" @click=${(e: Event) => e.stopPropagation()}>
           <div class="modal-header">确认告警</div>
-          <div class="modal-body">
-            <div style="font-size: 13px; color: var(--muted); margin-bottom: 12px;">
-              ${this.ackAlarm?.message}
-            </div>
+          <div class="modal-body modal-fields">
+            <div class="form-hint form-hint--block">${this.ackAlarm?.message}</div>
             <div class="field">
               <span>备注（可选）</span>
               <input type="text" placeholder="确认备注" .value=${this.ackNote} @input=${(e: any) => { this.ackNote = e.target.value; }} />
@@ -308,20 +306,18 @@ export class AlarmsView extends LitElement {
       <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="解决告警" @click=${this.closeResolveModal}>
         <div class="modal" @click=${(e: Event) => e.stopPropagation()}>
           <div class="modal-header">解决告警</div>
-          <div class="modal-body">
-            <div style="font-size: 13px; color: var(--muted); margin-bottom: 12px;">
-              ${this.resolveAlarm?.message}
-            </div>
+          <div class="modal-body modal-fields">
+            <div class="form-hint form-hint--block">${this.resolveAlarm?.message}</div>
             <div class="field">
               <span>解决方式</span>
-              <select .value=${this.resolveType} @change=${(e: Event) => { this.resolveType = (e.target as HTMLSelectElement).value as ResolutionType; }} style="width: 100%;">
+              <select .value=${this.resolveType} @change=${(e: Event) => { this.resolveType = (e.target as HTMLSelectElement).value as ResolutionType; }}>
                 <option value="Fixed">已修复</option>
                 <option value="FalseAlarm">误报</option>
                 <option value="Ignored">忽略</option>
                 <option value="AutoResolved">自动恢复</option>
               </select>
             </div>
-            <div class="field" style="margin-top: 12px;">
+            <div class="field">
               <span>备注（可选）</span>
               <input type="text" placeholder="解决备注" .value=${this.resolveNote} @input=${(e: any) => { this.resolveNote = e.target.value; }} />
             </div>

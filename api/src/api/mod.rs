@@ -1,11 +1,12 @@
 // API Layer
 // Contains all HTTP API handlers and middleware
 
-use axum::{middleware as axum_middleware, routing::{get, post, put}, Router};
+use axum::{middleware as axum_middleware, routing::{get, post}, Router};
 
-use crate::{application::data_context::DataContext, shared::app_state::AppState};
+use crate::shared::app_state::AppState;
 
 pub mod chat;
+pub mod agents;
 pub mod alarm_rules;
 pub mod alarms;
 pub mod auth;
@@ -53,10 +54,11 @@ pub fn create_router() -> Router<AppState> {
         .nest("/workspaces", workspaces::create_router()) // 工作空间端点
         .nest("/mcp", mcp::create_router()) // MCP 工具端点
         .nest("/chat", chat::create_router()) // Chat 代理端点
+        .nest("/agents/skills", agents::skills::create_router()) // Skills CRUD 端点
+        .nest("/tags", tags::create_router()) // 标签端点（之前遗漏）
         // API Keys — 直接在 /v1/api-keys/ 下，不嵌套在 /tenants 下
         .nest("/api-keys", tenants::create_api_key_router())
-        .route("/agents", get(chat::proxy::list_agents))
-        .route("/agents/:id/config", get(chat::proxy::get_agent_config).put(chat::proxy::set_agent_config))
+        .nest("/agents", agents::create_router())
         .route("/tools/catalog", get(chat::proxy::tools_catalog))
         .route("/tools/effective", get(chat::proxy::tools_effective))
         .route("/tools/toggle", post(chat::proxy::tools_toggle))

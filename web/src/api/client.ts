@@ -229,3 +229,50 @@ export const {
   delete: apiDelete,
   patch: apiPatch,
 } = ApiClient;
+
+// File-based Skill (matches SkillInfoDto from backend)
+export interface Skill {
+  name: string;         // skill file name (without .md)
+  description: string;  // from YAML frontmatter description field
+  content: string;      // body of the .md file (after frontmatter)
+}
+
+// Frontmatter fields stored in the skill file itself
+export interface CreateSkillRequest {
+  workspace_id: string;
+  skill_name: string;
+  skill_content: string;  // full markdown including YAML frontmatter
+}
+
+export interface UpdateSkillRequest {
+  skill_content: string;  // full markdown including YAML frontmatter
+}
+
+// Skills (file-based, name is string identifier)
+export async function listSkills(workspaceId?: string): Promise<ApiResponse<Skill[]>> {
+  const params = new URLSearchParams();
+  if (workspaceId) params.set("workspace_id", workspaceId);
+  return apiGet(`/agents/skills?${params}`);
+}
+
+export async function getSkill(name: string, workspaceId?: string): Promise<ApiResponse<Skill>> {
+  const params = new URLSearchParams();
+  if (workspaceId) params.set("workspace_id", workspaceId);
+  return apiGet(`/agents/skills/${encodeURIComponent(name)}?${params}`);
+}
+
+export async function createSkill(data: CreateSkillRequest): Promise<ApiResponse<Skill>> {
+  return apiPost("/agents/skills", data);
+}
+
+export async function updateSkill(name: string, data: UpdateSkillRequest, workspaceId?: string): Promise<ApiResponse<Skill>> {
+  const params = new URLSearchParams();
+  if (workspaceId) params.set("workspace_id", workspaceId);
+  return apiPut(`/agents/skills/${encodeURIComponent(name)}?${params}`, data);
+}
+
+export async function deleteSkill(name: string, workspaceId?: string): Promise<ApiResponse<void>> {
+  const params = new URLSearchParams();
+  if (workspaceId) params.set("workspace_id", workspaceId);
+  return apiDelete(`/agents/skills/${encodeURIComponent(name)}?${params}`);
+}

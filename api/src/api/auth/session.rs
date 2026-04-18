@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use crate::{
     api::AppState,
     dto::{
-        entity::user::User,
         response::{
             login::{RefreshTokenResponse, UserInfo},
             ApiResponse,
@@ -40,7 +39,7 @@ pub fn create_router() -> Router<AppState> {
 
 /// 获取当前用户信息
 async fn get_profile(State(state): State<AppState>, claims: Claims) -> Json<ApiResponse<UserInfo>> {
-    match User::find_by_id(state.database(), &claims.user_id).await {
+    match state.user_service.get_user_by_id(&claims.user_id).await {
         Ok(Some(user)) => {
             tracing::debug!("Retrieved profile for user: {}", user.get_display_name());
             ApiResponse::success(UserInfo::from(user))
@@ -78,7 +77,7 @@ async fn validate_session(
     claims: Claims,
 ) -> Json<ApiResponse<SessionInfo>> {
     // 检查用户是否仍然存在且未被禁用
-    match User::find_by_id(state.database(), &claims.user_id).await {
+    match state.user_service.get_user_by_id(&claims.user_id).await {
         Ok(Some(user)) => {
             // 从 JWT claims 中获取真实的过期时间
             let token_expires_at = claims.exp.unwrap_or_else(|| {
@@ -89,10 +88,10 @@ async fn validate_session(
             let session_info = SessionInfo {
                 user_info: UserInfo::from(user.clone()),
                 token_expires_at,
-                is_valid: user.enabled(),
+                is_valid: user.is_enabled(),
             };
 
-            if user.enabled() {
+            if user.is_enabled() {
                 tracing::debug!("Session validated for user: {}", user.get_display_name());
                 ApiResponse::success(session_info)
             } else {

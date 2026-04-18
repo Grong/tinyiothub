@@ -22,7 +22,7 @@ pub fn create_router() -> Router<AppState> {
         .route("/", post(query::create_event))
         .route("/real-time", get(real_time::get_real_time_events))
         .route("/real-time/status", get(real_time::get_status_summary))
-        .route("/real-time/:id/acknowledge", post(real_time::acknowledge_event))
+        .route("/real-time/{id}/acknowledge", post(real_time::acknowledge_event))
         .route("/overview", get(overview::get_event_overview))
         .route("/security/permissions", get(security::get_user_permissions))
         .route("/security/config", get(security::get_security_config))

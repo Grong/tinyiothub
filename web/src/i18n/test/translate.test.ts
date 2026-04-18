@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { i18n, t } from "../lib/translate.ts";
+import { i18n, t } from "../lib/translate";
 
 describe("i18n", () => {
   beforeEach(async () => {
@@ -44,7 +44,7 @@ describe("i18n", () => {
   it("loads saved non-English locale on startup", async () => {
     localStorage.setItem("openclaw.i18n.locale", "zh-CN");
     vi.resetModules();
-    const fresh = await import("../lib/translate.ts");
+    const fresh = await import("../lib/translate");
 
     for (let index = 0; index < 5 && fresh.i18n.getLocale() !== "zh-CN"; index += 1) {
       await Promise.resolve();

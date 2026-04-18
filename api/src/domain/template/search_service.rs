@@ -111,26 +111,24 @@ impl TemplateSearchService {
     ) -> Result<Vec<DeviceTemplate>, TemplateError> {
         info!("按分类搜索模板: {}", category);
 
-        let mut query_str = String::from(
+        let mut query = QueryBuilder::new(
             r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, device_type, protocol_type, driver_name, tags,
                    device_info, properties, commands, is_builtin, is_active,
                    created_at, updated_at
-            FROM device_templates 
-            WHERE is_active = 1 AND category = ?
-            ORDER BY is_builtin DESC, name
+            FROM device_templates
+            WHERE is_active = 1 AND category =
             "#,
         );
+        query.push_bind(category);
+        query.push(" ORDER BY is_builtin DESC, name");
 
         if let Some(limit) = limit {
-            query_str.push_str(&format!(" LIMIT {}", limit));
+            query.push(" LIMIT ").push_bind(limit as i64);
         }
 
-        let templates = sqlx::query_as::<_, DeviceTemplate>(sqlx::AssertSqlSafe(query_str.clone()))
-            .bind(category)
-            .fetch_all(self.database.pool())
-            .await?;
+        let templates = query.build_query_as::<DeviceTemplate>().fetch_all(self.database.pool()).await?;
 
         info!("在分类 {} 中找到 {} 个模板", category, templates.len());
         Ok(templates)
@@ -144,26 +142,24 @@ impl TemplateSearchService {
     ) -> Result<Vec<DeviceTemplate>, TemplateError> {
         info!("按厂商搜索模板: {}", manufacturer);
 
-        let mut query_str = String::from(
+        let mut query = QueryBuilder::new(
             r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, device_type, protocol_type, driver_name, tags,
                    device_info, properties, commands, is_builtin, is_active,
                    created_at, updated_at
-            FROM device_templates 
-            WHERE is_active = 1 AND manufacturer = ?
-            ORDER BY is_builtin DESC, category, name
+            FROM device_templates
+            WHERE is_active = 1 AND manufacturer =
             "#,
         );
+        query.push_bind(manufacturer);
+        query.push(" ORDER BY is_builtin DESC, category, name");
 
         if let Some(limit) = limit {
-            query_str.push_str(&format!(" LIMIT {}", limit));
+            query.push(" LIMIT ").push_bind(limit as i64);
         }
 
-        let templates = sqlx::query_as::<_, DeviceTemplate>(sqlx::AssertSqlSafe(query_str.clone()))
-            .bind(manufacturer)
-            .fetch_all(self.database.pool())
-            .await?;
+        let templates = query.build_query_as::<DeviceTemplate>().fetch_all(self.database.pool()).await?;
 
         info!("厂商 {} 的模板找到 {} 个", manufacturer, templates.len());
         Ok(templates)
@@ -176,26 +172,24 @@ impl TemplateSearchService {
     ) -> Result<Vec<DeviceTemplate>, TemplateError> {
         info!("按协议类型搜索模板: {}", protocol_type);
 
-        let mut query_str = String::from(
+        let mut query = QueryBuilder::new(
             r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, device_type, protocol_type, driver_name, tags,
                    device_info, properties, commands, is_builtin, is_active,
                    created_at, updated_at
-            FROM device_templates 
-            WHERE is_active = 1 AND protocol_type = ?
-            ORDER BY is_builtin DESC, category, name
+            FROM device_templates
+            WHERE is_active = 1 AND protocol_type =
             "#,
         );
+        query.push_bind(protocol_type);
+        query.push(" ORDER BY is_builtin DESC, category, name");
 
         if let Some(limit) = limit {
-            query_str.push_str(&format!(" LIMIT {}", limit));
+            query.push(" LIMIT ").push_bind(limit as i64);
         }
 
-        let templates = sqlx::query_as::<_, DeviceTemplate>(sqlx::AssertSqlSafe(query_str.clone()))
-            .bind(protocol_type)
-            .fetch_all(self.database.pool())
-            .await?;
+        let templates = query.build_query_as::<DeviceTemplate>().fetch_all(self.database.pool()).await?;
 
         info!("协议类型 {} 的模板找到 {} 个", protocol_type, templates.len());
         Ok(templates)

@@ -57,19 +57,13 @@ pub async fn register_tools() {
     // Initialize heartbeat state (Task 4)
     tools::heartbeat::init_heartbeat_state();
 
-    // Register device tools (Task 2)
+    // Register device tools
     reg.register(tools::device::ListDevicesHandler);
-    reg.register(tools::device::GetDeviceHandler);
-    reg.register(tools::device::GetDeviceStatusHandler);
-    reg.register(tools::device::ReadPropertiesHandler);
-    reg.register(tools::device::WritePropertiesHandler);
-    reg.register(tools::device::SendCommandHandler);
+    reg.register(tools::device::DeviceProfileHandler);
+    reg.register(tools::device::DevicePropertyGetHandler);
     reg.register(tools::device::CreateDeviceHandler);
-    reg.register(tools::device::UpdateDeviceHandler);
-    reg.register(tools::device::DeleteDeviceHandler);
-    reg.register(tools::device::GetDeviceHistoryHandler);
-    reg.register(tools::device::GetDeviceMetricsHandler);
-    reg.register(tools::device::ExportDeviceReportHandler);
+    reg.register(tools::device::DeviceCommandHandler);
+    reg.register(tools::device::DeviceTemplateListHandler);
 
     // Register driver tools (Task 3)
     reg.register(tools::driver::ListDriversHandler);

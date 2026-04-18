@@ -28,17 +28,17 @@ pub struct ChatAbortRequest {
     pub run_id: Option<String>,
 }
 
-/// Request body for PUT /api/v1/agents/:id/config
+/// Query parameters for GET /api/v1/chat/sessions
 #[derive(Debug, Deserialize)]
-pub struct AgentConfigUpdateRequest {
-    pub config: serde_json::Value,
-    pub base_hash: Option<String>,
+pub struct ChatSessionsQuery {
+    pub workspace_id: Option<String>,
+    pub agent_id: Option<String>,
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
 }
 
-/// Request body for POST /api/v1/tools/toggle
+/// Request body for POST /api/v1/chat/sessions/{session_key}/label
 #[derive(Debug, Deserialize)]
-pub struct ToolToggleRequest {
-    pub agent_id: String,
-    pub tool_name: String,
-    pub enabled: bool,
+pub struct UpdateSessionLabelRequest {
+    pub label: String,
 }

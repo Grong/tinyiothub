@@ -7,7 +7,7 @@ use tokio::{
 use tracing::{error, info, warn};
 
 use crate::{
-    application::{scheduler::TimeTask, DataContext, DataServer},
+    application::{DataContext, DataServer},
     shared::error::Error,
 };
 
@@ -78,20 +78,79 @@ impl ServiceManager {
 
         info!("✅ DataServer started and registered");
 
-        // 2. 启动定时任务调度器
+        // 2. 启动 Cron 调度器 (使用 zeroclaw SQLite store + TinyIoTHub agent)
         #[cfg(not(feature = "harmonyos"))]
         {
-            let time_task = TimeTask::new();
+            let cron_service = crate::application::cron::CronService::new(
+                Arc::new(app_state.clone()),
+            );
             // 在后台启动调度器
             tokio::spawn(async move {
-                time_task.run().await;
+                cron_service.run().await;
             });
-            info!("✅ TimeTask Scheduler started");
+            info!("✅ CronService started");
         }
 
         // 3. 启动健康检查服务
         #[cfg(not(feature = "harmonyos"))]
         self.start_health_monitor(app_state.data_context.clone()).await?;
+
+        // 4. 启动 Heartbeat 服务
+        #[cfg(not(feature = "harmonyos"))]
+        {
+            let agent_settings = crate::infrastructure::config::get().agent.clone();
+            let workspace_dir = std::path::PathBuf::from(&agent_settings.workspace_dir);
+
+            // Initialize workspace with template files
+            let scaffold_result = crate::infrastructure::agent::scaffold_service::scaffold_workspace(&workspace_dir).await;
+            match scaffold_result {
+                Ok(result) => {
+                    if result.created_files > 0 || result.created_dirs > 0 {
+                        info!("✅ Workspace scaffolded: {}", result);
+                    }
+                }
+                Err(e) => {
+                    warn!("⚠️ Workspace scaffolding failed: {}", e);
+                }
+            }
+
+            let heartbeat_config = zeroclaw::config::schema::HeartbeatConfig {
+                enabled: agent_settings.heartbeat_enabled,
+                interval_minutes: agent_settings.heartbeat_interval_minutes,
+                two_phase: false,
+                message: None,
+                target: None,
+                to: None,
+                adaptive: false,
+                min_interval_minutes: 5,
+                max_interval_minutes: 120,
+                deadman_timeout_minutes: 0,
+                deadman_channel: None,
+                deadman_to: None,
+                max_run_history: 100,
+                load_session_context: false,
+                task_timeout_secs: 600,
+            };
+            let mut observer_config = zeroclaw::config::schema::ObservabilityConfig::default();
+            observer_config.backend = agent_settings.observer_backend.clone();
+            let heartbeat_observer: std::sync::Arc<dyn zeroclaw::observability::Observer> =
+                std::sync::Arc::from(zeroclaw::observability::create_observer(&observer_config));
+            let heartbeat_service = crate::infrastructure::agent::HeartbeatService::new(
+                workspace_dir,
+                heartbeat_config,
+                heartbeat_observer,
+                app_state.chat_service.clone(),
+                "default".to_string(),
+                "default".to_string(),
+                agent_settings.system_prompts.heartbeat.clone(),
+            );
+            let handle: tokio::task::JoinHandle<Result<(), Error>> = tokio::spawn(async move {
+                heartbeat_service.run().await;
+                Ok(())
+            });
+            self.service_handles.write().await.push(handle);
+            info!("✅ HeartbeatService started");
+        }
 
         // 更新状态为运行中
         *self.status.write().await = ServiceStatus::Running;

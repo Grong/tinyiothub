@@ -1,29 +1,86 @@
 # TinyIoTHub — Claude Code 指令
 
+
+Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
+
+Tradeoff: These guidelines bias toward caution over speed. For trivial tasks, use judgment.
+
+1. Think Before Coding
+Don't assume. Don't hide confusion. Surface tradeoffs.
+
+Before implementing:
+
+State your assumptions explicitly. If uncertain, ask.
+If multiple interpretations exist, present them - don't pick silently.
+If a simpler approach exists, say so. Push back when warranted.
+If something is unclear, stop. Name what's confusing. Ask.
+2. Simplicity First
+Minimum code that solves the problem. Nothing speculative.
+
+No features beyond what was asked.
+No abstractions for single-use code.
+No "flexibility" or "configurability" that wasn't requested.
+No error handling for impossible scenarios.
+If you write 200 lines and it could be 50, rewrite it.
+Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+
+3. Surgical Changes
+Touch only what you must. Clean up only your own mess.
+
+When editing existing code:
+
+Don't "improve" adjacent code, comments, or formatting.
+Don't refactor things that aren't broken.
+Match existing style, even if you'd do it differently.
+If you notice unrelated dead code, mention it - don't delete it.
+When your changes create orphans:
+
+Remove imports/variables/functions that YOUR changes made unused.
+Don't remove pre-existing dead code unless asked.
+The test: Every changed line should trace directly to the user's request.
+
+4. Goal-Driven Execution
+Define success criteria. Loop until verified.
+
+Transform tasks into verifiable goals:
+
+"Add validation" → "Write tests for invalid inputs, then make them pass"
+"Fix the bug" → "Write a test that reproduces it, then make it pass"
+"Refactor X" → "Ensure tests pass before and after"
+For multi-step tasks, state a brief plan:
+
+1. [Step] → verify: [check]
+2. [Step] → verify: [check]
+3. [Step] → verify: [check]
+Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+These guidelines are working if: fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+
 > ⚠️ **强制要求**：在开始任何开发工作之前，必须阅读 `ARCHITECTURE_HARNESS.md`。该文件是架构宪法，所有代码必须遵守，违者 PR 拒绝合并。
 
 ## 项目概述
 
-TinyIoTHub 是一个 **Rust 后端 + Next.js 前端** 的 IoT 边缘网关系统，支持多协议（Modbus、ONVIF、SNMP、MQTT）。
+TinyIoTHub 是一个 **Rust 后端 + Lit 3 前端** 的 IoT 边缘网关系统，支持多协议（Modbus、ONVIF、SNMP、MQTT）。
 
-- **后端**: Rust 2021, Tokio (10 workers), Axum, Tower middleware, SQLx + SQLite
-- **前端**: Next.js (App Router), React Query, TailwindCSS, Zustand
+- **后端**: Rust 2024, Tokio, Axum, Tower middleware, SQLx + SQLite
+- **前端**: Lit 3 + Vite + TypeScript, Web Components, nanostore
 - **架构**: DDD (Domain-Driven Design) + Clean Architecture
 - **分支策略**: `master` (边缘网关), `saas` (SaaS 云端版)
 
 ## 技术栈
 
 ```
-Rust Backend          Next.js Frontend
+Rust Backend          Lit Frontend
 ─────────────        ───────────────
-tokio (async)        React 19
-axum (HTTP)          Next.js 15
-tower (middleware)    React Query
-sqlx + rusqlite      Zustand (state)
-serde + serde_json    TailwindCSS
-jsonwebtoken (JWT)    TypeScript
-tokio-modbus         shadcn/ui
-onvif                zod (validation)
+tokio (async)        Lit 3
+axum (HTTP)          Vite
+tower (middleware)   TypeScript
+sqlx + rusqlite      Web Components
+serde + serde_json   nanostore
+jsonwebtoken (JWT)   Signal-based state
+tokio-modbus         CSS Modules
+onvif                i18n
 snmp / rumqttc
 ```
 
@@ -36,18 +93,18 @@ tinyiothub/
 │   ├── application/     # 应用服务、数据上下文
 │   ├── api/            # HTTP handlers（路由 + 业务逻辑）
 │   ├── infrastructure/ # 外部依赖（DB、消息、网关）
-│   ├── shared/         # 跨层共享（error、security）
+│   ├── shared/         # 跨层共享（error、security、utils）
 │   └── dto/            # 数据传输对象
-├── mcp/                # MCP Server (已废弃 - 集成到 api/src/api/mcp/)
-├── web/
-│   ├── app/            # Next.js App Router 页面
-│   ├── service/        # API 调用层（必须用这个，不准直接 fetch）
-│   ├── hooks/          # React Query hooks
-│   ├── lib/            # 工具（api-client、query-keys）
-│   └── store/          # Zustand 状态管理
+├── web/                # Lit 3 + Vite 前端
+│   ├── src/ui/         # Lit Web Components 组件和页面
+│   ├── src/api/        # API 客户端
+│   ├── src/i18n/       # 国际化
+│   ├── src/styles/     # CSS 样式
+│   └── src/stores/     # nanostore 状态管理
 ├── docs/               # 技术文档
 ├── .kiro/steering/     # 开发规范（命名、API、架构）
-└── .kiro/specs/        # 特性设计文档
+├── .kiro/specs/        # 特性设计文档
+└── docs/superpowers/   # AI 辅助设计文档（plans / specs）
 ```
 
 ## 开发规范
@@ -76,15 +133,19 @@ ApiResponseBuilder::error_with_code(400, "bad request") // 自定义 code
 | Rust 文件/模块 | snake_case | `device_service.rs` |
 | Rust 结构体/枚举 | PascalCase | `DeviceStatus` |
 | Rust 函数 | snake_case | `get_device_by_id` |
-| TypeScript 文件 | kebab-case | `device-list.tsx` |
-| React 组件 | PascalCase | `DeviceList` |
+| TypeScript 文件 | kebab-case | `device-list.ts` |
+| Lit 组件类 | PascalCase | `DeviceList` |
+| 自定义元素名 | kebab-case | `<device-list>` |
 | TypeScript 变量 | camelCase | `deviceData` |
+| nanostore 变量 | `$` 前缀 | `$currentRoute` |
 
 ### 前端必须遵循
 
-1. **API 调用必须走 `web/service/`**，不准在组件里直接 fetch
-2. **必须用 `web/lib/api-client.ts`**（`apiGet`、`apiPost`、`apiPut`、`apiDelete`）
-3. **React Query 数据获取必须走 hooks**，不准在组件里直接用 `useQuery`
+1. **API 调用必须走 `web/src/api/`**，不准在组件里直接 `fetch`
+2. **使用 `web/src/api/client.ts` 中导出的 API 客户端**
+3. **状态管理使用 nanostore**，保存 `subscribe()` 返回的 unsubscribe 并在 `disconnectedCallback()` 中清理
+4. **路由使用 `navigate()` 函数**，禁止直接操作 `window.history.pushState`
+5. **事件监听禁止 `addEventListener('x', this.handler.bind(this))`**，使用箭头函数属性
 
 ## 工作流（Superpowers）
 
@@ -111,7 +172,7 @@ ApiResponseBuilder::error_with_code(400, "bad request") // 自定义 code
 **禁止行为：**
 - ❌ 不搜索就直接创建重复功能
 - ❌ 在 `api/src/` 创建散弹式的 `utils/` 或 `helpers/`
-- ❌ 前端组件里直接 `fetch()` 或 `useQuery()`
+- ❌ 前端组件里直接 `fetch()`
 - ❌ API handler 里直接写 SQL
 - ❌ 绕过 `ApiResponseBuilder` 拼装自定义 JSON 响应
 
@@ -128,10 +189,11 @@ ApiResponseBuilder::error_with_code(400, "bad request") // 自定义 code
 
 ### 前端
 
-- **Service Layer**: 所有 API 调用走 `web/service/`
-- **React Query**: 数据获取走 hooks（`web/hooks/`）
-- **API Client**: 统一用 `web/lib/api-client.ts`
-- **表单验证**: zod schemas
+- **API Client**: 所有 API 调用走 `web/src/api/client.ts`
+- **State Management**: nanostore（`web/src/stores/`）
+- **Routing**: 使用 `navigate()` 函数，禁止直接操作 `window.location`
+- **Shadow DOM**: CSS 选择器用 `:host`，全局 CSS 不穿透 Shadow DOM
+- **Lifecycle**: 首次数据加载用 `firstUpdated()`，`disconnectedCallback()` 清理订阅
 
 ## 当前功能状态
 
@@ -140,10 +202,11 @@ ApiResponseBuilder::error_with_code(400, "bad request") // 自定义 code
 - **设备管理**: CRUD、多协议驱动（Modbus/ONVIF/SNMP/MQTT）
 - **告警模块**: 规则引擎、告警通知、统计
 - **用户认证**: JWT + 会话管理
-- **MCP Server**: AI Agent 集成（Claude Desktop、Cursor）
+- **AI Agent 集成**: 内嵌 MCP Server + A2UI 聊天界面（Claude Desktop、Cursor 支持）
 - **Tenant/Subscription**: SaaS 多租户
 - **自愈引擎**: 探测调度器、自动故障恢复（system/device/task 探针）
 - **CI/CD**: GitHub Actions + Docker 多架构构建
+- **A2UI 组件库**: IoT 专用 AI 交互组件（设备卡片、告警表格、控制面板）
 
 ### 规划中（见 `.kiro/specs/`）
 
@@ -154,13 +217,15 @@ ApiResponseBuilder::error_with_code(400, "bad request") // 自定义 code
 ## 设计文档位置
 
 ```
-.kiro/steering/     # 开发规范（命名/API/架构）
-.kiro/specs/        # 特性设计（event-service、device-template、harmonyos-jwt）
-docs/api/           # API 文档
-docs/guide/         # 用户指南
-docs/technical/     # 技术文档（当前有效）
-docs/deployment/    # 部署指南
-docs/drivers/        # 驱动开发
+.kiro/steering/           # 开发规范（命名/API/架构）
+.kiro/specs/              # 特性设计文档
+docs/superpowers/plans/   # AI 辅助架构设计（当前活跃）
+docs/superpowers/specs/   # AI 辅助详细设计（当前活跃）
+docs/api/                 # API 文档
+docs/guide/               # 用户指南
+docs/technical/           # 技术文档
+docs/deployment/          # 部署指南
+docs/drivers/             # 驱动开发
 ```
 
 ## 数据库
@@ -180,7 +245,7 @@ docs/drivers/        # 驱动开发
 - 所有 PR 必须有测试
 - 提交信息格式: `type(scope): description`（参考 Conventional Commits）
 - 不准在 `api/src/` 直接写 SQL，优先用 SQLx query builder
-- 前端组件不准直接调用 API，必须走 service 层
+- 前端组件不准直接调用 API，必须走 `web/src/api/` 层
 
 ## 重要约定
 
@@ -269,3 +334,23 @@ docs/drivers/        # 驱动开发
 | CSS 类名 | BEM-like | `.card-header`, `.nav-item__icon` |
 | 事件名 | camelCase | `deviceSelected` |
 | nanostore 变量 | `$` 前缀 | `$currentRoute`, `$token` |
+
+## Skill routing
+
+When the user's request matches an available skill, ALWAYS invoke it using the Skill
+tool as your FIRST action. Do NOT answer directly, do NOT use other tools first.
+The skill has specialized workflows that produce better results than ad-hoc answers.
+
+Key routing rules:
+- Product ideas, "is this worth building", brainstorming → invoke office-hours
+- Bugs, errors, "why is this broken", 500 errors → invoke investigate
+- Ship, deploy, push, create PR → invoke ship
+- QA, test the site, find bugs → invoke qa
+- Code review, check my diff → invoke review
+- Update docs after shipping → invoke document-release
+- Weekly retro → invoke retro
+- Design system, brand → invoke design-consultation
+- Visual audit, design polish → invoke design-review
+- Architecture review → invoke plan-eng-review
+- Save progress, checkpoint, resume → invoke checkpoint
+- Code quality, health check → invoke health

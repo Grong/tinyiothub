@@ -66,7 +66,7 @@ impl DataServer {
     /// 核心数据处理循环（简化版）
     pub async fn run(
         &self,
-        mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
+        shutdown_rx: tokio::sync::broadcast::Receiver<()>,
     ) -> Result<(), Error> {
         // 按协议类型分组启动处理任务
         let driver_groups = self.group_drivers_by_protocol();
@@ -122,11 +122,24 @@ impl DataServer {
 
             // 处理每个驱动
             for driver_arc in &drivers {
+                // 先检查是否可以读取（避免在重试间隔内获取写锁）
+                let can_read = {
+                    if let Some(driver) = driver_arc.try_read() {
+                        driver.can_read_now()
+                    } else {
+                        false
+                    }
+                };
+
+                if !can_read {
+                    continue;
+                }
+
                 if let Some(mut driver) = driver_arc.try_write() {
                     let device_id = driver.device().id.clone();
 
-                    // 读取数据
-                    let read_result = driver.read_data();
+                    // 读取数据（非阻塞版，由 tick 间隔替代 sleep）
+                    let read_result = driver.read_data_once();
 
                     // 克隆设备信息，避免借用冲突
                     let mut device = driver.device().clone();
@@ -270,6 +283,7 @@ impl DataServer {
     }
 
     /// 更新设备属性值
+    #[allow(dead_code)]
     fn update_device_properties(
         device: &mut Device,
         values: &[crate::domain::device::driver::ResultValue],
@@ -389,8 +403,10 @@ impl DataServer {
     /// 重新加载设备（从数据库加载最新数据并更新context和驱动）
     pub async fn reload_device(&self, ids: Vec<String>) -> Result<(), Error> {
         // 使用DeviceService加载完整设备信息
-        let device_service =
-            crate::domain::device::service::DeviceService::new(Arc::new(self.context.database()));
+        let db = self.context.database();
+        let device_repository: Arc<dyn crate::domain::device::repository::DeviceRepository> =
+            Arc::new(crate::infrastructure::persistence::repositories::SqliteDeviceRepository::new(db.clone()));
+        let device_service = crate::domain::device::service::DeviceService::new(device_repository, Arc::new(db));
 
         let devices = device_service.load_complete_devices(&ids).await?;
 

@@ -1,12 +1,10 @@
 use axum::{
     extract::{Query, State},
-    http::StatusCode,
     response::Json,
     routing::get,
     Router,
 };
 use serde::Deserialize;
-use chrono::{DateTime, Utc};
 use tracing::{info, error};
 
 use crate::{

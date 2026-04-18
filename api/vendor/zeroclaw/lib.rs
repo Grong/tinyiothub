@@ -53,7 +53,7 @@ pub mod gateway;
 pub mod hands;
 pub(crate) mod hardware;
 pub(crate) mod health;
-pub(crate) mod heartbeat;
+pub mod heartbeat;
 pub mod hooks;
 pub mod i18n;
 pub(crate) mod identity;

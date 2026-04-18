@@ -5,21 +5,20 @@ use moka::sync::Cache;
 use serde_json::Value;
 use tokio::{sync::Mutex, time::interval};
 
-use crate::{
-    dto::entity::job::{Job, JobExecution},
-    infrastructure::persistence::database::Database,
-};
+use crate::domain::job::service::{JobExecutionService, JobService};
 
 /// 任务调度器
 pub struct TimeTask {
     jobs: Cache<String, JobSchedule>,
-    db: Option<Arc<Database>>,
+    job_service: Option<Arc<JobService>>,
+    job_execution_service: Option<Arc<JobExecutionService>>,
     running: Mutex<bool>,
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 struct JobSchedule {
-    pub job: Job,
+    pub job: crate::dto::entity::job::Job,
     pub schedule: Schedule,
 }
 
@@ -27,40 +26,48 @@ impl TimeTask {
     pub fn new() -> Self {
         let map: Cache<String, JobSchedule> = Cache::new(100);
 
-        Self { jobs: map, db: None, running: Mutex::new(false) }
+        Self {
+            jobs: map,
+            job_service: None,
+            job_execution_service: None,
+            running: Mutex::new(false),
+        }
     }
 
-    /// 设置数据库连接
-    pub fn with_database(mut self, db: Arc<Database>) -> Self {
-        self.db = Some(db);
+    /// 设置服务
+    pub fn with_services(
+        mut self,
+        job_service: Arc<JobService>,
+        job_execution_service: Arc<JobExecutionService>,
+    ) -> Self {
+        self.job_service = Some(job_service);
+        self.job_execution_service = Some(job_execution_service);
         self
     }
 
     /// 启动调度器
     pub async fn run(&self) {
-        if self.db.is_none() {
-            tracing::warn!("TimeTask: No database configured, scheduler not started");
+        if self.job_service.is_none() || self.job_execution_service.is_none() {
+            tracing::warn!("TimeTask: No services configured, scheduler not started");
             return;
         }
 
-        let db = self.db.as_ref().unwrap();
+        let job_service = self.job_service.as_ref().unwrap();
+        let job_execution_service = self.job_execution_service.as_ref().unwrap();
 
-        // 使用互斥锁保护 running 状态，防止并发 start/stop
         let mut running = self.running.lock().await;
         if *running {
             tracing::warn!("TimeTask: Scheduler already running, skipping start");
             return;
         }
         *running = true;
-        drop(running); // 释放锁，让 stop() 可以获取锁
+        drop(running);
 
         tracing::info!("TimeTask Scheduler started");
 
-        // 每分钟检查一次任务
         let mut checker = interval(Duration::from_secs(60));
 
         loop {
-            // 检查是否应该继续运行
             let running = self.running.lock().await;
             if !*running {
                 drop(running);
@@ -70,8 +77,7 @@ impl TimeTask {
 
             checker.tick().await;
 
-            // 加载并执行到期的任务
-            self.check_and_run_tasks(db).await;
+            self.check_and_run_tasks(job_service, job_execution_service).await;
         }
 
         tracing::info!("TimeTask Scheduler stopped");
@@ -84,16 +90,19 @@ impl TimeTask {
     }
 
     /// 检查并执行到期的任务
-    async fn check_and_run_tasks(&self, db: &Database) {
+    async fn check_and_run_tasks(
+        &self,
+        job_service: &Arc<JobService>,
+        job_execution_service: &Arc<JobExecutionService>,
+    ) {
         let now = chrono::Utc::now();
 
-        // 查询所有启用的任务
         let params = crate::dto::entity::job::JobQueryParams {
             is_enabled: Some(true),
             ..Default::default()
         };
 
-        let jobs = match Job::find_all(db, &params).await {
+        let jobs = match job_service.find_all(&params).await {
             Ok(jobs) => jobs,
             Err(e) => {
                 tracing::error!("Failed to load jobs: {}", e);
@@ -102,23 +111,22 @@ impl TimeTask {
         };
 
         for job in jobs {
-            // 检查是否应该执行
             if should_run_now(&job, &now) {
                 tracing::info!("Executing job: {} ({})", job.name, job.id);
 
-                // 异步执行任务
-                let db_clone = db.clone();
+                let job_service_clone = job_service.clone();
+                let job_execution_service_clone = job_execution_service.clone();
                 let job_clone = job.clone();
 
                 tokio::spawn(async move {
-                    execute_job(&job_clone, &db_clone).await;
+                    execute_job(&job_clone, &job_service_clone, &job_execution_service_clone).await;
                 });
             }
         }
     }
 
     /// 添加任务
-    pub fn add_job(&self, job: Job) {
+    pub fn add_job(&self, job: crate::dto::entity::job::Job) {
         if let Ok(schedule) = Schedule::from_str(&job.cron_expression) {
             self.jobs.insert(job.id.clone(), JobSchedule { job, schedule });
             tracing::info!("Added job to scheduler");
@@ -128,7 +136,7 @@ impl TimeTask {
     }
 
     /// 更新任务
-    pub fn upd_job(&self, job: Job) {
+    pub fn upd_job(&self, job: crate::dto::entity::job::Job) {
         self.jobs.invalidate(&job.id);
         self.add_job(job);
     }
@@ -139,54 +147,51 @@ impl TimeTask {
     }
 
     /// 加载任务
-    pub fn load_jobs(&self, jobs: Vec<Job>) {
+    pub fn load_jobs(&self, jobs: Vec<crate::dto::entity::job::Job>) {
         for job in jobs {
             self.add_job(job);
         }
     }
 }
 
-unsafe impl Send for TimeTask {}
-unsafe impl Sync for TimeTask {}
-
 impl Clone for TimeTask {
     fn clone(&self) -> Self {
         Self {
             jobs: self.jobs.clone(),
-            db: self.db.clone(),
-            running: Mutex::new(false), // Clone 创建新实例时默认为未运行状态
+            job_service: self.job_service.clone(),
+            job_execution_service: self.job_execution_service.clone(),
+            running: Mutex::new(false),
         }
     }
 }
 
 /// 检查任务是否应该现在执行
-fn should_run_now(job: &Job, now: &chrono::DateTime<chrono::Utc>) -> bool {
-    // 如果任务正在运行，跳过
+fn should_run_now(job: &crate::dto::entity::job::Job, now: &chrono::DateTime<chrono::Utc>) -> bool {
     if job.is_running {
         return false;
     }
 
-    // 如果没有下次的行时间，跳过
     let Some(next_run) = &job.next_run_at else {
-        return true; // 首次执行
+        return true;
     };
 
-    // 解析下次执行时间
     if let Ok(next) = chrono::DateTime::parse_from_rfc3339(next_run) {
         return now >= &next;
     }
 
-    // 如果无法解析，认为应该执行
     true
 }
 
 /// 执行任务
-async fn execute_job(job: &Job, db: &Database) {
+async fn execute_job(
+    job: &crate::dto::entity::job::Job,
+    job_service: &Arc<JobService>,
+    job_execution_service: &Arc<JobExecutionService>,
+) {
     let job_id = job.id.clone();
     let start_time = std::time::Instant::now();
 
-    // 创建执行记录
-    let execution = match JobExecution::create(db, &job_id, "schedule", Some("system")).await {
+    let execution = match job_execution_service.create(&job_id, "schedule", Some("system")).await {
         Ok(e) => e,
         Err(e) => {
             tracing::error!("Failed to create execution record: {}", e);
@@ -194,10 +199,8 @@ async fn execute_job(job: &Job, db: &Database) {
         }
     };
 
-    // 设置任务为运行中
-    let _ = Job::set_running(db, &job_id, true).await;
+    let _ = job_service.set_running(&job_id, true).await;
 
-    // 执行任务
     let result = match job.job_type.as_str() {
         "webhook" | "http" => execute_http_job(job).await,
         "script" => execute_script_job(job).await,
@@ -210,28 +213,28 @@ async fn execute_job(job: &Job, db: &Database) {
     let duration = start_time.elapsed().as_millis() as i64;
     let ended_at = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-    // 更新执行状态
     let status = if result.is_ok() { "success" } else { "failed" };
     let error_msg = result.as_ref().err().map(|s| s.as_str());
 
-    let _ = JobExecution::update_status(
-        db,
-        &execution.id,
-        status,
-        Some(&ended_at),
-        result.as_ref().ok().map(|s| s.as_str()),
-        error_msg,
-    )
-    .await;
+    let _ = job_execution_service
+        .update_status(
+            &execution.id,
+            status,
+            Some(&ended_at),
+            result.as_ref().ok().map(|s| s.as_str()),
+            error_msg,
+        )
+        .await;
 
-    // 更新任务统计
-    let _ = Job::update_run_stats(db, &job_id, status, error_msg).await;
+    let _ = job_service
+        .update_run_stats(&job_id, status, error_msg)
+        .await;
 
     tracing::info!("Job {} executed: {} ({}ms)", job_id, status, duration);
 }
 
 /// 执行 HTTP/Webhook 任务
-async fn execute_http_job(job: &Job) -> Result<String, String> {
+async fn execute_http_job(job: &crate::dto::entity::job::Job) -> Result<String, String> {
     let config: Value =
         serde_json::from_str(&job.config).map_err(|e| format!("Invalid config JSON: {}", e))?;
 
@@ -247,7 +250,6 @@ async fn execute_http_job(job: &Job) -> Result<String, String> {
 
     let body = config.get("body").and_then(|v| v.as_str());
 
-    // 构建完整 URL
     let full_url =
         if url.starts_with("http") { url.to_string() } else { format!("http://localhost{}", url) };
 
@@ -262,14 +264,12 @@ async fn execute_http_job(job: &Job) -> Result<String, String> {
         _ => return Err(format!("Unsupported HTTP method: {}", method)),
     };
 
-    // 添加 headers
     if let Some(hdrs) = headers {
         for (key, value) in hdrs.iter() {
             request = request.header(key.as_str(), value.as_str());
         }
     }
 
-    // 添加 body
     if let Some(b) = body {
         request = request.body(b.to_string());
     }
@@ -290,7 +290,7 @@ async fn execute_http_job(job: &Job) -> Result<String, String> {
 }
 
 /// 执行脚本任务
-async fn execute_script_job(job: &Job) -> Result<String, String> {
+async fn execute_script_job(job: &crate::dto::entity::job::Job) -> Result<String, String> {
     let config: Value =
         serde_json::from_str(&job.config).map_err(|e| format!("Invalid config JSON: {}", e))?;
 
@@ -300,7 +300,6 @@ async fn execute_script_job(job: &Job) -> Result<String, String> {
 
     let interpreter = config.get("interpreter").and_then(|v| v.as_str()).unwrap_or("bash");
 
-    // 根据解释器执行脚本
     let output = match interpreter {
         "python" => Command::new("python")
             .arg("-c")
@@ -339,8 +338,7 @@ async fn execute_script_job(job: &Job) -> Result<String, String> {
 }
 
 /// 执行设备控制任务
-async fn execute_device_control_job(job: &Job) -> Result<String, String> {
-    // 需要设备服务支持，这里简化处理
+async fn execute_device_control_job(job: &crate::dto::entity::job::Job) -> Result<String, String> {
     let device_id = job.target_device_id.as_ref().ok_or("No target device configured")?;
     let command = job.target_command_name.as_ref().ok_or("No command configured")?;
 
@@ -351,8 +349,6 @@ async fn execute_device_control_job(job: &Job) -> Result<String, String> {
         job.target_command_params.as_deref().unwrap_or("")
     );
 
-    // NOTE: device_control job type is a stub — it logs the command but does not execute it
-    // TODO: integrate with device service when device command API is available
     tracing::warn!(
         "device_control job is a stub — command logged but not executed: {} {} ({})",
         device_id,
@@ -368,7 +364,7 @@ async fn execute_device_control_job(job: &Job) -> Result<String, String> {
 }
 
 /// 执行通知任务
-async fn execute_notification_job(job: &Job) -> Result<String, String> {
+async fn execute_notification_job(job: &crate::dto::entity::job::Job) -> Result<String, String> {
     let config: Value =
         serde_json::from_str(&job.config).map_err(|e| format!("Invalid config JSON: {}", e))?;
 
@@ -380,19 +376,16 @@ async fn execute_notification_job(job: &Job) -> Result<String, String> {
 
     tracing::info!("Sending notification: {} -> {}: {}", channel, to, message);
 
-    // TODO: 调用通知服务
     Ok(format!("Notification sent via {} to {}", channel, to))
 }
 
 /// 执行 SQL 任务
-async fn execute_sql_job(job: &Job) -> Result<String, String> {
+async fn execute_sql_job(job: &crate::dto::entity::job::Job) -> Result<String, String> {
     let config: Value =
         serde_json::from_str(&job.config).map_err(|e| format!("Invalid config JSON: {}", e))?;
 
     let sql = config.get("sql").and_then(|v| v.as_str()).ok_or("Missing SQL in config")?;
 
-    // 注意：实际执行需要数据库连接
-    // 这里只做验证和模拟
     tracing::info!("Executing SQL: {}", sql);
 
     Ok(format!("SQL would execute: {}", sql))
@@ -402,8 +395,8 @@ async fn execute_sql_job(job: &Job) -> Result<String, String> {
 mod tests {
     use super::*;
 
-    fn create_test_job(job_type: &str) -> Job {
-        Job {
+    fn create_test_job(job_type: &str) -> crate::dto::entity::job::Job {
+        crate::dto::entity::job::Job {
             id: "test-job-001".to_string(),
             name: "Test Job".to_string(),
             description: Some("Test description".to_string()),
@@ -436,20 +429,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_http_job_valid_config() {
-        let job = Job {
+        let job = crate::dto::entity::job::Job {
             config: r#"{"url": "http://httpbin.org/status/200", "method": "GET"}"#.to_string(),
             timeout_seconds: 30,
             ..create_test_job("http")
         };
 
         let result = execute_http_job(&job).await;
-        // 可能网络不通，但至少应该能解析配置
         assert!(result.is_ok() || result.unwrap_err().contains("HTTP error"));
     }
 
     #[tokio::test]
     async fn test_execute_http_job_missing_url() {
-        let job = Job {
+        let job = crate::dto::entity::job::Job {
             config: r#"{"method": "GET"}"#.to_string(),
             timeout_seconds: 30,
             ..create_test_job("http")
@@ -462,19 +454,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_script_job() {
-        let job = Job {
+        let job = crate::dto::entity::job::Job {
             config: r#"{"script": "echo 'Hello Test'", "interpreter": "cmd"}"#.to_string(),
             ..create_test_job("script")
         };
 
         let result = execute_script_job(&job).await;
-        // Windows 上可能没有 bash，但 cmd 应该可以
         assert!(result.is_ok() || result.unwrap_err().contains("Failed to execute"));
     }
 
     #[tokio::test]
     async fn test_execute_device_control_job() {
-        let job = Job {
+        let job = crate::dto::entity::job::Job {
             target_device_id: Some("device-001".to_string()),
             target_command_name: Some("turn_on".to_string()),
             target_command_params: Some(r#"{"power": 100}"#.to_string()),
@@ -495,7 +486,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_notification_job() {
-        let job = Job {
+        let job = crate::dto::entity::job::Job {
             config: r#"{
                 "channel": "email",
                 "to": "test@example.com",
@@ -512,7 +503,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_sql_job() {
-        let job = Job {
+        let job = crate::dto::entity::job::Job {
             config: r#"{"sql": "SELECT * FROM devices"}"#.to_string(),
             ..create_test_job("sql")
         };
@@ -523,7 +514,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_sql_job_missing_sql() {
-        let job = Job { config: r#"{}"#.to_string(), ..create_test_job("sql") };
+        let job = crate::dto::entity::job::Job {
+            config: r#"{}"#.to_string(),
+            ..create_test_job("sql")
+        };
 
         let result = execute_sql_job(&job).await;
         assert!(result.is_err());
@@ -533,7 +527,6 @@ mod tests {
     async fn test_execute_unknown_job_type() {
         let job = create_test_job("unknown_type");
 
-        // 测试未知任务类型应该返回错误
         let result = match job.job_type.as_str() {
             "http" | "webhook" => Ok("http"),
             "script" => Ok("script"),
@@ -551,7 +544,6 @@ mod tests {
     fn test_should_run_now_first_time() {
         let job = create_test_job("http");
 
-        // 首次执行（没有 next_run_at）应该返回 true
         let result = should_run_now(&job, &chrono::Utc::now());
         assert!(result);
     }
@@ -568,7 +560,7 @@ mod tests {
     #[test]
     fn test_timetask_new() {
         let task = TimeTask::new();
-        assert!(task.db.is_none());
+        assert!(task.job_service.is_none());
     }
 
     #[test]
@@ -577,13 +569,11 @@ mod tests {
         let job = create_test_job("http");
 
         task.add_job(job.clone());
-        // 添加后不会 panic，说明 cron 表达式有效
     }
 
     #[test]
     fn test_timetask_clone() {
         let task = TimeTask::new();
         let _cloned = task.clone();
-        // Clone 实现应该正常工作
     }
 }
