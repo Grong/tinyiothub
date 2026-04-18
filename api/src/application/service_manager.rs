@@ -82,19 +82,9 @@ impl ServiceManager {
 
         info!("✅ DataServer started and registered");
 
-        // 2. 启动 Cron 调度器 (使用 zeroclaw SQLite store + TinyIoTHub agent)
+        // 2. 启动 Cron 调度器
         #[cfg(not(feature = "harmonyos"))]
         {
-            let cron_service = crate::application::cron::CronService::new(
-                Arc::new(app_state.clone()),
-            );
-            // 在后台启动调度器
-            tokio::spawn(async move {
-                cron_service.run().await;
-            });
-            info!("✅ CronService started");
-
-            // 启动新版 Cron 调度器
             let cron_scheduler = crate::application::cron_scheduler::CronSchedulerService::new(
                 app_state.cron_job_repo.clone(),
                 app_state.cron_run_repo.clone(),
