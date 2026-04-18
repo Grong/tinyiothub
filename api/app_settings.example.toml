@@ -1,5 +1,5 @@
 # TinyIoTHub Configuration
-# 物联网边缘网关配置文件
+# 云端 SaaS 物联网平台配置文件
 
 [server]
 # HTTP服务器配置

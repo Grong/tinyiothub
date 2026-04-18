@@ -1,6 +1,6 @@
 # TinyIoTHub API - Rust Backend
 
-基于 Rust 的物联网边缘网关后端服务。
+基于 Rust 的云端 SaaS 物联网后端服务，支持配置和管理边缘网关设备。
 
 ## 目录结构
 
