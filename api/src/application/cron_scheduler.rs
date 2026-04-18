@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use cron::Schedule;
-use futures::FutureExt;
 use tokio::sync::{broadcast, Semaphore};
 use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
@@ -11,7 +10,7 @@ use tracing::{error, info, warn};
 use crate::domain::cron::executor::{ExecutionResult, ExecutorError, ExecutorRegistry};
 use crate::domain::cron::repository::{CronJobRepository, CronRunRepository};
 use crate::dto::entity::cron_job::CronJob;
-use crate::shared::error::{Error, Result};
+use crate::shared::error::Result;
 
 /// Cron job scheduler service that polls for due jobs and executes them.
 pub struct CronSchedulerService {
@@ -97,33 +96,18 @@ async fn tick_impl(
     registry: Arc<ExecutorRegistry>,
     max_concurrent: usize,
 ) -> Result<()> {
-    let now = Utc::now();
     let jobs = job_repo.find_due_jobs(None).await?;
 
-    let due_jobs: Vec<CronJob> = jobs
-        .into_iter()
-        .filter(|job| {
-            job.is_enabled
-                && !job.is_running
-                && job
-                    .next_run_at
-                    .as_ref()
-                    .and_then(|s| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").ok())
-                    .map(|dt| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc) <= now)
-                    .unwrap_or(false)
-        })
-        .collect();
-
-    if due_jobs.is_empty() {
+    if jobs.is_empty() {
         return Ok(());
     }
 
-    info!("Found {} due cron jobs", due_jobs.len());
+    info!("Found {} potentially due cron jobs", jobs.len());
 
     let semaphore = Arc::new(Semaphore::new(max_concurrent));
     let mut handles = Vec::new();
 
-    for job in due_jobs {
+    for job in jobs {
         let permit = semaphore
             .clone()
             .acquire_owned()
@@ -152,16 +136,28 @@ async fn tick_impl(
     Ok(())
 }
 
-/// Execute a single cron job: set running, create run record, execute, update stats.
+/// Execute a single cron job: atomically claim, create run record, execute, update stats.
 async fn execute_job(
     job: CronJob,
     job_repo: Arc<dyn CronJobRepository>,
     run_repo: Arc<dyn CronRunRepository>,
     registry: Arc<ExecutorRegistry>,
 ) -> Result<()> {
-    // Set is_running = true
-    if let Err(e) = job_repo.set_running(&job.id, &job.workspace_id, true).await {
-        warn!("Failed to set job {} running: {}", job.id, e);
+    // Atomically claim the job (prevents race between scheduler and manual trigger)
+    let claimed = match job_repo.claim_job(&job.id, &job.workspace_id).await {
+        Ok(true) => true,
+        Ok(false) => {
+            info!("Job {} already claimed by another process, skipping", job.id);
+            return Ok(());
+        }
+        Err(e) => {
+            warn!("Failed to claim job {}: {}", job.id, e);
+            return Err(e);
+        }
+    };
+
+    if !claimed {
+        return Ok(());
     }
 
     // Create run record
@@ -183,21 +179,17 @@ async fn execute_job(
     // Look up executor
     let executor = registry.find(&job.job_type);
 
+    let start = std::time::Instant::now();
     let result: std::result::Result<ExecutionResult, ExecutorError> = if let Some(exec) = executor {
-        // Wrap execution in timeout and catch_unwind
-        let fut = std::panic::AssertUnwindSafe(exec.execute(&job, &run_id));
         let timeout_result = tokio::time::timeout(
             std::time::Duration::from_secs(timeout_secs),
-            fut.catch_unwind(),
+            exec.execute(&job, &run_id),
         )
         .await;
 
         match timeout_result {
-            Ok(Ok(Ok(res))) => Ok(res),
-            Ok(Ok(Err(e))) => Err(e),
-            Ok(Err(_panic)) => Err(ExecutorError::CommandFailed(
-                "job panicked during execution".to_string(),
-            )),
+            Ok(Ok(res)) => Ok(res),
+            Ok(Err(e)) => Err(e),
             Err(_) => Err(ExecutorError::Timeout(timeout_secs)),
         }
     } else {
@@ -242,16 +234,21 @@ async fn execute_job(
             );
         }
         Err(err) => {
+            let duration_ms = start.elapsed().as_millis() as i64;
             let err_msg = err.to_string();
+            let status = match err {
+                ExecutorError::Timeout(_) => "timeout",
+                _ => "failed",
+            };
             if let Err(e) = run_repo
-                .complete(&run_id, &job.workspace_id, "failed", None, Some(&err_msg), 0)
+                .complete(&run_id, &job.workspace_id, status, None, Some(&err_msg), duration_ms)
                 .await
             {
                 error!("Failed to complete run {}: {}", run_id, e);
             }
 
             if let Err(e) = job_repo
-                .update_run_stats(&job.id, &job.workspace_id, "failed", Some(&err_msg))
+                .update_run_stats(&job.id, &job.workspace_id, status, Some(&err_msg))
                 .await
             {
                 error!("Failed to update run stats for job {}: {}", job.id, e);

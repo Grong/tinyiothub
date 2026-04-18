@@ -215,4 +215,56 @@ impl CronRunRepository for SqliteCronRunRepository {
         let count: i64 = row.get("count");
         Ok(count)
     }
+
+    async fn find_all(
+        &self,
+        workspace_id: &str,
+        query: &CronRunQuery,
+    ) -> Result<Vec<CronRun>> {
+        let mut builder = QueryBuilder::<sqlx::Sqlite>::new(
+            r#"
+            SELECT id, job_id, workspace_id, started_at, ended_at, duration_ms, status,
+                   output, error_message, trigger_type, triggered_by, created_at
+            FROM cron_runs WHERE workspace_id = ?
+            "#,
+        );
+        builder.push_bind(workspace_id);
+
+        if let Some(ref status) = query.status {
+            builder.push(" AND status = ");
+            builder.push_bind(status);
+        }
+
+        if let Some(ref trigger_type) = query.trigger_type {
+            builder.push(" AND trigger_type = ");
+            builder.push_bind(trigger_type);
+        }
+
+        builder.push(" ORDER BY started_at DESC");
+
+        let page = query.page.unwrap_or(1);
+        let page_size = query.page_size.unwrap_or(20).min(100);
+        let offset = (page.saturating_sub(1)) * page_size;
+        builder.push(" LIMIT ").push_bind(page_size as i64);
+        builder.push(" OFFSET ").push_bind(offset as i64);
+
+        let rows = builder.build().fetch_all(self.database.pool()).await?;
+        let mut runs = Vec::new();
+        for row in rows {
+            runs.push(map_cron_run_row(&row)?);
+        }
+        Ok(runs)
+    }
+
+    async fn avg_duration_ms(&self, workspace_id: &str) -> Result<i64> {
+        let row = sqlx::query(
+            "SELECT COALESCE(AVG(duration_ms), 0) as avg FROM cron_runs WHERE workspace_id = ? AND duration_ms IS NOT NULL",
+        )
+        .bind(workspace_id)
+        .fetch_one(self.database.pool())
+        .await?;
+
+        let avg: f64 = row.get("avg");
+        Ok(avg as i64)
+    }
 }

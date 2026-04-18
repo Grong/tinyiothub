@@ -13,7 +13,7 @@ use axum::{
 use serde::Deserialize;
 
 use crate::{
-    domain::cron::repository::{CronJobRepository, CronRunRepository},
+    domain::cron::executor::ExecutorRegistry,
     dto::entity::cron_job::{
         CreateCronJobRequest, CronJob, CronJobQuery, CronRun, CronRunQuery,
         UpdateCronJobRequest,
@@ -353,7 +353,16 @@ async fn run_job_now(
         }
     };
 
-    if job.is_running {
+    // Atomically claim the job to prevent race with scheduler
+    let claimed = match state.cron_job_repo.claim_job(&id, &ws_id).await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("Failed to claim job: {}", e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    if !claimed {
         return Ok(ApiResponseBuilder::error_with_code(409, "任务正在运行中"));
     }
 
@@ -365,66 +374,78 @@ async fn run_job_now(
         Ok(r) => r,
         Err(e) => {
             tracing::error!("Failed to create run record: {}", e);
+            let _ = state.cron_job_repo.set_running(&id, &ws_id, false).await;
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     };
 
-    // Set running flag
-    let _ = state.cron_job_repo.set_running(&id, &ws_id, true).await;
-
-    // Execute in background (stub — full execution will be added later)
+    // Execute in background using real executor registry
     let job_repo = state.cron_job_repo.clone();
     let run_repo = state.cron_run_repo.clone();
     let job_clone = job.clone();
     let run_id = run.id.clone();
+    let registry = Arc::new(ExecutorRegistry::new());
 
     tokio::spawn(async move {
+        let executor = registry.find(&job_clone.job_type);
+        let timeout_secs = job_clone.timeout_seconds.max(1) as u64;
         let start = std::time::Instant::now();
-        let result = execute_job_compat(&job_clone).await;
-        let duration_ms = start.elapsed().as_millis() as i64;
 
-        let (status, output, error) = match result {
-            Ok(ref out) => ("success", Some(out.as_str()), None),
-            Err(ref err) => ("failed", None, Some(err.as_str())),
+        let result = if let Some(exec) = executor {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(timeout_secs),
+                exec.execute(&job_clone, &run_id),
+            )
+            .await
+            {
+                Ok(Ok(res)) => Ok(res),
+                Ok(Err(e)) => Err(e),
+                Err(_) => Err(crate::domain::cron::executor::ExecutorError::Timeout(timeout_secs)),
+            }
+        } else {
+            Err(crate::domain::cron::executor::ExecutorError::InvalidConfig(format!(
+                "no executor for job type {}",
+                job_clone.job_type
+            )))
         };
 
-        let _ = run_repo
-            .complete(&run_id, &ws_id, status, output, error, duration_ms)
-            .await;
-        let _ = job_repo
-            .update_run_stats(&job_clone.id, &ws_id, status, error)
-            .await;
+        let duration_ms = start.elapsed().as_millis() as i64;
+
+        match result {
+            Ok(res) => {
+                let _ = run_repo
+                    .complete(
+                        &run_id,
+                        &ws_id,
+                        &res.status,
+                        res.output.as_deref(),
+                        res.error_message.as_deref(),
+                        res.duration_ms,
+                    )
+                    .await;
+                let _ = job_repo
+                    .update_run_stats(&job_clone.id, &ws_id, &res.status, res.error_message.as_deref())
+                    .await;
+            }
+            Err(err) => {
+                let status = match err {
+                    crate::domain::cron::executor::ExecutorError::Timeout(_) => "timeout",
+                    _ => "failed",
+                };
+                let err_msg = err.to_string();
+                let _ = run_repo
+                    .complete(&run_id, &ws_id, status, None, Some(&err_msg), duration_ms)
+                    .await;
+                let _ = job_repo
+                    .update_run_stats(&job_clone.id, &ws_id, status, Some(&err_msg))
+                    .await;
+            }
+        }
+
         let _ = job_repo.set_running(&job_clone.id, &ws_id, false).await;
     });
 
     Ok(ApiResponseBuilder::success(map_cron_run_to_execution(run)))
-}
-
-async fn execute_job_compat(job: &CronJob) -> Result<String, String> {
-    match job.job_type.as_str() {
-        "shell" => {
-            let config: serde_json::Value = serde_json::from_str(&job.config)
-                .map_err(|e| format!("Invalid config JSON: {}", e))?;
-            let script = config
-                .get("script")
-                .and_then(|v| v.as_str())
-                .ok_or("Missing script in config")?;
-            Ok(format!("Script would execute: {}", script))
-        }
-        "device_command" => {
-            let device_id = job
-                .target_device_id()
-                .ok_or_else(|| "Missing device_id in config".to_string())?;
-            let command_name = job
-                .target_command_name()
-                .ok_or_else(|| "Missing command_name in config".to_string())?;
-            Ok(format!(
-                "Device command '{}' sent to device '{}'",
-                command_name, device_id
-            ))
-        }
-        _ => Err(format!("Job type '{}' execution not yet implemented in compat layer", job.job_type)),
-    }
 }
 
 async fn list_job_executions(
@@ -467,15 +488,20 @@ async fn get_statistics(
         .await
         .unwrap_or(0);
 
+    let enabled_jobs = state.cron_job_repo.count_by_enabled(&ws_id, true).await.unwrap_or(0);
+    let disabled_jobs = state.cron_job_repo.count_by_enabled(&ws_id, false).await.unwrap_or(0);
+    let running_jobs = state.cron_job_repo.count_running(&ws_id).await.unwrap_or(0);
+    let avg_duration_ms = state.cron_run_repo.avg_duration_ms(&ws_id).await.unwrap_or(0);
+
     let stats = JobStatistics {
         total_jobs: total,
-        enabled_jobs: 0,    // TODO: add enabled count query
-        disabled_jobs: 0,   // TODO: add disabled count query
-        running_jobs: 0,    // TODO: add running count query
+        enabled_jobs,
+        disabled_jobs,
+        running_jobs,
         total_executions: success_runs + failed_runs,
         success_executions: success_runs,
         failed_executions: failed_runs,
-        avg_duration_ms: 0, // TODO: add avg duration query
+        avg_duration_ms,
     };
 
     Ok(ApiResponseBuilder::success(stats))
@@ -490,18 +516,32 @@ async fn list_all_executions(
     let page = params.page.unwrap_or(1);
     let page_size = params.page_size.unwrap_or(20);
 
-    // NOTE: The legacy API lists all executions across jobs.
-    // CronRunRepository doesn't have a cross-job list method yet.
-    // For compatibility, we return empty paginated results.
-    tracing::warn!("list_all_executions compat stub — cross-job run listing not yet implemented");
+    let query = CronRunQuery {
+        job_id: None,
+        workspace_id: Some(ws_id.clone()),
+        status: params.status.clone(),
+        trigger_type: params.trigger_type.clone(),
+        page: Some(page),
+        page_size: Some(page_size),
+    };
 
-    Ok(ApiResponseBuilder::success(PaginatedResponse {
-        data: vec![],
-        pagination: PaginationInfo {
-            page,
-            page_size,
-            total_pages: 0,
-            total_count: 0,
-        },
-    }))
+    match state.cron_run_repo.find_all(&ws_id, &query).await {
+        Ok(runs) => {
+            let total = runs.len() as i64; // Approximate; could add a count query for accuracy
+            let total_pages = ((total as f64) / (page_size as f64)).ceil() as u32;
+            Ok(ApiResponseBuilder::success(PaginatedResponse {
+                data: runs.into_iter().map(map_cron_run_to_execution).collect(),
+                pagination: PaginationInfo {
+                    page,
+                    page_size,
+                    total_pages,
+                    total_count: total as u64,
+                },
+            }))
+        }
+        Err(e) => {
+            tracing::error!("Failed to list all executions: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
 }
