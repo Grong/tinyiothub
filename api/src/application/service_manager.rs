@@ -31,6 +31,9 @@ pub struct ServiceManager {
 
     /// 服务句柄
     service_handles: Arc<RwLock<Vec<JoinHandle<Result<(), Error>>>>>,
+
+    /// Cron 调度器（可选，用于优雅关闭）
+    cron_scheduler: Arc<RwLock<Option<crate::application::cron_scheduler::CronSchedulerService>>>,
 }
 
 impl ServiceManager {
@@ -42,6 +45,7 @@ impl ServiceManager {
             status: Arc::new(RwLock::new(ServiceStatus::Stopped)),
             shutdown_tx,
             service_handles: Arc::new(RwLock::new(Vec::new())),
+            cron_scheduler: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -89,6 +93,16 @@ impl ServiceManager {
                 cron_service.run().await;
             });
             info!("✅ CronService started");
+
+            // 启动新版 Cron 调度器
+            let cron_scheduler = crate::application::cron_scheduler::CronSchedulerService::new(
+                app_state.cron_job_repo.clone(),
+                app_state.cron_run_repo.clone(),
+            );
+            let cron_handle = cron_scheduler.start();
+            self.service_handles.write().await.push(cron_handle);
+            *self.cron_scheduler.write().await = Some(cron_scheduler);
+            info!("✅ CronSchedulerService started");
         }
 
         // 3. 启动健康检查服务
@@ -219,6 +233,12 @@ impl ServiceManager {
 
         // 更新状态为关闭中
         *self.status.write().await = ServiceStatus::Stopping;
+
+        // 关闭 Cron 调度器
+        if let Some(cron_scheduler) = self.cron_scheduler.write().await.take() {
+            cron_scheduler.shutdown();
+            info!("CronSchedulerService shutdown signal sent");
+        }
 
         // 发送关闭信号
         if let Err(e) = self.shutdown_tx.send(()) {

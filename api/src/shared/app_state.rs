@@ -138,6 +138,12 @@ pub struct AppState {
     /// 任务执行服务 - CRUD 操作
     pub job_execution_service: Arc<crate::domain::job::service::JobExecutionService>,
 
+    /// Cron 任务仓库
+    pub cron_job_repo: Arc<dyn crate::domain::cron::repository::CronJobRepository>,
+
+    /// Cron 执行记录仓库
+    pub cron_run_repo: Arc<dyn crate::domain::cron::repository::CronRunRepository>,
+
     /// 会话服务 - Agent 聊天会话管理
     pub session_service: Arc<crate::application::agent::SessionService>,
 
@@ -341,6 +347,16 @@ impl AppState {
             ));
         let job_execution_service = Arc::new(crate::domain::job::service::JobExecutionService::new(job_execution_repository));
 
+        // Cron 仓库
+        let cron_job_repo: Arc<dyn crate::domain::cron::repository::CronJobRepository> =
+            Arc::new(crate::infrastructure::persistence::repositories::SqliteCronJobRepository::new(
+                database.as_ref().clone(),
+            ));
+        let cron_run_repo: Arc<dyn crate::domain::cron::repository::CronRunRepository> =
+            Arc::new(crate::infrastructure::persistence::repositories::SqliteCronRunRepository::new(
+                database.as_ref().clone(),
+            ));
+
         // 会话服务 - 用于 Agent 聊天会话管理
         let session_repository: Arc<dyn crate::application::agent::SessionRepository> =
             Arc::new(crate::infrastructure::persistence::repositories::SqliteSessionRepository::new(
@@ -391,6 +407,8 @@ impl AppState {
             product_service,
             job_service,
             job_execution_service,
+            cron_job_repo,
+            cron_run_repo,
             session_service,
             agent_memory_service,
             chat_service,

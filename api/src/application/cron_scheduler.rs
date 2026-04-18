@@ -11,7 +11,7 @@ use tracing::{error, info, warn};
 use crate::domain::cron::executor::{ExecutionResult, ExecutorError, ExecutorRegistry};
 use crate::domain::cron::repository::{CronJobRepository, CronRunRepository};
 use crate::dto::entity::cron_job::CronJob;
-use crate::shared::error::Result;
+use crate::shared::error::{Error, Result};
 
 /// Cron job scheduler service that polls for due jobs and executes them.
 pub struct CronSchedulerService {
@@ -40,7 +40,7 @@ impl CronSchedulerService {
     }
 
     /// Start the background polling loop.
-    pub fn start(&self) -> JoinHandle<()> {
+    pub fn start(&self) -> JoinHandle<Result<()>> {
         let mut shutdown_rx = self.shutdown_tx.subscribe();
         let job_repo = self.job_repo.clone();
         let run_repo = self.run_repo.clone();
@@ -78,6 +78,7 @@ impl CronSchedulerService {
             }
 
             info!("CronSchedulerService stopped");
+            Ok(())
         })
     }
 
