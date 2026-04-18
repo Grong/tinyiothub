@@ -8,19 +8,92 @@ const STATUS_CONFIG: Record<string, { color: string; glow: string; label: string
   error:   { color: "#ef4444", glow: "rgba(239, 68, 68, 0.4)",  label: "故障",   pulse: true  },
 };
 
+// Normalize property data from various formats
+type PropItem = { key: string; value: string; unit?: string };
+
+function normalizeProperties(data: Record<string, unknown>): PropItem[] {
+  const arr = data.properties;
+  if (!Array.isArray(arr)) {
+    // Fallback: flat key-value pairs
+    const reserved = new Set(["deviceId", "name", "displayName", "deviceName", "status", "state", "deviceType", "telemetry", "sparkline", "actions", "id", "componentKind", "dataModel"]);
+    return Object.entries(data)
+      .filter(([k, v]) => !reserved.has(k) && v != null)
+      .map(([key, val]) => ({ key, value: String(val) }));
+  }
+  if (arr.length > 0) {
+    const first = arr[0];
+    // Format A: { name, displayName, value, unit } — IoT style
+    if ("name" in first || "displayName" in first) {
+      return arr
+        .filter((p: any) => p && (p.displayName || p.name))
+        .map((p: any) => ({
+          key: String(p.displayName || p.name || ""),
+          value: String(p.value ?? ""),
+          unit: p.unit ? String(p.unit) : undefined,
+        }));
+    }
+    // Format B: { key, value, unit } — standard style
+    return (arr as PropItem[])
+      .filter(p => p && typeof p.key === "string")
+      .map(p => ({ key: p.key, value: p.value || "", unit: p.unit }));
+  }
+  return [];
+}
+
+function normalizeTelemetry(data: Record<string, unknown>): PropItem[] {
+  const arr = data.telemetry;
+  if (!Array.isArray(arr)) return [];
+  if (arr.length > 0) {
+    const first = arr[0];
+    // Format A: { name, displayName, value, unit } — IoT style
+    if ("name" in first || "displayName" in first) {
+      return (arr as any[])
+        .filter((t: any) => t && (t.displayName || t.name))
+        .map((t: any) => ({
+          key: String(t.displayName || t.name || ""),
+          value: String(t.value ?? ""),
+          unit: t.unit ? String(t.unit) : undefined,
+        }));
+    }
+    // Format B: { key, value, unit } — standard style
+    return (arr as PropItem[])
+      .filter(t => t && typeof t.key === "string")
+      .map(t => ({ key: t.key, value: t.value || "", unit: t.unit }));
+  }
+  return [];
+}
+
+function normalizeStatus(data: Record<string, unknown>): string {
+  // Try various status field names
+  const statusFields = ["status", "state", "online", "deviceStatus"];
+  for (const field of statusFields) {
+    if (typeof data[field] === "string" && data[field]) {
+      return String(data[field]).toLowerCase();
+    }
+  }
+  // Infer from explicit online flag
+  if (data.online === true || data.online === "true") return "online";
+  if (data.online === false || data.online === "false") return "offline";
+  return "offline";
+}
+
 export function renderDeviceCard(
   data: Record<string, unknown>,
   onAction?: (fn: string, args: Record<string, unknown>) => void,
 ): TemplateResult {
-  const deviceId = String(data.deviceId || "");
-  const deviceName = String(data.name || data.deviceName || deviceId);
-  const status = String(data.status || "offline");
-  const properties = (data.properties as Array<{ key: string; value: string; unit?: string }>) || [];
-  const telemetry = (data.telemetry as Array<{ key: string; value: string; unit?: string }>) || [];
+  const deviceId = String(data.deviceId || data.id || "");
+  const deviceName = String(data.displayName || data.name || data.deviceName || data.title || deviceId);
+  const status = normalizeStatus(data);
+  const properties = normalizeProperties(data);
+  const telemetry = normalizeTelemetry(data);
   const sparkline = data.sparkline as number[] | undefined;
   const actions = (data.actions as Array<{ label: string; functionId: string }>) || [];
 
   const cfg = STATUS_CONFIG[status] || STATUS_CONFIG.offline;
+
+  // Debug: log what we received
+  console.log("[DeviceCard] Received data:", JSON.stringify(data).substring(0, 300));
+  console.log("[DeviceCard] Normalized — name:", deviceName, "status:", status, "properties:", properties.length, "telemetry:", telemetry.length);
 
   return html`
     <div class="a2ui-device-card a2ui-device-card--${status}" style="--status-color: ${cfg.color}; --status-glow: ${cfg.glow};">

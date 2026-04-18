@@ -104,7 +104,7 @@
   flex-direction: column;
   justify-content: center;
   padding: 64px;
-  color: white;
+  color: var(--text-inverse);
 }
 
 .signin-page-wrapper .brand-logo {
@@ -262,7 +262,7 @@
   background: var(--card);
   border-radius: var(--radius-lg);
   padding: 32px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--shadow-sm);
   animation: rise 0.25s var(--ease-out) backwards;
 }
 
@@ -286,7 +286,7 @@
   cursor: pointer;
   white-space: nowrap;
   border: none;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--shadow-sm);
   transition: all var(--duration-fast) ease;
 }
 
@@ -351,7 +351,7 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--shadow-sm);
 }
 
 .signin-page-wrapper .wechat-qr-placeholder svg {
@@ -418,7 +418,7 @@
   display: flex;
   flex-direction: column;
   justify-content: center;
-  color: white;
+  color: var(--text-inverse);
 }
 
 .register-page-wrapper .brand-content {

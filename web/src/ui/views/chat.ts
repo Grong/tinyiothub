@@ -80,9 +80,11 @@ export class ChatView extends LitElement {
   }
 
   private _bindA2uiCallback(): void {
+    console.log("[A2UI] _bindA2uiCallback called");
     this.chatState.onA2ui = (jsonl: string) => {
+      console.log("[A2UI] onA2ui callback triggered, jsonl length:", jsonl.length, "first 200:", jsonl.substring(0, 200));
       this.a2uiRenderer.handleA2uiMessage(jsonl);
-      this._attachLastSurfaceToMessage();
+      // Note: surfaceId will be attached to message in "final" state handler
       this.requestUpdate();
     };
   }

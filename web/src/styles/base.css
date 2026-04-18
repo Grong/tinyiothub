@@ -68,6 +68,7 @@
   --danger-muted: rgba(239, 68, 68, 0.75);
   --danger-subtle: rgba(239, 68, 68, 0.12);
   --info: #3b82f6;
+  --info-subtle: rgba(59, 130, 246, 0.12);
 
   /* Semantic aliases used across views */
   --success: var(--ok);
@@ -85,11 +86,11 @@
   --theme-switch-x: 50%;
   --theme-switch-y: 50%;
 
-  /* Typography */
+  /* Typography — Distinctive industrial/technical pairing */
   --mono:
     "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace;
-  --font-body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-display: "Space Grotesk", "Inter", sans-serif;
+  --font-body: "Plus Jakarta Sans", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Outfit", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 
   /* Shadows - Richer with subtle color */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
@@ -155,6 +156,34 @@
   --danger-line-15: rgba(239, 68, 68, 0.15);
   --muted-fill-10: rgba(107, 114, 128, 0.10);
   --ok-fill-10: rgba(16, 185, 129, 0.10);
+
+  /* Z-index layering system */
+  --z-base: 0;
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-modal-backdrop: 300;
+  --z-modal: 400;
+  --z-popover: 500;
+  --z-toast: 600;
+  --z-tooltip: 700;
+  --z-loading: 800;
+  --z-max: 9999;
+
+  /* Semantic glow shadows */
+  --accent-glow-sm: 0 0 8px rgba(0, 152, 255, 0.5);
+  --ok-glow-sm: 0 0 8px rgba(34, 197, 94, 0.5);
+  --warn-glow-sm: 0 0 8px rgba(245, 158, 11, 0.5);
+  --danger-glow-sm: 0 0 8px rgba(239, 68, 68, 0.5);
+  --info-glow-sm: 0 0 8px rgba(59, 130, 246, 0.5);
+
+  /* Semantic gradient backgrounds */
+  --danger-gradient-bg: linear-gradient(135deg, rgba(239, 68, 68, 0.08) 0%, rgba(239, 68, 68, 0.04) 100%);
+  --info-gradient-bg: linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(59, 130, 246, 0.04) 100%);
+  --ok-gradient-bg: linear-gradient(135deg, rgba(34, 197, 94, 0.08) 0%, rgba(34, 197, 94, 0.04) 100%);
+  --warn-gradient-bg: linear-gradient(135deg, rgba(245, 158, 11, 0.08) 0%, rgba(245, 158, 11, 0.04) 100%);
+
+  /* Text inverse (for dark text on light backgrounds) */
+  --text-inverse: #ffffff;
 
   color-scheme: dark;
 }
@@ -222,6 +251,11 @@
   --danger-muted: rgba(220, 38, 38, 0.75);
   --danger-subtle: rgba(220, 38, 38, 0.1);
   --info: #2563eb;
+  --info-subtle: rgba(37, 99, 235, 0.1);
+
+  /* Typography — Light theme inherits same font stack */
+  --font-body: "Plus Jakarta Sans", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Outfit", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 
   /* Spacing scale (theme agnostic) */
   --space-1: 4px;
@@ -233,6 +267,34 @@
   --space-7: 32px;
   --space-8: 40px;
   --space-9: 60px;
+
+  /* Z-index layering system */
+  --z-base: 0;
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-modal-backdrop: 300;
+  --z-modal: 400;
+  --z-popover: 500;
+  --z-toast: 600;
+  --z-tooltip: 700;
+  --z-loading: 800;
+  --z-max: 9999;
+
+  /* Semantic glow shadows — light */
+  --accent-glow-sm: 0 0 8px rgba(0, 152, 255, 0.4);
+  --ok-glow-sm: 0 0 8px rgba(22, 163, 74, 0.4);
+  --warn-glow-sm: 0 0 8px rgba(217, 119, 6, 0.4);
+  --danger-glow-sm: 0 0 8px rgba(220, 38, 38, 0.4);
+  --info-glow-sm: 0 0 8px rgba(37, 99, 235, 0.4);
+
+  /* Semantic gradient backgrounds — light */
+  --danger-gradient-bg: linear-gradient(135deg, rgba(220, 38, 38, 0.08) 0%, rgba(220, 38, 38, 0.04) 100%);
+  --info-gradient-bg: linear-gradient(135deg, rgba(37, 99, 235, 0.08) 0%, rgba(37, 99, 235, 0.04) 100%);
+  --ok-gradient-bg: linear-gradient(135deg, rgba(22, 163, 74, 0.08) 0%, rgba(22, 163, 74, 0.04) 100%);
+  --warn-gradient-bg: linear-gradient(135deg, rgba(217, 119, 6, 0.08) 0%, rgba(217, 119, 6, 0.04) 100%);
+
+  /* Text inverse (for light text on dark backgrounds) */
+  --text-inverse: #ffffff;
 
   /* Missing surface tokens — light */
   --bg-subtle: rgba(0, 0, 0, 0.03);
@@ -341,7 +403,7 @@ html.theme-transition::view-transition-new(theme) {
     left: 0;
     width: 100%;
     height: 100%;
-    z-index: 9999;
+    z-index: var(--z-max);
     pointer-events: none;
     background: var(--bg);
     animation: theme-circle-transition 0.4s var(--ease-out) forwards;
@@ -440,89 +502,6 @@ h1, h2, h3, .page-title {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--border-strong);
-}
-
-/* Animations - Polished with spring feel */
-
-@keyframes pulse-glow {
-  0%, 100% { box-shadow: 0 0 8px var(--accent-glow); }
-  50% { box-shadow: 0 0 16px var(--accent-glow-strong); }
-}
-
-@keyframes bar-shine {
-  0% { transform: translateX(-100%); }
-  50%, 100% { transform: translateX(100%); }
-}
-
-@keyframes rise {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes fade-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes scale-in {
-  from {
-    opacity: 0;
-    transform: scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-@keyframes dashboard-enter {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes shimmer {
-  0% {
-    background-position: -200% 0;
-  }
-  100% {
-    background-position: 200% 0;
-  }
-}
-
-@keyframes pulse-subtle {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.7;
-  }
-}
-
-@keyframes glow-pulse {
-  0%,
-  100% {
-    box-shadow: 0 0 0 rgba(0, 152, 255, 0);
-  }
-  50% {
-    box-shadow: 0 0 20px var(--accent-glow);
-  }
 }
 
 /* Stagger animation delays for grouped elements */

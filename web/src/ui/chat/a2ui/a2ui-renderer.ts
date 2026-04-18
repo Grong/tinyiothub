@@ -22,15 +22,19 @@ export class A2uiRendererEngine {
   }
 
   handleA2uiMessage(jsonl: string): void {
+    console.log("[A2UI] handleA2uiMessage called, jsonl:", jsonl.substring(0, 300));
     const lines = jsonl.split("\n").filter((l) => l.trim());
+    console.log("[A2UI] Parsing", lines.length, "lines");
     for (const line of lines) {
       try {
         const msg = JSON.parse(line);
+        console.log("[A2UI] Parsed message:", JSON.stringify(msg).substring(0, 200));
         this.handleSingleMessage(msg);
-      } catch {
-        // skip non-JSON lines
+      } catch (e) {
+        console.error("[A2UI] Failed to parse line:", line.substring(0, 100), e);
       }
     }
+    console.log("[A2UI] Current surfaces:", Array.from(this.surfaces.keys()));
   }
 
   private handleSingleMessage(msg: Record<string, unknown>): void {
@@ -77,6 +81,7 @@ export class A2uiRendererEngine {
 
   renderSurface(surfaceId: string): TemplateResult | typeof nothing {
     const surface = this.surfaces.get(surfaceId);
+    console.log("[A2UI] renderSurface called for:", surfaceId, "found:", !!surface, "all surfaces:", Array.from(this.surfaces.keys()));
     if (!surface) return nothing;
 
     return html`
@@ -102,6 +107,7 @@ export class A2uiRendererEngine {
     if (!renderer) {
       return html`<div class="a2ui-unknown">Unknown component: ${comp.componentKind}</div>`;
     }
+    console.log("[A2UI] renderComponent:", comp.componentKind, "dataModel keys:", Object.keys(comp.dataModel));
     return renderer(comp.dataModel, this.onAction);
   }
 
