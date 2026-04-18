@@ -181,7 +181,7 @@ export class HomeView extends LitElement {
                 <span class="gradient">IoT 智能平台</span>
               </h1>
               <p class="hero-desc">
-                轻量级、高性能、企业级的物联网边缘网关系统。基于 Rust + AI 构建，为工业物联网场景提供可靠的设备接入、数据采集和边缘计算能力。
+                轻量级、高性能、企业级的云端 SaaS 物联网平台。基于 Rust + AI 构建，支持配置和管理边缘网关设备，为工业物联网场景提供可靠的设备接入、数据采集和云端管理能力。
               </p>
               <div class="hero-cta">
                 <button class="btn btn--primary btn--lg" @click=${() => this.navigate('/login')}>

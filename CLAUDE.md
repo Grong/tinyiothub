@@ -61,12 +61,12 @@ These guidelines are working if: fewer unnecessary changes in diffs, fewer rewri
 
 ## 项目概述
 
-TinyIoTHub 是一个 **Rust 后端 + Lit 3 前端** 的 IoT 边缘网关系统，支持多协议（Modbus、ONVIF、SNMP、MQTT）。
+TinyIoTHub 是一个 **Rust 后端 + Lit 3 前端** 的云端 SaaS 物联网平台，支持配置和管理边缘网关设备，兼容多协议（Modbus、ONVIF、SNMP、MQTT）。
 
 - **后端**: Rust 2024, Tokio, Axum, Tower middleware, SQLx + SQLite
 - **前端**: Lit 3 + Vite + TypeScript, Web Components, nanostore
 - **架构**: DDD (Domain-Driven Design) + Clean Architecture
-- **分支策略**: `master` (边缘网关), `saas` (SaaS 云端版)
+- **分支策略**: `master` (主分支), `saas` (SaaS 云端版)
 
 ## 技术栈
 

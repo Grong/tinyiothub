@@ -1,8 +1,8 @@
-# IoT Edge Gateway API 文档
+# TinyIoTHub Cloud SaaS IoT API 文档
 
 ## 概述
 
-本项目提供了一套完整的 IoT 边缘网关 RESTful API，采用业务域驱动的架构设计，支持设备管理、用户认证、告警处理、系统监控等核心功能。
+本项目提供了一套完整的云端 SaaS IoT RESTful API，采用业务域驱动的架构设计，支持设备管理、用户认证、告警处理、系统监控等核心功能。
 
 ## 架构特点
 
@@ -484,6 +484,6 @@ cargo build --release
 
 ---
 
-**维护团队**: IoT Edge Gateway 开发团队  
+**维护团队**: TinyIoTHub 开发团队  
 **最后更新**: 2025-01-03  
 **文档版本**: v2.0.0

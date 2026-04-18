@@ -6,7 +6,7 @@
 **Docker Hub**: https://hub.docker.com/r/grong/tinyiothub  
 **发布日期**: 2026-01-19
 
-基于 Rust 的物联网边缘网关系统，专为鸿蒙系统优化，支持多种设备协议和数据采集。
+基于 Rust 的云端 SaaS 物联网平台，支持配置和管理边缘网关设备，兼容多协议设备接入。
 
 ## 版本说明
 
