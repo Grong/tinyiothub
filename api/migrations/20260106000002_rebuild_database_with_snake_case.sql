@@ -205,6 +205,7 @@ CREATE TABLE tags (
     name TEXT NOT NULL,
     description TEXT,
     color TEXT, -- 十六进制颜色代码
+    tenant_id TEXT,
     created_by TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -218,6 +219,7 @@ CREATE TABLE tag_bindings (
     tag_id TEXT NOT NULL,
     target_id TEXT NOT NULL,
     target_type TEXT NOT NULL, -- 'device', 'user', 'organization', etc.
+    tenant_id TEXT,
     created_by TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE,
@@ -378,9 +380,11 @@ CREATE INDEX idx_device_commands_device_id ON device_commands(device_id);
 -- 标签相关索引
 CREATE INDEX idx_tags_type ON tags(type);
 CREATE INDEX idx_tags_name ON tags(name);
+CREATE INDEX idx_tags_tenant_id ON tags(tenant_id);
 CREATE INDEX idx_tag_bindings_tag_id ON tag_bindings(tag_id);
 CREATE INDEX idx_tag_bindings_target_id ON tag_bindings(target_id);
 CREATE INDEX idx_tag_bindings_target_type ON tag_bindings(target_type);
+CREATE INDEX idx_tag_bindings_tenant_id ON tag_bindings(tenant_id);
 
 -- 告警相关索引
 CREATE INDEX idx_device_alarm_rules_device_id ON device_alarm_rules(device_id);
@@ -476,36 +480,36 @@ INSERT INTO device_commands (id, device_id, name, display_name, description, par
 ('cmd-003', 'device-005', 'capture', '拍照', '拍摄一张照片', '{}');
 
 -- 插入标签
-INSERT INTO tags (id, type, name, description, color, created_by) VALUES
-('tag-device-001', 'device', '温度传感器', '温度监测设备', '#FF6B6B', 'admin-user-001'),
-('tag-device-002', 'device', '湿度传感器', '湿度监测设备', '#4ECDC4', 'admin-user-001'),
-('tag-device-003', 'device', '摄像头', '视频监控设备', '#45B7D1', 'admin-user-001'),
-('tag-device-004', 'device', '机器人', '自动化设备', '#96CEB4', 'admin-user-001'),
-('tag-device-005', 'device', '在线设备', '当前在线的设备', '#FFEAA7', 'admin-user-001'),
-('tag-device-006', 'device', '离线设备', '当前离线的设备', '#DDA0DD', 'admin-user-001'),
-('tag-device-007', 'device', '生产设备', '生产相关设备', '#98D8C8', 'admin-user-001'),
-('tag-device-008', 'device', '监控设备', '监控相关设备', '#F7DC6F', 'admin-user-001'),
-('tag-app-001', 'app', '生产环境', '生产环境应用', '#52C41A', 'admin-user-001'),
-('tag-app-002', 'app', '测试环境', '测试环境应用', '#1890FF', 'admin-user-001'),
-('tag-app-003', 'app', '开发环境', '开发环境应用', '#722ED1', 'admin-user-001');
+INSERT INTO tags (id, type, name, description, color, tenant_id, created_by) VALUES
+('tag-device-001', 'device', '温度传感器', '温度监测设备', '#FF6B6B', 'tenant-default-001', 'admin-user-001'),
+('tag-device-002', 'device', '湿度传感器', '湿度监测设备', '#4ECDC4', 'tenant-default-001', 'admin-user-001'),
+('tag-device-003', 'device', '摄像头', '视频监控设备', '#45B7D1', 'tenant-default-001', 'admin-user-001'),
+('tag-device-004', 'device', '机器人', '自动化设备', '#96CEB4', 'tenant-default-001', 'admin-user-001'),
+('tag-device-005', 'device', '在线设备', '当前在线的设备', '#FFEAA7', 'tenant-default-001', 'admin-user-001'),
+('tag-device-006', 'device', '离线设备', '当前离线的设备', '#DDA0DD', 'tenant-default-001', 'admin-user-001'),
+('tag-device-007', 'device', '生产设备', '生产相关设备', '#98D8C8', 'tenant-default-001', 'admin-user-001'),
+('tag-device-008', 'device', '监控设备', '监控相关设备', '#F7DC6F', 'tenant-default-001', 'admin-user-001'),
+('tag-app-001', 'app', '生产环境', '生产环境应用', '#52C41A', 'tenant-default-001', 'admin-user-001'),
+('tag-app-002', 'app', '测试环境', '测试环境应用', '#1890FF', 'tenant-default-001', 'admin-user-001'),
+('tag-app-003', 'app', '开发环境', '开发环境应用', '#722ED1', 'tenant-default-001', 'admin-user-001');
 
 -- 绑定设备标签
-INSERT INTO tag_bindings (id, tag_id, target_id, target_type, created_by) VALUES
-('binding-001', 'tag-device-001', 'device-001', 'device', 'admin-user-001'),
-('binding-002', 'tag-device-005', 'device-001', 'device', 'admin-user-001'),
-('binding-003', 'tag-device-007', 'device-001', 'device', 'admin-user-001'),
-('binding-004', 'tag-device-002', 'device-002', 'device', 'admin-user-001'),
-('binding-005', 'tag-device-005', 'device-002', 'device', 'admin-user-001'),
-('binding-006', 'tag-device-007', 'device-002', 'device', 'admin-user-001'),
-('binding-007', 'tag-device-003', 'device-003', 'device', 'admin-user-001'),
-('binding-008', 'tag-device-006', 'device-003', 'device', 'admin-user-001'),
-('binding-009', 'tag-device-008', 'device-003', 'device', 'admin-user-001'),
-('binding-010', 'tag-device-004', 'device-004', 'device', 'admin-user-001'),
-('binding-011', 'tag-device-005', 'device-004', 'device', 'admin-user-001'),
-('binding-012', 'tag-device-007', 'device-004', 'device', 'admin-user-001'),
-('binding-013', 'tag-device-003', 'device-005', 'device', 'admin-user-001'),
-('binding-014', 'tag-device-006', 'device-005', 'device', 'admin-user-001'),
-('binding-015', 'tag-device-008', 'device-005', 'device', 'admin-user-001');
+INSERT INTO tag_bindings (id, tag_id, target_id, target_type, tenant_id, created_by) VALUES
+('binding-001', 'tag-device-001', 'device-001', 'device', 'tenant-default-001', 'admin-user-001'),
+('binding-002', 'tag-device-005', 'device-001', 'device', 'tenant-default-001', 'admin-user-001'),
+('binding-003', 'tag-device-007', 'device-001', 'device', 'tenant-default-001', 'admin-user-001'),
+('binding-004', 'tag-device-002', 'device-002', 'device', 'tenant-default-001', 'admin-user-001'),
+('binding-005', 'tag-device-005', 'device-002', 'device', 'tenant-default-001', 'admin-user-001'),
+('binding-006', 'tag-device-007', 'device-002', 'device', 'tenant-default-001', 'admin-user-001'),
+('binding-007', 'tag-device-003', 'device-003', 'device', 'tenant-default-001', 'admin-user-001'),
+('binding-008', 'tag-device-006', 'device-003', 'device', 'tenant-default-001', 'admin-user-001'),
+('binding-009', 'tag-device-008', 'device-003', 'device', 'tenant-default-001', 'admin-user-001'),
+('binding-010', 'tag-device-004', 'device-004', 'device', 'tenant-default-001', 'admin-user-001'),
+('binding-011', 'tag-device-005', 'device-004', 'device', 'tenant-default-001', 'admin-user-001'),
+('binding-012', 'tag-device-007', 'device-004', 'device', 'tenant-default-001', 'admin-user-001'),
+('binding-013', 'tag-device-003', 'device-005', 'device', 'tenant-default-001', 'admin-user-001'),
+('binding-014', 'tag-device-006', 'device-005', 'device', 'tenant-default-001', 'admin-user-001'),
+('binding-015', 'tag-device-008', 'device-005', 'device', 'tenant-default-001', 'admin-user-001');
 
 -- 插入告警规则
 INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, created_by) VALUES

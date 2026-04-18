@@ -122,11 +122,24 @@ impl DataServer {
 
             // 处理每个驱动
             for driver_arc in &drivers {
+                // 先检查是否可以读取（避免在重试间隔内获取写锁）
+                let can_read = {
+                    if let Some(driver) = driver_arc.try_read() {
+                        driver.can_read_now()
+                    } else {
+                        false
+                    }
+                };
+
+                if !can_read {
+                    continue;
+                }
+
                 if let Some(mut driver) = driver_arc.try_write() {
                     let device_id = driver.device().id.clone();
 
-                    // 读取数据
-                    let read_result = driver.read_data();
+                    // 读取数据（非阻塞版，由 tick 间隔替代 sleep）
+                    let read_result = driver.read_data_once();
 
                     // 克隆设备信息，避免借用冲突
                     let mut device = driver.device().clone();

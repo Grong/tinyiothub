@@ -283,7 +283,8 @@ impl Device {
         use crate::domain::tag::repository::TagRepository;
         use crate::infrastructure::persistence::repositories::SqliteTagRepository;
         let tag_repo = SqliteTagRepository::new(db.clone());
-        let tags = tag_repo.find_by_target_id(&self.id).await.map_err(|_| sqlx::Error::RowNotFound)?;
+        let tenant_id = self.tenant_id.as_deref().unwrap_or("");
+        let tags = tag_repo.find_by_target_id(&self.id, tenant_id).await.map_err(|_| sqlx::Error::RowNotFound)?;
         self.tags = Some(tags);
         Ok(())
     }
@@ -298,7 +299,8 @@ impl Device {
         let tag_repo = SqliteTagRepository::new(db.clone());
 
         for device in devices {
-            let tags = tag_repo.find_by_target_id(&device.id).await.map_err(|_| sqlx::Error::RowNotFound)?;
+            let tenant_id = device.tenant_id.as_deref().unwrap_or("");
+            let tags = tag_repo.find_by_target_id(&device.id, tenant_id).await.map_err(|_| sqlx::Error::RowNotFound)?;
             device.tags = Some(tags);
         }
 

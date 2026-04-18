@@ -97,7 +97,7 @@ fn parse_heartbeat_md(content: &str) -> Vec<HeartbeatTask> {
     let mut tasks = Vec::new();
     for line in content.lines() {
         let line = line.trim();
-        if !line.starts_with('-') || !line.starts_with("- [") {
+        if !line.starts_with('-') || line.starts_with("#") {
             continue;
         }
         // Parse "- [priority|paused] text" or "- [priority] text"
@@ -127,8 +127,8 @@ fn parse_heartbeat_md(content: &str) -> Vec<HeartbeatTask> {
 fn build_heartbeat_md(tasks: &[HeartbeatTask]) -> String {
     let mut s = "# Periodic Tasks\n".to_string();
     for task in tasks {
-        let flag = if task.paused { format!("{}\\paused", task.priority) } else { task.priority.clone() };
-        s.push_str(&format!("- [{}] {}\\n", flag, task.text));
+        let flag = if task.paused { format!("{}|paused", task.priority) } else { task.priority.clone() };
+        s.push_str(&format!("- [{}] {}\n", flag, task.text));
     }
     s
 }

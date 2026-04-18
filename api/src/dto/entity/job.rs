@@ -82,6 +82,7 @@ pub struct UpdateJobRequest {
     pub target_device_id: Option<String>,
     pub target_command_name: Option<String>,
     pub target_command_params: Option<String>,
+    pub is_enabled: Option<bool>,
     pub tags: Option<String>,
     pub alert_config: Option<String>,
 }

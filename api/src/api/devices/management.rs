@@ -19,40 +19,9 @@ use crate::{
         request::pagination::PaginationQuery,
         response::{builder::ApiResponseBuilder, ApiResponse, PaginatedResponse, PaginationInfo},
     },
-    shared::{app_state::AppState, security::jwt::Claims},
+    shared::{app_state::AppState, error::Error, security::jwt::Claims},
 };
 
-/// Verify device belongs to the user's tenant.
-/// Returns Ok(Some(Device)) if verified, Ok(None) if not authorized or not found (logs warning),
-/// Err if database error.
-async fn verify_device_tenant(
-    device_service: &crate::domain::device::service::DeviceService,
-    device_id: &str,
-    tenant_id: &str,
-) -> Result<Option<Device>, (String, Option<Device>)> {
-    match device_service.get_device_by_id(device_id).await {
-        Ok(Some(device)) if device.tenant_id.as_ref() == Some(&tenant_id.to_string()) => {
-            Ok(Some(device))
-        }
-        Ok(Some(device)) => {
-            tracing::warn!(
-                "Access denied: device {} belongs to tenant {:?}, user tenant {}",
-                device_id,
-                device.tenant_id,
-                tenant_id
-            );
-            Ok(None)
-        }
-        Ok(None) => {
-            tracing::warn!("Access denied: device {} not found for tenant {}", device_id, tenant_id);
-            Ok(None)
-        }
-        Err(e) => {
-            tracing::error!("Failed to find device {}: {}", device_id, e);
-            Err(("设备不存在".to_string(), None))
-        }
-    }
-}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -297,10 +266,11 @@ async fn update_device(
     Json(req): Json<UpdateDeviceApiRequest>,
 ) -> Json<ApiResponse<Device>> {
     // Verify device belongs to user's tenant before updating
-    match verify_device_tenant(&state.device_service, &id, &claims.tenant_id).await {
-        Ok(Some(_)) => {}
-        Ok(None) => return ApiResponseBuilder::error("设备不存在".to_string()),
-        Err((msg, _)) => return ApiResponseBuilder::error(msg),
+    if let Err(e) = super::verify_device_tenant(&state, &id, &claims.tenant_id).await {
+        return match e {
+            Error::NotFound => ApiResponseBuilder::error("设备不存在"),
+            _ => ApiResponseBuilder::error("查询设备失败"),
+        };
     }
 
     let update_request = UpdateDeviceRequest {
@@ -343,10 +313,11 @@ async fn delete_device(
     claims: Claims,
 ) -> Json<ApiResponse<bool>> {
     // Verify device belongs to user's tenant before deleting
-    match verify_device_tenant(&state.device_service, &id, &claims.tenant_id).await {
-        Ok(Some(_)) => {}
-        Ok(None) => return ApiResponseBuilder::error("设备不存在".to_string()),
-        Err((msg, _)) => return ApiResponseBuilder::error(msg),
+    if let Err(e) = super::verify_device_tenant(&state, &id, &claims.tenant_id).await {
+        return match e {
+            Error::NotFound => ApiResponseBuilder::error("设备不存在"),
+            _ => ApiResponseBuilder::error("查询设备失败"),
+        };
     }
 
     match state.device_service.delete_device(&id).await {
@@ -375,10 +346,11 @@ async fn enable_device(
     claims: Claims,
 ) -> Json<ApiResponse<bool>> {
     // Verify device belongs to user's tenant before enabling
-    match verify_device_tenant(&state.device_service, &id, &claims.tenant_id).await {
-        Ok(Some(_)) => {}
-        Ok(None) => return ApiResponseBuilder::error("设备不存在".to_string()),
-        Err((msg, _)) => return ApiResponseBuilder::error(msg),
+    if let Err(e) = super::verify_device_tenant(&state, &id, &claims.tenant_id).await {
+        return match e {
+            Error::NotFound => ApiResponseBuilder::error("设备不存在"),
+            _ => ApiResponseBuilder::error("查询设备失败"),
+        };
     }
 
     match state.device_service.update_device_enabled_status(&id, true).await {
@@ -404,10 +376,11 @@ async fn disable_device(
     claims: Claims,
 ) -> Json<ApiResponse<bool>> {
     // Verify device belongs to user's tenant before disabling
-    match verify_device_tenant(&state.device_service, &id, &claims.tenant_id).await {
-        Ok(Some(_)) => {}
-        Ok(None) => return ApiResponseBuilder::error("设备不存在".to_string()),
-        Err((msg, _)) => return ApiResponseBuilder::error(msg),
+    if let Err(e) = super::verify_device_tenant(&state, &id, &claims.tenant_id).await {
+        return match e {
+            Error::NotFound => ApiResponseBuilder::error("设备不存在"),
+            _ => ApiResponseBuilder::error("查询设备失败"),
+        };
     }
 
     match state.device_service.update_device_enabled_status(&id, false).await {

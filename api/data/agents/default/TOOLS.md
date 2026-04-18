@@ -65,7 +65,7 @@ Use the `canvas` tool to push rich UI components after getting data from tools.
 
 ### CRITICAL: Exact Format Required
 
-The `jsonl` parameter must be a string containing JSONL with TWO lines:
+The `jsonl` parameter must be a STRING containing JSONL with TWO lines:
 1. `{"createSurface":{"id":"<unique_id>","surfaceKind":"inline"}}`
 2. `{"updateComponents":{"components":[{"id":"<id>","componentKind":"DeviceCard","dataModel":{...}}]}}`
 
@@ -128,7 +128,7 @@ canvas(tool_call_id, {
 ```
 dataModel: {
   deviceId: string,           // Device ID (e.g. "device-004")
-  name: string,                // Display name (e.g. "装配机器人1号")
+  name: string,               // Display name (e.g. "装配机器人1号")
   status: "online" | "offline" | "warning" | "error",
   properties: [                // Key-value pairs to display
     { key: "关节1角度", value: "53.16", unit: "度" },

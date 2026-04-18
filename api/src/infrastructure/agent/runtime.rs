@@ -128,7 +128,7 @@ impl AgentRuntimeImpl {
         let minimax_config = crate::infrastructure::config::get()
             .minimax
             .clone()
-            .expect("minimax config required");
+            .ok_or_else(|| anyhow::anyhow!("minimax config required"))?;
 
         let provider = zeroclaw::providers::create_provider(
             "minimaxi",
@@ -151,6 +151,15 @@ impl AgentRuntimeImpl {
 
         tracing::info!("Agent tools refreshed successfully");
         Ok(())
+    }
+
+    /// Execute a single agent turn with the given message.
+    ///
+    /// This is useful for cron job execution where we want to run a prompt
+    /// and get the complete response without SSE streaming.
+    pub async fn run_single_impl(&self, message: &str) -> Result<String, AgentError> {
+        let mut ag = self.agent.lock().await;
+        ag.run_single(message).await.map_err(|e| AgentError::RequestFailed(e.to_string()))
     }
 }
 
@@ -262,31 +271,11 @@ impl AgentClient for AgentRuntimeImpl {
             let session_key_clone = session_key.clone();
             let run_id_clone = run_id.clone();
 
-            // Guard to clean up chat_handles entry when the task finishes or is aborted
-            struct ChatRunGuard {
-                chat_handles: Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
-                run_id: String,
-            }
-            impl Drop for ChatRunGuard {
-                fn drop(&mut self) {
-                    let chat_handles = self.chat_handles.clone();
-                    let run_id = self.run_id.clone();
-                    tokio::spawn(async move {
-                        chat_handles.lock().await.remove(&run_id);
-                    });
-                }
-            }
-
             let chat_handles_for_spawn = chat_handles.clone();
             let run_id_for_spawn = run_id.clone();
 
             // Run Agent::turn_streamed in background
             let handle = tokio::spawn(async move {
-                let _guard = ChatRunGuard {
-                    chat_handles: chat_handles_for_spawn.clone(),
-                    run_id: run_id_for_spawn.clone(),
-                };
-
                 let mut ag = agent.lock().await;
 
                 // Send channel to turn_streamed (using mpsc)
@@ -327,10 +316,12 @@ impl AgentClient for AgentRuntimeImpl {
                             );
                             let args_str = serde_json::to_string(&args).unwrap_or_default();
                             let a2ui_jsonl = if name == "canvas" {
-                                args.get("jsonl")
+                                let jsonl = args.get("jsonl")
                                     .and_then(|v| v.as_str())
                                     .map(|s| s.to_string())
-                                    .unwrap_or_default()
+                                    .unwrap_or_default();
+                                tracing::info!("Canvas tool call - a2ui_jsonl length: {}, first 200 chars: {}", jsonl.len(), &jsonl[..jsonl.len().min(200)]);
+                                jsonl
                             } else {
                                 String::new()
                             };
@@ -411,6 +402,10 @@ impl AgentClient for AgentRuntimeImpl {
                         let _ = tx_stream.send(Ok(bytes::Bytes::from(format!("data: {}\n\n", err_json))));
                     }
                 }
+
+                // Explicit cleanup when the task completes naturally.
+                // Abort paths are handled by chat_abort which removes the entry.
+                chat_handles_for_spawn.lock().await.remove(&run_id_for_spawn);
             });
 
             chat_handles.lock().await.insert(run_id, handle);
@@ -709,6 +704,11 @@ impl AgentRuntime for AgentRuntimeImpl {
     fn refresh_tools(&self) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>> {
         Box::pin(async move { self.refresh_tools_impl().await })
     }
+
+    fn run_single(&self, message: &str) -> Pin<Box<dyn std::future::Future<Output = Result<String, AgentError>> + Send + '_>> {
+        let message = message.to_string();
+        Box::pin(async move { self.run_single_impl(&message).await })
+    }
 }
 
 // ============================================================================
@@ -720,13 +720,13 @@ pub struct CanvasTool;
 #[async_trait]
 impl Tool for CanvasTool {
     fn name(&self) -> &str { "canvas" }
-    fn description(&self) -> &str { "Push A2UI components to frontend rendering. Use this tool to create user interfaces." }
+    fn description(&self) -> &str { "Push A2UI UI components to frontend. jsonl must be a string with TWO lines: Line1={\"createSurface\":{\"id\":\"<id>\",\"surfaceKind\":\"inline\"}}, Line2={\"updateComponents\":{\"components\":[{\"id\":\"<id>\",\"componentKind\":\"DeviceCard\",\"dataModel\":{...}}]}}. Example: canvas(toolCallId, {action:\"a2ui_push\",jsonl:JSON.stringify({createSurface:{id:\"s1\",surfaceKind:\"inline\"}})+\"\\n\"+JSON.stringify({updateComponents:{components:[{id:\"c1\",componentKind:\"DeviceCard\",dataModel:{deviceId:\"d1\",name:\"Device\",status:\"online\",properties:[]}}]}})})" }
     fn parameters_schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
                 "action": { "type": "string", "enum": ["a2ui_push"] },
-                "jsonl": { "type": "string" },
+                "jsonl": { "type": "string", "description": "JSONL string with createSurface and updateComponents messages" },
             },
             "required": ["action", "jsonl"],
         })

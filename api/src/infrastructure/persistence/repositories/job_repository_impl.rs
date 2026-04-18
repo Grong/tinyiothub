@@ -250,6 +250,12 @@ impl JobRepository for SqliteJobRepository {
             has_updates = true;
         }
 
+        if let Some(is_enabled) = req.is_enabled {
+            query.push(", is_enabled = ");
+            query.push_bind(if is_enabled { 1 } else { 0 });
+            has_updates = true;
+        }
+
         if !has_updates {
             return self.find_by_id(id).await?.ok_or(crate::shared::error::Error::NotFound);
         }

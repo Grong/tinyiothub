@@ -4,7 +4,7 @@
 use axum::{
     body::Body,
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::Response,
     routing::{get, post},
     Json, Router,
@@ -120,10 +120,14 @@ async fn open_health(State(_state): State<AppState>) -> Result<Json<serde_json::
 }
 
 /// List devices
-async fn list_devices(State(state): State<AppState>) -> Result<Response<Body>, StatusCode> {
+async fn list_devices(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
-    let (key, _tenant, workspace_id) = validate_api_key(&state, None).await?;
+    let api_key = extract_api_key_header(&headers);
+    let (key, _tenant, workspace_id) = validate_api_key(&state, api_key).await?;
 
     let sql = format!(
         "SELECT id, name, display_name, device_type, state, created_at FROM devices ORDER BY created_at DESC LIMIT 100"
@@ -168,11 +172,13 @@ async fn list_devices(State(state): State<AppState>) -> Result<Response<Body>, S
 /// Get device details
 async fn get_device(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
-    let (key, _tenant, workspace_id) = validate_api_key(&state, None).await?;
+    let api_key = extract_api_key_header(&headers);
+    let (key, _tenant, workspace_id) = validate_api_key(&state, api_key).await?;
 
     let row = sqlx::query(
         "SELECT id, name, display_name, device_type, address, state, protocol_type, created_at, updated_at FROM devices WHERE id = ? LIMIT 1"
@@ -229,11 +235,13 @@ async fn get_device(
 /// Get device properties
 async fn get_device_properties(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
-    let (key, _tenant, workspace_id) = validate_api_key(&state, None).await?;
+    let api_key = extract_api_key_header(&headers);
+    let (key, _tenant, workspace_id) = validate_api_key(&state, api_key).await?;
 
     let rows = sqlx::query(
         "SELECT name, display_name, data_type, value, unit, updated_at FROM device_properties WHERE device_id = ? ORDER BY created_at DESC"
@@ -288,11 +296,13 @@ async fn get_device_properties(
 /// List device commands
 async fn list_commands(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
-    let (key, _tenant, workspace_id) = validate_api_key(&state, None).await?;
+    let api_key = extract_api_key_header(&headers);
+    let (key, _tenant, workspace_id) = validate_api_key(&state, api_key).await?;
 
     let rows = sqlx::query(
         "SELECT id, name, display_name, description, command_type FROM device_commands WHERE device_id = ? ORDER BY created_at DESC"
@@ -346,12 +356,14 @@ async fn list_commands(
 /// Send device command
 async fn send_command(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<String>,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
-    let (key, _tenant, workspace_id) = validate_api_key(&state, None).await?;
+    let api_key = extract_api_key_header(&headers);
+    let (key, _tenant, workspace_id) = validate_api_key(&state, api_key).await?;
 
     let command_name =
         payload.get("command").and_then(|v| v.as_str()).ok_or(StatusCode::BAD_REQUEST)?;
@@ -403,11 +415,13 @@ async fn send_command(
 /// Get device events
 async fn list_events(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
-    let (key, _tenant, workspace_id) = validate_api_key(&state, None).await?;
+    let api_key = extract_api_key_header(&headers);
+    let (key, _tenant, workspace_id) = validate_api_key(&state, api_key).await?;
 
     let rows = sqlx::query(
         "SELECT id, event_type, event_level, message, created_at FROM events WHERE device_id = ? ORDER BY created_at DESC LIMIT 100"
@@ -454,10 +468,14 @@ async fn list_events(
 }
 
 /// Get all events
-async fn list_all_events(State(state): State<AppState>) -> Result<Response<Body>, StatusCode> {
+async fn list_all_events(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response<Body>, StatusCode> {
     let start = std::time::Instant::now();
 
-    let (key, _tenant, workspace_id) = validate_api_key(&state, None).await?;
+    let api_key = extract_api_key_header(&headers);
+    let (key, _tenant, workspace_id) = validate_api_key(&state, api_key).await?;
 
     let sql = "SELECT id, event_type, event_level, message, device_id, created_at FROM events ORDER BY created_at DESC LIMIT 100".to_string();
 
@@ -495,6 +513,15 @@ async fn list_all_events(State(state): State<AppState>) -> Result<Response<Body>
         .header("Content-Type", "application/json")
         .body(Body::from(serde_json::to_string(&events).unwrap_or_default()))
         .unwrap())
+}
+
+/// Extract API key from request headers
+fn extract_api_key_header(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("X-API-Key")
+        .or_else(|| headers.get("x-api-key"))
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
 }
 
 /// Fallback handler
