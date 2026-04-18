@@ -95,6 +95,7 @@ pub async fn register_tools() {
     // Register job tools (Task 13)
     reg.register(tools::job::ListSchedulesHandler);
     reg.register(tools::job::CreateScheduleHandler);
+    reg.register(tools::job::UpdateScheduleHandler);
     reg.register(tools::job::DeleteScheduleHandler);
 
     // Register batch tools (Task 14)
