@@ -90,8 +90,15 @@ pub fn create_router() -> Router<AppState> {
 async fn get_device_profile(
     State(state): State<AppState>,
     Path(device_id): Path<String>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<DeviceProfile>> {
+    if let Err(e) = super::verify_device_tenant(&state, &device_id, &claims.tenant_id).await {
+        return match e {
+            crate::shared::error::Error::NotFound => ApiResponseBuilder::error("设备不存在"),
+            _ => ApiResponseBuilder::error("查询设备失败"),
+        };
+    }
+
     tracing::debug!("Getting complete profile for device: {}", device_id);
 
     // 从DataContext缓存获取设备信息（包含实时数据）
@@ -146,7 +153,7 @@ async fn get_device_profile(
     };
 
     // 加载设备标签
-    match state.tag_service.find_tags_by_target_id(&device_id).await {
+    match state.tag_service.find_tags_by_target_id(&device_id, &claims.tenant_id).await {
         Ok(tags) => device.tags = Some(tags),
         Err(e) => tracing::warn!("Failed to load tags for device {}: {}", device_id, e),
     }

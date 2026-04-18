@@ -119,6 +119,12 @@ pub trait AgentClient: Send + Sync {
 pub trait AgentRuntime: AgentClient + Send + Sync {
     /// Refresh the agent's tool registry
     fn refresh_tools(&self) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>>;
+
+    /// Execute a single agent turn with the given message.
+    ///
+    /// This is useful for cron job execution where we want to run a prompt
+    /// and get the complete response without SSE streaming.
+    fn run_single(&self, message: &str) -> Pin<Box<dyn std::future::Future<Output = Result<String, AgentError>> + Send + '_>>;
 }
 
 /// Returns the static catalog of all available TinyIoTHub tools grouped by category.
@@ -222,7 +228,9 @@ pub async fn build_full_system_prompt(
         String::new()
     };
 
-    format!("{}{}{}{}", workspace_prompt, persona_layer, skills_layer, context_layer)
+    let full_prompt = format!("{}{}{}{}", workspace_prompt, persona_layer, skills_layer, context_layer);
+    tracing::info!("[SYSTEM_PROMPT]\n{}", full_prompt);
+    full_prompt
 }
 
 /// Get the workspace directory path for loading prompt files.

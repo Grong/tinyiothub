@@ -9,6 +9,7 @@ pub struct Tag {
     #[serde(rename = "type")]
     pub tag_type: String, // "device" or "app"
     pub name: String,
+    pub tenant_id: Option<String>,
     pub created_by: Option<String>,
     pub created_at: String,
 }
@@ -20,6 +21,7 @@ pub struct TagBinding {
     pub id: String,
     pub tag_id: String,
     pub target_id: String,
+    pub tenant_id: Option<String>,
     pub created_by: Option<String>,
     pub created_at: String,
 }
@@ -32,6 +34,7 @@ pub struct TagQuery {
     #[serde(rename = "type")]
     pub tag_type: Option<String>,
     pub target_id: Option<String>,
+    pub tenant_id: Option<String>,
     pub page: Option<u32>,
     pub page_size: Option<u32>,
 }

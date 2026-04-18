@@ -200,7 +200,7 @@ pub fn create_jwt(payload: AuthPayload) -> Result<AuthBody, String> {
     // 标准 JWT 实现（非 HarmonyOS）
     let token_id = uuid::Uuid::new_v4().to_string();
 
-    let jwt_exp_seconds = 60 * 60;
+    let jwt_exp_seconds = 60 * 60 * 24;
     let exp = iat + ChronoDuration::seconds(jwt_exp_seconds);
 
     let custom_claims = Claims {

@@ -102,6 +102,7 @@ impl RetryState {
     pub fn record_success(&mut self) {
         self.consecutive_successes += 1;
         self.last_error = None;
+        self.next_retry_at = None;
 
         // 如果连续成功多次，重置重试计数
         if self.consecutive_successes >= 3 {
@@ -305,6 +306,88 @@ impl RetryManager {
                             std::thread::sleep(wait_time);
                         }
                     }
+                }
+            }
+        }
+    }
+
+    /// 执行一次操作，不阻塞 sleep。
+    /// 如果失败且还可以重试，返回 Retrying（由调用者在合适时机再次调用）。
+    /// 如果成功，返回 Success。
+    /// 如果重试次数耗尽或超时，返回 Failed/Timeout。
+    pub fn execute_once<T, F>(&mut self, operation: F) -> RetryResult<T>
+    where
+        F: FnOnce() -> Result<T, Error>,
+    {
+        // 如果还没到下一次次重试时间，直接返回 Retrying
+        if let Some(next_retry) = self.state.next_retry_at {
+            if Instant::now() < next_retry {
+                return RetryResult::Retrying {
+                    attempt: self.state.current_attempt,
+                    next_retry_at: next_retry,
+                    last_error: self.state.last_error.clone().unwrap_or_else(|| {
+                        Error::Internal("Waiting for retry".to_string())
+                    }),
+                };
+            }
+        }
+
+        // 检查重试次数
+        if self.state.current_attempt >= self.config.max_attempts {
+            let elapsed = self.state.start_time.elapsed();
+            return RetryResult::Failed {
+                attempts: self.state.current_attempt,
+                last_error: self
+                    .state
+                    .last_error
+                    .clone()
+                    .unwrap_or_else(|| Error::Internal("Max retries exceeded".to_string())),
+                total_duration: elapsed,
+            };
+        }
+
+        // 检查总超时时间
+        if self.state.start_time.elapsed() >= self.config.timeout {
+            return RetryResult::Timeout {
+                attempts: self.state.current_attempt,
+                total_duration: self.state.start_time.elapsed(),
+            };
+        }
+
+        // 执行操作
+        match operation() {
+            Ok(result) => {
+                self.state.record_success();
+                RetryResult::Success(result)
+            }
+            Err(error) => {
+                self.state.record_failure(error.clone());
+
+                // 检查是否还可以重试
+                if self.state.current_attempt >= self.config.max_attempts
+                    || self.state.start_time.elapsed() >= self.config.timeout
+                {
+                    let elapsed = self.state.start_time.elapsed();
+                    return if elapsed >= self.config.timeout {
+                        RetryResult::Timeout {
+                            attempts: self.state.current_attempt,
+                            total_duration: elapsed,
+                        }
+                    } else {
+                        RetryResult::Failed {
+                            attempts: self.state.current_attempt,
+                            last_error: error,
+                            total_duration: elapsed,
+                        }
+                    };
+                }
+
+                // 还可以重试，计算下次重试时间
+                self.state.calculate_next_retry(&self.config);
+                RetryResult::Retrying {
+                    attempt: self.state.current_attempt,
+                    next_retry_at: self.state.next_retry_at.unwrap_or_else(Instant::now),
+                    last_error: error,
                 }
             }
         }

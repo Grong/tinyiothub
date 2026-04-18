@@ -250,9 +250,21 @@ async fn execute_http_job(job: &Job) -> Result<String, String> {
     }
 }
 
+/// Build a minimal zeroclaw Config for shell command validation.
+fn build_zeroclaw_config() -> Result<zeroclaw::config::schema::Config, String> {
+    let agent_settings = crate::infrastructure::config::get().agent.clone();
+    let workspace_dir = std::path::PathBuf::from(&agent_settings.workspace_dir);
+    Ok(zeroclaw::config::schema::Config {
+        workspace_dir: workspace_dir.clone(),
+        config_path: workspace_dir.join("config.toml"),
+        ..zeroclaw::config::schema::Config::default()
+    })
+}
+
 /// Execute script job
 async fn execute_script_job(job: &Job) -> Result<String, String> {
-    use std::process::Command;
+    use tokio::process::Command;
+    use tokio::time::{timeout, Duration};
 
     use serde_json::Value;
 
@@ -263,37 +275,75 @@ async fn execute_script_job(job: &Job) -> Result<String, String> {
 
     let working_dir = config.get("working_dir").and_then(|v| v.as_str());
 
+    // Validate working_dir to prevent directory traversal
+    if let Some(dir) = working_dir {
+        if dir.contains("..") {
+            return Err(format!("Invalid working_dir: contains parent directory reference"));
+        }
+        let path = std::path::Path::new(dir);
+        if path.is_absolute() {
+            return Err(format!("Invalid working_dir: absolute paths are not allowed"));
+        }
+    }
+
     let interpreter = config.get("interpreter").and_then(|v| v.as_str()).unwrap_or("bash");
 
+    // Validate shell scripts against security policy before execution
+    if interpreter == "bash" || interpreter == "sh" || interpreter == "cmd" || interpreter == "powershell" {
+        let zeroclaw_config = build_zeroclaw_config()
+            .map_err(|e| format!("Failed to build security config: {}", e))?;
+        if let Err(e) = zeroclaw::cron::validate_shell_command(&zeroclaw_config, script, false) {
+            return Err(format!("Blocked by security policy: {}", e));
+        }
+    }
+
+    const SCRIPT_TIMEOUT_SECS: u64 = 300;
     let output = match interpreter {
-        "python" => Command::new("python")
-            .arg("-c")
-            .arg(script)
-            .current_dir(working_dir.unwrap_or("."))
-            .output(),
-        "powershell" => Command::new("powershell")
-            .args(["-Command", script])
-            .current_dir(working_dir.unwrap_or("."))
-            .output(),
-        "cmd" => Command::new("cmd")
-            .args(["/C", script])
-            .current_dir(working_dir.unwrap_or("."))
-            .output(),
-        _ => Command::new("bash")
-            .args(["-c", script])
-            .current_dir(working_dir.unwrap_or("."))
-            .output(),
+        "python" => timeout(
+            Duration::from_secs(SCRIPT_TIMEOUT_SECS),
+            Command::new("python")
+                .arg("-c")
+                .arg(script)
+                .current_dir(working_dir.unwrap_or("."))
+                .output(),
+        )
+        .await,
+        "powershell" => timeout(
+            Duration::from_secs(SCRIPT_TIMEOUT_SECS),
+            Command::new("powershell")
+                .args(["-Command", script])
+                .current_dir(working_dir.unwrap_or("."))
+                .output(),
+        )
+        .await,
+        "cmd" => timeout(
+            Duration::from_secs(SCRIPT_TIMEOUT_SECS),
+            Command::new("cmd")
+                .args(["/C", script])
+                .current_dir(working_dir.unwrap_or("."))
+                .output(),
+        )
+        .await,
+        _ => timeout(
+            Duration::from_secs(SCRIPT_TIMEOUT_SECS),
+            Command::new("bash")
+                .args(["-c", script])
+                .current_dir(working_dir.unwrap_or("."))
+                .output(),
+        )
+        .await,
     };
 
     match output {
-        Ok(output) => {
+        Ok(Ok(output)) => {
             if output.status.success() {
                 Ok(String::from_utf8_lossy(&output.stdout).to_string())
             } else {
                 Err(String::from_utf8_lossy(&output.stderr).to_string())
             }
         }
-        Err(e) => Err(format!("Failed to execute script: {}", e)),
+        Ok(Err(e)) => Err(format!("Failed to execute script: {}", e)),
+        Err(_) => Err(format!("Script timed out after {} seconds", SCRIPT_TIMEOUT_SECS)),
     }
 }
 

@@ -425,7 +425,8 @@ impl DeviceService {
 
         if let Some(tag_repo) = &self.tag_repository {
             for device in &mut devices {
-                match tag_repo.find_by_target_id(&device.id).await {
+                let tenant_id = params.tenant_id.as_deref().unwrap_or("");
+                match tag_repo.find_by_target_id(&device.id, tenant_id).await {
                     Ok(tags) => device.tags = Some(tags),
                     Err(e) => {
                         tracing::warn!("Failed to load tags for device {}: {}", device.id, e);

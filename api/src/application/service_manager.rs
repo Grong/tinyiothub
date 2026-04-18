@@ -7,7 +7,7 @@ use tokio::{
 use tracing::{error, info, warn};
 
 use crate::{
-    application::{scheduler::TimeTask, DataContext, DataServer},
+    application::{DataContext, DataServer},
     shared::error::Error,
 };
 
@@ -78,19 +78,17 @@ impl ServiceManager {
 
         info!("✅ DataServer started and registered");
 
-        // 2. 启动定时任务调度器
+        // 2. 启动 Cron 调度器 (使用 zeroclaw SQLite store + TinyIoTHub agent)
         #[cfg(not(feature = "harmonyos"))]
         {
-            let time_task = TimeTask::new()
-                .with_services(
-                    app_state.job_service.clone(),
-                    app_state.job_execution_service.clone(),
-                );
+            let cron_service = crate::application::cron::CronService::new(
+                Arc::new(app_state.clone()),
+            );
             // 在后台启动调度器
             tokio::spawn(async move {
-                time_task.run().await;
+                cron_service.run().await;
             });
-            info!("✅ TimeTask Scheduler started");
+            info!("✅ CronService started");
         }
 
         // 3. 启动健康检查服务

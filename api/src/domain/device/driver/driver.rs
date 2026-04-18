@@ -420,7 +420,7 @@ impl DriverWrapper {
         &mut *self.inner_driver
     }
 
-    /// 读取设备数据（带重试和状态管理）
+    /// 读取设备数据（带重试和状态管理，阻塞版）
     pub fn read_data(&mut self) -> DriverExecutionResult<Vec<ResultValue>> {
         let start_time = Instant::now();
 
@@ -430,6 +430,24 @@ impl DriverWrapper {
         self.update_status(&result, elapsed);
 
         self.convert_result(result, elapsed)
+    }
+
+    /// 读取设备数据（非阻塞版，只执行一次）
+    /// 由调用者的 tick 间隔来替代 sleep 等待
+    pub fn read_data_once(&mut self) -> DriverExecutionResult<Vec<ResultValue>> {
+        let start_time = Instant::now();
+
+        let result = self.retry_manager.execute_once(|| self.inner_driver.read_data());
+
+        let elapsed = start_time.elapsed();
+        self.update_status(&result, elapsed);
+
+        self.convert_result(result, elapsed)
+    }
+
+    /// 检查当前是否可以读取（不受重试间隔限制）
+    pub fn can_read_now(&self) -> bool {
+        self.retry_manager.can_retry_now()
     }
 
     /// 执行设备命令（带重试和状态管理）
@@ -533,6 +551,8 @@ impl DriverWrapper {
     pub fn on_connected(&mut self, ip_address: Option<String>) {
         // 更新状态管理器
         self.status_manager.record_success(Duration::from_millis(0));
+        // 重置重试状态，避免离线期间累积的重试计数影响正常读取
+        self.retry_manager.reset();
 
         // 发布上线事件
         if let Some(ref event_bus) = self.event_bus {

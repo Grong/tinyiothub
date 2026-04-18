@@ -68,9 +68,15 @@ pub fn create_router() -> Router<AppState> {
 async fn record_device_trace(
     State(state): State<AppState>,
     Path(device_id): Path<String>,
-    _claims: Claims,
+    claims: Claims,
     Json(req): Json<RecordTraceRequest>,
 ) -> Json<ApiResponse<String>> {
+    if let Err(e) = super::verify_device_tenant(&state, &device_id, &claims.tenant_id).await {
+        return match e {
+            crate::shared::error::Error::NotFound => ApiResponseBuilder::error("设备不存在"),
+            _ => ApiResponseBuilder::error("查询设备失败"),
+        };
+    }
     match state
         .trace_service
         .record_device_trace(
@@ -103,8 +109,14 @@ async fn get_device_traces(
     State(state): State<AppState>,
     Path(device_id): Path<String>,
     Query(params): Query<TraceQuery>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<Vec<DeviceTrace>>> {
+    if let Err(e) = super::verify_device_tenant(&state, &device_id, &claims.tenant_id).await {
+        return match e {
+            crate::shared::error::Error::NotFound => ApiResponseBuilder::error("设备不存在"),
+            _ => ApiResponseBuilder::error("查询设备失败"),
+        };
+    }
     let trace_types = params.trace_types.as_deref();
     let levels = params.levels.as_deref();
 
@@ -129,8 +141,14 @@ async fn get_device_trace_summary(
     State(state): State<AppState>,
     Path(device_id): Path<String>,
     Query(params): Query<TraceStatisticsQuery>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<DeviceTraceStatistics>> {
+    if let Err(e) = super::verify_device_tenant(&state, &device_id, &claims.tenant_id).await {
+        return match e {
+            crate::shared::error::Error::NotFound => ApiResponseBuilder::error("设备不存在"),
+            _ => ApiResponseBuilder::error("查询设备失败"),
+        };
+    }
     match state.trace_service.get_device_trace_statistics(&device_id, params.days).await {
         Ok(stats) => ApiResponseBuilder::success(stats),
         Err(e) => {
@@ -147,9 +165,15 @@ async fn get_device_trace_summary(
 async fn clear_device_traces(
     State(state): State<AppState>,
     Path(device_id): Path<String>,
-    _claims: Claims,
+    claims: Claims,
     Json(req): Json<ClearTracesRequest>,
 ) -> Json<ApiResponse<u32>> {
+    if let Err(e) = super::verify_device_tenant(&state, &device_id, &claims.tenant_id).await {
+        return match e {
+            crate::shared::error::Error::NotFound => ApiResponseBuilder::error("设备不存在"),
+            _ => ApiResponseBuilder::error("查询设备失败"),
+        };
+    }
     let trace_types = req.trace_types.as_deref();
 
     match state
