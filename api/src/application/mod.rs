@@ -2,7 +2,6 @@
 // This module contains application services and orchestration logic
 
 pub mod agent;
-pub mod cron;
 pub mod cron_scheduler;
 pub mod data_context;
 pub mod data_server;
