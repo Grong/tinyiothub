@@ -78,9 +78,11 @@ pub trait CronRunRepository: Send + Sync {
     ) -> Result<CronRun>;
 
     /// Mark a run as completed with status, output, error, and duration.
+    /// workspace_id is verified to ensure workspace isolation.
     async fn complete(
         &self,
         id: &str,
+        workspace_id: &str,
         status: &str,
         output: Option<&str>,
         error: Option<&str>,

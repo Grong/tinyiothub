@@ -212,6 +212,7 @@ async fn execute_job(
             if let Err(e) = run_repo
                 .complete(
                     &run_id,
+                    &job.workspace_id,
                     &res.status,
                     res.output.as_deref(),
                     res.error_message.as_deref(),
@@ -242,7 +243,7 @@ async fn execute_job(
         Err(err) => {
             let err_msg = err.to_string();
             if let Err(e) = run_repo
-                .complete(&run_id, "failed", None, Some(&err_msg), 0)
+                .complete(&run_id, &job.workspace_id, "failed", None, Some(&err_msg), 0)
                 .await
             {
                 error!("Failed to complete run {}: {}", run_id, e);
