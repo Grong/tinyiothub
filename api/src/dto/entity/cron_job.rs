@@ -29,34 +29,35 @@ pub struct CronJob {
 }
 
 impl CronJob {
-    /// Parse config JSON and return device_id if job_type == "device_command"
-    pub fn target_device_id(&self) -> Option<String> {
+    fn parsed_config(&self) -> Option<serde_json::Value> {
         if self.job_type != "device_command" {
             return None;
         }
-        serde_json::from_str::<serde_json::Value>(&self.config)
-            .ok()
+        serde_json::from_str(&self.config).ok()
+    }
+
+    /// Parse config JSON and return device_id if job_type == "device_command"
+    pub fn target_device_id(&self) -> Option<String> {
+        self.parsed_config()
             .and_then(|v| v.get("device_id").and_then(|d| d.as_str()).map(String::from))
     }
 
     /// Return command_name from config if job_type == "device_command"
     pub fn target_command_name(&self) -> Option<String> {
-        if self.job_type != "device_command" {
-            return None;
-        }
-        serde_json::from_str::<serde_json::Value>(&self.config)
-            .ok()
+        self.parsed_config()
             .and_then(|v| v.get("command_name").and_then(|c| c.as_str()).map(String::from))
     }
 
     /// Return params from config if job_type == "device_command"
+    /// Handles both string params and JSON object params.
     pub fn target_command_params(&self) -> Option<String> {
-        if self.job_type != "device_command" {
-            return None;
-        }
-        serde_json::from_str::<serde_json::Value>(&self.config)
-            .ok()
-            .and_then(|v| v.get("params").and_then(|p| p.as_str()).map(String::from))
+        self.parsed_config().and_then(|v| {
+            v.get("params").and_then(|p| {
+                p.as_str()
+                    .map(String::from)
+                    .or_else(|| serde_json::to_string(p).ok())
+            })
+        })
     }
 }
 
@@ -176,6 +177,71 @@ mod tests {
         assert_eq!(job.target_device_id(), Some("dev-123".to_string()));
         assert_eq!(job.target_command_name(), Some("restart".to_string()));
         assert_eq!(job.target_command_params(), Some(r#"{"delay":5}"#.to_string()));
+    }
+
+    #[test]
+    fn test_cron_job_config_extraction_object_params() {
+        let job = CronJob {
+            id: "job-003".to_string(),
+            workspace_id: "ws-001".to_string(),
+            name: "Test Object Params".to_string(),
+            description: None,
+            job_type: "device_command".to_string(),
+            cron_expression: "*/5 * * * *".to_string(),
+            config: r#"{"device_id":"dev-456","command_name":"set_config","params":{"delay":5,"mode":"fast"}}"#.to_string(),
+            timeout_seconds: 300,
+            max_retries: 3,
+            is_enabled: true,
+            is_running: false,
+            last_run_at: None,
+            last_run_status: None,
+            last_run_error: None,
+            next_run_at: None,
+            run_count: 0,
+            success_count: 0,
+            fail_count: 0,
+            created_at: "2026-04-18 08:00:00".to_string(),
+            updated_at: "2026-04-18 08:00:00".to_string(),
+            created_by: None,
+        };
+
+        assert_eq!(job.target_device_id(), Some("dev-456".to_string()));
+        assert_eq!(job.target_command_name(), Some("set_config".to_string()));
+        assert_eq!(
+            job.target_command_params(),
+            Some(r#"{"delay":5,"mode":"fast"}"#.to_string())
+        );
+    }
+
+    #[test]
+    fn test_cron_job_config_extraction_invalid_json() {
+        let job = CronJob {
+            id: "job-004".to_string(),
+            workspace_id: "ws-001".to_string(),
+            name: "Invalid Config".to_string(),
+            description: None,
+            job_type: "device_command".to_string(),
+            cron_expression: "*/5 * * * *".to_string(),
+            config: "not-json-at-all".to_string(),
+            timeout_seconds: 300,
+            max_retries: 3,
+            is_enabled: true,
+            is_running: false,
+            last_run_at: None,
+            last_run_status: None,
+            last_run_error: None,
+            next_run_at: None,
+            run_count: 0,
+            success_count: 0,
+            fail_count: 0,
+            created_at: "2026-04-18 08:00:00".to_string(),
+            updated_at: "2026-04-18 08:00:00".to_string(),
+            created_by: None,
+        };
+
+        assert_eq!(job.target_device_id(), None);
+        assert_eq!(job.target_command_name(), None);
+        assert_eq!(job.target_command_params(), None);
     }
 
     #[test]
