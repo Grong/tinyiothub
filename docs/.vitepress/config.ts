@@ -2,7 +2,7 @@ import { defineConfig } from 'vitepress'
 
 export default defineConfig({
   title: "TinyIoTHub | 文档",
-  description: "专业物联网边缘网关系统",
+  description: "云端 SaaS 物联网平台",
   lang: 'zh-CN',
   appearance: 'dark',
 
@@ -90,7 +90,7 @@ export default defineConfig({
 
     // 页脚
     footer: {
-      message: '基于 Rust 的高性能物联网边缘网关系统',
+      message: '基于 Rust 的高性能云端 SaaS 物联网平台',
       copyright: 'MIT License © 2026 TinyIoTHub | <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer" style="text-decoration: none;">粤ICP备2026029601号-2</a>'
     },
 
