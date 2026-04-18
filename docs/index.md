@@ -3,8 +3,8 @@ layout: home
 
 hero:
   name: "TinyIoTHub"
-  text: "物联网边缘网关系统"
-  tagline: 基于 Rust 的高性能 IoT 边缘网关，支持多协议（Modbus、ONVIF、SNMP、MQTT）
+  text: "云端 SaaS 物联网平台"
+  tagline: 基于 Rust 的高性能云端 SaaS IoT 平台，支持配置和管理边缘网关设备，兼容多协议（Modbus、ONVIF、SNMP、MQTT）
   actions:
     - theme: brand
       text: 快速开始

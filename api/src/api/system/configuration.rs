@@ -61,7 +61,7 @@ async fn get_system_config(
     let config = SystemConfig {
         system_name: "TinyIoTHub".to_string(),
         system_version: "1.0.0".to_string(),
-        description: "物联网边缘网关".to_string(),
+        description: "云端 SaaS 物联网平台".to_string(),
         timezone: "Asia/Shanghai".to_string(),
         language: "zh-CN".to_string(),
     };

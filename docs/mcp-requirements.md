@@ -4,7 +4,7 @@
 
 ## 一、背景
 
-随着 AI 工具的快速发展，MCP (Model Context Protocol) 已成为连接 AI 应用与外部系统的开放标准。TinyIoTHub 作为物联网边缘网关系统，支持 MCP 协议将使其能够：
+随着 AI 工具的快速发展，MCP (Model Context Protocol) 已成为连接 AI 应用与外部系统的开放标准。TinyIoTHub 作为云端 SaaS 物联网平台，支持 MCP 协议将使其能够：
 
 1. **AI 助手控制**：通过自然语言查询和控制 IoT 设备
 2. **智能自动化**：AI Agent 可调用 IoT 设备能力

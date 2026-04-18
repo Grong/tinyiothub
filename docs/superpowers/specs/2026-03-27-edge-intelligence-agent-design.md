@@ -8,7 +8,7 @@
 
 ### 1.1 项目背景
 
-TinyIoTHub 目前已具备成熟的物联网边缘网关能力：
+TinyIoTHub 目前已具备成熟的云端 SaaS 物联网平台能力：
 - 设备管理（CRUD、多协议驱动：Modbus TCP/SNMP/Simulated）
 - 告警引擎（规则、事件、通知）
 - 自动化（条件触发、动作执行）
