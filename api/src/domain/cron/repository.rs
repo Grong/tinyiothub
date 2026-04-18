@@ -49,12 +49,22 @@ pub trait CronJobRepository: Send + Sync {
     /// Pass `None` for `workspace_id` to query across all workspaces (scheduler use-case).
     async fn find_due_jobs(&self, workspace_id: Option<&str>) -> Result<Vec<CronJob>>;
 
+    /// Atomically claim a job for execution by setting is_running = 1 only if it was 0.
+    /// Returns true if the claim succeeded (caller should proceed with execution).
+    async fn claim_job(&self, id: &str, workspace_id: &str) -> Result<bool>;
+
     /// Clear the `is_running` flag on all jobs (or all jobs in a workspace).
     /// Returns the number of rows affected. Used for crash recovery on startup.
     async fn clear_all_running(&self, workspace_id: Option<&str>) -> Result<u64>;
 
     /// Count total cron jobs in a workspace.
     async fn count(&self, workspace_id: &str) -> Result<i64>;
+
+    /// Count jobs by enabled status in a workspace.
+    async fn count_by_enabled(&self, workspace_id: &str, is_enabled: bool) -> Result<i64>;
+
+    /// Count jobs that are currently running in a workspace.
+    async fn count_running(&self, workspace_id: &str) -> Result<i64>;
 
     /// Update the `next_run_at` field for a job.
     async fn update_next_run_at(
@@ -107,4 +117,10 @@ pub trait CronRunRepository: Send + Sync {
 
     /// Count runs by status within a workspace.
     async fn count_by_status(&self, workspace_id: &str, status: &str) -> Result<i64>;
+
+    /// List all runs in a workspace (cross-job), with optional status filter.
+    async fn find_all(&self, workspace_id: &str, query: &CronRunQuery) -> Result<Vec<CronRun>>;
+
+    /// Average duration (ms) of completed runs in a workspace.
+    async fn avg_duration_ms(&self, workspace_id: &str) -> Result<i64>;
 }

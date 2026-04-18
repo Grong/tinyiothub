@@ -341,6 +341,20 @@ impl CronJobRepository for SqliteCronJobRepository {
         Ok(jobs)
     }
 
+    async fn claim_job(&self, id: &str, workspace_id: &str) -> Result<bool> {
+        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let result = sqlx::query(
+            "UPDATE cron_jobs SET is_running = 1, updated_at = ? WHERE id = ? AND workspace_id = ? AND is_running = 0",
+        )
+        .bind(&now)
+        .bind(id)
+        .bind(workspace_id)
+        .execute(self.database.pool())
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
     async fn clear_all_running(&self, workspace_id: Option<&str>) -> Result<u64> {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
         let mut builder = QueryBuilder::<sqlx::Sqlite>::new(
@@ -363,6 +377,31 @@ impl CronJobRepository for SqliteCronJobRepository {
             .bind(workspace_id)
             .fetch_one(self.database.pool())
             .await?;
+
+        let count: i64 = row.get("count");
+        Ok(count)
+    }
+
+    async fn count_by_enabled(&self, workspace_id: &str, is_enabled: bool) -> Result<i64> {
+        let row = sqlx::query(
+            "SELECT COUNT(*) as count FROM cron_jobs WHERE workspace_id = ? AND is_enabled = ?",
+        )
+        .bind(workspace_id)
+        .bind(if is_enabled { 1 } else { 0 })
+        .fetch_one(self.database.pool())
+        .await?;
+
+        let count: i64 = row.get("count");
+        Ok(count)
+    }
+
+    async fn count_running(&self, workspace_id: &str) -> Result<i64> {
+        let row = sqlx::query(
+            "SELECT COUNT(*) as count FROM cron_jobs WHERE workspace_id = ? AND is_running = 1",
+        )
+        .bind(workspace_id)
+        .fetch_one(self.database.pool())
+        .await?;
 
         let count: i64 = row.get("count");
         Ok(count)
