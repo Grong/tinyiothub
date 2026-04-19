@@ -97,6 +97,7 @@ elsa = { workspace = true }
 redis = { workspace = true }
 
 # Workspace crates
+tinyiothub-core = { workspace = true, features = ["sqlx"] }
 tinyiothub-macros = { workspace = true }
 tinyiothub-plugin-sdk = { workspace = true }
 
