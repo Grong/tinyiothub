@@ -1,7 +1,7 @@
+use tinyiothub_core::models::user::{;
 use std::sync::Arc;
 
 use crate::{
-    dto::entity::user::{
         CreateUserRequest, UpdateUserRequest, User, UserQueryParams, UserStatisticsNew,
     },
     shared::error::{Error, Result},

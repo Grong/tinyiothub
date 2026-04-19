@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::dto::entity::tenant::{
+use tinyiothub_core::models::tenant::{
     ApiKey, ApiUsageStats, CreateApiKeyRequest, CreateTenantRequest, SubscriptionPlan, Tenant,
     TenantUsage,
 };

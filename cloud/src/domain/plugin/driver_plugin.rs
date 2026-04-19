@@ -2,12 +2,12 @@
 //!
 //! 将现有驱动系统（DriverWrapper）适配为插件系统（PluginHandler）
 
+use tinyiothub_core::models::device::Device;
 use std::{any::Any, sync::Arc};
 
 use crate::{
     domain::device::driver::{create_driver, DriverWrapper},
     domain::plugin::{AppContext, PluginHandler, PluginManifest, PluginType},
-    dto::entity::Device,
     shared::error::Error,
 };
 

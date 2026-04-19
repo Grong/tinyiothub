@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use tracing::info;
 
+use tinyiothub_core::models::template_error::TemplateError;
 use crate::{
-    domain::template::repository::TemplateRepository, dto::entity::template_error::TemplateError,
+
 };
 
 /// 模板服务 - 提供高级模板操作功能

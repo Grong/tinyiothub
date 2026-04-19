@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use tracing::{debug, info, warn};
 
-use crate::dto::entity::{
+use tinyiothub_core::models::{
     device_template::{
         CommandTemplate, CreateDeviceTemplateRequest, DeviceCreationInput, DeviceTemplate,
         PropertyTemplate,

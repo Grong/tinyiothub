@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::api::mcp::handlers::get_mcp_context;
 use crate::api::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
-use crate::dto::entity::workspace::WorkspaceWithDeviceCount;
+use tinyiothub_core::models::workspace::WorkspaceWithDeviceCount;
 use crate::infrastructure::agent::AgentConfig;
 
 /// Tool input: List workspaces

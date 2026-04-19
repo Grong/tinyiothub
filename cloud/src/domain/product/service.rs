@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::dto::entity::product::{CreateProductRequest, Product, ProductQueryParams, UpdateProductRequest};
+use tinyiothub_core::models::product::{CreateProductRequest, Product, ProductQueryParams, UpdateProductRequest};
 use crate::shared::error::Result;
 
 use super::repository::ProductRepository;

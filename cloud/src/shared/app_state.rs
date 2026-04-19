@@ -1,3 +1,4 @@
+use tinyiothub_core::models::device_property::DeviceProperty;
 use std::{path::PathBuf, sync::Arc};
 
 use tokio::sync::OnceCell;
@@ -21,7 +22,6 @@ use crate::{
             engine::TemplateEngine, repository::TemplateRepository, validator::TemplateValidator,
         },
     },
-    dto::entity::DeviceProperty,
     infrastructure::{
         agent::AgentRuntime,
         event::{
@@ -449,12 +449,12 @@ impl AppState {
     }
 
     /// 获取设备
-    pub fn get_device(&self, device_id: &str) -> Option<crate::dto::entity::Device> {
+    pub fn get_device(&self, device_id: &str) -> Option<tinyiothub_core::models::device::Device> {
         self.data_context.get_device(device_id)
     }
 
     /// 设置设备
-    pub fn set_device(&self, device: crate::dto::entity::Device) {
+    pub fn set_device(&self, device: tinyiothub_core::models::device::Device) {
         self.data_context.set_device(device)
     }
 

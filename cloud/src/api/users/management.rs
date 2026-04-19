@@ -62,7 +62,7 @@ async fn list_users(
 
     match state.user_service.list_users(query.enabled, query.search, page, page_size).await {
         Ok((users, total)) => {
-            let user_dtos = crate::dto::entity::user::User::to_dto_list(users);
+            let user_dtos = tinyiothub_core::models::user::User::to_dto_list(users);
             let total_count = total as u64;
             let total_pages = if page_size > 0 {
                 ((total as f64) / (page_size as f64)).ceil() as u32
@@ -154,7 +154,7 @@ async fn create_user(
 async fn get_user_statistics(
     State(state): State<AppState>,
     _claims: Claims,
-) -> Json<ApiResponse<crate::dto::entity::user::UserStatisticsNew>> {
+) -> Json<ApiResponse<tinyiothub_core::models::user::UserStatisticsNew>> {
     match state.user_service.get_user_statistics().await {
         Ok(statistics) => {
             tracing::debug!("Retrieved user statistics");

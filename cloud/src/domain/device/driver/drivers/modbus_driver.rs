@@ -1,3 +1,4 @@
+use tinyiothub_core::models::{Device, DeviceCommand};
 use std::collections::HashMap;
 
 #[cfg(feature = "serial")]
@@ -5,7 +6,6 @@ use serialport::SerialPort;
 
 use crate::{
     domain::device::driver::{DeviceDriver, ResultValue},
-    dto::entity::{Device, DeviceCommand},
     shared::error::Error,
 };
 

@@ -8,10 +8,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::api::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
-use crate::dto::entity::device::{CreateDeviceRequest, Device, DeviceQueryParams, UpdateDeviceRequest, find_device_by_id, find_device_by_id_with_tags, find_all_devices_with_tags};
-use crate::dto::entity::device_command::{DeviceCommand, find_device_command_by_device_and_name, find_device_commands_by_device_id};
-use crate::dto::entity::device_property::{DeviceProperty, find_device_properties_by_device_id};
-use crate::dto::entity::device_template::{CreateDeviceFromTemplateRequest, DeviceCreationInput};
+use tinyiothub_core::models::device::{CreateDeviceRequest, Device, DeviceQueryParams, UpdateDeviceRequest, find_device_by_id, find_device_by_id_with_tags, find_all_devices_with_tags};
+use tinyiothub_core::models::device_command::{DeviceCommand, find_device_command_by_device_and_name, find_device_commands_by_device_id};
+use tinyiothub_core::models::device_property::{DeviceProperty, find_device_properties_by_device_id};
+use tinyiothub_core::models::device_template::{CreateDeviceFromTemplateRequest, DeviceCreationInput};
 use crate::domain::device::monitoring_service::DeviceMetrics;
 use crate::domain::device::performance_service::DevicePerformanceMetrics;
 
@@ -830,14 +830,14 @@ impl ToolHandler for DeviceTemplateListHandler {
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
-        let params = crate::dto::entity::device_template::TemplateQueryParams {
+        let params = tinyiothub_core::models::device_template::TemplateQueryParams {
             category: input.category,
             manufacturer: input.manufacturer,
             device_type: input.device_type,
             ..Default::default()
         };
 
-        let templates = crate::dto::entity::device_template::DeviceTemplate::find_all(
+        let templates = tinyiothub_core::models::device_template::DeviceTemplate::find_all(
             state.database(),
             &params,
         )

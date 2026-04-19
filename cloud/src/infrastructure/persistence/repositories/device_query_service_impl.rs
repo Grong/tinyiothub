@@ -1,9 +1,9 @@
+use tinyiothub_core::models::device::{Device, DeviceStats};
 use async_trait::async_trait;
 use sqlx::{QueryBuilder, Row};
 
 use crate::{
     domain::device::query_service::DeviceQueryService,
-    dto::entity::device::{Device, DeviceStats},
     dto::response::{DeviceStatusDistribution, QuickDevice},
     infrastructure::persistence::Database,
     shared::error::Result,

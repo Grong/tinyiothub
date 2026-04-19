@@ -101,7 +101,7 @@ impl TemplateInstaller {
         let template_data: serde_json::Value = serde_json::from_str(&content)?;
 
         // 将 JSON 转换为 CreateDeviceTemplateRequest
-        let request: crate::dto::entity::device_template::CreateDeviceTemplateRequest =
+        let request: tinyiothub_core::models::device_template::CreateDeviceTemplateRequest =
             serde_json::from_value(template_data).map_err(|e| {
                 MarketplaceError::Template(format!("Invalid template format: {}", e))
             })?;

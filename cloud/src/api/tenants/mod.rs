@@ -10,12 +10,10 @@ use axum::{
     Router,
 };
 
+use tinyiothub_core::models::tenant::{ApiKey, ApiUsageStats, CreateApiKeyRequest, Tenant, TenantQueryParams, TenantUsage};
 use crate::{
     api::middleware::WorkspaceScope,
     shared::security::jwt::Claims,
-    dto::entity::{
-        tenant::{ApiKey, ApiUsageStats, CreateApiKeyRequest, Tenant, TenantQueryParams, TenantUsage},
-    },
     dto::response::{ApiResponse, builder::ApiResponseBuilder},
     shared::app_state::AppState,
 };
@@ -59,7 +57,7 @@ async fn list_tenants(
 /// Create tenant
 async fn create_tenant(
     State(state): State<AppState>,
-    Json(payload): Json<crate::dto::entity::tenant::CreateTenantRequest>,
+    Json(payload): Json<tinyiothub_core::models::tenant::CreateTenantRequest>,
 ) -> Json<ApiResponse<Tenant>> {
     match state.tenant_service.create_tenant(&payload).await {
         Ok(tenant) => ApiResponseBuilder::success(tenant),
@@ -89,7 +87,7 @@ async fn get_tenant(
 async fn update_tenant(
     State(_state): State<AppState>,
     Path(_id): Path<String>,
-    Json(_payload): Json<crate::dto::entity::tenant::UpdateTenantRequest>,
+    Json(_payload): Json<tinyiothub_core::models::tenant::UpdateTenantRequest>,
 ) -> Json<ApiResponse<Tenant>> {
     // 简化实现
     ApiResponseBuilder::error_with_code(501, "功能未实现")

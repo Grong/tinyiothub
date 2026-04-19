@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::dto::entity::role::{CreateRoleRequest, Role, RoleQueryParams, RoleStats, UpdateRoleRequest};
+use tinyiothub_core::models::role::{CreateRoleRequest, Role, RoleQueryParams, RoleStats, UpdateRoleRequest};
 use crate::shared::error::Result;
 
 use super::repository::RoleRepository;

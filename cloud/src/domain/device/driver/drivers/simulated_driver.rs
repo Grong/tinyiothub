@@ -1,8 +1,8 @@
+use tinyiothub_core::models::{Device, DeviceCommand};
 use std::collections::HashMap;
 
 use crate::{
     domain::device::driver::{DeviceDriver, ResultValue},
-    dto::entity::{Device, DeviceCommand},
     shared::error::Error,
 };
 
@@ -463,7 +463,7 @@ mod tests {
         );
 
         // 检查选项描述符
-        let options_json: Vec<crate::dto::entity::component::ComponentOption> =
+        let options_json: Vec<tinyiothub_core::models::component::ComponentOption> =
             serde_json::from_str(&driver_info.options_descriptors).unwrap();
 
         assert_eq!(options_json.len(), 4);

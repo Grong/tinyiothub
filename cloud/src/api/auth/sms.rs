@@ -720,7 +720,7 @@ fn generate_code() -> String {
 async fn find_or_create_user_by_phone(
     db: &crate::infrastructure::persistence::database::Database,
     phone: &str,
-) -> Result<crate::dto::entity::user::User, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<tinyiothub_core::models::user::User, Box<dyn std::error::Error + Send + Sync>> {
     // 查找现有用户
     let rows = sqlx::query("SELECT * FROM users WHERE phone = ? LIMIT 1")
         .bind(phone)
@@ -728,7 +728,7 @@ async fn find_or_create_user_by_phone(
         .await?;
 
     if let Some(row) = rows.into_iter().next() {
-        return Ok(crate::dto::entity::user::User {
+        return Ok(tinyiothub_core::models::user::User {
             id: row.try_get("id")?,
             username: row.try_get("username")?,
             password_hash: row.try_get("password_hash")?,
@@ -760,7 +760,7 @@ async fn find_or_create_user_by_phone(
     .await?;
 
     // 直接构建并返回新用户
-    Ok(crate::dto::entity::user::User {
+    Ok(tinyiothub_core::models::user::User {
         id: user_id,
         username: phone.to_string(),
         password_hash: String::new(),

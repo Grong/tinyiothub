@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use crate::api::mcp::handlers::get_mcp_context;
 use crate::api::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
-use crate::dto::entity::cron_job::{
+use tinyiothub_core::models::cron_job::{
     CreateCronJobRequest, CronJobQuery, UpdateCronJobRequest,
 };
 
@@ -323,7 +323,7 @@ impl ToolHandler for CreateScheduleHandler {
         // SECURITY: Verify target_device_id belongs to authenticated workspace if provided
         if let Some(ref device_id) = input.target_device_id {
             let db = state.database();
-            let device = crate::dto::entity::device::find_device_by_id(db, device_id)
+            let device = tinyiothub_core::models::device::find_device_by_id(db, device_id)
                 .await
                 .map_err(|e| ToolError::Internal(format!("failed to verify device: {}", e)))?
                 .ok_or_else(|| ToolError::NotFound(format!("device {} not found", device_id)))?;

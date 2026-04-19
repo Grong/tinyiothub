@@ -1,6 +1,8 @@
 // Jobs API Module — Compatibility layer over new cron system
 // Preserves legacy /api/jobs/* endpoints while using cron_jobs/cron_runs tables underneath
 
+use tinyiothub_core::models::cron_job::{;
+use tinyiothub_core::models::job::{;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -14,11 +16,9 @@ use serde::Deserialize;
 
 use crate::{
     domain::cron::executor::ExecutorRegistry,
-    dto::entity::cron_job::{
         CreateCronJobRequest, CronJob, CronJobQuery, CronRun, CronRunQuery,
         UpdateCronJobRequest,
     },
-    dto::entity::job::{
         CreateJobRequest, Job, JobExecution, JobExecutionQueryParams, JobQueryParams,
         JobStatistics, UpdateJobRequest,
     },

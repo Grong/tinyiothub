@@ -6,7 +6,7 @@ pub mod profile;
 pub mod properties;
 pub mod trace;
 
-use crate::dto::entity::device::Device;
+use tinyiothub_core::models::device::Device;
 use crate::shared::{app_state::AppState, error::Error};
 
 /// Verify a device belongs to the authenticated user's tenant.

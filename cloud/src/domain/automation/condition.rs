@@ -236,7 +236,7 @@ impl TriggerContext {
     }
     
     /// 从设备数据创建上下文
-    pub fn from_device(device: &crate::dto::entity::Device) -> Self {
+    pub fn from_device(device: &tinyiothub_core::models::device::Device) -> Self {
         let mut ctx = Self::new();
         ctx.device_id = Some(device.id.clone());
         ctx.device_name = Some(device.name.clone());

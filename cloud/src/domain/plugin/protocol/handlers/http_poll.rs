@@ -8,10 +8,10 @@ use std::time::Duration;
 use tracing::debug;
 
 use super::ProtocolHandler;
+use tinyiothub_core::models::device::Device;
 use crate::{
     domain::device::driver::ResultValue,
-    dto::entity::Device,
-    shared::error::Error,
+    shared::error::Error
 };
 
 use super::super::config::HttpPollConfig;

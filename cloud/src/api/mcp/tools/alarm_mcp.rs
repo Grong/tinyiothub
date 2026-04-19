@@ -217,7 +217,7 @@ impl ToolHandler for AlarmListHandler {
 
         let total_pages = ((total as f64) / (page_size as f64)).ceil() as u32;
 
-        let alarms: Vec<crate::dto::entity::alarm::AlarmDto> =
+        let alarms: Vec<tinyiothub_core::models::alarm::AlarmDto> =
             result.into_iter().map(|a| a.into()).collect();
 
         Ok(serde_json::json!({
@@ -301,7 +301,7 @@ impl ToolHandler for AlarmStatisticsHandler {
             .await
             .map_err(|e| ToolError::Internal(format!("Failed to get alarm statistics: {}", e)))?;
 
-        let dto: crate::dto::entity::alarm::AlarmStatisticsDto = stats.into();
+        let dto: tinyiothub_core::models::alarm::AlarmStatisticsDto = stats.into();
         Ok(serde_json::to_value(dto).unwrap())
     }
 }

@@ -1,10 +1,10 @@
 //! 协议处理器
 
 use async_trait::async_trait;
+use tinyiothub_core::models::device::Device;
 use crate::{
     domain::device::driver::ResultValue,
-    dto::entity::Device,
-    shared::error::Error,
+    shared::error::Error
 };
 
 

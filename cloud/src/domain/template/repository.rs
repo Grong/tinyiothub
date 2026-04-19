@@ -3,17 +3,17 @@ use std::{path::PathBuf, sync::Arc};
 use sqlx;
 use tracing::{info, warn};
 
+use tinyiothub_core::models::{
+    device_template::{
+        CreateDeviceTemplateRequest, DeviceTemplate, TemplateCategory, TemplateQueryParams,
+        UpdateDeviceTemplateRequest,
+    },
+    template_error::TemplateError,
+};
 use crate::{
     domain::template::{
         file_manager::TemplateFileManager,
         search_service::{TemplateFilters, TemplateSearchService},
-    },
-    dto::entity::{
-        device_template::{
-            CreateDeviceTemplateRequest, DeviceTemplate, TemplateCategory, TemplateQueryParams,
-            UpdateDeviceTemplateRequest,
-        },
-        template_error::TemplateError,
     },
     infrastructure::persistence::database::Database,
 };

@@ -1,6 +1,7 @@
 //! 统一驱动注册表
 #![allow(dead_code, deprecated)] // Deprecated public API preserved for backward compatibility
 
+use tinyiothub_core::models::{component::Component, Device};
 use std::{path::PathBuf, sync::Arc};
 
 use dashmap::DashMap;
@@ -10,7 +11,6 @@ use super::loader::DynamicDriverLoader;
 use crate::{
     application::data_context::DataContext,
     domain::device::driver::DeviceDriver,
-    dto::entity::{component::Component, Device},
     shared::error::Error,
 };
 

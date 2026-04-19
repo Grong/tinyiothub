@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::dto::entity::tag::{
+use tinyiothub_core::models::tag::{
     CreateTagBindingRequest, CreateTagRequest, Tag, TagBinding,
     TagQuery, UpdateTagRequest,
 };

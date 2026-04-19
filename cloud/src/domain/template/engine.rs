@@ -2,18 +2,18 @@ use std::{collections::HashMap, sync::Arc};
 
 use tracing::{debug, info};
 
+use tinyiothub_core::models::{
+    device::CreateDeviceRequest,
+    device_command::CreateDeviceCommandRequest,
+    device_property::CreateDevicePropertyRequest,
+    device_template::{
+        CommandInfo, DeviceCreationInput, DevicePreview, DeviceTemplate, PropertyInfo,
+        TemplateRequirements,
+    },
+    template_error::{TemplateError, ValidationResult},
+};
 use crate::{
     domain::template::{repository::TemplateRepository, validator::TemplateValidator},
-    dto::entity::{
-        device::CreateDeviceRequest,
-        device_command::CreateDeviceCommandRequest,
-        device_property::CreateDevicePropertyRequest,
-        device_template::{
-            CommandInfo, DeviceCreationInput, DevicePreview, DeviceTemplate, PropertyInfo,
-            TemplateRequirements,
-        },
-        template_error::{TemplateError, ValidationResult},
-    },
 };
 
 /// 模板引擎 - 负责解析和应用设备模板的核心组件
@@ -420,7 +420,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
-    use crate::dto::entity::device_template::{CommandTemplate, DeviceInfo, PropertyTemplate};
+    use tinyiothub_core::models::device_template::{CommandTemplate, DeviceInfo, PropertyTemplate};
 
     fn create_test_template() -> DeviceTemplate {
         let mut template = DeviceTemplate::default();

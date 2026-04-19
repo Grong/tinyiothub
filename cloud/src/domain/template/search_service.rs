@@ -3,11 +3,11 @@ use std::sync::Arc;
 use sqlx::{QueryBuilder, Row};
 use tracing::{debug, info};
 
+use tinyiothub_core::models::{
+    device_template::{DeviceTemplate, TemplateQueryParams},
+    template_error::TemplateError,
+};
 use crate::{
-    dto::entity::{
-        device_template::{DeviceTemplate, TemplateQueryParams},
-        template_error::TemplateError,
-    },
     infrastructure::persistence::database::Database,
 };
 

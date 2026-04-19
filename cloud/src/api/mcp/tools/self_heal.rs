@@ -11,7 +11,7 @@ use crate::api::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, Too
 use crate::api::self_healing::get_self_healing_state;
 use crate::domain::self_healing::{RecoveryActionType, SeverityLevel};
 use crate::domain::workspace::repository::WorkspaceRepository;
-use crate::dto::entity::self_healing::{ExecuteSelfHealRequest, SelfHealingPolicyDto};
+use tinyiothub_core::models::self_healing::{ExecuteSelfHealRequest, SelfHealingPolicyDto};
 
 /// Get self-heal policy tool handler
 pub struct GetSelfHealPolicyHandler;

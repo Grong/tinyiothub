@@ -1,3 +1,4 @@
+use tinyiothub_core::models::{Device, DeviceCommand};
 use std::{
     collections::HashMap,
     time::{Duration, Instant},
@@ -14,7 +15,6 @@ use crate::{
             ContentElement, DeviceEventType, EventLevel, EventSource, RichContent, TextFormat,
         },
     },
-    dto::entity::{Device, DeviceCommand},
     infrastructure::event::EventBus,
     shared::error::Error,
 };

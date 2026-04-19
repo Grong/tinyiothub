@@ -78,7 +78,7 @@ impl DeviceService {
         &self,
         template_engine: &crate::domain::template::engine::TemplateEngine,
         template_id: &str,
-        device_input: &crate::dto::entity::device_template::DeviceCreationInput,
+        device_input: &tinyiothub_core::models::device_template::DeviceCreationInput,
     ) -> Result<Device, Error> {
         tracing::info!(
             "Creating device from template: template_id={}, device_name={}",

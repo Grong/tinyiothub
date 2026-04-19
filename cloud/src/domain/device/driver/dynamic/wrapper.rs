@@ -1,5 +1,6 @@
 //! 动态驱动包装器
 
+use tinyiothub_core::models::{Device, DeviceCommand};
 use std::sync::Arc;
 
 use tracing::debug;
@@ -7,7 +8,6 @@ use tracing::debug;
 use super::loader::DynamicDriverLoader;
 use crate::{
     domain::device::driver::{DeviceDriver, ResultValue},
-    dto::entity::{Device, DeviceCommand},
     shared::error::Error,
 };
 

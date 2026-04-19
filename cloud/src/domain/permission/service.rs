@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::dto::entity::permission::{
+use tinyiothub_core::models::permission::{
     CreatePermissionGroupRequest, CreatePermissionRequest, Permission, PermissionGroup,
     PermissionQuery, UpdatePermissionRequest,
 };

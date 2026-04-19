@@ -1,3 +1,4 @@
+use tinyiothub_core::models::{Device, DeviceCommand};
 use std::{collections::HashMap, sync::Arc};
 
 use dashmap::DashMap;
@@ -7,7 +8,6 @@ use parking_lot::RwLock;
 use super::data_context::DataContext;
 use crate::{
     domain::device::driver::{create_driver, DeviceOverview, DriverWrapper},
-    dto::entity::{Device, DeviceCommand},
     shared::error::Error,
 };
 
