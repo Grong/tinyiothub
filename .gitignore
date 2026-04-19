@@ -1,6 +1,4 @@
 # Rust 编译输出
-/api/target
-/api/Cargo.lock
 /sdks/driver-sdk/target
 /examples/example-plugin/target
 /examples/bacnet-driver/target
@@ -23,7 +21,6 @@ app_settings_harmonyos.toml
 
 # 日志文件
 logs/*.log
-/api/logs
 
 # 临时文件
 /temp
@@ -32,7 +29,7 @@ logs/*.log
 /wwwroot
 
 # Docker 日志
-/docker/logs
+/deploy/docker/logs
 
 # Worktrees
 .worktrees/

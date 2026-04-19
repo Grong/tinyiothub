@@ -1,0 +1,29 @@
+# TinyIoTHub Edge Runtime Configuration
+
+[edge]
+# Edge runtime settings
+node_id = ""
+cloud_endpoint = "http://localhost:3002"
+heartbeat_interval_secs = 30
+
+[mqtt]
+# Local MQTT broker connection
+broker_host = "localhost"
+broker_port = 1883
+client_id = "tinyiothub-edge"
+
+[storage]
+# Offline storage settings
+db_path = "./data/edge.db"
+max_offline_messages = 10000
+flush_interval_secs = 60
+
+[plugin]
+# Plugin management
+plugin_dir = "./plugins"
+auto_load = true
+sandbox_enabled = true
+
+[logging]
+level = "info"
+format = "text"

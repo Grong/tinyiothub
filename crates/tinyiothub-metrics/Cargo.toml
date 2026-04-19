@@ -1,0 +1,20 @@
+[package]
+name = "tinyiothub-metrics"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "TinyIoTHub observability primitives — metrics, traces, and registry"
+
+[dependencies]
+# Zero framework dependencies — only core primitives
+# tracing integration is optional via feature flag
+tinyiothub-core = { workspace = true }
+tracing = { workspace = true, optional = true }
+
+[features]
+default = []
+tracing = ["dep:tracing"]
+
+[dev-dependencies]
+tokio = { workspace = true }

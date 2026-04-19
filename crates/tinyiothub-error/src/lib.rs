@@ -8,6 +8,12 @@
 //! use tinyiothub_error::{Error, Result};
 //! ```
 
+pub mod context;
+pub mod kind;
+
+pub use context::ErrorContext;
+pub use kind::ErrorKind;
+
 use thiserror::Error as ThisError;
 use tinyiothub_core::error::Error as CoreError;
 

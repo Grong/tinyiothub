@@ -5548,6 +5548,7 @@ dependencies = [
 name = "tinyiothub-config"
 version = "1.1.0"
 dependencies = [
+ "serde",
  "tinyiothub-core",
 ]
 
@@ -5565,6 +5566,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tinyiothub-driver-bacnet"
+version = "1.1.0"
+dependencies = [
+ "tinyiothub-plugin",
+]
+
+[[package]]
 name = "tinyiothub-driver-modbus"
 version = "1.1.0"
 dependencies = [
@@ -5579,7 +5587,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "tinyiothub-driver-mqtt-bridge"
+version = "1.1.0"
+dependencies = [
+ "tinyiothub-plugin",
+]
+
+[[package]]
 name = "tinyiothub-driver-onvif"
+version = "1.1.0"
+dependencies = [
+ "tinyiothub-plugin",
+]
+
+[[package]]
+name = "tinyiothub-driver-opcua"
 version = "1.1.0"
 dependencies = [
  "tinyiothub-plugin",
@@ -5641,6 +5663,15 @@ version = "1.1.0"
 dependencies = [
  "tinyiothub-plugin",
  "tokio",
+]
+
+[[package]]
+name = "tinyiothub-metrics"
+version = "1.1.0"
+dependencies = [
+ "tinyiothub-core",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

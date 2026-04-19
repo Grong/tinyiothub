@@ -1,7 +1,6 @@
-use axum::Router;
 use tokio::net::TcpListener;
-use tower_http::trace::TraceLayer;
 use tracing::{error, info};
+use tinyiothub_cloud::server;
 use tracing_appender::{
     non_blocking,
     rolling::{RollingFileAppender, Rotation},
@@ -119,6 +118,7 @@ async fn main_impl() -> std::io::Result<()> {
 
     #[cfg(feature = "harmonyos")]
     let app = {
+        use axum::Router;
         use tower_http::services::ServeDir;
         // Initialize MCP tools with AppState for harmonyos
         use std::sync::Arc;
@@ -136,7 +136,7 @@ async fn main_impl() -> std::io::Result<()> {
     };
 
     #[cfg(not(feature = "harmonyos"))]
-    let app = create_app_router(app_state).await;
+    let app = server::create_app_router(app_state).await;
 
     let bind_address = config::get().server_bind_address();
     info!("🚀 Server listening on {}", bind_address);
@@ -231,154 +231,4 @@ async fn initialize_logging() -> std::io::Result<()> {
     }
 
     Ok(())
-}
-
-/// Create the main application router
-async fn create_app_router(app_state: tinyiothub_cloud::shared::app_state::AppState) -> Router {
-    use tower_http::cors::{AllowOrigin, CorsLayer};
-
-    tracing::info!("Creating CORS layer...");
-
-    // Initialize MCP tools with AppState
-    tracing::info!("Initializing MCP tools...");
-    use std::sync::Arc;
-    tinyiothub_cloud::api::mcp::init_app_state(Arc::new(app_state.clone()));
-    tinyiothub_cloud::api::mcp::register_tools().await;
-    tracing::info!("MCP tools initialized");
-
-    // Refresh agent tools after MCP registration
-    if let Err(e) = app_state.agent_runtime.refresh_tools().await {
-        tracing::error!("Failed to refresh agent tools: {}", e);
-    }
-
-    // Initialize self-healing state
-    let db = app_state.database.clone();
-    let _self_healing_state = tinyiothub_cloud::api::self_healing::init_self_healing_state(db);
-    // 创建CORS层 - 使用配置中的origins，支持credentials
-    let config = tinyiothub_cloud::infrastructure::config::get();
-    let cors_origins = &config.server.cors_origins;
-
-    let allowed_headers = [
-        axum::http::header::CONTENT_TYPE,
-        axum::http::header::AUTHORIZATION,
-        axum::http::header::ACCEPT,
-    ];
-    let allowed_methods = [
-        axum::http::Method::GET,
-        axum::http::Method::POST,
-        axum::http::Method::PUT,
-        axum::http::Method::DELETE,
-        axum::http::Method::OPTIONS,
-    ];
-
-    let allow_any = cors_origins.contains(&"*".to_string());
-    let explicit_origins: Vec<axum::http::HeaderValue> = if allow_any {
-        Vec::new()
-    } else {
-        cors_origins.iter().filter_map(|o| o.parse().ok()).collect()
-    };
-
-    let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::predicate(move |origin, _| {
-            if allow_any {
-                return true;
-            }
-            explicit_origins.iter().any(|o| o == origin)
-        }))
-        .allow_credentials(true)
-        .allow_methods(allowed_methods)
-        .allow_headers(allowed_headers);
-
-    tracing::info!("Creating API router...");
-    let api_router = tinyiothub_cloud::api::create_router();
-
-    tracing::info!("Building main router...");
-
-    // 静态文件服务 - SPA 模式
-    use axum::{
-        http::{StatusCode, Uri},
-        response::{IntoResponse, Response},
-    };
-
-    tracing::info!("Serving static files from wwwroot/ (SPA mode)");
-
-    // 创建一个处理器，对于所有非 API 请求返回对应的 HTML 文件
-    async fn spa_handler(uri: Uri) -> Response {
-        let path = uri.path();
-
-        // 如果是 API 请求，不应该到这里（已被 nest 处理）
-        if path.starts_with("/api/") {
-            return (StatusCode::NOT_FOUND, "API endpoint not found").into_response();
-        }
-
-        // 尝试读取请求的文件
-        let file_path = if path == "/" {
-            "wwwroot/index.html".to_string()
-        } else if path.ends_with('/') {
-            format!("wwwroot{}", path.trim_end_matches('/'))
-        } else {
-            format!("wwwroot{}", path)
-        };
-
-        match tokio::fs::read(&file_path).await {
-            Ok(content) => {
-                // 根据文件扩展名设置 Content-Type
-                let content_type = if file_path.ends_with(".html") {
-                    "text/html"
-                } else if file_path.ends_with(".js") {
-                    "application/javascript"
-                } else if file_path.ends_with(".css") {
-                    "text/css"
-                } else if file_path.ends_with(".json") {
-                    "application/json"
-                } else if file_path.ends_with(".png") {
-                    "image/png"
-                } else if file_path.ends_with(".jpg") || file_path.ends_with(".jpeg") {
-                    "image/jpeg"
-                } else if file_path.ends_with(".svg") {
-                    "image/svg+xml"
-                } else if file_path.ends_with(".ico") {
-                    "image/x-icon"
-                } else {
-                    "application/octet-stream"
-                };
-
-                ([(axum::http::header::CONTENT_TYPE, content_type)], content).into_response()
-            }
-            Err(_) => {
-                // 文件不存在，尝试 path.html
-                let html_path = format!("{}.html", file_path);
-                match tokio::fs::read(&html_path).await {
-                    Ok(content) => {
-                        ([(axum::http::header::CONTENT_TYPE, "text/html")], content).into_response()
-                    }
-                    Err(_) => {
-                        // 还是找不到，返回 index.html（SPA 路由）
-                        tracing::info!("Serving index.html for SPA route: {}", path);
-                        match tokio::fs::read("wwwroot/index.html").await {
-                            Ok(content) => {
-                                ([(axum::http::header::CONTENT_TYPE, "text/html")], content)
-                                    .into_response()
-                            }
-                            Err(_) => {
-                                (StatusCode::NOT_FOUND, "index.html not found").into_response()
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    let mut router = Router::new()
-        // API路由优先
-        .nest("/api", api_router)
-        // 所有其他请求使用 SPA 处理器
-        .fallback(spa_handler);
-
-    tracing::info!("Adding middleware layers...");
-    router = router.layer(cors).layer(TraceLayer::new_for_http());
-
-    tracing::info!("Adding application state...");
-    router.with_state(app_state)
 }

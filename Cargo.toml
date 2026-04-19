@@ -159,6 +159,7 @@ tinyiothub-engine = { path = "crates/tinyiothub-engine" }
 tinyiothub-storage = { path = "crates/tinyiothub-storage" }
 tinyiothub-plugin = { path = "crates/tinyiothub-plugin" }
 tinyiothub-plugin-sdk = { path = "sdks/plugin-sdk" }
+tinyiothub-metrics = { path = "crates/tinyiothub-metrics" }
 
 [profile.release]
 opt-level = 0

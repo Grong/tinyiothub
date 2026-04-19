@@ -8,3 +8,4 @@ description = "Configuration management for TinyIoTHub"
 
 [dependencies]
 tinyiothub-core = { workspace = true }
+serde = { workspace = true }
