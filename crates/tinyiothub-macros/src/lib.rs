@@ -167,7 +167,7 @@ pub fn derive_device_driver(input: TokenStream) -> TokenStream {
         let required = opt.required;
 
         quote! {
-            crate::dto::entity::component::ComponentOption::new(
+            tinyiothub_core::models::component::ComponentOption::new(
                 #label.to_string(),
                 #name.to_string(),
                 #default_value.to_string(),
@@ -200,13 +200,13 @@ pub fn derive_device_driver(input: TokenStream) -> TokenStream {
 
     let expanded = quote! {
         impl #name {
-            pub fn get_driver_info() -> crate::dto::entity::component::Component {
+            pub fn get_driver_info() -> tinyiothub_core::models::component::Component {
                 let opts = vec![
                     #(#options_code),*
                 ];
 
-                crate::dto::entity::component::Component::new(
-                    crate::dto::entity::component::CreateComponentRequest {
+                tinyiothub_core::models::component::Component::new(
+                    tinyiothub_core::models::component::CreateComponentRequest {
                         name: #driver_name.to_string(),
                         version: #version.to_string(),
                         class_name: #class_name.to_string(),
@@ -273,7 +273,7 @@ pub fn register_drivers(input: TokenStream) -> TokenStream {
         });
 
         /// 获取驱动信息列表
-        pub fn get_driver_list() -> Vec<crate::dto::entity::component::Component> {
+        pub fn get_driver_list() -> Vec<tinyiothub_core::models::component::Component> {
             vec![
                 #(#driver_list_entries),*
             ]
@@ -284,7 +284,7 @@ pub fn register_drivers(input: TokenStream) -> TokenStream {
             driver_name: &str,
             device: &Device,
             context: Arc<DataContext>,
-        ) -> Result<Box<dyn DeviceDriver>, crate::shared::error::Error> {
+        ) -> Result<Box<dyn DeviceDriver>, tinyiothub_core::error::Error> {
             tracing::debug!("Creating driver with name: {}", driver_name);
 
             if let Some(factory) = DRIVER_REGISTRY.get(driver_name) {
@@ -294,7 +294,7 @@ pub fn register_drivers(input: TokenStream) -> TokenStream {
             } else {
                 tracing::error!("Unknown driver name: {}", driver_name);
                 tracing::debug!("Available drivers: {:?}", DRIVER_REGISTRY.keys().collect::<Vec<_>>());
-                Err(crate::shared::error::Error::Unsupported(format!("Unknown driver name: {}", driver_name)))
+                Err(tinyiothub_core::error::Error::Unsupported(format!("Unknown driver name: {}", driver_name)))
             }
         }
 

@@ -6,7 +6,7 @@ use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 
-use tinyiothub_core::models::device::Device;
+use crate::dto::entity::device::Device;
 
 /// 设备连接状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

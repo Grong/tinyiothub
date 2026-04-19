@@ -1,17 +1,17 @@
+use crate::dto::entity::permission::{Permission, PermissionQuery};
 use axum::{
     extract::{Path, State},
     routing::get,
-    Json, Router,
+    Json, Router
 };
 use serde::Serialize;
 
 use crate::{
     api::AppState,
     dto::{
-        entity::permission::{Permission, PermissionQuery},
-        response::{ApiResponse, ApiResponseBuilder},
+        response::{ApiResponse, ApiResponseBuilder}
     },
-    shared::security::jwt::Claims,
+    shared::security::jwt::Claims
 };
 
 #[derive(Serialize)]

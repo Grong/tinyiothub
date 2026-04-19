@@ -2,7 +2,6 @@
 // 通知渠道配置 API
 
 
-use tinyiothub_core::models::notification_channel::{;
 use axum::{
     extract::{Path, Query, State},
     routing::{delete, get, post, put},
@@ -10,14 +9,15 @@ use axum::{
     Router,
 };
 
+use crate::dto::entity::notification_channel::{
+    ChannelStatistics, CreateNotificationChannelRequest, NotificationChannel,
+    NotificationChannelQueryParams, SendMessageRequest, UpdateNotificationChannelRequest,
+    find_notification_channel_by_id, find_all_notification_channels,
+    count_notification_channels, create_notification_channel,
+    update_notification_channel, delete_notification_channel,
+    get_notification_channel_statistics, send_notification_message,
+};
 use crate::{
-        ChannelStatistics, CreateNotificationChannelRequest, NotificationChannel,
-        NotificationChannelQueryParams, SendMessageRequest, UpdateNotificationChannelRequest,
-        find_notification_channel_by_id, find_all_notification_channels,
-        count_notification_channels, create_notification_channel,
-        update_notification_channel, delete_notification_channel,
-        get_notification_channel_statistics, send_notification_message,
-    },
     dto::response::{ApiResponse, builder::ApiResponseBuilder, PaginatedResponse, PaginationInfo},
     shared::app_state::AppState,
 };

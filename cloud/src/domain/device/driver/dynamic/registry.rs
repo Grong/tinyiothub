@@ -1,7 +1,7 @@
 //! 统一驱动注册表
 #![allow(dead_code, deprecated)] // Deprecated public API preserved for backward compatibility
 
-use tinyiothub_core::models::{component::Component, Device};
+use crate::dto::entity::{component::Component, Device};
 use std::{path::PathBuf, sync::Arc};
 
 use dashmap::DashMap;

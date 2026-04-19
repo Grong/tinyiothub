@@ -1,22 +1,22 @@
+use crate::dto::entity::tag::{
+            BatchTagBindingRequest, CreateTagBindingRequest, CreateTagRequest, Tag, TagBinding,
+            TagQuery, UpdateTagRequest,
+        };
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::Json,
     routing::{get, post},
-    Router,
+    Router
 };
 use serde::Deserialize;
 
 use crate::{
     api::AppState,
     dto::{
-        entity::tag::{
-            BatchTagBindingRequest, CreateTagBindingRequest, CreateTagRequest, Tag, TagBinding,
-            TagQuery, UpdateTagRequest,
-        },
-        response::{api_response::ApiResponse, builder::ApiResponseBuilder, PaginatedResponse, PaginationInfo},
+        response::{api_response::ApiResponse, builder::ApiResponseBuilder, PaginatedResponse, PaginationInfo}
     },
-    shared::security::jwt::Claims,
+    shared::security::jwt::Claims
 };
 
 #[derive(Debug, Deserialize)]
@@ -63,8 +63,8 @@ async fn list_tags(
         target_id: None,
         tenant_id: Some(claims.tenant_id),
         page: query.page,
-        page_size: query.page_size,
-    };
+        page_size: query.page_size
+};
 
     let page = query.page.unwrap_or(1);
     let page_size = query.page_size.unwrap_or(20);
@@ -235,8 +235,8 @@ async fn search_tags(
         target_id: None,
         tenant_id: Some(claims.tenant_id),
         page: query.page,
-        page_size: query.page_size,
-    };
+        page_size: query.page_size
+};
 
     let page = query.page.unwrap_or(1);
     let page_size = query.page_size.unwrap_or(20);

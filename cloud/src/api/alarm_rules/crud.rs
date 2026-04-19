@@ -1,16 +1,16 @@
+use crate::dto::entity::alarm::AlarmRuleDto;
 use axum::{
     extract::{Path, Query, State},
-    Json,
+    Json
 };
 
 use crate::{
     domain::alarm::{AlarmCondition, AlarmLevel, AlarmRule, NotificationConfig},
     dto::{
-        entity::AlarmRuleDto,
         request::{CreateAlarmRuleRequest, ToggleRuleRequest, UpdateAlarmRuleRequest},
-        response::{api_response::ApiResponse, builder::ApiResponseBuilder},
+        response::{api_response::ApiResponse, builder::ApiResponseBuilder}
     },
-    shared::{app_state::AppState, error_handling::ErrorCode, security::jwt::Claims},
+    shared::{app_state::AppState, error_handling::ErrorCode, security::jwt::Claims}
 };
 
 #[derive(serde::Deserialize)]
@@ -61,21 +61,21 @@ pub async fn create_alarm_rule(
     // 解析报警级别
     let alarm_level = match AlarmLevel::from_str(&req.alarm_level) {
         Some(level) => level,
-        None => return ApiResponseBuilder::error("无效的报警级别"),
-    };
+        None => return ApiResponseBuilder::error("无效的报警级别")
+};
 
     // 解析条件
     let condition: AlarmCondition = match serde_json::from_value(req.condition) {
         Ok(c) => c,
-        Err(e) => return ApiResponseBuilder::error(format!("无效的条件配置: {}", e)),
-    };
+        Err(e) => return ApiResponseBuilder::error(format!("无效的条件配置: {}", e))
+};
 
     // 解析通知配置
     let notification_config: NotificationConfig =
         match serde_json::from_value(req.notification_config) {
             Ok(nc) => nc,
-            Err(e) => return ApiResponseBuilder::error(format!("无效的通知配置: {}", e)),
-        };
+            Err(e) => return ApiResponseBuilder::error(format!("无效的通知配置: {}", e))
+};
 
     // 创建规则
     let rule = match AlarmRule::new(
@@ -89,8 +89,8 @@ pub async fn create_alarm_rule(
         notification_config,
     ) {
         Ok(r) => r,
-        Err(e) => return ApiResponseBuilder::error(format!("创建规则失败: {}", e)),
-    };
+        Err(e) => return ApiResponseBuilder::error(format!("创建规则失败: {}", e))
+};
 
     match state.alarm_service.create_rule(rule.clone()).await {
         Ok(_) => ApiResponseBuilder::success(AlarmRuleDto::from(rule)),
@@ -109,8 +109,8 @@ pub async fn update_alarm_rule(
     let mut rule = match state.alarm_service.get_rule_by_id(&id).await {
         Ok(Some(r)) => r,
         Ok(None) => return ApiResponseBuilder::error_with_code(404, "规则不存在"),
-        Err(e) => return ApiResponseBuilder::error(format!("获取规则失败: {}", e)),
-    };
+        Err(e) => return ApiResponseBuilder::error(format!("获取规则失败: {}", e))
+};
 
     // 解析更新字段
     let condition = req.condition.and_then(|c| serde_json::from_value(c).ok());

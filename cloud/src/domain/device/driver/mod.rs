@@ -6,8 +6,8 @@ pub use status::DeviceOverview;
 // 重新导出SDK类型以保持向后兼容
 pub use tinyiothub_plugin_sdk::{ComponentInfo, ComponentOption, CreateComponentRequest};
 
-use tinyiothub_core::models::Device, shared::error::Error;
-
+use crate::dto::entity::device::Device;
+use crate::{application::data_context::DataContext, shared::error::Error};
 
 pub mod driver;
 pub mod drivers;

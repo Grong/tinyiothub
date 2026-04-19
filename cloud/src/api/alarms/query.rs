@@ -1,17 +1,17 @@
+use crate::dto::entity::{AlarmDto, AlarmStatisticsDto};
 use axum::{
     extract::{Path, Query, State},
-    Json,
+    Json
 };
 use chrono::{DateTime, Utc};
 
 use crate::{
     domain::alarm::{AlarmLevel, AlarmQueryCriteria, AlarmStatus, TimeRange},
     dto::{
-        entity::{AlarmDto, AlarmStatisticsDto},
         request::{AlarmQueryParams, StatisticsQueryParams},
-        response::{api_response::ApiResponse, builder::ApiResponseBuilder, PaginatedResponse, PaginationInfo},
+        response::{api_response::ApiResponse, builder::ApiResponseBuilder, PaginatedResponse, PaginationInfo}
     },
-    shared::{app_state::AppState, error_handling::ErrorCode, security::jwt::Claims},
+    shared::{app_state::AppState, error_handling::ErrorCode, security::jwt::Claims}
 };
 
 /// 查询报警列表
@@ -74,8 +74,8 @@ pub async fn list_alarms(
         sort_by: Some("alarm_time".to_string()),
         sort_order: Some(crate::domain::alarm::SortOrder::Desc),
         limit: Some(page_size),
-        offset: Some(offset),
-    };
+        offset: Some(offset)
+};
 
     // 查询报警
     match state.alarm_service.get_alarm_history(criteria.clone()).await {

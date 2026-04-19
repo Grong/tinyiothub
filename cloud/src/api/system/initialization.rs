@@ -1,12 +1,12 @@
+use crate::dto::entity::user::CreateUserRequest;
 use axum::{extract::State, routing::post, Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     dto::{
-        entity::user::CreateUserRequest,
-        response::{ApiResponse, ApiResponseBuilder},
+        response::{ApiResponse, ApiResponseBuilder}
     },
-    shared::{app_state::AppState, error::Result},
+    shared::{app_state::AppState, error::Result}
 };
 
 #[derive(Deserialize)]
@@ -69,8 +69,8 @@ async fn initialize_system(
         email: request.admin_email,
         display_name: None,
         is_enabled: Some(true), // 启用状态
-        parent_id: None,
-    };
+        parent_id: None
+};
 
     match state.user_service.create_user(&create_request).await {
         Ok(admin_user) => {
@@ -126,8 +126,8 @@ pub async fn ensure_default_admin_user(state: &AppState) -> Result<()> {
             email: Some("admin@tinyiothub.local".to_string()),
             display_name: Some("Administrator".to_string()),
             is_enabled: Some(true),
-            parent_id: None,
-        };
+            parent_id: None
+};
 
         match state.user_service.create_user(&create_request).await {
             Ok(admin_user) => {

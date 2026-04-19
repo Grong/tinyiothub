@@ -1,27 +1,26 @@
-use axum::{
-    extract::{Path, Query, State},
-    routing::{get, post},
-    Json, Router,
-};
-use serde::Deserialize;
-
-use crate::{
-    api::middleware::WorkspaceScope,
-    dto::{
-        entity::{
+use crate::dto::entity::{
             device::{CreateDeviceRequest, Device, DeviceQueryParams, UpdateDeviceRequest},
             device_template::{
                 CreateDeviceFromTemplateRequest, DeviceCreationInput, DevicePreview,
                 TemplateRequirements,
             },
             template_error::ValidationResult,
-        },
-        request::pagination::PaginationQuery,
-        response::{builder::ApiResponseBuilder, ApiResponse, PaginatedResponse, PaginationInfo},
-    },
-    shared::{app_state::AppState, error::Error, security::jwt::Claims},
+        };
+use axum::{
+    extract::{Path, Query, State},
+    routing::{get, post},
+    Json, Router
 };
+use serde::Deserialize;
 
+use crate::{
+    api::middleware::WorkspaceScope,
+    dto::{
+        request::pagination::PaginationQuery,
+        response::{builder::ApiResponseBuilder, ApiResponse, PaginatedResponse, PaginationInfo}
+    },
+    shared::{app_state::AppState, error::Error, security::jwt::Claims}
+};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -103,8 +102,8 @@ async fn list_devices(
         page: query.pagination.page,
         page_size: query.pagination.page_size,
         tenant_id: Some(claims.tenant_id), // Enforce tenant isolation
-        workspace_id,
-    };
+        workspace_id
+};
 
     let include_properties = query.include_properties.unwrap_or(false);
     let page = query.pagination.page.unwrap_or(1);
@@ -185,8 +184,8 @@ async fn create_device(
         parent_id: req.parent_id,
         product_id: req.product_id,
         tenant_id: Some(claims.tenant_id), // Set from authenticated user's tenant
-        workspace_id,
-    };
+        workspace_id
+};
 
     match state.device_service.create_device(&request).await {
         Ok(created_device) => ApiResponseBuilder::success(created_device),
@@ -269,8 +268,8 @@ async fn update_device(
     if let Err(e) = super::verify_device_tenant(&state, &id, &claims.tenant_id).await {
         return match e {
             Error::NotFound => ApiResponseBuilder::error("设备不存在"),
-            _ => ApiResponseBuilder::error("查询设备失败"),
-        };
+            _ => ApiResponseBuilder::error("查询设备失败")
+};
     }
 
     let update_request = UpdateDeviceRequest {
@@ -316,8 +315,8 @@ async fn delete_device(
     if let Err(e) = super::verify_device_tenant(&state, &id, &claims.tenant_id).await {
         return match e {
             Error::NotFound => ApiResponseBuilder::error("设备不存在"),
-            _ => ApiResponseBuilder::error("查询设备失败"),
-        };
+            _ => ApiResponseBuilder::error("查询设备失败")
+};
     }
 
     match state.device_service.delete_device(&id).await {
@@ -349,8 +348,8 @@ async fn enable_device(
     if let Err(e) = super::verify_device_tenant(&state, &id, &claims.tenant_id).await {
         return match e {
             Error::NotFound => ApiResponseBuilder::error("设备不存在"),
-            _ => ApiResponseBuilder::error("查询设备失败"),
-        };
+            _ => ApiResponseBuilder::error("查询设备失败")
+};
     }
 
     match state.device_service.update_device_enabled_status(&id, true).await {
@@ -379,8 +378,8 @@ async fn disable_device(
     if let Err(e) = super::verify_device_tenant(&state, &id, &claims.tenant_id).await {
         return match e {
             Error::NotFound => ApiResponseBuilder::error("设备不存在"),
-            _ => ApiResponseBuilder::error("查询设备失败"),
-        };
+            _ => ApiResponseBuilder::error("查询设备失败")
+};
     }
 
     match state.device_service.update_device_enabled_status(&id, false).await {

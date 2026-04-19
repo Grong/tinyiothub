@@ -1,16 +1,16 @@
+use crate::dto::entity::device_command::{find_device_command_by_id, DeviceCommand};
 use axum::{
     extract::{Path, State},
     routing::post,
-    Json, Router,
+    Json, Router
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
     dto::{
-        entity::device_command::{find_device_command_by_id, DeviceCommand},
-        response::{builder::ApiResponseBuilder, ApiResponse},
+        response::{builder::ApiResponseBuilder, ApiResponse}
     },
-    shared::{app_state::AppState, security::jwt::Claims},
+    shared::{app_state::AppState, security::jwt::Claims}
 };
 
 #[derive(Debug, Deserialize)]
@@ -54,8 +54,8 @@ async fn execute_device_command(
     if let Err(e) = super::verify_device_tenant(&state, &device_id, &claims.tenant_id).await {
         return match e {
             crate::shared::error::Error::NotFound => ApiResponseBuilder::error("设备不存在"),
-            _ => ApiResponseBuilder::error("查询设备失败"),
-        };
+            _ => ApiResponseBuilder::error("查询设备失败")
+};
     }
 
     // 验证指令是否存在
@@ -127,8 +127,8 @@ async fn execute_device_command(
             None
         },
         executed_at: executed_at.clone(),
-        completed_at: None,
-    };
+        completed_at: None
+};
 
     tracing::info!(
         "Command submitted: device={}, command={}, execution_id={}",

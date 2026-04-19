@@ -11,7 +11,7 @@ use std::sync::OnceLock;
 use tokio::sync::RwLock;
 
 use crate::domain::self_healing::{ActionExecutor, PolicyEvaluator, SelfHealingPolicy, HealingExecutionRepository};
-use tinyiothub_core::models::self_healing::ProbeConfig;
+use crate::dto::entity::self_healing::ProbeConfig;
 use crate::infrastructure::persistence::database::Database;
 use crate::infrastructure::self_healing::ProbeScheduler;
 

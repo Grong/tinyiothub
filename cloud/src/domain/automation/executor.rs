@@ -15,7 +15,7 @@ use super::condition::TriggerContext;
 use crate::application::data_server::DataServer;
 use crate::domain::event::services::notification_service::NotificationManager;
 use crate::domain::event::value_objects::{ContentElement, EventLevel, NotificationChannelType, RichContent, TextFormat};
-use tinyiothub_core::models::device_command::DeviceCommand;
+use crate::dto::entity::device_command::DeviceCommand;
 
 /// 动作执行器
 pub struct ActionExecutor {

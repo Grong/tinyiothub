@@ -1,3 +1,9 @@
+use crate::dto::entity::{
+            device::{CreateDeviceRequest, DeviceQueryParams, UpdateDeviceRequest},
+            device_command::{CreateDeviceCommandRequest, bulk_create_device_commands, create_device_command, find_device_commands_by_device_id},
+            device_property::{create_device_properties_batch, find_device_properties_by_device_id},
+            Device, DeviceCommand, DeviceProperty,
+        };
 use std::sync::Arc;
 
 use crate::{
@@ -12,16 +18,10 @@ use crate::{
         tag::repository::TagRepository,
     },
     dto::{
-        entity::{
-            device::{CreateDeviceRequest, DeviceQueryParams, UpdateDeviceRequest},
-            device_command::{CreateDeviceCommandRequest, bulk_create_device_commands, create_device_command, find_device_commands_by_device_id},
-            device_property::{create_device_properties_batch, find_device_properties_by_device_id},
-            Device, DeviceCommand, DeviceProperty,
-        },
-        request::pagination::DataObjectWithPagination,
+        request::pagination::DataObjectWithPagination
     },
     infrastructure::{event::EventBus, persistence::database::Database},
-    shared::error::Error,
+    shared::error::Error
 };
 
 /// 设备服务
@@ -78,7 +78,7 @@ impl DeviceService {
         &self,
         template_engine: &crate::domain::template::engine::TemplateEngine,
         template_id: &str,
-        device_input: &tinyiothub_core::models::device_template::DeviceCreationInput,
+        device_input: &crate::dto::entity::device_template::DeviceCreationInput,
     ) -> Result<Device, Error> {
         tracing::info!(
             "Creating device from template: template_id={}, device_name={}",
@@ -734,8 +734,8 @@ impl DeviceService {
         // 从数据库加载设备基本信息
         let mut device = match self.repository.find_by_id(device_id).await? {
             Some(device) => device,
-            None => return Ok(None),
-        };
+            None => return Ok(None)
+};
 
         // 加载设备属性
         match self.get_device_properties(device_id).await {
@@ -813,8 +813,8 @@ impl DeviceService {
             name: command_name.to_string(),
             display_name: Some(format!("{} ({})", command_name, command_type)),
             description: Some(format!("Automation command: {} via {}", command_name, command_type)),
-            parameters: params,
-        };
+            parameters: params
+};
         // TODO: DeviceCommand 尚未提取到 repository，暂时仍直接调用 Database
         let db = self.database.clone();
         let _ = create_device_command(&db, &create_request).await;

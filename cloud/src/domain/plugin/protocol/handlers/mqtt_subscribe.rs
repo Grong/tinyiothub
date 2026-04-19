@@ -8,7 +8,7 @@ use tokio::sync::RwLock;
 use tracing::debug;
 
 use super::ProtocolHandler;
-use tinyiothub_core::models::device::Device;
+use crate::dto::entity::device::Device;
 use crate::{
     domain::device::driver::ResultValue,
     shared::error::Error

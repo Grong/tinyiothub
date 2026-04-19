@@ -9,9 +9,6 @@
 //! 3. Migrate handlers domain by domain
 //! 4. Update cloud/src/api/ to re-export from this crate
 
-pub mod middleware;
-pub mod dto;
-
 // Placeholder module for future middleware implementations
 pub mod middleware {
     //! Tower middleware for authentication, CORS, rate limiting, etc.

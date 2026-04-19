@@ -1,4 +1,4 @@
-use tinyiothub_core::models::{component::{Component, ComponentOption, CreateComponentRequest}, Device, DeviceCommand, DeviceProperty};
+use crate::dto::entity::{component::{Component, ComponentOption, CreateComponentRequest}, Device, DeviceCommand, DeviceProperty};
 use std::collections::HashMap;
 
 #[cfg(feature = "serial")]

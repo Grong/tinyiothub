@@ -1,7 +1,8 @@
+use crate::dto::entity::{device::Device, device_property::DeviceProperty};
 use axum::{
     extract::{Path, State},
     routing::get,
-    Json, Router,
+    Json, Router
 };
 use serde::Serialize;
 
@@ -11,10 +12,9 @@ use crate::{
         value_objects::EventType,
     },
     dto::{
-        entity::{device::Device, device_property::DeviceProperty},
-        response::{builder::ApiResponseBuilder, ApiResponse, DeviceCommandResponse},
+        response::{builder::ApiResponseBuilder, ApiResponse, DeviceCommandResponse}
     },
-    shared::{app_state::AppState, security::jwt::Claims},
+    shared::{app_state::AppState, security::jwt::Claims}
 };
 
 /// 设备完整配置文件
@@ -95,8 +95,8 @@ async fn get_device_profile(
     if let Err(e) = super::verify_device_tenant(&state, &device_id, &claims.tenant_id).await {
         return match e {
             crate::shared::error::Error::NotFound => ApiResponseBuilder::error("设备不存在"),
-            _ => ApiResponseBuilder::error("查询设备失败"),
-        };
+            _ => ApiResponseBuilder::error("查询设备失败")
+};
     }
 
     tracing::debug!("Getting complete profile for device: {}", device_id);
@@ -187,8 +187,8 @@ async fn get_device_profile(
         commands: commands_response,
         recent_events,
         overview,
-        generated_at: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
-    };
+        generated_at: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()
+};
 
     ApiResponseBuilder::success(profile)
 }
@@ -212,8 +212,8 @@ async fn fetch_recent_device_events(state: &AppState, device_id: &str) -> Vec<De
                     // 提取事件类型字符串
                     let event_type_str = match event.event_type() {
                         EventType::Device(device_type) => device_type.display_name(),
-                        EventType::System(_) => "System",
-                    };
+                        EventType::System(_) => "System"
+};
 
                     // 提取事件级别字符串
                     let level_str = match event.level() {
@@ -221,8 +221,8 @@ async fn fetch_recent_device_events(state: &AppState, device_id: &str) -> Vec<De
                         crate::domain::event::value_objects::EventLevel::Info => "Info",
                         crate::domain::event::value_objects::EventLevel::Warning => "Warning",
                         crate::domain::event::value_objects::EventLevel::Error => "Error",
-                        crate::domain::event::value_objects::EventLevel::Critical => "Critical",
-                    };
+                        crate::domain::event::value_objects::EventLevel::Critical => "Critical"
+};
 
                     // 提取内容
                     let content = event.content();

@@ -36,7 +36,7 @@ pub fn create_open_router() -> Router<AppState> {
 async fn validate_api_key(
     state: &AppState,
     api_key: Option<String>,
-) -> Result<(tinyiothub_core::models::tenant::ApiKey, tinyiothub_core::models::tenant::Tenant, String), StatusCode> {
+) -> Result<(crate::dto::entity::tenant::ApiKey, crate::dto::entity::tenant::Tenant, String), StatusCode> {
     let raw_key = api_key.ok_or(StatusCode::UNAUTHORIZED)?;
 
     let key = state.tenant_service.find_api_key_by_prefix(&raw_key)

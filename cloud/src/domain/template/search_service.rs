@@ -3,7 +3,7 @@ use std::sync::Arc;
 use sqlx::{QueryBuilder, Row};
 use tracing::{debug, info};
 
-use tinyiothub_core::models::{
+use crate::dto::entity::{
     device_template::{DeviceTemplate, TemplateQueryParams},
     template_error::TemplateError,
 };

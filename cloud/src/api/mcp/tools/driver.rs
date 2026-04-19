@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use crate::api::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
 use crate::domain::device::driver;
-use tinyiothub_core::models::component::ComponentOption;
+use crate::dto::entity::component::ComponentOption;
 
 /// Driver list response
 #[derive(Debug, Serialize)]
@@ -527,7 +527,7 @@ impl ToolHandler for TestDriverHandler {
                 .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
             // Create a test device
-            let test_device = tinyiothub_core::models::device::Device {
+            let test_device = crate::dto::entity::device::Device {
                 id: uuid::Uuid::new_v4().to_string(),
                 name: "test_device".to_string(),
                 display_name: Some("Test Device".to_string()),

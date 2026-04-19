@@ -3,8 +3,8 @@ use std::{path::PathBuf, sync::Arc};
 use dashmap::DashMap;
 use sqlx::SqlitePool;
 
-use tinyiothub_core::models::device_property::find_device_property_by_id;
-use tinyiothub_core::models::device::Device;
+use crate::dto::entity::device_property::find_device_property_by_id;
+use crate::dto::entity::device::Device;
 use crate::{
     domain::template::{
         engine::TemplateEngine, repository::TemplateRepository, service::TemplateService,
@@ -183,7 +183,7 @@ impl DataContext {
         &self,
         dev_name: &str,
         prop_name: &str,
-    ) -> Option<tinyiothub_core::models::device_property::DeviceProperty> {
+    ) -> Option<crate::dto::entity::device_property::DeviceProperty> {
         if let Some(device) = self.get_device_by_name(dev_name) {
             if let Some(properties) = &device.properties {
                 return properties.iter().find(|prop| prop.name == prop_name).cloned();

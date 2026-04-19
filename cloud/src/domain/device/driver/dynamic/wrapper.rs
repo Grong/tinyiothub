@@ -1,6 +1,6 @@
 //! 动态驱动包装器
 
-use tinyiothub_core::models::{Device, DeviceCommand};
+use crate::dto::entity::{Device, DeviceCommand};
 use std::sync::Arc;
 
 use tracing::debug;

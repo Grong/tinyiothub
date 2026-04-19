@@ -1,9 +1,13 @@
+use crate::dto::entity::self_healing::{
+            ExecuteSelfHealRequest, ExecuteSelfHealResponse, HealingExecutionDto,
+            ProbeConfig, ProbeConfig as ProbeConfigDto, ProbeResultDto, SelfHealingPolicyDto,
+        };
 use std::sync::Arc;
 
 use axum::{
     extract::{Path, Query, State},
     routing::{get, post, put},
-    Json, Router,
+    Json, Router
 };
 use serde::Deserialize;
 
@@ -11,13 +15,9 @@ use crate::{
     api::self_healing::get_self_healing_state,
     domain::self_healing::PolicyEvaluator,
     dto::{
-        entity::self_healing::{
-            ExecuteSelfHealRequest, ExecuteSelfHealResponse, HealingExecutionDto,
-            ProbeConfig, ProbeConfig as ProbeConfigDto, ProbeResultDto, SelfHealingPolicyDto,
-        },
-        response::{builder::ApiResponseBuilder, ApiResponse},
+        response::{builder::ApiResponseBuilder, ApiResponse}
     },
-    shared::{app_state::AppState, security::jwt::Claims},
+    shared::{app_state::AppState, security::jwt::Claims}
 };
 
 /// Create the self-healing router
@@ -50,8 +50,8 @@ async fn get_policy(
 ) -> Json<ApiResponse<SelfHealingPolicyDto>> {
     let state = match get_self_healing_state() {
         Some(s) => s,
-        None => return ApiResponseBuilder::error("Self-healing not initialized"),
-    };
+        None => return ApiResponseBuilder::error("Self-healing not initialized")
+};
 
     let state = state.read().await;
     ApiResponseBuilder::success(SelfHealingPolicyDto::from(&state.policy))
@@ -65,8 +65,8 @@ async fn update_policy(
 ) -> Json<ApiResponse<SelfHealingPolicyDto>> {
     let state = match get_self_healing_state() {
         Some(s) => s,
-        None => return ApiResponseBuilder::error("Self-healing not initialized"),
-    };
+        None => return ApiResponseBuilder::error("Self-healing not initialized")
+};
 
     let mut state = state.write().await;
     state.policy.enabled = policy.enabled;
@@ -86,8 +86,8 @@ async fn execute_action(
 
     let state = match get_self_healing_state() {
         Some(s) => s,
-        None => return ApiResponseBuilder::error("Self-healing not initialized"),
-    };
+        None => return ApiResponseBuilder::error("Self-healing not initialized")
+};
 
     let state = state.read().await;
 
@@ -96,8 +96,8 @@ async fn execute_action(
         "L1" => SeverityLevel::L1,
         "L2" => SeverityLevel::L2,
         "L3" => SeverityLevel::L3,
-        _ => return ApiResponseBuilder::error("Invalid severity level (L0-L3 required)"),
-    };
+        _ => return ApiResponseBuilder::error("Invalid severity level (L0-L3 required)")
+};
 
     let action_type = match request.action_type.to_lowercase().as_str() {
         "log_only" => RecoveryActionType::LogOnly,
@@ -107,8 +107,8 @@ async fn execute_action(
         "clean_logs" => RecoveryActionType::CleanLogs,
         "report_cloud" => RecoveryActionType::ReportCloud,
         "create_ticket" => RecoveryActionType::CreateTicket,
-        _ => return ApiResponseBuilder::error("Invalid action type"),
-    };
+        _ => return ApiResponseBuilder::error("Invalid action type")
+};
 
     let cooldown = state.policy.levels.get(&severity)
         .map(|p| p.cooldown_secs)
@@ -155,8 +155,8 @@ async fn get_executions(
 ) -> Json<ApiResponse<Vec<HealingExecutionDto>>> {
     let state = match get_self_healing_state() {
         Some(s) => s,
-        None => return ApiResponseBuilder::error("Self-healing not initialized"),
-    };
+        None => return ApiResponseBuilder::error("Self-healing not initialized")
+};
 
     let state = state.read().await;
     let limit = params.limit.unwrap_or(50);
@@ -182,8 +182,8 @@ async fn get_probe_status(
 ) -> Json<ApiResponse<Vec<ProbeResultDto>>> {
     let state = match get_self_healing_state() {
         Some(s) => s,
-        None => return ApiResponseBuilder::error("Self-healing not initialized"),
-    };
+        None => return ApiResponseBuilder::error("Self-healing not initialized")
+};
 
     let state = state.read().await;
     let results = state.scheduler.get_all_results().await;
@@ -198,8 +198,8 @@ async fn get_probe_config(
 ) -> Json<ApiResponse<ProbeConfigDto>> {
     let state = match get_self_healing_state() {
         Some(s) => s,
-        None => return ApiResponseBuilder::error("Self-healing not initialized"),
-    };
+        None => return ApiResponseBuilder::error("Self-healing not initialized")
+};
 
     let state = state.read().await;
     ApiResponseBuilder::success(ProbeConfigDto {
@@ -220,8 +220,8 @@ async fn update_probe_config(
 ) -> Json<ApiResponse<ProbeConfigDto>> {
     let state = match get_self_healing_state() {
         Some(s) => s,
-        None => return ApiResponseBuilder::error("Self-healing not initialized"),
-    };
+        None => return ApiResponseBuilder::error("Self-healing not initialized")
+};
 
     let mut state = state.write().await;
     state.probe_config = ProbeConfig {
@@ -230,8 +230,8 @@ async fn update_probe_config(
         device_probe_enabled: config.device_probe_enabled,
         device_probe_interval_secs: config.device_probe_interval_secs,
         task_probe_enabled: config.task_probe_enabled,
-        task_probe_interval_secs: config.task_probe_interval_secs,
-    };
+        task_probe_interval_secs: config.task_probe_interval_secs
+};
 
     ApiResponseBuilder::success(ProbeConfigDto {
         system_probe_enabled: state.probe_config.system_probe_enabled,

@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use tracing::{debug, info};
 
-use tinyiothub_core::models::{
+use crate::dto::entity::{
     device::CreateDeviceRequest,
     device_command::CreateDeviceCommandRequest,
     device_property::CreateDevicePropertyRequest,
@@ -420,7 +420,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
-    use tinyiothub_core::models::device_template::{CommandTemplate, DeviceInfo, PropertyTemplate};
+    use crate::dto::entity::device_template::{CommandTemplate, DeviceInfo, PropertyTemplate};
 
     fn create_test_template() -> DeviceTemplate {
         let mut template = DeviceTemplate::default();

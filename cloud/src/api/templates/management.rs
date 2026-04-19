@@ -1,9 +1,13 @@
+use crate::dto::entity::device_template::{
+            CreateDeviceTemplateRequest, DeviceCreationInput, DevicePreview, DeviceTemplate,
+            TemplateCategory, TemplateQueryParams, UpdateDeviceTemplateRequest,
+        };
 use std::{path::PathBuf, sync::Arc};
 
 use axum::{
     extract::{Path, Query, State},
     routing::{delete, get, post, put},
-    Json, Router,
+    Json, Router
 };
 use serde::Deserialize;
 
@@ -14,13 +18,9 @@ use crate::{
         validator::TemplateValidator,
     },
     dto::{
-        entity::device_template::{
-            CreateDeviceTemplateRequest, DeviceCreationInput, DevicePreview, DeviceTemplate,
-            TemplateCategory, TemplateQueryParams, UpdateDeviceTemplateRequest,
-        },
-        response::{ApiResponse, ApiResponseBuilder, PaginatedResponse, PaginationInfo},
+        response::{ApiResponse, ApiResponseBuilder, PaginatedResponse, PaginationInfo}
     },
-    shared::security::jwt::Claims,
+    shared::security::jwt::Claims
 };
 
 #[derive(Deserialize)]
@@ -69,8 +69,8 @@ async fn list_templates(
         protocol_type: query.protocol_type,
         keyword: query.keyword,
         page: query.page,
-        page_size: query.page_size,
-    };
+        page_size: query.page_size
+};
 
     let page = params.page.unwrap_or(1);
     let page_size = params.page_size.unwrap_or(20);

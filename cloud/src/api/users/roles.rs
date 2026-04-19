@@ -1,18 +1,18 @@
+use crate::dto::entity::role::{CreateRoleRequest, Role, UpdateRoleRequest};
 use axum::{
     extract::{Path, Query, State},
     routing::get,
-    Json, Router,
+    Json, Router
 };
 use serde::Deserialize;
 
 use crate::{
     api::AppState,
     dto::{
-        entity::role::{CreateRoleRequest, Role, UpdateRoleRequest},
         request::pagination::PaginationQuery,
-        response::{ApiResponse, ApiResponseBuilder},
+        response::{ApiResponse, ApiResponseBuilder}
     },
-    shared::security::jwt::Claims,
+    shared::security::jwt::Claims
 };
 
 #[derive(Deserialize)]

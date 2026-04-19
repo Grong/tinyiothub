@@ -5681,6 +5681,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "tinyiothub-web"
+version = "1.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tinyiothub-core",
+ "tinyiothub-storage",
+ "tokio",
+ "tower",
+ "tower-http",
+]
+
+[[package]]
 name = "tinystr"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

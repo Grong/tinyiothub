@@ -12,7 +12,7 @@ use serde_json::Value;
 use tokio::sync::RwLock;
 
 use crate::api::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
-use tinyiothub_core::models::heartbeat::{
+use crate::dto::entity::heartbeat::{
     HeartbeatConfig, HeartbeatStatus,
     ReportHeartbeatResponse,
 };

@@ -9,7 +9,7 @@ use tracing::{error, info, warn};
 
 use crate::domain::cron::executor::{ExecutionResult, ExecutorError, ExecutorRegistry};
 use crate::domain::cron::repository::{CronJobRepository, CronRunRepository};
-use tinyiothub_core::models::cron_job::CronJob;
+use crate::dto::entity::cron_job::CronJob;
 use crate::shared::error::Result;
 
 /// Cron job scheduler service that polls for due jobs and executes them.

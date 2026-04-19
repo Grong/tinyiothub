@@ -1,10 +1,11 @@
+use crate::dto::entity::component::{Component, ComponentOption};
 use std::collections::HashMap;
 
 use axum::{
     extract::{Path, Query},
     response::Json,
     routing::{delete, get, post},
-    Router,
+    Router
 };
 use serde::{Deserialize, Serialize};
 
@@ -12,10 +13,9 @@ use crate::{
     api_error, api_success,
     domain::device::driver::get_driver_list,
     dto::{
-        entity::component::{Component, ComponentOption},
-        response::{ApiResponse, PaginatedResponse, PaginationInfo},
+        response::{ApiResponse, PaginatedResponse, PaginationInfo}
     },
-    shared::app_state::AppState,
+    shared::app_state::AppState
 };
 
 pub mod dynamic;
@@ -140,8 +140,8 @@ async fn check_driver_support(Path(name): Path<String>) -> Json<ApiResponse<Pagi
             page_size: 1,
             total_pages: 1,
             total_count,
-        },
-    };
+        }
+};
 
     tracing::info!("Driver {} support status: {}", name, is_supported);
 

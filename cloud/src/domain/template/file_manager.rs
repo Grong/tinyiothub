@@ -6,7 +6,7 @@ use std::{
 use serde_json;
 use tracing::{error, info, warn};
 
-use tinyiothub_core::models::{
+use crate::dto::entity::{
     device_template::CreateDeviceTemplateRequest, template_error::TemplateError,
 };
 
@@ -167,7 +167,7 @@ impl TemplateFileManager {
         // 检查必填字段
         if template.name.is_empty() {
             return Err(TemplateError::ValidationFailed {
-                errors: vec![tinyiothub_core::models::template_error::ValidationError::required_field(
+                errors: vec![crate::dto::entity::template_error::ValidationError::required_field(
                     "name",
                 )],
             });
@@ -175,7 +175,7 @@ impl TemplateFileManager {
 
         if template.category.is_empty() {
             return Err(TemplateError::ValidationFailed {
-                errors: vec![tinyiothub_core::models::template_error::ValidationError::required_field(
+                errors: vec![crate::dto::entity::template_error::ValidationError::required_field(
                     "category",
                 )],
             });
@@ -183,7 +183,7 @@ impl TemplateFileManager {
 
         if template.device_type.is_empty() {
             return Err(TemplateError::ValidationFailed {
-                errors: vec![tinyiothub_core::models::template_error::ValidationError::required_field(
+                errors: vec![crate::dto::entity::template_error::ValidationError::required_field(
                     "device_type",
                 )],
             });
@@ -191,7 +191,7 @@ impl TemplateFileManager {
 
         if template.display_name.is_empty() {
             return Err(TemplateError::ValidationFailed {
-                errors: vec![tinyiothub_core::models::template_error::ValidationError::required_field(
+                errors: vec![crate::dto::entity::template_error::ValidationError::required_field(
                     "display_name",
                 )],
             });

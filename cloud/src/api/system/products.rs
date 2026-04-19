@@ -1,17 +1,17 @@
+use crate::dto::entity::product::{CreateProductRequest, Product, UpdateProductRequest};
 use axum::{
     extract::{Path, Query, State},
     routing::get,
-    Json, Router,
+    Json, Router
 };
 use serde::Deserialize;
 
 use crate::{
     dto::{
-        entity::product::{CreateProductRequest, Product, UpdateProductRequest},
         request::pagination::PaginationQuery,
-        response::{ApiResponse, ApiResponseBuilder},
+        response::{ApiResponse, ApiResponseBuilder}
     },
-    shared::{app_state::AppState, security::jwt::Claims},
+    shared::{app_state::AppState, security::jwt::Claims}
 };
 
 #[derive(Deserialize)]

@@ -1,4 +1,4 @@
-use tinyiothub_core::models::{Device, DeviceCommand};
+use crate::dto::entity::{Device, DeviceCommand};
 use std::{collections::HashMap, sync::Arc};
 
 use dashmap::DashMap;

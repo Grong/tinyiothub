@@ -1,16 +1,16 @@
+use crate::dto::entity::device_property::DeviceProperty;
 use axum::{
     extract::{Path, State},
     routing::{get, put},
-    Json, Router,
+    Json, Router
 };
 use serde::Deserialize;
 
 use crate::{
     dto::{
-        entity::device_property::DeviceProperty,
-        response::{builder::ApiResponseBuilder, ApiResponse},
+        response::{builder::ApiResponseBuilder, ApiResponse}
     },
-    shared::{app_state::AppState, security::jwt::Claims},
+    shared::{app_state::AppState, security::jwt::Claims}
 };
 
 #[derive(Deserialize)]
@@ -35,8 +35,8 @@ async fn get_device_properties(
     if let Err(e) = super::verify_device_tenant(&state, &device_id, &claims.tenant_id).await {
         return match e {
             crate::shared::error::Error::NotFound => ApiResponseBuilder::error("设备不存在"),
-            _ => ApiResponseBuilder::error("查询设备失败"),
-        };
+            _ => ApiResponseBuilder::error("查询设备失败")
+};
     }
 
     match state.device_service.get_device_properties(&device_id).await {
@@ -66,8 +66,8 @@ async fn get_device_property_by_name(
     if let Err(e) = super::verify_device_tenant(&state, &device.id, &claims.tenant_id).await {
         return match e {
             crate::shared::error::Error::NotFound => ApiResponseBuilder::error("设备不存在"),
-            _ => ApiResponseBuilder::error("查询设备失败"),
-        };
+            _ => ApiResponseBuilder::error("查询设备失败")
+};
     }
     let property = state.get_device_prop_by_name(&device_name, &property_name);
     ApiResponseBuilder::success(property)
@@ -83,8 +83,8 @@ async fn update_property_value(
     if let Err(e) = super::verify_device_tenant(&state, &device_id, &claims.tenant_id).await {
         return match e {
             crate::shared::error::Error::NotFound => ApiResponseBuilder::error("设备不存在"),
-            _ => ApiResponseBuilder::error("查询设备失败"),
-        };
+            _ => ApiResponseBuilder::error("查询设备失败")
+};
     }
     match state.update_device_property_value(&device_id, &property_id, &req.value).await {
         Ok(()) => {

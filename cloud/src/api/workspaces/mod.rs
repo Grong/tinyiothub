@@ -1,6 +1,5 @@
 // Workspaces API Module
 
-use tinyiothub_core::models::workspace::{;
 use axum::{
     extract::{Extension, Path, Query, State},
     routing::{delete, get, post, put},
@@ -8,10 +7,11 @@ use axum::{
     Router,
 };
 
+use crate::dto::entity::workspace::{
+    AssignDeviceRequest, CreateWorkspaceRequest, UpdateWorkspaceRequest,
+    WorkspaceQueryParams, WorkspaceWithDeviceCount,
+};
 use crate::{
-        AssignDeviceRequest, CreateWorkspaceRequest, UpdateWorkspaceRequest,
-        WorkspaceQueryParams, WorkspaceWithDeviceCount,
-    },
     dto::response::{ApiResponse, builder::ApiResponseBuilder},
     shared::{app_state::AppState, security::jwt::Claims},
 };

@@ -33,7 +33,7 @@ fn verify_signature(payload: &str, signature: &str, secret: &str) -> bool {
     expected.as_bytes().ct_eq(signature.as_bytes()).into()
 }
 
-use tinyiothub_core::models::tenant::CreateTenantRequest;
+use crate::dto::entity::tenant::CreateTenantRequest;
 use crate::{
     shared::app_state::AppState
 };
@@ -71,14 +71,14 @@ pub struct LoginRequest {
 #[serde(rename_all = "snake_case")]
 pub struct LoginResponse {
     pub token: String,
-    pub tenant: tinyiothub_core::models::tenant::Tenant,
+    pub tenant: crate::dto::entity::tenant::Tenant,
     pub user: serde_json::Value,
 }
 
 /// List subscription plans (public)
 async fn list_plans(
     State(state): State<AppState>,
-) -> Result<Json<Vec<tinyiothub_core::models::tenant::SubscriptionPlan>>, StatusCode> {
+) -> Result<Json<Vec<crate::dto::entity::tenant::SubscriptionPlan>>, StatusCode> {
     match state.tenant_service.find_all_plans().await {
         Ok(plans) => Ok(Json(plans)),
         Err(e) => {
@@ -261,7 +261,7 @@ async fn login(
 
     let tenant_row = tenant_rows.into_iter().next().ok_or(StatusCode::NOT_FOUND)?;
 
-    let tenant = tinyiothub_core::models::tenant::Tenant {
+    let tenant = crate::dto::entity::tenant::Tenant {
         id: tenant_row.try_get("id").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
         name: tenant_row.try_get("name").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
         slug: tenant_row.try_get("slug").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,

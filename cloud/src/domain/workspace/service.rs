@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use tinyiothub_core::models::workspace::{Workspace, WorkspaceWithDeviceCount};
+use crate::dto::entity::workspace::{Workspace, WorkspaceWithDeviceCount};
 use crate::shared::error::Result;
 use super::repository::WorkspaceRepository;
 

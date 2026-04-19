@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 use crate::domain::self_healing::{
     PolicyEvaluator, ProbeFinding, ProbeResult, ProbeType, SeverityLevel,
 };
-use tinyiothub_core::models::self_healing::ProbeConfig;
+use crate::dto::entity::self_healing::ProbeConfig;
 
 /// Probe scheduler that runs periodic health checks
 pub struct ProbeScheduler {

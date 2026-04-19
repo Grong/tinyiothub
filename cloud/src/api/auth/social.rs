@@ -1,21 +1,24 @@
 // 第三方登录模块
 // 支持微信扫码登录
 
+use crate::dto::entity::user::User;
 use axum::{
     extract::{Query, State},
     http::StatusCode,
     response::{Html, IntoResponse, Json, Response},
     routing::{get, post},
-    Router,
+    Router
 };
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
 use crate::{
     api::AppState,
-    dto::{entity::user::User, response::{ApiResponse, ApiResponseBuilder}},
+    dto::{
+        response::{ApiResponse, ApiResponseBuilder}
+    },
     infrastructure::{config::get as get_config, redis::RedisClient},
-    shared::security::jwt,
+    shared::security::jwt
 };
 
 pub fn create_router() -> Router<AppState> {
@@ -251,8 +254,8 @@ async fn wechat_callback(
 
     let wechat_config = WechatOAuthConfig {
         app_id: config.app_id.unwrap_or_default(),
-        app_secret: config.app_secret.unwrap_or_default(),
-    };
+        app_secret: config.app_secret.unwrap_or_default()
+};
 
     let token_resp = match exchange_wechat_code(&code, &wechat_config).await {
         Ok(r) => r,

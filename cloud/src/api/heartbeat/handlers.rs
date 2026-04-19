@@ -1,10 +1,14 @@
 // Heartbeat API Handlers
 // HTTP endpoint handlers for heartbeat management
 
+use crate::dto::entity::heartbeat::{
+            ConfigureHeartbeatRequest, HeartbeatConfig, HeartbeatStatus,
+            ReportHeartbeatResponse,
+        };
 use axum::{
     extract::State,
     routing::{get, post},
-    Json, Router,
+    Json, Router
 };
 use chrono::Utc;
 use serde::Deserialize;
@@ -12,13 +16,9 @@ use serde::Deserialize;
 use crate::{
     api::mcp::tools::heartbeat::{get_heartbeat_config, get_heartbeat_status},
     dto::{
-        entity::heartbeat::{
-            ConfigureHeartbeatRequest, HeartbeatConfig, HeartbeatStatus,
-            ReportHeartbeatResponse,
-        },
-        response::{builder::ApiResponseBuilder, ApiResponse},
+        response::{builder::ApiResponseBuilder, ApiResponse}
     },
-    shared::{app_state::AppState, security::jwt::Claims},
+    shared::{app_state::AppState, security::jwt::Claims}
 };
 
 /// Create the heartbeat router
@@ -91,8 +91,8 @@ async fn report_heartbeat(
     let response = ReportHeartbeatResponse {
         accepted: true,
         next_heartbeat_at: next_heartbeat,
-        status: status.status.clone(),
-    };
+        status: status.status.clone()
+};
 
     ApiResponseBuilder::success(response)
 }
@@ -133,8 +133,8 @@ async fn get_heartbeat(
         active_alarms: status.active_alarms,
         uptime_seconds: status.uptime_seconds,
         last_cloud_sync: status.last_cloud_sync,
-        error_message: status.error_message.clone(),
-    };
+        error_message: status.error_message.clone()
+};
 
     ApiResponseBuilder::success(response)
 }

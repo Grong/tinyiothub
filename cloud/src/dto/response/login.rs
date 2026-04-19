@@ -30,8 +30,8 @@ pub struct UserInfo {
     pub parent_id: Option<String>,
 }
 
-impl From<tinyiothub_core::models::user::User> for UserInfo {
-    fn from(user: tinyiothub_core::models::user::User) -> Self {
+impl From<crate::dto::entity::user::User> for UserInfo {
+    fn from(user: crate::dto::entity::user::User) -> Self {
         Self {
             id: user.id.clone(),
             name: user.get_display_name().to_string(),
