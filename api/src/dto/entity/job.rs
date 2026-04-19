@@ -183,6 +183,7 @@ mod tests {
             target_device_id: None,
             target_command_name: None,
             target_command_params: None,
+            is_enabled: None,
             tags: None,
             alert_config: None,
         };
