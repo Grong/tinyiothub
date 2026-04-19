@@ -1,5 +1,5 @@
 # ============================================
-# Stage 1: Frontend Builder - 构建 Next.js 静态文件
+# Stage 1: Frontend Builder - 构建前端静态文件
 # ============================================
 FROM node:20-alpine AS frontend-builder
 
@@ -35,29 +35,37 @@ RUN apk add --no-cache \
 WORKDIR /build
 
 # 第一步：只复制依赖文件，构建依赖缓存
-COPY api/Cargo.toml api/Cargo.lock ./api/
-COPY api/derive ./api/derive
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
 COPY sdks ./sdks
+COPY vendor ./vendor
+COPY api/Cargo.toml ./api/
+COPY cloud/Cargo.toml ./cloud/
+COPY bin/tinyiothub-gateway/Cargo.toml ./bin/tinyiothub-gateway/
+COPY bin/tinyiothub-edge/Cargo.toml ./bin/tinyiothub-edge/
 
-# 创建虚拟 main.rs 来构建依赖
-RUN mkdir -p ./api/src && \
-    echo "fn main() {}" > ./api/src/main.rs
-
-WORKDIR /build/api
+# 创建虚拟 src 来构建依赖
+RUN mkdir -p ./api/src && echo "fn main() {}" > ./api/src/main.rs && \
+    mkdir -p ./cloud/src && echo "fn main() {}" > ./cloud/src/main.rs && \
+    mkdir -p ./bin/tinyiothub-gateway/src && echo "fn main() {}" > ./bin/tinyiothub-gateway/src/main.rs && \
+    mkdir -p ./bin/tinyiothub-edge/src && echo "fn main() {}" > ./bin/tinyiothub-edge/src/main.rs
 
 # 构建依赖（这一层会被缓存）
-RUN cargo build --release --bin tinyiothub || true
+RUN cargo build --release --bin tinyiothub --bin tinyiothub-cloud --bin tinyiothub-gateway --bin tinyiothub-edge || true
 
 # 第二步：复制实际源码
-WORKDIR /build
 COPY api/src ./api/src
 COPY api/migrations ./api/migrations
 COPY api/templates ./api/templates
+COPY cloud/src ./cloud/src
+COPY cloud/migrations ./cloud/migrations
+COPY cloud/templates ./cloud/templates
+COPY bin/tinyiothub-gateway/src ./bin/tinyiothub-gateway/src
+COPY bin/tinyiothub-edge/src ./bin/tinyiothub-edge/src
 
 # 清理虚拟构建产物，重新编译（只编译项目代码）
-WORKDIR /build/api
-RUN rm -f ./target/release/deps/tinyiothub* && \
-    cargo build --release --bin tinyiothub
+RUN rm -f ./target/release/deps/tinyiothub* ./target/release/deps/tinyiothub_cloud* ./target/release/deps/tinyiothub_gateway* ./target/release/deps/tinyiothub_edge* && \
+    cargo build --release --bin tinyiothub --bin tinyiothub-cloud --bin tinyiothub-gateway --bin tinyiothub-edge
 
 # ============================================
 # Stage 3: Runtime - 最小化运行时镜像
@@ -74,11 +82,16 @@ RUN apk add --no-cache \
 WORKDIR /app
 
 # 从 backend-builder 复制编译产物
-COPY --from=backend-builder /build/api/target/release/tinyiothub /app/
+COPY --from=backend-builder /build/target/release/tinyiothub /app/
+COPY --from=backend-builder /build/target/release/tinyiothub-cloud /app/
+COPY --from=backend-builder /build/target/release/tinyiothub-gateway /app/
+COPY --from=backend-builder /build/target/release/tinyiothub-edge /app/
+
+# 从 backend-builder 复制 migrations/templates
 COPY --from=backend-builder /build/api/migrations /app/migrations
 COPY --from=backend-builder /build/api/templates /app/templates
 
-# 从 frontend-builder 复制静态文件（Vite 输出到 dist/ui）
+# 从前端 builder 复制静态文件
 COPY --from=frontend-builder /frontend/dist/ui /app/wwwroot
 
 # 复制配置文件作为默认配置
@@ -107,5 +120,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
 RUN addgroup -g 1001 -S appgroup && adduser -u 1001 -S appuser -G appgroup
 USER appuser
 
-# 启动应用
+# 默认启动 legacy API binary
 CMD ["/app/tinyiothub"]

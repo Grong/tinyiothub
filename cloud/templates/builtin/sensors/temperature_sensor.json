@@ -1,0 +1,63 @@
+{
+  "name": "temperature_sensor",
+  "display_name": {
+    "zh": "温度传感器",
+    "en": "Temperature Sensor"
+  },
+  "description": {
+    "zh": "标准温度传感器设备模板，支持温度监测和报警配置",
+    "en": "Standard temperature sensor device template with temperature monitoring and alarm configuration"
+  },
+  "version": "1.0.0",
+  "author": "System",
+  "category": "sensors",
+  "manufacturer": null,
+  "device_type": "sensor",
+  "protocol_type": "modbus",
+  "driver_name": "modbus_rtu",
+  "tags": ["sensor", "temperature", "monitoring"],
+  "device_info": {
+    "default_name_pattern": "temp_sensor_{index}",
+    "default_display_name_pattern": "温度传感器 {index}",
+    "default_description": {
+      "zh": "温度监测传感器",
+      "en": "Temperature monitoring sensor"
+    },
+    "required_fields": ["name", "address"]
+  },
+  "properties": [
+    {
+      "name": "temperature",
+      "display_name": {
+        "zh": "温度",
+        "en": "Temperature"
+      },
+      "description": {
+        "zh": "当前环境温度",
+        "en": "Current ambient temperature"
+      },
+      "data_type": "number",
+      "unit": "°C",
+      "min_value": -50.0,
+      "max_value": 200.0,
+      "default_value": "25.0",
+      "is_read_only": true,
+      "is_required": true
+    }
+  ],
+  "commands": [
+    {
+      "name": "read_temperature",
+      "display_name": {
+        "zh": "读取温度",
+        "en": "Read Temperature"
+      },
+      "description": {
+        "zh": "读取当前温度值",
+        "en": "Read current temperature value"
+      },
+      "parameters": "{}",
+      "is_required": true
+    }
+  ]
+}

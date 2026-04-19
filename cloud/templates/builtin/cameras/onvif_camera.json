@@ -1,0 +1,60 @@
+{
+  "name": "onvif_camera",
+  "display_name": {
+    "zh": "ONVIF摄像头",
+    "en": "ONVIF Camera"
+  },
+  "description": {
+    "zh": "标准ONVIF协议摄像头设备模板，支持视频流和PTZ控制",
+    "en": "Standard ONVIF protocol camera device template with video streaming and PTZ control"
+  },
+  "version": "1.0.0",
+  "author": "System",
+  "category": "cameras",
+  "manufacturer": null,
+  "device_type": "camera",
+  "protocol_type": "onvif",
+  "driver_name": "onvif",
+  "tags": ["camera", "onvif", "surveillance", "ptz"],
+  "device_info": {
+    "default_name_pattern": "camera_{index}",
+    "default_display_name_pattern": "摄像头 {index}",
+    "default_description": {
+      "zh": "ONVIF网络摄像头",
+      "en": "ONVIF Network Camera"
+    },
+    "required_fields": ["name", "address"]
+  },
+  "properties": [
+    {
+      "name": "resolution",
+      "display_name": {
+        "zh": "分辨率",
+        "en": "Resolution"
+      },
+      "description": {
+        "zh": "视频分辨率设置",
+        "en": "Video resolution setting"
+      },
+      "data_type": "string",
+      "default_value": "1920x1080",
+      "is_read_only": false,
+      "is_required": true
+    }
+  ],
+  "commands": [
+    {
+      "name": "get_snapshot",
+      "display_name": {
+        "zh": "获取快照",
+        "en": "Get Snapshot"
+      },
+      "description": {
+        "zh": "获取当前视频快照",
+        "en": "Get current video snapshot"
+      },
+      "parameters": "{}",
+      "is_required": true
+    }
+  ]
+}

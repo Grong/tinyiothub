@@ -1,0 +1,14 @@
+[plugin]
+name = "cron_sync_data"
+version = "1.0.0"
+type = "scheduler"
+description = "数据同步定时任务"
+
+[scheduler]
+type = "cron"
+cron = "0 */30 * * * *"
+enabled = true
+
+[scheduler.payload]
+task_type = "sync_data"
+target = "external_api"

@@ -1,0 +1,10 @@
+[plugin]
+name = "postgres_storage"
+version = "1.0.0"
+type = "storage"
+description = "PostgreSQL 数据存储"
+
+[storage]
+type = "postgres"
+connection_string = "host=localhost port=5432 user=postgres password=secret dbname=iothub"
+table_name = "device_data"

@@ -1,0 +1,16 @@
+[package]
+name = "tinyiothub-edge"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "tinyiothub-edge"
+path = "src/main.rs"
+
+[dependencies]
+tinyiothub-core = { workspace = true }
+tinyiothub-engine = { workspace = true }
+tinyiothub-plugin = { workspace = true }
+tokio = { workspace = true }

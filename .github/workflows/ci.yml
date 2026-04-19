@@ -11,18 +11,15 @@ env:
 
 jobs:
   # -----------------------------------------------------------------------------
-  # 后端检查
+  # Rust Workspace Check
   # -----------------------------------------------------------------------------
-  backend-check:
-    name: Backend Check
+  rust-check:
+    name: Rust Workspace Check
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: api
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # 需要历史来检测新文件
+          fetch-depth: 0
 
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
@@ -35,26 +32,25 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            api/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('api/Cargo.lock') }}
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      - name: Check
-        run: cargo check
+      - name: Check workspace
+        run: cargo check --workspace
 
       - name: Fmt
         run: cargo fmt --check
 
       - name: Clippy
-        run: cargo clippy -- -D warnings --allow dead_code --allow unused_imports --allow unused_variables --allow unused_mut --allow non_snake_case
+        run: cargo clippy --workspace -- -D warnings --allow dead_code --allow unused_imports --allow unused_variables --allow unused_mut --allow non_snake_case
 
-      - name: Test
-        run: cargo test --all
+      - name: Test workspace
+        run: cargo test --workspace
 
       - name: Detect new files
         id: new-files
         run: |
-          # 获取相对于 origin/saas 的新增文件
           NEW_FILES=$(git diff --name-only origin/saas...HEAD --diff-filter=A | grep -E "\.(rs)$" || true)
           echo "new_files=$NEW_FILES" >> $GITHUB_OUTPUT
           echo "=== New Rust files in this PR ==="
@@ -71,19 +67,18 @@ jobs:
           NEW_FILES="${{ steps.new-files.outputs.new_files }}"
           for file in $NEW_FILES; do
             echo "Checking: $file"
-            
-            # 1. 检查是否在 api/src/ 下创建了散弹式 utils/helpers
-            if echo "$file" | grep -qE "^api/src/utils.*\.rs$|^api/src/helpers.*\.rs$|^api/src/common.*\.rs$"; then
+
+            # 1. 检查是否在 api/src/ 或 cloud/src/ 下创建了散弹式 utils/helpers
+            if echo "$file" | grep -qE "^api/src/utils.*\.rs$|^api/src/helpers.*\.rs$|^api/src/common.*\.rs$|^cloud/src/utils.*\.rs$|^cloud/src/helpers.*\.rs$|^cloud/src/common.*\.rs$"; then
               echo "❌ ARCHITECTURE VIOLATION: Cannot create scatter-shot utils/helpers: $file"
               echo "   ✅ Use shared/ or specific domain modules"
               exit 1
             fi
-            
+
             # 2. 检查新文件是否在 domain/ 但没有 #[cfg(test)]
-            if echo "$file" | grep -qE "^api/src/domain/.*\.rs$"; then
+            if echo "$file" | grep -qE "^api/src/domain/.*\.rs$|^cloud/src/domain/.*\.rs$"; then
               if ! grep -qE "#\[cfg\(test\)\]|#\[test\]" "$file" 2>/dev/null; then
                 echo "⚠️  WARNING: New domain file has no tests: $file"
-                # 不强制失败，只警告
               fi
             fi
           done
@@ -92,17 +87,11 @@ jobs:
       - name: Grandfathered Check (All Files)
         run: |
           echo "=== Checking ALL modified files for critical violations ==="
-          
-          # 这些检查对所有文件生效（不论新旧）
-          
-          # 检查 1：禁止直接 panic/unwrap in handlers
-          MODIFIED_HANDLERS=$(git diff --name-only origin/saas...HEAD | grep -E "^api/src/api/.*\.rs$" || true)
+
+          MODIFIED_HANDLERS=$(git diff --name-only origin/saas...HEAD | grep -E "^api/src/api/.*\.rs$|^cloud/src/api/.*\.rs$" || true)
           if [ -n "$MODIFIED_HANDLERS" ]; then
             for file in $MODIFIED_HANDLERS; do
               if grep -qE "\.unwrap\(\)|\.expect\(\)" "$file" 2>/dev/null; then
-                echo "❌ VIOLATION: unwrap/expect found in handler: $file"
-                echo "   ✅ Use ? operator or map_err"
-                # 降级为警告，因为历史代码可能有很多
                 echo "⚠️  WARNING (grandfathered): unwrap in $file - should be fixed"
               fi
             done
@@ -166,7 +155,7 @@ jobs:
           NEW_FILES="${{ steps.new-ts-files.outputs.new_files }}"
           for file in $NEW_FILES; do
             echo "Checking: $file"
-            
+
             # 禁止在 app/ 或 components/ 下直接 fetch
             case "$file" in
               web/app/*|web/components/*)
@@ -177,7 +166,7 @@ jobs:
                 fi
                 ;;
             esac
-            
+
             # 新增的 service 文件必须有导出
             if echo "$file" | grep -qE "^web/service/.*\.ts$"; then
               if ! grep -qE "^export " "$file" 2>/dev/null; then

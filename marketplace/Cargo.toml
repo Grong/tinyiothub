@@ -1,0 +1,14 @@
+[package]
+name = "tinyiothub-marketplace"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "tinyiothub-marketplace"
+path = "src/main.rs"
+
+[dependencies]
+tinyiothub-plugin = { workspace = true }
+tokio = { workspace = true }

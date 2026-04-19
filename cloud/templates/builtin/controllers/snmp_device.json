@@ -1,0 +1,196 @@
+{
+  "name": "snmp_device",
+  "display_name": {
+    "zh": "SNMP设备",
+    "en": "SNMP Device"
+  },
+  "description": {
+    "zh": "标准SNMP协议设备模板，支持OID读取和网络设备管理",
+    "en": "Standard SNMP protocol device template with OID reading and network device management"
+  },
+  "version": "1.0.0",
+  "author": "System",
+  "category": "controllers",
+  "manufacturer": null,
+  "device_type": "controller",
+  "protocol_type": "snmp",
+  "driver_name": "snmp",
+  "tags": ["snmp", "network", "controller", "monitoring"],
+  "device_info": {
+    "default_name_pattern": "snmp_device_{index}",
+    "default_display_name_pattern": "SNMP设备 {index}",
+    "default_description": {
+      "zh": "SNMP网络设备",
+      "en": "SNMP Network Device"
+    },
+    "required_fields": ["name", "address"]
+  },
+  "properties": [
+    {
+      "name": "community",
+      "display_name": {
+        "zh": "团体名",
+        "en": "Community"
+      },
+      "description": {
+        "zh": "SNMP团体名称",
+        "en": "SNMP community name"
+      },
+      "data_type": "string",
+      "default_value": "public",
+      "is_read_only": false,
+      "is_required": true
+    },
+    {
+      "name": "version",
+      "display_name": {
+        "zh": "SNMP版本",
+        "en": "SNMP Version"
+      },
+      "description": {
+        "zh": "SNMP协议版本",
+        "en": "SNMP protocol version"
+      },
+      "data_type": "string",
+      "default_value": "v2c",
+      "is_read_only": false,
+      "is_required": true
+    },
+    {
+      "name": "port",
+      "display_name": {
+        "zh": "端口号",
+        "en": "Port"
+      },
+      "description": {
+        "zh": "SNMP服务端口号",
+        "en": "SNMP service port number"
+      },
+      "data_type": "number",
+      "min_value": 1.0,
+      "max_value": 65535.0,
+      "default_value": "161.0",
+      "is_read_only": false,
+      "is_required": false
+    },
+    {
+      "name": "timeout",
+      "display_name": {
+        "zh": "超时时间",
+        "en": "Timeout"
+      },
+      "description": {
+        "zh": "SNMP请求超时时间",
+        "en": "SNMP request timeout duration"
+      },
+      "data_type": "number",
+      "unit": "秒",
+      "min_value": 1.0,
+      "max_value": 60.0,
+      "default_value": "5.0",
+      "is_read_only": false,
+      "is_required": false
+    },
+    {
+      "name": "system_description",
+      "display_name": {
+        "zh": "系统描述",
+        "en": "System Description"
+      },
+      "description": {
+        "zh": "设备系统描述信息",
+        "en": "Device system description information"
+      },
+      "data_type": "string",
+      "default_value": "",
+      "is_read_only": true,
+      "is_required": false
+    },
+    {
+      "name": "system_uptime",
+      "display_name": {
+        "zh": "系统运行时间",
+        "en": "System Uptime"
+      },
+      "description": {
+        "zh": "设备系统运行时间",
+        "en": "Device system uptime"
+      },
+      "data_type": "number",
+      "unit": "秒",
+      "default_value": "0",
+      "is_read_only": true,
+      "is_required": false
+    }
+  ],
+  "commands": [
+    {
+      "name": "get_oid",
+      "display_name": {
+        "zh": "读取OID",
+        "en": "Get OID"
+      },
+      "description": {
+        "zh": "读取指定OID的值",
+        "en": "Read value of specified OID"
+      },
+      "parameters": "{\"oid\": \"1.3.6.1.2.1.1.1.0\"}",
+      "parameter_schema": "{\"type\": \"object\", \"properties\": {\"oid\": {\"type\": \"string\", \"pattern\": \"^[0-9.]+$\"}}, \"required\": [\"oid\"]}",
+      "is_required": true
+    },
+    {
+      "name": "walk_oid",
+      "display_name": {
+        "zh": "遍历OID",
+        "en": "Walk OID"
+      },
+      "description": {
+        "zh": "遍历指定OID树的所有子节点",
+        "en": "Walk all child nodes of specified OID tree"
+      },
+      "parameters": "{\"oid\": \"1.3.6.1.2.1.1\"}",
+      "parameter_schema": "{\"type\": \"object\", \"properties\": {\"oid\": {\"type\": \"string\", \"pattern\": \"^[0-9.]+$\"}}, \"required\": [\"oid\"]}",
+      "is_required": true
+    },
+    {
+      "name": "set_oid",
+      "display_name": {
+        "zh": "设置OID",
+        "en": "Set OID"
+      },
+      "description": {
+        "zh": "设置指定OID的值",
+        "en": "Set value of specified OID"
+      },
+      "parameters": "{\"oid\": \"1.3.6.1.2.1.1.6.0\", \"value\": \"new_location\", \"type\": \"string\"}",
+      "parameter_schema": "{\"type\": \"object\", \"properties\": {\"oid\": {\"type\": \"string\", \"pattern\": \"^[0-9.]+$\"}, \"value\": {\"type\": \"string\"}, \"type\": {\"type\": \"string\", \"enum\": [\"string\", \"integer\", \"counter\", \"gauge\", \"timeticks\"]}}, \"required\": [\"oid\", \"value\", \"type\"]}",
+      "is_required": false
+    },
+    {
+      "name": "get_system_info",
+      "display_name": {
+        "zh": "获取系统信息",
+        "en": "Get System Info"
+      },
+      "description": {
+        "zh": "获取设备基本系统信息",
+        "en": "Get device basic system information"
+      },
+      "parameters": "{}",
+      "is_required": true
+    },
+    {
+      "name": "test_connection",
+      "display_name": {
+        "zh": "测试连接",
+        "en": "Test Connection"
+      },
+      "description": {
+        "zh": "测试SNMP连接是否正常",
+        "en": "Test if SNMP connection is working"
+      },
+      "parameters": "{}",
+      "is_required": false
+    }
+  ]
+}

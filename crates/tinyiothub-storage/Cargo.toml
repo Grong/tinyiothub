@@ -1,0 +1,11 @@
+[package]
+name = "tinyiothub-storage"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+tinyiothub-core = { workspace = true }
+tokio = { workspace = true }
+sqlx = { version = "0.9.0-alpha.1", features = ["runtime-tokio", "sqlite", "chrono", "uuid"] }

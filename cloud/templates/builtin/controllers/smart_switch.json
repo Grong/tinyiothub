@@ -1,0 +1,228 @@
+{
+  "name": "smart_switch",
+  "display_name": {
+    "zh": "智能开关",
+    "en": "Smart Switch"
+  },
+  "description": {
+    "zh": "智能开关设备模板，支持开关状态控制和电量监测",
+    "en": "Smart switch device template with switch control and power monitoring"
+  },
+  "version": "1.0.0",
+  "author": "System",
+  "category": "controllers",
+  "manufacturer": null,
+  "device_type": "switch",
+  "protocol_type": "wifi",
+  "driver_name": "smart_switch",
+  "tags": ["switch", "smart", "controller", "power"],
+  "device_info": {
+    "default_name_pattern": "smart_switch_{index}",
+    "default_display_name_pattern": "智能开关 {index}",
+    "default_description": {
+      "zh": "智能电源开关",
+      "en": "Smart Power Switch"
+    },
+    "required_fields": ["name", "address"]
+  },
+  "properties": [
+    {
+      "name": "switch_state",
+      "display_name": {
+        "zh": "开关状态",
+        "en": "Switch State"
+      },
+      "description": {
+        "zh": "当前开关状态（开/关）",
+        "en": "Current switch state (on/off)"
+      },
+      "data_type": "boolean",
+      "default_value": "false",
+      "is_read_only": false,
+      "is_required": true
+    },
+    {
+      "name": "power_consumption",
+      "display_name": {
+        "zh": "功耗",
+        "en": "Power Consumption"
+      },
+      "description": {
+        "zh": "当前功耗",
+        "en": "Current power consumption"
+      },
+      "data_type": "number",
+      "unit": "W",
+      "min_value": 0.0,
+      "max_value": 10000.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": false
+    },
+    {
+      "name": "voltage",
+      "display_name": {
+        "zh": "电压",
+        "en": "Voltage"
+      },
+      "description": {
+        "zh": "当前电压值",
+        "en": "Current voltage value"
+      },
+      "data_type": "number",
+      "unit": "V",
+      "min_value": 0.0,
+      "max_value": 500.0,
+      "default_value": "220.0",
+      "is_read_only": true,
+      "is_required": false
+    },
+    {
+      "name": "current",
+      "display_name": {
+        "zh": "电流",
+        "en": "Current"
+      },
+      "description": {
+        "zh": "当前电流值",
+        "en": "Current amperage value"
+      },
+      "data_type": "number",
+      "unit": "A",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": false
+    },
+    {
+      "name": "total_energy",
+      "display_name": {
+        "zh": "总用电量",
+        "en": "Total Energy"
+      },
+      "description": {
+        "zh": "累计用电量",
+        "en": "Accumulated energy consumption"
+      },
+      "data_type": "number",
+      "unit": "kWh",
+      "min_value": 0.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": false
+    },
+    {
+      "name": "wifi_signal",
+      "display_name": {
+        "zh": "WiFi信号强度",
+        "en": "WiFi Signal Strength"
+      },
+      "description": {
+        "zh": "WiFi信号强度",
+        "en": "WiFi signal strength"
+      },
+      "data_type": "number",
+      "unit": "dBm",
+      "min_value": -100.0,
+      "max_value": 0.0,
+      "default_value": "-50.0",
+      "is_read_only": true,
+      "is_required": false
+    }
+  ],
+  "commands": [
+    {
+      "name": "turn_on",
+      "display_name": {
+        "zh": "打开",
+        "en": "Turn On"
+      },
+      "description": {
+        "zh": "打开开关",
+        "en": "Turn on the switch"
+      },
+      "parameters": "{}",
+      "is_required": true
+    },
+    {
+      "name": "turn_off",
+      "display_name": {
+        "zh": "关闭",
+        "en": "Turn Off"
+      },
+      "description": {
+        "zh": "关闭开关",
+        "en": "Turn off the switch"
+      },
+      "parameters": "{}",
+      "is_required": true
+    },
+    {
+      "name": "toggle",
+      "display_name": {
+        "zh": "切换",
+        "en": "Toggle"
+      },
+      "description": {
+        "zh": "切换开关状态",
+        "en": "Toggle switch state"
+      },
+      "parameters": "{}",
+      "is_required": true
+    },
+    {
+      "name": "set_timer",
+      "display_name": {
+        "zh": "设置定时",
+        "en": "Set Timer"
+      },
+      "description": {
+        "zh": "设置定时开关",
+        "en": "Set timer for switch operation"
+      },
+      "parameters": "{\"action\": \"on\", \"delay_seconds\": 3600}",
+      "parameter_schema": "{\"type\": \"object\", \"properties\": {\"action\": {\"type\": \"string\", \"enum\": [\"on\", \"off\", \"toggle\"]}, \"delay_seconds\": {\"type\": \"number\", \"minimum\": 1, \"maximum\": 86400}}, \"required\": [\"action\", \"delay_seconds\"]}",
+      "is_required": false
+    },
+    {
+      "name": "get_power_stats",
+      "display_name": {
+        "zh": "获取电量统计",
+        "en": "Get Power Statistics"
+      },
+      "description": {
+        "zh": "获取电量使用统计信息",
+        "en": "Get power usage statistics"
+      },
+      "parameters": "{}",
+      "is_required": false
+    },
+    {
+      "name": "reset_energy_counter",
+      "display_name": {
+        "zh": "重置电量计数",
+        "en": "Reset Energy Counter"
+      },
+      "description": {
+        "zh": "重置累计用电量计数器",
+        "en": "Reset accumulated energy counter"
+      },
+      "parameters": "{}",
+      "is_required": false
+    },
+    {
+      "name": "get_device_info",
+      "display_name": {
+        "zh": "获取设备信息",
+        "en": "Get Device Info"
+      },
+      "description": {
+        "zh": "获取设备基本信息和状态",
+        "en": "Get device basic information and status"
+      },
+      "parameters": "{}",
+      "is_required": false
+    }
+  ]
+}

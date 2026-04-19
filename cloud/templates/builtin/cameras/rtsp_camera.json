@@ -1,0 +1,197 @@
+{
+  "name": "rtsp_camera",
+  "display_name": {
+    "zh": "RTSP摄像头",
+    "en": "RTSP Camera"
+  },
+  "description": {
+    "zh": "标准RTSP协议摄像头设备模板，支持视频流播放和基本控制",
+    "en": "Standard RTSP protocol camera device template with video streaming and basic control"
+  },
+  "version": "1.0.0",
+  "author": "System",
+  "category": "cameras",
+  "manufacturer": null,
+  "device_type": "camera",
+  "protocol_type": "rtsp",
+  "driver_name": "rtsp",
+  "tags": ["camera", "rtsp", "surveillance", "streaming"],
+  "device_info": {
+    "default_name_pattern": "rtsp_camera_{index}",
+    "default_display_name_pattern": "RTSP摄像头 {index}",
+    "default_description": {
+      "zh": "RTSP网络摄像头",
+      "en": "RTSP Network Camera"
+    },
+    "required_fields": ["name", "address"]
+  },
+  "properties": [
+    {
+      "name": "rtsp_url",
+      "display_name": {
+        "zh": "RTSP地址",
+        "en": "RTSP URL"
+      },
+      "description": {
+        "zh": "摄像头RTSP流地址",
+        "en": "Camera RTSP stream URL"
+      },
+      "data_type": "string",
+      "default_value": "rtsp://192.168.1.100:554/stream",
+      "is_read_only": false,
+      "is_required": true
+    },
+    {
+      "name": "resolution",
+      "display_name": {
+        "zh": "分辨率",
+        "en": "Resolution"
+      },
+      "description": {
+        "zh": "视频分辨率设置",
+        "en": "Video resolution setting"
+      },
+      "data_type": "string",
+      "default_value": "1920x1080",
+      "is_read_only": false,
+      "is_required": true
+    },
+    {
+      "name": "frame_rate",
+      "display_name": {
+        "zh": "帧率",
+        "en": "Frame Rate"
+      },
+      "description": {
+        "zh": "视频帧率设置",
+        "en": "Video frame rate setting"
+      },
+      "data_type": "number",
+      "unit": "fps",
+      "min_value": 1.0,
+      "max_value": 60.0,
+      "default_value": "25.0",
+      "is_read_only": false,
+      "is_required": true
+    },
+    {
+      "name": "bitrate",
+      "display_name": {
+        "zh": "码率",
+        "en": "Bitrate"
+      },
+      "description": {
+        "zh": "视频码率设置",
+        "en": "Video bitrate setting"
+      },
+      "data_type": "number",
+      "unit": "kbps",
+      "min_value": 64.0,
+      "max_value": 10000.0,
+      "default_value": "2048.0",
+      "is_read_only": false,
+      "is_required": false
+    },
+    {
+      "name": "audio_enabled",
+      "display_name": {
+        "zh": "音频启用",
+        "en": "Audio Enabled"
+      },
+      "description": {
+        "zh": "是否启用音频流",
+        "en": "Whether to enable audio stream"
+      },
+      "data_type": "boolean",
+      "default_value": "false",
+      "is_read_only": false,
+      "is_required": false
+    },
+    {
+      "name": "connection_timeout",
+      "display_name": {
+        "zh": "连接超时",
+        "en": "Connection Timeout"
+      },
+      "description": {
+        "zh": "RTSP连接超时时间",
+        "en": "RTSP connection timeout duration"
+      },
+      "data_type": "number",
+      "unit": "秒",
+      "min_value": 5.0,
+      "max_value": 60.0,
+      "default_value": "10.0",
+      "is_read_only": false,
+      "is_required": false
+    }
+  ],
+  "commands": [
+    {
+      "name": "get_snapshot",
+      "display_name": {
+        "zh": "获取快照",
+        "en": "Get Snapshot"
+      },
+      "description": {
+        "zh": "获取当前视频快照",
+        "en": "Get current video snapshot"
+      },
+      "parameters": "{}",
+      "is_required": true
+    },
+    {
+      "name": "start_stream",
+      "display_name": {
+        "zh": "开始播放",
+        "en": "Start Stream"
+      },
+      "description": {
+        "zh": "开始RTSP视频流播放",
+        "en": "Start RTSP video stream playback"
+      },
+      "parameters": "{}",
+      "is_required": true
+    },
+    {
+      "name": "stop_stream",
+      "display_name": {
+        "zh": "停止播放",
+        "en": "Stop Stream"
+      },
+      "description": {
+        "zh": "停止RTSP视频流播放",
+        "en": "Stop RTSP video stream playback"
+      },
+      "parameters": "{}",
+      "is_required": true
+    },
+    {
+      "name": "set_quality",
+      "display_name": {
+        "zh": "设置画质",
+        "en": "Set Quality"
+      },
+      "description": {
+        "zh": "调整视频画质参数",
+        "en": "Adjust video quality parameters"
+      },
+      "parameters": "{\"resolution\": \"1920x1080\", \"frame_rate\": 25, \"bitrate\": 2048}",
+      "parameter_schema": "{\"type\": \"object\", \"properties\": {\"resolution\": {\"type\": \"string\", \"enum\": [\"1920x1080\", \"1280x720\", \"640x480\"]}, \"frame_rate\": {\"type\": \"number\", \"minimum\": 1, \"maximum\": 60}, \"bitrate\": {\"type\": \"number\", \"minimum\": 64, \"maximum\": 10000}}, \"required\": [\"resolution\"]}",
+      "is_required": false
+    },
+    {
+      "name": "test_connection",
+      "display_name": {
+        "zh": "测试连接",
+        "en": "Test Connection"
+      },
+      "description": {
+        "zh": "测试RTSP连接是否正常",
+        "en": "Test if RTSP connection is working"
+      },
+      "parameters": "{}",
+      "is_required": false
+    }
+  ]
+}

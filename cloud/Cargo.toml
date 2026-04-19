@@ -1,0 +1,162 @@
+[package]
+name = "tinyiothub-cloud"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "云端 SaaS 物联网平台后端"
+
+[lib]
+doctest = false
+
+[[bin]]
+name = "tinyiothub-cloud"
+path = "src/main.rs"
+
+[dependencies]
+# Core async runtime
+tokio = { workspace = true }
+
+# Web framework
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+headers = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
+
+# System
+num_cpus = { workspace = true }
+
+# Database
+sqlx = { workspace = true }
+
+# Storage plugins
+tokio-postgres = { workspace = true }
+influxdb2 = { workspace = true }
+
+# MQTT
+rumqttc = { workspace = true }
+
+# JWT
+jwt-simple = { workspace = true }
+
+# HTTP client
+reqwest = { workspace = true }
+
+# Regex
+regex = { workspace = true }
+
+# Scheduling
+cron = { workspace = true }
+tokio-cron-scheduler = { workspace = true }
+
+# Config
+toml = { workspace = true }
+config = { workspace = true }
+
+# Serial (optional)
+serialport = { workspace = true, optional = true }
+
+# Random
+rand = { workspace = true }
+
+# Async utilities
+futures = { workspace = true }
+futures-util = { workspace = true }
+
+# Collections
+dashmap = { workspace = true }
+itertools = { workspace = true }
+
+# Sync primitives
+parking_lot = { workspace = true }
+
+# Cache
+moka = { workspace = true }
+
+# System info
+sysinfo = { workspace = true }
+
+# Retry
+backoff = { workspace = true }
+
+# Memory
+elsa = { workspace = true }
+
+# Redis
+redis = { workspace = true }
+
+# Workspace crates
+tinyiothub-macros = { workspace = true }
+tinyiothub-plugin-sdk = { workspace = true }
+
+# Dynamic loading
+libloading = { workspace = true }
+
+# Utilities
+uuid = { workspace = true }
+async-trait = { workspace = true }
+once_cell = { workspace = true }
+lazy_static = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# SSE
+async-stream = { workspace = true }
+tokio-stream = { workspace = true }
+
+# WebSocket
+tokio-tungstenite = { workspace = true }
+bytes = { workspace = true }
+http = { workspace = true }
+
+# Encoding
+base64 = { workspace = true }
+urlencoding = { workspace = true }
+
+# Crypto
+aes-gcm = { workspace = true }
+sha2 = { workspace = true }
+hmac = { workspace = true }
+sha1 = { workspace = true }
+subtle = { workspace = true }
+hex = { workspace = true }
+
+# Password hashing
+bcrypt = { workspace = true }
+
+# Validation
+validator = { workspace = true }
+
+# Performance
+smallvec = { workspace = true }
+
+# ZeroClaw Agent runtime
+zeroclaw = { path = "../vendor/zeroclaw" }
+zeroclaw-macros = { path = "../vendor/zeroclaw-macros" }
+
+[features]
+default = []
+harmonyos = []
+serial = ["serialport"]
+
+[dev-dependencies]
+proptest = { workspace = true }
+tempfile = { workspace = true }
+
+[lints.rust]
+dead_code = "warn"
+unused_imports = "warn"
+unused_variables = "warn"
+unused_mut = "warn"
+non_snake_case = "warn"

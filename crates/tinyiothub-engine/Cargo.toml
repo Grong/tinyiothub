@@ -1,0 +1,10 @@
+[package]
+name = "tinyiothub-engine"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+tinyiothub-core = { workspace = true }
+serde = { workspace = true }
