@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use sqlx::QueryBuilder;
+use sqlx::{FromRow, QueryBuilder};
 
 use crate::{
     domain::workspace::repository::WorkspaceRepository,
@@ -7,6 +7,37 @@ use crate::{
     infrastructure::persistence::Database,
     shared::error::{Error, Result},
 };
+
+/// Internal row type for sqlx mapping
+#[derive(Debug, Clone, FromRow)]
+struct WorkspaceWithDeviceCountRow {
+    id: String,
+    name: String,
+    description: Option<String>,
+    tenant_id: String,
+    agent_id: Option<String>,
+    created_at: String,
+    updated_at: String,
+    device_count: Option<i64>,
+    #[sqlx(default)]
+    warning: Option<String>,
+}
+
+impl From<WorkspaceWithDeviceCountRow> for WorkspaceWithDeviceCount {
+    fn from(row: WorkspaceWithDeviceCountRow) -> Self {
+        Self {
+            id: row.id,
+            name: row.name,
+            description: row.description,
+            tenant_id: row.tenant_id,
+            agent_id: row.agent_id,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            device_count: row.device_count,
+            warning: row.warning,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct SqliteWorkspaceRepository {
@@ -22,7 +53,7 @@ impl SqliteWorkspaceRepository {
 #[async_trait]
 impl WorkspaceRepository for SqliteWorkspaceRepository {
     async fn find_by_id(&self, id: &str) -> Result<Option<WorkspaceWithDeviceCount>> {
-        let workspace = sqlx::query_as::<_, WorkspaceWithDeviceCount>(
+        let row = sqlx::query_as::<_, WorkspaceWithDeviceCountRow>(
             r#"
             SELECT
                 w.id,
@@ -43,7 +74,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         .fetch_optional(self.database.pool())
         .await?;
 
-        Ok(workspace)
+        Ok(row.map(Into::into))
     }
 
     async fn find_by_tenant(
@@ -56,7 +87,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         let page_size = page_size.unwrap_or(20).min(100);
         let offset = (page - 1) * page_size;
 
-        let workspaces = sqlx::query_as::<_, WorkspaceWithDeviceCount>(
+        let rows = sqlx::query_as::<_, WorkspaceWithDeviceCountRow>(
             r#"
             SELECT
                 w.id,
@@ -81,7 +112,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         .fetch_all(self.database.pool())
         .await?;
 
-        Ok(workspaces)
+        Ok(rows.into_iter().map(Into::into).collect())
     }
 
     async fn create(

@@ -13,6 +13,7 @@ use crate::{
         response::{ApiResponse, PaginatedResponse, PaginationInfo},
     },
     shared::security::jwt::Claims,
+    shared::utils::password::verify_password,
 };
 
 #[derive(Debug, Deserialize)]
@@ -398,7 +399,7 @@ async fn change_user_password(
     };
 
     // 验证旧密码
-    match user.verify_password(&request.old_password) {
+    match verify_password(&request.old_password, &user.password_hash) {
         Ok(true) => {}
         Ok(false) => {
             return ApiResponse::error("旧密码错误".to_string());

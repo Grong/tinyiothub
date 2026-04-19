@@ -5,6 +5,7 @@ use crate::{
         CreateUserRequest, UpdateUserRequest, User, UserQueryParams, UserStatisticsNew,
     },
     shared::error::{Error, Result},
+    shared::utils::password::verify_password,
 };
 
 use super::repository::{UserCriteria, UserRepository, UserSortBy, UserSortOrder};
@@ -96,7 +97,7 @@ impl UserService {
     ) -> Result<bool> {
         let user = self.repository.find_by_id(id).await?.ok_or(Error::NotFound)?;
 
-        match user.verify_password(old_password) {
+        match verify_password(old_password, &user.password_hash) {
             Ok(true) => {
                 let new_hash = crate::shared::utils::password::hash_password(new_password)
                     .map_err(|e| Error::ValidationError(format!("密码哈希失败: {}", e)))?;
@@ -104,7 +105,7 @@ impl UserService {
                 Ok(true)
             }
             Ok(false) => Ok(false),
-            Err(e) => Err(e),
+            Err(e) => Err(Error::ValidationError(format!("password verification failed: {}", e))),
         }
     }
 
@@ -118,10 +119,10 @@ impl UserService {
     /// Authenticate user by username and password
     pub async fn authenticate(&self, username: &str, password: &str) -> Result<Option<User>> {
         if let Some(user) = self.repository.find_by_username(username).await? {
-            match user.verify_password(password) {
+            match verify_password(password, &user.password_hash) {
                 Ok(true) if user.is_enabled => return Ok(Some(user)),
                 Ok(_) => return Ok(None),
-                Err(e) => return Err(e),
+                Err(e) => return Err(Error::ValidationError(format!("password verification failed: {}", e))),
             }
         }
         Ok(None)

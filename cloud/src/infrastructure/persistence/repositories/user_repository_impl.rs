@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use sqlx::{QueryBuilder, Row};
+use sqlx::{FromRow, QueryBuilder, Row};
 
 use crate::{
     domain::user::repository::{
@@ -9,6 +9,40 @@ use crate::{
     infrastructure::persistence::Database,
     shared::error::{Error, Result},
 };
+
+/// Internal row type for sqlx mapping
+#[derive(Debug, Clone, FromRow)]
+struct UserRow {
+    id: String,
+    username: String,
+    password_hash: String,
+    email: Option<String>,
+    phone: Option<String>,
+    display_name: Option<String>,
+    is_enabled: bool,
+    parent_id: Option<String>,
+    created_at: String,
+    updated_at: String,
+    last_login_at: Option<String>,
+}
+
+impl From<UserRow> for User {
+    fn from(row: UserRow) -> Self {
+        Self {
+            id: row.id,
+            username: row.username,
+            password_hash: row.password_hash,
+            email: row.email,
+            phone: row.phone,
+            display_name: row.display_name,
+            is_enabled: row.is_enabled,
+            parent_id: row.parent_id,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            last_login_at: row.last_login_at,
+        }
+    }
+}
 
 /// SQLite implementation of UserRepository
 #[derive(Debug, Clone)]
@@ -25,7 +59,7 @@ impl SqliteUserRepository {
 #[async_trait]
 impl UserRepository for SqliteUserRepository {
     async fn find_by_id(&self, id: &str) -> Result<Option<User>> {
-        let user = sqlx::query_as::<_, User>(
+        let row = sqlx::query_as::<_, UserRow>(
             r#"
             SELECT id, username, password_hash, email, phone, display_name,
                    is_enabled, parent_id, created_at, updated_at, last_login_at
@@ -36,11 +70,11 @@ impl UserRepository for SqliteUserRepository {
         .fetch_optional(self.database.pool())
         .await?;
 
-        Ok(user)
+        Ok(row.map(Into::into))
     }
 
     async fn find_by_username(&self, username: &str) -> Result<Option<User>> {
-        let user = sqlx::query_as::<_, User>(
+        let row = sqlx::query_as::<_, UserRow>(
             r#"
             SELECT id, username, password_hash, email, phone, display_name,
                    is_enabled, parent_id, created_at, updated_at, last_login_at
@@ -51,11 +85,11 @@ impl UserRepository for SqliteUserRepository {
         .fetch_optional(self.database.pool())
         .await?;
 
-        Ok(user)
+        Ok(row.map(Into::into))
     }
 
     async fn find_by_email(&self, email: &str) -> Result<Option<User>> {
-        let user = sqlx::query_as::<_, User>(
+        let row = sqlx::query_as::<_, UserRow>(
             r#"
             SELECT id, username, password_hash, email, phone, display_name,
                    is_enabled, parent_id, created_at, updated_at, last_login_at
@@ -66,7 +100,7 @@ impl UserRepository for SqliteUserRepository {
         .fetch_optional(self.database.pool())
         .await?;
 
-        Ok(user)
+        Ok(row.map(Into::into))
     }
 
     async fn find_all(&self, criteria: &UserCriteria) -> Result<Vec<User>> {
@@ -123,11 +157,11 @@ impl UserRepository for SqliteUserRepository {
             builder.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let users = builder.build_query_as::<User>()
+        let rows = builder.build_query_as::<UserRow>()
             .fetch_all(self.database.pool())
             .await?;
 
-        Ok(users)
+        Ok(rows.into_iter().map(Into::into).collect())
     }
 
     async fn count(&self, criteria: &UserCriteria) -> Result<i64> {
@@ -261,7 +295,7 @@ impl UserRepository for SqliteUserRepository {
             return Err(Error::NotFound);
         }
 
-        let user = sqlx::query_as::<_, User>(
+        let row = sqlx::query_as::<_, UserRow>(
             r#"
             SELECT id, username, password_hash, email, phone, display_name,
                    is_enabled, parent_id, created_at, updated_at, last_login_at
@@ -272,10 +306,10 @@ impl UserRepository for SqliteUserRepository {
         .fetch_one(&mut *tx)
         .await;
 
-        match user {
-            Ok(user) => {
+        match row {
+            Ok(row) => {
                 tx.commit().await?;
-                Ok(user)
+                Ok(row.into())
             }
             Err(_) => Err(Error::NotFound),
         }
