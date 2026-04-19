@@ -1,0 +1,30 @@
+version: "3.8"
+
+services:
+  tinyiothub:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.cloud
+    ports:
+      - "3002:3002"
+    environment:
+      - TINYIOTHUB__DATABASE__URL=/data/tinyiothub.db
+      - TINYIOTHUB__SERVER__PORT=3002
+    volumes:
+      - tinyiothub-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ../../deploy/docker/mosquitto/config:/mosquitto/config:ro
+
+volumes:
+  tinyiothub-data:

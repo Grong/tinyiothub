@@ -149,6 +149,7 @@ smallvec = "1.11"
 # Dev dependencies (shared)
 proptest = "1.4"
 tempfile = "3.8"
+criterion = { version = "0.5", features = ["async_tokio"] }
 
 # Workspace crates (path deps — not published yet)
 tinyiothub-macros = { path = "crates/tinyiothub-macros" }
