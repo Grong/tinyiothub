@@ -1,10 +1,30 @@
 use async_trait::async_trait;
-use sqlx::{QueryBuilder, Row};
+use sqlx::{FromRow, QueryBuilder, Row};
 
 use crate::domain::role::repository::RoleRepository;
 use crate::dto::entity::role::{CreateRoleRequest, Role, RoleQueryParams, RoleStats, UpdateRoleRequest};
 use crate::infrastructure::persistence::database::Database;
 use crate::shared::error::Result;
+
+/// Internal row type for sqlx mapping
+#[derive(Debug, Clone, FromRow)]
+struct RoleRow {
+    id: String,
+    name: String,
+    description: Option<String>,
+    is_administrator: i32,
+}
+
+impl From<RoleRow> for Role {
+    fn from(row: RoleRow) -> Self {
+        Self {
+            id: row.id,
+            name: row.name,
+            description: row.description,
+            is_administrator: row.is_administrator,
+        }
+    }
+}
 
 pub struct SqliteRoleRepository {
     database: Database,
@@ -19,25 +39,25 @@ impl SqliteRoleRepository {
 #[async_trait]
 impl RoleRepository for SqliteRoleRepository {
     async fn find_by_id(&self, id: &str) -> Result<Option<Role>> {
-        let role = sqlx::query_as::<_, Role>(
+        let row = sqlx::query_as::<_, RoleRow>(
             "SELECT id, name, description, is_administrator FROM roles WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(self.database.pool())
         .await?;
 
-        Ok(role)
+        Ok(row.map(Into::into))
     }
 
     async fn find_by_name(&self, name: &str) -> Result<Option<Role>> {
-        let role = sqlx::query_as::<_, Role>(
+        let row = sqlx::query_as::<_, RoleRow>(
             "SELECT id, name, description, is_administrator FROM roles WHERE name = ?",
         )
         .bind(name)
         .fetch_optional(self.database.pool())
         .await?;
 
-        Ok(role)
+        Ok(row.map(Into::into))
     }
 
     async fn create(&self, request: &CreateRoleRequest) -> Result<Role> {
@@ -153,9 +173,9 @@ impl RoleRepository for SqliteRoleRepository {
             query.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let roles = query.build_query_as::<Role>().fetch_all(self.database.pool()).await?;
+        let rows = query.build_query_as::<RoleRow>().fetch_all(self.database.pool()).await?;
 
-        Ok(roles)
+        Ok(rows.into_iter().map(Into::into).collect())
     }
 
     async fn count(&self, params: &RoleQueryParams) -> Result<i64> {
@@ -202,23 +222,23 @@ impl RoleRepository for SqliteRoleRepository {
     }
 
     async fn find_admin_roles(&self) -> Result<Vec<Role>> {
-        let roles = sqlx::query_as::<_, Role>(
+        let rows = sqlx::query_as::<_, RoleRow>(
             "SELECT id, name, description, is_administrator FROM roles WHERE is_administrator = 1 ORDER BY name"
         )
         .fetch_all(self.database.pool())
         .await?;
 
-        Ok(roles)
+        Ok(rows.into_iter().map(Into::into).collect())
     }
 
     async fn find_user_roles(&self) -> Result<Vec<Role>> {
-        let roles = sqlx::query_as::<_, Role>(
+        let rows = sqlx::query_as::<_, RoleRow>(
             "SELECT id, name, description, is_administrator FROM roles WHERE is_administrator = 0 ORDER BY name"
         )
         .fetch_all(self.database.pool())
         .await?;
 
-        Ok(roles)
+        Ok(rows.into_iter().map(Into::into).collect())
     }
 
     async fn exists_by_name(&self, name: &str) -> Result<bool> {
@@ -256,9 +276,9 @@ impl RoleRepository for SqliteRoleRepository {
         }
         separated.push_unseparated(")");
 
-        let roles = query.build_query_as::<Role>().fetch_all(self.database.pool()).await?;
+        let rows = query.build_query_as::<RoleRow>().fetch_all(self.database.pool()).await?;
 
-        Ok(roles)
+        Ok(rows.into_iter().map(Into::into).collect())
     }
 
     async fn is_administrator_role(&self, id: &str) -> Result<bool> {

@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use sqlx::{QueryBuilder, Row};
+use sqlx::{FromRow, QueryBuilder, Row};
 
 use crate::domain::permission::repository::{PermissionGroupRepository, PermissionRepository};
 use crate::dto::entity::permission::{
@@ -8,6 +8,62 @@ use crate::dto::entity::permission::{
 };
 use crate::infrastructure::persistence::database::Database;
 use crate::shared::error::Result;
+
+/// Internal row type for sqlx mapping
+#[derive(Debug, Clone, FromRow)]
+struct PermissionRow {
+    id: String,
+    name: String,
+    code: String,
+    description: Option<String>,
+    resource_type: String,
+    action_type: String,
+    is_system: bool,
+    parent_id: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+impl From<PermissionRow> for Permission {
+    fn from(row: PermissionRow) -> Self {
+        Self {
+            id: row.id,
+            name: row.name,
+            code: row.code,
+            description: row.description,
+            resource_type: row.resource_type,
+            action_type: row.action_type,
+            is_system: row.is_system,
+            parent_id: row.parent_id,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        }
+    }
+}
+
+/// Internal row type for permission group sqlx mapping
+#[derive(Debug, Clone, FromRow)]
+struct PermissionGroupRow {
+    id: String,
+    name: String,
+    description: Option<String>,
+    permissions: String,
+    created_at: String,
+    updated_at: String,
+}
+
+impl From<PermissionGroupRow> for PermissionGroup {
+    fn from(row: PermissionGroupRow) -> Self {
+        Self {
+            id: row.id,
+            name: row.name,
+            description: row.description,
+            permissions: row.permissions,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        }
+    }
+}
 
 pub struct SqlitePermissionRepository {
     database: Database,
@@ -22,25 +78,25 @@ impl SqlitePermissionRepository {
 #[async_trait]
 impl PermissionRepository for SqlitePermissionRepository {
     async fn find_by_id(&self, id: &str) -> Result<Option<Permission>> {
-        let permission = sqlx::query_as::<_, Permission>(
+        let row = sqlx::query_as::<_, PermissionRow>(
             "SELECT id, name, code, description, resource_type, action_type, is_system, parent_id, created_at, updated_at FROM permissions WHERE id = ?"
         )
         .bind(id)
         .fetch_optional(self.database.pool())
         .await?;
 
-        Ok(permission)
+        Ok(row.map(Into::into))
     }
 
     async fn find_by_code(&self, code: &str) -> Result<Option<Permission>> {
-        let permission = sqlx::query_as::<_, Permission>(
+        let row = sqlx::query_as::<_, PermissionRow>(
             "SELECT id, name, code, description, resource_type, action_type, is_system, parent_id, created_at, updated_at FROM permissions WHERE code = ?"
         )
         .bind(code)
         .fetch_optional(self.database.pool())
         .await?;
 
-        Ok(permission)
+        Ok(row.map(Into::into))
     }
 
     async fn create(&self, request: &CreatePermissionRequest) -> Result<Permission> {
@@ -200,9 +256,9 @@ impl PermissionRepository for SqlitePermissionRepository {
             query.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let permissions = query.build_query_as::<Permission>().fetch_all(self.database.pool()).await?;
+        let rows = query.build_query_as::<PermissionRow>().fetch_all(self.database.pool()).await?;
 
-        Ok(permissions)
+        Ok(rows.into_iter().map(Into::into).collect())
     }
 
     async fn count(&self, params: &PermissionQuery) -> Result<i64> {
@@ -239,56 +295,56 @@ impl PermissionRepository for SqlitePermissionRepository {
     }
 
     async fn find_by_resource_type(&self, resource_type: &str) -> Result<Vec<Permission>> {
-        let permissions = sqlx::query_as::<_, Permission>(
+        let rows = sqlx::query_as::<_, PermissionRow>(
             "SELECT id, name, code, description, resource_type, action_type, is_system, parent_id, created_at, updated_at FROM permissions WHERE resource_type = ? ORDER BY action_type, name"
         )
         .bind(resource_type)
         .fetch_all(self.database.pool())
         .await?;
 
-        Ok(permissions)
+        Ok(rows.into_iter().map(Into::into).collect())
     }
 
     async fn find_by_action_type(&self, action_type: &str) -> Result<Vec<Permission>> {
-        let permissions = sqlx::query_as::<_, Permission>(
+        let rows = sqlx::query_as::<_, PermissionRow>(
             "SELECT id, name, code, description, resource_type, action_type, is_system, parent_id, created_at, updated_at FROM permissions WHERE action_type = ? ORDER BY resource_type, name"
         )
         .bind(action_type)
         .fetch_all(self.database.pool())
         .await?;
 
-        Ok(permissions)
+        Ok(rows.into_iter().map(Into::into).collect())
     }
 
     async fn find_system_permissions(&self) -> Result<Vec<Permission>> {
-        let permissions = sqlx::query_as::<_, Permission>(
+        let rows = sqlx::query_as::<_, PermissionRow>(
             "SELECT id, name, code, description, resource_type, action_type, is_system, parent_id, created_at, updated_at FROM permissions WHERE is_system = 1 ORDER BY resource_type, action_type"
         )
         .fetch_all(self.database.pool())
         .await?;
 
-        Ok(permissions)
+        Ok(rows.into_iter().map(Into::into).collect())
     }
 
     async fn find_root_permissions(&self) -> Result<Vec<Permission>> {
-        let permissions = sqlx::query_as::<_, Permission>(
+        let rows = sqlx::query_as::<_, PermissionRow>(
             "SELECT id, name, code, description, resource_type, action_type, is_system, parent_id, created_at, updated_at FROM permissions WHERE parent_id IS NULL ORDER BY resource_type, action_type"
         )
         .fetch_all(self.database.pool())
         .await?;
 
-        Ok(permissions)
+        Ok(rows.into_iter().map(Into::into).collect())
     }
 
     async fn find_by_parent_id(&self, parent_id: &str) -> Result<Vec<Permission>> {
-        let permissions = sqlx::query_as::<_, Permission>(
+        let rows = sqlx::query_as::<_, PermissionRow>(
             "SELECT id, name, code, description, resource_type, action_type, is_system, parent_id, created_at, updated_at FROM permissions WHERE parent_id = ? ORDER BY action_type, name"
         )
         .bind(parent_id)
         .fetch_all(self.database.pool())
         .await?;
 
-        Ok(permissions)
+        Ok(rows.into_iter().map(Into::into).collect())
     }
 
     async fn exists_by_code(&self, code: &str) -> Result<bool> {
@@ -326,9 +382,9 @@ impl PermissionRepository for SqlitePermissionRepository {
         }
         separated.push_unseparated(")");
 
-        let permissions = query.build_query_as::<Permission>().fetch_all(self.database.pool()).await?;
+        let rows = query.build_query_as::<PermissionRow>().fetch_all(self.database.pool()).await?;
 
-        Ok(permissions)
+        Ok(rows.into_iter().map(Into::into).collect())
     }
 }
 
@@ -345,25 +401,25 @@ impl SqlitePermissionGroupRepository {
 #[async_trait]
 impl PermissionGroupRepository for SqlitePermissionGroupRepository {
     async fn find_by_id(&self, id: &str) -> Result<Option<PermissionGroup>> {
-        let group = sqlx::query_as::<_, PermissionGroup>(
+        let row = sqlx::query_as::<_, PermissionGroupRow>(
             "SELECT id, name, description, permissions, created_at, updated_at FROM permission_groups WHERE id = ?"
         )
         .bind(id)
         .fetch_optional(self.database.pool())
         .await?;
 
-        Ok(group)
+        Ok(row.map(Into::into))
     }
 
     async fn find_by_name(&self, name: &str) -> Result<Option<PermissionGroup>> {
-        let group = sqlx::query_as::<_, PermissionGroup>(
+        let row = sqlx::query_as::<_, PermissionGroupRow>(
             "SELECT id, name, description, permissions, created_at, updated_at FROM permission_groups WHERE name = ?"
         )
         .bind(name)
         .fetch_optional(self.database.pool())
         .await?;
 
-        Ok(group)
+        Ok(row.map(Into::into))
     }
 
     async fn create(&self, request: &CreatePermissionGroupRequest) -> Result<PermissionGroup> {
@@ -400,12 +456,12 @@ impl PermissionGroupRepository for SqlitePermissionGroupRepository {
     }
 
     async fn find_all(&self) -> Result<Vec<PermissionGroup>> {
-        let groups = sqlx::query_as::<_, PermissionGroup>(
+        let rows = sqlx::query_as::<_, PermissionGroupRow>(
             "SELECT id, name, description, permissions, created_at, updated_at FROM permission_groups ORDER BY name"
         )
         .fetch_all(self.database.pool())
         .await?;
 
-        Ok(groups)
+        Ok(rows.into_iter().map(Into::into).collect())
     }
 }
