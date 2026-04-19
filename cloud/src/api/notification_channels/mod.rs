@@ -13,6 +13,10 @@ use crate::{
     dto::entity::notification_channel::{
         ChannelStatistics, CreateNotificationChannelRequest, NotificationChannel,
         NotificationChannelQueryParams, SendMessageRequest, UpdateNotificationChannelRequest,
+        find_notification_channel_by_id, find_all_notification_channels,
+        count_notification_channels, create_notification_channel,
+        update_notification_channel, delete_notification_channel,
+        get_notification_channel_statistics, send_notification_message,
     },
     dto::response::{ApiResponse, builder::ApiResponseBuilder, PaginatedResponse, PaginationInfo},
     shared::app_state::AppState,
@@ -42,8 +46,8 @@ async fn list_channels(
     let page_size = params.page_size.unwrap_or(20);
 
     let (channels_result, count_result) = tokio::join!(
-        NotificationChannel::find_all(&state.database, &params),
-        NotificationChannel::count(&state.database, &params),
+        find_all_notification_channels(&state.database, &params),
+        count_notification_channels(&state.database, &params),
     );
 
     match channels_result {
@@ -74,7 +78,7 @@ async fn get_channel(
 ) -> Json<ApiResponse<NotificationChannel>> {
     let db = state.database.clone();
 
-    match NotificationChannel::find_by_id(&db, &id).await {
+    match find_notification_channel_by_id(&db, &id).await {
         Ok(Some(channel)) => ApiResponseBuilder::success(channel),
         Ok(None) => ApiResponseBuilder::error_with_code(404, "通知渠道不存在"),
         Err(e) => {
@@ -102,7 +106,7 @@ async fn create_channel(
         return ApiResponseBuilder::error_with_code(400, "无效的配置 JSON");
     }
 
-    match NotificationChannel::create(&db, &payload).await {
+    match create_notification_channel(&db, &payload).await {
         Ok(channel) => ApiResponseBuilder::success(channel),
         Err(e) => {
             tracing::error!("Failed to create channel: {}", e);
@@ -134,7 +138,7 @@ async fn update_channel(
         }
     }
 
-    match NotificationChannel::update(&db, &id, &payload).await {
+    match update_notification_channel(&db, &id, &payload).await {
         Ok(channel) => ApiResponseBuilder::success(channel),
         Err(e) => {
             tracing::error!("Failed to update channel: {}", e);
@@ -150,7 +154,7 @@ async fn delete_channel(
 ) -> Json<ApiResponse<bool>> {
     let db = state.database.clone();
 
-    match NotificationChannel::delete(&db, &id).await {
+    match delete_notification_channel(&db, &id).await {
         Ok(_) => ApiResponseBuilder::success(true),
         Err(e) => {
             tracing::error!("Failed to delete channel: {}", e);
@@ -168,7 +172,7 @@ async fn test_channel(
     let db = state.database.clone();
 
     // 获取渠道配置
-    let channel = match NotificationChannel::find_by_id(&db, &id).await {
+    let channel = match find_notification_channel_by_id(&db, &id).await {
         Ok(Some(c)) => c,
         Ok(None) => return ApiResponseBuilder::error_with_code(404, "通知渠道不存在"),
         Err(e) => {
@@ -183,7 +187,7 @@ async fn test_channel(
     }
 
     // 发送测试消息
-    match channel.send_message(&payload).await {
+    match send_notification_message(&channel, &payload).await {
         Ok(result) => {
             tracing::info!("Test message sent successfully: {}", result);
             ApiResponseBuilder::success(serde_json::json!({
@@ -205,7 +209,7 @@ async fn test_channel(
 async fn get_statistics(State(state): State<AppState>) -> Json<ApiResponse<ChannelStatistics>> {
     let db = state.database.clone();
 
-    match NotificationChannel::get_statistics(&db).await {
+    match get_notification_channel_statistics(&db).await {
         Ok(stats) => ApiResponseBuilder::success(stats),
         Err(e) => {
             tracing::error!("Failed to get statistics: {}", e);
