@@ -542,20 +542,6 @@ struct WechatOAuthConfig {
     app_secret: String,
 }
 
-/// 生成并存储 OAuth state 参数到 Redis
-#[allow(dead_code)]
-async fn generate_oauth_state(redis: &Option<RedisClient>, state: &str) -> Result<(), StatusCode> {
-    let redis = redis.as_ref().ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let key = format!("wechat:state:{}", state);
-    redis
-        .set_ex(&key, "1", 300)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(())
-}
-
 /// 验证并删除 OAuth state 参数
 async fn verify_oauth_state(
     redis: &Option<RedisClient>,

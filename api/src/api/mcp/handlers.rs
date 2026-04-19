@@ -188,24 +188,6 @@ async fn extract_api_key(
     })
 }
 
-/// Shared helper: extract API key and set MCP context with RAII guard.
-/// All three handlers use this, eliminating the previous code duplication.
-#[allow(dead_code)]
-async fn with_mcp_context<F, R>(
-    headers: axum::http::HeaderMap,
-    state: &AppState,
-    f: F,
-) -> R
-where
-    F: FnOnce(McpAuthContext) -> R,
-{
-    let ctx = extract_api_key(&headers, state)
-        .await
-        .expect("Caller handles errors");
-    let _guard = McpContextGuard::new(ctx.clone());
-    f(ctx)
-}
-
 /// Handle all MCP requests
 async fn handle_mcp_request(
     headers: axum::http::HeaderMap,
