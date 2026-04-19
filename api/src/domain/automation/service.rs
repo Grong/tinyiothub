@@ -98,32 +98,6 @@ impl AutomationService {
         executions
     }
     
-    /// 测试条件
-    pub fn test_condition(&self, condition_json: &str, mock_data: Value) -> (bool, Value) {
-        let mut context = TriggerContext::new();
-        
-        if let Some(device_id) = mock_data.get("device_id").and_then(|v| v.as_str()) {
-            context.device_id = Some(device_id.to_string());
-        }
-        
-        if let Some(props) = mock_data.get("properties").and_then(|v| v.as_object()) {
-            for (k, v) in props {
-                context.properties.insert(k.clone(), v.clone());
-            }
-        }
-        
-        if let Ok(condition) = serde_json::from_str::<Condition>(condition_json) {
-            let result = self.evaluator.evaluate_with_details(&condition, &context);
-            (result.0, result.1)
-        } else {
-            (false, json!({"error": "Invalid condition JSON"}))
-        }
-    }
-    
-    /// 获取所有自动化规则
-    pub async fn list(&self) -> Vec<Automation> {
-        self.automations.read().await.clone()
-    }
 }
 
 /// 自动化规则

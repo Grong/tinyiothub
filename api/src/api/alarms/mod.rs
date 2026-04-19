@@ -1,4 +1,3 @@
-pub mod management;
 pub mod query;
 pub mod recent;
 

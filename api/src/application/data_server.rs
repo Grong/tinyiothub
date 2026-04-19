@@ -282,23 +282,6 @@ impl DataServer {
         }
     }
 
-    /// 更新设备属性值
-    #[allow(dead_code)]
-    fn update_device_properties(
-        device: &mut Device,
-        values: &[crate::domain::device::driver::ResultValue],
-    ) {
-        if let Some(ref mut properties) = device.properties {
-            for property in properties.iter_mut() {
-                if let Some(result_value) = values.iter().find(|v| v.name == property.name) {
-                    if let Some(ref value_str) = result_value.value {
-                        property.set_current_value(value_str.clone());
-                    }
-                }
-            }
-        }
-    }
-
     /// 更新设备属性值并发布变化事件
     fn update_device_properties_with_events(
         device: &mut Device,

@@ -240,7 +240,6 @@ impl Stream for ChatStream {
 }
 
 /// Core chat orchestration service
-#[allow(dead_code)]
 pub struct ChatService {
     runtime: Arc<dyn AgentRuntime>,
     session_repo: Arc<dyn SessionRepository>,

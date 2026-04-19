@@ -132,12 +132,6 @@ pub struct AppState {
     /// 产品服务 - CRUD 操作
     pub product_service: Arc<crate::domain::product::service::ProductService>,
 
-    /// 任务服务 - CRUD 操作
-    pub job_service: Arc<crate::domain::job::service::JobService>,
-
-    /// 任务执行服务 - CRUD 操作
-    pub job_execution_service: Arc<crate::domain::job::service::JobExecutionService>,
-
     /// Cron 任务仓库
     pub cron_job_repo: Arc<dyn crate::domain::cron::repository::CronJobRepository>,
 
@@ -334,19 +328,6 @@ impl AppState {
             ));
         let product_service = Arc::new(crate::domain::product::service::ProductService::new(product_repository));
 
-        // 任务服务
-        let job_repository: Arc<dyn crate::domain::job::repository::JobRepository> =
-            Arc::new(crate::infrastructure::persistence::repositories::SqliteJobRepository::new(
-                database.as_ref().clone(),
-            ));
-        let job_service = Arc::new(crate::domain::job::service::JobService::new(job_repository));
-
-        let job_execution_repository: Arc<dyn crate::domain::job::repository::JobExecutionRepository> =
-            Arc::new(crate::infrastructure::persistence::repositories::SqliteJobExecutionRepository::new(
-                database.as_ref().clone(),
-            ));
-        let job_execution_service = Arc::new(crate::domain::job::service::JobExecutionService::new(job_execution_repository));
-
         // Cron 仓库
         let cron_job_repo: Arc<dyn crate::domain::cron::repository::CronJobRepository> =
             Arc::new(crate::infrastructure::persistence::repositories::SqliteCronJobRepository::new(
@@ -405,8 +386,6 @@ impl AppState {
             role_service,
             permission_service,
             product_service,
-            job_service,
-            job_execution_service,
             cron_job_repo,
             cron_run_repo,
             session_service,
