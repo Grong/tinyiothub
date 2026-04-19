@@ -5521,6 +5521,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tinyiothub-config",
  "tinyiothub-core",
+ "tinyiothub-engine",
  "tinyiothub-error",
  "tinyiothub-macros",
  "tinyiothub-plugin-sdk",
@@ -5605,8 +5606,12 @@ dependencies = [
 name = "tinyiothub-engine"
 version = "1.1.0"
 dependencies = [
+ "async-trait",
  "serde",
+ "serde_json",
+ "thiserror 1.0.69",
  "tinyiothub-core",
+ "tokio",
 ]
 
 [[package]]
