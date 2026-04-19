@@ -1,7 +1,7 @@
 // Event security configuration and factory
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
+pub use tinyiothub_core::config::EventSecurityConfig;
 
 use crate::{
     domain::event::{repositories::EventRepository, EventError, Result},
@@ -11,45 +11,21 @@ use crate::{
     },
 };
 
-/// Event security configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EventSecurityConfig {
-    pub enable_rbac: bool,
-    pub enable_encryption: bool,
-    pub enable_audit_log: bool,
-    pub encryption_key: Option<String>,
-    pub audit_retention_days: u32,
-}
-
-impl Default for EventSecurityConfig {
-    fn default() -> Self {
-        Self {
-            enable_rbac: true,
-            enable_encryption: true,
-            enable_audit_log: true,
-            encryption_key: None,
-            audit_retention_days: 90,
-        }
+/// Validate event security configuration
+fn validate_event_security_config(config: &EventSecurityConfig) -> Result<()> {
+    if config.enable_encryption && config.encryption_key.is_none() {
+        return Err(EventError::Configuration(
+            "Encryption enabled but no encryption key provided".to_string(),
+        ));
     }
-}
 
-impl EventSecurityConfig {
-    /// Validate the configuration
-    pub fn validate(&self) -> Result<()> {
-        if self.enable_encryption && self.encryption_key.is_none() {
-            return Err(EventError::Configuration(
-                "Encryption enabled but no encryption key provided".to_string(),
-            ));
-        }
-
-        if self.audit_retention_days == 0 {
-            return Err(EventError::Configuration(
-                "Audit retention days must be greater than 0".to_string(),
-            ));
-        }
-
-        Ok(())
+    if config.audit_retention_days == 0 {
+        return Err(EventError::Configuration(
+            "Audit retention days must be greater than 0".to_string(),
+        ));
     }
+
+    Ok(())
 }
 
 /// Event security factory for creating and configuring security components
@@ -71,7 +47,7 @@ impl EventSecurityFactory {
         db: Arc<crate::infrastructure::persistence::Database>,
         config: EventSecurityConfig,
     ) -> Result<Self> {
-        config.validate()?;
+        validate_event_security_config(&config)?;
 
         Ok(Self { db, config })
     }
@@ -164,7 +140,7 @@ impl EventSecurityFactory {
             );
         }
 
-        config.validate()?;
+        validate_event_security_config(&config)?;
         Ok(config)
     }
 }
