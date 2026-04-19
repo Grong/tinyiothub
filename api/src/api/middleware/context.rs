@@ -85,15 +85,6 @@ fn extract_user_from_jwt(headers: &HeaderMap, uri: &axum::http::Uri, db: Option<
     })
 }
 
-/// Extract body data from request (helper function)
-#[allow(dead_code)]
-async fn extract_body_data(body: &[u8]) -> Result<String, String> {
-    match std::str::from_utf8(body) {
-        Ok(text) => Ok(text.to_string()),
-        Err(_) => Ok("Binary data".to_string()),
-    }
-}
-
 /// JWT authentication middleware - requires valid JWT token
 pub async fn jwt_auth_middleware(mut request: Request, next: Next) -> Response {
     let uri = request.uri().to_string();

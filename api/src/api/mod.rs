@@ -73,7 +73,6 @@ pub fn create_router() -> Router<AppState> {
         .nest("/auth/social", auth::social::create_router()) // 第三方登录
         .nest("/tenants", tenants::auth::create_auth_router()) // 租户注册登录
         .nest("/system", system::create_router())
-        .nest("/tags", tags::create_router())
         // 公开的SSE端点（不需要认证）
         .route("/events/sse/public", get(events::sse::handle_sse_connection_public))
         .merge(protected_routes);

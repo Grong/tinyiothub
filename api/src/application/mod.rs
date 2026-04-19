@@ -5,7 +5,6 @@ pub mod agent;
 pub mod cron_scheduler;
 pub mod data_context;
 pub mod data_server;
-pub mod message_server;
 pub mod service_manager;
 
 pub use data_context::DataContext;

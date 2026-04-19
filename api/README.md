@@ -12,24 +12,51 @@ api/
 │   │   ├── devices/          # 设备管理 API
 │   │   ├── drivers/          # 驱动管理 API
 │   │   ├── alarms/           # 告警管理 API
+│   │   ├── alarm_rules/      # 告警规则 API
+│   │   ├── agents/           # AI Agent 管理 API
+│   │   ├── automations/      # 自动化规则 API
 │   │   ├── chat/             # AI Agent 聊天 API
+│   │   ├── events/           # 事件管理 API
+│   │   ├── jobs/             # 定时任务 API
+│   │   ├── marketplace/      # 应用市场 API
 │   │   ├── mcp/              # 内嵌 MCP Server
-│   │   ├── users/            # 用户管理 API
+│   │   ├── notifications/    # 通知管理 API
+│   │   ├── notification_channels/ # 通知渠道 API
+│   │   ├── self_healing/     # 自愈引擎 API
 │   │   ├── system/           # 系统管理 API
 │   │   ├── monitoring/       # 监控 API
 │   │   ├── templates/        # 设备模板 API
+│   │   ├── tenants/          # 租户管理 API
+│   │   ├── users/            # 用户管理 API
+│   │   ├── workspaces/       # 工作空间 API
+│   │   ├── batch/            # 批量操作 API
+│   │   ├── open/             # 开放接口 API
+│   │   ├── heartbeat/        # 心跳 API
 │   │   └── middleware/       # 中间件
 │   ├── application/          # 应用服务层
 │   │   ├── agent/            # Agent 会话、聊天、记忆服务
-│   │   └── scheduler.rs      # 定时任务调度
+│   │   ├── cron_scheduler.rs # 定时任务调度（CronSchedulerService）
+│   │   ├── data_context.rs   # 数据上下文
+│   │   ├── data_server.rs    # 数据服务
+│   │   ├── message_server.rs # 消息服务
+│   │   └── service_manager.rs # 服务管理器
 │   ├── domain/               # 领域层
-│   │   ├── device/           # 设备领域（含 driver/registry）
+│   │   ├── agent/            # Agent 领域
 │   │   ├── alarm/            # 告警领域
+│   │   ├── automation/       # 自动化领域
+│   │   ├── cron/             # 定时任务领域
+│   │   ├── device/           # 设备领域（含 driver/registry）
+│   │   ├── event/            # 事件领域
 │   │   ├── job/              # 任务领域
-│   │   ├── product/          # 产品领域
+│   │   ├── marketplace/      # 市场领域
+│   │   ├── organization/     # 组织领域
 │   │   ├── permission/       # 权限领域
+│   │   ├── plugin/           # 插件领域
+│   │   ├── product/          # 产品领域
 │   │   ├── role/             # 角色领域
+│   │   ├── self_healing/     # 自愈引擎领域
 │   │   ├── tag/              # 标签领域
+│   │   ├── template/         # 模板领域
 │   │   ├── tenant/           # 租户领域
 │   │   ├── user/             # 用户领域
 │   │   └── workspace/        # 工作空间领域
@@ -104,6 +131,16 @@ port = 1883
 - `/api/v1/devices` - 设备管理
 - `/api/v1/drivers` - 驱动管理
 - `/api/v1/templates` - 模板管理
+- `/api/v1/alarms` - 告警管理
+- `/api/v1/alarm-rules` - 告警规则
+- `/api/v1/agents` - AI Agent 管理
+- `/api/v1/agents/skills` - Agent 技能调用
+- `/api/v1/workspaces` - 工作空间
+- `/api/v1/jobs` - 定时任务
+- `/api/v1/automations` - 自动化规则
+- `/api/v1/self-healing` - 自愈引擎
+- `/api/v1/events` - 事件查询
+- `/api/v1/notifications` - 通知管理
 
 ## 技术栈
 
