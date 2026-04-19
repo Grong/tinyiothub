@@ -14,7 +14,6 @@ api/
 │   │   ├── alarms/           # 告警管理 API
 │   │   ├── alarm_rules/      # 告警规则 API
 │   │   ├── agents/           # AI Agent 管理 API
-│   │   ├── automations/      # 自动化规则 API
 │   │   ├── chat/             # AI Agent 聊天 API
 │   │   ├── events/           # 事件管理 API
 │   │   ├── jobs/             # 定时任务 API
@@ -38,7 +37,6 @@ api/
 │   │   ├── cron_scheduler.rs # 定时任务调度（CronSchedulerService）
 │   │   ├── data_context.rs   # 数据上下文
 │   │   ├── data_server.rs    # 数据服务
-│   │   ├── message_server.rs # 消息服务
 │   │   └── service_manager.rs # 服务管理器
 │   ├── domain/               # 领域层
 │   │   ├── agent/            # Agent 领域
@@ -47,9 +45,7 @@ api/
 │   │   ├── cron/             # 定时任务领域
 │   │   ├── device/           # 设备领域（含 driver/registry）
 │   │   ├── event/            # 事件领域
-│   │   ├── job/              # 任务领域
 │   │   ├── marketplace/      # 市场领域
-│   │   ├── organization/     # 组织领域
 │   │   ├── permission/       # 权限领域
 │   │   ├── plugin/           # 插件领域
 │   │   ├── product/          # 产品领域
@@ -137,7 +133,6 @@ port = 1883
 - `/api/v1/agents/skills` - Agent 技能调用
 - `/api/v1/workspaces` - 工作空间
 - `/api/v1/jobs` - 定时任务
-- `/api/v1/automations` - 自动化规则
 - `/api/v1/self-healing` - 自愈引擎
 - `/api/v1/events` - 事件查询
 - `/api/v1/notifications` - 通知管理

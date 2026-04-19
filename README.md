@@ -317,7 +317,6 @@ api/
 │   │   ├── alarms/           # 告警管理 API
 │   │   ├── alarm_rules/      # 告警规则 API
 │   │   ├── agents/           # AI Agent 管理 API
-│   │   ├── automations/      # 自动化规则 API
 │   │   ├── chat/             # AI Agent 聊天 API
 │   │   ├── events/           # 事件管理 API
 │   │   ├── jobs/             # 定时任务 API
@@ -341,7 +340,6 @@ api/
 │   │   ├── cron_scheduler.rs # 定时任务调度（CronSchedulerService）
 │   │   ├── data_context.rs   # 数据上下文
 │   │   ├── data_server.rs    # 数据服务
-│   │   ├── message_server.rs # 消息服务
 │   │   └── service_manager.rs # 服务管理器
 │   ├── domain/               # 领域层
 │   │   ├── agent/            # Agent 领域
@@ -350,9 +348,7 @@ api/
 │   │   ├── cron/             # 定时任务领域
 │   │   ├── device/           # 设备领域（含 driver/registry）
 │   │   ├── event/            # 事件领域
-│   │   ├── job/              # 任务领域
 │   │   ├── marketplace/      # 市场领域
-│   │   ├── organization/     # 组织领域
 │   │   ├── permission/       # 权限领域
 │   │   ├── plugin/           # 插件领域
 │   │   ├── product/          # 产品领域
@@ -433,9 +429,7 @@ web/
 ### 告警管理
 - `GET /api/v1/alarms` - 获取告警列表
 - `GET /api/v1/alarms/{id}` - 获取告警详情
-- `POST /api/v1/alarms/{id}/acknowledge` - 确认告警
-- `POST /api/v1/alarms/{id}/resolve` - 解决告警
-- `POST /api/v1/alarms/batch-acknowledge` - 批量确认告警
+- `GET /api/v1/alarms/recent` - 获取最新告警
 - `GET /api/v1/alarms/statistics` - 告警统计
 
 ### 告警规则
@@ -462,12 +456,6 @@ web/
 - `DELETE /api/v1/jobs/{id}` - 删除任务
 - `POST /api/v1/jobs/{id}/toggle` - 启用/禁用任务
 - `GET /api/v1/jobs/{id}/runs` - 获取任务执行记录
-
-### 自动化规则
-- `GET /api/v1/automations` - 获取自动化规则列表
-- `POST /api/v1/automations` - 创建自动化规则
-- `PUT /api/v1/automations/{id}` - 更新自动化规则
-- `DELETE /api/v1/automations/{id}` - 删除自动化规则
 
 ### 自愈引擎
 - `GET /api/v1/self-healing/probes` - 获取探针列表
