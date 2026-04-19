@@ -617,16 +617,6 @@ fn default_sms_provider() -> String {
     "aliyun".to_string()
 }
 
-#[allow(dead_code)]
-fn default_sms_rate_limit() -> u32 {
-    5
-}
-
-#[allow(dead_code)]
-fn default_sms_expire() -> u64 {
-    300
-}
-
 /// SMS configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
