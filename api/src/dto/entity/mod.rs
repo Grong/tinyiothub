@@ -3,8 +3,6 @@ pub mod component;
 
 pub mod device;
 
-pub mod device_alarm;
-
 pub mod device_command;
 
 pub mod device_property;
@@ -13,17 +11,7 @@ pub mod job;
 
 pub mod cron_job;
 
-pub mod menu;
-
-pub mod message;
-
-pub mod mqtt_info;
-
 pub mod notification_channel;
-
-pub mod opt_record;
-
-pub mod organization;
 
 pub mod permission;
 
@@ -31,15 +19,9 @@ pub mod product;
 
 pub mod role;
 
-pub mod role_permission;
-
 pub mod tag;
 
 pub mod user;
-
-pub mod user_permission;
-
-pub mod user_roles;
 
 pub mod device_template;
 
