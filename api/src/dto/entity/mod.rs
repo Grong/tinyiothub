@@ -5,11 +5,7 @@ pub mod device;
 
 pub mod device_alarm;
 
-pub mod device_alarm_rule;
-
 pub mod device_command;
-
-pub mod device_event_trigger;
 
 pub mod device_property;
 
