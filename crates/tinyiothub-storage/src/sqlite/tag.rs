@@ -1,12 +1,12 @@
 use async_trait::async_trait;
 use sqlx::{FromRow, QueryBuilder, Row};
 
-use crate::domain::tag::repository::{TagBindingRepository, TagRepository};
-use crate::dto::entity::tag::{
+use crate::traits::tag::{TagBindingRepository, TagRepository};
+use tinyiothub_core::models::tag::{
     CreateTagBindingRequest, CreateTagRequest, Tag, TagBinding, TagQuery, UpdateTagRequest,
 };
-use crate::infrastructure::persistence::database::Database;
-use crate::shared::error::Result;
+use crate::sqlite::database::Database;
+use tinyiothub_core::error::Result;
 
 /// Internal row type for sqlx mapping
 #[derive(Debug, Clone, FromRow)]
@@ -110,7 +110,7 @@ impl TagRepository for SqliteTagRepository {
         .execute(self.database.pool())
         .await?;
 
-        self.find_by_id(&id).await?.ok_or(crate::shared::error::Error::NotFound)
+        self.find_by_id(&id).await?.ok_or(tinyiothub_core::error::Error::NotFound)
     }
 
     async fn update(&self, id: &str, request: &UpdateTagRequest) -> Result<Tag> {
@@ -126,7 +126,7 @@ impl TagRepository for SqliteTagRepository {
         }
 
         if !has_updates {
-            return self.find_by_id(id).await?.ok_or(crate::shared::error::Error::NotFound);
+            return self.find_by_id(id).await?.ok_or(tinyiothub_core::error::Error::NotFound);
         }
 
         query.push(" WHERE id = ").push_bind(id);
@@ -134,10 +134,10 @@ impl TagRepository for SqliteTagRepository {
         let result = query.build().execute(self.database.pool()).await?;
 
         if result.rows_affected() == 0 {
-            return Err(crate::shared::error::Error::NotFound);
+            return Err(tinyiothub_core::error::Error::NotFound);
         }
 
-        self.find_by_id(id).await?.ok_or(crate::shared::error::Error::NotFound)
+        self.find_by_id(id).await?.ok_or(tinyiothub_core::error::Error::NotFound)
     }
 
     async fn delete(&self, id: &str, tenant_id: &str) -> Result<u64> {
@@ -309,7 +309,7 @@ impl TagBindingRepository for SqliteTagBindingRepository {
         .execute(self.database.pool())
         .await?;
 
-        self.find_by_id(&id).await?.ok_or(crate::shared::error::Error::NotFound)
+        self.find_by_id(&id).await?.ok_or(tinyiothub_core::error::Error::NotFound)
     }
 
     async fn delete(&self, id: &str, tenant_id: &str) -> Result<u64> {

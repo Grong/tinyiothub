@@ -1,13 +1,13 @@
 use async_trait::async_trait;
 use sqlx::{FromRow, QueryBuilder, Row};
 
-use crate::domain::permission::repository::{PermissionGroupRepository, PermissionRepository};
-use crate::dto::entity::permission::{
+use crate::traits::permission::{PermissionGroupRepository, PermissionRepository};
+use tinyiothub_core::models::permission::{
     CreatePermissionGroupRequest, CreatePermissionRequest, Permission, PermissionGroup,
     PermissionQuery, UpdatePermissionRequest,
 };
-use crate::infrastructure::persistence::database::Database;
-use crate::shared::error::Result;
+use crate::sqlite::database::Database;
+use tinyiothub_core::error::Result;
 
 /// Internal row type for sqlx mapping
 #[derive(Debug, Clone, FromRow)]
@@ -123,7 +123,7 @@ impl PermissionRepository for SqlitePermissionRepository {
         .execute(self.database.pool())
         .await?;
 
-        self.find_by_id(&id).await?.ok_or(crate::shared::error::Error::NotFound)
+        self.find_by_id(&id).await?.ok_or(tinyiothub_core::error::Error::NotFound)
     }
 
     async fn update(&self, id: &str, request: &UpdatePermissionRequest) -> Result<Permission> {
@@ -174,7 +174,7 @@ impl PermissionRepository for SqlitePermissionRepository {
         if has_updates {
             query.push(", updated_at = ").push_bind(&now);
         } else {
-            return self.find_by_id(id).await?.ok_or(crate::shared::error::Error::NotFound);
+            return self.find_by_id(id).await?.ok_or(tinyiothub_core::error::Error::NotFound);
         }
 
         query.push(" WHERE id = ").push_bind(id);
@@ -182,16 +182,16 @@ impl PermissionRepository for SqlitePermissionRepository {
         let result = query.build().execute(self.database.pool()).await?;
 
         if result.rows_affected() == 0 {
-            return Err(crate::shared::error::Error::NotFound);
+            return Err(tinyiothub_core::error::Error::NotFound);
         }
 
-        self.find_by_id(id).await?.ok_or(crate::shared::error::Error::NotFound)
+        self.find_by_id(id).await?.ok_or(tinyiothub_core::error::Error::NotFound)
     }
 
     async fn delete(&self, id: &str) -> Result<u64> {
         if let Some(permission) = self.find_by_id(id).await? {
             if permission.is_system {
-                return Err(crate::shared::error::Error::NotFound);
+                return Err(tinyiothub_core::error::Error::NotFound);
             }
         }
 
@@ -443,7 +443,7 @@ impl PermissionGroupRepository for SqlitePermissionGroupRepository {
         .execute(self.database.pool())
         .await?;
 
-        self.find_by_id(&id).await?.ok_or(crate::shared::error::Error::NotFound)
+        self.find_by_id(&id).await?.ok_or(tinyiothub_core::error::Error::NotFound)
     }
 
     async fn delete(&self, id: &str) -> Result<u64> {

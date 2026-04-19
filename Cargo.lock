@@ -5524,6 +5524,7 @@ dependencies = [
  "tinyiothub-error",
  "tinyiothub-macros",
  "tinyiothub-plugin-sdk",
+ "tinyiothub-storage",
  "tokio",
  "tokio-cron-scheduler",
  "tokio-postgres",
@@ -5660,9 +5661,18 @@ dependencies = [
 name = "tinyiothub-storage"
 version = "1.1.0"
 dependencies = [
+ "async-trait",
+ "chrono",
+ "cron 0.12.1",
+ "rand 0.8.6",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
  "sqlx",
  "tinyiothub-core",
  "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

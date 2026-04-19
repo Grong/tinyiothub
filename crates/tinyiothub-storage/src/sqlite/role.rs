@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 use sqlx::{FromRow, QueryBuilder, Row};
 
-use crate::domain::role::repository::RoleRepository;
-use crate::dto::entity::role::{CreateRoleRequest, Role, RoleQueryParams, RoleStats, UpdateRoleRequest};
-use crate::infrastructure::persistence::database::Database;
-use crate::shared::error::Result;
+use crate::traits::role::RoleRepository;
+use tinyiothub_core::models::role::{CreateRoleRequest, Role, RoleQueryParams, RoleStats, UpdateRoleRequest};
+use crate::sqlite::database::Database;
+use tinyiothub_core::error::Result;
 
 /// Internal row type for sqlx mapping
 #[derive(Debug, Clone, FromRow)]
@@ -77,7 +77,7 @@ impl RoleRepository for SqliteRoleRepository {
         .execute(self.database.pool())
         .await?;
 
-        self.find_by_id(&id).await?.ok_or(crate::shared::error::Error::NotFound)
+        self.find_by_id(&id).await?.ok_or(tinyiothub_core::error::Error::NotFound)
     }
 
     async fn update(&self, id: &str, request: &UpdateRoleRequest) -> Result<Role> {
@@ -109,7 +109,7 @@ impl RoleRepository for SqliteRoleRepository {
         }
 
         if !has_updates {
-            return self.find_by_id(id).await?.ok_or(crate::shared::error::Error::NotFound);
+            return self.find_by_id(id).await?.ok_or(tinyiothub_core::error::Error::NotFound);
         }
 
         query.push(" WHERE id = ").push_bind(id);
@@ -117,10 +117,10 @@ impl RoleRepository for SqliteRoleRepository {
         let result = query.build().execute(self.database.pool()).await?;
 
         if result.rows_affected() == 0 {
-            return Err(crate::shared::error::Error::NotFound);
+            return Err(tinyiothub_core::error::Error::NotFound);
         }
 
-        self.find_by_id(id).await?.ok_or(crate::shared::error::Error::NotFound)
+        self.find_by_id(id).await?.ok_or(tinyiothub_core::error::Error::NotFound)
     }
 
     async fn delete(&self, id: &str) -> Result<u64> {

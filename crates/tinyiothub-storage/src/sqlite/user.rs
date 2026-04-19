@@ -1,14 +1,12 @@
 use async_trait::async_trait;
 use sqlx::{FromRow, QueryBuilder, Row};
 
-use crate::{
-    domain::user::repository::{
+use crate::traits::user::{
         UserCriteria, UserRepository, UserSortBy, UserSortOrder,
-    },
-    dto::entity::user::{CreateUserRequest, UpdateUserRequest, User, UserStatisticsNew},
-    infrastructure::persistence::Database,
-    shared::error::{Error, Result},
-};
+    };
+use tinyiothub_core::models::user::{CreateUserRequest, UpdateUserRequest, User, UserStatisticsNew};
+use crate::sqlite::database::Database;
+use tinyiothub_core::error::{Error, Result};
 
 /// Internal row type for sqlx mapping
 #[derive(Debug, Clone, FromRow)]

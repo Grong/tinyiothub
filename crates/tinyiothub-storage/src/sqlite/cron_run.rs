@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 use sqlx::{QueryBuilder, Row};
 
-use crate::domain::cron::repository::CronRunRepository;
-use crate::dto::entity::cron_job::{CronRun, CronRunQuery};
-use crate::infrastructure::persistence::database::Database;
-use crate::shared::error::Result;
+use crate::traits::cron::CronRunRepository;
+use tinyiothub_core::models::cron_job::{CronRun, CronRunQuery};
+use crate::sqlite::database::Database;
+use tinyiothub_core::error::Result;
 
 pub struct SqliteCronRunRepository {
     database: Database,
@@ -67,7 +67,7 @@ impl CronRunRepository for SqliteCronRunRepository {
 
         self.find_by_id(&id, workspace_id)
             .await?
-            .ok_or(crate::shared::error::Error::NotFound)
+            .ok_or(tinyiothub_core::error::Error::NotFound)
     }
 
     async fn complete(
@@ -103,7 +103,7 @@ impl CronRunRepository for SqliteCronRunRepository {
         .await?;
 
         if result.rows_affected() == 0 {
-            return Err(crate::shared::error::Error::NotFound);
+            return Err(tinyiothub_core::error::Error::NotFound);
         }
 
         // Fetch the run back to return the updated entity

@@ -1,12 +1,10 @@
 use async_trait::async_trait;
 use sqlx::{FromRow, QueryBuilder};
 
-use crate::{
-    domain::workspace::repository::WorkspaceRepository,
-    dto::entity::workspace::{Workspace, WorkspaceWithDeviceCount},
-    infrastructure::persistence::Database,
-    shared::error::{Error, Result},
-};
+use crate::traits::workspace::WorkspaceRepository;
+use tinyiothub_core::models::workspace::{Workspace, WorkspaceWithDeviceCount};
+use crate::sqlite::database::Database;
+use tinyiothub_core::error::{Error, Result};
 
 /// Internal row type for sqlx mapping
 #[derive(Debug, Clone, FromRow)]

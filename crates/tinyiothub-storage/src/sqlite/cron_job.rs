@@ -4,10 +4,10 @@ use cron::Schedule;
 use sqlx::{QueryBuilder, Row};
 use std::str::FromStr;
 
-use crate::domain::cron::repository::CronJobRepository;
-use crate::dto::entity::cron_job::{CreateCronJobRequest, CronJob, CronJobQuery, UpdateCronJobRequest};
-use crate::infrastructure::persistence::database::Database;
-use crate::shared::error::Result;
+use crate::traits::cron::CronJobRepository;
+use tinyiothub_core::models::cron_job::{CreateCronJobRequest, CronJob, CronJobQuery, UpdateCronJobRequest};
+use crate::sqlite::database::Database;
+use tinyiothub_core::error::Result;
 
 pub struct SqliteCronJobRepository {
     database: Database,
@@ -160,7 +160,7 @@ impl CronJobRepository for SqliteCronJobRepository {
 
         self.find_by_id(&id, workspace_id)
             .await?
-            .ok_or(crate::shared::error::Error::NotFound)
+            .ok_or(tinyiothub_core::error::Error::NotFound)
     }
 
     async fn update(
@@ -231,7 +231,7 @@ impl CronJobRepository for SqliteCronJobRepository {
             return self
                 .find_by_id(id, workspace_id)
                 .await?
-                .ok_or(crate::shared::error::Error::NotFound);
+                .ok_or(tinyiothub_core::error::Error::NotFound);
         }
 
         builder.push(" WHERE id = ").push_bind(id);
@@ -240,12 +240,12 @@ impl CronJobRepository for SqliteCronJobRepository {
         let result = builder.build().execute(self.database.pool()).await?;
 
         if result.rows_affected() == 0 {
-            return Err(crate::shared::error::Error::NotFound);
+            return Err(tinyiothub_core::error::Error::NotFound);
         }
 
         self.find_by_id(id, workspace_id)
             .await?
-            .ok_or(crate::shared::error::Error::NotFound)
+            .ok_or(tinyiothub_core::error::Error::NotFound)
     }
 
     async fn delete(&self, id: &str, workspace_id: &str) -> Result<bool> {

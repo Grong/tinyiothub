@@ -102,6 +102,7 @@ tinyiothub-error = { workspace = true }
 tinyiothub-config = { workspace = true }
 tinyiothub-macros = { workspace = true }
 tinyiothub-plugin-sdk = { workspace = true }
+tinyiothub-storage = { workspace = true }
 
 # Dynamic loading
 libloading = { workspace = true }

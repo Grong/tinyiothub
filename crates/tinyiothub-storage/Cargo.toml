@@ -4,8 +4,36 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "Repository traits and SQLite persistence implementations"
 
 [dependencies]
-tinyiothub-core = { workspace = true }
+tinyiothub-core = { workspace = true, features = ["sqlx"] }
+
+# Async runtime
 tokio = { workspace = true }
-sqlx = { version = "0.9.0-alpha.1", features = ["runtime-tokio", "sqlite", "chrono", "uuid"] }
+
+# Database
+sqlx = { workspace = true, features = ["runtime-tokio", "sqlite", "chrono", "uuid"] }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Utilities
+uuid = { workspace = true }
+async-trait = { workspace = true }
+
+# Scheduling
+cron = { workspace = true }
+
+# Crypto (for API key hashing in tenant repo)
+rand = { workspace = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

@@ -3,13 +3,13 @@ use rand::RngCore;
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 
-use crate::domain::tenant::repository::TenantRepository;
-use crate::dto::entity::tenant::{
+use crate::traits::tenant::TenantRepository;
+use tinyiothub_core::models::tenant::{
     ApiKey, ApiUsageStats, CreateApiKeyRequest, CreateTenantRequest, SubscriptionPlan, Tenant,
     TenantUsage,
 };
-use crate::infrastructure::persistence::Database;
-use crate::shared::error::{Error, Result};
+use crate::sqlite::database::Database;
+use tinyiothub_core::error::{Error, Result};
 
 #[derive(Debug, Clone)]
 pub struct SqliteTenantRepository {
