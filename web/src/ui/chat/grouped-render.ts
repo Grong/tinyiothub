@@ -252,23 +252,6 @@ const TOOL_ICONS: Record<string, string> = {
   // Default
 };
 
-const TOOL_CATEGORY_LABELS: Record<string, string> = {
-  device: "设备",
-  alarm: "告警",
-  data: "数据",
-  system: "系统",
-  default: "工具",
-};
-
-function getToolCategory(name: string): string {
-  const n = name.toLowerCase();
-  if (n.includes("device")) return "device";
-  if (n.includes("alarm")) return "alarm";
-  if (n.includes("query") || n.includes("data") || n.includes("aggregate")) return "data";
-  if (n.includes("system")) return "system";
-  return "default";
-}
-
 function getToolIcon(name: string): string {
   return TOOL_ICONS[name] || "⚙";
 }

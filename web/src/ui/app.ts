@@ -7,7 +7,6 @@ import { resolveTheme, type ThemeMode, type ResolvedTheme } from "./theme.js";
 import "./components/theme-toggle.js";
 import "./components/toast.js";
 import { error as toastError } from "./components/toast.js";
-import "./components/skeleton.js";
 import { deviceCache } from "../stores/device-cache.js";
 
 // Views — side-effect imports register custom elements
