@@ -13,7 +13,7 @@ use sqlx::Row;
 
 use crate::{
     api::AppState,
-    dto::{entity::user::User, response::ApiResponse},
+    dto::{entity::user::User, response::{ApiResponse, ApiResponseBuilder}},
     infrastructure::{config::get as get_config, redis::RedisClient},
     shared::security::jwt,
 };
@@ -143,26 +143,26 @@ async fn get_wechat_qrcode(
     let wechat_config = match &config.social.wechat {
         Some(c) => c,
         None => {
-            return ApiResponse::error("微信登录未配置".to_string());
+            return ApiResponseBuilder::error("微信登录未配置".to_string());
         }
     };
 
     // 检查是否启用
     if !wechat_config.enabled {
-        return ApiResponse::error("微信登录未启用".to_string());
+        return ApiResponseBuilder::error("微信登录未启用".to_string());
     }
 
     let app_id = match &wechat_config.app_id {
         Some(id) => id.clone(),
         None => {
-            return ApiResponse::error("微信 AppID 未配置".to_string());
+            return ApiResponseBuilder::error("微信 AppID 未配置".to_string());
         }
     };
 
     let _app_secret = match &wechat_config.app_secret {
         Some(secret) => secret.clone(),
         None => {
-            return ApiResponse::error("微信 AppSecret 未配置".to_string());
+            return ApiResponseBuilder::error("微信 AppSecret 未配置".to_string());
         }
     };
 
@@ -196,7 +196,7 @@ async fn get_wechat_qrcode(
         }
     }
 
-    ApiResponse::success(WeChatQRCodeResponse { qrcode_url, authorize_url, state: oauth_state })
+    ApiResponseBuilder::success(WeChatQRCodeResponse { qrcode_url, authorize_url, state: oauth_state })
 }
 
 /// 微信回调处理
@@ -327,7 +327,7 @@ async fn wechat_login(
     let code = request.code.trim();
 
     if code.is_empty() {
-        return ApiResponse::error("授权码不能为空".to_string());
+        return ApiResponseBuilder::error("授权码不能为空".to_string());
     }
 
     let db = state.database();
@@ -336,14 +336,14 @@ async fn wechat_login(
     let config = match get_wechat_config(db).await {
         Some(c) => c,
         None => {
-            return ApiResponse::error("微信登录未配置".to_string());
+            return ApiResponseBuilder::error("微信登录未配置".to_string());
         }
     };
 
     let (_app_id, _app_secret) = match (config.app_id, config.app_secret) {
         (Some(id), Some(secret)) => (id, secret),
         _ => {
-            return ApiResponse::error("微信配置不完整".to_string());
+            return ApiResponseBuilder::error("微信配置不完整".to_string());
         }
     };
 
@@ -362,7 +362,7 @@ async fn wechat_login(
     .await
     .unwrap_or(None);
 
-    ApiResponse::success(WeChatLoginResponse {
+    ApiResponseBuilder::success(WeChatLoginResponse {
         access_token: "mock_token".to_string(),
         token_type: "Bearer".to_string(),
         expires_in: 7200,
@@ -393,7 +393,7 @@ async fn wechat_miniprogram_login(
     let code = request.code.trim();
 
     if code.is_empty() {
-        return ApiResponse::error("code 不能为空".to_string());
+        return ApiResponseBuilder::error("code 不能为空".to_string());
     }
 
     let db = state.database();
@@ -402,7 +402,7 @@ async fn wechat_miniprogram_login(
     let _config = match get_wechat_config(db).await {
         Some(c) => c,
         None => {
-            return ApiResponse::error("微信登录未配置".to_string());
+            return ApiResponseBuilder::error("微信登录未配置".to_string());
         }
     };
 
@@ -417,7 +417,7 @@ async fn wechat_miniprogram_login(
     .await
     .unwrap_or(None);
 
-    ApiResponse::success(WeChatLoginResponse {
+    ApiResponseBuilder::success(WeChatLoginResponse {
         access_token: "mock_mp_token".to_string(),
         token_type: "Bearer".to_string(),
         expires_in: 7200,
@@ -441,7 +441,7 @@ async fn bind_social_account(
 ) -> Json<ApiResponse<String>> {
     // TODO: 实现绑定逻辑
 
-    ApiResponse::success("绑定成功".to_string())
+    ApiResponseBuilder::success("绑定成功".to_string())
 }
 
 /// 解绑社交账号
@@ -451,7 +451,7 @@ async fn unbind_social_account(
 ) -> Json<ApiResponse<String>> {
     // TODO: 实现解绑逻辑
 
-    ApiResponse::success("解绑成功".to_string())
+    ApiResponseBuilder::success("解绑成功".to_string())
 }
 
 /// 获取社交登录配置
@@ -475,12 +475,12 @@ async fn get_social_config(State(state): State<AppState>) -> Json<ApiResponse<Ve
         Ok(r) => r,
         Err(e) => {
             tracing::error!("Failed to get social config: {}", e);
-            return ApiResponse::error("获取配置失败".to_string());
+            return ApiResponseBuilder::error("获取配置失败".to_string());
         }
     };
 
     let configs: Vec<SocialConfig> = rows.into_iter().map(|r| r).collect();
-    ApiResponse::success(configs)
+    ApiResponseBuilder::success(configs)
 }
 
 /// 更新社交登录配置
@@ -505,10 +505,10 @@ async fn update_social_config(
 
     if let Err(e) = result {
         tracing::error!("Failed to update social config: {}", e);
-        return ApiResponse::error("更新配置失败".to_string());
+        return ApiResponseBuilder::error("更新配置失败".to_string());
     }
 
-    ApiResponse::success("配置已更新".to_string())
+    ApiResponseBuilder::success("配置已更新".to_string())
 }
 
 // ============== 辅助函数 ==============

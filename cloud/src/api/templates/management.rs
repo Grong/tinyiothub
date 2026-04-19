@@ -18,7 +18,7 @@ use crate::{
             CreateDeviceTemplateRequest, DeviceCreationInput, DevicePreview, DeviceTemplate,
             TemplateCategory, TemplateQueryParams, UpdateDeviceTemplateRequest,
         },
-        response::{ApiResponse, PaginatedResponse, PaginationInfo},
+        response::{ApiResponse, ApiResponseBuilder, PaginatedResponse, PaginationInfo},
     },
     shared::security::jwt::Claims,
 };
@@ -58,7 +58,7 @@ async fn list_templates(
         Ok(service) => service,
         Err(e) => {
             tracing::error!("Failed to initialize template service: {}", e);
-            return ApiResponse::error("初始化模板服务失败".to_string());
+            return ApiResponseBuilder::error("初始化模板服务失败".to_string());
         }
     };
 
@@ -90,7 +90,7 @@ async fn list_templates(
                 0
             };
 
-            ApiResponse::success(PaginatedResponse {
+            ApiResponseBuilder::success(PaginatedResponse {
                 data: templates,
                 pagination: PaginationInfo {
                     page,
@@ -102,7 +102,7 @@ async fn list_templates(
         }
         Err(e) => {
             tracing::error!("Failed to list templates: {}", e);
-            ApiResponse::error("获取模板列表失败".to_string())
+            ApiResponseBuilder::error("获取模板列表失败".to_string())
         }
     }
 }
@@ -118,15 +118,15 @@ async fn get_template(
         Ok(service) => service,
         Err(e) => {
             tracing::error!("Failed to initialize template service: {}", e);
-            return ApiResponse::error("初始化模板服务失败".to_string());
+            return ApiResponseBuilder::error("初始化模板服务失败".to_string());
         }
     };
 
     match template_service.get_repository().find_by_id(&id).await {
-        Ok(template) => ApiResponse::success(template),
+        Ok(template) => ApiResponseBuilder::success(template),
         Err(e) => {
             tracing::error!("Failed to get template {}: {}", id, e);
-            ApiResponse::error("获取模板详情失败".to_string())
+            ApiResponseBuilder::error("获取模板详情失败".to_string())
         }
     }
 }
@@ -141,15 +141,15 @@ async fn get_template_categories(
         Ok(service) => service,
         Err(e) => {
             tracing::error!("Failed to initialize template service: {}", e);
-            return ApiResponse::error("初始化模板服务失败".to_string());
+            return ApiResponseBuilder::error("初始化模板服务失败".to_string());
         }
     };
 
     match template_service.get_repository().get_categories().await {
-        Ok(categories) => ApiResponse::success(categories),
+        Ok(categories) => ApiResponseBuilder::success(categories),
         Err(e) => {
             tracing::error!("Failed to get template categories: {}", e);
-            ApiResponse::error("获取模板分类失败".to_string())
+            ApiResponseBuilder::error("获取模板分类失败".to_string())
         }
     }
 }
@@ -165,29 +165,29 @@ async fn create_template(
         Ok(service) => service,
         Err(e) => {
             tracing::error!("Failed to initialize template service: {}", e);
-            return ApiResponse::error("初始化模板服务失败".to_string());
+            return ApiResponseBuilder::error("初始化模板服务失败".to_string());
         }
     };
 
     // 验证模板名称唯一性
     match template_service.get_repository().exists_by_name(&req.name).await {
         Ok(true) => {
-            return ApiResponse::error("模板名称已存在".to_string());
+            return ApiResponseBuilder::error("模板名称已存在".to_string());
         }
         Ok(false) => {
             // 名称可用，继续创建
         }
         Err(e) => {
             tracing::error!("Failed to check template name existence: {}", e);
-            return ApiResponse::error("检查模板名称失败".to_string());
+            return ApiResponseBuilder::error("检查模板名称失败".to_string());
         }
     }
 
     match template_service.get_repository().create(&req).await {
-        Ok(created_template) => ApiResponse::success(created_template),
+        Ok(created_template) => ApiResponseBuilder::success(created_template),
         Err(e) => {
             tracing::error!("Failed to create template: {}", e);
-            ApiResponse::error("创建模板失败".to_string())
+            ApiResponseBuilder::error("创建模板失败".to_string())
         }
     }
 }
@@ -204,7 +204,7 @@ async fn update_template(
         Ok(service) => service,
         Err(e) => {
             tracing::error!("Failed to initialize template service: {}", e);
-            return ApiResponse::error("初始化模板服务失败".to_string());
+            return ApiResponseBuilder::error("初始化模板服务失败".to_string());
         }
     };
 
@@ -213,17 +213,17 @@ async fn update_template(
         Ok(Some(_template)) => {
             // 模板存在，继续更新
             match template_service.get_repository().update(&id, &req).await {
-                Ok(updated_template) => ApiResponse::success(updated_template),
+                Ok(updated_template) => ApiResponseBuilder::success(updated_template),
                 Err(e) => {
                     tracing::error!("Failed to update template {}: {}", id, e);
-                    ApiResponse::error("更新模板失败".to_string())
+                    ApiResponseBuilder::error("更新模板失败".to_string())
                 }
             }
         }
-        Ok(None) => ApiResponse::error("模板不存在".to_string()),
+        Ok(None) => ApiResponseBuilder::error("模板不存在".to_string()),
         Err(e) => {
             tracing::error!("Failed to find template {}: {}", id, e);
-            ApiResponse::error("查询模板失败".to_string())
+            ApiResponseBuilder::error("查询模板失败".to_string())
         }
     }
 }
@@ -239,7 +239,7 @@ async fn delete_template(
         Ok(service) => service,
         Err(e) => {
             tracing::error!("Failed to initialize template service: {}", e);
-            return ApiResponse::error("初始化模板服务失败".to_string());
+            return ApiResponseBuilder::error("初始化模板服务失败".to_string());
         }
     };
 
@@ -247,14 +247,14 @@ async fn delete_template(
         Ok(deleted) => {
             if deleted {
                 tracing::info!("Template {} deleted successfully", id);
-                ApiResponse::success(true)
+                ApiResponseBuilder::success(true)
             } else {
-                ApiResponse::error("模板不存在".to_string())
+                ApiResponseBuilder::error("模板不存在".to_string())
             }
         }
         Err(e) => {
             tracing::error!("Failed to delete template {}: {}", id, e);
-            ApiResponse::error("删除模板失败".to_string())
+            ApiResponseBuilder::error("删除模板失败".to_string())
         }
     }
 }
@@ -271,7 +271,7 @@ async fn validate_template_input(
         Ok(service) => service,
         Err(e) => {
             tracing::error!("Failed to initialize template service: {}", e);
-            return ApiResponse::error("初始化模板服务失败".to_string());
+            return ApiResponseBuilder::error("初始化模板服务失败".to_string());
         }
     };
 
@@ -279,11 +279,11 @@ async fn validate_template_input(
     let template = match template_service.get_repository().find_by_id(&id).await {
         Ok(Some(template)) => template,
         Ok(None) => {
-            return ApiResponse::error("模板不存在".to_string());
+            return ApiResponseBuilder::error("模板不存在".to_string());
         }
         Err(e) => {
             tracing::error!("Failed to find template {}: {}", id, e);
-            return ApiResponse::error("查询模板失败".to_string());
+            return ApiResponseBuilder::error("查询模板失败".to_string());
         }
     };
 
@@ -293,10 +293,10 @@ async fn validate_template_input(
 
     // 将验证结果转换为JSON
     match serde_json::to_value(&validation_result) {
-        Ok(json_result) => ApiResponse::success(json_result),
+        Ok(json_result) => ApiResponseBuilder::success(json_result),
         Err(e) => {
             tracing::error!("Failed to serialize validation result: {}", e);
-            ApiResponse::error("验证结果序列化失败".to_string())
+            ApiResponseBuilder::error("验证结果序列化失败".to_string())
         }
     }
 }
@@ -313,7 +313,7 @@ async fn preview_device_from_template(
         Ok(service) => service,
         Err(e) => {
             tracing::error!("Failed to initialize template service: {}", e);
-            return ApiResponse::error("初始化模板服务失败".to_string());
+            return ApiResponseBuilder::error("初始化模板服务失败".to_string());
         }
     };
 
@@ -321,11 +321,11 @@ async fn preview_device_from_template(
     let _template = match template_service.get_repository().find_by_id(&id).await {
         Ok(Some(template)) => template,
         Ok(None) => {
-            return ApiResponse::error("模板不存在".to_string());
+            return ApiResponseBuilder::error("模板不存在".to_string());
         }
         Err(e) => {
             tracing::error!("Failed to find template {}: {}", id, e);
-            return ApiResponse::error("查询模板失败".to_string());
+            return ApiResponseBuilder::error("查询模板失败".to_string());
         }
     };
 
@@ -336,10 +336,10 @@ async fn preview_device_from_template(
     let engine = TemplateEngine::new(template_repository, validator);
 
     match engine.preview_template(&id, &input).await {
-        Ok(preview) => ApiResponse::success(preview),
+        Ok(preview) => ApiResponseBuilder::success(preview),
         Err(e) => {
             tracing::error!("Failed to preview device from template {}: {}", id, e);
-            ApiResponse::error("预览设备创建失败".to_string())
+            ApiResponseBuilder::error("预览设备创建失败".to_string())
         }
     }
 }

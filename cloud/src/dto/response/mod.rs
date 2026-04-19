@@ -11,5 +11,6 @@ pub mod login;
 
 pub use alarm::*;
 pub use api_response::{ApiResponse, PaginatedResponse, PaginationInfo, ReqCtx, UserInfo};
+pub use builder::ApiResponseBuilder;
 pub use dashboard::*;
 pub use device_command::DeviceCommandResponse;

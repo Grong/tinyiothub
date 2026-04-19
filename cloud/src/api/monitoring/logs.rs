@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     api::AppState,
-    dto::{request::pagination::PaginationQuery, response::ApiResponse},
+    dto::{request::pagination::PaginationQuery, response::{ApiResponse, ApiResponseBuilder}},
     shared::security::jwt::Claims,
 };
 
@@ -56,7 +56,7 @@ async fn get_logs(
     tracing::info!("Getting logs with filters");
 
     let logs = vec![];
-    ApiResponse::success(logs)
+    ApiResponseBuilder::success(logs)
 }
 
 /// 获取日志级别列表
@@ -71,5 +71,5 @@ async fn get_log_levels(
         LogLevel { name: "DEBUG".to_string(), description: "调试级别".to_string() },
     ];
 
-    ApiResponse::success(levels)
+    ApiResponseBuilder::success(levels)
 }

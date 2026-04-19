@@ -6,7 +6,7 @@ use crate::{
     dto::{
         response::{
             login::{LoginResponse, UserInfo},
-            ApiResponse,
+            ApiResponse, ApiResponseBuilder,
         },
     },
     shared::security::jwt,
@@ -38,7 +38,7 @@ async fn login(
 
     // 验证输入参数
     if request.username.trim().is_empty() || request.password.trim().is_empty() {
-        return ApiResponse::error("用户名和密码不能为空".to_string());
+        return ApiResponseBuilder::error("用户名和密码不能为空".to_string());
     }
 
     tracing::debug!("Authenticating user: {}", request.username);
@@ -50,7 +50,7 @@ async fn login(
 
             // 检查用户是否被禁用
             if !user.is_enabled() {
-                return ApiResponse::error("用户账户已被禁用".to_string());
+                return ApiResponseBuilder::error("用户账户已被禁用".to_string());
             }
 
             tracing::debug!("Updating last login time for user: {}", user.id);
@@ -120,11 +120,11 @@ async fn login(
                     };
 
                     tracing::info!("User {} logged in successfully", request.username);
-                    ApiResponse::success(login_response)
+                    ApiResponseBuilder::success(login_response)
                 }
                 Err(e) => {
                     tracing::error!("Failed to generate JWT token: {}", e);
-                    ApiResponse::error("登录失败，请稍后重试".to_string())
+                    ApiResponseBuilder::error("登录失败，请稍后重试".to_string())
                 }
             }
         }
@@ -133,11 +133,11 @@ async fn login(
                 "Login attempt with invalid credentials for username: {}",
                 request.username
             );
-            ApiResponse::error("用户名或密码错误".to_string())
+            ApiResponseBuilder::error("用户名或密码错误".to_string())
         }
         Err(e) => {
             tracing::error!("Database error during login: {}", e);
-            ApiResponse::error("登录失败，请稍后重试".to_string())
+            ApiResponseBuilder::error("登录失败，请稍后重试".to_string())
         }
     }
 }
@@ -150,5 +150,5 @@ async fn logout(
     // 在实际应用中，这里可能需要将 token 加入黑名单
     // 目前只是返回成功响应
     tracing::info!("User logged out");
-    ApiResponse::success("登出成功".to_string())
+    ApiResponseBuilder::success("登出成功".to_string())
 }

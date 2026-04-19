@@ -16,7 +16,7 @@ use sqlx::Row;
 
 use crate::{
     api::AppState,
-    dto::response::ApiResponse,
+    dto::response::{ApiResponse, ApiResponseBuilder},
     infrastructure::{config::get as get_config, redis::RedisClient},
     shared::security::jwt,
 };
@@ -291,14 +291,14 @@ async fn send_code(
     // 检查 SMS 是否启用
     let config = get_config();
     if !config.sms.enabled {
-        return ApiResponse::error("短信服务未启用".to_string());
+        return ApiResponseBuilder::error("短信服务未启用".to_string());
     }
 
     let phone = request.phone.trim();
 
     // 验证手机号格式
     if !validate_phone(phone) {
-        return ApiResponse::error("手机号格式不正确".to_string());
+        return ApiResponseBuilder::error("手机号格式不正确".to_string());
     }
 
     let purpose = request.purpose.unwrap_or_else(|| "login".to_string());
@@ -307,16 +307,16 @@ async fn send_code(
     // 频率限制检查
     match check_rate_limit(&state.redis, phone, Some(&ip_str)).await {
         Ok(RateLimitResult::NeedsWait(secs)) => {
-            return ApiResponse::error(format!("操作太频繁，请 {} 秒后重试", secs));
+            return ApiResponseBuilder::error(format!("操作太频繁，请 {} 秒后重试", secs));
         }
         Ok(RateLimitResult::DailyLimitExceeded) => {
-            return ApiResponse::error("今日发送次数已用完，请明天再试".to_string());
+            return ApiResponseBuilder::error("今日发送次数已用完，请明天再试".to_string());
         }
         Ok(RateLimitResult::NeedsCaptcha) => {
-            return ApiResponse::error_with_code(1001, "请先完成验证".to_string());
+            return ApiResponseBuilder::error_with_code(1001, "请先完成验证".to_string());
         }
         Ok(RateLimitResult::Allowed) => {}
-        Err(_) => return ApiResponse::error("系统错误".to_string()),
+        Err(_) => return ApiResponseBuilder::error("系统错误".to_string()),
     }
 
     // CAPTCHA 验证（如果频率异常，需要验证）
@@ -325,10 +325,10 @@ async fn send_code(
         match verify_captcha(ticket, randstr, &ip_str).await {
             Ok(true) => {}
             Ok(false) => {
-                return ApiResponse::error("验证失败，请重试".to_string());
+                return ApiResponseBuilder::error("验证失败，请重试".to_string());
             }
             Err(_) => {
-                return ApiResponse::error("验证服务异常".to_string());
+                return ApiResponseBuilder::error("验证服务异常".to_string());
             }
         }
     }
@@ -400,7 +400,7 @@ async fn send_code(
         .await
         {
             tracing::error!("Failed to save SMS code: {}", e);
-            return ApiResponse::error("发送失败，请稍后重试".to_string());
+            return ApiResponseBuilder::error("发送失败，请稍后重试".to_string());
         }
     }
 
@@ -408,7 +408,7 @@ async fn send_code(
     #[cfg(debug_assertions)]
     {
         tracing::info!("[TEST] SMS code for {}: {}", phone, code);
-        ApiResponse::success(SendCodeResponse {
+        ApiResponseBuilder::success(SendCodeResponse {
             expires_in: CODE_EXPIRE_SECONDS,
             message: format!("验证码已发送（测试模式: {}）", code),
         })
@@ -419,19 +419,19 @@ async fn send_code(
         // 调用阿里云 SMS API
         if let Some(aliyun_config) = &config.sms.aliyun {
             match send_aliyun_sms(phone, &code, aliyun_config).await {
-                Ok(_) => ApiResponse::success(SendCodeResponse {
+                Ok(_) => ApiResponseBuilder::success(SendCodeResponse {
                     expires_in: CODE_EXPIRE_SECONDS,
                     message: "验证码已发送".to_string(),
                 }),
                 Err(e) => {
                     tracing::error!("Failed to send SMS: {}", e);
-                    ApiResponse::error("发送失败，请稍后重试".to_string())
+                    ApiResponseBuilder::error("发送失败，请稍后重试".to_string())
                 }
             }
         } else {
             // 未配置阿里云 SMS 时记录日志
             tracing::warn!("Aliyun SMS not configured, code logged only");
-            ApiResponse::success(SendCodeResponse {
+            ApiResponseBuilder::success(SendCodeResponse {
                 expires_in: CODE_EXPIRE_SECONDS,
                 message: "验证码已发送".to_string(),
             })
@@ -449,7 +449,7 @@ async fn login_with_code(
 
     // 验证手机号格式
     if !validate_phone(phone) {
-        return ApiResponse::error("手机号格式不正确".to_string());
+        return ApiResponseBuilder::error("手机号格式不正确".to_string());
     }
 
     let redis = state.redis.as_ref();
@@ -468,7 +468,7 @@ async fn login_with_code(
 
     let stored_code = match stored_code {
         Some(c) => c,
-        None => return ApiResponse::error("验证码已过期，请重新获取".to_string()),
+        None => return ApiResponseBuilder::error("验证码已过期，请重新获取".to_string()),
     };
 
     // 验证码比较
@@ -490,10 +490,10 @@ async fn login_with_code(
                 if let Err(e) = r.del(&code_key).await {
                     tracing::error!("Failed to delete code after too many failures: {}", e);
                 }
-                return ApiResponse::error("验证码错误次数过多，请重新获取".to_string());
+                return ApiResponseBuilder::error("验证码错误次数过多，请重新获取".to_string());
             }
         }
-        return ApiResponse::error("验证码错误".to_string());
+        return ApiResponseBuilder::error("验证码错误".to_string());
     }
 
     // 验证成功，删除验证码
@@ -510,7 +510,7 @@ async fn login_with_code(
         Ok(u) => u,
         Err(e) => {
             tracing::error!("Failed to find or create user: {}", e);
-            return ApiResponse::error("登录失败，请稍后重试".to_string());
+            return ApiResponseBuilder::error("登录失败，请稍后重试".to_string());
         }
     };
 
@@ -520,7 +520,7 @@ async fn login_with_code(
         Ok(t) => t,
         Err(e) => {
             tracing::error!("Failed to generate token: {}", e);
-            return ApiResponse::error("登录失败，请稍后重试".to_string());
+            return ApiResponseBuilder::error("登录失败，请稍后重试".to_string());
         }
     };
 
@@ -533,7 +533,7 @@ async fn login_with_code(
     .await
     .unwrap_or(None);
 
-    ApiResponse::success(LoginWithCodeResponse {
+    ApiResponseBuilder::success(LoginWithCodeResponse {
         access_token: token,
         token_type: "Bearer".to_string(),
         expires_in: 86400,
@@ -557,11 +557,11 @@ async fn verify_code(
 
     // 验证手机号格式
     if !validate_phone(&phone) {
-        return ApiResponse::error("手机号格式不正确".to_string());
+        return ApiResponseBuilder::error("手机号格式不正确".to_string());
     }
 
     if code.is_empty() {
-        return ApiResponse::error("验证码不能为空".to_string());
+        return ApiResponseBuilder::error("验证码不能为空".to_string());
     }
 
     let db = state.database();
@@ -580,12 +580,12 @@ async fn verify_code(
         Ok(r) => r,
         Err(e) => {
             tracing::error!("Database error: {}", e);
-            return ApiResponse::error("验证失败，请稍后重试".to_string());
+            return ApiResponseBuilder::error("验证失败，请稍后重试".to_string());
         }
     };
 
     if rows.is_empty() {
-        return ApiResponse::success(VerifyCodeResponse {
+        return ApiResponseBuilder::success(VerifyCodeResponse {
             valid: false,
             message: "验证码不存在或已失效".to_string(),
         });
@@ -598,7 +598,7 @@ async fn verify_code(
     let stored_code: String = match row.try_get("code") {
         Ok(c) => c,
         Err(_) => {
-            return ApiResponse::error("验证码数据异常".to_string());
+            return ApiResponseBuilder::error("验证码数据异常".to_string());
         }
     };
 
@@ -606,14 +606,14 @@ async fn verify_code(
     let expires_at: String = match row.try_get("expires_at") {
         Ok(e) => e,
         Err(_) => {
-            return ApiResponse::error("验证码数据异常".to_string());
+            return ApiResponseBuilder::error("验证码数据异常".to_string());
         }
     };
 
     // 检查验证码是否过期
     if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(&expires_at) {
         if exp < chrono::Utc::now() {
-            return ApiResponse::success(VerifyCodeResponse {
+            return ApiResponseBuilder::success(VerifyCodeResponse {
                 valid: false,
                 message: "验证码已过期".to_string(),
             });
@@ -625,13 +625,13 @@ async fn verify_code(
     if stored_code.as_bytes().ct_eq(code.as_bytes()).into() {
         // correct
     } else {
-        return ApiResponse::success(VerifyCodeResponse {
+        return ApiResponseBuilder::success(VerifyCodeResponse {
             valid: false,
             message: "验证码错误".to_string(),
         });
     }
 
-    ApiResponse::success(VerifyCodeResponse {
+    ApiResponseBuilder::success(VerifyCodeResponse {
         valid: true, message: "验证码验证成功".to_string()
     })
 }

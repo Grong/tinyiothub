@@ -6,7 +6,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    dto::{request::pagination::PaginationQuery, response::ApiResponse},
+    dto::{request::pagination::PaginationQuery, response::{ApiResponse, ApiResponseBuilder}},
     shared::{app_state::AppState, security::jwt::Claims},
 };
 
@@ -77,7 +77,7 @@ async fn list_tasks(
     tracing::info!("Listing time tasks with filters");
 
     let tasks = vec![];
-    ApiResponse::success(tasks)
+    ApiResponseBuilder::success(tasks)
 }
 
 /// 创建定时任务
@@ -102,7 +102,7 @@ async fn create_task(
         created_at: chrono::Utc::now(),
     };
 
-    ApiResponse::success(task)
+    ApiResponseBuilder::success(task)
 }
 
 /// 获取定时任务详情
@@ -114,7 +114,7 @@ async fn get_task(
     // TODO: 实现定时任务详情查询逻辑
     tracing::info!("Getting time task details for: {}", id);
 
-    ApiResponse::success(None)
+    ApiResponseBuilder::success(None)
 }
 
 /// 更新定时任务
@@ -127,7 +127,7 @@ async fn update_task(
     // TODO: 实现定时任务更新逻辑
     tracing::info!("Updating time task: {}", id);
 
-    ApiResponse::success(true)
+    ApiResponseBuilder::success(true)
 }
 
 /// 删除定时任务
@@ -139,7 +139,7 @@ async fn delete_task(
     // TODO: 实现定时任务删除逻辑
     tracing::info!("Deleting time task: {}", id);
 
-    ApiResponse::success(true)
+    ApiResponseBuilder::success(true)
 }
 
 /// 启用定时任务
@@ -151,7 +151,7 @@ async fn enable_task(
     // TODO: 实现定时任务启用逻辑
     tracing::info!("Enabling time task: {}", id);
 
-    ApiResponse::success(true)
+    ApiResponseBuilder::success(true)
 }
 
 /// 禁用定时任务
@@ -163,7 +163,7 @@ async fn disable_task(
     // TODO: 实现定时任务禁用逻辑
     tracing::info!("Disabling time task: {}", id);
 
-    ApiResponse::success(true)
+    ApiResponseBuilder::success(true)
 }
 
 /// 立即运行定时任务
@@ -175,5 +175,5 @@ async fn run_task_now(
     // TODO: 实现立即运行定时任务逻辑
     tracing::info!("Running time task now: {}", id);
 
-    ApiResponse::success(true)
+    ApiResponseBuilder::success(true)
 }

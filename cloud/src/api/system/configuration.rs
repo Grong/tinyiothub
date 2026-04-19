@@ -6,7 +6,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    dto::response::ApiResponse,
+    dto::response::{ApiResponse, ApiResponseBuilder},
     shared::{app_state::AppState, security::jwt::Claims},
 };
 
@@ -66,7 +66,7 @@ async fn get_system_config(
         language: "zh-CN".to_string(),
     };
 
-    ApiResponse::success(config)
+    ApiResponseBuilder::success(config)
 }
 
 /// 更新系统配置
@@ -78,7 +78,7 @@ async fn update_system_config(
     // TODO: 保存系统配置到配置文件或数据库
     tracing::info!("Updating system config: {}", config.system_name);
 
-    ApiResponse::success(true)
+    ApiResponseBuilder::success(true)
 }
 
 /// 获取网络配置
@@ -97,7 +97,7 @@ async fn get_network_config(
         dhcp_enabled: false,
     };
 
-    ApiResponse::success(config)
+    ApiResponseBuilder::success(config)
 }
 
 /// 更新网络配置
@@ -109,7 +109,7 @@ async fn update_network_config(
     // TODO: 保存网络配置
     tracing::info!("Updating network config: {}", config.ip_address);
 
-    ApiResponse::success(true)
+    ApiResponseBuilder::success(true)
 }
 
 /// 获取MQTT配置
@@ -129,7 +129,7 @@ async fn get_mqtt_config(
         clean_session: true,
     };
 
-    ApiResponse::success(config)
+    ApiResponseBuilder::success(config)
 }
 
 /// 更新MQTT配置
@@ -141,7 +141,7 @@ async fn update_mqtt_config(
     // TODO: 保存MQTT配置
     tracing::info!("Updating MQTT config: {}:{}", config.broker_host, config.broker_port);
 
-    ApiResponse::success(true)
+    ApiResponseBuilder::success(true)
 }
 
 /// 重启系统
@@ -152,7 +152,7 @@ async fn restart_system(
     // TODO: 实现系统重启逻辑
     tracing::warn!("System restart requested");
 
-    ApiResponse::success(true)
+    ApiResponseBuilder::success(true)
 }
 
 /// 关闭系统
@@ -163,5 +163,5 @@ async fn shutdown_system(
     // TODO: 实现系统关闭逻辑
     tracing::warn!("System shutdown requested");
 
-    ApiResponse::success(true)
+    ApiResponseBuilder::success(true)
 }

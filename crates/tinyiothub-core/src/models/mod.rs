@@ -1,4 +1,5 @@
 pub mod alarm;
+pub mod api_response;
 pub mod component;
 pub mod cron_job;
 pub mod device;

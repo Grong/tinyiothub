@@ -1,7 +1,7 @@
 use axum::{extract::State, routing::get, Json, Router};
 use serde::{Deserialize, Serialize};
 
-use crate::{api::AppState, dto::response::ApiResponse, shared::security::jwt::Claims};
+use crate::{api::AppState, dto::response::{ApiResponse, ApiResponseBuilder}, shared::security::jwt::Claims};
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]
@@ -59,7 +59,7 @@ async fn get_system_metrics(
         timestamp: chrono::Utc::now(),
     };
 
-    ApiResponse::success(metrics)
+    ApiResponseBuilder::success(metrics)
 }
 
 /// 获取设备指标
@@ -70,7 +70,7 @@ async fn get_device_metrics(
     // TODO: 实现设备指标收集
     let metrics = vec![];
 
-    ApiResponse::success(metrics)
+    ApiResponseBuilder::success(metrics)
 }
 
 /// 获取网关指标
@@ -89,5 +89,5 @@ async fn get_gateway_metrics(
         uptime_seconds: 0,
     };
 
-    ApiResponse::success(metrics)
+    ApiResponseBuilder::success(metrics)
 }

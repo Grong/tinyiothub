@@ -9,7 +9,7 @@ use crate::{
     dto::{
         entity::product::{CreateProductRequest, Product, UpdateProductRequest},
         request::pagination::PaginationQuery,
-        response::ApiResponse,
+        response::{ApiResponse, ApiResponseBuilder},
     },
     shared::{app_state::AppState, security::jwt::Claims},
 };
@@ -49,11 +49,11 @@ async fn list_products(
     {
         Ok(products) => {
             tracing::debug!("Retrieved {} products", products.len());
-            ApiResponse::success(products)
+            ApiResponseBuilder::success(products)
         }
         Err(e) => {
             tracing::error!("Failed to list products: {}", e);
-            ApiResponse::error("获取产品列表失败".to_string())
+            ApiResponseBuilder::error("获取产品列表失败".to_string())
         }
     }
 }
@@ -66,18 +66,18 @@ async fn create_product(
 ) -> Json<ApiResponse<Product>> {
     // 验证输入
     if request.name.trim().is_empty() {
-        return ApiResponse::error("产品名称不能为空".to_string());
+        return ApiResponseBuilder::error("产品名称不能为空".to_string());
     }
 
     // 检查产品名称是否已存在
     match state.product_service.exists_by_name(&request.name).await {
         Ok(true) => {
-            return ApiResponse::error("产品名称已存在".to_string());
+            return ApiResponseBuilder::error("产品名称已存在".to_string());
         }
         Ok(false) => {}
         Err(e) => {
             tracing::error!("Failed to check product name existence: {}", e);
-            return ApiResponse::error("创建产品失败".to_string());
+            return ApiResponseBuilder::error("创建产品失败".to_string());
         }
     }
 
@@ -85,11 +85,11 @@ async fn create_product(
     match state.product_service.create(&request).await {
         Ok(product) => {
             tracing::info!("Product created: {}", product.name);
-            ApiResponse::success(product)
+            ApiResponseBuilder::success(product)
         }
         Err(e) => {
             tracing::error!("Failed to create product: {}", e);
-            ApiResponse::error("创建产品失败".to_string())
+            ApiResponseBuilder::error("创建产品失败".to_string())
         }
     }
 }
@@ -103,12 +103,12 @@ async fn get_product(
     match state.product_service.find_by_id(&id).await {
         Ok(Some(product)) => {
             tracing::debug!("Retrieved product: {}", product.name);
-            ApiResponse::success(product)
+            ApiResponseBuilder::success(product)
         }
-        Ok(None) => ApiResponse::error("产品不存在".to_string()),
+        Ok(None) => ApiResponseBuilder::error("产品不存在".to_string()),
         Err(e) => {
             tracing::error!("Failed to get product {}: {}", id, e);
-            ApiResponse::error("获取产品信息失败".to_string())
+            ApiResponseBuilder::error("获取产品信息失败".to_string())
         }
     }
 }
@@ -123,18 +123,18 @@ async fn update_product(
     // 验证输入
     if let Some(name) = &request.name {
         if name.trim().is_empty() {
-            return ApiResponse::error("产品名称不能为空".to_string());
+            return ApiResponseBuilder::error("产品名称不能为空".to_string());
         }
 
         // 检查产品名称是否已被其他产品使用
         match state.product_service.exists_by_name_excluding_id(name, &id).await {
             Ok(true) => {
-                return ApiResponse::error("产品名称已存在".to_string());
+                return ApiResponseBuilder::error("产品名称已存在".to_string());
             }
             Ok(false) => {}
             Err(e) => {
                 tracing::error!("Failed to check product name uniqueness: {}", e);
-                return ApiResponse::error("更新产品失败".to_string());
+                return ApiResponseBuilder::error("更新产品失败".to_string());
             }
         }
     }
@@ -142,12 +142,12 @@ async fn update_product(
     match state.product_service.update(&id, &request).await {
         Ok(product) => {
             tracing::info!("Product updated: {}", product.name);
-            ApiResponse::success(product)
+            ApiResponseBuilder::success(product)
         }
-        Err(crate::shared::error::Error::NotFound) => ApiResponse::error("产品不存在".to_string()),
+        Err(crate::shared::error::Error::NotFound) => ApiResponseBuilder::error("产品不存在".to_string()),
         Err(e) => {
             tracing::error!("Failed to update product {}: {}", id, e);
-            ApiResponse::error("更新产品失败".to_string())
+            ApiResponseBuilder::error("更新产品失败".to_string())
         }
     }
 }
@@ -162,14 +162,14 @@ async fn delete_product(
         Ok(rows_affected) => {
             if rows_affected > 0 {
                 tracing::info!("Product deleted: {}", id);
-                ApiResponse::success(true)
+                ApiResponseBuilder::success(true)
             } else {
-                ApiResponse::error("产品不存在".to_string())
+                ApiResponseBuilder::error("产品不存在".to_string())
             }
         }
         Err(e) => {
             tracing::error!("Failed to delete product {}: {}", id, e);
-            ApiResponse::error("删除产品失败".to_string())
+            ApiResponseBuilder::error("删除产品失败".to_string())
         }
     }
 }

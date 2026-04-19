@@ -10,7 +10,7 @@ use crate::{
     dto::{
         entity::role::{CreateRoleRequest, Role, UpdateRoleRequest},
         request::pagination::PaginationQuery,
-        response::ApiResponse,
+        response::{ApiResponse, ApiResponseBuilder},
     },
     shared::security::jwt::Claims,
 };
@@ -47,11 +47,11 @@ async fn list_roles(
     {
         Ok(roles) => {
             tracing::debug!("Retrieved {} roles", roles.len());
-            ApiResponse::success(roles)
+            ApiResponseBuilder::success(roles)
         }
         Err(e) => {
             tracing::error!("Failed to list roles: {}", e);
-            ApiResponse::error("获取角色列表失败".to_string())
+            ApiResponseBuilder::error("获取角色列表失败".to_string())
         }
     }
 }
@@ -64,18 +64,18 @@ async fn create_role(
 ) -> Json<ApiResponse<Role>> {
     // 验证输入
     if request.name.trim().is_empty() {
-        return ApiResponse::error("角色名称不能为空".to_string());
+        return ApiResponseBuilder::error("角色名称不能为空".to_string());
     }
 
     // 检查角色名称是否已存在
     match state.role_service.exists_by_name(&request.name).await {
         Ok(true) => {
-            return ApiResponse::error("角色名称已存在".to_string());
+            return ApiResponseBuilder::error("角色名称已存在".to_string());
         }
         Ok(false) => {}
         Err(e) => {
             tracing::error!("Failed to check role name existence: {}", e);
-            return ApiResponse::error("创建角色失败".to_string());
+            return ApiResponseBuilder::error("创建角色失败".to_string());
         }
     }
 
@@ -83,11 +83,11 @@ async fn create_role(
     match state.role_service.create(&request).await {
         Ok(role) => {
             tracing::info!("Role created: {}", role.name);
-            ApiResponse::success(role)
+            ApiResponseBuilder::success(role)
         }
         Err(e) => {
             tracing::error!("Failed to create role: {}", e);
-            ApiResponse::error("创建角色失败".to_string())
+            ApiResponseBuilder::error("创建角色失败".to_string())
         }
     }
 }
@@ -101,12 +101,12 @@ async fn get_role(
     match state.role_service.find_by_id(&id).await {
         Ok(Some(role)) => {
             tracing::debug!("Retrieved role: {}", role.name);
-            ApiResponse::success(role)
+            ApiResponseBuilder::success(role)
         }
-        Ok(None) => ApiResponse::error("角色不存在".to_string()),
+        Ok(None) => ApiResponseBuilder::error("角色不存在".to_string()),
         Err(e) => {
             tracing::error!("Failed to get role {}: {}", id, e);
-            ApiResponse::error("获取角色信息失败".to_string())
+            ApiResponseBuilder::error("获取角色信息失败".to_string())
         }
     }
 }
@@ -121,18 +121,18 @@ async fn update_role(
     // 验证输入
     if let Some(name) = &request.name {
         if name.trim().is_empty() {
-            return ApiResponse::error("角色名称不能为空".to_string());
+            return ApiResponseBuilder::error("角色名称不能为空".to_string());
         }
 
         // 检查角色名称是否已被其他角色使用
         match state.role_service.exists_by_name_exclude_id(name, &id).await {
             Ok(true) => {
-                return ApiResponse::error("角色名称已存在".to_string());
+                return ApiResponseBuilder::error("角色名称已存在".to_string());
             }
             Ok(false) => {}
             Err(e) => {
                 tracing::error!("Failed to check role name uniqueness: {}", e);
-                return ApiResponse::error("更新角色失败".to_string());
+                return ApiResponseBuilder::error("更新角色失败".to_string());
             }
         }
     }
@@ -140,12 +140,12 @@ async fn update_role(
     match state.role_service.update(&id, &request).await {
         Ok(role) => {
             tracing::info!("Role updated: {}", role.name);
-            ApiResponse::success(role)
+            ApiResponseBuilder::success(role)
         }
-        Err(crate::shared::error::Error::NotFound) => ApiResponse::error("角色不存在".to_string()),
+        Err(crate::shared::error::Error::NotFound) => ApiResponseBuilder::error("角色不存在".to_string()),
         Err(e) => {
             tracing::error!("Failed to update role {}: {}", id, e);
-            ApiResponse::error("更新角色失败".to_string())
+            ApiResponseBuilder::error("更新角色失败".to_string())
         }
     }
 }
@@ -160,14 +160,14 @@ async fn delete_role(
         Ok(rows_affected) => {
             if rows_affected > 0 {
                 tracing::info!("Role deleted: {}", id);
-                ApiResponse::success(true)
+                ApiResponseBuilder::success(true)
             } else {
-                ApiResponse::error("角色不存在".to_string())
+                ApiResponseBuilder::error("角色不存在".to_string())
             }
         }
         Err(e) => {
             tracing::error!("Failed to delete role {}: {}", id, e);
-            ApiResponse::error("删除角色失败".to_string())
+            ApiResponseBuilder::error("删除角色失败".to_string())
         }
     }
 }
@@ -182,7 +182,7 @@ async fn get_role_permissions(
     tracing::info!("Getting permissions for role: {}", id);
 
     let permissions = vec![];
-    ApiResponse::success(permissions)
+    ApiResponseBuilder::success(permissions)
 }
 
 /// 更新角色权限
@@ -195,5 +195,5 @@ async fn update_role_permissions(
     // TODO: 实现更新角色权限逻辑
     tracing::info!("Updating permissions for role: {}", id);
 
-    ApiResponse::success(true)
+    ApiResponseBuilder::success(true)
 }

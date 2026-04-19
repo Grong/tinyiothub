@@ -1,7 +1,7 @@
 use axum::{extract::State, routing::get, Json, Router};
 use serde::{Deserialize, Serialize};
 
-use crate::{api::AppState, dto::response::ApiResponse, shared::security::jwt::Claims};
+use crate::{api::AppState, dto::response::{ApiResponse, ApiResponseBuilder}, shared::security::jwt::Claims};
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]
@@ -37,7 +37,7 @@ async fn get_health(State(_state): State<AppState>) -> Json<ApiResponse<HealthSt
         uptime_seconds: 0, // TODO: 实现实际的运行时间计算
     };
 
-    ApiResponse::success(health)
+    ApiResponseBuilder::success(health)
 }
 
 /// 详细健康状态
@@ -58,5 +58,5 @@ async fn get_detailed_health(
         cpu_usage_percent: 0.0,
     };
 
-    ApiResponse::success(detailed_health)
+    ApiResponseBuilder::success(detailed_health)
 }

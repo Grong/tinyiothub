@@ -4,7 +4,7 @@ use tracing::info;
 
 use crate::{
     api::{middleware::WorkspaceScope, AppState},
-    dto::response::{ApiResponse, DashboardMetrics, DashboardStats, MonthlyGrowth, NetworkMetrics},
+    dto::response::{ApiResponse, ApiResponseBuilder, DashboardMetrics, DashboardStats, MonthlyGrowth, NetworkMetrics},
     infrastructure::persistence::Database,
     shared::security::jwt::Claims,
 };
@@ -56,7 +56,7 @@ pub async fn get_dashboard_stats(
         monthly_growth,
     };
 
-    ApiResponse::success(stats)
+    ApiResponseBuilder::success(stats)
 }
 
 /// 获取系统性能指标
@@ -78,7 +78,7 @@ pub async fn get_dashboard_metrics(
         },
     };
 
-    ApiResponse::success(metrics)
+    ApiResponseBuilder::success(metrics)
 }
 
 // 辅助函数

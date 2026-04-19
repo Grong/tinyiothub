@@ -7,7 +7,7 @@ use sha2::Digest;
 
 use crate::{
     api::AppState,
-    dto::response::ApiResponse,
+    dto::response::{ApiResponse, ApiResponseBuilder},
     shared::security::jwt::{generate_token, validate_jwt},
 };
 
@@ -48,7 +48,7 @@ async fn refresh_token(
         Ok(c) => c,
         Err(e) => {
             tracing::warn!("Token refresh failed: {}", e);
-            return ApiResponse::error("Invalid or expired token".to_string());
+            return ApiResponseBuilder::error("Invalid or expired token".to_string());
         }
     };
 
@@ -56,7 +56,7 @@ async fn refresh_token(
     match generate_token(&claims.user_id, &claims.username, &claims.tenant_id) {
         Ok(new_token) => {
             tracing::info!("Token refreshed for user: {}", claims.user_id);
-            ApiResponse::success(RefreshTokenResponse {
+            ApiResponseBuilder::success(RefreshTokenResponse {
                 access_token: new_token,
                 token_type: "Bearer".to_string(),
                 expires_in: 86400, // 24 小时
@@ -64,7 +64,7 @@ async fn refresh_token(
         }
         Err(e) => {
             tracing::error!("Failed to generate new token: {}", e);
-            ApiResponse::error("Failed to refresh token".to_string())
+            ApiResponseBuilder::error("Failed to refresh token".to_string())
         }
     }
 }
@@ -110,5 +110,5 @@ async fn logout(
         }
     }
 
-    ApiResponse::success("Logged out successfully".to_string())
+    ApiResponseBuilder::success("Logged out successfully".to_string())
 }

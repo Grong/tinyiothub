@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     dto::{
         entity::user::CreateUserRequest,
-        response::ApiResponse,
+        response::{ApiResponse, ApiResponseBuilder},
     },
     shared::{app_state::AppState, error::Result},
 };
@@ -37,7 +37,7 @@ async fn initialize_system(
     // 检查是否已经有用户存在
     match state.user_service.find_all(&Default::default()).await {
         Ok(users) if !users.is_empty() => {
-            return ApiResponse::success(InitializeResponse {
+            return ApiResponseBuilder::success(InitializeResponse {
                 success: false,
                 message: "系统已经初始化，存在用户账户".to_string(),
                 admin_user_id: None,
@@ -48,17 +48,17 @@ async fn initialize_system(
         }
         Err(e) => {
             tracing::error!("Failed to check existing users: {}", e);
-            return ApiResponse::error("系统初始化失败".to_string());
+            return ApiResponseBuilder::error("系统初始化失败".to_string());
         }
     }
 
     // 验证输入
     if request.admin_username.trim().is_empty() {
-        return ApiResponse::error("管理员用户名不能为空".to_string());
+        return ApiResponseBuilder::error("管理员用户名不能为空".to_string());
     }
 
     if request.admin_password.len() < 6 {
-        return ApiResponse::error("管理员密码长度不能少于6位".to_string());
+        return ApiResponseBuilder::error("管理员密码长度不能少于6位".to_string());
     }
 
     // 创建管理员用户
@@ -76,7 +76,7 @@ async fn initialize_system(
         Ok(admin_user) => {
             tracing::info!("System initialized with admin user: {}", admin_user.get_display_name());
 
-            ApiResponse::success(InitializeResponse {
+            ApiResponseBuilder::success(InitializeResponse {
                 success: true,
                 message: "系统初始化成功".to_string(),
                 admin_user_id: Some(admin_user.id),
@@ -84,7 +84,7 @@ async fn initialize_system(
         }
         Err(e) => {
             tracing::error!("Failed to create admin user: {}", e);
-            ApiResponse::error("创建管理员用户失败".to_string())
+            ApiResponseBuilder::error("创建管理员用户失败".to_string())
         }
     }
 }

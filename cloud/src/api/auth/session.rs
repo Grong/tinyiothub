@@ -10,7 +10,7 @@ use crate::{
     dto::{
         response::{
             login::{RefreshTokenResponse, UserInfo},
-            ApiResponse,
+            ApiResponse, ApiResponseBuilder,
         },
     },
     shared::security::jwt::Claims,
@@ -42,15 +42,15 @@ async fn get_profile(State(state): State<AppState>, claims: Claims) -> Json<ApiR
     match state.user_service.get_user_by_id(&claims.user_id).await {
         Ok(Some(user)) => {
             tracing::debug!("Retrieved profile for user: {}", user.get_display_name());
-            ApiResponse::success(UserInfo::from(user))
+            ApiResponseBuilder::success(UserInfo::from(user))
         }
         Ok(None) => {
             tracing::warn!("Profile requested for non-existent user: {}", claims.user_id);
-            ApiResponse::error("用户不存在".to_string())
+            ApiResponseBuilder::error("用户不存在".to_string())
         }
         Err(e) => {
             tracing::error!("Database error when fetching user profile: {}", e);
-            ApiResponse::error("获取用户信息失败".to_string())
+            ApiResponseBuilder::error("获取用户信息失败".to_string())
         }
     }
 }
@@ -68,7 +68,7 @@ async fn refresh_token(
     // 4. 可选：生成新的 refresh_token
 
     tracing::info!("Token refresh requested");
-    ApiResponse::error("刷新令牌功能暂未实现".to_string())
+    ApiResponseBuilder::error("刷新令牌功能暂未实现".to_string())
 }
 
 /// 验证会话有效性
@@ -93,22 +93,22 @@ async fn validate_session(
 
             if user.is_enabled() {
                 tracing::debug!("Session validated for user: {}", user.get_display_name());
-                ApiResponse::success(session_info)
+                ApiResponseBuilder::success(session_info)
             } else {
                 tracing::warn!(
                     "Session validation failed - user disabled: {}",
                     user.get_display_name()
                 );
-                ApiResponse::error("用户账户已被禁用".to_string())
+                ApiResponseBuilder::error("用户账户已被禁用".to_string())
             }
         }
         Ok(None) => {
             tracing::warn!("Session validation failed - user not found: {}", claims.user_id);
-            ApiResponse::error("用户不存在".to_string())
+            ApiResponseBuilder::error("用户不存在".to_string())
         }
         Err(e) => {
             tracing::error!("Database error during session validation: {}", e);
-            ApiResponse::error("会话验证失败".to_string())
+            ApiResponseBuilder::error("会话验证失败".to_string())
         }
     }
 }

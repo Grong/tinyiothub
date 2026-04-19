@@ -9,7 +9,7 @@ use crate::{
     api::AppState,
     dto::{
         entity::permission::{Permission, PermissionQuery},
-        response::ApiResponse,
+        response::{ApiResponse, ApiResponseBuilder},
     },
     shared::security::jwt::Claims,
 };
@@ -38,10 +38,10 @@ async fn list_permissions(
 ) -> Json<ApiResponse<Vec<Permission>>> {
     let query = PermissionQuery::default();
     match state.permission_service.find_all_permissions(&query).await {
-        Ok(permissions) => ApiResponse::success(permissions),
+        Ok(permissions) => ApiResponseBuilder::success(permissions),
         Err(e) => {
             tracing::error!("Failed to list permissions: {}", e);
-            ApiResponse::error("获取权限列表失败".to_string())
+            ApiResponseBuilder::error("获取权限列表失败".to_string())
         }
     }
 }
@@ -57,5 +57,5 @@ async fn get_user_permissions(
     tracing::info!("Getting permissions for user: {}", user_id);
 
     let permissions = vec![];
-    ApiResponse::success(permissions)
+    ApiResponseBuilder::success(permissions)
 }

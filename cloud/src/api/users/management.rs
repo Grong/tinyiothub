@@ -10,7 +10,7 @@ use crate::{
     dto::{
         entity::user::{CreateUserRequest, UpdateUserRequest, UserDto},
         request::pagination::PaginationQuery,
-        response::{ApiResponse, PaginatedResponse, PaginationInfo},
+        response::{ApiResponse, ApiResponseBuilder, PaginatedResponse, PaginationInfo},
     },
     shared::security::jwt::Claims,
     shared::utils::password::verify_password,
@@ -70,7 +70,7 @@ async fn list_users(
                 0
             };
             tracing::info!("Retrieved {} users", user_dtos.len());
-            ApiResponse::success(PaginatedResponse {
+            ApiResponseBuilder::success(PaginatedResponse {
                 data: user_dtos,
                 pagination: PaginationInfo {
                     page,
@@ -82,7 +82,7 @@ async fn list_users(
         }
         Err(e) => {
             tracing::error!("Failed to list users: {}", e);
-            ApiResponse::error("获取用户列表失败".to_string())
+            ApiResponseBuilder::error("获取用户列表失败".to_string())
         }
     }
 }
@@ -117,23 +117,23 @@ async fn create_user(
 ) -> Json<ApiResponse<UserDto>> {
     // 验证输入
     if request.username.trim().is_empty() {
-        return ApiResponse::error("用户名不能为空".to_string());
+        return ApiResponseBuilder::error("用户名不能为空".to_string());
     }
 
     // 验证密码强度
     if let Err(err) = validate_password_strength(&request.password) {
-        return ApiResponse::error(err);
+        return ApiResponseBuilder::error(err);
     }
 
     // 检查用户名是否已存在
     match state.user_service.exists_by_username(&request.username).await {
         Ok(true) => {
-            return ApiResponse::error("用户名已存在".to_string());
+            return ApiResponseBuilder::error("用户名已存在".to_string());
         }
         Ok(false) => {}
         Err(e) => {
             tracing::error!("Failed to check user existence: {}", e);
-            return ApiResponse::error("创建用户失败".to_string());
+            return ApiResponseBuilder::error("创建用户失败".to_string());
         }
     }
 
@@ -141,11 +141,11 @@ async fn create_user(
     match state.user_service.create_user(&request).await {
         Ok(user) => {
             tracing::info!("User created: {}", user.get_display_name());
-            ApiResponse::success(user.to_dto())
+            ApiResponseBuilder::success(user.to_dto())
         }
         Err(e) => {
             tracing::error!("Failed to create user: {}", e);
-            ApiResponse::error("创建用户失败".to_string())
+            ApiResponseBuilder::error("创建用户失败".to_string())
         }
     }
 }
@@ -158,11 +158,11 @@ async fn get_user_statistics(
     match state.user_service.get_user_statistics().await {
         Ok(statistics) => {
             tracing::debug!("Retrieved user statistics");
-            ApiResponse::success(statistics)
+            ApiResponseBuilder::success(statistics)
         }
         Err(e) => {
             tracing::error!("Failed to get user statistics: {}", e);
-            ApiResponse::error("获取用户统计失败".to_string())
+            ApiResponseBuilder::error("获取用户统计失败".to_string())
         }
     }
 }
@@ -173,11 +173,11 @@ async fn get_current_user(
     claims: Claims,
 ) -> Json<ApiResponse<UserDto>> {
     match state.user_service.get_user_by_id(&claims.user_id).await {
-        Ok(Some(user)) => ApiResponse::success(user.to_dto()),
-        Ok(None) => ApiResponse::error("用户不存在".to_string()),
+        Ok(Some(user)) => ApiResponseBuilder::success(user.to_dto()),
+        Ok(None) => ApiResponseBuilder::error("用户不存在".to_string()),
         Err(e) => {
             tracing::error!("Failed to get current user {}: {}", claims.user_id, e);
-            ApiResponse::error("获取用户信息失败".to_string())
+            ApiResponseBuilder::error("获取用户信息失败".to_string())
         }
     }
 }
@@ -194,18 +194,18 @@ async fn get_user(
             claims.user_id,
             id
         );
-        return ApiResponse::error("无权限查看此用户".to_string());
+        return ApiResponseBuilder::error("无权限查看此用户".to_string());
     }
 
     match state.user_service.get_user_by_id(&id).await {
         Ok(Some(user)) => {
             tracing::debug!("Retrieved user: {}", user.get_display_name());
-            ApiResponse::success(user.to_dto())
+            ApiResponseBuilder::success(user.to_dto())
         }
-        Ok(None) => ApiResponse::error("用户不存在".to_string()),
+        Ok(None) => ApiResponseBuilder::error("用户不存在".to_string()),
         Err(e) => {
             tracing::error!("Failed to get user {}: {}", id, e);
-            ApiResponse::error("获取用户信息失败".to_string())
+            ApiResponseBuilder::error("获取用户信息失败".to_string())
         }
     }
 }
@@ -228,24 +228,24 @@ async fn update_user(
             claims.user_id,
             id
         );
-        return ApiResponse::error("无权限修改此用户".to_string());
+        return ApiResponseBuilder::error("无权限修改此用户".to_string());
     }
 
     // 验证输入
     if let Some(username) = &request.username {
         if username.trim().is_empty() {
-            return ApiResponse::error("用户名不能为空".to_string());
+            return ApiResponseBuilder::error("用户名不能为空".to_string());
         }
 
         // 检查用户名是否已被其他用户使用
         match state.user_service.get_user_by_username(username).await {
             Ok(Some(existing_user)) if existing_user.id != id => {
-                return ApiResponse::error("用户名已存在".to_string());
+                return ApiResponseBuilder::error("用户名已存在".to_string());
             }
             Ok(_) => {}
             Err(e) => {
                 tracing::error!("Failed to check user name uniqueness: {}", e);
-                return ApiResponse::error("更新用户失败".to_string());
+                return ApiResponseBuilder::error("更新用户失败".to_string());
             }
         }
     }
@@ -253,12 +253,12 @@ async fn update_user(
     match state.user_service.update_user(&id, &request).await {
         Ok(user) => {
             tracing::info!("User updated: {}", user.get_display_name());
-            ApiResponse::success(user.to_dto())
+            ApiResponseBuilder::success(user.to_dto())
         }
-        Err(crate::shared::error::Error::NotFound) => ApiResponse::error("用户不存在".to_string()),
+        Err(crate::shared::error::Error::NotFound) => ApiResponseBuilder::error("用户不存在".to_string()),
         Err(e) => {
             tracing::error!("Failed to update user {}: {}", id, e);
-            ApiResponse::error("更新用户失败".to_string())
+            ApiResponseBuilder::error("更新用户失败".to_string())
         }
     }
 }
@@ -271,7 +271,7 @@ async fn delete_user(
 ) -> Json<ApiResponse<bool>> {
     // 用户不能删除自己，且需要管理员权限
     if claims.user_id == id {
-        return ApiResponse::error("不能删除自己的账号".to_string());
+        return ApiResponseBuilder::error("不能删除自己的账号".to_string());
     }
     let is_admin =
         crate::shared::error_handling::AuthHelper::check_role(&state, &claims.user_id, "admin")
@@ -283,21 +283,21 @@ async fn delete_user(
             claims.user_id,
             id
         );
-        return ApiResponse::error("无权限删除用户".to_string());
+        return ApiResponseBuilder::error("无权限删除用户".to_string());
     }
 
     match state.user_service.delete_user(&id).await {
         Ok(rows_affected) => {
             if rows_affected > 0 {
                 tracing::info!("User deleted: {}", id);
-                ApiResponse::success(true)
+                ApiResponseBuilder::success(true)
             } else {
-                ApiResponse::error("用户不存在".to_string())
+                ApiResponseBuilder::error("用户不存在".to_string())
             }
         }
         Err(e) => {
             tracing::error!("Failed to delete user {}: {}", id, e);
-            ApiResponse::error("删除用户失败".to_string())
+            ApiResponseBuilder::error("删除用户失败".to_string())
         }
     }
 }
@@ -313,17 +313,17 @@ async fn enable_user(
             .await
             .unwrap_or(false);
     if !is_admin {
-        return ApiResponse::error("无权限启用用户".to_string());
+        return ApiResponseBuilder::error("无权限启用用户".to_string());
     }
     match state.user_service.update_enabled_status(&id, true).await {
         Ok(_user) => {
             tracing::info!("User enabled: {}", id);
-            ApiResponse::success(true)
+            ApiResponseBuilder::success(true)
         }
-        Err(crate::shared::error::Error::NotFound) => ApiResponse::error("用户不存在".to_string()),
+        Err(crate::shared::error::Error::NotFound) => ApiResponseBuilder::error("用户不存在".to_string()),
         Err(e) => {
             tracing::error!("Failed to enable user {}: {}", id, e);
-            ApiResponse::error("启用用户失败".to_string())
+            ApiResponseBuilder::error("启用用户失败".to_string())
         }
     }
 }
@@ -339,17 +339,17 @@ async fn disable_user(
             .await
             .unwrap_or(false);
     if !is_admin {
-        return ApiResponse::error("无权限禁用用户".to_string());
+        return ApiResponseBuilder::error("无权限禁用用户".to_string());
     }
     match state.user_service.update_enabled_status(&id, false).await {
         Ok(_user) => {
             tracing::info!("User disabled: {}", id);
-            ApiResponse::success(true)
+            ApiResponseBuilder::success(true)
         }
-        Err(crate::shared::error::Error::NotFound) => ApiResponse::error("用户不存在".to_string()),
+        Err(crate::shared::error::Error::NotFound) => ApiResponseBuilder::error("用户不存在".to_string()),
         Err(e) => {
             tracing::error!("Failed to disable user {}: {}", id, e);
-            ApiResponse::error("禁用用户失败".to_string())
+            ApiResponseBuilder::error("禁用用户失败".to_string())
         }
     }
 }
@@ -363,11 +363,11 @@ async fn change_user_password(
 ) -> Json<ApiResponse<bool>> {
     // 验证新密码强度
     if let Err(err) = validate_password_strength(&request.new_password) {
-        return ApiResponse::error(err);
+        return ApiResponseBuilder::error(err);
     }
 
     if request.old_password == request.new_password {
-        return ApiResponse::error("新密码不能与旧密码相同".to_string());
+        return ApiResponseBuilder::error("新密码不能与旧密码相同".to_string());
     }
 
     // 授权检查：用户只能修改自己的密码，或者需要管理员权限
@@ -383,18 +383,18 @@ async fn change_user_password(
             requesting_user_id,
             id
         );
-        return ApiResponse::error("无权限修改此用户密码".to_string());
+        return ApiResponseBuilder::error("无权限修改此用户密码".to_string());
     }
 
     // 获取用户信息
     let user = match state.user_service.get_user_by_id(&id).await {
         Ok(Some(user)) => user,
         Ok(None) => {
-            return ApiResponse::error("用户不存在".to_string());
+            return ApiResponseBuilder::error("用户不存在".to_string());
         }
         Err(e) => {
             tracing::error!("Failed to find user {}: {}", id, e);
-            return ApiResponse::error("修改密码失败".to_string());
+            return ApiResponseBuilder::error("修改密码失败".to_string());
         }
     };
 
@@ -402,11 +402,11 @@ async fn change_user_password(
     match verify_password(&request.old_password, &user.password_hash) {
         Ok(true) => {}
         Ok(false) => {
-            return ApiResponse::error("旧密码错误".to_string());
+            return ApiResponseBuilder::error("旧密码错误".to_string());
         }
         Err(e) => {
             tracing::error!("Password verification failed for user {}: {}", id, e);
-            return ApiResponse::error("密码验证失败".to_string());
+            return ApiResponseBuilder::error("密码验证失败".to_string());
         }
     }
 
@@ -414,11 +414,11 @@ async fn change_user_password(
     match state.user_service.update_password(&id, &request.new_password).await {
         Ok(()) => {
             tracing::info!("Password changed for user: {}", id);
-            ApiResponse::success(true)
+            ApiResponseBuilder::success(true)
         }
         Err(e) => {
             tracing::error!("Failed to update password for user {}: {}", id, e);
-            ApiResponse::error("修改密码失败".to_string())
+            ApiResponseBuilder::error("修改密码失败".to_string())
         }
     }
 }

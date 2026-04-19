@@ -5,7 +5,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{api::AppState, dto::response::ApiResponse, shared::security::jwt::Claims};
+use crate::{api::AppState, dto::response::{ApiResponse, ApiResponseBuilder}, shared::security::jwt::Claims};
 
 /// Performance monitoring query parameters
 #[derive(Debug, Deserialize)]
@@ -102,7 +102,7 @@ async fn get_performance_metrics(
         "last_updated": chrono::Utc::now()
     });
 
-    ApiResponse::success(mock_metrics)
+    ApiResponseBuilder::success(mock_metrics)
 }
 
 /// Get performance summary with health status
@@ -126,7 +126,7 @@ async fn get_performance_summary(
         }
     });
 
-    ApiResponse::success(mock_summary)
+    ApiResponseBuilder::success(mock_summary)
 }
 
 /// Get active performance alerts
@@ -145,7 +145,7 @@ async fn get_performance_alerts(
         "resolved": false
     })];
 
-    ApiResponse::success(mock_alerts)
+    ApiResponseBuilder::success(mock_alerts)
 }
 
 /// Optimize database performance
@@ -190,7 +190,7 @@ async fn optimize_database(
         "success": true
     });
 
-    ApiResponse::success(mock_result)
+    ApiResponseBuilder::success(mock_result)
 }
 
 /// Get load balancer statistics
@@ -254,7 +254,7 @@ async fn get_load_balancer_stats(
         ]
     });
 
-    ApiResponse::success(mock_stats)
+    ApiResponseBuilder::success(mock_stats)
 }
 
 /// Update load balancer configuration
@@ -276,7 +276,7 @@ async fn update_load_balancer_config(
         }
     });
 
-    ApiResponse::success(mock_response)
+    ApiResponseBuilder::success(mock_response)
 }
 
 /// Update performance thresholds
@@ -301,7 +301,7 @@ async fn update_performance_thresholds(
         }
     });
 
-    ApiResponse::success(mock_response)
+    ApiResponseBuilder::success(mock_response)
 }
 
 /// Get optimization recommendations
@@ -333,7 +333,7 @@ async fn get_optimization_recommendations(
         }),
     ];
 
-    ApiResponse::success(mock_recommendations)
+    ApiResponseBuilder::success(mock_recommendations)
 }
 
 /// Analyze query performance
@@ -381,7 +381,7 @@ async fn analyze_query_performance(
         "failed_queries": 0
     });
 
-    ApiResponse::success(mock_analysis)
+    ApiResponseBuilder::success(mock_analysis)
 }
 
 /// Performance monitoring response types

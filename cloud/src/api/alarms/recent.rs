@@ -9,7 +9,7 @@ use tracing::{info, error};
 
 use crate::{
     api::{middleware::WorkspaceScope, AppState},
-    dto::response::{ApiResponse, RecentAlarm},
+    dto::response::{ApiResponse, ApiResponseBuilder, RecentAlarm},
     infrastructure::persistence::Database,
     shared::security::jwt::Claims,
 };
@@ -226,10 +226,10 @@ pub async fn get_recent_alarms(
 
     let limit = query.limit.unwrap_or(10);
     match get_recent_alarms_list(&db, limit, workspace_id.as_deref()).await {
-        Ok(alarms) => ApiResponse::success(alarms),
+        Ok(alarms) => ApiResponseBuilder::success(alarms),
         Err(e) => {
             error!("获取最新告警列表失败: {}", e);
-            ApiResponse::error("获取最新告警列表失败".to_string())
+            ApiResponseBuilder::error("获取最新告警列表失败".to_string())
         }
     }
 }
