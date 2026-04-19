@@ -8,7 +8,10 @@ use crate::{
         engine::TemplateEngine, repository::TemplateRepository, service::TemplateService,
         validator::TemplateValidator,
     },
-    dto::entity::Device,
+    dto::entity::{
+        device_property::find_device_property_by_id,
+        Device,
+    },
     infrastructure::{
         event::EventBus,
         persistence::{create_pool, Database, DatabaseConfig},
@@ -273,7 +276,7 @@ impl DataContext {
         let db = self.database();
 
         // 验证属性是否存在并获取旧值
-        let property = crate::dto::entity::DeviceProperty::find_by_id(&db, property_id)
+        let property = find_device_property_by_id(&db, property_id)
             .await
             .map_err(|e| Error::IOError(format!("Failed to find property: {}", e)))?
             .ok_or_else(|| Error::IOError("Property not found".to_string()))?;

@@ -1,10 +1,40 @@
 use async_trait::async_trait;
-use sqlx::{QueryBuilder, Row};
+use sqlx::{FromRow, QueryBuilder, Row};
 
 use crate::domain::product::repository::ProductRepository;
 use crate::dto::entity::product::{CreateProductRequest, Product, ProductQueryParams, UpdateProductRequest};
 use crate::infrastructure::persistence::database::Database;
 use crate::shared::error::Result;
+
+/// Internal row type for sqlx mapping
+#[derive(Debug, Clone, FromRow)]
+struct ProductRow {
+    id: String,
+    name: String,
+    description: Option<String>,
+    version: Option<String>,
+    manufacturer: Option<String>,
+    device_type: Option<String>,
+    protocol_type: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+impl From<ProductRow> for Product {
+    fn from(row: ProductRow) -> Self {
+        Self {
+            id: row.id,
+            name: row.name,
+            description: row.description,
+            version: row.version,
+            manufacturer: row.manufacturer,
+            device_type: row.device_type,
+            protocol_type: row.protocol_type,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        }
+    }
+}
 
 pub struct SqliteProductRepository {
     database: Database,
@@ -19,7 +49,7 @@ impl SqliteProductRepository {
 #[async_trait]
 impl ProductRepository for SqliteProductRepository {
     async fn find_by_id(&self, id: &str) -> Result<Option<Product>> {
-        let product = sqlx::query_as::<_, Product>(
+        let row = sqlx::query_as::<_, ProductRow>(
             r#"
             SELECT id, name, description, version, manufacturer, device_type,
                    protocol_type, created_at, updated_at
@@ -30,11 +60,11 @@ impl ProductRepository for SqliteProductRepository {
         .fetch_optional(self.database.pool())
         .await?;
 
-        Ok(product)
+        Ok(row.map(Into::into))
     }
 
     async fn find_by_name(&self, name: &str) -> Result<Option<Product>> {
-        let product = sqlx::query_as::<_, Product>(
+        let row = sqlx::query_as::<_, ProductRow>(
             r#"
             SELECT id, name, description, version, manufacturer, device_type,
                    protocol_type, created_at, updated_at
@@ -45,7 +75,7 @@ impl ProductRepository for SqliteProductRepository {
         .fetch_optional(self.database.pool())
         .await?;
 
-        Ok(product)
+        Ok(row.map(Into::into))
     }
 
     async fn create(&self, request: &CreateProductRequest) -> Result<Product> {
@@ -184,7 +214,8 @@ impl ProductRepository for SqliteProductRepository {
             query.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let products = query.build_query_as::<Product>().fetch_all(self.database.pool()).await?;
+        let rows = query.build_query_as::<ProductRow>().fetch_all(self.database.pool()).await?;
+        let products: Vec<Product> = rows.into_iter().map(Into::into).collect();
 
         Ok(products)
     }
@@ -224,7 +255,7 @@ impl ProductRepository for SqliteProductRepository {
     }
 
     async fn find_by_device_type(&self, device_type: &str) -> Result<Vec<Product>> {
-        let products = sqlx::query_as::<_, Product>(
+        let rows = sqlx::query_as::<_, ProductRow>(
             r#"
             SELECT id, name, description, version, manufacturer, device_type,
                    protocol_type, created_at, updated_at
@@ -236,11 +267,11 @@ impl ProductRepository for SqliteProductRepository {
         .fetch_all(self.database.pool())
         .await?;
 
-        Ok(products)
+        Ok(rows.into_iter().map(Into::into).collect())
     }
 
     async fn find_by_manufacturer(&self, manufacturer: &str) -> Result<Vec<Product>> {
-        let products = sqlx::query_as::<_, Product>(
+        let rows = sqlx::query_as::<_, ProductRow>(
             r#"
             SELECT id, name, description, version, manufacturer, device_type,
                    protocol_type, created_at, updated_at
@@ -252,7 +283,7 @@ impl ProductRepository for SqliteProductRepository {
         .fetch_all(self.database.pool())
         .await?;
 
-        Ok(products)
+        Ok(rows.into_iter().map(Into::into).collect())
     }
 
     async fn search(&self, keyword: &str, limit: Option<u32>) -> Result<Vec<Product>> {
@@ -278,7 +309,8 @@ impl ProductRepository for SqliteProductRepository {
             query.push(" LIMIT ").push_bind(limit as i64);
         }
 
-        let products = query.build_query_as::<Product>().fetch_all(self.database.pool()).await?;
+        let rows = query.build_query_as::<ProductRow>().fetch_all(self.database.pool()).await?;
+        let products: Vec<Product> = rows.into_iter().map(Into::into).collect();
 
         Ok(products)
     }
@@ -363,7 +395,8 @@ impl ProductRepository for SqliteProductRepository {
             query.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let products = query.build_query_as::<Product>().fetch_all(self.database.pool()).await?;
+        let rows = query.build_query_as::<ProductRow>().fetch_all(self.database.pool()).await?;
+        let products: Vec<Product> = rows.into_iter().map(Into::into).collect();
 
         Ok(products)
     }

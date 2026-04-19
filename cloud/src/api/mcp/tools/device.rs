@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::api::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
-use crate::dto::entity::device::{CreateDeviceRequest, Device, DeviceQueryParams, UpdateDeviceRequest};
-use crate::dto::entity::device_command::DeviceCommand;
-use crate::dto::entity::device_property::DeviceProperty;
+use crate::dto::entity::device::{CreateDeviceRequest, Device, DeviceQueryParams, UpdateDeviceRequest, find_device_by_id, find_device_by_id_with_tags, find_all_devices_with_tags};
+use crate::dto::entity::device_command::{DeviceCommand, find_device_command_by_device_and_name, find_device_commands_by_device_id};
+use crate::dto::entity::device_property::{DeviceProperty, find_device_properties_by_device_id};
 use crate::dto::entity::device_template::{CreateDeviceFromTemplateRequest, DeviceCreationInput};
 use crate::domain::device::monitoring_service::DeviceMetrics;
 use crate::domain::device::performance_service::DevicePerformanceMetrics;
@@ -303,7 +303,7 @@ impl ToolHandler for ListDevicesHandler {
             workspace_id,
         };
 
-        let devices = Device::find_all_with_tags(state.database(), &params)
+        let devices = find_all_devices_with_tags(state.database(), &params)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?;
 
@@ -355,7 +355,7 @@ impl ToolHandler for DeviceProfileHandler {
         let workspace_id = crate::api::mcp::handlers::get_mcp_context()
             .map(|c| c.workspace_id);
 
-        let mut device = Device::find_by_id_with_tags(state.database(), &input.id)
+        let mut device = find_device_by_id_with_tags(state.database(), &input.id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.id)))?;
@@ -416,7 +416,7 @@ impl ToolHandler for GetDeviceStatusHandler {
         let workspace_id = crate::api::mcp::handlers::get_mcp_context()
             .map(|c| c.workspace_id);
 
-        let device = Device::find_by_id(state.database(), &input.id)
+        let device = find_device_by_id(state.database(), &input.id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.id)))?;
@@ -490,7 +490,7 @@ impl ToolHandler for DevicePropertyGetHandler {
         let workspace_id = crate::api::mcp::handlers::get_mcp_context()
             .map(|c| c.workspace_id);
 
-        let device = Device::find_by_id(state.database(), &input.device_id)
+        let device = find_device_by_id(state.database(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.device_id)))?;
@@ -503,7 +503,7 @@ impl ToolHandler for DevicePropertyGetHandler {
             }
         }
 
-        let all_properties = DeviceProperty::find_by_device_id(state.database(), &input.device_id)
+        let all_properties = find_device_properties_by_device_id(state.database(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?;
 
@@ -580,7 +580,7 @@ impl ToolHandler for WritePropertiesHandler {
             .map(|c| c.workspace_id);
 
         // Check device exists and belongs to user's workspace
-        let device = Device::find_by_id(state.database(), &input.device_id)
+        let device = find_device_by_id(state.database(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.device_id)))?;
@@ -596,7 +596,7 @@ impl ToolHandler for WritePropertiesHandler {
         }
 
         // Get device properties definition
-        let device_properties = DeviceProperty::find_by_device_id(state.database(), &input.device_id)
+        let device_properties = find_device_properties_by_device_id(state.database(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?;
 
@@ -703,7 +703,7 @@ impl ToolHandler for DeviceCommandHandler {
             .map(|c| c.workspace_id);
 
         // Check device exists and belongs to user's workspace
-        let device = Device::find_by_id(state.database(), &input.device_id)
+        let device = find_device_by_id(state.database(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.device_id)))?;
@@ -734,7 +734,7 @@ impl ToolHandler for DeviceCommandHandler {
         }
 
         // Find command definition
-        let command = DeviceCommand::find_by_device_and_name(
+        let command = find_device_command_by_device_and_name(
             state.database(),
             &input.device_id,
             &input.command_name,
@@ -1017,7 +1017,7 @@ impl ToolHandler for UpdateDeviceHandler {
 
         // Verify device belongs to user's tenant before updating
         if let Some(ref ws_id) = workspace_id {
-            match Device::find_by_id(state.database(), &input.id).await {
+            match find_device_by_id(state.database(), &input.id).await {
                 Ok(Some(device)) if device.workspace_id.as_ref() == Some(&ws_id) => {
                     // Device verified, proceed
                 }
@@ -1099,7 +1099,7 @@ impl ToolHandler for DeleteDeviceHandler {
 
         // Verify device belongs to user's tenant before deleting
         if let Some(ref ws_id) = workspace_id {
-            match Device::find_by_id(state.database(), &input.id).await {
+            match find_device_by_id(state.database(), &input.id).await {
                 Ok(Some(device)) if device.workspace_id.as_ref() == Some(&ws_id) => {
                     // Device verified, proceed
                 }
@@ -1165,7 +1165,7 @@ impl ToolHandler for GetDeviceHistoryHandler {
         let hours = input.hours.unwrap_or(168);
 
         // Check device exists and belongs to user's tenant
-        let device = Device::find_by_id(state.database(), &input.device_id)
+        let device = find_device_by_id(state.database(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.device_id)))?;
@@ -1230,7 +1230,7 @@ impl ToolHandler for GetDeviceMetricsHandler {
             .map(|c| c.workspace_id);
 
         // Check device exists and belongs to user's workspace
-        let device = Device::find_by_id(state.database(), &input.device_id)
+        let device = find_device_by_id(state.database(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.device_id)))?;
@@ -1305,7 +1305,7 @@ impl ToolHandler for ExportDeviceReportHandler {
             .map(|c| c.workspace_id);
 
         // Get device
-        let mut device = Device::find_by_id_with_tags(state.database(), &input.device_id)
+        let mut device = find_device_by_id_with_tags(state.database(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.device_id)))?;
@@ -1321,12 +1321,12 @@ impl ToolHandler for ExportDeviceReportHandler {
         }
 
         // Get properties
-        let properties = DeviceProperty::find_by_device_id(state.database(), &input.device_id)
+        let properties = find_device_properties_by_device_id(state.database(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?;
 
         // Get commands
-        let commands = DeviceCommand::find_by_device_id(state.database(), &input.device_id)
+        let commands = find_device_commands_by_device_id(state.database(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?;
 

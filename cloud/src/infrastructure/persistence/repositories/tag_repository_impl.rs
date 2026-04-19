@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use sqlx::{QueryBuilder, Row};
+use sqlx::{FromRow, QueryBuilder, Row};
 
 use crate::domain::tag::repository::{TagBindingRepository, TagRepository};
 use crate::dto::entity::tag::{
@@ -7,6 +7,54 @@ use crate::dto::entity::tag::{
 };
 use crate::infrastructure::persistence::database::Database;
 use crate::shared::error::Result;
+
+/// Internal row type for sqlx mapping
+#[derive(Debug, Clone, FromRow)]
+struct TagRow {
+    id: String,
+    #[sqlx(rename = "type")]
+    tag_type: String,
+    name: String,
+    tenant_id: Option<String>,
+    created_by: Option<String>,
+    created_at: String,
+}
+
+impl From<TagRow> for Tag {
+    fn from(row: TagRow) -> Self {
+        Self {
+            id: row.id,
+            tag_type: row.tag_type,
+            name: row.name,
+            tenant_id: row.tenant_id,
+            created_by: row.created_by,
+            created_at: row.created_at,
+        }
+    }
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct TagBindingRow {
+    id: String,
+    tag_id: String,
+    target_id: String,
+    tenant_id: Option<String>,
+    created_by: Option<String>,
+    created_at: String,
+}
+
+impl From<TagBindingRow> for TagBinding {
+    fn from(row: TagBindingRow) -> Self {
+        Self {
+            id: row.id,
+            tag_id: row.tag_id,
+            target_id: row.target_id,
+            tenant_id: row.tenant_id,
+            created_by: row.created_by,
+            created_at: row.created_at,
+        }
+    }
+}
 
 pub struct SqliteTagRepository {
     database: Database,
@@ -21,18 +69,18 @@ impl SqliteTagRepository {
 #[async_trait]
 impl TagRepository for SqliteTagRepository {
     async fn find_by_id(&self, id: &str) -> Result<Option<Tag>> {
-        let tag = sqlx::query_as::<_, Tag>(
+        let row = sqlx::query_as::<_, TagRow>(
             "SELECT id, type as tag_type, name, tenant_id, created_by, created_at FROM tags WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(self.database.pool())
         .await?;
 
-        Ok(tag)
+        Ok(row.map(Into::into))
     }
 
     async fn find_by_name_and_type(&self, name: &str, tag_type: &str) -> Result<Option<Tag>> {
-        let tag = sqlx::query_as::<_, Tag>(
+        let row = sqlx::query_as::<_, TagRow>(
             "SELECT id, type as tag_type, name, tenant_id, created_by, created_at FROM tags WHERE name = ? AND type = ?",
         )
         .bind(name)
@@ -40,7 +88,7 @@ impl TagRepository for SqliteTagRepository {
         .fetch_optional(self.database.pool())
         .await?;
 
-        Ok(tag)
+        Ok(row.map(Into::into))
     }
 
     async fn create(&self, request: &CreateTagRequest, created_by: &str, tenant_id: &str) -> Result<Tag> {
@@ -136,7 +184,8 @@ impl TagRepository for SqliteTagRepository {
             query.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let tags = query.build_query_as::<Tag>().fetch_all(self.database.pool()).await?;
+        let rows = query.build_query_as::<TagRow>().fetch_all(self.database.pool()).await?;
+        let tags: Vec<Tag> = rows.into_iter().map(Into::into).collect();
 
         Ok(tags)
     }
@@ -163,7 +212,7 @@ impl TagRepository for SqliteTagRepository {
     }
 
     async fn find_by_target_id(&self, target_id: &str, tenant_id: &str) -> Result<Vec<Tag>> {
-        let tags = sqlx::query_as::<_, Tag>(
+        let rows = sqlx::query_as::<_, TagRow>(
             r#"
             SELECT t.id, t.type as tag_type, t.name, t.tenant_id, t.created_by, t.created_at
             FROM tags t
@@ -178,7 +227,7 @@ impl TagRepository for SqliteTagRepository {
         .fetch_all(self.database.pool())
         .await?;
 
-        Ok(tags)
+        Ok(rows.into_iter().map(Into::into).collect())
     }
 
     async fn exists_by_name_and_type(&self, name: &str, tag_type: &str, tenant_id: &str) -> Result<bool> {
@@ -225,14 +274,14 @@ impl SqliteTagBindingRepository {
 #[async_trait]
 impl TagBindingRepository for SqliteTagBindingRepository {
     async fn find_by_id(&self, id: &str) -> Result<Option<TagBinding>> {
-        let binding = sqlx::query_as::<_, TagBinding>(
+        let row = sqlx::query_as::<_, TagBindingRow>(
             "SELECT id, tag_id, target_id, tenant_id, created_by, created_at FROM tag_bindings WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(self.database.pool())
         .await?;
 
-        Ok(binding)
+        Ok(row.map(Into::into))
     }
 
     async fn create(
@@ -285,7 +334,7 @@ impl TagBindingRepository for SqliteTagBindingRepository {
     }
 
     async fn find_by_tag_id(&self, tag_id: &str, tenant_id: &str) -> Result<Vec<TagBinding>> {
-        let bindings = sqlx::query_as::<_, TagBinding>(
+        let rows = sqlx::query_as::<_, TagBindingRow>(
             "SELECT id, tag_id, target_id, tenant_id, created_by, created_at FROM tag_bindings WHERE tag_id = ? AND tenant_id = ? ORDER BY created_at DESC"
         )
         .bind(tag_id)
@@ -293,11 +342,11 @@ impl TagBindingRepository for SqliteTagBindingRepository {
         .fetch_all(self.database.pool())
         .await?;
 
-        Ok(bindings)
+        Ok(rows.into_iter().map(Into::into).collect())
     }
 
     async fn find_by_target_id(&self, target_id: &str, tenant_id: &str) -> Result<Vec<TagBinding>> {
-        let bindings = sqlx::query_as::<_, TagBinding>(
+        let rows = sqlx::query_as::<_, TagBindingRow>(
             "SELECT id, tag_id, target_id, tenant_id, created_by, created_at FROM tag_bindings WHERE target_id = ? AND tenant_id = ? ORDER BY created_at DESC"
         )
         .bind(target_id)
@@ -305,7 +354,7 @@ impl TagBindingRepository for SqliteTagBindingRepository {
         .fetch_all(self.database.pool())
         .await?;
 
-        Ok(bindings)
+        Ok(rows.into_iter().map(Into::into).collect())
     }
 
     async fn count_by_tag_id(&self, tag_id: &str, tenant_id: &str) -> Result<i64> {
@@ -340,7 +389,7 @@ impl TagBindingRepository for SqliteTagBindingRepository {
     }
 
     async fn find_by_tag_and_target(&self, tag_id: &str, target_id: &str, tenant_id: &str) -> Result<Option<TagBinding>> {
-        let binding = sqlx::query_as::<_, TagBinding>(
+        let row = sqlx::query_as::<_, TagBindingRow>(
             "SELECT id, tag_id, target_id, tenant_id, created_by, created_at FROM tag_bindings WHERE tag_id = ? AND target_id = ? AND tenant_id = ? LIMIT 1",
         )
         .bind(tag_id)
@@ -349,7 +398,7 @@ impl TagBindingRepository for SqliteTagBindingRepository {
         .fetch_optional(self.database.pool())
         .await?;
 
-        Ok(binding)
+        Ok(row.map(Into::into))
     }
 
     async fn create_batch(

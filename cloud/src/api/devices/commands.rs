@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     dto::{
-        entity::device_command::DeviceCommand,
+        entity::device_command::{find_device_command_by_id, DeviceCommand},
         response::{builder::ApiResponseBuilder, ApiResponse},
     },
     shared::{app_state::AppState, security::jwt::Claims},
@@ -59,7 +59,7 @@ async fn execute_device_command(
     }
 
     // 验证指令是否存在
-    let command = match DeviceCommand::find_by_id(state.database(), &command_id).await {
+    let command = match find_device_command_by_id(state.database(), &command_id).await {
         Ok(Some(c)) => c,
         Ok(None) => return ApiResponseBuilder::error("指令不存在"),
         Err(e) => {

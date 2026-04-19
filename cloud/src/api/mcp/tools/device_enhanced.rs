@@ -9,6 +9,7 @@ use serde_json::Value;
 
 use crate::api::mcp::handlers::get_mcp_context;
 use crate::api::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
+use crate::dto::entity::device::find_device_by_id;
 use crate::infrastructure::diagnostics::DiagnosticsService;
 
 /// Tool input: Compare devices
@@ -89,7 +90,7 @@ impl ToolHandler for CompareDevicesHandler {
         // SECURITY: Verify all devices belong to authenticated workspace
         let db = state.database();
         for device_id in &input.device_ids {
-            let device = crate::dto::entity::device::Device::find_by_id(db, device_id)
+            let device = crate::dto::entity::device::find_device_by_id(db, device_id)
                 .await
                 .map_err(|e| ToolError::Internal(format!("failed to verify device: {}", e)))?
                 .ok_or_else(|| ToolError::NotFound(format!("device {} not found", device_id)))?;
@@ -152,7 +153,7 @@ impl ToolHandler for DiagnoseDeviceHandler {
 
         // SECURITY: Verify device belongs to authenticated workspace
         let db = state.database();
-        let device = crate::dto::entity::device::Device::find_by_id(db, &input.device_id)
+        let device = find_device_by_id(db, &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(format!("failed to verify device: {}", e)))?
             .ok_or_else(|| ToolError::NotFound(format!("device {} not found", input.device_id)))?;

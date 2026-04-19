@@ -5,10 +5,7 @@ use serialport::SerialPort;
 
 use crate::{
     domain::device::driver::{DeviceDriver, ResultValue},
-    dto::entity::{
-        component::{ComponentInfo, ComponentOptions, CreateComponentRequest},
-        Device, DeviceCommand, DeviceProperty,
-    },
+    dto::entity::{component::{Component, ComponentOption, CreateComponentRequest}, Device, DeviceCommand, DeviceProperty},
     shared::error::Error,
 };
 
@@ -26,30 +23,30 @@ impl SnmpDriver {
         Self { device, retry_count: 0 }
     }
 
-    pub fn get_driver_info() -> ComponentInfo {
+    pub fn get_driver_info() -> Component {
         let opts = vec![
-            ComponentOptions::new(
+            ComponentOption::new(
                 "Refresh Interval (ms)".to_string(),
                 "interval".to_string(),
                 "1000".to_string(),
                 "number".to_string(),
                 true,
             ),
-            ComponentOptions::new(
+            ComponentOption::new(
                 "Serial Port".to_string(),
                 "serial".to_string(),
                 "/dev/ttyS1".to_string(),
                 "string".to_string(),
                 true,
             ),
-            ComponentOptions::new(
+            ComponentOption::new(
                 "Baud Rate".to_string(),
                 "baud_rate".to_string(),
                 "9600".to_string(),
                 "number".to_string(),
                 true,
             ),
-            ComponentOptions::new(
+            ComponentOption::new(
                 "Device Address".to_string(),
                 "slave_id".to_string(),
                 "1".to_string(),
@@ -58,7 +55,7 @@ impl SnmpDriver {
             ),
         ];
 
-        ComponentInfo::new(CreateComponentRequest {
+        Component::new(CreateComponentRequest {
             name: "SnmpDriver".to_string(),
             version: "1.0.0".to_string(),
             class_name: "tinyiothub::domain::device::driver::drivers::SnmpDriver".to_string(),

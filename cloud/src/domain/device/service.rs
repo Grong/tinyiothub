@@ -14,7 +14,8 @@ use crate::{
     dto::{
         entity::{
             device::{CreateDeviceRequest, DeviceQueryParams, UpdateDeviceRequest},
-            device_command::CreateDeviceCommandRequest,
+            device_command::{CreateDeviceCommandRequest, bulk_create_device_commands, create_device_command, find_device_commands_by_device_id},
+            device_property::{create_device_properties_batch, find_device_properties_by_device_id},
             Device, DeviceCommand, DeviceProperty,
         },
         request::pagination::DataObjectWithPagination,
@@ -116,7 +117,7 @@ impl DeviceService {
                 if !properties.is_empty() {
                     // TODO: DeviceProperty 的批量创建仍直接依赖 Database，后续应提取到 repository
                     let db = self.database.clone();
-                    if let Err(e) = DeviceProperty::create_batch(&db, &properties).await {
+                    if let Err(e) = create_device_properties_batch(&db, &properties).await {
                         tracing::warn!("Failed to create device properties: {}", e);
                     }
                 }
@@ -135,7 +136,7 @@ impl DeviceService {
                 if !commands.is_empty() {
                     // TODO: 同上，临时使用 Database 直接调用
                     let db = self.database.clone();
-                    if let Err(e) = DeviceCommand::bulk_create(&db, &commands).await {
+                    if let Err(e) = bulk_create_device_commands(&db, &commands).await {
                         tracing::warn!("Failed to create device commands: {}", e);
                     }
                 }
@@ -499,7 +500,7 @@ impl DeviceService {
     ) -> Result<Vec<DeviceProperty>, Error> {
         // TODO: DeviceProperty 尚未提取到 repository，暂时仍直接调用 Database
         let db = self.database.clone();
-        DeviceProperty::find_by_device_id(&db, device_id)
+        find_device_properties_by_device_id(&db, device_id)
             .await
             .map_err(|e| Error::IOError(e.to_string()))
     }
@@ -538,7 +539,7 @@ impl DeviceService {
     pub async fn get_device_commands(&self, device_id: &str) -> Result<Vec<DeviceCommand>, Error> {
         // TODO: DeviceCommand 尚未提取到 repository，暂时仍直接调用 Database
         let db = self.database.clone();
-        DeviceCommand::find_by_device_id(&db, device_id)
+        find_device_commands_by_device_id(&db, device_id)
             .await
             .map_err(|e| Error::IOError(e.to_string()))
     }
@@ -816,8 +817,7 @@ impl DeviceService {
         };
         // TODO: DeviceCommand 尚未提取到 repository，暂时仍直接调用 Database
         let db = self.database.clone();
-        let _ = DeviceCommand::create(&db, &create_request,
-        ).await;
+        let _ = create_device_command(&db, &create_request).await;
 
         // 发布命令执行事件（DataServer 会处理实际执行）
         if let Some(ref event_bus) = self.event_bus {
