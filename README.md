@@ -20,16 +20,22 @@
 - 🌐 **现代化 REST API**（基于 Axum + 统一响应格式）
 - 📱 **MQTT 消息推送**（支持主备双通道）
 - 🔐 **JWT 身份认证**（支持会话管理）
-- 📈 **设备监控和告警**（实时状态监控）
-- 🎯 **事件驱动架构**（设备联动和规则引擎）
+- 📈 **设备监控和告警**（实时状态监控 + 规则引擎）
+- 🎯 **事件驱动架构**（设备联动、SSE 流式推送）
+- ⏰ **定时任务调度**（Cron 表达式、任务执行记录、Workspace 隔离）
+- 🏢 **多租户 SaaS 架构**（租户隔离、订阅管理）
+- 🏗️ **工作空间管理**（物理环境分组、AI Agent 绑定）
+- ⚡ **自动化规则**（触发器-动作引擎）
+- 🔧 **自愈引擎**（探测调度器 + 自动故障恢复，支持 system/device/task 探针）
+- 📢 **通知系统**（多渠道通知：Email、SMS、SSE、Webhook）
+- 🤖 **AI Agent 集成**（内嵌 MCP Server + A2UI 聊天，Claude Desktop/Cursor 支持）
+- 🛒 **应用市场**（驱动市场、模板市场）
 - 💾 **SQLite 数据存储**（支持自动迁移）
 - 🔄 **自动重连和故障恢复**
-- 🤖 **AI Agent 集成**（内嵌 MCP Server + A2UI 聊天，Claude Desktop/Cursor 支持）
-- 🔧 **自愈引擎**（探测调度器 + 自动故障恢复，支持 system/device/task 探针）
 - 🤖 **鸿蒙系统原生支持**
 - ⚙️ **专业配置系统**（层次化配置，环境感知）
 - 🔒 **安全加固**（配置验证，权限控制）
-- 🎨 **现代化前端界面**（Lit 3 + TypeScript + Vite）
+- 🎨 **现代化前端界面**（Lit 3 + TypeScript + Vite + nanostore）
 
 ## 项目结构
 
@@ -127,6 +133,10 @@ cd api
 - ✅ 支持动态路由
 
 详见: [单进程部署方案](docs/deployment/single-process-deployment.md)
+
+#### 前端独立运行（开发调试）
+
+```bash
 cd web
 
 # 安装依赖
@@ -137,9 +147,6 @@ pnpm dev
 
 # 构建生产版本
 pnpm build
-
-# 启动生产服务器
-pnpm start
 ```
 
 ### 配置文件
@@ -167,10 +174,15 @@ secret = "your-secret-key-must-be-at-least-32-characters-long"
 expiration_secs = 10800  # 3 hours
 ```
 
-前端配置文件位于 `web/.env.local`：
+前端开发服务器代理配置位于 `web/vite.config.ts`：
 
-```env
-NEXT_PUBLIC_API_URL=http://localhost:3002
+```typescript
+server: {
+  port: 3001,
+  proxy: {
+    '/api': 'http://localhost:3002'
+  }
+}
 ```
 
 ### 访问服务
@@ -224,7 +236,7 @@ ApiResponseBuilder::error("错误信息")
 
 ```typescript
 // ✅ 正确：使用统一API客户端
-import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api-client'
+import { apiGet, apiPost, apiPut, apiDelete } from './client'
 
 // GET请求
 const response = await apiGet<UserList>('users', { page: 1, pageSize: 20 })
@@ -303,38 +315,72 @@ api/
 │   │   ├── devices/          # 设备管理 API
 │   │   ├── drivers/          # 驱动管理 API
 │   │   ├── alarms/           # 告警管理 API
+│   │   ├── alarm_rules/      # 告警规则 API
+│   │   ├── agents/           # AI Agent 管理 API
+│   │   ├── automations/      # 自动化规则 API
 │   │   ├── chat/             # AI Agent 聊天 API
+│   │   ├── events/           # 事件管理 API
+│   │   ├── jobs/             # 定时任务 API
+│   │   ├── marketplace/      # 应用市场 API
 │   │   ├── mcp/              # 内嵌 MCP Server
-│   │   ├── users/            # 用户管理 API
+│   │   ├── notifications/    # 通知管理 API
+│   │   ├── notification_channels/ # 通知渠道 API
+│   │   ├── self_healing/     # 自愈引擎 API
 │   │   ├── system/           # 系统管理 API
 │   │   ├── monitoring/       # 监控 API
 │   │   ├── templates/        # 设备模板 API
+│   │   ├── tenants/          # 租户管理 API
+│   │   ├── users/            # 用户管理 API
+│   │   ├── workspaces/       # 工作空间 API
+│   │   ├── batch/            # 批量操作 API
+│   │   ├── open/             # 开放接口 API
+│   │   ├── heartbeat/        # 心跳 API
 │   │   └── middleware/       # 中间件
 │   ├── application/          # 应用服务层
-│   │   └── agent/            # Agent 会话、聊天、记忆服务
+│   │   ├── agent/            # Agent 会话、聊天、记忆服务
+│   │   ├── cron_scheduler.rs # 定时任务调度（CronSchedulerService）
+│   │   ├── data_context.rs   # 数据上下文
+│   │   ├── data_server.rs    # 数据服务
+│   │   ├── message_server.rs # 消息服务
+│   │   └── service_manager.rs # 服务管理器
 │   ├── domain/               # 领域层
-│   │   ├── device/           # 设备领域
+│   │   ├── agent/            # Agent 领域
 │   │   ├── alarm/            # 告警领域
+│   │   ├── automation/       # 自动化领域
+│   │   ├── cron/             # 定时任务领域
+│   │   ├── device/           # 设备领域（含 driver/registry）
+│   │   ├── event/            # 事件领域
 │   │   ├── job/              # 任务领域
-│   │   ├── product/          # 产品领域
+│   │   ├── marketplace/      # 市场领域
+│   │   ├── organization/     # 组织领域
 │   │   ├── permission/       # 权限领域
+│   │   ├── plugin/           # 插件领域
+│   │   ├── product/          # 产品领域
 │   │   ├── role/             # 角色领域
+│   │   ├── self_healing/     # 自愈引擎领域
 │   │   ├── tag/              # 标签领域
+│   │   ├── template/         # 模板领域
 │   │   ├── tenant/           # 租户领域
 │   │   ├── user/             # 用户领域
 │   │   └── workspace/        # 工作空间领域
-│   │       ├── repository.rs # Repository trait
+│   │       ├── repository.rs # Repository trait（接口）
 │   │       └── service.rs    # 领域服务
-│   ├── dto/                  # 数据传输对象（纯结构体）
+│   ├── dto/                  # 数据传输对象（纯结构体，无 SQL）
 │   ├── infrastructure/       # 基础设施层
 │   │   └── persistence/
-│   │       └── repositories/ # Repository 实现
+│   │       └── repositories/ # Repository 实现（SQLite）
 │   ├── shared/               # 共享组件
+│   ├── lib.rs                # 库入口
 │   └── main.rs               # 程序入口
-├── migrations/               # 数据库迁移
+├── derive/                   # 自定义宏
+├── migrations/               # 数据库迁移文件
 ├── drivers/                  # 驱动实现
+├── templates/                # 设备模板
+├── vendor/                   # 第三方依赖（本地 fork）
 ├── Cargo.toml                # Rust 项目配置
-└── app_settings.toml         # 应用配置
+├── Dockerfile                # Docker 构建文件
+├── app_settings.toml         # 应用配置
+└── tinyiothub.db             # SQLite 数据库
 ```
 
 ### 前端目录结构 (web/)
@@ -350,7 +396,8 @@ web/
 │   ├── api/                 # API 客户端
 │   ├── i18n/                # 国际化
 │   ├── styles/              # CSS 样式
-│   └── stores/              # nanostore 状态管理
+│   ├── stores/              # nanostore 状态管理
+│   └── types/               # TypeScript 类型定义
 ├── package.json
 └── vite.config.ts
 ```
@@ -385,18 +432,69 @@ web/
 
 ### 告警管理
 - `GET /api/v1/alarms` - 获取告警列表
+- `GET /api/v1/alarms/{id}` - 获取告警详情
 - `POST /api/v1/alarms/{id}/acknowledge` - 确认告警
-- `GET /api/v1/alarms/rules` - 获取告警规则
+- `POST /api/v1/alarms/{id}/resolve` - 解决告警
+- `POST /api/v1/alarms/batch-acknowledge` - 批量确认告警
+- `GET /api/v1/alarms/statistics` - 告警统计
 
-### 用户管理
+### 告警规则
+- `GET /api/v1/alarm-rules` - 获取告警规则列表
+- `POST /api/v1/alarm-rules` - 创建告警规则
+- `GET /api/v1/alarm-rules/{id}` - 获取告警规则详情
+- `PUT /api/v1/alarm-rules/{id}` - 更新告警规则
+- `DELETE /api/v1/alarm-rules/{id}` - 删除告警规则
+- `POST /api/v1/alarm-rules/{id}/toggle` - 启用/禁用规则
+
+### 工作空间
+- `GET /api/v1/workspaces` - 获取工作空间列表
+- `POST /api/v1/workspaces` - 创建工作空间
+- `GET /api/v1/workspaces/{id}` - 获取工作空间详情
+- `PUT /api/v1/workspaces/{id}` - 更新工作空间
+- `DELETE /api/v1/workspaces/{id}` - 删除工作空间
+- `POST /api/v1/workspaces/{id}/devices` - 分配设备到工作空间
+
+### 定时任务
+- `GET /api/v1/jobs` - 获取定时任务列表
+- `POST /api/v1/jobs` - 创建定时任务
+- `GET /api/v1/jobs/{id}` - 获取任务详情
+- `PUT /api/v1/jobs/{id}` - 更新任务
+- `DELETE /api/v1/jobs/{id}` - 删除任务
+- `POST /api/v1/jobs/{id}/toggle` - 启用/禁用任务
+- `GET /api/v1/jobs/{id}/runs` - 获取任务执行记录
+
+### 自动化规则
+- `GET /api/v1/automations` - 获取自动化规则列表
+- `POST /api/v1/automations` - 创建自动化规则
+- `PUT /api/v1/automations/{id}` - 更新自动化规则
+- `DELETE /api/v1/automations/{id}` - 删除自动化规则
+
+### 自愈引擎
+- `GET /api/v1/self-healing/probes` - 获取探针列表
+- `POST /api/v1/self-healing/probes` - 创建探针
+- `GET /api/v1/self-healing/status` - 获取自愈状态
+
+### 事件系统
+- `GET /api/v1/events` - 获取事件列表
+- `GET /api/v1/events/stream` - SSE 事件流订阅
+
+### 通知管理
+- `GET /api/v1/notifications` - 获取通知列表
+- `POST /api/v1/notifications/{id}/read` - 标记已读
+- `GET /api/v1/notification-channels` - 获取通知渠道
+- `POST /api/v1/notification-channels` - 创建通知渠道
+
+### 用户与租户
 - `GET /api/v1/users` - 获取用户列表
 - `POST /api/v1/users` - 创建用户
 - `GET /api/v1/users/roles` - 获取角色列表
+- `GET /api/v1/tenants` - 获取租户列表
 
 ### 系统管理
 - `GET /api/v1/system/health` - 健康检查
 - `GET /api/v1/system/features` - 获取系统特性
 - `GET /api/v1/system/config` - 获取系统配置
+- `GET /api/v1/system/initialization` - 系统初始化状态
 
 ### 监控接口
 - `GET /api/v1/monitoring/health` - 健康检查
@@ -426,6 +524,7 @@ web/
 - `POST /mcp` - MCP JSON-RPC 统一端点（tools/list、tools/call）
 - `POST /mcp/tools/list` - 列出可用工具
 - `POST /mcp/tools/call` - 调用指定工具
+- `POST /mcp/sse` - MCP SSE 流式端点
 
 ## 开发指南
 
@@ -597,8 +696,12 @@ gateway/{sn}/alarm            # 告警消息
 ## 项目状态
 
 ✅ **最新完成的工作**:
+- **Cron 定时任务重构**: 从旧双调度器迁移到统一的 `CronSchedulerService`，基于 `cron_jobs`/`cron_runs` 表，支持 Workspace 隔离
 - **AI Agent 架构重构**: 内嵌 MCP Server + A2UI 聊天界面，支持 SSE 流式对话和 Agent 技能调用
 - **前端架构迁移**: 从 Next.js 迁移到 Lit 3 + Vite，采用 Web Components 和 nanostore 状态管理
+- **告警规则引擎**: 支持阈值、范围、变化、持续时间、组合五种条件类型
+- **工作空间管理**: 物理环境分组，每个 Workspace 绑定一个 AI Agent
+- **自愈引擎**: system/device/task 三级探针，自动故障检测与恢复
 - **API 规范统一**: 建立完整的前后端API开发规范，确保数据对接一致性
 - **统一响应格式**: 所有API使用 `ApiResponse<T>` 包装格式
 - **设备创建向导**: 完整的模板选择和设备配置流程
@@ -612,7 +715,9 @@ gateway/{sn}/alarm            # 告警消息
 - **设备模板系统**: 模板化设备创建，支持验证和预览
 - **配置管理**: 多源配置加载，环境变量覆盖，配置验证
 - **认证授权**: JWT 会话管理，角色权限控制
-- **监控告警**: 健康检查，指标收集，告警规则
+- **监控告警**: 健康检查，指标收集，告警规则引擎
+- **定时任务**: Cron 表达式调度，任务执行记录，Workspace 隔离
+- **事件系统**: SSE 流式推送，设备联动
 - **鸿蒙系统适配**: 硬件抽象层，资源优化配置
 
 🔧 **技术栈**:

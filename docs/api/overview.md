@@ -19,15 +19,19 @@
 ### 📊 统一响应格式
 ```json
 {
-  "success": true,
-  "data": { ... },
-  "message": "操作成功"
+  "code": 0,
+  "msg": "",
+  "result": { ... }
 }
 ```
 
+- `code`: `0` 表示成功，非零表示错误
+- `msg`: 错误信息，成功时为空字符串
+- `result`: 实际数据，错误时为 `null`
+
 ## API 端点总览
 
-### 🔐 认证相关 (`/api/auth`)
+### 🔐 认证相关 (`/api/v1/auth`)
 
 #### POST /api/auth/login
 用户登录认证
@@ -43,8 +47,9 @@
 **响应:**
 ```json
 {
-  "success": true,
-  "data": {
+  "code": 0,
+  "msg": "",
+  "result": {
     "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
     "token_type": "Bearer",
     "expires_in": 86400,
@@ -66,9 +71,9 @@
 
 ---
 
-### 🔧 设备管理 (`/api/devices`)
+### 🔧 设备管理 (`/api/v1/devices`)
 
-#### GET /api/devices
+#### GET /api/v1/devices
 获取设备列表
 
 **查询参数:**
@@ -84,8 +89,9 @@
 **响应:**
 ```json
 {
-  "success": true,
-  "data": [
+  "code": 0,
+  "msg": "",
+  "result": [
     {
       "id": "device-id",
       "name": "温度传感器01",
@@ -101,7 +107,7 @@
 }
 ```
 
-#### POST /api/devices
+#### POST /api/v1/devices
 创建新设备
 
 **请求体:**
@@ -116,29 +122,30 @@
 }
 ```
 
-#### GET /api/devices/:id
+#### GET /api/v1/devices/:id
 获取设备详情
 
-#### PUT /api/devices/:id
+#### PUT /api/v1/devices/:id
 更新设备信息
 
-#### DELETE /api/devices/:id
+#### DELETE /api/v1/devices/:id
 删除设备
 
-#### POST /api/devices/:id/enable
+#### POST /api/v1/devices/:id/enable
 启用设备
 
-#### POST /api/devices/:id/disable
+#### POST /api/v1/devices/:id/disable
 禁用设备
 
-#### GET /api/devices/:id/status
+#### GET /api/v1/devices/:id/status
 获取设备状态
 
 **响应:**
 ```json
 {
-  "success": true,
-  "data": {
+  "code": 0,
+  "msg": "",
+  "result": {
     "device_id": "device-id",
     "online": true,
     "last_seen": "2024-01-01T10:30:00Z",
@@ -148,10 +155,10 @@
 }
 ```
 
-#### GET /api/devices/:id/data
+#### GET /api/v1/devices/:id/data
 读取设备数据
 
-#### POST /api/devices/:id/commands
+#### POST /api/v1/devices/:id/commands
 执行设备命令
 
 **请求体:**
@@ -164,14 +171,14 @@
 }
 ```
 
-#### GET /api/devices/:id/properties
+#### GET /api/v1/devices/:id/properties
 获取设备属性
 
 ---
 
-### 🚨 告警管理 (`/api/alarms`)
+### 🚨 告警管理 (`/api/v1/alarms`)
 
-#### GET /api/alarms
+#### GET /api/v1/alarms
 获取告警列表
 
 **查询参数:**
@@ -181,14 +188,15 @@
 - `start_time` - 开始时间筛选
 - `end_time` - 结束时间筛选
 
-#### GET /api/alarms/statistics
+#### GET /api/v1/alarms/statistics
 获取告警统计信息
 
 **响应:**
 ```json
 {
-  "success": true,
-  "data": {
+  "code": 0,
+  "msg": "",
+  "result": {
     "total_count": 150,
     "active_count": 25,
     "acknowledged_count": 100,
@@ -203,10 +211,10 @@
 }
 ```
 
-#### GET /api/alarms/:id
+#### GET /api/v1/alarms/:id
 获取告警详情
 
-#### POST /api/alarms/:id/acknowledge
+#### POST /api/v1/alarms/:id/acknowledge
 确认告警
 
 **请求体:**
@@ -217,7 +225,7 @@
 }
 ```
 
-#### POST /api/alarms/batch/acknowledge
+#### POST /api/v1/alarms/batch/acknowledge
 批量确认告警
 
 **请求体:**
@@ -229,20 +237,107 @@
 }
 ```
 
-#### GET /api/alarms/rules
+#### GET /api/v1/alarm-rules
 获取告警规则列表
 
-#### POST /api/alarms/rules
+#### POST /api/v1/alarm-rules
 创建告警规则
 
-#### GET /api/alarms/events
-获取事件触发器列表
+#### GET /api/v1/alarm-rules/:id
+获取告警规则详情
+
+#### PUT /api/v1/alarm-rules/:id
+更新告警规则
+
+#### DELETE /api/v1/alarm-rules/:id
+删除告警规则
+
+#### POST /api/v1/alarm-rules/:id/toggle
+启用/禁用告警规则
+
+#### GET /api/v1/automations
+获取自动化规则列表
+
+#### POST /api/v1/automations
+创建自动化规则
+
+#### PUT /api/v1/automations/:id
+更新自动化规则
+
+#### DELETE /api/v1/automations/:id
+删除自动化规则
+
+#### GET /api/v1/events
+获取事件列表
+
+#### GET /api/v1/events/stream
+SSE 事件流订阅
+
+#### GET /api/v1/workspaces
+获取工作空间列表
+
+#### POST /api/v1/workspaces
+创建工作空间
+
+#### GET /api/v1/workspaces/:id
+获取工作空间详情
+
+#### PUT /api/v1/workspaces/:id
+更新工作空间
+
+#### POST /api/v1/workspaces/:id/devices
+分配设备到工作空间
+
+#### GET /api/v1/jobs
+获取定时任务列表
+
+#### POST /api/v1/jobs
+创建定时任务
+
+#### GET /api/v1/jobs/:id
+获取任务详情
+
+#### PUT /api/v1/jobs/:id
+更新任务
+
+#### DELETE /api/v1/jobs/:id
+删除任务
+
+#### POST /api/v1/jobs/:id/toggle
+启用/禁用任务
+
+#### GET /api/v1/jobs/:id/runs
+获取任务执行记录
+
+#### GET /api/v1/self-healing/probes
+获取探针列表
+
+#### POST /api/v1/self-healing/probes
+创建探针
+
+#### GET /api/v1/self-healing/status
+获取自愈状态
+
+#### GET /api/v1/notifications
+获取通知列表
+
+#### POST /api/v1/notifications/:id/read
+标记通知已读
+
+#### GET /api/v1/notification-channels
+获取通知渠道
+
+#### POST /api/v1/notification-channels
+创建通知渠道
+
+#### GET /api/v1/tenants
+获取租户列表
 
 ---
 
-### 👥 用户管理 (`/api/users`)
+### 👥 用户管理 (`/api/v1/users`)
 
-#### GET /api/users
+#### GET /api/v1/users
 获取用户列表
 
 **查询参数:**
@@ -251,7 +346,7 @@
 - `enabled` - 是否启用筛选
 - `role_id` - 角色ID筛选
 
-#### POST /api/users
+#### POST /api/v1/users
 创建新用户
 
 **请求体:**
@@ -266,19 +361,19 @@
 }
 ```
 
-#### GET /api/users/:id
+#### GET /api/v1/users/:id
 获取用户详情
 
-#### PUT /api/users/:id
+#### PUT /api/v1/users/:id
 更新用户信息
 
-#### DELETE /api/users/:id
+#### DELETE /api/v1/users/:id
 删除用户
 
-#### GET /api/users/roles
+#### GET /api/v1/users/roles
 获取角色列表
 
-#### POST /api/users/roles
+#### POST /api/v1/users/roles
 创建新角色
 
 **请求体:**
@@ -290,20 +385,20 @@
 }
 ```
 
-#### GET /api/users/permissions
+#### GET /api/v1/users/permissions
 获取权限列表
 
-#### GET /api/users/:id/permissions
+#### GET /api/v1/users/:id/permissions
 获取用户权限
 
 ---
 
-### ⚙️ 系统管理 (`/api/system`)
+### ⚙️ 系统管理 (`/api/v1/system`)
 
-#### GET /api/system/products
+#### GET /api/v1/system/products
 获取产品列表
 
-#### POST /api/system/products
+#### POST /api/v1/system/products
 创建新产品
 
 **请求体:**
@@ -316,24 +411,25 @@
 }
 ```
 
-#### GET /api/system/tasks
+#### GET /api/v1/system/tasks
 获取任务列表
 
-#### GET /api/system/configuration
+#### GET /api/v1/system/configuration
 获取系统配置
 
 ---
 
-### 📊 监控相关 (`/api/monitoring`)
+### 📊 监控相关 (`/api/v1/monitoring`)
 
-#### GET /api/monitoring/health
+#### GET /api/v1/monitoring/health
 系统健康检查
 
 **响应:**
 ```json
 {
-  "success": true,
-  "data": {
+  "code": 0,
+  "msg": "",
+  "result": {
     "status": "healthy",
     "timestamp": "2024-01-01T10:00:00Z",
     "services": {
@@ -350,10 +446,10 @@
 }
 ```
 
-#### GET /api/monitoring/metrics
+#### GET /api/v1/monitoring/metrics
 获取系统指标
 
-#### GET /api/monitoring/logs
+#### GET /api/v1/monitoring/logs
 获取系统日志
 
 ---
@@ -382,7 +478,7 @@ curl -X POST http://localhost:3002/api/auth/login \
   -d '{"username":"admin","password":"password123"}'
 
 # 使用Token访问API
-curl -X GET http://localhost:3002/api/devices \
+curl -X GET http://localhost:3002/api/v1/devices \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 ```
 
@@ -392,9 +488,9 @@ curl -X GET http://localhost:3002/api/devices \
 
 ```json
 {
-  "success": false,
-  "data": null,
-  "message": "错误描述信息"
+  "code": -1,
+  "msg": "错误描述信息",
+  "result": null
 }
 ```
 
@@ -463,27 +559,34 @@ cargo run
 
 # 生产环境
 cargo build --release
-./target/release/iotedge-rust-harmonyos
+./target/release/tinyiothub
 ```
 
 ## 版本信息
 
-- **当前版本**: v2.0.0
-- **API版本**: v2 (业务域架构)
-- **兼容性**: 不兼容 v1 API (已废弃)
+- **当前版本**: v1.1.0
+- **API版本**: v1
+- **兼容性**: 向后兼容
 
 ## 更新日志
 
-### v2.0.0 (2025-01-03)
+### v1.1.0 (2026-04)
+- ✅ Cron 定时任务重构：统一 CronSchedulerService，Workspace 隔离
+- ✅ 告警规则引擎：支持阈值、范围、变化、持续时间、组合五种条件
+- ✅ 工作空间管理：物理环境分组，AI Agent 绑定
+- ✅ 事件系统：SSE 流式推送，设备联动
+- ✅ 自愈引擎：system/device/task 三级探针
+- ✅ 前端迁移：Next.js → Lit 3 + Vite + nanostore
+- ✅ AI Agent 架构：内嵌 MCP Server + A2UI 聊天界面
+
+### v1.0.0 (2025-01)
 - ✅ 完全重构API架构，采用业务域驱动设计
-- ✅ 删除旧的V1 API，统一使用新架构
 - ✅ 实现完整的用户认证和权限管理
 - ✅ 建立标准化的错误处理和响应格式
 - ✅ 支持设备管理、告警处理、系统监控等核心功能
-- ✅ 零编译错误，代码质量优秀
 
 ---
 
-**维护团队**: TinyIoTHub 开发团队  
-**最后更新**: 2025-01-03  
-**文档版本**: v2.0.0
+**维护团队**: TinyIoTHub 开发团队
+**最后更新**: 2026-04-19
+**文档版本**: v1.1.0

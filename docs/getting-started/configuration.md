@@ -70,15 +70,25 @@ interval_ms = 1000    # 重试间隔
 
 ## 前端配置
 
-### 环境变量
+前端基于 Vite 构建，API 代理在 `web/vite.config.ts` 中配置：
 
-```env
-# API 地址
-NEXT_PUBLIC_API_URL=http://localhost:3002
-
-# MQTT 配置
-NEXT_PUBLIC_MQTT_WS_URL=ws://localhost:9001
+```typescript
+server: {
+  port: 5173,
+  proxy: {
+    "/api": {
+      target: "http://localhost:3002",
+      changeOrigin: true,
+    },
+    "/v1": {
+      target: "http://localhost:3002",
+      changeOrigin: true,
+    }
+  }
+}
 ```
+
+开发模式下前端运行在 `http://localhost:5173`，API 请求通过 Vite 代理转发到后端 `http://localhost:3002`。
 
 ## 配置优先级
 
