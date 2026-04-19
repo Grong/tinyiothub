@@ -153,6 +153,8 @@ tempfile = "3.8"
 # Workspace crates (path deps — not published yet)
 tinyiothub-macros = { path = "crates/tinyiothub-macros" }
 tinyiothub-core = { path = "crates/tinyiothub-core" }
+tinyiothub-error = { path = "crates/tinyiothub-error" }
+tinyiothub-config = { path = "crates/tinyiothub-config" }
 tinyiothub-engine = { path = "crates/tinyiothub-engine" }
 tinyiothub-storage = { path = "crates/tinyiothub-storage" }
 tinyiothub-plugin = { path = "crates/tinyiothub-plugin" }

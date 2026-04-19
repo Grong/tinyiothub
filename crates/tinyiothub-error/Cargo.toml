@@ -1,0 +1,13 @@
+[package]
+name = "tinyiothub-error"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Error types for TinyIoTHub — wraps core errors with framework conversions"
+
+[dependencies]
+tinyiothub-core = { workspace = true }
+thiserror = { workspace = true }
+sqlx = { workspace = true }
+serde_json = { workspace = true }

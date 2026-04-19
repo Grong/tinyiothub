@@ -16,17 +16,17 @@ pub enum Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            Error::Internal(ref s) => write!(f, "core internal error: {s}"),
+        match self {
+            Error::Internal(s) => write!(f, "core internal error: {s}"),
             Error::NotFound => write!(f, "not found"),
-            Error::InvalidArgument(ref s) => write!(f, "core invalid argument: {s}"),
-            Error::Unsupported(ref s) => write!(f, "core unsupported error: {s}"),
-            Error::IOError(ref s) => write!(f, "core io error: {s}"),
-            Error::NetworkError(ref s) => write!(f, "network error: {s}"),
-            Error::ConfigError(ref s) => write!(f, "config error: {s}"),
-            Error::ValidationError(ref s) => write!(f, "validation error: {s}"),
-            Error::DatabaseError(ref s) => write!(f, "database error: {s}"),
-            Error::SerializationError(ref s) => write!(f, "serialization error: {s}"),
+            Error::InvalidArgument(s) => write!(f, "core invalid argument: {s}"),
+            Error::Unsupported(s) => write!(f, "core unsupported error: {s}"),
+            Error::IOError(s) => write!(f, "core io error: {s}"),
+            Error::NetworkError(s) => write!(f, "network error: {s}"),
+            Error::ConfigError(s) => write!(f, "config error: {s}"),
+            Error::ValidationError(s) => write!(f, "validation error: {s}"),
+            Error::DatabaseError(s) => write!(f, "database error: {s}"),
+            Error::SerializationError(s) => write!(f, "serialization error: {s}"),
         }
     }
 }

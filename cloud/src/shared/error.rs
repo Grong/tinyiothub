@@ -1,1 +1,1 @@
-pub use tinyiothub_core::error::*;
+pub use tinyiothub_core::error::{Error, Result};

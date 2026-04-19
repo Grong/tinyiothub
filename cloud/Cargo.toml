@@ -98,6 +98,8 @@ redis = { workspace = true }
 
 # Workspace crates
 tinyiothub-core = { workspace = true, features = ["sqlx"] }
+tinyiothub-error = { workspace = true }
+tinyiothub-config = { workspace = true }
 tinyiothub-macros = { workspace = true }
 tinyiothub-plugin-sdk = { workspace = true }
 

@@ -1,0 +1,10 @@
+[package]
+name = "tinyiothub-config"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Configuration management for TinyIoTHub"
+
+[dependencies]
+tinyiothub-core = { workspace = true }

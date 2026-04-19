@@ -5519,7 +5519,9 @@ dependencies = [
  "sysinfo",
  "tempfile",
  "thiserror 1.0.69",
+ "tinyiothub-config",
  "tinyiothub-core",
+ "tinyiothub-error",
  "tinyiothub-macros",
  "tinyiothub-plugin-sdk",
  "tokio",
@@ -5541,6 +5543,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tinyiothub-config"
+version = "1.1.0"
+dependencies = [
+ "tinyiothub-core",
+]
+
+[[package]]
 name = "tinyiothub-core"
 version = "1.1.0"
 dependencies = [
@@ -5549,7 +5558,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
- "thiserror 1.0.69",
  "tokio",
  "uuid",
 ]
@@ -5597,6 +5605,16 @@ name = "tinyiothub-engine"
 version = "1.1.0"
 dependencies = [
  "serde",
+ "tinyiothub-core",
+]
+
+[[package]]
+name = "tinyiothub-error"
+version = "1.1.0"
+dependencies = [
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
  "tinyiothub-core",
 ]
 
