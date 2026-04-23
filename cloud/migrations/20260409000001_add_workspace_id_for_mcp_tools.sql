@@ -28,8 +28,7 @@
 -- Check 4: device_alarm_rules must not have existing workspace_id (should be NULL)
 -- SELECT COUNT(*) AS existing_workspace FROM device_alarm_rules WHERE workspace_id IS NOT NULL;
 
--- Check 5: jobs must not have existing workspace_id (should be NULL)
--- SELECT COUNT(*) AS existing_workspace FROM jobs WHERE workspace_id IS NOT NULL;
+-- Check 5: (jobs table replaced by cron_jobs in cron refactor; skipped)
 
 -- Check 6: No code should reference api_keys.tenant_id after this migration
 -- (Verify by grepping source code before running)
@@ -126,22 +125,19 @@ WHERE workspace_id IS NULL AND device_alarm_rules.device_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_device_alarm_rules_workspace ON device_alarm_rules(workspace_id);
 
 -- ============================================================================
--- STEP 4: Add workspace_id to jobs table
+-- STEP 4: Add workspace_id to cron_jobs table
 -- ============================================================================
+-- NOTE: The old `jobs` table was replaced by `cron_jobs` in the cron refactor.
+-- The cron_jobs table is created by migration 20260418000002_create_cron_tables.sql
+-- which includes workspace_id directly, so no ALTER is needed here.
+-- This step intentionally does nothing for fresh databases.
 
-ALTER TABLE jobs ADD COLUMN workspace_id TEXT;
-
--- Backfill: jobs created before this migration are considered tenant-global
--- Assign them to the default workspace of their tenant (via device if target_device_id exists)
--- For jobs with target_device_id: use that device's workspace
--- For jobs without: leave as NULL (no workspace binding)
-UPDATE jobs
-SET workspace_id = (
-    SELECT d.workspace_id FROM devices d WHERE d.id = jobs.target_device_id
-)
-WHERE workspace_id IS NULL AND jobs.target_device_id IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_jobs_workspace ON jobs(workspace_id);
+-- For legacy databases that still have the old jobs table:
+-- ALTER TABLE jobs ADD COLUMN workspace_id TEXT;
+-- UPDATE jobs SET workspace_id = (
+--     SELECT d.workspace_id FROM devices d WHERE d.id = jobs.target_device_id
+-- ) WHERE workspace_id IS NULL AND jobs.target_device_id IS NOT NULL;
+-- CREATE INDEX IF NOT EXISTS idx_jobs_workspace ON jobs(workspace_id);
 
 -- ============================================================================
 -- POST-CHECK: Verify migration results
@@ -157,4 +153,3 @@ CREATE INDEX IF NOT EXISTS idx_jobs_workspace ON jobs(workspace_id);
 -- SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='api_keys';
 -- SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='device_alarms';
 -- SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='device_alarm_rules';
--- SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='jobs';
