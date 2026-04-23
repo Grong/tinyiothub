@@ -339,7 +339,7 @@ impl SessionRepository for SqliteSessionRepository {
         let summary_message = compacted
             .summary_message
             .as_ref()
-            .map(|m| serde_json::to_string(m))
+            .map(serde_json::to_string)
             .transpose()
             .map_err(|e| SessionError::RepositoryError(e.to_string()))?;
         let recent_messages = serde_json::to_string(&compacted.recent_messages)
@@ -431,7 +431,9 @@ mod tests {
 
     async fn create_test_repo() -> SqliteSessionRepository {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        crate::infrastructure::persistence::test_helpers::run_all_migrations(&pool)
+            .await
+            .unwrap();
         SqliteSessionRepository::new(Database::new(pool))
     }
 

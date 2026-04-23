@@ -48,7 +48,7 @@ impl PluginLoader {
     /// the library remains loaded for as long as the returned function
     /// pointers are used.
     pub unsafe fn load(&self, path: &Path) -> Result<PluginFfi, PluginLoadError> {
-        let lib = Library::new(path).map_err(|e| {
+        let lib = unsafe { Library::new(path) }.map_err(|e| {
             PluginLoadError::LibraryNotFound(format!("{}: {}", path.display(), e))
         })?;
 
@@ -57,7 +57,7 @@ impl PluginLoader {
                 lib.get(b"plugin_info\0")
             }
             .map_err(|_| PluginLoadError::SymbolNotFound("plugin_info".into()))?;
-            std::ptr::read((*info_fn)())
+            unsafe { std::ptr::read((*info_fn)()) }
         };
 
         if info.api_version != self.api_version {

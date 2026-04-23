@@ -1,6 +1,8 @@
 // API Layer - SSE Endpoints
 // Handles HTTP requests for Server-Sent Events (SSE) connections
 
+use crate::shared::security::jwt::Claims;
+use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
     extract::{Query, State},
     response::Response,
@@ -10,11 +12,11 @@ use serde::Deserialize;
 use tracing::{info, warn};
 
 use crate::{
-    api::middleware::workspace::WorkspaceScope,
-    dto::response::{api_response::ApiResponse, builder::ApiResponseBuilder},
+    dto::response::ApiResponse,
     infrastructure::event::sse_manager::{SseConnectionInfo, SseOverview},
-    shared::{app_state::AppState, security::jwt::Claims},
+    shared::{app_state::AppState},
 };
+use crate::api::middleware::WorkspaceScope;
 
 /// SSE connection query parameters
 #[derive(Debug, Deserialize)]

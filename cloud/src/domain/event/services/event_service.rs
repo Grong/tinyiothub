@@ -8,6 +8,19 @@ use crate::domain::event::{
     value_objects::{EventLevel, EventSource, EventType, RichContent},
 };
 
+// Constants for event categories and pattern types
+const EVENT_CATEGORY_SYSTEM: &str = "system";
+const EVENT_CATEGORY_DEVICE: &str = "device";
+const PATTERN_TYPE_REPEATED_ERRORS: &str = "repeated_errors";
+const PATTERN_SEVERITY_HIGH: &str = "high";
+const PATTERN_SEVERITY_MEDIUM: &str = "medium";
+
+// Business rule constants
+const EVENT_UPDATE_TIME_LIMIT_MINUTES: i64 = 5;
+const EVENT_BATCH_SIZE_LIMIT: usize = 1000;
+const REPEATED_ERRORS_THRESHOLD: usize = 3;
+const REPEATED_ERRORS_HIGH_SEVERITY_THRESHOLD: usize = 5;
+
 /// Domain service for event processing (pure business logic)
 ///
 /// This service encapsulates the core business rules for event handling,
@@ -31,7 +44,7 @@ impl EventService {
         content: RichContent,
     ) -> DomainResult<EventAggregate> {
         // Create event aggregate
-        let aggregate = EventAggregate::new(event_type, level, source, content, None)
+        let aggregate = EventAggregate::new(event_type, level, source, content)
             .map_err(|e| EventDomainError::validation(e.to_string()))?;
 
         // Validate according to business rules
@@ -85,13 +98,13 @@ impl EventService {
         current_event: &Event,
         new_content: &RichContent,
     ) -> DomainResult<()> {
-        // Business rule: Can only update content within 5 minutes
+        // Business rule: Can only update content within time limit
         let now = chrono::Utc::now();
         let time_diff = now.signed_duration_since(current_event.timestamp());
 
-        if time_diff.num_minutes() > 5 {
+        if time_diff.num_minutes() > EVENT_UPDATE_TIME_LIMIT_MINUTES {
             return Err(EventDomainError::immutable(
-                "Cannot update event content after 5 minutes".to_string(),
+                format!("Cannot update event content after {} minutes", EVENT_UPDATE_TIME_LIMIT_MINUTES),
             )
             .into());
         }
@@ -142,8 +155,8 @@ impl EventService {
 
         for event in events {
             let category = match event.event_type() {
-                EventType::System(_) => "system",
-                EventType::Device(_) => "device",
+                EventType::System(_) => EVENT_CATEGORY_SYSTEM,
+                EventType::Device(_) => EVENT_CATEGORY_DEVICE,
             };
 
             groups.entry(category.to_string()).or_insert_with(Vec::new).push(event);
@@ -165,25 +178,22 @@ impl EventService {
             .iter()
             .filter(|event| {
                 // Filter by level
-                if let Some(min_level) = &min_level {
-                    if &event.level() < min_level {
+                if let Some(min_level) = &min_level
+                    && &event.level() < min_level {
                         return false;
                     }
-                }
 
                 // Filter by event types
-                if let Some(types) = event_types {
-                    if !types.contains(event.event_type()) {
+                if let Some(types) = event_types
+                    && !types.contains(event.event_type()) {
                         return false;
                     }
-                }
 
                 // Filter by sources
-                if let Some(sources) = sources {
-                    if !sources.contains(event.source()) {
+                if let Some(sources) = sources
+                    && !sources.contains(event.source()) {
                         return false;
                     }
-                }
 
                 // Filter by time range
                 if let Some((start, end)) = time_range {
@@ -203,6 +213,16 @@ impl EventService {
         let mut patterns = Vec::new();
 
         // Pattern 1: Repeated errors from same source
+        patterns.extend(self.detect_repeated_errors_pattern(events));
+
+        // Pattern 2: Cascading failures (multiple devices failing in sequence)
+        // This would be more complex in a real implementation
+
+        patterns
+    }
+
+    /// Detect repeated errors pattern from same source
+    fn detect_repeated_errors_pattern(&self, events: &[Event]) -> Vec<EventPattern> {
         let error_events: Vec<_> = events
             .iter()
             .filter(|e| matches!(e.level(), EventLevel::Error | EventLevel::Critical))
@@ -213,31 +233,28 @@ impl EventService {
             *source_counts.entry(event.source().clone()).or_insert(0) += 1;
         }
 
+        let mut patterns = Vec::new();
         for (source, count) in source_counts {
-            if count >= 3 {
+            if count >= REPEATED_ERRORS_THRESHOLD {
                 patterns.push(EventPattern {
-                    pattern_type: "repeated_errors".to_string(),
+                    pattern_type: PATTERN_TYPE_REPEATED_ERRORS.to_string(),
                     description: format!("Repeated errors from source: {}", source.source_id()),
-                    severity: if count >= 5 { "high" } else { "medium" }.to_string(),
+                    severity: if count >= REPEATED_ERRORS_HIGH_SEVERITY_THRESHOLD { PATTERN_SEVERITY_HIGH } else { PATTERN_SEVERITY_MEDIUM }.to_string(),
                     event_count: count,
                     sources: vec![source],
                 });
             }
         }
-
-        // Pattern 2: Cascading failures (multiple devices failing in sequence)
-        // This would be more complex in a real implementation
-
         patterns
     }
 
     /// Validate event batch (business rules)
     pub fn validate_event_batch(&self, events: &[Event]) -> DomainResult<()> {
         // Business rule: Batch size limit
-        if events.len() > 1000 {
+        if events.len() > EVENT_BATCH_SIZE_LIMIT {
             return Err(EventServiceDomainError::CapacityExceeded {
                 current: events.len(),
-                max: 1000,
+                max: EVENT_BATCH_SIZE_LIMIT,
             }
             .into());
         }
@@ -292,7 +309,6 @@ mod tests {
             level,
             EventSource::system("test".to_string(), None),
             RichContent::new_text("Test".to_string(), "Test content".to_string()),
-            None,
         )
         .unwrap()
     }
@@ -352,7 +368,6 @@ mod tests {
             EventLevel::Error,
             EventSource::device("device-1".to_string(), Some("Device 1".to_string())),
             RichContent::new_text("Error".to_string(), "Connection lost".to_string()),
-            None,
         )
         .unwrap();
 
@@ -405,7 +420,6 @@ mod tests {
                     EventLevel::Error,
                     source.clone(),
                     RichContent::new_text("Error".to_string(), "Test error".to_string()),
-                    None,
                 )
                 .unwrap()
             })
@@ -413,7 +427,7 @@ mod tests {
 
         let patterns = service.detect_event_patterns(&events);
         assert_eq!(patterns.len(), 1);
-        assert_eq!(patterns[0].pattern_type, "repeated_errors");
+        assert_eq!(patterns[0].pattern_type, PATTERN_TYPE_REPEATED_ERRORS);
         assert_eq!(patterns[0].event_count, 4);
     }
 }

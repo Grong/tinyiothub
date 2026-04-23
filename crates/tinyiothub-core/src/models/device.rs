@@ -20,13 +20,11 @@ pub struct Device {
     pub state: Option<i32>,
     pub parent_id: Option<String>,
     pub product_id: Option<String>,
-    pub tenant_id: Option<String>,
-    pub workspace_id: Option<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
     /// 关联的标签列表 (不存储在数据库中，通过关联查询获取)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tags: Option<Vec<super::tag::Tag>>,
+    pub tags: Option<Vec<serde_json::Value>>,
     /// 设备实时属性数据 (不存储在数据库中，由DataServer更新)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub properties: Option<Vec<super::device_property::DeviceProperty>>,
@@ -54,8 +52,6 @@ pub struct DeviceQueryParams {
     pub product_id: Option<String>,
     pub page: Option<u32>,
     pub page_size: Option<u32>,
-    pub tenant_id: Option<String>,
-    pub workspace_id: Option<String>,
 }
 
 /// 创建设备请求
@@ -76,8 +72,6 @@ pub struct CreateDeviceRequest {
     pub driver_options: Option<String>,
     pub parent_id: Option<String>,
     pub product_id: Option<String>,
-    pub tenant_id: Option<String>,
-    pub workspace_id: Option<String>,
 }
 
 /// 更新设备请求
@@ -99,8 +93,6 @@ pub struct UpdateDeviceRequest {
     pub state: Option<i32>,
     pub parent_id: Option<String>,
     pub product_id: Option<String>,
-    pub tenant_id: Option<String>,
-    pub workspace_id: Option<String>,
 }
 
 /// 设备统计信息
@@ -212,8 +204,6 @@ impl Default for Device {
             state: Some(0), // 默认离线状态
             parent_id: None,
             product_id: None,
-            tenant_id: None,
-            workspace_id: None,
             created_at: Some(now.clone()),
             updated_at: Some(now),
             tags: None,           // 默认无标签

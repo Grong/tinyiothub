@@ -1,5 +1,7 @@
 //! 动态驱动管理API（内部管理用）
 
+use crate::shared::security::jwt::Claims;
+use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
     extract::{Path, State},
     Json,
@@ -8,8 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     domain::device::driver,
-    dto::response::{builder::ApiResponseBuilder, ApiResponse},
-    shared::{app_state::AppState, security::jwt::Claims},
+    dto::response::{ApiResponse},
+    shared::{app_state::AppState},
 };
 
 /// 加载动态驱动请求
@@ -53,7 +55,7 @@ pub async fn load_driver(
         }
         Err(e) => {
             tracing::error!("Failed to load dynamic driver: {}", e);
-            ApiResponseBuilder::error(&format!("Failed to load driver: {}", e))
+            ApiResponseBuilder::error(format!("Failed to load driver: {}", e))
         }
     }
 }
@@ -73,7 +75,7 @@ pub async fn unload_driver(
         }
         Err(e) => {
             tracing::error!("Failed to unload dynamic driver: {}", e);
-            ApiResponseBuilder::error(&format!("Failed to unload driver: {}", e))
+            ApiResponseBuilder::error(format!("Failed to unload driver: {}", e))
         }
     }
 }
@@ -128,7 +130,7 @@ pub async fn reload_drivers_dir(
         }
         Err(e) => {
             tracing::error!("Failed to reload drivers: {}", e);
-            ApiResponseBuilder::error(&format!("Failed to reload drivers: {}", e))
+            ApiResponseBuilder::error(format!("Failed to reload drivers: {}", e))
         }
     }
 }

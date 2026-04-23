@@ -301,12 +301,10 @@ mod tests {
 
     #[test]
     fn test_severity_level_max() {
-        let levels = vec![
-            SeverityLevel::L1,
+        let levels = [SeverityLevel::L1,
             SeverityLevel::L3,
             SeverityLevel::L0,
-            SeverityLevel::L2,
-        ];
+            SeverityLevel::L2];
 
         let max = levels.iter().copied().max().unwrap();
         assert_eq!(max, SeverityLevel::L3);

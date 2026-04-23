@@ -30,7 +30,7 @@ impl AlarmType {
         }
     }
 
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse_str(s: &str) -> Self {
         match s {
             "device_offline" => AlarmType::DeviceOffline,
             "device_error" => AlarmType::DeviceError,

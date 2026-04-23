@@ -31,13 +31,13 @@ impl AlarmEventHandler {
 
 #[async_trait::async_trait]
 impl EventHandler for AlarmEventHandler {
-    async fn handle(&self, event: &Event) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn handle(&self, event: &Event) -> tinyiothub_core::error::Result<()> {
         // 1. 评估规则，获取触发的报警
         let triggers = self
             .rule_engine
             .evaluate_event(event)
             .await
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+            .map_err(|e| tinyiothub_core::error::Error::Internal(e.to_string()))?;
 
         if triggers.is_empty() {
             return Ok(());

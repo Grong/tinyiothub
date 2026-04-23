@@ -1,29 +1,29 @@
 use std::sync::Arc;
 
-use crate::{application::data_context::DataContext, infrastructure::persistence::Database};
+use tinyiothub_storage::cache::DeviceCache;
+use crate::infrastructure::persistence::Database;
 
 /// 设备监控服务
 /// 负责设备性能监控、告警检查、追踪记录等功能
 pub struct DeviceMonitoringService {
     database: Arc<Database>,
-    context: Arc<DataContext>,
+    device_cache: Arc<DeviceCache>,
 }
 
 impl DeviceMonitoringService {
-    pub fn new(database: Arc<Database>, context: Arc<DataContext>) -> Self {
-        Self { database, context }
+    pub fn new(database: Arc<Database>, device_cache: Arc<DeviceCache>) -> Self {
+        Self { database, device_cache }
     }
 
     /// 检查设备是否在线
     pub fn is_device_online(&self, device_id: &str) -> bool {
-        if let Some(device) = self.context.get_device(device_id) {
+        if let Some(device) = self.device_cache.get(device_id) {
             // 1. 检查设备启用状态（state字段）
-            if let Some(state) = device.state {
-                if state == 0 {
+            if let Some(state) = device.state
+                && state == 0 {
                     tracing::debug!("Device {} is disabled (state=0)", device_id);
                     return false; // 设备被禁用
                 }
-            }
 
             // 2. 检查设备的 is_online 字段（由 DataServer 更新）
             if !device.is_online {
@@ -32,8 +32,8 @@ impl DeviceMonitoringService {
             }
 
             // 3. 检查心跳时间（如果存在）
-            if let Some(last_heartbeat) = &device.last_heartbeat {
-                if let Ok(heartbeat_time) = chrono::DateTime::parse_from_str(
+            if let Some(last_heartbeat) = &device.last_heartbeat
+                && let Ok(heartbeat_time) = chrono::DateTime::parse_from_str(
                     &format!("{} +00:00", last_heartbeat),
                     "%Y-%m-%d %H:%M:%S %z",
                 ) {
@@ -49,11 +49,10 @@ impl DeviceMonitoringService {
                         return false; // 心跳超时
                     }
                 }
-            }
 
             // 4. 检查最后更新时间（作为备用指标）
-            if let Some(updated_at) = &device.updated_at {
-                if let Ok(update_time) = chrono::DateTime::parse_from_str(
+            if let Some(updated_at) = &device.updated_at
+                && let Ok(update_time) = chrono::DateTime::parse_from_str(
                     &format!("{} +00:00", updated_at),
                     "%Y-%m-%d %H:%M:%S %z",
                 ) {
@@ -66,7 +65,6 @@ impl DeviceMonitoringService {
                         return false; // 更新超时
                     }
                 }
-            }
 
             // 综合判断：如果通过了所有检查，认为设备在线
             true
@@ -77,7 +75,7 @@ impl DeviceMonitoringService {
 
     /// 获取设备连接质量评分 (0-100)
     pub fn get_device_connection_quality(&self, device_id: &str) -> Option<u8> {
-        if let Some(device) = self.context.get_device(device_id) {
+        if let Some(device) = self.device_cache.get(device_id) {
             let mut score = 100u8;
 
             // 基于心跳时间计算质量
@@ -104,14 +102,14 @@ impl DeviceMonitoringService {
             }
 
             // 基于属性更新活跃度计算质量
-            if let Some(properties) = &device.properties {
-                if !properties.is_empty() {
+            if let Some(properties) = &device.properties
+                && !properties.is_empty() {
                     let now = chrono::Utc::now();
                     let active_count = properties
                         .iter()
                         .filter(|p| {
-                            if let Some(last_update) = &p.updated_at {
-                                if let Ok(update_time) = chrono::DateTime::parse_from_str(
+                            if let Some(last_update) = &p.updated_at
+                                && let Ok(update_time) = chrono::DateTime::parse_from_str(
                                     &format!("{} +00:00", last_update),
                                     "%Y-%m-%d %H:%M:%S %z",
                                 ) {
@@ -120,7 +118,6 @@ impl DeviceMonitoringService {
                                     .num_minutes();
                                     return minutes_since_update <= 5;
                                 }
-                            }
                             false
                         })
                         .count();
@@ -132,7 +129,6 @@ impl DeviceMonitoringService {
                         score = score.saturating_sub(5); // 活跃度中等扣5分
                     }
                 }
-            }
 
             Some(score)
         } else {
@@ -142,7 +138,7 @@ impl DeviceMonitoringService {
 
     /// 获取设备指标信息
     pub async fn get_device_metrics(&self, device_id: &str) -> Option<DeviceMetrics> {
-        if let Some(_device) = self.context.get_device(device_id) {
+        if let Some(_device) = self.device_cache.get(device_id) {
             // 使用 DeviceService 获取真实的属性和指令数据
             let device_repository: Arc<dyn crate::domain::device::repository::DeviceRepository> =
                 Arc::new(crate::infrastructure::persistence::repositories::SqliteDeviceRepository::new(
@@ -230,7 +226,7 @@ impl DeviceMonitoringService {
 
     /// 获取系统概览信息
     pub async fn get_system_overview(&self) -> SystemOverview {
-        let all_devices = self.context.get_all_devices();
+        let all_devices = self.device_cache.all();
         let total_devices = all_devices.len() as u32;
 
         let mut online_devices = 0u32;

@@ -60,10 +60,17 @@ pub async fn register_tools() {
     // Register device tools
     reg.register(tools::device::ListDevicesHandler);
     reg.register(tools::device::DeviceProfileHandler);
+    reg.register(tools::device::GetDeviceStatusHandler);
     reg.register(tools::device::DevicePropertyGetHandler);
-    reg.register(tools::device::CreateDeviceHandler);
+    reg.register(tools::device::WritePropertiesHandler);
     reg.register(tools::device::DeviceCommandHandler);
     reg.register(tools::device::DeviceTemplateListHandler);
+    reg.register(tools::device::CreateDeviceHandler);
+    reg.register(tools::device::UpdateDeviceHandler);
+    reg.register(tools::device::DeleteDeviceHandler);
+    reg.register(tools::device::GetDeviceHistoryHandler);
+    reg.register(tools::device::GetDeviceMetricsHandler);
+    reg.register(tools::device::ExportDeviceReportHandler);
 
     // Register driver tools (Task 3)
     reg.register(tools::driver::ListDriversHandler);
@@ -114,5 +121,5 @@ pub async fn register_tools() {
     reg.register(tools::device_enhanced::ScanSerialHandler);
 
     tracing::info!("Registered {} device MCP tools, {} driver MCP tools, {} heartbeat MCP tools, {} self-heal MCP tools, {} knowledge MCP tools, {} workspace MCP tools, {} job MCP tools, {} batch MCP tools, {} alarm MCP tools, {} device_enhanced MCP tools",
-        12, 7, 3, 3, 3, 5, 3, 2, 4, 3);
+        13, 7, 3, 3, 3, 5, 4, 2, 4, 3);
 }

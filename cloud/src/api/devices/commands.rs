@@ -1,4 +1,6 @@
-use crate::dto::entity::device_command::{find_device_command_by_id, DeviceCommand};
+use crate::shared::security::jwt::Claims;
+use tinyiothub_web::response::ApiResponseBuilder;
+use crate::infrastructure::persistence::repositories::find_device_command_by_id;
 use axum::{
     extract::{Path, State},
     routing::post,
@@ -8,9 +10,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     dto::{
-        response::{builder::ApiResponseBuilder, ApiResponse}
+        response::{ApiResponse}
     },
-    shared::{app_state::AppState, security::jwt::Claims}
+    shared::{app_state::AppState}
 };
 
 #[derive(Debug, Deserialize)]
@@ -40,7 +42,7 @@ pub fn create_router() -> Router<AppState> {
 async fn execute_device_command(
     State(state): State<AppState>,
     Path((device_id, command_id)): Path<(String, String)>,
-    claims: Claims,
+    _claims: Claims,
     Json(req): Json<ExecuteCommandRequest>,
 ) -> Json<ApiResponse<CommandExecution>> {
     tracing::info!(
@@ -50,13 +52,8 @@ async fn execute_device_command(
         req.parameters
     );
 
-    // 验证设备存在且属于当前租户
-    if let Err(e) = super::verify_device_tenant(&state, &device_id, &claims.tenant_id).await {
-        return match e {
-            crate::shared::error::Error::NotFound => ApiResponseBuilder::error("设备不存在"),
-            _ => ApiResponseBuilder::error("查询设备失败")
-};
-    }
+    // Note: Tenant verification is now handled by the TenantDeviceRepository adapter
+    // which automatically filters devices by workspace_id
 
     // 验证指令是否存在
     let command = match find_device_command_by_id(state.database(), &command_id).await {

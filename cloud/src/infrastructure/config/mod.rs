@@ -1,9 +1,11 @@
 // Configuration Module - Using config crate for zero-boilerplate config management
-pub mod settings;
+pub use tinyiothub_core::config::*;
+
+pub mod settings {
+    pub use tinyiothub_core::config::{AliyunSmsConfig, ApplicationSettings, MarketplaceConfig, SmsConfig};
+}
 
 use std::sync::OnceLock;
-
-pub use settings::*;
 
 /// Global configuration instance
 static CONFIG: OnceLock<ApplicationSettings> = OnceLock::new();

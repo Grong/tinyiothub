@@ -109,17 +109,17 @@ async fn register_tenant(
     let email = payload.email.trim().to_lowercase();
 
     // 验证 slug 格式
-    if !crate::utils::validation::is_valid_slug(&slug) {
+    if !crate::shared::utils::validation::is_valid_slug(&slug) {
         return Err(StatusCode::BAD_REQUEST);
     }
 
     // 验证邮箱格式
-    if !crate::utils::validation::is_valid_email(&email) {
+    if !crate::shared::utils::validation::is_valid_email(&email) {
         return Err(StatusCode::BAD_REQUEST);
     }
 
     // 验证密码强度
-    if !crate::utils::validation::is_strong_password(&payload.password) {
+    if !crate::shared::utils::validation::is_strong_password(&payload.password) {
         return Err(StatusCode::BAD_REQUEST);
     }
 
@@ -219,7 +219,7 @@ async fn login(
     let email = payload.email.trim().to_lowercase();
 
     // 验证邮箱格式
-    if !crate::utils::validation::is_valid_email(&email) {
+    if !crate::shared::utils::validation::is_valid_email(&email) {
         return Err(StatusCode::BAD_REQUEST);
     }
 

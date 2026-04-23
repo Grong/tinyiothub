@@ -23,6 +23,7 @@ pub enum AgentError {
 
 /// Agent configuration passed when creating an agent
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct AgentConfig {
     pub workspace_id: String,
     pub name: String,
@@ -44,19 +45,6 @@ impl AgentConfig {
     }
 }
 
-impl Default for AgentConfig {
-    fn default() -> Self {
-        Self {
-            workspace_id: String::new(),
-            name: String::new(),
-            model: None,
-            temperature: None,
-            max_tokens: None,
-            top_p: None,
-            system_prompt: None,
-        }
-    }
-}
 
 /// Default agent config returned when no persisted config exists
 pub fn default_agent_config() -> serde_json::Value {

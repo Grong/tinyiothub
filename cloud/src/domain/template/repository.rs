@@ -15,7 +15,7 @@ use crate::{
         file_manager::TemplateFileManager,
         search_service::{TemplateFilters, TemplateSearchService},
     },
-    infrastructure::persistence::database::Database,
+    infrastructure::persistence::Database,
 };
 
 /// 模板仓库 - 负责设备模板的存储和检索
@@ -189,11 +189,10 @@ impl TemplateRepository {
         // 如果更新名称，检查新名称是否已存在
         if let Some(new_name) = &request.name {
             let existing = DeviceTemplate::find_by_name(&self.database, new_name).await?;
-            if let Some(existing_template) = existing {
-                if existing_template.id != id {
+            if let Some(existing_template) = existing
+                && existing_template.id != id {
                     return Err(TemplateError::TemplateNameExists { name: new_name.clone() });
                 }
-            }
         }
 
         // 如果更新分类，验证分类是否存在

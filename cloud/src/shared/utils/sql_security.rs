@@ -34,12 +34,11 @@ pub fn build_where_clause(filters: Vec<(&str, Option<String>)>) -> (String, Vec<
     let mut values = Vec::new();
 
     for (field, value) in filters {
-        if let Some(v) = value {
-            if !v.is_empty() {
+        if let Some(v) = value
+            && !v.is_empty() {
                 conditions.push(format!("{} = ?", field));
                 values.push(v);
             }
-        }
     }
 
     if conditions.is_empty() {

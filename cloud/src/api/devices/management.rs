@@ -1,5 +1,7 @@
+use crate::shared::security::jwt::Claims;
+use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_core::models::device::{CreateDeviceRequest, Device, DeviceQueryParams, UpdateDeviceRequest};
 use crate::dto::entity::{
-            device::{CreateDeviceRequest, Device, DeviceQueryParams, UpdateDeviceRequest},
             device_template::{
                 CreateDeviceFromTemplateRequest, DeviceCreationInput, DevicePreview,
                 TemplateRequirements,
@@ -14,13 +16,13 @@ use axum::{
 use serde::Deserialize;
 
 use crate::{
-    api::middleware::WorkspaceScope,
     dto::{
         request::pagination::PaginationQuery,
-        response::{builder::ApiResponseBuilder, ApiResponse, PaginatedResponse, PaginationInfo}
+        response::{ApiResponse, PaginatedResponse, PaginationInfo}
     },
-    shared::{app_state::AppState, error::Error, security::jwt::Claims}
+    shared::app_state::AppState
 };
+use crate::api::middleware::WorkspaceScope;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -101,27 +103,28 @@ async fn list_devices(
         product_id: query.product_id,
         page: query.pagination.page,
         page_size: query.pagination.page_size,
-        tenant_id: Some(claims.tenant_id), // Enforce tenant isolation
-        workspace_id
-};
+    };
 
     let include_properties = query.include_properties.unwrap_or(false);
     let page = query.pagination.page.unwrap_or(1);
     let page_size = query.pagination.page_size.unwrap_or(20);
 
+    // 获取租户感知的设备服务
+    let tenant_device_service = state.tenant_device_service(&workspace_id);
+
     // Get total count for pagination
-    let total_count = state.device_service.count_devices(&params).await.unwrap_or(0) as u64;
+    let total_count = tenant_device_service.count_devices(&params).await.unwrap_or(0) as u64;
     let total_pages = if page_size > 0 {
         ((total_count as f64) / (page_size as f64)).ceil() as u32
     } else {
         0
     };
 
-    match state.device_service.get_devices_with_tags(&params).await {
+    match tenant_device_service.get_devices_with_tags(&params, &claims.tenant_id).await {
         Ok(mut devices) => {
-            // 从 DataContext 同步实时状态
+            // 从 DeviceCache 同步实时状态
             for device in &mut devices {
-                if let Some(cached_device) = state.data_context.get_device(&device.id) {
+                if let Some(cached_device) = state.device_cache.get(&device.id) {
                     // 始终更新实时状态字段
                     device.state = cached_device.state;
                     device.is_online = cached_device.is_online;
@@ -164,7 +167,7 @@ async fn list_devices(
 /// 创建设备
 async fn create_device(
     State(state): State<AppState>,
-    claims: Claims,
+    _claims: Claims,
     WorkspaceScope(workspace_id): WorkspaceScope,
     Json(req): Json<CreateDeviceApiRequest>,
 ) -> Json<ApiResponse<Device>> {
@@ -183,11 +186,10 @@ async fn create_device(
         driver_options: req.connection_config,
         parent_id: req.parent_id,
         product_id: req.product_id,
-        tenant_id: Some(claims.tenant_id), // Set from authenticated user's tenant
-        workspace_id
-};
+    };
 
-    match state.device_service.create_device(&request).await {
+    let tenant_device_service = state.tenant_device_service(&workspace_id);
+    match tenant_device_service.create_device(&request).await {
         Ok(created_device) => ApiResponseBuilder::success(created_device),
         Err(e) => {
             tracing::error!("Failed to create device: {}", e);
@@ -204,20 +206,20 @@ async fn get_device(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Query(query): Query<DeviceDetailQuery>,
-    claims: Claims,
+    _claims: Claims,
+    WorkspaceScope(workspace_id): WorkspaceScope,
 ) -> Json<ApiResponse<Option<Device>>> {
     let include_properties = query.include_properties.unwrap_or(true); // 详情默认包含属性
 
     // Verify device belongs to user's tenant before returning
-    let device_result = state.device_service.get_device_by_id(&id).await;
+    let tenant_device_service = state.tenant_device_service(&workspace_id);
+    let device_result = tenant_device_service.get_device_by_id(&id).await;
 
     match device_result {
         Ok(device_opt) => {
-            let device = device_opt
-                .filter(|d| d.tenant_id.as_ref() == Some(&claims.tenant_id))
-                .map(|mut device| {
-                    // 从 DataContext 同步实时状态
-                    if let Some(cached_device) = state.data_context.get_device(&device.id) {
+            let device = device_opt.map(|mut device| {
+                    // 从 DeviceCache 同步实时状态
+                    if let Some(cached_device) = state.device_cache.get(&device.id) {
                         // 始终更新实时状态字段
                         device.state = cached_device.state;
                         device.is_online = cached_device.is_online;
@@ -261,16 +263,12 @@ pub struct DeviceDetailQuery {
 async fn update_device(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    claims: Claims,
+    _claims: Claims,
+    WorkspaceScope(workspace_id): WorkspaceScope,
     Json(req): Json<UpdateDeviceApiRequest>,
 ) -> Json<ApiResponse<Device>> {
-    // Verify device belongs to user's tenant before updating
-    if let Err(e) = super::verify_device_tenant(&state, &id, &claims.tenant_id).await {
-        return match e {
-            Error::NotFound => ApiResponseBuilder::error("设备不存在"),
-            _ => ApiResponseBuilder::error("查询设备失败")
-};
-    }
+    // Note: Tenant verification is now handled by the TenantDeviceRepository adapter
+    // which automatically filters devices by workspace_id
 
     let update_request = UpdateDeviceRequest {
         name: req.name,
@@ -288,11 +286,10 @@ async fn update_device(
         state: None, // 不在此处更新状态
         parent_id: req.parent_id,
         product_id: req.product_id,
-        tenant_id: None, // Tenant cannot be changed
-        workspace_id: None, // Workspace change via separate API
     };
 
-    match state.device_service.update_device(&id, &update_request).await {
+    let tenant_device_service = state.tenant_device_service(&workspace_id);
+    match tenant_device_service.update_device(&id, &update_request).await {
         Ok(updated_device) => ApiResponseBuilder::success(updated_device),
         Err(e) => {
             tracing::error!("Failed to update device {}: {}", id, e);
@@ -309,17 +306,14 @@ async fn update_device(
 async fn delete_device(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    claims: Claims,
+    _claims: Claims,
+    WorkspaceScope(workspace_id): WorkspaceScope,
 ) -> Json<ApiResponse<bool>> {
-    // Verify device belongs to user's tenant before deleting
-    if let Err(e) = super::verify_device_tenant(&state, &id, &claims.tenant_id).await {
-        return match e {
-            Error::NotFound => ApiResponseBuilder::error("设备不存在"),
-            _ => ApiResponseBuilder::error("查询设备失败")
-};
-    }
+    // Note: Tenant verification is now handled by the TenantDeviceRepository adapter
+    // which automatically filters devices by workspace_id
 
-    match state.device_service.delete_device(&id).await {
+    let tenant_device_service = state.tenant_device_service(&workspace_id);
+    match tenant_device_service.delete_device(&id).await {
         Ok(success) => {
             if success {
                 tracing::info!("Device {} deleted successfully", id);
@@ -342,17 +336,14 @@ async fn delete_device(
 async fn enable_device(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    claims: Claims,
+    _claims: Claims,
+    WorkspaceScope(workspace_id): WorkspaceScope,
 ) -> Json<ApiResponse<bool>> {
-    // Verify device belongs to user's tenant before enabling
-    if let Err(e) = super::verify_device_tenant(&state, &id, &claims.tenant_id).await {
-        return match e {
-            Error::NotFound => ApiResponseBuilder::error("设备不存在"),
-            _ => ApiResponseBuilder::error("查询设备失败")
-};
-    }
+    // Note: Tenant verification is now handled by the TenantDeviceRepository adapter
+    // which automatically filters devices by workspace_id
 
-    match state.device_service.update_device_enabled_status(&id, true).await {
+    let tenant_device_service = state.tenant_device_service(&workspace_id);
+    match tenant_device_service.update_device_enabled_status(&id, true).await {
         Ok(updated) => {
             if updated {
                 tracing::info!("Device {} enabled", id);
@@ -372,17 +363,14 @@ async fn enable_device(
 async fn disable_device(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    claims: Claims,
+    _claims: Claims,
+    WorkspaceScope(workspace_id): WorkspaceScope,
 ) -> Json<ApiResponse<bool>> {
-    // Verify device belongs to user's tenant before disabling
-    if let Err(e) = super::verify_device_tenant(&state, &id, &claims.tenant_id).await {
-        return match e {
-            Error::NotFound => ApiResponseBuilder::error("设备不存在"),
-            _ => ApiResponseBuilder::error("查询设备失败")
-};
-    }
+    // Note: Tenant verification is now handled by the TenantDeviceRepository adapter
+    // which automatically filters devices by workspace_id
 
-    match state.device_service.update_device_enabled_status(&id, false).await {
+    let tenant_device_service = state.tenant_device_service(&workspace_id);
+    match tenant_device_service.update_device_enabled_status(&id, false).await {
         Ok(updated) => {
             if updated {
                 tracing::info!("Device {} disabled", id);
@@ -408,9 +396,10 @@ async fn create_device_from_template(
     // Set tenant_id from authenticated user's claims
     let mut device_input = req.device_input;
     device_input.tenant_id = Some(claims.tenant_id);
-    device_input.workspace_id = workspace_id;
+    device_input.workspace_id = workspace_id.clone();
 
-    match state.device_service
+    let tenant_device_service = state.tenant_device_service(&workspace_id);
+    match tenant_device_service
         .create_device_from_template(state.template_engine(), &req.template_id, &device_input)
         .await
     {

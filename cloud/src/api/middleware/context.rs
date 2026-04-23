@@ -52,26 +52,24 @@ fn extract_bearer_token<'a>(headers: &'a HeaderMap, uri: &'a axum::http::Uri) ->
     let query = uri.query()?;
     for pair in query.split('&') {
         let mut parts = pair.splitn(2, '=');
-        if parts.next() == Some("token") {
-            if let Some(val) = parts.next() {
+        if parts.next() == Some("token")
+            && let Some(val) = parts.next() {
                 return Some(val.to_string());
             }
-        }
     }
     None
 }
 
 /// Extract user information from JWT token in headers or query string
-fn extract_user_from_jwt(headers: &HeaderMap, uri: &axum::http::Uri, db: Option<&crate::infrastructure::persistence::database::Database>) -> Option<UserInfo> {
+fn extract_user_from_jwt(headers: &HeaderMap, uri: &axum::http::Uri, db: Option<&crate::infrastructure::persistence::Database>) -> Option<UserInfo> {
     let token = extract_bearer_token(headers, uri)?;
 
     // Check token blacklist if DB is available
-    if let Some(database) = db {
-        if is_token_blacklisted_sync(database, &token) {
+    if let Some(database) = db
+        && is_token_blacklisted_sync(database, &token) {
             tracing::warn!("Rejected blacklisted token");
             return None;
         }
-    }
 
     // Validate JWT token
     let claims = validate_jwt(&token).ok()?;
@@ -81,7 +79,6 @@ fn extract_user_from_jwt(headers: &HeaderMap, uri: &axum::http::Uri, db: Option<
         id: claims.user_id,
         name: claims.username,
         token_id: claims.token_id,
-        tenant_id: claims.tenant_id,
     })
 }
 

@@ -55,7 +55,7 @@ impl AlarmService {
         if !AlarmSpecifications::can_acknowledge(&alarm) {
             return Err(AlarmError::InvalidStatusTransition {
                 from: alarm.status.as_str().to_string(),
-                to: "acknowledged".to_string(),
+                to: AlarmStatus::Acknowledged.as_str().to_string(),
             });
         }
 
@@ -82,7 +82,7 @@ impl AlarmService {
         if !AlarmSpecifications::can_resolve(&alarm) {
             return Err(AlarmError::InvalidStatusTransition {
                 from: alarm.status.as_str().to_string(),
-                to: "resolved".to_string(),
+                to: AlarmStatus::Resolved.as_str().to_string(),
             });
         }
 

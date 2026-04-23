@@ -50,14 +50,18 @@ impl std::convert::From<std::io::Error> for Error {
 }
 
 #[cfg(feature = "sqlx")]
-impl From<sqlx::Error> for Error {
+impl std::convert::From<sqlx::Error> for Error {
     fn from(err: sqlx::Error) -> Self {
-        match err {
-            sqlx::Error::RowNotFound => Error::NotFound,
-            _ => Error::DatabaseError(err.to_string()),
-        }
+        Error::DatabaseError(err.to_string())
     }
 }
+
+impl std::convert::From<serde_json::Error> for Error {
+    fn from(err: serde_json::Error) -> Self {
+        Error::SerializationError(err.to_string())
+    }
+}
+
 
 impl std::error::Error for Error {}
 

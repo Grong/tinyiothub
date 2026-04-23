@@ -1,3 +1,5 @@
+use crate::shared::security::jwt::Claims;
+use tinyiothub_web::response::ApiResponseBuilder;
 use crate::dto::entity::product::{CreateProductRequest, Product, UpdateProductRequest};
 use axum::{
     extract::{Path, Query, State},
@@ -9,9 +11,9 @@ use serde::Deserialize;
 use crate::{
     dto::{
         request::pagination::PaginationQuery,
-        response::{ApiResponse, ApiResponseBuilder}
+        response::ApiResponse
     },
-    shared::{app_state::AppState, security::jwt::Claims}
+    shared::{app_state::AppState}
 };
 
 #[derive(Deserialize)]

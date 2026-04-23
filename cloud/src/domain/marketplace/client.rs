@@ -7,7 +7,7 @@ use super::{
     error::{MarketplaceError, Result},
     metadata::{DriverIndex, DriverMetadata, TemplateIndex, TemplateMetadata},
 };
-use crate::infrastructure::config::settings::MarketplaceConfig;
+use tinyiothub_core::config::MarketplaceConfig;
 
 pub struct MarketplaceClient {
     http_client: Client,
@@ -26,12 +26,12 @@ impl MarketplaceClient {
         Ok(Self { http_client, config })
     }
 
-    /// 获取模板列表
+    /// Fetch template list
     pub async fn fetch_templates(&self) -> Result<Vec<TemplateMetadata>> {
         let url = self.build_url("templates/index.json")?;
         tracing::info!("Fetching templates from: {}", url);
 
-        // 检查是否是本地文件
+        // Check if it's a local file
         if url.starts_with("file://") || !url.starts_with("http") {
             let file_path = url.trim_start_matches("file://");
             let content = tokio::fs::read_to_string(file_path).await?;
@@ -45,12 +45,12 @@ impl MarketplaceClient {
         Ok(index.templates)
     }
 
-    /// 获取驱动列表
+    /// Fetch driver list
     pub async fn fetch_drivers(&self) -> Result<Vec<DriverMetadata>> {
         let url = self.build_url("drivers/index.json")?;
         tracing::info!("Fetching drivers from: {}", url);
 
-        // 检查是否是本地文件
+        // Check if it's a local file
         if url.starts_with("file://") || !url.starts_with("http") {
             let file_path = url.trim_start_matches("file://");
             let content = tokio::fs::read_to_string(file_path).await?;
@@ -64,14 +64,14 @@ impl MarketplaceClient {
         Ok(index.drivers)
     }
 
-    /// 下载资源文件
+    /// Download resource file
     pub async fn download_resource(&self, url: &str, dest: &Path) -> Result<()> {
         tracing::info!("Downloading resource from {} to {:?}", url, dest);
 
         let response = self.http_client.get(url).send().await?;
         let bytes = response.bytes().await?;
 
-        // 确保目标目录存在
+        // Ensure target directory exists
         if let Some(parent) = dest.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
@@ -82,7 +82,7 @@ impl MarketplaceClient {
         Ok(())
     }
 
-    /// 验证文件校验和
+    /// Verify file checksum
     pub async fn verify_checksum(&self, file_path: &Path, expected: &str) -> Result<()> {
         let content = tokio::fs::read(file_path).await?;
         let actual = self.calculate_checksum(&content);
@@ -97,7 +97,7 @@ impl MarketplaceClient {
         Ok(())
     }
 
-    /// 计算文件校验和
+    /// Calculate file checksum
     fn calculate_checksum(&self, data: &[u8]) -> String {
         let mut hasher = Sha256::new();
         hasher.update(data);
@@ -105,14 +105,14 @@ impl MarketplaceClient {
         format!("sha256:{}", hex::encode(result))
     }
 
-    /// 构建资源URL
+    /// Build resource URL
     fn build_url(&self, path: &str) -> Result<String> {
-        // 优先使用 API URL
+        // Prefer API URL
         if let Some(api_url) = &self.config.api_url {
             return Ok(format!("{}/{}", api_url.trim_end_matches('/'), path));
         }
 
-        // 使用 GitHub 作为市场源
+        // Use GitHub as marketplace source
         if let Some(repo) = &self.config.github_repo {
             let url = format!(
                 "https://raw.githubusercontent.com/{}/{}/{}",
@@ -124,7 +124,7 @@ impl MarketplaceClient {
         Err(MarketplaceError::InvalidConfig("No marketplace source configured".to_string()))
     }
 
-    /// 获取当前平台标识
+    /// Get current platform identifier
     pub fn get_current_platform() -> String {
         #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
         {

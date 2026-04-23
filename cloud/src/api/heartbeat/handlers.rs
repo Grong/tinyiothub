@@ -1,6 +1,8 @@
 // Heartbeat API Handlers
 // HTTP endpoint handlers for heartbeat management
 
+use crate::shared::security::jwt::Claims;
+use tinyiothub_web::response::ApiResponseBuilder;
 use crate::dto::entity::heartbeat::{
             ConfigureHeartbeatRequest, HeartbeatConfig, HeartbeatStatus,
             ReportHeartbeatResponse,
@@ -16,9 +18,9 @@ use serde::Deserialize;
 use crate::{
     api::mcp::tools::heartbeat::{get_heartbeat_config, get_heartbeat_status},
     dto::{
-        response::{builder::ApiResponseBuilder, ApiResponse}
+        response::{ApiResponse}
     },
-    shared::{app_state::AppState, security::jwt::Claims}
+    shared::{app_state::AppState}
 };
 
 /// Create the heartbeat router

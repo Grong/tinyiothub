@@ -1,3 +1,5 @@
+use crate::shared::security::jwt::Claims;
+use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
     extract::{Query, State},
     routing::get,
@@ -7,12 +9,12 @@ use serde::Deserialize;
 use tracing::{error, info};
 
 use crate::{
-    api::middleware::WorkspaceScope,
     dto::response::{
-        builder::ApiResponseBuilder, ApiResponse, DeviceStatusDistribution, QuickDevice,
+        ApiResponse, DeviceStatusDistribution, QuickDevice,
     },
-    shared::{app_state::AppState, security::jwt::Claims},
+    shared::{app_state::AppState},
 };
+use crate::api::middleware::WorkspaceScope;
 
 #[derive(Debug, Deserialize)]
 pub struct QuickDevicesQuery {

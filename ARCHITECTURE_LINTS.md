@@ -2,7 +2,7 @@
 
 > ⚠️ **Rust 代码必须通过以下 Clippy 检查**。这些 lints 针对 TinyIoTHub 的架构违规模式。
 
-## 在 `api/Cargo.toml` 添加：
+## 在 `cloud/Cargo.toml` 添加：
 
 ```toml
 [lints.clippy]
@@ -21,10 +21,10 @@ single_component_imports = "allow"    # 允许单组件 import
 
 ---
 
-## 必须在 api/src/lib.rs 或 main.rs 启用：
+## 必须在 cloud/src/lib.rs 或 main.rs 启用：
 
 ```rust
-// api/src/lib.rs
+// cloud/src/lib.rs
 #![warn(clippy::all)]
 #![warn(clippy::pedantic)]
 #![warn(clippy::nursery)]
@@ -83,7 +83,7 @@ fn foo() {
 ### ✅ API 响应（必须用 ApiResponseBuilder）
 
 ```rust
-use crate::dto::response::ApiResponseBuilder;
+use tinyiothub_web::response::ApiResponseBuilder;
 
 // ✅ 正确
 async fn get_device(
@@ -134,7 +134,7 @@ let device = conn.query_row(
 
 ```rust
 // ✅ 正确：在 infrastructure 层实现 repository trait
-// api/src/infrastructure/persistence/repositories/device_repository_impl.rs
+// cloud/src/infrastructure/persistence/repositories/device_repository_impl.rs
 
 pub struct DeviceRepositoryImpl {
     pool: Pool<SqlitePool>,
@@ -157,7 +157,7 @@ impl DeviceRepository for DeviceRepositoryImpl {
 
 ```rust
 // ❌ 禁止：handler 直接操作数据库
-// api/src/api/devices/management.rs
+// cloud/src/api/devices/management.rs
 async fn get_device(Path(id): Path<String>, pool: Pool<SqlitePool>) -> ... {
     let device = sqlx::query("SELECT ...").bind(&id).fetch_one(&pool).await?; // 禁止！
 }
@@ -167,7 +167,7 @@ async fn get_device(Path(id): Path<String>, pool: Pool<SqlitePool>) -> ... {
 
 ```rust
 // ❌ 禁止：domain 依赖 sqlx 或具体 DB
-// api/src/domain/device/entity.rs
+// cloud/src/domain/device/entity.rs
 pub struct Device {
     pub id: String,
     pub name: String,
@@ -176,7 +176,7 @@ pub struct Device {
 }
 
 // ✅ 正确：domain 只包含业务概念
-// api/src/domain/device/entity.rs
+// cloud/src/domain/device/entity.rs
 pub struct Device {
     pub id: DeviceId,           // 值对象
     pub name: DeviceName,       // 值对象

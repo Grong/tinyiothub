@@ -1,6 +1,8 @@
 // Jobs API Module — Compatibility layer over new cron system
 // Preserves legacy /api/jobs/* endpoints while using cron_jobs/cron_runs tables underneath
 
+use crate::shared::security::jwt::Claims;
+use tinyiothub_web::response::ApiResponseBuilder;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -12,18 +14,18 @@ use axum::{
 };
 use serde::Deserialize;
 
-use crate::dto::entity::cron_job::{
+use tinyiothub_core::models::cron_job::{
     CreateCronJobRequest, CronJob, CronJobQuery, CronRun, CronRunQuery, UpdateCronJobRequest,
 };
-use crate::dto::entity::job::{
+use tinyiothub_core::models::job::{
     CreateJobRequest, Job, JobExecution, JobExecutionQueryParams, JobQueryParams, JobStatistics,
     UpdateJobRequest,
 };
 use crate::{
-    domain::cron::executor::ExecutorRegistry,
-    dto::response::{ApiResponse, builder::ApiResponseBuilder, PaginatedResponse, PaginationInfo},
+    dto::response::{ApiResponse, PaginatedResponse, PaginationInfo},
     shared::{app_state::AppState, error::Error},
 };
+use tinyiothub_engine::cron::ExecutorRegistry;
 
 /// Create jobs router
 pub fn create_router() -> Router<AppState> {
@@ -109,7 +111,7 @@ fn map_cron_job_to_job(cj: CronJob) -> Job {
     }
 }
 
-fn map_create_request(req: &CreateJobRequest) -> CreateCronJobRequest {
+fn map_create_request(req: &CreateJobRequest, _workspace_id: &str) -> CreateCronJobRequest {
     let job_type = if req.job_type == "script" {
         "shell".to_string()
     } else {
@@ -190,7 +192,6 @@ fn map_update_request(req: &UpdateJobRequest) -> UpdateCronJobRequest {
 
 fn map_cron_job_query(params: &JobQueryParams) -> CronJobQuery {
     CronJobQuery {
-        workspace_id: params.workspace_id.clone(),
         name: params.name.clone(),
         job_type: params.job_type.clone(),
         is_enabled: params.is_enabled,
@@ -224,7 +225,6 @@ fn map_cron_run_to_execution(run: CronRun) -> JobExecution {
 fn map_execution_query(params: &JobExecutionQueryParams) -> CronRunQuery {
     CronRunQuery {
         job_id: params.job_id.clone(),
-        workspace_id: None,
         status: params.status.clone(),
         trigger_type: params.trigger_type.clone(),
         page: params.page,
@@ -254,10 +254,10 @@ async fn get_job(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Query(q): Query<WorkspaceQuery>,
-    claims: crate::shared::security::jwt::Claims,
+    claims: Claims,
 ) -> Result<Json<ApiResponse<Job>>, StatusCode> {
-    let ws_id = resolve_workspace(&state, &claims.tenant_id, q.workspace_id).await?;
-    match state.cron_job_repo.find_by_id(&id, &ws_id).await {
+    let _ws_id = resolve_workspace(&state, &claims.tenant_id, q.workspace_id).await?;
+    match state.cron_job_repo.find_by_id(&id).await {
         Ok(Some(job)) => Ok(ApiResponseBuilder::success(map_cron_job_to_job(job))),
         Ok(None) => Ok(ApiResponseBuilder::error_with_code(404, "任务不存在")),
         Err(e) => {
@@ -268,7 +268,7 @@ async fn get_job(
 }
 
 async fn create_job(
-    claims: crate::shared::security::jwt::Claims,
+    claims: Claims,
     State(state): State<AppState>,
     Json(payload): Json<CreateJobRequest>,
 ) -> Result<Json<ApiResponse<Job>>, StatusCode> {
@@ -278,9 +278,9 @@ async fn create_job(
     }
 
     let ws_id = resolve_workspace(&state, &claims.tenant_id, None).await?;
-    let req = map_create_request(&payload);
+    let req = map_create_request(&payload, &ws_id);
 
-    match state.cron_job_repo.create(&req, &ws_id, Some(&claims.user_id)).await {
+    match state.cron_job_repo.create(&req, Some(&claims.user_id)).await {
         Ok(job) => Ok(ApiResponseBuilder::success(map_cron_job_to_job(job))),
         Err(e) => {
             tracing::error!("Failed to create job: {}", e);
@@ -290,22 +290,21 @@ async fn create_job(
 }
 
 async fn update_job(
-    claims: crate::shared::security::jwt::Claims,
+    claims: Claims,
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(payload): Json<UpdateJobRequest>,
 ) -> Result<Json<ApiResponse<Job>>, StatusCode> {
-    if let Some(ref cron) = payload.cron_expression {
-        if let Err(e) = cron::Schedule::from_str(cron) {
+    if let Some(ref cron) = payload.cron_expression
+        && let Err(e) = cron::Schedule::from_str(cron) {
             tracing::error!("Invalid cron expression: {}", e);
             return Ok(ApiResponseBuilder::error_with_code(400, "无效的 Cron 表达式"));
         }
-    }
 
-    let ws_id = resolve_workspace(&state, &claims.tenant_id, None).await?;
+    let _ws_id = resolve_workspace(&state, &claims.tenant_id, None).await?;
     let req = map_update_request(&payload);
 
-    match state.cron_job_repo.update(&id, &ws_id, &req).await {
+    match state.cron_job_repo.update(&id, &req).await {
         Ok(job) => Ok(ApiResponseBuilder::success(map_cron_job_to_job(job))),
         Err(Error::NotFound) => Ok(ApiResponseBuilder::error_with_code(404, "任务不存在")),
         Err(e) => {
@@ -319,13 +318,13 @@ async fn delete_job(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Query(q): Query<WorkspaceQuery>,
-    claims: crate::shared::security::jwt::Claims,
+    claims: Claims,
 ) -> Result<Json<ApiResponse<bool>>, StatusCode> {
-    let ws_id = resolve_workspace(&state, &claims.tenant_id, q.workspace_id).await?;
-    match state.cron_job_repo.delete(&id, &ws_id).await {
+    let _ws_id = resolve_workspace(&state, &claims.tenant_id, q.workspace_id).await?;
+    match state.cron_job_repo.delete(&id).await {
         Ok(true) => {
             // Also delete execution history
-            let _ = state.cron_run_repo.delete_by_job_id(&id, &ws_id).await;
+            let _ = state.cron_run_repo.delete_by_job_id(&id).await;
             Ok(ApiResponseBuilder::success(true))
         }
         Ok(false) => Ok(ApiResponseBuilder::error_with_code(404, "任务不存在")),
@@ -339,11 +338,11 @@ async fn delete_job(
 async fn run_job_now(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    claims: crate::shared::security::jwt::Claims,
+    claims: Claims,
 ) -> Result<Json<ApiResponse<JobExecution>>, StatusCode> {
-    let ws_id = resolve_workspace(&state, &claims.tenant_id, None).await?;
+    let _ws_id = resolve_workspace(&state, &claims.tenant_id, None).await?;
 
-    let job = match state.cron_job_repo.find_by_id(&id, &ws_id).await {
+    let job = match state.cron_job_repo.find_by_id(&id).await {
         Ok(Some(j)) => j,
         Ok(None) => return Ok(ApiResponseBuilder::error_with_code(404, "任务不存在")),
         Err(e) => {
@@ -353,7 +352,7 @@ async fn run_job_now(
     };
 
     // Atomically claim the job to prevent race with scheduler
-    let claimed = match state.cron_job_repo.claim_job(&id, &ws_id).await {
+    let claimed = match state.cron_job_repo.claim_job(&id).await {
         Ok(c) => c,
         Err(e) => {
             tracing::error!("Failed to claim job: {}", e);
@@ -367,13 +366,13 @@ async fn run_job_now(
 
     let run = match state
         .cron_run_repo
-        .create(&job.id, &ws_id, "manual", Some(&claims.user_id))
+        .create(&job.id, "manual", Some(&claims.user_id))
         .await
     {
         Ok(r) => r,
         Err(e) => {
             tracing::error!("Failed to create run record: {}", e);
-            let _ = state.cron_job_repo.set_running(&id, &ws_id, false).await;
+            let _ = state.cron_job_repo.set_running(&id, false).await;
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     };
@@ -399,10 +398,10 @@ async fn run_job_now(
             {
                 Ok(Ok(res)) => Ok(res),
                 Ok(Err(e)) => Err(e),
-                Err(_) => Err(crate::domain::cron::executor::ExecutorError::Timeout(timeout_secs)),
+                Err(_) => Err(tinyiothub_engine::cron::ExecutorError::Timeout(timeout_secs)),
             }
         } else {
-            Err(crate::domain::cron::executor::ExecutorError::InvalidConfig(format!(
+            Err(tinyiothub_engine::cron::ExecutorError::InvalidConfig(format!(
                 "no executor for job type {}",
                 job_clone.job_type
             )))
@@ -415,7 +414,6 @@ async fn run_job_now(
                 let _ = run_repo
                     .complete(
                         &run_id,
-                        &ws_id,
                         &res.status,
                         res.output.as_deref(),
                         res.error_message.as_deref(),
@@ -423,25 +421,25 @@ async fn run_job_now(
                     )
                     .await;
                 let _ = job_repo
-                    .update_run_stats(&job_clone.id, &ws_id, &res.status, res.error_message.as_deref())
+                    .update_run_stats(&job_clone.id, &res.status, res.error_message.as_deref())
                     .await;
             }
             Err(err) => {
                 let status = match err {
-                    crate::domain::cron::executor::ExecutorError::Timeout(_) => "timeout",
+                    tinyiothub_engine::cron::ExecutorError::Timeout(_) => "timeout",
                     _ => "failed",
                 };
                 let err_msg = err.to_string();
                 let _ = run_repo
-                    .complete(&run_id, &ws_id, status, None, Some(&err_msg), duration_ms)
+                    .complete(&run_id, status, None, Some(&err_msg), duration_ms)
                     .await;
                 let _ = job_repo
-                    .update_run_stats(&job_clone.id, &ws_id, status, Some(&err_msg))
+                    .update_run_stats(&job_clone.id, status, Some(&err_msg))
                     .await;
             }
         }
 
-        let _ = job_repo.set_running(&job_clone.id, &ws_id, false).await;
+        let _ = job_repo.set_running(&job_clone.id, false).await;
     });
 
     Ok(ApiResponseBuilder::success(map_cron_run_to_execution(run)))
@@ -451,12 +449,11 @@ async fn list_job_executions(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Query(params): Query<JobExecutionQueryParams>,
-    claims: crate::shared::security::jwt::Claims,
+    claims: Claims,
 ) -> Result<Json<ApiResponse<Vec<JobExecution>>>, StatusCode> {
-    let ws_id = resolve_workspace(&state, &claims.tenant_id, None).await?;
+    let _ws_id = resolve_workspace(&state, &claims.tenant_id, None).await?;
     let mut query = map_execution_query(&params);
     query.job_id = Some(id);
-    query.workspace_id = Some(ws_id);
 
     match state.cron_run_repo.find_by_job_id(&params.job_id.unwrap_or_default(), &query).await {
         Ok(runs) => Ok(ApiResponseBuilder::success(
@@ -471,26 +468,26 @@ async fn list_job_executions(
 
 async fn get_statistics(
     State(state): State<AppState>,
-    claims: crate::shared::security::jwt::Claims,
+    claims: Claims,
 ) -> Result<Json<ApiResponse<JobStatistics>>, StatusCode> {
-    let ws_id = resolve_workspace(&state, &claims.tenant_id, None).await?;
+    let _ws_id = resolve_workspace(&state, &claims.tenant_id, None).await?;
 
-    let total = state.cron_job_repo.count(&ws_id).await.unwrap_or(0);
+    let total = state.cron_job_repo.count().await.unwrap_or(0);
     let success_runs = state
         .cron_run_repo
-        .count_by_status(&ws_id, "success")
+        .count_by_status("success")
         .await
         .unwrap_or(0);
     let failed_runs = state
         .cron_run_repo
-        .count_by_status(&ws_id, "failed")
+        .count_by_status("failed")
         .await
         .unwrap_or(0);
 
-    let enabled_jobs = state.cron_job_repo.count_by_enabled(&ws_id, true).await.unwrap_or(0);
-    let disabled_jobs = state.cron_job_repo.count_by_enabled(&ws_id, false).await.unwrap_or(0);
-    let running_jobs = state.cron_job_repo.count_running(&ws_id).await.unwrap_or(0);
-    let avg_duration_ms = state.cron_run_repo.avg_duration_ms(&ws_id).await.unwrap_or(0);
+    let enabled_jobs = state.cron_job_repo.count_by_enabled(true).await.unwrap_or(0);
+    let disabled_jobs = state.cron_job_repo.count_by_enabled(false).await.unwrap_or(0);
+    let running_jobs = state.cron_job_repo.count_running().await.unwrap_or(0);
+    let avg_duration_ms = state.cron_run_repo.avg_duration_ms().await.unwrap_or(0);
 
     let stats = JobStatistics {
         total_jobs: total,
@@ -509,22 +506,21 @@ async fn get_statistics(
 async fn list_all_executions(
     State(state): State<AppState>,
     Query(params): Query<JobExecutionQueryParams>,
-    claims: crate::shared::security::jwt::Claims,
+    claims: Claims,
 ) -> Result<Json<ApiResponse<PaginatedResponse<JobExecution>>>, StatusCode> {
-    let ws_id = resolve_workspace(&state, &claims.tenant_id, None).await?;
+    let _ws_id = resolve_workspace(&state, &claims.tenant_id, None).await?;
     let page = params.page.unwrap_or(1);
     let page_size = params.page_size.unwrap_or(20);
 
     let query = CronRunQuery {
         job_id: None,
-        workspace_id: Some(ws_id.clone()),
         status: params.status.clone(),
         trigger_type: params.trigger_type.clone(),
         page: Some(page),
         page_size: Some(page_size),
     };
 
-    match state.cron_run_repo.find_all(&ws_id, &query).await {
+    match state.cron_run_repo.find_all(&query).await {
         Ok(runs) => {
             let total = runs.len() as i64; // Approximate; could add a count query for accuracy
             let total_pages = ((total as f64) / (page_size as f64)).ceil() as u32;

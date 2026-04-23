@@ -149,7 +149,7 @@ impl HandlerRegistry {
 
     /// Get a cloned tool handler by name
     pub fn get_owned(&self, name: &str) -> Option<std::sync::Arc<dyn ToolHandler>> {
-        self.handlers.get(name).map(|h| h.clone())
+        self.handlers.get(name).cloned()
     }
 
     /// List all registered tool names

@@ -5,20 +5,17 @@ use serde_json::Value;
 
 /// 权限级别
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Default)]
 pub enum PermissionLevel {
     /// 可信操作，自动放行
     Allow,
     /// 需要用户确认
+    #[default]
     Ask,
     /// 危险操作，需额外确认
     Deny,
 }
 
-impl Default for PermissionLevel {
-    fn default() -> Self {
-        PermissionLevel::Ask
-    }
-}
 
 /// IoT 工具元数据 trait
 /// 为 IoTToolAdapter 提供并发安全和权限属性

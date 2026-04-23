@@ -8,7 +8,7 @@ use tracing_appender::{
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use tinyiothub_cloud::{
-    application::{DataContext, ServiceManager},
+    application::ServiceManager,
     infrastructure::config,
 };
 
@@ -56,6 +56,12 @@ async fn main_impl() -> std::io::Result<()> {
     // Initialize logging system
     initialize_logging().await?;
 
+    // Register JWT validator with tinyiothub-web (so Claims extractor works)
+    tinyiothub_web::security::set_jwt_validator(Box::new(|token| {
+        tinyiothub_cloud::shared::security::jwt::validate_jwt(token)
+            .map(tinyiothub_web::security::Claims::from)
+    }));
+
     info!("🚀 TinyIoTHub Starting...");
     info!("Environment: {}", config::environment());
     info!("Server: {}", config::get().server_bind_address());
@@ -66,11 +72,12 @@ async fn main_impl() -> std::io::Result<()> {
     // === 2. 初始化数据库 ===
     use tinyiothub_cloud::infrastructure::persistence::DatabaseConfig;
     let db_config = DatabaseConfig::from_settings(config::get());
-    let data_context = DataContext::new(db_config).await.expect("Failed to initialize DataContext");
-    info!("✅ DataContext initialized");
+    let db_pool = tinyiothub_cloud::infrastructure::persistence::create_pool(&db_config).await.expect("Failed to create DB pool");
+    let device_cache = std::sync::Arc::new(tinyiothub_storage::cache::DeviceCache::new());
+    info!("✅ Database pool & device cache initialized");
 
     // === 3. 创建 AppState（包含所有核心组件）===
-    let mut app_state = tinyiothub_cloud::shared::app_state::AppState::new(data_context);
+    let mut app_state = tinyiothub_cloud::shared::app_state::AppState::new(device_cache, db_pool);
     info!("✅ AppState created");
 
     // === 4. 自动加载动态驱动 ===
@@ -176,11 +183,10 @@ async fn initialize_logging() -> std::io::Result<()> {
     let _guard;
 
     // Create log directory if it doesn't exist
-    if config.logging.file_enabled {
-        if let Some(parent) = config.log_file_path().parent() {
+    if config.logging.file_enabled
+        && let Some(parent) = config.log_file_path().parent() {
             std::fs::create_dir_all(parent)?;
         }
-    }
 
     if config.logging.file_enabled {
         info!(

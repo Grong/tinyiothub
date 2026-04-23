@@ -12,12 +12,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
-async-trait = { workspace = true }
 sqlx = { workspace = true, optional = true }
 
 [features]
 default = []
-sqlx = ["dep:sqlx"]
 
 [dev-dependencies]
 tokio = { workspace = true }

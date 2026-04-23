@@ -3,6 +3,7 @@
 
 pub mod auth;
 
+use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
     extract::{Path, Query, State},
     routing::{delete, get, post, put},
@@ -12,11 +13,11 @@ use axum::{
 
 use crate::dto::entity::tenant::{ApiKey, ApiUsageStats, CreateApiKeyRequest, Tenant, TenantQueryParams, TenantUsage};
 use crate::{
-    api::middleware::WorkspaceScope,
-    shared::security::jwt::Claims,
-    dto::response::{ApiResponse, builder::ApiResponseBuilder},
+    dto::response::{ApiResponse},
     shared::app_state::AppState,
 };
+use crate::api::middleware::WorkspaceScope;
+use crate::shared::security::jwt::Claims;
 
 /// Create API Keys router — 直接挂载在 /v1/api-keys/ 下
 pub fn create_api_key_router() -> Router<AppState> {
@@ -151,7 +152,7 @@ async fn list_api_keys(
     };
 
     // 验证 workspace 归属，防止伪造 header 越权
-    if matches!(validate_workspace(&state, &ws, &claims.tenant_id).await, None) {
+    if validate_workspace(&state, &ws, &claims.tenant_id).await.is_none() {
         return ApiResponseBuilder::error_with_code(403, "无权操作此 Workspace");
     }
 
@@ -178,7 +179,7 @@ async fn create_api_key(
     };
 
     // 验证 workspace 归属，防止伪造 header 越权
-    if matches!(validate_workspace(&state, &ws, &claims.tenant_id).await, None) {
+    if validate_workspace(&state, &ws, &claims.tenant_id).await.is_none() {
         return ApiResponseBuilder::error_with_code(403, "无权操作此 Workspace");
     }
 

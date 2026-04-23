@@ -262,7 +262,6 @@ mod tests {
     fn make_shell_job(script: &str, timeout: i32) -> CronJob {
         CronJob {
             id: "job-1".to_string(),
-            workspace_id: "ws-1".to_string(),
             name: "test".to_string(),
             description: None,
             job_type: "shell".to_string(),
@@ -288,7 +287,6 @@ mod tests {
     fn make_agent_job(task: &str, timeout: i32) -> CronJob {
         CronJob {
             id: "job-2".to_string(),
-            workspace_id: "ws-1".to_string(),
             name: "test".to_string(),
             description: None,
             job_type: "agent".to_string(),
@@ -314,7 +312,6 @@ mod tests {
     fn make_device_command_job(device_id: &str, command_name: &str, timeout: i32) -> CronJob {
         CronJob {
             id: "job-3".to_string(),
-            workspace_id: "ws-1".to_string(),
             name: "test".to_string(),
             description: None,
             job_type: "device_command".to_string(),

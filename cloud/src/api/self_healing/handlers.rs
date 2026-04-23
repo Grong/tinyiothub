@@ -1,3 +1,5 @@
+use crate::shared::security::jwt::Claims;
+use tinyiothub_web::response::ApiResponseBuilder;
 use crate::dto::entity::self_healing::{
             ExecuteSelfHealRequest, ExecuteSelfHealResponse, HealingExecutionDto,
             ProbeConfig, ProbeConfig as ProbeConfigDto, ProbeResultDto, SelfHealingPolicyDto,
@@ -15,9 +17,9 @@ use crate::{
     api::self_healing::get_self_healing_state,
     domain::self_healing::PolicyEvaluator,
     dto::{
-        response::{builder::ApiResponseBuilder, ApiResponse}
+        response::{ApiResponse}
     },
-    shared::{app_state::AppState, security::jwt::Claims}
+    shared::{app_state::AppState}
 };
 
 /// Create the self-healing router
@@ -137,7 +139,7 @@ async fn execute_action(
             }
             ApiResponseBuilder::success(ExecuteSelfHealResponse {
                 execution: HealingExecutionDto::from(&execution),
-                message: format!("Self-healing action executed successfully"),
+                message: "Self-healing action executed successfully".to_string(),
             })
         }
         Err(e) => {

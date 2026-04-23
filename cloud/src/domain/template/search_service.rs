@@ -8,7 +8,7 @@ use crate::dto::entity::{
     template_error::TemplateError,
 };
 use crate::{
-    infrastructure::persistence::database::Database,
+    infrastructure::persistence::Database,
 };
 
 /// 模板搜索服务 - 负责高级搜索和筛选功能
@@ -62,10 +62,10 @@ impl TemplateSearchService {
         Ok(templates)
     }
     /// 构建搜索条件
-    fn build_search_conditions<'a>(
+    fn build_search_conditions(
         &self,
         query: &mut QueryBuilder<sqlx::Sqlite>,
-        params: &'a TemplateQueryParams,
+        params: &TemplateQueryParams,
     ) {
         // 分类筛选
         if let Some(category) = &params.category {

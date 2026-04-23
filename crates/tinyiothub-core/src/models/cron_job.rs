@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub struct CronJob {
     pub id: String,
-    pub workspace_id: String,
     pub name: String,
     pub description: Option<String>,
     pub job_type: String,
@@ -64,7 +63,6 @@ impl CronJob {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct CronJobQuery {
-    pub workspace_id: Option<String>,
     pub name: Option<String>,
     pub job_type: Option<String>,
     pub is_enabled: Option<bool>,
@@ -105,7 +103,6 @@ pub struct UpdateCronJobRequest {
 pub struct CronRun {
     pub id: String,
     pub job_id: String,
-    pub workspace_id: String,
     pub started_at: String,
     pub ended_at: Option<String>,
     pub duration_ms: Option<i64>,
@@ -122,7 +119,6 @@ pub struct CronRun {
 #[serde(rename_all = "snake_case")]
 pub struct CronRunQuery {
     pub job_id: Option<String>,
-    pub workspace_id: Option<String>,
     pub status: Option<String>,
     pub trigger_type: Option<String>,
     pub page: Option<u32>,
@@ -151,7 +147,6 @@ mod tests {
     fn test_cron_job_config_extraction() {
         let job = CronJob {
             id: "job-001".to_string(),
-            workspace_id: "ws-001".to_string(),
             name: "Test Device Command".to_string(),
             description: None,
             job_type: "device_command".to_string(),
@@ -182,7 +177,6 @@ mod tests {
     fn test_cron_job_config_extraction_object_params() {
         let job = CronJob {
             id: "job-003".to_string(),
-            workspace_id: "ws-001".to_string(),
             name: "Test Object Params".to_string(),
             description: None,
             job_type: "device_command".to_string(),
@@ -216,7 +210,6 @@ mod tests {
     fn test_cron_job_config_extraction_invalid_json() {
         let job = CronJob {
             id: "job-004".to_string(),
-            workspace_id: "ws-001".to_string(),
             name: "Invalid Config".to_string(),
             description: None,
             job_type: "device_command".to_string(),
@@ -247,7 +240,6 @@ mod tests {
     fn test_cron_job_config_extraction_wrong_type() {
         let job = CronJob {
             id: "job-002".to_string(),
-            workspace_id: "ws-001".to_string(),
             name: "Test HTTP Job".to_string(),
             description: None,
             job_type: "http".to_string(),
@@ -277,7 +269,6 @@ mod tests {
     #[test]
     fn test_cron_job_query_default() {
         let query = CronJobQuery::default();
-        assert_eq!(query.workspace_id, None);
         assert_eq!(query.page, None);
         assert_eq!(query.page_size, None);
     }
@@ -318,7 +309,6 @@ mod tests {
         let run = CronRun {
             id: "run-001".to_string(),
             job_id: "job-001".to_string(),
-            workspace_id: "ws-001".to_string(),
             started_at: "2026-04-18 08:00:00".to_string(),
             ended_at: Some("2026-04-18 08:00:05".to_string()),
             duration_ms: Some(5000),

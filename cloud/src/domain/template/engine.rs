@@ -2,10 +2,10 @@ use std::{collections::HashMap, sync::Arc};
 
 use tracing::{debug, info};
 
+use tinyiothub_core::models::device::CreateDeviceRequest;
+use tinyiothub_core::models::device_command::CreateDeviceCommandRequest;
+use tinyiothub_core::models::device_property::CreateDevicePropertyRequest;
 use crate::dto::entity::{
-    device::CreateDeviceRequest,
-    device_command::CreateDeviceCommandRequest,
-    device_property::CreateDevicePropertyRequest,
     device_template::{
         CommandInfo, DeviceCreationInput, DevicePreview, DeviceTemplate, PropertyInfo,
         TemplateRequirements,
@@ -84,8 +84,6 @@ impl TemplateEngine {
                 .or_else(|| device_info.default_driver_options.clone()),
             parent_id: user_input.parent_id.clone(),
             product_id: user_input.product_id.clone(),
-            tenant_id: user_input.tenant_id.clone(),
-            workspace_id: user_input.workspace_id.clone(),
         };
 
         debug!("设备创建请求已生成: {:?}", device_request);

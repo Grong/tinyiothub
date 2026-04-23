@@ -1,3 +1,5 @@
+use crate::shared::security::jwt::Claims;
+use tinyiothub_web::response::ApiResponseBuilder;
 use crate::dto::entity::alarm::AlarmRuleDto;
 use axum::{
     extract::{Path, Query, State},
@@ -8,9 +10,9 @@ use crate::{
     domain::alarm::{AlarmCondition, AlarmLevel, AlarmRule, NotificationConfig},
     dto::{
         request::{CreateAlarmRuleRequest, ToggleRuleRequest, UpdateAlarmRuleRequest},
-        response::{api_response::ApiResponse, builder::ApiResponseBuilder}
+        response::ApiResponse
     },
-    shared::{app_state::AppState, error_handling::ErrorCode, security::jwt::Claims}
+    shared::{app_state::AppState, error_handling::ErrorCode}
 };
 
 #[derive(serde::Deserialize)]
@@ -59,7 +61,7 @@ pub async fn create_alarm_rule(
     Json(req): Json<CreateAlarmRuleRequest>,
 ) -> Json<ApiResponse<AlarmRuleDto>> {
     // 解析报警级别
-    let alarm_level = match AlarmLevel::from_str(&req.alarm_level) {
+    let alarm_level = match AlarmLevel::parse_str(&req.alarm_level) {
         Some(level) => level,
         None => return ApiResponseBuilder::error("无效的报警级别")
 };
@@ -114,7 +116,7 @@ pub async fn update_alarm_rule(
 
     // 解析更新字段
     let condition = req.condition.and_then(|c| serde_json::from_value(c).ok());
-    let alarm_level = req.alarm_level.and_then(|l| AlarmLevel::from_str(&l));
+    let alarm_level = req.alarm_level.and_then(|l| AlarmLevel::parse_str(&l));
     let notification_config =
         req.notification_config.and_then(|nc| serde_json::from_value(nc).ok());
 

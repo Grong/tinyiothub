@@ -239,13 +239,12 @@ impl HeartbeatService {
                         tracing::info!("💓 Heartbeat collected {} tasks", tasks.len());
                     }
                     for task in tasks {
-                        if task.priority == TaskPriority::High {
-                            if let Err(e) = self.execute_task(&task.text).await {
+                        if task.priority == TaskPriority::High
+                            && let Err(e) = self.execute_task(&task.text).await {
                                 status = "error".to_string();
                                 error_message = Some(e);
                                 break;
                             }
-                        }
                     }
                 }
                 Err(e) => {

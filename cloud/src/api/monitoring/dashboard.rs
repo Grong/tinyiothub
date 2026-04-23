@@ -1,13 +1,15 @@
+use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{extract::State, response::Json, routing::get, Router};
 use serde::Deserialize;
 use tracing::info;
 
 use crate::{
-    api::{middleware::WorkspaceScope, AppState},
-    dto::response::{ApiResponse, ApiResponseBuilder, DashboardMetrics, DashboardStats, MonthlyGrowth, NetworkMetrics},
+    api::AppState,
+    dto::response::{ApiResponse, DashboardMetrics, DashboardStats, MonthlyGrowth, NetworkMetrics},
     infrastructure::persistence::Database,
-    shared::security::jwt::Claims,
 };
+use crate::api::middleware::WorkspaceScope;
+use crate::shared::security::jwt::Claims;
 
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]

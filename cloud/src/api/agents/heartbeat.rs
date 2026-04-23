@@ -8,6 +8,8 @@
 // - GET  /agents/{id}/heartbeat/tasks
 // - PUT  /agents/{id}/heartbeat/tasks
 
+use crate::shared::security::jwt::Claims;
+use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
     extract::{Path, State},
     routing::get,
@@ -16,12 +18,12 @@ use axum::{
 use serde::Deserialize;
 
 use crate::{
-    dto::response::{builder::ApiResponseBuilder, ApiResponse},
+    dto::response::{ApiResponse},
     infrastructure::agent::heartbeat_service::{
         get_heartbeat_state, HeartbeatExecutionRecord, HeartbeatTask,
         read_heartbeat_tasks, write_heartbeat_tasks,
     },
-    shared::{app_state::AppState, security::jwt::Claims},
+    shared::{app_state::AppState},
 };
 
 /// Request to update heartbeat config
@@ -160,7 +162,7 @@ pub async fn get_heartbeat_tasks(
     let state = state_lock.read().await;
     match read_heartbeat_tasks(&state.workspace_dir).await {
         Ok(tasks) => ApiResponseBuilder::success(tasks),
-        Err(e) => ApiResponseBuilder::error(&format!("Failed to read tasks: {}", e)),
+        Err(e) => ApiResponseBuilder::error(format!("Failed to read tasks: {}", e)),
     }
 }
 
@@ -178,6 +180,6 @@ pub async fn update_heartbeat_tasks(
             tracing::info!("💓 Heartbeat tasks updated: {} tasks", req.tasks.len());
             ApiResponseBuilder::success(req.tasks)
         }
-        Err(e) => ApiResponseBuilder::error(&format!("Failed to save tasks: {}", e)),
+        Err(e) => ApiResponseBuilder::error(format!("Failed to save tasks: {}", e)),
     }
 }

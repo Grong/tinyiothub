@@ -1,3 +1,4 @@
+use tinyiothub_web::response::ApiResponseBuilder;
 use crate::dto::entity::user::{CreateUserRequest, UpdateUserRequest, UserDto};
 use axum::{
     extract::{Path, Query, State},
@@ -10,11 +11,11 @@ use crate::{
     api::AppState,
     dto::{
         request::pagination::PaginationQuery,
-        response::{ApiResponse, ApiResponseBuilder, PaginatedResponse, PaginationInfo}
+        response::{ApiResponse, PaginatedResponse, PaginationInfo}
     },
-    shared::security::jwt::Claims,
     shared::utils::password::verify_password
 };
+use crate::shared::security::jwt::Claims;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]

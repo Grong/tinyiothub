@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-/// 模板元数据
+/// Template metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TemplateMetadata {
     pub id: String,
@@ -27,7 +27,7 @@ pub struct TemplateMetadata {
     pub updated_at: String,
 }
 
-/// 驱动元数据
+/// Driver metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DriverMetadata {
     pub id: String,
@@ -53,7 +53,7 @@ pub struct DriverMetadata {
     pub updated_at: String,
 }
 
-/// 平台二进制文件信息
+/// Platform binary information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlatformBinary {
     pub file_url: String,
@@ -61,20 +61,20 @@ pub struct PlatformBinary {
     pub size: u64,
 }
 
-/// 作者信息
+/// Author information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthorInfo {
     pub name: String,
     pub email: String,
 }
 
-/// 驱动要求
+/// Driver requirements
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DriverRequirements {
     pub min_version: String,
 }
 
-/// 市场索引（模板）
+/// Marketplace index (templates)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TemplateIndex {
     pub version: String,
@@ -82,7 +82,7 @@ pub struct TemplateIndex {
     pub templates: Vec<TemplateMetadata>,
 }
 
-/// 市场索引（驱动）
+/// Marketplace index (drivers)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DriverIndex {
     pub version: String,

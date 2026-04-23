@@ -1,6 +1,7 @@
 // Event security API endpoints
 // Provides endpoints for managing event security, permissions, and audit logs
 
+use tinyiothub_web::response::ApiResponseBuilder;
 use std::{sync::Arc, time::Duration};
 
 use axum::{
@@ -15,7 +16,7 @@ use crate::{
     domain::event::value_objects::EventId,
     dto::{
         request::pagination::PaginationQuery,
-        response::{builder::ApiResponseBuilder, ApiResponse},
+        response::{ApiResponse},
     },
     handle_service_result,
     infrastructure::event::security::AuditLogEntry,
@@ -23,9 +24,9 @@ use crate::{
         app_state::AppState,
         error_handling::{AuthHelper, ErrorCategory},
         performance::Cache,
-        security::jwt::Claims,
     },
 };
+use crate::shared::security::jwt::Claims;
 
 /// Cache for user permissions to improve performance
 static PERMISSIONS_CACHE: OnceCell<Arc<Cache<String, UserPermissionsResponse>>> =
@@ -332,25 +333,22 @@ pub async fn get_user_audit_logs(
         .into_iter()
         .filter(|entry| {
             // Filter by log type
-            if let Some(ref log_type) = params.log_type {
-                if !entry.action.contains(log_type) {
+            if let Some(ref log_type) = params.log_type
+                && !entry.action.contains(log_type) {
                     return false;
                 }
-            }
 
             // Filter by action
-            if let Some(ref action) = params.action {
-                if entry.action != *action {
+            if let Some(ref action) = params.action
+                && entry.action != *action {
                     return false;
                 }
-            }
 
             // Filter by result
-            if let Some(ref result) = params.result {
-                if entry.result.as_ref() != Some(result) {
+            if let Some(ref result) = params.result
+                && entry.result.as_ref() != Some(result) {
                     return false;
                 }
-            }
 
             // TODO: Add time range filtering when we have proper DateTime parsing
 
@@ -429,25 +427,22 @@ async fn get_all_audit_logs_impl(
         .into_iter()
         .filter(|entry| {
             // Filter by log type
-            if let Some(ref log_type) = params.log_type {
-                if !entry.action.contains(log_type) {
+            if let Some(ref log_type) = params.log_type
+                && !entry.action.contains(log_type) {
                     return false;
                 }
-            }
 
             // Filter by action
-            if let Some(ref action) = params.action {
-                if entry.action != *action {
+            if let Some(ref action) = params.action
+                && entry.action != *action {
                     return false;
                 }
-            }
 
             // Filter by result
-            if let Some(ref result) = params.result {
-                if entry.result.as_ref() != Some(result) {
+            if let Some(ref result) = params.result
+                && entry.result.as_ref() != Some(result) {
                     return false;
                 }
-            }
 
             true
         })
@@ -656,13 +651,12 @@ pub async fn update_security_config(
     }
 
     // Validate configuration changes
-    if let Some(retention_days) = request.audit_retention_days {
-        if !(1..=3650).contains(&retention_days) {
+    if let Some(retention_days) = request.audit_retention_days
+        && !(1..=3650).contains(&retention_days) {
             return ApiResponseBuilder::error(
                 "Invalid audit retention days: must be between 1 and 3650",
             );
         }
-    }
 
     // Get current configuration
     let mut config = secure_service.config().clone();

@@ -26,39 +26,78 @@ ls web/service/
 
 ## 一、模块边界（绝对禁止跨边界私自造轮）
 
+**注意：workspace-refactor 分支采用多 Crate 架构，详见 `ARCHITECTURE_CONTRACT.md`。**
+
+### 1.1 Crate 依赖方向（单向不可逆）
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  api/src/domain/        # 核心业务逻辑，绝对不可侵犯    │
-│  api/src/application/  # 应用编排，禁止放业务逻辑      │
-│  api/src/infrastructure/  # 外部依赖（DB/MQTT/GPIO）   │
-│  api/src/shared/       # 公共组件，所有人共享          │
-│  api/src/dto/          # 数据传输对象，禁止放业务逻辑  │
-│  api/src/api/          # HTTP handlers + 业务逻辑      │
+│                         cloud (Binary)                  │
+│  - Tenant Logic, Workspace Routes, ServiceOrchestrator  │
+└───────────────────────────────┬─────────────────────────┘
+                                │ 依赖
+                                ▼
+┌─────────────────────────────────────────────────────────┐
+│                      tinyiothub-web (HTTP)              │
+│  - Generic IoT Handlers, Logging Middleware             │
+└───────────────────────────────┬─────────────────────────┘
+                                │ 依赖
+                                ▼
+┌─────────────────────────────────────────────────────────┐
+│                     tinyiothub-engine (IoT)             │
+│  - Collector, Scheduler, Rule, Alarm, Template          │
+└───────────────────────────────┬─────────────────────────┘
+                                │ 依赖 (Traits only)
+                                ▼
+┌─────────────────────────────────────────────────────────┐
+│                    tinyiothub-storage (Data)            │
+│  - DeviceRepo Trait, TelemetryRepo Trait, Cache         │
+└───────────────────────────────┬─────────────────────────┘
+                                │ 依赖
+                                ▼
+┌─────────────────────────────────────────────────────────┐
+│                     tinyiothub-core (Types)             │
+│  - Device, Event, TelemetryPoint, Error                 │
 └─────────────────────────────────────────────────────────┘
 ```
 
+### 1.2 核心规则
+- ❌ 禁止反向依赖（如 `core` 依赖 `web`）
+- ❌ 禁止循环依赖
+- ❌ 禁止跨 Crate 直接访问内部模块（必须通过定义好的接口）
+- ✅ 新功能先想清楚属于哪个现有 Crate
+- ✅ 跨 Crate 调用必须走定义好的接口
+
 **规则：**
-- ❌ 禁止在 `api/` 中创建 `utils/`、`helpers/`、`tools/` 散弹文件
+- ❌ 禁止在任何 Crate 中创建散弹式的 `utils/`、`helpers/`、`tools/` 目录（公共组件应放在 `cloud/src/shared/` 或相应 Crate 的 `shared/` 模块）
 - ❌ 禁止在 `domain/` 直接调用 DB（必须通过 repository interface）
-- ❌ 禁止在 `api/` handlers 里直接写 SQL（用 SQLx query builder）
-- ✅ 新功能先想清楚属于哪个现有模块
-- ✅ 跨模块调用必须走定义好的接口
+- ❌ 禁止在 HTTP handlers 里直接写 SQL（用 SQLx query builder）
+- ✅ 新功能先想清楚属于哪个现有 Crate
+- ✅ 跨 Crate 调用必须走定义好的接口（traits）
 
 ---
 
 ## 二、必须复用的公共组件（禁止重复实现）
 
-### 2.1 Rust 后端 — 公共组件清单
+### 2.1 Rust 后端 — 公共组件清单（多 Crate 架构）
+
+**核心原则：先搜索 `cloud/src/shared/` 和相应 Crate 的公共模块，找不到再考虑新建。**
 
 | 组件位置 | 用途 | 禁止做的事 |
 |---------|------|-----------|
-| `shared/error.rs` | 统一错误类型 | 禁止自定义 `anyhow::Error` |
-| `shared/security/jwt.rs` | JWT 工具 | 禁止自己实现 JWT |
-| `shared/identifier.rs` | ID 生成 | 禁止自己写 UUID |
-| `shared/command.rs` | 命令执行 | 禁止直接 `std::process::Command` |
-| `dto/response/builder.rs` | API 响应 | 禁止自己拼 JSON 响应 |
-| `infrastructure/config/` | 配置管理 | 禁止硬编码配置 |
-| `infrastructure/persistence/database.rs` | 数据库连接 | 禁止自己建连接池 |
+| `cloud/src/shared/error_handling.rs` | 统一错误处理 | 禁止自定义 `anyhow::Error` |
+| `cloud/src/shared/security/` | JWT 工具、加密 | 禁止自己实现 JWT |
+| `cloud/src/shared/identifier.rs` | ID 生成 | 禁止自己写 UUID |
+| `cloud/src/shared/command.rs` | 命令执行 | 禁止直接 `std::process::Command` |
+| `tinyiothub-web::response::ApiResponseBuilder` | API 响应 | 禁止自己拼 JSON 响应 |
+| `cloud/src/infrastructure/config/` | 配置管理 | 禁止硬编码配置 |
+| `cloud/src/infrastructure/persistence/database.rs` | 数据库连接 | 禁止自己建连接池 |
+| `tinyiothub-error` crate | 错误类型（带 `thiserror`） | 禁止重复定义相似错误 |
+| `tinyiothub-core` 中的领域类型 | 设备、事件、遥测点等 | 禁止在 SaaS 层重复定义 |
+
+**注意：**
+- `tinyiothub-web` crate 提供 `ApiResponseBuilder`，通过 `use tinyiothub_web::response::ApiResponseBuilder` 导入
+- `cloud` 二进制可以依赖所有内部 crates，但内部 crates 不能反向依赖 `cloud`
+- 通用工具函数应放在 `cloud/src/shared/utils/` 而非各 Crate 重复实现
 
 ### 2.2 TypeScript 前端 — 公共组件清单
 

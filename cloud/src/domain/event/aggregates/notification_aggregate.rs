@@ -24,7 +24,7 @@ impl std::fmt::Display for NotificationStatus {
 }
 
 impl NotificationStatus {
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse_str(s: &str) -> Option<Self> {
         match s {
             "pending" => Some(NotificationStatus::Pending),
             "sent" => Some(NotificationStatus::Sent),
@@ -54,7 +54,7 @@ pub enum NotificationChannelType {
 }
 
 impl NotificationChannelType {
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse_str(s: &str) -> Option<Self> {
         match s {
             "email" => Some(NotificationChannelType::Email),
             "sms" => Some(NotificationChannelType::Sms),

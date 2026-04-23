@@ -8,7 +8,6 @@ pub mod dto;
 pub mod infrastructure;
 pub mod server;
 pub mod shared;
-pub mod utils;
 
 // Re-export commonly used types for easier access
 pub use domain::event;

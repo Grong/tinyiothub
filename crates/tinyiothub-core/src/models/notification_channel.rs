@@ -18,7 +18,7 @@ impl ChannelType {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "sms" => Some(ChannelType::Sms),
             "email" => Some(ChannelType::Email),
@@ -105,10 +105,10 @@ mod tests {
 
     #[test]
     fn test_channel_type_from_str() {
-        assert_eq!(ChannelType::from_str("sms"), Some(ChannelType::Sms));
-        assert_eq!(ChannelType::from_str("email"), Some(ChannelType::Email));
-        assert_eq!(ChannelType::from_str("webhook"), Some(ChannelType::Webhook));
-        assert_eq!(ChannelType::from_str("unknown"), None);
+        assert_eq!(ChannelType::parse_str("sms"), Some(ChannelType::Sms));
+        assert_eq!(ChannelType::parse_str("email"), Some(ChannelType::Email));
+        assert_eq!(ChannelType::parse_str("webhook"), Some(ChannelType::Webhook));
+        assert_eq!(ChannelType::parse_str("unknown"), None);
     }
 
     #[test]

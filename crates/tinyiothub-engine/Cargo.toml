@@ -9,9 +9,14 @@ description = "Business logic engines for TinyIoTHub"
 
 [dependencies]
 tinyiothub-core = { workspace = true }
+tinyiothub-macros = { workspace = true }
+tinyiothub-plugin-sdk = { workspace = true }
 
 # Async runtime
-tokio = { workspace = true, features = ["process"] }
+tokio = { workspace = true, features = ["process", "sync"] }
+
+# Workspace crates
+tinyiothub-storage = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
@@ -22,6 +27,33 @@ async-trait = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Collections
+dashmap = { workspace = true }
+
+# Dynamic loading
+libloading = { workspace = true }
+
+# Random
+rand = { workspace = true }
+
+# Serial (optional)
+serialport = { workspace = true, optional = true }
+
+# Caching
+moka = { workspace = true }
+
+# Utilities
+once_cell = { workspace = true }
+
+# Sync primitives
+parking_lot = { workspace = true }
+
+# Date/time
+chrono = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

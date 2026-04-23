@@ -1,6 +1,7 @@
 // MCP HTTP Handlers
 // HTTP endpoint handlers for MCP protocol (tools/list + tools/call)
 
+use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -13,7 +14,6 @@ use serde_json::Value;
 use std::time::Instant;
 
 use crate::{
-    dto::response::builder::ApiResponseBuilder,
     shared::app_state::AppState,
 };
 
@@ -173,13 +173,11 @@ async fn extract_api_key(
     }
 
     // Verify key has not expired
-    if let Some(expires_at) = &api_key.expires_at {
-        if let Ok(expires) = chrono::DateTime::parse_from_rfc3339(expires_at) {
-            if expires < chrono::Utc::now() {
+    if let Some(expires_at) = &api_key.expires_at
+        && let Ok(expires) = chrono::DateTime::parse_from_rfc3339(expires_at)
+            && expires < chrono::Utc::now() {
                 return Err(ToolError::Unauthorized("API key has expired".into()));
             }
-        }
-    }
 
     Ok(McpAuthContext {
         workspace_id: api_key.workspace_id.clone(),

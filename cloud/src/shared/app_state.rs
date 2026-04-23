@@ -1,10 +1,11 @@
-use crate::dto::entity::device_property::DeviceProperty;
+use tinyiothub_core::models::device_property::DeviceProperty;
 use std::{path::PathBuf, sync::Arc};
 
 use tokio::sync::OnceCell;
 
+use tinyiothub_storage::cache::DeviceCache;
+
 use crate::{
-    application::data_context::DataContext,
     domain::{
         agent::memory_service::MemoryService,
         device::{
@@ -30,9 +31,10 @@ use crate::{
             EventBus, SseConnectionManager,
         },
         persistence::{
+            factory::DeviceRepositoryFactory,
             repositories::{
-                NotificationHistoryRepositoryImpl, SqliteEventRepository,
-                SqliteRealTimeEventRepository, SqliteDeviceMemoryRepository,
+                NotificationHistoryRepositoryImpl,
+                SqliteEventRepository, SqliteRealTimeEventRepository, SqliteDeviceMemoryRepository,
             },
             Database,
         },
@@ -50,15 +52,18 @@ use crate::{
 /// 4. 清晰的依赖关系 - 所有依赖在启动时解析
 #[derive(Clone)]
 pub struct AppState {
-    /// 核心数据上下文 - 设备缓存和基础操作
-    pub data_context: Arc<DataContext>,
+    /// 设备内存缓存
+    pub device_cache: Arc<DeviceCache>,
 
     /// 数据库连接池
     pub database: Arc<Database>,
 
+    /// 设备仓库工厂 - 用于创建租户感知的设备仓库
+    pub device_repository_factory: Arc<DeviceRepositoryFactory>,
+
     /// === 应用服务层 ===
     /// 数据服务器 - 设备数据采集和命令执行
-    pub data_server: Option<Arc<crate::application::data_server::DataServer>>,
+    pub data_server: Option<Arc<tinyiothub_engine::application::DataServer>>,
 
     /// === 领域服务层 ===
     /// 设备基础服务 - CRUD 操作
@@ -123,6 +128,9 @@ pub struct AppState {
     /// 标签服务 - CRUD 操作
     pub tag_service: Arc<crate::domain::tag::service::TagService>,
 
+    /// 标签仓库 - 用于设备服务的标签关联
+    pub tag_repository: Arc<dyn crate::domain::tag::repository::TagRepository>,
+
     /// 角色服务 - CRUD 操作
     pub role_service: Arc<crate::domain::role::service::RoleService>,
 
@@ -157,9 +165,12 @@ impl AppState {
     /// 2. 依赖管理 - 清晰的服务依赖关系
     /// 3. 测试友好 - 便于单元测试和集成测试
     /// 4. 类型安全 - 编译时检查所有依赖
-    pub fn new(data_context: Arc<DataContext>) -> Self {
+    pub fn new(device_cache: Arc<DeviceCache>, db_pool: sqlx::SqlitePool) -> Self {
         // 创建共享的数据库连接
-        let database = Arc::new(data_context.database());
+        let database = Arc::new(Database::new(db_pool));
+
+        // 创建设备仓库工厂
+        let device_repository_factory = Arc::new(DeviceRepositoryFactory::new(database.clone()));
 
         // === 创建领域服务 ===
         // 按照依赖关系顺序创建，避免循环依赖
@@ -188,8 +199,8 @@ impl AppState {
         let alarm_rule_repository = Arc::new(AlarmRuleRepositoryImpl::new(database.clone()));
         let alarm_service = Arc::new(AlarmService::new(alarm_repository, alarm_rule_repository));
 
-        // 创建SSE管理器（带 DataContext 用于设备 workspace 查找）
-        let sse_manager = Arc::new(SseConnectionManager::with_data_context(data_context.clone()));
+        // 创建SSE管理器（带 DeviceCache 用于设备 workspace 查找）
+        let sse_manager = Arc::new(SseConnectionManager::new());
 
         // 注册事件处理器将在异步初始化中完成
         // 这里只创建事件总线，处理器注册推迟到 register_event_handlers() 方法
@@ -220,15 +231,14 @@ impl AppState {
 
         // 监控服务 - 依赖数据库和上下文
         let monitoring_service =
-            Arc::new(DeviceMonitoringService::new(database.clone(), data_context.clone()));
+            Arc::new(DeviceMonitoringService::new(database.clone(), device_cache.clone()));
 
         // 性能服务 - 依赖数据库和上下文
         let performance_service =
-            Arc::new(DevicePerformanceService::new(database.clone(), data_context.clone()));
+            Arc::new(DevicePerformanceService::new(database.clone(), device_cache.clone()));
 
-        // 追踪服务 - 依赖数据库和上下文
-        let trace_service =
-            Arc::new(DeviceTraceService::new(database.clone(), data_context.clone()));
+        // 追踪服务 - 仅依赖数据库
+        let trace_service = Arc::new(DeviceTraceService::new(database.clone()));
 
         // 模板引擎 - 复合服务，依赖仓库和验证器
         let template_repository =
@@ -245,8 +255,7 @@ impl AppState {
         let redis = crate::infrastructure::config::get()
             .redis
             .as_ref()
-            .map(|config| RedisClient::new(&config.url).ok())
-            .flatten();
+            .and_then(|config| RedisClient::new(&config.url).ok());
 
         // Agent Runtime - 使用 zeroclaw 内置的 OpenAiCompatibleProvider (MiniMax)
         let minimax_config = crate::infrastructure::config::get().minimax.clone()
@@ -296,7 +305,7 @@ impl AppState {
 
         // 标签服务
         let tag_service = Arc::new(crate::domain::tag::service::TagService::new(
-            tag_repository,
+            tag_repository.clone(),
             tag_binding_repository,
         ));
 
@@ -346,12 +355,10 @@ impl AppState {
         let session_service = Arc::new(crate::application::agent::SessionService::new(Arc::clone(&session_repository)));
 
         // 聊天服务 - 编排 Agent 聊天、会话、记忆上下文
-        let compact_service = Arc::new(crate::domain::agent::compact_service::CompactService);
         let chat_service = Arc::new(crate::application::agent::ChatService::new(
             agent_runtime.clone(),
             session_repository,
             agent_memory_service.clone(),
-            compact_service,
             crate::application::agent::ChatServiceConfig {
                 system_prompts: agent_settings.system_prompts.clone(),
                 max_messages_before_compact: agent_settings.max_messages_before_compact,
@@ -360,8 +367,9 @@ impl AppState {
         ));
 
         Self {
-            data_context,
+            device_cache,
             database,
+            device_repository_factory,
             data_server: None, // DataServer 由 ServiceManager 设置
             device_service,
             device_query_service,
@@ -383,6 +391,7 @@ impl AppState {
             tenant_service,
             workspace_service,
             tag_service,
+            tag_repository,
             role_service,
             permission_service,
             product_service,
@@ -397,13 +406,13 @@ impl AppState {
     /// 设置数据服务器（由 ServiceManager 调用）
     pub fn set_data_server(
         &mut self,
-        data_server: Arc<crate::application::data_server::DataServer>,
+        data_server: Arc<tinyiothub_engine::application::DataServer>,
     ) {
         self.data_server = Some(data_server);
     }
 
     /// 获取数据服务器
-    pub fn data_server(&self) -> Option<&crate::application::data_server::DataServer> {
+    pub fn data_server(&self) -> Option<&tinyiothub_engine::application::DataServer> {
         self.data_server.as_ref().map(|ds| ds.as_ref())
     }
 
@@ -422,8 +431,41 @@ impl AppState {
         self.database.pool().clone()
     }
 
+    /// 获取租户感知的设备服务
+    ///
+    /// 使用设备仓库工厂创建针对特定工作空间的租户感知设备仓库，
+    /// 并基于该仓库创建设备服务。
+    ///
+    /// 获取租户感知的设备服务（接受字符串 workspace_id）
+    pub fn tenant_device_service_str(&self, workspace_id: &str) -> Arc<DeviceService> {
+        let repository = self.device_repository_factory.create_for_workspace(workspace_id.to_string());
+        Arc::new(DeviceService::new(repository, self.database.clone())
+            .with_tag_repository(self.tag_repository.clone()))
+    }
+
+    /// 如果 workspace_id 为 None，返回原始仓库（无租户过滤，向后兼容）。
+    pub fn tenant_device_service(&self, workspace_id: &Option<String>) -> Arc<DeviceService> {
+        let repository = if let Some(ws_id) = workspace_id {
+            // 使用工厂创建租户感知的设备仓库
+            self.device_repository_factory.create_for_workspace(ws_id.clone())
+        } else {
+            // 返回原始仓库（无租户过滤，向后兼容）
+            self.device_repository_factory.raw_repository()
+        };
+
+        // 创建设备服务（使用现有的事件总线和标签仓库）
+        Arc::new(
+            DeviceService::with_event_bus(
+                repository,
+                self.database.clone(),
+                self.event_bus.clone(),
+            )
+            .with_tag_repository(self.tag_repository.clone())
+        )
+    }
+
     // === 兼容性方法 ===
-    // 这些方法提供对 DataContext 的直接访问，
+    // 这些方法提供对 DeviceCache 的直接访问，
     // 用于渐进式迁移，避免一次性修改所有代码
 
     /// 通过设备名称和属性名称获取属性
@@ -432,30 +474,89 @@ impl AppState {
         device_name: &str,
         property_name: &str,
     ) -> Option<DeviceProperty> {
-        self.data_context.get_device_prop_by_name(device_name, property_name)
+        self.device_cache.get_by_name(device_name).and_then(|d| d.properties.as_ref().and_then(|props| props.iter().find(|p| p.name == property_name).cloned()))
     }
 
     /// 更新设备属性值
+    ///
+    /// 通过发布 PropertyChange 事件解耦：
+    /// 1.  cloud 层只负责验证 + 发布事件
+    /// 2.  engine::DataServer 作为 EventHandler 接收事件并更新 DeviceCache
     pub async fn update_device_property_value(
         &self,
+        workspace_id: &str,
         device_id: &str,
         property_id: &str,
         value: &str,
     ) -> Result<(), Error> {
-        self.data_context
-            .as_ref()
-            .update_device_property_value(device_id, property_id, value, Some(&self.event_bus))
+        use tinyiothub_core::models::event::{
+            ContentElement, EventSource, RichContent, TextFormat,
+        };
+
+        // 1. 验证设备存在且属于指定的workspace
+        let tenant_device_service = self.tenant_device_service(&Some(workspace_id.to_string()));
+        let device = match tenant_device_service.get_device_by_id(device_id).await? {
+            Some(d) => d,
+            None => return Err(Error::NotFound),
+        };
+
+        // 2. 验证属性存在且属于该设备
+        let property = match
+            crate::infrastructure::persistence::repositories::find_device_property_by_id(
+                self.database(),
+                property_id,
+            )
             .await
+        {
+            Ok(Some(p)) if p.device_id == device_id => p,
+            Ok(Some(_)) => {
+                return Err(Error::ValidationError(
+                    "Property does not belong to device".to_string(),
+                ));
+            }
+            Ok(None) => return Err(Error::NotFound),
+            Err(e) => return Err(Error::IOError(format!("DB error: {}", e))),
+        };
+
+        // 3. 构造并发布 PropertyChange 事件
+        let source = EventSource::device_property(
+            device_id.to_string(),
+            property_id.to_string(),
+            format!("{}:{}", device_id, property_id),
+        );
+
+        let device_display_name =
+            device.display_name.as_deref().unwrap_or(&device.name);
+        let content = RichContent::new(
+            format!(
+                "Property Changed: {} - {}",
+                device_display_name, property.name
+            ),
+            vec![ContentElement::Text {
+                content: format!("Current value: {}", value),
+                format: TextFormat::Plain,
+            }],
+        );
+
+        let event = tinyiothub_core::models::event::Event::new_property_change_event(
+            device_id.to_string(),
+            property_id.to_string(),
+            source,
+            content,
+        )
+        .map_err(|e| Error::ValidationError(e.to_string()))?;
+
+        self.event_bus
+            .publish(event)
+            .await
+            .map_err(|e| Error::IOError(e.to_string()))?;
+
+        Ok(())
     }
 
-    /// 获取设备
-    pub fn get_device(&self, device_id: &str) -> Option<crate::dto::entity::device::Device> {
-        self.data_context.get_device(device_id)
-    }
-
-    /// 设置设备
-    pub fn set_device(&self, device: crate::dto::entity::device::Device) {
-        self.data_context.set_device(device)
+    /// 获取设备（从缓存读取实时状态）
+    pub fn get_device(&self, device_id: &str) -> Option<tinyiothub_core::models::device::Device> {
+        self.device_cache.get(device_id)
     }
 
     /// 获取模板引擎
@@ -513,8 +614,7 @@ impl AppState {
                 .secure_event_service
                 .get()
                 .ok_or_else(|| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Box::new(std::io::Error::other(
                         "Failed to get secure event service",
                     ))
                 })
@@ -524,8 +624,7 @@ impl AppState {
                 self.secure_event_service
                     .get()
                     .ok_or_else(|| -> Box<dyn std::error::Error + Send + Sync> {
-                        Box::new(std::io::Error::new(
-                            std::io::ErrorKind::Other,
+                        Box::new(std::io::Error::other(
                             "Failed to get secure event service",
                         ))
                     })
@@ -590,12 +689,13 @@ impl AppState {
         let database_url = format!("sqlite://{}", db_path.to_str().unwrap());
         let pool = sqlx::SqlitePool::connect(&database_url).await.unwrap();
 
-        // Run migrations
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        crate::infrastructure::persistence::test_helpers::run_all_migrations(&pool)
+            .await
+            .unwrap();
 
-        let data_context = DataContext::new_with_pool(pool).await.unwrap();
+        let device_cache = Arc::new(DeviceCache::new());
 
-        Self::new(data_context)
+        Self::new(device_cache, pool)
     }
 }
 

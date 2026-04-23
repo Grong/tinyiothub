@@ -8,6 +8,8 @@
 //
 // Supported files: IDENTITY.md, SOUL.md, AGENTS.md, USER.md, TOOLS.md, MEMORY.md, HEARTBEAT.md, BOOTSTRAP.md
 
+use crate::shared::security::jwt::Claims;
+use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
     extract::{Path, State},
     response::Json,
@@ -16,10 +18,10 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::{
-    api::middleware::workspace::WorkspaceScope,
-    dto::response::{builder::ApiResponseBuilder, ApiResponse},
-    shared::{app_state::AppState, security::jwt::Claims},
+    dto::response::{ApiResponse},
+    shared::{app_state::AppState},
 };
+use crate::api::middleware::WorkspaceScope;
 
 /// Supported workspace files (pub(crate) for testing)
 pub(crate) const WORKSPACE_FILES: &[&str] = &[

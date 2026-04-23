@@ -7,11 +7,10 @@ const DEFAULT_SN: &str = "TINYIOTHUB-DEFAULT-001";
 
 /// Initialize serial number configuration
 pub fn init_sn_config() {
-    if !Path::new(SN_FILE).exists() {
-        if let Err(e) = fs::write(SN_FILE, DEFAULT_SN) {
+    if !Path::new(SN_FILE).exists()
+        && let Err(e) = fs::write(SN_FILE, DEFAULT_SN) {
             tracing::error!("Failed to create SN file: {}", e);
         }
-    }
 }
 
 /// Get device serial number

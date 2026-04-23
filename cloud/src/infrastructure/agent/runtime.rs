@@ -483,12 +483,11 @@ impl AgentClient for AgentRuntimeImpl {
         let run_id = run_id.map(String::from);
         let chat_handles = Arc::clone(&self.chat_handles);
         Box::pin(async move {
-            if let Some(rid) = run_id {
-                if let Some(handle) = chat_handles.lock().await.remove(&rid) {
+            if let Some(rid) = run_id
+                && let Some(handle) = chat_handles.lock().await.remove(&rid) {
                     handle.abort();
                     tracing::info!("Aborted chat run {}", rid);
                 }
-            }
             Ok(())
         })
     }

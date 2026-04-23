@@ -270,11 +270,10 @@ impl EventEncryption for AesEventEncryption {
         }
 
         // Check metadata for sensitive markers
-        if let Some(metadata) = content.metadata().get("sensitive") {
-            if let Some(is_sensitive) = metadata.as_bool() {
+        if let Some(metadata) = content.metadata().get("sensitive")
+            && let Some(is_sensitive) = metadata.as_bool() {
                 return is_sensitive;
             }
-        }
 
         false
     }

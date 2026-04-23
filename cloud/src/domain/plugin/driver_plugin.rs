@@ -2,7 +2,7 @@
 //!
 //! 将现有驱动系统（DriverWrapper）适配为插件系统（PluginHandler）
 
-use crate::dto::entity::device::Device;
+use tinyiothub_core::models::device::Device;
 use std::{any::Any, sync::Arc};
 
 use crate::{
@@ -25,7 +25,7 @@ impl DriverPluginHandler {
         driver_name: String,
         version: String,
         device: Device,
-        context: Arc<AppContext>,
+        _context: Arc<AppContext>,
     ) -> Result<Self, Error> {
         let manifest = PluginManifest {
             name: driver_name.clone(),
@@ -35,7 +35,7 @@ impl DriverPluginHandler {
         };
 
         let driver =
-            create_driver(&driver_name, &device, context.data_context.clone())?;
+            create_driver(&driver_name, &device)?;
 
         Ok(Self { driver, manifest })
     }
@@ -74,7 +74,7 @@ pub fn register_builtin_drivers(registry: &crate::domain::plugin::PluginRegistry
     let driver_infos = get_driver_list();
     let driver_names = get_supported_driver_names();
 
-    for (info, name) in driver_infos.into_iter().zip(driver_names.into_iter()) {
+    for (info, name) in driver_infos.into_iter().zip(driver_names) {
         // Clone description for use in both manifest and closure
         let desc_clone = info.description.clone();
         let manifest = PluginManifest {
@@ -86,7 +86,7 @@ pub fn register_builtin_drivers(registry: &crate::domain::plugin::PluginRegistry
 
         // 创建立厂函数闭包
         let driver_name = info.name.clone();
-        let factory = Box::new(move |app_context: Arc<AppContext>| {
+        let factory = Box::new(move |_app_context: Arc<AppContext>| {
             // 创建设备的最小实例用于获取配置
             // 注意：实际设备会通过 MQTT 或其他方式传入，这里只注册类型
             let device = Device {
@@ -96,7 +96,7 @@ pub fn register_builtin_drivers(registry: &crate::domain::plugin::PluginRegistry
                 ..Default::default()
             };
 
-            let driver = create_driver(&driver_name, &device, app_context.data_context.clone())
+            let driver = create_driver(&driver_name, &device)
                 .map_err(|e| crate::shared::error::Error::Internal(e.to_string()))?;
 
             Ok(Box::new(DriverPluginHandler {

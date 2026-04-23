@@ -12,7 +12,7 @@ use super::action::{Action, ActionResult};
 use super::condition::{Condition, TriggerContext, TriggerType};
 use crate::domain::automation::evaluator::ConditionEvaluator;
 use crate::domain::automation::executor::ActionExecutor;
-use crate::application::data_server::DataServer;
+use tinyiothub_engine::application::DataServer;
 use crate::domain::event::services::notification_service::NotificationManager;
 
 /// 自动化规则服务

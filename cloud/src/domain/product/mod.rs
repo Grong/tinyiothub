@@ -1,5 +1,5 @@
 pub mod repository;
 pub mod service;
 
-pub use repository::ProductRepository;
+pub use repository::*;
 pub use service::ProductService;

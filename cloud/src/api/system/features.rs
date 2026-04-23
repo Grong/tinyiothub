@@ -1,9 +1,10 @@
+use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{extract::State, routing::get, Json, Router};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    dto::response::{builder::ApiResponseBuilder, ApiResponse},
+    dto::response::{ApiResponse},
     shared::app_state::AppState,
 };
 

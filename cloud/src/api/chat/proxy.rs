@@ -1,3 +1,5 @@
+use crate::shared::security::jwt::Claims;
+use tinyiothub_web::response::ApiResponseBuilder;
 use std::collections::HashMap;
 
 use axum::{
@@ -10,8 +12,8 @@ use async_stream::stream;
 use crate::{
     application::agent::ChatRequest,
     api::mcp::handlers::{McpAuthContext, McpContextGuard},
-    dto::response::{api_response::ApiResponse, builder::ApiResponseBuilder},
-    shared::{app_state::AppState, security::jwt::Claims},
+    dto::response::ApiResponse,
+    shared::{app_state::AppState},
 };
 
 use super::types::*;
@@ -33,7 +35,7 @@ pub async fn chat_stream(
 
     // session_key format: agent:<agentId>:<mainKey>/<sess_uuid>
     // Extract workspace_id from the second colon-separated segment
-    let workspace_id = req.session_key.split(':').nth(1).map(|s| s.split('/').next()).flatten();
+    let workspace_id = req.session_key.split(':').nth(1).and_then(|s| s.split('/').next());
     let system_prompts = &crate::infrastructure::config::get().agent.system_prompts;
     let full_prompt = crate::infrastructure::agent::build_full_system_prompt(
         system_prompts,
@@ -59,7 +61,7 @@ pub async fn chat_stream(
     let mut chat_stream = match state.chat_service.chat(chat_request).await {
         Ok(stream) => stream,
         Err(e) => {
-            let err: Json<ApiResponse<()>> = ApiResponseBuilder::error(&format!("Chat stream failed: {}", e));
+            let err: Json<ApiResponse<()>> = ApiResponseBuilder::error(format!("Chat stream failed: {}", e));
             return err.into_response();
         }
     };
@@ -84,7 +86,7 @@ pub async fn chat_history(
     let limit = query.limit.unwrap_or(200);
     match state.chat_service.get_history(&query.session_key, limit).await {
         Ok(data) => ApiResponseBuilder::success(data),
-        Err(e) => ApiResponseBuilder::error(&format!("Failed to load chat history: {}", e)),
+        Err(e) => ApiResponseBuilder::error(format!("Failed to load chat history: {}", e)),
     }
 }
 
@@ -97,7 +99,7 @@ pub async fn chat_abort(
     let run_id_ref = req.run_id.as_deref();
     match state.chat_service.abort_chat(&req.session_key, run_id_ref).await {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({"aborted": true})),
-        Err(e) => ApiResponseBuilder::error(&format!("Abort failed: {}", e)),
+        Err(e) => ApiResponseBuilder::error(format!("Abort failed: {}", e)),
     }
 }
 
@@ -120,7 +122,7 @@ pub async fn list_sessions(
         .await
     {
         Ok(sessions) => ApiResponseBuilder::success(serde_json::json!({ "sessions": sessions })),
-        Err(e) => ApiResponseBuilder::error(&format!("Failed to list sessions: {}", e)),
+        Err(e) => ApiResponseBuilder::error(format!("Failed to list sessions: {}", e)),
     }
 }
 
@@ -133,7 +135,7 @@ pub async fn update_session_label(
 ) -> Json<ApiResponse<serde_json::Value>> {
     match state.session_service.update_label(&session_key, &req.label).await {
         Ok(session) => ApiResponseBuilder::success(serde_json::json!({ "session": session })),
-        Err(e) => ApiResponseBuilder::error(&format!("Failed to update session label: {}", e)),
+        Err(e) => ApiResponseBuilder::error(format!("Failed to update session label: {}", e)),
     }
 }
 
@@ -145,7 +147,7 @@ pub async fn delete_session(
 ) -> Json<ApiResponse<serde_json::Value>> {
     match state.session_service.delete_session(&session_key).await {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({ "deleted": true })),
-        Err(e) => ApiResponseBuilder::error(&format!("Failed to delete session: {}", e)),
+        Err(e) => ApiResponseBuilder::error(format!("Failed to delete session: {}", e)),
     }
 }
 
@@ -156,7 +158,7 @@ pub async fn list_agents(
 ) -> Json<ApiResponse<serde_json::Value>> {
     match state.agent_runtime.list_agents().await {
         Ok(data) => ApiResponseBuilder::success(data),
-        Err(e) => ApiResponseBuilder::error(&format!("Failed to list agents: {}", e)),
+        Err(e) => ApiResponseBuilder::error(format!("Failed to list agents: {}", e)),
     }
 }
 
@@ -168,7 +170,7 @@ pub async fn get_agent_config(
 ) -> Json<ApiResponse<serde_json::Value>> {
     match state.agent_runtime.get_agent_config(&agent_id).await {
         Ok(data) => ApiResponseBuilder::success(data),
-        Err(e) => ApiResponseBuilder::error(&format!("Failed to get agent config: {}", e)),
+        Err(e) => ApiResponseBuilder::error(format!("Failed to get agent config: {}", e)),
     }
 }
 
@@ -187,7 +189,7 @@ pub async fn set_agent_config(
         .await
     {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({"saved": true})),
-        Err(e) => ApiResponseBuilder::error(&format!("Failed to save config: {}", e)),
+        Err(e) => ApiResponseBuilder::error(format!("Failed to save config: {}", e)),
     }
 }
 
@@ -200,7 +202,7 @@ pub async fn tools_catalog(
     let agent_id = params.get("agent_id").map(|s| s.as_str()).unwrap_or("");
     match state.agent_runtime.tools_catalog(agent_id).await {
         Ok(data) => ApiResponseBuilder::success(data),
-        Err(e) => ApiResponseBuilder::error(&format!("Failed to get tools catalog: {}", e)),
+        Err(e) => ApiResponseBuilder::error(format!("Failed to get tools catalog: {}", e)),
     }
 }
 
@@ -213,7 +215,7 @@ pub async fn tools_effective(
     let agent_id = params.get("agent_id").map(|s| s.as_str()).unwrap_or("");
     match state.agent_runtime.tools_effective(agent_id).await {
         Ok(data) => ApiResponseBuilder::success(data),
-        Err(e) => ApiResponseBuilder::error(&format!("Failed to get effective tools: {}", e)),
+        Err(e) => ApiResponseBuilder::error(format!("Failed to get effective tools: {}", e)),
     }
 }
 
@@ -229,6 +231,6 @@ pub async fn tools_toggle(
         .await
     {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({"toggled": true})),
-        Err(e) => ApiResponseBuilder::error(&format!("Failed to toggle tool: {}", e)),
+        Err(e) => ApiResponseBuilder::error(format!("Failed to toggle tool: {}", e)),
     }
 }

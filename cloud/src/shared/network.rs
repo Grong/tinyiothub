@@ -81,13 +81,11 @@ pub fn get_interface_ip(interface: &str) -> Option<String> {
             let output_str = String::from_utf8_lossy(&output.stdout);
             // Parse IP address from output
             // This is a simplified implementation
-            if let Some(line) = output_str.lines().find(|line| line.contains("inet ")) {
-                if let Some(ip_part) = line.split_whitespace().nth(1) {
-                    if let Some(ip) = ip_part.split('/').next() {
+            if let Some(line) = output_str.lines().find(|line| line.contains("inet "))
+                && let Some(ip_part) = line.split_whitespace().nth(1)
+                    && let Some(ip) = ip_part.split('/').next() {
                         return Some(ip.to_string());
                     }
-                }
-            }
             None
         }
         Err(_) => None,
@@ -107,11 +105,10 @@ pub fn get_default_gateway() -> Option<String> {
     match Command::new("ip").args(["route", "show", "default"]).output() {
         Ok(output) => {
             let output_str = String::from_utf8_lossy(&output.stdout);
-            if let Some(line) = output_str.lines().next() {
-                if let Some(gateway) = line.split_whitespace().nth(2) {
+            if let Some(line) = output_str.lines().next()
+                && let Some(gateway) = line.split_whitespace().nth(2) {
                     return Some(gateway.to_string());
                 }
-            }
             None
         }
         Err(_) => None,

@@ -3,19 +3,17 @@
 
 pub mod agent;
 pub mod cron_scheduler;
-pub mod data_context;
-pub mod data_server;
 pub mod service_manager;
-
-pub use data_context::DataContext;
 
 use std::sync::Arc;
 
-/// 应用上下文（所有插件共享）
+use tinyiothub_storage::cache::DeviceCache;
+
+/// Application context shared by plugins.
 pub struct AppContext {
-    pub data_context: Arc<DataContext>,
+    pub device_cache: Arc<DeviceCache>,
 }
-pub use data_server::DataServer;
+
 pub use service_manager::ServiceManager;
 
 // Re-export agent application services

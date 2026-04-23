@@ -1,3 +1,4 @@
+use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
     extract::State,
     routing::{get, post},
@@ -10,11 +11,11 @@ use crate::{
     dto::{
         response::{
             login::{RefreshTokenResponse, UserInfo},
-            ApiResponse, ApiResponseBuilder,
+            ApiResponse,
         },
     },
-    shared::security::jwt::Claims,
 };
+use crate::shared::security::jwt::Claims;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]

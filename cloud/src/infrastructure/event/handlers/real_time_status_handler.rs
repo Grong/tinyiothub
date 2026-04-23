@@ -24,13 +24,13 @@ impl RealTimeStatusHandler {
 
 #[async_trait::async_trait]
 impl EventHandler for RealTimeStatusHandler {
-    async fn handle(&self, event: &Event) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn handle(&self, event: &Event) -> tinyiothub_core::error::Result<()> {
         // 只处理需要更新实时状态的事件
         if event.level().should_update_real_time_status() {
             self.repository
                 .upsert_status(event)
                 .await
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+                .map_err(|e| tinyiothub_core::error::Error::Internal(e.to_string()))?;
         }
         Ok(())
     }

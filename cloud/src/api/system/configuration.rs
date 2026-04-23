@@ -1,3 +1,5 @@
+use crate::shared::security::jwt::Claims;
+use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
     extract::State,
     routing::{get, post},
@@ -6,8 +8,8 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    dto::response::{ApiResponse, ApiResponseBuilder},
-    shared::{app_state::AppState, security::jwt::Claims},
+    dto::response::ApiResponse,
+    shared::{app_state::AppState},
 };
 
 #[derive(Serialize, Deserialize, Debug)]

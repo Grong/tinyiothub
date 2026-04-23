@@ -22,7 +22,6 @@ fn map_cron_run_row(
     Ok(CronRun {
         id: row.try_get("id")?,
         job_id: row.try_get("job_id")?,
-        workspace_id: row.try_get("workspace_id")?,
         started_at: row.try_get("started_at")?,
         ended_at: row.try_get("ended_at")?,
         duration_ms: row.try_get("duration_ms")?,
@@ -40,7 +39,6 @@ impl CronRunRepository for SqliteCronRunRepository {
     async fn create(
         &self,
         job_id: &str,
-        workspace_id: &str,
         trigger_type: &str,
         triggered_by: Option<&str>,
     ) -> Result<CronRun> {
@@ -50,14 +48,13 @@ impl CronRunRepository for SqliteCronRunRepository {
         sqlx::query(
             r#"
             INSERT INTO cron_runs (
-                id, job_id, workspace_id, started_at, status,
+                id, job_id, started_at, status,
                 trigger_type, triggered_by, created_at
-            ) VALUES (?, ?, ?, ?, 'running', ?, ?, ?)
+            ) VALUES (?, ?, ?, 'running', ?, ?, ?)
             "#,
         )
         .bind(&id)
         .bind(job_id)
-        .bind(workspace_id)
         .bind(&now)
         .bind(trigger_type)
         .bind(triggered_by)
@@ -65,7 +62,7 @@ impl CronRunRepository for SqliteCronRunRepository {
         .execute(self.database.pool())
         .await?;
 
-        self.find_by_id(&id, workspace_id)
+        self.find_by_id(&id)
             .await?
             .ok_or(tinyiothub_core::error::Error::NotFound)
     }
@@ -73,7 +70,6 @@ impl CronRunRepository for SqliteCronRunRepository {
     async fn complete(
         &self,
         id: &str,
-        workspace_id: &str,
         status: &str,
         output: Option<&str>,
         error: Option<&str>,
@@ -89,7 +85,7 @@ impl CronRunRepository for SqliteCronRunRepository {
                 error_message = ?,
                 duration_ms = ?,
                 ended_at = ?
-            WHERE id = ? AND workspace_id = ?
+            WHERE id = ?
             "#,
         )
         .bind(status)
@@ -98,7 +94,6 @@ impl CronRunRepository for SqliteCronRunRepository {
         .bind(duration_ms)
         .bind(&now)
         .bind(id)
-        .bind(workspace_id)
         .execute(self.database.pool())
         .await?;
 
@@ -109,13 +104,12 @@ impl CronRunRepository for SqliteCronRunRepository {
         // Fetch the run back to return the updated entity
         let row = sqlx::query(
             r#"
-            SELECT id, job_id, workspace_id, started_at, ended_at, duration_ms, status,
+            SELECT id, job_id, started_at, ended_at, duration_ms, status,
                    output, error_message, trigger_type, triggered_by, created_at
-            FROM cron_runs WHERE id = ? AND workspace_id = ? LIMIT 1
+            FROM cron_runs WHERE id = ? LIMIT 1
             "#,
         )
         .bind(id)
-        .bind(workspace_id)
         .fetch_one(self.database.pool())
         .await?;
 
@@ -129,7 +123,7 @@ impl CronRunRepository for SqliteCronRunRepository {
     ) -> Result<Vec<CronRun>> {
         let mut builder = QueryBuilder::<sqlx::Sqlite>::new(
             r#"
-            SELECT id, job_id, workspace_id, started_at, ended_at, duration_ms, status,
+            SELECT id, job_id, started_at, ended_at, duration_ms, status,
                    output, error_message, trigger_type, triggered_by, created_at
             FROM cron_runs WHERE job_id = ?
             "#,
@@ -162,40 +156,37 @@ impl CronRunRepository for SqliteCronRunRepository {
         Ok(runs)
     }
 
-    async fn find_by_id(&self, id: &str, workspace_id: &str) -> Result<Option<CronRun>> {
+    async fn find_by_id(&self, id: &str) -> Result<Option<CronRun>> {
         let row = sqlx::query(
             r#"
-            SELECT id, job_id, workspace_id, started_at, ended_at, duration_ms, status,
+            SELECT id, job_id, started_at, ended_at, duration_ms, status,
                    output, error_message, trigger_type, triggered_by, created_at
-            FROM cron_runs WHERE id = ? AND workspace_id = ? LIMIT 1
+            FROM cron_runs WHERE id = ? LIMIT 1
             "#,
         )
         .bind(id)
-        .bind(workspace_id)
         .fetch_optional(self.database.pool())
         .await?;
 
         Ok(row.map(|r| map_cron_run_row(&r)).transpose()?)
     }
 
-    async fn delete_by_job_id(&self, job_id: &str, workspace_id: &str) -> Result<u64> {
+    async fn delete_by_job_id(&self, job_id: &str) -> Result<u64> {
         let result = sqlx::query(
-            "DELETE FROM cron_runs WHERE job_id = ? AND workspace_id = ?",
+            "DELETE FROM cron_runs WHERE job_id = ?",
         )
         .bind(job_id)
-        .bind(workspace_id)
         .execute(self.database.pool())
         .await?;
 
         Ok(result.rows_affected())
     }
 
-    async fn count_by_job_id(&self, job_id: &str, workspace_id: &str) -> Result<i64> {
+    async fn count_by_job_id(&self, job_id: &str) -> Result<i64> {
         let row = sqlx::query(
-            "SELECT COUNT(*) as count FROM cron_runs WHERE job_id = ? AND workspace_id = ?",
+            "SELECT COUNT(*) as count FROM cron_runs WHERE job_id = ?",
         )
         .bind(job_id)
-        .bind(workspace_id)
         .fetch_one(self.database.pool())
         .await?;
 
@@ -203,11 +194,10 @@ impl CronRunRepository for SqliteCronRunRepository {
         Ok(count)
     }
 
-    async fn count_by_status(&self, workspace_id: &str, status: &str) -> Result<i64> {
+    async fn count_by_status(&self, status: &str) -> Result<i64> {
         let row = sqlx::query(
-            "SELECT COUNT(*) as count FROM cron_runs WHERE workspace_id = ? AND status = ?",
+            "SELECT COUNT(*) as count FROM cron_runs WHERE status = ?",
         )
-        .bind(workspace_id)
         .bind(status)
         .fetch_one(self.database.pool())
         .await?;
@@ -218,17 +208,15 @@ impl CronRunRepository for SqliteCronRunRepository {
 
     async fn find_all(
         &self,
-        workspace_id: &str,
         query: &CronRunQuery,
     ) -> Result<Vec<CronRun>> {
         let mut builder = QueryBuilder::<sqlx::Sqlite>::new(
             r#"
-            SELECT id, job_id, workspace_id, started_at, ended_at, duration_ms, status,
+            SELECT id, job_id, started_at, ended_at, duration_ms, status,
                    output, error_message, trigger_type, triggered_by, created_at
-            FROM cron_runs WHERE workspace_id = ?
+            FROM cron_runs WHERE 1=1
             "#,
         );
-        builder.push_bind(workspace_id);
 
         if let Some(ref status) = query.status {
             builder.push(" AND status = ");
@@ -256,11 +244,10 @@ impl CronRunRepository for SqliteCronRunRepository {
         Ok(runs)
     }
 
-    async fn avg_duration_ms(&self, workspace_id: &str) -> Result<i64> {
+    async fn avg_duration_ms(&self) -> Result<i64> {
         let row = sqlx::query(
-            "SELECT COALESCE(AVG(duration_ms), 0) as avg FROM cron_runs WHERE workspace_id = ? AND duration_ms IS NOT NULL",
+            "SELECT COALESCE(AVG(duration_ms), 0) as avg FROM cron_runs WHERE duration_ms IS NOT NULL",
         )
-        .bind(workspace_id)
         .fetch_one(self.database.pool())
         .await?;
 

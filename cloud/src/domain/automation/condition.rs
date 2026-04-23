@@ -166,7 +166,7 @@ pub enum DeviceState {
 }
 
 impl DeviceState {
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "online" => DeviceState::Online,
             "offline" => DeviceState::Offline,
@@ -188,7 +188,7 @@ pub enum AlarmLevel {
 }
 
 impl AlarmLevel {
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "info" => AlarmLevel::Info,
             "warning" => AlarmLevel::Warning,
@@ -236,7 +236,7 @@ impl TriggerContext {
     }
     
     /// 从设备数据创建上下文
-    pub fn from_device(device: &crate::dto::entity::device::Device) -> Self {
+    pub fn from_device(device: &tinyiothub_core::models::device::Device) -> Self {
         let mut ctx = Self::new();
         ctx.device_id = Some(device.id.clone());
         ctx.device_name = Some(device.name.clone());

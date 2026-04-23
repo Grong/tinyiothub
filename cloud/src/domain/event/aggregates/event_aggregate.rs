@@ -25,9 +25,8 @@ impl EventAggregate {
         level: EventLevel,
         source: EventSource,
         content: RichContent,
-        workspace_id: Option<String>,
     ) -> Result<Self> {
-        let event = Event::new(event_type, level, source, content, workspace_id)?;
+        let event = Event::new(event_type, level, source, content)?;
 
         Ok(Self { event, metadata: HashMap::new(), version: 1 })
     }
@@ -162,7 +161,6 @@ mod tests {
             EventLevel::Info,
             EventSource::system("test".to_string(), None),
             RichContent::new_text("Test".to_string(), "Test content".to_string()),
-            None,
         )
         .unwrap()
     }
@@ -190,7 +188,6 @@ mod tests {
             EventLevel::Critical,
             EventSource::device("device-1".to_string(), Some("Device 1".to_string())),
             RichContent::new_text("Critical".to_string(), "Device connection lost".to_string()),
-            None,
         )
         .unwrap();
 

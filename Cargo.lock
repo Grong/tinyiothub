@@ -166,6 +166,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 
 [[package]]
+name = "assert-json-diff"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47e4f2b81832e72834d7518d8487a0396a28cc408186a2e8854c0f98011faf12"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "async-channel"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1161,6 +1171,24 @@ name = "data-encoding"
 version = "2.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
+
+[[package]]
+name = "deadpool"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0be2b1d1d6ec8d846f05e137292d0b89133caf95ef33695424c09568bdd39b1b"
+dependencies = [
+ "deadpool-runtime",
+ "lazy_static",
+ "num_cpus",
+ "tokio",
+]
+
+[[package]]
+name = "deadpool-runtime"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "092966b41edc516079bdf31ec78a2e0588d1d0c08f78b91d8307215928642b2b"
 
 [[package]]
 name = "deltae"
@@ -3339,6 +3367,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df94ce210e5bc13cb6651479fa48d14f601d9858cfe0467f43ae157023b938d3"
 
 [[package]]
+name = "pem"
+version = "3.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d30c53c26bc5b31a98cd02d20f25a7c8567146caf63ed593a9d87b2775291be"
+dependencies = [
+ "base64 0.22.1",
+ "serde_core",
+]
+
+[[package]]
 name = "pem-rfc7468"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4021,6 +4059,19 @@ checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
 dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
+]
+
+[[package]]
+name = "rcgen"
+version = "0.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75e669e5202259b5314d1ea5397316ad400819437857b90861765f24c4cf80a2"
+dependencies = [
+ "pem",
+ "ring",
+ "rustls-pki-types",
+ "time",
+ "yasna",
 ]
 
 [[package]]
@@ -5522,10 +5573,10 @@ dependencies = [
  "tinyiothub-config",
  "tinyiothub-core",
  "tinyiothub-engine",
- "tinyiothub-error",
  "tinyiothub-macros",
  "tinyiothub-plugin-sdk",
  "tinyiothub-storage",
+ "tinyiothub-web",
  "tokio",
  "tokio-cron-scheduler",
  "tokio-postgres",
@@ -5556,7 +5607,6 @@ dependencies = [
 name = "tinyiothub-core"
 version = "1.1.0"
 dependencies = [
- "async-trait",
  "chrono",
  "serde",
  "serde_json",
@@ -5629,21 +5679,23 @@ name = "tinyiothub-engine"
 version = "1.1.0"
 dependencies = [
  "async-trait",
+ "chrono",
+ "dashmap",
+ "libloading",
+ "moka",
+ "once_cell",
+ "parking_lot 0.12.5",
+ "rand 0.8.6",
  "serde",
  "serde_json",
+ "serialport",
  "thiserror 1.0.69",
  "tinyiothub-core",
+ "tinyiothub-macros",
+ "tinyiothub-plugin-sdk",
+ "tinyiothub-storage",
  "tokio",
-]
-
-[[package]]
-name = "tinyiothub-error"
-version = "1.1.0"
-dependencies = [
- "serde_json",
- "sqlx",
- "thiserror 1.0.69",
- "tinyiothub-core",
+ "tracing",
 ]
 
 [[package]]
@@ -5700,6 +5752,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "cron 0.12.1",
+ "dashmap",
  "rand 0.8.6",
  "serde",
  "serde_json",
@@ -5717,14 +5770,18 @@ version = "1.1.0"
 dependencies = [
  "async-trait",
  "axum",
+ "chrono",
+ "headers",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
  "tinyiothub-core",
+ "tinyiothub-engine",
  "tinyiothub-storage",
  "tokio",
  "tower",
  "tower-http",
+ "tracing",
 ]
 
 [[package]]
@@ -7121,6 +7178,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "wiremock"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08db1edfb05d9b3c1542e521aea074442088292f00b5f28e435c714a98f85031"
+dependencies = [
+ "assert-json-diff",
+ "base64 0.22.1",
+ "deadpool",
+ "futures",
+ "http 1.4.0",
+ "http-body-util",
+ "hyper 1.9.0",
+ "hyper-util",
+ "log",
+ "once_cell",
+ "regex",
+ "serde",
+ "serde_json",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "wit-bindgen"
 version = "0.51.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7231,6 +7311,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "yasna"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e17bb3549cc1321ae1296b9cdc2698e2b6cb1992adfa19a8c72e5b7a738f44cd"
+dependencies = [
+ "time",
+]
+
+[[package]]
 name = "yoke"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7294,6 +7383,7 @@ dependencies = [
  "prost",
  "rand 0.10.1",
  "ratatui",
+ "rcgen",
  "regex",
  "reqwest 0.12.28",
  "ring",
@@ -7304,6 +7394,7 @@ dependencies = [
  "rustls-pemfile 2.2.0",
  "rustls-pki-types",
  "schemars",
+ "scopeguard",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -7326,6 +7417,7 @@ dependencies = [
  "uuid",
  "webpki-roots 1.0.7",
  "which",
+ "wiremock",
  "zeroclaw-macros",
  "zip",
 ]

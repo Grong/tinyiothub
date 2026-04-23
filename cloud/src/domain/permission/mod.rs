@@ -1,5 +1,7 @@
+pub mod entity;
 pub mod repository;
 pub mod service;
 
-pub use repository::{PermissionRepository, PermissionGroupRepository};
+pub use entity::*;
+pub use repository::*;
 pub use service::PermissionService;

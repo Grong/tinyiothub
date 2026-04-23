@@ -85,7 +85,7 @@ pub async fn create_app_router(app_state: AppState) -> Router {
 async fn spa_handler(uri: axum::http::Uri) -> axum::response::Response {
     use axum::{
         http::StatusCode,
-        response::{IntoResponse, Response},
+        response::IntoResponse,
     };
 
     let path = uri.path();

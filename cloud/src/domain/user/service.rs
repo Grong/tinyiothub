@@ -5,7 +5,7 @@ use crate::dto::entity::user::{
 };
 use crate::{
     shared::error::{Error, Result},
-    shared::utils::password::verify_password,
+    shared::utils::password::{hash_password, verify_password},
 };
 
 use super::repository::{UserCriteria, UserRepository, UserSortBy, UserSortOrder};
@@ -41,14 +41,14 @@ impl UserService {
     /// Create a new user (hashes password before storing)
     pub async fn create_user(&self, request: &CreateUserRequest) -> Result<User> {
         if request.username.trim().is_empty() {
-            return Err(Error::ValidationError("用户名不能为空".to_string()));
+            return Err(Error::ValidationError("Username cannot be empty".to_string()));
         }
         if request.password.len() < 8 {
-            return Err(Error::ValidationError("密码长度不能少于8位".to_string()));
+            return Err(Error::ValidationError("Password must be at least 8 characters long".to_string()));
         }
 
-        let password_hash = crate::shared::utils::password::hash_password(&request.password)
-            .map_err(|e| Error::ValidationError(format!("密码哈希失败: {}", e)))?;
+        let password_hash = hash_password(&request.password)
+            .map_err(|e| Error::ValidationError(format!("Password hashing failed: {}", e)))?;
 
         let hashed_request = CreateUserRequest {
             username: request.username.clone(),
@@ -99,8 +99,8 @@ impl UserService {
 
         match verify_password(old_password, &user.password_hash) {
             Ok(true) => {
-                let new_hash = crate::shared::utils::password::hash_password(new_password)
-                    .map_err(|e| Error::ValidationError(format!("密码哈希失败: {}", e)))?;
+                let new_hash = hash_password(new_password)
+                    .map_err(|e| Error::ValidationError(format!("Password hashing failed: {}", e)))?;
                 self.repository.update_password(id, &new_hash).await?;
                 Ok(true)
             }
@@ -111,21 +111,23 @@ impl UserService {
 
     /// Update password (admin override)
     pub async fn update_password(&self, id: &str, new_password: &str) -> Result<()> {
-        let new_hash = crate::shared::utils::password::hash_password(new_password)
-            .map_err(|e| Error::ValidationError(format!("密码哈希失败: {}", e)))?;
+        let new_hash = hash_password(new_password)
+            .map_err(|e| Error::ValidationError(format!("Password hashing failed: {}", e)))?;
         self.repository.update_password(id, &new_hash).await
     }
 
     /// Authenticate user by username and password
     pub async fn authenticate(&self, username: &str, password: &str) -> Result<Option<User>> {
-        if let Some(user) = self.repository.find_by_username(username).await? {
-            match verify_password(password, &user.password_hash) {
-                Ok(true) if user.is_enabled => return Ok(Some(user)),
-                Ok(_) => return Ok(None),
-                Err(e) => return Err(Error::ValidationError(format!("password verification failed: {}", e))),
-            }
+        let Some(user) = self.repository.find_by_username(username).await? else {
+            return Ok(None);
+        };
+
+        match verify_password(password, &user.password_hash) {
+            Ok(true) if user.is_enabled => Ok(Some(user)),
+            Ok(true) => Ok(None), // User disabled
+            Ok(false) => Ok(None), // Password mismatch
+            Err(e) => Err(Error::ValidationError(format!("password verification failed: {}", e))),
         }
-        Ok(None)
     }
 
     /// Update last login time

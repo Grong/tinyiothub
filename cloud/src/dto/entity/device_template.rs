@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder, Row};
 
-use crate::infrastructure::persistence::database::Database;
+use crate::infrastructure::persistence::Database;
 
 /// 设备模板实体 - 使用 snake_case 数据库字段
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -162,9 +162,9 @@ pub struct DeviceCreationInput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct DevicePreview {
-    pub device_info: crate::dto::entity::device::CreateDeviceRequest,
-    pub properties: Vec<crate::dto::entity::device_property::CreateDevicePropertyRequest>,
-    pub commands: Vec<crate::dto::entity::device_command::CreateDeviceCommandRequest>,
+    pub device_info: tinyiothub_core::models::device::CreateDeviceRequest,
+    pub properties: Vec<tinyiothub_core::models::device_property::CreateDevicePropertyRequest>,
+    pub commands: Vec<tinyiothub_core::models::device_command::CreateDeviceCommandRequest>,
     pub warnings: Vec<String>,
 }
 

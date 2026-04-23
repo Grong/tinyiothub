@@ -1,9 +1,8 @@
-// Workspace entity
-
 use serde::{Deserialize, Serialize};
 
-/// Workspace entity — represents a physical/logical environment managed by AI
+/// Workspace entity
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct Workspace {
     pub id: String,
     pub name: String,
@@ -15,13 +14,57 @@ pub struct Workspace {
     pub updated_at: String,
 }
 
+/// Workspace with device count (for list responses)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct WorkspaceWithDeviceCount {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub tenant_id: String,
+    pub agent_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_count: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
+}
+
+/// Create workspace request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct CreateWorkspaceRequest {
+    pub name: String,
+    pub description: Option<String>,
+}
+
+/// Update workspace request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct UpdateWorkspaceRequest {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub agent_config: Option<String>,
+}
+
+/// Assign device request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct AssignDeviceRequest {
+    pub device_id: String,
+}
+
+/// Workspace query params
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct WorkspaceQueryParams {
+    pub page: Option<u32>,
+    pub page_size: Option<u32>,
+}
+
 impl Workspace {
-    pub fn new(
-        id: String,
-        name: String,
-        description: Option<String>,
-        tenant_id: String,
-    ) -> Self {
+    pub fn new(id: String, name: String, description: Option<String>, tenant_id: String) -> Self {
         let now = chrono::Utc::now().to_rfc3339();
         Self {
             id,
@@ -44,26 +87,4 @@ impl Workspace {
         self.agent_config = Some(config);
         self
     }
-}
-
-/// Input for creating a new workspace
-#[derive(Debug, Clone, Deserialize)]
-pub struct CreateWorkspaceInput {
-    pub name: String,
-    pub description: Option<String>,
-}
-
-/// Input for updating a workspace
-#[derive(Debug, Clone, Deserialize)]
-pub struct UpdateWorkspaceInput {
-    pub name: Option<String>,
-    pub description: Option<String>,
-    pub agent_config: Option<String>,
-}
-
-/// Input for assigning a device to a workspace
-#[derive(Debug, Clone, Deserialize)]
-pub struct AssignDeviceInput {
-    pub device_id: String,
-    pub workspace_id: String,
 }

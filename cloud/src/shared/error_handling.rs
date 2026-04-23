@@ -1,10 +1,11 @@
 // Unified error handling system for consistent API responses and performance monitoring
+use tinyiothub_web::response::ApiResponseBuilder;
 use std::time::Instant;
 
 use axum::response::Json;
 use tracing::{error, info, warn};
 
-use crate::dto::response::{builder::ApiResponseBuilder, ApiResponse};
+use crate::dto::response::{ApiResponse};
 
 /// Standard error codes for consistent API responses
 #[derive(Debug, Clone, Copy)]

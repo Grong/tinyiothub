@@ -1,45 +1,25 @@
-// [Comment removed due to encoding issues]
-pub mod component;
-
-pub mod device;
-
-pub mod device_command;
-
-pub mod device_property;
-
-pub mod job;
-
-pub mod cron_job;
-
-pub mod notification_channel;
-
-pub mod permission;
-
-pub mod product;
-
-pub mod role;
-
-pub mod tag;
-
-pub mod user;
-
-pub mod device_template;
-
-pub mod template_error;
-
-pub mod heartbeat;
-
-pub mod self_healing;
-// Re-export commonly used types (using actual struct names from the modules)
-
-pub use device::Device;
-pub use device_command::DeviceCommand;
-pub use device_property::DeviceProperty;
-
 pub mod alarm;
+pub mod device_template;
+pub mod heartbeat;
+pub mod product;
+pub mod self_healing;
+pub mod tag;
+pub mod template_error;
 
 pub use alarm::{AlarmDto, AlarmRuleDto, AlarmStatisticsDto};
 
-pub mod tenant;
+// SaaS entities - owned by cloud, re-exported from domain
+pub use crate::domain::tenant;
+pub use crate::domain::user;
+pub use crate::domain::workspace;
+pub use crate::domain::role;
+pub use crate::domain::permission;
 
-pub mod workspace;
+// IoT models from core (not SaaS)
+pub use tinyiothub_core::models::device;
+pub use tinyiothub_core::models::device_property;
+pub use tinyiothub_core::models::component;
+pub use tinyiothub_core::models::cron_job;
+pub use tinyiothub_core::models::device_command;
+pub use tinyiothub_core::models::job;
+pub use tinyiothub_core::models::notification_channel::*;

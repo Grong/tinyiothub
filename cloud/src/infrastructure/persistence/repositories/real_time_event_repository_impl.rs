@@ -120,7 +120,7 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
             }
             // Only acknowledged is set
             (_, Some(acknowledged))
-                if filter.device_ids.as_ref().map_or(true, |ids| ids.is_empty()) =>
+                if filter.device_ids.as_ref().is_none_or(|ids| ids.is_empty()) =>
             {
                 base_sql.push_str(" AND acknowledged = ?");
                 base_sql.push_str(" ORDER BY timestamp DESC");

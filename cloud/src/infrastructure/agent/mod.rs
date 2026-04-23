@@ -175,6 +175,18 @@ pub fn build_tools_catalog_json() -> serde_json::Value {
                 ]
             },
             {
+                "id": "workspace",
+                "label": "工作空间",
+                "source": "core",
+                "tools": [
+                    { "id": "workspace_list",   "name": "workspace_list",   "label": "查询工作空间列表", "description": "列出所有工作空间",                  "danger": false, "enabled": true },
+                    { "id": "workspace_get",    "name": "workspace_get",    "label": "获取工作空间详情", "description": "获取指定工作空间的详细信息",      "danger": false, "enabled": true },
+                    { "id": "workspace_create", "name": "workspace_create", "label": "创建工作空间",     "description": "创建新的工作空间",                  "danger": false, "enabled": true },
+                    { "id": "workspace_update", "name": "workspace_update", "label": "更新工作空间",     "description": "更新工作空间配置",                  "danger": false, "enabled": true },
+                    { "id": "workspace_delete", "name": "workspace_delete", "label": "删除工作空间",     "description": "删除指定工作空间",                  "danger": true,  "enabled": false },
+                ]
+            },
+            {
                 "id": "job",
                 "label": "任务管理",
                 "source": "core",
@@ -273,14 +285,13 @@ async fn load_workspace_prompt(workspace_dir: &std::path::Path) -> String {
 
     for (filename, section_name) in files {
         let file_path = workspace_dir.join(filename);
-        if file_path.exists() {
-            if let Ok(content) = fs::read_to_string(&file_path).await {
+        if file_path.exists()
+            && let Ok(content) = fs::read_to_string(&file_path).await {
                 let trimmed = content.trim();
                 if !trimmed.is_empty() {
                     sections.push(format!("## {}\n{}\n", section_name, trimmed));
                 }
             }
-        }
     }
 
     if sections.is_empty() {
@@ -390,7 +401,7 @@ async fn read_skill_dir(dir: &std::path::Path) -> String {
 
     let mut skill_files: Vec<_> = Vec::new();
     while let Some(entry) = entries.next_entry().await.unwrap_or(None) {
-        if entry.path().extension().map_or(false, |ext| ext == "md") {
+        if entry.path().extension().is_some_and(|ext| ext == "md") {
             skill_files.push(entry);
         }
     }

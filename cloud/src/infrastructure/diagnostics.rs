@@ -196,7 +196,7 @@ impl DiagnosticsService {
                 .ok_or_else(|| format!("Device {} not found", device_id))?;
 
             // Get property from data context (real-time) or database
-            let property_value = if let Some(cached) = state.data_context.get_device(device_id) {
+            let property_value = if let Some(cached) = state.device_cache.get(device_id) {
                 cached.properties.as_ref().and_then(|props| {
                     props.iter().find(|p| p.name == property_name).map(|p| {
                         (

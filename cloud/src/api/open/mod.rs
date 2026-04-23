@@ -1,6 +1,7 @@
 // Open API Module
 // Public API for AI platform integration
 
+use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
     body::Body,
     extract::{Path, State},
@@ -12,9 +13,7 @@ use axum::{
 use sqlx::Row;
 
 use crate::{
-    dto::{
-        response::{api_response::ApiResponse, builder::ApiResponseBuilder},
-    },
+    dto::response::ApiResponse,
     shared::app_state::AppState,
 };
 
@@ -52,13 +51,11 @@ async fn validate_api_key(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    if let Some(expires) = &key.expires_at {
-        if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(expires) {
-            if exp < chrono::Utc::now() {
+    if let Some(expires) = &key.expires_at
+        && let Ok(exp) = chrono::DateTime::parse_from_rfc3339(expires)
+            && exp < chrono::Utc::now() {
                 return Err(StatusCode::FORBIDDEN);
             }
-        }
-    }
 
     // Resolve tenant_id from workspace for quota check
     let workspace = state.workspace_service.find_by_id(&key.workspace_id)
@@ -129,9 +126,7 @@ async fn list_devices(
     let api_key = extract_api_key_header(&headers);
     let (key, _tenant, workspace_id) = validate_api_key(&state, api_key).await?;
 
-    let sql = format!(
-        "SELECT id, name, display_name, device_type, state, created_at FROM devices ORDER BY created_at DESC LIMIT 100"
-    );
+    let sql = "SELECT id, name, display_name, device_type, state, created_at FROM devices ORDER BY created_at DESC LIMIT 100".to_string();
 
     let rows = state
         .database
@@ -148,7 +143,7 @@ async fn list_devices(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let devices: Vec<_> = rows.into_iter().map(|r| r).collect();
+    let devices: Vec<_> = rows.into_iter().collect();
 
     let latency_ms = start.elapsed().as_millis() as i32;
     record_api_usage(
@@ -494,7 +489,7 @@ async fn list_all_events(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let events: Vec<_> = rows.into_iter().map(|r| r).collect();
+    let events: Vec<_> = rows.into_iter().collect();
 
     let latency_ms = start.elapsed().as_millis() as i32;
     record_api_usage(

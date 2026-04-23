@@ -1,4 +1,4 @@
-use crate::dto::entity::device::{Device, DeviceStats};
+use tinyiothub_core::models::device::{Device, DeviceStats};
 use async_trait::async_trait;
 use crate::{
     dto::response::{DeviceStatusDistribution, QuickDevice},

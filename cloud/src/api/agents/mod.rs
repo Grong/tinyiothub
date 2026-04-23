@@ -14,6 +14,7 @@ pub mod types;
 #[cfg(test)]
 mod tests;
 
+use crate::shared::security::jwt::Claims;
 use axum::{
     routing::get,
     Router,
@@ -38,7 +39,7 @@ pub fn create_router() -> Router<AppState> {
 /// GET /api/v1/agents
 async fn list_agents(
     state: axum::extract::State<AppState>,
-    claims: crate::shared::security::jwt::Claims,
+    claims: Claims,
 ) -> axum::Json<crate::dto::response::ApiResponse<serde_json::Value>> {
     chat_proxy::list_agents(state, claims).await
 }
@@ -47,7 +48,7 @@ async fn list_agents(
 async fn get_agent_config(
     state: axum::extract::State<AppState>,
     path: axum::extract::Path<String>,
-    claims: crate::shared::security::jwt::Claims,
+    claims: Claims,
 ) -> axum::Json<crate::dto::response::ApiResponse<serde_json::Value>> {
     chat_proxy::get_agent_config(state, path, claims).await
 }
@@ -56,7 +57,7 @@ async fn get_agent_config(
 async fn set_agent_config(
     state: axum::extract::State<AppState>,
     path: axum::extract::Path<String>,
-    claims: crate::shared::security::jwt::Claims,
+    claims: Claims,
     json: axum::Json<crate::api::agents::types::AgentConfigUpdateRequest>,
 ) -> axum::Json<crate::dto::response::ApiResponse<serde_json::Value>> {
     chat_proxy::set_agent_config(state, path, claims, json).await

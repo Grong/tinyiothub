@@ -152,8 +152,6 @@ pub struct DeviceCreationInput {
     pub product_id: Option<String>,
     pub property_values: HashMap<String, String>, // 属性默认值覆盖
     pub enabled_commands: Vec<String>,            // 用户选择启用的命令
-    pub tenant_id: Option<String>,               // Will be set from claims, not from request
-    pub workspace_id: Option<String>,            // Will be set from X-Workspace-Id header
 }
 
 /// 设备预览

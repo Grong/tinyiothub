@@ -37,7 +37,6 @@ pub struct Job {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct JobQueryParams {
-    pub workspace_id: Option<String>,
     pub name: Option<String>,
     pub job_type: Option<String>,
     pub is_enabled: Option<bool>,

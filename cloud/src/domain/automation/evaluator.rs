@@ -149,7 +149,7 @@ impl ConditionEvaluator {
         // 简化实现：检查事件数据中是否有告警信息
         if let Some(data) = &context.event_data {
             if let Some(alarm_level) = data.get("level").and_then(|v| v.as_str()) {
-                let ctx_level = super::condition::AlarmLevel::from_str(alarm_level);
+                let ctx_level = super::condition::AlarmLevel::parse_str(alarm_level);
                 
                 // 检查级别
                 match (level, ctx_level) {

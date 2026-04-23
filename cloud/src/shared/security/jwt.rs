@@ -1,8 +1,6 @@
 use axum::{
     extract::FromRequestParts,
-    http::{request::Parts, StatusCode},
-    response::{IntoResponse, Response},
-    Json,
+    http::request::Parts,
 };
 use chrono::{Duration as ChronoDuration, Local};
 use headers::{authorization::Bearer, Authorization, HeaderMapExt};
@@ -10,8 +8,46 @@ use hmac::{Hmac, Mac};
 use jwt_simple::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
+use tinyiothub_web::security::{AuthBody, Claims as WebClaims, AuthError as WebAuthError};
 
 type HmacSha256 = Hmac<Sha256>;
+
+/// Cloud-specific JWT claims with tenant and workspace isolation
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Claims {
+    pub user_id: String,
+    pub token_id: String,
+    pub username: String,
+    pub tenant_id: String,
+    pub workspace_id: String,
+    /// Expiration timestamp (seconds since epoch), extracted from JWT validation
+    #[serde(skip_serializing)]
+    pub exp: Option<i64>,
+}
+
+impl From<Claims> for WebClaims {
+    fn from(claims: Claims) -> Self {
+        WebClaims {
+            user_id: claims.user_id,
+            token_id: claims.token_id,
+            username: claims.username,
+            exp: claims.exp,
+        }
+    }
+}
+
+impl From<WebClaims> for Claims {
+    fn from(web_claims: WebClaims) -> Self {
+        Claims {
+            user_id: web_claims.user_id,
+            token_id: web_claims.token_id,
+            username: web_claims.username,
+            tenant_id: String::new(), // Default empty, caller should fill from JWT custom claims
+            workspace_id: String::new(),
+            exp: web_claims.exp,
+        }
+    }
+}
 
 // 获取 JWT 密钥的辅助函数 - 从统一配置读取
 fn get_jwt_key() -> Result<HS256Key, String> {
@@ -129,6 +165,7 @@ fn verify_harmonyos_token(token: &str) -> Result<Claims, String> {
         token_id: timestamp.to_string(),
         username: username.to_string(),
         tenant_id: tenant_id.to_string(),
+        workspace_id: String::new(),
         exp: Some(timestamp + 86400),
     })
 }
@@ -138,48 +175,6 @@ pub struct AuthPayload {
     pub id: String,
     pub name: String,
     pub tenant_id: String,
-}
-
-// JWT Claims 结构体
-// 注意：exp 由 jwt-simple 自动管理，但我们需要在验证后获取它
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Claims {
-    pub user_id: String,
-    pub token_id: String,
-    pub username: String,
-    pub tenant_id: String,
-    // 从 JWT 验证结果中提取的过期时间（不参与序列化到 JWT）
-    #[serde(skip_serializing)]
-    pub exp: Option<i64>,
-}
-
-// Axum 的 JWT Claims 提取器
-impl<S> FromRequestParts<S> for Claims
-where
-    S: Send + Sync,
-{
-    type Rejection = AuthError;
-
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        // Try Authorization header first
-        if let Some(auth_header) = parts.headers.typed_get::<Authorization<Bearer>>() {
-            return validate_jwt(auth_header.token()).map_err(AuthError::InvalidToken);
-        }
-
-        // Fallback: query string ?token=xxx (needed for EventSource which can't set headers)
-        if let Some(query) = parts.uri.query() {
-            for pair in query.split('&') {
-                let mut kv = pair.splitn(2, '=');
-                if kv.next() == Some("token") {
-                    if let Some(token) = kv.next() {
-                        return validate_jwt(token).map_err(AuthError::InvalidToken);
-                    }
-                }
-            }
-        }
-
-        Err(AuthError::MissingToken)
-    }
 }
 
 // 使用 jwt-simple 创建 JWT
@@ -208,6 +203,7 @@ pub fn create_jwt(payload: AuthPayload) -> Result<AuthBody, String> {
         token_id: token_id.clone(),
         username: payload.name.clone(),
         tenant_id: payload.tenant_id.clone(),
+        workspace_id: String::new(),
         exp: None, // 不设置，让 jwt-simple 自动管理
     };
 
@@ -256,6 +252,7 @@ pub fn validate_jwt(token: &str) -> Result<Claims, String> {
         token_id: jwt_claims.custom.token_id,
         username: jwt_claims.custom.username,
         tenant_id: jwt_claims.custom.tenant_id,
+        workspace_id: jwt_claims.custom.workspace_id,
         exp,
     })
 }
@@ -293,39 +290,32 @@ pub fn generate_token(user_id: &str, username: &str, tenant_id: &str) -> Result<
     Ok(auth_body.token)
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct AuthBody {
-    pub token: String,
-    token_type: String,
-    pub exp: i64,
-    expired: i64,
-}
+/// 为 Cloud Claims 实现 FromRequestParts，使其可以直接在 handler 中作为 extractor 使用
+impl<S> FromRequestParts<S> for Claims
+where
+    S: Send + Sync,
+{
+    type Rejection = WebAuthError;
 
-impl AuthBody {
-    fn new(access_token: String, exp: i64, exp_in: i64) -> Self {
-        Self { token: access_token, token_type: "Bearer".to_string(), exp, expired: exp_in }
-    }
-}
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        // Try Authorization header first
+        if let Some(auth_header) = parts.headers.typed_get::<Authorization<Bearer>>() {
+            let token = auth_header.token();
+            return validate_jwt(token).map_err(|e| WebAuthError::InvalidToken(e));
+        }
 
-// Axum 错误类型
-#[derive(Debug)]
-pub enum AuthError {
-    MissingToken,
-    InvalidToken(String),
-}
+        // Fallback: query string ?token=xxx (needed for EventSource which can't set headers)
+        if let Some(query) = parts.uri.query() {
+            for pair in query.split('&') {
+                let mut kv = pair.splitn(2, '=');
+                if kv.next() == Some("token") {
+                    if let Some(token) = kv.next() {
+                        return validate_jwt(token).map_err(|e| WebAuthError::InvalidToken(e));
+                    }
+                }
+            }
+        }
 
-impl IntoResponse for AuthError {
-    fn into_response(self) -> Response {
-        let (status, error_message) = match self {
-            AuthError::MissingToken => (StatusCode::UNAUTHORIZED, "Missing authorization token"),
-            AuthError::InvalidToken(_msg) => (StatusCode::UNAUTHORIZED, "Invalid token"),
-        };
-
-        let body = Json(serde_json::json!({
-            "error": error_message,
-            "status": status.as_u16()
-        }));
-
-        (status, body).into_response()
+        Err(WebAuthError::MissingToken)
     }
 }

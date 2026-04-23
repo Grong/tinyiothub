@@ -1,5 +1,7 @@
 // Workspaces API Module
 
+use crate::shared::security::jwt::Claims;
+use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
     extract::{Extension, Path, Query, State},
     routing::{delete, get, post, put},
@@ -12,8 +14,8 @@ use crate::dto::entity::workspace::{
     WorkspaceQueryParams, WorkspaceWithDeviceCount,
 };
 use crate::{
-    dto::response::{ApiResponse, builder::ApiResponseBuilder},
-    shared::{app_state::AppState, security::jwt::Claims},
+    dto::response::{ApiResponse},
+    shared::{app_state::AppState},
 };
 
 /// Create workspaces router
@@ -216,15 +218,14 @@ async fn delete_workspace(
     };
 
     // Try to delete Agent
-    if let Some(agent_id) = workspace.agent_id {
-        if let Err(e) = state.agent_runtime.delete_agent(&agent_id).await {
+    if let Some(agent_id) = workspace.agent_id
+        && let Err(e) = state.agent_runtime.delete_agent(&agent_id).await {
             tracing::warn!(
                 "Failed to delete agent {}: {}. Proceeding with workspace deletion.",
                 agent_id,
                 e
             );
         }
-    }
 
     // Delete workspace from DB
     match state.workspace_service.delete(&id).await {
@@ -259,6 +260,6 @@ async fn assign_device(
 
     match state.workspace_service.assign_device(&payload.device_id, &workspace_id).await {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({"success": true})),
-        Err(e) => ApiResponseBuilder::error_with_code(409, &e.to_string()),
+        Err(e) => ApiResponseBuilder::error_with_code(409, e.to_string()),
     }
 }

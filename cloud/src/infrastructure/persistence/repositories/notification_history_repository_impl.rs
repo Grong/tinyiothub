@@ -9,7 +9,7 @@ use crate::{
     domain::event::{
         EventError, NotificationChannelType, NotificationRecord, NotificationStatus, Result,
     },
-    infrastructure::persistence::database::Database,
+    infrastructure::persistence::Database,
 };
 
 /// Notification history store trait
@@ -43,7 +43,7 @@ impl NotificationHistoryRepositoryImpl {
     ) -> Result<NotificationRecord> {
         let method_str: String = row.try_get("notification_method")?;
         let notification_method =
-            NotificationChannelType::from_str(&method_str).ok_or_else(|| {
+            NotificationChannelType::parse_str(&method_str).ok_or_else(|| {
                 EventError::Validation {
                     message: format!("Invalid notification method: {}", method_str),
                 }
@@ -51,7 +51,7 @@ impl NotificationHistoryRepositoryImpl {
 
         let status_str: String = row.try_get("status")?;
         let status =
-            NotificationStatus::from_str(&status_str).ok_or_else(|| EventError::Validation {
+            NotificationStatus::parse_str(&status_str).ok_or_else(|| EventError::Validation {
                 message: format!("Invalid notification status: {}", status_str),
             })?;
 
@@ -371,7 +371,7 @@ pub struct NotificationStatistics {
 
 #[cfg(test)]
 mod tests {
-    use tempfile::tempdir;
+    
     use uuid::Uuid;
 
     use super::*;
@@ -381,9 +381,9 @@ mod tests {
         use sqlx::sqlite::SqlitePoolOptions;
 
         let pool = SqlitePoolOptions::new().connect(":memory:").await.unwrap();
-
-        // Run migrations
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        crate::infrastructure::persistence::test_helpers::run_all_migrations(&pool)
+            .await
+            .unwrap();
 
         let db = Database::new(pool);
         Arc::new(db)

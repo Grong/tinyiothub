@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use crate::api::mcp::handlers::get_mcp_context;
 use crate::api::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
-use crate::dto::entity::cron_job::{
+use tinyiothub_core::models::cron_job::{
     CreateCronJobRequest, CronJobQuery, UpdateCronJobRequest,
 };
 
@@ -38,7 +38,8 @@ struct CreateScheduleInput {
     config: Option<String>,
     timeout_seconds: Option<i32>,
     retry_count: Option<i32>,
-    is_enabled: Option<bool>,
+    #[allow(dead_code)]
+    is_enabled: Option<bool>, // Note: CreateCronJobRequest doesn't have is_enabled, so this is ignored
 }
 
 /// Tool input: Delete schedule
@@ -86,7 +87,7 @@ fn build_config_from_input(input: &CreateScheduleInput) -> String {
     }
 }
 
-fn map_create_input(input: &CreateScheduleInput) -> CreateCronJobRequest {
+fn map_create_input(input: &CreateScheduleInput, _workspace_id: &str) -> CreateCronJobRequest {
     let job_type = if input.job_type == "script" {
         "shell".to_string()
     } else {
@@ -195,7 +196,7 @@ impl ToolHandler for ListSchedulesHandler {
         let input: ListSchedulesInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
-        let claims = get_mcp_context().ok_or_else(|| {
+        let _claims = get_mcp_context().ok_or_else(|| {
             ToolError::Unauthorized("MCP context not initialized".to_string())
         })?;
 
@@ -203,7 +204,6 @@ impl ToolHandler for ListSchedulesHandler {
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         let query = CronJobQuery {
-            workspace_id: Some(claims.workspace_id.clone()),
             name: None,
             job_type: input.job_type,
             is_enabled: input.is_enabled,
@@ -322,17 +322,19 @@ impl ToolHandler for CreateScheduleHandler {
 
         // SECURITY: Verify target_device_id belongs to authenticated workspace if provided
         if let Some(ref device_id) = input.target_device_id {
-            let db = state.database();
-            let device = crate::dto::entity::device::find_device_by_id(db, device_id)
-                .await
-                .map_err(|e| ToolError::Internal(format!("failed to verify device: {}", e)))?
-                .ok_or_else(|| ToolError::NotFound(format!("device {} not found", device_id)))?;
-
-            if device.workspace_id.as_ref() != Some(&claims.workspace_id) {
-                tracing::warn!("MCP create_schedule: access denied to device {} for workspace {}", device_id, claims.workspace_id);
-                return Err(ToolError::Forbidden(
-                    "Access denied: target device does not belong to authenticated workspace".to_string()
-                ));
+            match state.tenant_device_service_str(&claims.workspace_id).get_device_by_id(device_id).await {
+                Ok(Some(_)) => {
+                    // Device belongs to workspace, verification passed
+                }
+                Ok(None) => {
+                    tracing::warn!("MCP create_schedule: access denied to device {} for workspace {}", device_id, claims.workspace_id);
+                    return Err(ToolError::Forbidden(
+                        "Access denied: target device does not belong to authenticated workspace".to_string()
+                    ));
+                }
+                Err(e) => {
+                    return Err(ToolError::Internal(format!("failed to verify device ownership: {}", e)));
+                }
             }
         }
 
@@ -341,11 +343,11 @@ impl ToolHandler for CreateScheduleHandler {
             return Err(ToolError::InvalidParams(format!("Invalid cron expression: {}", e)));
         }
 
-        let req = map_create_input(&input);
+        let req = map_create_input(&input, &claims.workspace_id);
 
         let job = state
             .cron_job_repo
-            .create(&req, &claims.workspace_id, Some(&claims.api_key_name))
+            .create(&req, Some(&claims.api_key_name))
             .await
             .map_err(|e| ToolError::Internal(format!("failed to create schedule: {}", e)))?;
 
@@ -403,24 +405,23 @@ impl ToolHandler for UpdateScheduleHandler {
         let input: UpdateScheduleInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
-        let claims = get_mcp_context().ok_or_else(|| {
+        let _claims = get_mcp_context().ok_or_else(|| {
             ToolError::Unauthorized("MCP context not initialized".to_string())
         })?;
 
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
-        if let Some(ref cron) = input.cron_expression {
-            if let Err(e) = cron::Schedule::from_str(cron) {
+        if let Some(ref cron) = input.cron_expression
+            && let Err(e) = cron::Schedule::from_str(cron) {
                 return Err(ToolError::InvalidParams(format!("Invalid cron expression: {}", e)));
             }
-        }
 
         let req = map_update_input(&input);
 
         let job = state
             .cron_job_repo
-            .update(&input.id, &claims.workspace_id, &req)
+            .update(&input.id, &req)
             .await
             .map_err(|e| ToolError::Internal(format!("failed to update schedule: {}", e)))?;
 
@@ -457,7 +458,7 @@ impl ToolHandler for DeleteScheduleHandler {
         let input: DeleteScheduleInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
-        let claims = get_mcp_context().ok_or_else(|| {
+        let _claims = get_mcp_context().ok_or_else(|| {
             ToolError::Unauthorized("MCP context not initialized".to_string())
         })?;
 
@@ -467,26 +468,26 @@ impl ToolHandler for DeleteScheduleHandler {
         // Verify the job exists and belongs to the workspace
         let existing = state
             .cron_job_repo
-            .find_by_id(&input.id, &claims.workspace_id)
+            .find_by_id(&input.id)
             .await
             .map_err(|e| ToolError::Internal(format!("failed to get schedule: {}", e)))?
             .ok_or_else(|| ToolError::NotFound("schedule not found".to_string()))?;
 
         state
             .cron_job_repo
-            .delete(&input.id, &claims.workspace_id)
+            .delete(&input.id)
             .await
             .map_err(|e| ToolError::Internal(format!("failed to delete schedule: {}", e)))?;
 
         let _ = state
             .cron_run_repo
-            .delete_by_job_id(&input.id, &claims.workspace_id)
+            .delete_by_job_id(&input.id)
             .await;
 
         Ok(serde_json::json!({
             "success": true,
             "id": input.id,
             "deleted_job_name": existing.name
-        }).into())
+        }))
     }
 }

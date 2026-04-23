@@ -2,6 +2,7 @@
 // 短信验证码认证模块
 // 支持手机验证码登录/注册
 
+use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
     extract::{ConnectInfo, Query, State},
     http::StatusCode,
@@ -16,7 +17,7 @@ use sqlx::Row;
 
 use crate::{
     api::AppState,
-    dto::response::{ApiResponse, ApiResponseBuilder},
+    dto::response::ApiResponse,
     infrastructure::{config::get as get_config, redis::RedisClient},
     shared::security::jwt,
 };
@@ -112,24 +113,20 @@ async fn check_rate_limit(
 
     // 检查同手机号当日发送次数
     let daily_key = format!("sms:count:daily:{}", phone);
-    if let Ok(count) = redis.get(&daily_key).await {
-        if let Ok(c) = count.unwrap_or_default().parse::<i64>() {
-            if c >= daily_limit {
+    if let Ok(count) = redis.get(&daily_key).await
+        && let Ok(c) = count.unwrap_or_default().parse::<i64>()
+            && c >= daily_limit {
                 return Ok(RateLimitResult::DailyLimitExceeded);
             }
-        }
-    }
 
     // 检查同 IP 5分钟内发送次数
     if let Some(ip_addr) = ip {
         let ip_key = format!("sms:count:ip:{}", ip_addr);
-        if let Ok(count) = redis.get(&ip_key).await {
-            if let Ok(c) = count.unwrap_or_default().parse::<i64>() {
-                if c >= 3 {
+        if let Ok(count) = redis.get(&ip_key).await
+            && let Ok(c) = count.unwrap_or_default().parse::<i64>()
+                && c >= 3 {
                     return Ok(RateLimitResult::NeedsCaptcha);
                 }
-            }
-        }
     }
 
     Ok(RateLimitResult::Allowed)
@@ -162,7 +159,7 @@ type HmacSha1 = Hmac<Sha1>;
 async fn send_aliyun_sms(
     phone: &str,
     code: &str,
-    config: &crate::infrastructure::config::settings::AliyunSmsConfig,
+    config: &tinyiothub_core::config::AliyunSmsConfig,
 ) -> Result<(), String> {
     let endpoint = "https://dysmsapi.aliyuncs.com/";
     let action = "SendSms";
@@ -611,14 +608,13 @@ async fn verify_code(
     };
 
     // 检查验证码是否过期
-    if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(&expires_at) {
-        if exp < chrono::Utc::now() {
+    if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(&expires_at)
+        && exp < chrono::Utc::now() {
             return ApiResponseBuilder::success(VerifyCodeResponse {
                 valid: false,
                 message: "验证码已过期".to_string(),
             });
         }
-    }
 
     // 比较验证码 — 使用常量时间比较防止时序攻击
     use subtle::ConstantTimeEq;
@@ -695,11 +691,10 @@ async fn get_code_from_db(
     };
 
     // 检查验证码是否过期
-    if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(&expires_at) {
-        if exp < chrono::Utc::now() {
+    if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(&expires_at)
+        && exp < chrono::Utc::now() {
             return None;
         }
-    }
 
     Some(stored_code)
 }
@@ -718,7 +713,7 @@ fn generate_code() -> String {
 
 /// 根据手机号查找或创建用户
 async fn find_or_create_user_by_phone(
-    db: &crate::infrastructure::persistence::database::Database,
+    db: &crate::infrastructure::persistence::Database,
     phone: &str,
 ) -> Result<crate::dto::entity::user::User, Box<dyn std::error::Error + Send + Sync>> {
     // 查找现有用户

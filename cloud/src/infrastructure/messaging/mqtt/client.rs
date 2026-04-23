@@ -82,14 +82,13 @@ impl NormallyMqttClient {
 
                                     tracing::error!("conn ack code {:?}", conn.code);
 
-                                    if conn.code == ConnectReturnCode::Success {
-                                        if let Err(e) = mqtt_conn_sender.send(true) {
+                                    if conn.code == ConnectReturnCode::Success
+                                        && let Err(e) = mqtt_conn_sender.send(true) {
                                             tracing::error!(
                                                 "Failed to send connection success signal: {}",
                                                 e
                                             );
                                         }
-                                    }
                                 }
 
                                 _ => {}

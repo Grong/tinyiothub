@@ -78,7 +78,6 @@ pub struct ProbeResultDto {
 #[serde(rename_all = "camelCase")]
 pub struct HealingExecutionDto {
     pub id: String,
-    pub tenant_id: String,
     pub timestamp: DateTime<Utc>,
     pub level: String,
     pub action_type: String,

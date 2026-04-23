@@ -100,20 +100,18 @@ impl EventRepository for SqliteEventRepository {
         }
 
         // Add level filters
-        if let Some(levels) = &criteria.levels {
-            if !levels.is_empty() {
+        if let Some(levels) = &criteria.levels
+            && !levels.is_empty() {
                 let placeholders = vec!["?"; levels.len()].join(",");
                 sql.push_str(&format!(" AND event_level IN ({})", placeholders));
             }
-        }
 
         // Add device ID filters
-        if let Some(device_ids) = &criteria.device_ids {
-            if !device_ids.is_empty() {
+        if let Some(device_ids) = &criteria.device_ids
+            && !device_ids.is_empty() {
                 let placeholders = vec!["?"; device_ids.len()].join(",");
                 sql.push_str(&format!(" AND device_id IN ({})", placeholders));
             }
-        }
 
         // Add search text filter
         if criteria.search_text.is_some() {
@@ -372,7 +370,7 @@ impl SqliteEventRepository {
             })?
         };
 
-        Ok(Event::reconstruct(id, event_type, level, timestamp, source, content, None))
+        Ok(Event::reconstruct(id, event_type, level, timestamp, source, content))
     }
 
     async fn get_total_count(&self) -> Result<u64> {

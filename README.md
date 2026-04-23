@@ -37,40 +37,49 @@
 - 🔒 **安全加固**（配置验证，权限控制）
 - 🎨 **现代化前端界面**（Lit 3 + TypeScript + Vite + nanostore）
 
-## 项目结构
+## 项目结构（多 Crate 架构）
 
 ```
 tinyiothub/
-├── api/                      # Rust 后端服务
-│   ├── src/                  # 源代码
-│   ├── migrations/           # 数据库迁移
-│   ├── drivers/              # 驱动实现
-│   ├── templates/            # 设备模板
-│   ├── vendor/               # 第三方依赖
-│   ├── Cargo.toml            # Rust 项目配置
-│   └── tinyiothub.db         # SQLite 数据库
-├── web/                      # Lit 3 前端应用 (Web Components)
-│   ├── src/                  # 源代码
-│   │   ├── ui/              # Lit 组件、页面、聊天/A2UI
-│   │   ├── api/             # API 客户端
-│   │   ├── i18n/            # 国际化
-│   │   ├── styles/          # CSS 样式
-│   │   └── stores/          # nanostore 状态管理
-│   ├── package.json          # Node.js 项目配置
-│   └── vite.config.ts       # Vite 构建配置
-├── sdks/                     # SDK 开发包
-│   └── driver-sdk/           # 驱动开发 SDK
-├── examples/                 # 示例项目
-│   ├── example-plugin/       # 插件示例
-│   └── bacnet-driver/        # BACnet 驱动示例
-├── marketplace/              # 市场资源
-│   ├── drivers/              # 驱动市场
-│   └── templates/            # 模板市场
-├── scripts/                  # 工具脚本
-├── docs/                     # 项目文档
-├── .kiro/                    # 开发规范
-└── skills/                   # AI prompts / skills
+├── cloud/                   # SaaS 应用编排层（主二进制）
+│   ├── src/                 # SaaS 领域逻辑（tenant, user, workspace, marketplace）
+│   ├── migrations/          # 数据库迁移
+│   ├── drivers/             # 驱动实现
+│   ├── templates/           # 设备模板
+│   ├── vendor/              # 第三方依赖（本地 fork）
+│   ├── Cargo.toml           # Rust 项目配置
+│   └── tinyiothub.db        # SQLite 数据库
+├── crates/                  # 内部库 Crate
+│   ├── tinyiothub-core/     # 通用基础类型与领域模型
+│   ├── tinyiothub-storage/  # 纯 IoT 数据存取抽象与轻量级缓存
+│   ├── tinyiothub-engine/   # 可独立部署的通用 IoT 业务引擎
+│   ├── tinyiothub-web/      # 共享的 HTTP 基础设施层
+│   ├── tinyiothub-error/    # 错误类型（带 `thiserror` 派生）
+│   └── ...（其他支持库）
+├── web/                     # Lit 3 前端应用 (Web Components)
+│   ├── src/                 # 源代码
+│   │   ├── ui/             # Lit 组件、页面、聊天/A2UI
+│   │   ├── api/            # API 客户端
+│   │   ├── i18n/           # 国际化
+│   │   ├── styles/         # CSS 样式
+│   │   └── stores/         # nanostore 状态管理
+│   ├── package.json         # Node.js 项目配置
+│   └── vite.config.ts      # Vite 构建配置
+├── sdks/                    # SDK 开发包
+│   └── driver-sdk/         # 驱动开发 SDK
+├── examples/                # 示例项目
+│   ├── example-plugin/     # 插件示例
+│   └── bacnet-driver/      # BACnet 驱动示例
+├── marketplace/            # 市场资源
+│   ├── drivers/            # 驱动市场
+│   └── templates/          # 模板市场
+├── scripts/                # 工具脚本
+├── docs/                   # 项目文档
+├── .kiro/                  # 开发规范
+└── skills/                 # AI prompts / skills
 ```
+
+**注意：本项目采用多 Crate 架构，依赖方向为单向不可逆：`cloud → web → engine → storage → core`。详细架构见 [ARCHITECTURE_CONTRACT.md](ARCHITECTURE_CONTRACT.md)。**
 
 ## 快速开始
 
@@ -93,7 +102,7 @@ tinyiothub/
 
 **后端**:
 ```bash
-cd api
+cd cloud
 cargo run
 ```
 
@@ -119,7 +128,7 @@ pnpm dev
 
 **运行**:
 ```bash
-cd api
+cd cloud
 .\target\release\tinyiothub.exe  # Windows
 ./target/release/tinyiothub      # Linux/macOS
 ```
@@ -151,10 +160,10 @@ pnpm build
 
 ### 配置文件
 
-后端配置文件位于 `api/app_settings.toml`：
+后端配置文件位于 `cloud/app_settings.toml`：
 
 ```toml
-# api/app_settings.toml 示例
+# cloud/app_settings.toml 示例
 [server]
 host = "0.0.0.0"
 port = 3002
@@ -223,7 +232,7 @@ async fn list_devices(
 }
 
 // 使用统一的响应构建器
-use crate::dto::response::builder::ApiResponseBuilder;
+use tinyiothub_web::response::ApiResponseBuilder;
 
 // 成功响应
 ApiResponseBuilder::success(data)
@@ -276,7 +285,7 @@ export const loadUsers = task(async (params?: { page?: number; pageSize?: number
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 │   Lit 3 UI      │    │   REST API      │    │   MQTT Client   │
-│   (web/)        │    │   (api/)        │    │   (rumqttc)     │
+│   (web/)        │    │   (cloud/)      │    │   (rumqttc)     │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
          │                       │                       │
          └───────────────────────┼───────────────────────┘
@@ -305,10 +314,10 @@ export const loadUsers = task(async (params?: { page?: number; pageSize?: number
          └─────────────────────────────────────────────────────┘
 ```
 
-### 后端目录结构 (api/)
+### 后端目录结构 (cloud/)
 
 ```
-api/
+cloud/
 ├── src/
 │   ├── api/                  # REST API 层
 │   │   ├── auth/             # 认证相关 API
@@ -526,7 +535,7 @@ web/
 
 ```rust
 // 示例：添加新API
-use crate::dto::response::builder::ApiResponseBuilder;
+use tinyiothub_web::response::ApiResponseBuilder;
 
 async fn list_items(
     Query(params): Query<ItemQuery>,
@@ -626,7 +635,7 @@ export class ItemList extends LitElement {
 
 ```bash
 # 后端
-cd api
+cd cloud
 cargo fmt          # 格式化代码
 cargo check        # 检查代码
 cargo clippy       # 代码检查

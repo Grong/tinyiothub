@@ -245,7 +245,7 @@ impl SmsProvider {
     }
 
     /// Parse from string
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "twilio" => Some(SmsProvider::Twilio),
             "alibaba_cloud" | "alibaba" => Some(SmsProvider::AlibabaCloud),
@@ -429,9 +429,9 @@ mod tests {
     #[test]
     fn test_sms_provider_conversion() {
         assert_eq!(SmsProvider::Twilio.as_str(), "twilio");
-        assert_eq!(SmsProvider::from_str("twilio"), Some(SmsProvider::Twilio));
-        assert_eq!(SmsProvider::from_str("alibaba"), Some(SmsProvider::AlibabaCloud));
-        assert_eq!(SmsProvider::from_str("invalid"), None);
+        assert_eq!(SmsProvider::parse_str("twilio"), Some(SmsProvider::Twilio));
+        assert_eq!(SmsProvider::parse_str("alibaba"), Some(SmsProvider::AlibabaCloud));
+        assert_eq!(SmsProvider::parse_str("invalid"), None);
     }
 
     #[test]

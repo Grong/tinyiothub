@@ -90,21 +90,19 @@ impl TemplateValidator {
             }
 
             // 验证数值范围
-            if property.data_type == "number" {
-                if let (Some(min), Some(max)) = (property.min_value, property.max_value) {
-                    if min >= max {
+            if property.data_type == "number"
+                && let (Some(min), Some(max)) = (property.min_value, property.max_value)
+                    && min >= max {
                         result.add_error(
                             &format!("{}.range", field_prefix),
                             "最小值必须小于最大值",
                             "INVALID_RANGE",
                         );
                     }
-                }
-            }
 
             // 验证默认值与数据类型的匹配
-            if let Some(default_value) = &property.default_value {
-                if !self.validate_value_type(default_value, &property.data_type) {
+            if let Some(default_value) = &property.default_value
+                && !self.validate_value_type(default_value, &property.data_type) {
                     result.add_warning(
                         &format!("{}.default_value", field_prefix),
                         &format!(
@@ -114,7 +112,6 @@ impl TemplateValidator {
                         "TYPE_MISMATCH",
                     );
                 }
-            }
 
             // 验证多语言显示名称
             if property.display_name.is_empty() {
@@ -167,30 +164,26 @@ impl TemplateValidator {
             }
 
             // 验证参数定义JSON格式
-            if let Some(parameters) = &command.parameters {
-                if !parameters.trim().is_empty() {
-                    if let Err(e) = serde_json::from_str::<serde_json::Value>(parameters) {
+            if let Some(parameters) = &command.parameters
+                && !parameters.trim().is_empty()
+                    && let Err(e) = serde_json::from_str::<serde_json::Value>(parameters) {
                         result.add_error(
                             &format!("{}.parameters", field_prefix),
                             &format!("参数定义JSON格式错误: {}", e),
                             "INVALID_JSON",
                         );
                     }
-                }
-            }
 
             // 验证参数Schema格式
-            if let Some(schema) = &command.parameter_schema {
-                if !schema.trim().is_empty() {
-                    if let Err(e) = serde_json::from_str::<serde_json::Value>(schema) {
+            if let Some(schema) = &command.parameter_schema
+                && !schema.trim().is_empty()
+                    && let Err(e) = serde_json::from_str::<serde_json::Value>(schema) {
                         result.add_error(
                             &format!("{}.parameter_schema", field_prefix),
                             &format!("参数Schema JSON格式错误: {}", e),
                             "INVALID_JSON",
                         );
                     }
-                }
-            }
         }
 
         result
@@ -220,25 +213,22 @@ impl TemplateValidator {
         if let Ok(device_info) = template.get_device_info() {
             for required_field in &device_info.required_fields {
                 match required_field.as_str() {
-                    "driver_options" => {
-                        if input.driver_options.as_ref().map_or(true, |opt| opt.trim().is_empty()) {
+                    "driver_options"
+                        if input.driver_options.as_ref().is_none_or(|opt| opt.trim().is_empty()) => {
                             result.add_error(
                                 "driver_options",
                                 "驱动选项是必填字段",
                                 "REQUIRED_FIELD",
                             );
                         }
-                    }
-                    "parent_id" => {
-                        if input.parent_id.as_ref().map_or(true, |id| id.trim().is_empty()) {
+                    "parent_id"
+                        if input.parent_id.as_ref().is_none_or(|id| id.trim().is_empty()) => {
                             result.add_error("parent_id", "父设备ID是必填字段", "REQUIRED_FIELD");
                         }
-                    }
-                    "product_id" => {
-                        if input.product_id.as_ref().map_or(true, |id| id.trim().is_empty()) {
+                    "product_id"
+                        if input.product_id.as_ref().is_none_or(|id| id.trim().is_empty()) => {
                             result.add_error("product_id", "产品ID是必填字段", "REQUIRED_FIELD");
                         }
-                    }
                     _ => {
                         // 其他自定义必填字段的验证可以在这里扩展
                     }
@@ -262,28 +252,25 @@ impl TemplateValidator {
                     }
 
                     // 验证数值范围
-                    if property.data_type == "number" {
-                        if let Ok(value) = prop_value.parse::<f64>() {
-                            if let Some(min) = property.min_value {
-                                if value < min {
+                    if property.data_type == "number"
+                        && let Ok(value) = prop_value.parse::<f64>() {
+                            if let Some(min) = property.min_value
+                                && value < min {
                                     result.add_error(
                                         &format!("property_values.{}", prop_name),
                                         &format!("属性值 {} 小于最小值 {}", value, min),
                                         "VALUE_TOO_SMALL",
                                     );
                                 }
-                            }
-                            if let Some(max) = property.max_value {
-                                if value > max {
+                            if let Some(max) = property.max_value
+                                && value > max {
                                     result.add_error(
                                         &format!("property_values.{}", prop_name),
                                         &format!("属性值 {} 大于最大值 {}", value, max),
                                         "VALUE_TOO_LARGE",
                                     );
                                 }
-                            }
                         }
-                    }
                 } else {
                     result.add_warning(
                         &format!("property_values.{}", prop_name),
@@ -360,15 +347,14 @@ impl TemplateValidator {
         }
 
         // 验证描述JSON
-        if let Some(description) = &template.description {
-            if let Err(e) = serde_json::from_str::<HashMap<String, String>>(description) {
+        if let Some(description) = &template.description
+            && let Err(e) = serde_json::from_str::<HashMap<String, String>>(description) {
                 result.add_error(
                     "description",
                     &format!("描述JSON格式错误: {}", e),
                     "INVALID_JSON",
                 );
             }
-        }
 
         // 验证标签JSON
         if let Err(e) = serde_json::from_str::<Vec<String>>(&template.tags) {
@@ -452,8 +438,8 @@ impl TemplateValidator {
 
     /// 验证驱动引用 (需求 6.5)
     fn validate_driver_reference(&self, template: &DeviceTemplate, result: &mut ValidationResult) {
-        if let Some(driver_name) = &template.driver_name {
-            if !driver_name.trim().is_empty() {
+        if let Some(driver_name) = &template.driver_name
+            && !driver_name.trim().is_empty() {
                 // 检查驱动名称是否在已知驱动列表中
                 let known_drivers = vec![
                     "modbus_rtu",
@@ -476,7 +462,6 @@ impl TemplateValidator {
                     );
                 }
             }
-        }
     }
 
     /// 验证数据类型是否有效
@@ -574,13 +559,12 @@ impl TemplateValidator {
         }
 
         // 检查是否为必需字段
-        if let Ok(device_info) = template.get_device_info() {
-            if device_info.required_fields.contains(&field_name.to_string())
+        if let Ok(device_info) = template.get_device_info()
+            && device_info.required_fields.contains(&field_name.to_string())
                 && field_value.trim().is_empty()
             {
                 result.add_error(field_name, "此字段为必填项", "FIELD_REQUIRED");
             }
-        }
 
         debug!(
             "单个字段验证完成: 字段={}, 错误数={}, 警告数={}",

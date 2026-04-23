@@ -20,7 +20,7 @@ impl AlarmLevel {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "info" => Some(AlarmLevel::Info),
             "warning" => Some(AlarmLevel::Warning),

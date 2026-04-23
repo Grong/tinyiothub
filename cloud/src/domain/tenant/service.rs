@@ -8,6 +8,11 @@ use crate::shared::error::{Error, Result};
 
 use super::repository::TenantRepository;
 
+// Resource type constants for quota checking
+const RESOURCE_TYPE_DEVICE: &str = "device";
+const RESOURCE_TYPE_API_CALL: &str = "api_call";
+const RESOURCE_TYPE_USER: &str = "user";
+
 /// Tenant domain service
 pub struct TenantService {
     repository: Arc<dyn TenantRepository>,
@@ -67,26 +72,19 @@ impl TenantService {
             .ok_or(Error::NotFound)?;
 
         match resource {
-            "device" => {
-                if plan.device_limit == 0 {
-                    return Ok(true);
-                }
-                Ok(usage.device_count < plan.device_limit)
-            }
-            "api_call" => {
-                if plan.api_call_limit == 0 {
-                    return Ok(true);
-                }
-                Ok(usage.api_call_count < plan.api_call_limit)
-            }
-            "user" => {
-                if plan.user_limit == 0 {
-                    return Ok(true);
-                }
-                Ok(usage.user_count < plan.user_limit)
-            }
+            RESOURCE_TYPE_DEVICE => Ok(self.check_resource_quota(plan.device_limit, usage.device_count)),
+            RESOURCE_TYPE_API_CALL => Ok(self.check_resource_quota(plan.api_call_limit, usage.api_call_count)),
+            RESOURCE_TYPE_USER => Ok(self.check_resource_quota(plan.user_limit, usage.user_count)),
             _ => Ok(false),
         }
+    }
+
+    /// Helper function to check if usage is under limit (limit = 0 means unlimited)
+    fn check_resource_quota(&self, limit: i32, usage: i32) -> bool {
+        if limit == 0 {
+            return true;
+        }
+        usage < limit
     }
 
     /// Change tenant subscription plan

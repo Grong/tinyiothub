@@ -208,25 +208,22 @@ impl SseNotificationChannel {
 /// Check if a message should be sent to a specific connection
 fn should_send_to_user(user_id: &str, workspace_id: &str, message: &SseMessage) -> bool {
     // Check if message has a target user specified
-    if let Some(target_user) = message.data.get("target_user") {
-        if let Some(target_str) = target_user.as_str() {
+    if let Some(target_user) = message.data.get("target_user")
+        && let Some(target_str) = target_user.as_str() {
             return target_str == user_id;
         }
-    }
 
     // Check if message has recipient information
-    if let Some(recipient) = message.data.get("recipient") {
-        if let Some(recipient_str) = recipient.as_str() {
+    if let Some(recipient) = message.data.get("recipient")
+        && let Some(recipient_str) = recipient.as_str() {
             return recipient_str == user_id || recipient_str == "admin" || recipient_str == "all";
         }
-    }
 
     // Filter by workspace_id — only send events belonging to the same workspace
-    if let Some(msg_workspace) = message.data.get("workspace_id") {
-        if let Some(msg_workspace_str) = msg_workspace.as_str() {
+    if let Some(msg_workspace) = message.data.get("workspace_id")
+        && let Some(msg_workspace_str) = msg_workspace.as_str() {
             return msg_workspace_str == workspace_id;
         }
-    }
 
     // Messages without workspace_id are system-level events — send to all
     true

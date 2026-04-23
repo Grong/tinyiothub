@@ -1,3 +1,5 @@
+use crate::shared::security::jwt::Claims;
+use tinyiothub_web::response::ApiResponseBuilder;
 use std::sync::Arc;
 
 use axum::{
@@ -14,9 +16,9 @@ use crate::{
             template_installer::TemplateInstaller},
         template::repository::TemplateRepository,
     },
-    dto::response::{builder::ApiResponseBuilder, ApiResponse},
+    dto::response::{ApiResponse},
     infrastructure::config,
-    shared::{app_state::AppState, security::jwt::Claims},
+    shared::{app_state::AppState},
 };
 
 pub fn create_router() -> Router<AppState> {
@@ -216,7 +218,7 @@ async fn install_marketplace_template(
         Ok(client) => Arc::new(client),
         Err(e) => {
             tracing::error!("Failed to create marketplace client: {}", e);
-            return ApiResponseBuilder::error(&format!("市场客户端初始化失败: {}", e));
+            return ApiResponseBuilder::error(format!("市场客户端初始化失败: {}", e));
         }
     };
 
@@ -235,7 +237,7 @@ async fn install_marketplace_template(
         }
         Err(e) => {
             tracing::error!("Failed to install template {}: {}", id, e);
-            ApiResponseBuilder::error(&format!("安装模板失败: {}", e))
+            ApiResponseBuilder::error(format!("安装模板失败: {}", e))
         }
     }
 }
@@ -253,7 +255,7 @@ async fn install_marketplace_driver(
         Ok(client) => Arc::new(client),
         Err(e) => {
             tracing::error!("Failed to create marketplace client: {}", e);
-            return ApiResponseBuilder::error(&format!("市场客户端初始化失败: {}", e));
+            return ApiResponseBuilder::error(format!("市场客户端初始化失败: {}", e));
         }
     };
 
@@ -269,7 +271,7 @@ async fn install_marketplace_driver(
         }
         Err(e) => {
             tracing::error!("Failed to install driver {}: {}", id, e);
-            ApiResponseBuilder::error(&format!("安装驱动失败: {}", e))
+            ApiResponseBuilder::error(format!("安装驱动失败: {}", e))
         }
     }
 }

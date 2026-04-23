@@ -1,3 +1,4 @@
+use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{extract::State, routing::post, Json, Router};
 use serde::Deserialize;
 
@@ -6,7 +7,7 @@ use crate::{
     dto::{
         response::{
             login::{LoginResponse, UserInfo},
-            ApiResponse, ApiResponseBuilder,
+            ApiResponse,
         },
     },
     shared::security::jwt,

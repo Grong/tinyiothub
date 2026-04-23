@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info};
 
 use crate::{
-    application::data_context::DataContext,
     domain::event::entities::Event,
     infrastructure::event::channels::sse_channel::{SseMessage, SseNotificationChannel},
 };
@@ -20,20 +19,12 @@ use crate::{
 pub struct SseConnectionManager {
     /// SSE notification channel for managing connections
     sse_channel: Arc<SseNotificationChannel>,
-
-    /// Data context for device workspace lookup during broadcast
-    data_context: Option<Arc<DataContext>>,
 }
 
 impl SseConnectionManager {
     /// Create a new SSE connection manager
     pub fn new() -> Self {
-        Self { sse_channel: Arc::new(SseNotificationChannel::new()), data_context: None }
-    }
-
-    /// Create with DataContext for device workspace lookup
-    pub fn with_data_context(data_context: Arc<DataContext>) -> Self {
-        Self { sse_channel: Arc::new(SseNotificationChannel::new()), data_context: Some(data_context) }
+        Self { sse_channel: Arc::new(SseNotificationChannel::new()) }
     }
 
     /// Create an authenticated SSE connection
@@ -91,17 +82,9 @@ impl SseConnectionManager {
         // Extract device_id from source if present
         let device_id = event.source().device_id().map(|s| s.to_string());
 
-        // Use workspace_id from the event itself (set at event creation from the device).
-        // Fall back to DataContext lookup only for events that predate this fix.
-        let workspace_id = event
-            .workspace_id()
-            .map(|s| s.to_string())
-            .or_else(|| {
-                self.data_context
-                    .as_ref()
-                    .and_then(|dc| device_id.as_ref().and_then(|id| dc.get_device(id)))
-                    .and_then(|d| d.workspace_id.clone())
-            });
+        // Note: Event doesn't contain workspace_id (zero-tenant pollution principle).
+        // Workspace filtering should be handled at higher level (cloud crate).
+        let workspace_id: Option<String> = None;
 
         // Build base data payload
         let mut data = serde_json::json!({
@@ -132,12 +115,11 @@ impl SseConnectionManager {
 
             // Extract new_value from content elements (look for "Current value: X")
             for element in event.content().elements() {
-                if let crate::domain::event::value_objects::rich_content::ContentElement::Text { content, .. } = element {
-                    if let Some(val) = content.strip_prefix("Current value: ") {
+                if let crate::domain::event::ContentElement::Text { content, .. } = element
+                    && let Some(val) = content.strip_prefix("Current value: ") {
                         data["new_value"] = serde_json::Value::String(val.to_string());
                         break;
                     }
-                }
             }
         }
 

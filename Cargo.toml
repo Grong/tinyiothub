@@ -154,13 +154,13 @@ criterion = { version = "0.5", features = ["async_tokio"] }
 # Workspace crates (path deps — not published yet)
 tinyiothub-macros = { path = "crates/tinyiothub-macros" }
 tinyiothub-core = { path = "crates/tinyiothub-core" }
-tinyiothub-error = { path = "crates/tinyiothub-error" }
 tinyiothub-config = { path = "crates/tinyiothub-config" }
 tinyiothub-engine = { path = "crates/tinyiothub-engine" }
 tinyiothub-storage = { path = "crates/tinyiothub-storage" }
 tinyiothub-plugin = { path = "crates/tinyiothub-plugin" }
 tinyiothub-plugin-sdk = { path = "sdks/plugin-sdk" }
 tinyiothub-metrics = { path = "crates/tinyiothub-metrics" }
+tinyiothub-web = { path = "crates/tinyiothub-web" }
 
 [profile.release]
 opt-level = 0

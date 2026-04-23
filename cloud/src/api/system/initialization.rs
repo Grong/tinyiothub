@@ -1,10 +1,11 @@
+use tinyiothub_web::response::ApiResponseBuilder;
 use crate::dto::entity::user::CreateUserRequest;
 use axum::{extract::State, routing::post, Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     dto::{
-        response::{ApiResponse, ApiResponseBuilder}
+        response::ApiResponse
     },
     shared::{app_state::AppState, error::Result}
 };

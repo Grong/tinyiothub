@@ -9,6 +9,7 @@ description = "HTTP handlers and middleware for TinyIoTHub (placeholder)"
 
 [dependencies]
 tinyiothub-core = { workspace = true }
+tinyiothub-engine = { workspace = true }
 tinyiothub-storage = { workspace = true }
 
 # Web framework
@@ -24,5 +25,14 @@ serde_json = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }
 
+# Date/time
+chrono = { workspace = true }
+
 # Error handling
 thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# HTTP headers (for Bearer token extraction)
+headers = { workspace = true }

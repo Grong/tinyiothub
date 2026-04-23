@@ -8,14 +8,10 @@ pub mod pool;
 pub mod cron_job;
 pub mod cron_run;
 pub mod device;
+pub mod device_command;
+pub mod device_property;
 pub mod device_row_mapper;
-pub mod permission;
-pub mod product;
-pub mod role;
-pub mod tag;
-pub mod tenant;
-pub mod user;
-pub mod workspace;
+pub mod notification_channel;
 
 pub use config::DatabaseConfig;
 pub use database::Database;

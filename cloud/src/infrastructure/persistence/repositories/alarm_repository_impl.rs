@@ -112,28 +112,26 @@ impl AlarmRepository for AlarmRepositoryImpl {
             bindings.push(workspace_id.clone());
         }
 
-        if let Some(device_ids) = &criteria.device_ids {
-            if !device_ids.is_empty() {
+        if let Some(device_ids) = &criteria.device_ids
+            && !device_ids.is_empty() {
                 let placeholders = vec!["?"; device_ids.len()].join(",");
                 query.push_str(&format!(" AND device_id IN ({})", placeholders));
                 for id in device_ids {
                     bindings.push(id.clone());
                 }
             }
-        }
 
-        if let Some(levels) = &criteria.alarm_levels {
-            if !levels.is_empty() {
+        if let Some(levels) = &criteria.alarm_levels
+            && !levels.is_empty() {
                 let placeholders = vec!["?"; levels.len()].join(",");
                 query.push_str(&format!(" AND alarm_level IN ({})", placeholders));
                 for level in levels {
                     bindings.push(level.clone().to_string());
                 }
             }
-        }
 
-        if let Some(statuses) = &criteria.statuses {
-            if !statuses.is_empty() {
+        if let Some(statuses) = &criteria.statuses
+            && !statuses.is_empty() {
                 let mut status_conditions: Vec<&str> = Vec::new();
                 for status in statuses {
                     match status {
@@ -157,7 +155,6 @@ impl AlarmRepository for AlarmRepositoryImpl {
                     query.push_str(&format!(" AND ({})", status_conditions.join(" OR ")));
                 }
             }
-        }
 
         if let Some(time_range) = &criteria.time_range {
             query.push_str(" AND alarm_time >= ? AND alarm_time <= ?");
@@ -249,28 +246,26 @@ impl AlarmRepository for AlarmRepositoryImpl {
             bindings.push(workspace_id.clone());
         }
 
-        if let Some(device_ids) = &criteria.device_ids {
-            if !device_ids.is_empty() {
+        if let Some(device_ids) = &criteria.device_ids
+            && !device_ids.is_empty() {
                 let placeholders = vec!["?"; device_ids.len()].join(",");
                 query.push_str(&format!(" AND device_id IN ({})", placeholders));
                 for id in device_ids {
                     bindings.push(id.clone());
                 }
             }
-        }
 
-        if let Some(levels) = &criteria.alarm_levels {
-            if !levels.is_empty() {
+        if let Some(levels) = &criteria.alarm_levels
+            && !levels.is_empty() {
                 let placeholders = vec!["?"; levels.len()].join(",");
                 query.push_str(&format!(" AND alarm_level IN ({})", placeholders));
                 for level in levels {
                     bindings.push(level.clone().to_string());
                 }
             }
-        }
 
-        if let Some(statuses) = &criteria.statuses {
-            if !statuses.is_empty() {
+        if let Some(statuses) = &criteria.statuses
+            && !statuses.is_empty() {
                 let mut status_conditions: Vec<&str> = Vec::new();
                 for status in statuses {
                     match status {
@@ -292,7 +287,6 @@ impl AlarmRepository for AlarmRepositoryImpl {
                     query.push_str(&format!(" AND ({})", status_conditions.join(" OR ")));
                 }
             }
-        }
 
         if let Some(time_range) = &criteria.time_range {
             query.push_str(" AND alarm_time >= ? AND alarm_time <= ?");
@@ -385,7 +379,7 @@ impl AlarmRepositoryImpl {
         let created_at_str: String = row.get("created_at");
 
         // Parse alarm_level
-        let alarm_level = AlarmLevel::from_str(&alarm_level_str).ok_or_else(|| {
+        let alarm_level = AlarmLevel::parse_str(&alarm_level_str).ok_or_else(|| {
             AlarmError::InvalidRuleConfig(format!("Unknown alarm level: {}", alarm_level_str))
         })?;
 
@@ -513,7 +507,7 @@ impl AlarmRuleRepositoryImpl {
             .map_err(|e| AlarmError::InvalidCondition(format!("解析条件配置失败: {}", e)))?;
 
         // 解析 alarm_level
-        let alarm_level = AlarmLevel::from_str(&alarm_level_str).ok_or_else(|| {
+        let alarm_level = AlarmLevel::parse_str(&alarm_level_str).ok_or_else(|| {
             AlarmError::InvalidRuleConfig(format!("未知的告警级别: {}", alarm_level_str))
         })?;
 

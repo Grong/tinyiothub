@@ -18,7 +18,6 @@ use tokio::sync::mpsc;
 
 use crate::application::agent::memory_service::{AgentMemoryService, MemoryContext};
 use crate::application::agent::session_service::SessionRepository;
-use crate::domain::agent::compact_service::CompactService;
 use crate::infrastructure::agent::{AgentRuntime, AgentError};
 use crate::infrastructure::config::SystemPromptsConfig;
 
@@ -69,7 +68,7 @@ pub struct ChatRequest {
 impl ChatRequest {
     /// Parse the session key to extract workspace_id, agent_id, and session_uuid
     pub fn parse_session_key(&self) -> Result<ParsedSessionKey, ChatError> {
-        ParsedSessionKey::from_str(&self.session_key)
+        ParsedSessionKey::parse_str(&self.session_key)
     }
 }
 
@@ -83,7 +82,7 @@ pub struct ParsedSessionKey {
 
 impl ParsedSessionKey {
     /// Parse session key in format: "agent:{workspace_id}:{agent_id}/{session_uuid}"
-    pub fn from_str(key: &str) -> Result<Self, ChatError> {
+    pub fn parse_str(key: &str) -> Result<Self, ChatError> {
         // Expected format: agent:{workspace_id}:{agent_id}/{session_uuid}
         let parts: Vec<&str> = key.split('/').collect();
         if parts.len() != 2 {
@@ -244,7 +243,6 @@ pub struct ChatService {
     runtime: Arc<dyn AgentRuntime>,
     session_repo: Arc<dyn SessionRepository>,
     memory_service: Arc<AgentMemoryService>,
-    compact_service: Arc<CompactService>,
     config: ChatServiceConfig,
 }
 
@@ -254,14 +252,12 @@ impl ChatService {
         runtime: Arc<dyn AgentRuntime>,
         session_repo: Arc<dyn SessionRepository>,
         memory_service: Arc<AgentMemoryService>,
-        compact_service: Arc<CompactService>,
         config: ChatServiceConfig,
     ) -> Self {
         Self {
             runtime,
             session_repo,
             memory_service,
-            compact_service,
             config,
         }
     }
@@ -327,7 +323,7 @@ impl ChatService {
         session_key: &str,
         run_id: Option<&str>,
     ) -> Result<(), ChatError> {
-        let parsed = ParsedSessionKey::from_str(session_key)?;
+        let parsed = ParsedSessionKey::parse_str(session_key)?;
 
         self.runtime
             .chat_abort(&parsed.agent_id, session_key, run_id)
@@ -343,7 +339,7 @@ impl ChatService {
         session_key: &str,
         limit: u32,
     ) -> Result<Value, ChatError> {
-        let parsed = ParsedSessionKey::from_str(session_key)?;
+        let parsed = ParsedSessionKey::parse_str(session_key)?;
 
         let history = self
             .runtime
@@ -467,10 +463,8 @@ impl ChatService {
 
                     // Parse SSE data lines
                     for line in text.lines() {
-                        if line.starts_with("data: ") {
-                            let data = &line[6..];
-
-                            if let Ok(event_value) = serde_json::from_str::<Value>(data) {
+                        if let Some(data) = line.strip_prefix("data: ")
+                            && let Ok(event_value) = serde_json::from_str::<Value>(data) {
                                 // Convert runtime event to ChatEvent
                                 if let Some(event) = Self::convert_runtime_event(
                                     event_value.clone(),
@@ -478,8 +472,8 @@ impl ChatService {
                                     session_key,
                                 ) {
                                     // Save assistant message on final event
-                                    if let ChatEvent::Final { message, .. } = &event {
-                                        if let Some(content) = message.get("content").and_then(|v| v.as_array()) {
+                                    if let ChatEvent::Final { message, .. } = &event
+                                        && let Some(content) = message.get("content").and_then(|v| v.as_array()) {
                                             let content_json = serde_json::json!(content);
                                             let _ = session_repo.add_message(
                                                 session_key,
@@ -493,7 +487,6 @@ impl ChatService {
                                                 },
                                             ).await;
                                         }
-                                    }
 
                                     if tx.send(event).await.is_err() {
                                         // Receiver dropped, stop processing
@@ -501,7 +494,6 @@ impl ChatService {
                                     }
                                 }
                             }
-                        }
                     }
                 }
                 Err(e) => {
@@ -603,7 +595,7 @@ mod tests {
 
     #[test]
     fn test_parse_session_key_valid() {
-        let key = ParsedSessionKey::from_str("agent:ws-123:agent-456/sess-789").unwrap();
+        let key = ParsedSessionKey::parse_str("agent:ws-123:agent-456/sess-789").unwrap();
         assert_eq!(key.workspace_id, "ws-123");
         assert_eq!(key.agent_id, "agent-456");
         assert_eq!(key.session_uuid, "sess-789");
@@ -611,13 +603,13 @@ mod tests {
 
     #[test]
     fn test_parse_session_key_invalid_format() {
-        let result = ParsedSessionKey::from_str("invalid-key");
+        let result = ParsedSessionKey::parse_str("invalid-key");
         assert!(result.is_err());
     }
 
     #[test]
     fn test_parse_session_key_missing_separator() {
-        let result = ParsedSessionKey::from_str("agent:ws-123:agent-456");
+        let result = ParsedSessionKey::parse_str("agent:ws-123:agent-456");
         assert!(result.is_err());
     }
 
@@ -629,7 +621,7 @@ mod tests {
             session_uuid: "sess-uuid".to_string(),
         };
         let key = original.to_session_key();
-        let parsed = ParsedSessionKey::from_str(&key).unwrap();
+        let parsed = ParsedSessionKey::parse_str(&key).unwrap();
 
         assert_eq!(original.workspace_id, parsed.workspace_id);
         assert_eq!(original.agent_id, parsed.agent_id);

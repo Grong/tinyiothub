@@ -124,10 +124,8 @@ impl PersistenceEventHandler {
                     })
                 }));
 
-                match result {
-                    Err(e) => error!("Event flush task panicked: {:?}", e),
-                    Ok(_) => {}
-                }
+                let Err(e) = result;
+                error!("Event flush task panicked: {:?}", e)
             });
         }
     }
@@ -136,7 +134,7 @@ impl PersistenceEventHandler {
     async fn flush_buffer(
         buffer: &Arc<RwLock<EventBuffer>>,
         repository: &Arc<dyn EventRepository>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> tinyiothub_core::error::Result<()> {
         let events = {
             let mut buf = buffer.write().await;
             buf.drain()
@@ -152,7 +150,7 @@ impl PersistenceEventHandler {
         repository
             .save_batch(&events)
             .await
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+            .map_err(|e| tinyiothub_core::error::Error::Internal(e.to_string()))?;
 
         Ok(())
     }
@@ -160,7 +158,7 @@ impl PersistenceEventHandler {
 
 #[async_trait::async_trait]
 impl EventHandler for PersistenceEventHandler {
-    async fn handle(&self, event: &Event) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn handle(&self, event: &Event) -> tinyiothub_core::error::Result<()> {
         // 判断是否应该持久化
         if !self.should_persist(event) {
             trace!(
@@ -187,7 +185,7 @@ impl EventHandler for PersistenceEventHandler {
             self.repository
                 .save(event)
                 .await
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+                .map_err(|e| tinyiothub_core::error::Error::Internal(e.to_string()))?;
         }
 
         Ok(())

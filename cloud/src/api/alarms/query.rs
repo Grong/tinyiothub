@@ -1,3 +1,5 @@
+use crate::shared::security::jwt::Claims;
+use tinyiothub_web::response::ApiResponseBuilder;
 use crate::dto::entity::{AlarmDto, AlarmStatisticsDto};
 use axum::{
     extract::{Path, Query, State},
@@ -9,9 +11,9 @@ use crate::{
     domain::alarm::{AlarmLevel, AlarmQueryCriteria, AlarmStatus, TimeRange},
     dto::{
         request::{AlarmQueryParams, StatisticsQueryParams},
-        response::{api_response::ApiResponse, builder::ApiResponseBuilder, PaginatedResponse, PaginationInfo}
+        response::{ApiResponse, PaginatedResponse, PaginationInfo}
     },
-    shared::{app_state::AppState, error_handling::ErrorCode, security::jwt::Claims}
+    shared::{app_state::AppState, error_handling::ErrorCode}
 };
 
 /// 查询报警列表
@@ -41,7 +43,7 @@ pub async fn list_alarms(
 
     let alarm_levels = params.levels.as_ref().and_then(|levels| {
         let parsed: Vec<AlarmLevel> =
-            levels.iter().filter_map(|l| AlarmLevel::from_str(l)).collect();
+            levels.iter().filter_map(|l| AlarmLevel::parse_str(l)).collect();
         if parsed.is_empty() {
             None
         } else {
@@ -51,7 +53,7 @@ pub async fn list_alarms(
 
     let statuses = params.statuses.as_ref().and_then(|statuses| {
         let parsed: Vec<AlarmStatus> =
-            statuses.iter().filter_map(|s| AlarmStatus::from_str(s)).collect();
+            statuses.iter().filter_map(|s| AlarmStatus::parse_str(s)).collect();
         if parsed.is_empty() {
             None
         } else {

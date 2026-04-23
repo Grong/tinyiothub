@@ -58,13 +58,6 @@ impl DeviceRepository for SqliteDeviceRepository {
         let mut builder = QueryBuilder::new("SELECT ");
         builder.push(device_row_mapper::SELECT_COLUMNS);
         builder.push(" FROM devices WHERE 1=1");
-
-        if let Some(tenant_id) = &criteria.tenant_id {
-            builder.push(" AND tenant_id = ").push_bind(tenant_id);
-        }
-        if let Some(workspace_id) = &criteria.workspace_id {
-            builder.push(" AND workspace_id = ").push_bind(workspace_id);
-        }
         if let Some(name) = &criteria.name {
             builder.push(" AND name LIKE ").push_bind(format!("%{}%", name));
         }
@@ -130,13 +123,6 @@ impl DeviceRepository for SqliteDeviceRepository {
 
     async fn count(&self, criteria: &DeviceCriteria) -> Result<i64> {
         let mut builder = QueryBuilder::new("SELECT COUNT(*) as count FROM devices WHERE 1=1");
-
-        if let Some(tenant_id) = &criteria.tenant_id {
-            builder.push(" AND tenant_id = ").push_bind(tenant_id);
-        }
-        if let Some(workspace_id) = &criteria.workspace_id {
-            builder.push(" AND workspace_id = ").push_bind(workspace_id);
-        }
         if let Some(name) = &criteria.name {
             builder.push(" AND name LIKE ").push_bind(format!("%{}%", name));
         }
@@ -185,8 +171,8 @@ impl DeviceRepository for SqliteDeviceRepository {
             INSERT INTO devices (
                 id, name, display_name, device_type, address, description, position,
                 driver_name, device_model, protocol_type, factory_name, linked_data,
-                driver_options, state, parent_id, product_id, tenant_id, workspace_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                driver_options, state, parent_id, product_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&id)
@@ -205,8 +191,6 @@ impl DeviceRepository for SqliteDeviceRepository {
         .bind(0i32)
         .bind(&request.parent_id)
         .bind(&request.product_id)
-        .bind(&request.tenant_id)
-        .bind(&request.workspace_id)
         .bind(&now)
         .bind(&now)
         .execute(self.database.pool())
@@ -329,20 +313,6 @@ impl DeviceRepository for SqliteDeviceRepository {
             builder.push("product_id = ").push_bind(product_id);
             has_updates = true;
         }
-        if let Some(tenant_id) = &request.tenant_id {
-            if has_updates {
-                builder.push(", ");
-            }
-            builder.push("tenant_id = ").push_bind(tenant_id);
-            has_updates = true;
-        }
-        if let Some(workspace_id) = &request.workspace_id {
-            if has_updates {
-                builder.push(", ");
-            }
-            builder.push("workspace_id = ").push_bind(workspace_id);
-            has_updates = true;
-        }
 
         if !has_updates {
             return self.find_by_id(id).await?.ok_or(Error::NotFound);
@@ -416,8 +386,8 @@ impl DeviceRepository for SqliteDeviceRepository {
                 INSERT INTO devices (
                     id, name, display_name, device_type, address, description, position,
                     driver_name, device_model, protocol_type, factory_name, linked_data,
-                    driver_options, state, parent_id, product_id, tenant_id, workspace_id, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    driver_options, state, parent_id, product_id, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 "#,
             )
             .bind(&id)
@@ -436,8 +406,6 @@ impl DeviceRepository for SqliteDeviceRepository {
             .bind(0i32)
             .bind(&request.parent_id)
             .bind(&request.product_id)
-            .bind(&request.tenant_id)
-            .bind(&request.workspace_id)
             .bind(&now)
             .bind(&now)
             .execute(&mut *tx)
@@ -460,8 +428,6 @@ impl DeviceRepository for SqliteDeviceRepository {
                 state: Some(0),
                 parent_id: request.parent_id.clone(),
                 product_id: request.product_id.clone(),
-                tenant_id: request.tenant_id.clone(),
-                workspace_id: request.workspace_id.clone(),
                 created_at: Some(now.clone()),
                 updated_at: Some(now.clone()),
                 tags: None,

@@ -1,3 +1,4 @@
+use tinyiothub_web::response::ApiResponseBuilder;
 use crate::dto::entity::permission::{Permission, PermissionQuery};
 use axum::{
     extract::{Path, State},
@@ -9,10 +10,10 @@ use serde::Serialize;
 use crate::{
     api::AppState,
     dto::{
-        response::{ApiResponse, ApiResponseBuilder}
+        response::ApiResponse
     },
-    shared::security::jwt::Claims
 };
+use crate::shared::security::jwt::Claims;
 
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]

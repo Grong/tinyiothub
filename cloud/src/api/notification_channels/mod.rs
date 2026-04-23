@@ -2,6 +2,7 @@
 // 通知渠道配置 API
 
 
+use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
     extract::{Path, Query, State},
     routing::{delete, get, post, put},
@@ -9,16 +10,19 @@ use axum::{
     Router,
 };
 
-use crate::dto::entity::notification_channel::{
-    ChannelStatistics, CreateNotificationChannelRequest, NotificationChannel,
-    NotificationChannelQueryParams, SendMessageRequest, UpdateNotificationChannelRequest,
+use crate::domain::event::services::notification_channel::send_notification_message;
+use crate::infrastructure::persistence::repositories::{
     find_notification_channel_by_id, find_all_notification_channels,
     count_notification_channels, create_notification_channel,
     update_notification_channel, delete_notification_channel,
-    get_notification_channel_statistics, send_notification_message,
+    get_notification_channel_statistics,
+};
+use tinyiothub_core::models::notification_channel::{
+    ChannelStatistics, CreateNotificationChannelRequest, NotificationChannel,
+    NotificationChannelQueryParams, SendMessageRequest, UpdateNotificationChannelRequest,
 };
 use crate::{
-    dto::response::{ApiResponse, builder::ApiResponseBuilder, PaginatedResponse, PaginationInfo},
+    dto::response::{ApiResponse, PaginatedResponse, PaginationInfo},
     shared::app_state::AppState,
 };
 
@@ -124,19 +128,17 @@ async fn update_channel(
     let db = state.database.clone();
 
     // 验证渠道类型
-    if let Some(ref channel_type) = payload.channel_type {
-        if !["sms", "email", "webhook"].contains(&channel_type.as_str()) {
+    if let Some(ref channel_type) = payload.channel_type
+        && !["sms", "email", "webhook"].contains(&channel_type.as_str()) {
             return ApiResponseBuilder::error_with_code(400, "无效的通知渠道类型");
         }
-    }
 
     // 验证配置 JSON
-    if let Some(ref config) = payload.config {
-        if let Err(e) = serde_json::from_str::<serde_json::Value>(config) {
+    if let Some(ref config) = payload.config
+        && let Err(e) = serde_json::from_str::<serde_json::Value>(config) {
             tracing::error!("Invalid config JSON: {}", e);
             return ApiResponseBuilder::error_with_code(400, "无效的配置 JSON");
         }
-    }
 
     match update_notification_channel(&db, &id, &payload).await {
         Ok(channel) => ApiResponseBuilder::success(channel),
@@ -199,7 +201,7 @@ async fn test_channel(
             tracing::error!("Failed to send test message: {}", e);
             ApiResponseBuilder::success(serde_json::json!({
                 "success": false,
-                "error": e
+                "error": e.to_string()
             }))
         }
     }

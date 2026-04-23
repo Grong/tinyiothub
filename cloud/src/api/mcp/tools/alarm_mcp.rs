@@ -172,7 +172,7 @@ impl ToolHandler for AlarmListHandler {
         };
 
         let alarm_levels = input.levels.as_ref().and_then(|l| {
-            let parsed: Vec<AlarmLevel> = l.iter().filter_map(|level| AlarmLevel::from_str(level)).collect();
+            let parsed: Vec<AlarmLevel> = l.iter().filter_map(|level| AlarmLevel::parse_str(level)).collect();
             if parsed.is_empty() {
                 None
             } else {
@@ -181,7 +181,7 @@ impl ToolHandler for AlarmListHandler {
         });
 
         let statuses = input.statuses.as_ref().and_then(|s| {
-            let parsed: Vec<AlarmStatus> = s.iter().filter_map(|status| AlarmStatus::from_str(status)).collect();
+            let parsed: Vec<AlarmStatus> = s.iter().filter_map(|status| AlarmStatus::parse_str(status)).collect();
             if parsed.is_empty() {
                 None
             } else {
@@ -228,7 +228,7 @@ impl ToolHandler for AlarmListHandler {
                 "total_pages": total_pages,
                 "total_count": total
             }
-        }).into())
+        }))
     }
 }
 
@@ -274,13 +274,12 @@ impl ToolHandler for AlarmStatisticsHandler {
 
         // SECURITY: Reject if user tries to specify a different workspace_id
         // The statistics should only be for the authenticated workspace
-        if let Some(ref ws_id) = input.workspace_id {
-            if ws_id != &claims.workspace_id {
+        if let Some(ref ws_id) = input.workspace_id
+            && ws_id != &claims.workspace_id {
                 return Err(ToolError::Forbidden(
                     "Access denied: cannot query statistics for other workspaces".to_string()
                 ));
             }
-        }
 
         let state = crate::api::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
@@ -356,19 +355,16 @@ impl ToolHandler for AlarmAcknowledgeHandler {
             .map_err(|e| ToolError::Internal(format!("Failed to fetch alarm: {}", e)))?
             .ok_or_else(|| ToolError::NotFound("Alarm not found".to_string()))?;
 
-        // 2. Get the device to check its workspace
-        let device = state.device_service.get_device_by_id(&alarm.device_id)
+        // 2. Get tenant-aware device service to verify workspace isolation
+        // Using tenant_device_service ensures the device belongs to the authenticated workspace
+        let tenant_device_service = state.tenant_device_service(&Some(claims.workspace_id.clone()));
+        let _device = tenant_device_service.get_device_by_id(&alarm.device_id)
             .await
             .map_err(|e| ToolError::Internal(format!("Failed to fetch device: {}", e)))?
-            .ok_or_else(|| ToolError::NotFound("Device associated with alarm not found".to_string()))?;
+            .ok_or_else(|| ToolError::NotFound("Device associated with alarm not found or does not belong to workspace".to_string()))?;
 
-        // 3. Verify workspace isolation
-        let device_workspace = device.workspace_id.as_deref().unwrap_or("");
-        if device_workspace != claims.workspace_id {
-            return Err(ToolError::Forbidden(
-                "Access denied: alarm does not belong to authenticated workspace".to_string()
-            ));
-        }
+        // 3. Workspace isolation is now verified by tenant_device_service
+        // If we get here, the device belongs to the authenticated workspace
 
         // 4. Now safe to acknowledge
         state
@@ -381,7 +377,7 @@ impl ToolHandler for AlarmAcknowledgeHandler {
             "success": true,
             "alarm_id": input.id,
             "acknowledged_by": claims.actor_identifier()
-        }).into())
+        }))
     }
 }
 
@@ -494,7 +490,7 @@ impl ToolHandler for AlarmRuleAddHandler {
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         // Parse alarm level
-        let alarm_level = AlarmLevel::from_str(&input.alarm_level)
+        let alarm_level = AlarmLevel::parse_str(&input.alarm_level)
             .ok_or_else(|| ToolError::InvalidParams(format!("Invalid alarm level: {}", input.alarm_level)))?;
 
         // Parse condition

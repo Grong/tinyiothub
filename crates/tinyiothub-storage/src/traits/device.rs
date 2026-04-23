@@ -84,8 +84,6 @@ pub struct DeviceCriteria {
     pub state: Option<i32>,
     pub parent_id: Option<String>,
     pub product_id: Option<String>,
-    pub tenant_id: Option<String>,
-    pub workspace_id: Option<String>,
     pub search_text: Option<String>,
     pub sort_by: DeviceSortBy,
     pub sort_order: DeviceSortOrder,
@@ -134,8 +132,6 @@ impl Default for DeviceCriteria {
             state: None,
             parent_id: None,
             product_id: None,
-            tenant_id: None,
-            workspace_id: None,
             search_text: None,
             sort_by: DeviceSortBy::default(),
             sort_order: DeviceSortOrder::default(),
@@ -199,17 +195,6 @@ impl DeviceCriteria {
         self
     }
 
-    /// Filter by tenant ID
-    pub fn with_tenant_id(mut self, tenant_id: String) -> Self {
-        self.tenant_id = Some(tenant_id);
-        self
-    }
-
-    /// Filter by workspace ID
-    pub fn with_workspace_id(mut self, workspace_id: String) -> Self {
-        self.workspace_id = Some(workspace_id);
-        self
-    }
 
     /// Filter by search text
     pub fn with_search_text(mut self, text: String) -> Self {
@@ -284,15 +269,6 @@ impl DeviceCriteriaBuilder {
         self
     }
 
-    pub fn tenant_id(mut self, tenant_id: String) -> Self {
-        self.criteria.tenant_id = Some(tenant_id);
-        self
-    }
-
-    pub fn workspace_id(mut self, workspace_id: String) -> Self {
-        self.criteria.workspace_id = Some(workspace_id);
-        self
-    }
 
     pub fn search_text(mut self, text: String) -> Self {
         self.criteria.search_text = Some(text);
@@ -341,7 +317,6 @@ mod tests {
             .device_type("temperature".to_string())
             .driver_name("modbus".to_string())
             .state(1)
-            .workspace_id("ws-1".to_string())
             .sort_by(DeviceSortBy::Name)
             .sort_order(DeviceSortOrder::Ascending)
             .limit(100)
@@ -352,7 +327,6 @@ mod tests {
         assert_eq!(criteria.device_type, Some("temperature".to_string()));
         assert_eq!(criteria.driver_name, Some("modbus".to_string()));
         assert_eq!(criteria.state, Some(1));
-        assert_eq!(criteria.workspace_id, Some("ws-1".to_string()));
         assert!(matches!(criteria.sort_by, DeviceSortBy::Name));
         assert!(matches!(criteria.sort_order, DeviceSortOrder::Ascending));
         assert_eq!(criteria.limit, Some(100));

@@ -145,7 +145,7 @@ pub enum NotifyChannel {
 }
 
 impl NotifyChannel {
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "email" => NotifyChannel::Email,
             "sms" => NotifyChannel::Sms,
@@ -168,7 +168,7 @@ pub enum HttpMethod {
 }
 
 impl HttpMethod {
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse_str(s: &str) -> Self {
         match s.to_uppercase().as_str() {
             "GET" => HttpMethod::Get,
             "POST" => HttpMethod::Post,
@@ -200,7 +200,7 @@ pub enum DataFormat {
 }
 
 impl DataFormat {
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "json" => DataFormat::Json,
             "csv" => DataFormat::Csv,
@@ -221,7 +221,7 @@ pub enum ScriptInterpreter {
 }
 
 impl ScriptInterpreter {
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "bash" | "sh" => ScriptInterpreter::Bash,
             "python" | "python3" => ScriptInterpreter::Python,

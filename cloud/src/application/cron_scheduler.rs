@@ -7,9 +7,9 @@ use tokio::sync::{broadcast, Semaphore};
 use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
 
-use crate::domain::cron::executor::{ExecutionResult, ExecutorError, ExecutorRegistry};
-use crate::domain::cron::repository::{CronJobRepository, CronRunRepository};
-use crate::dto::entity::cron_job::CronJob;
+use tinyiothub_engine::cron::{ExecutionResult, ExecutorError, ExecutorRegistry};
+use tinyiothub_storage::traits::cron::{CronJobRepository, CronRunRepository};
+use tinyiothub_core::models::cron_job::CronJob;
 use crate::shared::error::Result;
 
 /// Cron job scheduler service that polls for due jobs and executes them.
@@ -51,7 +51,7 @@ impl CronSchedulerService {
 
         tokio::spawn(async move {
             // Crash recovery: clear any stale is_running flags from previous session.
-            if let Err(e) = job_repo.clear_all_running(None).await {
+            if let Err(e) = job_repo.clear_all_running().await {
                 warn!("Failed to clear stale running flags on startup: {}", e);
             }
 
@@ -96,7 +96,7 @@ async fn tick_impl(
     registry: Arc<ExecutorRegistry>,
     max_concurrent: usize,
 ) -> Result<()> {
-    let jobs = job_repo.find_due_jobs(None).await?;
+    let jobs = job_repo.find_due_jobs().await?;
 
     if jobs.is_empty() {
         return Ok(());
@@ -144,7 +144,7 @@ async fn execute_job(
     registry: Arc<ExecutorRegistry>,
 ) -> Result<()> {
     // Atomically claim the job (prevents race between scheduler and manual trigger)
-    let claimed = match job_repo.claim_job(&job.id, &job.workspace_id).await {
+    let claimed = match job_repo.claim_job(&job.id).await {
         Ok(true) => true,
         Ok(false) => {
             info!("Job {} already claimed by another process, skipping", job.id);
@@ -162,13 +162,13 @@ async fn execute_job(
 
     // Create run record
     let run = match run_repo
-        .create(&job.id, &job.workspace_id, "schedule", None)
+        .create(&job.id, "schedule", None)
         .await
     {
         Ok(r) => r,
         Err(e) => {
             error!("Failed to create run record for job {}: {}", job.id, e);
-            let _ = job_repo.set_running(&job.id, &job.workspace_id, false).await;
+            let _ = job_repo.set_running(&job.id, false).await;
             return Err(e);
         }
     };
@@ -205,7 +205,6 @@ async fn execute_job(
             if let Err(e) = run_repo
                 .complete(
                     &run_id,
-                    &job.workspace_id,
                     &res.status,
                     res.output.as_deref(),
                     res.error_message.as_deref(),
@@ -219,7 +218,6 @@ async fn execute_job(
             if let Err(e) = job_repo
                 .update_run_stats(
                     &job.id,
-                    &job.workspace_id,
                     &res.status,
                     res.error_message.as_deref(),
                 )
@@ -241,14 +239,14 @@ async fn execute_job(
                 _ => "failed",
             };
             if let Err(e) = run_repo
-                .complete(&run_id, &job.workspace_id, status, None, Some(&err_msg), duration_ms)
+                .complete(&run_id, status, None, Some(&err_msg), duration_ms)
                 .await
             {
                 error!("Failed to complete run {}: {}", run_id, e);
             }
 
             if let Err(e) = job_repo
-                .update_run_stats(&job.id, &job.workspace_id, status, Some(&err_msg))
+                .update_run_stats(&job.id, status, Some(&err_msg))
                 .await
             {
                 error!("Failed to update run stats for job {}: {}", job.id, e);
@@ -262,7 +260,7 @@ async fn execute_job(
     let next_run = compute_next_run_at(&job.cron_expression);
     if let Some(ref next) = next_run {
         if let Err(e) = job_repo
-            .update_next_run_at(&job.id, &job.workspace_id, Some(next))
+            .update_next_run_at(&job.id, Some(next))
             .await
         {
             warn!("Failed to update next_run_at for job {}: {}", job.id, e);
@@ -271,7 +269,7 @@ async fn execute_job(
     }
 
     // Set is_running = false
-    if let Err(e) = job_repo.set_running(&job.id, &job.workspace_id, false).await {
+    if let Err(e) = job_repo.set_running(&job.id, false).await {
         warn!("Failed to set job {} not running: {}", job.id, e);
     }
 

@@ -445,21 +445,20 @@ impl ToolHandler for DeleteWorkspaceHandler {
         }
 
         // Try to delete Agent using AppState's agent client
-        if let Some(agent_id) = workspace.agent_id {
-            if let Err(e) = state.agent_runtime.delete_agent(&agent_id).await {
+        if let Some(agent_id) = workspace.agent_id
+            && let Err(e) = state.agent_runtime.delete_agent(&agent_id).await {
                 tracing::warn!(
                     "Failed to delete agent {}: {}. Proceeding with workspace deletion.",
                     agent_id,
                     e
                 );
             }
-        }
 
         // Delete workspace from DB
         state.workspace_service.delete(&input.id)
             .await
             .map_err(|e| ToolError::Internal(format!("failed to delete workspace: {}", e)))?;
 
-        Ok(serde_json::json!({ "success": true, "id": input.id }).into())
+        Ok(serde_json::json!({ "success": true, "id": input.id }))
     }
 }

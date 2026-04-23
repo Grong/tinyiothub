@@ -5,17 +5,14 @@ use serde::{Deserialize, Serialize};
 
 /// 技能类型
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum SkillType {
+    #[default]
     File,    // 文件系统技能
     Bundled, // 内建打包技能
     Mcp,     // MCP Server 技能
 }
 
-impl Default for SkillType {
-    fn default() -> Self {
-        SkillType::File
-    }
-}
 
 impl std::fmt::Display for SkillType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

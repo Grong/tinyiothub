@@ -2,6 +2,7 @@
 // REST API for batch command management
 
 
+use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
     extract::{Path, Query, State},
     routing::{get, post},
@@ -10,11 +11,12 @@ use axum::{
 use serde::Deserialize;
 
 use crate::{
-    dto::response::{ApiResponse, builder::ApiResponseBuilder},
+    dto::response::{ApiResponse},
     infrastructure::batch_command::{
         BatchCommandExecutor, BatchCommandRepository, BatchCommandWithItems, CreateBatchCommandRequest,
     },
     shared::app_state::AppState,
+    api::middleware::WorkspaceScope,
 };
 
 /// Query params for listing batches
@@ -106,11 +108,12 @@ async fn get_batch(
 async fn execute_batch(
     State(state): State<AppState>,
     Path(batch_id): Path<String>,
+    WorkspaceScope(workspace_id): WorkspaceScope,
 ) -> Json<ApiResponse<BatchCommandWithItems>> {
     let db = state.database.clone();
-    let device_service = state.device_service.clone();
+    let tenant_device_service = state.tenant_device_service(&workspace_id);
 
-    match BatchCommandExecutor::execute(&db, device_service, &batch_id).await {
+    match BatchCommandExecutor::execute(&db, tenant_device_service, &batch_id).await {
         Ok(batch_with_items) => ApiResponseBuilder::success(batch_with_items),
         Err(e) => {
             tracing::error!("Failed to execute batch {}: {}", batch_id, e);

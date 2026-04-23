@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    application::data_context::DataContext, infrastructure::persistence::Database,
+    infrastructure::persistence::Database,
     shared::error::Error,
 };
 
@@ -9,12 +9,27 @@ use crate::{
 /// 负责设备追踪记录的管理和查询
 pub struct DeviceTraceService {
     database: Arc<Database>,
-    context: Arc<DataContext>,
 }
 
 impl DeviceTraceService {
-    pub fn new(database: Arc<Database>, context: Arc<DataContext>) -> Self {
-        Self { database, context }
+    pub fn new(database: Arc<Database>) -> Self {
+        Self { database }
+    }
+
+    /// 检查设备是否存在于数据库中
+    async fn device_exists(&self, device_id: &str) -> Result<bool, Error> {
+        match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM devices WHERE id = ?")
+            .bind(device_id)
+            .fetch_optional(self.database.pool())
+            .await
+        {
+            Ok(Some(count)) => Ok(count > 0),
+            Ok(None) => Ok(false),
+            Err(e) => {
+                tracing::debug!("Failed to check device existence for {}: {}", device_id, e);
+                Err(Error::IOError(format!("DB error: {}", e)))
+            }
+        }
     }
 
     /// 记录设备追踪信息
@@ -32,7 +47,7 @@ impl DeviceTraceService {
         session_id: Option<&str>,
     ) -> Result<String, Error> {
         // 验证设备是否存在
-        if self.context.get_device(device_id).is_none() {
+        if !self.device_exists(device_id).await? {
             return Err(Error::IOError("Device not found".to_string()));
         }
 
@@ -94,7 +109,7 @@ impl DeviceTraceService {
         offset: Option<u32>,
     ) -> Result<Vec<DeviceTrace>, Error> {
         // 验证设备是否存在
-        if self.context.get_device(device_id).is_none() {
+        if !self.device_exists(device_id).await? {
             return Err(Error::NotFound);
         }
 
@@ -106,22 +121,20 @@ impl DeviceTraceService {
         let mut bind_values: Vec<String> = vec![device_id.to_string()];
 
         // 添加类型过滤
-        if let Some(types) = trace_types {
-            if !types.is_empty() {
+        if let Some(types) = trace_types
+            && !types.is_empty() {
                 let placeholders = types.iter().map(|_| "?").collect::<Vec<_>>().join(",");
                 query.push_str(&format!(" AND trace_type IN ({})", placeholders));
                 bind_values.extend(types.iter().cloned());
             }
-        }
 
         // 添加级别过滤
-        if let Some(lvls) = levels {
-            if !lvls.is_empty() {
+        if let Some(lvls) = levels
+            && !lvls.is_empty() {
                 let placeholders = lvls.iter().map(|_| "?").collect::<Vec<_>>().join(",");
                 query.push_str(&format!(" AND level IN ({})", placeholders));
                 bind_values.extend(lvls.iter().cloned());
             }
-        }
 
         // 按时间倒序排列并分页
         query.push_str(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
@@ -158,7 +171,7 @@ impl DeviceTraceService {
         days: Option<u32>,
     ) -> Result<DeviceTraceStatistics, Error> {
         // 验证设备是否存在
-        if self.context.get_device(device_id).is_none() {
+        if !self.device_exists(device_id).await? {
             return Err(Error::NotFound);
         }
 
@@ -243,7 +256,7 @@ impl DeviceTraceService {
         trace_types: Option<&[String]>,
     ) -> Result<u32, Error> {
         // 验证设备是否存在
-        if self.context.get_device(device_id).is_none() {
+        if !self.device_exists(device_id).await? {
             return Err(Error::IOError("Device not found".to_string()));
         }
 
@@ -257,13 +270,12 @@ impl DeviceTraceService {
         }
 
         // 添加类型条件
-        if let Some(types) = trace_types {
-            if !types.is_empty() {
+        if let Some(types) = trace_types
+            && !types.is_empty() {
                 let placeholders = types.iter().map(|_| "?").collect::<Vec<_>>().join(",");
                 query.push_str(&format!(" AND trace_type IN ({})", placeholders));
                 bind_values.extend(types.iter().cloned());
             }
-        }
 
         // 动态绑定参数 - 使用 fold 避免 let mut 生命周期问题
         let query_builder = bind_values.iter().fold(

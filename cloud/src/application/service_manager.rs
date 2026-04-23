@@ -6,8 +6,8 @@ use tokio::{
 };
 use tracing::{error, info, warn};
 
+use tinyiothub_engine::application::DataServer;
 use crate::{
-    application::{DataContext, DataServer},
     shared::error::Error,
 };
 
@@ -61,7 +61,7 @@ impl ServiceManager {
 
         // 1. 创建并启动数据服务器
         let data_server =
-            Arc::new(DataServer::new(app_state.data_context.clone(), app_state.event_bus.clone()));
+            Arc::new(DataServer::new(app_state.device_cache.clone(), app_state.event_bus.clone()));
 
         // 启动数据服务器
         let shutdown_rx = self.shutdown_tx.subscribe();
@@ -97,7 +97,7 @@ impl ServiceManager {
 
         // 3. 启动健康检查服务
         #[cfg(not(feature = "harmonyos"))]
-        self.start_health_monitor(app_state.data_context.clone()).await?;
+        self.start_health_monitor(data_server.clone(), app_state.database.clone()).await?;
 
         // 4. 启动 Heartbeat 服务
         #[cfg(not(feature = "harmonyos"))]
@@ -164,8 +164,12 @@ impl ServiceManager {
     }
 
     /// 启动健康检查服务
-    async fn start_health_monitor(&self, context: Arc<DataContext>) -> Result<(), Error> {
-        info!("� SStarting Health Monitor...");
+    async fn start_health_monitor(
+        &self,
+        data_server: Arc<DataServer>,
+        database: Arc<crate::infrastructure::persistence::Database>,
+    ) -> Result<(), Error> {
+        info!("Starting Health Monitor...");
 
         let _status = self.status.clone();
         let mut shutdown_rx = self.shutdown_tx.subscribe();
@@ -176,8 +180,7 @@ impl ServiceManager {
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        // 执行健康检查
-                        if let Err(e) = Self::perform_health_check(&context).await {
+                        if let Err(e) = Self::perform_health_check(&data_server, &database).await {
                             warn!("Health check failed: {}", e);
                         }
                     }
@@ -197,11 +200,11 @@ impl ServiceManager {
         Ok(())
     }
 
-    /// 执行健康检查
-    async fn perform_health_check(context: &Arc<DataContext>) -> Result<(), Error> {
-        // 检查数据库连接
-        let db = context.database();
-        match sqlx::query("SELECT 1").fetch_optional(db.pool()).await {
+    async fn perform_health_check(
+        data_server: &DataServer,
+        database: &Arc<crate::infrastructure::persistence::Database>,
+    ) -> Result<(), Error> {
+        match sqlx::query("SELECT 1").fetch_optional(database.pool()).await {
             Ok(_) => {
                 tracing::debug!("Database health check passed");
             }
@@ -210,9 +213,7 @@ impl ServiceManager {
             }
         }
 
-        // 检查缓存状态
-        let cache_stats = context.get_cache_stats();
-        tracing::debug!("Cache stats: {} devices cached", cache_stats.device_count);
+        tracing::debug!("Cache stats: {} devices cached", data_server.get_devices().len());
 
         Ok(())
     }

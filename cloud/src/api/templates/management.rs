@@ -1,3 +1,4 @@
+use tinyiothub_web::response::ApiResponseBuilder;
 use crate::dto::entity::device_template::{
             CreateDeviceTemplateRequest, DeviceCreationInput, DevicePreview, DeviceTemplate,
             TemplateCategory, TemplateQueryParams, UpdateDeviceTemplateRequest,
@@ -18,10 +19,10 @@ use crate::{
         validator::TemplateValidator,
     },
     dto::{
-        response::{ApiResponse, ApiResponseBuilder, PaginatedResponse, PaginationInfo}
+        response::{ApiResponse, PaginatedResponse, PaginationInfo}
     },
-    shared::security::jwt::Claims
 };
+use crate::shared::security::jwt::Claims;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]

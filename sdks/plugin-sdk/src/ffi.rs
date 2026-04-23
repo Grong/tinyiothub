@@ -18,7 +18,7 @@ pub fn to_c_string(s: &str) -> *const c_char {
 /// 
 /// `ptr` 必须是有效的C字符串指针
 pub unsafe fn from_c_string(ptr: *const c_char) -> String {
-    CStr::from_ptr(ptr).to_string_lossy().into_owned()
+    unsafe { CStr::from_ptr(ptr).to_string_lossy().into_owned() }
 }
 
 /// 释放C字符串
@@ -28,6 +28,6 @@ pub unsafe fn from_c_string(ptr: *const c_char) -> String {
 /// `ptr` 必须是通过 `to_c_string` 创建的指针
 pub unsafe fn free_c_string(ptr: *const c_char) {
     if !ptr.is_null() {
-        let _ = CString::from_raw(ptr as *mut c_char);
+        let _ = unsafe { CString::from_raw(ptr as *mut c_char) };
     }
 }

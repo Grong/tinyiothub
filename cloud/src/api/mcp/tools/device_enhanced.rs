@@ -9,7 +9,6 @@ use serde_json::Value;
 
 use crate::api::mcp::handlers::get_mcp_context;
 use crate::api::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
-use crate::dto::entity::device::find_device_by_id;
 use crate::infrastructure::diagnostics::DiagnosticsService;
 
 /// Tool input: Compare devices
@@ -88,18 +87,21 @@ impl ToolHandler for CompareDevicesHandler {
         }
 
         // SECURITY: Verify all devices belong to authenticated workspace
-        let db = state.database();
+        let tenant_device_service = state.tenant_device_service_str(&claims.workspace_id);
         for device_id in &input.device_ids {
-            let device = crate::dto::entity::device::find_device_by_id(db, device_id)
-                .await
-                .map_err(|e| ToolError::Internal(format!("failed to verify device: {}", e)))?
-                .ok_or_else(|| ToolError::NotFound(format!("device {} not found", device_id)))?;
-
-            if device.workspace_id.as_ref() != Some(&claims.workspace_id) {
-                tracing::warn!("MCP compare_devices: access denied to device {} for workspace {}", device_id, claims.workspace_id);
-                return Err(ToolError::Forbidden(
-                    "Access denied: one or more devices do not belong to authenticated workspace".to_string()
-                ));
+            match tenant_device_service.get_device_by_id(device_id).await {
+                Ok(Some(_)) => {
+                    // Device belongs to workspace, verification passed
+                }
+                Ok(None) => {
+                    tracing::warn!("MCP compare_devices: access denied to device {} for workspace {}", device_id, claims.workspace_id);
+                    return Err(ToolError::Forbidden(
+                        "Access denied: one or more devices do not belong to authenticated workspace".to_string()
+                    ));
+                }
+                Err(e) => {
+                    return Err(ToolError::Internal(format!("failed to verify device ownership: {}", e)));
+                }
             }
         }
 
@@ -152,17 +154,19 @@ impl ToolHandler for DiagnoseDeviceHandler {
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         // SECURITY: Verify device belongs to authenticated workspace
-        let db = state.database();
-        let device = find_device_by_id(db, &input.device_id)
-            .await
-            .map_err(|e| ToolError::Internal(format!("failed to verify device: {}", e)))?
-            .ok_or_else(|| ToolError::NotFound(format!("device {} not found", input.device_id)))?;
-
-        if device.workspace_id.as_ref() != Some(&claims.workspace_id) {
-            tracing::warn!("MCP diagnose_device: access denied to device {} for workspace {}", input.device_id, claims.workspace_id);
-            return Err(ToolError::Forbidden(
-                "Access denied: device does not belong to authenticated workspace".to_string()
-            ));
+        match state.tenant_device_service_str(&claims.workspace_id).get_device_by_id(&input.device_id).await {
+            Ok(Some(_)) => {
+                // Device belongs to workspace, verification passed
+            }
+            Ok(None) => {
+                tracing::warn!("MCP diagnose_device: access denied to device {} for workspace {}", input.device_id, claims.workspace_id);
+                return Err(ToolError::Forbidden(
+                    "Access denied: device does not belong to authenticated workspace".to_string()
+                ));
+            }
+            Err(e) => {
+                return Err(ToolError::Internal(format!("failed to verify device ownership: {}", e)));
+            }
         }
 
         let diagnosis = DiagnosticsService::diagnose_device(&state, &input.device_id)
@@ -206,6 +210,6 @@ impl ToolHandler for ScanSerialHandler {
         Ok(serde_json::json!({
             "ports": ports,
             "count": ports.len()
-        }).into())
+        }))
     }
 }

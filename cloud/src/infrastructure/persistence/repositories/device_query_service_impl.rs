@@ -1,4 +1,4 @@
-use crate::dto::entity::device::{Device, DeviceStats};
+use tinyiothub_core::models::device::{Device, DeviceStats};
 use async_trait::async_trait;
 use sqlx::{QueryBuilder, Row};
 
@@ -9,7 +9,7 @@ use crate::{
     shared::error::Result,
 };
 
-use super::device_row_mapper;
+use tinyiothub_storage::sqlite::device_row_mapper;
 
 /// SQLite implementation of DeviceQueryService
 #[derive(Debug, Clone)]

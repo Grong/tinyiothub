@@ -1,6 +1,7 @@
 // 第三方登录模块
 // 支持微信扫码登录
 
+use tinyiothub_web::response::ApiResponseBuilder;
 use crate::dto::entity::user::User;
 use axum::{
     extract::{Query, State},
@@ -15,7 +16,7 @@ use sqlx::Row;
 use crate::{
     api::AppState,
     dto::{
-        response::{ApiResponse, ApiResponseBuilder}
+        response::ApiResponse
     },
     infrastructure::{config::get as get_config, redis::RedisClient},
     shared::security::jwt
@@ -482,7 +483,7 @@ async fn get_social_config(State(state): State<AppState>) -> Json<ApiResponse<Ve
         }
     };
 
-    let configs: Vec<SocialConfig> = rows.into_iter().map(|r| r).collect();
+    let configs: Vec<SocialConfig> = rows.into_iter().collect();
     ApiResponseBuilder::success(configs)
 }
 
@@ -517,7 +518,7 @@ async fn update_social_config(
 // ============== 辅助函数 ==============
 
 async fn get_wechat_config(
-    db: &crate::infrastructure::persistence::database::Database,
+    db: &crate::infrastructure::persistence::Database,
 ) -> Option<SocialConfig> {
     let sql = "SELECT * FROM social_configs WHERE provider = 'wechat' LIMIT 1";
 
@@ -594,14 +595,13 @@ async fn exchange_wechat_code(
         .map_err(|e| format!("Read body error: {}", e))?;
 
     // 尝试解析错误响应
-    if let Ok(err_resp) = serde_json::from_slice::<WechatErrorResponse>(&body) {
-        if err_resp.errcode != 0 {
+    if let Ok(err_resp) = serde_json::from_slice::<WechatErrorResponse>(&body)
+        && err_resp.errcode != 0 {
             return Err(format!(
                 "WeChat API error: {} - {}",
                 err_resp.errcode, err_resp.errmsg
             ));
         }
-    }
 
     serde_json::from_slice::<WechatTokenResponse>(&body)
         .map_err(|e| format!("Parse error: {}", e))
@@ -620,7 +620,7 @@ struct WechatTokenResponse {
 
 /// 根据微信 openid 查找或创建用户
 async fn find_or_create_user_by_wechat(
-    db: &crate::infrastructure::persistence::database::Database,
+    db: &crate::infrastructure::persistence::Database,
     openid: &str,
 ) -> Result<User, StatusCode> {
     // 查找 social_bindings
@@ -696,7 +696,7 @@ fn user_from_row(row: sqlx::sqlite::SqliteRow) -> User {
 
 /// 存储社交账号绑定
 async fn save_social_binding(
-    db: &crate::infrastructure::persistence::database::Database,
+    db: &crate::infrastructure::persistence::Database,
     user_id: &str,
     provider: &str,
     provider_user_id: &str,

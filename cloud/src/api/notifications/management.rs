@@ -1,3 +1,5 @@
+use crate::shared::security::jwt::Claims;
+use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
     extract::{Path, Query, State},
     response::Json,
@@ -12,8 +14,8 @@ use crate::{
         services::notification_service::NotificationLevel, NotificationChannelType,
         NotificationRule,
     },
-    dto::response::{api_response::ApiResponse, builder::ApiResponseBuilder},
-    shared::{app_state::AppState, security::jwt::Claims},
+    dto::response::ApiResponse,
+    shared::{app_state::AppState},
 };
 
 /// Helper function to convert JsonValue device filter to DeviceFilterResponse
@@ -182,25 +184,21 @@ async fn get_notification_rules_impl(
     let filtered_rules: Vec<_> = rules
         .into_iter()
         .filter(|rule| {
-            if let Some(enabled) = query.enabled {
-                if rule.enabled != enabled {
+            if let Some(enabled) = query.enabled
+                && rule.enabled != enabled {
                     return false;
                 }
-            }
 
-            if let Some(ref event_type) = query.event_type {
-                if rule.event_type.as_ref() != Some(event_type) {
+            if let Some(ref event_type) = query.event_type
+                && rule.event_type.as_ref() != Some(event_type) {
                     return false;
                 }
-            }
 
-            if let Some(ref method) = query.notification_method {
-                if let Some(channel) = NotificationChannelType::from_str(method) {
-                    if !rule.notification_methods.contains(&channel) {
+            if let Some(ref method) = query.notification_method
+                && let Some(channel) = NotificationChannelType::parse_str(method)
+                    && !rule.notification_methods.contains(&channel) {
                         return false;
                     }
-                }
-            }
 
             true
         })
@@ -255,7 +253,7 @@ async fn create_notification_rule_impl(
         .notification_methods
         .iter()
         .map(|method| {
-            NotificationChannelType::from_str(method)
+            NotificationChannelType::parse_str(method)
                 .ok_or_else(|| format!("Invalid notification method: {}", method))
         })
         .collect();
@@ -439,7 +437,7 @@ async fn update_notification_rule_impl(
         let methods: Result<Vec<NotificationChannelType>, _> = notification_methods
             .iter()
             .map(|method| {
-                NotificationChannelType::from_str(method)
+                NotificationChannelType::parse_str(method)
                     .ok_or_else(|| format!("Invalid notification method: {}", method))
             })
             .collect();
@@ -594,7 +592,7 @@ async fn send_test_notification_impl(
         state.get_notification_manager().ok_or("Notification manager not available")?;
 
     // Parse notification level
-    let level = NotificationLevel::from_str(&request.level)
+    let level = NotificationLevel::parse_str(&request.level)
         .map_err(|_e| format!("Invalid notification level: {}", request.level))?;
 
     // Parse notification channels
@@ -602,7 +600,7 @@ async fn send_test_notification_impl(
         .channels
         .iter()
         .map(|channel| {
-            NotificationChannelType::from_str(channel)
+            NotificationChannelType::parse_str(channel)
                 .ok_or_else(|| format!("Invalid notification channel: {}", channel))
         })
         .collect();

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use sqlx::Row;
 
-use crate::infrastructure::persistence::database::Database;
+use crate::infrastructure::persistence::Database;
 
 use super::entity::{ExecutionResult, HealingExecution, RecoveryActionType, SeverityLevel};
 
@@ -39,10 +39,10 @@ impl HealingExecutionRepository {
                     &execution.id,
                     &execution.tenant_id,
                     &execution.timestamp.to_rfc3339(),
-                    &execution.level.as_str(),
-                    &execution.action_type.as_str(),
+                    execution.level.as_str(),
+                    execution.action_type.as_str(),
                     &execution.target,
-                    &execution.result.as_str(),
+                    execution.result.as_str(),
                     &logs_json,
                 ],
             )
@@ -66,7 +66,9 @@ impl HealingExecutionRepository {
             LIMIT ? OFFSET ?
         "#;
 
-        let rows = self.db.query(sql, |row| {
+        
+
+        self.db.query(sql, |row| {
             let id: String = row.try_get("id")?;
             let tenant_id: String = row.try_get("tenant_id")?;
             let timestamp_str: String = row.try_get("timestamp")?;
@@ -120,9 +122,7 @@ impl HealingExecutionRepository {
                 result,
                 logs,
             })
-        }).await;
-
-        rows
+        }).await
     }
 
     /// Count total healing executions for a tenant

@@ -146,7 +146,7 @@ impl ToolHandler for BatchCommandHandler {
                 "idempotency_matched": true,
                 "items": batch_with_items.items,
                 "message": "Returned existing batch for idempotency key"
-            }).into());
+            }));
         }
 
         // Create new batch
@@ -167,8 +167,8 @@ impl ToolHandler for BatchCommandHandler {
         // Auto-execute if requested (default true)
         let auto_execute = input.auto_execute.unwrap_or(true);
         if auto_execute {
-            let device_service = state.device_service.clone();
-            match BatchCommandExecutor::execute(&db, device_service, &batch_with_items.batch.id).await {
+            let tenant_device_service = state.tenant_device_service(&Some(input.workspace_id.clone()));
+            match BatchCommandExecutor::execute(&db, tenant_device_service, &batch_with_items.batch.id).await {
                 Ok(executed) => {
                     return Ok(serde_json::json!({
                         "id": executed.batch.id,
@@ -177,7 +177,7 @@ impl ToolHandler for BatchCommandHandler {
                         "items": executed.items,
                         "total_devices": executed.batch.total_devices,
                         "message": "Batch created and executed successfully"
-                    }).into());
+                    }));
                 }
                 Err(e) => {
                     tracing::error!("Auto-execute failed for batch {}: {}", batch_with_items.batch.id, e);
@@ -189,7 +189,7 @@ impl ToolHandler for BatchCommandHandler {
                         "items": batch_with_items.items,
                         "total_devices": batch_with_items.batch.total_devices,
                         "message": format!("Batch created but auto-execute failed: {}", e)
-                    }).into());
+                    }));
                 }
             }
         }
@@ -201,7 +201,7 @@ impl ToolHandler for BatchCommandHandler {
             "items": batch_with_items.items,
             "total_devices": batch_with_items.batch.total_devices,
             "message": "Batch created successfully"
-        }).into())
+        }))
     }
 }
 

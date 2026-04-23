@@ -1,13 +1,14 @@
 // Token 刷新模块
 // 支持 Token 刷新和黑名单
 
+use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{extract::State, response::Json, routing::post, Router};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 
 use crate::{
     api::AppState,
-    dto::response::{ApiResponse, ApiResponseBuilder},
+    dto::response::ApiResponse,
     shared::security::jwt::{generate_token, validate_jwt},
 };
 

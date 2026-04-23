@@ -22,7 +22,7 @@ impl SseEventHandler {
 
 #[async_trait::async_trait]
 impl EventHandler for SseEventHandler {
-    async fn handle(&self, event: &Event) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn handle(&self, event: &Event) -> tinyiothub_core::error::Result<()> {
         // 直接广播事件到所有连接的客户端
         // SseConnectionManager 会负责序列化
         self.sse_manager.broadcast_event(event).await;

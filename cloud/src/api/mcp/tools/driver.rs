@@ -2,7 +2,6 @@
 // MCP tools for driver management
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -10,7 +9,7 @@ use serde_json::Value;
 
 use crate::api::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
 use crate::domain::device::driver;
-use crate::dto::entity::component::ComponentOption;
+use tinyiothub_core::models::component::ComponentOption;
 
 /// Driver list response
 #[derive(Debug, Serialize)]
@@ -338,13 +337,12 @@ impl ToolHandler for MatchDriverHandler {
                     matched_driver = Some("S7Driver".to_string());
                     match_reason = "Siemens S7 PLC model detected".to_string();
                 }
-            } else if model_lower.contains("UPS") || model_lower.contains("smart") {
-                if confidence < 0.7 {
+            } else if (model_lower.contains("UPS") || model_lower.contains("smart"))
+                && confidence < 0.7 {
                     confidence = 0.7;
                     matched_driver = Some("SnmpDriver".to_string());
                     match_reason = "UPS/Smart device model pattern detected".to_string();
                 }
-            }
         }
 
         // Verify the matched driver exists
@@ -523,11 +521,11 @@ impl ToolHandler for TestDriverHandler {
 
         // For SimulatedDriver, we can actually run a test
         if input.driver_name == "SimulatedDriver" {
-            let state = crate::api::mcp::get_app_state()
+            let _state = crate::api::mcp::get_app_state()
                 .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
             // Create a test device
-            let test_device = crate::dto::entity::device::Device {
+            let test_device = tinyiothub_core::models::device::Device {
                 id: uuid::Uuid::new_v4().to_string(),
                 name: "test_device".to_string(),
                 display_name: Some("Test Device".to_string()),
@@ -549,14 +547,12 @@ impl ToolHandler for TestDriverHandler {
                 tags: None,
                 parent_id: None,
                 product_id: None,
-                tenant_id: None,
-                workspace_id: None,
                 created_at: Some(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),
                 updated_at: Some(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),
             };
 
             // Create driver instance
-            match driver::create_driver(&input.driver_name, &test_device, Arc::clone(&state.data_context)) {
+            match driver::create_driver(&input.driver_name, &test_device) {
                 Ok(mut driver_wrapper) => {
                     // Try to read data
                     let result = driver_wrapper.read_data();

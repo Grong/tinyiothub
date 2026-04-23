@@ -1,4 +1,7 @@
-use crate::dto::entity::{device::Device, device_property::DeviceProperty};
+use crate::shared::security::jwt::Claims;
+use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_core::models::device::Device;
+use tinyiothub_core::models::device_property::DeviceProperty;
 use axum::{
     extract::{Path, State},
     routing::get,
@@ -12,9 +15,10 @@ use crate::{
         value_objects::EventType,
     },
     dto::{
-        response::{builder::ApiResponseBuilder, ApiResponse, DeviceCommandResponse}
+        response::{ApiResponse, DeviceCommandResponse}
     },
-    shared::{app_state::AppState, security::jwt::Claims}
+    shared::{app_state::AppState},
+    api::middleware::WorkspaceScope,
 };
 
 /// 设备完整配置文件
@@ -91,25 +95,22 @@ async fn get_device_profile(
     State(state): State<AppState>,
     Path(device_id): Path<String>,
     claims: Claims,
+    WorkspaceScope(workspace_id): WorkspaceScope,
 ) -> Json<ApiResponse<DeviceProfile>> {
-    if let Err(e) = super::verify_device_tenant(&state, &device_id, &claims.tenant_id).await {
-        return match e {
-            crate::shared::error::Error::NotFound => ApiResponseBuilder::error("设备不存在"),
-            _ => ApiResponseBuilder::error("查询设备失败")
-};
-    }
+    // Note: Tenant verification is now handled by the TenantDeviceRepository adapter
+    // which automatically filters devices by workspace_id
 
     tracing::debug!("Getting complete profile for device: {}", device_id);
+    let tenant_device_service = state.tenant_device_service(&workspace_id);
 
-    // 从DataContext缓存获取设备信息（包含实时数据）
+    // 优先从缓存获取实时数据，缓存未命中则从数据库加载
     let mut device = match state.get_device(&device_id) {
         Some(device) => device,
         None => {
-            // 如果内存中没有，尝试从数据库加载并加入缓存
-            match state.device_service.get_device_by_id(&device_id).await {
+            match tenant_device_service.get_device_by_id(&device_id).await {
                 Ok(Some(mut device)) => {
                     // 加载设备属性和指令
-                    match state.device_service.get_device_properties(&device_id).await {
+                    match tenant_device_service.get_device_properties(&device_id).await {
                         Ok(properties) => device.properties = Some(properties),
                         Err(e) => {
                             tracing::warn!(
@@ -121,7 +122,7 @@ async fn get_device_profile(
                         }
                     }
 
-                    match state.device_service.get_device_commands(&device_id).await {
+                    match tenant_device_service.get_device_commands(&device_id).await {
                         Ok(commands) => device.commands = Some(commands),
                         Err(e) => {
                             tracing::warn!(
@@ -137,8 +138,6 @@ async fn get_device_profile(
                     device.is_online = false;
                     device.last_heartbeat = None;
 
-                    // 将设备加载到内存缓存中
-                    state.set_device(device.clone());
                     device
                 }
                 Ok(None) => {
@@ -154,7 +153,13 @@ async fn get_device_profile(
 
     // 加载设备标签
     match state.tag_service.find_tags_by_target_id(&device_id, &claims.tenant_id).await {
-        Ok(tags) => device.tags = Some(tags),
+        Ok(tags) => {
+            let tag_values: Vec<serde_json::Value> = tags
+                .into_iter()
+                .map(|t| serde_json::to_value(t).unwrap_or_default())
+                .collect();
+            device.tags = Some(tag_values);
+        }
         Err(e) => tracing::warn!("Failed to load tags for device {}: {}", device_id, e),
     }
 

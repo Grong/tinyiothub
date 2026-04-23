@@ -24,7 +24,7 @@ impl AlarmStatus {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "active" => Some(AlarmStatus::Active),
             "acknowledged" => Some(AlarmStatus::Acknowledged),

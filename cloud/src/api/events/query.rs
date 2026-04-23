@@ -1,6 +1,8 @@
 // Event query API endpoints
 // Provides event search, filtering, and pagination functionality
 
+use crate::shared::security::jwt::Claims;
+use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
     extract::{Query, State},
     response::Json,
@@ -15,9 +17,9 @@ use crate::{
     },
     dto::{
         request::pagination::PaginationQuery,
-        response::{builder::ApiResponseBuilder, ApiResponse, PaginatedResponse, PaginationInfo},
+        response::{ApiResponse, PaginatedResponse, PaginationInfo},
     },
-    shared::{app_state::AppState, security::jwt::Claims},
+    shared::{app_state::AppState},
 };
 
 /// Query parameters for event search
@@ -106,18 +108,16 @@ pub async fn get_events(
     }
 
     // Event types
-    if let Some(types_str) = params.event_types {
-        if let Ok(types) = EventType::parse_multiple(&types_str) {
+    if let Some(types_str) = params.event_types
+        && let Ok(types) = EventType::parse_multiple(&types_str) {
             criteria.event_types = Some(types);
         }
-    }
 
     // Levels
-    if let Some(levels_str) = params.levels {
-        if let Ok(levels) = parse_event_levels(&levels_str) {
+    if let Some(levels_str) = params.levels
+        && let Ok(levels) = parse_event_levels(&levels_str) {
             criteria.levels = Some(levels);
         }
-    }
 
     // Device IDs
     if let Some(device_ids_str) = params.device_ids {
@@ -156,11 +156,10 @@ pub async fn get_events(
     }
 
     // Search text
-    if let Some(search) = params.search {
-        if !search.trim().is_empty() {
+    if let Some(search) = params.search
+        && !search.trim().is_empty() {
             criteria.search_text = Some(search.trim().to_string());
         }
-    }
 
     // Sorting
     criteria.sort_by = parse_sort_by(params.sort_by.as_deref()).unwrap_or(SortBy::Timestamp);

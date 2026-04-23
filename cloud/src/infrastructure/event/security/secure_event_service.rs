@@ -72,8 +72,7 @@ impl SecureEventService {
                 event.level(),
                 event.timestamp(),
                 event.source().clone(),
-                encrypted_rich_content,
-            event.workspace_id().map(|s| s.to_string()),
+                encrypted_rich_content
             );
         }
 
@@ -115,17 +114,15 @@ impl SecureEventService {
         // Decrypt content if encrypted
         if self.config.enable_encryption {
             // Check if content appears to be encrypted (simplified check)
-            if event.content().title() == "Encrypted Content" {
-                if let Some(first_element) = event.content().elements().first() {
-                    if let crate::domain::event::value_objects::ContentElement::Text {
+            if event.content().title() == "Encrypted Content"
+                && let Some(first_element) = event.content().elements().first()
+                    && let crate::domain::event::value_objects::ContentElement::Text {
                         content,
                         ..
                     } = first_element
-                    {
-                        if let Ok(encrypted_data) =
+                        && let Ok(encrypted_data) =
                             serde_json::from_str::<EncryptedContent>(content)
-                        {
-                            if let Ok(decrypted_content) =
+                            && let Ok(decrypted_content) =
                                 self.encryption.decrypt_content(&encrypted_data)
                             {
                                 // Create a new event with decrypted content
@@ -135,14 +132,9 @@ impl SecureEventService {
                                     event.level(),
                                     event.timestamp(),
                                     event.source().clone(),
-                                    decrypted_content,
-                                event.workspace_id().map(|s| s.to_string()),
+                                    decrypted_content
                                 );
                             }
-                        }
-                    }
-                }
-            }
         }
 
         // Log the access
@@ -178,17 +170,15 @@ impl SecureEventService {
         for mut event in events {
             if self.access_control.can_read_event(user_id, &event).await? {
                 // Decrypt content if encrypted
-                if self.config.enable_encryption && event.content().title() == "Encrypted Content" {
-                    if let Some(first_element) = event.content().elements().first() {
-                        if let crate::domain::event::value_objects::ContentElement::Text {
+                if self.config.enable_encryption && event.content().title() == "Encrypted Content"
+                    && let Some(first_element) = event.content().elements().first()
+                        && let crate::domain::event::value_objects::ContentElement::Text {
                             content,
                             ..
                         } = first_element
-                        {
-                            if let Ok(encrypted_data) =
+                            && let Ok(encrypted_data) =
                                 serde_json::from_str::<EncryptedContent>(content)
-                            {
-                                if let Ok(decrypted_content) =
+                                && let Ok(decrypted_content) =
                                     self.encryption.decrypt_content(&encrypted_data)
                                 {
                                     // Create a new event with decrypted content
@@ -198,14 +188,9 @@ impl SecureEventService {
                                         event.level(),
                                         event.timestamp(),
                                         event.source().clone(),
-                                        decrypted_content,
-                                    event.workspace_id().map(|s| s.to_string()),
+                                        decrypted_content
                                     );
                                 }
-                            }
-                        }
-                    }
-                }
                 filtered_events.push(event);
             }
         }
@@ -272,8 +257,7 @@ impl SecureEventService {
                 updated_event.level(),
                 updated_event.timestamp(),
                 updated_event.source().clone(),
-                encrypted_rich_content,
-            updated_event.workspace_id().map(|s| s.to_string()),
+                encrypted_rich_content
             );
         }
 

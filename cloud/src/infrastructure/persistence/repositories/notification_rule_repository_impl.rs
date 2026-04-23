@@ -7,7 +7,7 @@ use tracing::{debug, error, info};
 
 use crate::{
     domain::event::{EventError, NotificationChannelType, NotificationRule, Result},
-    infrastructure::persistence::database::Database,
+    infrastructure::persistence::Database,
 };
 
 /// Notification rule store trait
@@ -76,7 +76,7 @@ impl NotificationRuleRepositoryImpl {
         let notification_methods: Result<Vec<NotificationChannelType>> = notification_methods
             .into_iter()
             .map(|method| {
-                NotificationChannelType::from_str(&method).ok_or_else(|| EventError::Validation {
+                NotificationChannelType::parse_str(&method).ok_or_else(|| EventError::Validation {
                     message: format!("Invalid notification method: {}", method),
                 })
             })
@@ -481,9 +481,9 @@ mod tests {
         use sqlx::sqlite::SqlitePoolOptions;
 
         let pool = SqlitePoolOptions::new().connect(":memory:").await.unwrap();
-
-        // Run migrations
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        crate::infrastructure::persistence::test_helpers::run_all_migrations(&pool)
+            .await
+            .unwrap();
 
         Arc::new(Database::new(pool))
     }

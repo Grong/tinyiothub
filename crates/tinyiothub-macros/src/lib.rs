@@ -251,7 +251,7 @@ pub fn register_drivers(input: TokenStream) -> TokenStream {
                 let info = #driver::get_driver_info();
                 registry.insert(
                     info.name.clone(),
-                    Box::new(|device, context| Box::new(#driver::new(device, context)) as Box<dyn DeviceDriver>)
+                    Box::new(|device| Box::new(#driver::new(device)) as Box<dyn DeviceDriver>)
                 );
             }
         }
@@ -263,7 +263,7 @@ pub fn register_drivers(input: TokenStream) -> TokenStream {
 
     let expanded = quote! {
         /// 驱动工厂函数类型
-        type DriverFactory = Box<dyn Fn(Device, Arc<DataContext>) -> Box<dyn DeviceDriver> + Send + Sync>;
+        type DriverFactory = Box<dyn Fn(Device) -> Box<dyn DeviceDriver> + Send + Sync>;
 
         /// 驱动注册表
         static DRIVER_REGISTRY: once_cell::sync::Lazy<std::collections::HashMap<String, DriverFactory>> = once_cell::sync::Lazy::new(|| {
@@ -283,12 +283,11 @@ pub fn register_drivers(input: TokenStream) -> TokenStream {
         pub fn create_driver_by_name(
             driver_name: &str,
             device: &Device,
-            context: Arc<DataContext>,
         ) -> Result<Box<dyn DeviceDriver>, tinyiothub_core::error::Error> {
             tracing::debug!("Creating driver with name: {}", driver_name);
 
             if let Some(factory) = DRIVER_REGISTRY.get(driver_name) {
-                let driver = factory(device.clone(), context);
+                let driver = factory(device.clone());
                 tracing::info!("Successfully created driver: {}", driver_name);
                 Ok(driver)
             } else {

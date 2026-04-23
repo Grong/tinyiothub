@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
+use tinyiothub_storage::cache::DeviceCache;
 use crate::{
-    application::data_context::DataContext,
     domain::device::monitoring_service::DeviceMonitoringService,
     infrastructure::persistence::Database, shared::error::Error,
 };
@@ -10,15 +10,15 @@ use crate::{
 /// 负责设备性能指标收集、分析和告警
 pub struct DevicePerformanceService {
     database: Arc<Database>,
-    context: Arc<DataContext>,
+    device_cache: Arc<DeviceCache>,
     monitoring_service: DeviceMonitoringService,
 }
 
 impl DevicePerformanceService {
-    pub fn new(database: Arc<Database>, context: Arc<DataContext>) -> Self {
-        let monitoring_service = DeviceMonitoringService::new(database.clone(), context.clone());
+    pub fn new(database: Arc<Database>, device_cache: Arc<DeviceCache>) -> Self {
+        let monitoring_service = DeviceMonitoringService::new(database.clone(), device_cache.clone());
 
-        Self { database, context, monitoring_service }
+        Self { database, device_cache, monitoring_service }
     }
 
     /// 获取设备性能指标
@@ -26,7 +26,7 @@ impl DevicePerformanceService {
         &self,
         device_id: &str,
     ) -> Option<DevicePerformanceMetrics> {
-        if let Some(device) = self.context.get_device(device_id) {
+        if let Some(device) = self.device_cache.get(device_id) {
             let mut metrics = DevicePerformanceMetrics {
                 device_id: device_id.to_string(),
                 cpu_usage: None,
@@ -40,8 +40,8 @@ impl DevicePerformanceService {
             };
 
             // 1. 计算设备响应时间（基于最后心跳时间）
-            if let Some(last_heartbeat) = &device.last_heartbeat {
-                if let Ok(heartbeat_time) = chrono::DateTime::parse_from_str(
+            if let Some(last_heartbeat) = &device.last_heartbeat
+                && let Ok(heartbeat_time) = chrono::DateTime::parse_from_str(
                     &format!("{} +00:00", last_heartbeat),
                     "%Y-%m-%d %H:%M:%S %z",
                 ) {
@@ -54,7 +54,6 @@ impl DevicePerformanceService {
                         metrics.response_time_ms = Some(response_time);
                     }
                 }
-            }
 
             // 2. 计算网络延迟（基于设备连接质量）
             if let Some(connection_quality) =
@@ -111,9 +110,9 @@ impl DevicePerformanceService {
 
     /// 计算设备正常运行时间百分比
     async fn calculate_device_uptime_percentage(&self, device_id: &str) -> Option<f64> {
-        if let Some(device) = self.context.get_device(device_id) {
-            if let Some(created_at) = &device.created_at {
-                if let Ok(created_time) = chrono::DateTime::parse_from_str(
+        if let Some(device) = self.device_cache.get(device_id)
+            && let Some(created_at) = &device.created_at
+                && let Ok(created_time) = chrono::DateTime::parse_from_str(
                     &format!("{} +00:00", created_at),
                     "%Y-%m-%d %H:%M:%S %z",
                 ) {
@@ -130,8 +129,6 @@ impl DevicePerformanceService {
                         return Some(uptime_percentage);
                     }
                 }
-            }
-        }
 
         // 如果无法计算，基于当前在线状态返回估算值
         if self.monitoring_service.is_device_online(device_id) {
@@ -144,9 +141,9 @@ impl DevicePerformanceService {
     /// 计算设备离线时间（小时）
     async fn calculate_device_offline_hours(&self, device_id: &str) -> f64 {
         match sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM device_alarms 
-             WHERE device_id = ? 
-             AND alarm_message LIKE '%离线%' 
+            "SELECT COUNT(*) FROM device_alarms
+             WHERE device_id = ?
+             AND alarm_message LIKE '%离线%'
              AND alarm_time > datetime('now', '-30 days')",
         )
         .bind(device_id)
@@ -164,7 +161,7 @@ impl DevicePerformanceService {
 
     /// 估算设备资源使用情况
     async fn estimate_device_resource_usage(&self, device_id: &str) -> (Option<f64>, Option<f64>) {
-        if let Some(device) = self.context.get_device(device_id) {
+        if let Some(device) = self.device_cache.get(device_id) {
             let property_count = device.properties.as_ref().map(|p| p.len()).unwrap_or(0) as f64;
             let command_count = device.commands.as_ref().map(|c| c.len()).unwrap_or(0) as f64;
 
@@ -214,7 +211,7 @@ impl DevicePerformanceService {
         device_id: &str,
         hours: u32,
     ) -> Result<Vec<DevicePerformanceMetrics>, Error> {
-        if self.context.get_device(device_id).is_none() {
+        if self.device_cache.get(device_id).is_none() {
             return Err(Error::NotFound);
         }
 
@@ -448,7 +445,7 @@ impl DevicePerformanceService {
 
     /// 获取系统性能概览
     pub async fn get_system_performance_overview(&self) -> SystemPerformanceOverview {
-        let all_devices = self.context.get_all_devices();
+        let all_devices = self.device_cache.all();
         let total_devices = all_devices.len() as u32;
 
         let mut total_cpu_usage = 0.0;

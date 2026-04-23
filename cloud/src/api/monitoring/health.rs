@@ -1,7 +1,9 @@
+use crate::shared::security::jwt::Claims;
+use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{extract::State, routing::get, Json, Router};
 use serde::{Deserialize, Serialize};
 
-use crate::{api::AppState, dto::response::{ApiResponse, ApiResponseBuilder}, shared::security::jwt::Claims};
+use crate::{api::AppState, dto::response::ApiResponse};
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]

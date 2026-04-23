@@ -6,11 +6,18 @@ use std::fmt::Debug;
 // Domain aggregates (aggregate roots)
 pub mod aggregates;
 
-// Domain entities
-pub mod entities;
+// Domain entities — re-exported from tinyiothub-core
+pub mod entities {
+    pub use tinyiothub_core::models::event::Event;
+}
 
-// Value objects
-pub mod value_objects;
+// Value objects — re-exported from tinyiothub-core
+pub mod value_objects {
+    pub use tinyiothub_core::models::event::{
+        ConnectionStatus, ContentElement, DeviceEventType, EventId, EventLevel, EventSource,
+        EventType, LinkTarget, RichContent, SystemEventType, TextFormat,
+    };
+}
 
 // Repository interfaces (defined in domain, implemented in infrastructure)
 pub mod repositories;
@@ -25,6 +32,12 @@ pub mod specifications;
 pub mod errors;
 
 // Re-export DDD components
+
+// Re-export core event types from tinyiothub-core
+pub use tinyiothub_core::models::event::{
+    ConnectionStatus, ContentElement, DeviceEventType, Event, EventId, EventLevel, EventSource,
+    EventType, LinkTarget, RichContent, SystemEventType, TextFormat,
+};
 
 // Legacy compatibility exports (will be removed after full migration)
 pub use aggregates::{

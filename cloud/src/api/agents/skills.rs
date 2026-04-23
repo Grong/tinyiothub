@@ -1,5 +1,7 @@
 // File-based skills CRUD — writes to data/agents/<workspace_id>/skills/<skill_name>.md
 
+use crate::shared::security::jwt::Claims;
+use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -11,7 +13,7 @@ use serde::Deserialize;
 use std::path::PathBuf;
 use tokio::fs;
 
-use crate::{api::AppState, dto::response::{api_response::ApiResponse, builder::ApiResponseBuilder}, shared::{paths::{self, workspace_skills_dir, global_skills_dir}, security::jwt::Claims}};
+use crate::{api::AppState, dto::response::ApiResponse, shared::{paths::{self, workspace_skills_dir, global_skills_dir}}};
 
 #[derive(Debug, Deserialize)]
 pub struct CreateSkillRequest {
@@ -40,11 +42,8 @@ fn skill_file_path(workspace_id: &str, skill_name: &str) -> Result<PathBuf, Stri
 
     // Verify the resolved path is still under the skills directory (defense in depth)
     for component in file_path.components() {
-        match component {
-            std::path::Component::ParentDir => {
-                return Err("Invalid path: escape detected".to_string());
-            }
-            _ => {}
+        if component == std::path::Component::ParentDir {
+            return Err("Invalid path: escape detected".to_string());
         }
     }
 
@@ -200,7 +199,7 @@ async fn list_skill_files(dir: &std::path::Path) -> Vec<SkillInfoDto> {
 
     while let Some(entry) = entries.next_entry().await.unwrap_or(None) {
         let path = entry.path();
-        if path.extension().map_or(false, |e| e == "md") {
+        if path.extension().is_some_and(|e| e == "md") {
             let file_name = path.file_stem().unwrap().to_string_lossy().to_string();
             let content = fs::read_to_string(&path).await.unwrap_or_default();
             let (fm, body) = crate::domain::agent::skill::AgentSkill::parse_frontmatter(&content);
@@ -318,7 +317,7 @@ Some body content here."#;
 
         let mut entries: Vec<_> = fs::read_dir(&ws_dir).unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
             .collect();
         entries.sort_by_key(|e| e.file_name().to_string_lossy().to_string());
 

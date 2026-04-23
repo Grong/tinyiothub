@@ -1,4 +1,4 @@
-use crate::dto::entity::component::{Component, ComponentOption};
+use tinyiothub_core::models::component::{Component, ComponentOption};
 use std::collections::HashMap;
 
 use axum::{
@@ -10,13 +10,13 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    api_error, api_success,
     domain::device::driver::get_driver_list,
     dto::{
         response::{ApiResponse, PaginatedResponse, PaginationInfo}
     },
     shared::app_state::AppState
 };
+use tinyiothub_web::response::ApiResponseBuilder;
 
 pub mod dynamic;
 
@@ -92,7 +92,7 @@ async fn list_drivers(
 
     tracing::info!("Found {} drivers (static + dynamic), page {} of {}", total, page, total_pages);
 
-    api_success!(PaginatedResponse {
+    ApiResponseBuilder::success(PaginatedResponse {
         data: paged.to_vec(),
         pagination: PaginationInfo {
             page,
@@ -111,18 +111,18 @@ async fn get_driver_detail(Path(name): Path<String>) -> Json<ApiResponse<DriverD
     let drivers = get_driver_list();
     if let Some(driver) = drivers.into_iter().find(|d| d.name == name) {
         tracing::info!("Found static driver: {}", driver.name);
-        return api_success!(DriverDetailResponse { driver });
+        return ApiResponseBuilder::success(DriverDetailResponse { driver });
     }
 
     // 再从动态驱动查找
     let registry = crate::domain::device::driver::dynamic::registry::get_global_registry();
     if let Ok(driver) = registry.get_dynamic_driver_info(&name) {
         tracing::info!("Found dynamic driver: {}", driver.name);
-        return api_success!(DriverDetailResponse { driver });
+        return ApiResponseBuilder::success(DriverDetailResponse { driver });
     }
 
     tracing::warn!("Driver not found: {}", name);
-    api_error!(format!("Driver '{}' not found", name))
+    ApiResponseBuilder::error(format!("Driver '{}' not found", name))
 }
 
 /// 检查驱动支持状态的处理函数
@@ -145,7 +145,7 @@ async fn check_driver_support(Path(name): Path<String>) -> Json<ApiResponse<Pagi
 
     tracing::info!("Driver {} support status: {}", name, is_supported);
 
-    api_success!(response)
+    ApiResponseBuilder::success(response)
 }
 
 /// 获取驱动配置参数的处理函数
@@ -171,14 +171,14 @@ async fn get_driver_config(Path(name): Path<String>) -> Json<ApiResponse<DriverC
 
         tracing::info!("Found {} config options for driver: {}", config_options.len(), driver.name);
 
-        api_success!(DriverConfigResponse {
+        ApiResponseBuilder::success(DriverConfigResponse {
             driver_name: driver.name,
             config_options,
             default_config,
         })
     } else {
         tracing::warn!("Driver not found: {}", name);
-        api_error!(format!("Driver '{}' not found", name))
+        ApiResponseBuilder::error(format!("Driver '{}' not found", name))
     }
 }
 
@@ -211,5 +211,5 @@ async fn list_driver_names() -> Json<ApiResponse<Vec<Component>>> {
 
     tracing::info!("Found {} supported driver names (static + dynamic)", drivers.len());
 
-    api_success!(drivers)
+    ApiResponseBuilder::success(drivers)
 }

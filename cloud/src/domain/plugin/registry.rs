@@ -203,11 +203,10 @@ impl PluginRegistry {
 
             if let Some(ext) = path.extension() {
                 let ext_str = ext.to_string_lossy();
-                if ext_str == "toml" {
-                    if let Ok(name) = self.load_toml_plugin(&path) {
+                if ext_str == "toml"
+                    && let Ok(name) = self.load_toml_plugin(&path) {
                         loaded.push(name);
                     }
-                }
             }
         }
 
