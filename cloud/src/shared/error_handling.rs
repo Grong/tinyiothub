@@ -1,11 +1,10 @@
-// Unified error handling system for consistent API responses and performance monitoring
+// Unified error handling system for consistent API responses
 use tinyiothub_web::response::ApiResponseBuilder;
-use std::time::Instant;
 
 use axum::response::Json;
 use tracing::{error, info, warn};
 
-use crate::dto::response::{ApiResponse};
+use crate::shared::api_response::ApiResponse;
 
 /// Standard error codes for consistent API responses
 #[derive(Debug, Clone, Copy)]
@@ -98,69 +97,21 @@ impl ErrorHandler {
             Ok(data) => ApiResponseBuilder::success(data),
             Err(e) => {
                 Self::log_error(&context, &e);
-                Self::create_error_response(&context, user_message)
+                let error_code = match context.category {
+                    ErrorCategory::Authentication => ErrorCode::Unauthorized,
+                    ErrorCategory::Authorization => ErrorCode::Forbidden,
+                    ErrorCategory::Validation => ErrorCode::ValidationFailed,
+                    ErrorCategory::NotFound => ErrorCode::NotFound,
+                    ErrorCategory::Database => ErrorCode::DatabaseError,
+                    ErrorCategory::ExternalService => ErrorCode::ExternalServiceError,
+                    ErrorCategory::Configuration => ErrorCode::InternalError,
+                    ErrorCategory::Performance => ErrorCode::ServiceUnavailable,
+                    ErrorCategory::Security => ErrorCode::Forbidden,
+                    ErrorCategory::Business => ErrorCode::BadRequest,
+                };
+                ApiResponseBuilder::error_with_code(error_code.as_i32(), user_message)
             }
         }
-    }
-
-    /// Handle authentication errors
-    pub fn handle_auth_error(context: ErrorContext, user_message: &str) -> Json<ApiResponse<()>> {
-        Self::log_error(&context, &"Authentication failed");
-        ApiResponseBuilder::error_with_code(ErrorCode::Unauthorized.as_i32(), user_message)
-    }
-
-    /// Handle authorization errors
-    pub fn handle_authz_error(context: ErrorContext, user_message: &str) -> Json<ApiResponse<()>> {
-        Self::log_error(&context, &"Authorization failed");
-        ApiResponseBuilder::error_with_code(ErrorCode::Forbidden.as_i32(), user_message)
-    }
-
-    /// Handle validation errors
-    pub fn handle_validation_error(
-        context: ErrorContext,
-        user_message: &str,
-    ) -> Json<ApiResponse<()>> {
-        Self::log_error(&context, &"Validation failed");
-        ApiResponseBuilder::error_with_code(ErrorCode::ValidationFailed.as_i32(), user_message)
-    }
-
-    /// Handle not found errors
-    pub fn handle_not_found_error(
-        context: ErrorContext,
-        user_message: &str,
-    ) -> Json<ApiResponse<()>> {
-        Self::log_error(&context, &"Resource not found");
-        ApiResponseBuilder::error_with_code(ErrorCode::NotFound.as_i32(), user_message)
-    }
-
-    /// Handle database errors
-    pub fn handle_database_error(
-        context: ErrorContext,
-        user_message: &str,
-    ) -> Json<ApiResponse<()>> {
-        Self::log_error(&context, &"Database operation failed");
-        ApiResponseBuilder::error_with_code(ErrorCode::DatabaseError.as_i32(), user_message)
-    }
-
-    /// Create appropriate error response based on context
-    fn create_error_response<T>(
-        context: &ErrorContext,
-        user_message: &str,
-    ) -> Json<ApiResponse<T>> {
-        let error_code = match context.category {
-            ErrorCategory::Authentication => ErrorCode::Unauthorized,
-            ErrorCategory::Authorization => ErrorCode::Forbidden,
-            ErrorCategory::Validation => ErrorCode::ValidationFailed,
-            ErrorCategory::NotFound => ErrorCode::NotFound,
-            ErrorCategory::Database => ErrorCode::DatabaseError,
-            ErrorCategory::ExternalService => ErrorCode::ExternalServiceError,
-            ErrorCategory::Configuration => ErrorCode::InternalError,
-            ErrorCategory::Performance => ErrorCode::ServiceUnavailable,
-            ErrorCategory::Security => ErrorCode::Forbidden,
-            ErrorCategory::Business => ErrorCode::BadRequest,
-        };
-
-        ApiResponseBuilder::error_with_code(error_code.as_i32(), user_message)
     }
 
     /// Log error with structured information
@@ -191,62 +142,7 @@ impl ErrorHandler {
     }
 }
 
-/// Performance monitoring utilities
-pub struct PerformanceMonitor;
-
-impl PerformanceMonitor {
-    /// Monitor operation performance with automatic logging
-    pub async fn monitor_async<F, T, E>(
-        operation: &str,
-        threshold_ms: u64,
-        future: F,
-    ) -> Result<T, E>
-    where
-        F: std::future::Future<Output = Result<T, E>>,
-    {
-        let start = Instant::now();
-        let result = future.await;
-        let duration = start.elapsed();
-
-        if duration.as_millis() as u64 > threshold_ms {
-            warn!(
-                "Slow operation '{}': {}ms (threshold: {}ms)",
-                operation,
-                duration.as_millis(),
-                threshold_ms
-            );
-        } else {
-            info!("Operation '{}' completed in {}ms", operation, duration.as_millis());
-        }
-
-        result
-    }
-
-    /// Monitor synchronous operations
-    pub fn monitor_sync<F, T>(operation: &str, threshold_ms: u64, func: F) -> T
-    where
-        F: FnOnce() -> T,
-    {
-        let start = Instant::now();
-        let result = func();
-        let duration = start.elapsed();
-
-        if duration.as_millis() as u64 > threshold_ms {
-            warn!(
-                "Slow operation '{}': {}ms (threshold: {}ms)",
-                operation,
-                duration.as_millis(),
-                threshold_ms
-            );
-        } else {
-            info!("Operation '{}' completed in {}ms", operation, duration.as_millis());
-        }
-
-        result
-    }
-}
-
-/// Convenient macros for error handling
+/// Convenient macro for error handling
 #[macro_export]
 macro_rules! handle_service_result {
     ($result:expr, $category:expr, $operation:expr, $user_message:expr) => {
@@ -273,26 +169,6 @@ macro_rules! handle_service_result {
                 .with_user($user_id)
                 .with_resource($resource_id),
             $user_message,
-        )
-    };
-}
-
-#[macro_export]
-macro_rules! monitor_performance {
-    ($operation:expr, $threshold:expr, $block:block) => {
-        $crate::shared::error_handling::PerformanceMonitor::monitor_sync(
-            $operation,
-            $threshold,
-            || $block,
-        )
-    };
-}
-
-#[macro_export]
-macro_rules! monitor_async_performance {
-    ($operation:expr, $threshold:expr, $future:expr) => {
-        $crate::shared::error_handling::PerformanceMonitor::monitor_async(
-            $operation, $threshold, $future,
         )
     };
 }
@@ -346,23 +222,18 @@ impl AuthHelper {
     pub async fn require_admin_role(
         state: &crate::shared::app_state::AppState,
         user_id: &str,
-        operation: &str,
+        _operation: &str,
     ) -> Result<(), Json<ApiResponse<serde_json::Value>>> {
         match Self::check_role(state, user_id, "admin").await {
             Ok(true) => Ok(()),
             Ok(false) => {
-                let _context = ErrorContext::new(ErrorCategory::Authorization, operation)
-                    .with_user(user_id)
-                    .with_details("Admin role required");
                 Err(ApiResponseBuilder::error_with_code(
                     ErrorCode::Forbidden.as_i32(),
                     "Access denied: admin role required",
                 ))
             }
             Err(e) => {
-                let _context = ErrorContext::new(ErrorCategory::Authentication, operation)
-                    .with_user(user_id)
-                    .with_details(e);
+                tracing::warn!("Permission check failed for user {}: {}", user_id, e);
                 Err(ApiResponseBuilder::error_with_code(
                     ErrorCode::Unauthorized.as_i32(),
                     "Permission check failed",
@@ -396,22 +267,5 @@ mod tests {
         assert_eq!(ErrorCode::Forbidden.as_i32(), 403);
         assert_eq!(ErrorCode::NotFound.as_i32(), 404);
         assert_eq!(ErrorCode::InternalError.as_i32(), 500);
-    }
-
-    #[tokio::test]
-    async fn test_performance_monitor() {
-        let result = PerformanceMonitor::monitor_async("test_operation", 1000, async {
-            Ok::<i32, String>(42)
-        })
-        .await;
-
-        assert_eq!(result, Ok(42));
-    }
-
-    #[test]
-    fn test_performance_monitor_sync() {
-        let result = PerformanceMonitor::monitor_sync("test_operation", 1000, || 42);
-
-        assert_eq!(result, 42);
     }
 }

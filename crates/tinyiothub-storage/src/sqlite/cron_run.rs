@@ -5,6 +5,7 @@ use crate::traits::cron::CronRunRepository;
 use tinyiothub_core::models::cron_job::{CronRun, CronRunQuery};
 use crate::sqlite::database::Database;
 use tinyiothub_core::error::Result;
+use tinyiothub_core::{generate_id, now_string};
 
 pub struct SqliteCronRunRepository {
     database: Database,
@@ -42,8 +43,8 @@ impl CronRunRepository for SqliteCronRunRepository {
         trigger_type: &str,
         triggered_by: Option<&str>,
     ) -> Result<CronRun> {
-        let id = uuid::Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let id = generate_id();
+        let now = now_string();
 
         sqlx::query(
             r#"
@@ -75,7 +76,7 @@ impl CronRunRepository for SqliteCronRunRepository {
         error: Option<&str>,
         duration_ms: i64,
     ) -> Result<CronRun> {
-        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let now = now_string();
 
         let result = sqlx::query(
             r#"

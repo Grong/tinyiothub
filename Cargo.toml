@@ -152,6 +152,7 @@ tempfile = "3.8"
 criterion = { version = "0.5", features = ["async_tokio"] }
 
 # Workspace crates (path deps — not published yet)
+tinyiothub-error = { path = "crates/tinyiothub-error" }
 tinyiothub-macros = { path = "crates/tinyiothub-macros" }
 tinyiothub-core = { path = "crates/tinyiothub-core" }
 tinyiothub-config = { path = "crates/tinyiothub-config" }

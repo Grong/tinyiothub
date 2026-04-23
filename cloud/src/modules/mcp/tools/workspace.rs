@@ -1,0 +1,464 @@
+// Workspace Tools Module
+// MCP tools for workspace management
+
+use std::collections::HashMap;
+
+use async_trait::async_trait;
+use serde::Deserialize;
+use serde_json::Value;
+
+use crate::modules::mcp::handlers::get_mcp_context;
+use crate::modules::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
+use crate::modules::workspace::WorkspaceWithDeviceCount;
+use crate::shared::agent::AgentConfig;
+
+/// Tool input: List workspaces
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListWorkspacesInput {
+    page: Option<u32>,
+    page_size: Option<u32>,
+}
+
+/// Tool input: Get workspace
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GetWorkspaceInput {
+    id: String,
+}
+
+/// Tool input: Create workspace
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateWorkspaceInput {
+    name: String,
+    description: Option<String>,
+}
+
+/// Tool input: Update workspace
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateWorkspaceInput {
+    id: String,
+    name: Option<String>,
+    description: Option<String>,
+    agent_config: Option<String>,
+}
+
+/// Tool input: Delete workspace
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteWorkspaceInput {
+    id: String,
+}
+
+/// List workspaces tool handler
+pub struct ListWorkspacesHandler;
+
+#[async_trait]
+impl ToolHandler for ListWorkspacesHandler {
+    fn name(&self) -> &str {
+        "workspace_list"
+    }
+
+    fn description(&self) -> &str {
+        "List all workspaces for the current tenant. Returns workspaces with device counts."
+    }
+
+    fn input_schema(&self) -> InputSchema {
+        let mut props = HashMap::new();
+        props.insert(
+            "page".to_string(),
+            PropertySchema {
+                prop_type: "integer".to_string(),
+                description: Some("Page number (default: 1)".to_string()),
+            },
+        );
+        props.insert(
+            "pageSize".to_string(),
+            PropertySchema {
+                prop_type: "integer".to_string(),
+                description: Some("Page size (default: 20, max: 100)".to_string()),
+            },
+        );
+        InputSchema::object(vec![], props)
+    }
+
+    async fn execute(&self, args: Value) -> Result<Value, ToolError> {
+        let input: ListWorkspacesInput =
+            serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
+
+        let claims = get_mcp_context().ok_or_else(|| {
+            ToolError::Unauthorized("MCP context not initialized".to_string())
+        })?;
+
+        let state = crate::modules::mcp::get_app_state()
+            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
+
+        // Resolve tenant_id from workspace for listing workspaces
+        let tenant_id = state.workspace_service.find_by_id(&claims.workspace_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|w| w.tenant_id)
+            .unwrap_or_default();
+
+        let workspaces = state.workspace_service.find_by_tenant(
+            &tenant_id,
+            input.page,
+            input.page_size,
+        )
+        .await
+        .map_err(|e| ToolError::Internal(format!("failed to list workspaces: {}", e)))?;
+
+        Ok(serde_json::to_value(workspaces).unwrap())
+    }
+}
+
+/// Get workspace tool handler
+pub struct GetWorkspaceHandler;
+
+#[async_trait]
+impl ToolHandler for GetWorkspaceHandler {
+    fn name(&self) -> &str {
+        "workspace_get"
+    }
+
+    fn description(&self) -> &str {
+        "Get a workspace by ID. Returns workspace details including device count."
+    }
+
+    fn input_schema(&self) -> InputSchema {
+        let mut props = HashMap::new();
+        props.insert(
+            "id".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("Workspace ID".to_string()),
+            },
+        );
+        InputSchema::object(vec!["id".to_string()], props)
+    }
+
+    async fn execute(&self, args: Value) -> Result<Value, ToolError> {
+        let input: GetWorkspaceInput =
+            serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
+
+        let claims = get_mcp_context().ok_or_else(|| {
+            ToolError::Unauthorized("MCP context not initialized".to_string())
+        })?;
+
+        let state = crate::modules::mcp::get_app_state()
+            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
+
+        let workspace = state.workspace_service.find_by_id(&input.id)
+            .await
+            .map_err(|e| ToolError::Internal(format!("failed to get workspace: {}", e)))?
+            .ok_or_else(|| ToolError::NotFound("workspace not found".to_string()))?;
+
+        // Verify tenant ownership (resolve tenant_id from claims workspace)
+        let ctx_tenant_id = state.workspace_service.find_by_id(&claims.workspace_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|w| w.tenant_id)
+            .unwrap_or_default();
+        if workspace.tenant_id != ctx_tenant_id {
+            return Err(ToolError::Unauthorized(
+                "workspace does not belong to this tenant".to_string(),
+            ));
+        }
+
+        Ok(serde_json::to_value(workspace).unwrap())
+    }
+}
+
+/// Create workspace tool handler
+pub struct CreateWorkspaceHandler;
+
+#[async_trait]
+impl ToolHandler for CreateWorkspaceHandler {
+    fn name(&self) -> &str {
+        "workspace_create"
+    }
+
+    fn description(&self) -> &str {
+        "Create a new workspace. Automatically creates an associated AI agent."
+    }
+
+    fn input_schema(&self) -> InputSchema {
+        let mut props = HashMap::new();
+        props.insert(
+            "name".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("Workspace name".to_string()),
+            },
+        );
+        props.insert(
+            "description".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("Optional workspace description".to_string()),
+            },
+        );
+        InputSchema::object(vec!["name".to_string()], props)
+    }
+
+    async fn execute(&self, args: Value) -> Result<Value, ToolError> {
+        let input: CreateWorkspaceInput =
+            serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
+
+        let claims = get_mcp_context().ok_or_else(|| {
+            ToolError::Unauthorized("MCP context not initialized".to_string())
+        })?;
+
+        let state = crate::modules::mcp::get_app_state()
+            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
+
+        // Resolve tenant_id from current workspace (new workspace inherits tenant)
+        let tenant_id = state.workspace_service.find_by_id(&claims.workspace_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|w| w.tenant_id)
+            .unwrap_or_default();
+
+        // Create workspace in DB
+        let workspace = state.workspace_service.create(
+            &tenant_id,
+            &input.name,
+            input.description.as_deref(),
+            None,
+            None,
+        )
+        .await
+        .map_err(|e| ToolError::Internal(format!("failed to create workspace: {}", e)))?;
+
+        // Try to create Agent using AppState's agent client
+        let agent_result = state
+            .agent_runtime
+            .create_agent(&AgentConfig {
+                workspace_id: workspace.id.clone(),
+                name: workspace.name.clone(),
+                ..Default::default()
+            })
+            .await;
+
+        let (final_workspace, warning) = match agent_result {
+            Ok(_agent_id) => {
+                // Update workspace with agent_id
+                if let Ok(Some(updated)) =
+                    state.workspace_service.update(&workspace.id, None, None, Some(&_agent_id), None).await
+                {
+                    (updated, None)
+                } else {
+                    let wc = WorkspaceWithDeviceCount {
+                        id: workspace.id.clone(),
+                        name: workspace.name.clone(),
+                        description: workspace.description.clone(),
+                        tenant_id: workspace.tenant_id.clone(),
+                        agent_id: workspace.agent_id.clone(),
+                        created_at: workspace.created_at.clone(),
+                        updated_at: workspace.updated_at.clone(),
+                        device_count: Some(0),
+                        warning: None,
+                    };
+                    (wc, None)
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to create agent for workspace {}: {}",
+                    workspace.id,
+                    e
+                );
+                let wc = WorkspaceWithDeviceCount {
+                    id: workspace.id.clone(),
+                    name: workspace.name.clone(),
+                    description: workspace.description.clone(),
+                    tenant_id: workspace.tenant_id.clone(),
+                    agent_id: workspace.agent_id.clone(),
+                    created_at: workspace.created_at.clone(),
+                    updated_at: workspace.updated_at.clone(),
+                    device_count: Some(0),
+                    warning: None,
+                };
+                (wc, Some(format!("Agent unavailable: {}", e)))
+            }
+        };
+
+        let mut result = final_workspace;
+        if let Some(w) = warning {
+            result.warning = Some(w);
+        }
+
+        Ok(serde_json::to_value(result).unwrap())
+    }
+}
+
+/// Update workspace tool handler
+pub struct UpdateWorkspaceHandler;
+
+#[async_trait]
+impl ToolHandler for UpdateWorkspaceHandler {
+    fn name(&self) -> &str {
+        "workspace_update"
+    }
+
+    fn description(&self) -> &str {
+        "Update a workspace's name, description, or agent configuration."
+    }
+
+    fn input_schema(&self) -> InputSchema {
+        let mut props = HashMap::new();
+        props.insert(
+            "id".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("Workspace ID".to_string()),
+            },
+        );
+        props.insert(
+            "name".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("New workspace name".to_string()),
+            },
+        );
+        props.insert(
+            "description".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("New workspace description".to_string()),
+            },
+        );
+        props.insert(
+            "agentConfig".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("Agent configuration as JSON string".to_string()),
+            },
+        );
+        InputSchema::object(vec!["id".to_string()], props)
+    }
+
+    async fn execute(&self, args: Value) -> Result<Value, ToolError> {
+        let input: UpdateWorkspaceInput =
+            serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
+
+        let claims = get_mcp_context().ok_or_else(|| {
+            ToolError::Unauthorized("MCP context not initialized".to_string())
+        })?;
+
+        let state = crate::modules::mcp::get_app_state()
+            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
+
+        // Verify workspace exists and belongs to tenant
+        let existing = state.workspace_service.find_by_id(&input.id)
+            .await
+            .map_err(|e| ToolError::Internal(format!("failed to get workspace: {}", e)))?
+            .ok_or_else(|| ToolError::NotFound("workspace not found".to_string()))?;
+
+        // Verify tenant ownership via workspace_id from claims
+        let ctx_tenant_id = state.workspace_service.find_by_id(&claims.workspace_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|w| w.tenant_id)
+            .unwrap_or_default();
+        if existing.tenant_id != ctx_tenant_id {
+            return Err(ToolError::Unauthorized(
+                "workspace does not belong to this tenant".to_string(),
+            ));
+        }
+
+        // Update workspace
+        let workspace = state.workspace_service.update(
+            &input.id,
+            input.name.as_deref(),
+            input.description.as_deref(),
+            None,
+            input.agent_config.as_deref(),
+        )
+        .await
+        .map_err(|e| ToolError::Internal(format!("failed to update workspace: {}", e)))?
+        .ok_or_else(|| ToolError::NotFound("workspace not found after update".to_string()))?;
+
+        Ok(serde_json::to_value(workspace).unwrap())
+    }
+}
+
+/// Delete workspace tool handler
+pub struct DeleteWorkspaceHandler;
+
+#[async_trait]
+impl ToolHandler for DeleteWorkspaceHandler {
+    fn name(&self) -> &str {
+        "workspace_delete"
+    }
+
+    fn description(&self) -> &str {
+        "Delete a workspace. Also deletes the associated AI agent."
+    }
+
+    fn input_schema(&self) -> InputSchema {
+        let mut props = HashMap::new();
+        props.insert(
+            "id".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("Workspace ID to delete".to_string()),
+            },
+        );
+        InputSchema::object(vec!["id".to_string()], props)
+    }
+
+    async fn execute(&self, args: Value) -> Result<Value, ToolError> {
+        let input: DeleteWorkspaceInput =
+            serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
+
+        let claims = get_mcp_context().ok_or_else(|| {
+            ToolError::Unauthorized("MCP context not initialized".to_string())
+        })?;
+
+        let state = crate::modules::mcp::get_app_state()
+            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
+
+        // Get workspace to find agent_id
+        let workspace = state.workspace_service.find_by_id(&input.id)
+            .await
+            .map_err(|e| ToolError::Internal(format!("failed to get workspace: {}", e)))?
+            .ok_or_else(|| ToolError::NotFound("workspace not found".to_string()))?;
+
+        // Verify tenant ownership via workspace_id from claims
+        let ctx_tenant_id = state.workspace_service.find_by_id(&claims.workspace_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|w| w.tenant_id)
+            .unwrap_or_default();
+        if workspace.tenant_id != ctx_tenant_id {
+            return Err(ToolError::Unauthorized(
+                "workspace does not belong to this tenant".to_string(),
+            ));
+        }
+
+        // Try to delete Agent using AppState's agent client
+        if let Some(agent_id) = workspace.agent_id
+            && let Err(e) = state.agent_runtime.delete_agent(&agent_id).await {
+                tracing::warn!(
+                    "Failed to delete agent {}: {}. Proceeding with workspace deletion.",
+                    agent_id,
+                    e
+                );
+            }
+
+        // Delete workspace from DB
+        state.workspace_service.delete(&input.id)
+            .await
+            .map_err(|e| ToolError::Internal(format!("failed to delete workspace: {}", e)))?;
+
+        Ok(serde_json::json!({ "success": true, "id": input.id }))
+    }
+}

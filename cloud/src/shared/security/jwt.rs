@@ -51,7 +51,7 @@ impl From<WebClaims> for Claims {
 
 // 获取 JWT 密钥的辅助函数 - 从统一配置读取
 fn get_jwt_key() -> Result<HS256Key, String> {
-    let secret = crate::infrastructure::config::get().security.jwt.secret.clone();
+    let secret = crate::shared::config::get().security.jwt.secret.clone();
 
     // 验证密钥长度
     if secret.len() < 32 {
@@ -73,7 +73,7 @@ fn get_jwt_key() -> Result<HS256Key, String> {
 
 // 检查是否在 HarmonyOS 环境
 fn is_harmonyos() -> bool {
-    crate::infrastructure::config::get().harmonyos.enabled
+    crate::shared::config::get().harmonyos.enabled
 }
 
 // ============================================================================
@@ -106,7 +106,7 @@ fn decode_simple(s: &str) -> Result<String, String> {
 
 // HarmonyOS 专用：创建安全 token（使用 HMAC-SHA256）
 fn create_harmonyos_token(user_id: &str, username: &str, tenant_id: &str) -> Result<String, String> {
-    let secret = crate::infrastructure::config::get().security.jwt.secret.clone();
+    let secret = crate::shared::config::get().security.jwt.secret.clone();
     let timestamp = Local::now().timestamp();
     let random_suffix = timestamp % 1000000; // 使用时间戳作为随机数
 
@@ -126,7 +126,7 @@ fn create_harmonyos_token(user_id: &str, username: &str, tenant_id: &str) -> Res
 
 // HarmonyOS 专用：验证安全 token（使用 HMAC-SHA256）
 fn verify_harmonyos_token(token: &str) -> Result<Claims, String> {
-    let secret = crate::infrastructure::config::get().security.jwt.secret.clone();
+    let secret = crate::shared::config::get().security.jwt.secret.clone();
 
     // 解码
     let token_data = decode_simple(token)?;
@@ -259,7 +259,7 @@ pub fn validate_jwt(token: &str) -> Result<Claims, String> {
 
 // 检查 token 是否在黑名单中（使用阻塞 DB 调用）
 pub fn is_token_blacklisted_sync(
-    db: &crate::infrastructure::persistence::database::Database,
+    db: &crate::shared::persistence::database::Database,
     token: &str,
 ) -> bool {
     let token_hash = format!("{:x}", Sha256::digest(token.as_bytes()));

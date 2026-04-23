@@ -3,7 +3,6 @@
 //! Repository traits, SQLite implementations, caches, and the unified Storage facade.
 
 pub mod cache;
-pub mod error;
 pub mod memory;
 pub mod models;
 pub mod postgres;
@@ -13,7 +12,6 @@ pub mod traits;
 
 // Re-export commonly used items
 pub use cache::DeviceCache;
-pub use error::StorageError;
 pub use models::{Filter, FilterOp, Pagination, RowMetadata, SortOrder};
 pub use sqlite::{
     create_pool, create_pool_from_url, create_pool_with_harmonyos, Database, DatabaseConfig,

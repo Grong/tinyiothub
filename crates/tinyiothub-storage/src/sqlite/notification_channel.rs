@@ -2,6 +2,7 @@ use sqlx::Row;
 
 use crate::sqlite::database::Database;
 use tinyiothub_core::models::notification_channel::*;
+use tinyiothub_core::generate_id;
 
 /// 根据 ID 查询通知渠道
 pub async fn find_notification_channel_by_id(
@@ -104,7 +105,7 @@ pub async fn create_notification_channel(
     db: &Database,
     req: &CreateNotificationChannelRequest,
 ) -> Result<NotificationChannel, sqlx::Error> {
-    let id = uuid::Uuid::new_v4().to_string();
+    let id = generate_id();
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
     sqlx::query(

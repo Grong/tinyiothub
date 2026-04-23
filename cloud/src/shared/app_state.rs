@@ -6,8 +6,7 @@ use tokio::sync::OnceCell;
 use tinyiothub_storage::cache::DeviceCache;
 
 use crate::{
-    domain::{
-        agent::memory_service::MemoryService,
+    modules::{
         device::{
             monitoring_service::DeviceMonitoringService,
             performance_service::DevicePerformanceService,
@@ -17,13 +16,15 @@ use crate::{
         },
         event::{
             repositories::{EventRepository, RealTimeEventRepository},
-            services::notification_service::NotificationManager,
-        },
-        template::{
-            engine::TemplateEngine, repository::TemplateRepository, validator::TemplateValidator,
         },
     },
-    infrastructure::{
+    modules::{
+        notification::NotificationManager,
+        template::{
+            TemplateEngine, TemplateRepository, TemplateValidator,
+        },
+    },
+    shared::{
         agent::AgentRuntime,
         event::{
             channels::NotificationChannelFactory,
@@ -35,6 +36,7 @@ use crate::{
             repositories::{
                 NotificationHistoryRepositoryImpl,
                 SqliteEventRepository, SqliteRealTimeEventRepository, SqliteDeviceMemoryRepository,
+                DeviceTraceRepository,
             },
             Database,
         },
@@ -108,52 +110,49 @@ pub struct AppState {
     pub real_time_event_repository: Arc<dyn RealTimeEventRepository>,
 
     /// 报警服务 - 报警规则和报警管理
-    pub alarm_service: Arc<crate::domain::alarm::AlarmService>,
+    pub alarm_service: Arc<crate::modules::alarm::AlarmService>,
 
     /// Agent Runtime - consolidated agent interface
     pub agent_runtime: Arc<dyn AgentRuntime>,
 
-    /// Agent Memory Service - 设备状态快照记忆
-    pub memory_service: Arc<MemoryService>,
-
     /// 用户服务 - CRUD 操作
-    pub user_service: Arc<crate::domain::user::service::UserService>,
+    pub user_service: Arc<crate::modules::user::UserService>,
 
     /// 租户服务 - CRUD 操作
-    pub tenant_service: Arc<crate::domain::tenant::service::TenantService>,
+    pub tenant_service: Arc<crate::modules::tenant::TenantService>,
 
     /// 工作空间服务 - CRUD 操作
-    pub workspace_service: Arc<crate::domain::workspace::service::WorkspaceService>,
+    pub workspace_service: Arc<crate::modules::workspace::WorkspaceService>,
 
     /// 标签服务 - CRUD 操作
-    pub tag_service: Arc<crate::domain::tag::service::TagService>,
+    pub tag_service: Arc<crate::modules::tag::TagService>,
 
     /// 标签仓库 - 用于设备服务的标签关联
-    pub tag_repository: Arc<dyn crate::domain::tag::repository::TagRepository>,
+    pub tag_repository: Arc<dyn crate::modules::tag::TagRepository>,
 
     /// 角色服务 - CRUD 操作
-    pub role_service: Arc<crate::domain::role::service::RoleService>,
+    pub role_service: Arc<crate::modules::role::RoleService>,
 
     /// 权限服务 - CRUD 操作
-    pub permission_service: Arc<crate::domain::permission::service::PermissionService>,
+    pub permission_service: Arc<crate::modules::permission::PermissionService>,
 
     /// 产品服务 - CRUD 操作
-    pub product_service: Arc<crate::domain::product::service::ProductService>,
+    pub product_service: Arc<crate::modules::product::ProductService>,
 
     /// Cron 任务仓库
-    pub cron_job_repo: Arc<dyn crate::domain::cron::repository::CronJobRepository>,
+    pub cron_job_repo: Arc<dyn crate::modules::cron::CronJobRepository>,
 
     /// Cron 执行记录仓库
-    pub cron_run_repo: Arc<dyn crate::domain::cron::repository::CronRunRepository>,
+    pub cron_run_repo: Arc<dyn crate::modules::cron::CronRunRepository>,
 
     /// 会话服务 - Agent 聊天会话管理
-    pub session_service: Arc<crate::application::agent::SessionService>,
+    pub session_service: Arc<crate::modules::agent::SessionService>,
 
     /// Agent 记忆服务 - 构建设备快照等上下文
-    pub agent_memory_service: Arc<crate::application::agent::AgentMemoryService>,
+    pub agent_memory_service: Arc<crate::modules::agent::AgentMemoryService>,
 
     /// 聊天服务 - Agent 聊天编排
-    pub chat_service: Arc<crate::application::agent::ChatService>,
+    pub chat_service: Arc<crate::modules::agent::ChatService>,
 }
 
 impl AppState {
@@ -188,16 +187,12 @@ impl AppState {
         let event_bus = Arc::new(EventBus::new());
 
         // 创建报警服务
-        use crate::{
-            domain::alarm::AlarmService,
-            infrastructure::persistence::repositories::{
-                AlarmRepositoryImpl, AlarmRuleRepositoryImpl,
-            },
-        };
+        let alarm_repository = Arc::new(crate::modules::alarm::SqliteAlarmRepository::new(database.clone()));
+        let alarm_rule_repository = Arc::new(crate::modules::alarm::SqliteAlarmRuleRepository::new(database.clone()));
+        let alarm_service = Arc::new(crate::modules::alarm::AlarmService::new(alarm_repository.clone(), alarm_rule_repository));
 
-        let alarm_repository = Arc::new(AlarmRepositoryImpl::new(database.clone()));
-        let alarm_rule_repository = Arc::new(AlarmRuleRepositoryImpl::new(database.clone()));
-        let alarm_service = Arc::new(AlarmService::new(alarm_repository, alarm_rule_repository));
+        // 旧的 AlarmRepositoryImpl（device 监控/性能服务需要特定方法）
+        let legacy_alarm_repository = Arc::new(crate::shared::persistence::repositories::AlarmRepositoryImpl::new(database.clone()));
 
         // 创建SSE管理器（带 DeviceCache 用于设备 workspace 查找）
         let sse_manager = Arc::new(SseConnectionManager::new());
@@ -206,18 +201,18 @@ impl AppState {
         // 这里只创建事件总线，处理器注册推迟到 register_event_handlers() 方法
 
         // 标签仓库（提前创建，供 DeviceService 使用）
-        let tag_repository: Arc<dyn crate::domain::tag::repository::TagRepository> =
-            Arc::new(crate::infrastructure::persistence::repositories::SqliteTagRepository::new(
+        let tag_repository: Arc<dyn crate::modules::tag::TagRepository> =
+            Arc::new(crate::modules::tag::SqliteTagRepository::new(
                 database.as_ref().clone(),
             ));
-        let tag_binding_repository: Arc<dyn crate::domain::tag::repository::TagBindingRepository> =
-            Arc::new(crate::infrastructure::persistence::repositories::SqliteTagBindingRepository::new(
+        let tag_binding_repository: Arc<dyn crate::modules::tag::TagBindingRepository> =
+            Arc::new(crate::modules::tag::SqliteTagBindingRepository::new(
                 database.as_ref().clone(),
             ));
 
         // 基础服务 - 使用事件总线
-        let device_repository: Arc<dyn crate::domain::device::repository::DeviceRepository> =
-            Arc::new(crate::infrastructure::persistence::repositories::SqliteDeviceRepository::new(
+        let device_repository: Arc<dyn crate::modules::device::repository::DeviceRepository> =
+            Arc::new(crate::shared::persistence::repositories::SqliteDeviceRepository::new(
                 database.as_ref().clone(),
             ));
         let device_service = Arc::new(
@@ -225,20 +220,21 @@ impl AppState {
                 .with_tag_repository(tag_repository.clone()),
         );
         let device_query_service: Arc<dyn DeviceQueryService> =
-            Arc::new(crate::infrastructure::persistence::repositories::SqliteDeviceQueryService::new(
+            Arc::new(crate::shared::persistence::repositories::SqliteDeviceQueryService::new(
                 database.as_ref().clone(),
             ));
 
-        // 监控服务 - 依赖数据库和上下文
+        // 监控服务 - 依赖数据库、缓存和告警仓库
         let monitoring_service =
-            Arc::new(DeviceMonitoringService::new(database.clone(), device_cache.clone()));
+            Arc::new(DeviceMonitoringService::new(database.clone(), device_cache.clone(), legacy_alarm_repository.clone()));
 
-        // 性能服务 - 依赖数据库和上下文
+        // 性能服务 - 依赖数据库、缓存和告警仓库
         let performance_service =
-            Arc::new(DevicePerformanceService::new(database.clone(), device_cache.clone()));
+            Arc::new(DevicePerformanceService::new(database.clone(), device_cache.clone(), legacy_alarm_repository.clone()));
 
-        // 追踪服务 - 仅依赖数据库
-        let trace_service = Arc::new(DeviceTraceService::new(database.clone()));
+        // 追踪服务 - 依赖追踪仓库
+        let trace_repository = Arc::new(DeviceTraceRepository::new((*database).clone()));
+        let trace_service = Arc::new(DeviceTraceService::new(trace_repository));
 
         // 模板引擎 - 复合服务，依赖仓库和验证器
         let template_repository =
@@ -252,21 +248,21 @@ impl AppState {
         let secure_event_service = OnceCell::new();
 
         // Redis 客户端 - 可选服务，依赖配置
-        let redis = crate::infrastructure::config::get()
+        let redis = crate::shared::config::get()
             .redis
             .as_ref()
             .and_then(|config| RedisClient::new(&config.url).ok());
 
         // Agent Runtime - 使用 zeroclaw 内置的 OpenAiCompatibleProvider (MiniMax)
-        let minimax_config = crate::infrastructure::config::get().minimax.clone()
+        let minimax_config = crate::shared::config::get().minimax.clone()
             .expect("minimax config is required - set [minimax] in app_settings.toml");
-        let agent_settings = crate::infrastructure::config::get().agent.clone();
+        let agent_settings = crate::shared::config::get().agent.clone();
         let provider = zeroclaw::providers::create_provider("minimaxi", Some(&minimax_config.auth_token))
             .expect("failed to create MiniMax provider");
         tracing::info!("TinyIoTHub Agent initialized with zeroclaw MiniMax provider (memory_backend={}, observer_backend={})",
             agent_settings.memory_backend, agent_settings.observer_backend);
         let agent_runtime: Arc<dyn AgentRuntime> = Arc::new(
-            crate::infrastructure::agent::AgentRuntimeImpl::new(
+            crate::shared::agent::AgentRuntimeImpl::new(
                 database.pool().clone(),
                 provider,
                 minimax_config.model,
@@ -277,89 +273,88 @@ impl AppState {
         // Agent Memory Service
         let memory_repo =
             Arc::new(SqliteDeviceMemoryRepository::new(database.pool().clone()));
-        let memory_service = Arc::new(MemoryService::new(Arc::clone(&memory_repo)));
         let agent_memory_service = Arc::new(
-            crate::application::agent::AgentMemoryService::new(memory_repo)
+            crate::modules::agent::AgentMemoryService::new(memory_repo)
         );
 
         // 用户服务
-        let user_repository: Arc<dyn crate::domain::user::repository::UserRepository> =
-            Arc::new(crate::infrastructure::persistence::repositories::SqliteUserRepository::new(
+        let user_repository: Arc<dyn crate::modules::user::UserRepository> =
+            Arc::new(crate::modules::user::SqliteUserRepository::new(
                 database.as_ref().clone(),
             ));
-        let user_service = Arc::new(crate::domain::user::service::UserService::new(user_repository));
+        let user_service = Arc::new(crate::modules::user::UserService::new(user_repository));
 
         // 租户服务
-        let tenant_repository: Arc<dyn crate::domain::tenant::repository::TenantRepository> =
-            Arc::new(crate::infrastructure::persistence::repositories::SqliteTenantRepository::new(
+        let tenant_repository: Arc<dyn crate::modules::tenant::TenantRepository> =
+            Arc::new(crate::modules::tenant::SqliteTenantRepository::new(
                 database.as_ref().clone(),
             ));
-        let tenant_service = Arc::new(crate::domain::tenant::service::TenantService::new(tenant_repository));
+        let tenant_service = Arc::new(crate::modules::tenant::TenantService::new(tenant_repository));
 
         // 工作空间服务
-        let workspace_repository: Arc<dyn crate::domain::workspace::repository::WorkspaceRepository> =
-            Arc::new(crate::infrastructure::persistence::repositories::SqliteWorkspaceRepository::new(
+        let workspace_repository: Arc<dyn crate::modules::workspace::WorkspaceRepository> =
+            Arc::new(crate::modules::workspace::SqliteWorkspaceRepository::new(
                 database.as_ref().clone(),
             ));
-        let workspace_service = Arc::new(crate::domain::workspace::service::WorkspaceService::new(workspace_repository));
+        let workspace_service = Arc::new(crate::modules::workspace::WorkspaceService::new(workspace_repository));
 
         // 标签服务
-        let tag_service = Arc::new(crate::domain::tag::service::TagService::new(
+        let tag_service = Arc::new(crate::modules::tag::TagService::new(
             tag_repository.clone(),
             tag_binding_repository,
         ));
 
         // 角色服务
-        let role_repository: Arc<dyn crate::domain::role::repository::RoleRepository> =
-            Arc::new(crate::infrastructure::persistence::repositories::SqliteRoleRepository::new(
+        let role_repository: Arc<dyn crate::modules::role::RoleRepository> =
+            Arc::new(crate::modules::role::SqliteRoleRepository::new(
                 database.as_ref().clone(),
             ));
-        let role_service = Arc::new(crate::domain::role::service::RoleService::new(role_repository));
+        let role_service = Arc::new(crate::modules::role::RoleService::new(role_repository));
 
         // 权限服务
-        let permission_repository: Arc<dyn crate::domain::permission::repository::PermissionRepository> =
-            Arc::new(crate::infrastructure::persistence::repositories::SqlitePermissionRepository::new(
+        let permission_repository: Arc<dyn crate::modules::permission::PermissionRepository> =
+            Arc::new(crate::modules::permission::SqlitePermissionRepository::new(
                 database.as_ref().clone(),
             ));
-        let permission_group_repository: Arc<dyn crate::domain::permission::repository::PermissionGroupRepository> =
-            Arc::new(crate::infrastructure::persistence::repositories::SqlitePermissionGroupRepository::new(
+        let permission_group_repository: Arc<dyn crate::modules::permission::PermissionGroupRepository> =
+            Arc::new(crate::modules::permission::SqlitePermissionGroupRepository::new(
                 database.as_ref().clone(),
             ));
-        let permission_service = Arc::new(crate::domain::permission::service::PermissionService::new(
+        let permission_service = Arc::new(crate::modules::permission::PermissionService::new(
             permission_repository,
             permission_group_repository,
         ));
 
         // 产品服务
-        let product_repository: Arc<dyn crate::domain::product::repository::ProductRepository> =
-            Arc::new(crate::infrastructure::persistence::repositories::SqliteProductRepository::new(
+        let product_repository: Arc<dyn crate::modules::product::ProductRepository> =
+            Arc::new(crate::modules::product::SqliteProductRepository::new(
                 database.as_ref().clone(),
             ));
-        let product_service = Arc::new(crate::domain::product::service::ProductService::new(product_repository));
+        let product_service = Arc::new(crate::modules::product::ProductService::new(product_repository));
 
         // Cron 仓库
-        let cron_job_repo: Arc<dyn crate::domain::cron::repository::CronJobRepository> =
-            Arc::new(crate::infrastructure::persistence::repositories::SqliteCronJobRepository::new(
+        let cron_job_repo: Arc<dyn crate::modules::cron::CronJobRepository> =
+            Arc::new(tinyiothub_storage::sqlite::cron_job::SqliteCronJobRepository::new(
                 database.as_ref().clone(),
             ));
-        let cron_run_repo: Arc<dyn crate::domain::cron::repository::CronRunRepository> =
-            Arc::new(crate::infrastructure::persistence::repositories::SqliteCronRunRepository::new(
+        let cron_run_repo: Arc<dyn crate::modules::cron::CronRunRepository> =
+            Arc::new(tinyiothub_storage::sqlite::cron_run::SqliteCronRunRepository::new(
                 database.as_ref().clone(),
             ));
 
         // 会话服务 - 用于 Agent 聊天会话管理
-        let session_repository: Arc<dyn crate::application::agent::SessionRepository> =
-            Arc::new(crate::infrastructure::persistence::repositories::SqliteSessionRepository::new(
+        let session_repository: Arc<dyn crate::modules::agent::SessionRepository> =
+            Arc::new(crate::shared::persistence::repositories::SqliteSessionRepository::new(
                 database.as_ref().clone(),
             ));
-        let session_service = Arc::new(crate::application::agent::SessionService::new(Arc::clone(&session_repository)));
+        let session_service = Arc::new(crate::modules::agent::SessionService::new(Arc::clone(&session_repository)));
 
         // 聊天服务 - 编排 Agent 聊天、会话、记忆上下文
-        let chat_service = Arc::new(crate::application::agent::ChatService::new(
+        let chat_service = Arc::new(crate::modules::agent::ChatService::new(
             agent_runtime.clone(),
             session_repository,
             agent_memory_service.clone(),
-            crate::application::agent::ChatServiceConfig {
+            crate::modules::agent::ChatServiceConfig {
                 system_prompts: agent_settings.system_prompts.clone(),
                 max_messages_before_compact: agent_settings.max_messages_before_compact,
                 enable_compaction: agent_settings.enable_compaction,
@@ -386,7 +381,6 @@ impl AppState {
             secure_event_service,
             alarm_service,
             agent_runtime,
-            memory_service,
             user_service,
             tenant_service,
             workspace_service,
@@ -502,7 +496,7 @@ impl AppState {
 
         // 2. 验证属性存在且属于该设备
         let property = match
-            crate::infrastructure::persistence::repositories::find_device_property_by_id(
+            crate::shared::persistence::repositories::find_device_property_by_id(
                 self.database(),
                 property_id,
             )
@@ -598,7 +592,7 @@ impl AppState {
         }
 
         // Get security configuration from unified config
-        let config = crate::infrastructure::config::get().event.security.clone();
+        let config = crate::shared::config::get().event.security.clone();
 
         // Create security factory
         let security_factory = EventSecurityFactory::new(self.database.clone(), config)?;
@@ -656,29 +650,6 @@ impl AppState {
         Ok(Arc::new(notification_manager))
     }
 
-    /// 同步检查 Agent 是否可用（启动时调用一次）
-    #[allow(dead_code)]
-    fn check_openclaw_available(url: &str) -> bool {
-        // 从 URL 中提取 host:port
-        let parsed = match reqwest::Url::parse(url) {
-            Ok(u) => u,
-            Err(_) => return false,
-        };
-        let host = match parsed.host_str() {
-            Some(h) => h.to_string(),
-            None => return false,
-        };
-        let port = parsed.port_or_known_default().unwrap_or(42617);
-        let addr = format!("{}:{}", host, port);
-
-        // 快速 TCP 连接检查（2秒超时）
-        std::net::TcpStream::connect_timeout(
-            &addr.parse().unwrap_or_else(|_| "127.0.0.1:42617".parse().unwrap()),
-            std::time::Duration::from_secs(2),
-        )
-        .is_ok()
-    }
-
     /// Create AppState for testing
     #[cfg(test)]
     pub async fn new_for_testing() -> Self {
@@ -689,7 +660,7 @@ impl AppState {
         let database_url = format!("sqlite://{}", db_path.to_str().unwrap());
         let pool = sqlx::SqlitePool::connect(&database_url).await.unwrap();
 
-        crate::infrastructure::persistence::test_helpers::run_all_migrations(&pool)
+        crate::shared::persistence::test_helpers::run_all_migrations(&pool)
             .await
             .unwrap();
 

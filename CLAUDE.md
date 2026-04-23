@@ -97,12 +97,10 @@ snmp / rumqttc
 tinyiothub/
 ├── cloud/              # SaaS 应用编排层（主二进制）
 │   ├── src/
-│   │   ├── domain/     # SaaS 领域逻辑（tenant, user, workspace, marketplace）
-│   │   ├── application/# 应用服务编排
 │   │   ├── api/        # HTTP handlers（SaaS 路由 + 业务逻辑）
-│   │   ├── infrastructure/ # 外部依赖（DB、消息、网关）
-│   │   ├── shared/     # 跨层共享（error_handling, security, identifier, utils）
-│   │   └── dto/        # 数据传输对象
+│   │   ├── modules/    # 业务模块（标准三层架构：types → service → handler）
+│   │   ├── shared/     # 跨层共享（persistence, security, error_handling, utils）
+│   │   └── server.rs   # Axum 服务启动
 │   └── Cargo.toml
 ├── crates/             # 内部库 Crate
 │   ├── tinyiothub-core/    # 通用基础类型与领域模型
@@ -166,15 +164,18 @@ tinyiothub/
 **核心原则：先搜索，后实现；找不到复用再新建。**
 
 每次写代码前必须：
-1. 在 `cloud/src/shared/` 搜索是否有可复用组件
-2. 在相应 Crate 的公共模块搜索（如 `tinyiothub-web/src/` 的共享工具）
-3. 在 `web/src/api/` 搜索是否有可复用 API 封装
-4. 在 `web/src/stores/` 搜索是否有可复用状态管理
-5. 确认要新建模块/文件时，说明理由并引用 ARCHITECTURE_HARNESS.md 和 ARCHITECTURE_CONTRACT.md 对应条款
+1. 在 `cloud/src/shared/` 搜索是否有可复用组件（persistence、security、error_handling 等）
+2. 在 `cloud/src/modules/` 搜索是否有同类业务模块可参考标准结构
+3. 在相应 Crate 的公共模块搜索（如 `tinyiothub-web/src/` 的共享工具）
+4. 在 `web/src/api/` 搜索是否有可复用 API 封装
+5. 在 `web/src/stores/` 搜索是否有可复用状态管理
+6. 确认要新建模块/文件时，说明理由并引用 ARCHITECTURE_HARNESS.md 和 ARCHITECTURE_CONTRACT.md 对应条款
 
 **禁止行为：**
 - ❌ 不搜索就直接创建重复功能
 - ❌ 在 `cloud/src/` 或任何 Crate 中创建散弹式的 `utils/` 或 `helpers/`（公共组件应放在 `cloud/src/shared/`）
+- ❌ 模块中使用 `dto.rs` 命名（统一使用 `types.rs`）
+- ❌ 模块中创建 `application/` 子目录（业务逻辑放 `service.rs`）
 - ❌ 前端组件里直接 `fetch()`
 - ❌ API handler 里直接写 SQL
 - ❌ 绕过 `ApiResponseBuilder` 拼装自定义 JSON 响应
@@ -186,7 +187,8 @@ tinyiothub/
 ### 后端（多 Crate 架构）
 
 - **架构分层**: `cloud` (SaaS) → `web` (HTTP) → `engine` (IoT) → `storage` (数据) → `core` (类型)
-- **Repository Pattern**: 数据访问在 infrastructure 层（`cloud/src/infrastructure/persistence/`）
+- **Repository Pattern**: 数据访问在 `cloud/src/shared/persistence/repositories/`
+- **模块三层架构**: 每个模块统一 `types.rs` → `service.rs` → `handler/`（禁止使用 `dto.rs` 命名）
 - **Async 所有 I/O**: tokio async/await，不准在 async fn 里用 blocking 代码
 - **错误处理**: 用 `thiserror` 定义自定义错误（使用 `tinyiothub-error` crate），`Result<T, E>` 传播
 - **中间件**: Tower (CORS、tracing、rate limit) — 在 `tinyiothub-web` crate 中定义
@@ -254,7 +256,7 @@ docs/drivers/             # 驱动开发
 
 ## 重要约定
 
-1. **Rust edition 2021**，最低支持 Rust 1.75+
+1. **Rust edition 2024**，最低支持 Rust 1.82+
 2. **Node 18+** for frontend
 3. 所有敏感配置通过环境变量，不硬编码
 4. JWT secret 在生产环境必须设置，不允许默认密钥

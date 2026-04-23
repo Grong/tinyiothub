@@ -62,7 +62,7 @@ pub fn get_mac_address() -> String {
 /// Get device IP address (placeholder implementation)
 pub fn get_ip_address() -> String {
     // 尝试从配置读取
-    match crate::infrastructure::config::get() {
+    match crate::shared::config::get() {
         config => config.network.defaults.ip_address.clone(),
     }
 }
@@ -182,7 +182,12 @@ impl DiskInfo {
 }
 /// Generate a unique ID using UUID v4
 pub fn generate_id() -> String {
-    uuid::Uuid::new_v4().to_string()
+    tinyiothub_core::generate_id()
+}
+
+/// Generate current timestamp as "%Y-%m-%d %H:%M:%S" string (UTC)
+pub fn now_string() -> String {
+    tinyiothub_core::now_string()
 }
 
 /// Generate a short ID (8 characters)

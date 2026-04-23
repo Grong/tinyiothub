@@ -15,8 +15,8 @@ pub use spawn::{execute_or_spawn, spawn_safe, spawn_with_error_handling};
 /// On other platforms: spawns background task
 #[cfg(feature = "harmonyos")]
 pub async fn publish_event_safe(
-    event_bus: std::sync::Arc<crate::infrastructure::event::EventBus>,
-    event: crate::domain::event::entities::Event,
+    event_bus: std::sync::Arc<crate::shared::event::EventBus>,
+    event: crate::modules::event::entities::Event,
 ) {
     // On HarmonyOS, publish inline
     if let Err(e) = event_bus.publish(event).await {
@@ -30,8 +30,8 @@ pub async fn publish_event_safe(
 /// On other platforms: spawns background task
 #[cfg(not(feature = "harmonyos"))]
 pub async fn publish_event_safe(
-    event_bus: std::sync::Arc<crate::infrastructure::event::EventBus>,
-    event: crate::domain::event::entities::Event,
+    event_bus: std::sync::Arc<crate::shared::event::EventBus>,
+    event: crate::modules::event::entities::Event,
 ) {
     tokio::spawn(async move {
         if let Err(e) = event_bus.publish(event).await {

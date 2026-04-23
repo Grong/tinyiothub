@@ -17,7 +17,7 @@ pub struct NetworkInfo {
 impl Default for NetworkInfo {
     fn default() -> Self {
         // 尝试从配置读取，失败则使用环境变量或默认值
-        let config = crate::infrastructure::config::get();
+        let config = crate::shared::config::get();
         Self {
             addr: config.network.defaults.ip_address.clone(),
             gateway: config.network.defaults.gateway.clone(),
@@ -33,7 +33,7 @@ pub fn init_network_scripts() {
     {
         tracing::info!("Initializing network scripts on HarmonyOS");
         // 使用鸿蒙系统的网络初始化
-        crate::infrastructure::hardware::harmonyos::network::init_network_scripts();
+        crate::shared::hardware::harmonyos::network::init_network_scripts();
     }
 
     #[cfg(not(feature = "harmonyos"))]

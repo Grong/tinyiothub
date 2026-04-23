@@ -16,8 +16,8 @@ pub async fn create_app_router(app_state: AppState) -> Router {
     // Initialize MCP tools with AppState
     tracing::info!("Initializing MCP tools...");
     use std::sync::Arc;
-    crate::api::mcp::init_app_state(Arc::new(app_state.clone()));
-    crate::api::mcp::register_tools().await;
+    crate::modules::mcp::init_app_state(Arc::new(app_state.clone()));
+    crate::modules::mcp::register_tools().await;
     tracing::info!("MCP tools initialized");
 
     // Refresh agent tools after MCP registration
@@ -27,10 +27,10 @@ pub async fn create_app_router(app_state: AppState) -> Router {
 
     // Initialize self-healing state
     let db = app_state.database.clone();
-    let _self_healing_state = crate::api::self_healing::init_self_healing_state(db);
+    let _self_healing_state = crate::modules::self_healing::handler::init_self_healing_state(db);
 
     // CORS layer
-    let config = crate::infrastructure::config::get();
+    let config = crate::shared::config::get();
     let cors_origins = &config.server.cors_origins;
 
     let allowed_headers = [

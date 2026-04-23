@@ -2,6 +2,7 @@ use sqlx::FromRow;
 
 use crate::sqlite::database::Database;
 use tinyiothub_core::models::device_command::*;
+use tinyiothub_core::{generate_id, now_string};
 
 /// Internal row type for sqlx mapping
 #[derive(Debug, Clone, FromRow)]
@@ -52,8 +53,8 @@ pub async fn create_device_command(
     db: &Database,
     request: &CreateDeviceCommandRequest,
 ) -> Result<DeviceCommand, sqlx::Error> {
-    let id = uuid::Uuid::new_v4().to_string();
-    let created_at = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let id = generate_id();
+    let created_at = now_string();
 
     let mut tx = db.pool().begin().await?;
 
@@ -134,8 +135,8 @@ pub async fn bulk_create_device_commands(
     let mut created_commands = Vec::new();
 
     for request in requests {
-        let id = uuid::Uuid::new_v4().to_string();
-        let created_at = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let id = generate_id();
+        let created_at = now_string();
 
         sqlx::query(
             r#"

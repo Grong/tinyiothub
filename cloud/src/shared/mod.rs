@@ -17,3 +17,15 @@ pub mod app_state;
 pub mod error_handling;
 
 pub mod performance;
+
+pub mod service_manager;
+pub mod cron_scheduler;
+pub mod pagination;
+pub mod api_response;
+
+pub mod agent;
+pub mod config;
+pub mod event;
+pub mod hardware;
+pub mod persistence;
+pub mod redis;

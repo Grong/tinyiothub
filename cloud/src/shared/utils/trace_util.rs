@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::domain::device::trace_service::DeviceTraceService;
+use crate::modules::device::trace_service::DeviceTraceService;
 
 /// 设备追踪工具类
 pub struct DeviceTracer {

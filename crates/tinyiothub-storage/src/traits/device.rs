@@ -84,6 +84,7 @@ pub struct DeviceCriteria {
     pub state: Option<i32>,
     pub parent_id: Option<String>,
     pub product_id: Option<String>,
+    pub workspace_id: Option<String>,
     pub search_text: Option<String>,
     pub sort_by: DeviceSortBy,
     pub sort_order: DeviceSortOrder,
@@ -132,6 +133,7 @@ impl Default for DeviceCriteria {
             state: None,
             parent_id: None,
             product_id: None,
+            workspace_id: None,
             search_text: None,
             sort_by: DeviceSortBy::default(),
             sort_order: DeviceSortOrder::default(),
@@ -195,6 +197,11 @@ impl DeviceCriteria {
         self
     }
 
+    /// Filter by workspace ID
+    pub fn with_workspace_id(mut self, workspace_id: String) -> Self {
+        self.workspace_id = Some(workspace_id);
+        self
+    }
 
     /// Filter by search text
     pub fn with_search_text(mut self, text: String) -> Self {
@@ -269,6 +276,10 @@ impl DeviceCriteriaBuilder {
         self
     }
 
+    pub fn workspace_id(mut self, workspace_id: String) -> Self {
+        self.criteria.workspace_id = Some(workspace_id);
+        self
+    }
 
     pub fn search_text(mut self, text: String) -> Self {
         self.criteria.search_text = Some(text);

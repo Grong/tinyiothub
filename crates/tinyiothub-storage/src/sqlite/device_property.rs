@@ -2,6 +2,7 @@ use sqlx::FromRow;
 
 use crate::sqlite::database::Database;
 use tinyiothub_core::models::device_property::*;
+use tinyiothub_core::{generate_id, now_string};
 
 /// Internal row type for sqlx mapping
 #[derive(Debug, Clone, FromRow)]
@@ -101,8 +102,8 @@ pub async fn create_device_properties_batch(
     let mut created_ids = Vec::new();
 
     for request in requests {
-        let id = uuid::Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let id = generate_id();
+        let now = now_string();
         let is_read_only = request.is_read_only.unwrap_or(0);
 
         sqlx::query(

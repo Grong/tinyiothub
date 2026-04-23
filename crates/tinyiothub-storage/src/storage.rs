@@ -6,7 +6,7 @@
 use sqlx::SqlitePool;
 
 use crate::cache::DeviceCache;
-use crate::error::StorageError;
+use tinyiothub_core::error::{Error, Result};
 
 /// Storage layer entry point.
 #[derive(Debug, Clone)]
@@ -17,7 +17,7 @@ pub struct Storage {
 
 impl Storage {
     /// Create a new Storage instance with an existing pool.
-    pub async fn new(pool: SqlitePool) -> Result<Self, StorageError> {
+    pub async fn new(pool: SqlitePool) -> Result<Self> {
         let storage = Self {
             pool,
             device_cache: DeviceCache::new(),
@@ -30,10 +30,10 @@ impl Storage {
     }
 
     /// Create a new Storage instance from a database URL.
-    pub async fn from_url(url: &str) -> Result<Self, StorageError> {
+    pub async fn from_url(url: &str) -> Result<Self> {
         let pool = sqlx::SqlitePool::connect(url)
             .await
-            .map_err(|e| StorageError::ConnectionFailed(e.to_string()))?;
+            .map_err(|e| Error::DatabaseError(e.to_string()))?;
         Self::new(pool).await
     }
 
@@ -52,4 +52,3 @@ impl Storage {
         self.pool
     }
 }
-

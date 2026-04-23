@@ -8,8 +8,8 @@ use tracing_appender::{
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use tinyiothub_cloud::{
-    application::ServiceManager,
-    infrastructure::config,
+    shared::service_manager::ServiceManager,
+    shared::config,
 };
 
 #[cfg(feature = "harmonyos")]
@@ -70,9 +70,9 @@ async fn main_impl() -> std::io::Result<()> {
     info!("CPUs: {}", num_cpus::get());
 
     // === 2. 初始化数据库 ===
-    use tinyiothub_cloud::infrastructure::persistence::DatabaseConfig;
+    use tinyiothub_cloud::shared::persistence::DatabaseConfig;
     let db_config = DatabaseConfig::from_settings(config::get());
-    let db_pool = tinyiothub_cloud::infrastructure::persistence::create_pool(&db_config).await.expect("Failed to create DB pool");
+    let db_pool = tinyiothub_cloud::shared::persistence::create_pool(&db_config).await.expect("Failed to create DB pool");
     let device_cache = std::sync::Arc::new(tinyiothub_storage::cache::DeviceCache::new());
     info!("✅ Database pool & device cache initialized");
 
@@ -84,7 +84,7 @@ async fn main_impl() -> std::io::Result<()> {
     if config::get().device.drivers.auto_load_on_startup {
         let drivers_dir = &config::get().device.drivers.dynamic_drivers_dir;
         info!("🔌 Auto-loading drivers from: {}", drivers_dir);
-        match tinyiothub_cloud::domain::device::driver::dynamic::auto_load_drivers(drivers_dir) {
+        match tinyiothub_cloud::modules::device::driver::dynamic::auto_load_drivers(drivers_dir) {
             Ok(loaded) => {
                 if loaded.is_empty() {
                     info!("No drivers found in directory");
@@ -109,7 +109,7 @@ async fn main_impl() -> std::io::Result<()> {
     // === 5. 确保默认管理员用户存在 ===
     #[cfg(not(feature = "harmonyos"))]
     {
-        if let Err(e) = tinyiothub_cloud::api::system::ensure_default_admin_user(&app_state).await {
+        if let Err(e) = tinyiothub_cloud::modules::system::handler::ensure_default_admin_user(&app_state).await {
             error!("Failed to ensure default admin user: {}", e);
         }
     }
@@ -117,7 +117,7 @@ async fn main_impl() -> std::io::Result<()> {
     // === 6. 设置优雅关闭处理 ===
     #[cfg(not(feature = "harmonyos"))]
     let shutdown_handle = tokio::spawn(async move {
-        tinyiothub_cloud::application::service_manager::setup_graceful_shutdown().await;
+        tinyiothub_cloud::shared::service_manager::setup_graceful_shutdown().await;
     });
 
     // === 7. 创建并启动 Web 服务器 ===

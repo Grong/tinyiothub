@@ -7,6 +7,7 @@ use crate::traits::device::{
 use tinyiothub_core::models::device::{
         CreateDeviceRequest, Device, DeviceStatusUpdate, UpdateDeviceRequest,
     };
+use tinyiothub_core::{generate_id, now_string};
 use crate::sqlite::database::Database;
 use tinyiothub_core::error::{Error, Result};
 
@@ -58,6 +59,9 @@ impl DeviceRepository for SqliteDeviceRepository {
         let mut builder = QueryBuilder::new("SELECT ");
         builder.push(device_row_mapper::SELECT_COLUMNS);
         builder.push(" FROM devices WHERE 1=1");
+        if let Some(workspace_id) = &criteria.workspace_id {
+            builder.push(" AND workspace_id = ").push_bind(workspace_id);
+        }
         if let Some(name) = &criteria.name {
             builder.push(" AND name LIKE ").push_bind(format!("%{}%", name));
         }
@@ -123,6 +127,9 @@ impl DeviceRepository for SqliteDeviceRepository {
 
     async fn count(&self, criteria: &DeviceCriteria) -> Result<i64> {
         let mut builder = QueryBuilder::new("SELECT COUNT(*) as count FROM devices WHERE 1=1");
+        if let Some(workspace_id) = &criteria.workspace_id {
+            builder.push(" AND workspace_id = ").push_bind(workspace_id);
+        }
         if let Some(name) = &criteria.name {
             builder.push(" AND name LIKE ").push_bind(format!("%{}%", name));
         }
@@ -163,8 +170,8 @@ impl DeviceRepository for SqliteDeviceRepository {
     }
 
     async fn create(&self, request: &CreateDeviceRequest) -> Result<Device> {
-        let id = uuid::Uuid::new_v4().to_string();
-        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let id = generate_id();
+        let now = now_string();
 
         sqlx::query(
             r#"
@@ -206,7 +213,7 @@ impl DeviceRepository for SqliteDeviceRepository {
 
         let mut builder = QueryBuilder::new("UPDATE devices SET ");
         let mut has_updates = false;
-        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let now = now_string();
 
         if let Some(name) = &request.name {
             if has_updates {
@@ -376,10 +383,10 @@ impl DeviceRepository for SqliteDeviceRepository {
 
         let mut tx = self.database.pool().begin().await?;
         let mut created_devices = Vec::new();
-        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let now = now_string();
 
         for request in requests {
-            let id = uuid::Uuid::new_v4().to_string();
+            let id = generate_id();
 
             sqlx::query(
                 r#"
@@ -445,7 +452,7 @@ impl DeviceRepository for SqliteDeviceRepository {
     }
 
     async fn update_state(&self, id: &str, state: i32) -> Result<()> {
-        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let now = now_string();
         let result = sqlx::query("UPDATE devices SET state = ?, updated_at = ? WHERE id = ?")
             .bind(state)
             .bind(now)
@@ -466,7 +473,7 @@ impl DeviceRepository for SqliteDeviceRepository {
 
         let mut tx = self.database.pool().begin().await?;
         let mut total_affected = 0u64;
-        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let now = now_string();
 
         for (id, state) in updates {
             let result = sqlx::query("UPDATE devices SET state = ?, updated_at = ? WHERE id = ?")
