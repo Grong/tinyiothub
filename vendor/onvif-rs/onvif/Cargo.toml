@@ -1,0 +1,45 @@
+[package]
+name = "onvif"
+version = "0.1.0"
+authors = ["Chris Bruce <chris@lumeo.com>"]
+edition = "2018"
+license = "MIT"
+
+[features]
+default = ["tls"]
+# hyper-rustls does not support IP hosts (like https://192.168.1.2) which are
+# very common for IP cameras. So we can use only native-tls for now.
+# https://github.com/ctz/hyper-rustls/issues/56
+tls = ["reqwest/native-tls"]
+
+[dependencies]
+async-recursion = "0.3.1"
+async-trait = "0.1.41"
+base64 = "0.13.0"
+bigdecimal = "0.3.0"
+chrono = "0.4.19"
+digest_auth = "0.3.0"
+futures-core = "0.3.8"
+num-bigint = "0.4.2"
+reqwest = { version = "0.11.0", default-features = false }
+schema = { version = "0.1.0", path = "../schema", default-features = false, features = ["analytics", "devicemgmt", "event", "media", "ptz"] }
+sha1 = "0.6.0"
+thiserror = "1.0"
+tokio = { version = "1", default-features = false, features = ["net", "sync", "time"] }
+tokio-stream = "0.1"
+tracing = "0.1.26"
+url = "2.2.0"
+uuid = { version = "0.8.1", features = ["v4"] }
+xml-rs = "0.8.3"
+xmltree = "0.10.2"
+xsd-macro-utils = { git = "https://github.com/lumeohq/xsd-parser-rs", rev = "7f3d433" }
+xsd-types = { git = "https://github.com/lumeohq/xsd-parser-rs", rev = "7f3d433" }
+yaserde = "0.7.1"
+yaserde_derive = "0.7.1"
+
+[dev-dependencies]
+dotenv = "0.15.0"
+futures-util = "0.3.8"
+structopt = "0.3.21"
+tokio = { version = "1.0.1", features = ["full"] }
+tracing-subscriber = "0.2.20"

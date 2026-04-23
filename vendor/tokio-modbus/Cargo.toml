@@ -1,0 +1,86 @@
+# SPDX-FileCopyrightText: Copyright (c) 2017-2022 slowtec GmbH <post@slowtec.de>
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+[package]
+name = "tokio-modbus"
+description = "Tokio-based Modbus library"
+version = "0.5.3"
+authors = ["slowtec GmbH <post@slowtec.de>", "Markus Kohlhase <markus.kohlhase@slowtec.de>"]
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+keywords = ["fieldbus", "modbus", "hardware", "automation"]
+homepage = "https://github.com/slowtec/tokio-modbus"
+repository = "https://github.com/slowtec/tokio-modbus"
+edition = "2021"
+
+[package.metadata.docs.rs]
+all-features = true
+
+# Please specify precise dependency versions in Cargo.toml:
+# <https://users.rust-lang.org/t/psa-please-specify-precise-dependency-versions-in-cargo-toml/71277>
+
+[dependencies]
+async-trait = "0.1.58"
+byteorder = "1.4.3"
+bytes = "1.2.1"
+futures = { version = "0.3.25", optional = true }
+futures-util = { version = "0.3.25", optional = true, default-features = false }
+log = "0.4.17"
+smallvec = { version = "1.10.0", default-features = false }
+socket2 = { version = "0.4.7", optional = true, default-features = false }
+tokio = { version = "1.21.2", default-features = false }
+# Disable default-features to exclude unused dependency on libudev
+tokio-serial = { version = "5.4.4", optional = true, default-features = false }
+tokio-util = { version = "0.7.4", features = ["codec"] }
+tracing = "0.1"
+
+[dev-dependencies]
+env_logger = "0.9.1"
+futures = "0.3.25"
+tokio = { version = "1.21.2", features = ["net", "macros", "io-util", "rt", "time"] }
+
+[features]
+default = ["tcp", "rtu"]
+rtu = ["tokio-serial", "futures-util/sink"]
+tcp = ["tokio/net", "futures-util/sink"]
+sync = ["tokio/rt"]
+server = ["futures", "socket2/all", "tokio/macros", "tokio/rt", "tokio/rt-multi-thread"]
+tcp-server-unstable = ["tcp", "server"]
+
+[badges]
+maintenance = { status = "actively-developed" }
+
+[[example]]
+name = "rtu-client-sync"
+path = "examples/rtu-client-sync.rs"
+required-features = ["rtu", "sync"]
+
+[[example]]
+name = "rtu-client"
+path = "examples/rtu-client.rs"
+required-features = ["rtu"]
+
+[[example]]
+name = "rtu-server"
+path = "examples/rtu-server.rs"
+required-features = ["rtu", "server"]
+
+[[example]]
+name = "tcp-client-custom-fn"
+path = "examples/tcp-client-custom-fn.rs"
+required-features = ["tcp"]
+
+[[example]]
+name = "tcp-client-sync"
+path = "examples/tcp-client-sync.rs"
+required-features = ["tcp", "sync"]
+
+[[example]]
+name = "tcp-client"
+path = "examples/tcp-client.rs"
+required-features = ["tcp"]
+
+[[example]]
+name = "tcp-server"
+path = "examples/tcp-server.rs"
+required-features = ["tcp", "server", "tcp-server-unstable"]

@@ -47,5 +47,8 @@ api/wwwroot
 
 /dist
 /.gstack
-/vendor/
+# Ignore vendor subdirectories that are downloaded/generated, but track vendored Rust crates
+# Vendored crates: zeroclaw, zeroclaw-macros, onvif-rs, tokio-modbus
+/vendor/*.tar.gz
+/vendor/*.zip
 /target
