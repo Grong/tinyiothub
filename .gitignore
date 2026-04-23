@@ -1,7 +1,5 @@
 # Rust 编译输出
-/sdks/driver-sdk/target
-/examples/example-plugin/target
-/examples/bacnet-driver/target
+**/target/
 
 # IDE
 /.idea
@@ -49,4 +47,5 @@ api/wwwroot
 
 /dist
 /.gstack
+/vendor/
 /target
