@@ -1,5 +1,5 @@
 use tokio::net::TcpListener;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use tinyiothub_cloud::server;
 use tracing_appender::{
     non_blocking,
@@ -80,20 +80,33 @@ async fn main_impl() -> std::io::Result<()> {
     let mut app_state = tinyiothub_cloud::shared::app_state::AppState::new(device_cache, db_pool);
     info!("✅ AppState created");
 
-    // === 4. 自动加载动态驱动 ===
-    if config::get().device.drivers.auto_load_on_startup {
-        let drivers_dir = &config::get().device.drivers.dynamic_drivers_dir;
-        info!("🔌 Auto-loading drivers from: {}", drivers_dir);
-        match tinyiothub_cloud::modules::device::driver::dynamic::auto_load_drivers(drivers_dir) {
-            Ok(loaded) => {
-                if loaded.is_empty() {
-                    info!("No drivers found in directory");
-                } else {
-                    info!("✅ Loaded {} driver(s): {:?}", loaded.len(), loaded);
+    // === 4. 驱动（静态编译，无需加载） ===
+    info!("✅ Drivers registered (static compilation)");
+
+    // === 4.5 从数据库加载完整设备（含属性、指令）到缓存 ===
+    {
+        use tinyiothub_core::models::device::DeviceQueryParams;
+        match app_state.device_service.get_devices(&DeviceQueryParams::default()).await {
+            Ok(devices) => {
+                let device_ids: Vec<String> = devices.iter().map(|d| d.id.clone()).collect();
+                let count = device_ids.len();
+                match app_state.device_service.load_complete_devices(&device_ids).await {
+                    Ok(complete_devices) => {
+                        for device in complete_devices {
+                            app_state.device_cache.insert(device);
+                        }
+                        info!("✅ Loaded {} complete devices (with properties) into cache", count);
+                    }
+                    Err(e) => {
+                        warn!("⚠️ Failed to load complete devices, falling back to basic: {}", e);
+                        for device in devices {
+                            app_state.device_cache.insert(device);
+                        }
+                    }
                 }
             }
             Err(e) => {
-                error!("Failed to auto-load drivers: {}", e);
+                warn!("⚠️ Failed to load devices into cache: {}", e);
             }
         }
     }
@@ -113,12 +126,6 @@ async fn main_impl() -> std::io::Result<()> {
             error!("Failed to ensure default admin user: {}", e);
         }
     }
-
-    // === 6. 设置优雅关闭处理 ===
-    #[cfg(not(feature = "harmonyos"))]
-    let shutdown_handle = tokio::spawn(async move {
-        tinyiothub_cloud::shared::service_manager::setup_graceful_shutdown().await;
-    });
 
     // === 7. 创建并启动 Web 服务器 ===
     info!("🌐 Starting web server");
@@ -159,8 +166,11 @@ async fn main_impl() -> std::io::Result<()> {
                     error!("Server error: {}", e);
                 }
             }
-            _ = shutdown_handle => {
-                info!("Graceful shutdown completed");
+            _ = tokio::signal::ctrl_c() => {
+                info!("Received Ctrl+C, shutting down...");
+                if let Err(e) = service_manager.shutdown().await {
+                    error!("Service shutdown error: {}", e);
+                }
             }
         }
     }

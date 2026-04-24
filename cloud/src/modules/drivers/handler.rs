@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use axum::{
     extract::{Path, Query},
     response::Json,
-    routing::{delete, get, post},
+    routing::get,
     Router,
 };
 use serde::{Deserialize, Serialize};
@@ -40,36 +40,6 @@ pub fn create_router() -> Router<AppState> {
         .route("/{name}", get(get_driver_detail))
         .route("/{name}/config", get(get_driver_config))
         .route("/{name}/supported", get(check_driver_support))
-        // 动态驱动管理
-        .route("/dynamic/load", post(dynamic_load_driver))
-        .route("/dynamic/{name}/unload", delete(dynamic_unload_driver))
-        .route("/dynamic/list", get(dynamic_list_all_drivers))
-        .route("/dynamic/reload", post(dynamic_reload_drivers_dir))
-}
-
-/// 加载动态驱动请求
-#[derive(Debug, Deserialize)]
-pub struct LoadDriverRequest {
-    pub path: String,
-}
-
-/// 驱动信息响应
-#[derive(Debug, Serialize)]
-pub struct DriverInfo {
-    pub name: String,
-    pub version: Option<String>,
-    pub description: Option<String>,
-    pub is_loaded: bool,
-    pub path: Option<String>,
-    pub category: Option<String>,
-    pub tags: Option<Vec<String>>,
-}
-
-/// 所有驱动列表响应
-#[derive(Debug, Serialize)]
-pub struct AllDriversResponse {
-    pub static_drivers: Vec<DriverInfo>,
-    pub dynamic: Vec<DriverInfo>,
 }
 
 /// 获取驱动列表
@@ -79,13 +49,6 @@ async fn list_drivers(
     tracing::info!("Getting driver list, params: {:?}", params);
 
     let mut drivers = get_driver_list();
-
-    let registry = crate::modules::device::driver::dynamic::registry::get_global_registry();
-    for driver_name in registry.get_driver_names() {
-        if let Ok(driver_info) = registry.get_dynamic_driver_info(&driver_name) {
-            drivers.push(driver_info);
-        }
-    }
 
     if let Some(filter_name) = params.get("name") {
         drivers.retain(|driver| driver.name.to_lowercase().contains(&filter_name.to_lowercase()));
@@ -106,7 +69,7 @@ async fn list_drivers(
     let end = (start + page_size as usize).min(total);
     let paged = if start < total { &drivers[start..end] } else { &[] };
 
-    tracing::info!("Found {} drivers (static + dynamic), page {} of {}", total, page, total_pages);
+    tracing::info!("Found {} drivers, page {} of {}", total, page, total_pages);
 
     ApiResponseBuilder::success(PaginatedResponse {
         data: paged.to_vec(),
@@ -125,13 +88,7 @@ async fn get_driver_detail(Path(name): Path<String>) -> Json<ApiResponse<DriverD
 
     let drivers = get_driver_list();
     if let Some(driver) = drivers.into_iter().find(|d| d.name == name) {
-        tracing::info!("Found static driver: {}", driver.name);
-        return ApiResponseBuilder::success(DriverDetailResponse { driver });
-    }
-
-    let registry = crate::modules::device::driver::dynamic::registry::get_global_registry();
-    if let Ok(driver) = registry.get_dynamic_driver_info(&name) {
-        tracing::info!("Found dynamic driver: {}", driver.name);
+        tracing::info!("Found driver: {}", driver.name);
         return ApiResponseBuilder::success(DriverDetailResponse { driver });
     }
 
@@ -217,105 +174,6 @@ async fn list_driver_names() -> Json<ApiResponse<Vec<Component>>> {
         })
         .collect();
 
-    tracing::info!("Found {} supported driver names (static + dynamic)", drivers.len());
+    tracing::info!("Found {} supported driver names", drivers.len());
     ApiResponseBuilder::success(drivers)
-}
-
-/// 加载动态驱动
-async fn dynamic_load_driver(
-    axum::extract::State(_state): axum::extract::State<AppState>,
-    _claims: crate::shared::security::jwt::Claims,
-    Json(req): Json<LoadDriverRequest>,
-) -> Json<ApiResponse<String>> {
-    use crate::modules::device::driver;
-    tracing::info!("Loading dynamic driver from: {}", req.path);
-
-    match driver::load_dynamic_driver(&req.path) {
-        Ok(driver_name) => {
-            tracing::info!("Successfully loaded dynamic driver: {}", driver_name);
-            ApiResponseBuilder::success(driver_name)
-        }
-        Err(e) => {
-            tracing::error!("Failed to load dynamic driver: {}", e);
-            ApiResponseBuilder::error(format!("Failed to load driver: {}", e))
-        }
-    }
-}
-
-/// 卸载动态驱动
-async fn dynamic_unload_driver(
-    axum::extract::State(_state): axum::extract::State<AppState>,
-    _claims: crate::shared::security::jwt::Claims,
-    Path(name): Path<String>,
-) -> Json<ApiResponse<bool>> {
-    use crate::modules::device::driver;
-    tracing::info!("Unloading dynamic driver: {}", name);
-
-    match driver::unload_dynamic_driver(&name) {
-        Ok(_) => {
-            tracing::info!("Successfully unloaded dynamic driver: {}", name);
-            ApiResponseBuilder::success(true)
-        }
-        Err(e) => {
-            tracing::error!("Failed to unload dynamic driver: {}", e);
-            ApiResponseBuilder::error(format!("Failed to unload driver: {}", e))
-        }
-    }
-}
-
-/// 获取所有驱动列表（包括静态和动态）
-async fn dynamic_list_all_drivers(
-    axum::extract::State(_state): axum::extract::State<AppState>,
-    _claims: crate::shared::security::jwt::Claims,
-) -> Json<ApiResponse<AllDriversResponse>> {
-    use crate::modules::device::driver;
-    let all_names = driver::get_all_driver_names();
-    let registry = driver::dynamic::registry::get_global_registry();
-
-    let mut static_drivers = Vec::new();
-    let mut dynamic_drivers = Vec::new();
-
-    for name in all_names {
-        let is_dynamic = registry.has_driver(&name);
-        let driver_info = DriverInfo {
-            name: name.clone(),
-            version: Some("1.0.0".to_string()),
-            description: Some(format!("{} driver", name)),
-            is_loaded: true,
-            path: if is_dynamic { registry.get_driver_path(&name) } else { None },
-            category: Some("protocol".to_string()),
-            tags: Some(vec!["industrial".to_string()]),
-        };
-
-        if is_dynamic {
-            dynamic_drivers.push(driver_info);
-        } else {
-            static_drivers.push(driver_info);
-        }
-    }
-
-    ApiResponseBuilder::success(AllDriversResponse { static_drivers, dynamic: dynamic_drivers })
-}
-
-/// 重新加载驱动目录
-async fn dynamic_reload_drivers_dir(
-    axum::extract::State(_state): axum::extract::State<AppState>,
-    _claims: crate::shared::security::jwt::Claims,
-) -> Json<ApiResponse<Vec<String>>> {
-    use crate::modules::device::driver;
-    let config = crate::shared::config::get();
-    let drivers_dir = &config.device.drivers.dynamic_drivers_dir;
-
-    tracing::info!("Reloading drivers from: {}", drivers_dir);
-
-    match driver::dynamic::auto_load_drivers(drivers_dir) {
-        Ok(loaded) => {
-            tracing::info!("Reloaded {} driver(s)", loaded.len());
-            ApiResponseBuilder::success(loaded)
-        }
-        Err(e) => {
-            tracing::error!("Failed to reload drivers: {}", e);
-            ApiResponseBuilder::error(format!("Failed to reload drivers: {}", e))
-        }
-    }
 }

@@ -10,7 +10,7 @@ description = "Business logic engines for TinyIoTHub"
 [dependencies]
 tinyiothub-core = { workspace = true }
 tinyiothub-macros = { workspace = true }
-tinyiothub-plugin-sdk = { workspace = true }
+tinyiothub-plugin-sdk = { workspace = true, features = ["core-interop"] }
 
 # Async runtime
 tokio = { workspace = true, features = ["process", "sync"] }
@@ -33,9 +33,6 @@ tracing = { workspace = true }
 
 # Collections
 dashmap = { workspace = true }
-
-# Dynamic loading
-libloading = { workspace = true }
 
 # Random
 rand = { workspace = true }

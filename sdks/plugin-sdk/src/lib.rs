@@ -4,28 +4,26 @@
 //! 
 //! # 快速开始
 //! 
-//! ```rust,no_run
-//! use iot_edge_driver_sdk::*;
-//! 
-//! #[derive(DeviceDriverDerive)]
-//! #[driver(name = "MyDriver", version = "1.0.0")]
+//! ```rust,ignore
+//! use tinyiothub_plugin_sdk::*;
+//!
 //! pub struct MyDriver {
 //!     device: Device,
 //! }
-//! 
+//!
 //! impl MyDriver {
 //!     pub fn new(device: Device) -> Self {
 //!         Self { device }
 //!     }
 //! }
-//! 
+//!
 //! impl DeviceDriver for MyDriver {
 //!     fn device(&self) -> &Device { &self.device }
 //!     fn device_mut(&mut self) -> &mut Device { &mut self.device }
 //!     fn read_data(&mut self) -> Result<Vec<ResultValue>> { Ok(vec![]) }
 //!     fn execute_command(&mut self, _cmd: &DeviceCommand) -> Result<bool> { Ok(true) }
 //! }
-//! 
+//!
 //! export_driver!(MyDriver);
 //! ```
 

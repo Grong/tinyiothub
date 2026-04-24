@@ -88,26 +88,22 @@ impl DriverInstaller {
         Ok(dest_file)
     }
 
-    /// Load driver
-    async fn load_driver(&self, driver_file: &PathBuf) -> Result<String> {
-        let path_str = driver_file
-            .to_str()
-            .ok_or_else(|| MarketplaceError::InstallationFailed("Invalid path".to_string()))?;
-
-        driver::load_dynamic_driver(path_str).map_err(|e| MarketplaceError::Driver(e.to_string()))
+    /// Load driver (static drivers are compiled in; dynamic loading not supported)
+    async fn load_driver(&self, _driver_file: &PathBuf) -> Result<String> {
+        Err(MarketplaceError::InstallationFailed(
+            "Dynamic driver loading is not supported. Drivers must be compiled into the binary.".to_string()
+        ))
     }
 
     /// Check if driver is installed
     pub fn is_installed(&self, driver_name: &str) -> bool {
-        let registry = driver::dynamic::registry::get_global_registry();
-        registry.has_driver(driver_name)
+        driver::has_driver(driver_name)
     }
 
-    /// Uninstall driver
-    pub async fn uninstall(&self, driver_name: &str) -> Result<()> {
-        driver::unload_dynamic_driver(driver_name)
-            .map_err(|e| MarketplaceError::Driver(e.to_string()))?;
-
-        Ok(())
+    /// Uninstall driver (static drivers cannot be uninstalled at runtime)
+    pub async fn uninstall(&self, _driver_name: &str) -> Result<()> {
+        Err(MarketplaceError::Driver(
+            "Dynamic driver unloading is not supported.".to_string()
+        ))
     }
 }

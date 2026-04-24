@@ -34,5 +34,19 @@ impl fmt::Display for DriverError {
 
 impl std::error::Error for DriverError {}
 
+#[cfg(feature = "core-interop")]
+impl From<tinyiothub_core::error::Error> for DriverError {
+    fn from(err: tinyiothub_core::error::Error) -> Self {
+        match err {
+            tinyiothub_core::error::Error::NetworkError(msg) => DriverError::NetworkError(msg),
+            tinyiothub_core::error::Error::IOError(msg) => DriverError::IOError(msg),
+            tinyiothub_core::error::Error::ConfigError(msg) => DriverError::ConfigError(msg),
+            tinyiothub_core::error::Error::ValidationError(msg) => DriverError::ValidationError(msg),
+            tinyiothub_core::error::Error::Unsupported(msg) => DriverError::Unsupported(msg),
+            other => DriverError::Internal(other.to_string()),
+        }
+    }
+}
+
 /// 驱动结果类型
 pub type Result<T> = std::result::Result<T, DriverError>;

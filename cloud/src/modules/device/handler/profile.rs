@@ -102,7 +102,7 @@ async fn get_device_profile(
     tracing::debug!("Getting complete profile for device: {}", device_id);
     let tenant_device_service = state.tenant_device_service(&workspace_id);
 
-    // 优先从缓存获取实时数据，缓存未命中则从数据库加载
+    // 优先从缓存获取实时数据（含属性、指令、运行时状态），缓存未命中则从数据库加载
     let mut device = match state.get_device(&device_id) {
         Some(device) => device,
         None => {

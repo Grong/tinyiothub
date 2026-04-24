@@ -7,7 +7,7 @@ use super::{
     error::{MarketplaceError, Result},
     metadata::{DriverIndex, DriverMetadata, TemplateIndex, TemplateMetadata},
 };
-use tinyiothub_core::config::MarketplaceConfig;
+use tinyiothub_config::MarketplaceConfig;
 
 pub struct MarketplaceClient {
     http_client: Client,

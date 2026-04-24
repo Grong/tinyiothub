@@ -153,19 +153,15 @@ impl ToolHandler for ListDriversHandler {
 
     async fn execute(&self, _args: Value) -> Result<Value, ToolError> {
         let all_names = driver::get_all_driver_names();
-        let registry = driver::dynamic::registry::get_global_registry();
 
         let mut drivers = Vec::new();
         for name in &all_names {
-            let is_dynamic = !driver::is_driver_supported(name);
-            let path = if is_dynamic { registry.get_driver_path(name) } else { None };
-
             drivers.push(DriverInfo {
                 name: name.clone(),
                 version: "1.0.0".to_string(),
                 description: Some(format!("{} driver", name)),
-                is_dynamic,
-                path,
+                is_dynamic: false,
+                path: None,
                 category: Some("protocol".to_string()),
             });
         }
@@ -202,22 +198,15 @@ impl ToolHandler for GetDriverConfigSchemaHandler {
             .as_str()
             .ok_or_else(|| ToolError::InvalidParams("driverName is required".to_string()))?;
 
-        // Get driver list (static drivers)
+        // Get driver list (static drivers only)
         let static_drivers = driver::get_driver_list();
 
-        // Try to find the driver in static list first
         let config_options: Vec<ComponentOption> = if let Some(driver_info) =
             static_drivers.iter().find(|d| d.name == driver_name)
         {
             serde_json::from_str(&driver_info.options_descriptors).unwrap_or_default()
         } else {
-            // Check dynamic drivers
-            let registry = driver::dynamic::registry::get_global_registry();
-            if let Ok(info) = registry.get_dynamic_driver_info(driver_name) {
-                serde_json::from_str(&info.options_descriptors).unwrap_or_default()
-            } else {
-                return Err(ToolError::NotFound(format!("Driver '{}' not found", driver_name)));
-            }
+            return Err(ToolError::NotFound(format!("Driver '{}' not found", driver_name)));
         };
 
         let mut default_config = HashMap::new();
@@ -409,24 +398,13 @@ impl ToolHandler for LoadDriverHandler {
         InputSchema::object(vec!["path".to_string()], props)
     }
 
-    async fn execute(&self, args: Value) -> Result<Value, ToolError> {
-        let input: LoadDriverInput = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidParams(e.to_string()))?;
-
-        match driver::load_dynamic_driver(&input.path) {
-            Ok(driver_name) => Ok(serde_json::to_value(LoadDriverResponse {
-                driver_name,
-                success: true,
-                message: "Driver loaded successfully".to_string(),
-            })
-            .unwrap()),
-            Err(e) => Ok(serde_json::to_value(LoadDriverResponse {
-                driver_name: String::new(),
-                success: false,
-                message: format!("Failed to load driver: {}", e),
-            })
-            .unwrap()),
-        }
+    async fn execute(&self, _args: Value) -> Result<Value, ToolError> {
+        Ok(serde_json::to_value(LoadDriverResponse {
+            driver_name: String::new(),
+            success: false,
+            message: "Dynamic driver loading is not supported. Drivers must be compiled into the binary.".to_string(),
+        })
+        .unwrap())
     }
 }
 
@@ -453,30 +431,12 @@ impl ToolHandler for UnloadDriverHandler {
         let input: UnloadDriverInput = serde_json::from_value(args)
             .map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
-        // Check if driver is a static driver (cannot be unloaded)
-        if driver::is_driver_supported(&input.name) {
-            return Ok(serde_json::to_value(UnloadDriverResponse {
-                name: input.name,
-                success: false,
-                message: "Cannot unload static driver - only dynamic drivers can be unloaded".to_string(),
-            })
-            .unwrap());
-        }
-
-        match driver::unload_dynamic_driver(&input.name) {
-            Ok(_) => Ok(serde_json::to_value(UnloadDriverResponse {
-                name: input.name.clone(),
-                success: true,
-                message: format!("Driver '{}' unloaded successfully", input.name),
-            })
-            .unwrap()),
-            Err(e) => Ok(serde_json::to_value(UnloadDriverResponse {
-                name: input.name,
-                success: false,
-                message: format!("Failed to unload driver: {}", e),
-            })
-            .unwrap()),
-        }
+        Ok(serde_json::to_value(UnloadDriverResponse {
+            name: input.name,
+            success: false,
+            message: "Dynamic driver unloading is not supported.".to_string(),
+        })
+        .unwrap())
     }
 }
 

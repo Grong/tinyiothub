@@ -6,8 +6,8 @@
 /// 
 /// # 示例
 /// 
-/// ```rust,no_run
-/// use iot_edge_driver_sdk::*;
+/// ```rust,ignore
+/// use tinyiothub_plugin_sdk::*;
 /// 
 /// pub struct MyDriver {
 ///     device: Device,

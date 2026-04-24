@@ -126,7 +126,7 @@ impl CronRunRepository for SqliteCronRunRepository {
             r#"
             SELECT id, job_id, started_at, ended_at, duration_ms, status,
                    output, error_message, trigger_type, triggered_by, created_at
-            FROM cron_runs WHERE job_id = ?
+            FROM cron_runs WHERE job_id =
             "#,
         );
         builder.push_bind(job_id);
@@ -247,12 +247,214 @@ impl CronRunRepository for SqliteCronRunRepository {
 
     async fn avg_duration_ms(&self) -> Result<i64> {
         let row = sqlx::query(
-            "SELECT COALESCE(AVG(duration_ms), 0) as avg FROM cron_runs WHERE duration_ms IS NOT NULL",
+            "SELECT CAST(COALESCE(AVG(duration_ms), 0) AS REAL) as avg FROM cron_runs WHERE duration_ms IS NOT NULL",
         )
         .fetch_one(self.database.pool())
         .await?;
 
         let avg: f64 = row.get("avg");
         Ok(avg as i64)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sqlite::database::Database;
+    use crate::traits::cron::CronRunRepository;
+
+    async fn setup_repo() -> SqliteCronRunRepository {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("Failed to create in-memory pool");
+
+        sqlx::query(
+            r#"
+            CREATE TABLE cron_runs (
+                id            TEXT PRIMARY KEY,
+                job_id        TEXT NOT NULL,
+                workspace_id  TEXT,
+                started_at    TEXT NOT NULL,
+                ended_at      TEXT,
+                duration_ms   INTEGER,
+                status        TEXT NOT NULL CHECK (status IN ('pending', 'running', 'success', 'failed')),
+                output        TEXT,
+                error_message TEXT,
+                trigger_type  TEXT NOT NULL DEFAULT 'schedule',
+                triggered_by  TEXT,
+                created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .expect("Failed to create cron_runs table");
+
+        let database = Database::new(pool);
+        SqliteCronRunRepository::new(database)
+    }
+
+    #[tokio::test]
+    async fn test_create_run() {
+        let repo = setup_repo().await;
+        let run = repo.create("job-1", "schedule", None).await.unwrap();
+        assert_eq!(run.job_id, "job-1");
+        assert_eq!(run.status, "running");
+        assert_eq!(run.trigger_type, "schedule");
+        assert!(run.duration_ms.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_complete_run() {
+        let repo = setup_repo().await;
+        let run = repo.create("job-1", "schedule", None).await.unwrap();
+
+        let completed = repo
+            .complete(&run.id, "success", Some("output ok"), None, 1500)
+            .await
+            .unwrap();
+
+        assert_eq!(completed.status, "success");
+        assert_eq!(completed.output, Some("output ok".to_string()));
+        assert_eq!(completed.duration_ms, Some(1500));
+        assert!(completed.ended_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_complete_run_not_found() {
+        let repo = setup_repo().await;
+        let result = repo.complete("nonexistent", "success", None, None, 100).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_find_by_id() {
+        let repo = setup_repo().await;
+        let run = repo.create("job-1", "manual", Some("user-1")).await.unwrap();
+
+        let found = repo.find_by_id(&run.id).await.unwrap();
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().id, run.id);
+    }
+
+    #[tokio::test]
+    async fn test_find_by_id_not_found() {
+        let repo = setup_repo().await;
+        let found = repo.find_by_id("nonexistent").await.unwrap();
+        assert!(found.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_find_by_job_id() {
+        let repo = setup_repo().await;
+        repo.create("job-1", "schedule", None).await.unwrap();
+        repo.create("job-1", "manual", None).await.unwrap();
+        repo.create("job-2", "schedule", None).await.unwrap();
+
+        let query = CronRunQuery::default();
+        let runs = repo.find_by_job_id("job-1", &query).await.unwrap();
+        assert_eq!(runs.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_find_by_job_id_with_status_filter() {
+        let repo = setup_repo().await;
+        let run = repo.create("job-1", "schedule", None).await.unwrap();
+        repo.complete(&run.id, "success", None, None, 100).await.unwrap();
+        repo.create("job-1", "schedule", None).await.unwrap();
+
+        let query = CronRunQuery {
+            status: Some("running".to_string()),
+            ..Default::default()
+        };
+        let runs = repo.find_by_job_id("job-1", &query).await.unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].status, "running");
+    }
+
+    #[tokio::test]
+    async fn test_delete_by_job_id() {
+        let repo = setup_repo().await;
+        repo.create("job-1", "schedule", None).await.unwrap();
+        repo.create("job-1", "schedule", None).await.unwrap();
+
+        let deleted = repo.delete_by_job_id("job-1").await.unwrap();
+        assert_eq!(deleted, 2);
+
+        let query = CronRunQuery::default();
+        let runs = repo.find_by_job_id("job-1", &query).await.unwrap();
+        assert_eq!(runs.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_count_by_job_id() {
+        let repo = setup_repo().await;
+        repo.create("job-1", "schedule", None).await.unwrap();
+        repo.create("job-1", "schedule", None).await.unwrap();
+        repo.create("job-2", "schedule", None).await.unwrap();
+
+        assert_eq!(repo.count_by_job_id("job-1").await.unwrap(), 2);
+        assert_eq!(repo.count_by_job_id("job-2").await.unwrap(), 1);
+        assert_eq!(repo.count_by_job_id("job-3").await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_count_by_status() {
+        let repo = setup_repo().await;
+        let run1 = repo.create("job-1", "schedule", None).await.unwrap();
+        repo.complete(&run1.id, "success", None, None, 100).await.unwrap();
+        repo.create("job-2", "schedule", None).await.unwrap();
+
+        assert_eq!(repo.count_by_status("success").await.unwrap(), 1);
+        assert_eq!(repo.count_by_status("running").await.unwrap(), 1);
+        assert_eq!(repo.count_by_status("failed").await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_find_all() {
+        let repo = setup_repo().await;
+        repo.create("job-1", "schedule", None).await.unwrap();
+        repo.create("job-2", "manual", None).await.unwrap();
+
+        let query = CronRunQuery::default();
+        let runs = repo.find_all(&query).await.unwrap();
+        assert_eq!(runs.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_avg_duration_ms_no_runs() {
+        let repo = setup_repo().await;
+        let avg = repo.avg_duration_ms().await.unwrap();
+        assert_eq!(avg, 0);
+    }
+
+    #[tokio::test]
+    async fn test_avg_duration_ms_with_runs() {
+        let repo = setup_repo().await;
+
+        let run1 = repo.create("job-1", "schedule", None).await.unwrap();
+        repo.complete(&run1.id, "success", None, None, 100).await.unwrap();
+
+        let run2 = repo.create("job-1", "schedule", None).await.unwrap();
+        repo.complete(&run2.id, "success", None, None, 300).await.unwrap();
+
+        let avg = repo.avg_duration_ms().await.unwrap();
+        // AVG(100, 300) = 200
+        assert_eq!(avg, 200);
+    }
+
+    #[tokio::test]
+    async fn test_avg_duration_ms_ignores_null() {
+        let repo = setup_repo().await;
+
+        // Running run has NULL duration_ms
+        repo.create("job-1", "schedule", None).await.unwrap();
+
+        let run2 = repo.create("job-1", "schedule", None).await.unwrap();
+        repo.complete(&run2.id, "success", None, None, 500).await.unwrap();
+
+        let avg = repo.avg_duration_ms().await.unwrap();
+        // Only the completed run (500) should be counted
+        assert_eq!(avg, 500);
     }
 }

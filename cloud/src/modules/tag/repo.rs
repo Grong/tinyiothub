@@ -115,7 +115,7 @@ impl SqliteTagRepository {
 impl TagRepository for SqliteTagRepository {
     async fn find_by_id(&self, id: &str) -> Result<Option<Tag>> {
         let row = sqlx::query_as::<_, TagRow>(
-            "SELECT id, type as tag_type, name, tenant_id, created_by, created_at FROM tags WHERE id = ?",
+            "SELECT id, type, name, tenant_id, created_by, created_at FROM tags WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(self.database.pool())
@@ -126,7 +126,7 @@ impl TagRepository for SqliteTagRepository {
 
     async fn find_by_name_and_type(&self, name: &str, tag_type: &str) -> Result<Option<Tag>> {
         let row = sqlx::query_as::<_, TagRow>(
-            "SELECT id, type as tag_type, name, tenant_id, created_by, created_at FROM tags WHERE name = ? AND type = ?",
+            "SELECT id, type, name, tenant_id, created_by, created_at FROM tags WHERE name = ? AND type = ?",
         )
         .bind(name)
         .bind(tag_type)
@@ -206,7 +206,7 @@ impl TagRepository for SqliteTagRepository {
 
     async fn find_all(&self, params: &TagQuery) -> Result<Vec<Tag>> {
         let mut query = QueryBuilder::new(
-            "SELECT id, type as tag_type, name, tenant_id, created_by, created_at FROM tags WHERE 1=1",
+            "SELECT id, type, name, tenant_id, created_by, created_at FROM tags WHERE 1=1",
         );
 
         if let Some(tenant_id) = &params.tenant_id {

@@ -4,8 +4,8 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "Configuration management for TinyIoTHub"
+description = "Configuration types for TinyIoTHub"
 
 [dependencies]
-tinyiothub-core = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }

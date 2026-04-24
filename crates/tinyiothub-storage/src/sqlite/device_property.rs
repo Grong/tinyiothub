@@ -111,7 +111,7 @@ pub async fn create_device_properties_batch(
             INSERT INTO device_properties (
                 id, device_id, name, display_name, description, data_type, unit,
                 min_value, max_value, default_value, is_read_only, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&id)

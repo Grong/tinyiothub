@@ -25,7 +25,7 @@ pub use cron::{
 };
 pub use device::{DeviceRegistry, DeviceShadow};
 pub use driver::{
-    create_driver, get_all_driver_names, has_driver, load_dynamic_driver, unload_dynamic_driver,
+    create_driver, get_all_driver_names, has_driver,
     DeviceDriver, DriverWrapper, ResultValue,
 };
 pub use event_bus::{publish_event_safe, EventBus, EventHandler};

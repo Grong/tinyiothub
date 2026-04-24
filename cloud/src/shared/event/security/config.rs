@@ -1,7 +1,7 @@
 // Event security configuration and factory
 use std::sync::Arc;
 
-pub use tinyiothub_core::config::EventSecurityConfig;
+pub use tinyiothub_config::EventSecurityConfig;
 
 use crate::{
     modules::event::{repositories::EventRepository, EventError, Result},

@@ -127,3 +127,79 @@ impl ComponentInfo {
         }
     }
 }
+
+// === Core interop conversions ===
+
+#[cfg(feature = "core-interop")]
+mod core_interop {
+    use super::*;
+
+    impl From<tinyiothub_core::models::device::Device> for Device {
+        fn from(core: tinyiothub_core::models::device::Device) -> Self {
+            Device {
+                id: core.id,
+                name: core.name,
+                display_name: core.display_name,
+                protocol_type: core.protocol_type,
+                driver_options: core.driver_options,
+                address: core.address,
+                enabled: core.is_online,
+            }
+        }
+    }
+
+    impl From<Device> for tinyiothub_core::models::device::Device {
+        fn from(sdk: Device) -> Self {
+            tinyiothub_core::models::device::Device {
+                id: sdk.id,
+                name: sdk.name,
+                display_name: sdk.display_name,
+                device_type: None,
+                address: sdk.address,
+                description: None,
+                position: None,
+                driver_name: None,
+                device_model: None,
+                protocol_type: sdk.protocol_type,
+                factory_name: None,
+                linked_data: None,
+                driver_options: sdk.driver_options,
+                state: None,
+                parent_id: None,
+                product_id: None,
+                created_at: None,
+                updated_at: None,
+                tags: None,
+                properties: None,
+                commands: None,
+                is_online: sdk.enabled,
+                last_heartbeat: None,
+            }
+        }
+    }
+
+    impl From<tinyiothub_core::models::device_command::DeviceCommand> for DeviceCommand {
+        fn from(core: tinyiothub_core::models::device_command::DeviceCommand) -> Self {
+            DeviceCommand {
+                id: core.id,
+                name: core.name,
+                command_type: String::new(),
+                parameters: core.parameters,
+            }
+        }
+    }
+
+    impl From<DeviceCommand> for tinyiothub_core::models::device_command::DeviceCommand {
+        fn from(sdk: DeviceCommand) -> Self {
+            tinyiothub_core::models::device_command::DeviceCommand {
+                id: sdk.id,
+                device_id: String::new(),
+                name: sdk.name,
+                display_name: None,
+                description: None,
+                parameters: sdk.parameters,
+                created_at: String::new(),
+            }
+        }
+    }
+}

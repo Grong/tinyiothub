@@ -159,7 +159,7 @@ type HmacSha1 = Hmac<Sha1>;
 async fn send_aliyun_sms(
     phone: &str,
     code: &str,
-    config: &tinyiothub_core::config::AliyunSmsConfig,
+    config: &tinyiothub_config::AliyunSmsConfig,
 ) -> Result<(), String> {
     let endpoint = "https://dysmsapi.aliyuncs.com/";
     let action = "SendSms";
