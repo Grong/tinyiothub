@@ -396,6 +396,11 @@ impl DriverWrapper {
         self.event_bus = Some(event_bus);
     }
 
+    /// 获取事件总线引用（用于在不调用 publish 方法的情况下获取 Arc）
+    pub fn event_bus_ref(&self) -> Option<&std::sync::Arc<EventBus>> {
+        self.event_bus.as_ref()
+    }
+
     /// 获取设备引用
     pub fn device(&self) -> &Device {
         self.inner_driver.device()
@@ -542,95 +547,77 @@ impl DriverWrapper {
 
     // === 统一的连接状态管理方法 ===
 
-    /// 设备上线
-    /// 同时更新状态和发布事件
-    pub fn on_connected(&mut self, ip_address: Option<String>) {
+    /// 设备上线 — 更新状态，返回需要发布的事件（调用方负责发布）
+    pub fn on_connected(&mut self, ip_address: Option<String>) -> Option<DomainEvent> {
         // 更新状态管理器
         self.status_manager.record_success(Duration::from_millis(0));
         // 重置重试状态，避免离线期间累积的重试计数影响正常读取
         self.retry_manager.reset();
 
-        // 发布上线事件
-        if let Some(ref event_bus) = self.event_bus {
-            let device = self.device();
-            let event = DomainEvent::new_device_event(
-                DeviceEventType::Connection,
-                EventLevel::Info,
-                EventSource::device(device.id.clone(), Some("driver".to_string())),
-                RichContent::new(
-                    format!("Device Online: {}", device.name),
-                    vec![
-                        ContentElement::Text {
-                            content: format!("Device '{}' is now online", device.name),
-                            format: TextFormat::Plain,
-                        },
-                        ContentElement::Text {
-                            content: format!(
-                                "Protocol: {}",
-                                device.protocol_type.as_deref().unwrap_or("Unknown")
-                            ),
-                            format: TextFormat::Plain,
-                        },
-                        ContentElement::Text {
-                            content: format!("Address: {}", ip_address.as_deref().unwrap_or("N/A")),
-                            format: TextFormat::Plain,
-                        },
-                    ],
-                ),
-            );
-
-            if let Ok(event) = event {
-                let event_bus_clone = event_bus.clone();
-                tokio::spawn(async move {
-                    crate::event_bus::publish_event_safe(event_bus_clone, event).await;
-                });
-            }
-        }
-
         tracing::info!("Device '{}' connected successfully", self.display_name());
+
+        // 构建上线事件（不发布，由调用方在释放写锁后发布）
+        let device = self.device();
+        DomainEvent::new_device_event(
+            DeviceEventType::Connection,
+            EventLevel::Info,
+            EventSource::device(device.id.clone(), Some("driver".to_string())),
+            RichContent::new(
+                format!("Device Online: {}", device.name),
+                vec![
+                    ContentElement::Text {
+                        content: format!("Device '{}' is now online", device.name),
+                        format: TextFormat::Plain,
+                    },
+                    ContentElement::Text {
+                        content: format!(
+                            "Protocol: {}",
+                            device.protocol_type.as_deref().unwrap_or("Unknown")
+                        ),
+                        format: TextFormat::Plain,
+                    },
+                    ContentElement::Text {
+                        content: format!("Address: {}", ip_address.as_deref().unwrap_or("N/A")),
+                        format: TextFormat::Plain,
+                    },
+                ],
+            ),
+        )
+        .ok()
     }
 
-    /// 设备下线
-    /// 同时更新状态和发布事件
-    pub fn on_disconnected(&mut self, reason: Option<String>) {
+    /// 设备下线 — 更新状态，返回需要发布的事件（调用方负责发布）
+    pub fn on_disconnected(&mut self, reason: Option<String>) -> Option<DomainEvent> {
         // 更新状态管理器
         self.status_manager.set_offline();
 
-        // 发布下线事件
-        if let Some(ref event_bus) = self.event_bus {
-            let device = self.device();
-            let mut elements = vec![ContentElement::Text {
-                content: format!("Device '{}' is now offline", device.name),
-                format: TextFormat::Plain,
-            }];
-
-            if let Some(ref reason_text) = reason {
-                elements.push(ContentElement::Text {
-                    content: format!("Reason: {}", reason_text),
-                    format: TextFormat::Plain,
-                });
-            }
-
-            let event = DomainEvent::new_device_event(
-                DeviceEventType::Connection,
-                EventLevel::Warning,
-                EventSource::device(device.id.clone(), Some("driver".to_string())),
-                RichContent::new(format!("Device Offline: {}", device.name), elements),
-            );
-
-            if let Ok(event) = event {
-                let event_bus_clone = event_bus.clone();
-                tokio::spawn(async move {
-                    crate::event_bus::publish_event_safe(event_bus_clone, event).await;
-                });
-            }
-        }
-
-        if let Some(reason) = reason {
-            tracing::warn!("Device '{}' disconnected: {}", self.display_name(), reason);
+        if let Some(ref reason_text) = reason {
+            tracing::warn!("Device '{}' disconnected: {}", self.display_name(), reason_text);
         } else {
             tracing::warn!("Device '{}' disconnected", self.display_name());
         }
+
+        // 构建下线事件（不发布，由调用方在释放写锁后发布）
+        let device = self.device();
+        let mut elements = vec![ContentElement::Text {
+            content: format!("Device '{}' is now offline", device.name),
+            format: TextFormat::Plain,
+        }];
+
+        if let Some(ref reason_text) = reason {
+            elements.push(ContentElement::Text {
+                content: format!("Reason: {}", reason_text),
+                format: TextFormat::Plain,
+            });
+        }
+
+        DomainEvent::new_device_event(
+            DeviceEventType::Connection,
+            EventLevel::Warning,
+            EventSource::device(device.id.clone(), Some("driver".to_string())),
+            RichContent::new(format!("Device Offline: {}", device.name), elements),
+        )
+        .ok()
     }
 
     /// 连接失败

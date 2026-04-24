@@ -5,11 +5,16 @@ use moka::sync::Cache;
 use parking_lot::RwLock;
 
 use tinyiothub_core::error::Error;
+use tinyiothub_core::models::device_property::DeviceProperty;
 use tinyiothub_core::models::{device::Device, device_command::DeviceCommand};
+use tinyiothub_core::models::event::{
+    ContentElement, DeviceEventType, Event as DomainEvent, EventLevel, EventSource, RichContent,
+    TextFormat,
+};
 
 use tinyiothub_storage::cache::DeviceCache;
 use crate::driver::{create_driver, DeviceOverview, DriverWrapper, ResultValue};
-use crate::event_bus::{EventBus, EventHandler};
+use crate::event_bus::{publish_event_safe, EventBus, EventHandler};
 
 // Type aliases
 type DriverCache = Cache<String, Arc<RwLock<DriverWrapper>>>;
@@ -128,6 +133,10 @@ impl DataServer {
                     continue;
                 }
 
+                // Collect events INSIDE the write lock, publish OUTSIDE to avoid deadlock.
+                let mut pending_events: Vec<DomainEvent> = Vec::new();
+                let mut event_bus_ref: Option<std::sync::Arc<EventBus>> = None;
+
                 if let Some(mut driver) = driver_arc.try_write() {
                     let device_id = driver.device().id.clone();
                     let read_result = driver.read_data_once();
@@ -137,10 +146,14 @@ impl DataServer {
                         device.display_name.clone().unwrap_or_else(|| device.name.clone());
                     let device_address = device.address.clone();
 
+                    event_bus_ref = driver.event_bus_ref().cloned();
+
                     match read_result.result {
                         Ok(values) => {
                             if !was_online {
-                                driver.on_connected(device_address);
+                                if let Some(event) = driver.on_connected(device_address) {
+                                    pending_events.push(event);
+                                }
                                 tracing::info!(
                                     "Device '{}' state changed: offline → online",
                                     device_display_name
@@ -150,42 +163,34 @@ impl DataServer {
                             device.state = Some(1);
                             device.last_heartbeat =
                                 Some(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string());
-                            Self::update_device_properties_with_events(
+                            let events = Self::collect_property_change_events(
                                 &mut device,
                                 &values,
-                                &mut driver,
+                                event_bus_ref.as_deref(),
                             );
+                            pending_events.extend(events);
                         }
                         Err(e) => {
                             if let Some(retry_info) = &read_result.retry_info {
                                 if retry_info.will_retry {
-                                    tracing::debug!(
-                                        "Device {} read failed (attempt {}), will retry in {:?}: {}",
-                                        device_display_name,
-                                        retry_info.attempt,
-                                        retry_info.next_retry_in.unwrap_or_default(),
-                                        e
-                                    );
                                     continue;
                                 } else {
                                     if was_online {
-                                        driver.on_disconnected(Some(e.to_string()));
-                                        tracing::warn!(
-                                            "Device '{}' state changed: online → offline after {} attempts",
-                                            device_display_name,
-                                            retry_info.attempt
-                                        );
+                                        if let Some(event) = driver.on_disconnected(Some(e.to_string())) {
+                                            pending_events.push(event);
+                                        }
                                     }
                                     device.is_online = false;
                                     device.state = Some(0);
                                 }
                             } else {
                                 if was_online {
-                                    driver.on_disconnected(Some(e.to_string()));
+                                    if let Some(event) = driver.on_disconnected(Some(e.to_string())) {
+                                        pending_events.push(event);
+                                    }
                                 }
                                 device.is_online = false;
                                 device.state = Some(0);
-                                tracing::warn!("Device {} read error: {}", device_display_name, e);
                             }
                         }
                     }
@@ -193,38 +198,47 @@ impl DataServer {
                     for cmd in commands.iter().filter(|c| c.device_id == device_id) {
                         let cmd_result = driver.execute_command(cmd);
                         let execution_time_ms = cmd_result.elapsed.as_millis() as u64;
-                        match cmd_result.result {
-                            Ok(_) => {
-                                driver.publish_command_execution(
-                                    cmd.name.clone(),
-                                    true,
-                                    execution_time_ms,
-                                    None,
-                                );
-                            }
-                            Err(e) => {
-                                driver.publish_command_execution(
-                                    cmd.name.clone(),
-                                    false,
-                                    execution_time_ms,
-                                    Some(e.to_string()),
-                                );
-                            }
+                        if let Some(event) = Self::build_command_event(
+                            &device,
+                            cmd,
+                            cmd_result.result.is_ok(),
+                            execution_time_ms,
+                            cmd_result.result.as_ref().err().map(|e| e.to_string()),
+                        ) {
+                            pending_events.push(event);
                         }
                     }
 
                     *driver.device_mut() = device.clone();
                     device_cache.update(device);
                 }
+                // Write lock released — now safe to publish events
+                if let Some(bus) = event_bus_ref {
+                    for event in pending_events {
+                        publish_event_safe(bus.clone(), event).await;
+                    }
+                }
             }
         }
     }
 
-    fn update_device_properties_with_events(
+    /// Collect property change events without publishing.
+    ///
+    /// Returns events that need to be published AFTER the driver write lock is released.
+    /// This avoids a deadlock: publish_property_change calls self.device() which
+    /// tries to read-lock the same RwLock that the caller holds as a write lock.
+    fn collect_property_change_events(
         device: &mut Device,
         values: &[ResultValue],
-        driver: &mut DriverWrapper,
-    ) {
+        event_bus: Option<&EventBus>,
+    ) -> Vec<DomainEvent> {
+        let mut pending_events = Vec::new();
+        if event_bus.is_none() {
+            return pending_events;
+        }
+        // Extract device info before mutable borrow of properties
+        let device_id = device.id.clone();
+        let device_name = device.name.clone();
         if let Some(ref mut properties) = device.properties {
             for property in properties.iter_mut() {
                 if let Some(result_value) = values.iter().find(|v| v.name == property.name) {
@@ -236,17 +250,109 @@ impl DataServer {
                         };
                         property.set_current_value(value_str.clone());
                         if value_changed {
-                            driver.publish_property_change(
-                                property.id.clone(),
-                                property.name.clone(),
-                                old_value,
-                                value_str.clone(),
-                            );
+                            if let Some(event) = Self::build_property_change_event_static(
+                                &device_id, &device_name, property, old_value, value_str,
+                            ) {
+                                pending_events.push(event);
+                            }
                         }
                     }
                 }
             }
         }
+        pending_events
+    }
+
+    /// Build a property change event without acquiring any locks.
+    /// Takes pre-extracted device fields to avoid borrow conflicts.
+    fn build_property_change_event_static(
+        device_id: &str,
+        device_name: &str,
+        property: &DeviceProperty,
+        old_value: Option<String>,
+        new_value: &str,
+    ) -> Option<DomainEvent> {
+        let mut elements = vec![ContentElement::Text {
+            content: format!(
+                "Property '{}' value changed on device '{}'",
+                property.name, device_name
+            ),
+            format: TextFormat::Plain,
+        }];
+
+        if let Some(ref old_val) = old_value {
+            elements.push(ContentElement::Text {
+                content: format!("Previous value: {}", old_val),
+                format: TextFormat::Plain,
+            });
+        }
+
+        elements.push(ContentElement::Text {
+            content: format!("Current value: {}", new_value),
+            format: TextFormat::Plain,
+        });
+
+        DomainEvent::new_device_event(
+            DeviceEventType::PropertyChange,
+            EventLevel::Info,
+            EventSource::device_property(
+                device_id.to_string(),
+                property.id.clone(),
+                "data_collector".to_string(),
+            ),
+            RichContent::new(
+                format!("Property Changed: {} - {}", device_name, property.name),
+                elements,
+            ),
+        )
+        .ok()
+    }
+
+    /// Build a command execution event without acquiring any locks.
+    fn build_command_event(
+        device: &Device,
+        cmd: &DeviceCommand,
+        success: bool,
+        execution_time_ms: u64,
+        error_message: Option<String>,
+    ) -> Option<DomainEvent> {
+        let (event_type, level, status) = if success {
+            (DeviceEventType::CommandCompleted, EventLevel::Info, "success")
+        } else {
+            (DeviceEventType::CommandFailed, EventLevel::Error, "failed")
+        };
+
+        let mut elements = vec![
+            ContentElement::Text {
+                content: format!(
+                    "Command '{}' executed on device '{}'",
+                    cmd.name, device.name
+                ),
+                format: TextFormat::Plain,
+            },
+            ContentElement::Text {
+                content: format!("Status: {}, Time: {}ms", status, execution_time_ms),
+                format: TextFormat::Plain,
+            },
+        ];
+
+        if let Some(ref err) = error_message {
+            elements.push(ContentElement::Text {
+                content: format!("Error: {}", err),
+                format: TextFormat::Plain,
+            });
+        }
+
+        DomainEvent::new_device_event(
+            event_type,
+            level,
+            EventSource::device(device.id.clone(), Some("driver".to_string())),
+            RichContent::new(
+                format!("Command '{}' on device '{}': {}", cmd.name, device.name, status),
+                elements,
+            ),
+        )
+        .ok()
     }
 
     fn group_drivers_by_protocol(&self) -> HashMap<String, Vec<Arc<RwLock<DriverWrapper>>>> {

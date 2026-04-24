@@ -26,6 +26,7 @@ tracing = { workspace = true }
 
 # Collections
  dashmap = { workspace = true }
+arc-swap = "1.9"
 
 # Utilities
 uuid = { workspace = true }
