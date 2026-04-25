@@ -82,8 +82,13 @@ impl DeviceCache {
         _property_id: &str,
         update_fn: impl FnOnce(&mut Device),
     ) {
-        if let Some(device_arc) = self.devices.get(device_id) {
-            let mut device = (**device_arc).clone();
+        // Clone the device OUTSIDE the read-lock scope.
+        // DashMap::get() holds a per-shard read lock; if we try to
+        // DashMap::insert() (which needs a write lock) while that
+        // read guard is still alive we deadlock — parking_lot does
+        // NOT support lock upgrades.
+        let device = self.devices.get(device_id).map(|arc| (**arc).clone());
+        if let Some(mut device) = device {
             update_fn(&mut device);
             self.devices.insert(device_id.to_string(), Arc::new(device));
         }
