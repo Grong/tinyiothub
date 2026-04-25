@@ -233,9 +233,6 @@ impl DataServer {
         event_bus: Option<&EventBus>,
     ) -> Vec<DomainEvent> {
         let mut pending_events = Vec::new();
-        if event_bus.is_none() {
-            return pending_events;
-        }
         // Extract device info before mutable borrow of properties
         let device_id = device.id.clone();
         let device_name = device.name.clone();
@@ -603,7 +600,16 @@ impl EventHandler for DataServer {
     }
 
     fn should_handle(&self, event: &tinyiothub_core::models::event::Event) -> bool {
-        matches!(event.event_type(), tinyiothub_core::models::event::EventType::Device(_))
+        use tinyiothub_core::models::event::{DeviceEventType, EventType};
+        // DataServer should NOT handle PropertyChange events — those are generated
+        // by the polling loop itself and the cache is already updated inline.
+        // Handling them creates redundant updates and can cause deadlocks.
+        matches!(
+            event.event_type(),
+            EventType::Device(DeviceEventType::DeviceCreated
+                | DeviceEventType::DeviceUpdated
+                | DeviceEventType::DeviceDeleted)
+        )
     }
 
     fn priority(&self) -> u8 {
