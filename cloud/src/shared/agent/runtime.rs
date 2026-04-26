@@ -553,7 +553,7 @@ impl AgentClient for AgentRuntimeImpl {
     }
 
     async fn tools_catalog(&self, _agent_id: &str) -> Result<serde_json::Value, AgentError> {
-        Ok(crate::shared::agent::build_tools_catalog_json())
+        Ok(build_dynamic_catalog().await)
     }
 
     async fn tools_effective(&self, agent_id: &str) -> Result<serde_json::Value, AgentError> {
@@ -583,7 +583,7 @@ impl AgentClient for AgentRuntimeImpl {
             .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
             .unwrap_or_default();
 
-        let catalog = crate::shared::agent::build_tools_catalog_json();
+        let catalog = build_dynamic_catalog().await;
         let groups = catalog.get("groups").and_then(|v| v.as_array()).cloned().unwrap_or_default();
 
         let filtered_groups: Vec<serde_json::Value> = groups
@@ -671,6 +671,116 @@ impl AgentClient for AgentRuntimeImpl {
 
         Ok(())
     }
+}
+
+// ============================================================================
+// Dynamic tool catalog from MCP registry
+// ============================================================================
+
+/// Build tool catalog dynamically from the MCP registry.
+/// Falls back to the static catalog if the registry is empty or unavailable.
+async fn build_dynamic_catalog() -> serde_json::Value {
+    use std::collections::HashMap;
+
+    /// Label mapping for known tools (display name in Chinese)
+    fn tool_label(name: &str) -> &str {
+        match name {
+            "search_devices" => "搜索设备",
+            "device_profile" => "获取设备 Profile",
+            "device_property_get" => "获取属性详情",
+            "device_create" => "根据模板创建设备",
+            "device_command" => "执行设备命令",
+            "device_template_list" => "查询设备模板列表",
+            "alarm_list" => "查询告警列表",
+            "alarm_get" => "获取告警详情",
+            "alarm_ack" => "确认告警",
+            "alarm_rule_list" => "查询告警规则",
+            "alarm_stats" => "告警统计",
+            "system_health" => "系统健康检查",
+            "event_list" => "查询事件列表",
+            "driver_list" => "查询驱动列表",
+            "driver_get" => "获取驱动详情",
+            "workspace_list" => "查询工作空间列表",
+            "workspace_get" => "获取工作空间详情",
+            "workspace_create" => "创建工作空间",
+            "workspace_update" => "更新工作空间",
+            "workspace_delete" => "删除工作空间",
+            "job_list" => "查询任务列表",
+            "job_get" => "获取任务详情",
+            "job_cancel" => "取消任务",
+            _ => name,
+        }
+    }
+
+    /// Infer group (id, label) from tool name
+    fn tool_group(name: &str) -> (&str, &str) {
+        if name.starts_with("search_") || name.starts_with("device_") {
+            ("device", "设备管理")
+        } else if name.starts_with("alarm_") {
+            ("alarm", "告警管理")
+        } else if name.starts_with("system_") || name.starts_with("event_") {
+            ("monitoring", "系统监控")
+        } else if name.starts_with("driver_") {
+            ("driver", "驱动管理")
+        } else if name.starts_with("workspace_") {
+            ("workspace", "工作空间")
+        } else if name.starts_with("job_") {
+            ("job", "任务管理")
+        } else {
+            ("other", "其他")
+        }
+    }
+
+    let mut groups: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
+
+    if let Some(registry) = crate::modules::mcp::get_mcp_registry() {
+        let reg = registry.read().await;
+        for meta in reg.list_tools() {
+            let name = meta.name.clone();
+            let (group_id, _) = tool_group(&name);
+            let label = tool_label(&name);
+            let danger = name_infers_destructive(&name);
+
+            let tool_json = serde_json::json!({
+                "id": name,
+                "name": name,
+                "label": label,
+                "description": meta.description,
+                "danger": danger,
+                "enabled": !danger,
+            });
+
+            groups.entry(group_id.to_string()).or_default().push(tool_json);
+        }
+    }
+
+    if groups.is_empty() {
+        return crate::shared::agent::build_tools_catalog_json();
+    }
+
+    let group_order = [
+        ("device", "设备管理"),
+        ("alarm", "告警管理"),
+        ("monitoring", "系统监控"),
+        ("driver", "驱动管理"),
+        ("workspace", "工作空间"),
+        ("job", "任务管理"),
+        ("other", "其他"),
+    ];
+
+    let groups_vec: Vec<serde_json::Value> = group_order
+        .into_iter()
+        .filter_map(|(id, label)| {
+            groups.get(id).map(|tools| serde_json::json!({
+                "id": id,
+                "label": label,
+                "source": "core",
+                "tools": tools,
+            }))
+        })
+        .collect();
+
+    serde_json::json!({ "groups": groups_vec })
 }
 
 // ============================================================================
