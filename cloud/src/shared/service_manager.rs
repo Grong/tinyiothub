@@ -140,11 +140,11 @@ impl ServiceManager {
             let heartbeat_observer: std::sync::Arc<dyn zeroclaw::observability::Observer> =
                 std::sync::Arc::from(zeroclaw::observability::create_observer(&observer_config));
             let heartbeat_service = crate::shared::agent::HeartbeatService::new(
-                workspace_dir,
+                workspace_dir.clone(),
                 heartbeat_config,
                 heartbeat_observer,
                 app_state.chat_service.clone(),
-                "default".to_string(),
+                crate::shared::paths::DEFAULT_WORKSPACE_ID.to_string(),
                 "default".to_string(),
                 agent_settings.system_prompts.heartbeat.clone(),
             );

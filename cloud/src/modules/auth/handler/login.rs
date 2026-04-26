@@ -106,7 +106,8 @@ async fn login(
             );
 
             // 生成 JWT 令牌（HarmonyOS 会自动使用 HMAC-SHA256）
-            match jwt::generate_token(&user.id, user.get_display_name(), &tenant_id) {
+            let workspace_id_for_token = workspace_id.clone().unwrap_or_default();
+            match jwt::generate_token(&user.id, user.get_display_name(), &tenant_id, &workspace_id_for_token) {
                 Ok(token) => {
                     let login_response = LoginResponse {
                         access_token: token,

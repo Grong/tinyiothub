@@ -51,8 +51,9 @@ pub fn heartbeat_file(workspace_id: &str) -> PathBuf {
     workspace_dir(workspace_id).join("HEARTBEAT.md")
 }
 
-/// Default workspace ID used when none is specified
-pub const DEFAULT_WORKSPACE_ID: &str = "default";
+/// Default workspace ID used when none is specified.
+/// Must match the ID created by initialization.rs (`ws-default-001`).
+pub const DEFAULT_WORKSPACE_ID: &str = "ws-default-001";
 
 /// Default workspace directory (for config defaults)
 pub fn default_workspace_dir() -> PathBuf {

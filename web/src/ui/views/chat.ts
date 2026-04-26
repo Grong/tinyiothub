@@ -32,33 +32,47 @@ export class ChatView extends LitElement {
     return this;
   }
 
-  connectedCallback(): void {
+  async connectedCallback(): Promise<void> {
     super.connectedCallback();
     this.agentId = "default"; // TODO: get from URL params or store
     // Register chip toggle callback for Lit re-render
     setChipToggleCallback(() => this.requestUpdate());
     // Persist session key so chat history loads correctly across page reloads
     // Format: agent:<workspace_id>:<agent_id>/<session_uuid>
+    let workspaceId = localStorage.getItem("workspace-id");
+    if (!workspaceId) {
+      // Fallback: fetch from API if not in localStorage (e.g. first visit)
+      try {
+        const wsRes = await apiGet<{ id: string; name: string }[]>('/workspaces');
+        if (wsRes.result && wsRes.result.length > 0) {
+          workspaceId = wsRes.result[0].id;
+          localStorage.setItem("workspace-id", workspaceId);
+        }
+      } catch {
+        // API failed — session key will use empty workspace, backend may reject
+      }
+    }
     const storedKey = localStorage.getItem("tinyiothub_chat_session_key");
     let sessionKey = storedKey;
-    if (!storedKey || !storedKey.includes('/')) {
-      sessionKey = `agent:default:${this.agentId}/${crypto.randomUUID()}`;
+    // Regenerate if: missing, malformed, or workspace_id mismatch
+    const storedWorkspace = storedKey?.split(':')[1];
+    if (!storedKey || !storedKey.includes('/') || storedWorkspace !== workspaceId) {
+      const ws = workspaceId || "";
+      sessionKey = `agent:${ws}:${this.agentId}/${crypto.randomUUID()}`;
       localStorage.setItem("tinyiothub_chat_session_key", sessionKey);
     }
     // Load agent config to get systemPrompt, then create chat state
-    apiGet<{ config: { systemPrompt?: string } }>(`/agents/${this.agentId}/config`)
-      .then((res) => {
-        const systemPrompt = res.result?.config?.systemPrompt;
-        this.chatState = createChatState(sessionKey || "", this.agentId, systemPrompt);
-        this._bindA2uiCallback();
-        loadChatHistory(this.chatState).then(() => this.requestUpdate());
-      })
-      .catch(() => {
-        // ZeroClaw not connected or config unavailable — still allow chat
-        this.chatState = createChatState(sessionKey || "", this.agentId);
-        this._bindA2uiCallback();
-        loadChatHistory(this.chatState).then(() => this.requestUpdate());
-      });
+    try {
+      const res = await apiGet<{ config: { systemPrompt?: string } }>(`/agents/${this.agentId}/config`);
+      const systemPrompt = res.result?.config?.systemPrompt;
+      this.chatState = createChatState(sessionKey || "", this.agentId, systemPrompt);
+    } catch {
+      // ZeroClaw not connected or config unavailable — still allow chat
+      this.chatState = createChatState(sessionKey || "", this.agentId);
+    }
+    this._bindA2uiCallback();
+    await loadChatHistory(this.chatState);
+    this.requestUpdate();
   }
 
   disconnectedCallback(): void {

@@ -286,7 +286,17 @@ async fn wechat_callback(
     .unwrap_or(None)
     .unwrap_or_else(|| "default".to_string());
 
-    let jwt_token = match jwt::generate_token(&user.id, &user.username, &tenant_id) {
+    // 查找该租户的第一个 workspace 作为默认 workspace
+    let workspace_id: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM workspaces WHERE tenant_id = ? LIMIT 1"
+    )
+    .bind(&tenant_id)
+    .fetch_optional(db.pool())
+    .await
+    .unwrap_or(None);
+
+    let workspace_id_for_token = workspace_id.clone().unwrap_or_default();
+    let jwt_token = match jwt::generate_token(&user.id, &user.username, &tenant_id, &workspace_id_for_token) {
         Ok(t) => t,
         Err(e) => {
             tracing::error!("Failed to generate JWT: {}", e);
@@ -299,15 +309,6 @@ async fn wechat_callback(
     if let Err(e) = save_social_binding(state.database(), &user.id, "wechat", &token_resp.openid).await {
         tracing::warn!("Failed to save social binding: {:?}", e);
     }
-
-    // 查找该租户的第一个 workspace 作为默认 workspace
-    let workspace_id: Option<String> = sqlx::query_scalar(
-        "SELECT id FROM workspaces WHERE tenant_id = ? LIMIT 1"
-    )
-    .bind(&tenant_id)
-    .fetch_optional(db.pool())
-    .await
-    .unwrap_or(None);
 
     // 返回成功页面，通过 postMessage 发送 token
     let html = format!(

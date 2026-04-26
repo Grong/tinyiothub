@@ -54,7 +54,7 @@ async fn refresh_token(
     };
 
     // 生成新的 token
-    match generate_token(&claims.user_id, &claims.username, &claims.tenant_id) {
+    match generate_token(&claims.user_id, &claims.username, &claims.tenant_id, &claims.workspace_id) {
         Ok(new_token) => {
             tracing::info!("Token refreshed for user: {}", claims.user_id);
             ApiResponseBuilder::success(RefreshTokenResponse {

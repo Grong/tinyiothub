@@ -129,7 +129,7 @@ async fn create_test_app_state() -> AppState {
 
 /// Generate a valid JWT token for testing authenticated endpoints.
 pub fn create_test_token(user_id: &str, tenant_id: &str) -> String {
-    crate::shared::security::jwt::generate_token(user_id, "test-user", tenant_id)
+    crate::shared::security::jwt::generate_token(user_id, "test-user", tenant_id, "ws-default-001")
         .expect("Failed to generate test token")
 }
 

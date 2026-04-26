@@ -11,7 +11,6 @@ use async_stream::stream;
 
 use crate::{
     modules::agent::ChatRequest,
-    modules::mcp::handlers::{McpAuthContext, McpContextGuard},
     shared::api_response::ApiResponse,
     shared::{app_state::AppState},
 };
@@ -33,26 +32,40 @@ pub async fn chat_stream(
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
-    // session_key format: agent:<agentId>:<mainKey>/<sess_uuid>
-    // Extract workspace_id from the second colon-separated segment
-    let workspace_id = req.session_key.split(':').nth(1).and_then(|s| s.split('/').next());
+    // session_key format: agent:<workspace_id>:<agent_id>/<sess_uuid>
+    // Use claims.workspace_id (from JWT) as the source of truth.
+    // If claims has a workspace_id, replace the session_key's workspace segment
+    // to ensure the correct workspace is used for MCP tool calls.
+    let session_key = if !claims.workspace_id.is_empty() {
+        // Parse agent_id and uuid from the incoming session_key
+        let parts: Vec<&str> = req.session_key.split(':').collect();
+        if parts.len() >= 3 {
+            let agent_and_sess = parts[2]; // "agent_id/uuid"
+            format!("agent:{}:{}", claims.workspace_id, agent_and_sess)
+        } else {
+            req.session_key.clone()
+        }
+    } else {
+        // Old token without workspace_id — fallback to session_key parsing
+        req.session_key.clone()
+    };
+
+    let workspace_id = session_key
+        .split(':')
+        .nth(1)
+        .and_then(|s| s.split('/').next())
+        .map(|s| s.to_string())
+        .unwrap_or_default();
     let system_prompts = &crate::shared::config::get().agent.system_prompts;
     let full_prompt = crate::shared::agent::build_full_system_prompt(
         system_prompts,
         user_persona,
-        workspace_id,
+        Some(&workspace_id),
         None,
     ).await;
 
-    // Set MCP context for in-process tool calls (JWT-authenticated)
-    let mcp_ctx = McpAuthContext::for_jwt(
-        workspace_id.map(|s| s.to_string()).unwrap_or_default(),
-        claims.user_id.clone(),
-    );
-    let _guard = McpContextGuard::new(mcp_ctx);
-
     let chat_request = ChatRequest {
-        session_key: req.session_key,
+        session_key,
         message: req.message,
         run_id: req.run_id,
         system_prompt_override: req.system_prompt.or(Some(full_prompt)),

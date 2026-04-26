@@ -511,24 +511,32 @@ async fn login_with_code(
         }
     };
 
-    // 生成 JWT token（复用 jwt::generate_token）
-    let default_tenant_id = "default";
-    let token = match jwt::generate_token(&user.id, &user.username, default_tenant_id) {
+    // 查找该用户关联的租户和默认 workspace
+    let tenant_id: String = sqlx::query_scalar(
+        "SELECT tenant_id FROM tenant_users WHERE user_id = ? LIMIT 1"
+    )
+    .bind(&user.id)
+    .fetch_optional(db.pool())
+    .await
+    .unwrap_or(None)
+    .unwrap_or_else(|| "default".to_string());
+
+    let workspace_id: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM workspaces WHERE tenant_id = ? LIMIT 1"
+    )
+    .bind(&tenant_id)
+    .fetch_optional(db.pool())
+    .await
+    .unwrap_or(None);
+
+    let workspace_id_for_token = workspace_id.clone().unwrap_or_default();
+    let token = match jwt::generate_token(&user.id, &user.username, &tenant_id, &workspace_id_for_token) {
         Ok(t) => t,
         Err(e) => {
             tracing::error!("Failed to generate token: {}", e);
             return ApiResponseBuilder::error("登录失败，请稍后重试".to_string());
         }
     };
-
-    // 查找该租户的第一个 workspace 作为默认 workspace
-    let workspace_id: Option<String> = sqlx::query_scalar(
-        "SELECT id FROM workspaces WHERE tenant_id = ? LIMIT 1"
-    )
-    .bind(default_tenant_id)
-    .fetch_optional(db.pool())
-    .await
-    .unwrap_or(None);
 
     ApiResponseBuilder::success(LoginWithCodeResponse {
         access_token: token,

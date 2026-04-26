@@ -54,7 +54,7 @@ pub fn default_agent_config() -> serde_json::Value {
         "maxTokens": 4096,
         "topP": 1.0,
         "systemPrompt": "",
-        "workspace": "default"
+        "workspace": "ws-default-001"
     })
 }
 
