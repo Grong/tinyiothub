@@ -63,24 +63,42 @@ impl McpAuthContext {
     }
 }
 
-// Thread-local storage for MCP request context (workspace_id from API Key)
+// Tokio task-local: survives await points within the same task (unlike thread_local)
+tokio::task_local! {
+    static MCP_CONTEXT_TASK: Option<McpAuthContext>;
+}
+
+// Thread-local fallback for synchronous/API Key paths
 thread_local! {
     static MCP_CONTEXT: std::cell::RefCell<Option<McpAuthContext>> = const {
         std::cell::RefCell::new(None)
     };
 }
 
-/// Set MCP context for the current async task
+/// Set MCP context for thread-local fallback (API Key path)
 fn set_mcp_context(ctx: McpAuthContext) {
     MCP_CONTEXT.with(|c| *c.borrow_mut() = Some(ctx));
 }
 
-/// Get MCP context for the current async task
+/// Get MCP context: tries task-local first (async path), then thread-local (sync fallback)
 pub fn get_mcp_context() -> Option<McpAuthContext> {
-    MCP_CONTEXT.with(|ctx| ctx.borrow().clone())
+    MCP_CONTEXT_TASK
+        .try_with(|ctx| ctx.clone())
+        .ok()
+        .flatten()
+        .or_else(|| MCP_CONTEXT.with(|ctx| ctx.borrow().clone()))
 }
 
-/// RAII guard for MCP context - clears on drop
+/// Run an async block with task-local MCP context set
+pub async fn with_mcp_context<F, Fut, R>(ctx: McpAuthContext, f: F) -> R
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = R>,
+{
+    MCP_CONTEXT_TASK.scope(Some(ctx), f()).await
+}
+
+/// RAII guard for thread-local MCP context - clears on drop (API Key path)
 pub(crate) struct McpContextGuard;
 
 impl McpContextGuard {

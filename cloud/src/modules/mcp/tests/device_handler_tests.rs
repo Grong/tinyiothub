@@ -19,19 +19,19 @@ async fn test_get_device_not_found() {
                           crate::modules::mcp::ToolError::Internal(_)));
 }
 
-/// Test list_devices handler returns valid array (or graceful error)
+/// Test search_devices handler returns valid response (or graceful error)
 #[tokio::test]
-async fn test_list_devices_returns_array() {
+async fn test_search_devices_returns_response() {
     crate::modules::mcp::register_tools().await;
     let registry = crate::modules::mcp::get_mcp_registry().unwrap();
     let guard = registry.read().await;
-    let handler = guard.get("list_devices").unwrap();
+    let handler = guard.get("search_devices").unwrap();
 
-    let result = handler.execute(json!({"page": 1, "page_size": 10 })).await;
+    let result = handler.execute(json!({"keyword": "test"})).await;
 
     match result {
         Ok(value) => {
-            assert!(value.is_array(), "list_devices should return an array");
+            assert!(value.is_object(), "search_devices should return an object");
         }
         Err(e) => {
             // If AppState is not initialized, we get Internal error
@@ -44,21 +44,19 @@ async fn test_list_devices_returns_array() {
     }
 }
 
-/// Test list_devices accepts pagination parameters
+/// Test search_devices accepts keyword and limit parameters
 #[tokio::test]
-async fn test_list_devices_with_pagination() {
+async fn test_search_devices_with_params() {
     crate::modules::mcp::register_tools().await;
     let registry = crate::modules::mcp::get_mcp_registry().unwrap();
     let guard = registry.read().await;
-    let handler = guard.get("list_devices").unwrap();
+    let handler = guard.get("search_devices").unwrap();
 
-    // Test with page and page_size
+    // Test with keyword and limit
     let result = handler.execute(json!({
-        "page": 2,
-        "page_size": 5,
-        "name": "test"
+        "keyword": "sensor",
+        "limit": 10
     })).await;
-    // Should succeed or fail gracefully with Internal error if AppState not initialized
     match result {
         Ok(_) => {}
         Err(e) => {
@@ -70,8 +68,11 @@ async fn test_list_devices_with_pagination() {
         }
     }
 
-    // Test with only page_size
-    let result = handler.execute(json!({"page_size": 50 })).await;
+    // Test with keyword and tag
+    let result = handler.execute(json!({
+        "keyword": "modbus",
+        "tag": "production"
+    })).await;
     match result {
         Ok(_) => {}
         Err(e) => {
@@ -83,32 +84,26 @@ async fn test_list_devices_with_pagination() {
         }
     }
 
-    // Test with default pagination
-    let result = handler.execute(json!({})).await;
-    match result {
-        Ok(_) => {}
-        Err(e) => {
-            assert!(
-                matches!(e, crate::modules::mcp::ToolError::Internal(_)),
-                "Expected Internal error for uninitialized state, got {:?}",
-                e
-            );
-        }
-    }
+    // Empty keyword should be rejected
+    let result = handler.execute(json!({"keyword": ""})).await;
+    assert!(
+        matches!(result, Err(crate::modules::mcp::ToolError::InvalidParams(_))),
+        "Expected InvalidParams for empty keyword, got {:?}",
+        result
+    );
 }
 
-/// Test list_devices with filters
+/// Test search_devices with tag filter
 #[tokio::test]
-async fn test_list_devices_with_filters() {
+async fn test_search_devices_with_tag() {
     crate::modules::mcp::register_tools().await;
     let registry = crate::modules::mcp::get_mcp_registry().unwrap();
     let guard = registry.read().await;
-    let handler = guard.get("list_devices").unwrap();
+    let handler = guard.get("search_devices").unwrap();
 
     let result = handler.execute(json!({
-        "device_type": "temperature_sensor",
-        "driver_name": "ModbusDriver",
-        "state": 1
+        "keyword": "temp",
+        "tag": "critical"
     })).await;
 
     match result {

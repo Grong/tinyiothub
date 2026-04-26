@@ -44,50 +44,41 @@ pub struct ApiResponse<T> {
 
 ## 二、工具参数与返回设计
 
-### 2.1 list_devices - 获取设备列表
+### 2.1 search_devices - 搜索设备
 
-**复用 DTO**：
-- 输入：`DeviceQueryParams` + `PaginationQuery`
-- 输出：`Vec<Device>`
+**功能**：通过关键词搜索设备，支持按标签过滤，返回精简结果以节省 token。
 
 **MCP 输入参数**（JSON Schema）：
 
 ```json
 {
-  "name": "list_devices",
-  "description": "列出所有 IoT 设备，支持分页和过滤",
+  "name": "search_devices",
+  "description": "通过关键词搜索设备，支持按标签过滤",
   "inputSchema": {
     "type": "object",
+    "required": ["keyword"],
     "properties": {
-      "page": {
-        "type": "integer",
-        "description": "页码，从 1 开始（复用 PaginationQuery）",
-        "default": 1,
-        "minimum": 1
+      "keyword": {
+        "type": "string",
+        "description": "搜索关键词（在 name、display_name、address、description 中模糊匹配）"
       },
-      "page_size": {
+      "tag": {
+        "type": "string",
+        "description": "按标签名称过滤（部分匹配）"
+      },
+      "limit": {
         "type": "integer",
-        "description": "每页数量（复用 PaginationQuery）",
+        "description": "最大返回数量",
         "default": 20,
         "minimum": 1,
-        "maximum": 100
-      },
-      "name": { "type": "string", "description": "按设备名称模糊搜索（复用 DeviceQueryParams.name）" },
-      "device_type": { "type": "string", "description": "按设备类型过滤（复用 DeviceQueryParams.device_type）" },
-      "driver_name": { "type": "string", "description": "按驱动名称过滤（复用 DeviceQueryParams.driver_name）" },
-      "state": { "type": "integer", "description": "按状态过滤：0=离线, 1=在线（复用 DeviceQueryParams.state）" },
-      "include_properties": { "type": "boolean", "description": "是否包含实时属性数据", "default": false }
+        "maximum": 50
+      }
     }
   }
 }
 ```
 
-**API 调用**：
-```
-GET /api/v1/devices?page=1&page_size=20&include_properties=true
-```
-
-**复用返回结构**：`ApiResponse<Vec<Device>>`
+**返回结构**：`SearchDevicesResponse`（精简字段，节省 token）
 
 ```json
 {
@@ -507,7 +498,7 @@ GET /api/v1/drivers
 
 | MCP 工具 | HTTP 方法 | API 路径 | 复用 DTO | 状态 |
 |----------|-----------|----------|----------|------|
-| list_devices | GET | /api/v1/devices | `Device`, `DeviceQueryParams` | ✅ 已有 |
+| search_devices | GET | /api/v1/devices | `Device`, `DeviceQueryParams` | ✅ 已有 |
 | get_device | GET | /api/v1/devices/{id} | `Device` | ✅ 已有 |
 | get_device_status | GET | /api/v1/devices/{id} | `Device` 部分字段 | ✅ 已有 |
 | read_sensor_data | POST | /api/v1/devices/{id}/properties/read | `DeviceProperty` | 🆕 需新增 |
@@ -558,8 +549,8 @@ import { AlarmDto } from './dto/entity/alarm';
 import { ApiResponse } from './dto/response/api_response';
 
 export const tools = {
-  list_devices: {
-    name: 'list_devices',
+  search_devices: {
+    name: 'search_devices',
     description: '列出所有 IoT 设备，支持分页和过滤',
     inputSchema: {
       type: 'object' as const,

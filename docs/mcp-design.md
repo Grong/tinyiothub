@@ -134,7 +134,7 @@ impl McpServer {
     fn build_tools() -> Vec<Tool> {
         vec![
             // 设备管理
-            tool!("list_devices", "列出所有设备"),
+            tool!("search_devices", "搜索设备"),
             tool!("get_device", "获取设备详情"),
             tool!("get_device_status", "获取设备状态"),
             // 实时控制
@@ -154,19 +154,19 @@ impl McpServer {
 
 ### 3.1 设备管理工具
 
-#### 3.1.1 list_devices
+#### 3.1.1 search_devices
 
 ```json
 {
-  "name": "list_devices",
-  "description": "列出所有 IoT 设备，支持分页和过滤",
+  "name": "search_devices",
+  "description": "通过关键词搜索设备，支持按标签过滤，返回精简结果以节省 token",
   "inputSchema": {
     "type": "object",
+    "required": ["keyword"],
     "properties": {
-      "page": { "type": "integer", "default": 1 },
-      "pageSize": { "type": "integer", "default": 20 },
-      "status": { "type": "string", "enum": ["online", "offline", "all"], "default": "all" },
-      "driver": { "type": "string", "description": "按驱动名称过滤" }
+      "keyword": { "type": "string", "description": "搜索关键词（模糊匹配 name、display_name、address、description）" },
+      "tag": { "type": "string", "description": "按标签名称过滤（部分匹配）" },
+      "limit": { "type": "integer", "default": 20, "minimum": 1, "maximum": 50 }
     }
   }
 }
@@ -482,7 +482,7 @@ TinyIoTHub API
 
 | 工具 | 需要的权限 |
 |------|-----------|
-| list_devices | read:devices |
+| search_devices | read:devices |
 | get_device | read:devices |
 | read_sensor_data | read:devices |
 | send_command | write:devices |
@@ -501,7 +501,7 @@ TinyIoTHub API
 
 ### 8.2 阶段二：设备工具（Week 3）
 
-- [ ] 实现 list_devices
+- [ ] 实现 search_devices
 - [ ] 实现 get_device
 - [ ] 实现 get_device_status
 - [ ] 实现 read_sensor_data
@@ -539,7 +539,7 @@ TinyIoTHub API
 ### 10.1 功能验收
 
 - [ ] 能通过 Claude Desktop 连接
-- [ ] list_devices 返回正确设备列表
+- [ ] search_devices 返回正确设备列表
 - [ ] read_sensor_data 返回实时数据
 - [ ] send_command 能控制设备
 - [ ] 错误信息清晰易懂

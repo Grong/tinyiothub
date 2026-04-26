@@ -49,7 +49,7 @@ MCP 服务器可以提供三种主要能力：
 
 | 功能 | 描述 | 优先级 |
 |------|------|--------|
-| list_devices | 列出所有 IoT 设备 | P0 |
+| search_devices | 列出所有 IoT 设备 | P0 |
 | get_device | 获取单个设备详情 | P0 |
 | create_device | 创建设备 | P1 |
 | update_device | 更新设备配置 | P1 |

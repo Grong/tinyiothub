@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::modules::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
-use tinyiothub_core::models::device::{CreateDeviceRequest, Device, DeviceQueryParams, UpdateDeviceRequest};
+use tinyiothub_core::models::device::{CreateDeviceRequest, Device, UpdateDeviceRequest};
 use crate::shared::persistence::repositories::{
-    find_device_by_id, find_device_by_id_with_tags, find_all_devices_with_tags,
+    find_device_by_id, find_device_by_id_with_tags,
 };
 use tinyiothub_core::models::device_command::DeviceCommand;
 use crate::shared::persistence::repositories::{
@@ -22,21 +22,6 @@ use crate::modules::template::types::{CreateDeviceFromTemplateRequest, DeviceCre
 use crate::modules::device::monitoring_service::DeviceMetrics;
 use crate::modules::device::performance_service::DevicePerformanceMetrics;
 use tinyiothub_storage::traits::device::{DeviceCriteria, DeviceSortBy, DeviceSortOrder};
-
-/// Tool input: List devices with pagination and filtering
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-#[serde(rename_all = "camelCase")]
-struct ListDevicesInput {
-    page: Option<u32>,
-    page_size: Option<u32>,
-    name: Option<String>,
-    device_type: Option<String>,
-    driver_name: Option<String>,
-    state: Option<i32>,
-    product_id: Option<String>,
-    enabled: Option<bool>,
-}
 
 /// Tool input: Get single device
 #[derive(Debug, Deserialize)]
@@ -224,82 +209,6 @@ struct DeviceReportResponse {
     status: DeviceStatusResponse,
     generated_at: String,
     report_type: String,
-}
-
-// === List Devices Handler ===
-pub struct ListDevicesHandler;
-
-#[async_trait]
-impl ToolHandler for ListDevicesHandler {
-    fn name(&self) -> &str {
-        "list_devices"
-    }
-
-    fn description(&self) -> &str {
-        "List devices with pagination and filtering support"
-    }
-
-    fn input_schema(&self) -> InputSchema {
-        let mut props = HashMap::new();
-        props.insert("page".to_string(), PropertySchema { prop_type: "integer".to_string(), description: Some("Page number (default: 1)".to_string()) });
-        props.insert("pageSize".to_string(), PropertySchema { prop_type: "integer".to_string(), description: Some("Page size (default: 20, max: 100)".to_string()) });
-        props.insert("name".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Filter by device name (partial match)".to_string()) });
-        props.insert("deviceType".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Filter by device type".to_string()) });
-        props.insert("driverName".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Filter by driver name".to_string()) });
-        props.insert("state".to_string(), PropertySchema { prop_type: "integer".to_string(), description: Some("Filter by state (0=offline, 1=online, 2=alarm)".to_string()) });
-        props.insert("productId".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Filter by product ID".to_string()) });
-        props.insert("enabled".to_string(), PropertySchema { prop_type: "boolean".to_string(), description: Some("Filter by enabled status".to_string()) });
-        InputSchema::object(vec![], props)
-    }
-
-    async fn execute(&self, args: Value) -> Result<Value, ToolError> {
-        let input: ListDevicesInput = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidParams(e.to_string()))?;
-
-        // Validate page_size against schema max of 100
-        if let Some(size) = input.page_size
-            && size > 100 {
-                return Err(ToolError::InvalidParams(
-                    format!("page_size {} exceeds maximum allowed value of 100", size),
-                ));
-            }
-
-        let state = crate::modules::mcp::get_app_state()
-            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
-
-        let workspace_id = crate::modules::mcp::handlers::get_mcp_context()
-            .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
-            .workspace_id;
-        let params = DeviceQueryParams {
-            name: input.name,
-            display_name: None,
-            device_type: input.device_type,
-            address: None,
-            driver_name: input.driver_name,
-            state: input.state,
-            parent_id: None,
-            product_id: input.product_id,
-            page: input.page,
-            page_size: input.page_size.or(Some(20)),
-        };
-
-        let devices = find_all_devices_with_tags(state.database(), &params, None, Some(workspace_id.clone()))
-            .await
-            .map_err(|e| ToolError::Internal(e.to_string()))?;
-
-        // Sync real-time state from DeviceCache
-        let mut result = Vec::new();
-        for mut device in devices {
-            if let Some(cached) = state.device_cache.get(&device.id) {
-                device.status = cached.status.clone();
-                device.status = cached.status.clone();
-                device.last_heartbeat = cached.last_heartbeat.clone();
-            }
-            result.push(device);
-        }
-
-        Ok(serde_json::to_value(result).unwrap())
-    }
 }
 
 // === Get Device Profile Handler ===
@@ -1282,6 +1191,7 @@ impl ToolHandler for ExportDeviceReportHandler {
 #[serde(rename_all = "camelCase")]
 struct SearchDevicesInput {
     keyword: String,
+    tag: Option<String>,
     limit: Option<u32>,
 }
 
@@ -1330,6 +1240,13 @@ impl ToolHandler for SearchDevicesHandler {
             },
         );
         props.insert(
+            "tag".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("Filter by tag name (partial match)".to_string()),
+            },
+        );
+        props.insert(
             "limit".to_string(),
             PropertySchema {
                 prop_type: "integer".to_string(),
@@ -1356,12 +1273,20 @@ impl ToolHandler for SearchDevicesHandler {
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 
+        tracing::info!(
+            tool = "search_devices",
+            keyword = %input.keyword,
+            workspace_id = %workspace_id,
+            "MCP search_devices executing"
+        );
+
         // Use workspace-scoped repository for security
         let repository = state.device_repository_factory.create_for_workspace(workspace_id.clone());
 
         let criteria = DeviceCriteria {
             workspace_id: Some(workspace_id),
             search_text: Some(input.keyword.clone()),
+            tag_name: input.tag,
             limit: Some(limit),
             sort_by: DeviceSortBy::Name,
             sort_order: DeviceSortOrder::Ascending,
@@ -1372,6 +1297,13 @@ impl ToolHandler for SearchDevicesHandler {
             .find_all(&criteria)
             .await
             .map_err(|e| ToolError::Internal(format!("Search failed: {}", e)))?;
+
+        tracing::info!(
+            tool = "search_devices",
+            keyword = %input.keyword,
+            result_count = devices.len(),
+            "MCP search_devices completed"
+        );
 
         // Sync real-time status from DeviceCache
         let mut results = Vec::with_capacity(devices.len());

@@ -4,10 +4,11 @@ These are my capabilities — use them naturally as you work.
 
 ## Device Management (5 Tools)
 
-**device_list**
-- Paginated listing of all registered IoT devices
-- Filter by name, device type, driver, state
-- Shows online/offline status and last heartbeat
+**search_devices**
+- Search devices by keyword across name, display name, address, description
+- Filter by tag name for quick categorization
+- Returns concise results (id, name, status, driver, address) to save tokens
+- Default limit: 20, max: 50
 
 **device_template_list**
 - List all available device templates

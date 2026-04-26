@@ -14,13 +14,13 @@ async fn test_all_tools_registered() {
 
     let tools = registry.read().await.list_tools();
 
-    // Expected count: 14 device + 7 driver + 3 heartbeat + 5 workspace + 4 job + 2 batch + 4 alarm + 3 device_enhanced + 3 self_heal + 3 knowledge = 48
+    // Expected count: 13 device + 7 driver + 3 heartbeat + 5 workspace + 4 job + 2 batch + 4 alarm + 3 device_enhanced + 3 self_heal + 3 knowledge = 47
     // Note: generate_driver returns NotImplemented in Phase 1
-    assert_eq!(tools.len(), 48, "Expected 48 tools registered");
+    assert_eq!(tools.len(), 47, "Expected 47 tools registered");
 
     // Verify critical tools exist
     let tool_names: Vec<_> = tools.iter().map(|t| t.name.clone()).collect();
-    assert!(tool_names.contains(&"list_devices".to_string()), "list_devices should be registered");
+    assert!(tool_names.contains(&"search_devices".to_string()), "search_devices should be registered");
     assert!(tool_names.contains(&"create_device".to_string()), "create_device should be registered");
     assert!(tool_names.contains(&"report_heartbeat".to_string()), "report_heartbeat should be registered");
     assert!(tool_names.contains(&"get_self_heal_policy".to_string()), "get_self_heal_policy should be registered");
@@ -48,37 +48,36 @@ async fn test_generate_driver_returns_not_implemented() {
     }
 }
 
-/// Test that pagination works for list_devices
+/// Test that search_devices rejects empty keyword
 #[tokio::test]
-async fn test_list_devices_respects_pagination() {
+async fn test_search_devices_rejects_empty_keyword() {
     crate::modules::mcp::register_tools().await;
     let registry = crate::modules::mcp::get_mcp_registry().unwrap();
     let guard = registry.read().await;
-    let handler = guard.get("list_devices").unwrap();
+    let handler = guard.get("search_devices").unwrap();
 
-    // Test over-limit page_size - should be rejected with InvalidParams (schema says max: 100)
-    let result = handler.execute(json!({"pageSize": 1000 })).await;
+    let result = handler.execute(json!({"keyword": ""})).await;
     assert!(
         matches!(result, Err(crate::modules::mcp::ToolError::InvalidParams(_))),
-        "Expected InvalidParams for page_size > 100, got {:?}",
+        "Expected InvalidParams for empty keyword, got {:?}",
         result
     );
 }
 
-/// Test that list_devices returns array result or graceful error
+/// Test that search_devices returns response object or graceful error
 #[tokio::test]
-async fn test_list_devices_returns_valid_response() {
+async fn test_search_devices_returns_valid_response() {
     crate::modules::mcp::register_tools().await;
     let registry = crate::modules::mcp::get_mcp_registry().unwrap();
     let guard = registry.read().await;
-    let handler = guard.get("list_devices").unwrap();
+    let handler = guard.get("search_devices").unwrap();
 
-    let result = handler.execute(json!({"page": 1, "page_size": 10 })).await;
+    let result = handler.execute(json!({"keyword": "test"})).await;
 
     match result {
         Ok(value) => {
-            // Result should be an array of devices
-            assert!(value.is_array(), "list_devices should return an array");
+            // Result should be an object with keyword, total, devices
+            assert!(value.is_object(), "search_devices should return an object");
         }
         Err(e) => {
             // AppState may not be initialized in unit test context
@@ -147,7 +146,6 @@ async fn test_all_device_tools_registered() {
     let tool_names = registry.read().await.list_names();
 
     let device_tools = [
-        "list_devices",
         "search_devices",
         "get_device",
         "get_device_status",

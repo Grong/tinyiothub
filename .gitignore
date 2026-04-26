@@ -19,6 +19,10 @@ app_settings_harmonyos.toml
 
 # 日志文件
 logs/*.log
+cloud/logs/
+
+# 运行时数据目录
+/data/
 
 # 临时文件
 /temp
