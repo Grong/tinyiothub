@@ -18,10 +18,10 @@ impl DeviceMonitoringService {
 
     pub fn is_device_online(&self, device_id: &str) -> bool {
         if let Some(device) = self.device_cache.get(device_id) {
-            if let Some(state) = device.state && state == 0 {
+            if device.status == tinyiothub_core::models::device::DeviceStatus::Offline {
                 return false;
             }
-            if !device.is_online {
+            if !device.is_online() {
                 // For simulation drivers, skip this check
             }
             if let Some(last_heartbeat) = &device.last_heartbeat

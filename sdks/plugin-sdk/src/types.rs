@@ -136,6 +136,7 @@ mod core_interop {
 
     impl From<tinyiothub_core::models::device::Device> for Device {
         fn from(core: tinyiothub_core::models::device::Device) -> Self {
+            let enabled = core.is_online();
             Device {
                 id: core.id,
                 name: core.name,
@@ -143,7 +144,7 @@ mod core_interop {
                 protocol_type: core.protocol_type,
                 driver_options: core.driver_options,
                 address: core.address,
-                enabled: core.is_online,
+                enabled,
             }
         }
     }
@@ -164,7 +165,11 @@ mod core_interop {
                 factory_name: None,
                 linked_data: None,
                 driver_options: sdk.driver_options,
-                state: None,
+                status: if sdk.enabled {
+                    tinyiothub_core::models::device::DeviceStatus::Online
+                } else {
+                    tinyiothub_core::models::device::DeviceStatus::Offline
+                },
                 parent_id: None,
                 product_id: None,
                 created_at: None,
@@ -172,7 +177,6 @@ mod core_interop {
                 tags: None,
                 properties: None,
                 commands: None,
-                is_online: sdk.enabled,
                 last_heartbeat: None,
             }
         }

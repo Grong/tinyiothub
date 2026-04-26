@@ -239,7 +239,7 @@ impl DeviceService {
 
     pub async fn update_device_state(&self, device_id: &str, new_state: i32) -> Result<(), Error> {
         let device = self.repository.find_by_id(device_id).await?.ok_or(Error::NotFound)?;
-        let old_state = device.state.unwrap_or(0);
+        let old_state: i32 = device.status.into();
         if old_state != new_state {
             self.repository.update_state(device_id, new_state).await?;
             if let Ok(Some(updated_device)) = self.repository.find_by_id(device_id).await {
@@ -429,7 +429,7 @@ impl DeviceService {
         };
         device.properties = self.load_properties_with_fallback(device_id).await;
         device.commands = self.load_commands_with_fallback(device_id).await;
-        device.is_online = false;
+        device.status = tinyiothub_core::models::device::DeviceStatus::Offline;
         device.last_heartbeat = None;
         Ok(Some(device))
     }

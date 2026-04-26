@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use tokio::sync::broadcast;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use tinyiothub_core::error::Result;
 use tinyiothub_core::models::event::Event;
@@ -83,7 +83,7 @@ impl EventBus {
                 debug!("Event {} broadcasted to {} subscribers", event.id(), subscriber_count);
             }
             Err(_) => {
-                debug!("No subscribers for event {}", event.id());
+                warn!("Event {} broadcast failed — channel may be full (capacity=1000)", event.id());
             }
         }
 
@@ -107,7 +107,7 @@ impl EventBus {
         let mut new: Vec<Arc<dyn EventHandler>> = (**current).clone();
         new.push(handler);
         new.sort_by_key(|h| h.priority());
-        let name = new.last().unwrap().name().to_string();
+        let name = new.last().map(|h| h.name().to_string()).unwrap_or_else(|| "unknown".to_string());
         self.handlers.store(Arc::new(new));
         info!("Registered event handler: {}", name);
     }

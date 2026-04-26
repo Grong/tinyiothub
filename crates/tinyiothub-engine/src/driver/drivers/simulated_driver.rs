@@ -2,6 +2,7 @@ use tinyiothub_core::models::{device::Device, device_command::DeviceCommand};
 use std::collections::HashMap;
 
 use crate::driver::{DeviceDriver, ResultValue};
+use rand::{rngs::StdRng, SeedableRng, Rng};
 use tinyiothub_core::error::Error;
 
 #[derive(Debug, Clone, tinyiothub_macros::DeviceDriver)]
@@ -43,6 +44,8 @@ pub struct SimulatedDriver {
     pub retry_count: i32,
     /// Monotonically-increasing tick counter so every read produces a changed value.
     tick_counter: u64,
+    /// Seeded RNG for deterministic, reproducible simulation values.
+    rng: StdRng,
 }
 
 impl SimulatedDriver {
@@ -52,7 +55,7 @@ impl SimulatedDriver {
             device.display_name.as_deref().unwrap_or(&device.name)
         );
 
-        Self { device, retry_count: 0, tick_counter: 0 }
+        Self { device, retry_count: 0, tick_counter: 0, rng: StdRng::from_entropy() }
     }
 }
 
@@ -88,7 +91,7 @@ impl DeviceDriver for SimulatedDriver {
 
     fn read_data(&mut self) -> Result<Vec<ResultValue>, Error> {
         let start_time = std::time::Instant::now();
-        self.tick_counter += 1;
+        self.tick_counter = self.tick_counter.wrapping_add(1);
         tracing::debug!(
             "SimulatedDriver::read_data called for device: {} (tick={})",
             self.device.display_name.as_deref().unwrap_or(&self.device.name),
@@ -131,7 +134,7 @@ impl DeviceDriver for SimulatedDriver {
                             base_temp
                         } else {
                             let noise =
-                                if enable_noise { rand::random::<f64>() * temp_range } else { 0.0 };
+                                if enable_noise { self.rng.r#gen::<f64>() * temp_range } else { 0.0 };
                             base_temp + noise
                         };
                         ResultValue::float_with_precision(property.name.clone(), temp, 2)
@@ -142,7 +145,7 @@ impl DeviceDriver for SimulatedDriver {
                             base_temp
                         } else {
                             let noise =
-                                if enable_noise { rand::random::<f64>() * temp_range } else { 0.0 };
+                                if enable_noise { self.rng.r#gen::<f64>() * temp_range } else { 0.0 };
                             base_temp + noise
                         };
                         ResultValue::float_with_precision(property.name.clone(), temp, 2)
@@ -155,7 +158,7 @@ impl DeviceDriver for SimulatedDriver {
                             let base = 25.0;
                             let variation = (self.tick_counter % 10) as f64;
                             let noise = if enable_noise {
-                                (rand::random::<f64>() - 0.5) * 2.0
+                                (self.rng.r#gen::<f64>() - 0.5) * 2.0
                             } else {
                                 0.0
                             };
@@ -171,7 +174,7 @@ impl DeviceDriver for SimulatedDriver {
                             base_humidity
                         } else {
                             let noise =
-                                if enable_noise { rand::random::<f64>() * 10.0 } else { 0.0 };
+                                if enable_noise { self.rng.r#gen::<f64>() * 10.0 } else { 0.0 };
                             base_humidity + noise
                         };
                         ResultValue::float_with_precision(property.name.clone(), humidity, 1)
@@ -182,7 +185,7 @@ impl DeviceDriver for SimulatedDriver {
                             base_humidity
                         } else {
                             let noise =
-                                if enable_noise { rand::random::<f64>() * 10.0 } else { 0.0 };
+                                if enable_noise { self.rng.r#gen::<f64>() * 10.0 } else { 0.0 };
                             base_humidity + noise
                         };
                         ResultValue::float_with_precision(property.name.clone(), humidity, 1)
@@ -194,7 +197,7 @@ impl DeviceDriver for SimulatedDriver {
                             let base = 60.0;
                             let variation = (self.tick_counter % 20) as f64;
                             let noise = if enable_noise {
-                                (rand::random::<f64>() - 0.5) * 2.0
+                                (self.rng.r#gen::<f64>() - 0.5) * 2.0
                             } else {
                                 0.0
                             };
@@ -209,7 +212,7 @@ impl DeviceDriver for SimulatedDriver {
                             "运行中"
                         } else {
                             let statuses = ["运行中", "待机", "维护中"];
-                            statuses[rand::random::<usize>() % statuses.len()]
+                            statuses[self.rng.gen_range(0..statuses.len())]
                         };
                         ResultValue::string(property.name.clone(), status.to_string())
                     }
@@ -229,7 +232,7 @@ impl DeviceDriver for SimulatedDriver {
                             "v1.2.3"
                         } else {
                             let versions = ["v1.2.3", "v1.2.4", "v1.3.0"];
-                            versions[rand::random::<usize>() % versions.len()]
+                            versions[self.rng.gen_range(0..versions.len())]
                         };
                         ResultValue::string(property.name.clone(), version.to_string())
                     }
@@ -260,7 +263,7 @@ impl DeviceDriver for SimulatedDriver {
                         let angle = if simulation_mode == "fixed" {
                             0.0
                         } else {
-                            -180.0 + (rand::random::<f64>() * 360.0)
+                            -180.0 + (self.rng.r#gen::<f64>() * 360.0)
                         };
                         ResultValue::float_with_precision(property.name.clone(), angle, 1)
                     }
@@ -278,7 +281,7 @@ impl DeviceDriver for SimulatedDriver {
                                 let value = if simulation_mode == "fixed" {
                                     50.0
                                 } else {
-                                    rand::random::<f64>() * 100.0
+                                    self.rng.r#gen::<f64>() * 100.0
                                 };
                                 ResultValue::float_with_precision(property.name.clone(), value, 2)
                             }
@@ -286,7 +289,7 @@ impl DeviceDriver for SimulatedDriver {
                                 let value = if simulation_mode == "fixed" {
                                     50
                                 } else {
-                                    rand::random::<i64>() % 100
+                                    self.rng.gen_range(0..100)
                                 };
                                 ResultValue::integer(property.name.clone(), value)
                             }
@@ -294,7 +297,7 @@ impl DeviceDriver for SimulatedDriver {
                                 let value = if simulation_mode == "fixed" {
                                     true
                                 } else {
-                                    rand::random::<bool>()
+                                    self.rng.r#gen::<bool>()
                                 };
                                 ResultValue::boolean(property.name.clone(), value)
                             }

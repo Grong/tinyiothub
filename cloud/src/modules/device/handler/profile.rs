@@ -134,7 +134,7 @@ async fn get_device_profile(
                     }
 
                     // 初始化运行时状态
-                    device.is_online = false;
+                    device.status = tinyiothub_core::models::device::DeviceStatus::Offline;
                     device.last_heartbeat = None;
 
                     device
@@ -181,7 +181,7 @@ async fn get_device_profile(
     .await;
 
     // 设备在线状态直接从缓存获取
-    let is_online = device.is_online;
+    let is_online = device.is_online();
 
     // 生成配置文件
     let profile = DeviceProfile {

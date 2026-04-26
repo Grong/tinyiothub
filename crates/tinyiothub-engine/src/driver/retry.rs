@@ -89,13 +89,22 @@ impl Default for RetryState {
 }
 
 impl RetryState {
-    /// 重置状态
+    /// 完全重置状态（包括累积统计）
     pub fn reset(&mut self) {
         self.current_attempt = 0;
         self.start_time = Instant::now();
         self.next_retry_at = None;
         self.last_error = None;
         self.consecutive_successes = 0;
+    }
+
+    /// 软重置 —— 只重置临时重试状态，保留 consecutive_successes
+    pub fn soft_reset(&mut self) {
+        self.current_attempt = 0;
+        self.start_time = Instant::now();
+        self.next_retry_at = None;
+        self.last_error = None;
+        // consecutive_successes 保留，用于恢复判断
     }
 
     /// 记录成功
@@ -397,9 +406,14 @@ impl RetryManager {
         }
     }
 
-    /// 重置重试状态
+    /// 完全重置重试状态（包括累积统计）
     pub fn reset(&mut self) {
         self.state.reset();
+    }
+
+    /// 软重置 —— 只重置临时重试状态，保留 consecutive_successes
+    pub fn soft_reset(&mut self) {
+        self.state.soft_reset();
     }
 
     /// 获取当前状态
@@ -419,6 +433,14 @@ impl RetryManager {
 
     /// 是否可以立即重试
     pub fn can_retry_now(&self) -> bool {
+        // 重试次数已耗尽，不再重试
+        if self.state.current_attempt >= self.config.max_attempts {
+            return false;
+        }
+        // 总超时已过期，不再重试
+        if self.state.start_time.elapsed() >= self.config.timeout {
+            return false;
+        }
         if let Some(next_retry) = self.state.next_retry_at {
             Instant::now() >= next_retry
         } else {

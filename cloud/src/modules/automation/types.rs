@@ -107,7 +107,7 @@ impl TriggerContext {
         let mut ctx = Self::new();
         ctx.device_id = Some(device.id.clone());
         ctx.device_name = Some(device.name.clone());
-        ctx.device_online = Some(device.is_online);
+        ctx.device_online = Some(device.is_online());
         if let Some(props) = &device.properties {
             for prop in props {
                 if let Some(value) = &prop.current_value {

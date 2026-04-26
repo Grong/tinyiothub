@@ -499,8 +499,7 @@ impl ToolHandler for TestDriverHandler {
                 factory_name: Some("Test".to_string()),
                 linked_data: None,
                 driver_options: input.connection_config,
-                state: Some(0),
-                is_online: false,
+                status: tinyiothub_core::models::device::DeviceStatus::Offline,
                 last_heartbeat: None,
                 properties: None,
                 commands: None,
@@ -515,7 +514,7 @@ impl ToolHandler for TestDriverHandler {
             match driver::create_driver(&input.driver_name, &test_device) {
                 Ok(mut driver_wrapper) => {
                     // Try to read data
-                    let result = driver_wrapper.read_data();
+                    let result = driver_wrapper.read_data_once();
 
                     let execution_time_ms = start.elapsed().as_millis() as u64;
 

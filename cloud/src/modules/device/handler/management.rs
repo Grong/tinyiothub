@@ -123,9 +123,9 @@ async fn list_devices(
             for device in &mut devices {
                 if let Some(cached_device) = state.device_cache.get(&device.id) {
                     // 始终更新实时状态字段
-                    device.state = cached_device.state;
-                    device.is_online = cached_device.is_online;
-                    device.last_heartbeat = cached_device.last_heartbeat;
+                    device.status = cached_device.status.clone();
+                    device.status = cached_device.status.clone();
+                    device.last_heartbeat = cached_device.last_heartbeat.clone();
 
                     // 根据参数决定是否包含属性
                     if include_properties {
@@ -218,9 +218,9 @@ async fn get_device(
                     // 从 DeviceCache 同步实时状态
                     if let Some(cached_device) = state.device_cache.get(&device.id) {
                         // 始终更新实时状态字段
-                        device.state = cached_device.state;
-                        device.is_online = cached_device.is_online;
-                        device.last_heartbeat = cached_device.last_heartbeat;
+                        device.status = cached_device.status.clone();
+                        device.status = cached_device.status.clone();
+                        device.last_heartbeat = cached_device.last_heartbeat.clone();
 
                         // 根据参数决定是否包含属性和命令
                         if include_properties {

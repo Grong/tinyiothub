@@ -92,7 +92,7 @@ impl DiagnosticsService {
         let mut recommendations = Vec::new();
 
         // Check offline state
-        if device.state == Some(0) {
+        if device.status == tinyiothub_core::models::device::DeviceStatus::Offline {
             issues.push(DeviceIssue {
                 severity: "critical".to_string(),
                 code: "OFFLINE".to_string(),

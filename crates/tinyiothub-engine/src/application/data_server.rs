@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use dashmap::DashMap;
 use moka::sync::Cache;
@@ -81,59 +81,55 @@ impl DataServer {
         tracing::info!("Driver cache now has {} entries", cache.entry_count());
     }
 
-    /// Core async loop. Spawns one task per protocol group.
+    /// Core async loop. Spawns a single task that polls all drivers.
     pub async fn run(
         &self,
         shutdown_rx: tokio::sync::broadcast::Receiver<()>,
     ) -> Result<(), Error> {
-        let driver_groups = self.group_drivers_by_protocol();
-        for (protocol, _) in driver_groups {
-            let driver_cache = self.driver_cache.clone();
-            let device_cache = self.device_cache.clone();
-            let command_queue = self.command_queue.clone();
-            let mut shutdown_rx_clone = shutdown_rx.resubscribe();
-            tokio::spawn(async move {
-                tokio::select! {
-                    _ = Self::process_protocol_drivers(protocol.clone(), driver_cache, device_cache, command_queue) => {
-                        tracing::debug!("Driver task for protocol {} completed", protocol);
-                    }
-                    _ = shutdown_rx_clone.recv() => {
-                        tracing::info!("Driver task for protocol {} received shutdown signal", protocol);
-                    }
+        let driver_cache = self.driver_cache.clone();
+        let device_cache = self.device_cache.clone();
+        let command_queue = self.command_queue.clone();
+        let mut shutdown_rx_clone = shutdown_rx.resubscribe();
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = Self::process_all_drivers(driver_cache, device_cache, command_queue) => {
+                    tracing::debug!("Driver polling task completed");
                 }
-            });
-        }
+                _ = shutdown_rx_clone.recv() => {
+                    tracing::info!("Driver polling task received shutdown signal");
+                }
+            }
+        });
         Ok(())
     }
 
-    async fn process_protocol_drivers(
-        protocol: String,
+    async fn process_all_drivers(
         driver_cache: DriverCache,
         device_cache: Arc<DeviceCache>,
         command_queue: CommandQueue,
     ) {
-        tracing::info!("Starting data server loop for protocol: {}", protocol);
+        tracing::info!("Starting data server polling loop for all drivers");
         let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(100));
         loop {
             interval.tick().await;
 
             let mut drivers = Vec::new();
             for (_, driver_arc) in driver_cache.iter() {
-                if let Some(driver) = driver_arc.try_read() {
-                    if driver.device().driver_name.as_deref() == Some(&protocol) {
-                        drivers.push(driver_arc.clone());
-                    }
-                }
+                drivers.push(driver_arc.clone());
             }
 
             if drivers.is_empty() {
-                tracing::debug!("Protocol {}: no drivers found in cache", protocol);
+                tracing::debug!("No drivers found in cache");
             }
 
-            let commands = command_queue
-                .remove(&protocol)
-                .map(|(_, cmds)| cmds)
-                .unwrap_or_default();
+            // Collect commands from all protocol queues.
+            let mut all_commands = Vec::new();
+            let keys: Vec<String> = command_queue.iter().map(|e| e.key().clone()).collect();
+            for key in keys {
+                if let Some((_, cmds)) = command_queue.remove(&key) {
+                    all_commands.extend(cmds);
+                }
+            }
 
             for driver_arc in &drivers {
                 let can_read = {
@@ -152,12 +148,13 @@ impl DataServer {
                 let mut pending_events: Vec<DomainEvent> = Vec::new();
                 let mut event_bus_ref: Option<std::sync::Arc<EventBus>> = None;
                 let mut device_id = String::new();
+                let mut updated_device: Option<Device> = None;
 
                 if let Some(mut driver) = driver_arc.try_write() {
                     device_id = driver.device().id.clone();
                     let read_result = driver.read_data_once();
                     let mut device = driver.device().clone();
-                    let was_online = device.is_online;
+                    let was_online = device.is_online();
                     let device_display_name =
                         device.display_name.clone().unwrap_or_else(|| device.name.clone());
                     let device_address = device.address.clone();
@@ -180,8 +177,7 @@ impl DataServer {
                                     device_display_name
                                 );
                             }
-                            device.is_online = true;
-                            device.state = Some(1);
+                            device.status = tinyiothub_core::models::device::DeviceStatus::Online;
                             device.last_heartbeat =
                                 Some(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string());
                             let events = Self::collect_property_change_events(
@@ -205,8 +201,7 @@ impl DataServer {
                                             pending_events.push(event);
                                         }
                                     }
-                                    device.is_online = false;
-                                    device.state = Some(0);
+                                    device.status = tinyiothub_core::models::device::DeviceStatus::Offline;
                                 }
                             } else {
                                 if was_online {
@@ -214,13 +209,12 @@ impl DataServer {
                                         pending_events.push(event);
                                     }
                                 }
-                                device.is_online = false;
-                                device.state = Some(0);
+                                device.status = tinyiothub_core::models::device::DeviceStatus::Offline;
                             }
                         }
                     }
 
-                    for cmd in commands.iter().filter(|c| c.device_id == device_id) {
+                    for cmd in all_commands.iter().filter(|c| c.device_id == device_id) {
                         let cmd_result = driver.execute_command(cmd);
                         let execution_time_ms = cmd_result.elapsed.as_millis() as u64;
                         if let Some(event) = Self::build_command_event(
@@ -235,11 +229,14 @@ impl DataServer {
                     }
 
                     *driver.device_mut() = device.clone();
-                    device_cache.update(device);
+                    updated_device = Some(device);
                 } else {
                     tracing::warn!("Driver write lock contended, skipping this tick");
                 }
-                // Write lock released — now safe to publish events
+                // Write lock released — update cache and publish events
+                if let Some(device) = updated_device {
+                    device_cache.update(device);
+                }
                 if let Some(bus) = event_bus_ref {
                     if !pending_events.is_empty() {
                         tracing::debug!("Publishing {} events for device {}", pending_events.len(), device_id);
@@ -396,24 +393,6 @@ impl DataServer {
         .ok()
     }
 
-    fn group_drivers_by_protocol(&self) -> HashMap<String, Vec<Arc<RwLock<DriverWrapper>>>> {
-        let mut groups = HashMap::new();
-        for (_, driver_arc) in self.driver_cache.iter() {
-            if let Some(driver) = driver_arc.try_read() {
-                let protocol = driver
-                    .device()
-                    .driver_name
-                    .clone()
-                    .unwrap_or_else(|| "unknown".to_string());
-                groups
-                    .entry(protocol)
-                    .or_insert_with(Vec::new)
-                    .push(driver_arc.clone());
-            }
-        }
-        groups
-    }
-
     // === Public API ===
 
     pub fn get_devices(&self) -> Vec<Device> {
@@ -514,14 +493,15 @@ impl DataServer {
 
     pub fn cleanup_driver_cache(&self) {
         let mut to_remove = Vec::new();
-        for (device_id, driver_arc) in self.driver_cache.iter() {
-            if driver_arc.try_read().is_none() {
+        for (device_id, _) in self.driver_cache.iter() {
+            // 只清理设备已从 device_cache 中删除的孤儿驱动
+            if self.device_cache.get(&device_id).is_none() {
                 to_remove.push(device_id.to_string());
             }
         }
         for device_id in to_remove {
             self.driver_cache.invalidate(&device_id);
-            tracing::info!("Removed invalid driver for device: {}", device_id);
+            tracing::info!("Removed orphan driver for deleted device: {}", device_id);
         }
     }
 }

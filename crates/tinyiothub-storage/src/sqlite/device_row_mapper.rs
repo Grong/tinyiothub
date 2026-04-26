@@ -11,6 +11,7 @@ pub const SELECT_COLUMNS: &str = r#"
 
 /// Map a `SqliteRow` to a `Device`.
 pub fn row_to_device(row: sqlx::sqlite::SqliteRow) -> Result<Device> {
+    let state_i32: i32 = row.get("state");
     Ok(Device {
         id: row.get("id"),
         name: row.get("name"),
@@ -25,7 +26,7 @@ pub fn row_to_device(row: sqlx::sqlite::SqliteRow) -> Result<Device> {
         factory_name: row.get("factory_name"),
         linked_data: row.get("linked_data"),
         driver_options: row.get("driver_options"),
-        state: row.get("state"),
+        status: state_i32.into(),
         parent_id: row.get("parent_id"),
         product_id: row.get("product_id"),
         created_at: row.get("created_at"),
@@ -33,7 +34,6 @@ pub fn row_to_device(row: sqlx::sqlite::SqliteRow) -> Result<Device> {
         tags: None,
         properties: None,
         commands: None,
-        is_online: false,
         last_heartbeat: None,
     })
 }

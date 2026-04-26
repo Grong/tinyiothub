@@ -374,6 +374,8 @@ pub struct DriverWrapper {
     status_manager: DeviceStatusManager,
     /// 事件总线（可选）
     event_bus: Option<std::sync::Arc<EventBus>>,
+    /// 缓存的驱动配置（避免每次 get_config_* 都重新解析 JSON）
+    cached_config: DriverConfig,
 }
 
 impl DriverWrapper {
@@ -382,12 +384,14 @@ impl DriverWrapper {
         let device = inner_driver.device().clone();
         let config = inner_driver.retry_config();
         let event_bus = inner_driver.event_bus().cloned();
+        let cached_config = inner_driver.init_config();
 
         Self {
             retry_manager: RetryManager::new(config),
             status_manager: DeviceStatusManager::new(&device),
             inner_driver,
             event_bus,
+            cached_config,
         }
     }
 
@@ -421,18 +425,6 @@ impl DriverWrapper {
         &mut *self.inner_driver
     }
 
-    /// 读取设备数据（带重试和状态管理，阻塞版）
-    pub fn read_data(&mut self) -> DriverExecutionResult<Vec<ResultValue>> {
-        let start_time = Instant::now();
-
-        let result = self.retry_manager.execute_with_retry(|| self.inner_driver.read_data());
-
-        let elapsed = start_time.elapsed();
-        self.update_status(&result, elapsed);
-
-        self.convert_result(result, elapsed)
-    }
-
     /// 读取设备数据（非阻塞版，只执行一次）
     /// 由调用者的 tick 间隔来替代 sleep 等待
     pub fn read_data_once(&mut self) -> DriverExecutionResult<Vec<ResultValue>> {
@@ -446,17 +438,30 @@ impl DriverWrapper {
         self.convert_result(result, elapsed)
     }
 
+    /// 读取设备数据（阻塞版，内部含 thread::sleep）
+    /// ⚠️ 警告：此函数会阻塞当前线程，不要在 async 上下文中调用
+    #[deprecated(since = "0.1.0", note = "Use read_data_once in async contexts")]
+    pub fn read_data(&mut self) -> DriverExecutionResult<Vec<ResultValue>> {
+        let start_time = Instant::now();
+
+        let result = self.retry_manager.execute_with_retry(|| self.inner_driver.read_data());
+
+        let elapsed = start_time.elapsed();
+        self.update_status(&result, elapsed);
+
+        self.convert_result(result, elapsed)
+    }
+
     /// 检查当前是否可以读取（不受重试间隔限制）
     pub fn can_read_now(&self) -> bool {
         self.retry_manager.can_retry_now()
     }
 
-    /// 执行设备命令（带重试和状态管理）
+    /// 执行设备命令（非阻塞版，只执行一次）
     pub fn execute_command(&mut self, cmd: &DeviceCommand) -> DriverExecutionResult<bool> {
         let start_time = Instant::now();
 
-        let result =
-            self.retry_manager.execute_with_retry(|| self.inner_driver.execute_command(cmd));
+        let result = self.retry_manager.execute_once(|| self.inner_driver.execute_command(cmd));
 
         let elapsed = start_time.elapsed();
         self.update_status(&result, elapsed);
@@ -534,10 +539,15 @@ impl DriverWrapper {
         self.status_manager.is_healthy()
     }
 
-    /// 重置驱动状态
+    /// 重置驱动状态（软重置 —— 保留累积统计）
     pub fn reset(&mut self) {
-        self.status_manager.reset();
-        self.retry_manager = RetryManager::new(self.inner_driver.retry_config());
+        self.status_manager.soft_reset();
+        self.retry_manager.soft_reset();
+    }
+
+    /// 获取缓存的配置参数值（避免重复解析 JSON）
+    pub fn config_value(&self, key: &str) -> Option<&String> {
+        self.cached_config.get_value(key)
     }
 
     /// 强制设备离线

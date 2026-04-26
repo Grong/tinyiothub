@@ -252,10 +252,21 @@ impl DeviceStatusManager {
         self.overview.health.is_online()
     }
 
-    /// 重置状态
+    /// 完全重置状态（包括累积统计）
     pub fn reset(&mut self) {
         self.overview.health = HealthStatus::default();
         self.overview.start_time = SystemTime::now();
+        self.overview.update();
+    }
+
+    /// 软重置 —— 只重置连接状态和连续计数，保留总成功/失败次数和平均响应时间
+    pub fn soft_reset(&mut self) {
+        self.overview.health.connection = ConnectionStatus::Disconnected;
+        self.overview.health.consecutive_failures = 0;
+        self.overview.health.consecutive_successes = 0;
+        self.overview.health.last_failure_time = None;
+        self.overview.health.last_success_time = None;
+        self.overview.health.last_response_time = None;
         self.overview.update();
     }
 

@@ -1,5 +1,55 @@
 use serde::{Deserialize, Serialize};
 
+/// 设备状态枚举
+///
+/// 序列化输出小写字符串（"online"/"offline"/"error"），与前端统一。
+/// 数据库存储为整数：Online=1, Offline=0, Error=2。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum DeviceStatus {
+    #[default]
+    Offline,
+    Online,
+    Error,
+}
+
+impl DeviceStatus {
+    /// 检查是否在线
+    pub fn is_online(&self) -> bool {
+        *self == Self::Online
+    }
+}
+
+impl From<i32> for DeviceStatus {
+    fn from(value: i32) -> Self {
+        match value {
+            1 => Self::Online,
+            2 | 3 => Self::Error,
+            _ => Self::Offline,
+        }
+    }
+}
+
+impl From<DeviceStatus> for i32 {
+    fn from(status: DeviceStatus) -> Self {
+        match status {
+            DeviceStatus::Online => 1,
+            DeviceStatus::Offline => 0,
+            DeviceStatus::Error => 2,
+        }
+    }
+}
+
+impl std::fmt::Display for DeviceStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Online => write!(f, "online"),
+            Self::Offline => write!(f, "offline"),
+            Self::Error => write!(f, "error"),
+        }
+    }
+}
+
 /// 设备实体 - 使用 snake_case 数据库字段
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -17,7 +67,7 @@ pub struct Device {
     pub factory_name: Option<String>,
     pub linked_data: Option<String>,
     pub driver_options: Option<String>,
-    pub state: Option<i32>,
+    pub status: DeviceStatus,
     pub parent_id: Option<String>,
     pub product_id: Option<String>,
     pub created_at: Option<String>,
@@ -31,8 +81,6 @@ pub struct Device {
     /// 设备指令列表 (不存储在数据库中，由DataServer加载)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub commands: Option<Vec<super::device_command::DeviceCommand>>,
-    /// 设备在线状态 (不存储在数据库中，由DataServer更新)
-    pub is_online: bool,
     /// 最后心跳时间 (不存储在数据库中，由DataServer更新)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_heartbeat: Option<String>,
@@ -111,35 +159,28 @@ pub struct DeviceStats {
 pub struct DeviceStatusUpdate {
     pub device_id: String,
     pub state: i32,
-    pub is_online: bool,
     pub last_heartbeat: Option<String>,
     pub updated_at: String,
+}
+
+impl DeviceStatusUpdate {
+    pub fn is_online(&self) -> bool {
+        self.state == 1
+    }
 }
 
 impl Device {
     /// 检查设备是否在线
     pub fn is_online(&self) -> bool {
-        self.state.is_some_and(|s| s == 1)
-    }
-
-    /// 检查设备是否离线
-    pub fn is_offline(&self) -> bool {
-        self.state.is_none_or(|s| s == 0 || s == 3)
-    }
-
-    /// 检查设备是否有告警
-    pub fn has_alarm(&self) -> bool {
-        self.state.is_some_and(|s| s == 2)
+        self.status.is_online()
     }
 
     /// 获取设备状态描述
     pub fn get_state_description(&self) -> &'static str {
-        match self.state {
-            Some(0) => "离线",
-            Some(1) => "在线",
-            Some(2) => "告警",
-            Some(3) => "故障",
-            _ => "未知",
+        match self.status {
+            DeviceStatus::Online => "在线",
+            DeviceStatus::Offline => "离线",
+            DeviceStatus::Error => "故障",
         }
     }
 
@@ -201,7 +242,7 @@ impl Default for Device {
             factory_name: None,
             linked_data: None,
             driver_options: None,
-            state: Some(0), // 默认离线状态
+            status: DeviceStatus::Offline,
             parent_id: None,
             product_id: None,
             created_at: Some(now.clone()),
@@ -209,7 +250,6 @@ impl Default for Device {
             tags: None,           // 默认无标签
             properties: None,     // 默认无属性数据
             commands: None,       // 默认无指令数据
-            is_online: false,     // 默认离线
             last_heartbeat: None, // 默认无心跳
         }
     }

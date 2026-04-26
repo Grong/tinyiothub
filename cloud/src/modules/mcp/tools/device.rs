@@ -154,7 +154,7 @@ struct DeviceStatusResponse {
     device_id: String,
     name: String,
     is_online: bool,
-    state: Option<i32>,
+    status: String,
     state_description: String,
     last_heartbeat: Option<String>,
     signal_strength: Option<i32>, // Placeholder, would come from device data
@@ -290,9 +290,9 @@ impl ToolHandler for ListDevicesHandler {
         let mut result = Vec::new();
         for mut device in devices {
             if let Some(cached) = state.device_cache.get(&device.id) {
-                device.state = cached.state;
-                device.is_online = cached.is_online;
-                device.last_heartbeat = cached.last_heartbeat;
+                device.status = cached.status.clone();
+                device.status = cached.status.clone();
+                device.last_heartbeat = cached.last_heartbeat.clone();
             }
             result.push(device);
         }
@@ -346,9 +346,9 @@ impl ToolHandler for DeviceProfileHandler {
 
         // Sync real-time state
         if let Some(cached) = state.device_cache.get(&device.id) {
-            device.state = cached.state;
-            device.is_online = cached.is_online;
-            device.last_heartbeat = cached.last_heartbeat;
+            device.status = cached.status.clone();
+            device.status = cached.status.clone();
+            device.last_heartbeat = cached.last_heartbeat.clone();
 
             if include_properties {
                 device.properties = cached.properties.clone();
@@ -403,16 +403,16 @@ impl ToolHandler for GetDeviceStatusHandler {
         let state_description = device.get_state_description().to_string();
 
         let (is_online, last_heartbeat) = if let Some(cached) = state.device_cache.get(&device.id) {
-            (cached.is_online, cached.last_heartbeat)
+            (cached.is_online(), cached.last_heartbeat)
         } else {
-            (device.is_online, device.last_heartbeat)
+            (device.is_online(), device.last_heartbeat)
         };
 
         let status = DeviceStatusResponse {
             device_id: device.id.clone(),
             name: device.name.clone(),
             is_online,
-            state: device.state,
+            status: device.status.to_string(),
             state_description,
             last_heartbeat,
             signal_strength: None, // Would need device data server to provide this
@@ -676,8 +676,8 @@ impl ToolHandler for DeviceCommandHandler {
 
         // Check if device is online
         let is_online = state.device_cache.get(&input.device_id)
-            .map(|d| d.is_online)
-            .unwrap_or(device.is_online);
+            .map(|d| d.is_online())
+            .unwrap_or(device.is_online());
 
         if !is_online {
             return Ok(serde_json::to_value(CommandResponse {
@@ -1242,18 +1242,18 @@ impl ToolHandler for ExportDeviceReportHandler {
 
         // Sync real-time state
         if let Some(cached) = state.device_cache.get(&device.id) {
-            device.state = cached.state;
-            device.is_online = cached.is_online;
-            device.last_heartbeat = cached.last_heartbeat;
-            device.properties = cached.properties;
-            device.commands = cached.commands;
+            device.status = cached.status.clone();
+            device.status = cached.status.clone();
+            device.last_heartbeat = cached.last_heartbeat.clone();
+            device.properties = cached.properties.clone();
+            device.commands = cached.commands.clone();
         }
 
         let status = DeviceStatusResponse {
             device_id: device.id.clone(),
             name: device.name.clone(),
-            is_online: device.is_online,
-            state: device.state,
+            is_online: device.is_online(),
+            status: device.status.to_string(),
             state_description: device.get_state_description().to_string(),
             last_heartbeat: device.last_heartbeat.clone(),
             signal_strength: None,

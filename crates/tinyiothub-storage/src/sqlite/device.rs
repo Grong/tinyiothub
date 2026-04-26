@@ -432,7 +432,7 @@ impl DeviceRepository for SqliteDeviceRepository {
                 factory_name: request.factory_name.clone(),
                 linked_data: request.linked_data.clone(),
                 driver_options: request.driver_options.clone(),
-                state: Some(0),
+                status: tinyiothub_core::models::device::DeviceStatus::Offline,
                 parent_id: request.parent_id.clone(),
                 product_id: request.product_id.clone(),
                 created_at: Some(now.clone()),
@@ -440,7 +440,6 @@ impl DeviceRepository for SqliteDeviceRepository {
                 tags: None,
                 properties: None,
                 commands: None,
-                is_online: false,
                 last_heartbeat: None,
             };
 
