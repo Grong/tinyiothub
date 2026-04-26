@@ -50,7 +50,7 @@ impl AgentRuntimeImpl {
         let mut tool_boxed: Vec<Box<dyn Tool>> = Vec::new();
         tool_boxed.push(Box::new(CanvasTool));
 
-        let workspace_dir = std::path::PathBuf::from(&agent_settings.workspace_dir);
+        let workspace_dir = crate::shared::paths::default_workspace_dir();
         std::fs::create_dir_all(&workspace_dir).ok();
 
         let mut memory_config = zeroclaw::config::schema::MemoryConfig::default();

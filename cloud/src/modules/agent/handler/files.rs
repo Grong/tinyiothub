@@ -82,17 +82,14 @@ fn validate_workspace_file_path(workspace_id: &str, filename: &str) -> Result<Pa
         ));
     }
 
-    let workspace_dir = crate::shared::config::get()
-        .agent
-        .workspace_dir
-        .clone();
+    let workspace_dir = crate::shared::paths::workspace_dir(workspace_id);
 
-    let file_path = std::path::Path::new(&workspace_dir).join(filename);
+    let file_path = workspace_dir.join(filename);
 
     // Verify the resolved path is still under workspace_dir (defense in depth)
     let canonical = file_path.canonicalize().map_err(|_| "Invalid path")?;
     let workspace_canonical =
-        std::path::Path::new(&workspace_dir).canonicalize().map_err(|_| "Invalid workspace directory")?;
+        workspace_dir.canonicalize().map_err(|_| "Invalid workspace directory")?;
 
     if !canonical.starts_with(&workspace_canonical) {
         return Err("Invalid path: escape detected".to_string());

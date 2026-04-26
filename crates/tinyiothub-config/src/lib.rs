@@ -148,7 +148,7 @@ fn default_max_messages_before_compact() -> usize {
 }
 
 fn default_agent_workspace_dir() -> String {
-    "./data/agents/default".to_string()
+    "./data/agents".to_string()
 }
 
 /// MiniMax GLM provider configuration

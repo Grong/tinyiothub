@@ -191,7 +191,7 @@ heartbeat_enabled = true
 heartbeat_interval_minutes = 30
 max_messages_before_compact = 50
 enable_compaction = true
-workspace_dir = "./data/agents/default"
+workspace_dir = "./data/agents"
 
 [minimax]
 base_url = "https://api.minimax.chat/v1"

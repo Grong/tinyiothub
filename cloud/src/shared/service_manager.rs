@@ -103,7 +103,7 @@ impl ServiceManager {
         #[cfg(not(feature = "harmonyos"))]
         {
             let agent_settings = crate::shared::config::get().agent.clone();
-            let workspace_dir = std::path::PathBuf::from(&agent_settings.workspace_dir);
+            let workspace_dir = crate::shared::paths::default_workspace_dir();
 
             // Initialize workspace with template files
             let scaffold_result = crate::shared::agent::scaffold_service::scaffold_workspace(&workspace_dir).await;
