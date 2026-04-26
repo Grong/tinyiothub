@@ -12,12 +12,13 @@ impl DataRouter {
     }
 
     /// Route a telemetry event to the appropriate handlers.
+    ///
+    /// Currently a passthrough — no routing logic is applied.
     pub fn route(
         &self,
         _device_id: &str,
         _payload: &serde_json::Value,
     ) -> Result<(), String> {
-        // TODO: implement routing logic
-        Err("not yet implemented".into())
+        Ok(())
     }
 }

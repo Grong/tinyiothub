@@ -18,6 +18,35 @@ impl DeviceStatus {
     pub fn is_online(&self) -> bool {
         *self == Self::Online
     }
+
+    /// 检查是否可用（与 is_online 语义相同，保持兼容）
+    pub fn is_available(&self) -> bool {
+        *self == Self::Online
+    }
+
+    /// 检查是否为错误状态
+    pub fn is_error(&self) -> bool {
+        *self == Self::Error
+    }
+
+    /// 获取字符串表示
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Online => "online",
+            Self::Offline => "offline",
+            Self::Error => "error",
+        }
+    }
+
+    /// 从字符串解析
+    pub fn parse_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "online" => Some(Self::Online),
+            "offline" => Some(Self::Offline),
+            "error" => Some(Self::Error),
+            _ => None,
+        }
+    }
 }
 
 impl From<i32> for DeviceStatus {
@@ -288,5 +317,59 @@ impl Device {
     /// 获取设备连接配置 - 新API兼容方法
     pub fn connection_config(&self) -> Option<String> {
         self.driver_options.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_device_status_string_conversion() {
+        assert_eq!(DeviceStatus::Online.as_str(), "online");
+        assert_eq!(DeviceStatus::Offline.as_str(), "offline");
+        assert_eq!(DeviceStatus::Error.as_str(), "error");
+
+        assert_eq!(DeviceStatus::parse_str("online"), Some(DeviceStatus::Online));
+        assert_eq!(DeviceStatus::parse_str("OFFLINE"), Some(DeviceStatus::Offline));
+        assert_eq!(DeviceStatus::parse_str("invalid"), None);
+    }
+
+    #[test]
+    fn test_device_status_properties() {
+        assert!(DeviceStatus::Online.is_available());
+        assert!(!DeviceStatus::Offline.is_available());
+        assert!(!DeviceStatus::Error.is_available());
+
+        assert!(!DeviceStatus::Online.is_error());
+        assert!(!DeviceStatus::Offline.is_error());
+        assert!(DeviceStatus::Error.is_error());
+
+        assert!(DeviceStatus::Online.is_online());
+        assert!(!DeviceStatus::Offline.is_online());
+        assert!(!DeviceStatus::Error.is_online());
+    }
+
+    #[test]
+    fn test_device_status_display() {
+        assert_eq!(format!("{}", DeviceStatus::Online), "online");
+        assert_eq!(format!("{}", DeviceStatus::Error), "error");
+    }
+
+    #[test]
+    fn test_device_status_default() {
+        assert_eq!(DeviceStatus::default(), DeviceStatus::Offline);
+    }
+
+    #[test]
+    fn test_device_status_i32_conversion() {
+        assert_eq!(i32::from(DeviceStatus::Online), 1);
+        assert_eq!(i32::from(DeviceStatus::Offline), 0);
+        assert_eq!(i32::from(DeviceStatus::Error), 2);
+
+        assert_eq!(DeviceStatus::from(1), DeviceStatus::Online);
+        assert_eq!(DeviceStatus::from(0), DeviceStatus::Offline);
+        assert_eq!(DeviceStatus::from(2), DeviceStatus::Error);
+        assert_eq!(DeviceStatus::from(3), DeviceStatus::Error);
     }
 }

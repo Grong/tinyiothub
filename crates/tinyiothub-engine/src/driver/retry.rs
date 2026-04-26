@@ -189,7 +189,11 @@ impl RetryManager {
         Self::new(RetryConfig::default())
     }
 
-    /// 执行操作，带重试逻辑
+    /// 执行操作，带重试逻辑。
+    ///
+    /// ⚠️ **警告：此方法在 async runtime 中调用时会阻塞当前线程。**
+    /// 内部使用 `std::thread::sleep` 进行退避等待，不适合在 Tokio 等异步运行时中调用。
+    /// 在 async 上下文中请使用 [`execute_once`](Self::execute_once)，由调用者自行控制重试时机。
     pub fn execute_with_retry<T, F>(&mut self, mut operation: F) -> RetryResult<T>
     where
         F: FnMut() -> Result<T, Error>,

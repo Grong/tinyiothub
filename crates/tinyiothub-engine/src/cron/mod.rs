@@ -75,8 +75,9 @@ impl JobExecutor for ShellExecutor {
             .unwrap_or("sh");
 
         // Whitelist interpreters to prevent command injection.
+        // Removed: node, powershell, cmd — too powerful and easy to abuse.
         let allowed = match interpreter {
-            "sh" | "bash" | "python" | "python3" | "powershell" | "cmd" | "node" => interpreter,
+            "sh" | "bash" | "python" | "python3" => interpreter,
             other => {
                 return Err(ExecutorError::InvalidConfig(format!(
                     "interpreter '{other}' is not allowed"
@@ -85,6 +86,15 @@ impl JobExecutor for ShellExecutor {
         };
 
         let working_dir = config.get("working_dir").and_then(|v| v.as_str());
+        if let Some(dir) = working_dir {
+            // Reject paths containing parent-dir traversal to prevent escaping sandboxes.
+            if dir.contains("..") {
+                return Err(ExecutorError::InvalidConfig(format!(
+                    "working_dir '{dir}' contains '..' which is not allowed"
+                )));
+            }
+        }
+
         let timeout_secs = job.timeout_seconds.max(1) as u64;
         let start = Instant::now();
 

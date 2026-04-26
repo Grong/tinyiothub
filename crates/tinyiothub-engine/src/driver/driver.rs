@@ -33,7 +33,11 @@ impl DriverConfig {
                 serde_json::from_str::<HashMap<String, serde_json::Value>>(driver_options)
             {
                 for (key, value) in parsed_config {
-                    config.insert(key, value.to_string().trim_matches('"').to_string());
+                    let value_str = match &value {
+                        serde_json::Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    };
+                    config.insert(key, value_str);
                 }
             }
         }
@@ -62,7 +66,11 @@ impl DriverConfig {
                 serde_json::from_str::<HashMap<String, serde_json::Value>>(driver_options)
             {
                 for (key, value) in parsed_config {
-                    config.insert(key, value.to_string().trim_matches('"').to_string());
+                    let value_str = match &value {
+                        serde_json::Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    };
+                    config.insert(key, value_str);
                 }
             }
         }
@@ -479,8 +487,8 @@ impl DriverWrapper {
                 self.status_manager.record_failure();
             }
             RetryResult::Retrying { .. } => {
-                // execute_with_retry 不应该返回这个状态，但为安全起见处理一下
-                self.status_manager.record_failure();
+                // 正在等待重试窗口，不改变设备状态。
+                // DataServer 检测到 will_retry=true 时会跳过本轮 tick。
             }
         }
     }

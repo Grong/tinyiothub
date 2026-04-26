@@ -1,4 +1,3 @@
-pub mod connection_status;
 pub mod event;
 pub mod event_id;
 pub mod event_level;
@@ -6,7 +5,9 @@ pub mod event_source;
 pub mod event_type;
 pub mod rich_content;
 
-pub use connection_status::ConnectionStatus;
+// Backward compatibility: ConnectionStatus unified into DeviceStatus
+pub use crate::models::device::DeviceStatus as ConnectionStatus;
+
 pub use event::Event;
 pub use event_id::EventId;
 pub use event_level::EventLevel;

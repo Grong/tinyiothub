@@ -1,70 +1,20 @@
 //! 设备状态管理
 //!
-//! 统一管理设备连接状态、健康状态和告警状态
+//! 统一管理设备连接状态、健康状态和告警状态。
+//! 使用 core::DeviceStatus 作为唯一状态来源，避免与 core 层的枚举重复。
 
 use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 
+use tinyiothub_core::models::device::DeviceStatus;
 use tinyiothub_core::models::device::Device;
-
-/// 设备连接状态
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub enum ConnectionStatus {
-    /// 未连接
-    #[default]
-    Disconnected = 0,
-    /// 已连接
-    Connected = 1,
-    /// 告警状态
-    Alarm = 2,
-    /// 离线
-    Offline = 3,
-}
-
-impl ConnectionStatus {
-    pub fn is_connected(&self) -> bool {
-        matches!(self, ConnectionStatus::Connected)
-    }
-
-    pub fn is_online(&self) -> bool {
-        matches!(self, ConnectionStatus::Connected | ConnectionStatus::Alarm)
-    }
-
-    pub fn is_error(&self) -> bool {
-        matches!(self, ConnectionStatus::Offline)
-    }
-}
-
-impl From<i32> for ConnectionStatus {
-    fn from(value: i32) -> Self {
-        match value {
-            0 => ConnectionStatus::Disconnected,
-            1 => ConnectionStatus::Connected,
-            2 => ConnectionStatus::Alarm,
-            3 => ConnectionStatus::Offline,
-            _ => ConnectionStatus::Disconnected,
-        }
-    }
-}
-
-impl From<ConnectionStatus> for String {
-    fn from(status: ConnectionStatus) -> Self {
-        (status as i32).to_string()
-    }
-}
-
-impl From<&str> for ConnectionStatus {
-    fn from(s: &str) -> Self {
-        s.parse::<i32>().map(ConnectionStatus::from).unwrap_or(ConnectionStatus::Disconnected)
-    }
-}
 
 /// 设备健康状态
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthStatus {
-    /// 连接状态
-    pub connection: ConnectionStatus,
+    /// 连接状态 —— 统一使用 core::DeviceStatus
+    pub connection: DeviceStatus,
     /// 最后成功通信时间 (使用 SystemTime 替代 Instant)
     pub last_success_time: Option<SystemTime>,
     /// 最后失败时间
@@ -88,7 +38,7 @@ pub struct HealthStatus {
 impl Default for HealthStatus {
     fn default() -> Self {
         Self {
-            connection: ConnectionStatus::default(),
+            connection: DeviceStatus::default(),
             last_success_time: None,
             last_failure_time: None,
             consecutive_failures: 0,
@@ -105,7 +55,7 @@ impl Default for HealthStatus {
 impl HealthStatus {
     /// 记录成功通信
     pub fn record_success(&mut self, response_time: Duration) {
-        self.connection = ConnectionStatus::Connected;
+        self.connection = DeviceStatus::Online;
         self.last_success_time = Some(SystemTime::now());
         self.consecutive_successes += 1;
         self.consecutive_failures = 0;
@@ -126,7 +76,7 @@ impl HealthStatus {
 
     /// 记录失败通信
     pub fn record_failure(&mut self) {
-        self.connection = ConnectionStatus::Offline;
+        self.connection = DeviceStatus::Offline;
         self.last_failure_time = Some(SystemTime::now());
         self.consecutive_failures += 1;
         self.consecutive_successes = 0;
@@ -145,7 +95,7 @@ impl HealthStatus {
 
     /// 是否健康
     pub fn is_healthy(&self) -> bool {
-        self.connection.is_connected() && self.consecutive_failures < 3
+        self.connection.is_online() && self.consecutive_failures < 3
     }
 
     /// 是否在线
@@ -217,12 +167,12 @@ impl DeviceStatusManager {
     }
 
     /// 获取连接状态
-    pub fn get_connection_status(&self) -> ConnectionStatus {
-        self.overview.health.connection
+    pub fn get_connection_status(&self) -> DeviceStatus {
+        self.overview.health.connection.clone()
     }
 
     /// 设置连接状态
-    pub fn set_connection_status(&mut self, status: ConnectionStatus) {
+    pub fn set_connection_status(&mut self, status: DeviceStatus) {
         self.overview.health.connection = status;
         self.overview.update();
     }
@@ -261,7 +211,7 @@ impl DeviceStatusManager {
 
     /// 软重置 —— 只重置连接状态和连续计数，保留总成功/失败次数和平均响应时间
     pub fn soft_reset(&mut self) {
-        self.overview.health.connection = ConnectionStatus::Disconnected;
+        self.overview.health.connection = DeviceStatus::Offline;
         self.overview.health.consecutive_failures = 0;
         self.overview.health.consecutive_successes = 0;
         self.overview.health.last_failure_time = None;
@@ -272,7 +222,7 @@ impl DeviceStatusManager {
 
     /// 强制离线
     pub fn set_offline(&mut self) {
-        self.overview.health.connection = ConnectionStatus::Offline;
+        self.overview.health.connection = DeviceStatus::Offline;
         self.overview.health.last_failure_time = Some(SystemTime::now());
         self.overview.update();
     }
