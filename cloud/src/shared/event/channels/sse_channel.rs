@@ -94,8 +94,8 @@ impl SseNotificationChannel {
                             Ok(sse_message) => {
                                 // Check if this message should be sent to this user
                                 if should_send_to_user(&user_id, &workspace_id_clone, &sse_message) {
-                                    // Send as unnamed event so the browser EventSource.onmessage fires.
-                                    // The event_type is already included in the data JSON payload.
+                                    // Send as unnamed event so browser EventSource.onmessage fires.
+                                    // Event type is included in the data JSON payload.
                                     let event = SseEvent::default()
                                         .id(&sse_message.id)
                                         .data(serde_json::to_string(&sse_message.data).unwrap_or_default());
@@ -150,13 +150,13 @@ impl SseNotificationChannel {
         match self.sender.send(message.clone()) {
             Ok(receiver_count) => {
                 debug!(
-                    "Broadcasted SSE message to {} receivers: {}",
-                    receiver_count, message.event_type
+                    "Broadcasted SSE '{}' to {} receiver(s)",
+                    message.event_type, receiver_count
                 );
                 Ok(receiver_count)
             }
             Err(_) => {
-                warn!("Failed to broadcast SSE message: no receivers");
+                debug!("Failed to broadcast SSE message: no receivers");
                 Ok(0)
             }
         }

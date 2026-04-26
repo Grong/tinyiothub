@@ -209,7 +209,7 @@ impl HeartbeatService {
     }
 
     /// Run the heartbeat loop
-    pub async fn run(&self) {
+    pub async fn run(&self, mut shutdown_rx: tokio::sync::broadcast::Receiver<()>) {
         if let Err(e) = self.ensure_heartbeat_file().await {
             tracing::warn!("Failed to ensure heartbeat file: {}", e);
         }
@@ -225,7 +225,13 @@ impl HeartbeatService {
         );
 
         loop {
-            interval.tick().await;
+            tokio::select! {
+                _ = interval.tick() => {}
+                _ = shutdown_rx.recv() => {
+                    tracing::info!("💓 HeartbeatService received shutdown signal");
+                    break;
+                }
+            }
 
             let timestamp = chrono::Utc::now();
             let mut task_count = 0usize;

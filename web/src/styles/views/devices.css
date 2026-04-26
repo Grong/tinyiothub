@@ -176,6 +176,37 @@
 .prop-table-wrap {
   padding: 16px 20px;
 }
+.prop-table-wrap .data-table--compact {
+  table-layout: fixed;
+}
+.prop-table-wrap .data-table--compact th:nth-child(1),
+.prop-table-wrap .data-table--compact td:nth-child(1) {
+  width: 100px;
+}
+.prop-table-wrap .data-table--compact th:nth-child(2),
+.prop-table-wrap .data-table--compact td:nth-child(2) {
+  width: 120px;
+}
+.prop-table-wrap .data-table--compact th:nth-child(3),
+.prop-table-wrap .data-table--compact td:nth-child(3) {
+  width: 160px;
+}
+.prop-table-wrap .data-table--compact th:nth-child(4),
+.prop-table-wrap .data-table--compact td:nth-child(4) {
+  width: 40px;
+}
+.prop-table-wrap .data-table--compact th:nth-child(5),
+.prop-table-wrap .data-table--compact td:nth-child(5) {
+  width: 70px;
+}
+.prop-table-wrap .data-table--compact th:nth-child(6),
+.prop-table-wrap .data-table--compact td:nth-child(6) {
+  width: 60px;
+}
+.prop-table-wrap .data-table--compact th:nth-child(7),
+.prop-table-wrap .data-table--compact td:nth-child(7) {
+  width: 130px;
+}
 .command-list-wrap {
   padding: 16px 20px;
 }
@@ -298,8 +329,14 @@
 
 /* Property table value cell */
 .prop-value {
+  display: inline-block;
+  min-width: 60px;
   font-size: 13px;
   font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 .prop-unit {
   font-size: 11px;

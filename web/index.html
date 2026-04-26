@@ -8,12 +8,74 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <!-- Theme: read localStorage before any paint to avoid skeleton flash -->
+    <script>
+      (function() {
+        try {
+          var s = JSON.parse(localStorage.getItem('ui-settings') || '{}');
+          if (s.theme === 'light' || (!s.theme && window.matchMedia('(prefers-color-scheme: light)').matches)) {
+            document.documentElement.setAttribute('data-theme', 'light');
+          }
+        } catch(e) {}
+      })();
+    </script>
+    <!-- Google Fonts: non-blocking load -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&amp;family=Plus+Jakarta+Sans:wght@400;500;600;700&amp;display=swap" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&amp;family=Plus+Jakarta+Sans:wght@400;500;600;700&amp;display=swap" media="print" onload="this.media='all'" />
+    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&amp;family=Plus+Jakarta+Sans:wght@400;500;600;700&amp;display=swap" /></noscript>
+    <!-- Skeleton screen: shown while JS loads -->
+    <style>
+      :root { --bg:#0a0b0f; --surface:#11131a; --muted:#6b7280; --primary:#6366f1; }
+      [data-theme="light"] { --bg:#f8f9fb; --surface:#ffffff; --muted:#9ca3af; --primary:#6366f1; }
+      html,body{height:100%;margin:0;background:var(--bg);color:var(--muted);font-family:system-ui,-apple-system,sans-serif}
+      #skeleton{display:flex;height:100vh}
+      #skeleton .sk-nav{width:240px;flex-shrink:0;background:var(--surface);border-right:1px solid rgba(99,102,241,0.08);padding:16px 12px;animation:skFade .6s ease}
+      #skeleton .sk-top{height:56px;background:var(--surface);border-bottom:1px solid rgba(99,102,241,0.08);display:flex;align-items:center;padding:0 20px;gap:12px}
+      #skeleton .sk-main{flex:1;display:flex;flex-direction:column}
+      #skeleton .sk-content{flex:1;padding:24px}
+      #skeleton .sk-brand{width:36px;height:36px;border-radius:8px;background:rgba(99,102,241,0.12)}
+      #skeleton .sk-line{height:12px;border-radius:6px;background:rgba(99,102,241,0.08);margin:8px 0;animation:skPulse 1.4s ease-in-out infinite}
+      #skeleton .sk-line--sm{width:40%}
+      #skeleton .sk-line--md{width:70%}
+      #skeleton .sk-line--lg{width:100%;height:120px;border-radius:8px}
+      #skeleton .sk-circle{width:32px;height:32px;border-radius:50%;background:rgba(99,102,241,0.08);animation:skPulse 1.4s ease-in-out infinite;margin-left:auto}
+      @keyframes skPulse{0%,100%{opacity:.4}50%{opacity:.8}}
+      @keyframes skFade{from{opacity:0}to{opacity:1}}
+      .app-loaded #skeleton{display:none!important}
+      @keyframes spin{to{transform:rotate(360deg)}}
+    </style>
   </head>
   <body>
+    <!-- Skeleton shown until app bootstraps -->
+    <div id="skeleton">
+      <div class="sk-nav">
+        <div class="sk-line sk-line--sm" style="margin-bottom:24px"></div>
+        <div class="sk-line sk-line--md"></div>
+        <div class="sk-line sk-line--md"></div>
+        <div class="sk-line sk-line--md"></div>
+        <div style="margin-top:24px"></div>
+        <div class="sk-line sk-line--md"></div>
+        <div class="sk-line sk-line--md"></div>
+        <div class="sk-line sk-line--md"></div>
+      </div>
+      <div class="sk-main">
+        <div class="sk-top">
+          <div class="sk-brand"></div>
+          <div class="sk-line sk-line--sm" style="width:120px;margin:0"></div>
+          <div class="sk-circle"></div>
+        </div>
+        <div class="sk-content">
+          <div class="sk-line sk-line--sm" style="width:180px;margin-bottom:16px"></div>
+          <div class="sk-line sk-line--lg"></div>
+          <div style="margin-top:16px"></div>
+          <div class="sk-line sk-line--lg"></div>
+        </div>
+      </div>
+    </div>
     <tinyiothub-app></tinyiothub-app>
     <script type="module" src="/src/main.ts"></script>
+    <script>document.documentElement.addEventListener('app-ready',function(){document.body.classList.add('app-loaded')}, {once:true})</script>
   </body>
 </html>

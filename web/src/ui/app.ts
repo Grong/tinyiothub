@@ -9,23 +9,28 @@ import "./components/toast.js";
 import { error as toastError } from "./components/toast.js";
 import { deviceCache } from "../stores/device-cache.js";
 
-// Views — side-effect imports register custom elements
+// Public / first-screen views — eagerly loaded
 import "./views/login.js";
 import "./views/register.js";
 import "./views/home.js";
-import "./views/dashboard.js";
-import "./views/devices.js";
-import "./views/alarms.js";
-import "./views/events.js";
-import "./views/monitoring.js";
-import "./views/templates.js";
-import "./views/drivers.js";
-import "./views/tags.js";
-import "./views/users.js";
-import "./views/settings.js";
-import "./views/chat.js";
-import "./views/agents.js";
-import "./views/cron.js";
+
+// Lazy view loaders — each returns a Promise that resolves once the
+// custom element is registered.
+const lazyViews: Record<string, () => Promise<void>> = {
+  dashboard: () => import("./views/dashboard.js").then(() => {}),
+  devices:   () => import("./views/devices.js").then(() => {}),
+  alarms:    () => import("./views/alarms.js").then(() => {}),
+  events:    () => import("./views/events.js").then(() => {}),
+  monitoring:() => import("./views/monitoring.js").then(() => {}),
+  templates: () => import("./views/templates.js").then(() => {}),
+  drivers:   () => import("./views/drivers.js").then(() => {}),
+  tags:      () => import("./views/tags.js").then(() => {}),
+  users:     () => import("./views/users.js").then(() => {}),
+  settings:  () => import("./views/settings.js").then(() => {}),
+  chat:      () => import("./views/chat.js").then(() => {}),
+  agents:    () => import("./views/agents.js").then(() => {}),
+  cron:      () => import("./views/cron.js").then(() => {}),
+};
 
 interface NavItem {
   route: string;
@@ -91,7 +96,10 @@ export class TinyIoTHubApp extends LitElement {
   @state() userName = "";
   @state() userAvatar = "U";
   @state() userRole = "";
+  @state() loadingRoute: string | null = null;
+  @state() loadError: string | null = null;
 
+  private loadSeq = 0;
   private themeMediaQuery: MediaQueryList | null = null;
   private themeChangeHandler = () => {
     if (this.theme === "system") {
@@ -115,6 +123,10 @@ export class TinyIoTHubApp extends LitElement {
     if (this.isAuthenticated) {
       this.loadUserInfo();
     }
+    // Notify skeleton screen that app has bootstrapped
+    requestAnimationFrame(() => {
+      document.documentElement.dispatchEvent(new CustomEvent("app-ready"));
+    });
   }
 
   disconnectedCallback() {
@@ -215,6 +227,7 @@ export class TinyIoTHubApp extends LitElement {
     // Handle /devices/:id
     if (path.startsWith("devices/")) {
       this.currentRoute = path;
+      this._ensureViewLoaded("devices");
       return;
     }
 
@@ -223,7 +236,33 @@ export class TinyIoTHubApp extends LitElement {
     const publicRoutes = ["login", "register", "home", ""];
     if (!publicRoutes.includes(path) && !this.isAuthenticated) {
       this.navigate("login");
+      return;
     }
+
+    this._ensureViewLoaded(this.currentRoute);
+  }
+
+  /** Lazy-load the view module for the given route if needed. */
+  private _ensureViewLoaded(route: string) {
+    const base = route.startsWith("devices/") ? "devices" : route;
+    const loader = lazyViews[base];
+    if (!loader) return;
+    const tag = `view-${base}`;
+    if (customElements.get(tag)) return; // already registered
+    this.loadError = null;
+    this.loadingRoute = base;
+    const seq = ++this.loadSeq;
+    loader().then(() => {
+      if (this.loadSeq === seq) {
+        this.loadingRoute = null;
+      }
+    }).catch((err) => {
+      if (this.loadSeq === seq) {
+        this.loadingRoute = null;
+        this.loadError = `加载页面失败: ${base}`;
+        console.error(`Lazy load failed for ${base}:`, err);
+      }
+    });
   }
 
   navigate(route: string) {
@@ -408,19 +447,53 @@ export class TinyIoTHubApp extends LitElement {
 
   renderPage() {
     const route = this.currentRoute;
-    if (route === "dashboard") return html`<view-dashboard></view-dashboard>`;
-    if (route === "devices" || route.startsWith("devices/")) return html`<view-devices></view-devices>`;
-    if (route === "alarms") return html`<view-alarms></view-alarms>`;
-    if (route === "events") return html`<view-events></view-events>`;
-    if (route === "monitoring") return html`<view-monitoring></view-monitoring>`;
-    if (route === "templates") return html`<view-templates></view-templates>`;
-    if (route === "drivers") return html`<view-drivers></view-drivers>`;
-    if (route === "tags") return html`<view-tags></view-tags>`;
-    if (route === "users") return html`<view-users></view-users>`;
-    if (route === "settings") return html`<view-settings></view-settings>`;
-    if (route === "chat") return html`<view-chat></view-chat>`;
-    if (route === "agents") return html`<view-agents></view-agents>`;
-    if (route === "cron") return html`<view-cron></view-cron>`;
+    // Eager views — always available
+    if (route === "login") return html`<view-login></view-login>`;
+    if (route === "register") return html`<view-register></view-register>`;
+    if (route === "home") return html`<view-home></view-home>`;
+
+    const base = route.startsWith("devices/") ? "devices" : route;
+    const tag = `view-${base}`;
+    const isReady = !!customElements.get(tag);
+    const isLoading = this.loadingRoute === base;
+
+    if (!isReady && isLoading) {
+      return this._renderLoading();
+    }
+
+    // All lazy views use the same tag pattern
+    if (base === "dashboard") return html`<view-dashboard></view-dashboard>`;
+    if (base === "devices") return html`<view-devices></view-devices>`;
+    if (base === "alarms") return html`<view-alarms></view-alarms>`;
+    if (base === "events") return html`<view-events></view-events>`;
+    if (base === "monitoring") return html`<view-monitoring></view-monitoring>`;
+    if (base === "templates") return html`<view-templates></view-templates>`;
+    if (base === "drivers") return html`<view-drivers></view-drivers>`;
+    if (base === "tags") return html`<view-tags></view-tags>`;
+    if (base === "users") return html`<view-users></view-users>`;
+    if (base === "settings") return html`<view-settings></view-settings>`;
+    if (base === "chat") return html`<view-chat></view-chat>`;
+    if (base === "agents") return html`<view-agents></view-agents>`;
+    if (base === "cron") return html`<view-cron></view-cron>`;
     return html`<div style="padding: 40px; text-align: center; color: var(--muted);">页面不存在</div>`;
+  }
+
+  private _renderLoading() {
+    if (this.loadError) {
+      return html`
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:60vh;color:var(--muted);font-size:14px;gap:12px">
+          <div style="color:var(--error)">${this.loadError}</div>
+          <button class="btn btn--primary btn--sm" @click=${() => this._ensureViewLoaded(this.currentRoute)}>
+            重试
+          </button>
+        </div>
+      `;
+    }
+    return html`
+      <div style="display:flex;align-items:center;justify-content:center;height:60vh;color:var(--muted);font-size:14px">
+        <span style="width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin 1s linear infinite;display:inline-block;margin-right:8px"></span>
+        加载中…
+      </div>
+    `;
   }
 }

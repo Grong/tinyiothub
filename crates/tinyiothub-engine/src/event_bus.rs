@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use tokio::sync::{broadcast, RwLock};
+use arc_swap::ArcSwap;
+use tokio::sync::broadcast;
 use tracing::{debug, error, info};
 
 use tinyiothub_core::error::Result;
@@ -33,15 +34,22 @@ pub trait EventHandler: Send + Sync {
 /// - Distribute to all registered handlers
 /// - Provide real-time subscription capability
 ///
-/// Contains no business logic, only responsible for technical message passing
+/// Contains no business logic, only responsible for technical message passing.
+///
+/// # Lock-free reads
+///
+/// `handlers` is stored in an `ArcSwap<Vec<...>>`.  Reads (the hot path,
+/// `dispatch_to_handlers`) do a single atomic pointer load — no lock, no
+/// contention with `register_handler`.  Writes are rare (startup only) and
+/// perform a clone-then-swap of the entire vector.
 pub struct EventBus {
     /// Real-time event broadcast channel
     event_sender: broadcast::Sender<Event>,
     /// Keep a receiver to prevent channel closure
     _event_receiver: broadcast::Receiver<Event>,
 
-    /// Registered event handlers
-    handlers: Arc<RwLock<Vec<Arc<dyn EventHandler>>>>,
+    /// Registered event handlers — lock-free snapshot via ArcSwap.
+    handlers: Arc<ArcSwap<Vec<Arc<dyn EventHandler>>>>,
 }
 
 impl EventBus {
@@ -52,7 +60,7 @@ impl EventBus {
         Self {
             event_sender,
             _event_receiver: event_receiver,
-            handlers: Arc::new(RwLock::new(Vec::new())),
+            handlers: Arc::new(ArcSwap::from(Arc::new(Vec::new()))),
         }
     }
 
@@ -90,11 +98,18 @@ impl EventBus {
         self.event_sender.subscribe()
     }
 
-    /// Register event handler
-    pub async fn register_handler(&self, handler: Arc<dyn EventHandler>) {
-        let mut handlers = self.handlers.write().await;
-        info!("Registering event handler: {}", handler.name());
-        handlers.push(handler);
+    /// Register event handler.
+    ///
+    /// Writes are lock-free: clone current Vec, push, sort, then atomic swap.
+    /// Callers do not need to `await`.
+    pub fn register_handler(&self, handler: Arc<dyn EventHandler>) {
+        let current = self.handlers.load();
+        let mut new: Vec<Arc<dyn EventHandler>> = (**current).clone();
+        new.push(handler);
+        new.sort_by_key(|h| h.priority());
+        let name = new.last().unwrap().name().to_string();
+        self.handlers.store(Arc::new(new));
+        info!("Registered event handler: {}", name);
     }
 
     /// Get subscriber count
@@ -103,30 +118,51 @@ impl EventBus {
     }
 
     /// Get handler count
-    pub async fn handler_count(&self) -> usize {
-        self.handlers.read().await.len()
+    pub fn handler_count(&self) -> usize {
+        self.handlers.load().len()
     }
 
-    /// Dispatch event to all handlers
+    /// Dispatch event to all handlers.
+    ///
+    /// Lock-free: a single atomic pointer load yields the sorted handler list.
+    /// Handlers within the same priority run concurrently; priorities are
+    /// respected sequentially (lower number = earlier).
     async fn dispatch_to_handlers(&self, event: &Event) -> Result<()> {
-        let handlers = self.handlers.read().await;
+        let handlers = self.handlers.load(); // atomic pointer load — O(1), no lock
 
-        // Sort by priority
-        let mut sorted_handlers: Vec<_> = handlers.iter().collect();
-        sorted_handlers.sort_by_key(|h| h.priority());
-
-        for handler in sorted_handlers {
-            if handler.should_handle(event) {
-                if let Err(e) = handler.handle(event).await {
-                    error!(
-                        "Handler {} failed to process event {}: {}",
-                        handler.name(),
-                        event.id(),
-                        e
-                    );
-                    // Continue processing other handlers, don't interrupt
-                }
+        let mut i = 0;
+        while i < handlers.len() {
+            let priority = handlers[i].priority();
+            let mut j = i;
+            while j < handlers.len() && handlers[j].priority() == priority {
+                j += 1;
             }
+
+            let batch = &handlers[i..j];
+            let event_clone = event.clone();
+
+            let futures: Vec<_> = batch
+                .iter()
+                .filter(|h| h.should_handle(&event_clone))
+                .map(|handler| {
+                    let handler = Arc::clone(handler);
+                    let event = event_clone.clone();
+                    async move {
+                        if let Err(e) = handler.handle(&event).await {
+                            error!(
+                                "Handler {} failed to process event {}: {}",
+                                handler.name(),
+                                event.id(),
+                                e
+                            );
+                        }
+                    }
+                })
+                .collect();
+
+            futures_util::future::join_all(futures).await;
+
+            i = j;
         }
 
         Ok(())
@@ -154,6 +190,7 @@ impl std::fmt::Debug for EventBus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EventBus")
             .field("subscriber_count", &self.event_sender.receiver_count())
+            .field("handler_count", &self.handler_count())
             .finish()
     }
 }
@@ -180,7 +217,7 @@ mod tests {
         let bus = EventBus::new();
         // subscriber_count includes the internal _event_receiver that keeps the channel alive
         assert_eq!(bus.subscriber_count(), 1);
-        assert_eq!(bus.handler_count().await, 0);
+        assert_eq!(bus.handler_count(), 0);
     }
 
     #[tokio::test]

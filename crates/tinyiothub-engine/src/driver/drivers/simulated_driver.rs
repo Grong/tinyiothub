@@ -41,6 +41,8 @@ use tinyiothub_core::error::Error;
 pub struct SimulatedDriver {
     pub device: Device,
     pub retry_count: i32,
+    /// Monotonically-increasing tick counter so every read produces a changed value.
+    tick_counter: u64,
 }
 
 impl SimulatedDriver {
@@ -50,7 +52,7 @@ impl SimulatedDriver {
             device.display_name.as_deref().unwrap_or(&device.name)
         );
 
-        Self { device, retry_count: 0 }
+        Self { device, retry_count: 0, tick_counter: 0 }
     }
 }
 
@@ -86,9 +88,11 @@ impl DeviceDriver for SimulatedDriver {
 
     fn read_data(&mut self) -> Result<Vec<ResultValue>, Error> {
         let start_time = std::time::Instant::now();
+        self.tick_counter += 1;
         tracing::debug!(
-            "SimulatedDriver::read_data called for device: {}",
-            self.device.display_name.as_deref().unwrap_or(&self.device.name)
+            "SimulatedDriver::read_data called for device: {} (tick={})",
+            self.device.display_name.as_deref().unwrap_or(&self.device.name),
+            self.tick_counter
         );
 
         // 使用统一的配置管理获取配置参数
@@ -144,25 +148,18 @@ impl DeviceDriver for SimulatedDriver {
                         ResultValue::float_with_precision(property.name.clone(), temp, 2)
                     }
                     "current_temp" | "temperature" => {
-                        let base_temp = 25.0; // 基础温度
+                        // 强制变化：每次 tick 产生确定性的不同值，保证 property_change 事件触发
                         let temp = if simulation_mode == "fixed" {
-                            base_temp
-                        } else if simulation_mode == "sine" {
-                            // 正弦波模拟
-                            let time_factor = (std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap()
-                                .as_secs() as f64)
-                                / 60.0; // 每分钟一个周期
-                            base_temp + (time_factor.sin() * temp_range / 2.0)
+                            25.0
                         } else {
-                            // 随机模式
+                            let base = 25.0;
+                            let variation = (self.tick_counter % 10) as f64;
                             let noise = if enable_noise {
-                                (rand::random::<f64>() - 0.5) * temp_range
+                                (rand::random::<f64>() - 0.5) * 2.0
                             } else {
                                 0.0
                             };
-                            base_temp + noise
+                            base + variation + noise
                         };
                         ResultValue::float_with_precision(property.name.clone(), temp, 2)
                     }
@@ -191,23 +188,17 @@ impl DeviceDriver for SimulatedDriver {
                         ResultValue::float_with_precision(property.name.clone(), humidity, 1)
                     }
                     "current_humidity" | "humidity" => {
-                        let base_humidity = 60.0;
                         let humidity = if simulation_mode == "fixed" {
-                            base_humidity
-                        } else if simulation_mode == "sine" {
-                            let time_factor = (std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap()
-                                .as_secs() as f64)
-                                / 120.0; // 每2分钟一个周期
-                            base_humidity + (time_factor.sin() * 20.0)
+                            60.0
                         } else {
+                            let base = 60.0;
+                            let variation = (self.tick_counter % 20) as f64;
                             let noise = if enable_noise {
-                                (rand::random::<f64>() - 0.5) * 40.0
+                                (rand::random::<f64>() - 0.5) * 2.0
                             } else {
                                 0.0
                             };
-                            base_humidity + noise
+                            base + variation + noise
                         };
                         ResultValue::float_with_precision(property.name.clone(), humidity, 1)
                     }
@@ -226,7 +217,8 @@ impl DeviceDriver for SimulatedDriver {
                         let power_on = if simulation_mode == "fixed" {
                             true
                         } else {
-                            rand::random::<f64>() > 0.1 // 90%概率开启
+                            // 每 5 次 tick 切换一次状态，确保变化
+                            self.tick_counter % 5 != 0
                         };
                         ResultValue::boolean(property.name.clone(), power_on)
                     }

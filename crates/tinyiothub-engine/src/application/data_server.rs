@@ -48,13 +48,20 @@ impl DataServer {
         device_cache: &Arc<DeviceCache>,
         event_bus: &Arc<EventBus>,
     ) {
-        for device in device_cache.all() {
+        let devices = device_cache.all();
+        tracing::info!("initialize_drivers: {} device(s) in cache", devices.len());
+        for device in devices {
+            tracing::debug!(
+                "Device {}: driver_name={:?}, props={}",
+                device.name, device.driver_name,
+                device.properties.as_ref().map(|p| p.len()).unwrap_or(0)
+            );
             if let Some(driver_name) = &device.driver_name {
                 match create_driver(driver_name, &device) {
                     Ok(mut driver) => {
                         driver.set_event_bus(event_bus.clone());
                         cache.insert(device.id.clone(), Arc::new(RwLock::new(driver)));
-                        tracing::info!(
+                        tracing::debug!(
                             "Loaded driver for device: {}",
                             device.display_name.as_deref().unwrap_or(&device.name)
                         );
@@ -67,8 +74,11 @@ impl DataServer {
                         );
                     }
                 }
+            } else {
+                tracing::warn!("Device '{}' has no driver_name, skipping", device.name);
             }
         }
+        tracing::info!("Driver cache now has {} entries", cache.entry_count());
     }
 
     /// Core async loop. Spawns one task per protocol group.
@@ -85,7 +95,7 @@ impl DataServer {
             tokio::spawn(async move {
                 tokio::select! {
                     _ = Self::process_protocol_drivers(protocol.clone(), driver_cache, device_cache, command_queue) => {
-                        tracing::info!("Driver task for protocol {} completed", protocol);
+                        tracing::debug!("Driver task for protocol {} completed", protocol);
                     }
                     _ = shutdown_rx_clone.recv() => {
                         tracing::info!("Driver task for protocol {} received shutdown signal", protocol);
@@ -116,6 +126,10 @@ impl DataServer {
                 }
             }
 
+            if drivers.is_empty() {
+                tracing::debug!("Protocol {}: no drivers found in cache", protocol);
+            }
+
             let commands = command_queue
                 .remove(&protocol)
                 .map(|(_, cmds)| cmds)
@@ -130,26 +144,33 @@ impl DataServer {
                     }
                 };
                 if !can_read {
+                    tracing::debug!("Driver not ready for read (retry backoff)");
                     continue;
                 }
 
                 // Collect events INSIDE the write lock, publish OUTSIDE to avoid deadlock.
                 let mut pending_events: Vec<DomainEvent> = Vec::new();
                 let mut event_bus_ref: Option<std::sync::Arc<EventBus>> = None;
+                let mut device_id = String::new();
 
                 if let Some(mut driver) = driver_arc.try_write() {
-                    let device_id = driver.device().id.clone();
+                    device_id = driver.device().id.clone();
                     let read_result = driver.read_data_once();
                     let mut device = driver.device().clone();
                     let was_online = device.is_online;
                     let device_display_name =
                         device.display_name.clone().unwrap_or_else(|| device.name.clone());
                     let device_address = device.address.clone();
+                    let prop_count = device.properties.as_ref().map(|p| p.len()).unwrap_or(0);
 
                     event_bus_ref = driver.event_bus_ref().cloned();
 
                     match read_result.result {
                         Ok(values) => {
+                            tracing::debug!(
+                                "Device '{}' read {} values ({} properties)",
+                                device_display_name, values.len(), prop_count
+                            );
                             if !was_online {
                                 if let Some(event) = driver.on_connected(device_address) {
                                     pending_events.push(event);
@@ -167,6 +188,10 @@ impl DataServer {
                                 &mut device,
                                 &values,
                                 event_bus_ref.as_deref(),
+                            );
+                            tracing::debug!(
+                                "Device '{}' generated {} property change event(s)",
+                                device_display_name, events.len()
                             );
                             pending_events.extend(events);
                         }
@@ -211,9 +236,14 @@ impl DataServer {
 
                     *driver.device_mut() = device.clone();
                     device_cache.update(device);
+                } else {
+                    tracing::warn!("Driver write lock contended, skipping this tick");
                 }
                 // Write lock released — now safe to publish events
                 if let Some(bus) = event_bus_ref {
+                    if !pending_events.is_empty() {
+                        tracing::debug!("Publishing {} events for device {}", pending_events.len(), device_id);
+                    }
                     for event in pending_events {
                         publish_event_safe(bus.clone(), event).await;
                     }
@@ -230,13 +260,18 @@ impl DataServer {
     fn collect_property_change_events(
         device: &mut Device,
         values: &[ResultValue],
-        event_bus: Option<&EventBus>,
+        _event_bus: Option<&EventBus>,
     ) -> Vec<DomainEvent> {
         let mut pending_events = Vec::new();
-        // Extract device info before mutable borrow of properties
         let device_id = device.id.clone();
         let device_name = device.name.clone();
         if let Some(ref mut properties) = device.properties {
+            let value_names: Vec<&str> = values.iter().map(|v| v.name.as_str()).collect();
+            let prop_names: Vec<&str> = properties.iter().map(|p| p.name.as_str()).collect();
+            tracing::debug!(
+                "Device '{}' properties: {:?}, driver values: {:?}",
+                device_name, prop_names, value_names
+            );
             for property in properties.iter_mut() {
                 if let Some(result_value) = values.iter().find(|v| v.name == property.name) {
                     if let Some(ref value_str) = result_value.value {
@@ -247,6 +282,10 @@ impl DataServer {
                         };
                         property.set_current_value(value_str.clone());
                         if value_changed {
+                            tracing::debug!(
+                                "Property '{}' changed on device '{}': {:?} -> {}",
+                                property.name, device_name, old_value, value_str
+                            );
                             if let Some(event) = Self::build_property_change_event_static(
                                 &device_id, &device_name, property, old_value, value_str,
                             ) {
@@ -254,6 +293,11 @@ impl DataServer {
                             }
                         }
                     }
+                } else {
+                    tracing::debug!(
+                        "No driver value for property '{}' on device '{}'",
+                        property.name, device_name
+                    );
                 }
             }
         }
@@ -368,79 +412,6 @@ impl DataServer {
             }
         }
         groups
-    }
-
-    /// Handle a property-change event by updating the in-memory cache.
-    ///
-    /// The event is produced by `DriverWrapper::publish_property_change`:
-    /// - `source.source_id` = "{device_id}:{property_id}"
-    /// - `content.title`    = "Property Changed: {device_name} - {property_name}"
-    /// - last text element  = "Current value: {new_value}"
-    fn handle_property_change_event(
-        &self,
-        event: &tinyiothub_core::models::event::Event,
-        device_id: &str,
-    ) {
-        use tinyiothub_core::models::event::ContentElement;
-
-        let source_id = event.source().source_id();
-        let property_id = source_id
-            .split(':')
-            .nth(1)
-            .unwrap_or("");
-
-        // Extract property name from title: "Property Changed: DeviceName - PropertyName"
-        let title = event.content().title();
-        let property_name = title
-            .rfind(" - ")
-            .map(|pos| &title[pos + 3..])
-            .unwrap_or("");
-
-        // Extract new value from the last "Current value: X" text element
-        let new_value = event
-            .content()
-            .elements()
-            .iter()
-            .filter_map(|e| match e {
-                ContentElement::Text { content, .. } => {
-                    content.strip_prefix("Current value: ").map(|s| s.to_string())
-                }
-                _ => None,
-            })
-            .next();
-
-        let Some(new_value) = new_value else {
-            tracing::debug!(
-                "PropertyChange event for device {} missing 'Current value' element",
-                device_id
-            );
-            return;
-        };
-
-        if property_id.is_empty() && property_name.is_empty() {
-            tracing::debug!(
-                "PropertyChange event for device {} has no property identifier",
-                device_id
-            );
-            return;
-        }
-
-        self.device_cache.update_property(device_id, property_id, |device| {
-            if let Some(ref mut properties) = device.properties {
-                for prop in properties.iter_mut() {
-                    if prop.id == property_id || prop.name == property_name {
-                        prop.set_current_value(new_value.clone());
-                        tracing::debug!(
-                            "Updated device cache: device={}, property={}, value={}",
-                            device_id,
-                            prop.name,
-                            new_value
-                        );
-                        break;
-                    }
-                }
-            }
-        });
     }
 
     // === Public API ===
@@ -586,7 +557,11 @@ impl EventHandler for DataServer {
                     self.remove_device(device_id);
                 }
                 DeviceEventType::PropertyChange => {
-                    self.handle_property_change_event(event, device_id);
+                    // DataServer does NOT handle PropertyChange events.
+                    // The device cache is already updated inline by the polling
+                    // loop (device_cache.update()). Consuming our own events
+                    // here would be redundant and introduces deadlock risk
+                    // (update_property contends for the same DashMap shard).
                 }
                 _ => {}
             },
@@ -600,16 +575,7 @@ impl EventHandler for DataServer {
     }
 
     fn should_handle(&self, event: &tinyiothub_core::models::event::Event) -> bool {
-        use tinyiothub_core::models::event::{DeviceEventType, EventType};
-        // DataServer should NOT handle PropertyChange events — those are generated
-        // by the polling loop itself and the cache is already updated inline.
-        // Handling them creates redundant updates and can cause deadlocks.
-        matches!(
-            event.event_type(),
-            EventType::Device(DeviceEventType::DeviceCreated
-                | DeviceEventType::DeviceUpdated
-                | DeviceEventType::DeviceDeleted)
-        )
+        matches!(event.event_type(), tinyiothub_core::models::event::EventType::Device(_))
     }
 
     fn priority(&self) -> u8 {

@@ -7,7 +7,7 @@
 // - Config types: AgentConfig, AgentInfo, AgentError
 // - AgentRuntimeImpl: the concrete implementation using zeroclaw
 
-use std::pin::Pin;
+use async_trait::async_trait;
 
 pub mod config;
 pub mod heartbeat_service;
@@ -19,96 +19,73 @@ pub use heartbeat_service::HeartbeatService;
 pub use runtime::AgentRuntimeImpl;
 
 /// Trait for Agent operations — implemented by AgentRuntimeImpl
+#[async_trait]
 pub trait AgentClient: Send + Sync {
     /// Create a new agent for the given workspace
-    fn create_agent(
-        &self,
-        config: &AgentConfig,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, AgentError>> + Send + '_>>;
+    async fn create_agent(&self, config: &AgentConfig) -> Result<String, AgentError>;
 
     /// Delete an agent by ID
-    fn delete_agent(
-        &self,
-        agent_id: &str,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), AgentError>> + Send + '_>>;
+    async fn delete_agent(&self, agent_id: &str) -> Result<(), AgentError>;
 
     /// Get agent info by ID
-    fn get_agent(
-        &self,
-        agent_id: &str,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<AgentInfo, AgentError>> + Send + '_>>;
+    async fn get_agent(&self, agent_id: &str) -> Result<AgentInfo, AgentError>;
 
     /// Update agent configuration
-    fn update_agent(
-        &self,
-        agent_id: &str,
-        config: &str,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), AgentError>> + Send + '_>>;
+    async fn update_agent(&self, agent_id: &str, config: &str) -> Result<(), AgentError>;
 
     /// Send a chat message and get SSE stream response
-    fn chat_send(
+    async fn chat_send(
         &self,
         agent_id: &str,
         session_key: &str,
         message: &str,
         run_id: &str,
         system_prompt: &str,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<reqwest::Response, AgentError>> + Send + '_>>;
+    ) -> Result<reqwest::Response, AgentError>;
 
     /// Get chat history
-    fn chat_history(
+    async fn chat_history(
         &self,
         agent_id: &str,
         session_key: &str,
         limit: u32,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, AgentError>> + Send + '_>>;
+    ) -> Result<serde_json::Value, AgentError>;
 
     /// Abort a chat run
-    fn chat_abort(
+    async fn chat_abort(
         &self,
         agent_id: &str,
         session_key: &str,
         run_id: Option<&str>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), AgentError>> + Send + '_>>;
+    ) -> Result<(), AgentError>;
 
     /// List all agents
-    fn list_agents(
-        &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, AgentError>> + Send + '_>>;
+    async fn list_agents(&self) -> Result<serde_json::Value, AgentError>;
 
     /// Get agent config
-    fn get_agent_config(
-        &self,
-        agent_id: &str,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, AgentError>> + Send + '_>>;
+    async fn get_agent_config(&self, agent_id: &str) -> Result<serde_json::Value, AgentError>;
 
     /// Set agent config
-    fn set_agent_config(
+    async fn set_agent_config(
         &self,
         agent_id: &str,
         config: &str,
         base_hash: Option<&str>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), AgentError>> + Send + '_>>;
+    ) -> Result<(), AgentError>;
 
     /// Get tools catalog for an agent
-    fn tools_catalog(
-        &self,
-        agent_id: &str,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, AgentError>> + Send + '_>>;
+    async fn tools_catalog(&self, agent_id: &str) -> Result<serde_json::Value, AgentError>;
 
     /// Get effective tools for an agent
-    fn tools_effective(
-        &self,
-        agent_id: &str,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, AgentError>> + Send + '_>>;
+    async fn tools_effective(&self, agent_id: &str) -> Result<serde_json::Value, AgentError>;
 
     /// Toggle a tool on/off for an agent
-    fn tools_toggle(
+    async fn tools_toggle(
         &self,
         agent_id: &str,
         tool_name: &str,
         enabled: bool,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), AgentError>> + Send + '_>>;
+    ) -> Result<(), AgentError>;
 }
 
 /// Trait that consolidates all agent runtime functionality
@@ -116,15 +93,16 @@ pub trait AgentClient: Send + Sync {
 /// This trait is implemented by AgentRuntimeImpl and provides:
 /// - All AgentClient operations (chat, history, config, tools)
 /// - Tool refresh capability (refresh_tools)
+#[async_trait]
 pub trait AgentRuntime: AgentClient + Send + Sync {
     /// Refresh the agent's tool registry
-    fn refresh_tools(&self) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>>;
+    async fn refresh_tools(&self) -> anyhow::Result<()>;
 
     /// Execute a single agent turn with the given message.
     ///
     /// This is useful for cron job execution where we want to run a prompt
     /// and get the complete response without SSE streaming.
-    fn run_single(&self, message: &str) -> Pin<Box<dyn std::future::Future<Output = Result<String, AgentError>> + Send + '_>>;
+    async fn run_single(&self, message: &str) -> Result<String, AgentError>;
 }
 
 /// Returns the static catalog of all available TinyIoTHub tools grouped by category.

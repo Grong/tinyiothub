@@ -101,13 +101,10 @@ impl RetryState {
     /// 记录成功
     pub fn record_success(&mut self) {
         self.consecutive_successes += 1;
+        self.current_attempt = 0;
         self.last_error = None;
         self.next_retry_at = None;
-
-        // 如果连续成功多次，重置重试计数
-        if self.consecutive_successes >= 3 {
-            self.current_attempt = 0;
-        }
+        self.start_time = Instant::now();
     }
 
     /// 记录失败
@@ -319,6 +316,13 @@ impl RetryManager {
     where
         F: FnOnce() -> Result<T, Error>,
     {
+        // 如果重试等待期已过且总超时窗口也过期了，重置状态开始新会话。
+        // 避免驱动创建后永不重置 start_time，导致超时后永久 Timeout。
+        let past_backoff = self.state.next_retry_at.map_or(true, |t| Instant::now() >= t);
+        if past_backoff && self.state.start_time.elapsed() >= self.config.timeout {
+            self.state.reset();
+        }
+
         // 如果还没到下一次次重试时间，直接返回 Retrying
         if let Some(next_retry) = self.state.next_retry_at {
             if Instant::now() < next_retry {

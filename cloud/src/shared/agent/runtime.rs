@@ -4,7 +4,6 @@
 // using zeroclaw for AI Agent functionality.
 
 use std::sync::Arc;
-use std::pin::Pin;
 use async_trait::async_trait;
 
 use crate::shared::agent::config::{AgentConfig, AgentError, AgentInfo};
@@ -163,95 +162,88 @@ impl AgentRuntimeImpl {
     }
 }
 
+#[async_trait]
 impl AgentClient for AgentRuntimeImpl {
-    fn create_agent(&self, config: &AgentConfig) -> Pin<Box<dyn std::future::Future<Output = Result<String, AgentError>> + Send + '_>> {
+    async fn create_agent(&self, config: &AgentConfig) -> Result<String, AgentError> {
         let db_pool = self.db_pool.clone();
         let workspace_id = config.workspace_id.clone();
         let name = config.name.clone();
-        Box::pin(async move {
-            let agent_id = uuid::Uuid::new_v4().to_string();
-            sqlx::query(
-                "INSERT INTO agents (agent_id, workspace_id, name, status, created_at, updated_at)
-                 VALUES (?, ?, ?, 'active', datetime('now'), datetime('now'))",
-            )
+        let agent_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO agents (agent_id, workspace_id, name, status, created_at, updated_at)
+             VALUES (?, ?, ?, 'active', datetime('now'), datetime('now'))",
+        )
+        .bind(&agent_id)
+        .bind(&workspace_id)
+        .bind(&name)
+        .execute(&db_pool)
+        .await
+        .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
+        Ok(agent_id)
+    }
+
+    async fn delete_agent(&self, agent_id: &str) -> Result<(), AgentError> {
+        let agent_id = agent_id.to_string();
+        let db_pool = self.db_pool.clone();
+        let result = sqlx::query("DELETE FROM agents WHERE agent_id = ?")
             .bind(&agent_id)
-            .bind(&workspace_id)
-            .bind(&name)
             .execute(&db_pool)
             .await
             .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
-            Ok(agent_id)
-        })
-    }
-
-    fn delete_agent(&self, agent_id: &str) -> Pin<Box<dyn std::future::Future<Output = Result<(), AgentError>> + Send + '_>> {
-        let agent_id = agent_id.to_string();
-        let db_pool = self.db_pool.clone();
-        Box::pin(async move {
-            let result = sqlx::query("DELETE FROM agents WHERE agent_id = ?")
-                .bind(&agent_id)
-                .execute(&db_pool)
-                .await
-                .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
-            if result.rows_affected() == 0 {
-                return Err(AgentError::NotFound(agent_id));
-            }
-            let _ = sqlx::query("DELETE FROM agent_configs WHERE agent_id = ?")
-                .bind(&agent_id)
-                .execute(&db_pool)
-                .await;
-            let _ = sqlx::query("DELETE FROM agent_tools WHERE agent_id = ?")
-                .bind(&agent_id)
-                .execute(&db_pool)
-                .await;
-            Ok(())
-        })
-    }
-
-    fn get_agent(&self, agent_id: &str) -> Pin<Box<dyn std::future::Future<Output = Result<AgentInfo, AgentError>> + Send + '_>> {
-        let agent_id = agent_id.to_string();
-        let db_pool = self.db_pool.clone();
-        Box::pin(async move {
-            let row: Option<(String, String, String, String)> = sqlx::query_as(
-                "SELECT agent_id, workspace_id, name, status FROM agents WHERE agent_id = ?"
-            )
+        if result.rows_affected() == 0 {
+            return Err(AgentError::NotFound(agent_id));
+        }
+        let _ = sqlx::query("DELETE FROM agent_configs WHERE agent_id = ?")
             .bind(&agent_id)
-            .fetch_optional(&db_pool)
-            .await
-            .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
-
-            match row {
-                Some((id, _workspace, name, status)) => Ok(AgentInfo {
-                    id,
-                    name,
-                    status,
-                    created_at: None,
-                }),
-                None => Err(AgentError::NotFound(agent_id)),
-            }
-        })
+            .execute(&db_pool)
+            .await;
+        let _ = sqlx::query("DELETE FROM agent_tools WHERE agent_id = ?")
+            .bind(&agent_id)
+            .execute(&db_pool)
+            .await;
+        Ok(())
     }
 
-    fn update_agent(&self, _agent_id: &str, _config: &str) -> Pin<Box<dyn std::future::Future<Output = Result<(), AgentError>> + Send + '_>> {
-        Box::pin(async move { Ok(()) })
+    async fn get_agent(&self, agent_id: &str) -> Result<AgentInfo, AgentError> {
+        let agent_id = agent_id.to_string();
+        let db_pool = self.db_pool.clone();
+        let row: Option<(String, String, String, String)> = sqlx::query_as(
+            "SELECT agent_id, workspace_id, name, status FROM agents WHERE agent_id = ?"
+        )
+        .bind(&agent_id)
+        .fetch_optional(&db_pool)
+        .await
+        .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
+
+        match row {
+            Some((id, _workspace, name, status)) => Ok(AgentInfo {
+                id,
+                name,
+                status,
+                created_at: None,
+            }),
+            None => Err(AgentError::NotFound(agent_id)),
+        }
     }
 
-    fn chat_send(
+    async fn update_agent(&self, _agent_id: &str, _config: &str) -> Result<(), AgentError> {
+        Ok(())
+    }
+
+    async fn chat_send(
         &self,
         _agent_id: &str,
         session_key: &str,
         message: &str,
         run_id: &str,
         system_prompt: &str,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<reqwest::Response, AgentError>> + Send + '_>> {
+    ) -> Result<reqwest::Response, AgentError> {
         let session_key = session_key.to_string();
         let message = message.to_string();
         let run_id = run_id.to_string();
         let agent = Arc::clone(&self.agent);
         let system_prompt = system_prompt.to_string();
         let chat_handles = Arc::clone(&self.chat_handles);
-
-        Box::pin(async move {
             // Set system prompt (only first time)
             {
                 let mut ag = agent.lock().await;
@@ -421,277 +413,260 @@ impl AgentClient for AgentRuntimeImpl {
                 .map_err(|e| AgentError::RequestFailed(format!("SSE build error: {}", e)))?;
 
             Ok(reqwest::Response::from(http_response))
-        })
     }
 
-    fn chat_history(&self, _agent_id: &str, session_key: &str, limit: u32) -> Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, AgentError>> + Send + '_>> {
+    async fn chat_history(&self, _agent_id: &str, session_key: &str, limit: u32) -> Result<serde_json::Value, AgentError> {
         let session_key = session_key.to_string();
         let db_pool = self.db_pool.clone();
-        Box::pin(async move {
-            // First check for any system messages (for debugging)
-            let system_count: (i64,) = match sqlx::query_as(
-                "SELECT COUNT(*) FROM chat_messages WHERE session_key = ? AND role = 'system'",
-            )
-            .bind(&session_key)
-            .fetch_one(&db_pool)
-            .await {
-                Ok(count) => count,
-                Err(e) => {
-                    tracing::warn!("Failed to count system messages: {}", e);
-                    (0,)
-                }
-            };
-
-            if system_count.0 > 0 {
-                tracing::warn!("Found {} system messages in session {}", system_count.0, session_key);
+        // First check for any system messages (for debugging)
+        let system_count: (i64,) = match sqlx::query_as(
+            "SELECT COUNT(*) FROM chat_messages WHERE session_key = ? AND role = 'system'",
+        )
+        .bind(&session_key)
+        .fetch_one(&db_pool)
+        .await {
+            Ok(count) => count,
+            Err(e) => {
+                tracing::warn!("Failed to count system messages: {}", e);
+                (0,)
             }
+        };
 
-            let rows = sqlx::query_as::<_, (String, String, i64, Option<String>)>(
-                "SELECT role, content, timestamp, run_id FROM chat_messages
-                 WHERE session_key = ? AND role != 'system' ORDER BY timestamp ASC LIMIT ?",
-            )
-            .bind(&session_key)
-            .bind(limit as i64)
-            .fetch_all(&db_pool)
-            .await
-            .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
+        if system_count.0 > 0 {
+            tracing::warn!("Found {} system messages in session {}", system_count.0, session_key);
+        }
 
-            let messages: Vec<serde_json::Value> = rows
-                .into_iter()
-                .map(|row: (String, String, i64, Option<String>)| {
-                    let content_parsed: serde_json::Value = serde_json::from_str(&row.1)
-                        .unwrap_or_else(|_| serde_json::json!([{ "type": "text", "text": &row.1 }]));
-                    serde_json::json!({
-                        "role": row.0,
-                        "content": content_parsed,
-                        "timestamp": row.2,
-                        "toolCallId": row.3,
-                    })
+        let rows = sqlx::query_as::<_, (String, String, i64, Option<String>)>(
+            "SELECT role, content, timestamp, run_id FROM chat_messages
+             WHERE session_key = ? AND role != 'system' ORDER BY timestamp ASC LIMIT ?",
+        )
+        .bind(&session_key)
+        .bind(limit as i64)
+        .fetch_all(&db_pool)
+        .await
+        .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
+
+        let messages: Vec<serde_json::Value> = rows
+            .into_iter()
+            .map(|row: (String, String, i64, Option<String>)| {
+                let content_parsed: serde_json::Value = serde_json::from_str(&row.1)
+                    .unwrap_or_else(|_| serde_json::json!([{ "type": "text", "text": &row.1 }]));
+                serde_json::json!({
+                    "role": row.0,
+                    "content": content_parsed,
+                    "timestamp": row.2,
+                    "toolCallId": row.3,
                 })
-                .collect();
+            })
+            .collect();
 
-            Ok(serde_json::json!({ "messages": messages }))
-        })
+        Ok(serde_json::json!({ "messages": messages }))
     }
 
-    fn chat_abort(
+    async fn chat_abort(
         &self,
         _agent_id: &str,
         _session_key: &str,
         run_id: Option<&str>,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<(), AgentError>> + Send + '_>> {
+    ) -> Result<(), AgentError> {
         let run_id = run_id.map(String::from);
         let chat_handles = Arc::clone(&self.chat_handles);
-        Box::pin(async move {
-            if let Some(rid) = run_id
-                && let Some(handle) = chat_handles.lock().await.remove(&rid) {
-                    handle.abort();
-                    tracing::info!("Aborted chat run {}", rid);
-                }
-            Ok(())
-        })
+        if let Some(rid) = run_id
+            && let Some(handle) = chat_handles.lock().await.remove(&rid) {
+                handle.abort();
+                tracing::info!("Aborted chat run {}", rid);
+            }
+        Ok(())
     }
 
-    fn list_agents(&self) -> Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, AgentError>> + Send + '_>> {
+    async fn list_agents(&self) -> Result<serde_json::Value, AgentError> {
         let db_pool = self.db_pool.clone();
-        Box::pin(async move {
-            let rows: Vec<(String, String, String, String)> = sqlx::query_as(
-                "SELECT agent_id, workspace_id, name, status FROM agents ORDER BY created_at DESC"
-            )
-            .fetch_all(&db_pool)
-            .await
-            .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
+        let rows: Vec<(String, String, String, String)> = sqlx::query_as(
+            "SELECT agent_id, workspace_id, name, status FROM agents ORDER BY created_at DESC"
+        )
+        .fetch_all(&db_pool)
+        .await
+        .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
 
-            let agents: Vec<serde_json::Value> = rows
-                .into_iter()
-                .map(|(id, _workspace, name, status)| {
-                    serde_json::json!({
-                        "id": id,
-                        "name": name,
-                        "status": status,
-                        "created_at": null,
-                    })
+        let agents: Vec<serde_json::Value> = rows
+            .into_iter()
+            .map(|(id, _workspace, name, status)| {
+                serde_json::json!({
+                    "id": id,
+                    "name": name,
+                    "status": status,
+                    "created_at": null,
                 })
-                .collect();
+            })
+            .collect();
 
-            Ok(serde_json::json!({ "agents": agents }))
-        })
+        Ok(serde_json::json!({ "agents": agents }))
     }
 
-    fn get_agent_config(&self, agent_id: &str) -> Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, AgentError>> + Send + '_>> {
+    async fn get_agent_config(&self, agent_id: &str) -> Result<serde_json::Value, AgentError> {
         let agent_id = agent_id.to_string();
         let db_pool = self.db_pool.clone();
-        Box::pin(async move {
-            let row = sqlx::query_as::<_, (String, String)>(
-                "SELECT config, config_hash FROM agent_configs WHERE agent_id = ?",
-            )
-            .bind(&agent_id)
-            .fetch_optional(&db_pool)
-            .await
-            .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
+        let row = sqlx::query_as::<_, (String, String)>(
+            "SELECT config, config_hash FROM agent_configs WHERE agent_id = ?",
+        )
+        .bind(&agent_id)
+        .fetch_optional(&db_pool)
+        .await
+        .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
 
-            if let Some((config_str, config_hash)) = row {
-                let config: serde_json::Value = serde_json::from_str(&config_str)
-                    .unwrap_or_else(|_| crate::shared::agent::config::default_agent_config());
-                return Ok(serde_json::json!({ "config": config, "baseHash": config_hash }));
-            }
-            Ok(serde_json::json!({
-                "config": crate::shared::agent::config::default_agent_config(),
-                "baseHash": null,
-            }))
-        })
+        if let Some((config_str, config_hash)) = row {
+            let config: serde_json::Value = serde_json::from_str(&config_str)
+                .unwrap_or_else(|_| crate::shared::agent::config::default_agent_config());
+            return Ok(serde_json::json!({ "config": config, "baseHash": config_hash }));
+        }
+        Ok(serde_json::json!({
+            "config": crate::shared::agent::config::default_agent_config(),
+            "baseHash": null,
+        }))
     }
 
-    fn set_agent_config(&self, agent_id: &str, config: &str, _base_hash: Option<&str>) -> Pin<Box<dyn std::future::Future<Output = Result<(), AgentError>> + Send + '_>> {
+    async fn set_agent_config(&self, agent_id: &str, config: &str, _base_hash: Option<&str>) -> Result<(), AgentError> {
         let agent_id = agent_id.to_string();
         let config = config.to_string();
         let db_pool = self.db_pool.clone();
-        Box::pin(async move {
-            let _: serde_json::Value = serde_json::from_str(&config)
-                .map_err(|e| AgentError::RequestFailed(format!("Invalid config: {}", e)))?;
-            let config_hash = crate::shared::agent::config::compute_hash(&config);
-            sqlx::query(
-                "INSERT INTO agent_configs (agent_id, config, config_hash, updated_at)
-                 VALUES (?, ?, ?, datetime('now'))
-                 ON CONFLICT(agent_id) DO UPDATE SET
-                   config = excluded.config,
-                   config_hash = excluded.config_hash,
-                   updated_at = datetime('now')",
-            )
-            .bind(&agent_id)
-            .bind(&config)
-            .bind(&config_hash)
-            .execute(&db_pool)
-            .await
-            .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
-            Ok(())
-        })
+        let _: serde_json::Value = serde_json::from_str(&config)
+            .map_err(|e| AgentError::RequestFailed(format!("Invalid config: {}", e)))?;
+        let config_hash = crate::shared::agent::config::compute_hash(&config);
+        sqlx::query(
+            "INSERT INTO agent_configs (agent_id, config, config_hash, updated_at)
+             VALUES (?, ?, ?, datetime('now'))
+             ON CONFLICT(agent_id) DO UPDATE SET
+               config = excluded.config,
+               config_hash = excluded.config_hash,
+               updated_at = datetime('now')",
+        )
+        .bind(&agent_id)
+        .bind(&config)
+        .bind(&config_hash)
+        .execute(&db_pool)
+        .await
+        .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
+        Ok(())
     }
 
-    fn tools_catalog(&self, _agent_id: &str) -> Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, AgentError>> + Send + '_>> {
-        Box::pin(async move {
-            Ok(crate::shared::agent::build_tools_catalog_json())
-        })
+    async fn tools_catalog(&self, _agent_id: &str) -> Result<serde_json::Value, AgentError> {
+        Ok(crate::shared::agent::build_tools_catalog_json())
     }
 
-    fn tools_effective(&self, agent_id: &str) -> Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, AgentError>> + Send + '_>> {
+    async fn tools_effective(&self, agent_id: &str) -> Result<serde_json::Value, AgentError> {
         let agent_id = agent_id.to_string();
         let db_pool = self.db_pool.clone();
-        Box::pin(async move {
-            let overrides_row = sqlx::query_as::<_, (String,)>(
-                "SELECT tool_overrides FROM agent_tools WHERE agent_id = ?",
-            )
-            .bind(&agent_id)
-            .fetch_optional(&db_pool)
-            .await
-            .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
+        let overrides_row = sqlx::query_as::<_, (String,)>(
+            "SELECT tool_overrides FROM agent_tools WHERE agent_id = ?",
+        )
+        .bind(&agent_id)
+        .fetch_optional(&db_pool)
+        .await
+        .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
 
-            let overrides: serde_json::Value = overrides_row
-                .map(|row: (String,)| serde_json::from_str(&row.0).unwrap_or_default())
-                .unwrap_or_else(|| serde_json::json!({ "enabled": [], "disabled": [] }));
+        let overrides: serde_json::Value = overrides_row
+            .map(|row: (String,)| serde_json::from_str(&row.0).unwrap_or_default())
+            .unwrap_or_else(|| serde_json::json!({ "enabled": [], "disabled": [] }));
 
-            let enabled_list: Vec<String> = overrides
-                .get("enabled")
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-                .unwrap_or_default();
+        let enabled_list: Vec<String> = overrides
+            .get("enabled")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
 
-            let disabled_list: Vec<String> = overrides
-                .get("disabled")
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-                .unwrap_or_default();
+        let disabled_list: Vec<String> = overrides
+            .get("disabled")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
 
-            let catalog = crate::shared::agent::build_tools_catalog_json();
-            let groups = catalog.get("groups").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        let catalog = crate::shared::agent::build_tools_catalog_json();
+        let groups = catalog.get("groups").and_then(|v| v.as_array()).cloned().unwrap_or_default();
 
-            let filtered_groups: Vec<serde_json::Value> = groups
-                .into_iter()
-                .map(|group| {
-                    let tools = group.get("tools").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-                    let filtered_tools: Vec<serde_json::Value> = tools
-                        .into_iter()
-                        .map(|mut tool| {
-                            let tool_id = tool.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                            let is_dangerous = tool.get("danger").and_then(|v| v.as_bool()).unwrap_or(false);
-                            let effective_enabled = if !enabled_list.is_empty() {
-                                enabled_list.contains(&tool_id)
-                            } else if !disabled_list.is_empty() {
-                                !disabled_list.contains(&tool_id)
-                            } else {
-                                !is_dangerous
-                            };
-                            tool["enabled"] = serde_json::json!(effective_enabled);
-                            tool
-                        })
-                        .collect();
-                    serde_json::json!({
-                        "id": group.get("id"),
-                        "label": group.get("label"),
-                        "source": group.get("source"),
-                        "tools": filtered_tools,
+        let filtered_groups: Vec<serde_json::Value> = groups
+            .into_iter()
+            .map(|group| {
+                let tools = group.get("tools").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                let filtered_tools: Vec<serde_json::Value> = tools
+                    .into_iter()
+                    .map(|mut tool| {
+                        let tool_id = tool.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let is_dangerous = tool.get("danger").and_then(|v| v.as_bool()).unwrap_or(false);
+                        let effective_enabled = if !enabled_list.is_empty() {
+                            enabled_list.contains(&tool_id)
+                        } else if !disabled_list.is_empty() {
+                            !disabled_list.contains(&tool_id)
+                        } else {
+                            !is_dangerous
+                        };
+                        tool["enabled"] = serde_json::json!(effective_enabled);
+                        tool
                     })
+                    .collect();
+                serde_json::json!({
+                    "id": group.get("id"),
+                    "label": group.get("label"),
+                    "source": group.get("source"),
+                    "tools": filtered_tools,
                 })
-                .collect();
+            })
+            .collect();
 
-            Ok(serde_json::json!({ "groups": filtered_groups }))
-        })
+        Ok(serde_json::json!({ "groups": filtered_groups }))
     }
 
-    fn tools_toggle(&self, agent_id: &str, tool_name: &str, enabled: bool) -> Pin<Box<dyn std::future::Future<Output = Result<(), AgentError>> + Send + '_>> {
+    async fn tools_toggle(&self, agent_id: &str, tool_name: &str, enabled: bool) -> Result<(), AgentError> {
         let agent_id = agent_id.to_string();
         let tool_name = tool_name.to_string();
         let db_pool = self.db_pool.clone();
-        Box::pin(async move {
-            let current_row = sqlx::query_as::<_, (String,)>(
-                "SELECT tool_overrides FROM agent_tools WHERE agent_id = ?",
-            )
-            .bind(&agent_id)
-            .fetch_optional(&db_pool)
-            .await
-            .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
+        let current_row = sqlx::query_as::<_, (String,)>(
+            "SELECT tool_overrides FROM agent_tools WHERE agent_id = ?",
+        )
+        .bind(&agent_id)
+        .fetch_optional(&db_pool)
+        .await
+        .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
 
-            let overrides: serde_json::Value = current_row
-                .map(|row: (String,)| serde_json::from_str(&row.0).unwrap_or_default())
-                .unwrap_or_else(|| serde_json::json!({ "enabled": [], "disabled": [] }));
+        let overrides: serde_json::Value = current_row
+            .map(|row: (String,)| serde_json::from_str(&row.0).unwrap_or_default())
+            .unwrap_or_else(|| serde_json::json!({ "enabled": [], "disabled": [] }));
 
-            let mut enabled_list: Vec<String> = overrides
-                .get("enabled")
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-                .unwrap_or_default();
+        let mut enabled_list: Vec<String> = overrides
+            .get("enabled")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
 
-            let mut disabled_list: Vec<String> = overrides
-                .get("disabled")
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-                .unwrap_or_default();
+        let mut disabled_list: Vec<String> = overrides
+            .get("disabled")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
 
-            enabled_list.retain(|t| t != &tool_name);
-            disabled_list.retain(|t| t != &tool_name);
-            if enabled {
-                enabled_list.push(tool_name.clone());
-            } else {
-                disabled_list.push(tool_name);
-            }
+        enabled_list.retain(|t| t != &tool_name);
+        disabled_list.retain(|t| t != &tool_name);
+        if enabled {
+            enabled_list.push(tool_name.clone());
+        } else {
+            disabled_list.push(tool_name);
+        }
 
-            let new_overrides = serde_json::json!({ "enabled": enabled_list, "disabled": disabled_list });
+        let new_overrides = serde_json::json!({ "enabled": enabled_list, "disabled": disabled_list });
 
-            sqlx::query(
-                "INSERT INTO agent_tools (agent_id, tool_overrides, updated_at)
-                 VALUES (?, ?, datetime('now'))
-                 ON CONFLICT(agent_id) DO UPDATE SET
-                   tool_overrides = excluded.tool_overrides,
-                   updated_at = datetime('now')",
-            )
-            .bind(&agent_id)
-            .bind(new_overrides.to_string())
-            .execute(&db_pool)
-            .await
-            .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
+        sqlx::query(
+            "INSERT INTO agent_tools (agent_id, tool_overrides, updated_at)
+             VALUES (?, ?, datetime('now'))
+             ON CONFLICT(agent_id) DO UPDATE SET
+               tool_overrides = excluded.tool_overrides,
+               updated_at = datetime('now')",
+        )
+        .bind(&agent_id)
+        .bind(new_overrides.to_string())
+        .execute(&db_pool)
+        .await
+        .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
 
-            Ok(())
-        })
+        Ok(())
     }
 }
 
@@ -699,14 +674,14 @@ impl AgentClient for AgentRuntimeImpl {
 // AgentRuntime Implementation
 // ============================================================================
 
+#[async_trait]
 impl AgentRuntime for AgentRuntimeImpl {
-    fn refresh_tools(&self) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>> {
-        Box::pin(async move { self.refresh_tools_impl().await })
+    async fn refresh_tools(&self) -> anyhow::Result<()> {
+        self.refresh_tools_impl().await
     }
 
-    fn run_single(&self, message: &str) -> Pin<Box<dyn std::future::Future<Output = Result<String, AgentError>> + Send + '_>> {
-        let message = message.to_string();
-        Box::pin(async move { self.run_single_impl(&message).await })
+    async fn run_single(&self, message: &str) -> Result<String, AgentError> {
+        self.run_single_impl(message).await
     }
 }
 

@@ -68,13 +68,13 @@ impl ServiceManager {
         data_server.run(shutdown_rx).await?;
 
         // 注册为事件处理器
-        app_state.event_bus.register_handler(data_server.clone()).await;
+        app_state.event_bus.register_handler(data_server.clone());
 
         // 注册 SSE 事件处理器 - 将事件实时推送到前端
         let sse_handler = Arc::new(
             crate::shared::event::handlers::SseEventHandler::new(app_state.sse_manager.clone()),
         );
-        app_state.event_bus.register_handler(sse_handler).await;
+        app_state.event_bus.register_handler(sse_handler);
         info!("✅ SseEventHandler registered");
 
         // 保存到 AppState
@@ -148,8 +148,9 @@ impl ServiceManager {
                 "default".to_string(),
                 agent_settings.system_prompts.heartbeat.clone(),
             );
+            let mut heartbeat_shutdown_rx = self.shutdown_tx.subscribe();
             let handle: tokio::task::JoinHandle<Result<(), Error>> = tokio::spawn(async move {
-                heartbeat_service.run().await;
+                heartbeat_service.run(heartbeat_shutdown_rx).await;
                 Ok(())
             });
             self.service_handles.write().await.push(handle);
@@ -236,12 +237,18 @@ impl ServiceManager {
             warn!("Failed to send shutdown signal: {}", e);
         }
 
-        // 等待所有服务句柄完成
+        // 等待所有服务句柄完成（带超时，防止无限循环的服务阻塞退出）
         let handles = std::mem::take(&mut *self.service_handles.write().await);
 
         for handle in handles {
-            if let Err(e) = handle.await {
-                error!("Service shutdown error: {}", e);
+            match tokio::time::timeout(tokio::time::Duration::from_secs(10), handle).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => {
+                    error!("Service shutdown error: {}", e);
+                }
+                Err(_) => {
+                    warn!("Service shutdown timed out after 10s");
+                }
             }
         }
 

@@ -5704,9 +5704,11 @@ dependencies = [
 name = "tinyiothub-engine"
 version = "1.1.0"
 dependencies = [
+ "arc-swap",
  "async-trait",
  "chrono",
  "dashmap",
+ "futures-util",
  "moka",
  "once_cell",
  "parking_lot 0.12.5",
