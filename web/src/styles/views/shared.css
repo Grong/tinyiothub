@@ -436,6 +436,23 @@
   color: var(--text-inverse);
   border-color: var(--primary);
 }
+.btn.tag-btn--bound:hover {
+  background: var(--primary);
+  color: var(--text-inverse);
+  border-color: var(--primary);
+}
+
+:root[data-theme="light"] .btn.tag-btn--bound {
+  background: var(--primary);
+  color: var(--text-inverse);
+  border-color: var(--primary);
+}
+
+:root[data-theme="light"] .btn.tag-btn--bound:hover {
+  background: var(--primary);
+  color: var(--text-inverse);
+  border-color: var(--primary);
+}
 .tag-btn--unbound {
   background: var(--bg-subtle);
   border: 1px solid var(--border);
