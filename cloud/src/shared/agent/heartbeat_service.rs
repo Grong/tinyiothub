@@ -9,7 +9,6 @@ use std::sync::Arc;
 use futures::StreamExt;
 
 use zeroclaw::heartbeat::engine::{HeartbeatEngine, TaskPriority};
-use crate::modules::mcp::handlers::{McpAuthContext, McpContextGuard};
 
 /// Execution record for a single heartbeat run
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -287,12 +286,6 @@ impl HeartbeatService {
         );
 
         // Set MCP context for in-process tool calls (heartbeat system task)
-        let mcp_ctx = McpAuthContext::for_heartbeat(
-            self.workspace_id.clone(),
-            self.agent_id.clone(),
-        );
-        let _guard = McpContextGuard::new(mcp_ctx);
-
         let request = crate::modules::agent::ChatRequest {
             session_key,
             message: prompt.clone(),

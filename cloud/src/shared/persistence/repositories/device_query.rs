@@ -93,6 +93,7 @@ pub async fn find_all_devices_with_tags(
         product_id: params.product_id.clone(),
         workspace_id: _workspace_id,
         search_text: None,
+        tag_name: None,
         sort_by: DeviceSortBy::CreatedAt,
         sort_order: DeviceSortOrder::Descending,
         limit: params.page_size,

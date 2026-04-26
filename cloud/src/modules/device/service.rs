@@ -477,6 +477,7 @@ fn params_to_criteria(params: &DeviceQueryParams) -> DeviceCriteria {
         product_id: params.product_id.clone(),
         workspace_id: None,
         search_text: None,
+        tag_name: None,
         sort_by: tinyiothub_storage::traits::device::DeviceSortBy::CreatedAt,
         sort_order: tinyiothub_storage::traits::device::DeviceSortOrder::Descending,
         limit: params.page_size,

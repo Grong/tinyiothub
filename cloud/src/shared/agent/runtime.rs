@@ -9,6 +9,7 @@ use async_trait::async_trait;
 use crate::shared::agent::config::{AgentConfig, AgentError, AgentInfo};
 use crate::shared::agent::AgentClient;
 use crate::shared::agent::AgentRuntime;
+use crate::modules::mcp::handlers::McpAuthContext;
 use crate::modules::mcp::tool_metadata::{name_infers_concurrency_safe, name_infers_destructive, name_infers_read_only, IoTToolMetadata, PermissionLevel};
 use crate::modules::mcp::tool_registry::ToolHandler;
 use zeroclaw::tools::traits::{Tool, ToolResult};
@@ -266,8 +267,10 @@ impl AgentClient for AgentRuntimeImpl {
             let chat_handles_for_spawn = chat_handles.clone();
             let run_id_for_spawn = run_id.clone();
 
-            // Run Agent::turn_streamed in background
-            let handle = tokio::spawn(async move {
+            // Run Agent::turn_streamed in background with task-local MCP context
+            let workspace_id = session_key.split(':').nth(1).map(|s| s.split('/').next().unwrap_or(s)).unwrap_or("").to_string();
+            let mcp_ctx = McpAuthContext::for_jwt(workspace_id, "agent".to_string());
+            let handle = tokio::spawn(crate::modules::mcp::handlers::with_mcp_context(mcp_ctx, || async move {
                 let mut ag = agent.lock().await;
 
                 // Send channel to turn_streamed (using mpsc)
@@ -398,7 +401,7 @@ impl AgentClient for AgentRuntimeImpl {
                 // Explicit cleanup when the task completes naturally.
                 // Abort paths are handled by chat_abort which removes the entry.
                 chat_handles_for_spawn.lock().await.remove(&run_id_for_spawn);
-            });
+            }));
 
             chat_handles.lock().await.insert(run_id, handle);
 
