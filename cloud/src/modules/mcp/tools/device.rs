@@ -21,6 +21,7 @@ use crate::shared::persistence::repositories::find_device_properties_by_device_i
 use crate::modules::template::types::{CreateDeviceFromTemplateRequest, DeviceCreationInput};
 use crate::modules::device::monitoring_service::DeviceMetrics;
 use crate::modules::device::performance_service::DevicePerformanceMetrics;
+use tinyiothub_storage::traits::device::{DeviceCriteria, DeviceSortBy, DeviceSortOrder};
 
 /// Tool input: List devices with pagination and filtering
 #[derive(Debug, Deserialize)]
@@ -1268,6 +1269,133 @@ impl ToolHandler for ExportDeviceReportHandler {
             status,
             generated_at: chrono::Utc::now().to_rfc3339(),
             report_type: report_type.to_string(),
+        };
+
+        Ok(serde_json::to_value(response).unwrap())
+    }
+}
+
+// === Search Devices Handler ===
+
+/// Tool input: Search devices by keyword
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchDevicesInput {
+    keyword: String,
+    limit: Option<u32>,
+}
+
+/// Concise device result for search (saves tokens)
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchDeviceResult {
+    id: String,
+    name: String,
+    display_name: Option<String>,
+    device_type: Option<String>,
+    status: String,
+    driver_name: Option<String>,
+    address: Option<String>,
+    last_heartbeat: Option<String>,
+}
+
+/// Search devices response
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchDevicesResponse {
+    keyword: String,
+    total: usize,
+    devices: Vec<SearchDeviceResult>,
+}
+
+pub struct SearchDevicesHandler;
+
+#[async_trait]
+impl ToolHandler for SearchDevicesHandler {
+    fn name(&self) -> &str {
+        "search_devices"
+    }
+
+    fn description(&self) -> &str {
+        "Search devices by keyword across name, display name, address, and description. Returns a concise list of matching devices."
+    }
+
+    fn input_schema(&self) -> InputSchema {
+        let mut props = HashMap::new();
+        props.insert(
+            "keyword".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("Search keyword (partial match on name, display name, address, description)".to_string()),
+            },
+        );
+        props.insert(
+            "limit".to_string(),
+            PropertySchema {
+                prop_type: "integer".to_string(),
+                description: Some("Max results to return (default: 20, max: 50)".to_string()),
+            },
+        );
+        InputSchema::object(vec!["keyword".to_string()], props)
+    }
+
+    async fn execute(&self, args: Value) -> Result<Value, ToolError> {
+        let input: SearchDevicesInput = serde_json::from_value(args)
+            .map_err(|e| ToolError::InvalidParams(e.to_string()))?;
+
+        if input.keyword.trim().is_empty() {
+            return Err(ToolError::InvalidParams("keyword cannot be empty".to_string()));
+        }
+
+        let limit = input.limit.unwrap_or(20).min(50);
+
+        let state = crate::modules::mcp::get_app_state()
+            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
+
+        let workspace_id = crate::modules::mcp::handlers::get_mcp_context()
+            .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
+            .workspace_id;
+
+        // Use workspace-scoped repository for security
+        let repository = state.device_repository_factory.create_for_workspace(workspace_id.clone());
+
+        let criteria = DeviceCriteria {
+            workspace_id: Some(workspace_id),
+            search_text: Some(input.keyword.clone()),
+            limit: Some(limit),
+            sort_by: DeviceSortBy::Name,
+            sort_order: DeviceSortOrder::Ascending,
+            ..Default::default()
+        };
+
+        let mut devices = repository
+            .find_all(&criteria)
+            .await
+            .map_err(|e| ToolError::Internal(format!("Search failed: {}", e)))?;
+
+        // Sync real-time status from DeviceCache
+        let mut results = Vec::with_capacity(devices.len());
+        for device in &mut devices {
+            if let Some(cached) = state.device_cache.get(&device.id) {
+                device.status = cached.status.clone();
+                device.last_heartbeat = cached.last_heartbeat.clone();
+            }
+            results.push(SearchDeviceResult {
+                id: device.id.clone(),
+                name: device.name.clone(),
+                display_name: device.display_name.clone(),
+                device_type: device.device_type.clone(),
+                status: device.status.to_string(),
+                driver_name: device.driver_name.clone(),
+                address: device.address.clone(),
+                last_heartbeat: device.last_heartbeat.clone(),
+            });
+        }
+
+        let response = SearchDevicesResponse {
+            keyword: input.keyword,
+            total: results.len(),
+            devices: results,
         };
 
         Ok(serde_json::to_value(response).unwrap())

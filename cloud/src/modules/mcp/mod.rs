@@ -59,6 +59,7 @@ pub async fn register_tools() {
 
     // Register device tools
     reg.register(tools::device::ListDevicesHandler);
+    reg.register(tools::device::SearchDevicesHandler);
     reg.register(tools::device::DeviceProfileHandler);
     reg.register(tools::device::GetDeviceStatusHandler);
     reg.register(tools::device::DevicePropertyGetHandler);
@@ -121,5 +122,5 @@ pub async fn register_tools() {
     reg.register(tools::device_enhanced::ScanSerialHandler);
 
     tracing::info!("Registered {} device MCP tools, {} driver MCP tools, {} heartbeat MCP tools, {} self-heal MCP tools, {} knowledge MCP tools, {} workspace MCP tools, {} job MCP tools, {} batch MCP tools, {} alarm MCP tools, {} device_enhanced MCP tools",
-        13, 7, 3, 3, 3, 5, 4, 2, 4, 3);
+        14, 7, 3, 3, 3, 5, 4, 2, 4, 3);
 }
