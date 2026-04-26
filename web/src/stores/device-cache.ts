@@ -204,7 +204,6 @@ class DeviceCache {
 
     this.eventSource.onmessage = async (ev) => {
       try {
-        console.log('[SSE raw]', ev.data);
         const data = JSON.parse(ev.data);
         await this.handleSseEvent(data);
       } catch {
