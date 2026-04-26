@@ -110,8 +110,6 @@ pub struct AgentSettings {
     pub max_messages_before_compact: usize,
     #[serde(default = "default_true")]
     pub enable_compaction: bool,
-    #[serde(default = "default_agent_workspace_dir")]
-    pub workspace_dir: String,
     #[serde(default)]
     pub system_prompts: SystemPromptsConfig,
 }
@@ -125,7 +123,6 @@ impl Default for AgentSettings {
             heartbeat_interval_minutes: default_heartbeat_interval(),
             max_messages_before_compact: default_max_messages_before_compact(),
             enable_compaction: true,
-            workspace_dir: default_agent_workspace_dir(),
             system_prompts: SystemPromptsConfig::default(),
         }
     }
@@ -145,10 +142,6 @@ fn default_heartbeat_interval() -> u32 {
 
 fn default_max_messages_before_compact() -> usize {
     50
-}
-
-fn default_agent_workspace_dir() -> String {
-    "./data/agents".to_string()
 }
 
 /// MiniMax GLM provider configuration
