@@ -18,7 +18,7 @@ pub fn project_root() -> PathBuf {
 
 /// API data directory: <project_root>/api/data/
 pub fn api_data_dir() -> PathBuf {
-    project_root().join("api/data")
+    project_root().join("data")
 }
 
 /// Agent workspaces directory: <api_data>/agents/
@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn test_global_skills_dir() {
         let dir = global_skills_dir();
-        assert!(dir.to_str().unwrap().ends_with("api/data/skills"));
+        assert!(dir.to_str().unwrap().ends_with("data/skills"));
     }
 
     #[test]
