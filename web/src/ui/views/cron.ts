@@ -223,7 +223,7 @@ export class CronView extends LitElement {
 
   async loadDevices() {
     try {
-      const res = await deviceApi.getDevices({ pageSize: 200 });
+      const res = await deviceApi.getDevices({ page: 1, pageSize: 200 });
       const data = res.result;
       if (data?.data) {
         this.devices = data.data.map((d) => ({ id: d.id, name: d.displayName || d.name }));
@@ -1152,11 +1152,10 @@ export class CronView extends LitElement {
           <div class="modal-header">
             <span>${isEditing ? "编辑定时任务" : "新建定时任务"}</span>
             <button
-              class="btn btn--ghost btn--sm"
+              class="btn btn--ghost btn--sm cron-ml-auto"
               @click=${this.closeModal}
               aria-label="关闭"
               title="关闭"
-              class="cron-ml-auto"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
                 <line x1="18" y1="6" x2="6" y2="18"></line>

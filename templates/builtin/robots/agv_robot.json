@@ -1,0 +1,34 @@
+{
+  "name": "agv_robot",
+  "display_name": { "zh": "AGV搬运机器人", "en": "AGV Robot" },
+  "description": {
+    "zh": "自动导引搬运车，支持任务调度、状态监控、电量管理",
+    "en": "Automated Guided Vehicle, supports task dispatch, status monitoring, battery management"
+  },
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "robots",
+  "manufacturer": "Generic",
+  "device_type": "robot",
+  "protocol_type": "mqtt",
+  "driver_name": "mqtt",
+  "tags": ["agv", "robot", "logistics", "transport"],
+  "device_info": {
+    "default_name_pattern": "agv_{index}",
+    "default_display_name_pattern": {"zh": "AGV机器人 {index}", "en": "AGV Robot {index}"},
+    "required_fields": ["name", "address"]
+  },
+  "properties": [
+    {"name": "status", "display_name": { "zh": "运行状态", "en": "Status" }, "description": { "zh": "当前运行状态", "en": "Current running status" }, "data_type": "string", "unit": "", "default_value": "idle", "is_read_only": true, "is_required": true},
+    {"name": "battery_level", "display_name": { "zh": "电量", "en": "Battery Level" }, "description": { "zh": "电池电量百分比", "en": "Battery level percentage" }, "data_type": "number", "unit": "%", "min_value": 0.0, "max_value": 100.0, "default_value": "80.0", "is_read_only": true, "is_required": true},
+    {"name": "position_x", "display_name": { "zh": "X坐标", "en": "X Position" }, "description": { "zh": "当前X坐标", "en": "Current X position" }, "data_type": "number", "unit": "m", "min_value": -100.0, "max_value": 100.0, "default_value": "0.0", "is_read_only": true, "is_required": true},
+    {"name": "position_y", "display_name": { "zh": "Y坐标", "en": "Y Position" }, "description": { "zh": "当前Y坐标", "en": "Current Y position" }, "data_type": "number", "unit": "m", "min_value": -100.0, "max_value": 100.0, "default_value": "0.0", "is_read_only": true, "is_required": true},
+    {"name": "speed", "display_name": { "zh": "速度", "en": "Speed" }, "description": { "zh": "当前移动速度", "en": "Current movement speed" }, "data_type": "number", "unit": "m/s", "min_value": 0.0, "max_value": 5.0, "default_value": "0.0", "is_read_only": true, "is_required": false},
+    {"name": "current_task", "display_name": { "zh": "当前任务", "en": "Current Task" }, "description": { "zh": "当前执行的任务ID", "en": "Current task ID" }, "data_type": "string", "unit": "", "default_value": "", "is_read_only": true, "is_required": false}
+  ],
+  "commands": [
+    {"name": "move_to", "display_name": { "zh": "移动到", "en": "Move To" }, "description": { "zh": "移动到指定坐标", "en": "Move to specified position" }, "parameters": "{\"x\": 10.0, \"y\": 5.0}", "parameter_schema": "{\"type\": \"object\", \"properties\": {\"x\": {\"type\": \"number\"}, \"y\": {\"type\": \"number\"}}, \"required\": [\"x\", \"y\"]}", "is_required": true},
+    {"name": "stop", "display_name": { "zh": "停止", "en": "Stop" }, "description": { "zh": "立即停止移动", "en": "Stop movement immediately" }, "parameters": "{}", "is_required": true},
+    {"name": "charge", "display_name": { "zh": "回充电桩", "en": "Return to Charge" }, "description": { "zh": "返回充电桩充电", "en": "Return to charging station" }, "parameters": "{}", "is_required": false}
+  ]
+}

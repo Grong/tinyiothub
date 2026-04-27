@@ -37,40 +37,49 @@
 - 🔒 **安全加固**（配置验证，权限控制）
 - 🎨 **现代化前端界面**（Lit 3 + TypeScript + Vite + nanostore）
 
-## 项目结构
+## 项目结构（多 Crate 架构）
 
 ```
 tinyiothub/
-├── api/                      # Rust 后端服务
-│   ├── src/                  # 源代码
-│   ├── migrations/           # 数据库迁移
-│   ├── drivers/              # 驱动实现
-│   ├── templates/            # 设备模板
-│   ├── vendor/               # 第三方依赖
-│   ├── Cargo.toml            # Rust 项目配置
-│   └── tinyiothub.db         # SQLite 数据库
-├── web/                      # Lit 3 前端应用 (Web Components)
-│   ├── src/                  # 源代码
-│   │   ├── ui/              # Lit 组件、页面、聊天/A2UI
-│   │   ├── api/             # API 客户端
-│   │   ├── i18n/            # 国际化
-│   │   ├── styles/          # CSS 样式
-│   │   └── stores/          # nanostore 状态管理
-│   ├── package.json          # Node.js 项目配置
-│   └── vite.config.ts       # Vite 构建配置
-├── sdks/                     # SDK 开发包
-│   └── driver-sdk/           # 驱动开发 SDK
-├── examples/                 # 示例项目
-│   ├── example-plugin/       # 插件示例
-│   └── bacnet-driver/        # BACnet 驱动示例
-├── marketplace/              # 市场资源
-│   ├── drivers/              # 驱动市场
-│   └── templates/            # 模板市场
-├── scripts/                  # 工具脚本
-├── docs/                     # 项目文档
-├── .kiro/                    # 开发规范
-└── skills/                   # AI prompts / skills
+├── cloud/                   # SaaS 应用编排层（主二进制）
+│   ├── src/                 # SaaS 领域逻辑（tenant, user, workspace, marketplace）
+│   ├── migrations/          # 数据库迁移
+│   ├── drivers/             # 驱动实现
+│   ├── templates/           # 设备模板
+│   ├── vendor/              # 第三方依赖（本地 fork）
+│   ├── Cargo.toml           # Rust 项目配置
+│   └── tinyiothub.db        # SQLite 数据库
+├── crates/                  # 内部库 Crate
+│   ├── tinyiothub-core/     # 通用基础类型与领域模型
+│   ├── tinyiothub-storage/  # 纯 IoT 数据存取抽象与轻量级缓存
+│   ├── tinyiothub-engine/   # 可独立部署的通用 IoT 业务引擎
+│   ├── tinyiothub-web/      # 共享的 HTTP 基础设施层
+│   ├── tinyiothub-error/    # 错误类型（带 `thiserror` 派生）
+│   └── ...（其他支持库）
+├── web/                     # Lit 3 前端应用 (Web Components)
+│   ├── src/                 # 源代码
+│   │   ├── ui/             # Lit 组件、页面、聊天/A2UI
+│   │   ├── api/            # API 客户端
+│   │   ├── i18n/           # 国际化
+│   │   ├── styles/         # CSS 样式
+│   │   └── stores/         # nanostore 状态管理
+│   ├── package.json         # Node.js 项目配置
+│   └── vite.config.ts      # Vite 构建配置
+├── sdks/                    # SDK 开发包
+│   └── driver-sdk/         # 驱动开发 SDK
+├── examples/                # 示例项目
+│   ├── example-plugin/     # 插件示例
+│   └── bacnet-driver/      # BACnet 驱动示例
+├── marketplace/            # 市场资源
+│   ├── drivers/            # 驱动市场
+│   └── templates/          # 模板市场
+├── scripts/                # 工具脚本
+├── docs/                   # 项目文档
+├── .kiro/                  # 开发规范
+└── skills/                 # AI prompts / skills
 ```
+
+**注意：本项目采用多 Crate 架构，依赖方向为单向不可逆：`cloud/edge → runtime → core ← storage`。详细架构见 [CLAUDE.md](CLAUDE.md)。**
 
 ## 快速开始
 
@@ -93,7 +102,7 @@ tinyiothub/
 
 **后端**:
 ```bash
-cd api
+cd cloud
 cargo run
 ```
 
@@ -119,7 +128,7 @@ pnpm dev
 
 **运行**:
 ```bash
-cd api
+cd cloud
 .\target\release\tinyiothub.exe  # Windows
 ./target/release/tinyiothub      # Linux/macOS
 ```
@@ -151,10 +160,10 @@ pnpm build
 
 ### 配置文件
 
-后端配置文件位于 `api/app_settings.toml`：
+后端配置文件位于 `cloud/app_settings.toml`：
 
 ```toml
-# api/app_settings.toml 示例
+# cloud/app_settings.toml 示例
 [server]
 host = "0.0.0.0"
 port = 3002
@@ -223,7 +232,7 @@ async fn list_devices(
 }
 
 // 使用统一的响应构建器
-use crate::dto::response::builder::ApiResponseBuilder;
+use tinyiothub_web::response::ApiResponseBuilder;
 
 // 成功响应
 ApiResponseBuilder::success(data)
@@ -276,7 +285,7 @@ export const loadUsers = task(async (params?: { page?: number; pageSize?: number
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 │   Lit 3 UI      │    │   REST API      │    │   MQTT Client   │
-│   (web/)        │    │   (api/)        │    │   (rumqttc)     │
+│   (web/)        │    │   (cloud/)      │    │   (rumqttc)     │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
          │                       │                       │
          └───────────────────────┼───────────────────────┘
@@ -305,10 +314,10 @@ export const loadUsers = task(async (params?: { page?: number; pageSize?: number
          └─────────────────────────────────────────────────────┘
 ```
 
-### 后端目录结构 (api/)
+### 后端目录结构 (cloud/)
 
 ```
-api/
+cloud/
 ├── src/
 │   ├── api/                  # REST API 层
 │   │   ├── auth/             # 认证相关 API
@@ -317,7 +326,6 @@ api/
 │   │   ├── alarms/           # 告警管理 API
 │   │   ├── alarm_rules/      # 告警规则 API
 │   │   ├── agents/           # AI Agent 管理 API
-│   │   ├── automations/      # 自动化规则 API
 │   │   ├── chat/             # AI Agent 聊天 API
 │   │   ├── events/           # 事件管理 API
 │   │   ├── jobs/             # 定时任务 API
@@ -341,7 +349,6 @@ api/
 │   │   ├── cron_scheduler.rs # 定时任务调度（CronSchedulerService）
 │   │   ├── data_context.rs   # 数据上下文
 │   │   ├── data_server.rs    # 数据服务
-│   │   ├── message_server.rs # 消息服务
 │   │   └── service_manager.rs # 服务管理器
 │   ├── domain/               # 领域层
 │   │   ├── agent/            # Agent 领域
@@ -350,9 +357,7 @@ api/
 │   │   ├── cron/             # 定时任务领域
 │   │   ├── device/           # 设备领域（含 driver/registry）
 │   │   ├── event/            # 事件领域
-│   │   ├── job/              # 任务领域
 │   │   ├── marketplace/      # 市场领域
-│   │   ├── organization/     # 组织领域
 │   │   ├── permission/       # 权限领域
 │   │   ├── plugin/           # 插件领域
 │   │   ├── product/          # 产品领域
@@ -433,9 +438,7 @@ web/
 ### 告警管理
 - `GET /api/v1/alarms` - 获取告警列表
 - `GET /api/v1/alarms/{id}` - 获取告警详情
-- `POST /api/v1/alarms/{id}/acknowledge` - 确认告警
-- `POST /api/v1/alarms/{id}/resolve` - 解决告警
-- `POST /api/v1/alarms/batch-acknowledge` - 批量确认告警
+- `GET /api/v1/alarms/recent` - 获取最新告警
 - `GET /api/v1/alarms/statistics` - 告警统计
 
 ### 告警规则
@@ -462,12 +465,6 @@ web/
 - `DELETE /api/v1/jobs/{id}` - 删除任务
 - `POST /api/v1/jobs/{id}/toggle` - 启用/禁用任务
 - `GET /api/v1/jobs/{id}/runs` - 获取任务执行记录
-
-### 自动化规则
-- `GET /api/v1/automations` - 获取自动化规则列表
-- `POST /api/v1/automations` - 创建自动化规则
-- `PUT /api/v1/automations/{id}` - 更新自动化规则
-- `DELETE /api/v1/automations/{id}` - 删除自动化规则
 
 ### 自愈引擎
 - `GET /api/v1/self-healing/probes` - 获取探针列表
@@ -538,7 +535,7 @@ web/
 
 ```rust
 // 示例：添加新API
-use crate::dto::response::builder::ApiResponseBuilder;
+use tinyiothub_web::response::ApiResponseBuilder;
 
 async fn list_items(
     Query(params): Query<ItemQuery>,
@@ -638,7 +635,7 @@ export class ItemList extends LitElement {
 
 ```bash
 # 后端
-cd api
+cd cloud
 cargo fmt          # 格式化代码
 cargo check        # 检查代码
 cargo clippy       # 代码检查

@@ -1,0 +1,204 @@
+version: '3.8'
+
+services:
+  # ============================================
+  # Nginx 反向代理
+  # ============================================
+  tinyiothub-nginx:
+    image: nginx:alpine
+    container_name: tinyiothub-nginx
+    restart: unless-stopped
+
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8883:8883"
+
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:rw
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./data/certbot:/var/www/certbot
+
+    depends_on:
+      - tinyiothub-api
+      - tinyiothub-mqtt
+      - tinyiothub-docs
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================
+  # TinyIoTHub API 后端服务
+  # ============================================
+  tinyiothub-api:
+    image: chenguorongz/tinyiothub:latest
+    container_name: tinyiothub-api
+    restart: unless-stopped
+
+    expose:
+      - "3002"
+
+    privileged: true
+
+    user: "${UID:-1000}:${GID:-1000}"
+
+    depends_on:
+      zeroclaw:
+        condition: service_healthy
+
+    environment:
+      - RUST_LOG=info
+      - TZ=Asia/Shanghai
+      - TINYIOTHUB__DATABASE__URL=/app/data/tinyiothub.db
+      - TINYIOTHUB__SECURITY__JWT__SECRET=tinyiothub-default-jwt-secret-change-in-production-32chars
+      - TINYIOTHUB__OPENCLAW__URL=http://zeroclaw:42617
+      - TINYIOTHUB__OPENCLAW__WS_URL=ws://zeroclaw:42617
+      - TINYIOTHUB__MQTT__PRIMARY__USERNAME=admin
+      - TINYIOTHUB__MQTT__PRIMARY__PASSWORD=admin123
+
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./templates:/app/templates
+      - ./config/app_settings.toml:/app/app_settings.toml:ro
+
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3002/api/health"]
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================
+  # ZeroClaw AI Agent Gateway
+  # ============================================
+  zeroclaw:
+    image: ghcr.io/zeroclaw-labs/zeroclaw:latest
+    container_name: zeroclaw
+    restart: unless-stopped
+    environment:
+      - API_KEY=${ANTHROPIC_API_KEY:-}
+      - PROVIDER=${ZEROCLAW_PROVIDER:-anthropic}
+      - ZEROCLAW_ALLOW_PUBLIC_BIND=true
+      - ZEROCLAW_GATEWAY_PORT=42617
+    volumes:
+      - ./data/zeroclaw:/zeroclaw-data
+    expose:
+      - "42617"
+    ports:
+      - "42617:42617"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:42617/health"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================
+  # MQTT Broker (Eclipse Mosquitto)
+  # ============================================
+  tinyiothub-mqtt:
+    image: eclipse-mosquitto:2.0.15
+    container_name: tinyiothub-mqtt
+    restart: unless-stopped
+
+    ports:
+      - "1883:1883"     # MQTT 原始端口
+      - "9001:9001"    # MQTT over WebSocket
+
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - ./data/mosquitto:/mosquitto/data
+      - ./data/mosquitto:/mosquitto/log
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================
+  # TinyIoTHub Docs 文档服务 (VitePress)
+  # ============================================
+  tinyiothub-docs:
+    image: chenguorongz/tinyiothub-docs:latest
+    container_name: tinyiothub-docs
+    restart: unless-stopped
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================
+  # Certbot (用于 SSL 证书申请)
+  # ============================================
+  certbot:
+    image: certbot/certbot
+    container_name: tinyiothub-certbot
+    volumes:
+      - ./data/certbot:/var/www/certbot
+      - ./nginx/ssl:/etc/nginx/ssl
+    entrypoint: "/bin/sh -c 'mkdir -p /var/www/certbot/.well-known/acme-challenge; trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+
+  # ============================================
+  # Marketplace 市场服务
+  # ============================================
+  tinyiothub-marketplace:
+    image: chenguorongz/tinyiothub-marketplace:latest
+    container_name: tinyiothub-marketplace
+    restart: unless-stopped
+
+    expose:
+      - "3003"
+
+    privileged: true
+
+    user: "${UID:-1000}:${GID:-1000}"
+
+    environment:
+      - RUST_LOG=info
+      - TZ=Asia/Shanghai
+      - TINYIOTHUB__DATABASE__URL=/app/data/tinyiothub.db
+      - TINYIOTHUB__SECURITY__JWT__SECRET=tinyiothub-default-jwt-secret-change-in-production-32chars
+      - TINYIOTHUB__MQTT__PRIMARY__USERNAME=admin
+      - TINYIOTHUB__MQTT__PRIMARY__PASSWORD=admin123
+
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./templates:/app/templates
+      - ./config/app_settings.toml:/app/app_settings.toml:ro
+
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3003/"]
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  default:
+    name: tinyiothub-network

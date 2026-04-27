@@ -1,0 +1,12 @@
+[package]
+name = "tinyiothub-driver-onvif"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+tinyiothub-plugin = { workspace = true }

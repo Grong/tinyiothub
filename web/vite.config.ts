@@ -12,6 +12,14 @@ export default defineConfig(function () {
       outDir: path.resolve(here, "../dist/ui"),
       emptyOutDir: true,
       sourcemap: true,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            vendor: ["lit", "@lit-labs/signals"],
+            three: ["three"],
+          },
+        },
+      },
     },
     server: {
       host: true,

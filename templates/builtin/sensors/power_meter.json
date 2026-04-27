@@ -1,0 +1,33 @@
+{
+  "name": "power_meter",
+  "display_name": { "zh": "电力仪表", "en": "Power Meter" },
+  "description": {
+    "zh": "多功能电力仪表，监测电压、电流、功率、电量，适用于配电柜、能耗监测",
+    "en": "Multi-function power meter, monitors voltage, current, power, energy, for distribution panels and energy monitoring"
+  },
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "sensors",
+  "manufacturer": "TinyIoT",
+  "device_type": "sensor",
+  "protocol_type": "modbus",
+  "driver_name": "modbus_rtu",
+  "tags": ["power", "energy", "electricity", "meter"],
+  "device_info": {
+    "default_name_pattern": "power_meter_{index}",
+    "default_display_name_pattern": {"zh": "电力仪表 {index}", "en": "Power Meter {index}"},
+    "required_fields": ["name", "address"]
+  },
+  "properties": [
+    {"name": "voltage", "display_name": { "zh": "电压", "en": "Voltage" }, "description": { "zh": "相电压", "en": "Phase voltage" }, "data_type": "number", "unit": "V", "min_value": 0.0, "max_value": 500.0, "default_value": "220.0", "is_read_only": true, "is_required": true},
+    {"name": "current", "display_name": { "zh": "电流", "en": "Current" }, "description": { "zh": "相电流", "en": "Phase current" }, "data_type": "number", "unit": "A", "min_value": 0.0, "max_value": 1000.0, "default_value": "10.0", "is_read_only": true, "is_required": true},
+    {"name": "active_power", "display_name": { "zh": "有功功率", "en": "Active Power" }, "description": { "zh": "有功功率", "en": "Active power" }, "data_type": "number", "unit": "kW", "min_value": 0.0, "max_value": 999999.0, "default_value": "2.2", "is_read_only": true, "is_required": true},
+    {"name": "energy", "display_name": { "zh": "累计电量", "en": "Total Energy" }, "description": { "zh": "累计用电量", "en": "Total energy consumption" }, "data_type": "number", "unit": "kWh", "min_value": 0.0, "max_value": 99999999.0, "default_value": "0.0", "is_read_only": true, "is_required": true},
+    {"name": "power_factor", "display_name": { "zh": "功率因数", "en": "Power Factor" }, "description": { "zh": "功率因数", "en": "Power factor" }, "data_type": "number", "unit": "", "min_value": -1.0, "max_value": 1.0, "default_value": "0.95", "is_read_only": true, "is_required": false},
+    {"name": "frequency", "display_name": { "zh": "频率", "en": "Frequency" }, "description": { "zh": "电网频率", "en": "Grid frequency" }, "data_type": "number", "unit": "Hz", "min_value": 45.0, "max_value": 65.0, "default_value": "50.0", "is_read_only": true, "is_required": false}
+  ],
+  "commands": [
+    {"name": "read_all", "display_name": { "zh": "读取全部", "en": "Read All" }, "description": { "zh": "读取所有电力参数", "en": "Read all power parameters" }, "parameters": "{}", "is_required": true},
+    {"name": "reset_energy", "display_name": { "zh": "电量清零", "en": "Reset Energy" }, "description": { "zh": "重置累计电量", "en": "Reset total energy counter" }, "parameters": "{}", "is_required": false}
+  ]
+}

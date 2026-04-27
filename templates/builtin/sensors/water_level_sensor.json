@@ -1,0 +1,29 @@
+{
+  "name": "water_level_sensor",
+  "display_name": { "zh": "液位传感器", "en": "Water Level Sensor" },
+  "description": {
+    "zh": "投入式液位传感器，适用于水箱、水池、河道水位监测",
+    "en": "Submersible level sensor, suitable for tanks, pools, river level monitoring"
+  },
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "sensors",
+  "manufacturer": "TinyIoT",
+  "device_type": "sensor",
+  "protocol_type": "modbus",
+  "driver_name": "modbus_rtu",
+  "tags": ["water", "level", "liquid", "tank"],
+  "device_info": {
+    "default_name_pattern": "water_level_{index}",
+    "default_display_name_pattern": {"zh": "液位传感器 {index}", "en": "Water Level Sensor {index}"},
+    "required_fields": ["name", "address"]
+  },
+  "properties": [
+    {"name": "level", "display_name": { "zh": "液位", "en": "Level" }, "description": { "zh": "当前液位高度", "en": "Current liquid level" }, "data_type": "number", "unit": "m", "min_value": 0.0, "max_value": 10.0, "default_value": "1.5", "is_read_only": true, "is_required": true},
+    {"name": "level_percent", "display_name": { "zh": "液位百分比", "en": "Level Percentage" }, "description": { "zh": "液位百分比", "en": "Level percentage" }, "data_type": "number", "unit": "%", "min_value": 0.0, "max_value": 100.0, "default_value": "50.0", "is_read_only": true, "is_required": true},
+    {"name": "temperature", "display_name": { "zh": "液体温度", "en": "Liquid Temperature" }, "description": { "zh": "液体温度", "en": "Liquid temperature" }, "data_type": "number", "unit": "°C", "min_value": -10.0, "max_value": 80.0, "default_value": "20.0", "is_read_only": true, "is_required": false}
+  ],
+  "commands": [
+    {"name": "read_all", "display_name": { "zh": "读取全部", "en": "Read All" }, "description": { "zh": "读取液位数据", "en": "Read level data" }, "parameters": "{}", "is_required": true}
+  ]
+}

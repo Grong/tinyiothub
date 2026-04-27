@@ -1,0 +1,31 @@
+{
+  "name": "smart_relay",
+  "display_name": { "zh": "智能继电器", "en": "Smart Relay" },
+  "description": {
+    "zh": "多路智能继电器模块，支持远程开关控制，适用于照明、门禁、设备启停",
+    "en": "Multi-channel smart relay module, supports remote on/off control, for lighting, access control, device switching"
+  },
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "controllers",
+  "manufacturer": "TinyIoT",
+  "device_type": "controller",
+  "protocol_type": "modbus",
+  "driver_name": "modbus_rtu",
+  "tags": ["relay", "switch", "control", "lighting"],
+  "device_info": {
+    "default_name_pattern": "relay_{index}",
+    "default_display_name_pattern": {"zh": "智能继电器 {index}", "en": "Smart Relay {index}"},
+    "required_fields": ["name", "address"]
+  },
+  "properties": [
+    {"name": "channel_1", "display_name": { "zh": "通道1", "en": "Channel 1" }, "description": { "zh": "继电器通道1状态", "en": "Relay channel 1 status" }, "data_type": "boolean", "unit": "", "default_value": "false", "is_read_only": false, "is_required": true},
+    {"name": "channel_2", "display_name": { "zh": "通道2", "en": "Channel 2" }, "description": { "zh": "继电器通道2状态", "en": "Relay channel 2 status" }, "data_type": "boolean", "unit": "", "default_value": "false", "is_read_only": false, "is_required": true},
+    {"name": "channel_3", "display_name": { "zh": "通道3", "en": "Channel 3" }, "description": { "zh": "继电器通道3状态", "en": "Relay channel 3 status" }, "data_type": "boolean", "unit": "", "default_value": "false", "is_read_only": false, "is_required": false},
+    {"name": "channel_4", "display_name": { "zh": "通道4", "en": "Channel 4" }, "description": { "zh": "继电器通道4状态", "en": "Relay channel 4 status" }, "data_type": "boolean", "unit": "", "default_value": "false", "is_read_only": false, "is_required": false}
+  ],
+  "commands": [
+    {"name": "set_channel", "display_name": { "zh": "设置通道", "en": "Set Channel" }, "description": { "zh": "设置指定通道开关状态", "en": "Set specified channel on/off" }, "parameters": "{\"channel\": 1, \"value\": true}", "parameter_schema": "{\"type\": \"object\", \"properties\": {\"channel\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 4}, \"value\": {\"type\": \"boolean\"}}, \"required\": [\"channel\", \"value\"]}", "is_required": true},
+    {"name": "all_off", "display_name": { "zh": "全部关闭", "en": "All Off" }, "description": { "zh": "关闭所有通道", "en": "Turn off all channels" }, "parameters": "{}", "is_required": false}
+  ]
+}

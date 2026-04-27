@@ -1,0 +1,29 @@
+{
+  "name": "temperature_humidity_sensor",
+  "display_name": { "zh": "温湿度传感器", "en": "Temperature & Humidity Sensor" },
+  "description": {
+    "zh": "高精度温湿度传感器，适用于机房、仓库、农业大棚等场景",
+    "en": "High-precision temperature and humidity sensor, suitable for server rooms, warehouses, greenhouses"
+  },
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "sensors",
+  "manufacturer": "TinyIoT",
+  "device_type": "sensor",
+  "protocol_type": "modbus",
+  "driver_name": "modbus_rtu",
+  "tags": ["temperature", "humidity", "environment"],
+  "device_info": {
+    "default_name_pattern": "th_sensor_{index}",
+    "default_display_name_pattern": {"zh": "温湿度传感器 {index}", "en": "Temp & Humidity Sensor {index}"},
+    "required_fields": ["name", "address"]
+  },
+  "properties": [
+    {"name": "temperature", "display_name": { "zh": "温度", "en": "Temperature" }, "description": { "zh": "环境温度", "en": "Ambient temperature" }, "data_type": "number", "unit": "°C", "min_value": -40.0, "max_value": 80.0, "default_value": "25.0", "is_read_only": true, "is_required": true},
+    {"name": "humidity", "display_name": { "zh": "湿度", "en": "Humidity" }, "description": { "zh": "相对湿度", "en": "Relative humidity" }, "data_type": "number", "unit": "%RH", "min_value": 0.0, "max_value": 100.0, "default_value": "50.0", "is_read_only": true, "is_required": true},
+    {"name": "dew_point", "display_name": { "zh": "露点温度", "en": "Dew Point" }, "description": { "zh": "露点温度", "en": "Dew point temperature" }, "data_type": "number", "unit": "°C", "min_value": -40.0, "max_value": 80.0, "default_value": "15.0", "is_read_only": true, "is_required": false}
+  ],
+  "commands": [
+    {"name": "read_all", "display_name": { "zh": "读取全部", "en": "Read All" }, "description": { "zh": "读取温湿度数据", "en": "Read temperature and humidity data" }, "parameters": "{}", "is_required": true}
+  ]
+}

@@ -1,0 +1,198 @@
+# TinyIoTHub Configuration
+# 云端 SaaS 物联网平台配置文件
+
+[server]
+# HTTP服务器配置
+host = "0.0.0.0"
+port = 3002
+static_files_dir = "wwwroot"
+upload_dir = "uploads"
+enable_cors = true
+cors_origins = ["*"]
+max_connections = 1000
+request_timeout_secs = 30
+
+[database]
+# 数据库配置
+url = "tinyiothub.db"
+max_connections = 10
+min_connections = 1
+connect_timeout_secs = 30
+query_timeout_secs = 60
+log_queries = false
+auto_migrate = true
+
+[mqtt]
+# MQTT主要配置
+[mqtt.primary]
+host = "192.168.1.124"
+port = 1883
+username = "${MQTT_USERNAME}"
+password = "${MQTT_PASSWORD}"
+use_tls = false
+connect_timeout_secs = 30
+keep_alive_secs = 60
+
+# MQTT 4G备用配置
+[mqtt.secondary]
+host = "175.178.49.5"
+port = 9990
+username = "${MQTT_USERNAME}"
+password = "${MQTT_PASSWORD}"
+use_tls = false
+connect_timeout_secs = 30
+keep_alive_secs = 60
+
+# MQTT客户端配置
+[mqtt.client]
+client_id = "iot-edge"
+clean_session = true
+auto_reconnect = true
+max_reconnect_attempts = 5
+reconnect_delay_secs = 5
+message_queue_size = 1000
+
+# MQTT主题配置
+[mqtt.topics]
+prefix = "gateway"
+heartbeat = "heartbeat"
+device_registration = "device_regist"
+command = "command"
+data_upload = "data"
+alarm = "alarm"
+publish_qos = 1
+subscribe_qos = 1
+
+[logging]
+# 日志配置
+level = "info"
+console_enabled = true
+file_enabled = true
+file_path = "logs/app.log"
+max_file_size_mb = 10
+max_files = 5
+format = "text"
+structured = false
+
+[security]
+# 安全配置
+[security.jwt]
+# JWT 密钥 - 必须设置！至少 32 个字符，建议 64 个字符
+# 可以通过环境变量 TINYIOTHUB__SECURITY__JWT__SECRET 设置
+secret = ""  
+expiration_secs = 10800  # 3 hours (auth_time * 3600)
+issuer = "iot-edge"
+audience = "iot-edge-users"
+algorithm = "HS256"
+
+[security.session]
+timeout_secs = 10800  # 3 hours
+max_concurrent_sessions = 5
+persistent = false
+storage_type = "memory"
+
+[security.rate_limiting]
+enabled = true
+requests_per_minute = 60
+auth_requests_per_minute = 10
+burst_size = 10
+
+[monitoring]
+# 监控配置
+[monitoring.health_check]
+enabled = true
+interval_secs = 30
+timeout_secs = 10
+
+[monitoring.metrics]
+enabled = true
+collection_interval_secs = 60
+retention_days = 7
+export_format = "json"
+
+[monitoring.alerting]
+enabled = true
+check_interval_secs = 60
+
+[features]
+# 功能开关
+experimental_features = false
+debug_mode = false
+dev_tools = false
+
+[environment]
+# 环境配置
+name = "production"
+
+[update]
+# 更新服务配置
+host = "192.168.1.124"
+port = 8101
+enabled = true
+check_interval_secs = 3600
+auto_update = false
+
+[messaging]
+# 消息配置
+max_message_limit = 1000
+heartbeat_interval_secs = 10
+
+[mobile]
+# 4G移动网络配置
+[mobile.apn]
+name = "ctnet"
+enabled = false
+
+[sms]
+# 短信服务配置
+enabled = false
+provider = "aliyun"  # aliyun, tencent, twilio
+
+[sms.aliyun]
+access_key_id = ""
+access_key_secret = ""
+sign_name = ""       # 短信签名
+template_code = ""  # 短信模板Code
+
+[sms.tencent]
+secret_id = ""
+secret_key = ""
+app_id = ""          # SDK AppID
+sign_name = ""       # 短信签名
+template_id = ""     # 模板ID
+
+[sms.rate_limit]
+max_per_minute = 5   # 每分钟最大发送次数
+code_expire_secs = 300 # 验证码有效期（秒）
+daily_limit = 5       # 每天最大发送次数
+interval_secs = 90    # 发送间隔（秒）
+
+[sms.captcha]
+# 腾讯防水墙 CAPTCHA 验证
+enabled = false
+
+[social]
+# 第三方登录配置
+[social.wechat]
+enabled = false
+app_id = ""          # 开放平台应用ID
+app_secret = ""      # 开放平台应用密钥
+redirect_uri = ""    # 授权回调地址
+
+[social.wechat_miniprogram]
+enabled = false
+app_id = ""          # 小程序AppID
+app_secret = ""      # 小程序AppSecret
+
+[agent]
+memory_backend = "sqlite"
+observer_backend = "log"
+heartbeat_enabled = true
+heartbeat_interval_minutes = 30
+max_messages_before_compact = 50
+enable_compaction = true
+
+[minimax]
+base_url = "https://api.minimax.chat/v1"
+auth_token = ""
+model = "MiniMax-M2.7-highspeed"

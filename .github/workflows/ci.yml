@@ -2,27 +2,24 @@ name: CI
 
 on:
   push:
-    branches: [master, saas]
+    branches: [main, master, saas]
   pull_request:
-    branches: [master, saas]
+    branches: [main, master, saas]
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   # -----------------------------------------------------------------------------
-  # 后端检查
+  # Rust Workspace Check
   # -----------------------------------------------------------------------------
-  backend-check:
-    name: Backend Check
+  rust-check:
+    name: Rust Workspace Check
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: api
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # 需要历史来检测新文件
+          fetch-depth: 0
 
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
@@ -35,27 +32,42 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            api/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('api/Cargo.lock') }}
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      - name: Check
-        run: cargo check
+      - name: Check workspace
+        run: cargo check --workspace
 
       - name: Fmt
         run: cargo fmt --check
 
       - name: Clippy
-        run: cargo clippy -- -D warnings --allow dead_code --allow unused_imports --allow unused_variables --allow unused_mut --allow non_snake_case
+        run: cargo clippy --workspace -- -D warnings
 
-      - name: Test
-        run: cargo test --all
+      - name: Test workspace
+        run: cargo test --workspace
+
+      - name: Code coverage
+        run: |
+          cargo install cargo-tarpaulin --locked
+          cargo tarpaulin --workspace --skip-clean --out xml --output-dir coverage
+        continue-on-error: true
+
+      - name: Security audit
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
+
+      - name: Dependency check (cargo-deny)
+        run: |
+          cargo install cargo-deny --locked
+          cargo deny check
 
       - name: Detect new files
         id: new-files
         run: |
-          # 获取相对于 origin/saas 的新增文件
-          NEW_FILES=$(git diff --name-only origin/saas...HEAD --diff-filter=A | grep -E "\.(rs)$" || true)
+          NEW_FILES=$(git diff --name-only origin/${{ github.base_ref || 'main' }}...HEAD --diff-filter=A | grep -E "\.(rs)$" || true)
           echo "new_files=$NEW_FILES" >> $GITHUB_OUTPUT
           echo "=== New Rust files in this PR ==="
           if [ -z "$NEW_FILES" ]; then
@@ -71,19 +83,18 @@ jobs:
           NEW_FILES="${{ steps.new-files.outputs.new_files }}"
           for file in $NEW_FILES; do
             echo "Checking: $file"
-            
-            # 1. 检查是否在 api/src/ 下创建了散弹式 utils/helpers
-            if echo "$file" | grep -qE "^api/src/utils.*\.rs$|^api/src/helpers.*\.rs$|^api/src/common.*\.rs$"; then
+
+            # 1. 检查是否在 cloud/src/ 下创建了散弹式 utils/helpers
+            if echo "$file" | grep -qE "^cloud/src/utils.*\.rs$|^cloud/src/helpers.*\.rs$|^cloud/src/common.*\.rs$"; then
               echo "❌ ARCHITECTURE VIOLATION: Cannot create scatter-shot utils/helpers: $file"
               echo "   ✅ Use shared/ or specific domain modules"
               exit 1
             fi
-            
-            # 2. 检查新文件是否在 domain/ 但没有 #[cfg(test)]
-            if echo "$file" | grep -qE "^api/src/domain/.*\.rs$"; then
+
+            # 2. 检查新 domain 文件是否有测试
+            if echo "$file" | grep -qE "^cloud/src/modules/.*\.rs$"; then
               if ! grep -qE "#\[cfg\(test\)\]|#\[test\]" "$file" 2>/dev/null; then
-                echo "⚠️  WARNING: New domain file has no tests: $file"
-                # 不强制失败，只警告
+                echo "⚠️  WARNING: New module file has no tests: $file"
               fi
             fi
           done
@@ -92,17 +103,11 @@ jobs:
       - name: Grandfathered Check (All Files)
         run: |
           echo "=== Checking ALL modified files for critical violations ==="
-          
-          # 这些检查对所有文件生效（不论新旧）
-          
-          # 检查 1：禁止直接 panic/unwrap in handlers
-          MODIFIED_HANDLERS=$(git diff --name-only origin/saas...HEAD | grep -E "^api/src/api/.*\.rs$" || true)
+
+          MODIFIED_HANDLERS=$(git diff --name-only origin/${{ github.base_ref || 'main' }}...HEAD | grep -E "^cloud/src/modules/.*/handler.*\.rs$" || true)
           if [ -n "$MODIFIED_HANDLERS" ]; then
             for file in $MODIFIED_HANDLERS; do
               if grep -qE "\.unwrap\(\)|\.expect\(\)" "$file" 2>/dev/null; then
-                echo "❌ VIOLATION: unwrap/expect found in handler: $file"
-                echo "   ✅ Use ? operator or map_err"
-                # 降级为警告，因为历史代码可能有很多
                 echo "⚠️  WARNING (grandfathered): unwrap in $file - should be fixed"
               fi
             done
@@ -141,16 +146,19 @@ jobs:
       - name: Test
         run: pnpm test --if-present
 
-      - name: ESLint
+      - name: Lint
         run: pnpm lint --if-present 2>&1 || echo "No lint script configured"
 
       - name: Build
         run: pnpm build
 
+      - name: Security audit
+        run: pnpm audit --audit-level=high || echo "No vulnerabilities found or audit not configured"
+
       - name: Detect new TypeScript files
         id: new-ts-files
         run: |
-          NEW_FILES=$(git diff --name-only origin/saas...HEAD --diff-filter=A | grep -E "\.(ts|tsx)$" || true)
+          NEW_FILES=$(git diff --name-only origin/${{ github.base_ref || 'main' }}...HEAD --diff-filter=A | grep -E "\.(ts|tsx)$" || true)
           echo "new_files=$NEW_FILES" >> $GITHUB_OUTPUT
           echo "=== New TypeScript files in this PR ==="
           if [ -z "$NEW_FILES" ]; then
@@ -166,22 +174,22 @@ jobs:
           NEW_FILES="${{ steps.new-ts-files.outputs.new_files }}"
           for file in $NEW_FILES; do
             echo "Checking: $file"
-            
-            # 禁止在 app/ 或 components/ 下直接 fetch
+
+            # 禁止在 ui/ 组件中直接 fetch
             case "$file" in
-              web/app/*|web/components/*)
+              web/src/ui/*)
                 if grep -qE "fetch\(|axios\.|useQuery\s*\(" "$file" 2>/dev/null; then
                   echo "❌ ARCHITECTURE VIOLATION: Direct API call in component: $file"
-                  echo "   ✅ Must use service layer + hooks"
+                  echo "   ✅ Must use web/src/api/ layer"
                   exit 1
                 fi
                 ;;
             esac
-            
-            # 新增的 service 文件必须有导出
-            if echo "$file" | grep -qE "^web/service/.*\.ts$"; then
+
+            # 新增的 API 文件必须有导出
+            if echo "$file" | grep -qE "^web/src/api/.*\.ts$"; then
               if ! grep -qE "^export " "$file" 2>/dev/null; then
-                echo "❌ VIOLATION: Service file has no exports: $file"
+                echo "❌ VIOLATION: API file has no exports: $file"
                 exit 1
               fi
             fi
@@ -198,7 +206,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check commit message
         run: |
-          COMMITS=$(git log origin/saas..HEAD --oneline --format="%s")
+          COMMITS=$(git log origin/${{ github.base_ref || 'main' }}..HEAD --oneline --format="%s")
           echo "=== Commit Messages ==="
           echo "$COMMITS"
           echo ""

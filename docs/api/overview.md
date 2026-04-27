@@ -214,28 +214,8 @@
 #### GET /api/v1/alarms/:id
 获取告警详情
 
-#### POST /api/v1/alarms/:id/acknowledge
-确认告警
-
-**请求体:**
-```json
-{
-  "acknowledgedBy": "admin",
-  "note": "已处理此告警"
-}
-```
-
-#### POST /api/v1/alarms/batch/acknowledge
-批量确认告警
-
-**请求体:**
-```json
-{
-  "alarmIds": ["alarm-1", "alarm-2"],
-  "acknowledgedBy": "admin",
-  "note": "批量处理告警"
-}
-```
+#### GET /api/v1/alarms/recent
+获取最新告警列表
 
 #### GET /api/v1/alarm-rules
 获取告警规则列表
@@ -254,18 +234,6 @@
 
 #### POST /api/v1/alarm-rules/:id/toggle
 启用/禁用告警规则
-
-#### GET /api/v1/automations
-获取自动化规则列表
-
-#### POST /api/v1/automations
-创建自动化规则
-
-#### PUT /api/v1/automations/:id
-更新自动化规则
-
-#### DELETE /api/v1/automations/:id
-删除自动化规则
 
 #### GET /api/v1/events
 获取事件列表

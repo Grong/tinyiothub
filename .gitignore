@@ -1,9 +1,5 @@
 # Rust 编译输出
-/api/target
-/api/Cargo.lock
-/sdks/driver-sdk/target
-/examples/example-plugin/target
-/examples/bacnet-driver/target
+**/target/
 
 # IDE
 /.idea
@@ -23,7 +19,10 @@ app_settings_harmonyos.toml
 
 # 日志文件
 logs/*.log
-/api/logs
+cloud/logs/
+
+# 运行时数据目录
+/data/
 
 # 临时文件
 /temp
@@ -32,7 +31,7 @@ logs/*.log
 /wwwroot
 
 # Docker 日志
-/docker/logs
+/deploy/docker/logs
 
 # Worktrees
 .worktrees/
@@ -52,3 +51,8 @@ api/wwwroot
 
 /dist
 /.gstack
+# Ignore vendor subdirectories that are downloaded/generated, but track vendored Rust crates
+# Vendored crates: zeroclaw, zeroclaw-macros, onvif-rs, tokio-modbus
+/vendor/*.tar.gz
+/vendor/*.zip
+/target

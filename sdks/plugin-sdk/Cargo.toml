@@ -1,0 +1,22 @@
+[package]
+name = "tinyiothub-plugin-sdk"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "SDK for developing TinyIoTHub device plugins"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tinyiothub-core = { workspace = true, optional = true }
+
+[features]
+default = []
+core-interop = ["tinyiothub-core"]
+
+[dev-dependencies]
+tokio = { workspace = true }

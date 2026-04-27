@@ -1,0 +1,70 @@
+# cargo-deny configuration for TinyIoTHub workspace
+# https://embarkstudios.github.io/cargo-deny/
+
+targets = [
+    { triple = "x86_64-unknown-linux-gnu" },
+    { triple = "aarch64-unknown-linux-gnu" },
+]
+
+# -----------------------------------------------------------------------------
+# Licensing
+# -----------------------------------------------------------------------------
+[licenses]
+version = 2
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "MPL-2.0",
+    "CC0-1.0",
+    "Unlicense",
+    "Zlib",
+    "BSL-1.0",
+    "OpenSSL",
+]
+deny = [
+    "GPL-2.0",
+    "GPL-3.0",
+    "AGPL-3.0",
+]
+
+# -----------------------------------------------------------------------------
+# Bans (duplicate crates, yanked crates, etc.)
+# -----------------------------------------------------------------------------
+[bans]
+multiple-versions = "warn"
+wildcards = "warn"
+highlight = "all"
+
+# Allow specific duplicates that are hard to avoid
+skip = [
+    # syn 1.x vs 2.x — proc-macro ecosystem transition
+    { name = "syn", version = "1.0" },
+    # windows-sys versions
+    { name = "windows-sys", version = "0.48" },
+    { name = "windows-sys", version = "0.52" },
+]
+
+# -----------------------------------------------------------------------------
+# Advisories (security vulnerabilities)
+# -----------------------------------------------------------------------------
+[advisories]
+version = 2
+yanked = "warn"
+ignore = [
+    # Add ignored advisories here with justification:
+    # "RUSTSEC-YYYY-NNNN", # reason: ...
+]
+
+# -----------------------------------------------------------------------------
+# Sources (crates.io only, no git deps without approval)
+# -----------------------------------------------------------------------------
+[sources]
+unknown-registry = "warn"
+unknown-git = "warn"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
