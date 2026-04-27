@@ -60,6 +60,22 @@ pub fn default_workspace_dir() -> PathBuf {
     workspace_dir(DEFAULT_WORKSPACE_ID)
 }
 
+/// Templates root directory: <project_root>/templates/
+pub fn templates_dir() -> PathBuf {
+    project_root().join("templates")
+}
+
+/// Builtin device templates directory: <templates>/builtin/
+pub fn builtin_templates_dir() -> PathBuf {
+    templates_dir().join("builtin")
+}
+
+/// Agent prompt templates directory: <project_root>/cloud/templates/agent/
+/// Note: these are embedded at compile time via include_str!, this path is for reference.
+pub fn agent_templates_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("templates").join("agent")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

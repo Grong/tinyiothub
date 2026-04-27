@@ -238,7 +238,7 @@ impl AppState {
 
         // 模板引擎 - 复合服务，依赖仓库和验证器
         let template_repository =
-            Arc::new(TemplateRepository::new(database.clone(), PathBuf::from("templates")));
+            Arc::new(TemplateRepository::new(database.clone(), crate::shared::paths::templates_dir()));
         let template_validator = Arc::new(TemplateValidator::new());
         let template_engine =
             Arc::new(TemplateEngine::new(template_repository, template_validator));
