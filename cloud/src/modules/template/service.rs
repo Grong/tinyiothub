@@ -252,24 +252,24 @@ impl TemplateEngine {
         Ok(device_commands)
     }
 
-    /// 应用名称模式
+    /// 应用名称模式（多语言支持）
     fn apply_name_pattern(
         &self,
-        pattern: &Option<String>,
+        pattern: &Option<HashMap<String, String>>,
         user_input: &DeviceCreationInput,
     ) -> Option<String> {
-        pattern.as_ref().map(|p| {
-            let mut result = p.clone();
+        pattern.as_ref().map(|patterns| {
+            let template = patterns.get("zh")
+                .or_else(|| patterns.values().next())
+                .cloned()
+                .unwrap_or_default();
 
-            // 替换占位符
+            let mut result = template;
             result = result.replace("{name}", &user_input.name);
             if let Some(display_name) = &user_input.display_name {
                 result = result.replace("{display_name}", display_name);
             }
-
-            // 可以添加更多占位符替换逻辑
-            result = result.replace("{index}", "1"); // 简单的索引替换
-
+            result = result.replace("{index}", "1");
             result
         })
     }

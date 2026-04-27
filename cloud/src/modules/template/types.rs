@@ -35,7 +35,7 @@ pub struct DeviceTemplate {
 #[serde(rename_all = "snake_case")]
 pub struct DeviceInfo {
     pub default_name_pattern: String, // 例如: "{manufacturer}_{device_type}_{index}"
-    pub default_display_name_pattern: Option<String>,
+    pub default_display_name_pattern: Option<HashMap<String, String>>,
     pub default_description: Option<HashMap<String, String>>,
     pub default_position: Option<String>,
     pub default_driver_options: Option<String>,

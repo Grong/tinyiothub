@@ -1,0 +1,33 @@
+{
+  "name": "ip_camera",
+  "display_name": { "zh": "网络摄像头", "en": "IP Camera" },
+  "description": {
+    "zh": "ONVIF协议网络摄像头，支持RTSP流、PTZ控制、移动侦测",
+    "en": "ONVIF IP camera, supports RTSP streaming, PTZ control, motion detection"
+  },
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "cameras",
+  "manufacturer": "Generic",
+  "device_type": "camera",
+  "protocol_type": "onvif",
+  "driver_name": "onvif",
+  "tags": ["camera", "video", "surveillance", "onvif"],
+  "device_info": {
+    "default_name_pattern": "camera_{index}",
+    "default_display_name_pattern": "摄像头 {index}",
+    "required_fields": ["name", "address"]
+  },
+  "properties": [
+    {"name": "rtsp_url", "display_name": { "zh": "RTSP地址", "en": "RTSP URL" }, "description": { "zh": "视频流地址", "en": "Video stream URL" }, "data_type": "string", "unit": "", "default_value": "", "is_read_only": true, "is_required": true},
+    {"name": "resolution", "display_name": { "zh": "分辨率", "en": "Resolution" }, "description": { "zh": "视频分辨率", "en": "Video resolution" }, "data_type": "string", "unit": "", "default_value": "1920x1080", "is_read_only": true, "is_required": false},
+    {"name": "motion_detected", "display_name": { "zh": "移动侦测", "en": "Motion Detected" }, "description": { "zh": "是否检测到移动", "en": "Whether motion is detected" }, "data_type": "boolean", "unit": "", "default_value": "false", "is_read_only": true, "is_required": false},
+    {"name": "ptz_pan", "display_name": { "zh": "水平角度", "en": "Pan Angle" }, "description": { "zh": "PTZ水平角度", "en": "PTZ pan angle" }, "data_type": "number", "unit": "°", "min_value": -180.0, "max_value": 180.0, "default_value": "0", "is_read_only": false, "is_required": false},
+    {"name": "ptz_tilt", "display_name": { "zh": "俯仰角度", "en": "Tilt Angle" }, "description": { "zh": "PTZ俯仰角度", "en": "PTZ tilt angle" }, "data_type": "number", "unit": "°", "min_value": -90.0, "max_value": 90.0, "default_value": "0", "is_read_only": false, "is_required": false}
+  ],
+  "commands": [
+    {"name": "snapshot", "display_name": { "zh": "截图", "en": "Snapshot" }, "description": { "zh": "抓取当前画面", "en": "Capture current frame" }, "parameters": "{}", "is_required": true},
+    {"name": "ptz_move", "display_name": { "zh": "PTZ移动", "en": "PTZ Move" }, "description": { "zh": "控制云台移动", "en": "Control PTZ movement" }, "parameters": "{\"direction\": \"left\"}", "parameter_schema": "{\"type\": \"object\", \"properties\": {\"direction\": {\"type\": \"string\", \"enum\": [\"left\", \"right\", \"up\", \"down\", \"stop\"]}}, \"required\": [\"direction\"]}", "is_required": false},
+    {"name": "ptz_home", "display_name": { "zh": "回到原点", "en": "PTZ Home" }, "description": { "zh": "云台回到初始位置", "en": "Move PTZ to home position" }, "parameters": "{}", "is_required": false}
+  ]
+}
