@@ -15,7 +15,7 @@
   "tags": ["air", "quality", "pm25", "co2", "indoor"],
   "device_info": {
     "default_name_pattern": "air_quality_{index}",
-    "default_display_name_pattern": "空气质量传感器 {index}",
+    "default_display_name_pattern": {"zh": "空气质量传感器 {index}", "en": "Air Quality Sensor {index}"},
     "required_fields": ["name", "address"]
   },
   "properties": [

@@ -306,6 +306,10 @@ impl TemplateEngine {
         &self.template_repository
     }
 
+    pub fn get_repository_arc(&self) -> Arc<TemplateRepository> {
+        self.template_repository.clone()
+    }
+
     /// 获取验证器引用
     pub fn get_validator(&self) -> &TemplateValidator {
         &self.validator
@@ -1007,7 +1011,7 @@ impl TemplateService {
         self.repository.get_file_manager().ensure_directory_structure()?;
 
         // 加载内置模板
-        let _templates = self.repository.load_builtin_templates().await?;
+        let _templates = self.repository.load_builtin_templates()?;
 
         info!("模板系统初始化完成");
         Ok(())

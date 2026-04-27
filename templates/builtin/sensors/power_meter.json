@@ -15,7 +15,7 @@
   "tags": ["power", "energy", "electricity", "meter"],
   "device_info": {
     "default_name_pattern": "power_meter_{index}",
-    "default_display_name_pattern": "电力仪表 {index}",
+    "default_display_name_pattern": {"zh": "电力仪表 {index}", "en": "Power Meter {index}"},
     "required_fields": ["name", "address"]
   },
   "properties": [

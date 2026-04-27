@@ -15,7 +15,7 @@
   "tags": ["water", "level", "liquid", "tank"],
   "device_info": {
     "default_name_pattern": "water_level_{index}",
-    "default_display_name_pattern": "液位传感器 {index}",
+    "default_display_name_pattern": {"zh": "液位传感器 {index}", "en": "Water Level Sensor {index}"},
     "required_fields": ["name", "address"]
   },
   "properties": [

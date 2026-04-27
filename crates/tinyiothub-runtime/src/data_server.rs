@@ -434,6 +434,33 @@ impl EventHandler for DataServer {
             EventType::Device(device_event_type) => match device_event_type {
                 DeviceEventType::DeviceCreated | DeviceEventType::DeviceUpdated => {
                     tracing::info!("Handling {:?} event for device: {}", device_event_type, device_id);
+                    // 从事件 metadata 中提取完整设备信息
+                    let device = event.content().metadata()
+                        .get("device")
+                        .and_then(|v| serde_json::from_value::<Device>(v.clone()).ok())
+                        .or_else(|| self.device_cache.get(device_id));
+
+                    if let Some(device) = device {
+                        // 插入/更新缓存（单一写入者）
+                        self.device_cache.insert(device.clone());
+                        // 创建驱动并加入采集循环
+                        if let Some(driver_name) = &device.driver_name {
+                            if !self.driver_cache.contains_key(device_id) {
+                                match create_driver(driver_name, &device) {
+                                    Ok(mut driver) => {
+                                        driver.set_event_bus(self.event_bus.clone());
+                                        self.driver_cache.insert(device_id.to_string(), Arc::new(RwLock::new(driver)));
+                                        tracing::info!("Created driver for device '{}' and started data collection", device.name);
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("Failed to create driver for device '{}': {}", device.name, e);
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        tracing::warn!("Device not found in event metadata or cache: {}", device_id);
+                    }
                 }
                 DeviceEventType::DeviceDeleted => {
                     self.remove_device(device_id);

@@ -15,7 +15,7 @@
   "tags": ["plc", "controller", "industrial", "automation"],
   "device_info": {
     "default_name_pattern": "plc_{index}",
-    "default_display_name_pattern": "PLC控制器 {index}",
+    "default_display_name_pattern": {"zh": "PLC控制器 {index}", "en": "PLC Controller {index}"},
     "required_fields": ["name", "address"]
   },
   "properties": [

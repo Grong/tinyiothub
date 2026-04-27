@@ -15,7 +15,7 @@
   "tags": ["camera", "video", "surveillance", "onvif"],
   "device_info": {
     "default_name_pattern": "camera_{index}",
-    "default_display_name_pattern": "摄像头 {index}",
+    "default_display_name_pattern": {"zh": "摄像头 {index}", "en": "IP Camera {index}"},
     "required_fields": ["name", "address"]
   },
   "properties": [

@@ -15,7 +15,7 @@
   "tags": ["temperature", "humidity", "environment"],
   "device_info": {
     "default_name_pattern": "th_sensor_{index}",
-    "default_display_name_pattern": "温湿度传感器 {index}",
+    "default_display_name_pattern": {"zh": "温湿度传感器 {index}", "en": "Temp & Humidity Sensor {index}"},
     "required_fields": ["name", "address"]
   },
   "properties": [

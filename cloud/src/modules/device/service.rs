@@ -59,7 +59,10 @@ impl DeviceService {
             return Err(Error::ValidationError(ERROR_DEVICE_NAME_EXISTS.to_string()));
         }
         let created_device = self.repository.create(request).await?;
-        self.publish_device_created_event(&created_device).await;
+        // 加载完整设备信息（含属性、指令）再发布事件
+        let complete_device = self.load_complete_device(&created_device.id).await?
+            .unwrap_or(created_device.clone());
+        self.publish_device_created_event(&complete_device).await;
         tracing::info!("Device {} created successfully", created_device.id);
         Ok(created_device)
     }
@@ -75,7 +78,10 @@ impl DeviceService {
         let template = self.get_template(template_engine, template_id).await?;
         self.generate_and_create_properties(template_engine, &template, device_input, &created_device.id).await;
         self.generate_and_create_commands(template_engine, &template, device_input, &created_device.id).await;
-        self.publish_device_created_event(&created_device).await;
+        // 加载完整设备信息（含属性、指令）再发布事件
+        let complete_device = self.load_complete_device(&created_device.id).await?
+            .unwrap_or(created_device.clone());
+        self.publish_device_created_event(&complete_device).await;
         tracing::info!("Device created successfully from template: device_id={}", created_device.id);
         Ok(created_device)
     }
@@ -98,7 +104,13 @@ impl DeviceService {
 
     async fn publish_device_created_event(&self, device: &Device) {
         let content_elements = self.build_device_info_elements(device, format!("Device '{}' has been created successfully", device.name));
-        let _ = self.publish_device_event(DeviceEventType::DeviceCreated, EventLevel::Info, device, format!("Device Created: {}", device.name), content_elements).await;
+        // 将完整设备信息序列化到 metadata，供 DataServer 使用
+        let device_json = serde_json::to_value(device).unwrap_or(serde_json::Value::Null);
+        let _ = self.publish_device_event_with_metadata(
+            DeviceEventType::DeviceCreated, EventLevel::Info, device,
+            format!("Device Created: {}", device.name), content_elements,
+            device_json,
+        ).await;
     }
 
     async fn publish_device_event(
@@ -114,6 +126,29 @@ impl DeviceService {
                 event_type, level,
                 EventSource::device(device.id.clone(), Some("device_service".to_string())),
                 RichContent::new(title, content_elements),
+            ).map_err(|e| Error::IOError(format!("Failed to create event: {}", e)))?;
+            let event_bus_clone = event_bus.clone();
+            crate::shared::utils::publish_event_safe(event_bus_clone, event).await;
+        }
+        Ok(())
+    }
+
+    async fn publish_device_event_with_metadata(
+        &self,
+        event_type: DeviceEventType,
+        level: EventLevel,
+        device: &Device,
+        title: String,
+        content_elements: Vec<ContentElement>,
+        metadata_value: serde_json::Value,
+    ) -> Result<(), Error> {
+        if let Some(ref event_bus) = self.event_bus {
+            let content = RichContent::new(title, content_elements)
+                .with_metadata("device".to_string(), metadata_value);
+            let event = DomainEvent::new_device_event(
+                event_type, level,
+                EventSource::device(device.id.clone(), Some("device_service".to_string())),
+                content,
             ).map_err(|e| Error::IOError(format!("Failed to create event: {}", e)))?;
             let event_bus_clone = event_bus.clone();
             crate::shared::utils::publish_event_safe(event_bus_clone, event).await;

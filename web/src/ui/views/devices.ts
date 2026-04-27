@@ -279,9 +279,8 @@ export class DevicesView extends SignalWatcher(LitElement) {
         return;
       }
     }
-    // 分页加载设备列表，同时在后台初始化 SSE 缓存
+    // 分页加载设备列表（SSE 缓存在进入详情页时按需初始化）
     this.loadDevices();
-    deviceCache.getDevices().catch(() => {});
     this.loadDriverNames();
     this.loadAllTags();
   }

@@ -2,7 +2,8 @@
  * DeviceCache — 浏览器侧设备数据缓存层
  *
  * 单例模式，持有唯一 SSE 连接，所有组件从信号读数据。
- * 首次 getDevices() 自动 fetch + 建立 SSE 连接，后续调用直接返回缓存。
+ * 缓存从空开始，通过 SSE 推送和设备详情加载逐步填充。
+ * 不做全量 fetch，适合大量设备场景。
  */
 
 import { signal, computed } from '@lit-labs/signals';
@@ -25,31 +26,24 @@ class DeviceCache {
   private eventSource: EventSource | null = null;
   private reconnectTimer: number | null = null;
   private reconnectAttempt = 0;
-  private fetchInProgress = false;
   private pendingSseEvents: any[] = [];
-  private initialized = false;
-  private hasConnectedOnce = false;
+  private sseConnecting = false;
 
   /**
-   * 获取设备列表。首次调用触发 fetch + SSE 自动连接，后续直接返回缓存。
+   * 获取当前缓存的设备列表。
+   * 同时确保 SSE 连接已建立（静默，不 fetch）。
    */
   async getDevices(): Promise<Device[]> {
-    if (this.initialized) {
-      return this.$devicesList.get();
-    }
-    this.initialized = true;
-
-    await this.fetchAndPopulate();
     this.ensureConnected();
     return this.$devicesList.get();
   }
 
   /**
-   * 强制刷新设备列表。
+   * 强制刷新：重新建立 SSE 连接（不全量 fetch）。
    */
   async refreshDevices(): Promise<void> {
-    if (!this.initialized) return; // nothing to refresh if never initialized
-    await this.fetchAndPopulate();
+    this.disconnect();
+    this.ensureConnected();
   }
 
   /**
@@ -65,10 +59,8 @@ class DeviceCache {
     const device = map.get(deviceId);
     if (!device || !device.properties) return;
 
-    // 保存旧值用于 rollback
     const oldProperties = device.properties;
 
-    // 乐观更新
     const updatedProperties = device.properties.map((p) =>
       p.name === propertyName ? { ...p, currentValue: value, updatedAt: new Date().toISOString() } : p,
     );
@@ -107,11 +99,27 @@ class DeviceCache {
   }
 
   /**
+   * 添加或更新单个设备到缓存。
+   */
+  setDevice(device: Device): void {
+    const map = new Map(this.$devicesMap.get());
+    map.set(device.id, device);
+    this.$devicesMap.set(map);
+  }
+
+  /**
+   * 从缓存移除设备。
+   */
+  removeDevice(deviceId: string): void {
+    const map = new Map(this.$devicesMap.get());
+    map.delete(deviceId);
+    this.$devicesMap.set(map);
+  }
+
+  /**
    * 强制触发所有 $devicesMap 的订阅者 re-render。
-   * 在 SSE 推送更新后调用，确保 Lit 组件重新渲染。
    */
   touchForRerender(): void {
-    // 读写 signal 触发 SignalWatcher 检测变化
     const map = this.$devicesMap.get();
     this.$devicesMap.set(map);
   }
@@ -120,69 +128,40 @@ class DeviceCache {
    * 清空缓存，关闭 SSE 连接。登出时调用。
    */
   clearCache(): void {
+    this.disconnect();
+    this.$devicesMap.set(new Map());
+    localStorage.removeItem("workspace-id");
+    sessionStorage.removeItem("workspace-id");
+    this.pendingSseEvents = [];
+  }
+
+  // === Private methods ===
+
+  private disconnect(): void {
     this.eventSource?.close();
     this.eventSource = null;
     if (this.reconnectTimer != null) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    this.$devicesMap.set(new Map());
     this.$sseStatus.set('disconnected');
-    localStorage.removeItem("workspace-id");
-    sessionStorage.removeItem("workspace-id");
     this.reconnectAttempt = 0;
-    this.fetchInProgress = false;
-    this.pendingSseEvents = [];
-    this.initialized = false;
-    this.hasConnectedOnce = false;
-  }
-
-  // === Private methods ===
-
-  private async fetchAndPopulate(): Promise<void> {
-    this.fetchInProgress = true;
-    this.pendingSseEvents = [];
-
-    try {
-      const response = await deviceApi.getDevices({ page: 1, pageSize: 1000 });
-      const devices = response.result?.data ?? [];
-
-      const map = new Map<string, Device>();
-      for (const d of devices) {
-        map.set(d.id, d);
-      }
-
-      // 合并 fetch 期间积压的 SSE 事件
-      for (const evt of this.pendingSseEvents) {
-        this.applySseEventToMap(map, evt);
-      }
-
-      this.$devicesMap.set(map);
-    } catch {
-      // fetch 失败: 对旧数据也应用新事件（这些事件比旧缓存更新）
-      const map = this.$devicesMap.get();
-      for (const evt of this.pendingSseEvents) {
-        const updated = this.applySseEventToMap(map, evt);
-        if (updated) this.$devicesMap.set(updated);
-      }
-    } finally {
-      this.pendingSseEvents = [];
-      this.fetchInProgress = false;
-    }
+    this.sseConnecting = false;
   }
 
   private ensureConnected(): void {
-    if (this.eventSource != null) return;
+    if (this.eventSource != null || this.sseConnecting) return;
+    this.sseConnecting = true;
 
     this.$sseStatus.set('connecting');
 
-    const token =
-      getAuthToken();
+    const token = getAuthToken();
     const workspaceId = localStorage.getItem("workspace-id")
       ?? sessionStorage.getItem("workspace-id")
       ?? "default";
     if (!token) {
       this.$sseStatus.set('disconnected');
+      this.sseConnecting = false;
       return;
     }
 
@@ -192,6 +171,7 @@ class DeviceCache {
       this.eventSource = new EventSource(url);
     } catch {
       this.$sseStatus.set('error');
+      this.sseConnecting = false;
       this.scheduleReconnect();
       return;
     }
@@ -199,7 +179,19 @@ class DeviceCache {
     this.eventSource.onopen = () => {
       this.$sseStatus.set('connected');
       this.reconnectAttempt = 0;
-      this.hasConnectedOnce = true;
+      this.sseConnecting = false;
+
+      // 应用连接期间积压的事件
+      const map = this.$devicesMap.get();
+      let currentMap = map;
+      for (const evt of this.pendingSseEvents) {
+        const updated = this.applySseEventToMap(currentMap, evt);
+        if (updated) currentMap = updated;
+      }
+      this.pendingSseEvents = [];
+      if (currentMap !== map) {
+        this.$devicesMap.set(currentMap);
+      }
     };
 
     this.eventSource.onmessage = async (ev) => {
@@ -215,9 +207,10 @@ class DeviceCache {
       this.$sseStatus.set('error');
       this.eventSource?.close();
       this.eventSource = null;
+      this.sseConnecting = false;
 
-      // 首次连接失败（从未成功过）→ 可能是 token 过期
-      if (!this.hasConnectedOnce) {
+      // SSE 认证失败
+      if (this.reconnectAttempt === 0) {
         window.dispatchEvent(
           new CustomEvent('auth-error', { detail: { message: 'SSE 认证失败' } }),
         );
@@ -233,16 +226,12 @@ class DeviceCache {
     this.reconnectAttempt++;
     this.reconnectTimer = window.setTimeout(() => {
       this.reconnectTimer = null;
+      this.sseConnecting = false;
       this.ensureConnected();
     }, delay);
   }
 
   private async handleSseEvent(data: any): Promise<void> {
-    if (this.fetchInProgress) {
-      this.pendingSseEvents.push(data);
-      return;
-    }
-
     const deviceId: string | undefined = data.device_id;
     const eventType: string = data.event_type ?? '';
     const map = this.$devicesMap.get();
@@ -260,7 +249,6 @@ class DeviceCache {
 
   /**
    * 将 SSE 事件应用到 Map 上，返回新 Map（若有变更）或 null。
-   * 事件数据直接构造设备，不需要额外 API 调用。
    */
   private applySseEventToMap(
     map: Map<string, Device>,
@@ -308,14 +296,12 @@ class DeviceCache {
 
       let updatedProps: typeof props;
       if (propIndex >= 0) {
-        // 属性已存在，更新值
         updatedProps = props.map((p, i) =>
           i === propIndex
             ? { ...p, currentValue: newValue, updatedAt: data.timestamp ?? new Date().toISOString() }
             : p,
         );
       } else {
-        // 属性不存在，新增
         updatedProps = [
           ...props,
           {

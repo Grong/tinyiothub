@@ -15,7 +15,7 @@
   "tags": ["agv", "robot", "logistics", "transport"],
   "device_info": {
     "default_name_pattern": "agv_{index}",
-    "default_display_name_pattern": "AGV机器人 {index}",
+    "default_display_name_pattern": {"zh": "AGV机器人 {index}", "en": "AGV Robot {index}"},
     "required_fields": ["name", "address"]
   },
   "properties": [

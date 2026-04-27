@@ -15,7 +15,7 @@
   "tags": ["relay", "switch", "control", "lighting"],
   "device_info": {
     "default_name_pattern": "relay_{index}",
-    "default_display_name_pattern": "智能继电器 {index}",
+    "default_display_name_pattern": {"zh": "智能继电器 {index}", "en": "Smart Relay {index}"},
     "required_fields": ["name", "address"]
   },
   "properties": [

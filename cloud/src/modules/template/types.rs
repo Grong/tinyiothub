@@ -211,6 +211,32 @@ pub struct CommandInfo {
 }
 
 impl DeviceTemplate {
+    /// 从文件加载的请求直接转换为 DeviceTemplate（不经过数据库）
+    pub fn from_request(request: &CreateDeviceTemplateRequest) -> Self {
+        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        DeviceTemplate {
+            id: format!("builtin_{}", request.name),
+            name: request.name.clone(),
+            display_name: serde_json::to_string(&request.display_name).unwrap_or_default(),
+            description: request.description.as_ref().map(|d| serde_json::to_string(d).unwrap_or_default()),
+            version: request.version.clone(),
+            author: request.author.clone(),
+            category: request.category.clone(),
+            manufacturer: request.manufacturer.clone(),
+            device_type: request.device_type.clone(),
+            protocol_type: request.protocol_type.clone(),
+            driver_name: request.driver_name.clone(),
+            tags: serde_json::to_string(&request.tags).unwrap_or_default(),
+            device_info: serde_json::to_string(&request.device_info).unwrap_or_default(),
+            properties: serde_json::to_string(&request.properties).unwrap_or_default(),
+            commands: serde_json::to_string(&request.commands).unwrap_or_default(),
+            is_builtin: 1,
+            is_active: 1,
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+
     /// 根据 ID 查找设备模板
     pub async fn find_by_id(
         db: &Database,

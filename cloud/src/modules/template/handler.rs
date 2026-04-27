@@ -3,8 +3,6 @@ use crate::modules::template::types::{
     CreateDeviceTemplateRequest, DeviceCreationInput, DevicePreview, DeviceTemplate,
     TemplateCategory, TemplateQueryParams, UpdateDeviceTemplateRequest,
 };
-use std::{path::PathBuf, sync::Arc};
-
 use axum::{
     extract::{Path, Query, State},
     routing::{delete, get, post, put},
@@ -15,7 +13,6 @@ use serde::Deserialize;
 use crate::{
     shared::app_state::AppState,
     modules::template::{
-        repo::TemplateRepository,
         service::{TemplateEngine, TemplateService, TemplateValidator},
     },
     shared::api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
@@ -53,13 +50,7 @@ async fn list_templates(
     _claims: Claims,
 ) -> Json<ApiResponse<PaginatedResponse<DeviceTemplate>>> {
     // 初始化模板服务
-    let template_service = match initialize_template_service(&state).await {
-        Ok(service) => service,
-        Err(e) => {
-            tracing::error!("Failed to initialize template service: {}", e);
-            return ApiResponseBuilder::error("初始化模板服务失败".to_string());
-        }
-    };
+    let template_service = get_template_service(&state);
 
     let params = TemplateQueryParams {
         category: query.category,
@@ -112,13 +103,7 @@ async fn get_template(
     Path(id): Path<String>,
     _claims: Claims,
 ) -> Json<ApiResponse<Option<DeviceTemplate>>> {
-    let template_service = match initialize_template_service(&state).await {
-        Ok(service) => service,
-        Err(e) => {
-            tracing::error!("Failed to initialize template service: {}", e);
-            return ApiResponseBuilder::error("初始化模板服务失败".to_string());
-        }
-    };
+    let template_service = get_template_service(&state);
 
     match template_service.get_repository().find_by_id(&id).await {
         Ok(template) => ApiResponseBuilder::success(template),
@@ -134,13 +119,7 @@ async fn get_template_categories(
     State(state): State<AppState>,
     _claims: Claims,
 ) -> Json<ApiResponse<Vec<TemplateCategory>>> {
-    let template_service = match initialize_template_service(&state).await {
-        Ok(service) => service,
-        Err(e) => {
-            tracing::error!("Failed to initialize template service: {}", e);
-            return ApiResponseBuilder::error("初始化模板服务失败".to_string());
-        }
-    };
+    let template_service = get_template_service(&state);
 
     match template_service.get_repository().get_categories().await {
         Ok(categories) => ApiResponseBuilder::success(categories),
@@ -157,13 +136,7 @@ async fn create_template(
     _claims: Claims,
     Json(req): Json<CreateDeviceTemplateRequest>,
 ) -> Json<ApiResponse<DeviceTemplate>> {
-    let template_service = match initialize_template_service(&state).await {
-        Ok(service) => service,
-        Err(e) => {
-            tracing::error!("Failed to initialize template service: {}", e);
-            return ApiResponseBuilder::error("初始化模板服务失败".to_string());
-        }
-    };
+    let template_service = get_template_service(&state);
 
     // 验证模板名称唯一性
     match template_service.get_repository().exists_by_name(&req.name).await {
@@ -195,13 +168,7 @@ async fn update_template(
     _claims: Claims,
     Json(req): Json<UpdateDeviceTemplateRequest>,
 ) -> Json<ApiResponse<DeviceTemplate>> {
-    let template_service = match initialize_template_service(&state).await {
-        Ok(service) => service,
-        Err(e) => {
-            tracing::error!("Failed to initialize template service: {}", e);
-            return ApiResponseBuilder::error("初始化模板服务失败".to_string());
-        }
-    };
+    let template_service = get_template_service(&state);
 
     // 检查模板是否存在
     match template_service.get_repository().find_by_id(&id).await {
@@ -228,13 +195,7 @@ async fn delete_template(
     Path(id): Path<String>,
     _claims: Claims,
 ) -> Json<ApiResponse<bool>> {
-    let template_service = match initialize_template_service(&state).await {
-        Ok(service) => service,
-        Err(e) => {
-            tracing::error!("Failed to initialize template service: {}", e);
-            return ApiResponseBuilder::error("初始化模板服务失败".to_string());
-        }
-    };
+    let template_service = get_template_service(&state);
 
     match template_service.get_repository().delete(&id).await {
         Ok(deleted) => {
@@ -259,13 +220,7 @@ async fn validate_template_input(
     _claims: Claims,
     Json(input): Json<DeviceCreationInput>,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    let template_service = match initialize_template_service(&state).await {
-        Ok(service) => service,
-        Err(e) => {
-            tracing::error!("Failed to initialize template service: {}", e);
-            return ApiResponseBuilder::error("初始化模板服务失败".to_string());
-        }
-    };
+    let template_service = get_template_service(&state);
 
     // 获取模板
     let template = match template_service.get_repository().find_by_id(&id).await {
@@ -300,13 +255,7 @@ async fn preview_device_from_template(
     _claims: Claims,
     Json(input): Json<DeviceCreationInput>,
 ) -> Json<ApiResponse<DevicePreview>> {
-    let template_service = match initialize_template_service(&state).await {
-        Ok(service) => service,
-        Err(e) => {
-            tracing::error!("Failed to initialize template service: {}", e);
-            return ApiResponseBuilder::error("初始化模板服务失败".to_string());
-        }
-    };
+    let template_service = get_template_service(&state);
 
     // 获取模板
     let _template = match template_service.get_repository().find_by_id(&id).await {
@@ -320,11 +269,8 @@ async fn preview_device_from_template(
         }
     };
 
-    // 创建模板引擎并预览设备
-    let template_repository =
-        Arc::new(TemplateRepository::new(state.database.clone(), PathBuf::from("templates")));
-    let validator = Arc::new(TemplateValidator::new());
-    let engine = TemplateEngine::new(template_repository, validator);
+    // 使用已初始化的模板引擎预览设备
+    let engine = state.template_engine();
 
     match engine.preview_template(&id, &input).await {
         Ok(preview) => ApiResponseBuilder::success(preview),
@@ -336,16 +282,6 @@ async fn preview_device_from_template(
 }
 
 /// 初始化模板服务
-async fn initialize_template_service(
-    state: &AppState,
-) -> Result<TemplateService, Box<dyn std::error::Error + Send + Sync>> {
-    let template_repository =
-        Arc::new(TemplateRepository::new(state.database.clone(), PathBuf::from("templates")));
-
-    let template_service = TemplateService::new(template_repository);
-
-    // 初始化模板系统（加载内置模板等）
-    template_service.initialize().await?;
-
-    Ok(template_service)
+fn get_template_service(state: &AppState) -> TemplateService {
+    TemplateService::new(state.template_engine().get_repository_arc())
 }
