@@ -141,8 +141,8 @@ impl Default for HarmonyGpioManager {
 }
 
 /// 全局GPIO管理器实例
-static GPIO_MANAGER: once_cell::sync::Lazy<HarmonyGpioManager> =
-    once_cell::sync::Lazy::new(HarmonyGpioManager::new);
+static GPIO_MANAGER: std::sync::LazyLock<HarmonyGpioManager> =
+    std::sync::LazyLock::new(HarmonyGpioManager::new);
 
 /// 获取全局GPIO管理器
 pub fn get_gpio_manager() -> &'static HarmonyGpioManager {

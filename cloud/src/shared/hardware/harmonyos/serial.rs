@@ -313,8 +313,8 @@ impl Default for HarmonySerialManager {
 }
 
 /// 全局串口管理器实例
-static SERIAL_MANAGER: once_cell::sync::Lazy<HarmonySerialManager> =
-    once_cell::sync::Lazy::new(HarmonySerialManager::new);
+static SERIAL_MANAGER: std::sync::LazyLock<HarmonySerialManager> =
+    std::sync::LazyLock::new(HarmonySerialManager::new);
 
 /// 获取全局串口管理器
 pub fn get_serial_manager() -> &'static HarmonySerialManager {

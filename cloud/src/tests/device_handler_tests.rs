@@ -52,18 +52,15 @@ async fn test_create_device() {
         .unwrap();
 
     let status = response.status();
-    // Handler should respond (200 or 422/500) — we're verifying it doesn't panic
+    // Handler should respond with valid HTTP status — not panic
     assert!(
-        status == StatusCode::OK || status.is_client_error() || status.is_server_error(),
-        "Handler should respond, got: {}",
+        !status.is_informational() && status != StatusCode::SWITCHING_PROTOCOLS,
+        "Unexpected status: {}",
         status
     );
-
-    if status == StatusCode::OK {
-        let (_status, json) = response_parts(response).await;
-        // If OK, should have valid JSON response
-        assert!(json.is_object(), "Expected JSON object");
-    }
+    // Response should always be valid JSON with code field
+    let (_status, json) = response_parts(response).await;
+    assert!(json["code"].is_number(), "Response must have numeric code field");
 }
 
 // ============================================================================

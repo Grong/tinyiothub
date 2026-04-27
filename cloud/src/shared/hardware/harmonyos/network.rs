@@ -213,8 +213,8 @@ impl Default for HarmonyNetworkManager {
 }
 
 /// 全局网络管理器实例
-static NETWORK_MANAGER: once_cell::sync::Lazy<HarmonyNetworkManager> =
-    once_cell::sync::Lazy::new(HarmonyNetworkManager::default);
+static NETWORK_MANAGER: std::sync::LazyLock<HarmonyNetworkManager> =
+    std::sync::LazyLock::new(HarmonyNetworkManager::default);
 
 /// 获取全局网络管理器
 pub fn get_network_manager() -> &'static HarmonyNetworkManager {

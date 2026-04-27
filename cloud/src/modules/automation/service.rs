@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use super::types::*;
 use tinyiothub_core::models::device_command::DeviceCommand;
-use tinyiothub_engine::application::DataServer;
+use tinyiothub_runtime::DataServer;
 use crate::modules::notification::NotificationManager;
 use crate::modules::notification::types::NotificationChannelType;
 use crate::modules::event::value_objects::EventLevel;

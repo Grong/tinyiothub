@@ -1,0 +1,23 @@
+# Clippy configuration
+# https://doc.rust-lang.org/clippy/configuration.html
+
+# Types that should not be dereferenced
+avoid-breaking-exported-api = true
+
+# Maximum cognitive complexity allowed
+cognitive-complexity-threshold = 25
+
+# Maximum number of function arguments
+too-many-arguments-threshold = 8
+
+# Maximum lines in a single function body
+too-many-lines-threshold = 150
+
+# Maximum size of a struct literal
+struct-field-name-threshold = 0
+
+# Warn on single-character lifetime names
+single-char-lifetime-names-threshold = 1
+
+# Maximum type complexity
+type-complexity-threshold = 350

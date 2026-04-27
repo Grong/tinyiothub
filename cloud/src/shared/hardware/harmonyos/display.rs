@@ -147,8 +147,8 @@ impl Default for HarmonyDisplayManager {
 }
 
 /// 全局显示管理器实例
-static DISPLAY_MANAGER: once_cell::sync::Lazy<HarmonyDisplayManager> =
-    once_cell::sync::Lazy::new(HarmonyDisplayManager::new);
+static DISPLAY_MANAGER: std::sync::LazyLock<HarmonyDisplayManager> =
+    std::sync::LazyLock::new(HarmonyDisplayManager::new);
 
 /// 获取全局显示管理器
 pub fn get_display_manager() -> &'static HarmonyDisplayManager {

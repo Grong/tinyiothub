@@ -71,7 +71,19 @@ async fn main_impl() -> std::io::Result<()> {
 
     // === 2. 初始化数据库 ===
     use tinyiothub_cloud::shared::persistence::DatabaseConfig;
-    let db_config = DatabaseConfig::from_settings(config::get());
+    let settings = config::get();
+    let db_url = if settings.database.url.starts_with("sqlite:") {
+        settings.database.url.clone()
+    } else {
+        format!("sqlite:{}", settings.database.url)
+    };
+    let db_config = DatabaseConfig {
+        url: db_url,
+        max_connections: settings.database.max_connections,
+        min_connections: settings.database.min_connections,
+        acquire_timeout_secs: settings.database.connect_timeout_secs,
+        idle_timeout_secs: 600,
+    };
     let db_pool = tinyiothub_cloud::shared::persistence::create_pool(&db_config).await.expect("Failed to create DB pool");
     let device_cache = std::sync::Arc::new(tinyiothub_storage::cache::DeviceCache::new());
     info!("✅ Database pool & device cache initialized");

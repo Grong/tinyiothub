@@ -76,7 +76,6 @@ futures-util = { workspace = true }
 
 # Collections
 dashmap = { workspace = true }
-itertools = { workspace = true }
 
 # Sync primitives
 parking_lot = { workspace = true }
@@ -102,7 +101,7 @@ tinyiothub-config = { workspace = true }
 tinyiothub-macros = { workspace = true }
 tinyiothub-plugin-sdk = { workspace = true }
 tinyiothub-storage = { workspace = true }
-tinyiothub-engine = { workspace = true }
+tinyiothub-runtime = { workspace = true }
 tinyiothub-web = { workspace = true }
 
 # Dynamic loading
@@ -111,8 +110,6 @@ libloading = { workspace = true }
 # Utilities
 uuid = { workspace = true }
 async-trait = { workspace = true }
-once_cell = { workspace = true }
-lazy_static = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 

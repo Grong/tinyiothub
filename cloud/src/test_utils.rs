@@ -6,12 +6,12 @@
 
 use axum::Router;
 use http_body_util::BodyExt;
-use once_cell::sync::OnceCell;
+use std::sync::OnceLock;
 use serde_json::Value;
 
 use crate::shared::app_state::AppState;
 
-static TEST_CONFIG: OnceCell<()> = OnceCell::new();
+static TEST_CONFIG: OnceLock<()> = OnceLock::new();
 
 /// Initialize test configuration (runs once across all tests).
 ///

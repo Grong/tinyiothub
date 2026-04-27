@@ -9,7 +9,7 @@ description = "HTTP handlers and middleware for TinyIoTHub (placeholder)"
 
 [dependencies]
 tinyiothub-core = { workspace = true }
-tinyiothub-engine = { workspace = true }
+tinyiothub-runtime = { workspace = true }
 tinyiothub-storage = { workspace = true }
 
 # Web framework

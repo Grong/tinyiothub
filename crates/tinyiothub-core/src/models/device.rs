@@ -372,4 +372,150 @@ mod tests {
         assert_eq!(DeviceStatus::from(2), DeviceStatus::Error);
         assert_eq!(DeviceStatus::from(3), DeviceStatus::Error);
     }
+
+    #[test]
+    fn test_device_default() {
+        let device = Device::default();
+        assert!(device.id.len() > 0);
+        assert_eq!(device.name, "");
+        assert_eq!(device.status, DeviceStatus::Offline);
+        assert!(device.created_at.is_some());
+        assert!(device.updated_at.is_some());
+        assert!(device.tags.is_none());
+        assert!(device.properties.is_none());
+        assert!(device.commands.is_none());
+        assert!(device.last_heartbeat.is_none());
+    }
+
+    #[test]
+    fn test_device_is_online() {
+        let mut device = Device::default();
+        device.status = DeviceStatus::Online;
+        assert!(device.is_online());
+        assert!(device.enabled());
+
+        device.status = DeviceStatus::Offline;
+        assert!(!device.is_online());
+        assert!(!device.enabled());
+    }
+
+    #[test]
+    fn test_device_get_display_name() {
+        let mut device = Device::default();
+        device.name = "sensor-01".to_string();
+        assert_eq!(device.get_display_name(), "sensor-01");
+
+        device.display_name = Some("Temperature Sensor".to_string());
+        assert_eq!(device.get_display_name(), "Temperature Sensor");
+    }
+
+    #[test]
+    fn test_device_has_parent() {
+        let mut device = Device::default();
+        assert!(!device.has_parent());
+
+        device.parent_id = Some("parent-001".to_string());
+        assert!(device.has_parent());
+    }
+
+    #[test]
+    fn test_device_has_product() {
+        let mut device = Device::default();
+        assert!(!device.has_product());
+
+        device.product_id = Some("prod-001".to_string());
+        assert!(device.has_product());
+    }
+
+    #[test]
+    fn test_device_validate_success() {
+        let mut device = Device::default();
+        device.name = "valid-device".to_string();
+        assert!(device.validate().is_ok());
+    }
+
+    #[test]
+    fn test_device_validate_empty_name() {
+        let device = Device::default();
+        assert!(device.validate().is_err());
+    }
+
+    #[test]
+    fn test_device_validate_whitespace_name() {
+        let mut device = Device::default();
+        device.name = "   ".to_string();
+        assert!(device.validate().is_err());
+    }
+
+    #[test]
+    fn test_device_validate_long_name() {
+        let mut device = Device::default();
+        device.name = "a".repeat(101);
+        assert!(device.validate().is_err());
+    }
+
+    #[test]
+    fn test_device_validate_long_display_name() {
+        let mut device = Device::default();
+        device.name = "valid".to_string();
+        device.display_name = Some("b".repeat(201));
+        assert!(device.validate().is_err());
+    }
+
+    #[test]
+    fn test_device_validate_long_address() {
+        let mut device = Device::default();
+        device.name = "valid".to_string();
+        device.address = Some("c".repeat(501));
+        assert!(device.validate().is_err());
+    }
+
+    #[test]
+    fn test_device_get_state_description() {
+        let mut device = Device::default();
+        device.status = DeviceStatus::Online;
+        assert_eq!(device.get_state_description(), "在线");
+
+        device.status = DeviceStatus::Offline;
+        assert_eq!(device.get_state_description(), "离线");
+
+        device.status = DeviceStatus::Error;
+        assert_eq!(device.get_state_description(), "故障");
+    }
+
+    #[test]
+    fn test_device_status_update_is_online() {
+        let update = DeviceStatusUpdate {
+            device_id: "d1".to_string(),
+            state: 1,
+            last_heartbeat: None,
+            updated_at: "2024-01-01 00:00:00".to_string(),
+        };
+        assert!(update.is_online());
+
+        let update_offline = DeviceStatusUpdate {
+            device_id: "d1".to_string(),
+            state: 0,
+            last_heartbeat: None,
+            updated_at: "2024-01-01 00:00:00".to_string(),
+        };
+        assert!(!update_offline.is_online());
+    }
+
+    #[test]
+    fn test_device_serialization_roundtrip() {
+        let device = Device {
+            name: "test-device".to_string(),
+            display_name: Some("Test Device".to_string()),
+            status: DeviceStatus::Online,
+            ..Device::default()
+        };
+
+        let json = serde_json::to_string(&device).unwrap();
+        let deserialized: Device = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.name, "test-device");
+        assert_eq!(deserialized.display_name, Some("Test Device".to_string()));
+        assert_eq!(deserialized.status, DeviceStatus::Online);
+    }
 }

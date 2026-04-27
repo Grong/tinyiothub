@@ -11,4 +11,4 @@ path = "src/main.rs"
 
 [dependencies]
 tinyiothub-core = { workspace = true }
-tinyiothub-engine = { workspace = true }
+tinyiothub-runtime = { workspace = true }

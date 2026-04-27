@@ -266,7 +266,7 @@ pub fn register_drivers(input: TokenStream) -> TokenStream {
         type DriverFactory = Box<dyn Fn(Device) -> Box<dyn DeviceDriver> + Send + Sync>;
 
         /// 驱动注册表
-        static DRIVER_REGISTRY: once_cell::sync::Lazy<std::collections::HashMap<String, DriverFactory>> = once_cell::sync::Lazy::new(|| {
+        static DRIVER_REGISTRY: std::sync::LazyLock<std::collections::HashMap<String, DriverFactory>> = std::sync::LazyLock::new(|| {
             let mut registry: std::collections::HashMap<String, DriverFactory> = std::collections::HashMap::new();
             #(#registry_entries)*
             registry

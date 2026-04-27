@@ -1,0 +1,55 @@
+[package]
+name = "tinyiothub-runtime"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared runtime infrastructure for TinyIoTHub (drivers, event bus, data server)"
+
+[dependencies]
+tinyiothub-core = { workspace = true }
+tinyiothub-macros = { workspace = true }
+tinyiothub-plugin-sdk = { workspace = true, features = ["core-interop"] }
+tinyiothub-storage = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true, features = ["process", "sync"] }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Async trait
+async-trait = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Collections
+dashmap = { workspace = true }
+
+# Random
+rand = { workspace = true }
+
+# Serial (optional)
+serialport = { workspace = true, optional = true }
+
+# Caching
+moka = { workspace = true }
+
+# Sync primitives
+parking_lot = { workspace = true }
+arc-swap = "1.9"
+
+# Futures utilities (join_all)
+futures-util = { workspace = true }
+
+# Date/time
+chrono = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

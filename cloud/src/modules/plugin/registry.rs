@@ -235,8 +235,8 @@ impl Default for PluginRegistry {
     fn default() -> Self { Self::new() }
 }
 
-static GLOBAL_REGISTRY: once_cell::sync::Lazy<PluginRegistry> =
-    once_cell::sync::Lazy::new(PluginRegistry::new);
+static GLOBAL_REGISTRY: std::sync::LazyLock<PluginRegistry> =
+    std::sync::LazyLock::new(PluginRegistry::new);
 
 pub fn get_global_registry() -> &'static PluginRegistry {
     &GLOBAL_REGISTRY

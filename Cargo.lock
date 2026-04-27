@@ -2561,15 +2561,6 @@ dependencies = [
 
 [[package]]
 name = "itertools"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
@@ -5521,7 +5512,7 @@ name = "tinyiothub-cli"
 version = "1.1.0"
 dependencies = [
  "tinyiothub-core",
- "tinyiothub-engine",
+ "tinyiothub-runtime",
 ]
 
 [[package]]
@@ -5550,14 +5541,11 @@ dependencies = [
  "http 1.4.0",
  "http-body-util",
  "influxdb2",
- "itertools 0.12.1",
  "jwt-simple",
- "lazy_static",
  "libloading",
  "mockall",
  "moka",
  "num_cpus",
- "once_cell",
  "parking_lot 0.12.5",
  "proptest",
  "rand 0.8.6",
@@ -5578,9 +5566,9 @@ dependencies = [
  "thiserror 1.0.69",
  "tinyiothub-config",
  "tinyiothub-core",
- "tinyiothub-engine",
  "tinyiothub-macros",
  "tinyiothub-plugin-sdk",
+ "tinyiothub-runtime",
  "tinyiothub-storage",
  "tinyiothub-web",
  "tokio",
@@ -5613,6 +5601,7 @@ dependencies = [
 name = "tinyiothub-core"
 version = "1.1.0"
 dependencies = [
+ "async-trait",
  "chrono",
  "serde",
  "serde_json",
@@ -5677,34 +5666,9 @@ name = "tinyiothub-edge"
 version = "1.1.0"
 dependencies = [
  "tinyiothub-core",
- "tinyiothub-engine",
  "tinyiothub-plugin",
+ "tinyiothub-runtime",
  "tokio",
-]
-
-[[package]]
-name = "tinyiothub-engine"
-version = "1.1.0"
-dependencies = [
- "arc-swap",
- "async-trait",
- "chrono",
- "dashmap",
- "futures-util",
- "moka",
- "once_cell",
- "parking_lot 0.12.5",
- "rand 0.8.6",
- "serde",
- "serde_json",
- "serialport",
- "thiserror 1.0.69",
- "tinyiothub-core",
- "tinyiothub-macros",
- "tinyiothub-plugin-sdk",
- "tinyiothub-storage",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -5757,6 +5721,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "tinyiothub-runtime"
+version = "1.1.0"
+dependencies = [
+ "arc-swap",
+ "async-trait",
+ "chrono",
+ "dashmap",
+ "futures-util",
+ "moka",
+ "parking_lot 0.12.5",
+ "rand 0.8.6",
+ "serde",
+ "serde_json",
+ "serialport",
+ "thiserror 1.0.69",
+ "tinyiothub-core",
+ "tinyiothub-macros",
+ "tinyiothub-plugin-sdk",
+ "tinyiothub-storage",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "tinyiothub-storage"
 version = "1.1.0"
 dependencies = [
@@ -5788,7 +5776,7 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tinyiothub-core",
- "tinyiothub-engine",
+ "tinyiothub-runtime",
  "tinyiothub-storage",
  "tokio",
  "tower",
@@ -5963,10 +5951,12 @@ checksum = "7a9daff607c6d2bf6c16fd681ccb7eecc83e4e2cdc1ca067ffaadfca5de7f084"
 dependencies = [
  "futures-util",
  "log",
- "native-tls",
+ "rustls 0.23.38",
+ "rustls-pki-types",
  "tokio",
- "tokio-native-tls",
+ "tokio-rustls 0.26.4",
  "tungstenite 0.26.2",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -6226,8 +6216,9 @@ dependencies = [
  "http 1.4.0",
  "httparse",
  "log",
- "native-tls",
  "rand 0.9.4",
+ "rustls 0.23.38",
+ "rustls-pki-types",
  "sha1",
  "thiserror 2.0.18",
  "utf-8",

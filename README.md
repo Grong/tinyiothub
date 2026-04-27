@@ -79,7 +79,7 @@ tinyiothub/
 └── skills/                 # AI prompts / skills
 ```
 
-**注意：本项目采用多 Crate 架构，依赖方向为单向不可逆：`cloud → web → engine → storage → core`。详细架构见 [ARCHITECTURE_CONTRACT.md](ARCHITECTURE_CONTRACT.md)。**
+**注意：本项目采用多 Crate 架构，依赖方向为单向不可逆：`cloud/edge → runtime → core ← storage`。详细架构见 [CLAUDE.md](CLAUDE.md)。**
 
 ## 快速开始
 

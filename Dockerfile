@@ -39,33 +39,31 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY sdks ./sdks
 COPY vendor ./vendor
-COPY api/Cargo.toml ./api/
 COPY cloud/Cargo.toml ./cloud/
-COPY bin/tinyiothub-gateway/Cargo.toml ./bin/tinyiothub-gateway/
-COPY bin/tinyiothub-edge/Cargo.toml ./bin/tinyiothub-edge/
+COPY edge/Cargo.toml ./edge/
+COPY marketplace/Cargo.toml ./marketplace/
+COPY cli/Cargo.toml ./cli/
 
 # 创建虚拟 src 来构建依赖
-RUN mkdir -p ./api/src && echo "fn main() {}" > ./api/src/main.rs && \
-    mkdir -p ./cloud/src && echo "fn main() {}" > ./cloud/src/main.rs && \
-    mkdir -p ./bin/tinyiothub-gateway/src && echo "fn main() {}" > ./bin/tinyiothub-gateway/src/main.rs && \
-    mkdir -p ./bin/tinyiothub-edge/src && echo "fn main() {}" > ./bin/tinyiothub-edge/src/main.rs
+RUN mkdir -p ./cloud/src && echo "fn main() {}" > ./cloud/src/main.rs && \
+    mkdir -p ./edge/src && echo "fn main() {}" > ./edge/src/main.rs && \
+    mkdir -p ./marketplace/src && echo "fn main() {}" > ./marketplace/src/main.rs && \
+    mkdir -p ./cli/src && echo "fn main() {}" > ./cli/src/main.rs
 
 # 构建依赖（这一层会被缓存）
-RUN cargo build --release --bin tinyiothub --bin tinyiothub-cloud --bin tinyiothub-gateway --bin tinyiothub-edge || true
+RUN cargo build --release --bin tinyiothub-cloud --bin tinyiothub-edge --bin tinyiothub-marketplace --bin tinyiothub-cli || true
 
 # 第二步：复制实际源码
-COPY api/src ./api/src
-COPY api/migrations ./api/migrations
-COPY api/templates ./api/templates
 COPY cloud/src ./cloud/src
 COPY cloud/migrations ./cloud/migrations
 COPY cloud/templates ./cloud/templates
-COPY bin/tinyiothub-gateway/src ./bin/tinyiothub-gateway/src
-COPY bin/tinyiothub-edge/src ./bin/tinyiothub-edge/src
+COPY edge/src ./edge/src
+COPY marketplace/src ./marketplace/src
+COPY cli/src ./cli/src
 
 # 清理虚拟构建产物，重新编译（只编译项目代码）
-RUN rm -f ./target/release/deps/tinyiothub* ./target/release/deps/tinyiothub_cloud* ./target/release/deps/tinyiothub_gateway* ./target/release/deps/tinyiothub_edge* && \
-    cargo build --release --bin tinyiothub --bin tinyiothub-cloud --bin tinyiothub-gateway --bin tinyiothub-edge
+RUN rm -f ./target/release/deps/tinyiothub* && \
+    cargo build --release --bin tinyiothub-cloud --bin tinyiothub-edge --bin tinyiothub-marketplace --bin tinyiothub-cli
 
 # ============================================
 # Stage 3: Runtime - 最小化运行时镜像
@@ -82,32 +80,29 @@ RUN apk add --no-cache \
 WORKDIR /app
 
 # 从 backend-builder 复制编译产物
-COPY --from=backend-builder /build/target/release/tinyiothub /app/
 COPY --from=backend-builder /build/target/release/tinyiothub-cloud /app/
-COPY --from=backend-builder /build/target/release/tinyiothub-gateway /app/
 COPY --from=backend-builder /build/target/release/tinyiothub-edge /app/
+COPY --from=backend-builder /build/target/release/tinyiothub-marketplace /app/
+COPY --from=backend-builder /build/target/release/tinyiothub-cli /app/
 
 # 从 backend-builder 复制 migrations/templates
-COPY --from=backend-builder /build/api/migrations /app/migrations
-COPY --from=backend-builder /build/api/templates /app/templates
+COPY --from=backend-builder /build/cloud/migrations /app/migrations
+COPY --from=backend-builder /build/cloud/templates /app/templates
 
 # 从前端 builder 复制静态文件
 COPY --from=frontend-builder /frontend/dist/ui /app/wwwroot
 
 # 复制配置文件作为默认配置
-COPY api/app_settings.example.toml /app/app_settings.toml
+COPY app_settings.example.toml /app/app_settings.toml
 
-# 创建数据目录
+# 创建数据目录并设置权限（仅 appuser 可写）
 RUN mkdir -p /app/data /app/logs /app/templates && \
-    chmod -R 777 /app/data /app/logs /app/templates
+    chown -R 1001:1001 /app/data /app/logs /app/templates
 
 # 设置环境变量
 ENV RUST_LOG=info \
     TZ=Asia/Shanghai \
-    TINYIOTHUB__DATABASE__URL=/app/data/tinyiothub.db \
-    JWT_SECRET="" \
-    MQTT_USERNAME="" \
-    MQTT_PASSWORD=""
+    TINYIOTHUB__DATABASE__URL=/app/data/tinyiothub.db
 
 # 暴露端口
 EXPOSE 3002
@@ -120,5 +115,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
 RUN addgroup -g 1001 -S appgroup && adduser -u 1001 -S appuser -G appgroup
 USER appuser
 
-# 默认启动 legacy API binary
-CMD ["/app/tinyiothub"]
+# 默认启动 cloud 二进制
+CMD ["/app/tinyiothub-cloud"]

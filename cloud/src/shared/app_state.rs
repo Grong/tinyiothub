@@ -65,7 +65,7 @@ pub struct AppState {
 
     /// === 应用服务层 ===
     /// 数据服务器 - 设备数据采集和命令执行
-    pub data_server: Option<Arc<tinyiothub_engine::application::DataServer>>,
+    pub data_server: Option<Arc<tinyiothub_runtime::DataServer>>,
 
     /// === 领域服务层 ===
     /// 设备基础服务 - CRUD 操作
@@ -400,13 +400,13 @@ impl AppState {
     /// 设置数据服务器（由 ServiceManager 调用）
     pub fn set_data_server(
         &mut self,
-        data_server: Arc<tinyiothub_engine::application::DataServer>,
+        data_server: Arc<tinyiothub_runtime::DataServer>,
     ) {
         self.data_server = Some(data_server);
     }
 
     /// 获取数据服务器
-    pub fn data_server(&self) -> Option<&tinyiothub_engine::application::DataServer> {
+    pub fn data_server(&self) -> Option<&tinyiothub_runtime::DataServer> {
         self.data_server.as_ref().map(|ds| ds.as_ref())
     }
 

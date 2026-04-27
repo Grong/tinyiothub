@@ -61,12 +61,13 @@ async fn test_create_workspace() {
         .await
         .unwrap();
 
-    let status = response.status();
+    let (status, json) = response_parts(response).await;
     assert!(
-        status == StatusCode::OK || status.is_client_error() || status.is_server_error(),
-        "Handler should respond, got: {}",
+        status.is_success() || status.is_client_error(),
+        "Expected 2xx or 4xx, got: {}",
         status
     );
+    assert!(json["code"].is_number(), "Response must have numeric code field");
 }
 
 #[tokio::test]

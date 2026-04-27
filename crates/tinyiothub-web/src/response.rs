@@ -82,3 +82,82 @@ impl ApiResponseBuilder {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_success_response() {
+        let resp = ApiResponseBuilder::success("hello");
+        assert_eq!(resp.0.code, 0);
+        assert_eq!(resp.0.msg, "");
+        assert_eq!(resp.0.result, Some("hello"));
+    }
+
+    #[test]
+    fn test_success_with_message() {
+        let resp = ApiResponseBuilder::success_with_message(42, "created");
+        assert_eq!(resp.0.code, 0);
+        assert_eq!(resp.0.msg, "created");
+        assert_eq!(resp.0.result, Some(42));
+    }
+
+    #[test]
+    fn test_error_response() {
+        let resp: Json<ApiResponse<String>> = ApiResponseBuilder::error("something broke");
+        assert_eq!(resp.0.code, -1);
+        assert_eq!(resp.0.msg, "something broke");
+        assert_eq!(resp.0.result, None);
+    }
+
+    #[test]
+    fn test_error_with_code() {
+        let resp: Json<ApiResponse<String>> = ApiResponseBuilder::error_with_code(404, "not found");
+        assert_eq!(resp.0.code, 404);
+        assert_eq!(resp.0.msg, "not found");
+        assert_eq!(resp.0.result, None);
+    }
+
+    #[test]
+    fn test_from_result_ok() {
+        let resp = ApiResponseBuilder::from_result(Ok::<_, String>("data"));
+        assert_eq!(resp.0.code, 0);
+        assert_eq!(resp.0.result, Some("data"));
+    }
+
+    #[test]
+    fn test_from_result_err() {
+        let resp: Json<ApiResponse<String>> =
+            ApiResponseBuilder::from_result(Err::<String, _>("fail"));
+        assert_eq!(resp.0.code, -1);
+        assert_eq!(resp.0.msg, "fail");
+        assert_eq!(resp.0.result, None);
+    }
+
+    #[test]
+    fn test_response_serialization() {
+        let resp = ApiResponseBuilder::success(vec![1, 2, 3]);
+        let json = serde_json::to_value(&resp.0).unwrap();
+        assert_eq!(json["code"], 0);
+        assert_eq!(json["msg"], "");
+        assert_eq!(json["result"], serde_json::json!([1, 2, 3]));
+    }
+
+    #[test]
+    fn test_paginated_response_serialization() {
+        let resp = PaginatedResponse {
+            data: vec!["a", "b"],
+            pagination: PaginationInfo {
+                page: 1,
+                page_size: 10,
+                total_pages: 5,
+                total_count: 50,
+            },
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["data"].as_array().unwrap().len(), 2);
+        assert_eq!(json["pagination"]["page"], 1);
+        assert_eq!(json["pagination"]["total_count"], 50);
+    }
+}

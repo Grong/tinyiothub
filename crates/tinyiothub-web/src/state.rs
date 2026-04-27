@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tinyiothub_engine::event_bus::EventBus;
+use tinyiothub_runtime::EventBus;
 use tinyiothub_storage::Storage;
 
 /// Trait abstracting the application state for HTTP handlers.
