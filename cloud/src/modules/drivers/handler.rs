@@ -150,30 +150,11 @@ async fn get_driver_config(Path(name): Path<String>) -> Json<ApiResponse<DriverC
 }
 
 /// 获取支持的驱动名称列表
-async fn list_driver_names() -> Json<ApiResponse<Vec<Component>>> {
+async fn list_driver_names() -> Json<ApiResponse<Vec<String>>> {
     tracing::info!("Getting supported driver names");
 
     let driver_names = crate::modules::device::driver::get_all_driver_names();
 
-    let drivers: Vec<Component> = driver_names
-        .into_iter()
-        .map(|name| {
-            let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-            Component {
-                id: uuid::Uuid::new_v4().to_string(),
-                name: name.clone(),
-                version: "unknown".to_string(),
-                class_name: name,
-                device_num: 0,
-                description: None,
-                options_descriptors: "[]".to_string(),
-                location: None,
-                created_at: now.clone(),
-                updated_at: now,
-            }
-        })
-        .collect();
-
-    tracing::info!("Found {} supported driver names", drivers.len());
-    ApiResponseBuilder::success(drivers)
+    tracing::info!("Found {} supported driver names", driver_names.len());
+    ApiResponseBuilder::success(driver_names)
 }
