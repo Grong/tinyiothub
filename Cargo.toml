@@ -57,7 +57,7 @@ influxdb2 = "0.4"
 rumqttc = { version = "0.24", default-features = false, features = ["use-rustls"] }
 
 # JWT
-jwt-simple = { version = "0.12", default-features = false, features = ["pure-rust"] }
+jwt-simple = { version = "0.12.15", default-features = false, features = ["pure-rust"] }
 
 # HTTP client
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
@@ -141,7 +141,7 @@ hex = "0.4"
 bcrypt = "0.15"
 
 # Validation
-validator = { version = "0.16", features = ["derive"] }
+validator = { version = "0.19", features = ["derive"] }
 
 # Performance
 smallvec = "1.11"
