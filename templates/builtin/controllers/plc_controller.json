@@ -11,7 +11,7 @@
   "manufacturer": "Generic",
   "device_type": "controller",
   "protocol_type": "modbus",
-  "driver_name": "modbus_tcp",
+  "driver_name": "modbus_rtu",
   "tags": ["plc", "controller", "industrial", "automation"],
   "device_info": {
     "default_name_pattern": "plc_{index}",

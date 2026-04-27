@@ -11,7 +11,7 @@
   "manufacturer": "TinyIoT",
   "device_type": "sensor",
   "protocol_type": "modbus",
-  "driver_name": "modbus_tcp",
+  "driver_name": "modbus_rtu",
   "tags": ["power", "energy", "electricity", "meter"],
   "device_info": {
     "default_name_pattern": "power_meter_{index}",

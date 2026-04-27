@@ -8,7 +8,7 @@ use tinyiothub_core::driver::{DeviceDriver, ResultValue};
 use tinyiothub_core::error::Error;
 
 #[derive(Debug, Clone, tinyiothub_macros::DeviceDriver)]
-#[driver(name = "ModbusDriver", version = "1.0.0", description = "Modbus RTU/TCP Driver")]
+#[driver(name = "modbus_rtu", version = "1.0.0", description = "Modbus RTU/TCP Driver")]
 #[driver_option(
     label = "Refresh Interval (ms)",
     name = "interval",
