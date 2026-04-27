@@ -1,6 +1,10 @@
 # ============================================
-# Stage 1: Frontend Builder - 构建前端静态文件
+# TinyIoTHub Dev Build (本地测试用)
+# 使用 dev profile，内存需求低（2GB 即可）
+# 生产环境请用 Dockerfile（release profile，需 4GB+ 内存）
 # ============================================
+
+# Stage 1: Frontend Builder
 FROM node:20-alpine AS frontend-builder
 
 WORKDIR /frontend
@@ -11,13 +15,9 @@ RUN npm install -g pnpm && pnpm install --frozen-lockfile
 COPY web/ ./
 RUN pnpm build
 
-# ============================================
-# Stage 2: Backend Builder - 编译 Rust 应用
-# ============================================
-# 使用本地缓存的 nightly 镜像，无需下载工具链
+# Stage 2: Backend Builder (dev profile, 低内存)
 FROM rustlang/rust:nightly-bookworm AS backend-builder
 
-# 安装编译依赖（Debian，使用国内镜像）
 RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
     apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
@@ -28,21 +28,17 @@ RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debia
 
 WORKDIR /build
 
-# 复制整个 workspace（.dockerignore 已排除 target/node_modules/docs）
 COPY . .
 
-# 使用 BuildKit cache 挂载加速后续构建
-# 注意：release 构建需要较多内存（建议 Docker 分配 4GB+）
-# 本地内存不足时可用 Dockerfile.dev（dev profile）
+# dev profile: 无 LTO、无 strip，编译快、内存低
 RUN --mount=type=cache,target=/build/target \
     --mount=type=cache,target=/usr/local/cargo/registry \
-    cargo build --release --bin tinyiothub-cloud && \
+    CARGO_BUILD_JOBS=1 \
+    cargo build --bin tinyiothub-cloud && \
     mkdir -p /out && \
-    cp /build/target/release/tinyiothub-cloud /out/
+    cp /build/target/debug/tinyiothub-cloud /out/
 
-# ============================================
-# Stage 3: Runtime - 最小化运行时镜像
-# ============================================
+# Stage 3: Runtime
 FROM debian:bookworm-slim
 
 RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
@@ -54,12 +50,9 @@ RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debia
 WORKDIR /app
 
 COPY --from=backend-builder /out/tinyiothub-cloud /app/
-
 COPY --from=backend-builder /build/cloud/migrations /app/migrations
 COPY --from=backend-builder /build/cloud/templates /app/templates
-
 COPY --from=frontend-builder /dist/ui /app/wwwroot
-
 COPY app_settings.example.toml /app/app_settings.toml
 
 RUN mkdir -p /app/data /app/logs /app/templates && \

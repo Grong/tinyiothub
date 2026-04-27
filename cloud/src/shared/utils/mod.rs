@@ -1,4 +1,3 @@
-<<<<<<<< HEAD:cloud/src/shared/utils/mod.rs
 pub mod password;
 pub mod spawn;
 pub mod sql_security;
@@ -40,8 +39,3 @@ pub async fn publish_event_safe(
         }
     });
 }
-========
-// Re-export from shared location to maintain backward compatibility
-// Migration: moved to src/shared/utils/ per ARCHITECTURE_HARNESS
-pub use crate::shared::utils::*;
->>>>>>>> main:api/src/utils/mod.rs
