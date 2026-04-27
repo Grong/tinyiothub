@@ -110,7 +110,7 @@ fn map_cron_job_to_job(cj: CronJob) -> Job {
     }
 }
 
-fn map_create_request(req: &CreateJobRequest, _workspace_id: &str) -> CreateCronJobRequest {
+fn map_create_request(req: &CreateJobRequest, workspace_id: &str) -> CreateCronJobRequest {
     let job_type = if req.job_type == "script" {
         "shell".to_string()
     } else {
@@ -139,6 +139,7 @@ fn map_create_request(req: &CreateJobRequest, _workspace_id: &str) -> CreateCron
         job_type,
         cron_expression: req.cron_expression.clone(),
         config,
+        workspace_id: workspace_id.to_string(),
         timeout_seconds: req.timeout_seconds,
         max_retries: req.retry_count,
     }
@@ -265,8 +266,16 @@ async fn get_job(
 async fn create_job(
     claims: Claims,
     State(state): State<AppState>,
-    Json(payload): Json<CreateJobRequest>,
+    Json(mut payload): Json<CreateJobRequest>,
 ) -> Result<Json<ApiResponse<Job>>, StatusCode> {
+    // Normalize 5-field cron to 6-field (prepend seconds=0)
+    {
+        let fields: Vec<&str> = payload.cron_expression.split_whitespace().collect();
+        if fields.len() == 5 {
+            payload.cron_expression = format!("0 {}", payload.cron_expression);
+        }
+    }
+
     if let Err(e) = cron::Schedule::from_str(&payload.cron_expression) {
         tracing::error!("Invalid cron expression: {}", e);
         return Ok(ApiResponseBuilder::error_with_code(400, "无效的 Cron 表达式"));
@@ -288,8 +297,16 @@ async fn update_job(
     claims: Claims,
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(payload): Json<UpdateJobRequest>,
+    Json(mut payload): Json<UpdateJobRequest>,
 ) -> Result<Json<ApiResponse<Job>>, StatusCode> {
+    // Normalize 5-field cron to 6-field (prepend seconds=0)
+    if let Some(ref cron) = payload.cron_expression {
+        let fields: Vec<&str> = cron.split_whitespace().collect();
+        if fields.len() == 5 {
+            payload.cron_expression = Some(format!("0 {}", cron));
+        }
+    }
+
     if let Some(ref cron) = payload.cron_expression
         && let Err(e) = cron::Schedule::from_str(cron) {
             tracing::error!("Invalid cron expression: {}", e);

@@ -7,9 +7,10 @@ use tokio::sync::{broadcast, Semaphore};
 use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
 
-use tinyiothub_runtime::cron::{ExecutionResult, ExecutorError, ExecutorRegistry};
+use tinyiothub_runtime::cron::{ExecutionResult, ExecutorError, ExecutorRegistry, DeviceCommandExecutor};
 use tinyiothub_storage::traits::cron::{CronJobRepository, CronRunRepository};
 use tinyiothub_core::models::cron_job::CronJob;
+use tinyiothub_storage::sqlite::database::Database;
 use crate::shared::error::Result;
 
 /// Cron job scheduler service that polls for due jobs and executes them.
@@ -27,11 +28,20 @@ impl CronSchedulerService {
     pub fn new(
         job_repo: Arc<dyn CronJobRepository>,
         run_repo: Arc<dyn CronRunRepository>,
+        data_server: Option<Arc<tinyiothub_runtime::DataServer>>,
+        database: Option<Database>,
     ) -> Self {
+        let mut registry = ExecutorRegistry::new();
+        if let (Some(ds), Some(db)) = (data_server, database) {
+            registry.register(Box::new(DeviceCommandExecutor::new(ds, db)));
+            info!("DeviceCommandExecutor registered");
+        } else {
+            warn!("DataServer or Database not available, device_command jobs will not work");
+        }
         Self {
             job_repo,
             run_repo,
-            registry: Arc::new(ExecutorRegistry::new()),
+            registry: Arc::new(registry),
             shutdown_tx: broadcast::channel(1).0,
             poll_interval: std::time::Duration::from_secs(15),
             max_concurrent: 10,
@@ -278,7 +288,16 @@ async fn execute_job(
 
 /// Compute the next run time from a cron expression.
 fn compute_next_run_at(cron_expression: &str) -> Option<String> {
-    let schedule = Schedule::from_str(cron_expression).ok()?;
+    // Normalize 5-field cron to 6-field (prepend seconds=0)
+    let normalized = {
+        let fields: Vec<&str> = cron_expression.split_whitespace().collect();
+        if fields.len() == 5 {
+            format!("0 {}", cron_expression)
+        } else {
+            cron_expression.to_string()
+        }
+    };
+    let schedule = Schedule::from_str(&normalized).ok()?;
     let next = schedule.upcoming(Utc).next()?;
     Some(next.format("%Y-%m-%d %H:%M:%S").to_string())
 }

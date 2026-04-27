@@ -34,7 +34,6 @@ async fn test_search_devices_returns_response() {
             assert!(value.is_object(), "search_devices should return an object");
         }
         Err(e) => {
-            // If AppState is not initialized, we get Internal error
             assert!(
                 matches!(e, crate::modules::mcp::ToolError::Internal(_)),
                 "Expected Internal error for uninitialized state, got {:?}",
@@ -52,7 +51,6 @@ async fn test_search_devices_with_params() {
     let guard = registry.read().await;
     let handler = guard.get("search_devices").unwrap();
 
-    // Test with keyword and limit
     let result = handler.execute(json!({
         "keyword": "sensor",
         "limit": 10
@@ -68,7 +66,6 @@ async fn test_search_devices_with_params() {
         }
     }
 
-    // Test with keyword and tag
     let result = handler.execute(json!({
         "keyword": "modbus",
         "tag": "production"
@@ -84,7 +81,6 @@ async fn test_search_devices_with_params() {
         }
     }
 
-    // Empty keyword should be rejected
     let result = handler.execute(json!({"keyword": ""})).await;
     assert!(
         matches!(result, Err(crate::modules::mcp::ToolError::InvalidParams(_))),
@@ -116,22 +112,6 @@ async fn test_search_devices_with_tag() {
             );
         }
     }
-}
-
-/// Test get_device_status handler exists and has correct name
-#[tokio::test]
-async fn test_get_device_status_handler_metadata() {
-    crate::modules::mcp::register_tools().await;
-    let registry = crate::modules::mcp::get_mcp_registry().unwrap();
-    let guard = registry.read().await;
-    let handler = guard.get("get_device_status").unwrap();
-
-    assert_eq!(handler.name(), "get_device_status");
-    assert!(!handler.description().is_empty());
-
-    let schema = handler.input_schema();
-    let json_schema = schema.to_json();
-    assert_eq!(json_schema["type"], "object");
 }
 
 /// Test read_properties handler metadata
@@ -183,21 +163,8 @@ async fn test_create_device_handler_metadata() {
 
     let schema = handler.input_schema();
     let json_schema = schema.to_json();
-    // create_device should have required fields
     let required = json_schema["required"].as_array().unwrap();
     assert!(required.iter().any(|r| r == "name"), "name should be required for create_device");
-}
-
-/// Test update_device handler metadata
-#[tokio::test]
-async fn test_update_device_handler_metadata() {
-    crate::modules::mcp::register_tools().await;
-    let registry = crate::modules::mcp::get_mcp_registry().unwrap();
-    let guard = registry.read().await;
-    let handler = guard.get("update_device").unwrap();
-
-    assert_eq!(handler.name(), "update_device");
-    assert!(!handler.description().is_empty());
 }
 
 /// Test delete_device handler metadata
@@ -209,41 +176,5 @@ async fn test_delete_device_handler_metadata() {
     let handler = guard.get("delete_device").unwrap();
 
     assert_eq!(handler.name(), "delete_device");
-    assert!(!handler.description().is_empty());
-}
-
-/// Test get_device_history handler metadata
-#[tokio::test]
-async fn test_get_device_history_handler_metadata() {
-    crate::modules::mcp::register_tools().await;
-    let registry = crate::modules::mcp::get_mcp_registry().unwrap();
-    let guard = registry.read().await;
-    let handler = guard.get("get_device_history").unwrap();
-
-    assert_eq!(handler.name(), "get_device_history");
-    assert!(!handler.description().is_empty());
-}
-
-/// Test get_device_metrics handler metadata
-#[tokio::test]
-async fn test_get_device_metrics_handler_metadata() {
-    crate::modules::mcp::register_tools().await;
-    let registry = crate::modules::mcp::get_mcp_registry().unwrap();
-    let guard = registry.read().await;
-    let handler = guard.get("get_device_metrics").unwrap();
-
-    assert_eq!(handler.name(), "get_device_metrics");
-    assert!(!handler.description().is_empty());
-}
-
-/// Test export_device_report handler metadata
-#[tokio::test]
-async fn test_export_device_report_handler_metadata() {
-    crate::modules::mcp::register_tools().await;
-    let registry = crate::modules::mcp::get_mcp_registry().unwrap();
-    let guard = registry.read().await;
-    let handler = guard.get("export_device_report").unwrap();
-
-    assert_eq!(handler.name(), "export_device_report");
     assert!(!handler.description().is_empty());
 }

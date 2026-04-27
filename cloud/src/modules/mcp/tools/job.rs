@@ -87,7 +87,7 @@ fn build_config_from_input(input: &CreateScheduleInput) -> String {
     }
 }
 
-fn map_create_input(input: &CreateScheduleInput, _workspace_id: &str) -> CreateCronJobRequest {
+fn map_create_input(input: &CreateScheduleInput, workspace_id: &str) -> CreateCronJobRequest {
     let job_type = if input.job_type == "script" {
         "shell".to_string()
     } else {
@@ -100,6 +100,7 @@ fn map_create_input(input: &CreateScheduleInput, _workspace_id: &str) -> CreateC
         job_type,
         cron_expression: input.cron_expression.clone(),
         config: build_config_from_input(input),
+        workspace_id: workspace_id.to_string(),
         timeout_seconds: input.timeout_seconds,
         max_retries: input.retry_count,
     }
@@ -231,7 +232,10 @@ impl ToolHandler for CreateScheduleHandler {
     }
 
     fn description(&self) -> &str {
-        "Create a new scheduled job (one-time or cron)."
+        "Create a new scheduled job. Supports 3 job types:\n\
+         - shell: execute shell commands (config: {\"script\": \"...\", \"interpreter\": \"sh\"})\n\
+         - device_command: execute IoT device commands (requires targetDeviceId + targetCommandName)\n\
+         - agent: trigger AI agent tasks (config: {\"task\": \"...\"})"
     }
 
     fn input_schema(&self) -> InputSchema {
@@ -254,42 +258,42 @@ impl ToolHandler for CreateScheduleHandler {
             "jobType".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some("Job type: device_command, shell, agent".to_string()),
+                description: Some("Job type: 'device_command' (IoT device), 'shell' (script), 'agent' (AI task)".to_string()),
             },
         );
         props.insert(
             "cronExpression".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some("Cron expression (e.g., */5 * * * * for every 5 minutes)".to_string()),
+                description: Some("Cron expression, 5 or 6 fields (e.g., '0 8 * * *' for daily at 8am, '*/5 * * * *' for every 5 minutes)".to_string()),
             },
         );
         props.insert(
             "targetDeviceId".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some("Target device ID for device_command jobs".to_string()),
+                description: Some("Device ID for device_command jobs (e.g., 'device-env-01'). Must belong to your workspace.".to_string()),
             },
         );
         props.insert(
             "targetCommandName".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some("Command name to execute".to_string()),
+                description: Some("Command name for device_command jobs (e.g., 'restart', 'calibrate', 'snapshot'). Must exist on the target device.".to_string()),
             },
         );
         props.insert(
             "targetCommandParams".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some("Command parameters as JSON string".to_string()),
+                description: Some("Optional command parameters as JSON string (e.g., '{\"speed\": 50}')".to_string()),
             },
         );
         props.insert(
             "config".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some("Additional config as JSON string".to_string()),
+                description: Some("Config JSON. For shell: '{\"script\":\"echo hello\"}'. For device_command: auto-built from targetDeviceId/targetCommandName.".to_string()),
             },
         );
         props.insert(
@@ -310,7 +314,7 @@ impl ToolHandler for CreateScheduleHandler {
     }
 
     async fn execute(&self, args: Value) -> Result<Value, ToolError> {
-        let input: CreateScheduleInput =
+        let mut input: CreateScheduleInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
         let claims = get_mcp_context().ok_or_else(|| {
@@ -335,6 +339,15 @@ impl ToolHandler for CreateScheduleHandler {
                 Err(e) => {
                     return Err(ToolError::Internal(format!("failed to verify device ownership: {}", e)));
                 }
+            }
+        }
+
+        // Normalize cron expression: `cron` crate requires 6 fields (with seconds).
+        // Accept standard 5-field format by prepending "0 " for seconds.
+        {
+            let fields: Vec<&str> = input.cron_expression.split_whitespace().collect();
+            if fields.len() == 5 {
+                input.cron_expression = format!("0 {}", input.cron_expression);
             }
         }
 
@@ -402,7 +415,7 @@ impl ToolHandler for UpdateScheduleHandler {
     }
 
     async fn execute(&self, args: Value) -> Result<Value, ToolError> {
-        let input: UpdateScheduleInput =
+        let mut input: UpdateScheduleInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
         let _claims = get_mcp_context().ok_or_else(|| {
@@ -411,6 +424,14 @@ impl ToolHandler for UpdateScheduleHandler {
 
         let state = crate::modules::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
+
+        // Normalize 5-field cron to 6-field (prepend seconds=0)
+        if let Some(ref cron) = input.cron_expression {
+            let fields: Vec<&str> = cron.split_whitespace().collect();
+            if fields.len() == 5 {
+                input.cron_expression = Some(format!("0 {}", cron));
+            }
+        }
 
         if let Some(ref cron) = input.cron_expression
             && let Err(e) = cron::Schedule::from_str(cron) {

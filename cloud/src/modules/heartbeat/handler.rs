@@ -14,7 +14,7 @@ use chrono::Utc;
 use serde::Deserialize;
 
 use crate::{
-    modules::mcp::tools::heartbeat::{get_heartbeat_config, get_heartbeat_status},
+    modules::heartbeat::{get_heartbeat_config, get_heartbeat_status},
     shared::api_response::ApiResponse,
     shared::app_state::AppState,
 };

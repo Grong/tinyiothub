@@ -46,7 +46,15 @@ fn map_cron_job_row(row: &sqlx::sqlite::SqliteRow) -> std::result::Result<CronJo
 }
 
 fn compute_next_run_at(cron_expression: &str) -> Option<String> {
-    let schedule = Schedule::from_str(cron_expression).ok()?;
+    let normalized = {
+        let fields: Vec<&str> = cron_expression.split_whitespace().collect();
+        if fields.len() == 5 {
+            format!("0 {}", cron_expression)
+        } else {
+            cron_expression.to_string()
+        }
+    };
+    let schedule = Schedule::from_str(&normalized).ok()?;
     let next = schedule.upcoming(Utc).next()?;
     Some(next.format("%Y-%m-%d %H:%M:%S").to_string())
 }
@@ -129,14 +137,15 @@ impl CronJobRepository for SqliteCronJobRepository {
         sqlx::query(
             r#"
             INSERT INTO cron_jobs (
-                id, name, description, job_type, cron_expression, config,
+                id, workspace_id, name, description, job_type, cron_expression, config,
                 timeout_seconds, max_retries, is_enabled, is_running,
                 next_run_at, run_count, success_count, fail_count,
                 created_at, updated_at, created_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, 0, 0, 0, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, 0, 0, 0, ?, ?, ?)
             "#,
         )
         .bind(&id)
+        .bind(&job.workspace_id)
         .bind(&job.name)
         .bind(job.description.as_deref().unwrap_or(""))
         .bind(&job.job_type)

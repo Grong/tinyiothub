@@ -54,72 +54,32 @@ pub async fn register_tools() {
     let registry = init_mcp_registry();
     let mut reg = registry.write().await;
 
-    // Initialize heartbeat state (Task 4)
-    tools::heartbeat::init_heartbeat_state();
+    // Initialize heartbeat state (used by REST API handler)
+    crate::modules::heartbeat::init_heartbeat_state();
 
-    // Register device tools (search_devices replaces list_devices)
-    reg.register(tools::device::SearchDevicesHandler);
+    // Device tools (7)
     reg.register(tools::device::DeviceProfileHandler);
-    reg.register(tools::device::GetDeviceStatusHandler);
+    reg.register(tools::device::SearchDevicesHandler);
     reg.register(tools::device::DevicePropertyGetHandler);
     reg.register(tools::device::WritePropertiesHandler);
     reg.register(tools::device::DeviceCommandHandler);
-    reg.register(tools::device::DeviceTemplateListHandler);
     reg.register(tools::device::CreateDeviceHandler);
-    reg.register(tools::device::UpdateDeviceHandler);
     reg.register(tools::device::DeleteDeviceHandler);
-    reg.register(tools::device::GetDeviceHistoryHandler);
-    reg.register(tools::device::GetDeviceMetricsHandler);
-    reg.register(tools::device::ExportDeviceReportHandler);
 
-    // Register driver tools (Task 3)
+    // Driver tools (2)
     reg.register(tools::driver::ListDriversHandler);
-    reg.register(tools::driver::GetDriverConfigSchemaHandler);
-    reg.register(tools::driver::MatchDriverHandler);
-    reg.register(tools::driver::GenerateDriverHandler);
-    reg.register(tools::driver::LoadDriverHandler);
-    reg.register(tools::driver::UnloadDriverHandler);
     reg.register(tools::driver::TestDriverHandler);
 
-    // Register heartbeat tools (Task 4)
-    reg.register(tools::heartbeat::ReportHeartbeatHandler);
-    reg.register(tools::heartbeat::GetHeartbeatStatusHandler);
-    reg.register(tools::heartbeat::ConfigureHeartbeatHandler);
-
-    // Register self-heal tools (Task 5)
-    tools::self_heal::register_self_heal_tools(&mut reg);
-
-    // Register knowledge tools (Task 6)
-    tools::knowledge::register_knowledge_tools(&mut reg);
-
-    // Register workspace tools (Task 11)
-    reg.register(tools::workspace::ListWorkspacesHandler);
-    reg.register(tools::workspace::GetWorkspaceHandler);
-    reg.register(tools::workspace::CreateWorkspaceHandler);
-    reg.register(tools::workspace::UpdateWorkspaceHandler);
-    reg.register(tools::workspace::DeleteWorkspaceHandler);
-
-    // Register job tools (Task 13)
+    // Job tools (4)
     reg.register(tools::job::ListSchedulesHandler);
     reg.register(tools::job::CreateScheduleHandler);
     reg.register(tools::job::UpdateScheduleHandler);
     reg.register(tools::job::DeleteScheduleHandler);
 
-    // Register batch tools (Task 14)
-    reg.register(tools::batch::BatchCommandHandler);
-    reg.register(tools::batch::GetBatchStatusHandler);
-
-    // Register alarm tools (Task 18)
+    // Alarm tools (3)
     reg.register(tools::alarm_mcp::AlarmListHandler);
-    reg.register(tools::alarm_mcp::AlarmStatisticsHandler);
     reg.register(tools::alarm_mcp::AlarmAcknowledgeHandler);
     reg.register(tools::alarm_mcp::AlarmRuleAddHandler);
 
-    // Register device enhanced tools (Task 19)
-    reg.register(tools::device_enhanced::CompareDevicesHandler);
-    reg.register(tools::device_enhanced::DiagnoseDeviceHandler);
-    reg.register(tools::device_enhanced::ScanSerialHandler);
-
-    tracing::info!("Registered {} device MCP tools, {} driver MCP tools, {} heartbeat MCP tools, {} self-heal MCP tools, {} knowledge MCP tools, {} workspace MCP tools, {} job MCP tools, {} batch MCP tools, {} alarm MCP tools, {} device_enhanced MCP tools",
-        13, 7, 3, 3, 3, 5, 4, 2, 4, 3);
+    tracing::info!("Registered {} MCP tools: 7 device, 2 driver, 4 job, 3 alarm", 16);
 }

@@ -64,8 +64,6 @@ impl<R: CronJobRepository + Send + Sync> CronJobRepository for TenantCronJobRepo
         job: &CreateCronJobRequest,
         created_by: Option<&str>,
     ) -> Result<CronJob> {
-        // TODO: Inject workspace_id into the database insert
-        // Requires modifying the SQL query to include workspace_id column
         self.inner.create(job, created_by).await
     }
 

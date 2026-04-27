@@ -1,14 +1,7 @@
 // MCP Tools Module
-// Phase 1 tool implementations: device_*, driver_*, heartbeat_*, self_heal_*, knowledge_*
-// Phase 2: workspace_* (5 tools), job_* (3 tools)
+// Core IoT management tools: device, alarm, job, driver
 
 pub mod alarm_mcp;
-pub mod batch;
 pub mod device;
-pub mod device_enhanced;
 pub mod driver;
-pub mod heartbeat;
 pub mod job;
-pub mod self_heal;
-pub mod knowledge;
-pub mod workspace;

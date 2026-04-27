@@ -88,6 +88,8 @@ impl ServiceManager {
             let cron_scheduler = crate::shared::cron_scheduler::CronSchedulerService::new(
                 app_state.cron_job_repo.clone(),
                 app_state.cron_run_repo.clone(),
+                Some(data_server.clone()),
+                Some((*app_state.database).clone()),
             );
             let cron_handle = cron_scheduler.start();
             self.service_handles.write().await.push(cron_handle);

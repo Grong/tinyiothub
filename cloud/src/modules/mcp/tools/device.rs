@@ -8,19 +8,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::modules::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
-use tinyiothub_core::models::device::{CreateDeviceRequest, Device, UpdateDeviceRequest};
+use tinyiothub_core::models::device::CreateDeviceRequest;
 use crate::shared::persistence::repositories::{
     find_device_by_id, find_device_by_id_with_tags,
 };
-use tinyiothub_core::models::device_command::DeviceCommand;
-use crate::shared::persistence::repositories::{
-    find_device_command_by_device_and_name, find_device_commands_by_device_id,
-};
-use tinyiothub_core::models::device_property::DeviceProperty;
+use crate::shared::persistence::repositories::find_device_command_by_device_and_name;
 use crate::shared::persistence::repositories::find_device_properties_by_device_id;
 use crate::modules::template::types::{CreateDeviceFromTemplateRequest, DeviceCreationInput};
-use crate::modules::device::monitoring_service::DeviceMetrics;
-use crate::modules::device::performance_service::DevicePerformanceMetrics;
 use tinyiothub_storage::traits::device::{DeviceCriteria, DeviceSortBy, DeviceSortOrder};
 
 /// Tool input: Get single device
@@ -29,13 +23,6 @@ use tinyiothub_storage::traits::device::{DeviceCriteria, DeviceSortBy, DeviceSor
 struct GetDeviceInput {
     id: String,
     include_properties: Option<bool>,
-}
-
-/// Tool input: Get device status
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct GetDeviceStatusInput {
-    id: String,
 }
 
 /// Tool input: Write device properties
@@ -59,9 +46,7 @@ struct SendCommandInput {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CreateDeviceInput {
-    /// Template ID — required for template-based creation
     template_id: Option<String>,
-    /// Device name (required)
     name: String,
     display_name: Option<String>,
     device_type: Option<String>,
@@ -76,31 +61,8 @@ struct CreateDeviceInput {
     connection_config: Option<String>,
     parent_id: Option<String>,
     product_id: Option<String>,
-    /// Property values to set at creation time
     property_values: Option<HashMap<String, String>>,
-    /// Commands to enable at creation time
     enabled_commands: Option<Vec<String>>,
-}
-
-/// Tool input: Update device
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct UpdateDeviceInput {
-    id: String,
-    name: Option<String>,
-    display_name: Option<String>,
-    device_type: Option<String>,
-    address: Option<String>,
-    description: Option<String>,
-    position: Option<String>,
-    driver_name: Option<String>,
-    device_model: Option<String>,
-    protocol_type: Option<String>,
-    factory_name: Option<String>,
-    linked_data: Option<String>,
-    connection_config: Option<String>,
-    parent_id: Option<String>,
-    product_id: Option<String>,
 }
 
 /// Tool input: Delete device
@@ -108,42 +70,6 @@ struct UpdateDeviceInput {
 #[serde(rename_all = "camelCase")]
 struct DeleteDeviceInput {
     id: String,
-}
-
-/// Tool input: Get device history
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct GetDeviceHistoryInput {
-    device_id: String,
-    hours: Option<u32>, // History window in hours (default: 168 = 7 days)
-}
-
-/// Tool input: Get device metrics
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct GetDeviceMetricsInput {
-    device_id: String,
-}
-
-/// Tool input: Export device report
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ExportDeviceReportInput {
-    device_id: String,
-    format: Option<String>, // "json" (default) or "summary"
-}
-
-/// Device status response
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct DeviceStatusResponse {
-    device_id: String,
-    name: String,
-    is_online: bool,
-    status: String,
-    state_description: String,
-    last_heartbeat: Option<String>,
-    signal_strength: Option<i32>, // Placeholder, would come from device data
 }
 
 /// Property write response
@@ -175,42 +101,6 @@ struct CommandResponse {
     execution_time: Option<String>,
 }
 
-/// Device history response using performance metrics
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct DeviceHistoryResponse {
-    device_id: String,
-    hours: u32,
-    records: Vec<DevicePerformanceMetrics>,
-    total_count: usize,
-}
-
-/// Device metrics response
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct DeviceMetricsResponse {
-    device_id: String,
-    total_properties: u32,
-    online_properties: u32,
-    offline_properties: u32,
-    total_commands: u32,
-    total_events: u32,
-    active_alarms: u32,
-    generated_at: String,
-}
-
-/// Device report response
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct DeviceReportResponse {
-    device: Device,
-    properties: Vec<DeviceProperty>,
-    commands: Vec<DeviceCommand>,
-    status: DeviceStatusResponse,
-    generated_at: String,
-    report_type: String,
-}
-
 // === Get Device Profile Handler ===
 pub struct DeviceProfileHandler;
 
@@ -221,7 +111,7 @@ impl ToolHandler for DeviceProfileHandler {
     }
 
     fn description(&self) -> &str {
-        "Get detailed information about a single device, including its property definitions and current values"
+        "Get detailed information about a single device, including its property definitions, current values, status, and metrics"
     }
 
     fn input_schema(&self) -> InputSchema {
@@ -240,7 +130,6 @@ impl ToolHandler for DeviceProfileHandler {
 
         let include_properties = input.include_properties.unwrap_or(true);
 
-        // Get tenant_id from MCP context for access control
         let _workspace_id = crate::modules::mcp::handlers::get_mcp_context()
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
@@ -250,13 +139,8 @@ impl ToolHandler for DeviceProfileHandler {
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.id)))?;
 
-        // TODO: Verify device belongs to user's tenant - workspace_id field removed from Device
-        // Need alternative verification method
-        // if device.workspace_id.as_ref() != Some(&workspace_id) {
-
         // Sync real-time state
         if let Some(cached) = state.device_cache.get(&device.id) {
-            device.status = cached.status.clone();
             device.status = cached.status.clone();
             device.last_heartbeat = cached.last_heartbeat.clone();
 
@@ -267,68 +151,6 @@ impl ToolHandler for DeviceProfileHandler {
         }
 
         Ok(serde_json::to_value(device).unwrap())
-    }
-}
-
-// === Get Device Status Handler ===
-pub struct GetDeviceStatusHandler;
-
-#[async_trait]
-impl ToolHandler for GetDeviceStatusHandler {
-    fn name(&self) -> &str {
-        "get_device_status"
-    }
-
-    fn description(&self) -> &str {
-        "Get device online/offline status and signal strength"
-    }
-
-    fn input_schema(&self) -> InputSchema {
-        let mut props = HashMap::new();
-        props.insert("id".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device ID (required)".to_string()) });
-        InputSchema::object(vec!["id".to_string()], props)
-    }
-
-    async fn execute(&self, args: Value) -> Result<Value, ToolError> {
-        let input: GetDeviceStatusInput = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidParams(e.to_string()))?;
-
-        let state = crate::modules::mcp::get_app_state()
-            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
-
-        // Get tenant_id from MCP context for access control
-        let _workspace_id = crate::modules::mcp::handlers::get_mcp_context()
-            .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
-            .workspace_id;
-
-        let device = find_device_by_id(state.database(), &input.id)
-            .await
-            .map_err(|e| ToolError::Internal(e.to_string()))?
-            .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.id)))?;
-
-        // TODO: Verify device belongs to user's tenant - workspace_id field removed from Device
-        // Need alternative verification method
-        // if device.workspace_id.as_ref() != Some(&workspace_id) {
-
-        let state_description = device.get_state_description().to_string();
-
-        let (is_online, last_heartbeat) = if let Some(cached) = state.device_cache.get(&device.id) {
-            (cached.is_online(), cached.last_heartbeat)
-        } else {
-            (device.is_online(), device.last_heartbeat)
-        };
-
-        let status = DeviceStatusResponse {
-            device_id: device.id.clone(),
-            name: device.name.clone(),
-            is_online,
-            status: device.status.to_string(),
-            state_description,
-            last_heartbeat,
-            signal_strength: None, // Would need device data server to provide this
-        };
-
-        Ok(serde_json::to_value(status).unwrap())
     }
 }
 
@@ -374,10 +196,6 @@ impl ToolHandler for DevicePropertyGetHandler {
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.device_id)))?;
-
-        // TODO: Verify device belongs to user's workspace - workspace_id field removed from Device
-        // Need alternative verification method
-        // if device.workspace_id.as_ref() != Some(&workspace_id) {
 
         let all_properties = find_device_properties_by_device_id(state.database(), &input.device_id)
             .await
@@ -451,22 +269,15 @@ impl ToolHandler for WritePropertiesHandler {
         let state = crate::modules::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
-        // Get workspace_id from MCP context for access control
         let workspace_id = crate::modules::mcp::handlers::get_mcp_context()
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 
-        // Check device exists and belongs to user's workspace
         let _device = find_device_by_id(state.database(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.device_id)))?;
 
-        // TODO: Verify device belongs to user's workspace - workspace_id field removed from Device
-        // Need alternative verification method
-        // if device.workspace_id.as_ref() != Some(&workspace_id) {
-
-        // Get device properties definition
         let device_properties = find_device_properties_by_device_id(state.database(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?;
@@ -475,7 +286,6 @@ impl ToolHandler for WritePropertiesHandler {
         let mut results = Vec::new();
 
         for (prop_name, value) in &input.properties {
-            // Find property definition
             let prop_def = device_properties.iter().find(|p| &p.name == prop_name);
 
             match prop_def {
@@ -487,7 +297,6 @@ impl ToolHandler for WritePropertiesHandler {
                     });
                 }
                 Some(def) => {
-                    // Validate value
                     if let Err(e) = def.validate_value(value) {
                         results.push(PropertyUpdateResult {
                             name: prop_name.clone(),
@@ -497,7 +306,6 @@ impl ToolHandler for WritePropertiesHandler {
                         continue;
                     }
 
-                    // Update via PropertyChange event (DataServer updates DeviceCache)
                     match state.update_device_property_value(
                         &workspace_id,
                         &input.device_id,
@@ -569,22 +377,15 @@ impl ToolHandler for DeviceCommandHandler {
         let state = crate::modules::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
-        // Get workspace_id from MCP context for access control
         let _workspace_id = crate::modules::mcp::handlers::get_mcp_context()
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 
-        // Check device exists and belongs to user's workspace
         let device = find_device_by_id(state.database(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.device_id)))?;
 
-        // TODO: Verify device belongs to user's workspace - workspace_id field removed from Device
-        // Need alternative verification method
-        // if device.workspace_id.as_ref() != Some(&workspace_id) {
-
-        // Check if device is online
         let is_online = state.device_cache.get(&input.device_id)
             .map(|d| d.is_online())
             .unwrap_or(device.is_online());
@@ -599,7 +400,6 @@ impl ToolHandler for DeviceCommandHandler {
             }).unwrap());
         }
 
-        // Find command definition
         let command = find_device_command_by_device_and_name(
             state.database(),
             &input.device_id,
@@ -621,10 +421,8 @@ impl ToolHandler for DeviceCommandHandler {
             }
         };
 
-        // Execute command via DataServer if available
         let start_time = std::time::Instant::now();
 
-        // Create command with parameters
         let mut cmd = command_def.clone();
         if let Some(params) = input.parameters {
             cmd.parameters = Some(serde_json::to_string(&params).unwrap_or_default());
@@ -634,7 +432,6 @@ impl ToolHandler for DeviceCommandHandler {
             data_server.execute_command(cmd)
                 .map_err(|e| ToolError::Internal(e.to_string()))
         } else {
-            // No data server available - simulate success for testing
             tracing::warn!("DataServer not available, command execution simulated");
             Ok(())
         };
@@ -657,91 +454,6 @@ impl ToolHandler for DeviceCommandHandler {
                 execution_time: Some(execution_time),
             }).unwrap()),
         }
-    }
-}
-
-// === Device Template List Handler ===
-pub struct DeviceTemplateListHandler;
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TemplateListInput {
-    category: Option<String>,
-    manufacturer: Option<String>,
-    device_type: Option<String>,
-}
-
-#[async_trait]
-impl ToolHandler for DeviceTemplateListHandler {
-    fn name(&self) -> &str {
-        "device_template_list"
-    }
-
-    fn description(&self) -> &str {
-        "List all available device templates for creating new devices"
-    }
-
-    fn input_schema(&self) -> InputSchema {
-        let mut props = HashMap::new();
-        props.insert("category".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Filter by template category".to_string()) });
-        props.insert("manufacturer".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Filter by manufacturer".to_string()) });
-        props.insert("deviceType".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Filter by device type".to_string()) });
-        InputSchema::object(vec![], props)
-    }
-
-    async fn execute(&self, args: Value) -> Result<Value, ToolError> {
-        let input: TemplateListInput = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidParams(e.to_string()))?;
-
-        let state = crate::modules::mcp::get_app_state()
-            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
-
-        let params = crate::modules::template::types::TemplateQueryParams {
-            category: input.category,
-            manufacturer: input.manufacturer,
-            device_type: input.device_type,
-            ..Default::default()
-        };
-
-        let templates = crate::modules::template::types::DeviceTemplate::find_all(
-            state.database(),
-            &params,
-        )
-        .await
-        .map_err(|e| ToolError::Internal(e.to_string()))?;
-
-        #[derive(Serialize)]
-        #[serde(rename_all = "camelCase")]
-        struct TemplateSummary {
-            id: String,
-            name: String,
-            display_name: String,
-            description: Option<String>,
-            version: String,
-            category: String,
-            manufacturer: Option<String>,
-            device_type: String,
-            protocol_type: Option<String>,
-            driver_name: Option<String>,
-        }
-
-        let result: Vec<TemplateSummary> = templates
-            .into_iter()
-            .map(|t| TemplateSummary {
-                id: t.id,
-                name: t.name,
-                display_name: t.display_name,
-                description: t.description,
-                version: t.version,
-                category: t.category,
-                manufacturer: t.manufacturer,
-                device_type: t.device_type,
-                protocol_type: t.protocol_type,
-                driver_name: t.driver_name,
-            })
-            .collect();
-
-        Ok(serde_json::to_value(result).unwrap())
     }
 }
 
@@ -785,7 +497,6 @@ impl ToolHandler for CreateDeviceHandler {
         let tenant_device_service = state.tenant_device_service_str(&workspace_id);
 
         if let Some(template_id) = &input.template_id {
-            // Template-based creation
             let device_input = DeviceCreationInput {
                 name: input.name,
                 display_name: input.display_name,
@@ -810,7 +521,6 @@ impl ToolHandler for CreateDeviceHandler {
                 Err(e) => Err(ToolError::Internal(format!("Failed to create device from template: {}", e))),
             }
         } else {
-            // Direct creation (non-template)
             let request = CreateDeviceRequest {
                 name: input.name,
                 display_name: input.display_name,
@@ -831,94 +541,6 @@ impl ToolHandler for CreateDeviceHandler {
                 Ok(device) => Ok(serde_json::to_value(device).unwrap()),
                 Err(e) => Err(ToolError::Internal(format!("Failed to create device: {}", e))),
             }
-        }
-    }
-}
-
-// === Update Device Handler ===
-pub struct UpdateDeviceHandler;
-
-#[async_trait]
-impl ToolHandler for UpdateDeviceHandler {
-    fn name(&self) -> &str {
-        "update_device"
-    }
-
-    fn description(&self) -> &str {
-        "Update device configuration"
-    }
-
-    fn input_schema(&self) -> InputSchema {
-        let mut props = HashMap::new();
-        props.insert("id".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device ID (required)".to_string()) });
-        props.insert("name".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device name".to_string()) });
-        props.insert("displayName".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Display name".to_string()) });
-        props.insert("deviceType".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device type".to_string()) });
-        props.insert("address".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device address".to_string()) });
-        props.insert("description".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device description".to_string()) });
-        props.insert("position".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device position/location".to_string()) });
-        props.insert("driverName".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Driver name".to_string()) });
-        props.insert("deviceModel".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device model".to_string()) });
-        props.insert("protocolType".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Protocol type".to_string()) });
-        props.insert("factoryName".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Factory name".to_string()) });
-        props.insert("linkedData".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Linked data".to_string()) });
-        props.insert("connectionConfig".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Connection configuration".to_string()) });
-        props.insert("parentId".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Parent device ID".to_string()) });
-        props.insert("productId".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Product ID".to_string()) });
-        props.insert("organizationId".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Organization ID".to_string()) });
-        InputSchema::object(vec!["id".to_string()], props)
-    }
-
-    async fn execute(&self, args: Value) -> Result<Value, ToolError> {
-        let input: UpdateDeviceInput = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidParams(e.to_string()))?;
-
-        let state = crate::modules::mcp::get_app_state()
-            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
-
-        // Get workspace_id from MCP context for access control
-        let workspace_id = crate::modules::mcp::handlers::get_mcp_context()
-            .map(|c| c.workspace_id)
-            .ok_or_else(|| ToolError::Unauthorized("MCP context not available".to_string()))?;
-
-        // Verify device belongs to user's tenant before updating using tenant-aware service
-        let tenant_device_service = state.tenant_device_service_str(&workspace_id);
-        match tenant_device_service.get_device_by_id(&input.id).await {
-            Ok(Some(_)) => {
-                // Device verified, proceed
-            }
-            Ok(None) => {
-                tracing::warn!("MCP update_device: device {} not found for workspace {}", input.id, workspace_id);
-                return Err(ToolError::NotFound(format!("Device {} not found or does not belong to workspace", input.id)));
-            }
-            Err(e) => {
-                tracing::error!("MCP update_device: failed to find device {}: {}", input.id, e);
-                return Err(ToolError::Internal(format!("Failed to update device: {}", e)));
-            }
-        }
-
-        let request = UpdateDeviceRequest {
-            name: input.name,
-            display_name: input.display_name,
-            device_type: input.device_type,
-            address: input.address,
-            description: input.description,
-            position: input.position,
-            driver_name: input.driver_name,
-            device_model: input.device_model,
-            protocol_type: input.protocol_type,
-            factory_name: input.factory_name,
-            linked_data: input.linked_data,
-            driver_options: input.connection_config,
-            state: None,
-            parent_id: input.parent_id,
-            product_id: input.product_id,
-            // tenant_id and workspace_id fields removed from UpdateDeviceRequest per architecture contract
-        };
-
-        match tenant_device_service.update_device(&input.id, &request).await {
-            Ok(device) => Ok(serde_json::to_value(device).unwrap()),
-            Err(e) => Err(ToolError::Internal(format!("Failed to update device: {}", e))),
         }
     }
 }
@@ -949,12 +571,10 @@ impl ToolHandler for DeleteDeviceHandler {
         let state = crate::modules::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
-        // Get workspace_id from MCP context for access control
         let workspace_id = crate::modules::mcp::handlers::get_mcp_context()
             .map(|c| c.workspace_id)
             .ok_or_else(|| ToolError::Unauthorized("MCP context not available".to_string()))?;
 
-        // Verify device belongs to user's tenant before deleting using tenant-aware service
         let tenant_device_service = state.tenant_device_service_str(&workspace_id);
 
         match tenant_device_service.delete_device(&input.id).await {
@@ -965,228 +585,8 @@ impl ToolHandler for DeleteDeviceHandler {
     }
 }
 
-// === Get Device History Handler ===
-pub struct GetDeviceHistoryHandler;
-
-#[async_trait]
-impl ToolHandler for GetDeviceHistoryHandler {
-    fn name(&self) -> &str {
-        "get_device_history"
-    }
-
-    fn description(&self) -> &str {
-        "Query device performance history data. Returns time-series performance metrics."
-    }
-
-    fn input_schema(&self) -> InputSchema {
-        let mut props = HashMap::new();
-        props.insert("deviceId".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device ID (required)".to_string()) });
-        props.insert("hours".to_string(), PropertySchema { prop_type: "integer".to_string(), description: Some("History window in hours (default: 168 = 7 days)".to_string()) });
-        InputSchema::object(vec!["deviceId".to_string()], props)
-    }
-
-    async fn execute(&self, args: Value) -> Result<Value, ToolError> {
-        let input: GetDeviceHistoryInput = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidParams(e.to_string()))?;
-
-        let state = crate::modules::mcp::get_app_state()
-            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
-
-        // Get tenant_id from MCP context for access control
-        let _workspace_id = crate::modules::mcp::handlers::get_mcp_context()
-            .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
-            .workspace_id;
-
-        // Default to 7 days (168 hours)
-        let hours = input.hours.unwrap_or(168);
-
-        // Check device exists and belongs to user's tenant
-        let _device = find_device_by_id(state.database(), &input.device_id)
-            .await
-            .map_err(|e| ToolError::Internal(e.to_string()))?
-            .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.device_id)))?;
-
-        // TODO: Verify device belongs to user's tenant - workspace_id field removed from Device
-        // Need alternative verification method
-        // if device.workspace_id.as_ref() != Some(&workspace_id) {
-
-        // Get performance history from performance service
-        let records = state.performance_service
-            .get_device_performance_history(&input.device_id, hours)
-            .await
-            .map_err(|e| ToolError::Internal(format!("Failed to get history: {}", e)))?;
-
-        let total_count = records.len();
-
-        let response = DeviceHistoryResponse {
-            device_id: input.device_id,
-            hours,
-            records,
-            total_count,
-        };
-
-        Ok(serde_json::to_value(response).unwrap())
-    }
-}
-
-// === Get Device Metrics Handler ===
-pub struct GetDeviceMetricsHandler;
-
-#[async_trait]
-impl ToolHandler for GetDeviceMetricsHandler {
-    fn name(&self) -> &str {
-        "get_device_metrics"
-    }
-
-    fn description(&self) -> &str {
-        "Get device metrics including property counts, command counts, events, and alarms."
-    }
-
-    fn input_schema(&self) -> InputSchema {
-        let mut props = HashMap::new();
-        props.insert("deviceId".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device ID (required)".to_string()) });
-        InputSchema::object(vec!["deviceId".to_string()], props)
-    }
-
-    async fn execute(&self, args: Value) -> Result<Value, ToolError> {
-        let input: GetDeviceMetricsInput = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidParams(e.to_string()))?;
-
-        let state = crate::modules::mcp::get_app_state()
-            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
-
-        // Get workspace_id from MCP context for access control
-        let _workspace_id = crate::modules::mcp::handlers::get_mcp_context()
-            .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
-            .workspace_id;
-
-        // Check device exists and belongs to user's workspace
-        let _device = find_device_by_id(state.database(), &input.device_id)
-            .await
-            .map_err(|e| ToolError::Internal(e.to_string()))?
-            .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.device_id)))?;
-
-        // TODO: Verify device belongs to user's workspace - workspace_id field removed from Device
-        // Need alternative verification method
-        // if device.workspace_id.as_ref() != Some(&workspace_id) {
-
-        // Get metrics from monitoring service
-        let metrics: DeviceMetrics = state.monitoring_service
-            .get_device_metrics(&input.device_id)
-            .await
-            .unwrap_or(DeviceMetrics {
-                total_properties: 0,
-                online_properties: 0,
-                offline_properties: 0,
-                total_commands: 0,
-                total_events: 0,
-                active_alarms: 0,
-            });
-
-        let response = DeviceMetricsResponse {
-            device_id: input.device_id,
-            total_properties: metrics.total_properties,
-            online_properties: metrics.online_properties,
-            offline_properties: metrics.offline_properties,
-            total_commands: metrics.total_commands,
-            total_events: metrics.total_events,
-            active_alarms: metrics.active_alarms,
-            generated_at: chrono::Utc::now().to_rfc3339(),
-        };
-
-        Ok(serde_json::to_value(response).unwrap())
-    }
-}
-
-// === Export Device Report Handler ===
-pub struct ExportDeviceReportHandler;
-
-#[async_trait]
-impl ToolHandler for ExportDeviceReportHandler {
-    fn name(&self) -> &str {
-        "export_device_report"
-    }
-
-    fn description(&self) -> &str {
-        "Generate a device operation report with full device details, properties, commands, and status"
-    }
-
-    fn input_schema(&self) -> InputSchema {
-        let mut props = HashMap::new();
-        props.insert("deviceId".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device ID (required)".to_string()) });
-        props.insert("format".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Report format: 'json' (default) or 'summary'".to_string()) });
-        InputSchema::object(vec!["deviceId".to_string()], props)
-    }
-
-    async fn execute(&self, args: Value) -> Result<Value, ToolError> {
-        let input: ExportDeviceReportInput = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidParams(e.to_string()))?;
-
-        let state = crate::modules::mcp::get_app_state()
-            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
-
-        // Get workspace_id from MCP context for access control
-        let _workspace_id = crate::modules::mcp::handlers::get_mcp_context()
-            .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
-            .workspace_id;
-
-        // Get device
-        let mut device = find_device_by_id_with_tags(state.database(), &input.device_id, "")
-            .await
-            .map_err(|e| ToolError::Internal(e.to_string()))?
-            .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.device_id)))?;
-
-        // TODO: Verify device belongs to user's workspace - workspace_id field removed from Device
-        // Need alternative verification method
-        // if device.workspace_id.as_ref() != Some(&workspace_id) {
-
-        // Get properties
-        let properties = find_device_properties_by_device_id(state.database(), &input.device_id)
-            .await
-            .map_err(|e| ToolError::Internal(e.to_string()))?;
-
-        // Get commands
-        let commands = find_device_commands_by_device_id(state.database(), &input.device_id)
-            .await
-            .map_err(|e| ToolError::Internal(e.to_string()))?;
-
-        // Sync real-time state
-        if let Some(cached) = state.device_cache.get(&device.id) {
-            device.status = cached.status.clone();
-            device.status = cached.status.clone();
-            device.last_heartbeat = cached.last_heartbeat.clone();
-            device.properties = cached.properties.clone();
-            device.commands = cached.commands.clone();
-        }
-
-        let status = DeviceStatusResponse {
-            device_id: device.id.clone(),
-            name: device.name.clone(),
-            is_online: device.is_online(),
-            status: device.status.to_string(),
-            state_description: device.get_state_description().to_string(),
-            last_heartbeat: device.last_heartbeat.clone(),
-            signal_strength: None,
-        };
-
-        let report_type = input.format.as_deref().unwrap_or("json");
-
-        let response = DeviceReportResponse {
-            device,
-            properties,
-            commands,
-            status,
-            generated_at: chrono::Utc::now().to_rfc3339(),
-            report_type: report_type.to_string(),
-        };
-
-        Ok(serde_json::to_value(response).unwrap())
-    }
-}
-
 // === Search Devices Handler ===
 
-/// Tool input: Search devices by keyword
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SearchDevicesInput {
@@ -1195,7 +595,6 @@ struct SearchDevicesInput {
     limit: Option<u32>,
 }
 
-/// Concise device result for search (saves tokens)
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SearchDeviceResult {
@@ -1209,7 +608,6 @@ struct SearchDeviceResult {
     last_heartbeat: Option<String>,
 }
 
-/// Search devices response
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SearchDevicesResponse {
@@ -1273,14 +671,6 @@ impl ToolHandler for SearchDevicesHandler {
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?
             .workspace_id;
 
-        tracing::info!(
-            tool = "search_devices",
-            keyword = %input.keyword,
-            workspace_id = %workspace_id,
-            "MCP search_devices executing"
-        );
-
-        // Use workspace-scoped repository for security
         let repository = state.device_repository_factory.create_for_workspace(workspace_id.clone());
 
         let criteria = DeviceCriteria {
@@ -1298,14 +688,6 @@ impl ToolHandler for SearchDevicesHandler {
             .await
             .map_err(|e| ToolError::Internal(format!("Search failed: {}", e)))?;
 
-        tracing::info!(
-            tool = "search_devices",
-            keyword = %input.keyword,
-            result_count = devices.len(),
-            "MCP search_devices completed"
-        );
-
-        // Sync real-time status from DeviceCache
         let mut results = Vec::with_capacity(devices.len());
         for device in &mut devices {
             if let Some(cached) = state.device_cache.get(&device.id) {

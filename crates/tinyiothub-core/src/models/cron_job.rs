@@ -79,6 +79,7 @@ pub struct CreateCronJobRequest {
     pub job_type: String,
     pub cron_expression: String,
     pub config: String,
+    pub workspace_id: String,
     pub timeout_seconds: Option<i32>,
     pub max_retries: Option<i32>,
 }
@@ -281,6 +282,7 @@ mod tests {
             job_type: "device_command".to_string(),
             cron_expression: "*/5 * * * *".to_string(),
             config: "{}".to_string(),
+            workspace_id: "ws-test".to_string(),
             timeout_seconds: Some(300),
             max_retries: Some(3),
         };

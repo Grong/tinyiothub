@@ -30,15 +30,6 @@ struct ListAlarmsInput {
     page_size: Option<u32>,
 }
 
-/// Tool input: Get alarm statistics
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AlarmStatisticsInput {
-    workspace_id: Option<String>,
-    start_time: String,
-    end_time: String,
-}
-
 /// Tool input: Acknowledge alarm
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -228,79 +219,6 @@ impl ToolHandler for AlarmListHandler {
                 "total_count": total
             }
         }))
-    }
-}
-
-/// Alarm statistics handler
-pub struct AlarmStatisticsHandler;
-
-#[async_trait]
-impl ToolHandler for AlarmStatisticsHandler {
-    fn name(&self) -> &str {
-        "alarm_statistics"
-    }
-
-    fn description(&self) -> &str {
-        "Get alarm statistics for a time range."
-    }
-
-    fn input_schema(&self) -> InputSchema {
-        let mut props = HashMap::new();
-        props.insert(
-            "startTime".to_string(),
-            PropertySchema {
-                prop_type: "string".to_string(),
-                description: Some("Start time (RFC3339 format)".to_string()),
-            },
-        );
-        props.insert(
-            "endTime".to_string(),
-            PropertySchema {
-                prop_type: "string".to_string(),
-                description: Some("End time (RFC3339 format)".to_string()),
-            },
-        );
-        InputSchema::object(vec!["startTime".to_string(), "endTime".to_string()], props)
-    }
-
-    async fn execute(&self, args: Value) -> Result<Value, ToolError> {
-        let input: AlarmStatisticsInput =
-            serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
-
-        let claims = get_mcp_context().ok_or_else(|| {
-            ToolError::Unauthorized("MCP context not initialized".to_string())
-        })?;
-
-        // SECURITY: Reject if user tries to specify a different workspace_id
-        // The statistics should only be for the authenticated workspace
-        if let Some(ref ws_id) = input.workspace_id
-            && ws_id != &claims.workspace_id {
-                return Err(ToolError::Forbidden(
-                    "Access denied: cannot query statistics for other workspaces".to_string()
-                ));
-            }
-
-        let state = crate::modules::mcp::get_app_state()
-            .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
-
-        let start_time = chrono::DateTime::parse_from_rfc3339(&input.start_time)
-            .map_err(|_| ToolError::InvalidParams("Invalid start_time format".to_string()))?
-            .with_timezone(&chrono::Utc);
-
-        let end_time = chrono::DateTime::parse_from_rfc3339(&input.end_time)
-            .map_err(|_| ToolError::InvalidParams("Invalid end_time format".to_string()))?
-            .with_timezone(&chrono::Utc);
-
-        let time_range = TimeRange { start: start_time, end: end_time };
-
-        let stats = state
-            .alarm_service
-            .get_alarm_statistics(time_range)
-            .await
-            .map_err(|e| ToolError::Internal(format!("Failed to get alarm statistics: {}", e)))?;
-
-        let dto: crate::modules::alarm::types::AlarmStatisticsDto = stats.into();
-        Ok(serde_json::to_value(dto).unwrap())
     }
 }
 
