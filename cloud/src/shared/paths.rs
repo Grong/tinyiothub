@@ -16,7 +16,7 @@ pub fn project_root() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
 }
 
-/// API data directory: <project_root>/api/data/
+/// Runtime data directory: <project_root>/data/
 pub fn api_data_dir() -> PathBuf {
     project_root().join("data")
 }

@@ -231,7 +231,7 @@ mod tests {
         );
         assert_eq!(
             obj.get("workspace").and_then(|v| v.as_str()),
-            Some("default")
+            Some("ws-default-001")
         );
     }
 
