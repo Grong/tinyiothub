@@ -1,10 +1,25 @@
+# syntax=docker/dockerfile:1
+
 # ============================================
-# TinyIoTHub Dev Build (本地测试用)
+# TinyIoTHub Dev Build（本地测试用）
 # 使用 dev profile，内存需求低（2GB 即可）
 # 生产环境请用 Dockerfile（release profile，需 4GB+ 内存）
 # ============================================
 
+# ============================================
+# Stage 0: Chef Planner — 计算依赖配方
+# ============================================
+FROM rustlang/rust:nightly-bookworm AS planner
+
+RUN cargo install cargo-chef --locked
+
+WORKDIR /build
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# ============================================
 # Stage 1: Frontend Builder
+# ============================================
 FROM node:20-alpine AS frontend-builder
 
 WORKDIR /frontend
@@ -15,36 +30,45 @@ RUN npm install -g pnpm && pnpm install --frozen-lockfile
 COPY web/ ./
 RUN pnpm build
 
-# Stage 2: Backend Builder (dev profile, 低内存)
+# ============================================
+# Stage 2: Backend Builder（dev profile，低内存）
+# ============================================
 FROM rustlang/rust:nightly-bookworm AS backend-builder
 
-RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
-    apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libssl-dev \
     perl \
     make \
+    mold \
+    clang \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 
+COPY --from=planner /usr/local/cargo/bin/cargo-chef /usr/local/cargo/bin/cargo-chef
+
+COPY --from=planner /build/recipe.json recipe.json
+RUN cargo chef cook --recipe-path recipe.json
+
 COPY . .
 
-# dev profile: 无 LTO、无 strip，编译快、内存低
-RUN --mount=type=cache,target=/build/target \
-    --mount=type=cache,target=/usr/local/cargo/registry \
-    CARGO_BUILD_JOBS=1 \
-    cargo build --bin tinyiothub-cloud && \
+ENV RUSTFLAGS="-C link-arg=-fuse-ld=mold" \
+    CARGO_BUILD_JOBS=1
+
+RUN cargo build --bin tinyiothub-cloud && \
     mkdir -p /out && \
     cp /build/target/debug/tinyiothub-cloud /out/
 
+# ============================================
 # Stage 3: Runtime
+# ============================================
 FROM debian:bookworm-slim
 
-RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
-    apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     tzdata \
+    wget \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

@@ -1,35 +1,58 @@
+# syntax=docker/dockerfile:1
+
 # ============================================
 # TinyIoTHub Marketplace
 # ============================================
+
+# ============================================
+# Stage 0: Chef Planner — 计算依赖配方
+# ============================================
+FROM rustlang/rust:nightly-bookworm AS planner
+
+RUN cargo install cargo-chef --locked
+
+WORKDIR /build
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# ============================================
+# Stage 1: Backend Builder
+# ============================================
 FROM rustlang/rust:nightly-bookworm AS backend-builder
 
-RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
-    apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libssl-dev \
     perl \
     make \
+    mold \
+    clang \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 
+COPY --from=planner /usr/local/cargo/bin/cargo-chef /usr/local/cargo/bin/cargo-chef
+
+COPY --from=planner /build/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
+
 COPY . .
 
-RUN --mount=type=cache,target=/build/target \
-    --mount=type=cache,target=/usr/local/cargo/registry \
-    cargo build --release --bin tinyiothub-marketplace && \
+ENV RUSTFLAGS="-C link-arg=-fuse-ld=mold"
+
+RUN cargo build --release --bin tinyiothub-marketplace && \
     mkdir -p /out && \
     cp /build/target/release/tinyiothub-marketplace /out/
 
 # ============================================
-# Runtime
+# Stage 2: Runtime
 # ============================================
 FROM debian:bookworm-slim
 
-RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
-    apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     tzdata \
+    wget \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

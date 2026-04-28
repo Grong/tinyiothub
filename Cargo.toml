@@ -91,6 +91,7 @@ parking_lot = "0.12"
 
 # Cache
 moka = { version = "0.12", features = ["sync"] }
+sled = "0.34"
 
 # System info
 sysinfo = "0.30"

@@ -1,5 +1,3 @@
-version: '3.8'
-
 # ============================================
 # 本地测试用 docker-compose
 # 使用方式: docker compose -f docker-compose.local.yml up --build
@@ -100,6 +98,9 @@ services:
       - ./mosquitto/config:/mosquitto/config
       - ./data/mosquitto:/mosquitto/data
       - ./data/mosquitto:/mosquitto/log
+
+    ulimits:
+      memlock: -1
 
     logging:
       driver: "json-file"

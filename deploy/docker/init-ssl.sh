@@ -13,7 +13,7 @@ fi
 # 创建必要的目录并设置权限
 echo "📁 创建数据目录..."
 mkdir -p data/certbot data/mosquitto/data data/mosquitto/log logs config templates mosquitto/config nginx/conf.d
-chmod -R 777 data logs config templates mosquitto/config nginx/conf.d
+chmod -R 755 data logs config templates mosquitto/config nginx/conf.d
 
 # 修复 mosquitto 配置目录权限
 echo "🔧 修复 mosquitto 目录权限..."
