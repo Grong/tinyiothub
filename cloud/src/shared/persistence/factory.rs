@@ -30,12 +30,4 @@ impl DeviceRepositoryFactory {
             self.database.as_ref().clone(),
         ))
     }
-
-    /// Get the raw (non-tenant-aware) device repository
-    ///
-    /// Warning: This should only be used for administrative operations
-    /// that need to access devices across all workspaces.
-    pub fn raw_repository(&self) -> Arc<dyn DeviceRepository> {
-        self.inner_repo.clone()
-    }
 }
