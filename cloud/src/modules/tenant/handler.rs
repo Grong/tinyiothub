@@ -199,8 +199,8 @@ async fn register_tenant(
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
     sqlx::query(
-        r#"INSERT INTO users (id, username, password_hash, email, status, created_at, updated_at)
-           VALUES (?, ?, ?, ?, 'active', ?, ?)"#,
+        r#"INSERT INTO users (id, username, password_hash, email, is_enabled, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 1, ?, ?)"#,
     )
     .bind(&user_id)
     .bind(&email)
@@ -210,7 +210,10 @@ async fn register_tenant(
     .bind(&now)
     .execute(db.pool())
     .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .map_err(|e| {
+        tracing::error!("Failed to insert user during tenant registration: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     let tenant_user_id = uuid::Uuid::new_v4().to_string();
     sqlx::query(
@@ -260,7 +263,7 @@ async fn login(
     }
 
     let rows = sqlx::query(
-        "SELECT id, username, password_hash FROM users WHERE email = ? AND status = 'active' LIMIT 1"
+        "SELECT id, username, password_hash FROM users WHERE email = ? AND is_enabled = 1 LIMIT 1"
     )
     .bind(&email)
     .fetch_all(db.pool())

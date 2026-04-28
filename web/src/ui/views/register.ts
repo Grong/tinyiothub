@@ -40,7 +40,7 @@ export class RegisterView extends LitElement {
 
     this.loading = true;
     try {
-      await apiPost("/users", {
+      await apiPost("/auth/register", {
         name: this.name.trim(),
         username: this.username.trim(),
         password: this.password,
