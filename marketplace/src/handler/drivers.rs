@@ -93,6 +93,8 @@ async fn get_driver(
 }
 
 fn filter_drivers(items: &[serde_json::Value], params: &PaginationParams) -> Vec<serde_json::Value> {
+    let search_lower = params.search.as_ref().map(|s| s.to_lowercase());
+
     items.iter()
         .filter(|item| {
             if let Some(ref proto) = params.protocol {
@@ -101,12 +103,11 @@ fn filter_drivers(items: &[serde_json::Value], params: &PaginationParams) -> Vec
                 }
             }
 
-            if let Some(ref search) = params.search {
-                let search_lower = search.to_lowercase();
+            if let Some(ref search) = search_lower {
                 let matches = [
                     item.get("name").and_then(|v| v.as_str()),
                     item.get("description").and_then(|v| v.as_str()),
-                ].into_iter().flatten().any(|s| s.to_lowercase().contains(&search_lower));
+                ].into_iter().flatten().any(|s| s.to_lowercase().contains(search));
                 if !matches {
                     return false;
                 }

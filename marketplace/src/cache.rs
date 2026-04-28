@@ -12,6 +12,8 @@ pub enum CacheError {
     Json(#[from] serde_json::Error),
 }
 
+const SYNC_LOCK_TTL_SECS: i64 = 600;
+
 pub struct SledCache {
     db: Arc<RwLock<Db>>,
 }
@@ -44,7 +46,6 @@ impl SledCache {
     fn set(&self, key: &str, value: &[u8]) -> Result<(), CacheError> {
         let db = self.db.read();
         db.insert(key, value)?;
-        db.flush()?;
         Ok(())
     }
 
@@ -101,21 +102,22 @@ impl SledCache {
         let now = chrono::Utc::now().timestamp();
         let db = self.db.read();
 
-        if let Some(existing) = db.get(Self::SYNC_LOCK)? {
-            let lock: SyncLock = serde_json::from_slice(&existing)?;
-            if now - lock.ts < 600 {
+        let existing = db.get(Self::SYNC_LOCK)?;
+        if let Some(ref existing_bytes) = existing {
+            let lock: SyncLock = serde_json::from_slice(existing_bytes)?;
+            if now - lock.ts < SYNC_LOCK_TTL_SECS {
                 return Ok(false);
             }
         }
 
-        drop(db);
-
         let lock = SyncLock { holder_id: holder_id.to_string(), ts: now };
-        let json = serde_json::to_vec(&lock)?;
-        let db = self.db.read();
-        db.insert(Self::SYNC_LOCK, json)?;
-        db.flush()?;
-        Ok(true)
+        let new_json = serde_json::to_vec(&lock)?;
+
+        // Atomic compare-and-swap: only write if the old value hasn't changed
+        match db.compare_and_swap(Self::SYNC_LOCK, existing.as_deref(), Some(new_json.as_slice()))? {
+            Ok(()) => Ok(true),
+            Err(_) => Ok(false), // CAS failed — another caller won the race
+        }
     }
 
     pub fn release_sync_lock(&self, holder_id: &str) -> Result<(), CacheError> {
@@ -124,7 +126,6 @@ impl SledCache {
             let lock: SyncLock = serde_json::from_slice(&existing)?;
             if lock.holder_id == holder_id {
                 db.remove(Self::SYNC_LOCK)?;
-                db.flush()?;
             }
         }
         Ok(())
@@ -134,12 +135,20 @@ impl SledCache {
 
     pub fn check_idempotency(&self, delivery_id: &str) -> Result<bool, CacheError> {
         let key = format!("{}{}", Self::IDEMPOTENCY_PREFIX, delivery_id);
-        if self.contains_key(&key) {
-            return Ok(true);
+        let db = self.db.read();
+        let marker = serde_json::to_vec(&serde_json::json!({"ts": chrono::Utc::now().timestamp()}))?;
+
+        // Atomic: only insert if key doesn't exist
+        match db.compare_and_swap(&key, None as Option<&[u8]>, Some(marker.as_slice()))? {
+            Ok(()) => Ok(false),    // CAS succeeded — first time seeing this delivery_id
+            Err(_) => Ok(true),     // CAS failed — key already exists, already processed
         }
-        let json = serde_json::to_vec(&serde_json::json!({"ts": chrono::Utc::now().timestamp()}))?;
-        self.set(&key, &json)?;
-        Ok(false)
+    }
+
+    pub fn flush(&self) -> Result<(), CacheError> {
+        let db = self.db.read();
+        db.flush()?;
+        Ok(())
     }
 
     // ── Cache health ───────────────────────────────────

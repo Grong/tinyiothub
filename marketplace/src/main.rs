@@ -58,7 +58,17 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Marketplace API listening on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app.into_make_service()).await?;
+
+    let shutdown_signal = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+        tracing::info!("Shutting down marketplace...");
+    };
+
+    axum::serve(listener, app.into_make_service())
+        .with_graceful_shutdown(shutdown_signal)
+        .await?;
 
     Ok(())
 }

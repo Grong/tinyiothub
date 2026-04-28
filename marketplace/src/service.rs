@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use thiserror::Error;
-use tracing::{info, warn, error};
+use tracing::{info, warn};
 use serde_json::Value;
 
 use crate::cache::SledCache;
@@ -78,17 +78,18 @@ impl SyncService {
             info!("Drivers directory not found: {:?}", drivers_dir);
         }
 
-        if let Err(e) = self.cache.set_templates(&all_templates) {
-            error!("Failed to write templates to cache: {}", e);
-        }
-        if let Err(e) = self.cache.set_drivers(&all_drivers) {
-            error!("Failed to write drivers to cache: {}", e);
-        }
+        self.cache.set_templates(&all_templates)
+            .map_err(|e| SyncError::Failed(format!("Failed to write templates to cache: {}", e)))?;
+        self.cache.set_drivers(&all_drivers)
+            .map_err(|e| SyncError::Failed(format!("Failed to write drivers to cache: {}", e)))?;
 
         let now = chrono::Utc::now().timestamp();
-        if let Err(e) = self.cache.set_last_sync(now) {
-            error!("Failed to update last_sync: {}", e);
-        }
+        self.cache.set_last_sync(now)
+            .map_err(|e| SyncError::Failed(format!("Failed to update last_sync: {}", e)))?;
+
+        // Batch flush after all writes complete
+        self.cache.flush()
+            .map_err(|e| SyncError::Failed(format!("Failed to flush cache: {}", e)))?;
 
         info!("Local data load completed: {} templates, {} drivers", all_templates.len(), all_drivers.len());
         Ok(())

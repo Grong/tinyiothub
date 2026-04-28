@@ -148,15 +148,21 @@ fn default_per_page() -> usize {
 }
 
 impl PaginationParams {
+    pub const MAX_PER_PAGE: usize = 100;
+    const MAX_SEARCH_LEN: usize = 200;
+
     pub fn validate(&self) -> Result<(), &'static str> {
         if self.page == 0 {
             return Err("page must be >= 1");
         }
-        if self.per_page > 100 {
+        if self.per_page > Self::MAX_PER_PAGE {
             return Err("per_page must be <= 100");
         }
         if self.per_page == 0 {
             return Err("per_page must be >= 1");
+        }
+        if self.search.as_ref().map_or(0, |s| s.len()) > Self::MAX_SEARCH_LEN {
+            return Err("search must be <= 200 characters");
         }
         Ok(())
     }

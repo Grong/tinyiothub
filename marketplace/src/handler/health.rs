@@ -4,6 +4,8 @@ use tinyiothub_web::response::ApiResponseBuilder;
 use crate::AppState;
 use crate::types::HealthResponse;
 
+const STALE_THRESHOLD_SECS: i64 = 3600;
+
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/health", axum::routing::get(health_check))
@@ -16,11 +18,11 @@ async fn health_check(State(state): State<AppState>) -> Json<tinyiothub_web::res
 
     let status = if is_degraded {
         "degraded"
-    } else if let Some(ts) = last_sync {
-        let now = chrono::Utc::now().timestamp();
-        if now - ts > 3600 { "degraded" } else { "ok" }
     } else {
-        "ok"
+        // last_sync is guaranteed Some: is_degraded is false means !is_cold() && last_sync.is_some()
+        let ts = last_sync.unwrap();
+        let now = chrono::Utc::now().timestamp();
+        if now - ts > STALE_THRESHOLD_SECS { "degraded" } else { "ok" }
     };
 
     let response = HealthResponse {

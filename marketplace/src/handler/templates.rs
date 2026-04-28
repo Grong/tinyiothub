@@ -93,6 +93,8 @@ async fn get_template(
 }
 
 fn filter_templates(items: &[serde_json::Value], params: &PaginationParams) -> Vec<serde_json::Value> {
+    let search_lower = params.search.as_ref().map(|s| s.to_lowercase());
+
     items.iter()
         .filter(|item| {
             if let Some(ref cat) = params.category {
@@ -107,18 +109,17 @@ fn filter_templates(items: &[serde_json::Value], params: &PaginationParams) -> V
                 }
             }
 
-            if let Some(ref search) = params.search {
-                let search_lower = search.to_lowercase();
+            if let Some(ref search) = search_lower {
                 let name_match = item.get("name").and_then(|v| v.as_str())
-                    .map(|s| s.to_lowercase().contains(&search_lower))
+                    .map(|s| s.to_lowercase().contains(search))
                     .unwrap_or(false);
                 let display_match = item.get("display_name")
                     .and_then(|v| v.get("zh").or(v.get("en")).and_then(|s| s.as_str()))
-                    .map(|s| s.to_lowercase().contains(&search_lower))
+                    .map(|s| s.to_lowercase().contains(search))
                     .unwrap_or(false);
                 let tags_match = item.get("tags").and_then(|v| v.as_array())
                     .map(|arr| arr.iter().filter_map(|v| v.as_str())
-                        .any(|s| s.to_lowercase().contains(&search_lower)))
+                        .any(|s| s.to_lowercase().contains(search)))
                     .unwrap_or(false);
                 if !name_match && !display_match && !tags_match {
                     return false;
