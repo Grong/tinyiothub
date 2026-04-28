@@ -5,11 +5,11 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-COPY package.json pnpm-lock.yaml* ./
+COPY package.json pnpm-lock.yaml ./
 RUN npm install -g pnpm && pnpm install --frozen-lockfile
 
 COPY . .
-RUN npx vitepress build
+RUN pnpm run docs:build
 
 # ---- 运行阶段 ----
 FROM nginx:alpine

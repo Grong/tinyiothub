@@ -7,6 +7,7 @@ export default defineConfig({
   appearance: 'dark',
 
   ignoreDeadLinks: true,
+  srcExclude: ['superpowers/**'],
 
   head: [
     ['link', { rel: 'icon', href: '/favicon.ico' }]
