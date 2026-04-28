@@ -173,7 +173,7 @@ async fn main_impl() -> std::io::Result<()> {
     #[cfg(not(feature = "harmonyos"))]
     {
         tokio::select! {
-            result = axum::serve(listener, app) => {
+            result = axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>()) => {
                 if let Err(e) = result {
                     error!("Server error: {}", e);
                 }
@@ -189,7 +189,7 @@ async fn main_impl() -> std::io::Result<()> {
 
     #[cfg(feature = "harmonyos")]
     {
-        if let Err(e) = axum::serve(listener, app).await {
+        if let Err(e) = axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).await {
             error!("Server error: {}", e);
         }
     }
