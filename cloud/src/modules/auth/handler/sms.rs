@@ -356,26 +356,25 @@ async fn send_code(
             tracing::error!("Failed to set rate limit interval: {}", e);
         }
 
-        // 增加当日计数
+        // 增加当日计数（incr 原子创建/递增，expire 仅设置 TTL 不覆盖值）
         let daily_key = format!("sms:count:daily:{}", phone);
-        if let Ok(new_count) = r.incr(&daily_key).await {
-            // 设置每日计数器在次日凌晨过期（简化处理：直接设置 24 小时）
-            if let Err(e) = r.set_ex(&daily_key, &new_count.to_string(), 86400).await {
+        if let Ok(_count) = r.incr(&daily_key).await {
+            if let Err(e) = r.expire(&daily_key, 86400).await {
                 tracing::error!("Failed to set daily counter expiry: {}", e);
             }
         }
 
         // 增加 IP 计数
         let ip_key = format!("sms:count:ip:{}", ip_str);
-        let new_ip_count = match r.incr(&ip_key).await {
-            Ok(c) => c,
+        match r.incr(&ip_key).await {
+            Ok(_count) => {
+                if let Err(e) = r.expire(&ip_key, 300).await {
+                    tracing::error!("Failed to set IP counter expiry: {}", e);
+                }
+            }
             Err(e) => {
                 tracing::error!("Failed to increment IP counter: {}", e);
-                1
             }
-        };
-        if let Err(e) = r.set_ex(&ip_key, &new_ip_count.to_string(), 300).await {
-            tracing::error!("Failed to set IP counter expiry: {}", e);
         }
     } else {
         // 无 Redis 时降级到数据库存储
@@ -401,19 +400,19 @@ async fn send_code(
         }
     }
 
-    // 返回成功响应（测试模式下返回验证码）
+    // 返回成功响应
+    // 在 debug 模式或未配置阿里云 SMS 时，将验证码记录到日志（开发/测试用）
     #[cfg(debug_assertions)]
     {
         tracing::info!("[TEST] SMS code for {}: {}", phone, code);
-        ApiResponseBuilder::success(SendCodeResponse {
+        return ApiResponseBuilder::success(SendCodeResponse {
             expires_in: CODE_EXPIRE_SECONDS,
             message: format!("验证码已发送（测试模式: {}）", code),
-        })
+        });
     }
 
     #[cfg(not(debug_assertions))]
     {
-        // 调用阿里云 SMS API
         if let Some(aliyun_config) = &config.sms.aliyun {
             match send_aliyun_sms(phone, &code, aliyun_config).await {
                 Ok(_) => ApiResponseBuilder::success(SendCodeResponse {
@@ -426,12 +425,9 @@ async fn send_code(
                 }
             }
         } else {
-            // 未配置阿里云 SMS 时记录日志
-            tracing::warn!("Aliyun SMS not configured, code logged only");
-            ApiResponseBuilder::success(SendCodeResponse {
-                expires_in: CODE_EXPIRE_SECONDS,
-                message: "验证码已发送".to_string(),
-            })
+            // 未配置阿里云 SMS：记录验证码到日志用于调试，提示用户配置 SMS
+            tracing::warn!("[SMS] Aliyun SMS not configured — code for {}: {}", phone, code);
+            ApiResponseBuilder::error("短信服务未配置，请联系管理员".to_string())
         }
     }
 }
@@ -471,14 +467,21 @@ async fn login_with_code(
     // 验证码比较
     use subtle::ConstantTimeEq;
     if !bool::from(stored_code.as_bytes().ct_eq(code.as_bytes())) {
-        // 增加错误计数
+        // 增加错误计数（原子 incr 避免并发问题）
         if let Some(r) = redis {
             let fail_key = format!("sms:verify:fail:{}", phone);
-            let fail_count: i64 = r.get(&fail_key).await.ok().flatten()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0) + 1;
-            if let Err(e) = r.set_ex(&fail_key, &fail_count.to_string(), 300).await {
-                tracing::error!("Failed to increment fail count: {}", e);
+            let fail_count = match r.incr(&fail_key).await {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!("Failed to increment fail count: {}", e);
+                    1
+                }
+            };
+            // 首次 incr 时设置过期时间
+            if fail_count == 1 {
+                if let Err(e) = r.expire(&fail_key, 300).await {
+                    tracing::error!("Failed to set fail count expiry: {}", e);
+                }
             }
 
             if fail_count >= 3 {
@@ -569,74 +572,39 @@ async fn verify_code(
         return ApiResponseBuilder::error("验证码不能为空".to_string());
     }
 
-    let db = state.database();
-
-    // 从数据库获取最新的未验证验证码
-    let rows = match sqlx::query(
-        r#"SELECT id, code, expires_at, verified_at FROM sms_codes
-            WHERE phone = ? AND purpose = 'login'
-            AND verified_at IS NULL
-            ORDER BY created_at DESC LIMIT 1"#,
-    )
-    .bind(&phone)
-    .fetch_all(db.pool())
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::error!("Database error: {}", e);
-            return ApiResponseBuilder::error("验证失败，请稍后重试".to_string());
-        }
+    // 先从 Redis 获取验证码（与 send_code 保持一致）
+    let stored_code = if let Some(r) = &state.redis {
+        let code_key = format!("sms:code:{}", phone);
+        r.get(&code_key).await.ok().flatten()
+    } else {
+        None
     };
 
-    if rows.is_empty() {
-        return ApiResponseBuilder::success(VerifyCodeResponse {
-            valid: false,
-            message: "验证码不存在或已失效".to_string(),
-        });
-    }
-
-    // 获取第一条记录
-    let row = &rows[0];
-
-    // 获取存储的验证码
-    let stored_code: String = match row.try_get("code") {
-        Ok(c) => c,
-        Err(_) => {
-            return ApiResponseBuilder::error("验证码数据异常".to_string());
-        }
+    // Redis 未命中时 fallback 到数据库
+    let stored_code = match stored_code {
+        Some(c) => c,
+        None => match get_code_from_db(&state, &phone).await {
+            Some(c) => c,
+            None => {
+                return ApiResponseBuilder::success(VerifyCodeResponse {
+                    valid: false,
+                    message: "验证码不存在或已失效".to_string(),
+                });
+            }
+        },
     };
-
-    // 获取过期时间
-    let expires_at: String = match row.try_get("expires_at") {
-        Ok(e) => e,
-        Err(_) => {
-            return ApiResponseBuilder::error("验证码数据异常".to_string());
-        }
-    };
-
-    // 检查验证码是否过期
-    if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(&expires_at)
-        && exp < chrono::Utc::now() {
-            return ApiResponseBuilder::success(VerifyCodeResponse {
-                valid: false,
-                message: "验证码已过期".to_string(),
-            });
-        }
 
     // 比较验证码 — 使用常量时间比较防止时序攻击
     use subtle::ConstantTimeEq;
-    if stored_code.as_bytes().ct_eq(code.as_bytes()).into() {
-        // correct
-    } else {
-        return ApiResponseBuilder::success(VerifyCodeResponse {
-            valid: false,
-            message: "验证码错误".to_string(),
-        });
-    }
+    let is_valid = bool::from(stored_code.as_bytes().ct_eq(code.as_bytes()));
 
     ApiResponseBuilder::success(VerifyCodeResponse {
-        valid: true, message: "验证码验证成功".to_string()
+        valid: is_valid,
+        message: if is_valid {
+            "验证码验证成功".to_string()
+        } else {
+            "验证码错误".to_string()
+        },
     })
 }
 
@@ -719,19 +687,94 @@ fn generate_code() -> String {
     format!("{:06}", rng.gen_range(0..1_000_000))
 }
 
-/// 根据手机号查找或创建用户
+/// 根据手机号查找或创建用户（原子操作，防止并发重复创建）
 async fn find_or_create_user_by_phone(
     db: &crate::shared::persistence::Database,
     phone: &str,
 ) -> Result<crate::modules::user::User, Box<dyn std::error::Error + Send + Sync>> {
-    // 查找现有用户
+    // 最多重试 3 次，处理并发创建导致的唯一约束冲突
+    for attempt in 0..3 {
+        // 查找现有用户
+        let rows = sqlx::query("SELECT * FROM users WHERE phone = ? LIMIT 1")
+            .bind(phone)
+            .fetch_all(db.pool())
+            .await?;
+
+        if let Some(row) = rows.into_iter().next() {
+            return Ok(crate::modules::user::User {
+                id: row.try_get("id")?,
+                username: row.try_get("username")?,
+                password_hash: row.try_get("password_hash")?,
+                email: row.try_get("email")?,
+                phone: row.try_get("phone")?,
+                display_name: row.try_get("display_name")?,
+                is_enabled: row.try_get::<i32, _>("is_enabled")? == 1,
+                parent_id: row.try_get("parent_id")?,
+                created_at: row.try_get("created_at")?,
+                updated_at: row.try_get("updated_at")?,
+                last_login_at: row.try_get("last_login_at")?,
+            });
+        }
+
+        // 创建新用户
+        let user_id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+
+        let insert_result = sqlx::query(
+            r#"INSERT INTO users (id, username, phone, is_enabled, created_at, updated_at)
+                SELECT ?, ?, ?, 1, ?, ?
+                WHERE NOT EXISTS (SELECT 1 FROM users WHERE phone = ?)"#,
+        )
+        .bind(&user_id)
+        .bind(phone)
+        .bind(phone)
+        .bind(&now)
+        .bind(&now)
+        .bind(phone)
+        .execute(db.pool())
+        .await;
+
+        match insert_result {
+            Ok(result) => {
+                if result.rows_affected() > 0 {
+                    return Ok(crate::modules::user::User {
+                        id: user_id,
+                        username: phone.to_string(),
+                        password_hash: String::new(),
+                        email: None,
+                        phone: Some(phone.to_string()),
+                        display_name: None,
+                        is_enabled: true,
+                        parent_id: None,
+                        created_at: now.clone(),
+                        updated_at: now,
+                        last_login_at: None,
+                    });
+                }
+                // rows_affected == 0 说明并发请求已经创建了该用户，重试 SELECT
+                if attempt < 2 {
+                    tracing::warn!(
+                        "[SMS] User already created concurrently for phone={}, retrying SELECT (attempt {})",
+                        phone,
+                        attempt + 2
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to insert user for phone={}: {}", phone, e);
+                return Err(Box::new(e));
+            }
+        }
+    }
+
+    // 最后一次重试：直接 SELECT
     let rows = sqlx::query("SELECT * FROM users WHERE phone = ? LIMIT 1")
         .bind(phone)
         .fetch_all(db.pool())
         .await?;
 
     if let Some(row) = rows.into_iter().next() {
-        return Ok(crate::modules::user::User {
+        Ok(crate::modules::user::User {
             id: row.try_get("id")?,
             username: row.try_get("username")?,
             password_hash: row.try_get("password_hash")?,
@@ -743,39 +786,10 @@ async fn find_or_create_user_by_phone(
             created_at: row.try_get("created_at")?,
             updated_at: row.try_get("updated_at")?,
             last_login_at: row.try_get("last_login_at")?,
-        });
+        })
+    } else {
+        Err("Failed to create or find user after retries".into())
     }
-
-    // 创建新用户
-    let user_id = uuid::Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-
-    sqlx::query(
-        r#"INSERT INTO users (id, username, phone, is_enabled, created_at, updated_at)
-            VALUES (?, ?, ?, 1, ?, ?)"#,
-    )
-    .bind(&user_id)
-    .bind(phone)
-    .bind(phone)
-    .bind(&now)
-    .bind(&now)
-    .execute(db.pool())
-    .await?;
-
-    // 直接构建并返回新用户
-    Ok(crate::modules::user::User {
-        id: user_id,
-        username: phone.to_string(),
-        password_hash: String::new(),
-        email: None,
-        phone: Some(phone.to_string()),
-        display_name: None,
-        is_enabled: true,
-        parent_id: None,
-        created_at: now.clone(),
-        updated_at: now,
-        last_login_at: None,
-    })
 }
 
 // ============== 单元测试 ==============
