@@ -400,33 +400,30 @@ async fn send_code(
         }
     }
 
-    // 返回成功响应
-    // 在 debug 模式或未配置阿里云 SMS 时，将验证码记录到日志（开发/测试用）
-    #[cfg(debug_assertions)]
-    {
-        tracing::info!("[TEST] SMS code for {}: {}", phone, code);
-        return ApiResponseBuilder::success(SendCodeResponse {
-            expires_in: CODE_EXPIRE_SECONDS,
-            message: format!("验证码已发送（测试模式: {}）", code),
-        });
-    }
-
-    #[cfg(not(debug_assertions))]
-    {
-        if let Some(aliyun_config) = &config.sms.aliyun {
-            match send_aliyun_sms(phone, &code, aliyun_config).await {
-                Ok(_) => ApiResponseBuilder::success(SendCodeResponse {
-                    expires_in: CODE_EXPIRE_SECONDS,
-                    message: "验证码已发送".to_string(),
-                }),
-                Err(e) => {
-                    tracing::error!("Failed to send SMS: {}", e);
-                    ApiResponseBuilder::error("发送失败，请稍后重试".to_string())
-                }
+    // 发送短信或返回测试模式验证码
+    if let Some(aliyun_config) = &config.sms.aliyun {
+        match send_aliyun_sms(phone, &code, aliyun_config).await {
+            Ok(_) => ApiResponseBuilder::success(SendCodeResponse {
+                expires_in: CODE_EXPIRE_SECONDS,
+                message: "验证码已发送".to_string(),
+            }),
+            Err(e) => {
+                tracing::error!("Failed to send SMS: {}", e);
+                ApiResponseBuilder::error("发送失败，请稍后重试".to_string())
             }
-        } else {
-            // 未配置阿里云 SMS：记录验证码到日志用于调试，提示用户配置 SMS
-            tracing::warn!("[SMS] Aliyun SMS not configured — code for {}: {}", phone, code);
+        }
+    } else {
+        // 未配置阿里云 SMS：记录验证码到日志用于调试
+        tracing::warn!("[SMS] Aliyun SMS not configured — code for {}: {}", phone, code);
+        #[cfg(debug_assertions)]
+        {
+            ApiResponseBuilder::success(SendCodeResponse {
+                expires_in: CODE_EXPIRE_SECONDS,
+                message: format!("验证码已发送（测试模式: {}）", code),
+            })
+        }
+        #[cfg(not(debug_assertions))]
+        {
             ApiResponseBuilder::error("短信服务未配置，请联系管理员".to_string())
         }
     }
