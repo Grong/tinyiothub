@@ -370,7 +370,7 @@ impl SqliteEventRepository {
             })?
         };
 
-        Ok(Event::reconstruct(id, event_type, level, timestamp, source, content, None))
+        Ok(Event::reconstruct(id, event_type, level, timestamp, source, content))
     }
 
     async fn get_total_count(&self) -> Result<u64> {

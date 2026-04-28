@@ -7,11 +7,8 @@ web/node_modules
 web/.next
 web/out
 
-# Rust
-api/target
-api/*.db
-api/*.db-shm
-api/*.db-wal
+# Rust build artifacts
+target
 
 # IDE
 .vscode
@@ -21,17 +18,13 @@ api/*.db-wal
 
 # Logs
 *.log
-api/logs
-docker/logs
 
-# Docker
+# Docker data
 docker/data
-docker/images
+deploy/docker/data
 
-# Documentation
+# Documentation (docs image built separately)
 docs
-*.md
-!README.md
 
 # Scripts
 scripts
@@ -39,7 +32,7 @@ scripts
 # Environment
 .env
 .env.local
-api/app_settings.toml
+app_settings.toml
 
 # Misc
 .DS_Store

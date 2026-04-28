@@ -1,0 +1,9 @@
+target/
+**/*.rs.bk
+*.pdb
+*.db
+logs/
+*.log
+.git/
+.gitignore
+.DS_Store

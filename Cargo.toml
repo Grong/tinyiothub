@@ -17,7 +17,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "1.1.0"
+version = "0.1.0"
 edition = "2024"
 authors = ["TinyIoTHub Team"]
 license = "MIT"
@@ -91,6 +91,7 @@ parking_lot = "0.12"
 
 # Cache
 moka = { version = "0.12", features = ["sync"] }
+sled = "0.34"
 
 # System info
 sysinfo = "0.30"

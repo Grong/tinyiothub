@@ -56,3 +56,4 @@ api/wwwroot
 /vendor/*.tar.gz
 /vendor/*.zip
 /target
+deploy/docker/data/

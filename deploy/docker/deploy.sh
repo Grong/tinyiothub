@@ -16,7 +16,7 @@ chmod -R 755 mosquitto/config
 
 # 生成 Mosquitto 密码文件
 echo "🔑 生成 Mosquitto 密码文件..."
-mosquitto_passwd -c /mosquitto/config/passwd "admin" "TinyIoTHub@2026" || {
+mosquitto_passwd -c ./mosquitto/config/passwd "admin" "TinyIoTHub@2026" || {
     echo "❌ Mosquitto 密码文件生成失败"
     exit 1
 }
@@ -103,4 +103,4 @@ echo "访问: https://www.tinyiothub.com"
 echo "API: https://api.tinyiothub.com"
 echo "MQTT: https://mqtt.tinyiothub.com"
 echo "文档: https://docs.tinyiothub.com"
-echo "市场：https://marketplace.tinyiothub.com"
+echo "市场: https://marketplace.tinyiothub.com"
