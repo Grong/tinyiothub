@@ -749,8 +749,8 @@ async fn find_or_create_user_by_phone(
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         let insert_result = sqlx::query(
-            r#"INSERT INTO users (id, username, phone, is_enabled, created_at, updated_at)
-                SELECT ?, ?, ?, 1, ?, ?
+            r#"INSERT INTO users (id, username, password_hash, phone, is_enabled, created_at, updated_at)
+                SELECT ?, ?, '', ?, 1, ?, ?
                 WHERE NOT EXISTS (SELECT 1 FROM users WHERE phone = ?)"#,
         )
         .bind(&user_id)
