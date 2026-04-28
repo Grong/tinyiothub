@@ -9,7 +9,11 @@
 use std::path::PathBuf;
 
 /// Project root: the tinyiothub/ directory (parent of api/)
+/// 可通过环境变量 TINYIOTHUB__PROJECT_ROOT 覆盖（Docker 等场景）
 pub fn project_root() -> PathBuf {
+    if let Ok(root) = std::env::var("TINYIOTHUB__PROJECT_ROOT") {
+        return PathBuf::from(root);
+    }
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .map(|p| p.to_path_buf())

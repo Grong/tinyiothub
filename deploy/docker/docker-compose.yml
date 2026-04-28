@@ -53,6 +53,7 @@ services:
     environment:
       - RUST_LOG=info
       - TZ=Asia/Shanghai
+      - TINYIOTHUB__PROJECT_ROOT=/app
       - TINYIOTHUB__DATABASE__URL=/app/data/tinyiothub.db
       - TINYIOTHUB__SECURITY__JWT__SECRET=tinyiothub-default-jwt-secret-change-in-production-32chars
       - TINYIOTHUB__OPENCLAW__URL=http://zeroclaw:42617
@@ -175,6 +176,7 @@ services:
     environment:
       - RUST_LOG=info
       - TZ=Asia/Shanghai
+      - TINYIOTHUB__PROJECT_ROOT=/app
       - TINYIOTHUB__DATABASE__URL=/app/data/tinyiothub.db
       - TINYIOTHUB__SECURITY__JWT__SECRET=tinyiothub-default-jwt-secret-change-in-production-32chars
       - TINYIOTHUB__MQTT__PRIMARY__USERNAME=admin

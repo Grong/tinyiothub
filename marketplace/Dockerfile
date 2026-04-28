@@ -42,6 +42,7 @@ RUN mkdir -p /app/data /app/logs /app/templates && \
 
 ENV RUST_LOG=info \
     TZ=Asia/Shanghai \
+    TINYIOTHUB__PROJECT_ROOT=/app \
     TINYIOTHUB__DATABASE__URL=/app/data/tinyiothub.db
 
 EXPOSE 3003

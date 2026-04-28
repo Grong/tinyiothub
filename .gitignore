@@ -55,4 +55,4 @@ api/wwwroot
 # Vendored crates: zeroclaw, zeroclaw-macros, onvif-rs, tokio-modbus
 /vendor/*.tar.gz
 /vendor/*.zip
-/target
+/targetdeploy/docker/data/
