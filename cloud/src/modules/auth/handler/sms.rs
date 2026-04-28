@@ -235,16 +235,24 @@ async fn send_aliyun_sms(
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
 
+    let status = resp.status();
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read response body: {}", e))?;
+
+    tracing::debug!("[SMS] Aliyun response status={}, body={}", status, body);
+
     #[derive(serde::Deserialize)]
     struct AliyunResponse {
+        #[serde(rename = "Code")]
         pub code: String,
+        #[serde(rename = "Message")]
         pub message: String,
     }
 
-    let result: AliyunResponse = resp
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
+    let result: AliyunResponse = serde_json::from_str(&body)
+        .map_err(|e| format!("Failed to parse response: {} — body: {}", e, body))?;
 
     if result.code == "OK" {
         tracing::info!(
