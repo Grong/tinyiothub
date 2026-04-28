@@ -251,8 +251,24 @@ async fn send_aliyun_sms(
         pub message: String,
     }
 
-    let result: AliyunResponse = serde_json::from_str(&body)
-        .map_err(|e| format!("Failed to parse response: {} — body: {}", e, body))?;
+    let result: AliyunResponse = match serde_json::from_str(&body) {
+        Ok(r) => r,
+        Err(json_err) => {
+            // Aliyun returns XML on some errors (e.g. RequestParameterMalformed)
+            if body.trim_start().starts_with("<?xml") {
+                let code = extract_xml_text(&body, "Code")
+                    .unwrap_or_else(|| "UnknownError".to_string());
+                let message = extract_xml_text(&body, "Message")
+                    .unwrap_or_else(|| json_err.to_string());
+                AliyunResponse { code, message }
+            } else {
+                return Err(format!(
+                    "Failed to parse response: {} — body: {}",
+                    json_err, body
+                ));
+            }
+        }
+    };
 
     if result.code == "OK" {
         tracing::info!(
@@ -270,19 +286,26 @@ async fn send_aliyun_sms(
     }
 }
 
-/// URL 百分号编码（Aliyun 风格）
+/// 从 XML 字符串中提取指定标签的文本内容
+fn extract_xml_text(xml: &str, tag: &str) -> Option<String> {
+    let start_tag = format!("<{}>", tag);
+    let end_tag = format!("</{}>", tag);
+    let start = xml.find(&start_tag)? + start_tag.len();
+    let end = xml[start..].find(&end_tag)?;
+    Some(xml[start..start + end].to_string())
+}
+
+/// URL 百分号编码（RFC 3986，阿里云风格）
 fn percent_encode(s: &str) -> String {
-    let encoded: String = s
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '~' {
-                c.to_string()
+    s.bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b == b'.' || b == b'~' {
+                (b as char).to_string()
             } else {
-                format!("%{:02X}", c as u8)
+                format!("%{:02X}", b)
             }
         })
-        .collect();
-    encoded
+        .collect()
 }
 
 // ============== 路由处理函数 ==============
@@ -864,6 +887,29 @@ mod tests {
         assert_eq!(percent_encode("="), "%3D");
         assert_eq!(percent_encode("%"), "%25");
         assert_eq!(percent_encode("/"), "%2F");
+    }
+
+    #[test]
+    fn test_extract_xml_text() {
+        let xml = r#"<?xml version='1.0' encoding='UTF-8'?>
+<Error>
+    <RequestId>D2605CAD-9A04-5FB5-9922-F6A88132F7BA</RequestId>
+    <HostId>dysmsapi.aliyuncs.com</HostId>
+    <Code>RequestParameterMalformed</Code>
+    <Message>Request parameters has malformed encoded characters.</Message>
+    <Recommend><![CDATA[...]]></Recommend>
+</Error>"#;
+        assert_eq!(
+            extract_xml_text(xml, "Code"),
+            Some("RequestParameterMalformed".to_string())
+        );
+        assert_eq!(
+            extract_xml_text(xml, "Message"),
+            Some("Request parameters has malformed encoded characters.".to_string())
+        );
+        assert_eq!(extract_xml_text(xml, "Nonexistent"), None);
+        // JSON body returns None for any tag
+        assert_eq!(extract_xml_text(r#"{"Code":"OK"}"#, "Code"), None);
     }
 
     #[test]
