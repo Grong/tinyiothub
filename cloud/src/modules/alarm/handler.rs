@@ -46,7 +46,7 @@ pub fn create_alarm_rule_router() -> Router<AppState> {
 async fn list_alarms(
     Query(params): Query<AlarmQueryParams>,
     State(state): State<AppState>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<PaginatedResponse<AlarmDto>>> {
     let time_range = if params.start_time.is_some() || params.end_time.is_some() {
         let start = params
@@ -83,7 +83,7 @@ async fn list_alarms(
     let offset = (page - 1) * page_size;
 
     let criteria = AlarmQueryCriteria {
-        workspace_id: None,
+        workspace_id: Some(claims.workspace_id.clone()),
         device_ids: params.device_ids,
         property_ids: None,
         alarm_levels,
@@ -162,12 +162,12 @@ pub struct RecentAlarmsQuery {
 async fn get_recent_alarms(
     State(state): State<AppState>,
     Query(query): Query<RecentAlarmsQuery>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<Vec<RecentAlarm>>> {
     let db = tinyiothub_storage::sqlite::Database::new(state.db_pool());
     let limit = query.limit.unwrap_or(10);
 
-    match get_recent_alarms_list(&db, limit, query.workspace_id.as_deref()).await {
+    match get_recent_alarms_list(&db, limit, Some(&claims.workspace_id)).await {
         Ok(alarms) => ApiResponseBuilder::success(alarms),
         Err(e) => {
             tracing::error!("获取最新告警列表失败: {}", e);

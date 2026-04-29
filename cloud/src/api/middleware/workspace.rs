@@ -4,9 +4,12 @@ use axum::{
 };
 use std::convert::Infallible;
 
-/// 从请求头中提取 workspace 上下文
-/// 读取 X-Workspace-Id 请求头，值为可选的 workspace ID
-/// 未提供时返回 None（显示整个租户的数据，向后兼容）
+/// Workspace context extracted from JWT Claims — NOT from the X-Workspace-Id header.
+///
+/// The header was previously trusted without validation, allowing any authenticated
+/// user to access arbitrary workspaces by forging the header value. Now workspace_id
+/// is always sourced from the signed JWT, which is the authoritative source of the
+/// user's authorized scope.
 pub struct WorkspaceScope(pub Option<String>);
 
 impl<S> FromRequestParts<S> for WorkspaceScope
@@ -15,13 +18,13 @@ where
 {
     type Rejection = Infallible;
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let workspace_id = parts
-            .headers
-            .get("x-workspace-id")
-            .and_then(|v| v.to_str().ok())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-        Ok(WorkspaceScope(workspace_id))
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let claims_ws = crate::shared::security::jwt::Claims::from_request_parts(parts, state)
+            .await
+            .ok()
+            .filter(|c| !c.workspace_id.is_empty())
+            .map(|c| c.workspace_id);
+
+        Ok(WorkspaceScope(claims_ws))
     }
 }

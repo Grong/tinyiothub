@@ -60,4 +60,11 @@ impl RedisClient {
         let mut conn = self.client.get_multiplexed_async_connection().await?;
         conn.exists(key).await
     }
+
+    /// 设置键的过期时间（秒）
+    pub async fn expire(&self, key: &str, secs: i64) -> Result<(), redis::RedisError> {
+        let mut conn = self.client.get_multiplexed_async_connection().await?;
+        conn.expire::<_, ()>(key, secs).await?;
+        Ok(())
+    }
 }

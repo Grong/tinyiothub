@@ -440,15 +440,20 @@ impl AppState {
             .with_tag_repository(self.tag_repository.clone()))
     }
 
-    /// 如果 workspace_id 为 None，返回原始仓库（无租户过滤，向后兼容）。
+    /// Returns a tenant-scoped device service.
+    /// When workspace_id is None, logs a security warning and uses an empty
+    /// workspace ID (returns no devices) instead of falling back to the raw
+    /// repository which would bypass all tenant isolation.
     pub fn tenant_device_service(&self, workspace_id: &Option<String>) -> Arc<DeviceService> {
-        let repository = if let Some(ws_id) = workspace_id {
-            // 使用工厂创建租户感知的设备仓库
-            self.device_repository_factory.create_for_workspace(ws_id.clone())
-        } else {
-            // 返回原始仓库（无租户过滤，向后兼容）
-            self.device_repository_factory.raw_repository()
-        };
+        let ws_id = workspace_id.clone().unwrap_or_else(|| {
+            tracing::warn!(
+                "[SECURITY] tenant_device_service called with workspace_id=None — \
+                 using empty workspace (no devices will be returned). \
+                 This indicates a bug: WorkspaceScope should always resolve to a workspace_id."
+            );
+            String::new()
+        });
+        let repository = self.device_repository_factory.create_for_workspace(ws_id);
 
         // 创建设备服务（使用现有的事件总线和标签仓库）
         Arc::new(

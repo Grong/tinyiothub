@@ -133,6 +133,16 @@ pub fn create_test_token(user_id: &str, tenant_id: &str) -> String {
         .expect("Failed to generate test token")
 }
 
+/// Generate a JWT token with explicit workspace_id for cross-tenant isolation tests.
+pub fn create_test_token_with_workspace(
+    user_id: &str,
+    tenant_id: &str,
+    workspace_id: &str,
+) -> String {
+    crate::shared::security::jwt::generate_token(user_id, "test-user", tenant_id, workspace_id)
+        .expect("Failed to generate test token")
+}
+
 /// Build an Authorization header value from a token.
 pub fn auth_header(token: &str) -> String {
     format!("Bearer {}", token)

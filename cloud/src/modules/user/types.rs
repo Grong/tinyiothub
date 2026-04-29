@@ -67,6 +67,7 @@ pub struct CreateUserRequest {
     pub password: String,
     pub email: Option<String>,
     pub phone: Option<String>,
+    #[serde(alias = "name")]
     pub display_name: Option<String>,
     pub is_enabled: Option<bool>,
     pub parent_id: Option<String>,

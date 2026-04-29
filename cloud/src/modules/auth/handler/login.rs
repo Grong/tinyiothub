@@ -5,6 +5,7 @@ use serde::Deserialize;
 use crate::{
     shared::app_state::AppState,
     modules::auth::types::{LoginResponse, UserInfo},
+    modules::user::types::CreateUserRequest,
     shared::api_response::ApiResponse,
     shared::security::jwt,
 };
@@ -23,7 +24,81 @@ pub struct LogoutRequest {
 }
 
 pub fn create_router() -> Router<AppState> {
-    Router::new().route("/login", post(login)).route("/logout", post(logout))
+    Router::new()
+        .route("/login", post(login))
+        .route("/register", post(register))
+        .route("/logout", post(logout))
+}
+
+/// 用户注册（公开接口）
+async fn register(
+    State(state): State<AppState>,
+    Json(request): Json<CreateUserRequest>,
+) -> Json<ApiResponse<LoginResponse>> {
+    let username = request.username.trim();
+    let password = request.password.clone();
+
+    if username.is_empty() {
+        return ApiResponseBuilder::error("用户名不能为空".to_string());
+    }
+
+    if password.len() < 6 {
+        return ApiResponseBuilder::error("密码至少6个字符".to_string());
+    }
+
+    // 检查用户名是否已存在
+    match state.user_service.exists_by_username(username).await {
+        Ok(true) => return ApiResponseBuilder::error("用户名已存在".to_string()),
+        Err(e) => {
+            tracing::error!("Failed to check username existence: {}", e);
+            return ApiResponseBuilder::error("注册失败，请稍后重试".to_string());
+        }
+        _ => {}
+    }
+
+    // 创建用户
+    let user = match state.user_service.create_user(&request).await {
+        Ok(u) => u,
+        Err(e) => {
+            tracing::error!("Failed to create user: {}", e);
+            return ApiResponseBuilder::error("注册失败，请稍后重试".to_string());
+        }
+    };
+
+    // 注册后自动登录 — 查找租户和 workspace
+    let tenant_id: String = sqlx::query_scalar(
+        "SELECT tenant_id FROM tenant_users WHERE user_id = ? LIMIT 1"
+    )
+    .bind(&user.id)
+    .fetch_optional(state.database().pool())
+    .await
+    .unwrap_or(None)
+    .unwrap_or_else(|| "default".to_string());
+
+    let workspace_id: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM workspaces WHERE tenant_id = ? LIMIT 1"
+    )
+    .bind(&tenant_id)
+    .fetch_optional(state.database().pool())
+    .await
+    .unwrap_or(None);
+
+    let workspace_id_for_token = workspace_id.clone().unwrap_or_default();
+    let token = match jwt::generate_token(&user.id, user.get_display_name(), &tenant_id, &workspace_id_for_token) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!("Failed to generate token: {}", e);
+            return ApiResponseBuilder::error("注册成功，但登录失败".to_string());
+        }
+    };
+
+    ApiResponseBuilder::success(LoginResponse {
+        access_token: token,
+        token_type: "Bearer".to_string(),
+        expires_in: 24 * 60 * 60,
+        user_info: UserInfo::from(user),
+        workspace_id,
+    })
 }
 
 /// 用户登录
