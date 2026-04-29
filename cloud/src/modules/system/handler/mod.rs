@@ -18,4 +18,4 @@ pub fn create_router() -> Router<AppState> {
 }
 
 // 重新导出初始化功能
-pub use initialization::ensure_default_admin_user;
+pub use initialization::{ensure_default_admin_user, ensure_user_has_workspace};

@@ -542,6 +542,11 @@ async fn login_with_code(
         }
     };
 
+    // 确保新用户关联到默认租户和工作空间（幂等）
+    if let Err(e) = crate::modules::system::handler::ensure_user_has_workspace(&state, &user.id).await {
+        tracing::warn!("[SMS] Failed to ensure workspace for user {}: {}", user.id, e);
+    }
+
     // 查找该用户关联的租户和默认 workspace
     let tenant_id: String = sqlx::query_scalar(
         "SELECT tenant_id FROM tenant_users WHERE user_id = ? LIMIT 1"
