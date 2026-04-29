@@ -221,36 +221,57 @@ pub async fn get_notification_channel_statistics(
             .await?
     };
 
-    let enabled: i64 = db
-        .query_first("SELECT COUNT(*) FROM notification_channels WHERE is_enabled = 1", |row| {
-            row.try_get::<i64, _>(0)
-        })
-        .await?
-        .unwrap_or(0);
-
-    let sms: i64 = db
-        .query_first(
-            "SELECT COUNT(*) FROM notification_channels WHERE channel_type = 'sms'",
-            |row| row.try_get::<i64, _>(0),
+    let enabled: i64 = if let Some(ws_id) = workspace_id {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM notification_channels WHERE is_enabled = 1 AND workspace_id = ?"
         )
+        .bind(ws_id)
+        .fetch_one(db.pool())
         .await?
-        .unwrap_or(0);
+    } else {
+        sqlx::query_scalar("SELECT COUNT(*) FROM notification_channels WHERE is_enabled = 1")
+            .fetch_one(db.pool())
+            .await?
+    };
 
-    let email: i64 = db
-        .query_first(
-            "SELECT COUNT(*) FROM notification_channels WHERE channel_type = 'email'",
-            |row| row.try_get::<i64, _>(0),
+    let sms: i64 = if let Some(ws_id) = workspace_id {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM notification_channels WHERE channel_type = 'sms' AND workspace_id = ?"
         )
+        .bind(ws_id)
+        .fetch_one(db.pool())
         .await?
-        .unwrap_or(0);
+    } else {
+        sqlx::query_scalar("SELECT COUNT(*) FROM notification_channels WHERE channel_type = 'sms'")
+            .fetch_one(db.pool())
+            .await?
+    };
 
-    let webhook: i64 = db
-        .query_first(
-            "SELECT COUNT(*) FROM notification_channels WHERE channel_type = 'webhook'",
-            |row| row.try_get::<i64, _>(0),
+    let email: i64 = if let Some(ws_id) = workspace_id {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM notification_channels WHERE channel_type = 'email' AND workspace_id = ?"
         )
+        .bind(ws_id)
+        .fetch_one(db.pool())
         .await?
-        .unwrap_or(0);
+    } else {
+        sqlx::query_scalar("SELECT COUNT(*) FROM notification_channels WHERE channel_type = 'email'")
+            .fetch_one(db.pool())
+            .await?
+    };
+
+    let webhook: i64 = if let Some(ws_id) = workspace_id {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM notification_channels WHERE channel_type = 'webhook' AND workspace_id = ?"
+        )
+        .bind(ws_id)
+        .fetch_one(db.pool())
+        .await?
+    } else {
+        sqlx::query_scalar("SELECT COUNT(*) FROM notification_channels WHERE channel_type = 'webhook'")
+            .fetch_one(db.pool())
+            .await?
+    };
 
     Ok(ChannelStatistics {
         total_channels: total,
