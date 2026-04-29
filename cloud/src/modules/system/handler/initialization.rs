@@ -262,6 +262,17 @@ async fn ensure_default_workspace_and_agent(
         .await
         .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
         tracing::info!("[init] Created default workspace");
+
+        // Scaffold workspace directory with prompt templates and subdirectories
+        let workspace_dir = crate::shared::paths::default_workspace_dir();
+        match crate::shared::agent::scaffold_service::scaffold_workspace(&workspace_dir).await {
+            Ok(result) => {
+                tracing::info!("[init] Scaffolded workspace directory: {}", result);
+            }
+            Err(e) => {
+                tracing::warn!("[init] Workspace scaffolding failed (non-fatal): {}", e);
+            }
+        }
     }
 
     // 检查 workspace 是否缺少 agent_id

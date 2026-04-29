@@ -208,10 +208,11 @@ export class LoginView extends LitElement {
                   class="login-method-tab ${this.method === "phone" ? "active" : ""}"
                   @click=${() => this.switchMethod("phone")}
                 >手机验证码</button>
-                <button
+                <!-- 微信登录暂未开通 -->
+                <!-- <button
                   class="login-method-tab ${this.method === "wechat" ? "active" : ""}"
                   @click=${() => this.switchMethod("wechat")}
-                >微信登录</button>
+                >微信登录</button> -->
               </div>
 
               ${this.error ? html`<div class="error-message">${this.error}</div>` : ""}

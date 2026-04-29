@@ -71,40 +71,23 @@ pub async fn setup_test_app() -> Router {
 }
 
 /// Create an AppState backed by in-memory SQLite with migrations applied.
-///
-/// Runs cloud and storage migrations interleaved by version (same as production),
-/// skipping the broken chat_sessions migration (20260414102323) which has a
-/// column conflict with the storage version.
 async fn create_test_app_state() -> AppState {
     use tinyiothub_storage::cache::DeviceCache;
     use std::sync::Arc;
-    use std::path::Path;
 
     // In-memory SQLite — no temp file, no cleanup issues
-    let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+    // Disable foreign keys for tests to avoid needing full referential data seeding
+    use sqlx::sqlite::SqliteConnectOptions;
+    use std::str::FromStr;
+    let opts = SqliteConnectOptions::from_str("sqlite::memory:")
+        .expect("Invalid SQLite URL")
+        .foreign_keys(false);
+    let pool = sqlx::SqlitePool::connect_with(opts)
         .await
         .expect("Failed to create in-memory SQLite pool");
 
-    // Load both migrators
-    let cloud_migrator = sqlx::migrate::Migrator::new(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations"),
-    ).await.expect("Failed to load cloud migrations");
-
-    let storage_migrator = sqlx::migrate::Migrator::new(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../crates/tinyiothub-storage/migrations"),
-    ).await.expect("Failed to load storage migrations");
-
-    // Combine and sort by version (interleaved), skipping broken migration
-    let mut combined: Vec<sqlx::migrate::Migration> = Vec::new();
-    for m in cloud_migrator.iter() {
-        if m.version != 20260414102323 {
-            combined.push(m.clone());
-        }
-    }
-    combined.extend(storage_migrator.iter().cloned());
-
-    sqlx::migrate::Migrator::with_migrations(combined)
-        .run(&pool)
+    // Run cloud migrations
+    crate::shared::persistence::test_helpers::run_all_migrations(&pool)
         .await
         .expect("Failed to run migrations");
 
@@ -121,6 +104,29 @@ async fn create_test_app_state() -> AppState {
     .execute(&pool)
     .await
     .expect("Failed to seed test user");
+
+    // Seed default tenant so FK constraints (workspaces.tenant_id REFERENCES tenants(id)) don't fail
+    sqlx::query(
+        "INSERT OR IGNORE INTO tenants (id, name, slug, status, plan_id, subscription_status, timezone, locale)
+         VALUES ('tenant-default-001', 'Default', 'default', 'active', 'plan_free', 'active', 'UTC', 'zh-CN')",
+    )
+    .execute(&pool)
+    .await
+    .expect("Failed to seed default tenant");
+
+    // Seed default workspaces so FK constraints (devices.workspace_id REFERENCES workspaces(id)) don't fail
+    for ws_id in &["ws-default-001", "ws-a", "ws-b"] {
+        sqlx::query(
+            "INSERT OR IGNORE INTO workspaces (id, name, description, tenant_id)
+             VALUES (?, ?, ?, 'tenant-default-001')",
+        )
+        .bind(ws_id)
+        .bind(&format!("Workspace {}", ws_id))
+        .bind("Test workspace")
+        .execute(&pool)
+        .await
+        .expect("Failed to seed workspace");
+    }
 
     let device_cache = Arc::new(DeviceCache::new());
 

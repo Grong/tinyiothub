@@ -58,10 +58,10 @@ pub struct SystemTraceQuery {
 
 pub fn create_router() -> Router<AppState> {
     Router::new()
-        .route("/devices/{device_id}/traces", post(record_device_trace))
-        .route("/devices/{device_id}/traces", get(get_device_traces))
-        .route("/devices/{device_id}/traces/statistics", get(get_device_trace_summary))
-        .route("/devices/{device_id}/traces/clear", post(clear_device_traces))
+        .route("/{device_id}/traces", post(record_device_trace))
+        .route("/{device_id}/traces", get(get_device_traces))
+        .route("/{device_id}/traces/statistics", get(get_device_trace_summary))
+        .route("/{device_id}/traces/clear", post(clear_device_traces))
         .route("/system/traces/overview", get(get_system_trace_overview))
         .route("/system/traces/cleanup", post(cleanup_expired_traces))
 }
