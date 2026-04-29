@@ -153,21 +153,26 @@ pub async fn ensure_default_admin_user(state: &AppState) -> Result<()> {
     Ok(())
 }
 
+/// 确保任意用户关联到默认租户和工作空间（幂等，可多次调用）
+pub async fn ensure_user_has_workspace(state: &AppState, user_id: &str) -> Result<()> {
+    ensure_default_tenant(state, user_id).await
+}
+
 /// 确保默认租户、租户用户关联和默认工作空间/Agent 存在
-async fn ensure_default_tenant(state: &AppState, admin_user_id: &str) -> Result<()> {
+async fn ensure_default_tenant(state: &AppState, user_id: &str) -> Result<()> {
     let pool = state.database().pool();
 
     // 检查 admin 是否已有租户
     let has_tenant: bool = sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM tenant_users WHERE user_id = ?)"
     )
-    .bind(admin_user_id)
+    .bind(user_id)
     .fetch_one(pool)
     .await
     .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
 
     if !has_tenant {
-        tracing::info!("[init] Admin user has no tenant, bootstrapping default tenant...");
+        tracing::info!("[init] User has no tenant, bootstrapping default tenant...");
 
         // 检查是否有任何租户
         let tenant_exists: bool = sqlx::query_scalar::<_, bool>(
@@ -195,7 +200,7 @@ async fn ensure_default_tenant(state: &AppState, admin_user_id: &str) -> Result<
         }
 
         // 关联 admin 用户到默认租户
-        let tenant_user_id = format!("tu-{}", admin_user_id);
+        let tenant_user_id = format!("tu-{}", user_id);
         sqlx::query(
             r#"INSERT OR IGNORE INTO tenant_users
                (id, tenant_id, user_id, role, invitation_status, joined_at, created_at, updated_at)
@@ -203,7 +208,7 @@ async fn ensure_default_tenant(state: &AppState, admin_user_id: &str) -> Result<
                        datetime('now'), datetime('now'), datetime('now'))"#
         )
         .bind(&tenant_user_id)
-        .bind(admin_user_id)
+        .bind(user_id)
         .execute(pool)
         .await
         .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
