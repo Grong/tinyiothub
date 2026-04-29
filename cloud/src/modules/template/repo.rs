@@ -756,11 +756,10 @@ impl TemplateFileManager {
 
         for dir in directories {
             if !dir.exists() {
-                fs::create_dir_all(&dir).map_err(|e| {
-                    error!("创建目录失败: {:?}, 错误: {}", dir, e);
-                    TemplateError::FileSystemError { source: e }
-                })?;
-                info!("创建目录: {:?}", dir);
+                match fs::create_dir_all(&dir) {
+                    Ok(_) => info!("创建目录: {:?}", dir),
+                    Err(e) => warn!("创建目录失败（非致命）: {:?}, 错误: {}", dir, e),
+                }
             }
         }
 
