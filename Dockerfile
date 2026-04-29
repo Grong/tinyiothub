@@ -83,7 +83,13 @@ COPY --from=frontend-builder /dist/ui /app/wwwroot
 
 COPY app_settings.example.toml /app/app_settings.toml
 
-RUN mkdir -p /app/data /app/logs /app/templates && \
+RUN mkdir -p /app/data /app/logs /app/templates \
+    /app/templates/builtin/sensors \
+    /app/templates/builtin/cameras \
+    /app/templates/builtin/controllers \
+    /app/templates/builtin/robots \
+    /app/templates/custom \
+    /app/templates/schemas && \
     chown -R 1001:1001 /app/data /app/logs /app/templates
 
 ENV RUST_LOG=info \
