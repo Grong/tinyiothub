@@ -16,23 +16,10 @@ pub use pool::create_pool;
 pub mod test_helpers {
     use std::path::Path;
 
-    /// Run all migrations (cloud + storage) in chronological order.
-    ///
-    /// Migrations from cloud/migrations/ and crates/tinyiothub-storage/migrations/
-    /// have bidirectional dependencies and must be interleaved by version.
+    /// Run cloud migrations in version order.
     pub async fn run_all_migrations(pool: &sqlx::SqlitePool) -> Result<(), sqlx::migrate::MigrateError> {
-        let cloud_migrator = sqlx::migrate::Migrator::new(
+        sqlx::migrate::Migrator::new(
             Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations"),
-        ).await?;
-
-        let storage_migrator = sqlx::migrate::Migrator::new(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../crates/tinyiothub-storage/migrations"),
-        ).await?;
-
-        let mut combined: Vec<sqlx::migrate::Migration> = Vec::new();
-        combined.extend(cloud_migrator.iter().cloned());
-        combined.extend(storage_migrator.iter().cloned());
-
-        sqlx::migrate::Migrator::with_migrations(combined).run(pool).await
+        ).await?.run(pool).await
     }
 }

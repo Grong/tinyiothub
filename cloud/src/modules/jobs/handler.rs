@@ -8,7 +8,6 @@ use std::sync::Arc;
 
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
     routing::{get, post},
     Json, Router,
 };
@@ -49,7 +48,7 @@ async fn resolve_workspace(
     state: &AppState,
     tenant_id: &str,
     explicit: Option<String>,
-) -> Result<String, StatusCode> {
+) -> Result<String, (i32, String)> {
     if let Some(ws) = explicit {
         return Ok(ws);
     }
@@ -57,7 +56,7 @@ async fn resolve_workspace(
         Ok(workspaces) if !workspaces.is_empty() => Ok(workspaces[0].id.clone()),
         _ => {
             tracing::warn!("No workspace found for tenant {}", tenant_id);
-            Err(StatusCode::BAD_REQUEST)
+            Err((400, "未找到工作空间".to_string()))
         }
     }
 }
@@ -233,15 +232,15 @@ fn map_execution_query(params: &JobExecutionQueryParams) -> CronRunQuery {
 async fn list_jobs(
     State(state): State<AppState>,
     Query(params): Query<JobQueryParams>,
-) -> Result<Json<ApiResponse<Vec<Job>>>, StatusCode> {
+) -> Json<ApiResponse<Vec<Job>>> {
     let query = map_cron_job_query(&params);
     match state.cron_job_repo.find_all(&query).await {
-        Ok(jobs) => Ok(ApiResponseBuilder::success(
+        Ok(jobs) => ApiResponseBuilder::success(
             jobs.into_iter().map(map_cron_job_to_job).collect(),
-        )),
+        ),
         Err(e) => {
             tracing::error!("Failed to list jobs: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            ApiResponseBuilder::error("获取任务列表失败")
         }
     }
 }
@@ -251,14 +250,17 @@ async fn get_job(
     Path(id): Path<String>,
     Query(q): Query<WorkspaceQuery>,
     claims: Claims,
-) -> Result<Json<ApiResponse<Job>>, StatusCode> {
-    let _ws_id = resolve_workspace(&state, &claims.tenant_id, q.workspace_id).await?;
+) -> Json<ApiResponse<Job>> {
+    let _ws_id = match resolve_workspace(&state, &claims.tenant_id, q.workspace_id).await {
+        Ok(ws) => ws,
+        Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
+    };
     match state.cron_job_repo.find_by_id(&id).await {
-        Ok(Some(job)) => Ok(ApiResponseBuilder::success(map_cron_job_to_job(job))),
-        Ok(None) => Ok(ApiResponseBuilder::error_with_code(404, "任务不存在")),
+        Ok(Some(job)) => ApiResponseBuilder::success(map_cron_job_to_job(job)),
+        Ok(None) => ApiResponseBuilder::error_with_code(404, "任务不存在"),
         Err(e) => {
             tracing::error!("Failed to get job: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            ApiResponseBuilder::error("获取任务详情失败")
         }
     }
 }
@@ -267,7 +269,7 @@ async fn create_job(
     claims: Claims,
     State(state): State<AppState>,
     Json(mut payload): Json<CreateJobRequest>,
-) -> Result<Json<ApiResponse<Job>>, StatusCode> {
+) -> Json<ApiResponse<Job>> {
     // Normalize 5-field cron to 6-field (prepend seconds=0)
     {
         let fields: Vec<&str> = payload.cron_expression.split_whitespace().collect();
@@ -278,17 +280,20 @@ async fn create_job(
 
     if let Err(e) = cron::Schedule::from_str(&payload.cron_expression) {
         tracing::error!("Invalid cron expression: {}", e);
-        return Ok(ApiResponseBuilder::error_with_code(400, "无效的 Cron 表达式"));
+        return ApiResponseBuilder::error_with_code(400, "无效的 Cron 表达式");
     }
 
-    let ws_id = resolve_workspace(&state, &claims.tenant_id, None).await?;
+    let ws_id = match resolve_workspace(&state, &claims.tenant_id, None).await {
+        Ok(ws) => ws,
+        Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
+    };
     let req = map_create_request(&payload, &ws_id);
 
     match state.cron_job_repo.create(&req, Some(&claims.user_id)).await {
-        Ok(job) => Ok(ApiResponseBuilder::success(map_cron_job_to_job(job))),
+        Ok(job) => ApiResponseBuilder::success(map_cron_job_to_job(job)),
         Err(e) => {
             tracing::error!("Failed to create job: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            ApiResponseBuilder::error("创建任务失败")
         }
     }
 }
@@ -298,7 +303,7 @@ async fn update_job(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(mut payload): Json<UpdateJobRequest>,
-) -> Result<Json<ApiResponse<Job>>, StatusCode> {
+) -> Json<ApiResponse<Job>> {
     // Normalize 5-field cron to 6-field (prepend seconds=0)
     if let Some(ref cron) = payload.cron_expression {
         let fields: Vec<&str> = cron.split_whitespace().collect();
@@ -310,18 +315,21 @@ async fn update_job(
     if let Some(ref cron) = payload.cron_expression
         && let Err(e) = cron::Schedule::from_str(cron) {
             tracing::error!("Invalid cron expression: {}", e);
-            return Ok(ApiResponseBuilder::error_with_code(400, "无效的 Cron 表达式"));
+            return ApiResponseBuilder::error_with_code(400, "无效的 Cron 表达式");
         }
 
-    let _ws_id = resolve_workspace(&state, &claims.tenant_id, None).await?;
+    let _ws_id = match resolve_workspace(&state, &claims.tenant_id, None).await {
+        Ok(ws) => ws,
+        Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
+    };
     let req = map_update_request(&payload);
 
     match state.cron_job_repo.update(&id, &req).await {
-        Ok(job) => Ok(ApiResponseBuilder::success(map_cron_job_to_job(job))),
-        Err(Error::NotFound) => Ok(ApiResponseBuilder::error_with_code(404, "任务不存在")),
+        Ok(job) => ApiResponseBuilder::success(map_cron_job_to_job(job)),
+        Err(Error::NotFound) => ApiResponseBuilder::error_with_code(404, "任务不存在"),
         Err(e) => {
             tracing::error!("Failed to update job: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            ApiResponseBuilder::error("更新任务失败")
         }
     }
 }
@@ -331,17 +339,20 @@ async fn delete_job(
     Path(id): Path<String>,
     Query(q): Query<WorkspaceQuery>,
     claims: Claims,
-) -> Result<Json<ApiResponse<bool>>, StatusCode> {
-    let _ws_id = resolve_workspace(&state, &claims.tenant_id, q.workspace_id).await?;
+) -> Json<ApiResponse<bool>> {
+    let _ws_id = match resolve_workspace(&state, &claims.tenant_id, q.workspace_id).await {
+        Ok(ws) => ws,
+        Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
+    };
     match state.cron_job_repo.delete(&id).await {
         Ok(true) => {
             let _ = state.cron_run_repo.delete_by_job_id(&id).await;
-            Ok(ApiResponseBuilder::success(true))
+            ApiResponseBuilder::success(true)
         }
-        Ok(false) => Ok(ApiResponseBuilder::error_with_code(404, "任务不存在")),
+        Ok(false) => ApiResponseBuilder::error_with_code(404, "任务不存在"),
         Err(e) => {
             tracing::error!("Failed to delete job: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            ApiResponseBuilder::error("删除任务失败")
         }
     }
 }
@@ -350,15 +361,18 @@ async fn run_job_now(
     State(state): State<AppState>,
     Path(id): Path<String>,
     claims: Claims,
-) -> Result<Json<ApiResponse<JobExecution>>, StatusCode> {
-    let _ws_id = resolve_workspace(&state, &claims.tenant_id, None).await?;
+) -> Json<ApiResponse<JobExecution>> {
+    let _ws_id = match resolve_workspace(&state, &claims.tenant_id, None).await {
+        Ok(ws) => ws,
+        Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
+    };
 
     let job = match state.cron_job_repo.find_by_id(&id).await {
         Ok(Some(j)) => j,
-        Ok(None) => return Ok(ApiResponseBuilder::error_with_code(404, "任务不存在")),
+        Ok(None) => return ApiResponseBuilder::error_with_code(404, "任务不存在"),
         Err(e) => {
             tracing::error!("Failed to get job: {}", e);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return ApiResponseBuilder::error("获取任务详情失败");
         }
     };
 
@@ -366,12 +380,12 @@ async fn run_job_now(
         Ok(c) => c,
         Err(e) => {
             tracing::error!("Failed to claim job: {}", e);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return ApiResponseBuilder::error("启动任务失败");
         }
     };
 
     if !claimed {
-        return Ok(ApiResponseBuilder::error_with_code(409, "任务正在运行中"));
+        return ApiResponseBuilder::error_with_code(409, "任务正在运行中");
     }
 
     let run = match state
@@ -383,7 +397,7 @@ async fn run_job_now(
         Err(e) => {
             tracing::error!("Failed to create run record: {}", e);
             let _ = state.cron_job_repo.set_running(&id, false).await;
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return ApiResponseBuilder::error("创建执行记录失败");
         }
     };
 
@@ -451,7 +465,7 @@ async fn run_job_now(
         let _ = job_repo.set_running(&job_clone.id, false).await;
     });
 
-    Ok(ApiResponseBuilder::success(map_cron_run_to_execution(run)))
+    ApiResponseBuilder::success(map_cron_run_to_execution(run))
 }
 
 async fn list_job_executions(
@@ -459,18 +473,21 @@ async fn list_job_executions(
     Path(id): Path<String>,
     Query(params): Query<JobExecutionQueryParams>,
     claims: Claims,
-) -> Result<Json<ApiResponse<Vec<JobExecution>>>, StatusCode> {
-    let _ws_id = resolve_workspace(&state, &claims.tenant_id, None).await?;
+) -> Json<ApiResponse<Vec<JobExecution>>> {
+    let _ws_id = match resolve_workspace(&state, &claims.tenant_id, None).await {
+        Ok(ws) => ws,
+        Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
+    };
     let mut query = map_execution_query(&params);
     query.job_id = Some(id);
 
     match state.cron_run_repo.find_by_job_id(&params.job_id.unwrap_or_default(), &query).await {
-        Ok(runs) => Ok(ApiResponseBuilder::success(
+        Ok(runs) => ApiResponseBuilder::success(
             runs.into_iter().map(map_cron_run_to_execution).collect(),
-        )),
+        ),
         Err(e) => {
             tracing::error!("Failed to list executions: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            ApiResponseBuilder::error("获取执行记录失败")
         }
     }
 }
@@ -478,8 +495,11 @@ async fn list_job_executions(
 async fn get_statistics(
     State(state): State<AppState>,
     claims: Claims,
-) -> Result<Json<ApiResponse<JobStatistics>>, StatusCode> {
-    let _ws_id = resolve_workspace(&state, &claims.tenant_id, None).await?;
+) -> Json<ApiResponse<JobStatistics>> {
+    let _ws_id = match resolve_workspace(&state, &claims.tenant_id, None).await {
+        Ok(ws) => ws,
+        Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
+    };
 
     let total = state.cron_job_repo.count().await.unwrap_or(0);
     let success_runs = state
@@ -509,15 +529,18 @@ async fn get_statistics(
         avg_duration_ms,
     };
 
-    Ok(ApiResponseBuilder::success(stats))
+    ApiResponseBuilder::success(stats)
 }
 
 async fn list_all_executions(
     State(state): State<AppState>,
     Query(params): Query<JobExecutionQueryParams>,
     claims: Claims,
-) -> Result<Json<ApiResponse<PaginatedResponse<JobExecution>>>, StatusCode> {
-    let _ws_id = resolve_workspace(&state, &claims.tenant_id, None).await?;
+) -> Json<ApiResponse<PaginatedResponse<JobExecution>>> {
+    let _ws_id = match resolve_workspace(&state, &claims.tenant_id, None).await {
+        Ok(ws) => ws,
+        Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
+    };
     let page = params.page.unwrap_or(1);
     let page_size = params.page_size.unwrap_or(20);
 
@@ -533,7 +556,7 @@ async fn list_all_executions(
         Ok(runs) => {
             let total = runs.len() as i64;
             let total_pages = ((total as f64) / (page_size as f64)).ceil() as u32;
-            Ok(ApiResponseBuilder::success(PaginatedResponse {
+            ApiResponseBuilder::success(PaginatedResponse {
                 data: runs.into_iter().map(map_cron_run_to_execution).collect(),
                 pagination: PaginationInfo {
                     page,
@@ -541,11 +564,11 @@ async fn list_all_executions(
                     total_pages,
                     total_count: total as u64,
                 },
-            }))
+            })
         }
         Err(e) => {
             tracing::error!("Failed to list all executions: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            ApiResponseBuilder::error("获取执行记录失败")
         }
     }
 }

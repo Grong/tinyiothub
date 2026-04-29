@@ -2,7 +2,6 @@
 // 逐步迁移，每个模块就绪后取消注释
 
 pub mod tag;
-pub mod product;
 pub mod role;
 pub mod permission;
 pub mod user;
@@ -18,7 +17,6 @@ pub mod self_healing;
 pub mod mcp;
 pub mod agent;
 pub mod marketplace;
-pub mod automation;
 pub mod plugin;
 pub mod auth;
 pub mod batch;

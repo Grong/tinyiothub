@@ -217,7 +217,7 @@ async fn test_create_device_empty_name() {
 async fn test_cross_workspace_isolation() {
     let app = setup_test_app().await;
 
-    // User A (workspace ws-a) creates a device
+    // User A (workspace ws-a) creates a device — first ensure workspace exists
     let token_a = create_test_token_with_workspace("user-a", "tenant-a", "ws-a");
 
     let body = json!({
