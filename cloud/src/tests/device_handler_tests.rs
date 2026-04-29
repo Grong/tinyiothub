@@ -9,7 +9,10 @@ use axum::{
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-use crate::test_utils::{auth_header, create_test_token, response_parts, setup_test_app};
+use crate::test_utils::{
+    auth_header, create_test_token, create_test_token_with_workspace, response_parts,
+    setup_test_app,
+};
 
 /// Helper: build a request with auth and optional body.
 fn auth_request(method: &str, uri: &str, token: &str, body: Option<Value>) -> Request<Body> {
@@ -19,9 +22,8 @@ fn auth_request(method: &str, uri: &str, token: &str, body: Option<Value>) -> Re
         .header("Authorization", auth_header(token))
         .header("Content-Type", "application/json");
 
-    // All device handlers use WorkspaceScope extractor
-    builder = builder.header("X-Workspace-Id", "test-workspace");
-
+    // WorkspaceScope now reads workspace_id from JWT claims, not from header.
+    // Header is ignored to prevent cross-tenant forgery.
     let body_str = match body {
         Some(v) => v.to_string(),
         None => String::new(),
@@ -202,4 +204,91 @@ async fn test_create_device_empty_name() {
     assert_eq!(status, StatusCode::OK);
     // Should get a validation error from the service layer
     assert_ne!(json["code"], 0, "Expected validation error for empty name");
+}
+
+// ============================================================================
+// Cross-Tenant Isolation
+// ============================================================================
+
+/// Verify that a user in workspace A cannot see devices created in workspace B.
+/// This is the regression test for the security bug where omitting X-Workspace-Id
+/// header returned the raw (unfiltered) repository, exposing all devices.
+#[tokio::test]
+async fn test_cross_workspace_isolation() {
+    let app = setup_test_app().await;
+
+    // User A (workspace ws-a) creates a device
+    let token_a = create_test_token_with_workspace("user-a", "tenant-a", "ws-a");
+
+    let body = json!({
+        "name": "device-in-ws-a",
+        "display_name": "Device in Workspace A",
+        "device_type": "sensor",
+        "protocol_type": "modbus"
+    });
+
+    let response = app
+        .clone()
+        .oneshot(auth_request("POST", "/api/v1/devices", &token_a, Some(body)))
+        .await
+        .unwrap();
+
+    let (status, json) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["code"], 0, "Expected success creating device in workspace A");
+    let device_id = json["result"]["id"].as_str().unwrap().to_string();
+    assert!(!device_id.is_empty(), "Device should have an id");
+
+    // User B (workspace ws-b) lists devices — should NOT see workspace A's device
+    let token_b = create_test_token_with_workspace("user-b", "tenant-b", "ws-b");
+
+    let response = app
+        .clone()
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/devices?page=1&page_size=20",
+            &token_b,
+            None,
+        ))
+        .await
+        .unwrap();
+
+    let (status, json) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["code"], 0, "Expected success code");
+
+    let data = json["result"]["data"].as_array().unwrap();
+    let device_ids: Vec<&str> = data
+        .iter()
+        .filter_map(|d| d["id"].as_str())
+        .collect();
+
+    assert!(
+        !device_ids.contains(&device_id.as_str()),
+        "SECURITY BUG: User B (ws-b) can see workspace A's device (ws-a). \
+         Workspace isolation is broken!"
+    );
+
+    // User A should see their own device
+    let response = app
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/devices?page=1&page_size=20",
+            &token_a,
+            None,
+        ))
+        .await
+        .unwrap();
+
+    let (status, json) = response_parts(response).await;
+    assert_eq!(json["code"], 0);
+    let data = json["result"]["data"].as_array().unwrap();
+    let device_ids: Vec<&str> = data
+        .iter()
+        .filter_map(|d| d["id"].as_str())
+        .collect();
+    assert!(
+        device_ids.contains(&device_id.as_str()),
+        "User A should see their own device in workspace A"
+    );
 }
