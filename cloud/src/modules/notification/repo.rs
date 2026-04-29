@@ -119,6 +119,7 @@ impl NotificationRuleRepositoryImpl {
             enabled: row.try_get::<bool, _>("enabled")?,
             created_at,
             updated_at,
+            workspace_id: row.try_get("workspace_id").ok(),
             event_types: Vec::new(),
             event_levels: Vec::new(),
             channels: notification_methods,
@@ -142,7 +143,7 @@ impl NotificationRuleRepositoryImpl {
         let rows = sqlx::query(
             r#"
             SELECT id, name, description, event_type, event_subtype, event_level,
-                   device_filter, notification_methods, recipients, enabled, created_at, updated_at
+                   device_filter, notification_methods, recipients, enabled, created_at, updated_at, workspace_id
             FROM notification_rules
             WHERE enabled = 1 AND notification_methods LIKE ?
             ORDER BY created_at DESC
@@ -233,8 +234,8 @@ impl NotificationRuleRepository for NotificationRuleRepositoryImpl {
             r#"
             INSERT INTO notification_rules (
                 id, name, description, event_type, event_subtype, event_level,
-                device_filter, notification_methods, recipients, enabled, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                device_filter, notification_methods, recipients, enabled, created_at, updated_at, workspace_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&rule.id)
@@ -249,6 +250,7 @@ impl NotificationRuleRepository for NotificationRuleRepositoryImpl {
         .bind(rule.enabled)
         .bind(rule.created_at.to_rfc3339())
         .bind(rule.updated_at.to_rfc3339())
+        .bind(&rule.workspace_id)
         .execute(pool)
         .await?;
 
@@ -261,7 +263,7 @@ impl NotificationRuleRepository for NotificationRuleRepositoryImpl {
         let row = sqlx::query(
             r#"
             SELECT id, name, description, event_type, event_subtype, event_level,
-                   device_filter, notification_methods, recipients, enabled, created_at, updated_at
+                   device_filter, notification_methods, recipients, enabled, created_at, updated_at, workspace_id
             FROM notification_rules
             WHERE id = ?
             "#,
@@ -284,7 +286,7 @@ impl NotificationRuleRepository for NotificationRuleRepositoryImpl {
         let rows = sqlx::query(
             r#"
             SELECT id, name, description, event_type, event_subtype, event_level,
-                   device_filter, notification_methods, recipients, enabled, created_at, updated_at
+                   device_filter, notification_methods, recipients, enabled, created_at, updated_at, workspace_id
             FROM notification_rules
             ORDER BY created_at DESC
             "#,
@@ -311,7 +313,7 @@ impl NotificationRuleRepository for NotificationRuleRepositoryImpl {
         let rows = sqlx::query(
             r#"
             SELECT id, name, description, event_type, event_subtype, event_level,
-                   device_filter, notification_methods, recipients, enabled, created_at, updated_at
+                   device_filter, notification_methods, recipients, enabled, created_at, updated_at, workspace_id
             FROM notification_rules
             WHERE enabled = 1
             ORDER BY created_at DESC

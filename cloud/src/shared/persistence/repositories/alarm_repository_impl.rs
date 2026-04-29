@@ -558,6 +558,8 @@ impl AlarmRuleRepositoryImpl {
         // 这里暂时使用默认配置，实际应该从关联表读取
         let notification_config = NotificationConfig::default();
 
+        let workspace_id: Option<String> = row.get("workspace_id");
+
         Ok(AlarmRule {
             id,
             name,
@@ -569,6 +571,7 @@ impl AlarmRuleRepositoryImpl {
             alarm_level,
             is_enabled,
             notification_config,
+            workspace_id,
             created_at,
             updated_at,
         })
@@ -672,11 +675,17 @@ impl AlarmRuleRepository for AlarmRuleRepositoryImpl {
         }
     }
 
-    async fn find_enabled(&self) -> AlarmResult<Vec<AlarmRule>> {
-        let query =
-            "SELECT * FROM device_alarm_rules WHERE is_enabled = true ORDER BY created_at DESC";
-
-        let rows = sqlx::query(query)
+    async fn find_enabled(&self, workspace_id: Option<&str>) -> AlarmResult<Vec<AlarmRule>> {
+        let (query, bind_val) = if let Some(ws) = workspace_id {
+            ("SELECT * FROM device_alarm_rules WHERE is_enabled = true AND workspace_id = ? ORDER BY created_at DESC", Some(ws))
+        } else {
+            ("SELECT * FROM device_alarm_rules WHERE is_enabled = true ORDER BY created_at DESC", None)
+        };
+        let mut sqlx_query = sqlx::query(query);
+        if let Some(ws) = bind_val {
+            sqlx_query = sqlx_query.bind(ws);
+        }
+        let rows = sqlx_query
             .fetch_all(self.database.pool())
             .await
             .map_err(|e| AlarmError::InternalError(format!("查询启用规则失败: {}", e)))?;
@@ -689,11 +698,17 @@ impl AlarmRuleRepository for AlarmRuleRepositoryImpl {
         Ok(rules)
     }
 
-    async fn find_by_device(&self, device_id: &str) -> AlarmResult<Vec<AlarmRule>> {
-        let query = "SELECT * FROM device_alarm_rules WHERE device_id = ? ORDER BY created_at DESC";
-
-        let rows = sqlx::query(query)
-            .bind(device_id)
+    async fn find_by_device(&self, device_id: &str, workspace_id: Option<&str>) -> AlarmResult<Vec<AlarmRule>> {
+        let (query, bind_ws) = if let Some(ws) = workspace_id {
+            ("SELECT * FROM device_alarm_rules WHERE device_id = ? AND workspace_id = ? ORDER BY created_at DESC", Some(ws))
+        } else {
+            ("SELECT * FROM device_alarm_rules WHERE device_id = ? ORDER BY created_at DESC", None)
+        };
+        let mut sqlx_query = sqlx::query(query).bind(device_id);
+        if let Some(ws) = bind_ws {
+            sqlx_query = sqlx_query.bind(ws);
+        }
+        let rows = sqlx_query
             .fetch_all(self.database.pool())
             .await
             .map_err(|e| AlarmError::InternalError(format!("查询设备规则失败: {}", e)))?;

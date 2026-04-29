@@ -505,6 +505,7 @@ pub struct AlarmRule {
     pub alarm_level: AlarmLevel,
     pub is_enabled: bool,
     pub notification_config: NotificationConfig,
+    pub workspace_id: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -519,6 +520,7 @@ impl AlarmRule {
         condition: AlarmCondition,
         alarm_level: AlarmLevel,
         notification_config: NotificationConfig,
+        workspace_id: String,
     ) -> AlarmResult<Self> {
         Self::validate_config(&name, &condition, &notification_config)?;
 
@@ -534,6 +536,7 @@ impl AlarmRule {
             alarm_level,
             is_enabled: true,
             notification_config,
+            workspace_id: Some(workspace_id),
             created_at: now,
             updated_at: now,
         })

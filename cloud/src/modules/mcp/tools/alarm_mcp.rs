@@ -440,6 +440,7 @@ impl ToolHandler for AlarmRuleAddHandler {
             condition,
             alarm_level,
             notification_config,
+            claims.workspace_id.clone(),
         )
         .map_err(|e| ToolError::Internal(format!("Failed to create alarm rule: {}", e)))?;
 

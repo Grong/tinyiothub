@@ -24,6 +24,7 @@ pub async fn find_notification_channel_by_id(
             description: row.try_get("description")?,
             created_at: row.try_get("created_at")?,
             updated_at: row.try_get("updated_at")?,
+            workspace_id: row.try_get("workspace_id").ok(),
         }))
     } else {
         Ok(None)
@@ -46,6 +47,10 @@ pub async fn count_notification_channels(
     if let Some(is_enabled) = params.is_enabled {
         query_builder.push(" AND is_enabled = ");
         query_builder.push_bind(if is_enabled { 1 } else { 0 });
+    }
+    if let Some(ref ws_id) = params.workspace_id {
+        query_builder.push(" AND workspace_id = ");
+        query_builder.push_bind(ws_id);
     }
 
     let row = query_builder.build().fetch_one(db.pool()).await?;
@@ -74,6 +79,10 @@ pub async fn find_all_notification_channels(
         query_builder.push(" AND is_enabled = ");
         query_builder.push_bind(if is_enabled { 1 } else { 0 });
     }
+    if let Some(ref ws_id) = params.workspace_id {
+        query_builder.push(" AND workspace_id = ");
+        query_builder.push_bind(ws_id);
+    }
 
     query_builder.push(" ORDER BY created_at DESC");
     query_builder.push(" LIMIT ");
@@ -95,6 +104,7 @@ pub async fn find_all_notification_channels(
                 description: row.try_get("description")?,
                 created_at: row.try_get("created_at")?,
                 updated_at: row.try_get("updated_at")?,
+                workspace_id: row.try_get("workspace_id").ok(),
             })
         })
         .collect()
@@ -104,14 +114,15 @@ pub async fn find_all_notification_channels(
 pub async fn create_notification_channel(
     db: &Database,
     req: &CreateNotificationChannelRequest,
+    workspace_id: Option<&str>,
 ) -> Result<NotificationChannel, sqlx::Error> {
     let id = generate_id();
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
     sqlx::query(
         r#"
-        INSERT INTO notification_channels (id, name, channel_type, config, is_enabled, description, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+        INSERT INTO notification_channels (id, name, channel_type, config, is_enabled, description, created_at, updated_at, workspace_id)
+        VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)
         "#,
     )
     .bind(&id)
@@ -121,6 +132,7 @@ pub async fn create_notification_channel(
     .bind(req.description.as_deref().unwrap_or(""))
     .bind(&now)
     .bind(&now)
+    .bind(workspace_id)
     .execute(db.pool())
     .await?;
 
@@ -194,13 +206,20 @@ pub async fn set_notification_channel_enabled(
 /// 获取统计
 pub async fn get_notification_channel_statistics(
     db: &Database,
+    workspace_id: Option<&str>,
 ) -> Result<ChannelStatistics, sqlx::Error> {
-    let total: i64 = db
-        .query_first("SELECT COUNT(*) FROM notification_channels", |row| {
-            row.try_get::<i64, _>(0)
-        })
+    let total: i64 = if let Some(ws_id) = workspace_id {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM notification_channels WHERE workspace_id = ?"
+        )
+        .bind(ws_id)
+        .fetch_one(db.pool())
         .await?
-        .unwrap_or(0);
+    } else {
+        sqlx::query_scalar("SELECT COUNT(*) FROM notification_channels")
+            .fetch_one(db.pool())
+            .await?
+    };
 
     let enabled: i64 = db
         .query_first("SELECT COUNT(*) FROM notification_channels WHERE is_enabled = 1", |row| {

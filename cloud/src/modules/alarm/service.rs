@@ -129,8 +129,13 @@ impl AlarmService {
     pub async fn get_alarm_statistics(
         &self,
         time_range: TimeRange,
+        workspace_id: &str,
     ) -> AlarmResult<AlarmStatistics> {
-        let criteria = AlarmQueryCriteria { time_range: Some(time_range), ..Default::default() };
+        let criteria = AlarmQueryCriteria {
+            time_range: Some(time_range),
+            workspace_id: Some(workspace_id.to_string()),
+            ..Default::default()
+        };
 
         let alarms = self.alarm_repository.find_by_criteria(&criteria).await?;
 
@@ -167,12 +172,12 @@ impl AlarmService {
         self.rule_repository.find_by_id(id).await
     }
 
-    pub async fn get_all_rules(&self) -> AlarmResult<Vec<AlarmRule>> {
-        self.rule_repository.find_enabled().await
+    pub async fn get_all_rules(&self, workspace_id: &str) -> AlarmResult<Vec<AlarmRule>> {
+        self.rule_repository.find_enabled(Some(workspace_id)).await
     }
 
-    pub async fn get_rules_by_device(&self, device_id: &str) -> AlarmResult<Vec<AlarmRule>> {
-        self.rule_repository.find_by_device(device_id).await
+    pub async fn get_rules_by_device(&self, device_id: &str, workspace_id: &str) -> AlarmResult<Vec<AlarmRule>> {
+        self.rule_repository.find_by_device(device_id, Some(workspace_id)).await
     }
 
     pub async fn update_rule(&self, rule: AlarmRule) -> AlarmResult<()> {
@@ -396,7 +401,7 @@ impl RuleEngine {
     ) -> AlarmResult<Vec<AlarmRule>> {
         let mut rules = Vec::new();
         rules.extend(self.rule_repository.find_global_rules().await?);
-        rules.extend(self.rule_repository.find_by_device(device_id).await?);
+        rules.extend(self.rule_repository.find_by_device(device_id, None).await?);
         if let Some(prop_id) = property_id {
             rules.extend(self.rule_repository.find_by_property(device_id, prop_id).await?);
         }

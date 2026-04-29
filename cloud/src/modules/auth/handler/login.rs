@@ -70,7 +70,7 @@ async fn register(
         tracing::warn!("[REGISTER] Failed to ensure workspace for user {}: {}", user.id, e);
     }
 
-    // 注册后自动登录 — 查找租户和 workspace
+    // 注册后自动登录 — 查找租户和用户自己的 workspace
     let tenant_id: String = sqlx::query_scalar(
         "SELECT tenant_id FROM tenant_users WHERE user_id = ? LIMIT 1"
     )
@@ -80,10 +80,14 @@ async fn register(
     .unwrap_or(None)
     .unwrap_or_else(|| "default".to_string());
 
+    // 优先查找用户自己的 workspace (ws-{user_id})，fallback 到 tenant 下第一个
+    let user_ws_id = format!("ws-{}", user.id);
     let workspace_id: Option<String> = sqlx::query_scalar(
-        "SELECT id FROM workspaces WHERE tenant_id = ? LIMIT 1"
+        "SELECT id FROM workspaces WHERE id = ? UNION ALL SELECT id FROM workspaces WHERE tenant_id = ? AND id != ? LIMIT 1"
     )
+    .bind(&user_ws_id)
     .bind(&tenant_id)
+    .bind(&user_ws_id)
     .fetch_optional(state.database().pool())
     .await
     .unwrap_or(None);
@@ -166,11 +170,14 @@ async fn login(
                 user.id
             );
 
-            // 查找该租户的第一个 workspace 作为默认 workspace
+            // 优先查找用户自己的 workspace (ws-{user_id})，fallback 到 tenant 下第一个
+            let user_ws_id = format!("ws-{}", user.id);
             let workspace_id: Option<String> = sqlx::query_scalar(
-                "SELECT id FROM workspaces WHERE tenant_id = ? LIMIT 1"
+                "SELECT id FROM workspaces WHERE id = ? UNION ALL SELECT id FROM workspaces WHERE tenant_id = ? AND id != ? LIMIT 1"
             )
+            .bind(&user_ws_id)
             .bind(&tenant_id)
+            .bind(&user_ws_id)
             .fetch_optional(state.database().pool())
             .await
             .map_err(|e| {

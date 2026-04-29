@@ -208,6 +208,7 @@ impl ToolHandler for ListSchedulesHandler {
             name: None,
             job_type: input.job_type,
             is_enabled: input.is_enabled,
+            workspace_id: None,
             page: input.page,
             page_size: input.page_size,
         };

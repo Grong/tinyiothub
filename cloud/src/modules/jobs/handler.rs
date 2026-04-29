@@ -193,6 +193,7 @@ fn map_cron_job_query(params: &JobQueryParams) -> CronJobQuery {
         name: params.name.clone(),
         job_type: params.job_type.clone(),
         is_enabled: params.is_enabled,
+        workspace_id: None,
         page: params.page,
         page_size: params.page_size,
     }

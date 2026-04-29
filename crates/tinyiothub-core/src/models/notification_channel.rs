@@ -40,6 +40,7 @@ pub struct NotificationChannel {
     pub description: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    pub workspace_id: Option<String>,
 }
 
 /// 查询参数
@@ -48,6 +49,7 @@ pub struct NotificationChannel {
 pub struct NotificationChannelQueryParams {
     pub channel_type: Option<String>,
     pub is_enabled: Option<bool>,
+    pub workspace_id: Option<String>,
     pub page: Option<u32>,
     pub page_size: Option<u32>,
 }

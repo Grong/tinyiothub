@@ -524,10 +524,13 @@ async fn send_test_notification_impl(
 /// List notification channels
 async fn list_channels(
     State(state): State<AppState>,
-    Query(params): Query<NotificationChannelQueryParams>,
+    Query(mut params): Query<NotificationChannelQueryParams>,
+    claims: Claims,
 ) -> Json<ApiResponse<PaginatedResponse<NotificationChannel>>> {
     let page = params.page.unwrap_or(1);
     let page_size = params.page_size.unwrap_or(20);
+
+    params.workspace_id = Some(claims.workspace_id.clone());
 
     let (channels_result, count_result) = tokio::join!(
         find_all_notification_channels(&state.database, &params),
@@ -574,6 +577,7 @@ async fn get_channel(
 /// Create a new notification channel
 async fn create_channel(
     State(state): State<AppState>,
+    claims: Claims,
     Json(payload): Json<CreateNotificationChannelRequest>,
 ) -> Json<ApiResponse<NotificationChannel>> {
     let db = state.database.clone();
@@ -587,7 +591,7 @@ async fn create_channel(
         return ApiResponseBuilder::error_with_code(400, "无效的配置 JSON");
     }
 
-    match create_notification_channel(&db, &payload).await {
+    match create_notification_channel(&db, &payload, Some(&claims.workspace_id)).await {
         Ok(channel) => ApiResponseBuilder::success(channel),
         Err(e) => {
             tracing::error!("Failed to create channel: {}", e);
@@ -679,9 +683,12 @@ async fn test_channel(
 }
 
 /// Get channel statistics
-async fn get_statistics(State(state): State<AppState>) -> Json<ApiResponse<ChannelStatistics>> {
+async fn get_statistics(
+    State(state): State<AppState>,
+    claims: Claims,
+) -> Json<ApiResponse<ChannelStatistics>> {
     let db = state.database.clone();
-    match get_notification_channel_statistics(&db).await {
+    match get_notification_channel_statistics(&db, Some(&claims.workspace_id)).await {
         Ok(stats) => ApiResponseBuilder::success(stats),
         Err(e) => {
             tracing::error!("Failed to get statistics: {}", e);

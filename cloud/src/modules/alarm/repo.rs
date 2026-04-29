@@ -32,8 +32,8 @@ pub trait AlarmRuleRepository: Send + Sync {
     async fn update(&self, rule: &AlarmRule) -> AlarmResult<()>;
     async fn delete(&self, id: &str) -> AlarmResult<()>;
     async fn find_by_id(&self, id: &str) -> AlarmResult<Option<AlarmRule>>;
-    async fn find_enabled(&self) -> AlarmResult<Vec<AlarmRule>>;
-    async fn find_by_device(&self, device_id: &str) -> AlarmResult<Vec<AlarmRule>>;
+    async fn find_enabled(&self, workspace_id: Option<&str>) -> AlarmResult<Vec<AlarmRule>>;
+    async fn find_by_device(&self, device_id: &str, workspace_id: Option<&str>) -> AlarmResult<Vec<AlarmRule>>;
     async fn find_by_property(
         &self,
         device_id: &str,
@@ -590,6 +590,7 @@ impl SqliteAlarmRuleRepository {
             .with_timezone(&Utc);
 
         let notification_config = NotificationConfig::default();
+        let workspace_id: Option<String> = row.get("workspace_id");
 
         Ok(AlarmRule {
             id,
@@ -602,6 +603,7 @@ impl SqliteAlarmRuleRepository {
             alarm_level,
             is_enabled,
             notification_config,
+            workspace_id,
             created_at,
             updated_at,
         })
@@ -621,8 +623,8 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
             INSERT INTO device_alarm_rules (
                 id, device_id, property_id, rule_name, rule_type,
                 condition_config, alarm_level, is_enabled, description,
-                created_by, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                workspace_id, created_by, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
         "#;
 
         sqlx::query(query)
@@ -635,6 +637,7 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
             .bind(rule.alarm_level.as_str())
             .bind(rule.is_enabled)
             .bind(&rule.description)
+            .bind(&rule.workspace_id)
             .bind(rule.created_at.to_rfc3339())
             .bind(rule.updated_at.to_rfc3339())
             .execute(self.database.pool())
@@ -701,9 +704,17 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
         }
     }
 
-    async fn find_enabled(&self) -> AlarmResult<Vec<AlarmRule>> {
-        let query = "SELECT * FROM device_alarm_rules WHERE is_enabled = true ORDER BY created_at DESC";
-        let rows = sqlx::query(query)
+    async fn find_enabled(&self, workspace_id: Option<&str>) -> AlarmResult<Vec<AlarmRule>> {
+        let (query, bind_val) = if let Some(ws) = workspace_id {
+            ("SELECT * FROM device_alarm_rules WHERE is_enabled = true AND workspace_id = ? ORDER BY created_at DESC", Some(ws))
+        } else {
+            ("SELECT * FROM device_alarm_rules WHERE is_enabled = true ORDER BY created_at DESC", None)
+        };
+        let mut sqlx_query = sqlx::query(query);
+        if let Some(ws) = bind_val {
+            sqlx_query = sqlx_query.bind(ws);
+        }
+        let rows = sqlx_query
             .fetch_all(self.database.pool())
             .await
             .map_err(|e| AlarmError::InternalError(format!("查询启用规则失败: {}", e)))?;
@@ -715,10 +726,17 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
         Ok(rules)
     }
 
-    async fn find_by_device(&self, device_id: &str) -> AlarmResult<Vec<AlarmRule>> {
-        let query = "SELECT * FROM device_alarm_rules WHERE device_id = ? ORDER BY created_at DESC";
-        let rows = sqlx::query(query)
-            .bind(device_id)
+    async fn find_by_device(&self, device_id: &str, workspace_id: Option<&str>) -> AlarmResult<Vec<AlarmRule>> {
+        let (query, bind_ws) = if let Some(ws) = workspace_id {
+            ("SELECT * FROM device_alarm_rules WHERE device_id = ? AND workspace_id = ? ORDER BY created_at DESC", Some(ws))
+        } else {
+            ("SELECT * FROM device_alarm_rules WHERE device_id = ? ORDER BY created_at DESC", None)
+        };
+        let mut sqlx_query = sqlx::query(query).bind(device_id);
+        if let Some(ws) = bind_ws {
+            sqlx_query = sqlx_query.bind(ws);
+        }
+        let rows = sqlx_query
             .fetch_all(self.database.pool())
             .await
             .map_err(|e| AlarmError::InternalError(format!("查询设备规则失败: {}", e)))?;
