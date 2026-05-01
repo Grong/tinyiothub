@@ -58,9 +58,7 @@ fn ensure_test_config() {
 /// - Test JWT configuration
 /// - Full API route tree
 pub async fn setup_test_app() -> Router {
-    ensure_test_config();
-
-    let app_state = create_test_app_state().await;
+    let (app_state, _pool) = setup_test_app_with_pool().await;
 
     // Create API router (same as production, without MCP/agent init)
     let api_router = crate::api::create_router();
@@ -68,6 +66,45 @@ pub async fn setup_test_app() -> Router {
     Router::new()
         .nest("/api", api_router)
         .with_state(app_state)
+}
+
+/// Create test AppState and return it along with the pool (for seeding test data).
+pub async fn setup_test_app_with_pool() -> (AppState, sqlx::SqlitePool) {
+    ensure_test_config();
+
+    let app_state = create_test_app_state().await;
+    let pool = app_state.db_pool().clone();
+    (app_state, pool)
+}
+
+/// Seed a tenant and workspace for testing cross-workspace isolation.
+pub async fn seed_test_workspace(pool: &sqlx::SqlitePool, tenant_id: &str, workspace_id: &str) {
+    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+
+    sqlx::query(
+        "INSERT OR IGNORE INTO tenants (id, name, slug, status, plan_id, subscription_status, timezone, locale, created_at, updated_at) VALUES (?, ?, ?, 'active', 'plan_free', 'active', 'UTC', 'zh-CN', ?, ?)",
+    )
+    .bind(tenant_id)
+    .bind(format!("Test Tenant {}", tenant_id))
+    .bind(tenant_id)
+    .bind(&now)
+    .bind(&now)
+    .execute(pool)
+    .await
+    .expect("Failed to seed test tenant");
+
+    sqlx::query(
+        "INSERT OR IGNORE INTO workspaces (id, name, description, tenant_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(workspace_id)
+    .bind(format!("Test Workspace {}", workspace_id))
+    .bind("Test workspace for cross-workspace isolation tests")
+    .bind(tenant_id)
+    .bind(&now)
+    .bind(&now)
+    .execute(pool)
+    .await
+    .expect("Failed to seed test workspace");
 }
 
 /// Create an AppState backed by in-memory SQLite with migrations applied.
@@ -94,14 +131,26 @@ async fn create_test_app_state() -> AppState {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../crates/tinyiothub-storage/migrations"),
     ).await.expect("Failed to load storage migrations");
 
-    // Combine and sort by version (interleaved), skipping broken migration
+    // Combine and sort by version (interleaved), skipping broken/test-data migrations
+    let skip_versions: &[i64] = &[
+        20260107000001, // test data: inserts properties/commands for non-existent devices
+        20260114000001, // test data: inserts events referencing non-existent devices
+        20260418000001, // storage: add tenant_id to tags — already in cloud base schema
+    ];
+    let mut seen: std::collections::HashMap<i64, bool> = std::collections::HashMap::new();
     let mut combined: Vec<sqlx::migrate::Migration> = Vec::new();
     for m in cloud_migrator.iter() {
-        if m.version != 20260414102323 {
+        // Skip broken cloud version of 20260414102323 (column conflicts); storage version is canonical
+        if !skip_versions.contains(&m.version) && m.version != 20260414102323 {
+            seen.insert(m.version, true);
             combined.push(m.clone());
         }
     }
-    combined.extend(storage_migrator.iter().cloned());
+    for m in storage_migrator.iter() {
+        if !seen.contains_key(&m.version) && !skip_versions.contains(&m.version) {
+            combined.push(m.clone());
+        }
+    }
 
     sqlx::migrate::Migrator::with_migrations(combined)
         .run(&pool)

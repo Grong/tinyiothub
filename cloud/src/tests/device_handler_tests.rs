@@ -11,7 +11,7 @@ use tower::ServiceExt;
 
 use crate::test_utils::{
     auth_header, create_test_token, create_test_token_with_workspace, response_parts,
-    setup_test_app,
+    seed_test_workspace, setup_test_app, setup_test_app_with_pool,
 };
 
 /// Helper: build a request with auth and optional body.
@@ -215,7 +215,16 @@ async fn test_create_device_empty_name() {
 /// header returned the raw (unfiltered) repository, exposing all devices.
 #[tokio::test]
 async fn test_cross_workspace_isolation() {
-    let app = setup_test_app().await;
+    let (app_state, pool) = setup_test_app_with_pool().await;
+
+    // Seed tenants and workspaces for the test
+    seed_test_workspace(&pool, "tenant-a", "ws-a").await;
+    seed_test_workspace(&pool, "tenant-b", "ws-b").await;
+
+    let api_router = crate::api::create_router();
+    let app = axum::Router::new()
+        .nest("/api", api_router)
+        .with_state(app_state);
 
     // User A (workspace ws-a) creates a device
     let token_a = create_test_token_with_workspace("user-a", "tenant-a", "ws-a");

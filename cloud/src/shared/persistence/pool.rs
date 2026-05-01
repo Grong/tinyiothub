@@ -6,6 +6,13 @@ use sqlx::migrate::{Migrator, Migration};
 
 use super::config::DatabaseConfig;
 
+/// Versions to skip in production (test/seed data referencing non-existent devices).
+const SKIP_MIGRATIONS: &[i64] = &[
+    20260107000001, // inserts properties/commands for devices that don't exist in prod
+    20260114000001, // inserts test events referencing non-existent devices
+    20260418000001, // storage: add tenant_id to tags — already in cloud base schema
+];
+
 /// Load migrations from cloud/ and storage crate, interleaved by version.
 ///
 /// Cloud migrations take precedence when a version exists in both directories,
@@ -25,9 +32,9 @@ async fn load_all_migrations() -> Result<Vec<Migration>, sqlx::migrate::MigrateE
     let mut seen: HashMap<i64, bool> = HashMap::new();
     let mut combined: Vec<Migration> = Vec::new();
 
-    // Cloud migrations first (preferred), skip broken 20260414102323 cloud version
+    // Cloud migrations first (preferred), skip broken cloud version
     for m in cloud_migrations.iter().cloned() {
-        if m.version != 20260414102323 {
+        if m.version != 20260414102323 && !SKIP_MIGRATIONS.contains(&m.version) {
             seen.insert(m.version, true);
             combined.push(m);
         }
@@ -35,7 +42,7 @@ async fn load_all_migrations() -> Result<Vec<Migration>, sqlx::migrate::MigrateE
 
     // Storage migrations for versions not already covered by cloud
     for m in storage_migrations.iter().cloned() {
-        if !seen.contains_key(&m.version) {
+        if !seen.contains_key(&m.version) && !SKIP_MIGRATIONS.contains(&m.version) {
             combined.push(m);
         }
     }
