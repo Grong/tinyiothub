@@ -120,6 +120,26 @@ async fn test_login_missing_fields() {
     assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY || response.status() == StatusCode::OK);
 }
 
+#[tokio::test]
+async fn test_register_missing_fields() {
+    let app = setup_test_app().await;
+    let response = app
+        .oneshot(public_request("POST", "/api/v1/auth/register", Some(json!({}))))
+        .await
+        .unwrap();
+    assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY || response.status() == StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_logout_missing_session() {
+    let app = setup_test_app().await;
+    let response = app
+        .oneshot(public_request("POST", "/api/v1/auth/logout", None))
+        .await
+        .unwrap();
+    assert!(response.status() == StatusCode::UNAUTHORIZED || response.status().is_success() || response.status().is_client_error());
+}
+
 // ============================================================================
 // Session (protected)
 // ============================================================================
@@ -148,6 +168,17 @@ async fn test_validate_session() {
     assert_eq!(response.status(), StatusCode::OK);
     let (_s, json) = response_parts(response).await;
     assert!(json["code"].is_number());
+}
+
+#[tokio::test]
+async fn test_refresh_token_missing() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app
+        .oneshot(auth_request("POST", "/api/v1/auth/session/refresh", &token))
+        .await
+        .unwrap();
+    assert!(response.status().is_success() || response.status().is_client_error());
 }
 
 // ============================================================================
@@ -222,4 +253,55 @@ async fn test_get_social_config() {
         .await
         .unwrap();
     assert!(response.status().is_success() || response.status().is_client_error());
+}
+
+#[tokio::test]
+async fn test_update_social_config() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app
+        .oneshot(auth_request("POST", "/api/v1/auth/social/config", &token))
+        .await
+        .unwrap();
+    assert!(response.status().is_success() || response.status().is_client_error());
+}
+
+#[tokio::test]
+async fn test_wechat_callback() {
+    let app = setup_test_app().await;
+    let response = app
+        .oneshot(public_request("GET", "/api/v1/auth/social/wechat/callback?code=test&state=test", None))
+        .await
+        .unwrap();
+    assert!(response.status().is_success() || response.status().is_client_error());
+}
+
+#[tokio::test]
+async fn test_wechat_miniprogram_login_missing_fields() {
+    let app = setup_test_app().await;
+    let response = app
+        .oneshot(public_request("POST", "/api/v1/auth/social/wechat/miniprogram/login", Some(json!({}))))
+        .await
+        .unwrap();
+    assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY || response.status() == StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_bind_social_account_missing_fields() {
+    let app = setup_test_app().await;
+    let response = app
+        .oneshot(public_request("POST", "/api/v1/auth/social/bind", Some(json!({}))))
+        .await
+        .unwrap();
+    assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY || response.status() == StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_unbind_social_account_missing_fields() {
+    let app = setup_test_app().await;
+    let response = app
+        .oneshot(public_request("POST", "/api/v1/auth/social/unbind", Some(json!({}))))
+        .await
+        .unwrap();
+    assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY || response.status() == StatusCode::OK);
 }

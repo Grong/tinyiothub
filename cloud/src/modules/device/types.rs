@@ -50,3 +50,66 @@ impl DeviceCommandResponse {
         entities.into_iter().map(Self::from).collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_entity_with_params(params: Option<String>) -> DeviceCommandEntity {
+        DeviceCommandEntity {
+            id: "cmd-1".to_string(),
+            device_id: "dev-1".to_string(),
+            name: "toggle".to_string(),
+            display_name: Some("Toggle Switch".to_string()),
+            description: Some("Toggle the device".to_string()),
+            parameters: params,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_from_entity_with_valid_json_params() {
+        let entity = test_entity_with_params(Some(
+            r#"{"interval": 30, "unit": "seconds"}"#.to_string(),
+        ));
+        let response = DeviceCommandResponse::from(entity);
+
+        assert_eq!(response.id, "cmd-1");
+        assert_eq!(response.device_id, "dev-1");
+        assert_eq!(response.name, "toggle");
+        assert_eq!(response.display_name, Some("Toggle Switch".to_string()));
+        assert_eq!(response.parameters.len(), 2);
+        assert_eq!(response.parameters["interval"], 30);
+        assert_eq!(response.parameters["unit"], "seconds");
+    }
+
+    #[test]
+    fn test_from_entity_with_invalid_json_params() {
+        let entity = test_entity_with_params(Some("not valid json".to_string()));
+        let response = DeviceCommandResponse::from(entity);
+
+        assert!(response.parameters.is_empty());
+    }
+
+    #[test]
+    fn test_from_entity_with_none_params() {
+        let entity = test_entity_with_params(None);
+        let response = DeviceCommandResponse::from(entity);
+
+        assert!(response.parameters.is_empty());
+    }
+
+    #[test]
+    fn test_from_entities() {
+        let entities = vec![
+            test_entity_with_params(None),
+            test_entity_with_params(Some(r#"{"key": "value"}"#.to_string())),
+        ];
+        let responses = DeviceCommandResponse::from_entities(entities);
+
+        assert_eq!(responses.len(), 2);
+        assert_eq!(responses[0].id, "cmd-1");
+        assert!(responses[0].parameters.is_empty());
+        assert_eq!(responses[1].parameters["key"], "value");
+    }
+}

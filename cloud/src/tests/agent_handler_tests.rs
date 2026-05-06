@@ -134,3 +134,60 @@ async fn test_delete_skill_not_found() {
     let response = app.oneshot(auth_request("DELETE", "/api/v1/agents/skills/nonexistent-skill-12345", &token, None)).await.unwrap();
     assert!(response.status() == StatusCode::NOT_FOUND || response.status() == StatusCode::OK);
 }
+
+// ── Agent Files (detail) ──
+
+#[tokio::test]
+async fn test_get_agent_file_not_found() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app
+        .oneshot(auth_request("GET", "/api/v1/agents/nonexistent-agent-12345/files/some-file.md", &token, None))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert!(json["code"].is_number(), "Expected numeric code");
+}
+
+#[tokio::test]
+async fn test_put_agent_file_not_found() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app
+        .oneshot(auth_request("PUT", "/api/v1/agents/nonexistent-agent-12345/files/some-file.md", &token, Some(json!({"content": "test"}))))
+        .await
+        .unwrap();
+    let status = response.status();
+    assert!(!status.is_server_error(), "Expected non-5xx status, got: {}", status);
+}
+
+// ── Agent Heartbeat — write endpoints ──
+
+#[tokio::test]
+async fn test_update_heartbeat_config_not_found() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let body = json!({"enabled": true, "interval_minutes": 5});
+    let response = app
+        .oneshot(auth_request("PUT", "/api/v1/agents/nonexistent-agent-12345/heartbeat/config", &token, Some(body)))
+        .await
+        .unwrap();
+    let (status, json) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(json["code"].is_number(), "Expected numeric code");
+}
+
+#[tokio::test]
+async fn test_update_heartbeat_tasks_not_found() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let body = json!({"tasks": [{"priority": "high", "text": "Check system health", "paused": false}]});
+    let response = app
+        .oneshot(auth_request("PUT", "/api/v1/agents/nonexistent-agent-12345/heartbeat/tasks", &token, Some(body)))
+        .await
+        .unwrap();
+    let (status, json) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(json["code"].is_number(), "Expected numeric code");
+}

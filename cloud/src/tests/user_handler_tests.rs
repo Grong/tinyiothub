@@ -209,3 +209,126 @@ async fn test_get_user_statistics() {
     let (_s, json) = response_parts(response).await;
     assert!(json["code"].is_number(), "Expected numeric code");
 }
+
+// ============================================================================
+// Enable / Disable User
+// ============================================================================
+
+#[tokio::test]
+async fn test_enable_user_not_found() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+
+    let response = app
+        .oneshot(auth_request(
+            "POST",
+            "/api/v1/users/nonexistent-user-12345/enable",
+            &token,
+            None,
+        ))
+        .await
+        .unwrap();
+
+    let status = response.status();
+    assert_eq!(status, StatusCode::OK);
+
+    let (_s, json) = response_parts(response).await;
+    assert_ne!(json["code"], 0, "Expected error for nonexistent user enable");
+}
+
+#[tokio::test]
+async fn test_disable_user_not_found() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+
+    let response = app
+        .oneshot(auth_request(
+            "POST",
+            "/api/v1/users/nonexistent-user-12345/disable",
+            &token,
+            None,
+        ))
+        .await
+        .unwrap();
+
+    let status = response.status();
+    assert_eq!(status, StatusCode::OK);
+
+    let (_s, json) = response_parts(response).await;
+    assert_ne!(json["code"], 0, "Expected error for nonexistent user disable");
+}
+
+// ============================================================================
+// Change Password
+// ============================================================================
+
+#[tokio::test]
+async fn test_change_password_missing_fields() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+
+    let response = app
+        .oneshot(auth_request(
+            "PUT",
+            "/api/v1/users/user-1/password",
+            &token,
+            Some(json!({})),
+        ))
+        .await
+        .unwrap();
+
+    let status = response.status();
+    assert!(
+        status == StatusCode::UNPROCESSABLE_ENTITY || status == StatusCode::OK,
+        "Expected validation error, got: {}",
+        status
+    );
+}
+
+#[tokio::test]
+async fn test_change_password_weak() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+
+    // Password too short (< 8 chars) — uses old_password + new_password field names
+    let response = app
+        .oneshot(auth_request(
+            "PUT",
+            "/api/v1/users/user-1/password",
+            &token,
+            Some(json!({
+                "old_password": "test",
+                "new_password": "123"
+            })),
+        ))
+        .await
+        .unwrap();
+
+    let status = response.status();
+    assert!(status == StatusCode::OK || status == StatusCode::UNPROCESSABLE_ENTITY,
+        "Expected OK or 422, got: {}", status);
+
+    if status == StatusCode::OK {
+        let (_s, json) = response_parts(response).await;
+        assert_ne!(json["code"], 0, "Expected validation error for weak password");
+    }
+}
+
+// ============================================================================
+// User — test endpoint
+// ============================================================================
+
+#[tokio::test]
+async fn test_users_test_endpoint() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+
+    let response = app
+        .oneshot(auth_request("GET", "/api/v1/users/test", &token, None))
+        .await
+        .unwrap();
+
+    let status = response.status();
+    assert_eq!(status, StatusCode::OK);
+    // This endpoint returns plain text "Users module is working!", not JSON
+}

@@ -179,6 +179,185 @@ impl PermissionGroup {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_create_request() -> CreatePermissionRequest {
+        CreatePermissionRequest {
+            name: "Read Devices".to_string(),
+            code: "device:read".to_string(),
+            description: Some("Can read device data".to_string()),
+            resource_type: "device".to_string(),
+            action_type: "read".to_string(),
+            is_system: Some(true),
+            parent_id: Some("parent-1".to_string()),
+        }
+    }
+
+    #[test]
+    fn test_permission_new() {
+        let perm = Permission::new(test_create_request());
+        assert_eq!(perm.name, "Read Devices");
+        assert_eq!(perm.code, "device:read");
+        assert_eq!(perm.resource_type, "device");
+        assert_eq!(perm.action_type, "read");
+        assert!(perm.is_system);
+        assert_eq!(perm.parent_id, Some("parent-1".to_string()));
+    }
+
+    #[test]
+    fn test_permission_defaults() {
+        let req = CreatePermissionRequest {
+            is_system: None,
+            ..test_create_request()
+        };
+        let perm = Permission::new(req);
+        assert!(!perm.is_system);
+    }
+
+    #[test]
+    fn test_is_system_permission() {
+        let mut perm = Permission::new(test_create_request());
+        perm.is_system = true;
+        assert!(perm.is_system_permission());
+        perm.is_system = false;
+        assert!(!perm.is_system_permission());
+    }
+
+    #[test]
+    fn test_is_root_permission() {
+        let mut perm = Permission::new(test_create_request());
+        assert!(!perm.is_root_permission());
+        perm.parent_id = None;
+        assert!(perm.is_root_permission());
+    }
+
+    #[test]
+    fn test_get_full_code() {
+        let perm = Permission::new(test_create_request());
+        assert_eq!(perm.get_full_code(), "device:read");
+    }
+
+    #[test]
+    fn test_allows_action() {
+        let perm = Permission::new(test_create_request());
+        assert!(perm.allows_action("device", "read"));
+        assert!(!perm.allows_action("alarm", "read"));
+        assert!(!perm.allows_action("device", "write"));
+    }
+
+    #[test]
+    fn test_allows_action_wildcard_resource() {
+        let req = CreatePermissionRequest {
+            resource_type: "*".to_string(),
+            ..test_create_request()
+        };
+        let perm = Permission::new(req);
+        assert!(perm.allows_action("device", "read"));
+        assert!(perm.allows_action("alarm", "read"));
+    }
+
+    #[test]
+    fn test_allows_action_wildcard_action() {
+        let req = CreatePermissionRequest {
+            action_type: "*".to_string(),
+            ..test_create_request()
+        };
+        let perm = Permission::new(req);
+        assert!(perm.allows_action("device", "read"));
+        assert!(perm.allows_action("device", "write"));
+    }
+
+    #[test]
+    fn test_allows_action_admin() {
+        let req = CreatePermissionRequest {
+            action_type: "admin".to_string(),
+            ..test_create_request()
+        };
+        let perm = Permission::new(req);
+        assert!(perm.allows_action("device", "delete"));
+    }
+
+    #[test]
+    fn test_get_priority() {
+        let mut perm = Permission::new(test_create_request());
+
+        perm.action_type = "admin".to_string();
+        assert_eq!(perm.get_priority(), 10);
+
+        perm.action_type = "write".to_string();
+        assert_eq!(perm.get_priority(), 8);
+
+        perm.action_type = "delete".to_string();
+        assert_eq!(perm.get_priority(), 7);
+
+        perm.action_type = "execute".to_string();
+        assert_eq!(perm.get_priority(), 6);
+
+        perm.action_type = "read".to_string();
+        assert_eq!(perm.get_priority(), 5);
+
+        perm.action_type = "other".to_string();
+        assert_eq!(perm.get_priority(), 1);
+    }
+
+    #[test]
+    fn test_permission_group_new() {
+        let req = CreatePermissionGroupRequest {
+            name: "Admins".to_string(),
+            description: Some("Admin group".to_string()),
+            permission_ids: vec!["perm-1".to_string(), "perm-2".to_string()],
+        };
+        let group = PermissionGroup::new(req);
+        assert_eq!(group.name, "Admins");
+        assert_eq!(group.get_permission_ids(), vec!["perm-1", "perm-2"]);
+    }
+
+    #[test]
+    fn test_permission_group_add_remove() {
+        let req = CreatePermissionGroupRequest {
+            name: "Test".to_string(),
+            description: None,
+            permission_ids: vec!["perm-1".to_string()],
+        };
+        let mut group = PermissionGroup::new(req);
+
+        assert!(group.contains_permission("perm-1"));
+        assert!(!group.contains_permission("perm-2"));
+
+        group.add_permission("perm-2".to_string());
+        assert!(group.contains_permission("perm-2"));
+
+        group.remove_permission("perm-1");
+        assert!(!group.contains_permission("perm-1"));
+        assert_eq!(group.get_permission_ids(), vec!["perm-2"]);
+    }
+
+    #[test]
+    fn test_permission_group_add_duplicate() {
+        let req = CreatePermissionGroupRequest {
+            name: "Test".to_string(),
+            description: None,
+            permission_ids: vec!["perm-1".to_string()],
+        };
+        let mut group = PermissionGroup::new(req);
+        group.add_permission("perm-1".to_string());
+        assert_eq!(group.get_permission_ids().len(), 1);
+    }
+
+    #[test]
+    fn test_permission_group_get_permission_ids_invalid_json() {
+        let mut group = PermissionGroup::new(CreatePermissionGroupRequest {
+            name: "Test".to_string(),
+            description: None,
+            permission_ids: vec![],
+        });
+        group.permissions = "not json".to_string();
+        assert!(group.get_permission_ids().is_empty());
+    }
+}
+
 /// Backward compatibility aliases
 pub type PermissionDto = Permission;
 pub type PermissionQueryParams = PermissionQuery;

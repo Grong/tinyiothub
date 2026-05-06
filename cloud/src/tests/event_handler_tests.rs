@@ -198,3 +198,92 @@ async fn test_get_performance_thresholds() {
     let (_s, json) = response_parts(response).await;
     assert!(json["code"].is_number());
 }
+
+// ── Security — write endpoints ──
+
+#[tokio::test]
+async fn test_update_security_config() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let body = json!({"audit_log_retention_days": 90, "max_login_attempts": 5});
+    let response = app.oneshot(auth_request("PUT", "/api/v1/events/security/config", &token, Some(body))).await.unwrap();
+    assert!(response.status().is_success() || response.status().is_client_error());
+    if response.status() == StatusCode::OK {
+        let (_s, json) = response_parts(response).await;
+        assert!(json["code"].is_number());
+    }
+}
+
+#[tokio::test]
+async fn test_cleanup_audit_logs() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app.oneshot(auth_request("POST", "/api/v1/events/security/cleanup", &token, Some(json!({"retention_days": 30})))).await.unwrap();
+    assert!(response.status().is_success() || response.status().is_client_error());
+    if response.status() == StatusCode::OK {
+        let (_s, json) = response_parts(response).await;
+        assert!(json["code"].is_number());
+    }
+}
+
+#[tokio::test]
+async fn test_get_event_audit_logs_not_found() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app.oneshot(auth_request("GET", "/api/v1/events/security/audit-logs/nonexistent-event-12345", &token, None)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert!(json["code"].is_number());
+}
+
+// ── Performance — additional routes ──
+
+#[tokio::test]
+async fn test_optimize_database() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app.oneshot(auth_request("GET", "/api/v1/events/performance/optimize", &token, None)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert!(json["code"].is_number());
+}
+
+#[tokio::test]
+async fn test_get_load_balancer_stats() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app.oneshot(auth_request("GET", "/api/v1/events/performance/load-balancer/stats", &token, None)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert!(json["code"].is_number());
+}
+
+#[tokio::test]
+async fn test_get_load_balancer_config() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app.oneshot(auth_request("GET", "/api/v1/events/performance/load-balancer/config", &token, None)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert!(json["code"].is_number());
+}
+
+#[tokio::test]
+async fn test_get_optimization_recommendations() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app.oneshot(auth_request("GET", "/api/v1/events/performance/recommendations", &token, None)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert!(json["code"].is_number());
+}
+
+#[tokio::test]
+async fn test_analyze_query_performance() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app.oneshot(auth_request("GET", "/api/v1/events/performance/query-analysis", &token, None)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert!(json["code"].is_number());
+}

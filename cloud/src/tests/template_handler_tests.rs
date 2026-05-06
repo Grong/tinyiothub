@@ -132,3 +132,61 @@ async fn test_get_template_categories() {
     let (_s, json) = response_parts(response).await;
     assert!(json["code"].is_number(), "Expected numeric code");
 }
+
+// ============================================================================
+// Template — validate endpoint
+// ============================================================================
+
+#[tokio::test]
+async fn test_validate_template_not_found() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+
+    let response = app
+        .oneshot(auth_request(
+            "POST",
+            "/api/v1/device-templates/nonexistent-tpl-12345/validate",
+            &token,
+            Some(json!({"name": "test-device", "device_type": "sensor"})),
+        ))
+        .await
+        .unwrap();
+
+    let status = response.status();
+    assert!(status == StatusCode::OK || status == StatusCode::UNPROCESSABLE_ENTITY,
+        "Expected OK or 422, got: {}", status);
+
+    if status == StatusCode::OK {
+        let (_s, json) = response_parts(response).await;
+        assert_ne!(json["code"], 0, "Expected error for nonexistent template validation");
+    }
+}
+
+// ============================================================================
+// Template — preview endpoint
+// ============================================================================
+
+#[tokio::test]
+async fn test_preview_template_not_found() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+
+    let response = app
+        .oneshot(auth_request(
+            "POST",
+            "/api/v1/device-templates/nonexistent-tpl-12345/preview",
+            &token,
+            Some(json!({"name": "test-device", "device_type": "sensor"})),
+        ))
+        .await
+        .unwrap();
+
+    let status = response.status();
+    assert!(status == StatusCode::OK || status == StatusCode::UNPROCESSABLE_ENTITY,
+        "Expected OK or 422, got: {}", status);
+
+    if status == StatusCode::OK {
+        let (_s, json) = response_parts(response).await;
+        assert_ne!(json["code"], 0, "Expected error for nonexistent template preview");
+    }
+}

@@ -115,4 +115,53 @@ mod tests {
         assert!(!is_strong_password("pass"));
         assert!(!is_strong_password("12345678"));
     }
+
+    #[test]
+    fn test_username_validation() {
+        assert!(is_valid_username("user_123"));
+        assert!(is_valid_username("abc"));
+        assert!(is_valid_username("a_b_c_123_456"));
+        assert!(!is_valid_username("ab"));
+        assert!(!is_valid_username("user-name"));
+        assert!(!is_valid_username("user name"));
+        assert!(!is_valid_username("a".repeat(21).as_str()));
+    }
+
+    #[test]
+    fn test_slug_validation() {
+        assert!(is_valid_slug("my-tenant"));
+        assert!(is_valid_slug("abc"));
+        assert!(is_valid_slug("a-b-c-123"));
+        assert!(!is_valid_slug("ab"));
+        assert!(!is_valid_slug("-starts-with-dash"));
+        assert!(!is_valid_slug("ends-with-dash-"));
+        assert!(!is_valid_slug("UPPERCASE"));
+        assert!(!is_valid_slug("a".repeat(31).as_str()));
+    }
+
+    #[test]
+    fn test_sanitize_input() {
+        assert_eq!(sanitize_input("  hello  "), "hello");
+        assert_eq!(sanitize_input("no-trim-needed"), "no-trim-needed");
+        assert_eq!(sanitize_input("   "), "");
+    }
+
+    #[test]
+    fn test_sql_injection_detection() {
+        assert!(contains_sql_injection("'; DROP TABLE users; --"));
+        assert!(contains_sql_injection(" UNION SELECT * FROM passwords"));
+        assert!(contains_sql_injection("1; DELETE FROM users"));
+        assert!(!contains_sql_injection("hello world"));
+        assert!(!contains_sql_injection("normal_input_123"));
+        assert!(!contains_sql_injection("1 OR 1=1"));
+    }
+
+    #[test]
+    fn test_xss_detection() {
+        assert!(contains_xss("<script>alert(1)</script>"));
+        assert!(contains_xss("javascript:void(0)"));
+        assert!(contains_xss("<iframe src='evil.com'>"));
+        assert!(!contains_xss("normal text"));
+        assert!(!contains_xss("hello <world>"));
+    }
 }
