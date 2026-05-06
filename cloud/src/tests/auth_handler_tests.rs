@@ -319,6 +319,7 @@ async fn test_register_empty_username() {
             "/api/v1/auth/register",
             Some(json!({
                 "username": "",
+                "phone": "13800138000",
                 "password": "password123"
             })),
         ))
@@ -339,6 +340,7 @@ async fn test_register_short_password() {
             "/api/v1/auth/register",
             Some(json!({
                 "username": "newuser",
+                "phone": "13800138001",
                 "password": "123"
             })),
         ))
@@ -347,7 +349,7 @@ async fn test_register_short_password() {
     assert_eq!(response.status(), StatusCode::OK);
     let (_s, json) = response_parts(response).await;
     assert_ne!(json["code"].as_i64(), Some(0), "Expected error for short password");
-    assert!(json["msg"].as_str().unwrap().contains("密码至少6个字符"));
+    assert!(json["msg"].as_str().unwrap().contains("密码至少 8 个字符"));
 }
 
 #[tokio::test]
@@ -355,6 +357,7 @@ async fn test_register_duplicate_username() {
     let app = setup_test_app().await;
     let body = json!({
         "username": "duplicateuser",
+        "phone": "13800138002",
         "password": "password123"
     });
 
@@ -388,6 +391,7 @@ async fn test_register_success() {
             "/api/v1/auth/register",
             Some(json!({
                 "username": "testregister",
+                "phone": "13800138003",
                 "password": "password123",
                 "display_name": "Test Register"
             })),
@@ -400,6 +404,145 @@ async fn test_register_success() {
     assert!(json["result"]["access_token"].as_str().is_some(), "Should return access token");
     assert_eq!(json["result"]["token_type"], "Bearer");
     assert!(json["result"]["user_info"]["name"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn test_register_invalid_phone() {
+    let app = setup_test_app().await;
+    let response = app
+        .oneshot(public_request(
+            "POST",
+            "/api/v1/auth/register",
+            Some(json!({
+                "username": "badphone",
+                "phone": "123",
+                "password": "password123"
+            })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert_ne!(json["code"].as_i64(), Some(0));
+    assert!(json["msg"].as_str().unwrap().contains("手机号"));
+}
+
+#[tokio::test]
+async fn test_register_duplicate_phone() {
+    let app = setup_test_app().await;
+    let body = json!({
+        "username": "phoneuser1",
+        "phone": "13800138010",
+        "password": "password123"
+    });
+
+    let response = app
+        .clone()
+        .oneshot(public_request("POST", "/api/v1/auth/register", Some(body.clone())))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert_eq!(json["code"].as_i64(), Some(0), "First registration should succeed");
+
+    let body2 = json!({
+        "username": "phoneuser2",
+        "phone": "13800138010",
+        "password": "password123"
+    });
+    let response = app
+        .oneshot(public_request("POST", "/api/v1/auth/register", Some(body2)))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert_ne!(json["code"].as_i64(), Some(0), "Expected error for duplicate phone");
+    assert!(json["msg"].as_str().unwrap().contains("手机号已注册"));
+}
+
+#[tokio::test]
+async fn test_register_password_no_letter() {
+    let app = setup_test_app().await;
+    let response = app
+        .oneshot(public_request(
+            "POST",
+            "/api/v1/auth/register",
+            Some(json!({
+                "username": "noletter",
+                "phone": "13800138011",
+                "password": "12345678"
+            })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert_ne!(json["code"].as_i64(), Some(0));
+    assert!(json["msg"].as_str().unwrap().contains("密码必须包含字母"));
+}
+
+#[tokio::test]
+async fn test_register_password_no_digit() {
+    let app = setup_test_app().await;
+    let response = app
+        .oneshot(public_request(
+            "POST",
+            "/api/v1/auth/register",
+            Some(json!({
+                "username": "nodigit",
+                "phone": "13800138012",
+                "password": "passwordxx"
+            })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert_ne!(json["code"].as_i64(), Some(0));
+    assert!(json["msg"].as_str().unwrap().contains("密码必须包含数字"));
+}
+
+#[tokio::test]
+async fn test_register_password_has_whitespace() {
+    let app = setup_test_app().await;
+    let response = app
+        .oneshot(public_request(
+            "POST",
+            "/api/v1/auth/register",
+            Some(json!({
+                "username": "whitespace",
+                "phone": "13800138013",
+                "password": "pass word1"
+            })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert_ne!(json["code"].as_i64(), Some(0));
+    assert!(json["msg"].as_str().unwrap().contains("密码不能包含空格"));
+}
+
+#[tokio::test]
+async fn test_register_invalid_email() {
+    let app = setup_test_app().await;
+    let response = app
+        .oneshot(public_request(
+            "POST",
+            "/api/v1/auth/register",
+            Some(json!({
+                "username": "bademail",
+                "phone": "13800138014",
+                "password": "password123",
+                "email": "not-an-email"
+            })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert_ne!(json["code"].as_i64(), Some(0));
+    assert!(json["msg"].as_str().unwrap().contains("邮箱格式不正确"));
 }
 
 // ============================================================================
@@ -453,6 +596,7 @@ async fn test_login_invalid_credentials() {
     // Register a user first
     let reg_body = json!({
         "username": "logintestuser",
+        "phone": "13800138004",
         "password": "password123"
     });
     let response = app
@@ -487,6 +631,7 @@ async fn test_login_success() {
     // Register a user first
     let reg_body = json!({
         "username": "loginsuccess",
+        "phone": "13800138005",
         "password": "password123",
         "display_name": "Login Success"
     });

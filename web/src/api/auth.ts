@@ -5,6 +5,7 @@
 import { apiGet, apiPost } from './client.js';
 import type {
   LoginRequest, LoginResponse, User,
+  RegisterRequest, RegisterResponse,
   SmsSendRequest, SmsSendResponse,
   SmsLoginRequest, SmsLoginResponse,
   WechatQrcodeResponse, WechatLoginRequest, WechatLoginResponse,
@@ -13,6 +14,10 @@ import type {
 export const authApi = {
   async login(data: LoginRequest) {
     return apiPost<LoginResponse>('/auth/login', data);
+  },
+
+  async register(data: RegisterRequest) {
+    return apiPost<RegisterResponse>('/auth/register', data);
   },
 
   async logout() {

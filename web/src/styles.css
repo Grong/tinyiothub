@@ -4,6 +4,7 @@
 @import "./styles/components/_index.css";
 @import "./styles/config.css";
 @import "./styles/login.css";
+@import "./styles/legal.css";
 
 /* Design system utilities and view partials */
 @import "./styles/utilities.css";

@@ -48,6 +48,9 @@ pub trait UserRepository: Send + Sync {
     /// Check if a user with the given email exists
     async fn exists_by_email(&self, email: &str) -> Result<bool>;
 
+    /// Check if a user with the given phone exists
+    async fn exists_by_phone(&self, phone: &str) -> Result<bool>;
+
     /// Update the enabled status of a user
     async fn update_enabled_status(&self, id: &str, enabled: bool) -> Result<User>;
 
@@ -566,6 +569,14 @@ impl UserRepository for SqliteUserRepository {
     async fn exists_by_email(&self, email: &str) -> Result<bool> {
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE email = ?")
             .bind(email)
+            .fetch_one(self.database.pool())
+            .await?;
+        Ok(count > 0)
+    }
+
+    async fn exists_by_phone(&self, phone: &str) -> Result<bool> {
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE phone = ?")
+            .bind(phone)
             .fetch_one(self.database.pool())
             .await?;
         Ok(count > 0)

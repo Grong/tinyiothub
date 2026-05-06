@@ -30,6 +30,8 @@ const lazyViews: Record<string, () => Promise<void>> = {
   chat:      () => import("./views/chat.js").then(() => {}),
   agents:    () => import("./views/agents.js").then(() => {}),
   cron:      () => import("./views/cron.js").then(() => {}),
+  terms:     () => import("./views/terms.js").then(() => {}),
+  privacy:   () => import("./views/privacy.js").then(() => {}),
 };
 
 interface NavItem {
@@ -233,7 +235,7 @@ export class TinyIoTHubApp extends LitElement {
 
     this.currentRoute = path || "home";
 
-    const publicRoutes = ["login", "register", "home", ""];
+    const publicRoutes = ["login", "register", "home", "terms", "privacy", ""];
     if (!publicRoutes.includes(path) && !this.isAuthenticated) {
       this.navigate("login");
       return;
@@ -339,6 +341,14 @@ export class TinyIoTHubApp extends LitElement {
 
     if (this.currentRoute === "home") {
       return html`<view-home></view-home>`;
+    }
+
+    if (this.currentRoute === "terms") {
+      return html`<view-terms></view-terms>`;
+    }
+
+    if (this.currentRoute === "privacy") {
+      return html`<view-privacy></view-privacy>`;
     }
 
     // All other routes require auth

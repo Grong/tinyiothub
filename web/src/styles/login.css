@@ -571,6 +571,48 @@
   color: var(--ok);
 }
 
+/* Success panel (post-registration) */
+.register-page-wrapper .success-panel {
+  text-align: center;
+  animation: fade-in 0.4s var(--ease-out) both;
+}
+
+.register-page-wrapper .success-icon {
+  width: 72px;
+  height: 72px;
+  margin: 0 auto 24px;
+  color: var(--ok);
+  background: var(--ok-subtle);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.register-page-wrapper .success-icon svg {
+  width: 36px;
+  height: 36px;
+}
+
+.register-page-wrapper .success-countdown {
+  margin-top: 28px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+/* Success branding glyph */
+.register-page-wrapper .success-glyph {
+  width: 80px;
+  height: 80px;
+  margin-bottom: 24px;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.register-page-wrapper .success-glyph svg {
+  width: 100%;
+  height: 100%;
+}
+
 /* Terms */
 .register-page-wrapper .terms {
   font-size: 12px;

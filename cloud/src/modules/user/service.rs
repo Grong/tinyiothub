@@ -152,6 +152,11 @@ impl UserService {
     pub async fn exists_by_email(&self, email: &str) -> Result<bool> {
         self.repository.exists_by_email(email).await
     }
+
+    /// Check if phone exists
+    pub async fn exists_by_phone(&self, phone: &str) -> Result<bool> {
+        self.repository.exists_by_phone(phone).await
+    }
 }
 
 /// Convert UserQueryParams to UserCriteria
