@@ -56,13 +56,20 @@ pub fn create_router() -> Router<AppState> {
         .route("/{name}", get(get_skill).put(update_skill).delete(delete_skill))
 }
 
-// GET /api/v1/agents/skills?workspace_id=
+fn resolve_workspace_id(claims: &Claims) -> &str {
+    if claims.workspace_id.is_empty() {
+        paths::DEFAULT_WORKSPACE_ID
+    } else {
+        &claims.workspace_id
+    }
+}
+
+// GET /api/v1/agents/skills
 pub async fn list_skills(
     _state: State<AppState>,
-    _claims: Claims,
-    axum::extract::Query(q): axum::extract::Query<ListSkillsQuery>,
+    claims: Claims,
 ) -> Json<ApiResponse<Vec<SkillInfoDto>>> {
-    let workspace_id = q.workspace_id.as_deref().unwrap_or(paths::DEFAULT_WORKSPACE_ID);
+    let workspace_id = resolve_workspace_id(&claims);
     // List workspace-specific skills
     let ws_skills = list_skill_files(&workspace_skills_dir(workspace_id)).await;
     // Also include global skills (read-only)
@@ -77,14 +84,13 @@ pub async fn list_skills(
     ApiResponseBuilder::success(all_skills)
 }
 
-// GET /api/v1/agents/skills/{name}?workspace_id=
+// GET /api/v1/agents/skills/{name}
 pub async fn get_skill(
     _state: State<AppState>,
     Path(name): Path<String>,
-    _claims: Claims,
-    axum::extract::Query(q): axum::extract::Query<ListSkillsQuery>,
+    claims: Claims,
 ) -> Result<Json<ApiResponse<SkillInfoDto>>, StatusCode> {
-    let workspace_id = q.workspace_id.as_deref().unwrap_or(paths::DEFAULT_WORKSPACE_ID);
+    let workspace_id = resolve_workspace_id(&claims);
     let file_path = skill_file_path(workspace_id, &name)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
@@ -109,11 +115,12 @@ pub async fn get_skill(
 // POST /api/v1/agents/skills
 pub async fn create_skill(
     _state: State<AppState>,
-    _claims: Claims,
+    claims: Claims,
     Json(req): Json<CreateSkillRequest>,
 ) -> Result<Json<ApiResponse<SkillInfoDto>>, StatusCode> {
+    let workspace_id = resolve_workspace_id(&claims);
     // Validate path
-    let file_path = skill_file_path(&req.workspace_id, &req.skill_name)
+    let file_path = skill_file_path(workspace_id, &req.skill_name)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
     if file_path.exists() {
@@ -128,7 +135,7 @@ pub async fn create_skill(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    tracing::info!("Skill saved: {}/{} -> {:?}", req.workspace_id, req.skill_name, file_path);
+    tracing::info!("Skill saved: {}/{} -> {:?}", workspace_id, req.skill_name, file_path);
 
     Ok(ApiResponseBuilder::success_with_message(
         SkillInfoDto {
@@ -144,11 +151,10 @@ pub async fn create_skill(
 pub async fn update_skill(
     _state: State<AppState>,
     Path(name): Path<String>,
-    _claims: Claims,
-    axum::extract::Query(q): axum::extract::Query<ListSkillsQuery>,
+    claims: Claims,
     Json(req): Json<UpdateSkillRequest>,
 ) -> Result<Json<ApiResponse<SkillInfoDto>>, StatusCode> {
-    let workspace_id = q.workspace_id.as_deref().unwrap_or(paths::DEFAULT_WORKSPACE_ID);
+    let workspace_id = resolve_workspace_id(&claims);
     let file_path = skill_file_path(workspace_id, &name)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
@@ -169,14 +175,13 @@ pub async fn update_skill(
     }))
 }
 
-// DELETE /api/v1/agents/skills/{name}?workspace_id=
+// DELETE /api/v1/agents/skills/{name}
 pub async fn delete_skill(
     _state: State<AppState>,
     Path(name): Path<String>,
-    _claims: Claims,
-    axum::extract::Query(q): axum::extract::Query<ListSkillsQuery>,
+    claims: Claims,
 ) -> Result<Json<ApiResponse<()>>, StatusCode> {
-    let workspace_id = q.workspace_id.as_deref().unwrap_or(paths::DEFAULT_WORKSPACE_ID);
+    let workspace_id = resolve_workspace_id(&claims);
     let file_path = skill_file_path(workspace_id, &name)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 

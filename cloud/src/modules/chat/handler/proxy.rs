@@ -25,7 +25,7 @@ pub async fn chat_stream(
     Json(req): Json<ChatStreamRequest>,
 ) -> Response {
     // 后端自行读取 agent 配置获取 system_prompt
-    let agent_config = state.agent_runtime.get_agent_config(&req.agent_id).await
+    let agent_config = state.agent_runtime.get_agent_config(&req.agent_id, &claims.workspace_id).await
         .map(|v| v.get("config").cloned().unwrap_or_default())
         .unwrap_or_default();
     let user_persona = agent_config.get("systemPrompt")
@@ -120,14 +120,19 @@ pub async fn chat_abort(
 pub async fn list_sessions(
     State(state): State<AppState>,
     Query(query): Query<ChatSessionsQuery>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
     let limit = query.limit.unwrap_or(50);
     let offset = query.offset.unwrap_or(0);
+    let workspace_id = if claims.workspace_id.is_empty() {
+        query.workspace_id.as_deref()
+    } else {
+        Some(claims.workspace_id.as_str())
+    };
     match state
         .session_service
         .list_sessions(
-            query.workspace_id.as_deref(),
+            workspace_id,
             query.agent_id.as_deref(),
             limit,
             offset,
@@ -167,9 +172,9 @@ pub async fn delete_session(
 /// GET /api/v1/agents
 pub async fn list_agents(
     State(state): State<AppState>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    match state.agent_runtime.list_agents().await {
+    match state.agent_runtime.list_agents(&claims.workspace_id).await {
         Ok(data) => ApiResponseBuilder::success(data),
         Err(e) => ApiResponseBuilder::error(format!("Failed to list agents: {}", e)),
     }
@@ -179,9 +184,9 @@ pub async fn list_agents(
 pub async fn get_agent_config(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    match state.agent_runtime.get_agent_config(&agent_id).await {
+    match state.agent_runtime.get_agent_config(&agent_id, &claims.workspace_id).await {
         Ok(data) => ApiResponseBuilder::success(data),
         Err(e) => ApiResponseBuilder::error(format!("Failed to get agent config: {}", e)),
     }
@@ -191,14 +196,14 @@ pub async fn get_agent_config(
 pub async fn set_agent_config(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
-    _claims: Claims,
+    claims: Claims,
     Json(req): Json<AgentConfigUpdateRequest>,
 ) -> Json<ApiResponse<serde_json::Value>> {
     let config_str = serde_json::to_string(&req.config).unwrap_or_default();
     let base_hash_ref = req.base_hash.as_deref();
     match state
         .agent_runtime
-        .set_agent_config(&agent_id, &config_str, base_hash_ref)
+        .set_agent_config(&agent_id, &config_str, base_hash_ref, &claims.workspace_id)
         .await
     {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({"saved": true})),
