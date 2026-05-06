@@ -59,5 +59,19 @@ impl Default for Role {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_role_default() {
+        let role = Role::default();
+        assert!(!role.id.is_empty());
+        assert!(role.name.is_empty());
+        assert_eq!(role.description, None);
+        assert_eq!(role.is_administrator, 0);
+    }
+}
+
 /// Backward compatibility alias
 pub type RoleDto = Role;

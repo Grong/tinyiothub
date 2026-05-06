@@ -398,3 +398,239 @@ pub struct ExecuteSelfHealResponse {
     pub execution: HealingExecutionDto,
     pub message: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_severity_level_as_str() {
+        assert_eq!(SeverityLevel::L0.as_str(), "L0");
+        assert_eq!(SeverityLevel::L1.as_str(), "L1");
+        assert_eq!(SeverityLevel::L2.as_str(), "L2");
+        assert_eq!(SeverityLevel::L3.as_str(), "L3");
+    }
+
+    #[test]
+    fn test_recovery_action_type_as_str() {
+        assert_eq!(RecoveryActionType::LogOnly.as_str(), "logOnly");
+        assert_eq!(RecoveryActionType::RestartDriver.as_str(), "restartDriver");
+        assert_eq!(RecoveryActionType::RejoinLora.as_str(), "rejoinLora");
+        assert_eq!(RecoveryActionType::ReconnectDevice.as_str(), "reconnectDevice");
+        assert_eq!(RecoveryActionType::CleanLogs.as_str(), "cleanLogs");
+        assert_eq!(RecoveryActionType::ReportCloud.as_str(), "reportCloud");
+        assert_eq!(RecoveryActionType::CreateTicket.as_str(), "createTicket");
+    }
+
+    #[test]
+    fn test_probe_type_as_str() {
+        assert_eq!(ProbeType::System.as_str(), "System");
+        assert_eq!(ProbeType::Device.as_str(), "Device");
+        assert_eq!(ProbeType::Task.as_str(), "Task");
+    }
+
+    #[test]
+    fn test_execution_result_as_str() {
+        assert_eq!(ExecutionResult::Success.as_str(), "Success");
+        assert_eq!(ExecutionResult::Failed.as_str(), "Failed");
+        assert_eq!(ExecutionResult::PendingApproval.as_str(), "PendingApproval");
+        assert_eq!(ExecutionResult::Skipped.as_str(), "Skipped");
+    }
+
+    #[test]
+    fn test_probe_result_new_severity_from_findings() {
+        let findings = vec![
+            ProbeFinding {
+                finding_type: "error".to_string(),
+                severity: SeverityLevel::L2,
+                message: "High CPU".to_string(),
+                target: "system".to_string(),
+                value: Some("95%".to_string()),
+            },
+            ProbeFinding {
+                finding_type: "error".to_string(),
+                severity: SeverityLevel::L1,
+                message: "Low memory".to_string(),
+                target: "system".to_string(),
+                value: Some("10%".to_string()),
+            },
+        ];
+        let result = ProbeResult::new(ProbeType::System, false, findings);
+        assert!(!result.healthy);
+        assert_eq!(result.severity, SeverityLevel::L2);
+        assert_eq!(result.findings.len(), 2);
+        assert!(result.metadata.is_empty());
+    }
+
+    #[test]
+    fn test_probe_result_new_empty_findings() {
+        let result = ProbeResult::new(ProbeType::Device, true, vec![]);
+        assert!(result.healthy);
+        assert_eq!(result.severity, SeverityLevel::L0);
+    }
+
+    #[test]
+    fn test_healing_execution_new() {
+        let exec = HealingExecution::new(
+            "tenant-1".to_string(),
+            SeverityLevel::L2,
+            RecoveryActionType::RestartDriver,
+            "device-1".to_string(),
+            ExecutionResult::Success,
+        );
+        assert!(!exec.id.is_empty());
+        assert_eq!(exec.tenant_id, "tenant-1");
+        assert_eq!(exec.level, SeverityLevel::L2);
+        assert_eq!(exec.action_type, RecoveryActionType::RestartDriver);
+        assert_eq!(exec.target, "device-1");
+        assert_eq!(exec.result, ExecutionResult::Success);
+        assert!(exec.logs.is_empty());
+    }
+
+    #[test]
+    fn test_self_healing_policy_default() {
+        let policy = SelfHealingPolicy::default();
+        assert!(policy.enabled);
+        assert!(policy.levels.is_empty());
+    }
+
+    #[test]
+    fn test_probe_config_default() {
+        let config = ProbeConfig::default();
+        assert!(config.system_probe_enabled);
+        assert!(config.device_probe_enabled);
+        assert!(config.task_probe_enabled);
+        assert_eq!(config.system_probe_interval_secs, 60);
+        assert_eq!(config.device_probe_interval_secs, 300);
+        assert_eq!(config.task_probe_interval_secs, 300);
+    }
+
+    #[test]
+    fn test_recovery_action_dto_from() {
+        let action = RecoveryAction {
+            action_type: RecoveryActionType::RestartDriver,
+            target: "device-1".to_string(),
+            max_retries: 3,
+            cooldown_secs: 60,
+        };
+        let dto = RecoveryActionDto::from(&action);
+        assert_eq!(dto.action_type, "restartDriver");
+        assert_eq!(dto.target, "device-1");
+        assert_eq!(dto.max_retries, 3);
+        assert_eq!(dto.cooldown_secs, 60);
+    }
+
+    #[test]
+    fn test_healing_condition_dto_from() {
+        let condition = HealingCondition {
+            condition_type: "cpu_usage".to_string(),
+            threshold: 90.0,
+            count: 3,
+        };
+        let dto = HealingConditionDto::from(&condition);
+        assert_eq!(dto.condition_type, "cpu_usage");
+        assert!((dto.threshold - 90.0).abs() < f64::EPSILON);
+        assert_eq!(dto.count, 3);
+    }
+
+    #[test]
+    fn test_level_policy_dto_from() {
+        let policy = LevelPolicy {
+            level: SeverityLevel::L2,
+            actions: vec![RecoveryAction {
+                action_type: RecoveryActionType::LogOnly,
+                target: "system".to_string(),
+                max_retries: 1,
+                cooldown_secs: 0,
+            }],
+            conditions: vec![HealingCondition {
+                condition_type: "cpu".to_string(),
+                threshold: 95.0,
+                count: 1,
+            }],
+            require_approval: true,
+            cooldown_secs: 300,
+        };
+        let dto = LevelPolicyDto::from(&policy);
+        assert_eq!(dto.level, "L2");
+        assert_eq!(dto.actions.len(), 1);
+        assert_eq!(dto.conditions.len(), 1);
+        assert!(dto.require_approval);
+        assert_eq!(dto.cooldown_secs, 300);
+    }
+
+    #[test]
+    fn test_probe_finding_dto_from() {
+        let finding = ProbeFinding {
+            finding_type: "error".to_string(),
+            severity: SeverityLevel::L3,
+            message: "Critical".to_string(),
+            target: "device-1".to_string(),
+            value: None,
+        };
+        let dto = ProbeFindingDto::from(&finding);
+        assert_eq!(dto.finding_type, "error");
+        assert_eq!(dto.severity, "L3");
+        assert_eq!(dto.message, "Critical");
+        assert_eq!(dto.target, "device-1");
+        assert_eq!(dto.value, None);
+    }
+
+    #[test]
+    fn test_probe_result_dto_from() {
+        let result = ProbeResult::new(
+            ProbeType::Device,
+            true,
+            vec![ProbeFinding {
+                finding_type: "info".to_string(),
+                severity: SeverityLevel::L0,
+                message: "OK".to_string(),
+                target: "device-1".to_string(),
+                value: None,
+            }],
+        );
+        let dto = ProbeResultDto::from(&result);
+        assert_eq!(dto.probe_type, "Device");
+        assert!(dto.healthy);
+        assert_eq!(dto.severity, "L0");
+        assert_eq!(dto.findings.len(), 1);
+    }
+
+    #[test]
+    fn test_healing_execution_dto_from() {
+        let exec = HealingExecution::new(
+            "tenant-1".to_string(),
+            SeverityLevel::L1,
+            RecoveryActionType::ReconnectDevice,
+            "device-1".to_string(),
+            ExecutionResult::Failed,
+        );
+        let dto = HealingExecutionDto::from(&exec);
+        assert_eq!(dto.id, exec.id);
+        assert_eq!(dto.tenant_id, "tenant-1");
+        assert_eq!(dto.level, "L1");
+        assert_eq!(dto.action_type, "reconnectDevice");
+        assert_eq!(dto.target, "device-1");
+        assert_eq!(dto.result, "Failed");
+    }
+
+    #[test]
+    fn test_self_healing_policy_dto_from() {
+        let mut levels = HashMap::new();
+        levels.insert(
+            SeverityLevel::L1,
+            LevelPolicy {
+                level: SeverityLevel::L1,
+                actions: vec![],
+                conditions: vec![],
+                require_approval: false,
+                cooldown_secs: 60,
+            },
+        );
+        let policy = SelfHealingPolicy { enabled: true, levels };
+        let dto = SelfHealingPolicyDto::from(&policy);
+        assert!(dto.enabled);
+        assert_eq!(dto.levels.len(), 1);
+        assert!(dto.levels.contains_key("L1"));
+    }
+}

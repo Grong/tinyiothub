@@ -257,3 +257,248 @@ impl ActionResult {
 
 pub fn parse_actions(json: &str) -> Result<Vec<Action>, serde_json::Error> { serde_json::from_str(json) }
 pub fn actions_to_json(actions: &[Action]) -> Result<String, serde_json::Error> { serde_json::to_string(actions) }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_device_state_parse_str() {
+        assert_eq!(DeviceState::parse_str("online"), DeviceState::Online);
+        assert_eq!(DeviceState::parse_str("offline"), DeviceState::Offline);
+        assert_eq!(DeviceState::parse_str("warning"), DeviceState::Warning);
+        assert_eq!(DeviceState::parse_str("error"), DeviceState::Error);
+        assert_eq!(DeviceState::parse_str("unknown"), DeviceState::Unknown);
+        assert_eq!(DeviceState::parse_str("UNKNOWN"), DeviceState::Unknown);
+    }
+
+    #[test]
+    fn test_alarm_level_parse_str() {
+        assert!(matches!(AlarmLevel::parse_str("info"), AlarmLevel::Info));
+        assert!(matches!(AlarmLevel::parse_str("warning"), AlarmLevel::Warning));
+        assert!(matches!(AlarmLevel::parse_str("error"), AlarmLevel::Error));
+        assert!(matches!(AlarmLevel::parse_str("critical"), AlarmLevel::Critical));
+        assert!(matches!(AlarmLevel::parse_str("unknown"), AlarmLevel::Warning));
+    }
+
+    #[test]
+    fn test_operator_compare_eq() {
+        let op = Operator::Eq;
+        assert!(op.compare(&serde_json::json!(42), &serde_json::json!(42)));
+        assert!(!op.compare(&serde_json::json!(42), &serde_json::json!(43)));
+    }
+
+    #[test]
+    fn test_operator_compare_neq() {
+        let op = Operator::Neq;
+        assert!(op.compare(&serde_json::json!(1), &serde_json::json!(2)));
+        assert!(!op.compare(&serde_json::json!(1), &serde_json::json!(1)));
+    }
+
+    #[test]
+    fn test_operator_compare_gt() {
+        let op = Operator::Gt;
+        assert!(op.compare(&serde_json::json!(5.0), &serde_json::json!(3.0)));
+        assert!(!op.compare(&serde_json::json!(3.0), &serde_json::json!(5.0)));
+        assert!(!op.compare(&serde_json::json!("not a number"), &serde_json::json!(3.0)));
+    }
+
+    #[test]
+    fn test_operator_compare_gte() {
+        let op = Operator::Gte;
+        assert!(op.compare(&serde_json::json!(5.0), &serde_json::json!(3.0)));
+        assert!(op.compare(&serde_json::json!(3.0), &serde_json::json!(3.0)));
+        assert!(!op.compare(&serde_json::json!(2.0), &serde_json::json!(3.0)));
+    }
+
+    #[test]
+    fn test_operator_compare_lt() {
+        let op = Operator::Lt;
+        assert!(op.compare(&serde_json::json!(2.0), &serde_json::json!(5.0)));
+        assert!(!op.compare(&serde_json::json!(5.0), &serde_json::json!(2.0)));
+    }
+
+    #[test]
+    fn test_operator_compare_lte() {
+        let op = Operator::Lte;
+        assert!(op.compare(&serde_json::json!(2.0), &serde_json::json!(5.0)));
+        assert!(op.compare(&serde_json::json!(5.0), &serde_json::json!(5.0)));
+        assert!(!op.compare(&serde_json::json!(6.0), &serde_json::json!(5.0)));
+    }
+
+    #[test]
+    fn test_operator_compare_contains() {
+        let op = Operator::Contains;
+        assert!(op.compare(&serde_json::json!("hello world"), &serde_json::json!("world")));
+        assert!(!op.compare(&serde_json::json!("hello"), &serde_json::json!("xyz")));
+        assert!(!op.compare(&serde_json::json!(123), &serde_json::json!("xyz")));
+    }
+
+    #[test]
+    fn test_operator_compare_starts_with() {
+        let op = Operator::StartsWith;
+        assert!(op.compare(&serde_json::json!("hello world"), &serde_json::json!("hello")));
+        assert!(!op.compare(&serde_json::json!("hello"), &serde_json::json!("world")));
+    }
+
+    #[test]
+    fn test_operator_compare_ends_with() {
+        let op = Operator::EndsWith;
+        assert!(op.compare(&serde_json::json!("hello world"), &serde_json::json!("world")));
+        assert!(!op.compare(&serde_json::json!("hello"), &serde_json::json!("world")));
+    }
+
+    #[test]
+    fn test_operator_compare_in() {
+        let op = Operator::In;
+        let arr = serde_json::json!([1, 2, 3]);
+        assert!(op.compare(&serde_json::json!(2), &arr));
+        assert!(!op.compare(&serde_json::json!(5), &arr));
+        assert!(!op.compare(&serde_json::json!(2), &serde_json::json!("not array")));
+    }
+
+    #[test]
+    fn test_trigger_context_new() {
+        let ctx = TriggerContext::new();
+        assert!(ctx.device_id.is_none());
+        assert!(ctx.properties.is_empty());
+        assert!(matches!(ctx.trigger_type, TriggerType::Event));
+    }
+
+    #[test]
+    fn test_trigger_context_get_property_existing() {
+        let mut ctx = TriggerContext::new();
+        ctx.properties.insert("temp".to_string(), serde_json::json!(25.5));
+        assert_eq!(ctx.get_property("temp"), &serde_json::json!(25.5));
+    }
+
+    #[test]
+    fn test_trigger_context_get_property_missing() {
+        let ctx = TriggerContext::new();
+        assert_eq!(ctx.get_property("missing"), &serde_json::Value::Null);
+    }
+
+    #[test]
+    fn test_action_action_type() {
+        assert_eq!(Action::Alarm { level: AlarmLevel::Info, message: "test".to_string() }.action_type(), "alarm");
+        assert_eq!(Action::ControlDevice { device_id: "d1".to_string(), command: "on".to_string(), parameters: None }.action_type(), "control_device");
+        assert_eq!(Action::SetProperty { device_id: "d1".to_string(), property: "temp".to_string(), value: "25".to_string() }.action_type(), "set_property");
+        assert_eq!(Action::PowerOn { device_id: "d1".to_string() }.action_type(), "power_on");
+        assert_eq!(Action::PowerOff { device_id: "d1".to_string() }.action_type(), "power_off");
+        assert_eq!(Action::Notify { channel: NotifyChannel::Email, title: "t".to_string(), content: "c".to_string() }.action_type(), "notify");
+        assert_eq!(Action::SendEmail { to: vec![], subject: "s".to_string(), body: "b".to_string() }.action_type(), "send_email");
+        assert_eq!(Action::HttpRequest { method: HttpMethod::Get, url: "u".to_string(), headers: None, body: None }.action_type(), "http_request");
+        assert_eq!(Action::Forward { endpoint: "e".to_string(), format: DataFormat::Json }.action_type(), "forward");
+        assert_eq!(Action::Delay { duration_ms: 100 }.action_type(), "delay");
+        assert_eq!(Action::Conditional { condition: Condition::Threshold { property: "p".to_string(), operator: Operator::Eq, value: 1.0 }, then_actions: vec![], else_actions: None }.action_type(), "conditional");
+        assert_eq!(Action::Script { interpreter: ScriptInterpreter::Bash, script: "echo hi".to_string() }.action_type(), "script");
+    }
+
+    #[test]
+    fn test_notify_channel_parse_str() {
+        assert!(matches!(NotifyChannel::parse_str("email"), NotifyChannel::Email));
+        assert!(matches!(NotifyChannel::parse_str("sms"), NotifyChannel::Sms));
+        assert!(matches!(NotifyChannel::parse_str("webhook"), NotifyChannel::Webhook));
+        assert!(matches!(NotifyChannel::parse_str("mqtt"), NotifyChannel::Mqtt));
+        assert!(matches!(NotifyChannel::parse_str("unknown"), NotifyChannel::System));
+        assert!(matches!(NotifyChannel::parse_str("SYSTEM"), NotifyChannel::System));
+    }
+
+    #[test]
+    fn test_http_method_parse_str() {
+        assert!(matches!(HttpMethod::parse_str("GET"), HttpMethod::Get));
+        assert!(matches!(HttpMethod::parse_str("post"), HttpMethod::Post));
+        assert!(matches!(HttpMethod::parse_str("put"), HttpMethod::Put));
+        assert!(matches!(HttpMethod::parse_str("delete"), HttpMethod::Delete));
+        assert!(matches!(HttpMethod::parse_str("patch"), HttpMethod::Patch));
+        assert!(matches!(HttpMethod::parse_str("unknown"), HttpMethod::Get));
+    }
+
+    #[test]
+    fn test_http_method_as_str() {
+        assert_eq!(HttpMethod::Get.as_str(), "GET");
+        assert_eq!(HttpMethod::Post.as_str(), "POST");
+        assert_eq!(HttpMethod::Put.as_str(), "PUT");
+        assert_eq!(HttpMethod::Delete.as_str(), "DELETE");
+        assert_eq!(HttpMethod::Patch.as_str(), "PATCH");
+    }
+
+    #[test]
+    fn test_data_format_parse_str() {
+        assert!(matches!(DataFormat::parse_str("json"), DataFormat::Json));
+        assert!(matches!(DataFormat::parse_str("csv"), DataFormat::Csv));
+        assert!(matches!(DataFormat::parse_str("xml"), DataFormat::Xml));
+        assert!(matches!(DataFormat::parse_str("unknown"), DataFormat::Json));
+    }
+
+    #[test]
+    fn test_script_interpreter_parse_str() {
+        assert!(matches!(ScriptInterpreter::parse_str("bash"), ScriptInterpreter::Bash));
+        assert!(matches!(ScriptInterpreter::parse_str("sh"), ScriptInterpreter::Bash));
+        assert!(matches!(ScriptInterpreter::parse_str("python"), ScriptInterpreter::Python));
+        assert!(matches!(ScriptInterpreter::parse_str("python3"), ScriptInterpreter::Python));
+        assert!(matches!(ScriptInterpreter::parse_str("powershell"), ScriptInterpreter::PowerShell));
+        assert!(matches!(ScriptInterpreter::parse_str("ps"), ScriptInterpreter::PowerShell));
+        assert!(matches!(ScriptInterpreter::parse_str("cmd"), ScriptInterpreter::Cmd));
+        assert!(matches!(ScriptInterpreter::parse_str("batch"), ScriptInterpreter::Cmd));
+        assert!(matches!(ScriptInterpreter::parse_str("unknown"), ScriptInterpreter::Bash));
+    }
+
+    #[test]
+    fn test_action_result_success() {
+        let result = ActionResult::success("alarm", "triggered");
+        assert_eq!(result.action_type, "alarm");
+        assert!(result.success);
+        assert_eq!(result.message, Some("triggered".to_string()));
+        assert!(result.data.is_none());
+    }
+
+    #[test]
+    fn test_action_result_failure() {
+        let result = ActionResult::failure("control_device", "timeout");
+        assert_eq!(result.action_type, "control_device");
+        assert!(!result.success);
+        assert_eq!(result.message, Some("timeout".to_string()));
+    }
+
+    #[test]
+    fn test_condition_json_roundtrip() {
+        let cond = Condition::Threshold { property: "temp".to_string(), operator: Operator::Gt, value: 30.0 };
+        let json = cond.to_json().unwrap();
+        let parsed = Condition::from_json(&json).unwrap();
+        match parsed {
+            Condition::Threshold { property, operator, value } => {
+                assert_eq!(property, "temp");
+                assert!(matches!(operator, Operator::Gt));
+                assert_eq!(value, 30.0);
+            }
+            _ => panic!("Expected Threshold condition"),
+        }
+    }
+
+    #[test]
+    fn test_action_json_roundtrip() {
+        let action = Action::Delay { duration_ms: 500 };
+        let json = action.to_json().unwrap();
+        let parsed = Action::from_json(&json).unwrap();
+        match parsed {
+            Action::Delay { duration_ms } => assert_eq!(duration_ms, 500),
+            _ => panic!("Expected Delay action"),
+        }
+    }
+
+    #[test]
+    fn test_parse_actions() {
+        let json = r#"[{"type":"delay","duration_ms":100}]"#;
+        let actions = parse_actions(json).unwrap();
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].action_type(), "delay");
+    }
+
+    #[test]
+    fn test_actions_to_json() {
+        let actions = vec![Action::PowerOn { device_id: "d1".to_string() }];
+        let json = actions_to_json(&actions).unwrap();
+        assert!(json.contains("power_on"));
+    }
+}

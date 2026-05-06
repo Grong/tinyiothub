@@ -305,3 +305,234 @@ async fn test_unbind_social_account_missing_fields() {
         .unwrap();
     assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY || response.status() == StatusCode::OK);
 }
+
+// ============================================================================
+// Register (detailed business logic)
+// ============================================================================
+
+#[tokio::test]
+async fn test_register_empty_username() {
+    let app = setup_test_app().await;
+    let response = app
+        .oneshot(public_request(
+            "POST",
+            "/api/v1/auth/register",
+            Some(json!({
+                "username": "",
+                "password": "password123"
+            })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert_ne!(json["code"].as_i64(), Some(0), "Expected error for empty username");
+    assert!(json["msg"].as_str().unwrap().contains("用户名不能为空"));
+}
+
+#[tokio::test]
+async fn test_register_short_password() {
+    let app = setup_test_app().await;
+    let response = app
+        .oneshot(public_request(
+            "POST",
+            "/api/v1/auth/register",
+            Some(json!({
+                "username": "newuser",
+                "password": "123"
+            })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert_ne!(json["code"].as_i64(), Some(0), "Expected error for short password");
+    assert!(json["msg"].as_str().unwrap().contains("密码至少6个字符"));
+}
+
+#[tokio::test]
+async fn test_register_duplicate_username() {
+    let app = setup_test_app().await;
+    let body = json!({
+        "username": "duplicateuser",
+        "password": "password123"
+    });
+
+    // First registration should succeed
+    let response = app
+        .clone()
+        .oneshot(public_request("POST", "/api/v1/auth/register", Some(body.clone())))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert_eq!(json["code"].as_i64(), Some(0), "First registration should succeed");
+
+    // Second registration with same username should fail
+    let response = app
+        .oneshot(public_request("POST", "/api/v1/auth/register", Some(body)))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert_ne!(json["code"].as_i64(), Some(0), "Expected error for duplicate username");
+    assert!(json["msg"].as_str().unwrap().contains("用户名已存在"));
+}
+
+#[tokio::test]
+async fn test_register_success() {
+    let app = setup_test_app().await;
+    let response = app
+        .oneshot(public_request(
+            "POST",
+            "/api/v1/auth/register",
+            Some(json!({
+                "username": "testregister",
+                "password": "password123",
+                "display_name": "Test Register"
+            })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert_eq!(json["code"].as_i64(), Some(0), "Registration should succeed");
+    assert!(json["result"]["access_token"].as_str().is_some(), "Should return access token");
+    assert_eq!(json["result"]["token_type"], "Bearer");
+    assert!(json["result"]["user_info"]["name"].as_str().is_some());
+}
+
+// ============================================================================
+// Login (detailed business logic)
+// ============================================================================
+
+#[tokio::test]
+async fn test_login_empty_username() {
+    let app = setup_test_app().await;
+    let response = app
+        .oneshot(public_request(
+            "POST",
+            "/api/v1/auth/login",
+            Some(json!({
+                "username": "",
+                "password": "password123"
+            })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert_ne!(json["code"].as_i64(), Some(0), "Expected error for empty username");
+    assert!(json["msg"].as_str().unwrap().contains("用户名和密码不能为空"));
+}
+
+#[tokio::test]
+async fn test_login_empty_password() {
+    let app = setup_test_app().await;
+    let response = app
+        .oneshot(public_request(
+            "POST",
+            "/api/v1/auth/login",
+            Some(json!({
+                "username": "testuser",
+                "password": ""
+            })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert_ne!(json["code"].as_i64(), Some(0), "Expected error for empty password");
+    assert!(json["msg"].as_str().unwrap().contains("用户名和密码不能为空"));
+}
+
+#[tokio::test]
+async fn test_login_invalid_credentials() {
+    let app = setup_test_app().await;
+
+    // Register a user first
+    let reg_body = json!({
+        "username": "logintestuser",
+        "password": "password123"
+    });
+    let response = app
+        .clone()
+        .oneshot(public_request("POST", "/api/v1/auth/register", Some(reg_body)))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Try to login with wrong password
+    let response = app
+        .oneshot(public_request(
+            "POST",
+            "/api/v1/auth/login",
+            Some(json!({
+                "username": "logintestuser",
+                "password": "wrongpassword"
+            })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert_ne!(json["code"].as_i64(), Some(0), "Expected error for invalid credentials");
+    assert!(json["msg"].as_str().unwrap().contains("用户名或密码错误"));
+}
+
+#[tokio::test]
+async fn test_login_success() {
+    let app = setup_test_app().await;
+
+    // Register a user first
+    let reg_body = json!({
+        "username": "loginsuccess",
+        "password": "password123",
+        "display_name": "Login Success"
+    });
+    let response = app
+        .clone()
+        .oneshot(public_request("POST", "/api/v1/auth/register", Some(reg_body)))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert_eq!(json["code"].as_i64(), Some(0), "Registration should succeed");
+
+    // Login with correct credentials
+    let response = app
+        .oneshot(public_request(
+            "POST",
+            "/api/v1/auth/login",
+            Some(json!({
+                "username": "loginsuccess",
+                "password": "password123"
+            })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert_eq!(json["code"].as_i64(), Some(0), "Login should succeed");
+    assert!(json["result"]["access_token"].as_str().is_some(), "Should return access token");
+    assert_eq!(json["result"]["token_type"], "Bearer");
+    assert_eq!(json["result"]["expires_in"], 24 * 60 * 60);
+    assert_eq!(json["result"]["user_info"]["name"], "Login Success");
+}
+
+#[tokio::test]
+async fn test_logout_success() {
+    let app = setup_test_app().await;
+    let response = app
+        .oneshot(public_request(
+            "POST",
+            "/api/v1/auth/logout",
+            Some(json!({})),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert_eq!(json["code"].as_i64(), Some(0), "Logout should succeed");
+    assert_eq!(json["result"], "登出成功");
+}
