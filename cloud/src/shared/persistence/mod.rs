@@ -14,10 +14,11 @@ pub use pool::create_pool;
 
 #[cfg(test)]
 pub mod test_helpers {
-    use std::path::Path;
     /// Run all cloud migrations in chronological order.
     ///
     /// Test/seed data migrations referencing non-existent devices are skipped.
+    /// Migrations are embedded at compile time so tests work regardless of
+    /// the current working directory or `CARGO_MANIFEST_DIR`.
     pub async fn run_all_migrations(
         pool: &sqlx::SqlitePool,
     ) -> Result<(), sqlx::migrate::MigrateError> {
@@ -26,9 +27,7 @@ pub mod test_helpers {
             20260114000001, // test data: inserts events referencing non-existent devices
         ];
 
-        let migrator =
-            sqlx::migrate::Migrator::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations"))
-                .await?;
+        let migrator = sqlx::migrate!("./migrations");
 
         let mut combined: Vec<sqlx::migrate::Migration> = Vec::new();
         for m in migrator.iter().cloned() {

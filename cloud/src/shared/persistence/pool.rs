@@ -1,4 +1,4 @@
-use std::{collections::HashMap, str::FromStr, time::Duration};
+use std::{str::FromStr, time::Duration};
 
 use sqlx::{
     migrate::{Migration, Migrator},
@@ -14,40 +14,24 @@ const SKIP_MIGRATIONS: &[i64] = &[
     20260418000001, // storage: add tenant_id to tags — already in cloud base schema
 ];
 
-/// Load migrations from cloud/ and storage crate, interleaved by version.
+/// Load cloud migrations, filtering out test/seed data versions.
 ///
-/// Cloud migrations take precedence when a version exists in both directories,
-/// except for 20260414102323 where the storage version is the canonical one.
-async fn load_all_migrations() -> Result<Vec<Migration>, sqlx::migrate::MigrateError> {
-    let cloud_migrations =
-        Migrator::new(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations")).await?;
+/// Migrations are embedded at compile time via `sqlx::migrate!()`, so no
+/// runtime file-system access is required. This fixes the Docker issue where
+/// `env!("CARGO_MANIFEST_DIR")` points to the build-time path (`/build/cloud`)
+/// which does not exist in the runtime image.
+fn load_all_migrations() -> Result<Vec<Migration>, sqlx::migrate::MigrateError> {
+    // Use `./migrations` so the macro resolves it relative to CARGO_MANIFEST_DIR
+    // rather than the source file directory. The macro embeds all .sql files at
+    // compile time, so no runtime filesystem access is required.
+    let migrator = sqlx::migrate!("./migrations");
 
-    let storage_migrations = Migrator::new(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../crates/tinyiothub-storage/migrations"),
-    )
-    .await?;
-
-    let mut seen: HashMap<i64, bool> = HashMap::new();
     let mut combined: Vec<Migration> = Vec::new();
-
-    // Cloud migrations first (preferred), skip broken cloud version
-    for m in cloud_migrations.iter().cloned() {
-        if m.version != 20260414102323 && !SKIP_MIGRATIONS.contains(&m.version) {
-            seen.insert(m.version, true);
+    for m in migrator.iter().cloned() {
+        if !SKIP_MIGRATIONS.contains(&m.version) {
             combined.push(m);
         }
     }
-
-    // Storage migrations for versions not already covered by cloud
-    for m in storage_migrations.iter().cloned() {
-        if !seen.contains_key(&m.version) && !SKIP_MIGRATIONS.contains(&m.version) {
-            combined.push(m);
-        }
-    }
-
-    // Sort by version to apply chronologically
-    combined.sort_by_key(|m| m.version);
 
     Ok(combined)
 }
@@ -82,7 +66,7 @@ pub async fn create_pool(config: &DatabaseConfig) -> Result<SqlitePool, sqlx::Er
 
             // Run migrations (cloud + storage, interleaved by version)
             tracing::info!("Running database migrations...");
-            let migrations = load_all_migrations().await.map_err(|e| {
+            let migrations = load_all_migrations().map_err(|e| {
                 sqlx::Error::Configuration(format!("Failed to load migrations: {}", e).into())
             })?;
             Migrator::with_migrations(migrations).run(&pool).await?;
@@ -102,7 +86,7 @@ pub async fn create_pool(config: &DatabaseConfig) -> Result<SqlitePool, sqlx::Er
 
     // Run migrations (cloud + storage, interleaved by version)
     tracing::info!("Running database migrations...");
-    let migrations = load_all_migrations().await.map_err(|e| {
+    let migrations = load_all_migrations().map_err(|e| {
         sqlx::Error::Configuration(format!("Failed to load migrations: {}", e).into())
     })?;
     Migrator::with_migrations(migrations).run(&pool).await?;

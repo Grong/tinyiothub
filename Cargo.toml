@@ -17,7 +17,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 authors = ["TinyIoTHub Team"]
 license = "MIT"
@@ -47,7 +47,7 @@ tracing-appender = "0.2"
 num_cpus = "1.16"
 
 # Database
-sqlx = { version = "0.9.0-alpha.1", features = ["runtime-tokio", "sqlite", "chrono", "uuid"] }
+sqlx = { version = "0.9.0-alpha.1", features = ["runtime-tokio", "sqlite", "chrono", "uuid", "migrate"] }
 
 # Storage plugins
 tokio-postgres = "0.7"
