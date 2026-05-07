@@ -16,8 +16,6 @@ too-many-lines-threshold = 150
 # Maximum size of a struct literal
 struct-field-name-threshold = 0
 
-# Warn on single-character lifetime names
-single-char-lifetime-names-threshold = 1
 
 # Maximum type complexity
 type-complexity-threshold = 350
