@@ -202,35 +202,51 @@ impl SqliteMemory {
             CREATE INDEX IF NOT EXISTS idx_cache_accessed ON embedding_cache(accessed_at);",
         )?;
 
-        // Migration: add session_id column if not present (safe to run repeatedly)
-        let schema_sql: String = conn
-            .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='memories'")?
-            .query_row([], |row| row.get::<_, String>(0))?;
-
-        if !schema_sql.contains("session_id") {
-            conn.execute_batch(
-                "ALTER TABLE memories ADD COLUMN session_id TEXT;
-                 CREATE INDEX IF NOT EXISTS idx_memories_session ON memories(session_id);",
-            )?;
+        // Helper: check if a column exists using PRAGMA table_info (more reliable than sqlite_master.sql)
+        fn column_exists(conn: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
+            let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table))?;
+            let rows = stmt.query_map([], |row| {
+                let name: String = row.get(1)?;
+                Ok(name)
+            })?;
+            for name in rows {
+                if name?.eq_ignore_ascii_case(column) {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
         }
+
+        // Helper: add column if missing, ignoring "duplicate column name" errors
+        fn add_column_if_missing(
+            conn: &Connection,
+            column: &str,
+            definition: &str,
+        ) -> rusqlite::Result<()> {
+            if !column_exists(conn, "memories", column)? {
+                if let Err(e) = conn.execute_batch(&format!("ALTER TABLE memories ADD COLUMN {};", definition)) {
+                    let msg = e.to_string();
+                    if !msg.contains("duplicate column name") {
+                        return Err(e);
+                    }
+                }
+            }
+            Ok(())
+        }
+
+        // Migration: add session_id column if not present
+        add_column_if_missing(conn, "session_id", "session_id TEXT")?;
+        conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_memories_session ON memories(session_id);")?;
 
         // Migration: add namespace column
-        if !schema_sql.contains("namespace") {
-            conn.execute_batch(
-                "ALTER TABLE memories ADD COLUMN namespace TEXT DEFAULT 'default';
-                 CREATE INDEX IF NOT EXISTS idx_memories_namespace ON memories(namespace);",
-            )?;
-        }
+        add_column_if_missing(conn, "namespace", "namespace TEXT DEFAULT 'default'")?;
+        conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_memories_namespace ON memories(namespace);")?;
 
         // Migration: add importance column
-        if !schema_sql.contains("importance") {
-            conn.execute_batch("ALTER TABLE memories ADD COLUMN importance REAL DEFAULT 0.5;")?;
-        }
+        add_column_if_missing(conn, "importance", "importance REAL DEFAULT 0.5")?;
 
         // Migration: add superseded_by column
-        if !schema_sql.contains("superseded_by") {
-            conn.execute_batch("ALTER TABLE memories ADD COLUMN superseded_by TEXT;")?;
-        }
+        add_column_if_missing(conn, "superseded_by", "superseded_by TEXT")?;
 
         Ok(())
     }
