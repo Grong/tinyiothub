@@ -32,6 +32,8 @@ pub trait RoleRepository: Send + Sync {
         page_size: u32,
     ) -> Result<Vec<Role>>;
     async fn update_enabled_status(&self, id: &str, enabled: bool) -> Result<bool>;
+    async fn get_permissions(&self, role_id: &str) -> Result<Vec<String>>;
+    async fn update_permissions(&self, role_id: &str, permission_ids: &[String]) -> Result<()>;
 }
 
 // ── Row type (internal) ─────────────────────────────────
@@ -398,5 +400,40 @@ impl RoleRepository for SqliteRoleRepository {
             Some(_) => Ok(true),
             None => Ok(false),
         }
+    }
+
+    async fn get_permissions(&self, role_id: &str) -> Result<Vec<String>> {
+        let rows = sqlx::query_scalar::<_, String>(
+            "SELECT permission_id FROM role_permissions WHERE role_id = ?",
+        )
+        .bind(role_id)
+        .fetch_all(self.database.pool())
+        .await?;
+
+        Ok(rows)
+    }
+
+    async fn update_permissions(&self, role_id: &str, permission_ids: &[String]) -> Result<()> {
+        let mut tx = self.database.pool().begin().await?;
+
+        sqlx::query("DELETE FROM role_permissions WHERE role_id = ?")
+            .bind(role_id)
+            .execute(&mut *tx)
+            .await?;
+
+        for permission_id in permission_ids {
+            let id = uuid::Uuid::new_v4().to_string();
+            sqlx::query(
+                "INSERT INTO role_permissions (id, role_id, permission_id) VALUES (?, ?, ?)",
+            )
+            .bind(&id)
+            .bind(role_id)
+            .bind(permission_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+        Ok(())
     }
 }
