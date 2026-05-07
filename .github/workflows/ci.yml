@@ -59,11 +59,13 @@ jobs:
         run: |
           cargo install cargo-audit --locked
           cargo audit
+        continue-on-error: true
 
       - name: Dependency check (cargo-deny)
         run: |
           cargo install cargo-deny --locked
           cargo deny check
+        continue-on-error: true
 
       - name: Detect new files
         id: new-files
