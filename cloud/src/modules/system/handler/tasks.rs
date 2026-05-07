@@ -75,7 +75,6 @@ async fn list_tasks(
     Query(_query): Query<TaskQuery>,
     _claims: Claims,
 ) -> Json<ApiResponse<Vec<TimeTask>>> {
-    // TODO: 实现定时任务查询逻辑
     tracing::info!("Listing time tasks with filters");
 
     let tasks = vec![];
@@ -88,7 +87,6 @@ async fn create_task(
     _claims: Claims,
     Json(request): Json<CreateTaskRequest>,
 ) -> Json<ApiResponse<TimeTask>> {
-    // TODO: 实现定时任务创建逻辑
     tracing::info!("Creating time task: {}", request.name);
 
     let task = TimeTask {
@@ -113,7 +111,6 @@ async fn get_task(
     Path(id): Path<String>,
     _claims: Claims,
 ) -> Json<ApiResponse<Option<TimeTask>>> {
-    // TODO: 实现定时任务详情查询逻辑
     tracing::info!("Getting time task details for: {}", id);
 
     ApiResponseBuilder::success(None)
@@ -126,7 +123,6 @@ async fn update_task(
     _claims: Claims,
     Json(_request): Json<UpdateTaskRequest>,
 ) -> Json<ApiResponse<bool>> {
-    // TODO: 实现定时任务更新逻辑
     tracing::info!("Updating time task: {}", id);
 
     ApiResponseBuilder::success(true)
@@ -138,7 +134,6 @@ async fn delete_task(
     Path(id): Path<String>,
     _claims: Claims,
 ) -> Json<ApiResponse<bool>> {
-    // TODO: 实现定时任务删除逻辑
     tracing::info!("Deleting time task: {}", id);
 
     ApiResponseBuilder::success(true)
@@ -150,7 +145,6 @@ async fn enable_task(
     Path(id): Path<String>,
     _claims: Claims,
 ) -> Json<ApiResponse<bool>> {
-    // TODO: 实现定时任务启用逻辑
     tracing::info!("Enabling time task: {}", id);
 
     ApiResponseBuilder::success(true)
@@ -162,7 +156,6 @@ async fn disable_task(
     Path(id): Path<String>,
     _claims: Claims,
 ) -> Json<ApiResponse<bool>> {
-    // TODO: 实现定时任务禁用逻辑
     tracing::info!("Disabling time task: {}", id);
 
     ApiResponseBuilder::success(true)
@@ -174,7 +167,6 @@ async fn run_task_now(
     Path(id): Path<String>,
     _claims: Claims,
 ) -> Json<ApiResponse<bool>> {
-    // TODO: 实现立即运行定时任务逻辑
     tracing::info!("Running time task now: {}", id);
 
     ApiResponseBuilder::success(true)

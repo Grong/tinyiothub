@@ -348,7 +348,19 @@ pub async fn get_user_audit_logs(
                     return false;
                 }
 
-            // TODO: Add time range filtering when we have proper DateTime parsing
+            // Filter by time range
+            if let Some(start_time) = params.start_time {
+                let start_str = start_time.format("%Y-%m-%d %H:%M:%S").to_string();
+                if entry.created_at < start_str {
+                    return false;
+                }
+            }
+            if let Some(end_time) = params.end_time {
+                let end_str = end_time.format("%Y-%m-%d %H:%M:%S").to_string();
+                if entry.created_at > end_str {
+                    return false;
+                }
+            }
 
             true
         })
@@ -657,7 +669,7 @@ pub async fn update_security_config(
         }
 
     // Get current configuration
-    let mut config = secure_service.config().clone();
+    let mut config = secure_service.config();
 
     // Apply updates
     if let Some(enable_rbac) = request.enable_rbac {
@@ -673,15 +685,18 @@ pub async fn update_security_config(
         config.audit_retention_days = audit_retention_days;
     }
 
-    // TODO: In a full implementation, we would persist the configuration changes to database
-    // For now, we'll just return the updated configuration
-
     let response = SecurityConfigResponse {
         enable_rbac: config.enable_rbac,
         enable_encryption: config.enable_encryption,
         enable_audit_log: config.enable_audit_log,
         audit_retention_days: config.audit_retention_days,
     };
+
+    // Persist configuration changes through the service (deduplicated path)
+    if let Err(e) = secure_service.update_config(config).await {
+        tracing::error!("Failed to persist security config: {}", e);
+        return ApiResponseBuilder::error("配置保存失败");
+    }
 
     // Log the configuration update
     if let Some(audit_log) = secure_service.audit_log() {

@@ -3,7 +3,7 @@ use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{extract::State, routing::get, Json, Router};
 use serde::{Deserialize, Serialize};
 
-use crate::{shared::app_state::AppState, shared::api_response::ApiResponse};
+use crate::{shared::app_state::AppState, shared::api_response::ApiResponse, shared::error_handling::AuthHelper};
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]
@@ -46,18 +46,52 @@ pub fn create_router() -> Router<AppState> {
         .route("/gateway", get(get_gateway_metrics))
 }
 
-/// 获取系统指标
+/// 获取系统指标（仅管理员可访问）
 async fn get_system_metrics(
-    State(_state): State<AppState>,
-    _claims: Claims,
+    State(state): State<AppState>,
+    claims: Claims,
 ) -> Json<ApiResponse<SystemMetrics>> {
-    // TODO: 实现实际的系统指标收集
+    match AuthHelper::require_admin_role(&state, &claims.user_id, "get_system_metrics").await {
+        Ok(()) => {}
+        Err(_) => {
+            return ApiResponseBuilder::error_with_code(403, "Access denied: admin role required");
+        }
+    }
+    let mut sys = state.sysinfo_system.lock().unwrap();
+    sys.refresh_cpu_usage();
+    sys.refresh_memory();
+
+    let cpus = sys.cpus();
+    let cpu_usage_percent = if !cpus.is_empty() {
+        cpus.iter().map(|cpu| cpu.cpu_usage()).sum::<f32>() / cpus.len() as f32
+    } else {
+        0.0
+    };
+
+    let memory_usage_mb = sys.used_memory() / 1024;
+
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    let disk_usage_mb = disks
+        .iter()
+        .map(|disk| {
+            let total = disk.total_space();
+            let available = disk.available_space();
+            (total - available) / 1024 / 1024
+        })
+        .sum();
+
+    let networks = sysinfo::Networks::new_with_refreshed_list();
+    let (network_rx_bytes, network_tx_bytes) = networks
+        .iter()
+        .map(|(_name, network)| (network.total_received(), network.total_transmitted()))
+        .fold((0, 0), |(acc_rx, acc_tx), (rx, tx)| (acc_rx + rx, acc_tx + tx));
+
     let metrics = SystemMetrics {
-        cpu_usage_percent: 0.0,
-        memory_usage_mb: 0,
-        disk_usage_mb: 0,
-        network_rx_bytes: 0,
-        network_tx_bytes: 0,
+        cpu_usage_percent: cpu_usage_percent as f64,
+        memory_usage_mb,
+        disk_usage_mb,
+        network_rx_bytes,
+        network_tx_bytes,
         timestamp: chrono::Utc::now(),
     };
 
@@ -66,29 +100,93 @@ async fn get_system_metrics(
 
 /// 获取设备指标
 async fn get_device_metrics(
-    State(_state): State<AppState>,
-    _claims: Claims,
+    State(state): State<AppState>,
+    claims: Claims,
 ) -> Json<ApiResponse<Vec<DeviceMetrics>>> {
-    // TODO: 实现设备指标收集
-    let metrics = vec![];
+    let workspace_id = match state.resolve_workspace(&claims.tenant_id, None).await {
+        Ok(ws) => Some(ws),
+        Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
+    };
+
+    let device_service = state.tenant_device_service(&workspace_id);
+
+    let mut metrics = Vec::new();
+
+    match device_service
+        .get_devices(&tinyiothub_core::models::device::DeviceQueryParams::default())
+        .await
+    {
+        Ok(devices) => {
+            for device in devices {
+                let status = device.status.to_string();
+                let last_seen = device
+                    .last_heartbeat
+                    .as_ref()
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(chrono::Utc::now);
+
+                metrics.push(DeviceMetrics {
+                    device_id: device.id.clone(),
+                    device_name: device.name.clone(),
+                    status,
+                    last_seen,
+                    message_count: 0,
+                    error_count: 0,
+                });
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Failed to get device metrics: {}", e);
+        }
+    }
 
     ApiResponseBuilder::success(metrics)
 }
 
 /// 获取网关指标
 async fn get_gateway_metrics(
-    State(_state): State<AppState>,
-    _claims: Claims,
+    State(state): State<AppState>,
+    claims: Claims,
 ) -> Json<ApiResponse<GatewayMetrics>> {
-    // TODO: 实现网关指标收集
+    let workspace_id = match state.resolve_workspace(&claims.tenant_id, None).await {
+        Ok(ws) => Some(ws),
+        Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
+    };
+
+    let device_service = state.tenant_device_service(&workspace_id);
+
+    let mut total_devices = 0u32;
+    let mut online_devices = 0u32;
+    let mut offline_devices = 0u32;
+
+    match device_service.get_devices(&tinyiothub_core::models::device::DeviceQueryParams::default()).await {
+        Ok(devices) => {
+            total_devices = devices.len() as u32;
+            online_devices = devices.iter().filter(|d| d.status.is_online()).count() as u32;
+            offline_devices = total_devices - online_devices;
+        }
+        Err(e) => {
+            tracing::warn!("Failed to get device counts for gateway metrics: {}", e);
+        }
+    }
+
+    // Real uptime from global start time
+    let uptime_seconds = crate::modules::monitoring::handler::health::START_TIME
+        .get()
+        .and_then(|t| t.elapsed().ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
     let metrics = GatewayMetrics {
-        total_devices: 0,
-        online_devices: 0,
-        offline_devices: 0,
+        total_devices,
+        online_devices,
+        offline_devices,
+        // TODO: implement real message counting when message pipeline metrics are available
         total_messages: 0,
         messages_per_minute: 0.0,
         error_rate_percent: 0.0,
-        uptime_seconds: 0,
+        uptime_seconds,
     };
 
     ApiResponseBuilder::success(metrics)

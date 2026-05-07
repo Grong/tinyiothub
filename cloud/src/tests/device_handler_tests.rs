@@ -552,7 +552,7 @@ async fn test_get_device_traces_not_found() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices/devices/nonexistent-id-12345/traces", &token, None))
+        .oneshot(auth_request("GET", "/api/v1/devices/nonexistent-id-12345/traces", &token, None))
         .await
         .unwrap();
     let (status, json) = response_parts(response).await;
@@ -567,7 +567,7 @@ async fn test_get_device_trace_statistics_not_found() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices/devices/nonexistent-id-12345/traces/statistics", &token, None))
+        .oneshot(auth_request("GET", "/api/v1/devices/nonexistent-id-12345/traces/statistics", &token, None))
         .await
         .unwrap();
     let (status, json) = response_parts(response).await;
@@ -841,7 +841,7 @@ async fn test_record_device_trace_not_found() {
     let response = app
         .oneshot(auth_request(
             "POST",
-            "/api/v1/devices/devices/nonexistent-id-12345/traces",
+            "/api/v1/devices/nonexistent-id-12345/traces",
             &token,
             Some(body),
         ))
@@ -863,7 +863,7 @@ async fn test_clear_device_traces_not_found() {
     let response = app
         .oneshot(auth_request(
             "POST",
-            "/api/v1/devices/devices/nonexistent-id-12345/traces/clear",
+            "/api/v1/devices/nonexistent-id-12345/traces/clear",
             &token,
             Some(body),
         ))

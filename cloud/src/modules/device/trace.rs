@@ -64,6 +64,29 @@ impl DeviceTraceService {
     pub async fn get_system_trace_overview(&self, days: Option<u32>) -> SystemTraceOverview {
         self.repository.get_system_overview(days.unwrap_or(7)).await
     }
+
+    pub async fn find_all_traces(
+        &self,
+        levels: Option<&[String]>,
+        sources: Option<&[String]>,
+        device_id: Option<&str>,
+        device_ids: Option<&[String]>,
+        start_time: Option<&str>,
+        end_time: Option<&str>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> Result<Vec<DeviceTrace>, Error> {
+        self.repository.find_all_traces(
+            levels,
+            sources,
+            device_id,
+            device_ids,
+            start_time,
+            end_time,
+            limit.unwrap_or(50),
+            offset.unwrap_or(0),
+        ).await
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]

@@ -47,17 +47,84 @@ pub fn create_router() -> Router<AppState> {
     Router::new().route("/", get(get_logs)).route("/levels", get(get_log_levels))
 }
 
-/// 获取日志列表
+/// 获取日志列表（已启用 workspace 隔离）
 async fn get_logs(
-    State(_state): State<AppState>,
-    Query(_query): Query<LogQuery>,
-    _claims: Claims,
+    State(state): State<AppState>,
+    Query(query): Query<LogQuery>,
+    claims: Claims,
 ) -> Json<ApiResponse<Vec<LogEntry>>> {
-    // TODO: 实现日志查询逻辑
-    tracing::info!("Getting logs with filters");
+    // Resolve workspace and fetch allowed device IDs
+    let workspace_id = match state.resolve_workspace(&claims.tenant_id, None).await {
+        Ok(ws) => Some(ws),
+        Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
+    };
 
-    let logs = vec![];
-    ApiResponseBuilder::success(logs)
+    let device_service = state.tenant_device_service(&workspace_id);
+
+    let allowed_device_ids: Vec<String> = match device_service
+        .get_devices(&tinyiothub_core::models::device::DeviceQueryParams::default())
+        .await
+    {
+        Ok(devices) => devices.into_iter().map(|d| d.id).collect(),
+        Err(e) => {
+            tracing::warn!("Failed to get devices for log workspace isolation: {}", e);
+            return ApiResponseBuilder::error("获取日志失败".to_string());
+        }
+    };
+
+    // If user specified a device_id, verify it belongs to their workspace
+    if let Some(ref requested_device_id) = query.device_id {
+        if !allowed_device_ids.contains(requested_device_id) {
+            return ApiResponseBuilder::success(vec![]);
+        }
+    }
+
+    let device_ids_filter = if query.device_id.is_none() && !allowed_device_ids.is_empty() {
+        Some(allowed_device_ids)
+    } else {
+        None
+    };
+
+    let levels = query.level.as_ref().map(|l| vec![l.to_lowercase()]);
+    let sources = query.source.as_ref().map(|s| vec![s.clone()]);
+    let limit = query.pagination.page_size.unwrap_or(50);
+    let offset = (query.pagination.page.unwrap_or(1).saturating_sub(1)) * limit;
+
+    match state
+        .trace_service
+        .find_all_traces(
+            levels.as_deref(),
+            sources.as_deref(),
+            query.device_id.as_deref(),
+            device_ids_filter.as_deref(),
+            query.start_time.as_deref(),
+            query.end_time.as_deref(),
+            Some(limit),
+            Some(offset),
+        )
+        .await
+    {
+        Ok(traces) => {
+            let logs: Vec<LogEntry> = traces
+                .into_iter()
+                .map(|t| LogEntry {
+                    id: t.id,
+                    timestamp: chrono::DateTime::parse_from_rfc3339(&t.created_at)
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                        .unwrap_or_else(|_| chrono::Utc::now()),
+                    level: t.level.to_uppercase(),
+                    message: format!("{}: {}", t.title, t.message),
+                    source: t.source.unwrap_or_else(|| t.category),
+                    device_id: Some(t.device_id),
+                })
+                .collect();
+            ApiResponseBuilder::success(logs)
+        }
+        Err(e) => {
+            tracing::warn!("Failed to get logs: {}", e);
+            ApiResponseBuilder::error("获取日志失败".to_string())
+        }
+    }
 }
 
 /// 获取日志级别列表

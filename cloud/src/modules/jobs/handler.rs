@@ -44,22 +44,8 @@ struct WorkspaceQuery {
     workspace_id: Option<String>,
 }
 
-async fn resolve_workspace(
-    state: &AppState,
-    tenant_id: &str,
-    explicit: Option<String>,
-) -> Result<String, (i32, String)> {
-    if let Some(ws) = explicit {
-        return Ok(ws);
-    }
-    match state.workspace_service.find_by_tenant(tenant_id, Some(1), Some(1)).await {
-        Ok(workspaces) if !workspaces.is_empty() => Ok(workspaces[0].id.clone()),
-        _ => {
-            tracing::warn!("No workspace found for tenant {}", tenant_id);
-            Err((400, "未找到工作空间".to_string()))
-        }
-    }
-}
+// NOTE: resolve_workspace is now a method on AppState (shared/app_state.rs)
+// Use state.resolve_workspace(&claims.tenant_id, explicit_workspace_id).await
 
 // ─── DTO mapping: legacy Job <-> CronJob ──────────────────────────────────
 
@@ -187,12 +173,12 @@ fn map_update_request(req: &UpdateJobRequest) -> UpdateCronJobRequest {
     }
 }
 
-fn map_cron_job_query(params: &JobQueryParams) -> CronJobQuery {
+fn map_cron_job_query(params: &JobQueryParams, workspace_id: Option<String>) -> CronJobQuery {
     CronJobQuery {
         name: params.name.clone(),
         job_type: params.job_type.clone(),
         is_enabled: params.is_enabled,
-        workspace_id: None,
+        workspace_id,
         page: params.page,
         page_size: params.page_size,
     }
@@ -221,6 +207,7 @@ fn map_cron_run_to_execution(run: CronRun) -> JobExecution {
 fn map_execution_query(params: &JobExecutionQueryParams) -> CronRunQuery {
     CronRunQuery {
         job_id: params.job_id.clone(),
+        workspace_id: None,
         status: params.status.clone(),
         trigger_type: params.trigger_type.clone(),
         page: params.page,
@@ -233,8 +220,13 @@ fn map_execution_query(params: &JobExecutionQueryParams) -> CronRunQuery {
 async fn list_jobs(
     State(state): State<AppState>,
     Query(params): Query<JobQueryParams>,
+    claims: Claims,
 ) -> Json<ApiResponse<Vec<Job>>> {
-    let query = map_cron_job_query(&params);
+    let ws_id = match state.resolve_workspace(&claims.tenant_id, None).await {
+        Ok(ws) => Some(ws),
+        Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
+    };
+    let query = map_cron_job_query(&params, ws_id);
     match state.cron_job_repo.find_all(&query).await {
         Ok(jobs) => ApiResponseBuilder::success(
             jobs.into_iter().map(map_cron_job_to_job).collect(),
@@ -252,7 +244,7 @@ async fn get_job(
     Query(q): Query<WorkspaceQuery>,
     claims: Claims,
 ) -> Json<ApiResponse<Job>> {
-    let _ws_id = match resolve_workspace(&state, &claims.tenant_id, q.workspace_id).await {
+    let _ws_id = match state.resolve_workspace(&claims.tenant_id, q.workspace_id).await {
         Ok(ws) => ws,
         Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
     };
@@ -284,7 +276,7 @@ async fn create_job(
         return ApiResponseBuilder::error_with_code(400, "无效的 Cron 表达式");
     }
 
-    let ws_id = match resolve_workspace(&state, &claims.tenant_id, None).await {
+    let ws_id = match state.resolve_workspace(&claims.tenant_id, None).await {
         Ok(ws) => ws,
         Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
     };
@@ -319,7 +311,7 @@ async fn update_job(
             return ApiResponseBuilder::error_with_code(400, "无效的 Cron 表达式");
         }
 
-    let _ws_id = match resolve_workspace(&state, &claims.tenant_id, None).await {
+    let _ws_id = match state.resolve_workspace(&claims.tenant_id, None).await {
         Ok(ws) => ws,
         Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
     };
@@ -341,13 +333,13 @@ async fn delete_job(
     Query(q): Query<WorkspaceQuery>,
     claims: Claims,
 ) -> Json<ApiResponse<bool>> {
-    let _ws_id = match resolve_workspace(&state, &claims.tenant_id, q.workspace_id).await {
+    let ws_id = match state.resolve_workspace(&claims.tenant_id, q.workspace_id).await {
         Ok(ws) => ws,
         Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
     };
     match state.cron_job_repo.delete(&id).await {
         Ok(true) => {
-            let _ = state.cron_run_repo.delete_by_job_id(&id).await;
+            let _ = state.cron_run_repo.delete_by_job_id(&id, &ws_id).await;
             ApiResponseBuilder::success(true)
         }
         Ok(false) => ApiResponseBuilder::error_with_code(404, "任务不存在"),
@@ -363,7 +355,7 @@ async fn run_job_now(
     Path(id): Path<String>,
     claims: Claims,
 ) -> Json<ApiResponse<JobExecution>> {
-    let _ws_id = match resolve_workspace(&state, &claims.tenant_id, None).await {
+    let ws_id = match state.resolve_workspace(&claims.tenant_id, None).await {
         Ok(ws) => ws,
         Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
     };
@@ -389,9 +381,10 @@ async fn run_job_now(
         return ApiResponseBuilder::error_with_code(409, "任务正在运行中");
     }
 
+    let workspace_id = job.workspace_id.clone().unwrap_or_else(|| ws_id.clone());
     let run = match state
         .cron_run_repo
-        .create(&job.id, "manual", Some(&claims.user_id))
+        .create(&job.id, &workspace_id, "manual", Some(&claims.user_id))
         .await
     {
         Ok(r) => r,
@@ -438,6 +431,7 @@ async fn run_job_now(
                 let _ = run_repo
                     .complete(
                         &run_id,
+                        &workspace_id,
                         &res.status,
                         res.output.as_deref(),
                         res.error_message.as_deref(),
@@ -455,7 +449,7 @@ async fn run_job_now(
                 };
                 let err_msg = err.to_string();
                 let _ = run_repo
-                    .complete(&run_id, status, None, Some(&err_msg), duration_ms)
+                    .complete(&run_id, &workspace_id, status, None, Some(&err_msg), duration_ms)
                     .await;
                 let _ = job_repo
                     .update_run_stats(&job_clone.id, status, Some(&err_msg))
@@ -475,14 +469,14 @@ async fn list_job_executions(
     Query(params): Query<JobExecutionQueryParams>,
     claims: Claims,
 ) -> Json<ApiResponse<Vec<JobExecution>>> {
-    let _ws_id = match resolve_workspace(&state, &claims.tenant_id, None).await {
+    let ws_id = match state.resolve_workspace(&claims.tenant_id, None).await {
         Ok(ws) => ws,
         Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
     };
     let mut query = map_execution_query(&params);
     query.job_id = Some(id);
 
-    match state.cron_run_repo.find_by_job_id(&params.job_id.unwrap_or_default(), &query).await {
+    match state.cron_run_repo.find_by_job_id(&params.job_id.unwrap_or_default(), &ws_id, &query).await {
         Ok(runs) => ApiResponseBuilder::success(
             runs.into_iter().map(map_cron_run_to_execution).collect(),
         ),
@@ -497,7 +491,7 @@ async fn get_statistics(
     State(state): State<AppState>,
     claims: Claims,
 ) -> Json<ApiResponse<JobStatistics>> {
-    let _ws_id = match resolve_workspace(&state, &claims.tenant_id, None).await {
+    let ws_id = match state.resolve_workspace(&claims.tenant_id, None).await {
         Ok(ws) => ws,
         Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
     };
@@ -505,19 +499,19 @@ async fn get_statistics(
     let total = state.cron_job_repo.count().await.unwrap_or(0);
     let success_runs = state
         .cron_run_repo
-        .count_by_status("success")
+        .count_by_status(&ws_id, "success")
         .await
         .unwrap_or(0);
     let failed_runs = state
         .cron_run_repo
-        .count_by_status("failed")
+        .count_by_status(&ws_id, "failed")
         .await
         .unwrap_or(0);
 
     let enabled_jobs = state.cron_job_repo.count_by_enabled(true).await.unwrap_or(0);
     let disabled_jobs = state.cron_job_repo.count_by_enabled(false).await.unwrap_or(0);
     let running_jobs = state.cron_job_repo.count_running().await.unwrap_or(0);
-    let avg_duration_ms = state.cron_run_repo.avg_duration_ms().await.unwrap_or(0);
+    let avg_duration_ms = state.cron_run_repo.avg_duration_ms(&ws_id).await.unwrap_or(0);
 
     let stats = JobStatistics {
         total_jobs: total,
@@ -538,7 +532,7 @@ async fn list_all_executions(
     Query(params): Query<JobExecutionQueryParams>,
     claims: Claims,
 ) -> Json<ApiResponse<PaginatedResponse<JobExecution>>> {
-    let _ws_id = match resolve_workspace(&state, &claims.tenant_id, None).await {
+    let ws_id = match state.resolve_workspace(&claims.tenant_id, None).await {
         Ok(ws) => ws,
         Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
     };
@@ -547,13 +541,14 @@ async fn list_all_executions(
 
     let query = CronRunQuery {
         job_id: None,
+        workspace_id: None,
         status: params.status.clone(),
         trigger_type: params.trigger_type.clone(),
         page: Some(page),
         page_size: Some(page_size),
     };
 
-    match state.cron_run_repo.find_all(&query).await {
+    match state.cron_run_repo.find_all(&ws_id, &query).await {
         Ok(runs) => {
             let total = runs.len() as i64;
             let total_pages = ((total as f64) / (page_size as f64)).ceil() as u32;

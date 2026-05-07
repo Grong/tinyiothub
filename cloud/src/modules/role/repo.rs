@@ -22,6 +22,7 @@ pub trait RoleRepository: Send + Sync {
     async fn exists_by_name(&self, name: &str, workspace_id: Option<&str>) -> Result<bool>;
     async fn exists_by_name_exclude_id(&self, name: &str, exclude_id: &str, workspace_id: Option<&str>) -> Result<bool>;
     async fn find_by_ids(&self, ids: &[String]) -> Result<Vec<Role>>;
+    async fn find_roles_by_user_id(&self, user_id: &str) -> Result<Vec<Role>>;
     async fn is_administrator_role(&self, id: &str) -> Result<bool>;
     async fn find_with_filters(
         &self,
@@ -32,6 +33,8 @@ pub trait RoleRepository: Send + Sync {
         page_size: u32,
     ) -> Result<Vec<Role>>;
     async fn update_enabled_status(&self, id: &str, enabled: bool) -> Result<bool>;
+    async fn get_permissions(&self, role_id: &str) -> Result<Vec<String>>;
+    async fn update_permissions(&self, role_id: &str, permission_ids: &[String]) -> Result<()>;
 }
 
 // ── Row type (internal) ─────────────────────────────────
@@ -105,7 +108,7 @@ impl RoleRepository for SqliteRoleRepository {
 
         sqlx::query(
             r#"
-            INSERT INTO roles (id, name, description, IsAdministrator, workspace_id)
+            INSERT INTO roles (id, name, description, is_administrator, workspace_id)
             VALUES (?, ?, ?, ?, ?)
             "#,
         )
@@ -363,6 +366,23 @@ impl RoleRepository for SqliteRoleRepository {
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
+    async fn find_roles_by_user_id(&self, user_id: &str) -> Result<Vec<Role>> {
+        let rows = sqlx::query_as::<_, RoleRow>(
+            r#"
+            SELECT r.id, r.name, r.description, r.is_administrator, r.workspace_id
+            FROM roles r
+            INNER JOIN user_roles ur ON r.id = ur.role_id
+            WHERE ur.user_id = ?
+            ORDER BY r.name
+            "#,
+        )
+        .bind(user_id)
+        .fetch_all(self.database.pool())
+        .await?;
+
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+
     async fn is_administrator_role(&self, id: &str) -> Result<bool> {
         let role: Option<i32> =
             sqlx::query_scalar("SELECT is_administrator FROM roles WHERE id = ?")
@@ -398,5 +418,40 @@ impl RoleRepository for SqliteRoleRepository {
             Some(_) => Ok(true),
             None => Ok(false),
         }
+    }
+
+    async fn get_permissions(&self, role_id: &str) -> Result<Vec<String>> {
+        let rows = sqlx::query_scalar::<_, String>(
+            "SELECT permission_id FROM role_permissions WHERE role_id = ?",
+        )
+        .bind(role_id)
+        .fetch_all(self.database.pool())
+        .await?;
+
+        Ok(rows)
+    }
+
+    async fn update_permissions(&self, role_id: &str, permission_ids: &[String]) -> Result<()> {
+        let mut tx = self.database.pool().begin().await?;
+
+        sqlx::query("DELETE FROM role_permissions WHERE role_id = ?")
+            .bind(role_id)
+            .execute(&mut *tx)
+            .await?;
+
+        for permission_id in permission_ids {
+            let id = uuid::Uuid::new_v4().to_string();
+            sqlx::query(
+                "INSERT INTO role_permissions (id, role_id, permission_id) VALUES (?, ?, ?)",
+            )
+            .bind(&id)
+            .bind(role_id)
+            .bind(permission_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+        Ok(())
     }
 }

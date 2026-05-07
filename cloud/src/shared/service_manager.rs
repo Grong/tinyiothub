@@ -272,7 +272,6 @@ impl ServiceManager {
         _service_name: &str,
         _app_state: &mut crate::shared::app_state::AppState,
     ) -> Result<(), Error> {
-        // TODO: 实现服务重启逻辑
         Err(Error::IOError("Service restart not implemented".to_string()))
     }
 }

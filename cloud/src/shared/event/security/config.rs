@@ -99,6 +99,7 @@ impl EventSecurityFactory {
             components.encryption,
             components.audit_log,
             self.config.clone(),
+            self.db.clone(),
         )
     }
 
@@ -142,6 +143,51 @@ impl EventSecurityFactory {
 
         validate_event_security_config(&config)?;
         Ok(config)
+    }
+
+    /// Load security configuration from database, falling back to current config
+    pub async fn load_config_from_db(&self) -> Result<EventSecurityConfig> {
+        match sqlx::query_scalar::<_, String>(
+            "SELECT value FROM system_settings WHERE key = 'event_security_config'"
+        )
+        .fetch_optional(self.db.pool())
+        .await
+        {
+            Ok(Some(json)) => {
+                let config: EventSecurityConfig = serde_json::from_str(&json)
+                    .map_err(|e| EventError::Configuration(format!("Failed to parse config: {}", e)))?;
+                validate_event_security_config(&config)?;
+                Ok(config)
+            }
+            Ok(None) => Ok(self.config.clone()),
+            Err(e) => {
+                tracing::warn!("Failed to load security config from DB: {}, using default", e);
+                Ok(self.config.clone())
+            }
+        }
+    }
+
+    /// Save security configuration to database
+    pub async fn save_config_to_db(&self) -> Result<()> {
+        let json = serde_json::to_string(&self.config)
+            .map_err(|e| EventError::Configuration(format!("Failed to serialize config: {}", e)))?;
+
+        sqlx::query(
+            "INSERT INTO system_settings (key, value, updated_at) VALUES ('event_security_config', ?, datetime('now'))
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+        )
+        .bind(json)
+        .execute(self.db.pool())
+        .await
+        .map_err(|e| EventError::Configuration(format!("Failed to save config: {}", e)))?;
+
+        tracing::info!("Event security configuration saved to database");
+        Ok(())
+    }
+
+    /// Update the in-memory configuration
+    pub fn update_config(&mut self, config: EventSecurityConfig) {
+        self.config = config;
     }
 }
 

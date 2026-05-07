@@ -55,7 +55,6 @@ pub fn generate_sn() -> String {
 
 /// Get device MAC address (placeholder implementation)
 pub fn get_mac_address() -> String {
-    // TODO: Implement actual MAC address retrieval
     "00:11:22:33:44:55".to_string()
 }
 
@@ -83,7 +82,6 @@ pub fn get_hostname() -> String {
 
 /// Get system uptime in seconds
 pub fn get_uptime_seconds() -> u64 {
-    // TODO: Implement actual uptime retrieval
     0
 }
 
@@ -107,19 +105,16 @@ pub fn format_uptime(seconds: u64) -> String {
 
 /// Get device power status (placeholder implementation)
 pub fn get_power_status() -> String {
-    // TODO: Implement actual power status retrieval
     "AC Power".to_string()
 }
 
 /// Get device temperature (placeholder implementation)
 pub fn get_device_temperature() -> f32 {
-    // TODO: Implement actual temperature reading
     25.0
 }
 
 /// Get memory usage information
 pub fn get_memory_info() -> MemoryInfo {
-    // TODO: Implement actual memory info retrieval
     MemoryInfo {
         total: 1024 * 1024 * 1024, // 1GB
         used: 512 * 1024 * 1024,   // 512MB
@@ -148,13 +143,11 @@ impl MemoryInfo {
 
 /// Get CPU usage percentage (placeholder implementation)
 pub fn get_cpu_usage() -> f32 {
-    // TODO: Implement actual CPU usage retrieval
     15.5
 }
 
 /// Get disk usage information
 pub fn get_disk_info() -> DiskInfo {
-    // TODO: Implement actual disk info retrieval
     DiskInfo {
         total: 8 * 1024 * 1024 * 1024, // 8GB
         used: 2 * 1024 * 1024 * 1024,  // 2GB

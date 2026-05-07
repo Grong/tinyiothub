@@ -278,13 +278,22 @@ pub async fn get_tag_stats(
     let mut tag_query = TagQuery::default();
     tag_query.tenant_id = Some(claims.tenant_id);
 
-    match state.tag_service.count_tags(&tag_query).await {
-        Ok(total) => {
+    match state.tag_service.find_all_tags(&tag_query).await {
+        Ok(tags) => {
+            let mut device_count = 0i64;
+            let mut app_count = 0i64;
+            for tag in &tags {
+                match tag.tag_type.as_str() {
+                    "device" => device_count += 1,
+                    "app" => app_count += 1,
+                    _ => {}
+                }
+            }
             let stats = serde_json::json!({
-                "total": total,
+                "total": tags.len() as i64,
                 "by_type": {
-                    "device": 0, // TODO: implement by type stats
-                    "app": 0
+                    "device": device_count,
+                    "app": app_count
                 }
             });
             Ok(ApiResponseBuilder::success(stats))

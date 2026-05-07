@@ -230,3 +230,79 @@ async fn test_update_role_permissions_not_found() {
     let status = response.status();
     assert!(!status.is_server_error(), "Expected non-5xx status, got: {}", status);
 }
+
+// ============================================================================
+// Role Permissions — real data
+// ============================================================================
+
+#[tokio::test]
+async fn test_get_role_permissions_empty_for_new_role() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+
+    // Create a role first
+    let body = json!({"name": "perm-test-role-001", "description": "Role for permission testing"});
+    let response = app
+        .clone()
+        .oneshot(auth_request("POST", "/api/v1/users/roles", &token, Some(body)))
+        .await
+        .unwrap();
+    let (_status, json) = response_parts(response).await;
+    assert_eq!(json["code"], 0, "Role creation should succeed: {}", json["msg"]);
+    let role_id = json["result"]["id"].as_str().expect("Role should have an ID");
+
+    // Get permissions for the new role
+    let response = app
+        .oneshot(auth_request("GET", &format!("/api/v1/users/roles/{}/permissions", role_id), &token, None))
+        .await
+        .unwrap();
+    let (status, json) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["code"], 0, "Expected success code");
+    assert!(json["result"].is_array(), "Permissions should be an array");
+    assert_eq!(json["result"].as_array().unwrap().len(), 0, "New role should have no permissions");
+}
+
+#[tokio::test]
+async fn test_update_and_get_role_permissions() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+
+    // Create a role
+    let body = json!({"name": "perm-test-role-002", "description": "Role for permission testing"});
+    let response = app
+        .clone()
+        .oneshot(auth_request("POST", "/api/v1/users/roles", &token, Some(body)))
+        .await
+        .unwrap();
+    let (_status, json) = response_parts(response).await;
+    assert_eq!(json["code"], 0, "Role creation should succeed: {}", json["msg"]);
+    let role_id = json["result"]["id"].as_str().expect("Role should have an ID");
+
+    // Update permissions (use real permission IDs from migrations)
+    let perm_ids = json!({"permission_ids": ["perm-device-read", "perm-device-write", "perm-user-read"]});
+    let response = app
+        .clone()
+        .oneshot(auth_request("PUT", &format!("/api/v1/users/roles/{}/permissions", role_id), &token, Some(perm_ids)))
+        .await
+        .unwrap();
+    let (status, json) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["code"], 0, "Permission update should succeed");
+    assert_eq!(json["result"], true, "Update should return true");
+
+    // Get permissions and verify
+    let response = app
+        .oneshot(auth_request("GET", &format!("/api/v1/users/roles/{}/permissions", role_id), &token, None))
+        .await
+        .unwrap();
+    let (status, json) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["code"], 0, "Expected success code");
+    let perms = json["result"].as_array().expect("Permissions should be an array");
+    assert_eq!(perms.len(), 3, "Should have 3 permissions");
+    let perm_strings: Vec<String> = perms.iter().filter_map(|p| p.as_str().map(String::from)).collect();
+    assert!(perm_strings.contains(&"perm-device-read".to_string()));
+    assert!(perm_strings.contains(&"perm-device-write".to_string()));
+    assert!(perm_strings.contains(&"perm-user-read".to_string()));
+}

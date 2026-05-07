@@ -109,9 +109,8 @@ pub async fn seed_test_workspace(pool: &sqlx::SqlitePool, tenant_id: &str, works
 
 /// Create an AppState backed by in-memory SQLite with migrations applied.
 ///
-/// Runs cloud and storage migrations interleaved by version (same as production),
-/// skipping the broken chat_sessions migration (20260414102323) which has a
-/// column conflict with the storage version.
+/// Runs cloud migrations, skipping test-data migrations that reference
+/// non-existent devices.
 async fn create_test_app_state() -> AppState {
     use tinyiothub_storage::cache::DeviceCache;
     use std::sync::Arc;
@@ -122,32 +121,18 @@ async fn create_test_app_state() -> AppState {
         .await
         .expect("Failed to create in-memory SQLite pool");
 
-    // Load both migrators
-    let cloud_migrator = sqlx::migrate::Migrator::new(
+    // Load cloud migrations only (storage migrations consolidated into cloud crate)
+    let migrator = sqlx::migrate::Migrator::new(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations"),
     ).await.expect("Failed to load cloud migrations");
 
-    let storage_migrator = sqlx::migrate::Migrator::new(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../crates/tinyiothub-storage/migrations"),
-    ).await.expect("Failed to load storage migrations");
-
-    // Combine and sort by version (interleaved), skipping broken/test-data migrations
     let skip_versions: &[i64] = &[
         20260107000001, // test data: inserts properties/commands for non-existent devices
         20260114000001, // test data: inserts events referencing non-existent devices
-        20260418000001, // storage: add tenant_id to tags — already in cloud base schema
     ];
-    let mut seen: std::collections::HashMap<i64, bool> = std::collections::HashMap::new();
     let mut combined: Vec<sqlx::migrate::Migration> = Vec::new();
-    for m in cloud_migrator.iter() {
-        // Skip broken cloud version of 20260414102323 (column conflicts); storage version is canonical
-        if !skip_versions.contains(&m.version) && m.version != 20260414102323 {
-            seen.insert(m.version, true);
-            combined.push(m.clone());
-        }
-    }
-    for m in storage_migrator.iter() {
-        if !seen.contains_key(&m.version) && !skip_versions.contains(&m.version) {
+    for m in migrator.iter() {
+        if !skip_versions.contains(&m.version) {
             combined.push(m.clone());
         }
     }
@@ -172,6 +157,10 @@ async fn create_test_app_state() -> AppState {
     .expect("Failed to seed test user");
 
     let device_cache = Arc::new(DeviceCache::new());
+
+    // Initialize START_TIME for uptime tests
+    let _ = crate::modules::monitoring::handler::health::START_TIME
+        .set(std::time::SystemTime::now());
 
     AppState::new(device_cache, pool)
 }

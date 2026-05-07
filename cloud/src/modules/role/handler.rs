@@ -23,6 +23,11 @@ pub struct RoleQuery {
     pub pagination: PaginationQuery,
 }
 
+#[derive(Deserialize)]
+pub struct UpdateRolePermissionsRequest {
+    pub permission_ids: Vec<String>,
+}
+
 pub fn create_router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_roles).post(create_role))
@@ -231,26 +236,63 @@ async fn delete_role(
 
 /// 获取角色权限
 async fn get_role_permissions(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(id): Path<String>,
     claims: Claims,
 ) -> Json<ApiResponse<Vec<String>>> {
-    // TODO: 实现获取角色权限逻辑
-    tracing::info!("Getting permissions for role: {}", id);
+    // Verify workspace isolation: get current role first
+    match state.role_service.find_by_id(&id).await {
+        Ok(Some(ref role)) => {
+            if let Some(ref role_ws) = role.workspace_id {
+                if role_ws != &claims.workspace_id {
+                    return ApiResponseBuilder::error("角色不存在".to_string());
+                }
+            }
+        }
+        Ok(None) => return ApiResponseBuilder::error("角色不存在".to_string()),
+        Err(e) => {
+            tracing::error!("Failed to verify role {}: {}", id, e);
+            return ApiResponseBuilder::error("获取角色权限失败".to_string());
+        }
+    }
 
-    let permissions = vec![];
-    ApiResponseBuilder::success(permissions)
+    match state.role_service.get_permissions(&id).await {
+        Ok(permissions) => ApiResponseBuilder::success(permissions),
+        Err(e) => {
+            tracing::error!("Failed to get permissions for role {}: {}", id, e);
+            ApiResponseBuilder::error("获取角色权限失败".to_string())
+        }
+    }
 }
 
 /// 更新角色权限
 async fn update_role_permissions(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(id): Path<String>,
     claims: Claims,
-    Json(_permissions): Json<Vec<String>>,
+    Json(request): Json<UpdateRolePermissionsRequest>,
 ) -> Json<ApiResponse<bool>> {
-    // TODO: 实现更新角色权限逻辑
-    tracing::info!("Updating permissions for role: {}", id);
+    // Verify workspace isolation: get current role first
+    match state.role_service.find_by_id(&id).await {
+        Ok(Some(ref role)) => {
+            if let Some(ref role_ws) = role.workspace_id {
+                if role_ws != &claims.workspace_id {
+                    return ApiResponseBuilder::error("角色不存在".to_string());
+                }
+            }
+        }
+        Ok(None) => return ApiResponseBuilder::error("角色不存在".to_string()),
+        Err(e) => {
+            tracing::error!("Failed to verify role {}: {}", id, e);
+            return ApiResponseBuilder::error("更新角色权限失败".to_string());
+        }
+    }
 
-    ApiResponseBuilder::success(true)
+    match state.role_service.update_permissions(&id, &request.permission_ids).await {
+        Ok(()) => ApiResponseBuilder::success(true),
+        Err(e) => {
+            tracing::error!("Failed to update permissions for role {}: {}", id, e);
+            ApiResponseBuilder::error("更新角色权限失败".to_string())
+        }
+    }
 }
