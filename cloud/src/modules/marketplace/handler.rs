@@ -1,26 +1,25 @@
 // Marketplace API — moved from api/marketplace/mod.rs
 
-use crate::shared::security::jwt::Claims;
-use tinyiothub_web::response::ApiResponseBuilder;
 use std::sync::Arc;
 
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     routing::{get, post},
-    Json, Router,
 };
 use reqwest::Client;
 use serde::Deserialize;
+use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
-    modules::marketplace::{
-        client::MarketplaceClient, driver_installer::DriverInstaller,
-        template_installer::TemplateInstaller,
+    modules::{
+        marketplace::{
+            client::MarketplaceClient, driver_installer::DriverInstaller,
+            template_installer::TemplateInstaller,
+        },
+        template::TemplateRepository,
     },
-    modules::template::TemplateRepository,
-    shared::api_response::ApiResponse,
-    shared::config,
-    shared::app_state::AppState,
+    shared::{api_response::ApiResponse, app_state::AppState, config, security::jwt::Claims},
 };
 
 pub fn create_router() -> Router<AppState> {
@@ -35,13 +34,12 @@ pub fn create_router() -> Router<AppState> {
 
 const EXTERNAL_MARKETPLACE_API: &str = "https://marketplace.tinyiothub.com/api/v1";
 
-static HTTP_CLIENT: std::sync::LazyLock<Client, fn() -> Client> =
-    std::sync::LazyLock::new(|| {
-        Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .expect("Failed to create HTTP client")
-    });
+static HTTP_CLIENT: std::sync::LazyLock<Client, fn() -> Client> = std::sync::LazyLock::new(|| {
+    Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .expect("Failed to create HTTP client")
+});
 
 #[derive(Debug, Deserialize)]
 pub struct InstallRequest {
@@ -55,11 +53,8 @@ async fn proxy_marketplace_templates(
     let mut url = format!("{}/templates", EXTERNAL_MARKETPLACE_API);
 
     if !params.is_empty() {
-        let query_string = params
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, v))
-            .collect::<Vec<_>>()
-            .join("&");
+        let query_string =
+            params.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join("&");
         url = format!("{}?{}", url, query_string);
     }
 
@@ -125,11 +120,8 @@ async fn proxy_marketplace_drivers(
     let mut url = format!("{}/drivers", EXTERNAL_MARKETPLACE_API);
 
     if !params.is_empty() {
-        let query_string = params
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, v))
-            .collect::<Vec<_>>()
-            .join("&");
+        let query_string =
+            params.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join("&");
         url = format!("{}?{}", url, query_string);
     }
 

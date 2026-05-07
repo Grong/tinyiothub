@@ -4,19 +4,18 @@ use dashmap::DashMap;
 use moka::sync::Cache;
 use parking_lot::RwLock;
 
-use tinyiothub_core::error::Error;
 use tinyiothub_core::driver::ResultValue;
-use tinyiothub_core::models::device_property::DeviceProperty;
-use tinyiothub_core::models::{device::Device, device_command::DeviceCommand};
-use tinyiothub_core::models::event::{
-    ContentElement, DeviceEventType, Event as DomainEvent, EventLevel, EventSource, RichContent,
-    TextFormat,
-};
+use tinyiothub_core::error::Error;
 use tinyiothub_core::event::EventHandler;
+use tinyiothub_core::models::device_property::DeviceProperty;
+use tinyiothub_core::models::event::{
+    ContentElement, DeviceEventType, Event as DomainEvent, EventLevel, EventSource, RichContent, TextFormat,
+};
+use tinyiothub_core::models::{device::Device, device_command::DeviceCommand};
 
+use crate::driver::{DeviceOverview, DriverWrapper, create_driver};
+use crate::event_bus::{EventBus, publish_event_safe};
 use tinyiothub_storage::cache::DeviceCache;
-use crate::driver::{create_driver, DeviceOverview, DriverWrapper};
-use crate::event_bus::{publish_event_safe, EventBus};
 
 type DriverCache = Cache<String, Arc<RwLock<DriverWrapper>>>;
 type CommandQueue = Arc<DashMap<String, Vec<DeviceCommand>>>;
@@ -41,11 +40,7 @@ impl DataServer {
         }
     }
 
-    fn initialize_drivers(
-        cache: &DriverCache,
-        device_cache: &Arc<DeviceCache>,
-        event_bus: &Arc<EventBus>,
-    ) {
+    fn initialize_drivers(cache: &DriverCache, device_cache: &Arc<DeviceCache>, event_bus: &Arc<EventBus>) {
         let devices = device_cache.all();
         for device in devices {
             if let Some(driver_name) = &device.driver_name {
@@ -66,10 +61,7 @@ impl DataServer {
         }
     }
 
-    pub async fn run(
-        &self,
-        shutdown_rx: tokio::sync::broadcast::Receiver<()>,
-    ) -> Result<(), Error> {
+    pub async fn run(&self, shutdown_rx: tokio::sync::broadcast::Receiver<()>) -> Result<(), Error> {
         let driver_cache = self.driver_cache.clone();
         let device_cache = self.device_cache.clone();
         let command_queue = self.command_queue.clone();
@@ -142,12 +134,8 @@ impl DataServer {
                                 }
                             }
                             device.status = tinyiothub_core::models::device::DeviceStatus::Online;
-                            device.last_heartbeat =
-                                Some(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string());
-                            let events = Self::collect_property_change_events(
-                                &mut device,
-                                &values,
-                            );
+                            device.last_heartbeat = Some(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string());
+                            let events = Self::collect_property_change_events(&mut device, &values);
                             pending_events.extend(events);
                         }
                         Err(e) => {
@@ -195,10 +183,7 @@ impl DataServer {
         }
     }
 
-    fn collect_property_change_events(
-        device: &mut Device,
-        values: &[ResultValue],
-    ) -> Vec<DomainEvent> {
+    fn collect_property_change_events(device: &mut Device, values: &[ResultValue]) -> Vec<DomainEvent> {
         let mut pending_events = Vec::new();
         let device_id = device.id.clone();
         let device_name = device.name.clone();
@@ -214,7 +199,11 @@ impl DataServer {
                         property.set_current_value(value_str.clone());
                         if value_changed {
                             if let Some(event) = Self::build_property_change_event_static(
-                                &device_id, &device_name, property, old_value, value_str,
+                                &device_id,
+                                &device_name,
+                                property,
+                                old_value,
+                                value_str,
                             ) {
                                 pending_events.push(event);
                             }
@@ -234,10 +223,7 @@ impl DataServer {
         new_value: &str,
     ) -> Option<DomainEvent> {
         let mut elements = vec![ContentElement::Text {
-            content: format!(
-                "Property '{}' value changed on device '{}'",
-                property.name, device_name
-            ),
+            content: format!("Property '{}' value changed on device '{}'", property.name, device_name),
             format: TextFormat::Plain,
         }];
 
@@ -256,11 +242,7 @@ impl DataServer {
         DomainEvent::new_device_event(
             DeviceEventType::PropertyChange,
             EventLevel::Info,
-            EventSource::device_property(
-                device_id.to_string(),
-                property.id.clone(),
-                "data_collector".to_string(),
-            ),
+            EventSource::device_property(device_id.to_string(), property.id.clone(), "data_collector".to_string()),
             RichContent::new(
                 format!("Property Changed: {} - {}", device_name, property.name),
                 elements,
@@ -435,7 +417,9 @@ impl EventHandler for DataServer {
                 DeviceEventType::DeviceCreated | DeviceEventType::DeviceUpdated => {
                     tracing::info!("Handling {:?} event for device: {}", device_event_type, device_id);
                     // 从事件 metadata 中提取完整设备信息
-                    let device = event.content().metadata()
+                    let device = event
+                        .content()
+                        .metadata()
                         .get("device")
                         .and_then(|v| serde_json::from_value::<Device>(v.clone()).ok())
                         .or_else(|| self.device_cache.get(device_id));
@@ -449,8 +433,12 @@ impl EventHandler for DataServer {
                                 match create_driver(driver_name, &device) {
                                     Ok(mut driver) => {
                                         driver.set_event_bus(self.event_bus.clone());
-                                        self.driver_cache.insert(device_id.to_string(), Arc::new(RwLock::new(driver)));
-                                        tracing::info!("Created driver for device '{}' and started data collection", device.name);
+                                        self.driver_cache
+                                            .insert(device_id.to_string(), Arc::new(RwLock::new(driver)));
+                                        tracing::info!(
+                                            "Created driver for device '{}' and started data collection",
+                                            device.name
+                                        );
                                     }
                                     Err(e) => {
                                         tracing::error!("Failed to create driver for device '{}': {}", device.name, e);

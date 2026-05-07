@@ -1,22 +1,24 @@
 // API Layer - SSE Endpoints
 // Handles HTTP requests for Server-Sent Events (SSE) connections
 
-use crate::shared::security::jwt::Claims;
-use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
+    Json,
     extract::{Query, State},
     response::Response,
-    Json,
 };
 use serde::Deserialize;
+use tinyiothub_web::response::ApiResponseBuilder;
 use tracing::{info, warn};
 
 use crate::{
-    shared::api_response::ApiResponse,
-    shared::event::sse_manager::{SseConnectionInfo, SseOverview},
-    shared::{app_state::AppState},
+    api::middleware::WorkspaceScope,
+    shared::{
+        api_response::ApiResponse,
+        app_state::AppState,
+        event::sse_manager::{SseConnectionInfo, SseOverview},
+        security::jwt::Claims,
+    },
 };
-use crate::api::middleware::WorkspaceScope;
 
 /// SSE connection query parameters
 #[derive(Debug, Deserialize)]
@@ -52,11 +54,8 @@ pub async fn handle_sse_connection(
 
     // Workspace: query param > X-Workspace-Id header > "default"
     // Frontend must pass workspace_id in the SSE URL so events are correctly filtered.
-    let workspace_id = query
-        .workspace_id
-        .clone()
-        .or(workspace_scope.0)
-        .unwrap_or_else(|| "default".to_string());
+    let workspace_id =
+        query.workspace_id.clone().or(workspace_scope.0).unwrap_or_else(|| "default".to_string());
 
     info!("New authenticated SSE connection from user: {} workspace: {}", user_id, workspace_id);
 
@@ -81,7 +80,10 @@ pub async fn handle_sse_connection_public(
     let user_id = query.user_id.clone().unwrap_or_else(|| "anonymous".to_string());
     let workspace_id = query.workspace_id.clone().unwrap_or_else(|| "default".to_string());
 
-    warn!("New public (unauthenticated) SSE connection from user: {} workspace: {}", user_id, workspace_id);
+    warn!(
+        "New public (unauthenticated) SSE connection from user: {} workspace: {}",
+        user_id, workspace_id
+    );
 
     // Parse event filters
     let event_types = parse_event_types(&query.event_types);

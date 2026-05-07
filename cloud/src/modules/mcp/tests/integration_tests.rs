@@ -8,8 +8,7 @@ use serde_json::json;
 async fn test_all_tools_registered() {
     crate::modules::mcp::register_tools().await;
 
-    let registry = crate::modules::mcp::get_mcp_registry()
-        .expect("Registry not initialized");
+    let registry = crate::modules::mcp::get_mcp_registry().expect("Registry not initialized");
 
     let tools = registry.read().await.list_tools();
 
@@ -17,10 +16,19 @@ async fn test_all_tools_registered() {
     assert_eq!(tools.len(), 16, "Expected 16 tools registered");
 
     let tool_names: Vec<_> = tools.iter().map(|t| t.name.clone()).collect();
-    assert!(tool_names.contains(&"search_devices".to_string()), "search_devices should be registered");
-    assert!(tool_names.contains(&"create_device".to_string()), "create_device should be registered");
+    assert!(
+        tool_names.contains(&"search_devices".to_string()),
+        "search_devices should be registered"
+    );
+    assert!(
+        tool_names.contains(&"create_device".to_string()),
+        "create_device should be registered"
+    );
     assert!(tool_names.contains(&"alarm_list".to_string()), "alarm_list should be registered");
-    assert!(tool_names.contains(&"list_schedules".to_string()), "list_schedules should be registered");
+    assert!(
+        tool_names.contains(&"list_schedules".to_string()),
+        "list_schedules should be registered"
+    );
 }
 
 /// Test that search_devices rejects empty keyword
@@ -96,10 +104,7 @@ async fn test_all_driver_tools_registered() {
     let registry = crate::modules::mcp::get_mcp_registry().unwrap();
     let tool_names = registry.read().await.list_names();
 
-    let driver_tools = [
-        "list_drivers",
-        "test_driver",
-    ];
+    let driver_tools = ["list_drivers", "test_driver"];
 
     for tool_name in driver_tools {
         assert!(

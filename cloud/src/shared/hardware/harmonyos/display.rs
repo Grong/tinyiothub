@@ -30,7 +30,6 @@ impl HarmonyDisplayManager {
     pub fn initialize(&self, width: u32, height: u32) -> Result<(), std::io::Error> {
         info!("Initializing HarmonyOS display device {}x{}", width, height);
 
-
         let config = DisplayConfig {
             width,
             height,
@@ -65,7 +64,6 @@ impl HarmonyDisplayManager {
 
         debug!("Clearing HarmonyOS display screen");
 
-
         Ok(())
     }
 
@@ -79,7 +77,6 @@ impl HarmonyDisplayManager {
         }
 
         debug!("Displaying text '{}' at ({}, {}) on HarmonyOS display", text, x, y);
-
 
         Ok(())
     }
@@ -102,7 +99,6 @@ impl HarmonyDisplayManager {
 
         debug!("Displaying image {}x{} at ({}, {}) on HarmonyOS display", width, height, x, y);
 
-
         Ok(())
     }
 
@@ -117,14 +113,12 @@ impl HarmonyDisplayManager {
 
         debug!("Refreshing HarmonyOS display");
 
-
         Ok(())
     }
 
     /// 关闭显示设备
     pub fn shutdown(&self) -> Result<(), std::io::Error> {
         info!("Shutting down HarmonyOS display device");
-
 
         *self.initialized.lock().unwrap() = false;
         *self.config.lock().unwrap() = None;

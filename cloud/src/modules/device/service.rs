@@ -1,14 +1,17 @@
 // Device service — migrated from domain/device/service.rs
 
-use tinyiothub_core::models::device::{CreateDeviceRequest, Device, DeviceQueryParams, UpdateDeviceRequest};
-use tinyiothub_core::models::device_command::DeviceCommand;
-use tinyiothub_core::models::device_property::DeviceProperty;
-use crate::shared::persistence::repositories::{
-    bulk_create_device_commands, create_device_command, find_device_commands_by_device_id,
-    create_device_properties_batch, find_device_properties_by_device_id,
-};
-use tinyiothub_core::models::device_command::CreateDeviceCommandRequest;
 use std::sync::Arc;
+
+use tinyiothub_core::models::{
+    device::{CreateDeviceRequest, Device, DeviceQueryParams, UpdateDeviceRequest},
+    device_command::{CreateDeviceCommandRequest, DeviceCommand},
+    device_property::DeviceProperty,
+};
+
+use crate::shared::persistence::repositories::{
+    bulk_create_device_commands, create_device_command, create_device_properties_batch,
+    find_device_commands_by_device_id, find_device_properties_by_device_id,
+};
 
 const ERROR_DEVICE_NAME_EXISTS: &str = "Device name already exists";
 const ERROR_TEMPLATE_APPLICATION_FAILED: &str = "Template application failed";
@@ -25,11 +28,11 @@ use crate::{
                 ContentElement, DeviceEventType, EventLevel, EventSource, RichContent, TextFormat,
             },
         },
+        tag::TagRepository,
     },
-    shared::pagination::DataObjectWithPagination,
-    shared::{event::EventBus, persistence::Database},
-    modules::tag::TagRepository,
-    shared::error::Error
+    shared::{
+        error::Error, event::EventBus, pagination::DataObjectWithPagination, persistence::Database,
+    },
 };
 
 pub struct DeviceService {
@@ -44,7 +47,11 @@ impl DeviceService {
         Self { repository, database, event_bus: None, tag_repository: None }
     }
 
-    pub fn with_event_bus(repository: Arc<dyn DeviceRepository>, database: Arc<Database>, event_bus: Arc<EventBus>) -> Self {
+    pub fn with_event_bus(
+        repository: Arc<dyn DeviceRepository>,
+        database: Arc<Database>,
+        event_bus: Arc<EventBus>,
+    ) -> Self {
         Self { repository, database, event_bus: Some(event_bus), tag_repository: None }
     }
 
@@ -60,8 +67,8 @@ impl DeviceService {
         }
         let created_device = self.repository.create(request).await?;
         // 加载完整设备信息（含属性、指令）再发布事件
-        let complete_device = self.load_complete_device(&created_device.id).await?
-            .unwrap_or(created_device.clone());
+        let complete_device =
+            self.load_complete_device(&created_device.id).await?.unwrap_or(created_device.clone());
         self.publish_device_created_event(&complete_device).await;
         tracing::info!("Device {} created successfully", created_device.id);
         Ok(created_device)
@@ -73,16 +80,37 @@ impl DeviceService {
         template_id: &str,
         device_input: &crate::modules::template::types::DeviceCreationInput,
     ) -> Result<Device, Error> {
-        tracing::info!("Creating device from template: template_id={}, device_name={}", template_id, device_input.name);
-        let created_device = self.apply_template_and_create_device(template_engine, template_id, device_input).await?;
+        tracing::info!(
+            "Creating device from template: template_id={}, device_name={}",
+            template_id,
+            device_input.name
+        );
+        let created_device = self
+            .apply_template_and_create_device(template_engine, template_id, device_input)
+            .await?;
         let template = self.get_template(template_engine, template_id).await?;
-        self.generate_and_create_properties(template_engine, &template, device_input, &created_device.id).await;
-        self.generate_and_create_commands(template_engine, &template, device_input, &created_device.id).await;
+        self.generate_and_create_properties(
+            template_engine,
+            &template,
+            device_input,
+            &created_device.id,
+        )
+        .await;
+        self.generate_and_create_commands(
+            template_engine,
+            &template,
+            device_input,
+            &created_device.id,
+        )
+        .await;
         // 加载完整设备信息（含属性、指令）再发布事件
-        let complete_device = self.load_complete_device(&created_device.id).await?
-            .unwrap_or(created_device.clone());
+        let complete_device =
+            self.load_complete_device(&created_device.id).await?.unwrap_or(created_device.clone());
         self.publish_device_created_event(&complete_device).await;
-        tracing::info!("Device created successfully from template: device_id={}", created_device.id);
+        tracing::info!(
+            "Device created successfully from template: device_id={}",
+            created_device.id
+        );
         Ok(created_device)
     }
 
@@ -90,7 +118,10 @@ impl DeviceService {
         vec![
             self.create_text_element(title),
             self.create_text_element(format!("Device ID: {}", device.id)),
-            self.create_text_element(format!("Device Type: {}", device.device_type.as_deref().unwrap_or(MSG_DEVICE_TYPE_VALUE_NA))),
+            self.create_text_element(format!(
+                "Device Type: {}",
+                device.device_type.as_deref().unwrap_or(MSG_DEVICE_TYPE_VALUE_NA)
+            )),
         ]
     }
 
@@ -103,14 +134,22 @@ impl DeviceService {
     }
 
     async fn publish_device_created_event(&self, device: &Device) {
-        let content_elements = self.build_device_info_elements(device, format!("Device '{}' has been created successfully", device.name));
+        let content_elements = self.build_device_info_elements(
+            device,
+            format!("Device '{}' has been created successfully", device.name),
+        );
         // 将完整设备信息序列化到 metadata，供 DataServer 使用
         let device_json = serde_json::to_value(device).unwrap_or(serde_json::Value::Null);
-        let _ = self.publish_device_event_with_metadata(
-            DeviceEventType::DeviceCreated, EventLevel::Info, device,
-            format!("Device Created: {}", device.name), content_elements,
-            device_json,
-        ).await;
+        let _ = self
+            .publish_device_event_with_metadata(
+                DeviceEventType::DeviceCreated,
+                EventLevel::Info,
+                device,
+                format!("Device Created: {}", device.name),
+                content_elements,
+                device_json,
+            )
+            .await;
     }
 
     async fn publish_device_event(
@@ -123,10 +162,12 @@ impl DeviceService {
     ) -> Result<(), Error> {
         if let Some(ref event_bus) = self.event_bus {
             let event = DomainEvent::new_device_event(
-                event_type, level,
+                event_type,
+                level,
                 EventSource::device(device.id.clone(), Some("device_service".to_string())),
                 RichContent::new(title, content_elements),
-            ).map_err(|e| Error::IOError(format!("Failed to create event: {}", e)))?;
+            )
+            .map_err(|e| Error::IOError(format!("Failed to create event: {}", e)))?;
             let event_bus_clone = event_bus.clone();
             crate::shared::utils::publish_event_safe(event_bus_clone, event).await;
         }
@@ -146,10 +187,12 @@ impl DeviceService {
             let content = RichContent::new(title, content_elements)
                 .with_metadata("device".to_string(), metadata_value);
             let event = DomainEvent::new_device_event(
-                event_type, level,
+                event_type,
+                level,
                 EventSource::device(device.id.clone(), Some("device_service".to_string())),
                 content,
-            ).map_err(|e| Error::IOError(format!("Failed to create event: {}", e)))?;
+            )
+            .map_err(|e| Error::IOError(format!("Failed to create event: {}", e)))?;
             let event_bus_clone = event_bus.clone();
             crate::shared::utils::publish_event_safe(event_bus_clone, event).await;
         }
@@ -161,7 +204,10 @@ impl DeviceService {
         template_engine: &crate::modules::template::TemplateEngine,
         template_id: &str,
     ) -> Result<crate::modules::template::types::DeviceTemplate, Error> {
-        template_engine.get_repository().find_by_id(template_id).await
+        template_engine
+            .get_repository()
+            .find_by_id(template_id)
+            .await
             .map_err(|e| Error::IOError(format!("Failed to get template: {}", e)))?
             .ok_or(Error::NotFound)
     }
@@ -175,8 +221,10 @@ impl DeviceService {
         if self.repository.exists_by_name(&device_input.name).await.unwrap_or(false) {
             return Err(Error::ValidationError(ERROR_DEVICE_NAME_EXISTS.to_string()));
         }
-        let device_request = template_engine.apply_template(template_id, device_input).await
-            .map_err(|e| Error::ValidationError(format!("{}: {}", ERROR_TEMPLATE_APPLICATION_FAILED, e)))?;
+        let device_request =
+            template_engine.apply_template(template_id, device_input).await.map_err(|e| {
+                Error::ValidationError(format!("{}: {}", ERROR_TEMPLATE_APPLICATION_FAILED, e))
+            })?;
         self.repository.create(&device_request).await
     }
 
@@ -220,7 +268,11 @@ impl DeviceService {
         }
     }
 
-    pub async fn update_device(&self, device_id: &str, request: &UpdateDeviceRequest) -> Result<Device, Error> {
+    pub async fn update_device(
+        &self,
+        device_id: &str,
+        request: &UpdateDeviceRequest,
+    ) -> Result<Device, Error> {
         tracing::info!("Updating device: {}", device_id);
         let old_device = self.repository.find_by_id(device_id).await?.ok_or(Error::NotFound)?;
         let updated_device = self.repository.update(device_id, request).await?;
@@ -229,21 +281,54 @@ impl DeviceService {
         Ok(updated_device)
     }
 
-    async fn publish_device_updated_event(&self, old_device: &Device, request: &UpdateDeviceRequest, updated_device: &Device) {
+    async fn publish_device_updated_event(
+        &self,
+        old_device: &Device,
+        request: &UpdateDeviceRequest,
+        updated_device: &Device,
+    ) {
         let mut changes = Vec::new();
-        if let Some(ref new_name) = request.name && new_name != &old_device.name {
+        if let Some(ref new_name) = request.name
+            && new_name != &old_device.name
+        {
             changes.push(format!("Name: {} → {}", old_device.name, new_name));
         }
-        if let Some(ref new_type) = request.device_type && Some(new_type) != old_device.device_type.as_ref() {
-            changes.push(format!("Type: {} → {}", old_device.device_type.as_deref().unwrap_or("N/A"), new_type));
+        if let Some(ref new_type) = request.device_type
+            && Some(new_type) != old_device.device_type.as_ref()
+        {
+            changes.push(format!(
+                "Type: {} → {}",
+                old_device.device_type.as_deref().unwrap_or("N/A"),
+                new_type
+            ));
         }
-        if let Some(ref new_address) = request.address && Some(new_address) != old_device.address.as_ref() {
-            changes.push(format!("Address: {} → {}", old_device.address.as_deref().unwrap_or("N/A"), new_address));
+        if let Some(ref new_address) = request.address
+            && Some(new_address) != old_device.address.as_ref()
+        {
+            changes.push(format!(
+                "Address: {} → {}",
+                old_device.address.as_deref().unwrap_or("N/A"),
+                new_address
+            ));
         }
         if !changes.is_empty() {
-            let mut elements = vec![self.create_text_element(format!("Device '{}' has been updated", updated_device.name))];
-            for change in changes { elements.push(self.create_text_element(change)); }
-            let _ = self.publish_device_event(DeviceEventType::DeviceUpdated, EventLevel::Info, updated_device, format!("Device Updated: {}", updated_device.name), elements).await;
+            let mut elements =
+                vec![self.create_text_element(format!(
+                    "Device '{}' has been updated",
+                    updated_device.name
+                ))];
+            for change in changes {
+                elements.push(self.create_text_element(change));
+            }
+            let _ = self
+                .publish_device_event(
+                    DeviceEventType::DeviceUpdated,
+                    EventLevel::Info,
+                    updated_device,
+                    format!("Device Updated: {}", updated_device.name),
+                    elements,
+                )
+                .await;
         }
     }
 
@@ -260,16 +345,41 @@ impl DeviceService {
     }
 
     async fn publish_device_deleted_event(&self, device: &Device) {
-        let content_elements = self.build_device_info_elements(device, format!("Device '{}' has been deleted", device.name));
-        let _ = self.publish_device_event(DeviceEventType::DeviceDeleted, EventLevel::Warning, device, format!("Device Deleted: {}", device.name), content_elements).await;
+        let content_elements = self.build_device_info_elements(
+            device,
+            format!("Device '{}' has been deleted", device.name),
+        );
+        let _ = self
+            .publish_device_event(
+                DeviceEventType::DeviceDeleted,
+                EventLevel::Warning,
+                device,
+                format!("Device Deleted: {}", device.name),
+                content_elements,
+            )
+            .await;
     }
 
-    async fn publish_command_started_event(&self, device: &Device, command_name: &str, command_type: &str, command_id: &str) {
+    async fn publish_command_started_event(
+        &self,
+        device: &Device,
+        command_name: &str,
+        command_type: &str,
+        command_id: &str,
+    ) {
         let content_elements = vec![
             self.create_text_element(format!("Device: {}", device.name)),
             self.create_text_element(format!("Command ID: {}", command_id)),
         ];
-        let _ = self.publish_device_event(DeviceEventType::CommandStarted, EventLevel::Info, device, format!("Command: {} ({})", command_name, command_type), content_elements).await;
+        let _ = self
+            .publish_device_event(
+                DeviceEventType::CommandStarted,
+                EventLevel::Info,
+                device,
+                format!("Command: {} ({})", command_name, command_type),
+                content_elements,
+            )
+            .await;
     }
 
     pub async fn update_device_state(&self, device_id: &str, new_state: i32) -> Result<(), Error> {
@@ -278,25 +388,45 @@ impl DeviceService {
         if old_state != new_state {
             self.repository.update_state(device_id, new_state).await?;
             if let Ok(Some(updated_device)) = self.repository.find_by_id(device_id).await {
-                self.publish_device_state_updated_event(&updated_device, old_state, new_state).await;
+                self.publish_device_state_updated_event(&updated_device, old_state, new_state)
+                    .await;
             }
         }
         Ok(())
     }
 
-    async fn publish_device_state_updated_event(&self, device: &Device, old_state: i32, new_state: i32) {
+    async fn publish_device_state_updated_event(
+        &self,
+        device: &Device,
+        old_state: i32,
+        new_state: i32,
+    ) {
         let content_elements = vec![
-            self.create_text_element(format!("Device '{}' state changed from {} to {}", device.name, old_state, new_state)),
+            self.create_text_element(format!(
+                "Device '{}' state changed from {} to {}",
+                device.name, old_state, new_state
+            )),
             self.create_text_element(format!("Device ID: {}", device.id)),
         ];
-        let _ = self.publish_device_event(DeviceEventType::DeviceUpdated, EventLevel::Info, device, format!("Device State Updated: {}", device.name), content_elements).await;
+        let _ = self
+            .publish_device_event(
+                DeviceEventType::DeviceUpdated,
+                EventLevel::Info,
+                device,
+                format!("Device State Updated: {}", device.name),
+                content_elements,
+            )
+            .await;
     }
 
     pub async fn get_device_by_id(&self, device_id: &str) -> Result<Option<Device>, Error> {
         self.repository.find_by_id(device_id).await.map_err(|e| self.io_error(e))
     }
 
-    pub async fn get_device_by_id_with_tags(&self, device_id: &str) -> Result<Option<Device>, Error> {
+    pub async fn get_device_by_id_with_tags(
+        &self,
+        device_id: &str,
+    ) -> Result<Option<Device>, Error> {
         self.repository.find_by_id(device_id).await.map_err(|e| self.io_error(e))
     }
 
@@ -309,13 +439,20 @@ impl DeviceService {
         self.repository.find_all(&criteria).await.map_err(|e| self.io_error(e))
     }
 
-    pub async fn get_devices_with_tags(&self, params: &DeviceQueryParams, tenant_id: &str) -> Result<Vec<Device>, Error> {
+    pub async fn get_devices_with_tags(
+        &self,
+        params: &DeviceQueryParams,
+        tenant_id: &str,
+    ) -> Result<Vec<Device>, Error> {
         let mut devices = self.get_devices(params).await?;
         if let Some(tag_repo) = &self.tag_repository {
             for device in &mut devices {
                 match tag_repo.find_by_target_id(&device.id, tenant_id).await {
                     Ok(tags) => {
-                        let tag_values: Vec<serde_json::Value> = tags.into_iter().map(|t| serde_json::to_value(t).unwrap_or_default()).collect();
+                        let tag_values: Vec<serde_json::Value> = tags
+                            .into_iter()
+                            .map(|t| serde_json::to_value(t).unwrap_or_default())
+                            .collect();
                         device.tags = Some(tag_values);
                     }
                     Err(e) => {
@@ -333,11 +470,23 @@ impl DeviceService {
         self.repository.count(&criteria).await.map_err(|e| self.io_error(e))
     }
 
-    pub async fn update_device_enabled_status(&self, device_id: &str, enabled: bool) -> Result<bool, Error> {
-        self.repository.update_enabled_status(device_id, enabled).await.map_err(|e| self.io_error(e))
+    pub async fn update_device_enabled_status(
+        &self,
+        device_id: &str,
+        enabled: bool,
+    ) -> Result<bool, Error> {
+        self.repository
+            .update_enabled_status(device_id, enabled)
+            .await
+            .map_err(|e| self.io_error(e))
     }
 
-    pub async fn get_devices_page(&self, params: &DeviceQueryParams, page_no: u32, page_size: u32) -> Result<DataObjectWithPagination<Device>, Error> {
+    pub async fn get_devices_page(
+        &self,
+        params: &DeviceQueryParams,
+        page_no: u32,
+        page_size: u32,
+    ) -> Result<DataObjectWithPagination<Device>, Error> {
         let mut query_params = params.clone();
         query_params.page = Some(page_no);
         query_params.page_size = Some(page_size);
@@ -357,19 +506,34 @@ impl DeviceService {
         self.repository.find_by_driver_name(driver_name).await.map_err(|e| self.io_error(e))
     }
 
-    pub async fn get_device_properties(&self, device_id: &str) -> Result<Vec<DeviceProperty>, Error> {
+    pub async fn get_device_properties(
+        &self,
+        device_id: &str,
+    ) -> Result<Vec<DeviceProperty>, Error> {
         let db = self.database.clone();
         find_device_properties_by_device_id(&db, device_id).await.map_err(|e| self.io_error(e))
     }
 
-    pub async fn get_device_property_by_name(&self, device_id: &str, property_name: &str) -> Result<Option<DeviceProperty>, Error> {
+    pub async fn get_device_property_by_name(
+        &self,
+        device_id: &str,
+        property_name: &str,
+    ) -> Result<Option<DeviceProperty>, Error> {
         let properties = self.get_device_properties(device_id).await?;
         Ok(properties.into_iter().find(|p| p.name == property_name))
     }
 
-    pub async fn get_device_properties_page(&self, device_id: &str, property_name: Option<String>, page_no: u32, page_size: u32) -> Result<DataObjectWithPagination<DeviceProperty>, Error> {
+    pub async fn get_device_properties_page(
+        &self,
+        device_id: &str,
+        property_name: Option<String>,
+        page_no: u32,
+        page_size: u32,
+    ) -> Result<DataObjectWithPagination<DeviceProperty>, Error> {
         let mut properties = self.get_device_properties(device_id).await?;
-        if let Some(name) = property_name { properties.retain(|p| p.name.contains(&name)); }
+        if let Some(name) = property_name {
+            properties.retain(|p| p.name.contains(&name));
+        }
         Ok(DataObjectWithPagination::new(&properties, page_no, page_size))
     }
 
@@ -378,40 +542,79 @@ impl DeviceService {
         find_device_commands_by_device_id(&db, device_id).await.map_err(|e| self.io_error(e))
     }
 
-    pub async fn get_device_command_by_name(&self, device_id: &str, command_name: &str) -> Result<Option<DeviceCommand>, Error> {
+    pub async fn get_device_command_by_name(
+        &self,
+        device_id: &str,
+        command_name: &str,
+    ) -> Result<Option<DeviceCommand>, Error> {
         let commands = self.get_device_commands(device_id).await?;
         Ok(commands.into_iter().find(|c| c.name == command_name))
     }
 
-    pub async fn create_devices_batch(&self, requests: &[CreateDeviceRequest]) -> Result<Vec<Device>, Error> {
+    pub async fn create_devices_batch(
+        &self,
+        requests: &[CreateDeviceRequest],
+    ) -> Result<Vec<Device>, Error> {
         for request in requests {
             if self.repository.exists_by_name(&request.name).await.unwrap_or(false) {
-                return Err(Error::ValidationError(format!("{}: '{}'", ERROR_DEVICE_NAME_EXISTS, request.name)));
+                return Err(Error::ValidationError(format!(
+                    "{}: '{}'",
+                    ERROR_DEVICE_NAME_EXISTS, request.name
+                )));
             }
         }
         let created_devices = self.repository.create_batch(requests).await?;
-        for device in &created_devices { self.publish_batch_device_created_event(device).await; }
+        for device in &created_devices {
+            self.publish_batch_device_created_event(device).await;
+        }
         Ok(created_devices)
     }
 
     async fn publish_batch_device_created_event(&self, device: &Device) {
-        let content_elements = self.build_device_info_elements(device, format!("Device '{}' created in batch operation", device.name));
-        let _ = self.publish_device_event(DeviceEventType::DeviceCreated, EventLevel::Info, device, format!("Device Created: {}", device.name), content_elements).await;
+        let content_elements = self.build_device_info_elements(
+            device,
+            format!("Device '{}' created in batch operation", device.name),
+        );
+        let _ = self
+            .publish_device_event(
+                DeviceEventType::DeviceCreated,
+                EventLevel::Info,
+                device,
+                format!("Device Created: {}", device.name),
+                content_elements,
+            )
+            .await;
     }
 
     async fn publish_batch_device_deleted_event(&self, device: &Device) {
-        let content_elements = self.build_device_info_elements(device, format!("Device '{}' deleted in batch operation", device.name));
-        let _ = self.publish_device_event(DeviceEventType::DeviceDeleted, EventLevel::Warning, device, format!("Device Deleted: {}", device.name), content_elements).await;
+        let content_elements = self.build_device_info_elements(
+            device,
+            format!("Device '{}' deleted in batch operation", device.name),
+        );
+        let _ = self
+            .publish_device_event(
+                DeviceEventType::DeviceDeleted,
+                EventLevel::Warning,
+                device,
+                format!("Device Deleted: {}", device.name),
+                content_elements,
+            )
+            .await;
     }
 
     pub async fn delete_devices_batch(&self, device_ids: &[String]) -> Result<u64, Error> {
         let devices = self.repository.find_by_ids(device_ids).await?;
         let deleted_count = self.repository.delete_by_ids(device_ids).await?;
-        for device in &devices { self.publish_batch_device_deleted_event(device).await; }
+        for device in &devices {
+            self.publish_batch_device_deleted_event(device).await;
+        }
         Ok(deleted_count)
     }
 
-    pub async fn update_device_states_batch(&self, updates: &[(String, i32)]) -> Result<u64, Error> {
+    pub async fn update_device_states_batch(
+        &self,
+        updates: &[(String, i32)],
+    ) -> Result<u64, Error> {
         self.repository.update_states_batch(updates).await
     }
 
@@ -427,33 +630,53 @@ impl DeviceService {
     }
 
     fn validate_driver_configuration(&self, device: &Device) -> Option<String> {
-        if device.driver_name.is_none() { Some(ERROR_DEVICE_DRIVER_NOT_CONFIGURED.to_string()) } else { None }
+        if device.driver_name.is_none() {
+            Some(ERROR_DEVICE_DRIVER_NOT_CONFIGURED.to_string())
+        } else {
+            None
+        }
     }
 
     fn validate_address_configuration(&self, device: &Device) -> Option<String> {
-        if device.address.as_ref().is_none_or(|addr| addr.is_empty()) { Some(ERROR_DEVICE_ADDRESS_NOT_CONFIGURED.to_string()) } else { None }
+        if device.address.as_ref().is_none_or(|addr| addr.is_empty()) {
+            Some(ERROR_DEVICE_ADDRESS_NOT_CONFIGURED.to_string())
+        } else {
+            None
+        }
     }
 
     pub async fn validate_device(&self, device_id: &str) -> Result<Vec<String>, Error> {
         let device = self.get_device_by_id(device_id).await?.ok_or(Error::NotFound)?;
         let mut errors = Vec::new();
-        if let Err(e) = device.validate() { errors.push(e); }
-        if let Some(error) = self.validate_driver_configuration(&device) { errors.push(error); }
-        if let Some(error) = self.validate_address_configuration(&device) { errors.push(error); }
+        if let Err(e) = device.validate() {
+            errors.push(e);
+        }
+        if let Some(error) = self.validate_driver_configuration(&device) {
+            errors.push(error);
+        }
+        if let Some(error) = self.validate_address_configuration(&device) {
+            errors.push(error);
+        }
         Ok(errors)
     }
 
     async fn load_properties_with_fallback(&self, device_id: &str) -> Option<Vec<DeviceProperty>> {
         match self.get_device_properties(device_id).await {
             Ok(properties) => Some(properties),
-            Err(e) => { tracing::warn!("Failed to load properties for device {}: {}", device_id, e); Some(Vec::new()) }
+            Err(e) => {
+                tracing::warn!("Failed to load properties for device {}: {}", device_id, e);
+                Some(Vec::new())
+            }
         }
     }
 
     async fn load_commands_with_fallback(&self, device_id: &str) -> Option<Vec<DeviceCommand>> {
         match self.get_device_commands(device_id).await {
             Ok(commands) => Some(commands),
-            Err(e) => { tracing::warn!("Failed to load commands for device {}: {}", device_id, e); Some(Vec::new()) }
+            Err(e) => {
+                tracing::warn!("Failed to load commands for device {}: {}", device_id, e);
+                Some(Vec::new())
+            }
         }
     }
 
@@ -479,7 +702,13 @@ impl DeviceService {
         Ok(devices)
     }
 
-    fn build_device_command_request(&self, device_id: &str, command_name: &str, command_type: &str, params: Option<String>) -> CreateDeviceCommandRequest {
+    fn build_device_command_request(
+        &self,
+        device_id: &str,
+        command_name: &str,
+        command_type: &str,
+        params: Option<String>,
+    ) -> CreateDeviceCommandRequest {
         CreateDeviceCommandRequest {
             device_id: device_id.to_string(),
             name: command_name.to_string(),
@@ -489,10 +718,17 @@ impl DeviceService {
         }
     }
 
-    pub async fn send_command(&self, device_id: &str, command_name: &str, command_type: &str, params: Option<String>) -> Result<String, Error> {
+    pub async fn send_command(
+        &self,
+        device_id: &str,
+        command_name: &str,
+        command_type: &str,
+        params: Option<String>,
+    ) -> Result<String, Error> {
         let device = self.repository.find_by_id(device_id).await?.ok_or(Error::NotFound)?;
         let command_id = uuid::Uuid::new_v4().to_string();
-        let create_request = self.build_device_command_request(device_id, command_name, command_type, params);
+        let create_request =
+            self.build_device_command_request(device_id, command_name, command_type, params);
         let db = self.database.clone();
         let _ = create_device_command(&db, &create_request).await;
         self.publish_command_started_event(&device, command_name, command_type, &command_id).await;

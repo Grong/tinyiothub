@@ -1,18 +1,17 @@
 //! Cron 调度处理器
 
-use std::any::Any;
-use std::sync::Arc;
+use std::{any::Any, sync::Arc};
+
 use async_trait::async_trait;
 use tokio::sync::RwLock;
+use tokio_cron_scheduler::{Job, JobScheduler};
 use tracing::{debug, error, info};
 
-use super::SchedulerHandler;
-use crate::modules::plugin::scheduler::ScheduledTask;
-use crate::shared::error::Error;
-
-use super::super::config::SchedulerConfig;
-use crate::modules::plugin::{PluginHandler, PluginManifest, PluginType};
-use tokio_cron_scheduler::{Job, JobScheduler};
+use super::{super::config::SchedulerConfig, SchedulerHandler};
+use crate::{
+    modules::plugin::{PluginHandler, PluginManifest, PluginType, scheduler::ScheduledTask},
+    shared::error::Error,
+};
 
 pub struct CronHandler {
     config: SchedulerConfig,
@@ -60,9 +59,10 @@ impl CronHandler {
         })
         .map_err(|e| Error::Internal(format!("Invalid cron expression '{}': {}", cron_expr, e)))?;
 
-        sched.add(job).await.map_err(|e| {
-            Error::Internal(format!("Failed to add cron job: {}", e))
-        })?;
+        sched
+            .add(job)
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to add cron job: {}", e)))?;
 
         let sched_clone = sched.clone();
         tokio::spawn(async move {

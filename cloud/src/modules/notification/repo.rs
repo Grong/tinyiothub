@@ -12,8 +12,10 @@ use super::types::{
     HistoryStatistics, NotificationChannelType, NotificationRecord, NotificationRule,
     NotificationStatus, RuleStatistics,
 };
-use crate::modules::event::{EventError, Result};
-use crate::shared::persistence::Database;
+use crate::{
+    modules::event::{EventError, Result},
+    shared::persistence::Database,
+};
 
 // ──────────────────────────────────────────────
 // Notification Rule Repository
@@ -63,7 +65,8 @@ impl NotificationRuleRepositoryImpl {
         if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(timestamp_str, "%Y-%m-%d %H:%M:%S") {
             return Ok(dt.and_utc());
         }
-        if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(timestamp_str, "%Y-%m-%d %H:%M:%S%.f") {
+        if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(timestamp_str, "%Y-%m-%d %H:%M:%S%.f")
+        {
             return Ok(dt.and_utc());
         }
         Err(EventError::Validation {

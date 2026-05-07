@@ -1,9 +1,10 @@
 // Self-healing entity types
 // Migrated from domain/self_healing/entity.rs
 
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum SeverityLevel {
@@ -272,10 +273,7 @@ impl From<&SelfHealingPolicy> for SelfHealingPolicyDto {
             .map(|(k, v)| (k.as_str().to_string(), LevelPolicyDto::from(v)))
             .collect();
 
-        Self {
-            enabled: policy.enabled,
-            levels,
-        }
+        Self { enabled: policy.enabled, levels }
     }
 }
 
@@ -522,11 +520,8 @@ mod tests {
 
     #[test]
     fn test_healing_condition_dto_from() {
-        let condition = HealingCondition {
-            condition_type: "cpu_usage".to_string(),
-            threshold: 90.0,
-            count: 3,
-        };
+        let condition =
+            HealingCondition { condition_type: "cpu_usage".to_string(), threshold: 90.0, count: 3 };
         let dto = HealingConditionDto::from(&condition);
         assert_eq!(dto.condition_type, "cpu_usage");
         assert!((dto.threshold - 90.0).abs() < f64::EPSILON);

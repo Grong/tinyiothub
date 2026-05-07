@@ -2,16 +2,13 @@
 
 use async_trait::async_trait;
 use tinyiothub_core::models::device::Device;
-use crate::{
-    modules::device::driver::ResultValue,
-    shared::error::Error
-};
 
+use crate::{modules::device::driver::ResultValue, shared::error::Error};
 
 #[async_trait]
 pub trait ProtocolHandler: Send + Sync {
     async fn read_data(&self, device: &Device) -> Result<Vec<ResultValue>, Error>;
-    
+
     async fn execute_command(
         &self,
         device: &Device,

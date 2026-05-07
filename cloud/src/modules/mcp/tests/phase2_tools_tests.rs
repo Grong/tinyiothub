@@ -39,8 +39,11 @@ async fn test_list_schedules_returns_array() {
         }
         Err(e) => {
             assert!(
-                matches!(e, crate::modules::mcp::ToolError::Internal(_) |
-                             crate::modules::mcp::ToolError::Unauthorized(_)),
+                matches!(
+                    e,
+                    crate::modules::mcp::ToolError::Internal(_)
+                        | crate::modules::mcp::ToolError::Unauthorized(_)
+                ),
                 "Expected Internal or Unauthorized error, got {:?}",
                 e
             );
@@ -56,16 +59,21 @@ async fn test_list_schedules_with_filters() {
     let guard = registry.read().await;
     let handler = guard.get("list_schedules").unwrap();
 
-    let result = handler.execute(json!({
-        "page": 1,
-        "pageSize": 20,
-        "taskType": "probe",
-        "enabled": true
-    })).await;
+    let result = handler
+        .execute(json!({
+            "page": 1,
+            "pageSize": 20,
+            "taskType": "probe",
+            "enabled": true
+        }))
+        .await;
 
     match result {
-        Ok(_) | Err(crate::modules::mcp::ToolError::Internal(_) |
-                   crate::modules::mcp::ToolError::Unauthorized(_)) => {}
+        Ok(_)
+        | Err(
+            crate::modules::mcp::ToolError::Internal(_)
+            | crate::modules::mcp::ToolError::Unauthorized(_),
+        ) => {}
         Err(e) => panic!("Unexpected error: {:?}", e),
     }
 }
@@ -126,16 +134,21 @@ async fn test_alarm_list_with_filters() {
     let guard = registry.read().await;
     let handler = guard.get("alarm_list").unwrap();
 
-    let result = handler.execute(json!({
-        "page": 1,
-        "pageSize": 20,
-        "level": "error",
-        "acknowledged": false
-    })).await;
+    let result = handler
+        .execute(json!({
+            "page": 1,
+            "pageSize": 20,
+            "level": "error",
+            "acknowledged": false
+        }))
+        .await;
 
     match result {
-        Ok(_) | Err(crate::modules::mcp::ToolError::Internal(_) |
-                   crate::modules::mcp::ToolError::Unauthorized(_)) => {}
+        Ok(_)
+        | Err(
+            crate::modules::mcp::ToolError::Internal(_)
+            | crate::modules::mcp::ToolError::Unauthorized(_),
+        ) => {}
         Err(e) => panic!("Unexpected error: {:?}", e),
     }
 }
@@ -184,13 +197,15 @@ async fn test_alarm_rule_add_validates_rule_type() {
     let guard = registry.read().await;
     let handler = guard.get("alarm_rule_add").unwrap();
 
-    let result = handler.execute(json!({
-        "name": "Test Rule",
-        "ruleType": "invalid_type",
-        "deviceId": "device-1",
-        "property": "temperature",
-        "level": "error"
-    })).await;
+    let result = handler
+        .execute(json!({
+            "name": "Test Rule",
+            "ruleType": "invalid_type",
+            "deviceId": "device-1",
+            "property": "temperature",
+            "level": "error"
+        }))
+        .await;
 
     assert!(result.is_err());
 }

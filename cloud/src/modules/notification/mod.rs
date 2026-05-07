@@ -6,11 +6,11 @@
 //   infrastructure/persistence/repositories/notification_*_repository_impl.rs,
 //   api/notifications/management.rs, api/notification_channels/mod.rs
 
-pub mod types;
+pub mod handler;
 pub mod repo;
 pub mod service;
-pub mod handler;
+pub mod types;
 
-pub use types::*;
 pub use repo::*;
 pub use service::*;
+pub use types::*;

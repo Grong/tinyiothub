@@ -1,15 +1,13 @@
 use std::sync::Arc;
 
+use tinyiothub_runtime::DataServer;
 use tokio::{
-    sync::{broadcast, RwLock},
+    sync::{RwLock, broadcast},
     task::JoinHandle,
 };
 use tracing::{error, info, warn};
 
-use tinyiothub_runtime::DataServer;
-use crate::{
-    shared::error::Error,
-};
+use crate::shared::error::Error;
 
 /// 服务状态枚举
 #[derive(Debug, Clone, PartialEq)]
@@ -71,9 +69,9 @@ impl ServiceManager {
         app_state.event_bus.register_handler(data_server.clone());
 
         // 注册 SSE 事件处理器 - 将事件实时推送到前端
-        let sse_handler = Arc::new(
-            crate::shared::event::handlers::SseEventHandler::new(app_state.sse_manager.clone()),
-        );
+        let sse_handler = Arc::new(crate::shared::event::handlers::SseEventHandler::new(
+            app_state.sse_manager.clone(),
+        ));
         app_state.event_bus.register_handler(sse_handler);
         info!("✅ SseEventHandler registered");
 
@@ -108,7 +106,8 @@ impl ServiceManager {
             let workspace_dir = crate::shared::paths::default_workspace_dir();
 
             // Initialize workspace with template files
-            let scaffold_result = crate::shared::agent::scaffold_service::scaffold_workspace(&workspace_dir).await;
+            let scaffold_result =
+                crate::shared::agent::scaffold_service::scaffold_workspace(&workspace_dir).await;
             match scaffold_result {
                 Ok(result) => {
                     if result.created_files > 0 || result.created_dirs > 0 {
@@ -290,7 +289,7 @@ pub async fn setup_graceful_shutdown() {
 
     #[cfg(all(unix, not(feature = "harmonyos")))]
     {
-        use tokio::signal::unix::{signal, SignalKind};
+        use tokio::signal::unix::{SignalKind, signal};
 
         let mut sigterm =
             signal(SignalKind::terminate()).expect("Failed to create SIGTERM handler");

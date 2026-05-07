@@ -2,8 +2,7 @@
 
 use async_trait::async_trait;
 
-use crate::modules::plugin::scheduler::ScheduledTask;
-use crate::shared::error::Error;
+use crate::{modules::plugin::scheduler::ScheduledTask, shared::error::Error};
 
 #[async_trait]
 pub trait SchedulerHandler: Send + Sync {

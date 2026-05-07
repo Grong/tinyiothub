@@ -1,7 +1,6 @@
 // Unified error handling system for consistent API responses
-use tinyiothub_web::response::ApiResponseBuilder;
-
 use axum::response::Json;
+use tinyiothub_web::response::ApiResponseBuilder;
 use tracing::{error, info, warn};
 
 use crate::shared::api_response::ApiResponse;
@@ -226,12 +225,10 @@ impl AuthHelper {
     ) -> Result<(), Json<ApiResponse<serde_json::Value>>> {
         match Self::check_role(state, user_id, "admin").await {
             Ok(true) => Ok(()),
-            Ok(false) => {
-                Err(ApiResponseBuilder::error_with_code(
-                    ErrorCode::Forbidden.as_i32(),
-                    "Access denied: admin role required",
-                ))
-            }
+            Ok(false) => Err(ApiResponseBuilder::error_with_code(
+                ErrorCode::Forbidden.as_i32(),
+                "Access denied: admin role required",
+            )),
             Err(e) => {
                 tracing::warn!("Permission check failed for user {}: {}", user_id, e);
                 Err(ApiResponseBuilder::error_with_code(

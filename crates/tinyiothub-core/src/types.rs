@@ -6,9 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Unique device identifier.
-#[derive(
-    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default)]
 pub struct DeviceId(pub String);
 
 impl DeviceId {

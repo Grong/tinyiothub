@@ -15,11 +15,7 @@ impl RuleEvaluator {
     ///
     /// Extracts the field from the data object and compares it against
     /// the condition value using the specified operator.
-    pub fn evaluate(
-        &self,
-        condition: &RuleCondition,
-        data: &serde_json::Value,
-    ) -> Result<bool, String> {
+    pub fn evaluate(&self, condition: &RuleCondition, data: &serde_json::Value) -> Result<bool, String> {
         let data_value = match data.get(&condition.field) {
             Some(v) => v,
             None => return Ok(false), // field not present = condition not met
@@ -30,13 +26,11 @@ impl RuleEvaluator {
             ComparisonOperator::Ne => !Self::json_eq(data_value, &condition.value),
             ComparisonOperator::Gt => Self::json_gt(data_value, &condition.value)?,
             ComparisonOperator::Gte => {
-                Self::json_gt(data_value, &condition.value)?
-                    || Self::json_eq(data_value, &condition.value)
+                Self::json_gt(data_value, &condition.value)? || Self::json_eq(data_value, &condition.value)
             }
             ComparisonOperator::Lt => Self::json_lt(data_value, &condition.value)?,
             ComparisonOperator::Lte => {
-                Self::json_lt(data_value, &condition.value)?
-                    || Self::json_eq(data_value, &condition.value)
+                Self::json_lt(data_value, &condition.value)? || Self::json_eq(data_value, &condition.value)
             }
         };
 
@@ -54,20 +48,14 @@ impl RuleEvaluator {
     fn json_gt(a: &serde_json::Value, b: &serde_json::Value) -> Result<bool, String> {
         match (Self::as_f64(a), Self::as_f64(b)) {
             (Some(a_num), Some(b_num)) => Ok(a_num > b_num),
-            _ => Err(format!(
-                "cannot compare non-numeric values: {} > {}",
-                a, b
-            )),
+            _ => Err(format!("cannot compare non-numeric values: {} > {}", a, b)),
         }
     }
 
     fn json_lt(a: &serde_json::Value, b: &serde_json::Value) -> Result<bool, String> {
         match (Self::as_f64(a), Self::as_f64(b)) {
             (Some(a_num), Some(b_num)) => Ok(a_num < b_num),
-            _ => Err(format!(
-                "cannot compare non-numeric values: {} < {}",
-                a, b
-            )),
+            _ => Err(format!("cannot compare non-numeric values: {} < {}", a, b)),
         }
     }
 

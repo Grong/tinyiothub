@@ -1,17 +1,22 @@
-pub mod registry;
+pub mod driver_plugin;
 pub mod integration;
-pub mod protocol;
 pub mod notification;
+pub mod protocol;
+pub mod registry;
 pub mod scheduler;
 pub mod storage;
-pub mod driver_plugin;
 
-#[cfg(test)] mod tests;
-
-pub use registry::{get_global_registry, PluginRegistry, PluginEntry, PluginManifest, PluginType, PluginHandler, PluginFactory};
-pub use crate::modules::agent::AppContext;
+#[cfg(test)]
+mod tests;
 
 use std::sync::Arc;
+
+pub use registry::{
+    PluginEntry, PluginFactory, PluginHandler, PluginManifest, PluginRegistry, PluginType,
+    get_global_registry,
+};
+
+pub use crate::modules::agent::AppContext;
 use crate::shared::error::Error;
 
 /// 初始化插件系统

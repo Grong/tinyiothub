@@ -1,19 +1,19 @@
-use tinyiothub_web::response::ApiResponseBuilder;
-use super::types::{CreateUserRequest, UpdateUserRequest, UserDto, UserStatisticsNew};
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     routing::{get, post, put},
-    Json, Router,
 };
 use serde::Deserialize;
+use tinyiothub_web::response::ApiResponseBuilder;
 
-use crate::{
-    shared::app_state::AppState,
-    shared::pagination::PaginationQuery,
-    shared::api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
-    shared::utils::password::verify_password,
+use super::types::{CreateUserRequest, UpdateUserRequest, UserDto, UserStatisticsNew};
+use crate::shared::{
+    api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
+    app_state::AppState,
+    pagination::PaginationQuery,
+    security::jwt::Claims,
+    utils::password::verify_password,
 };
-use crate::shared::security::jwt::Claims;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -63,20 +63,12 @@ async fn list_users(
         Ok((users, total)) => {
             let user_dtos = super::types::User::to_dto_list(users);
             let total_count = total as u64;
-            let total_pages = if page_size > 0 {
-                ((total as f64) / (page_size as f64)).ceil() as u32
-            } else {
-                0
-            };
+            let total_pages =
+                if page_size > 0 { ((total as f64) / (page_size as f64)).ceil() as u32 } else { 0 };
             tracing::info!("Retrieved {} users", user_dtos.len());
             ApiResponseBuilder::success(PaginatedResponse {
                 data: user_dtos,
-                pagination: PaginationInfo {
-                    page,
-                    page_size,
-                    total_pages,
-                    total_count,
-                },
+                pagination: PaginationInfo { page, page_size, total_pages, total_count },
             })
         }
         Err(e) => {
@@ -244,7 +236,9 @@ async fn update_user(
             tracing::info!("User updated: {}", user.get_display_name());
             ApiResponseBuilder::success(user.to_dto())
         }
-        Err(crate::shared::error::Error::NotFound) => ApiResponseBuilder::error("用户不存在".to_string()),
+        Err(crate::shared::error::Error::NotFound) => {
+            ApiResponseBuilder::error("用户不存在".to_string())
+        }
         Err(e) => {
             tracing::error!("Failed to update user {}: {}", id, e);
             ApiResponseBuilder::error("更新用户失败".to_string())
@@ -308,7 +302,9 @@ async fn enable_user(
             tracing::info!("User enabled: {}", id);
             ApiResponseBuilder::success(true)
         }
-        Err(crate::shared::error::Error::NotFound) => ApiResponseBuilder::error("用户不存在".to_string()),
+        Err(crate::shared::error::Error::NotFound) => {
+            ApiResponseBuilder::error("用户不存在".to_string())
+        }
         Err(e) => {
             tracing::error!("Failed to enable user {}: {}", id, e);
             ApiResponseBuilder::error("启用用户失败".to_string())
@@ -334,7 +330,9 @@ async fn disable_user(
             tracing::info!("User disabled: {}", id);
             ApiResponseBuilder::success(true)
         }
-        Err(crate::shared::error::Error::NotFound) => ApiResponseBuilder::error("用户不存在".to_string()),
+        Err(crate::shared::error::Error::NotFound) => {
+            ApiResponseBuilder::error("用户不存在".to_string())
+        }
         Err(e) => {
             tracing::error!("Failed to disable user {}: {}", id, e);
             ApiResponseBuilder::error("禁用用户失败".to_string())

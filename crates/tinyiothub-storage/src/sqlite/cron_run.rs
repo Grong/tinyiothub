@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 use sqlx::{QueryBuilder, Row};
 
-use crate::traits::cron::CronRunRepository;
-use tinyiothub_core::models::cron_job::{CronRun, CronRunQuery};
 use crate::sqlite::database::Database;
+use crate::traits::cron::CronRunRepository;
 use tinyiothub_core::error::Result;
+use tinyiothub_core::models::cron_job::{CronRun, CronRunQuery};
 use tinyiothub_core::{generate_id, now_string};
 
 pub struct SqliteCronRunRepository {
@@ -17,9 +17,7 @@ impl SqliteCronRunRepository {
     }
 }
 
-fn map_cron_run_row(
-    row: &sqlx::sqlite::SqliteRow,
-) -> std::result::Result<CronRun, sqlx::Error> {
+fn map_cron_run_row(row: &sqlx::sqlite::SqliteRow) -> std::result::Result<CronRun, sqlx::Error> {
     Ok(CronRun {
         id: row.try_get("id")?,
         job_id: row.try_get("job_id")?,
@@ -123,12 +121,7 @@ impl CronRunRepository for SqliteCronRunRepository {
         Ok(map_cron_run_row(&row)?)
     }
 
-    async fn find_by_job_id(
-        &self,
-        job_id: &str,
-        workspace_id: &str,
-        query: &CronRunQuery,
-    ) -> Result<Vec<CronRun>> {
+    async fn find_by_job_id(&self, job_id: &str, workspace_id: &str, query: &CronRunQuery) -> Result<Vec<CronRun>> {
         let mut builder = QueryBuilder::<sqlx::Sqlite>::new(
             r#"
             SELECT id, job_id, workspace_id, started_at, ended_at, duration_ms, status,
@@ -183,48 +176,38 @@ impl CronRunRepository for SqliteCronRunRepository {
     }
 
     async fn delete_by_job_id(&self, job_id: &str, workspace_id: &str) -> Result<u64> {
-        let result = sqlx::query(
-            "DELETE FROM cron_runs WHERE job_id = ? AND workspace_id = ?",
-        )
-        .bind(job_id)
-        .bind(workspace_id)
-        .execute(self.database.pool())
-        .await?;
+        let result = sqlx::query("DELETE FROM cron_runs WHERE job_id = ? AND workspace_id = ?")
+            .bind(job_id)
+            .bind(workspace_id)
+            .execute(self.database.pool())
+            .await?;
 
         Ok(result.rows_affected())
     }
 
     async fn count_by_job_id(&self, job_id: &str, workspace_id: &str) -> Result<i64> {
-        let row = sqlx::query(
-            "SELECT COUNT(*) as count FROM cron_runs WHERE job_id = ? AND workspace_id = ?",
-        )
-        .bind(job_id)
-        .bind(workspace_id)
-        .fetch_one(self.database.pool())
-        .await?;
+        let row = sqlx::query("SELECT COUNT(*) as count FROM cron_runs WHERE job_id = ? AND workspace_id = ?")
+            .bind(job_id)
+            .bind(workspace_id)
+            .fetch_one(self.database.pool())
+            .await?;
 
         let count: i64 = row.get("count");
         Ok(count)
     }
 
     async fn count_by_status(&self, workspace_id: &str, status: &str) -> Result<i64> {
-        let row = sqlx::query(
-            "SELECT COUNT(*) as count FROM cron_runs WHERE workspace_id = ? AND status = ?",
-        )
-        .bind(workspace_id)
-        .bind(status)
-        .fetch_one(self.database.pool())
-        .await?;
+        let row = sqlx::query("SELECT COUNT(*) as count FROM cron_runs WHERE workspace_id = ? AND status = ?")
+            .bind(workspace_id)
+            .bind(status)
+            .fetch_one(self.database.pool())
+            .await?;
 
         let count: i64 = row.get("count");
         Ok(count)
     }
 
-    async fn find_all(
-        &self,
-        workspace_id: &str,
-        query: &CronRunQuery,
-    ) -> Result<Vec<CronRun>> {
+    async fn find_all(&self, workspace_id: &str, query: &CronRunQuery) -> Result<Vec<CronRun>> {
         let mut builder = QueryBuilder::<sqlx::Sqlite>::new(
             r#"
             SELECT id, job_id, workspace_id, started_at, ended_at, duration_ms, status,
@@ -377,7 +360,9 @@ mod tests {
     async fn test_find_by_job_id_with_status_filter() {
         let repo = setup_repo().await;
         let run = repo.create("job-1", "ws-1", "schedule", None).await.unwrap();
-        repo.complete(&run.id, "ws-1", "success", None, None, 100).await.unwrap();
+        repo.complete(&run.id, "ws-1", "success", None, None, 100)
+            .await
+            .unwrap();
         repo.create("job-1", "ws-1", "schedule", None).await.unwrap();
 
         let query = CronRunQuery {
@@ -419,7 +404,9 @@ mod tests {
     async fn test_count_by_status() {
         let repo = setup_repo().await;
         let run1 = repo.create("job-1", "ws-1", "schedule", None).await.unwrap();
-        repo.complete(&run1.id, "ws-1", "success", None, None, 100).await.unwrap();
+        repo.complete(&run1.id, "ws-1", "success", None, None, 100)
+            .await
+            .unwrap();
         repo.create("job-2", "ws-1", "schedule", None).await.unwrap();
 
         assert_eq!(repo.count_by_status("ws-1", "success").await.unwrap(), 1);
@@ -450,10 +437,14 @@ mod tests {
         let repo = setup_repo().await;
 
         let run1 = repo.create("job-1", "ws-1", "schedule", None).await.unwrap();
-        repo.complete(&run1.id, "ws-1", "success", None, None, 100).await.unwrap();
+        repo.complete(&run1.id, "ws-1", "success", None, None, 100)
+            .await
+            .unwrap();
 
         let run2 = repo.create("job-1", "ws-1", "schedule", None).await.unwrap();
-        repo.complete(&run2.id, "ws-1", "success", None, None, 300).await.unwrap();
+        repo.complete(&run2.id, "ws-1", "success", None, None, 300)
+            .await
+            .unwrap();
 
         let avg = repo.avg_duration_ms("ws-1").await.unwrap();
         // AVG(100, 300) = 200
@@ -468,7 +459,9 @@ mod tests {
         repo.create("job-1", "ws-1", "schedule", None).await.unwrap();
 
         let run2 = repo.create("job-1", "ws-1", "schedule", None).await.unwrap();
-        repo.complete(&run2.id, "ws-1", "success", None, None, 500).await.unwrap();
+        repo.complete(&run2.id, "ws-1", "success", None, None, 500)
+            .await
+            .unwrap();
 
         let avg = repo.avg_duration_ms("ws-1").await.unwrap();
         // Only the completed run (500) should be counted

@@ -5,10 +5,10 @@ use chrono::{DateTime, Utc};
 
 use crate::{
     modules::event::{
+        EventError, Result,
         entities::Event,
         repositories::EventRepository,
         value_objects::{EventId, EventLevel, EventType, RichContent},
-        EventError, Result,
     },
     shared::event::security::{
         AccessResult, AccessType, EncryptedContent, EventAccessControl, EventAuditLog,
@@ -36,7 +36,14 @@ impl SecureEventService {
         config: EventSecurityConfig,
         db: Arc<crate::shared::persistence::Database>,
     ) -> Result<Self> {
-        Ok(Self { event_repository, access_control, encryption, audit_log, config: std::sync::RwLock::new(config), db })
+        Ok(Self {
+            event_repository,
+            access_control,
+            encryption,
+            audit_log,
+            config: std::sync::RwLock::new(config),
+            db,
+        })
     }
 
     /// Create an event with security checks
@@ -58,7 +65,9 @@ impl SecureEventService {
         }
 
         // Encrypt sensitive content if enabled
-        if self.config.read().unwrap().enable_encryption && self.encryption.should_encrypt(event.content()) {
+        if self.config.read().unwrap().enable_encryption
+            && self.encryption.should_encrypt(event.content())
+        {
             let encrypted_content = self.encryption.encrypt_content(event.content())?;
             // Convert encrypted content back to RichContent for storage
             // This is a simplified approach - in practice you might store encrypted data differently
@@ -74,7 +83,7 @@ impl SecureEventService {
                 event.level(),
                 event.timestamp(),
                 event.source().clone(),
-                encrypted_rich_content
+                encrypted_rich_content,
             );
         }
 
@@ -118,25 +127,22 @@ impl SecureEventService {
             // Check if content appears to be encrypted (simplified check)
             if event.content().title() == "Encrypted Content"
                 && let Some(first_element) = event.content().elements().first()
-                    && let crate::modules::event::value_objects::ContentElement::Text {
-                        content,
-                        ..
-                    } = first_element
-                        && let Ok(encrypted_data) =
-                            serde_json::from_str::<EncryptedContent>(content)
-                            && let Ok(decrypted_content) =
-                                self.encryption.decrypt_content(&encrypted_data)
-                            {
-                                // Create a new event with decrypted content
-                                event = Event::reconstruct(
-                                    event.id().clone(),
-                                    event.event_type().clone(),
-                                    event.level(),
-                                    event.timestamp(),
-                                    event.source().clone(),
-                                    decrypted_content
-                                );
-                            }
+                && let crate::modules::event::value_objects::ContentElement::Text {
+                    content, ..
+                } = first_element
+                && let Ok(encrypted_data) = serde_json::from_str::<EncryptedContent>(content)
+                && let Ok(decrypted_content) = self.encryption.decrypt_content(&encrypted_data)
+            {
+                // Create a new event with decrypted content
+                event = Event::reconstruct(
+                    event.id().clone(),
+                    event.event_type().clone(),
+                    event.level(),
+                    event.timestamp(),
+                    event.source().clone(),
+                    decrypted_content,
+                );
+            }
         }
 
         // Log the access
@@ -172,27 +178,26 @@ impl SecureEventService {
         for mut event in events {
             if self.access_control.can_read_event(user_id, &event).await? {
                 // Decrypt content if encrypted
-                if self.config.read().unwrap().enable_encryption && event.content().title() == "Encrypted Content"
+                if self.config.read().unwrap().enable_encryption
+                    && event.content().title() == "Encrypted Content"
                     && let Some(first_element) = event.content().elements().first()
-                        && let crate::modules::event::value_objects::ContentElement::Text {
-                            content,
-                            ..
-                        } = first_element
-                            && let Ok(encrypted_data) =
-                                serde_json::from_str::<EncryptedContent>(content)
-                                && let Ok(decrypted_content) =
-                                    self.encryption.decrypt_content(&encrypted_data)
-                                {
-                                    // Create a new event with decrypted content
-                                    event = Event::reconstruct(
-                                        event.id().clone(),
-                                        event.event_type().clone(),
-                                        event.level(),
-                                        event.timestamp(),
-                                        event.source().clone(),
-                                        decrypted_content
-                                    );
-                                }
+                    && let crate::modules::event::value_objects::ContentElement::Text {
+                        content,
+                        ..
+                    } = first_element
+                    && let Ok(encrypted_data) = serde_json::from_str::<EncryptedContent>(content)
+                    && let Ok(decrypted_content) = self.encryption.decrypt_content(&encrypted_data)
+                {
+                    // Create a new event with decrypted content
+                    event = Event::reconstruct(
+                        event.id().clone(),
+                        event.event_type().clone(),
+                        event.level(),
+                        event.timestamp(),
+                        event.source().clone(),
+                        decrypted_content,
+                    );
+                }
                 filtered_events.push(event);
             }
         }
@@ -223,7 +228,7 @@ impl SecureEventService {
         let existing_event = match self.event_repository.find_by_id(event_id).await? {
             Some(event) => event,
             None => {
-                return Err(EventError::NotFound { id: format!("Event {} not found", event_id) })
+                return Err(EventError::NotFound { id: format!("Event {} not found", event_id) });
             }
         };
 
@@ -244,7 +249,8 @@ impl SecureEventService {
         }
 
         // Encrypt content if enabled
-        if self.config.read().unwrap().enable_encryption && self.encryption.should_encrypt(updated_event.content())
+        if self.config.read().unwrap().enable_encryption
+            && self.encryption.should_encrypt(updated_event.content())
         {
             let encrypted_content = self.encryption.encrypt_content(updated_event.content())?;
             let encrypted_rich_content = RichContent::new_text(
@@ -259,7 +265,7 @@ impl SecureEventService {
                 updated_event.level(),
                 updated_event.timestamp(),
                 updated_event.source().clone(),
-                encrypted_rich_content
+                encrypted_rich_content,
             );
         }
 
@@ -281,7 +287,7 @@ impl SecureEventService {
         let existing_event = match self.event_repository.find_by_id(event_id).await? {
             Some(event) => event,
             None => {
-                return Err(EventError::NotFound { id: format!("Event {} not found", event_id) })
+                return Err(EventError::NotFound { id: format!("Event {} not found", event_id) });
             }
         };
 
@@ -395,8 +401,9 @@ impl SecureEventService {
     pub async fn save_config_to_db(&self) -> Result<()> {
         let json = {
             let cfg = self.config.read().unwrap();
-            serde_json::to_string(&*cfg)
-                .map_err(|e| EventError::Configuration(format!("Failed to serialize config: {}", e)))?
+            serde_json::to_string(&*cfg).map_err(|e| {
+                EventError::Configuration(format!("Failed to serialize config: {}", e))
+            })?
         };
 
         sqlx::query(

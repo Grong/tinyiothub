@@ -1,13 +1,12 @@
-use crate::shared::security::jwt::Claims;
-use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
+    Json, Router,
     extract::{Query, State},
     routing::get,
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use tinyiothub_web::response::ApiResponseBuilder;
 
-use crate::{shared::app_state::AppState, shared::api_response::ApiResponse};
+use crate::shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims};
 
 /// Performance monitoring query parameters
 #[derive(Debug, Deserialize)]

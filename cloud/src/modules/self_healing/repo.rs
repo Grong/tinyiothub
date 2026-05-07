@@ -5,9 +5,8 @@ use std::sync::Arc;
 
 use sqlx::Row;
 
-use crate::shared::persistence::Database;
-
 use super::types::{ExecutionResult, HealingExecution, RecoveryActionType, SeverityLevel};
+use crate::shared::persistence::Database;
 
 /// Repository for storing and retrieving healing executions
 pub struct HealingExecutionRepository {
@@ -114,8 +113,7 @@ impl HealingExecutionRepository {
                 _ => ExecutionResult::Failed,
             };
 
-            let logs: Vec<String> =
-                serde_json::from_str(&logs_str).unwrap_or_else(|_| Vec::new());
+            let logs: Vec<String> = serde_json::from_str(&logs_str).unwrap_or_else(|_| Vec::new());
 
             executions.push(HealingExecution {
                 id,
@@ -137,10 +135,7 @@ impl HealingExecutionRepository {
             SELECT COUNT(*) as cnt FROM healing_executions WHERE tenant_id = ?
         "#;
 
-        let row = sqlx::query(sql)
-            .bind(tenant_id)
-            .fetch_one(self.db.pool())
-            .await?;
+        let row = sqlx::query(sql).bind(tenant_id).fetch_one(self.db.pool()).await?;
         let cnt: i64 = row.try_get("cnt")?;
         Ok(cnt as u32)
     }

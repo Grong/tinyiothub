@@ -59,7 +59,10 @@ enabled = true
 
     let value: toml::Value = toml::from_str(toml_str).unwrap();
     assert_eq!(value.get("plugin").unwrap().get("type").unwrap().as_str().unwrap(), "scheduler");
-    assert_eq!(value.get("scheduler").unwrap().get("cron").unwrap().as_str().unwrap(), "0 */5 * * * *");
+    assert_eq!(
+        value.get("scheduler").unwrap().get("cron").unwrap().as_str().unwrap(),
+        "0 */5 * * * *"
+    );
 }
 
 #[test]

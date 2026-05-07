@@ -1,17 +1,20 @@
 //! 企业微信集成处理器
 
 use std::any::Any;
+
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
 
-use crate::modules::plugin::integration::IntegrationRequest;
-use crate::modules::plugin::{PluginHandler, PluginManifest, PluginType};
-use crate::shared::error::Error;
-
-use crate::modules::plugin::integration::handlers::IntegrationHandler;
 use super::super::config::WeComConfig;
+use crate::{
+    modules::plugin::{
+        PluginHandler, PluginManifest, PluginType,
+        integration::{IntegrationRequest, handlers::IntegrationHandler},
+    },
+    shared::error::Error,
+};
 
 #[derive(Serialize)]
 struct WeComSendRequest {
@@ -56,11 +59,14 @@ impl WeComHandler {
             self.config.corp_id, self.config.corp_secret
         );
 
-        let resp = self.client.get(&url)
-            .send().await
-            .map_err(|e| Error::NetworkError(format!("Failed to get WeCom access token: {}", e)))?;
+        let resp =
+            self.client.get(&url).send().await.map_err(|e| {
+                Error::NetworkError(format!("Failed to get WeCom access token: {}", e))
+            })?;
 
-        let token_resp: WeComAccessTokenResponse = resp.json().await
+        let token_resp: WeComAccessTokenResponse = resp
+            .json()
+            .await
             .map_err(|e| Error::NetworkError(format!("Failed to parse WeCom response: {}", e)))?;
 
         Ok(token_resp.access_token)
@@ -87,9 +93,12 @@ impl IntegrationHandler for WeComHandler {
             text: serde_json::json!({ "content": request.content.clone() }),
         };
 
-        let resp = self.client.post(&url)
+        let resp = self
+            .client
+            .post(&url)
             .json(&send_req)
-            .send().await
+            .send()
+            .await
             .map_err(|e| Error::NetworkError(format!("Failed to send WeCom message: {}", e)))?;
 
         if !resp.status().is_success() {

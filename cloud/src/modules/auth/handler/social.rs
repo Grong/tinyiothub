@@ -1,23 +1,23 @@
 // 第三方登录模块
 // 支持微信扫码登录
 
-use tinyiothub_web::response::ApiResponseBuilder;
-use crate::modules::user::User;
 use axum::{
+    Router,
     extract::{Query, State},
     http::StatusCode,
     response::{Html, IntoResponse, Json, Response},
     routing::{get, post},
-    Router
 };
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
+use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
-    shared::app_state::AppState,
-    shared::api_response::ApiResponse,
-    shared::{config::get as get_config, redis::RedisClient},
-    shared::security::jwt
+    modules::user::User,
+    shared::{
+        api_response::ApiResponse, app_state::AppState, config::get as get_config,
+        redis::RedisClient, security::jwt,
+    },
 };
 
 pub fn create_router() -> Router<AppState> {
@@ -198,7 +198,11 @@ async fn get_wechat_qrcode(
         }
     }
 
-    ApiResponseBuilder::success(WeChatQRCodeResponse { qrcode_url, authorize_url, state: oauth_state })
+    ApiResponseBuilder::success(WeChatQRCodeResponse {
+        qrcode_url,
+        authorize_url,
+        state: oauth_state,
+    })
 }
 
 /// 微信回调处理
@@ -253,8 +257,8 @@ async fn wechat_callback(
 
     let wechat_config = WechatOAuthConfig {
         app_id: config.app_id.unwrap_or_default(),
-        app_secret: config.app_secret.unwrap_or_default()
-};
+        app_secret: config.app_secret.unwrap_or_default(),
+    };
 
     let token_resp = match exchange_wechat_code(&code, &wechat_config).await {
         Ok(r) => r,
@@ -277,26 +281,29 @@ async fn wechat_callback(
     };
 
     // 生成 JWT
-    let tenant_id: String = sqlx::query_scalar(
-        "SELECT tenant_id FROM tenant_users WHERE user_id = ? LIMIT 1"
-    )
-    .bind(&user.id)
-    .fetch_optional(db.pool())
-    .await
-    .unwrap_or(None)
-    .unwrap_or_else(|| "default".to_string());
+    let tenant_id: String =
+        sqlx::query_scalar("SELECT tenant_id FROM tenant_users WHERE user_id = ? LIMIT 1")
+            .bind(&user.id)
+            .fetch_optional(db.pool())
+            .await
+            .unwrap_or(None)
+            .unwrap_or_else(|| "default".to_string());
 
     // 查找该租户的第一个 workspace 作为默认 workspace
-    let workspace_id: Option<String> = sqlx::query_scalar(
-        "SELECT id FROM workspaces WHERE tenant_id = ? LIMIT 1"
-    )
-    .bind(&tenant_id)
-    .fetch_optional(db.pool())
-    .await
-    .unwrap_or(None);
+    let workspace_id: Option<String> =
+        sqlx::query_scalar("SELECT id FROM workspaces WHERE tenant_id = ? LIMIT 1")
+            .bind(&tenant_id)
+            .fetch_optional(db.pool())
+            .await
+            .unwrap_or(None);
 
     let workspace_id_for_token = workspace_id.clone().unwrap_or_default();
-    let jwt_token = match jwt::generate_token(&user.id, &user.username, &tenant_id, &workspace_id_for_token) {
+    let jwt_token = match jwt::generate_token(
+        &user.id,
+        &user.username,
+        &tenant_id,
+        &workspace_id_for_token,
+    ) {
         Ok(t) => t,
         Err(e) => {
             tracing::error!("Failed to generate JWT: {}", e);
@@ -306,7 +313,9 @@ async fn wechat_callback(
     };
 
     // 存储社交绑定（如果不存在）
-    if let Err(e) = save_social_binding(state.database(), &user.id, "wechat", &token_resp.openid).await {
+    if let Err(e) =
+        save_social_binding(state.database(), &user.id, "wechat", &token_resp.openid).await
+    {
         tracing::warn!("Failed to save social binding: {:?}", e);
     }
 
@@ -316,7 +325,9 @@ async fn wechat_callback(
         window.opener.postMessage({{type:'wechat_callback',code:'{}',access_token:'{}',workspace_id:'{}'}},window.location.origin);
         window.close();
     </script></body></html>"#,
-        code, jwt_token, workspace_id.unwrap_or_default()
+        code,
+        jwt_token,
+        workspace_id.unwrap_or_default()
     );
 
     Html(html).into_response()
@@ -358,12 +369,10 @@ async fn wechat_login(
 
     // 这里返回模拟响应（开发阶段）
     // 查找默认 workspace
-    let workspace_id: Option<String> = sqlx::query_scalar(
-        "SELECT id FROM workspaces LIMIT 1"
-    )
-    .fetch_optional(db.pool())
-    .await
-    .unwrap_or(None);
+    let workspace_id: Option<String> = sqlx::query_scalar("SELECT id FROM workspaces LIMIT 1")
+        .fetch_optional(db.pool())
+        .await
+        .unwrap_or(None);
 
     ApiResponseBuilder::success(WeChatLoginResponse {
         access_token: "mock_token".to_string(),
@@ -413,12 +422,10 @@ async fn wechat_miniprogram_login(
     // let api_url = "https://api.weixin.qq.com/sns/jscode2session";
 
     // 查找默认 workspace
-    let workspace_id: Option<String> = sqlx::query_scalar(
-        "SELECT id FROM workspaces LIMIT 1"
-    )
-    .fetch_optional(db.pool())
-    .await
-    .unwrap_or(None);
+    let workspace_id: Option<String> = sqlx::query_scalar("SELECT id FROM workspaces LIMIT 1")
+        .fetch_optional(db.pool())
+        .await
+        .unwrap_or(None);
 
     ApiResponseBuilder::success(WeChatLoginResponse {
         access_token: "mock_mp_token".to_string(),
@@ -516,9 +523,7 @@ async fn update_social_config(
 
 // ============== 辅助函数 ==============
 
-async fn get_wechat_config(
-    db: &crate::shared::persistence::Database,
-) -> Option<SocialConfig> {
+async fn get_wechat_config(db: &crate::shared::persistence::Database) -> Option<SocialConfig> {
     let sql = "SELECT * FROM social_configs WHERE provider = 'wechat' LIMIT 1";
 
     let rows = db
@@ -546,14 +551,12 @@ struct WechatOAuthConfig {
 }
 
 /// 验证并删除 OAuth state 参数
-async fn verify_oauth_state(
-    redis: &Option<RedisClient>,
-    state: &str,
-) -> Result<bool, StatusCode> {
+async fn verify_oauth_state(redis: &Option<RedisClient>, state: &str) -> Result<bool, StatusCode> {
     let redis = redis.as_ref().ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let key = format!("wechat:state:{}", state);
-    let exists: Option<String> = redis.get(&key).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let exists: Option<String> =
+        redis.get(&key).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if exists.is_some() {
         // 删除 state（一次性使用）
@@ -575,11 +578,7 @@ async fn exchange_wechat_code(
     );
 
     let client = reqwest::Client::new();
-    let resp = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("Network error: {}", e))?;
+    let resp = client.get(&url).send().await.map_err(|e| format!("Network error: {}", e))?;
 
     #[derive(Deserialize)]
     struct WechatErrorResponse {
@@ -588,22 +587,16 @@ async fn exchange_wechat_code(
     }
 
     // 检查微信返回错误
-    let body = resp
-        .bytes()
-        .await
-        .map_err(|e| format!("Read body error: {}", e))?;
+    let body = resp.bytes().await.map_err(|e| format!("Read body error: {}", e))?;
 
     // 尝试解析错误响应
     if let Ok(err_resp) = serde_json::from_slice::<WechatErrorResponse>(&body)
-        && err_resp.errcode != 0 {
-            return Err(format!(
-                "WeChat API error: {} - {}",
-                err_resp.errcode, err_resp.errmsg
-            ));
-        }
+        && err_resp.errcode != 0
+    {
+        return Err(format!("WeChat API error: {} - {}", err_resp.errcode, err_resp.errmsg));
+    }
 
-    serde_json::from_slice::<WechatTokenResponse>(&body)
-        .map_err(|e| format!("Parse error: {}", e))
+    serde_json::from_slice::<WechatTokenResponse>(&body).map_err(|e| format!("Parse error: {}", e))
 }
 
 #[derive(Deserialize)]
@@ -632,9 +625,8 @@ async fn find_or_create_user_by_wechat(
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if let Some(row) = rows.into_iter().next() {
-        let user_id: String = row
-            .try_get("user_id")
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let user_id: String =
+            row.try_get("user_id").map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
         // 获取用户信息
         let user_rows = sqlx::query("SELECT * FROM users WHERE id = ? LIMIT 1")
@@ -670,11 +662,7 @@ async fn find_or_create_user_by_wechat(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    user_rows
-        .into_iter()
-        .next()
-        .map(user_from_row)
-        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)
+    user_rows.into_iter().next().map(user_from_row).ok_or(StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 fn user_from_row(row: sqlx::sqlite::SqliteRow) -> User {

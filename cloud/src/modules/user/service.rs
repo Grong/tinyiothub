@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
-use super::repo::{UserCriteria, UserRepository, UserSortBy, UserSortOrder};
-use super::types::{CreateUserRequest, UpdateUserRequest, User, UserQueryParams, UserStatisticsNew};
-use crate::{
-    shared::error::{Error, Result},
-    shared::utils::password::{hash_password, verify_password},
+use super::{
+    repo::{UserCriteria, UserRepository, UserSortBy, UserSortOrder},
+    types::{CreateUserRequest, UpdateUserRequest, User, UserQueryParams, UserStatisticsNew},
+};
+use crate::shared::{
+    error::{Error, Result},
+    utils::password::{hash_password, verify_password},
 };
 
 /// User domain service
@@ -25,12 +27,10 @@ impl UserService {
         page: u32,
         page_size: u32,
     ) -> Result<(Vec<User>, i64)> {
-        let users = self.repository.find_with_filters(enabled, search.clone(), page, page_size).await?;
-        let criteria = UserCriteria {
-            is_enabled: enabled,
-            search_text: search,
-            ..Default::default()
-        };
+        let users =
+            self.repository.find_with_filters(enabled, search.clone(), page, page_size).await?;
+        let criteria =
+            UserCriteria { is_enabled: enabled, search_text: search, ..Default::default() };
         let total = self.repository.count(&criteria).await?;
         Ok((users, total))
     }
@@ -41,7 +41,9 @@ impl UserService {
             return Err(Error::ValidationError("Username cannot be empty".to_string()));
         }
         if request.password.len() < 8 {
-            return Err(Error::ValidationError("Password must be at least 8 characters long".to_string()));
+            return Err(Error::ValidationError(
+                "Password must be at least 8 characters long".to_string(),
+            ));
         }
 
         let password_hash = hash_password(&request.password)
@@ -96,8 +98,9 @@ impl UserService {
 
         match verify_password(old_password, &user.password_hash) {
             Ok(true) => {
-                let new_hash = hash_password(new_password)
-                    .map_err(|e| Error::ValidationError(format!("Password hashing failed: {}", e)))?;
+                let new_hash = hash_password(new_password).map_err(|e| {
+                    Error::ValidationError(format!("Password hashing failed: {}", e))
+                })?;
                 self.repository.update_password(id, &new_hash).await?;
                 Ok(true)
             }
@@ -121,7 +124,7 @@ impl UserService {
 
         match verify_password(password, &user.password_hash) {
             Ok(true) if user.is_enabled => Ok(Some(user)),
-            Ok(true) => Ok(None), // User disabled
+            Ok(true) => Ok(None),  // User disabled
             Ok(false) => Ok(None), // Password mismatch
             Err(e) => Err(Error::ValidationError(format!("password verification failed: {}", e))),
         }

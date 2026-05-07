@@ -1,22 +1,17 @@
 // Workspaces API handlers
 
-use crate::shared::security::jwt::Claims;
-use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
+    Json, Router,
     extract::{Extension, Path, Query, State},
     routing::{delete, get, post, put},
-    Json,
-    Router,
 };
+use tinyiothub_web::response::ApiResponseBuilder;
 
 use super::types::{
-    AssignDeviceRequest, CreateWorkspaceRequest, UpdateWorkspaceRequest,
-    WorkspaceQueryParams, WorkspaceWithDeviceCount,
+    AssignDeviceRequest, CreateWorkspaceRequest, UpdateWorkspaceRequest, WorkspaceQueryParams,
+    WorkspaceWithDeviceCount,
 };
-use crate::{
-    shared::api_response::ApiResponse,
-    shared::app_state::AppState,
-};
+use crate::shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims};
 
 /// Create workspaces router
 pub fn create_router() -> Router<AppState> {
@@ -35,7 +30,11 @@ async fn list_workspaces(
     Extension(claims): Extension<Claims>,
     Query(params): Query<WorkspaceQueryParams>,
 ) -> Json<ApiResponse<Vec<WorkspaceWithDeviceCount>>> {
-    match state.workspace_service.find_by_tenant(&claims.tenant_id, params.page, params.page_size).await {
+    match state
+        .workspace_service
+        .find_by_tenant(&claims.tenant_id, params.page, params.page_size)
+        .await
+    {
         Ok(workspaces) => ApiResponseBuilder::success(workspaces),
         Err(e) => {
             tracing::error!("Failed to list workspaces: {}", e);
@@ -71,14 +70,10 @@ async fn create_workspace(
     Extension(claims): Extension<Claims>,
     Json(payload): Json<CreateWorkspaceRequest>,
 ) -> Json<ApiResponse<WorkspaceWithDeviceCount>> {
-    let workspace = match state.workspace_service.create(
-        &claims.tenant_id,
-        &payload.name,
-        payload.description.as_deref(),
-        None,
-        None,
-    )
-    .await
+    let workspace = match state
+        .workspace_service
+        .create(&claims.tenant_id, &payload.name, payload.description.as_deref(), None, None)
+        .await
     {
         Ok(ws) => ws,
         Err(e) => {
@@ -98,8 +93,10 @@ async fn create_workspace(
 
     let (final_workspace, warning) = match agent_result {
         Ok(_agent_id) => {
-            if let Ok(Some(updated)) =
-                state.workspace_service.update(&workspace.id, None, None, Some(&_agent_id), None).await
+            if let Ok(Some(updated)) = state
+                .workspace_service
+                .update(&workspace.id, None, None, Some(&_agent_id), None)
+                .await
             {
                 (updated, None)
             } else {
@@ -173,14 +170,16 @@ async fn update_workspace(
         }
     }
 
-    match state.workspace_service.update(
-        &id,
-        payload.name.as_deref(),
-        payload.description.as_deref(),
-        None,
-        payload.agent_config.as_deref(),
-    )
-    .await
+    match state
+        .workspace_service
+        .update(
+            &id,
+            payload.name.as_deref(),
+            payload.description.as_deref(),
+            None,
+            payload.agent_config.as_deref(),
+        )
+        .await
     {
         Ok(Some(workspace)) => ApiResponseBuilder::success(workspace),
         Ok(None) => ApiResponseBuilder::error_with_code(404, "工作空间不存在"),
@@ -212,13 +211,14 @@ async fn delete_workspace(
     };
 
     if let Some(agent_id) = workspace.agent_id
-        && let Err(e) = state.agent_runtime.delete_agent(&agent_id).await {
-            tracing::warn!(
-                "Failed to delete agent {}: {}. Proceeding with workspace deletion.",
-                agent_id,
-                e
-            );
-        }
+        && let Err(e) = state.agent_runtime.delete_agent(&agent_id).await
+    {
+        tracing::warn!(
+            "Failed to delete agent {}: {}. Proceeding with workspace deletion.",
+            agent_id,
+            e
+        );
+    }
 
     match state.workspace_service.delete(&id).await {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({"success": true})),

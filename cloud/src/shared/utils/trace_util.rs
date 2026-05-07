@@ -74,9 +74,10 @@ impl DeviceTracer {
     ) -> Result<String, crate::shared::error::Error> {
         let mut details = comm_details.unwrap_or_default();
         if let Some(duration) = duration_ms
-            && let serde_json::Value::Object(ref mut map) = details {
-                map.insert("duration_ms".to_string(), serde_json::Value::Number(duration.into()));
-            }
+            && let serde_json::Value::Object(ref mut map) = details
+        {
+            map.insert("duration_ms".to_string(), serde_json::Value::Number(duration.into()));
+        }
 
         self.trace_service
             .record_device_trace(

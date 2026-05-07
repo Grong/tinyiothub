@@ -1,17 +1,15 @@
-use crate::shared::security::jwt::Claims;
-use tinyiothub_web::response::ApiResponseBuilder;
-use tinyiothub_core::models::device_property::DeviceProperty;
 use axum::{
+    Json, Router,
     extract::{Path, State},
     routing::{get, put},
-    Json, Router
 };
 use serde::Deserialize;
+use tinyiothub_core::models::device_property::DeviceProperty;
+use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
-    shared::api_response::ApiResponse,
-    shared::{app_state::AppState},
     api::middleware::WorkspaceScope,
+    shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims},
 };
 
 #[derive(Deserialize)]
@@ -24,7 +22,10 @@ pub fn create_router() -> Router<AppState> {
     Router::new()
         .route("/{device_id}/properties", get(get_device_properties))
         .route("/{device_id}/properties/{property_id}/value", put(update_property_value))
-        .route("/by-name/{device_name}/properties/{property_name}", get(get_device_property_by_name))
+        .route(
+            "/by-name/{device_name}/properties/{property_name}",
+            get(get_device_property_by_name),
+        )
 }
 
 /// 获取设备属性列表
@@ -79,7 +80,10 @@ async fn update_property_value(
 ) -> Json<ApiResponse<bool>> {
     // Note: Tenant verification is now handled by the TenantDeviceRepository adapter
     // which automatically filters devices by workspace_id
-    match state.update_device_property_value(&claims.workspace_id, &device_id, &property_id, &req.value).await {
+    match state
+        .update_device_property_value(&claims.workspace_id, &device_id, &property_id, &req.value)
+        .await
+    {
         Ok(()) => {
             tracing::info!(
                 "Property value updated: device={}, property={}, value={}",

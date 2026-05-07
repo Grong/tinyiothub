@@ -1,18 +1,17 @@
 // Probe Scheduler Infrastructure
 // Handles periodic health probes for system, device, and task monitoring
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use chrono::Utc;
-use tokio::sync::broadcast;
-use tokio::time::{interval, Duration};
-use tokio::sync::RwLock;
+use tokio::{
+    sync::{RwLock, broadcast},
+    time::{Duration, interval},
+};
 
 use crate::modules::self_healing::{
-    PolicyEvaluator, ProbeFinding, ProbeResult, ProbeType, SeverityLevel,
+    PolicyEvaluator, ProbeFinding, ProbeResult, ProbeType, SeverityLevel, types::ProbeConfig,
 };
-use crate::modules::self_healing::types::ProbeConfig;
 
 /// Probe scheduler that runs periodic health checks
 pub struct ProbeScheduler {
@@ -41,7 +40,11 @@ impl ProbeScheduler {
     /// Takes ownership of the shutdown receiver and runs until shutdown signal
     pub async fn run(&self) {
         // Take the shutdown receiver from the struct
-        let mut shutdown_rx = self.shutdown_rx.write().await.take()
+        let mut shutdown_rx = self
+            .shutdown_rx
+            .write()
+            .await
+            .take()
             .expect("ProbeScheduler::run() called twice - shutdown_rx already taken");
 
         // Read config to get probe intervals
@@ -166,11 +169,8 @@ impl ProbeScheduler {
         // Check memory usage
         let total_memory = sys.total_memory();
         let used_memory = sys.used_memory();
-        let memory_usage_pct = if total_memory > 0 {
-            (used_memory as f64 / total_memory as f64) * 100.0
-        } else {
-            0.0
-        };
+        let memory_usage_pct =
+            if total_memory > 0 { (used_memory as f64 / total_memory as f64) * 100.0 } else { 0.0 };
         metadata.insert("memory_usage".to_string(), format!("{:.1}%", memory_usage_pct));
 
         if memory_usage_pct >= 90.0 {

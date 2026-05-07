@@ -59,7 +59,10 @@ impl EventBus {
                 debug!("Event {} broadcasted to {} subscribers", event.id(), subscriber_count);
             }
             Err(_) => {
-                warn!("Event {} broadcast failed — channel may be full (capacity=1000)", event.id());
+                warn!(
+                    "Event {} broadcast failed — channel may be full (capacity=1000)",
+                    event.id()
+                );
             }
         }
 
@@ -79,7 +82,10 @@ impl EventBus {
         let mut new: Vec<Arc<dyn EventHandler>> = (**current).clone();
         new.push(handler);
         new.sort_by_key(|h| h.priority());
-        let name = new.last().map(|h| h.name().to_string()).unwrap_or_else(|| "unknown".to_string());
+        let name = new
+            .last()
+            .map(|h| h.name().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
         self.handlers.store(Arc::new(new));
         info!("Registered event handler: {}", name);
     }
@@ -164,9 +170,7 @@ impl std::fmt::Debug for EventBus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tinyiothub_core::models::event::{
-        EventLevel, EventSource, EventType, RichContent, SystemEventType,
-    };
+    use tinyiothub_core::models::event::{EventLevel, EventSource, EventType, RichContent, SystemEventType};
 
     fn create_test_event() -> Event {
         Event::new(

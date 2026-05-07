@@ -2,13 +2,13 @@ use async_trait::async_trait;
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 use sqlx::Row;
+use tinyiothub_core::error::{Error, Result};
+use tinyiothub_storage::sqlite::Database;
 
 use super::types::{
     ApiKey, ApiUsageStats, CreateApiKeyRequest, CreateTenantRequest, SubscriptionPlan, Tenant,
     TenantUsage,
 };
-use tinyiothub_core::error::{Error, Result};
-use tinyiothub_storage::sqlite::Database;
 
 /// Repository interface for tenant persistence
 #[async_trait]
@@ -101,10 +101,7 @@ fn generate_secure_key() -> String {
     let mut bytes = [0u8; 36];
     rand::rngs::OsRng.fill_bytes(&mut bytes);
     const CHARS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    bytes
-        .iter()
-        .map(|b| CHARS[(b % 62) as usize] as char)
-        .collect()
+    bytes.iter().map(|b| CHARS[(b % 62) as usize] as char).collect()
 }
 
 #[async_trait]
@@ -212,9 +209,7 @@ impl TenantRepository for SqliteTenantRepository {
         .await
         .map_err(|e| Error::DatabaseError(e.to_string()))?;
 
-        self.find_tenant_by_id(&id)
-            .await?
-            .ok_or(Error::NotFound)
+        self.find_tenant_by_id(&id).await?.ok_or(Error::NotFound)
     }
 
     async fn find_tenant_by_id(&self, id: &str) -> Result<Option<Tenant>> {
@@ -322,43 +317,33 @@ impl TenantRepository for SqliteTenantRepository {
         .await
         .map_err(|e| Error::DatabaseError(e.to_string()))?;
 
-        self.find_tenant_by_id(tenant_id)
-            .await?
-            .ok_or(Error::NotFound)
+        self.find_tenant_by_id(tenant_id).await?.ok_or(Error::NotFound)
     }
 
     async fn suspend_tenant(&self, tenant_id: &str) -> Result<Tenant> {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-        sqlx::query(
-            "UPDATE tenants SET status = 'suspended', updated_at = ? WHERE id = ?"
-        )
-        .bind(&now)
-        .bind(tenant_id)
-        .execute(self.database.pool())
-        .await
-        .map_err(|e| Error::DatabaseError(e.to_string()))?;
+        sqlx::query("UPDATE tenants SET status = 'suspended', updated_at = ? WHERE id = ?")
+            .bind(&now)
+            .bind(tenant_id)
+            .execute(self.database.pool())
+            .await
+            .map_err(|e| Error::DatabaseError(e.to_string()))?;
 
-        self.find_tenant_by_id(tenant_id)
-            .await?
-            .ok_or(Error::NotFound)
+        self.find_tenant_by_id(tenant_id).await?.ok_or(Error::NotFound)
     }
 
     async fn activate_tenant(&self, tenant_id: &str) -> Result<Tenant> {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-        sqlx::query(
-            "UPDATE tenants SET status = 'active', updated_at = ? WHERE id = ?"
-        )
-        .bind(&now)
-        .bind(tenant_id)
-        .execute(self.database.pool())
-        .await
-        .map_err(|e| Error::DatabaseError(e.to_string()))?;
+        sqlx::query("UPDATE tenants SET status = 'active', updated_at = ? WHERE id = ?")
+            .bind(&now)
+            .bind(tenant_id)
+            .execute(self.database.pool())
+            .await
+            .map_err(|e| Error::DatabaseError(e.to_string()))?;
 
-        self.find_tenant_by_id(tenant_id)
-            .await?
-            .ok_or(Error::NotFound)
+        self.find_tenant_by_id(tenant_id).await?.ok_or(Error::NotFound)
     }
 
     async fn create_api_key(
@@ -407,10 +392,7 @@ impl TenantRepository for SqliteTenantRepository {
         .await
         .map_err(|e| Error::DatabaseError(e.to_string()))?;
 
-        let key = self
-            .find_api_key_by_id(&id)
-            .await?
-            .ok_or(Error::NotFound)?;
+        let key = self.find_api_key_by_id(&id).await?.ok_or(Error::NotFound)?;
 
         Ok((key, raw_key))
     }
@@ -446,13 +428,11 @@ impl TenantRepository for SqliteTenantRepository {
     }
 
     async fn find_api_key_by_prefix(&self, prefix: &str) -> Result<Option<ApiKey>> {
-        let row = sqlx::query(
-            "SELECT * FROM api_keys WHERE prefix = ? AND is_revoked = 0 LIMIT 1"
-        )
-        .bind(prefix)
-        .fetch_optional(self.database.pool())
-        .await
-        .map_err(|e| Error::DatabaseError(e.to_string()))?;
+        let row = sqlx::query("SELECT * FROM api_keys WHERE prefix = ? AND is_revoked = 0 LIMIT 1")
+            .bind(prefix)
+            .fetch_optional(self.database.pool())
+            .await
+            .map_err(|e| Error::DatabaseError(e.to_string()))?;
 
         if let Some(row) = row {
             Ok(Some(ApiKey {
@@ -478,13 +458,12 @@ impl TenantRepository for SqliteTenantRepository {
     }
 
     async fn find_api_key_by_hash(&self, key_hash: &str) -> Result<Option<ApiKey>> {
-        let row = sqlx::query(
-            "SELECT * FROM api_keys WHERE key_hash = ? AND is_revoked = 0 LIMIT 1"
-        )
-        .bind(key_hash)
-        .fetch_optional(self.database.pool())
-        .await
-        .map_err(|e| Error::DatabaseError(e.to_string()))?;
+        let row =
+            sqlx::query("SELECT * FROM api_keys WHERE key_hash = ? AND is_revoked = 0 LIMIT 1")
+                .bind(key_hash)
+                .fetch_optional(self.database.pool())
+                .await
+                .map_err(|e| Error::DatabaseError(e.to_string()))?;
 
         if let Some(row) = row {
             Ok(Some(ApiKey {
@@ -586,13 +565,12 @@ impl TenantRepository for SqliteTenantRepository {
         latency_ms: i32,
         ip_address: Option<&str>,
     ) -> Result<()> {
-        let tenant_id: Option<String> = sqlx::query_scalar(
-            "SELECT tenant_id FROM workspaces WHERE id = ? LIMIT 1"
-        )
-        .bind(workspace_id)
-        .fetch_optional(self.database.pool())
-        .await
-        .map_err(|e| Error::DatabaseError(e.to_string()))?;
+        let tenant_id: Option<String> =
+            sqlx::query_scalar("SELECT tenant_id FROM workspaces WHERE id = ? LIMIT 1")
+                .bind(workspace_id)
+                .fetch_optional(self.database.pool())
+                .await
+                .map_err(|e| Error::DatabaseError(e.to_string()))?;
 
         let tenant_id = tenant_id.unwrap_or_default();
         let id = uuid::Uuid::new_v4().to_string();

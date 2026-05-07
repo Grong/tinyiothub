@@ -1,23 +1,21 @@
 // MCP HTTP Handlers
 // HTTP endpoint handlers for MCP protocol (tools/list + tools/call)
 
-use tinyiothub_web::response::ApiResponseBuilder;
+use std::time::Instant;
+
 use axum::{
+    Json, Router,
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::post,
-    Json, Router,
 };
-use sha2::Digest;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::time::Instant;
-
-use crate::{
-    shared::app_state::AppState,
-};
+use sha2::Digest;
+use tinyiothub_web::response::ApiResponseBuilder;
 
 use super::tool_registry::{ToolError, ToolMetadata};
+use crate::shared::app_state::AppState;
 
 /// MCP auth context: workspace isolation for API Key authentication.
 /// Unlike JWT-based auth (which had user_id/tenant_id), API Keys are bound
@@ -46,20 +44,12 @@ impl McpAuthContext {
 
     /// Create context for JWT-authenticated user requests
     pub fn for_jwt(workspace_id: String, user_id: String) -> Self {
-        Self {
-            workspace_id,
-            api_key_id: "jwt".to_string(),
-            api_key_name: user_id,
-        }
+        Self { workspace_id, api_key_id: "jwt".to_string(), api_key_name: user_id }
     }
 
     /// Create context for heartbeat system tasks
     pub fn for_heartbeat(workspace_id: String, agent_id: String) -> Self {
-        Self {
-            workspace_id,
-            api_key_id: "heartbeat".to_string(),
-            api_key_name: agent_id,
-        }
+        Self { workspace_id, api_key_id: "heartbeat".to_string(), api_key_name: agent_id }
     }
 }
 
@@ -175,7 +165,9 @@ async fn extract_api_key(
     let key_hash = format!("{:x}", sha2::Sha256::digest(raw_key.as_bytes()));
 
     // Look up by hash (secure, no prefix collision possible)
-    let api_key = state.tenant_service.find_api_key_by_hash(&key_hash)
+    let api_key = state
+        .tenant_service
+        .find_api_key_by_hash(&key_hash)
         .await
         .map_err(|e| ToolError::Internal(format!("Database error: {}", e)))?
         .ok_or_else(|| ToolError::Unauthorized("Invalid API key".into()))?;
@@ -193,9 +185,10 @@ async fn extract_api_key(
     // Verify key has not expired
     if let Some(expires_at) = &api_key.expires_at
         && let Ok(expires) = chrono::DateTime::parse_from_rfc3339(expires_at)
-            && expires < chrono::Utc::now() {
-                return Err(ToolError::Unauthorized("API key has expired".into()));
-            }
+        && expires < chrono::Utc::now()
+    {
+        return Err(ToolError::Unauthorized("API key has expired".into()));
+    }
 
     Ok(McpAuthContext {
         workspace_id: api_key.workspace_id.clone(),
@@ -213,7 +206,8 @@ async fn handle_mcp_request(
         Some(s) => s,
         None => {
             return ApiResponseBuilder::error_with_code::<serde_json::Value>(
-                500, "MCP registry not initialized",
+                500,
+                "MCP registry not initialized",
             )
             .into_response();
         }
@@ -232,7 +226,8 @@ async fn handle_mcp_request(
         Some(reg) => reg,
         None => {
             return ApiResponseBuilder::error_with_code::<serde_json::Value>(
-                500, "MCP registry not initialized",
+                500,
+                "MCP registry not initialized",
             )
             .into_response();
         }
@@ -319,8 +314,11 @@ async fn handle_mcp_request(
                             ToolError::ApiError(_, _) => 500,
                             ToolError::Internal(_) => 500,
                         };
-                        ApiResponseBuilder::error_with_code::<serde_json::Value>(code, e.to_string())
-                            .into_response()
+                        ApiResponseBuilder::error_with_code::<serde_json::Value>(
+                            code,
+                            e.to_string(),
+                        )
+                        .into_response()
                     }
                 },
                 None => {
@@ -352,7 +350,8 @@ async fn handle_tools_list(headers: axum::http::HeaderMap) -> Response {
         Some(s) => s,
         None => {
             return ApiResponseBuilder::error_with_code::<serde_json::Value>(
-                500, "MCP registry not initialized",
+                500,
+                "MCP registry not initialized",
             )
             .into_response();
         }
@@ -371,7 +370,8 @@ async fn handle_tools_list(headers: axum::http::HeaderMap) -> Response {
         Some(reg) => reg,
         None => {
             return ApiResponseBuilder::error_with_code::<serde_json::Value>(
-                500, "MCP registry not initialized",
+                500,
+                "MCP registry not initialized",
             )
             .into_response();
         }
@@ -391,7 +391,8 @@ async fn handle_tools_call(
         Some(s) => s,
         None => {
             return ApiResponseBuilder::error_with_code::<serde_json::Value>(
-                500, "MCP registry not initialized",
+                500,
+                "MCP registry not initialized",
             )
             .into_response();
         }
@@ -410,7 +411,8 @@ async fn handle_tools_call(
         Some(reg) => reg,
         None => {
             return ApiResponseBuilder::error_with_code::<serde_json::Value>(
-                500, "MCP registry not initialized",
+                500,
+                "MCP registry not initialized",
             )
             .into_response();
         }
@@ -419,8 +421,8 @@ async fn handle_tools_call(
     let registry = registry.read().await;
 
     let args_for_log = params.arguments.clone();
-    let sanitized_args = serde_json::to_string(&args_for_log)
-        .unwrap_or_else(|_| "<invalid JSON>".to_string());
+    let sanitized_args =
+        serde_json::to_string(&args_for_log).unwrap_or_else(|_| "<invalid JSON>".to_string());
     let start = Instant::now();
 
     match registry.get(&params.name) {
@@ -487,9 +489,10 @@ async fn handle_tools_call(
 
 #[cfg(test)]
 mod tests {
+    use async_trait::async_trait;
+
     use super::*;
     use crate::modules::mcp::tool_registry::ToolHandler;
-    use async_trait::async_trait;
 
     struct DummyHandler;
 

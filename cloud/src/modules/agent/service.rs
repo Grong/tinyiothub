@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use super::types::{Session, ChatMessage, CompactedSession, SessionError, SessionRepository};
+use super::types::{ChatMessage, CompactedSession, Session, SessionError, SessionRepository};
 
 // Compaction constants
 const MAX_MESSAGES_IN_MEMORY: usize = 50;
@@ -23,7 +23,10 @@ pub fn estimate_tokens(messages: &[ChatMessage]) -> usize {
 }
 
 /// Compact messages into system + summary + recent groups
-pub fn compact_messages(messages: &[ChatMessage], summary: &str) -> (Vec<ChatMessage>, Option<ChatMessage>, Vec<ChatMessage>) {
+pub fn compact_messages(
+    messages: &[ChatMessage],
+    summary: &str,
+) -> (Vec<ChatMessage>, Option<ChatMessage>, Vec<ChatMessage>) {
     let system_messages: Vec<_> = messages.iter().filter(|m| m.role == "system").cloned().collect();
     let recent: Vec<_> = messages
         .iter()
@@ -48,7 +51,11 @@ pub fn compact_messages(messages: &[ChatMessage], summary: &str) -> (Vec<ChatMes
 }
 
 /// Rebuild a message list from compacted groups
-pub fn rebuild_messages(system: &[ChatMessage], summary: &Option<ChatMessage>, recent: &[ChatMessage]) -> Vec<ChatMessage> {
+pub fn rebuild_messages(
+    system: &[ChatMessage],
+    summary: &Option<ChatMessage>,
+    recent: &[ChatMessage],
+) -> Vec<ChatMessage> {
     let mut result = system.to_vec();
     if let Some(s) = summary {
         result.push(s.clone());
@@ -208,7 +215,8 @@ mod tests {
                 ChatMessage::assistant(format!("Message {}", i))
             });
         }
-        let (system, summary, recent) = compact_messages(&messages, "Earlier conversation about various topics.");
+        let (system, summary, recent) =
+            compact_messages(&messages, "Earlier conversation about various topics.");
         assert_eq!(system.len(), 1);
         assert!(summary.is_some());
         assert!(recent.len() <= 20);

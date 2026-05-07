@@ -1,16 +1,18 @@
 // Self-healing service: evaluator + executor
 // Migrated from domain/self_healing/evaluator.rs + executor.rs
 
+use std::{collections::HashMap, sync::Arc};
+
 use chrono::{DateTime, Utc};
-use std::collections::HashMap;
-use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use super::types::{
-    ExecutionResult, HealingExecution, LevelPolicy, ProbeFinding, ProbeResult,
-    RecoveryActionType, SelfHealingPolicy, SeverityLevel,
+use super::{
+    errors::{Result, SelfHealingError},
+    types::{
+        ExecutionResult, HealingExecution, LevelPolicy, ProbeFinding, ProbeResult,
+        RecoveryActionType, SelfHealingPolicy, SeverityLevel,
+    },
 };
-use super::errors::{Result, SelfHealingError};
 
 // ════════════════════════════════════════════════
 // Policy Evaluator (from evaluator.rs)
@@ -52,10 +54,8 @@ impl PolicyEvaluator {
             return true;
         }
         for condition in &policy.conditions {
-            let matching_count = findings
-                .iter()
-                .filter(|f| f.finding_type == condition.condition_type)
-                .count();
+            let matching_count =
+                findings.iter().filter(|f| f.finding_type == condition.condition_type).count();
             if matching_count < condition.count as usize {
                 return false;
             }
@@ -109,31 +109,71 @@ impl ActionExecutor {
         let execution = match action_type {
             RecoveryActionType::RestartDriver => {
                 tracing::info!("Restarting driver: {}", target);
-                HealingExecution::new(tenant_id, level, action_type, target, ExecutionResult::Success)
+                HealingExecution::new(
+                    tenant_id,
+                    level,
+                    action_type,
+                    target,
+                    ExecutionResult::Success,
+                )
             }
             RecoveryActionType::RejoinLora => {
                 tracing::info!("Rejoining LoRa network: {}", target);
-                HealingExecution::new(tenant_id, level, action_type, target, ExecutionResult::Success)
+                HealingExecution::new(
+                    tenant_id,
+                    level,
+                    action_type,
+                    target,
+                    ExecutionResult::Success,
+                )
             }
             RecoveryActionType::ReconnectDevice => {
                 tracing::info!("Reconnecting device: {}", target);
-                HealingExecution::new(tenant_id, level, action_type, target, ExecutionResult::Success)
+                HealingExecution::new(
+                    tenant_id,
+                    level,
+                    action_type,
+                    target,
+                    ExecutionResult::Success,
+                )
             }
             RecoveryActionType::CleanLogs => {
                 tracing::info!("Cleaning logs: {}", target);
-                HealingExecution::new(tenant_id, level, action_type, target, ExecutionResult::Success)
+                HealingExecution::new(
+                    tenant_id,
+                    level,
+                    action_type,
+                    target,
+                    ExecutionResult::Success,
+                )
             }
             RecoveryActionType::ReportCloud => {
                 tracing::info!("Reporting to cloud: {}", target);
-                HealingExecution::new(tenant_id, level, action_type, target, ExecutionResult::Success)
+                HealingExecution::new(
+                    tenant_id,
+                    level,
+                    action_type,
+                    target,
+                    ExecutionResult::Success,
+                )
             }
             RecoveryActionType::CreateTicket => {
                 tracing::info!("Creating support ticket: {}", target);
-                HealingExecution::new(tenant_id, level, action_type, target, ExecutionResult::Success)
+                HealingExecution::new(
+                    tenant_id,
+                    level,
+                    action_type,
+                    target,
+                    ExecutionResult::Success,
+                )
             }
-            RecoveryActionType::LogOnly => {
-                HealingExecution::new(tenant_id, level, action_type, target, ExecutionResult::Success)
-            }
+            RecoveryActionType::LogOnly => HealingExecution::new(
+                tenant_id,
+                level,
+                action_type,
+                target,
+                ExecutionResult::Success,
+            ),
         };
 
         Ok(execution)
@@ -141,7 +181,9 @@ impl ActionExecutor {
 }
 
 impl Default for ActionExecutor {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ════════════════════════════════════════════════
@@ -150,9 +192,12 @@ impl Default for ActionExecutor {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::super::types::{HealingCondition, ProbeType};
     use std::collections::HashMap;
+
+    use super::{
+        super::types::{HealingCondition, ProbeType},
+        *,
+    };
 
     fn create_test_policy() -> SelfHealingPolicy {
         let mut levels = HashMap::new();
@@ -190,13 +235,16 @@ mod tests {
     fn test_evaluate_disabled_policy_returns_l0() {
         let policy = SelfHealingPolicy { enabled: false, levels: HashMap::new() };
         let evaluator = PolicyEvaluator::new(policy);
-        let probe_result = create_probe_result(SeverityLevel::L3, vec![ProbeFinding {
-            finding_type: "HighCpu".to_string(),
-            severity: SeverityLevel::L3,
-            message: "CPU usage high".to_string(),
-            target: "gateway-1".to_string(),
-            value: Some("95%".to_string()),
-        }]);
+        let probe_result = create_probe_result(
+            SeverityLevel::L3,
+            vec![ProbeFinding {
+                finding_type: "HighCpu".to_string(),
+                severity: SeverityLevel::L3,
+                message: "CPU usage high".to_string(),
+                target: "gateway-1".to_string(),
+                value: Some("95%".to_string()),
+            }],
+        );
         assert_eq!(evaluator.evaluate(&probe_result), SeverityLevel::L0);
     }
 
@@ -210,11 +258,32 @@ mod tests {
     #[test]
     fn test_evaluate_highest_severity_from_findings() {
         let evaluator = PolicyEvaluator::with_default_policy();
-        let probe_result = create_probe_result(SeverityLevel::L0, vec![
-            ProbeFinding { finding_type: "HighCpu".to_string(), severity: SeverityLevel::L1, message: "CPU high".to_string(), target: "gw1".to_string(), value: None },
-            ProbeFinding { finding_type: "HighMemory".to_string(), severity: SeverityLevel::L3, message: "Memory high".to_string(), target: "gw1".to_string(), value: None },
-            ProbeFinding { finding_type: "DiskFull".to_string(), severity: SeverityLevel::L2, message: "Disk full".to_string(), target: "gw1".to_string(), value: None },
-        ]);
+        let probe_result = create_probe_result(
+            SeverityLevel::L0,
+            vec![
+                ProbeFinding {
+                    finding_type: "HighCpu".to_string(),
+                    severity: SeverityLevel::L1,
+                    message: "CPU high".to_string(),
+                    target: "gw1".to_string(),
+                    value: None,
+                },
+                ProbeFinding {
+                    finding_type: "HighMemory".to_string(),
+                    severity: SeverityLevel::L3,
+                    message: "Memory high".to_string(),
+                    target: "gw1".to_string(),
+                    value: None,
+                },
+                ProbeFinding {
+                    finding_type: "DiskFull".to_string(),
+                    severity: SeverityLevel::L2,
+                    message: "Disk full".to_string(),
+                    target: "gw1".to_string(),
+                    value: None,
+                },
+            ],
+        );
         assert_eq!(evaluator.evaluate(&probe_result), SeverityLevel::L3);
     }
 
@@ -223,8 +292,20 @@ mod tests {
         let policy = create_test_policy();
         let evaluator = PolicyEvaluator::new(policy);
         let findings = vec![
-            ProbeFinding { finding_type: "HighCpu".to_string(), severity: SeverityLevel::L1, message: "CPU high 1".to_string(), target: "gw1".to_string(), value: None },
-            ProbeFinding { finding_type: "HighCpu".to_string(), severity: SeverityLevel::L1, message: "CPU high 2".to_string(), target: "gw1".to_string(), value: None },
+            ProbeFinding {
+                finding_type: "HighCpu".to_string(),
+                severity: SeverityLevel::L1,
+                message: "CPU high 1".to_string(),
+                target: "gw1".to_string(),
+                value: None,
+            },
+            ProbeFinding {
+                finding_type: "HighCpu".to_string(),
+                severity: SeverityLevel::L1,
+                message: "CPU high 2".to_string(),
+                target: "gw1".to_string(),
+                value: None,
+            },
         ];
         assert!(evaluator.check_conditions(SeverityLevel::L1, &findings));
     }
@@ -234,7 +315,11 @@ mod tests {
         let policy = create_test_policy();
         let evaluator = PolicyEvaluator::new(policy);
         let findings = vec![ProbeFinding {
-            finding_type: "HighCpu".to_string(), severity: SeverityLevel::L1, message: "CPU high".to_string(), target: "gw1".to_string(), value: None,
+            finding_type: "HighCpu".to_string(),
+            severity: SeverityLevel::L1,
+            message: "CPU high".to_string(),
+            target: "gw1".to_string(),
+            value: None,
         }];
         assert!(!evaluator.check_conditions(SeverityLevel::L1, &findings));
     }
@@ -244,25 +329,65 @@ mod tests {
     #[tokio::test]
     async fn test_execute_with_cooldown_blocks() {
         let executor = ActionExecutor::new();
-        let result = executor.execute("tenant-1", SeverityLevel::L1, RecoveryActionType::RestartDriver, "driver-1".to_string(), 300).await;
+        let result = executor
+            .execute(
+                "tenant-1",
+                SeverityLevel::L1,
+                RecoveryActionType::RestartDriver,
+                "driver-1".to_string(),
+                300,
+            )
+            .await;
         assert!(result.is_ok());
-        let result = executor.execute("tenant-1", SeverityLevel::L1, RecoveryActionType::RestartDriver, "driver-1".to_string(), 300).await;
+        let result = executor
+            .execute(
+                "tenant-1",
+                SeverityLevel::L1,
+                RecoveryActionType::RestartDriver,
+                "driver-1".to_string(),
+                300,
+            )
+            .await;
         assert!(matches!(result, Err(SelfHealingError::CooldownActive(_))));
     }
 
     #[tokio::test]
     async fn test_execute_different_targets_no_cooldown() {
         let executor = ActionExecutor::new();
-        let result = executor.execute("tenant-1", SeverityLevel::L1, RecoveryActionType::RestartDriver, "driver-1".to_string(), 300).await;
+        let result = executor
+            .execute(
+                "tenant-1",
+                SeverityLevel::L1,
+                RecoveryActionType::RestartDriver,
+                "driver-1".to_string(),
+                300,
+            )
+            .await;
         assert!(result.is_ok());
-        let result = executor.execute("tenant-1", SeverityLevel::L1, RecoveryActionType::RestartDriver, "driver-2".to_string(), 300).await;
+        let result = executor
+            .execute(
+                "tenant-1",
+                SeverityLevel::L1,
+                RecoveryActionType::RestartDriver,
+                "driver-2".to_string(),
+                300,
+            )
+            .await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_execute_log_only() {
         let executor = ActionExecutor::new();
-        let result = executor.execute("tenant-1", SeverityLevel::L0, RecoveryActionType::LogOnly, "gateway-1".to_string(), 0).await;
+        let result = executor
+            .execute(
+                "tenant-1",
+                SeverityLevel::L0,
+                RecoveryActionType::LogOnly,
+                "gateway-1".to_string(),
+                0,
+            )
+            .await;
         assert!(result.is_ok());
         let execution = result.unwrap();
         assert_eq!(execution.result, ExecutionResult::Success);

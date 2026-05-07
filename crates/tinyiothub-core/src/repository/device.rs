@@ -3,10 +3,8 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::models::device::{
-    CreateDeviceRequest, Device, DeviceStatusUpdate, UpdateDeviceRequest,
-};
 use crate::error::Result;
+use crate::models::device::{CreateDeviceRequest, Device, DeviceStatusUpdate, UpdateDeviceRequest};
 
 /// Repository interface for device persistence (defined in domain layer)
 #[async_trait]
@@ -190,7 +188,9 @@ pub struct DeviceCriteriaBuilder {
 
 impl DeviceCriteriaBuilder {
     pub fn new() -> Self {
-        Self { criteria: DeviceCriteria::default() }
+        Self {
+            criteria: DeviceCriteria::default(),
+        }
     }
 
     pub fn name(mut self, name: String) -> Self {

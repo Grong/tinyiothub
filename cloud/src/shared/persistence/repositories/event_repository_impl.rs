@@ -4,13 +4,13 @@ use sqlx::Row;
 
 use crate::{
     modules::event::{
+        Result,
         entities::Event,
         repositories::{
             EventCriteria, EventRepository, EventStatistics, ExportFormat, SortBy, SortOrder,
             StatisticsParams,
         },
         value_objects::{EventId, EventLevel, EventSource, EventType, RichContent},
-        Result,
     },
     shared::persistence::Database,
 };
@@ -87,7 +87,7 @@ impl EventRepository for SqliteEventRepository {
     async fn find_by_criteria(&self, criteria: &EventCriteria) -> Result<Vec<Event>> {
         // Build base SQL
         let mut sql = String::from(
-            "SELECT id, event_type, event_subtype, event_level, timestamp, source_type, source_id, device_id, user_id, title, content FROM events WHERE 1=1"
+            "SELECT id, event_type, event_subtype, event_level, timestamp, source_type, source_id, device_id, user_id, title, content FROM events WHERE 1=1",
         );
 
         // Add time range filters
@@ -101,17 +101,19 @@ impl EventRepository for SqliteEventRepository {
 
         // Add level filters
         if let Some(levels) = &criteria.levels
-            && !levels.is_empty() {
-                let placeholders = vec!["?"; levels.len()].join(",");
-                sql.push_str(&format!(" AND event_level IN ({})", placeholders));
-            }
+            && !levels.is_empty()
+        {
+            let placeholders = vec!["?"; levels.len()].join(",");
+            sql.push_str(&format!(" AND event_level IN ({})", placeholders));
+        }
 
         // Add device ID filters
         if let Some(device_ids) = &criteria.device_ids
-            && !device_ids.is_empty() {
-                let placeholders = vec!["?"; device_ids.len()].join(",");
-                sql.push_str(&format!(" AND device_id IN ({})", placeholders));
-            }
+            && !device_ids.is_empty()
+        {
+            let placeholders = vec!["?"; device_ids.len()].join(",");
+            sql.push_str(&format!(" AND device_id IN ({})", placeholders));
+        }
 
         // Add search text filter
         if criteria.search_text.is_some() {

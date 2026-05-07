@@ -1,16 +1,14 @@
+use tinyiothub_cloud::{
+    server,
+    shared::{config, service_manager::ServiceManager},
+};
 use tokio::net::TcpListener;
 use tracing::{error, info, warn};
-use tinyiothub_cloud::server;
 use tracing_appender::{
     non_blocking,
     rolling::{RollingFileAppender, Rotation},
 };
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
-
-use tinyiothub_cloud::{
-    shared::service_manager::ServiceManager,
-    shared::config,
-};
+use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[cfg(feature = "harmonyos")]
 #[tokio::main(flavor = "current_thread")]
@@ -88,7 +86,9 @@ async fn main_impl() -> std::io::Result<()> {
         acquire_timeout_secs: settings.database.connect_timeout_secs,
         idle_timeout_secs: 600,
     };
-    let db_pool = tinyiothub_cloud::shared::persistence::create_pool(&db_config).await.expect("Failed to create DB pool");
+    let db_pool = tinyiothub_cloud::shared::persistence::create_pool(&db_config)
+        .await
+        .expect("Failed to create DB pool");
     let device_cache = std::sync::Arc::new(tinyiothub_storage::cache::DeviceCache::new());
     info!("✅ Database pool & device cache initialized");
 
@@ -138,7 +138,9 @@ async fn main_impl() -> std::io::Result<()> {
     // === 5. 确保默认管理员用户存在 ===
     #[cfg(not(feature = "harmonyos"))]
     {
-        if let Err(e) = tinyiothub_cloud::modules::system::handler::ensure_default_admin_user(&app_state).await {
+        if let Err(e) =
+            tinyiothub_cloud::modules::system::handler::ensure_default_admin_user(&app_state).await
+        {
             error!("Failed to ensure default admin user: {}", e);
         }
     }
@@ -148,10 +150,11 @@ async fn main_impl() -> std::io::Result<()> {
 
     #[cfg(feature = "harmonyos")]
     let app = {
-        use axum::Router;
-        use tower_http::services::ServeDir;
         // Initialize MCP tools with AppState for harmonyos
         use std::sync::Arc;
+
+        use axum::Router;
+        use tower_http::services::ServeDir;
         tinyiothub_cloud::api::mcp::init_app_state(Arc::new(app_state.clone()));
         tinyiothub_cloud::api::mcp::register_tools().await;
         // Refresh agent tools after MCP registration
@@ -193,7 +196,10 @@ async fn main_impl() -> std::io::Result<()> {
 
     #[cfg(feature = "harmonyos")]
     {
-        if let Err(e) = axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>()).await {
+        if let Err(e) =
+            axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>())
+                .await
+        {
             error!("Server error: {}", e);
         }
     }
@@ -210,9 +216,10 @@ async fn initialize_logging() -> std::io::Result<()> {
 
     // Create log directory if it doesn't exist
     if config.logging.file_enabled
-        && let Some(parent) = config.log_file_path().parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+        && let Some(parent) = config.log_file_path().parent()
+    {
+        std::fs::create_dir_all(parent)?;
+    }
 
     if config.logging.file_enabled {
         info!(

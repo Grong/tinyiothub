@@ -158,14 +158,8 @@ mod tests {
         assert_eq!(validate_password_policy("abc12345"), Ok(()));
 
         // 长度不足（< 8）
-        assert_eq!(
-            validate_password_policy("ab12"),
-            Err(PasswordPolicyError::TooShort)
-        );
-        assert_eq!(
-            validate_password_policy("abc1234"),
-            Err(PasswordPolicyError::TooShort)
-        );
+        assert_eq!(validate_password_policy("ab12"), Err(PasswordPolicyError::TooShort));
+        assert_eq!(validate_password_policy("abc1234"), Err(PasswordPolicyError::TooShort));
 
         // 含空白字符（应在字母/数字检查前先报错）
         assert_eq!(
@@ -178,16 +172,10 @@ mod tests {
         );
 
         // 全数字 → 缺字母
-        assert_eq!(
-            validate_password_policy("12345678"),
-            Err(PasswordPolicyError::NoLetter)
-        );
+        assert_eq!(validate_password_policy("12345678"), Err(PasswordPolicyError::NoLetter));
 
         // 全字母 → 缺数字
-        assert_eq!(
-            validate_password_policy("abcdefgh"),
-            Err(PasswordPolicyError::NoDigit)
-        );
+        assert_eq!(validate_password_policy("abcdefgh"), Err(PasswordPolicyError::NoDigit));
     }
 
     #[test]

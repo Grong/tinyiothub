@@ -70,9 +70,7 @@ pub async fn create_app_router(app_state: AppState) -> Router {
     tracing::info!("Building main router...");
     tracing::info!("Serving static files from wwwroot/ (SPA mode)");
 
-    let mut router = Router::new()
-        .nest("/api", api_router)
-        .fallback(spa_handler);
+    let mut router = Router::new().nest("/api", api_router).fallback(spa_handler);
 
     tracing::info!("Adding middleware layers...");
     router = router.layer(cors).layer(TraceLayer::new_for_http());
@@ -83,10 +81,7 @@ pub async fn create_app_router(app_state: AppState) -> Router {
 
 /// SPA fallback handler — serves static files or falls back to index.html.
 async fn spa_handler(uri: axum::http::Uri) -> axum::response::Response {
-    use axum::{
-        http::StatusCode,
-        response::IntoResponse,
-    };
+    use axum::{http::StatusCode, response::IntoResponse};
 
     let path = uri.path();
 
@@ -135,13 +130,9 @@ async fn spa_handler(uri: axum::http::Uri) -> axum::response::Response {
                 Err(_) => {
                     tracing::info!("Serving index.html for SPA route: {}", path);
                     match tokio::fs::read("wwwroot/index.html").await {
-                        Ok(content) => {
-                            ([(axum::http::header::CONTENT_TYPE, "text/html")], content)
-                                .into_response()
-                        }
-                        Err(_) => {
-                            (StatusCode::NOT_FOUND, "index.html not found").into_response()
-                        }
+                        Ok(content) => ([(axum::http::header::CONTENT_TYPE, "text/html")], content)
+                            .into_response(),
+                        Err(_) => (StatusCode::NOT_FOUND, "index.html not found").into_response(),
                     }
                 }
             }

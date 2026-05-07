@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
-use super::repo::TenantRepository;
-use super::types::{
-    ApiKey, ApiUsageStats, CreateApiKeyRequest, CreateTenantRequest, SubscriptionPlan, Tenant,
-    TenantUsage,
+use super::{
+    repo::TenantRepository,
+    types::{
+        ApiKey, ApiUsageStats, CreateApiKeyRequest, CreateTenantRequest, SubscriptionPlan, Tenant,
+        TenantUsage,
+    },
 };
 use crate::shared::error::{Error, Result};
 
@@ -54,25 +56,18 @@ impl TenantService {
 
     /// Check if tenant has quota for a resource
     pub async fn check_quota(&self, tenant_id: &str, resource: &str) -> Result<bool> {
-        let tenant = self
-            .repository
-            .find_tenant_by_id(tenant_id)
-            .await?
-            .ok_or(Error::NotFound)?;
-        let plan = self
-            .repository
-            .find_plan_by_id(&tenant.plan_id)
-            .await?
-            .ok_or(Error::NotFound)?;
-        let usage = self
-            .repository
-            .get_tenant_usage(tenant_id)
-            .await?
-            .ok_or(Error::NotFound)?;
+        let tenant = self.repository.find_tenant_by_id(tenant_id).await?.ok_or(Error::NotFound)?;
+        let plan =
+            self.repository.find_plan_by_id(&tenant.plan_id).await?.ok_or(Error::NotFound)?;
+        let usage = self.repository.get_tenant_usage(tenant_id).await?.ok_or(Error::NotFound)?;
 
         match resource {
-            RESOURCE_TYPE_DEVICE => Ok(self.check_resource_quota(plan.device_limit, usage.device_count)),
-            RESOURCE_TYPE_API_CALL => Ok(self.check_resource_quota(plan.api_call_limit, usage.api_call_count)),
+            RESOURCE_TYPE_DEVICE => {
+                Ok(self.check_resource_quota(plan.device_limit, usage.device_count))
+            }
+            RESOURCE_TYPE_API_CALL => {
+                Ok(self.check_resource_quota(plan.api_call_limit, usage.api_call_count))
+            }
             RESOURCE_TYPE_USER => Ok(self.check_resource_quota(plan.user_limit, usage.user_count)),
             _ => Ok(false),
         }
@@ -157,7 +152,15 @@ impl TenantService {
         ip_address: Option<&str>,
     ) -> Result<()> {
         self.repository
-            .record_api_usage(workspace_id, api_key_id, method, path, status_code, latency_ms, ip_address)
+            .record_api_usage(
+                workspace_id,
+                api_key_id,
+                method,
+                path,
+                status_code,
+                latency_ms,
+                ip_address,
+            )
             .await
     }
 

@@ -15,8 +15,10 @@ async fn test_get_device_not_found() {
     assert!(result.is_err());
 
     let err = result.unwrap_err();
-    assert!(matches!(err, crate::modules::mcp::ToolError::NotFound(_) |
-                          crate::modules::mcp::ToolError::Internal(_)));
+    assert!(matches!(
+        err,
+        crate::modules::mcp::ToolError::NotFound(_) | crate::modules::mcp::ToolError::Internal(_)
+    ));
 }
 
 /// Test search_devices handler returns valid response (or graceful error)
@@ -51,10 +53,12 @@ async fn test_search_devices_with_params() {
     let guard = registry.read().await;
     let handler = guard.get("search_devices").unwrap();
 
-    let result = handler.execute(json!({
-        "keyword": "sensor",
-        "limit": 10
-    })).await;
+    let result = handler
+        .execute(json!({
+            "keyword": "sensor",
+            "limit": 10
+        }))
+        .await;
     match result {
         Ok(_) => {}
         Err(e) => {
@@ -66,10 +70,12 @@ async fn test_search_devices_with_params() {
         }
     }
 
-    let result = handler.execute(json!({
-        "keyword": "modbus",
-        "tag": "production"
-    })).await;
+    let result = handler
+        .execute(json!({
+            "keyword": "modbus",
+            "tag": "production"
+        }))
+        .await;
     match result {
         Ok(_) => {}
         Err(e) => {
@@ -97,10 +103,12 @@ async fn test_search_devices_with_tag() {
     let guard = registry.read().await;
     let handler = guard.get("search_devices").unwrap();
 
-    let result = handler.execute(json!({
-        "keyword": "temp",
-        "tag": "critical"
-    })).await;
+    let result = handler
+        .execute(json!({
+            "keyword": "temp",
+            "tag": "critical"
+        }))
+        .await;
 
     match result {
         Ok(_) => {}

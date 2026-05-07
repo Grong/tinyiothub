@@ -1,6 +1,6 @@
+use parking_lot::RwLock;
 use sled::{Db, IVec};
 use std::sync::Arc;
-use parking_lot::RwLock;
 use thiserror::Error;
 use tracing::info;
 
@@ -35,7 +35,9 @@ impl SledCache {
         let path = path.into();
         info!("Opening Sled cache at {}", path);
         let db = sled::open(&path)?;
-        Ok(Self { db: Arc::new(RwLock::new(db)) })
+        Ok(Self {
+            db: Arc::new(RwLock::new(db)),
+        })
     }
 
     fn get(&self, key: &str) -> Result<Option<IVec>, CacheError> {
@@ -110,7 +112,10 @@ impl SledCache {
             }
         }
 
-        let lock = SyncLock { holder_id: holder_id.to_string(), ts: now };
+        let lock = SyncLock {
+            holder_id: holder_id.to_string(),
+            ts: now,
+        };
         let new_json = serde_json::to_vec(&lock)?;
 
         // Atomic compare-and-swap: only write if the old value hasn't changed
@@ -140,8 +145,8 @@ impl SledCache {
 
         // Atomic: only insert if key doesn't exist
         match db.compare_and_swap(&key, None as Option<&[u8]>, Some(marker.as_slice()))? {
-            Ok(()) => Ok(false),    // CAS succeeded — first time seeing this delivery_id
-            Err(_) => Ok(true),     // CAS failed — key already exists, already processed
+            Ok(()) => Ok(false), // CAS succeeded — first time seeing this delivery_id
+            Err(_) => Ok(true),  // CAS failed — key already exists, already processed
         }
     }
 

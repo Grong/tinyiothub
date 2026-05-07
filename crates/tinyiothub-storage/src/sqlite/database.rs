@@ -1,4 +1,4 @@
-use sqlx::{sqlite::SqliteRow, AssertSqlSafe, Error as SqlxError, SqlitePool};
+use sqlx::{AssertSqlSafe, Error as SqlxError, SqlitePool, sqlite::SqliteRow};
 
 /// Database abstraction layer for SQLx
 #[derive(Debug, Clone)]
@@ -64,9 +64,7 @@ impl Database {
     }
 
     /// Begin a transaction
-    pub async fn begin_transaction(
-        &self,
-    ) -> Result<sqlx::Transaction<'_, sqlx::Sqlite>, SqlxError> {
+    pub async fn begin_transaction(&self) -> Result<sqlx::Transaction<'_, sqlx::Sqlite>, SqlxError> {
         self.pool.begin().await
     }
 }

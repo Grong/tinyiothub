@@ -6,16 +6,19 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
-use crate::modules::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
 use tinyiothub_core::models::device::CreateDeviceRequest;
-use crate::shared::persistence::repositories::{
-    find_device_by_id, find_device_by_id_with_tags,
-};
-use crate::shared::persistence::repositories::find_device_command_by_device_and_name;
-use crate::shared::persistence::repositories::find_device_properties_by_device_id;
-use crate::modules::template::types::{CreateDeviceFromTemplateRequest, DeviceCreationInput};
 use tinyiothub_storage::traits::device::{DeviceCriteria, DeviceSortBy, DeviceSortOrder};
+
+use crate::{
+    modules::{
+        mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler},
+        template::types::{CreateDeviceFromTemplateRequest, DeviceCreationInput},
+    },
+    shared::persistence::repositories::{
+        find_device_by_id, find_device_by_id_with_tags, find_device_command_by_device_and_name,
+        find_device_properties_by_device_id,
+    },
+};
 
 /// Tool input: Get single device
 #[derive(Debug, Deserialize)]
@@ -116,14 +119,26 @@ impl ToolHandler for DeviceProfileHandler {
 
     fn input_schema(&self) -> InputSchema {
         let mut props = HashMap::new();
-        props.insert("id".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device ID (required)".to_string()) });
-        props.insert("includeProperties".to_string(), PropertySchema { prop_type: "boolean".to_string(), description: Some("Include device properties (default: true)".to_string()) });
+        props.insert(
+            "id".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("Device ID (required)".to_string()),
+            },
+        );
+        props.insert(
+            "includeProperties".to_string(),
+            PropertySchema {
+                prop_type: "boolean".to_string(),
+                description: Some("Include device properties (default: true)".to_string()),
+            },
+        );
         InputSchema::object(vec!["id".to_string()], props)
     }
 
     async fn execute(&self, args: Value) -> Result<Value, ToolError> {
-        let input: GetDeviceInput = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidParams(e.to_string()))?;
+        let input: GetDeviceInput =
+            serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
         let state = crate::modules::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
@@ -169,8 +184,20 @@ impl ToolHandler for DevicePropertyGetHandler {
 
     fn input_schema(&self) -> InputSchema {
         let mut props = HashMap::new();
-        props.insert("deviceId".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device ID (required)".to_string()) });
-        props.insert("propertyName".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Property name (required)".to_string()) });
+        props.insert(
+            "deviceId".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("Device ID (required)".to_string()),
+            },
+        );
+        props.insert(
+            "propertyName".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("Property name (required)".to_string()),
+            },
+        );
         InputSchema::object(vec!["deviceId".to_string(), "propertyName".to_string()], props)
     }
 
@@ -182,8 +209,8 @@ impl ToolHandler for DevicePropertyGetHandler {
             property_name: String,
         }
 
-        let input: Input = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidParams(e.to_string()))?;
+        let input: Input =
+            serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
         let state = crate::modules::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
@@ -197,15 +224,22 @@ impl ToolHandler for DevicePropertyGetHandler {
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.device_id)))?;
 
-        let all_properties = find_device_properties_by_device_id(state.database(), &input.device_id)
-            .await
-            .map_err(|e| ToolError::Internal(e.to_string()))?;
+        let all_properties =
+            find_device_properties_by_device_id(state.database(), &input.device_id)
+                .await
+                .map_err(|e| ToolError::Internal(e.to_string()))?;
 
-        let prop = all_properties.iter()
-            .find(|p| p.name == input.property_name)
-            .ok_or_else(|| ToolError::NotFound(format!("Property '{}' not found on device {}", input.property_name, input.device_id)))?;
+        let prop =
+            all_properties.iter().find(|p| p.name == input.property_name).ok_or_else(|| {
+                ToolError::NotFound(format!(
+                    "Property '{}' not found on device {}",
+                    input.property_name, input.device_id
+                ))
+            })?;
 
-        let current_value = state.device_cache.get(&input.device_id)
+        let current_value = state
+            .device_cache
+            .get(&input.device_id)
             .and_then(|d| d.properties)
             .and_then(|props| props.into_iter().find(|p| p.name == input.property_name))
             .and_then(|p| p.current_value);
@@ -238,7 +272,8 @@ impl ToolHandler for DevicePropertyGetHandler {
             default_value: prop.default_value.clone(),
             is_read_only: prop.is_read_only == 1,
             current_value,
-        }).unwrap())
+        })
+        .unwrap())
     }
 }
 
@@ -257,14 +292,26 @@ impl ToolHandler for WritePropertiesHandler {
 
     fn input_schema(&self) -> InputSchema {
         let mut props = HashMap::new();
-        props.insert("deviceId".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device ID (required)".to_string()) });
-        props.insert("properties".to_string(), PropertySchema { prop_type: "object".to_string(), description: Some("Object mapping property names to values (required)".to_string()) });
+        props.insert(
+            "deviceId".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("Device ID (required)".to_string()),
+            },
+        );
+        props.insert(
+            "properties".to_string(),
+            PropertySchema {
+                prop_type: "object".to_string(),
+                description: Some("Object mapping property names to values (required)".to_string()),
+            },
+        );
         InputSchema::object(vec!["deviceId".to_string(), "properties".to_string()], props)
     }
 
     async fn execute(&self, args: Value) -> Result<Value, ToolError> {
-        let input: WritePropertiesInput = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidParams(e.to_string()))?;
+        let input: WritePropertiesInput =
+            serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
         let state = crate::modules::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
@@ -278,9 +325,10 @@ impl ToolHandler for WritePropertiesHandler {
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.device_id)))?;
 
-        let device_properties = find_device_properties_by_device_id(state.database(), &input.device_id)
-            .await
-            .map_err(|e| ToolError::Internal(e.to_string()))?;
+        let device_properties =
+            find_device_properties_by_device_id(state.database(), &input.device_id)
+                .await
+                .map_err(|e| ToolError::Internal(e.to_string()))?;
 
         let mut updated_count = 0;
         let mut results = Vec::new();
@@ -306,12 +354,15 @@ impl ToolHandler for WritePropertiesHandler {
                         continue;
                     }
 
-                    match state.update_device_property_value(
-                        &workspace_id,
-                        &input.device_id,
-                        &def.id,
-                        value,
-                    ).await {
+                    match state
+                        .update_device_property_value(
+                            &workspace_id,
+                            &input.device_id,
+                            &def.id,
+                            value,
+                        )
+                        .await
+                    {
                         Ok(_) => {
                             updated_count += 1;
                             results.push(PropertyUpdateResult {
@@ -364,15 +415,33 @@ impl ToolHandler for DeviceCommandHandler {
 
     fn input_schema(&self) -> InputSchema {
         let mut props = HashMap::new();
-        props.insert("deviceId".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device ID (required)".to_string()) });
-        props.insert("commandName".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Command name (required)".to_string()) });
-        props.insert("parameters".to_string(), PropertySchema { prop_type: "object".to_string(), description: Some("Command parameters as key-value pairs".to_string()) });
+        props.insert(
+            "deviceId".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("Device ID (required)".to_string()),
+            },
+        );
+        props.insert(
+            "commandName".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("Command name (required)".to_string()),
+            },
+        );
+        props.insert(
+            "parameters".to_string(),
+            PropertySchema {
+                prop_type: "object".to_string(),
+                description: Some("Command parameters as key-value pairs".to_string()),
+            },
+        );
         InputSchema::object(vec!["deviceId".to_string(), "commandName".to_string()], props)
     }
 
     async fn execute(&self, args: Value) -> Result<Value, ToolError> {
-        let input: SendCommandInput = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidParams(e.to_string()))?;
+        let input: SendCommandInput =
+            serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
         let state = crate::modules::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
@@ -386,7 +455,9 @@ impl ToolHandler for DeviceCommandHandler {
             .map_err(|e| ToolError::Internal(e.to_string()))?
             .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.device_id)))?;
 
-        let is_online = state.device_cache.get(&input.device_id)
+        let is_online = state
+            .device_cache
+            .get(&input.device_id)
             .map(|d| d.is_online())
             .unwrap_or(device.is_online());
 
@@ -397,7 +468,8 @@ impl ToolHandler for DeviceCommandHandler {
                 success: false,
                 message: Some("Device is offline".to_string()),
                 execution_time: None,
-            }).unwrap());
+            })
+            .unwrap());
         }
 
         let command = find_device_command_by_device_and_name(
@@ -417,7 +489,8 @@ impl ToolHandler for DeviceCommandHandler {
                     success: false,
                     message: Some(format!("Command '{}' not found on device", input.command_name)),
                     execution_time: None,
-                }).unwrap());
+                })
+                .unwrap());
             }
         };
 
@@ -429,8 +502,7 @@ impl ToolHandler for DeviceCommandHandler {
         }
 
         let result = if let Some(data_server) = state.data_server() {
-            data_server.execute_command(cmd)
-                .map_err(|e| ToolError::Internal(e.to_string()))
+            data_server.execute_command(cmd).map_err(|e| ToolError::Internal(e.to_string()))
         } else {
             tracing::warn!("DataServer not available, command execution simulated");
             Ok(())
@@ -445,14 +517,16 @@ impl ToolHandler for DeviceCommandHandler {
                 success: true,
                 message: None,
                 execution_time: Some(execution_time),
-            }).unwrap()),
+            })
+            .unwrap()),
             Err(e) => Ok(serde_json::to_value(CommandResponse {
                 device_id: input.device_id,
                 command_name: input.command_name,
                 success: false,
                 message: Some(e.to_string()),
                 execution_time: Some(execution_time),
-            }).unwrap()),
+            })
+            .unwrap()),
         }
     }
 }
@@ -472,20 +546,72 @@ impl ToolHandler for CreateDeviceHandler {
 
     fn input_schema(&self) -> InputSchema {
         let mut props = HashMap::new();
-        props.insert("templateId".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device template ID (required for template-based creation)".to_string()) });
-        props.insert("name".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device name (required)".to_string()) });
-        props.insert("displayName".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Display name".to_string()) });
-        props.insert("address".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device address".to_string()) });
-        props.insert("description".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device description".to_string()) });
-        props.insert("position".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device position/location".to_string()) });
-        props.insert("propertyValues".to_string(), PropertySchema { prop_type: "object".to_string(), description: Some("Property values to set at creation (property name -> value)".to_string()) });
-        props.insert("enabledCommands".to_string(), PropertySchema { prop_type: "array".to_string(), description: Some("Commands to enable at creation".to_string()) });
+        props.insert(
+            "templateId".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some(
+                    "Device template ID (required for template-based creation)".to_string(),
+                ),
+            },
+        );
+        props.insert(
+            "name".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("Device name (required)".to_string()),
+            },
+        );
+        props.insert(
+            "displayName".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("Display name".to_string()),
+            },
+        );
+        props.insert(
+            "address".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("Device address".to_string()),
+            },
+        );
+        props.insert(
+            "description".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("Device description".to_string()),
+            },
+        );
+        props.insert(
+            "position".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("Device position/location".to_string()),
+            },
+        );
+        props.insert(
+            "propertyValues".to_string(),
+            PropertySchema {
+                prop_type: "object".to_string(),
+                description: Some(
+                    "Property values to set at creation (property name -> value)".to_string(),
+                ),
+            },
+        );
+        props.insert(
+            "enabledCommands".to_string(),
+            PropertySchema {
+                prop_type: "array".to_string(),
+                description: Some("Commands to enable at creation".to_string()),
+            },
+        );
         InputSchema::object(vec!["name".to_string()], props)
     }
 
     async fn execute(&self, args: Value) -> Result<Value, ToolError> {
-        let input: CreateDeviceInput = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidParams(e.to_string()))?;
+        let input: CreateDeviceInput =
+            serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
         let state = crate::modules::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
@@ -512,13 +638,21 @@ impl ToolHandler for CreateDeviceHandler {
                 tenant_id: None,
                 workspace_id: None,
             };
-            let request = CreateDeviceFromTemplateRequest {
-                template_id: template_id.clone(),
-                device_input,
-            };
-            match tenant_device_service.create_device_from_template(state.template_engine(), &request.template_id, &request.device_input).await {
+            let request =
+                CreateDeviceFromTemplateRequest { template_id: template_id.clone(), device_input };
+            match tenant_device_service
+                .create_device_from_template(
+                    state.template_engine(),
+                    &request.template_id,
+                    &request.device_input,
+                )
+                .await
+            {
                 Ok(device) => Ok(serde_json::to_value(device).unwrap()),
-                Err(e) => Err(ToolError::Internal(format!("Failed to create device from template: {}", e))),
+                Err(e) => Err(ToolError::Internal(format!(
+                    "Failed to create device from template: {}",
+                    e
+                ))),
             }
         } else {
             let request = CreateDeviceRequest {
@@ -560,13 +694,19 @@ impl ToolHandler for DeleteDeviceHandler {
 
     fn input_schema(&self) -> InputSchema {
         let mut props = HashMap::new();
-        props.insert("id".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device ID (required)".to_string()) });
+        props.insert(
+            "id".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("Device ID (required)".to_string()),
+            },
+        );
         InputSchema::object(vec!["id".to_string()], props)
     }
 
     async fn execute(&self, args: Value) -> Result<Value, ToolError> {
-        let input: DeleteDeviceInput = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidParams(e.to_string()))?;
+        let input: DeleteDeviceInput =
+            serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
         let state = crate::modules::mcp::get_app_state()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
@@ -579,7 +719,10 @@ impl ToolHandler for DeleteDeviceHandler {
 
         match tenant_device_service.delete_device(&input.id).await {
             Ok(true) => Ok(serde_json::json!({"success": true, "device_id": input.id})),
-            Ok(false) => Err(ToolError::NotFound(format!("Device {} not found or does not belong to workspace", input.id))),
+            Ok(false) => Err(ToolError::NotFound(format!(
+                "Device {} not found or does not belong to workspace",
+                input.id
+            ))),
             Err(e) => Err(ToolError::Internal(format!("Failed to delete device: {}", e))),
         }
     }
@@ -634,7 +777,10 @@ impl ToolHandler for SearchDevicesHandler {
             "keyword".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some("Search keyword (partial match on name, display name, address, description)".to_string()),
+                description: Some(
+                    "Search keyword (partial match on name, display name, address, description)"
+                        .to_string(),
+                ),
             },
         );
         props.insert(
@@ -655,8 +801,8 @@ impl ToolHandler for SearchDevicesHandler {
     }
 
     async fn execute(&self, args: Value) -> Result<Value, ToolError> {
-        let input: SearchDevicesInput = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidParams(e.to_string()))?;
+        let input: SearchDevicesInput =
+            serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
         if input.keyword.trim().is_empty() {
             return Err(ToolError::InvalidParams("keyword cannot be empty".to_string()));

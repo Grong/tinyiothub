@@ -1,7 +1,7 @@
 // Redis Client Module
 // 用于会话管理、短信频率限制等场景
 
-use redis::{Client, AsyncCommands};
+use redis::{AsyncCommands, Client};
 
 /// Redis 客户端封装
 ///
@@ -25,12 +25,7 @@ impl RedisClient {
     }
 
     /// 设置键值（带过期时间）
-    pub async fn set_ex(
-        &self,
-        key: &str,
-        value: &str,
-        secs: u64,
-    ) -> Result<(), redis::RedisError> {
+    pub async fn set_ex(&self, key: &str, value: &str, secs: u64) -> Result<(), redis::RedisError> {
         let mut conn = self.client.get_multiplexed_async_connection().await?;
         conn.set_ex::<_, _, ()>(key, value, secs).await?;
         Ok(())

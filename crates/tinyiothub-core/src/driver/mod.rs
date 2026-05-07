@@ -107,9 +107,7 @@ impl DriverConfig {
     pub fn from_device(device: &Device) -> Self {
         let mut config = HashMap::new();
         if let Some(ref driver_options) = device.driver_options {
-            if let Ok(parsed_config) =
-                serde_json::from_str::<HashMap<String, serde_json::Value>>(driver_options)
-            {
+            if let Ok(parsed_config) = serde_json::from_str::<HashMap<String, serde_json::Value>>(driver_options) {
                 for (key, value) in parsed_config {
                     let value_str = match &value {
                         serde_json::Value::String(s) => s.clone(),
@@ -131,9 +129,7 @@ impl DriverConfig {
     pub fn from_device_with_defaults(device: &Device, defaults: HashMap<String, String>) -> Self {
         let mut config = defaults;
         if let Some(ref driver_options) = device.driver_options {
-            if let Ok(parsed_config) =
-                serde_json::from_str::<HashMap<String, serde_json::Value>>(driver_options)
-            {
+            if let Ok(parsed_config) = serde_json::from_str::<HashMap<String, serde_json::Value>>(driver_options) {
                 for (key, value) in parsed_config {
                     let value_str = match &value {
                         serde_json::Value::String(s) => s.clone(),
@@ -151,11 +147,15 @@ impl DriverConfig {
     }
 
     pub fn get_number(&self, key: &str, default: f64) -> f64 {
-        self.get_value(key).and_then(|v| v.parse::<f64>().ok()).unwrap_or(default)
+        self.get_value(key)
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(default)
     }
 
     pub fn get_integer(&self, key: &str, default: i64) -> i64 {
-        self.get_value(key).and_then(|v| v.parse::<i64>().ok()).unwrap_or(default)
+        self.get_value(key)
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(default)
     }
 
     pub fn get_boolean(&self, key: &str, default: bool) -> bool {
@@ -205,7 +205,11 @@ pub struct ResultValue {
 
 impl ResultValue {
     pub fn new(name: String, value_type: String, value: Option<String>) -> Self {
-        Self { name, value_type, value }
+        Self {
+            name,
+            value_type,
+            value,
+        }
     }
 
     pub fn integer(name: String, value: i64) -> Self {
@@ -222,7 +226,11 @@ impl ResultValue {
         Self::new(
             name,
             "float".to_string(),
-            Some(format!("{:.precision$}", rounded_value, precision = decimal_places as usize)),
+            Some(format!(
+                "{:.precision$}",
+                rounded_value,
+                precision = decimal_places as usize
+            )),
         )
     }
 
@@ -251,7 +259,10 @@ pub trait DeviceDriver: Send + Sync {
     fn device_mut(&mut self) -> &mut Device;
 
     fn display_name(&self) -> String {
-        self.device().display_name.clone().unwrap_or_else(|| self.device().name.clone())
+        self.device()
+            .display_name
+            .clone()
+            .unwrap_or_else(|| self.device().name.clone())
     }
 
     fn protocol_type(&self) -> String {

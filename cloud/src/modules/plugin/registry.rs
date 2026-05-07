@@ -50,25 +50,19 @@ pub struct PluginManifest {
 /// 插件条目
 pub enum PluginEntry {
     /// 静态插件（编译时注册）
-    Static {
-        manifest: PluginManifest,
-        factory: PluginFactory,
-    },
+    Static { manifest: PluginManifest, factory: PluginFactory },
     /// 动态插件（.dll/.so 路径）
-    Dynamic {
-        manifest: PluginManifest,
-        path: PathBuf,
-    },
+    Dynamic { manifest: PluginManifest, path: PathBuf },
     /// 配置插件（TOML 配置）
-    Config {
-        manifest: PluginManifest,
-        config: toml::Value,
-    },
+    Config { manifest: PluginManifest, config: toml::Value },
 }
 
 /// 插件工厂函数
-pub type PluginFactory =
-    Box<dyn Fn(Arc<crate::modules::agent::AppContext>) -> Result<Box<dyn PluginHandler>, Error> + Send + Sync>;
+pub type PluginFactory = Box<
+    dyn Fn(Arc<crate::modules::agent::AppContext>) -> Result<Box<dyn PluginHandler>, Error>
+        + Send
+        + Sync,
+>;
 
 /// 插件处理器接口（所有插件的共同接口）
 pub trait PluginHandler: Any + Send + Sync {
@@ -88,10 +82,7 @@ pub struct PluginRegistry {
 
 impl PluginRegistry {
     pub fn new() -> Self {
-        Self {
-            entries: DashMap::new(),
-            handlers: DashMap::new(),
-        }
+        Self { entries: DashMap::new(), handlers: DashMap::new() }
     }
 
     /// 注册静态插件
@@ -107,12 +98,18 @@ impl PluginRegistry {
     }
 
     /// 创建插件实例
-    pub fn create_plugin(&self, name: &str, context: Arc<AppContext>) -> Result<Arc<dyn PluginHandler>, Error> {
+    pub fn create_plugin(
+        &self,
+        name: &str,
+        context: Arc<AppContext>,
+    ) -> Result<Arc<dyn PluginHandler>, Error> {
         if let Some(handler) = self.handlers.get(name) {
             return Ok(handler.value().clone());
         }
 
-        let entry = self.entries.get(name)
+        let entry = self
+            .entries
+            .get(name)
             .ok_or_else(|| Error::Unsupported(format!("Plugin not found: {}", name)))?;
 
         let handler: Box<dyn PluginHandler> = match entry.value() {
@@ -135,7 +132,11 @@ impl PluginRegistry {
         Ok(arc_handler)
     }
 
-    fn create_dynamic_plugin(&self, name: &str, _path: &Path) -> Result<Box<dyn PluginHandler>, Error> {
+    fn create_dynamic_plugin(
+        &self,
+        name: &str,
+        _path: &Path,
+    ) -> Result<Box<dyn PluginHandler>, Error> {
         Err(Error::Unsupported(format!("Dynamic plugin loading not implemented yet: {}", name)))
     }
 
@@ -151,7 +152,8 @@ impl PluginRegistry {
                 Ok(handler)
             }
             PluginType::Notification => {
-                let handler = crate::modules::plugin::notification::create_handler(config, context)?;
+                let handler =
+                    crate::modules::plugin::notification::create_handler(config, context)?;
                 Ok(handler)
             }
             PluginType::Scheduler => {
@@ -204,9 +206,10 @@ impl PluginRegistry {
             if let Some(ext) = path.extension() {
                 let ext_str = ext.to_string_lossy();
                 if ext_str == "toml"
-                    && let Ok(name) = self.load_toml_plugin(&path) {
-                        loaded.push(name);
-                    }
+                    && let Ok(name) = self.load_toml_plugin(&path)
+                {
+                    loaded.push(name);
+                }
             }
         }
 
@@ -219,7 +222,8 @@ impl PluginRegistry {
         let value: toml::Value = toml::from_str(&content)
             .map_err(|e| Error::ValidationError(format!("Invalid TOML: {}", e)))?;
 
-        let manifest: PluginManifest = value.get("plugin")
+        let manifest: PluginManifest = value
+            .get("plugin")
             .ok_or_else(|| Error::ValidationError("Missing [plugin] section".to_string()))?
             .clone()
             .try_into()
@@ -232,7 +236,9 @@ impl PluginRegistry {
 }
 
 impl Default for PluginRegistry {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 static GLOBAL_REGISTRY: std::sync::LazyLock<PluginRegistry> =

@@ -1,8 +1,9 @@
-use std::collections::HashMap;
-use std::{str::FromStr, time::Duration};
+use std::{collections::HashMap, str::FromStr, time::Duration};
 
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
-use sqlx::migrate::{Migrator, Migration};
+use sqlx::{
+    migrate::{Migration, Migrator},
+    sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions},
+};
 
 use super::config::DatabaseConfig;
 
@@ -18,10 +19,8 @@ const SKIP_MIGRATIONS: &[i64] = &[
 /// Cloud migrations take precedence when a version exists in both directories,
 /// except for 20260414102323 where the storage version is the canonical one.
 async fn load_all_migrations() -> Result<Vec<Migration>, sqlx::migrate::MigrateError> {
-    let cloud_migrations = Migrator::new(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations"),
-    )
-    .await?;
+    let cloud_migrations =
+        Migrator::new(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations")).await?;
 
     let storage_migrations = Migrator::new(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

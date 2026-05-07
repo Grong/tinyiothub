@@ -17,16 +17,18 @@ pub struct Event {
 
 impl Event {
     /// Create a new event with validation
-    pub fn new(
-        event_type: EventType,
-        level: EventLevel,
-        source: EventSource,
-        content: RichContent,
-    ) -> Result<Self> {
+    pub fn new(event_type: EventType, level: EventLevel, source: EventSource, content: RichContent) -> Result<Self> {
         // Validate content size
         content.validate_size().map_err(|e| Error::ValidationError(e))?;
 
-        let event = Self { id: EventId::new(), event_type, level, timestamp: Utc::now(), source, content };
+        let event = Self {
+            id: EventId::new(),
+            event_type,
+            level,
+            timestamp: Utc::now(),
+            source,
+            content,
+        };
 
         // Additional business rule validations
         event.validate()?;
@@ -43,7 +45,14 @@ impl Event {
         source: EventSource,
         content: RichContent,
     ) -> Self {
-        Self { id, event_type, level, timestamp, source, content }
+        Self {
+            id,
+            event_type,
+            level,
+            timestamp,
+            source,
+            content,
+        }
     }
 
     /// Get event ID
@@ -75,7 +84,6 @@ impl Event {
     pub fn content(&self) -> &RichContent {
         &self.content
     }
-
 
     /// Update event content (business rule: only within 5 minutes)
     pub fn update_content(&mut self, new_content: RichContent) -> Result<()> {
@@ -110,7 +118,10 @@ impl Event {
     pub fn should_update_real_time_status(&self) -> bool {
         match &self.event_type {
             EventType::Device(_) => {
-                matches!(self.level, EventLevel::Critical | EventLevel::Error | EventLevel::Warning)
+                matches!(
+                    self.level,
+                    EventLevel::Critical | EventLevel::Error | EventLevel::Warning
+                )
             }
             EventType::System(_) => matches!(self.level, EventLevel::Critical | EventLevel::Error),
         }
@@ -198,20 +209,11 @@ impl Event {
             super::ConnectionStatus::Error => EventLevel::Error,
         };
 
-        Self::new_device_event(
-            super::DeviceEventType::Connection,
-            level,
-            source,
-            content,
-        )
+        Self::new_device_event(super::DeviceEventType::Connection, level, source, content)
     }
 
     /// Create a device alarm event
-    pub fn new_device_alarm_event(
-        _device_id: String,
-        source: EventSource,
-        content: RichContent,
-    ) -> Result<Self> {
+    pub fn new_device_alarm_event(_device_id: String, source: EventSource, content: RichContent) -> Result<Self> {
         Self::new_device_event(
             super::DeviceEventType::DeviceAlarm,
             EventLevel::Warning,
@@ -221,17 +223,8 @@ impl Event {
     }
 
     /// Create a device normal event
-    pub fn new_device_normal_event(
-        _device_id: String,
-        source: EventSource,
-        content: RichContent,
-    ) -> Result<Self> {
-        Self::new_device_event(
-            super::DeviceEventType::DeviceNormal,
-            EventLevel::Info,
-            source,
-            content,
-        )
+    pub fn new_device_normal_event(_device_id: String, source: EventSource, content: RichContent) -> Result<Self> {
+        Self::new_device_event(super::DeviceEventType::DeviceNormal, EventLevel::Info, source, content)
     }
 
     /// Create a property change event
@@ -257,12 +250,7 @@ impl Event {
         content: RichContent,
         level: EventLevel,
     ) -> Result<Self> {
-        Self::new_device_event(
-            super::DeviceEventType::PropertyAlarm,
-            level,
-            source,
-            content,
-        )
+        Self::new_device_event(super::DeviceEventType::PropertyAlarm, level, source, content)
     }
 
     /// Create a property normal event

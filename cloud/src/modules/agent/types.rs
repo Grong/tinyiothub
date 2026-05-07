@@ -1,16 +1,16 @@
 // Agent types — domain types and DTOs
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::mpsc;
-
-use crate::shared::config::SystemPromptsConfig;
 
 // Re-export sub-domain types
 pub use super::device_memory::DeviceMemory;
 pub use super::skill::{AgentSkill, SkillType};
+use crate::shared::config::SystemPromptsConfig;
 
 // --- Session types ---
 
@@ -258,16 +258,18 @@ impl ParsedSessionKey {
     pub fn parse_str(key: &str) -> Result<Self, ChatError> {
         let parts: Vec<&str> = key.split('/').collect();
         if parts.len() != 2 {
-            return Err(ChatError::InvalidSessionKey(
-                format!("Session key must contain '/' separator: {}", key)
-            ));
+            return Err(ChatError::InvalidSessionKey(format!(
+                "Session key must contain '/' separator: {}",
+                key
+            )));
         }
 
         let prefix_parts: Vec<&str> = parts[0].split(':').collect();
         if prefix_parts.len() != 3 || prefix_parts[0] != "agent" {
-            return Err(ChatError::InvalidSessionKey(
-                format!("Session key prefix must be 'agent:{{workspace}}:{{agent}}': {}", key)
-            ));
+            return Err(ChatError::InvalidSessionKey(format!(
+                "Session key prefix must be 'agent:{{workspace}}:{{agent}}': {}",
+                key
+            )));
         }
 
         Ok(Self {
@@ -416,11 +418,12 @@ pub struct DeviceSnapshot {
 impl DeviceSnapshot {
     /// Create a new device snapshot from domain DeviceMemory
     pub fn from_domain(memory: &DeviceMemory) -> Result<Self, MemoryError> {
-        let snapshot_data = memory
-            .parse_snapshot()
-            .ok_or_else(|| MemoryError::SerializationError(
-                format!("Failed to parse snapshot for device {}", memory.device_id)
-            ))?;
+        let snapshot_data = memory.parse_snapshot().ok_or_else(|| {
+            MemoryError::SerializationError(format!(
+                "Failed to parse snapshot for device {}",
+                memory.device_id
+            ))
+        })?;
 
         let timestamp_formatted = chrono::DateTime::from_timestamp_millis(memory.snapshot_time)
             .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
@@ -529,28 +532,35 @@ impl MemoryContext {
             "device_snapshot" => self.device_snapshots.push(
                 DeviceSnapshot::from_domain(&DeviceMemory {
                     id: None,
-                    workspace_id: item.value.get("workspace_id")
+                    workspace_id: item
+                        .value
+                        .get("workspace_id")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string(),
-                    agent_id: item.value.get("agent_id")
+                    agent_id: item
+                        .value
+                        .get("agent_id")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string(),
                     device_id: item.key.clone(),
-                    snapshot_data: item.value.get("snapshot")
+                    snapshot_data: item
+                        .value
+                        .get("snapshot")
                         .map(|v| v.to_string())
                         .unwrap_or_default(),
                     snapshot_time: item.timestamp,
                     created_at: None,
-                }).unwrap_or_else(|_| DeviceSnapshot {
+                })
+                .unwrap_or_else(|_| DeviceSnapshot {
                     device_id: item.key.clone(),
                     workspace_id: String::new(),
                     agent_id: String::new(),
                     snapshot_data: item.value.clone(),
                     snapshot_time: item.timestamp,
                     timestamp_formatted: String::new(),
-                })
+                }),
             ),
             "user_preference" => self.user_preferences.push(item),
             "conversation_summary" => self.conversation_summaries.push(item),
@@ -607,10 +617,7 @@ impl MemoryContext {
     }
 
     pub fn get_device_snapshots(&self, device_id: &str) -> Vec<&DeviceSnapshot> {
-        self.device_snapshots
-            .iter()
-            .filter(|s| s.device_id == device_id)
-            .collect()
+        self.device_snapshots.iter().filter(|s| s.device_id == device_id).collect()
     }
 
     pub fn get_latest_device_snapshot(&self, device_id: &str) -> Option<&DeviceSnapshot> {
@@ -652,16 +659,18 @@ pub trait SessionRepository: Send + Sync {
 
         let parts: Vec<&str> = session_key.split('/').collect();
         if parts.len() != 2 {
-            return Err(SessionError::InvalidData(
-                format!("Invalid session key format: {}", session_key)
-            ));
+            return Err(SessionError::InvalidData(format!(
+                "Invalid session key format: {}",
+                session_key
+            )));
         }
 
         let prefix_parts: Vec<&str> = parts[0].split(':').collect();
         if prefix_parts.len() != 3 || prefix_parts[0] != "agent" {
-            return Err(SessionError::InvalidData(
-                format!("Invalid session key prefix: {}", session_key)
-            ));
+            return Err(SessionError::InvalidData(format!(
+                "Invalid session key prefix: {}",
+                session_key
+            )));
         }
 
         let workspace_id = prefix_parts[1].to_string();
@@ -670,20 +679,36 @@ pub trait SessionRepository: Send + Sync {
 
         match self.create(&session).await {
             Ok(()) => Ok(session),
-            Err(SessionError::RepositoryError(ref e)) if e.contains("UNIQUE") => {
-                self.get(session_key).await?
-                    .ok_or_else(|| SessionError::NotFound(session_key.to_string()))
-            }
+            Err(SessionError::RepositoryError(ref e)) if e.contains("UNIQUE") => self
+                .get(session_key)
+                .await?
+                .ok_or_else(|| SessionError::NotFound(session_key.to_string())),
             Err(e) => Err(e),
         }
     }
 
-    async fn add_message(&self, session_key: &str, message: ChatMessage) -> Result<(), SessionError>;
-    async fn get_messages(&self, session_key: &str, limit: usize, offset: usize) -> Result<Vec<ChatMessage>, SessionError>;
+    async fn add_message(
+        &self,
+        session_key: &str,
+        message: ChatMessage,
+    ) -> Result<(), SessionError>;
+    async fn get_messages(
+        &self,
+        session_key: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<ChatMessage>, SessionError>;
     async fn get_message_count(&self, session_key: &str) -> Result<usize, SessionError>;
-    async fn delete_messages_before(&self, session_key: &str, timestamp: i64) -> Result<usize, SessionError>;
+    async fn delete_messages_before(
+        &self,
+        session_key: &str,
+        timestamp: i64,
+    ) -> Result<usize, SessionError>;
     async fn save_compacted(&self, compacted: &CompactedSession) -> Result<(), SessionError>;
-    async fn get_compacted(&self, session_key: &str) -> Result<Option<CompactedSession>, SessionError>;
+    async fn get_compacted(
+        &self,
+        session_key: &str,
+    ) -> Result<Option<CompactedSession>, SessionError>;
 }
 
 #[cfg(test)]
@@ -692,7 +717,8 @@ mod tests {
 
     #[test]
     fn test_session_new() {
-        let session = Session::new("agent:ws:agent/sess".to_string(), "ws".to_string(), "agent".to_string());
+        let session =
+            Session::new("agent:ws:agent/sess".to_string(), "ws".to_string(), "agent".to_string());
         assert_eq!(session.session_key, "agent:ws:agent/sess");
         assert_eq!(session.workspace_id, "ws");
         assert_eq!(session.agent_id, "agent");
@@ -701,7 +727,8 @@ mod tests {
 
     #[test]
     fn test_session_set_label() {
-        let mut session = Session::new("agent:ws:agent/sess".to_string(), "ws".to_string(), "agent".to_string());
+        let mut session =
+            Session::new("agent:ws:agent/sess".to_string(), "ws".to_string(), "agent".to_string());
         let before = session.updated_at;
         std::thread::sleep(std::time::Duration::from_millis(10));
         session.set_label("Test Session");
@@ -826,7 +853,9 @@ mod tests {
     #[test]
     fn test_device_snapshot_from_domain() {
         let memory = DeviceMemory::new(
-            "ws-123".to_string(), "agent-456".to_string(), "device-789".to_string(),
+            "ws-123".to_string(),
+            "agent-456".to_string(),
+            "device-789".to_string(),
             serde_json::json!({"temperature": 25.5, "status": "online"}),
         );
         let snapshot = DeviceSnapshot::from_domain(&memory).unwrap();
@@ -838,8 +867,11 @@ mod tests {
     #[test]
     fn test_device_snapshot_to_prompt_fragment() {
         let snapshot = DeviceSnapshot {
-            device_id: "dev-1".to_string(), workspace_id: "ws".to_string(), agent_id: "agent".to_string(),
-            snapshot_data: serde_json::json!({"temp": 25}), snapshot_time: 1234567890000,
+            device_id: "dev-1".to_string(),
+            workspace_id: "ws".to_string(),
+            agent_id: "agent".to_string(),
+            snapshot_data: serde_json::json!({"temp": 25}),
+            snapshot_time: 1234567890000,
             timestamp_formatted: "2009-02-13 23:31:30".to_string(),
         };
         let fragment = snapshot.to_prompt_fragment();
@@ -858,8 +890,11 @@ mod tests {
     fn test_memory_context_add_snapshot() {
         let mut context = MemoryContext::new();
         context.add_device_snapshot(DeviceSnapshot {
-            device_id: "dev-1".to_string(), workspace_id: "ws".to_string(), agent_id: "agent".to_string(),
-            snapshot_data: serde_json::json!({"temp": 25}), snapshot_time: 1234567890000,
+            device_id: "dev-1".to_string(),
+            workspace_id: "ws".to_string(),
+            agent_id: "agent".to_string(),
+            snapshot_data: serde_json::json!({"temp": 25}),
+            snapshot_time: 1234567890000,
             timestamp_formatted: "2009-02-13 23:31:30".to_string(),
         });
         assert!(!context.is_empty());
@@ -870,13 +905,19 @@ mod tests {
     fn test_memory_context_get_device_snapshots() {
         let mut context = MemoryContext::new();
         context.add_device_snapshot(DeviceSnapshot {
-            device_id: "dev-1".to_string(), workspace_id: "ws".to_string(), agent_id: "agent".to_string(),
-            snapshot_data: serde_json::json!({"temp": 25}), snapshot_time: 1000,
+            device_id: "dev-1".to_string(),
+            workspace_id: "ws".to_string(),
+            agent_id: "agent".to_string(),
+            snapshot_data: serde_json::json!({"temp": 25}),
+            snapshot_time: 1000,
             timestamp_formatted: "time-1".to_string(),
         });
         context.add_device_snapshot(DeviceSnapshot {
-            device_id: "dev-2".to_string(), workspace_id: "ws".to_string(), agent_id: "agent".to_string(),
-            snapshot_data: serde_json::json!({"temp": 30}), snapshot_time: 2000,
+            device_id: "dev-2".to_string(),
+            workspace_id: "ws".to_string(),
+            agent_id: "agent".to_string(),
+            snapshot_data: serde_json::json!({"temp": 30}),
+            snapshot_time: 2000,
             timestamp_formatted: "time-2".to_string(),
         });
         let dev1_snapshots = context.get_device_snapshots("dev-1");
@@ -887,8 +928,11 @@ mod tests {
     #[test]
     fn test_agent_memory_item_helpers() {
         let snapshot_item = AgentMemoryItem::device_snapshot(&DeviceSnapshot {
-            device_id: "dev-1".to_string(), workspace_id: "ws".to_string(), agent_id: "agent".to_string(),
-            snapshot_data: serde_json::json!({"temp": 25}), snapshot_time: 1000,
+            device_id: "dev-1".to_string(),
+            workspace_id: "ws".to_string(),
+            agent_id: "agent".to_string(),
+            snapshot_data: serde_json::json!({"temp": 25}),
+            snapshot_time: 1000,
             timestamp_formatted: "time".to_string(),
         });
         assert_eq!(snapshot_item.item_type, "device_snapshot");
@@ -897,7 +941,10 @@ mod tests {
         let pref_item = AgentMemoryItem::user_preference("theme", serde_json::json!("dark"));
         assert_eq!(pref_item.item_type, "user_preference");
 
-        let summary_item = AgentMemoryItem::conversation_summary("Talked about devices", vec!["devices".to_string()]);
+        let summary_item = AgentMemoryItem::conversation_summary(
+            "Talked about devices",
+            vec!["devices".to_string()],
+        );
         assert_eq!(summary_item.item_type, "conversation_summary");
     }
 

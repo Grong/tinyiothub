@@ -1,16 +1,15 @@
 // Alarm module types — entities, errors, value objects
 
 use std::time::Duration;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-
-use crate::modules::event::aggregates::NotificationChannelType;
-
 // ============================================================================
 // Errors
 // ============================================================================
-
 use thiserror::Error;
+
+use crate::modules::event::aggregates::NotificationChannelType;
 
 /// 报警模块错误类型
 #[derive(Error, Debug)]
@@ -229,8 +228,15 @@ impl std::fmt::Display for AlarmType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AlarmCondition {
-    Threshold { operator: ComparisonOperator, value: f64 },
-    Range { min: Option<f64>, max: Option<f64>, inclusive: bool },
+    Threshold {
+        operator: ComparisonOperator,
+        value: f64,
+    },
+    Range {
+        min: Option<f64>,
+        max: Option<f64>,
+        inclusive: bool,
+    },
     Change {
         change_type: ChangeType,
         threshold: f64,
@@ -242,7 +248,10 @@ pub enum AlarmCondition {
         #[serde(with = "duration_serde")]
         duration: Duration,
     },
-    Composite { operator: LogicalOperator, conditions: Vec<AlarmCondition> },
+    Composite {
+        operator: LogicalOperator,
+        conditions: Vec<AlarmCondition>,
+    },
 }
 
 /// 比较运算符
@@ -353,15 +362,20 @@ pub struct NotificationConfig {
 // Duration 序列化辅助模块
 mod duration_serde {
     use std::time::Duration;
+
     use serde::{Deserialize, Deserializer, Serializer};
 
     pub fn serialize<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
-    where S: Serializer {
+    where
+        S: Serializer,
+    {
         serializer.serialize_u64(duration.as_secs())
     }
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Duration, D::Error>
-    where D: Deserializer<'de> {
+    where
+        D: Deserializer<'de>,
+    {
         let secs = u64::deserialize(deserializer)?;
         Ok(Duration::from_secs(secs))
     }
@@ -369,10 +383,13 @@ mod duration_serde {
 
 mod optional_duration_serde {
     use std::time::Duration;
+
     use serde::{Deserialize, Deserializer, Serializer};
 
     pub fn serialize<S>(duration: &Option<Duration>, serializer: S) -> Result<S::Ok, S::Error>
-    where S: Serializer {
+    where
+        S: Serializer,
+    {
         match duration {
             Some(d) => serializer.serialize_some(&d.as_secs()),
             None => serializer.serialize_none(),
@@ -380,7 +397,9 @@ mod optional_duration_serde {
     }
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Duration>, D::Error>
-    where D: Deserializer<'de> {
+    where
+        D: Deserializer<'de>,
+    {
         let opt: Option<u64> = Option::deserialize(deserializer)?;
         Ok(opt.map(Duration::from_secs))
     }
@@ -916,7 +935,10 @@ mod tests {
         assert_eq!(AlarmType::parse_str("property_threshold"), AlarmType::PropertyThreshold);
         assert_eq!(AlarmType::parse_str("property_anomaly"), AlarmType::PropertyAnomaly);
         assert_eq!(AlarmType::parse_str("command_failed"), AlarmType::CommandFailed);
-        assert_eq!(AlarmType::parse_str("custom_foo"), AlarmType::Custom { name: "foo".to_string() });
+        assert_eq!(
+            AlarmType::parse_str("custom_foo"),
+            AlarmType::Custom { name: "foo".to_string() }
+        );
         assert_eq!(AlarmType::parse_str("other"), AlarmType::Custom { name: "other".to_string() });
     }
 
@@ -986,8 +1008,14 @@ mod tests {
     #[test]
     fn test_alarm_acknowledge_success() {
         let mut alarm = Alarm::new(
-            "device-1".to_string(), None, None,
-            AlarmType::DeviceOffline, AlarmLevel::Warning, "msg".to_string(), None, None,
+            "device-1".to_string(),
+            None,
+            None,
+            AlarmType::DeviceOffline,
+            AlarmLevel::Warning,
+            "msg".to_string(),
+            None,
+            None,
         );
         assert!(alarm.acknowledge("user-1".to_string(), Some("ack note".to_string())).is_ok());
         assert_eq!(alarm.status, AlarmStatus::Acknowledged);
@@ -997,8 +1025,14 @@ mod tests {
     #[test]
     fn test_alarm_acknowledge_already_acknowledged() {
         let mut alarm = Alarm::new(
-            "device-1".to_string(), None, None,
-            AlarmType::DeviceOffline, AlarmLevel::Warning, "msg".to_string(), None, None,
+            "device-1".to_string(),
+            None,
+            None,
+            AlarmType::DeviceOffline,
+            AlarmLevel::Warning,
+            "msg".to_string(),
+            None,
+            None,
         );
         alarm.acknowledge("user-1".to_string(), None).unwrap();
         let result = alarm.acknowledge("user-2".to_string(), None);
@@ -1008,8 +1042,14 @@ mod tests {
     #[test]
     fn test_alarm_resolve_success() {
         let mut alarm = Alarm::new(
-            "device-1".to_string(), None, None,
-            AlarmType::DeviceOffline, AlarmLevel::Warning, "msg".to_string(), None, None,
+            "device-1".to_string(),
+            None,
+            None,
+            AlarmType::DeviceOffline,
+            AlarmLevel::Warning,
+            "msg".to_string(),
+            None,
+            None,
         );
         assert!(alarm.resolve("user-1".to_string(), ResolutionType::Fixed, None).is_ok());
         assert_eq!(alarm.status, AlarmStatus::Resolved);
@@ -1018,8 +1058,14 @@ mod tests {
     #[test]
     fn test_alarm_resolve_after_acknowledge() {
         let mut alarm = Alarm::new(
-            "device-1".to_string(), None, None,
-            AlarmType::DeviceOffline, AlarmLevel::Warning, "msg".to_string(), None, None,
+            "device-1".to_string(),
+            None,
+            None,
+            AlarmType::DeviceOffline,
+            AlarmLevel::Warning,
+            "msg".to_string(),
+            None,
+            None,
         );
         alarm.acknowledge("user-1".to_string(), None).unwrap();
         assert!(alarm.resolve("user-1".to_string(), ResolutionType::Fixed, None).is_ok());
@@ -1028,8 +1074,14 @@ mod tests {
     #[test]
     fn test_alarm_resolve_already_resolved_fails() {
         let mut alarm = Alarm::new(
-            "device-1".to_string(), None, None,
-            AlarmType::DeviceOffline, AlarmLevel::Warning, "msg".to_string(), None, None,
+            "device-1".to_string(),
+            None,
+            None,
+            AlarmType::DeviceOffline,
+            AlarmLevel::Warning,
+            "msg".to_string(),
+            None,
+            None,
         );
         alarm.resolve("user-1".to_string(), ResolutionType::Fixed, None).unwrap();
         let result = alarm.resolve("user-1".to_string(), ResolutionType::Fixed, None);
@@ -1039,8 +1091,14 @@ mod tests {
     #[test]
     fn test_alarm_suppress_success() {
         let mut alarm = Alarm::new(
-            "device-1".to_string(), None, None,
-            AlarmType::DeviceOffline, AlarmLevel::Warning, "msg".to_string(), None, None,
+            "device-1".to_string(),
+            None,
+            None,
+            AlarmType::DeviceOffline,
+            AlarmLevel::Warning,
+            "msg".to_string(),
+            None,
+            None,
         );
         assert!(alarm.suppress().is_ok());
         assert_eq!(alarm.status, AlarmStatus::Suppressed);
@@ -1049,8 +1107,14 @@ mod tests {
     #[test]
     fn test_alarm_suppress_non_active_fails() {
         let mut alarm = Alarm::new(
-            "device-1".to_string(), None, None,
-            AlarmType::DeviceOffline, AlarmLevel::Warning, "msg".to_string(), None, None,
+            "device-1".to_string(),
+            None,
+            None,
+            AlarmType::DeviceOffline,
+            AlarmLevel::Warning,
+            "msg".to_string(),
+            None,
+            None,
         );
         alarm.acknowledge("user-1".to_string(), None).unwrap();
         assert!(alarm.suppress().is_err());
@@ -1059,8 +1123,14 @@ mod tests {
     #[test]
     fn test_alarm_can_acknowledge() {
         let mut alarm = Alarm::new(
-            "device-1".to_string(), None, None,
-            AlarmType::DeviceOffline, AlarmLevel::Warning, "msg".to_string(), None, None,
+            "device-1".to_string(),
+            None,
+            None,
+            AlarmType::DeviceOffline,
+            AlarmLevel::Warning,
+            "msg".to_string(),
+            None,
+            None,
         );
         assert!(alarm.can_acknowledge());
         alarm.acknowledge("user-1".to_string(), None).unwrap();
@@ -1070,8 +1140,14 @@ mod tests {
     #[test]
     fn test_alarm_can_resolve() {
         let mut alarm = Alarm::new(
-            "device-1".to_string(), None, None,
-            AlarmType::DeviceOffline, AlarmLevel::Warning, "msg".to_string(), None, None,
+            "device-1".to_string(),
+            None,
+            None,
+            AlarmType::DeviceOffline,
+            AlarmLevel::Warning,
+            "msg".to_string(),
+            None,
+            None,
         );
         assert!(alarm.can_resolve());
         alarm.acknowledge("user-1".to_string(), None).unwrap();
@@ -1083,8 +1159,14 @@ mod tests {
     #[test]
     fn test_alarm_is_active() {
         let mut alarm = Alarm::new(
-            "device-1".to_string(), None, None,
-            AlarmType::DeviceOffline, AlarmLevel::Warning, "msg".to_string(), None, None,
+            "device-1".to_string(),
+            None,
+            None,
+            AlarmType::DeviceOffline,
+            AlarmLevel::Warning,
+            "msg".to_string(),
+            None,
+            None,
         );
         assert!(alarm.is_active());
         alarm.acknowledge("user-1".to_string(), None).unwrap();
@@ -1124,7 +1206,9 @@ mod tests {
         let config = NotificationConfig::default();
         let rule = AlarmRule::new(
             "".to_string(),
-            None, None, None,
+            None,
+            None,
+            None,
             RuleType::Threshold,
             AlarmCondition::Threshold { operator: ComparisonOperator::GreaterThan, value: 50.0 },
             AlarmLevel::Warning,
@@ -1145,7 +1229,9 @@ mod tests {
         };
         let rule = AlarmRule::new(
             "Test".to_string(),
-            None, None, None,
+            None,
+            None,
+            None,
             RuleType::Threshold,
             AlarmCondition::Threshold { operator: ComparisonOperator::GreaterThan, value: 50.0 },
             AlarmLevel::Warning,
@@ -1166,13 +1252,16 @@ mod tests {
         };
         let mut rule = AlarmRule::new(
             "Old Name".to_string(),
-            None, None, None,
+            None,
+            None,
+            None,
             RuleType::Threshold,
             AlarmCondition::Threshold { operator: ComparisonOperator::GreaterThan, value: 50.0 },
             AlarmLevel::Warning,
             config,
             "ws-1".to_string(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let result = rule.update(Some("New Name".to_string()), None, None, None, None);
         assert!(result.is_ok());
@@ -1190,13 +1279,16 @@ mod tests {
         };
         let mut rule = AlarmRule::new(
             "Name".to_string(),
-            None, None, None,
+            None,
+            None,
+            None,
             RuleType::Threshold,
             AlarmCondition::Threshold { operator: ComparisonOperator::GreaterThan, value: 50.0 },
             AlarmLevel::Warning,
             config,
             "ws-1".to_string(),
-        ).unwrap();
+        )
+        .unwrap();
 
         let result = rule.update(Some("".to_string()), None, None, None, None);
         assert!(result.is_err());
@@ -1213,13 +1305,16 @@ mod tests {
         };
         let mut rule = AlarmRule::new(
             "Name".to_string(),
-            None, None, None,
+            None,
+            None,
+            None,
             RuleType::Threshold,
             AlarmCondition::Threshold { operator: ComparisonOperator::GreaterThan, value: 50.0 },
             AlarmLevel::Warning,
             config,
             "ws-1".to_string(),
-        ).unwrap();
+        )
+        .unwrap();
 
         rule.disable();
         assert!(!rule.is_enabled);

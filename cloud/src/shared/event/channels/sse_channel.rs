@@ -1,17 +1,17 @@
 use std::{collections::HashMap, convert::Infallible, sync::Arc, time::Duration};
 
 use axum::response::{
-    sse::{Event as SseEvent, KeepAlive},
     IntoResponse, Response, Sse,
+    sse::{Event as SseEvent, KeepAlive},
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use crate::modules::event::Result;
-use crate::modules::notification::types::{
-    NotificationChannel, NotificationChannelType, NotificationMessage,
+use crate::modules::{
+    event::Result,
+    notification::types::{NotificationChannel, NotificationChannelType, NotificationMessage},
 };
 
 /// SSE connection information
@@ -208,21 +208,24 @@ impl SseNotificationChannel {
 fn should_send_to_user(user_id: &str, workspace_id: &str, message: &SseMessage) -> bool {
     // Check if message has a target user specified
     if let Some(target_user) = message.data.get("target_user")
-        && let Some(target_str) = target_user.as_str() {
-            return target_str == user_id;
-        }
+        && let Some(target_str) = target_user.as_str()
+    {
+        return target_str == user_id;
+    }
 
     // Check if message has recipient information
     if let Some(recipient) = message.data.get("recipient")
-        && let Some(recipient_str) = recipient.as_str() {
-            return recipient_str == user_id || recipient_str == "admin" || recipient_str == "all";
-        }
+        && let Some(recipient_str) = recipient.as_str()
+    {
+        return recipient_str == user_id || recipient_str == "admin" || recipient_str == "all";
+    }
 
     // Filter by workspace_id — only send events belonging to the same workspace
     if let Some(msg_workspace) = message.data.get("workspace_id")
-        && let Some(msg_workspace_str) = msg_workspace.as_str() {
-            return msg_workspace_str == workspace_id;
-        }
+        && let Some(msg_workspace_str) = msg_workspace.as_str()
+    {
+        return msg_workspace_str == workspace_id;
+    }
 
     // Messages without workspace_id are system-level events — send to all
     true

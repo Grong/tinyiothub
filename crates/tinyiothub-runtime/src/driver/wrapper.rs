@@ -1,16 +1,15 @@
-use tinyiothub_core::models::{device::Device, device_command::DeviceCommand};
 use std::time::{Duration, Instant};
+use tinyiothub_core::models::{device::Device, device_command::DeviceCommand};
 
 use super::{
     retry::{RetryManager, RetryResult},
     status::{DeviceOverview, DeviceStatusManager},
 };
-use crate::event_bus::{publish_event_safe, EventBus};
-use tinyiothub_core::driver::{DriverConfig, ResultValue, DeviceDriver};
+use crate::event_bus::{EventBus, publish_event_safe};
+use tinyiothub_core::driver::{DeviceDriver, DriverConfig, ResultValue};
 use tinyiothub_core::error::Error;
 use tinyiothub_core::models::event::{
-    ContentElement, DeviceEventType, Event as DomainEvent, EventLevel, EventSource, RichContent,
-    TextFormat,
+    ContentElement, DeviceEventType, Event as DomainEvent, EventLevel, EventSource, RichContent, TextFormat,
 };
 
 /// 设备驱动执行结果
@@ -31,7 +30,11 @@ pub struct RetryInfo {
 
 impl RetryInfo {
     pub fn new(attempt: u32, will_retry: bool, next_retry_in: Option<Duration>) -> Self {
-        Self { attempt, will_retry, next_retry_in }
+        Self {
+            attempt,
+            will_retry,
+            next_retry_in,
+        }
     }
 }
 
@@ -99,7 +102,9 @@ impl DriverWrapper {
 
     pub fn execute_command(&mut self, cmd: &DeviceCommand) -> DriverExecutionResult<bool> {
         let start_time = Instant::now();
-        let result = self.retry_manager.execute_once(|| self.inner_driver.execute_command(cmd));
+        let result = self
+            .retry_manager
+            .execute_once(|| self.inner_driver.execute_command(cmd));
         let elapsed = start_time.elapsed();
         self.update_status(&result, elapsed);
         self.convert_result(result, elapsed)
@@ -117,28 +122,35 @@ impl DriverWrapper {
         }
     }
 
-    fn convert_result<T>(
-        &self,
-        result: RetryResult<T>,
-        elapsed: Duration,
-    ) -> DriverExecutionResult<T> {
+    fn convert_result<T>(&self, result: RetryResult<T>, elapsed: Duration) -> DriverExecutionResult<T> {
         match result {
-            RetryResult::Success(data) => {
-                DriverExecutionResult { result: Ok(data), elapsed, retry_info: None }
-            }
-            RetryResult::Failed { attempts, last_error, total_duration: _ } => {
-                DriverExecutionResult {
-                    result: Err(last_error),
-                    elapsed,
-                    retry_info: Some(RetryInfo::new(attempts, false, None)),
-                }
-            }
-            RetryResult::Timeout { attempts, total_duration: _ } => DriverExecutionResult {
+            RetryResult::Success(data) => DriverExecutionResult {
+                result: Ok(data),
+                elapsed,
+                retry_info: None,
+            },
+            RetryResult::Failed {
+                attempts,
+                last_error,
+                total_duration: _,
+            } => DriverExecutionResult {
+                result: Err(last_error),
+                elapsed,
+                retry_info: Some(RetryInfo::new(attempts, false, None)),
+            },
+            RetryResult::Timeout {
+                attempts,
+                total_duration: _,
+            } => DriverExecutionResult {
                 result: Err(Error::IOError("Operation timeout".to_string())),
                 elapsed,
                 retry_info: Some(RetryInfo::new(attempts, false, None)),
             },
-            RetryResult::Retrying { attempt, next_retry_at, last_error } => {
+            RetryResult::Retrying {
+                attempt,
+                next_retry_at,
+                last_error,
+            } => {
                 let next_retry_in = if next_retry_at > Instant::now() {
                     Some(next_retry_at - Instant::now())
                 } else {
@@ -198,10 +210,7 @@ impl DriverWrapper {
                         format: TextFormat::Plain,
                     },
                     ContentElement::Text {
-                        content: format!(
-                            "Protocol: {}",
-                            device.protocol_type.as_deref().unwrap_or("Unknown")
-                        ),
+                        content: format!("Protocol: {}", device.protocol_type.as_deref().unwrap_or("Unknown")),
                         format: TextFormat::Plain,
                     },
                     ContentElement::Text {
@@ -289,6 +298,9 @@ impl DriverWrapper {
     }
 
     fn display_name(&self) -> String {
-        self.device().display_name.clone().unwrap_or_else(|| self.device().name.clone())
+        self.device()
+            .display_name
+            .clone()
+            .unwrap_or_else(|| self.device().name.clone())
     }
 }

@@ -34,11 +34,7 @@ pub enum ExecutorError {
 #[async_trait]
 pub trait JobExecutor: Send + Sync {
     /// Execute the given cron job.
-    async fn execute(
-        &self,
-        job: &CronJob,
-        run_id: &str,
-    ) -> std::result::Result<ExecutionResult, ExecutorError>;
+    async fn execute(&self, job: &CronJob, run_id: &str) -> std::result::Result<ExecutionResult, ExecutorError>;
 
     /// Return true if this executor can handle the given job type.
     fn can_handle(&self, job_type: &str) -> bool;

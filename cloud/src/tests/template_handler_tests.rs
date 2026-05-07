@@ -6,7 +6,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use crate::test_utils::{auth_header, create_test_token, response_parts, setup_test_app};
@@ -52,7 +52,12 @@ async fn test_get_template_not_found() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/device-templates/nonexistent-tpl-12345", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/device-templates/nonexistent-tpl-12345",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
 
@@ -88,7 +93,12 @@ async fn test_update_template_not_found() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request("PUT", "/api/v1/device-templates/nonexistent-tpl-12345", &token, Some(json!({"name": "updated"}))))
+        .oneshot(auth_request(
+            "PUT",
+            "/api/v1/device-templates/nonexistent-tpl-12345",
+            &token,
+            Some(json!({"name": "updated"})),
+        ))
         .await
         .unwrap();
 
@@ -105,7 +115,12 @@ async fn test_delete_template_not_found() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request("DELETE", "/api/v1/device-templates/nonexistent-tpl-12345", &token, None))
+        .oneshot(auth_request(
+            "DELETE",
+            "/api/v1/device-templates/nonexistent-tpl-12345",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
 
@@ -153,8 +168,11 @@ async fn test_validate_template_not_found() {
         .unwrap();
 
     let status = response.status();
-    assert!(status == StatusCode::OK || status == StatusCode::UNPROCESSABLE_ENTITY,
-        "Expected OK or 422, got: {}", status);
+    assert!(
+        status == StatusCode::OK || status == StatusCode::UNPROCESSABLE_ENTITY,
+        "Expected OK or 422, got: {}",
+        status
+    );
 
     if status == StatusCode::OK {
         let (_s, json) = response_parts(response).await;
@@ -182,8 +200,11 @@ async fn test_preview_template_not_found() {
         .unwrap();
 
     let status = response.status();
-    assert!(status == StatusCode::OK || status == StatusCode::UNPROCESSABLE_ENTITY,
-        "Expected OK or 422, got: {}", status);
+    assert!(
+        status == StatusCode::OK || status == StatusCode::UNPROCESSABLE_ENTITY,
+        "Expected OK or 422, got: {}",
+        status
+    );
 
     if status == StatusCode::OK {
         let (_s, json) = response_parts(response).await;

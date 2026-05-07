@@ -8,22 +8,22 @@
 // - GET  /agents/{id}/heartbeat/tasks
 // - PUT  /agents/{id}/heartbeat/tasks
 
-use crate::shared::security::jwt::Claims;
-use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
+    Json, Router,
     extract::{Path, State},
     routing::get,
-    Json, Router,
 };
 use serde::Deserialize;
+use tinyiothub_web::response::ApiResponseBuilder;
 
-use crate::{
-    shared::api_response::{ApiResponse},
-    shared::agent::heartbeat_service::{
-        get_heartbeat_state, HeartbeatExecutionRecord, HeartbeatTask,
-        read_heartbeat_tasks, write_heartbeat_tasks,
+use crate::shared::{
+    agent::heartbeat_service::{
+        HeartbeatExecutionRecord, HeartbeatTask, get_heartbeat_state, read_heartbeat_tasks,
+        write_heartbeat_tasks,
     },
-    shared::{app_state::AppState},
+    api_response::ApiResponse,
+    app_state::AppState,
+    security::jwt::Claims,
 };
 
 /// Request to update heartbeat config
@@ -147,9 +147,7 @@ pub async fn get_heartbeat_logs(
 ) -> Json<ApiResponse<HeartbeatLogsResponse>> {
     let state_lock = get_state_or_error!(HeartbeatConfigResponse);
     let state = state_lock.read().await;
-    ApiResponseBuilder::success(HeartbeatLogsResponse {
-        logs: state.execution_history.clone(),
-    })
+    ApiResponseBuilder::success(HeartbeatLogsResponse { logs: state.execution_history.clone() })
 }
 
 /// GET /api/v1/agents/{agent_id}/heartbeat/tasks

@@ -6,17 +6,17 @@
 // memory_service: AgentMemoryService
 // handler: HTTP routes
 
-pub mod types;
-pub mod service;
 pub mod chat_service;
-pub mod memory_service;
 pub mod device_memory;
-pub mod skill;
 pub mod handler;
+pub mod memory_service;
+pub mod service;
+pub mod skill;
+pub mod types;
 
-pub use types::*;
-pub use service::SessionService;
 pub use chat_service::ChatService;
-pub use memory_service::AgentMemoryService;
 pub use device_memory::DeviceMemory;
+pub use memory_service::AgentMemoryService;
+pub use service::SessionService;
 pub use skill::{AgentSkill, SkillType};
+pub use types::*;

@@ -2,8 +2,10 @@ use std::sync::Arc;
 
 use tinyiothub_core::error::Result;
 
-use super::repo::RoleRepository;
-use super::types::{CreateRoleRequest, Role, RoleQueryParams, RoleStats, UpdateRoleRequest};
+use super::{
+    repo::RoleRepository,
+    types::{CreateRoleRequest, Role, RoleQueryParams, RoleStats, UpdateRoleRequest},
+};
 
 pub struct RoleService {
     role_repository: Arc<dyn RoleRepository>,
@@ -18,7 +20,11 @@ impl RoleService {
         self.role_repository.find_by_id(id).await
     }
 
-    pub async fn find_by_name(&self, name: &str, workspace_id: Option<&str>) -> Result<Option<Role>> {
+    pub async fn find_by_name(
+        &self,
+        name: &str,
+        workspace_id: Option<&str>,
+    ) -> Result<Option<Role>> {
         self.role_repository.find_by_name(name, workspace_id).await
     }
 
@@ -62,7 +68,12 @@ impl RoleService {
         self.role_repository.exists_by_name(name, workspace_id).await
     }
 
-    pub async fn exists_by_name_exclude_id(&self, name: &str, exclude_id: &str, workspace_id: Option<&str>) -> Result<bool> {
+    pub async fn exists_by_name_exclude_id(
+        &self,
+        name: &str,
+        exclude_id: &str,
+        workspace_id: Option<&str>,
+    ) -> Result<bool> {
         self.role_repository.exists_by_name_exclude_id(name, exclude_id, workspace_id).await
     }
 

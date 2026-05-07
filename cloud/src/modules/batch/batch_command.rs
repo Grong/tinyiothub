@@ -6,8 +6,7 @@ use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::modules::device::service::DeviceService;
-use crate::shared::persistence::database::Database;
+use crate::{modules::device::service::DeviceService, shared::persistence::database::Database};
 
 #[derive(Error, Debug)]
 pub enum BatchCommandError {
@@ -175,9 +174,7 @@ impl BatchCommandRepository {
             });
         }
 
-        let batch = Self::find_by_id(db, &batch_id)
-            .await?
-            .expect("Batch just created");
+        let batch = Self::find_by_id(db, &batch_id).await?.expect("Batch just created");
 
         Ok(BatchCommandWithItems { batch, items })
     }
@@ -401,11 +398,7 @@ impl BatchCommandExecutor {
         let has_failures = updated.items.iter().any(|i| i.status == "failure");
 
         let final_status = if all_done {
-            if has_failures {
-                "partial_failure"
-            } else {
-                "completed"
-            }
+            if has_failures { "partial_failure" } else { "completed" }
         } else {
             "running"
         };

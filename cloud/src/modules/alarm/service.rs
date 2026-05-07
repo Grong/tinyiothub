@@ -1,13 +1,16 @@
 // Alarm service — AlarmService, RuleEngine, AlarmSpecifications, AlarmEventHandler
 
 use std::{collections::HashMap, sync::Arc};
+
 use chrono::{DateTime, Duration, Utc};
 
-use super::types::*;
-use super::repo::{AlarmQueryCriteria, AlarmRepository, AlarmRuleRepository, TimeRange};
-use crate::modules::event::aggregates::NotificationChannelType;
-use crate::modules::event::entities::Event;
-use crate::modules::event::value_objects::EventType;
+use super::{
+    repo::{AlarmQueryCriteria, AlarmRepository, AlarmRuleRepository, TimeRange},
+    types::*,
+};
+use crate::modules::event::{
+    aggregates::NotificationChannelType, entities::Event, value_objects::EventType,
+};
 
 /// 报警业务服务
 pub struct AlarmService {
@@ -30,7 +33,11 @@ impl AlarmService {
         Ok(alarm)
     }
 
-    pub async fn get_alarm_by_id(&self, id: &str, workspace_id: Option<&str>) -> AlarmResult<Option<Alarm>> {
+    pub async fn get_alarm_by_id(
+        &self,
+        id: &str,
+        workspace_id: Option<&str>,
+    ) -> AlarmResult<Option<Alarm>> {
         self.alarm_repository.find_by_id(id, workspace_id).await
     }
 
@@ -191,11 +198,19 @@ impl AlarmService {
         self.rule_repository.find_enabled(Some(workspace_id)).await
     }
 
-    pub async fn get_rules_by_device(&self, device_id: &str, workspace_id: &str) -> AlarmResult<Vec<AlarmRule>> {
+    pub async fn get_rules_by_device(
+        &self,
+        device_id: &str,
+        workspace_id: &str,
+    ) -> AlarmResult<Vec<AlarmRule>> {
         self.rule_repository.find_by_device(device_id, Some(workspace_id)).await
     }
 
-    pub async fn update_rule(&self, rule: AlarmRule, workspace_id: Option<&str>) -> AlarmResult<()> {
+    pub async fn update_rule(
+        &self,
+        rule: AlarmRule,
+        workspace_id: Option<&str>,
+    ) -> AlarmResult<()> {
         AlarmSpecifications::is_valid_rule(&rule).map_err(AlarmError::InvalidRuleConfig)?;
         self.rule_repository.update(&rule, workspace_id).await
     }
@@ -204,7 +219,12 @@ impl AlarmService {
         self.rule_repository.delete(id, workspace_id).await
     }
 
-    pub async fn set_rule_enabled(&self, id: &str, enabled: bool, workspace_id: Option<&str>) -> AlarmResult<()> {
+    pub async fn set_rule_enabled(
+        &self,
+        id: &str,
+        enabled: bool,
+        workspace_id: Option<&str>,
+    ) -> AlarmResult<()> {
         self.rule_repository.set_enabled(id, enabled, workspace_id).await
     }
 
@@ -302,9 +322,7 @@ impl RuleEngine {
             AlarmCondition::Change { change_type, threshold, .. } => {
                 self.check_change(change_type, *threshold, context)
             }
-            AlarmCondition::Duration { condition, .. } => {
-                self.check_condition(condition, context)
-            }
+            AlarmCondition::Duration { condition, .. } => self.check_condition(condition, context),
             AlarmCondition::Composite { operator, conditions } => {
                 self.check_composite(operator, conditions, context)
             }

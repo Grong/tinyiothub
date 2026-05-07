@@ -4,11 +4,11 @@
 // service: aggregates, specifications, business logic
 // handler: HTTP routes
 
-pub mod types;
-pub mod repo;
-pub mod service;
 pub mod errors;
 pub mod handler;
+pub mod repo;
+pub mod service;
+pub mod types;
 
 // Backward compatibility: re-export core types as submodules
 pub mod entities {
@@ -66,15 +66,14 @@ impl From<crate::shared::error::Error> for EventError {
 }
 
 // Re-export core event types
+pub use handler::*;
+pub use repo::*;
+pub use service::*;
 pub use tinyiothub_core::models::event::{
     ConnectionStatus, ContentElement, DeviceEventType, Event, EventId, EventLevel, EventSource,
     EventType, LinkTarget, RichContent, SystemEventType, TextFormat,
 };
-
 pub use types::*;
-pub use repo::*;
-pub use service::*;
-pub use handler::*;
 
 // Backward compatibility: old module paths
 pub mod repositories {
@@ -86,10 +85,12 @@ pub use service::EventAggregate;
 
 /// Backward compatibility: old aggregates::NotificationChannelType path
 pub mod aggregates {
-    pub use crate::modules::notification::types::NotificationChannelType;
     pub use super::service::EventAggregate;
+    pub use crate::modules::notification::types::NotificationChannelType;
 }
 
 // Re-export errors module types at top level for convenience
-pub use errors::{DomainResult, DomainError, EventDomainError, EventServiceDomainError,
-    NotificationDomainError, PerformanceDomainError, SecurityDomainError};
+pub use errors::{
+    DomainError, DomainResult, EventDomainError, EventServiceDomainError, NotificationDomainError,
+    PerformanceDomainError, SecurityDomainError,
+};

@@ -1,18 +1,17 @@
 //! InfluxDB 存储处理器
 
 use std::any::Any;
+
 use async_trait::async_trait;
-use influxdb2::Client as InfluxClient;
-use influxdb2::models::DataPoint;
-use tracing::debug;
 use futures::stream::iter;
+use influxdb2::{Client as InfluxClient, models::DataPoint};
+use tracing::debug;
 
-use super::StorageHandler;
-use crate::modules::plugin::storage::StorageData;
-use crate::shared::error::Error;
-
-use super::super::config::InfluxdbConfig;
-use crate::modules::plugin::{PluginHandler, PluginManifest, PluginType};
+use super::{super::config::InfluxdbConfig, StorageHandler};
+use crate::{
+    modules::plugin::{PluginHandler, PluginManifest, PluginType, storage::StorageData},
+    shared::error::Error,
+};
 
 pub struct InfluxdbHandler {
     config: InfluxdbConfig,
@@ -70,7 +69,8 @@ impl StorageHandler for InfluxdbHandler {
 
         // Convert Vec to Stream using futures::stream::iter
         let data_points = vec![point.build().unwrap()];
-        self.client.write(&self.config.bucket, iter(data_points))
+        self.client
+            .write(&self.config.bucket, iter(data_points))
             .await
             .map_err(|e| Error::DatabaseError(format!("Failed to write to InfluxDB: {}", e)))?;
 

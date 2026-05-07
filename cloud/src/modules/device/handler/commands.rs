@@ -1,16 +1,14 @@
-use crate::shared::security::jwt::Claims;
-use tinyiothub_web::response::ApiResponseBuilder;
-use crate::shared::persistence::repositories::find_device_command_by_id;
 use axum::{
+    Json, Router,
     extract::{Path, State},
     routing::post,
-    Json, Router
 };
 use serde::{Deserialize, Serialize};
+use tinyiothub_web::response::ApiResponseBuilder;
 
-use crate::{
-    shared::api_response::ApiResponse,
-    shared::{app_state::AppState}
+use crate::shared::{
+    api_response::ApiResponse, app_state::AppState,
+    persistence::repositories::find_device_command_by_id, security::jwt::Claims,
 };
 
 #[derive(Debug, Deserialize)]
@@ -122,8 +120,8 @@ async fn execute_device_command(
             None
         },
         executed_at: executed_at.clone(),
-        completed_at: None
-};
+        completed_at: None,
+    };
 
     tracing::info!(
         "Command submitted: device={}, command={}, execution_id={}",

@@ -1,20 +1,13 @@
-use tinyiothub_storage::sqlite::{
-    database::Database,
-    device::SqliteDeviceRepository,
-};
-use tinyiothub_storage::traits::{
-    device::{DeviceCriteria, DeviceRepository, DeviceSortBy, DeviceSortOrder},
-};
 use tinyiothub_core::models::device::{Device, DeviceQueryParams};
+use tinyiothub_storage::{
+    sqlite::{database::Database, device::SqliteDeviceRepository},
+    traits::device::{DeviceCriteria, DeviceRepository, DeviceSortBy, DeviceSortOrder},
+};
 
-use crate::modules::tag::SqliteTagRepository;
-use crate::modules::tag::TagRepository;
+use crate::modules::tag::{SqliteTagRepository, TagRepository};
 
 /// Find a device by ID (convenience wrapper for MCP tools compatibility)
-pub async fn find_device_by_id(
-    db: &Database,
-    id: &str,
-) -> Result<Option<Device>, sqlx::Error> {
+pub async fn find_device_by_id(db: &Database, id: &str) -> Result<Option<Device>, sqlx::Error> {
     let repo = SqliteDeviceRepository::new(db.clone());
     repo.find_by_id(id).await.map_err(|_| sqlx::Error::RowNotFound)
 }
@@ -30,10 +23,8 @@ pub async fn load_device_tags(
         .find_by_target_id(&device.id, tenant_id)
         .await
         .map_err(|_| sqlx::Error::RowNotFound)?;
-    let tag_values: Vec<serde_json::Value> = tags
-        .into_iter()
-        .map(|t| serde_json::to_value(t).unwrap_or_default())
-        .collect();
+    let tag_values: Vec<serde_json::Value> =
+        tags.into_iter().map(|t| serde_json::to_value(t).unwrap_or_default()).collect();
     device.tags = Some(tag_values);
     Ok(())
 }
@@ -51,10 +42,8 @@ pub async fn load_tags_for_devices(
             .find_by_target_id(&device.id, tenant_id)
             .await
             .map_err(|_| sqlx::Error::RowNotFound)?;
-        let tag_values: Vec<serde_json::Value> = tags
-            .into_iter()
-            .map(|t| serde_json::to_value(t).unwrap_or_default())
-            .collect();
+        let tag_values: Vec<serde_json::Value> =
+            tags.into_iter().map(|t| serde_json::to_value(t).unwrap_or_default()).collect();
         device.tags = Some(tag_values);
     }
 
@@ -100,10 +89,7 @@ pub async fn find_all_devices_with_tags(
         offset: params.page.map(|p| p.saturating_sub(1) * params.page_size.unwrap_or(0)),
     };
     let repo = SqliteDeviceRepository::new(db.clone());
-    let mut devices = repo
-        .find_all(&criteria)
-        .await
-        .map_err(|_| sqlx::Error::RowNotFound)?;
+    let mut devices = repo.find_all(&criteria).await.map_err(|_| sqlx::Error::RowNotFound)?;
     let tenant_id_for_tags = tenant_id.as_deref().unwrap_or("");
     load_tags_for_devices(db, &mut devices, tenant_id_for_tags).await?;
     Ok(devices)

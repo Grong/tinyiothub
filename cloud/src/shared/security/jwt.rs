@@ -1,14 +1,11 @@
-use axum::{
-    extract::FromRequestParts,
-    http::request::Parts,
-};
+use axum::{extract::FromRequestParts, http::request::Parts};
 use chrono::{Duration as ChronoDuration, Local};
-use headers::{authorization::Bearer, Authorization, HeaderMapExt};
+use headers::{Authorization, HeaderMapExt, authorization::Bearer};
 use hmac::{Hmac, Mac};
 use jwt_simple::prelude::*;
 use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
-use tinyiothub_web::security::{AuthBody, Claims as WebClaims, AuthError as WebAuthError};
+use sha2::{Digest, Sha256};
+use tinyiothub_web::security::{AuthBody, AuthError as WebAuthError, Claims as WebClaims};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -105,13 +102,21 @@ fn decode_simple(s: &str) -> Result<String, String> {
 }
 
 // HarmonyOS 专用：创建安全 token（使用 HMAC-SHA256）
-fn create_harmonyos_token(user_id: &str, username: &str, tenant_id: &str, workspace_id: &str) -> Result<String, String> {
+fn create_harmonyos_token(
+    user_id: &str,
+    username: &str,
+    tenant_id: &str,
+    workspace_id: &str,
+) -> Result<String, String> {
     let secret = crate::shared::config::get().security.jwt.secret.clone();
     let timestamp = Local::now().timestamp();
     let random_suffix = timestamp % 1000000; // 使用时间戳作为随机数
 
     // 构建数据部分：user_id:username:tenant_id:workspace_id:timestamp:random
-    let data = format!("{}:{}:{}:{}:{}:{}", user_id, username, tenant_id, workspace_id, timestamp, random_suffix);
+    let data = format!(
+        "{}:{}:{}:{}:{}:{}",
+        user_id, username, tenant_id, workspace_id, timestamp, random_suffix
+    );
 
     // 计算 HMAC-SHA256 签名
     let signature = hmac_sha256(&data, &secret);
@@ -135,11 +140,12 @@ fn verify_harmonyos_token(token: &str) -> Result<Claims, String> {
     //   新格式(7部分): user_id:username:tenant_id:workspace_id:timestamp:random:signature
     //   旧格式(6部分): user_id:username:tenant_id:timestamp:random:signature
     let parts: Vec<&str> = token_data.split(':').collect();
-    let (user_id, username, tenant_id, workspace_id, timestamp_str, random_suffix, signature) = match parts.len() {
-        7 => (parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts[6]),
-        6 => (parts[0], parts[1], parts[2], "", parts[3], parts[4], parts[5]),
-        _ => return Err("Invalid token format".to_string()),
-    };
+    let (user_id, username, tenant_id, workspace_id, timestamp_str, random_suffix, signature) =
+        match parts.len() {
+            7 => (parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts[6]),
+            6 => (parts[0], parts[1], parts[2], "", parts[3], parts[4], parts[5]),
+            _ => return Err("Invalid token format".to_string()),
+        };
 
     let timestamp: i64 = timestamp_str.parse().map_err(|_| "Invalid timestamp".to_string())?;
 
@@ -147,7 +153,10 @@ fn verify_harmonyos_token(token: &str) -> Result<Claims, String> {
     let data = if workspace_id.is_empty() {
         format!("{}:{}:{}:{}:{}", user_id, username, tenant_id, timestamp, random_suffix)
     } else {
-        format!("{}:{}:{}:{}:{}:{}", user_id, username, tenant_id, workspace_id, timestamp, random_suffix)
+        format!(
+            "{}:{}:{}:{}:{}:{}",
+            user_id, username, tenant_id, workspace_id, timestamp, random_suffix
+        )
     };
     let expected_signature = hmac_sha256(&data, &secret);
 
@@ -189,7 +198,12 @@ pub fn create_jwt(payload: AuthPayload) -> Result<AuthBody, String> {
     if is_harmonyos() {
         tracing::warn!("🔧 HarmonyOS: Using simple secure token (no crypto libs)");
 
-        let token = create_harmonyos_token(&payload.id, &payload.name, &payload.tenant_id, &payload.workspace_id)?;
+        let token = create_harmonyos_token(
+            &payload.id,
+            &payload.name,
+            &payload.tenant_id,
+            &payload.workspace_id,
+        )?;
         let jwt_exp_seconds = 86400; // 24小时
         let exp = iat + ChronoDuration::seconds(jwt_exp_seconds);
 
@@ -283,7 +297,12 @@ pub fn is_token_blacklisted_sync(
 }
 
 // 生成 JWT token 的便捷函数
-pub fn generate_token(user_id: &str, username: &str, tenant_id: &str, workspace_id: &str) -> Result<String, String> {
+pub fn generate_token(
+    user_id: &str,
+    username: &str,
+    tenant_id: &str,
+    workspace_id: &str,
+) -> Result<String, String> {
     let payload = AuthPayload {
         id: user_id.to_string(),
         name: username.to_string(),

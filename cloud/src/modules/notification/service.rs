@@ -3,30 +3,29 @@
 // domain/event/services/notification_channel.rs, and
 // domain/event/specifications/notification_specifications.rs
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use chrono::{DateTime, Utc};
-use tracing::warn;
-
-use super::repo::NotificationRuleRepository;
-use super::types::{
-    NotificationAggregate, NotificationChannelType,
-    NotificationRecord, NotificationRule,
-    NotificationStatus,
+use tinyiothub_core::models::notification_channel::{
+    NotificationChannel as CoreNotificationChannel, SendMessageRequest,
 };
+use tracing::warn;
 
 // Re-export types from types.rs so they're accessible via service path
 pub use super::types::{
     NotificationChannel, NotificationLevel, NotificationMessage, NotificationStatistics,
 };
+use super::{
+    repo::NotificationRuleRepository,
+    types::{
+        NotificationAggregate, NotificationChannelType, NotificationRecord, NotificationRule,
+        NotificationStatus,
+    },
+};
 use crate::modules::event::{
+    EventError, Result,
     errors::{DomainResult, NotificationDomainError},
     value_objects::{EventId, EventLevel},
-    EventError, Result,
-};
-use tinyiothub_core::models::notification_channel::{
-    NotificationChannel as CoreNotificationChannel, SendMessageRequest,
 };
 
 // ──────────────────────────────────────────────
@@ -347,8 +346,8 @@ async fn send_sms(
     channel: &CoreNotificationChannel,
     req: &SendMessageRequest,
 ) -> std::result::Result<String, String> {
-    let config: serde_json::Value = serde_json::from_str(&channel.config)
-        .map_err(|e| format!("Invalid config JSON: {}", e))?;
+    let config: serde_json::Value =
+        serde_json::from_str(&channel.config).map_err(|e| format!("Invalid config JSON: {}", e))?;
     let provider = config.get("provider").and_then(|v| v.as_str()).unwrap_or("aliyun");
     let sign_name = config.get("sign_name").and_then(|v| v.as_str()).unwrap_or("TinyIoT");
     let template_id = config.get("template_id").and_then(|v| v.as_str()).unwrap_or("");
@@ -363,8 +362,8 @@ async fn send_email(
     channel: &CoreNotificationChannel,
     req: &SendMessageRequest,
 ) -> std::result::Result<String, String> {
-    let config: serde_json::Value = serde_json::from_str(&channel.config)
-        .map_err(|e| format!("Invalid config JSON: {}", e))?;
+    let config: serde_json::Value =
+        serde_json::from_str(&channel.config).map_err(|e| format!("Invalid config JSON: {}", e))?;
     let smtp_host = config.get("smtp_host").and_then(|v| v.as_str()).unwrap_or("");
     let from =
         config.get("from").and_then(|v| v.as_str()).unwrap_or("TinyIoT <noreply@tinyiot.com>");
@@ -381,8 +380,8 @@ async fn send_webhook(
     channel: &CoreNotificationChannel,
     req: &SendMessageRequest,
 ) -> std::result::Result<String, String> {
-    let config: serde_json::Value = serde_json::from_str(&channel.config)
-        .map_err(|e| format!("Invalid config JSON: {}", e))?;
+    let config: serde_json::Value =
+        serde_json::from_str(&channel.config).map_err(|e| format!("Invalid config JSON: {}", e))?;
     let url = config.get("url").and_then(|v| v.as_str()).ok_or("Missing URL in config")?;
     let method = config.get("method").and_then(|v| v.as_str()).unwrap_or("POST");
     tracing::info!("Sending webhook {} {} to {}", method, url, req.recipient);
@@ -420,7 +419,10 @@ impl NotificationManager {
         self.channels.insert(channel_type, channel);
     }
 
-    pub async fn send_notification(&self, message: &NotificationMessage) -> std::result::Result<(), String> {
+    pub async fn send_notification(
+        &self,
+        message: &NotificationMessage,
+    ) -> std::result::Result<(), String> {
         if let Some(channel) = self.channels.get(&message.channel) {
             if channel.is_available().await {
                 channel.send(message).await
@@ -492,35 +494,27 @@ impl NotificationManager {
 
     /// Get all notification rules
     pub async fn get_rules(&self) -> std::result::Result<Vec<NotificationRule>, String> {
-        self.rule_repository
-            .get_all_rules()
-            .await
-            .map_err(|e| e.to_string())
+        self.rule_repository.get_all_rules().await.map_err(|e| e.to_string())
     }
 
     /// Add a new notification rule
     pub async fn add_rule(&self, rule: NotificationRule) -> std::result::Result<(), String> {
-        self.rule_repository
-            .create_rule(&rule)
-            .await
-            .map_err(|e| e.to_string())
+        self.rule_repository.create_rule(&rule).await.map_err(|e| e.to_string())
     }
 
     /// Update an existing notification rule
-    pub async fn update_rule(&self, rule_id: &str, mut rule: NotificationRule) -> std::result::Result<(), String> {
+    pub async fn update_rule(
+        &self,
+        rule_id: &str,
+        mut rule: NotificationRule,
+    ) -> std::result::Result<(), String> {
         rule.id = rule_id.to_string();
-        self.rule_repository
-            .update_rule(&rule)
-            .await
-            .map_err(|e| e.to_string())
+        self.rule_repository.update_rule(&rule).await.map_err(|e| e.to_string())
     }
 
     /// Remove a notification rule
     pub async fn remove_rule(&self, rule_id: &str) -> std::result::Result<(), String> {
-        self.rule_repository
-            .delete_rule(rule_id)
-            .await
-            .map_err(|e| e.to_string())
+        self.rule_repository.delete_rule(rule_id).await.map_err(|e| e.to_string())
     }
 
     /// Get notification history for an event
@@ -835,9 +829,16 @@ mod tests {
         assert!(NotificationDeliverySpec::should_retry(0, 3));
         assert!(!NotificationDeliverySpec::should_retry(3, 3));
         assert_eq!(NotificationDeliverySpec::get_retry_delay(0), 30);
-        assert_eq!(NotificationDeliverySpec::get_channel_priority(&NotificationChannelType::Sse), 1);
-        assert!(NotificationDeliverySpec::should_batch_notifications(&NotificationChannelType::Email));
-        assert!(!NotificationDeliverySpec::should_batch_notifications(&NotificationChannelType::Sms));
+        assert_eq!(
+            NotificationDeliverySpec::get_channel_priority(&NotificationChannelType::Sse),
+            1
+        );
+        assert!(NotificationDeliverySpec::should_batch_notifications(
+            &NotificationChannelType::Email
+        ));
+        assert!(!NotificationDeliverySpec::should_batch_notifications(
+            &NotificationChannelType::Sms
+        ));
     }
 
     #[test]
@@ -958,8 +959,18 @@ mod tests {
             is_active: true,
         };
         let metadata = HashMap::new();
-        assert!(NotificationFilterSpec::matches_filters(&rule, "device.warning", &EventLevel::Warning, &metadata));
-        assert!(!NotificationFilterSpec::matches_filters(&rule, "system.info", &EventLevel::Info, &metadata));
+        assert!(NotificationFilterSpec::matches_filters(
+            &rule,
+            "device.warning",
+            &EventLevel::Warning,
+            &metadata
+        ));
+        assert!(!NotificationFilterSpec::matches_filters(
+            &rule,
+            "system.info",
+            &EventLevel::Info,
+            &metadata
+        ));
         assert!(NotificationFilterSpec::matches_pattern("device.warning", "device.*"));
         assert!(NotificationFilterSpec::matches_pattern("any.event", "*"));
         assert!(!NotificationFilterSpec::matches_pattern("system.info", "device.*"));

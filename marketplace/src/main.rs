@@ -3,11 +3,11 @@ mod handler;
 mod service;
 mod types;
 
-use std::sync::Arc;
 use axum::Router;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use cache::SledCache;
 use service::SyncService;
+use std::sync::Arc;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -16,9 +16,7 @@ pub struct AppState {
 }
 
 fn build_app(state: AppState) -> Router {
-    Router::new()
-        .merge(handler::routes())
-        .with_state(state)
+    Router::new().merge(handler::routes()).with_state(state)
 }
 
 #[tokio::main]
@@ -30,8 +28,7 @@ async fn main() -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let data_path = std::env::var("LOCAL_DATA_PATH")
-        .unwrap_or_else(|_| "data".into());
+    let data_path = std::env::var("LOCAL_DATA_PATH").unwrap_or_else(|_| "data".into());
 
     let cache = Arc::new(SledCache::new(
         std::env::var("SLED_PATH").unwrap_or_else(|_| "/tmp/marketplace.sled".into()),
@@ -46,13 +43,14 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("Initial data load failed: {}", e);
     }
 
-    let state = AppState { cache, sync: sync_service };
+    let state = AppState {
+        cache,
+        sync: sync_service,
+    };
 
     let app = build_app(state);
 
-    let port = std::env::var("PORT")
-        .unwrap_or_else(|_| "3003".into())
-        .parse::<u16>()?;
+    let port = std::env::var("PORT").unwrap_or_else(|_| "3003".into()).parse::<u16>()?;
 
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
     tracing::info!("Marketplace API listening on {}", addr);
@@ -60,9 +58,7 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
     let shutdown_signal = async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl+C handler");
+        tokio::signal::ctrl_c().await.expect("failed to install Ctrl+C handler");
         tracing::info!("Shutting down marketplace...");
     };
 

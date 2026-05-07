@@ -6,7 +6,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use crate::test_utils::{auth_header, create_test_token, response_parts, setup_test_app};
@@ -51,10 +51,8 @@ async fn test_get_current_user() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
-    let response = app
-        .oneshot(auth_request("GET", "/api/v1/users/me", &token, None))
-        .await
-        .unwrap();
+    let response =
+        app.oneshot(auth_request("GET", "/api/v1/users/me", &token, None)).await.unwrap();
 
     let status = response.status();
     assert_eq!(status, StatusCode::OK);
@@ -85,10 +83,8 @@ async fn test_create_user_missing_fields() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
-    let response = app
-        .oneshot(auth_request("POST", "/api/v1/users", &token, Some(json!({}))))
-        .await
-        .unwrap();
+    let response =
+        app.oneshot(auth_request("POST", "/api/v1/users", &token, Some(json!({})))).await.unwrap();
 
     let status = response.status();
     // Should reject with 422 (deserialization) or 200 with error code
@@ -105,7 +101,12 @@ async fn test_update_user_not_found() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request("PUT", "/api/v1/users/nonexistent-user-12345", &token, Some(json!({"name": "updated"}))))
+        .oneshot(auth_request(
+            "PUT",
+            "/api/v1/users/nonexistent-user-12345",
+            &token,
+            Some(json!({"name": "updated"})),
+        ))
         .await
         .unwrap();
 
@@ -181,10 +182,8 @@ async fn test_list_permissions() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
-    let response = app
-        .oneshot(auth_request("GET", "/api/v1/users/permissions", &token, None))
-        .await
-        .unwrap();
+    let response =
+        app.oneshot(auth_request("GET", "/api/v1/users/permissions", &token, None)).await.unwrap();
 
     let status = response.status();
     assert_eq!(status, StatusCode::OK);
@@ -198,10 +197,8 @@ async fn test_get_user_statistics() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
-    let response = app
-        .oneshot(auth_request("GET", "/api/v1/users/statistics", &token, None))
-        .await
-        .unwrap();
+    let response =
+        app.oneshot(auth_request("GET", "/api/v1/users/statistics", &token, None)).await.unwrap();
 
     let status = response.status();
     assert_eq!(status, StatusCode::OK);
@@ -220,12 +217,7 @@ async fn test_enable_user_not_found() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request(
-            "POST",
-            "/api/v1/users/nonexistent-user-12345/enable",
-            &token,
-            None,
-        ))
+        .oneshot(auth_request("POST", "/api/v1/users/nonexistent-user-12345/enable", &token, None))
         .await
         .unwrap();
 
@@ -242,12 +234,7 @@ async fn test_disable_user_not_found() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request(
-            "POST",
-            "/api/v1/users/nonexistent-user-12345/disable",
-            &token,
-            None,
-        ))
+        .oneshot(auth_request("POST", "/api/v1/users/nonexistent-user-12345/disable", &token, None))
         .await
         .unwrap();
 
@@ -268,12 +255,7 @@ async fn test_change_password_missing_fields() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request(
-            "PUT",
-            "/api/v1/users/user-1/password",
-            &token,
-            Some(json!({})),
-        ))
+        .oneshot(auth_request("PUT", "/api/v1/users/user-1/password", &token, Some(json!({}))))
         .await
         .unwrap();
 
@@ -305,8 +287,11 @@ async fn test_change_password_weak() {
         .unwrap();
 
     let status = response.status();
-    assert!(status == StatusCode::OK || status == StatusCode::UNPROCESSABLE_ENTITY,
-        "Expected OK or 422, got: {}", status);
+    assert!(
+        status == StatusCode::OK || status == StatusCode::UNPROCESSABLE_ENTITY,
+        "Expected OK or 422, got: {}",
+        status
+    );
 
     if status == StatusCode::OK {
         let (_s, json) = response_parts(response).await;
@@ -323,10 +308,8 @@ async fn test_users_test_endpoint() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
-    let response = app
-        .oneshot(auth_request("GET", "/api/v1/users/test", &token, None))
-        .await
-        .unwrap();
+    let response =
+        app.oneshot(auth_request("GET", "/api/v1/users/test", &token, None)).await.unwrap();
 
     let status = response.status();
     assert_eq!(status, StatusCode::OK);

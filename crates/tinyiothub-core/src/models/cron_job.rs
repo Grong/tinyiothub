@@ -51,11 +51,8 @@ impl CronJob {
     /// Handles both string params and JSON object params.
     pub fn target_command_params(&self) -> Option<String> {
         self.parsed_config().and_then(|v| {
-            v.get("params").and_then(|p| {
-                p.as_str()
-                    .map(String::from)
-                    .or_else(|| serde_json::to_string(p).ok())
-            })
+            v.get("params")
+                .and_then(|p| p.as_str().map(String::from).or_else(|| serde_json::to_string(p).ok()))
         })
     }
 }
@@ -187,7 +184,8 @@ mod tests {
             description: None,
             job_type: "device_command".to_string(),
             cron_expression: "*/5 * * * *".to_string(),
-            config: r#"{"device_id":"dev-456","command_name":"set_config","params":{"delay":5,"mode":"fast"}}"#.to_string(),
+            config: r#"{"device_id":"dev-456","command_name":"set_config","params":{"delay":5,"mode":"fast"}}"#
+                .to_string(),
             timeout_seconds: 300,
             max_retries: 3,
             is_enabled: true,

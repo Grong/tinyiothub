@@ -6,22 +6,20 @@
 // - /agents/{id}/heartbeat/* - heartbeat configuration
 // - /agents/{id}/files/* - workspace files
 
-pub mod heartbeat;
 pub mod files;
+pub mod heartbeat;
 pub mod skills;
 pub mod types;
 
 #[cfg(test)]
 mod tests;
 
-use crate::shared::security::jwt::Claims;
-use axum::{
-    routing::get,
-    Router,
-};
-use crate::shared::app_state::AppState;
+use axum::{Router, routing::get};
 
-use crate::modules::chat::handler::proxy as chat_proxy;
+use crate::{
+    modules::chat::handler::proxy as chat_proxy,
+    shared::{app_state::AppState, security::jwt::Claims},
+};
 
 pub fn create_router() -> Router<AppState> {
     Router::new()
@@ -33,7 +31,10 @@ pub fn create_router() -> Router<AppState> {
         .nest("/{id}/heartbeat", heartbeat::create_router())
         // /agents/{id}/files/*
         .route("/{id}/files", get(files::list_workspace_files))
-        .route("/{id}/files/{filename}", get(files::get_workspace_file).put(files::put_workspace_file))
+        .route(
+            "/{id}/files/{filename}",
+            get(files::get_workspace_file).put(files::put_workspace_file),
+        )
 }
 
 /// GET /api/v1/agents

@@ -6,7 +6,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use crate::test_utils::{auth_header, create_test_token, response_parts, setup_test_app};
@@ -70,7 +70,12 @@ async fn test_get_notification_rule_not_found() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/notifications/rules/nonexistent-rule-12345", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/notifications/rules/nonexistent-rule-12345",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
 
@@ -87,7 +92,12 @@ async fn test_update_notification_rule_not_found() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request("PUT", "/api/v1/notifications/rules/nonexistent-rule-12345", &token, Some(json!({"name": "updated"}))))
+        .oneshot(auth_request(
+            "PUT",
+            "/api/v1/notifications/rules/nonexistent-rule-12345",
+            &token,
+            Some(json!({"name": "updated"})),
+        ))
         .await
         .unwrap();
 
@@ -104,7 +114,12 @@ async fn test_delete_notification_rule_not_found() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request("DELETE", "/api/v1/notifications/rules/nonexistent-rule-12345", &token, None))
+        .oneshot(auth_request(
+            "DELETE",
+            "/api/v1/notifications/rules/nonexistent-rule-12345",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
 
@@ -164,7 +179,12 @@ async fn test_list_notification_channels() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/notification-channels/notification-channels", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/notification-channels/notification-channels",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
 
@@ -181,7 +201,12 @@ async fn test_create_notification_channel_missing_fields() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request("POST", "/api/v1/notification-channels/notification-channels", &token, Some(json!({}))))
+        .oneshot(auth_request(
+            "POST",
+            "/api/v1/notification-channels/notification-channels",
+            &token,
+            Some(json!({})),
+        ))
         .await
         .unwrap();
 
@@ -199,7 +224,12 @@ async fn test_get_notification_channel_not_found() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/notification-channels/notification-channels/nonexistent-ch-12345", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/notification-channels/notification-channels/nonexistent-ch-12345",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
 
@@ -216,7 +246,12 @@ async fn test_update_notification_channel_not_found() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request("PUT", "/api/v1/notification-channels/notification-channels/nonexistent-ch-12345", &token, Some(json!({"name": "updated"}))))
+        .oneshot(auth_request(
+            "PUT",
+            "/api/v1/notification-channels/notification-channels/nonexistent-ch-12345",
+            &token,
+            Some(json!({"name": "updated"})),
+        ))
         .await
         .unwrap();
 
@@ -233,7 +268,12 @@ async fn test_delete_notification_channel_not_found() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request("DELETE", "/api/v1/notification-channels/notification-channels/nonexistent-ch-12345", &token, None))
+        .oneshot(auth_request(
+            "DELETE",
+            "/api/v1/notification-channels/notification-channels/nonexistent-ch-12345",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
 
@@ -250,7 +290,12 @@ async fn test_get_notification_channel_statistics() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/notification-channels/notification-channels/statistics", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/notification-channels/notification-channels/statistics",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
 
@@ -267,7 +312,12 @@ async fn test_test_notification_channel_not_found() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request("POST", "/api/v1/notification-channels/notification-channels/nonexistent-ch-12345/test", &token, Some(json!({}))))
+        .oneshot(auth_request(
+            "POST",
+            "/api/v1/notification-channels/notification-channels/nonexistent-ch-12345/test",
+            &token,
+            Some(json!({})),
+        ))
         .await
         .unwrap();
 

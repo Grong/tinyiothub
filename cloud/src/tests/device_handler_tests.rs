@@ -6,7 +6,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use crate::test_utils::{
@@ -48,10 +48,8 @@ async fn test_create_device() {
         "protocol_type": "modbus"
     });
 
-    let response = app
-        .oneshot(auth_request("POST", "/api/v1/devices", &token, Some(body)))
-        .await
-        .unwrap();
+    let response =
+        app.oneshot(auth_request("POST", "/api/v1/devices", &token, Some(body))).await.unwrap();
 
     let status = response.status();
     // Handler should respond with valid HTTP status — not panic
@@ -165,10 +163,8 @@ async fn test_create_device_missing_name() {
     // Empty body — name is required
     let body = json!({});
 
-    let response = app
-        .oneshot(auth_request("POST", "/api/v1/devices", &token, Some(body)))
-        .await
-        .unwrap();
+    let response =
+        app.oneshot(auth_request("POST", "/api/v1/devices", &token, Some(body))).await.unwrap();
 
     let status = response.status();
 
@@ -194,10 +190,8 @@ async fn test_create_device_empty_name() {
         "name": ""
     });
 
-    let response = app
-        .oneshot(auth_request("POST", "/api/v1/devices", &token, Some(body)))
-        .await
-        .unwrap();
+    let response =
+        app.oneshot(auth_request("POST", "/api/v1/devices", &token, Some(body))).await.unwrap();
 
     let (status, json) = response_parts(response).await;
 
@@ -222,9 +216,7 @@ async fn test_cross_workspace_isolation() {
     seed_test_workspace(&pool, "tenant-b", "ws-b").await;
 
     let api_router = crate::api::create_router();
-    let app = axum::Router::new()
-        .nest("/api", api_router)
-        .with_state(app_state);
+    let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
 
     // User A (workspace ws-a) creates a device — first ensure workspace exists
     let token_a = create_test_token_with_workspace("user-a", "tenant-a", "ws-a");
@@ -253,12 +245,7 @@ async fn test_cross_workspace_isolation() {
 
     let response = app
         .clone()
-        .oneshot(auth_request(
-            "GET",
-            "/api/v1/devices?page=1&page_size=20",
-            &token_b,
-            None,
-        ))
+        .oneshot(auth_request("GET", "/api/v1/devices?page=1&page_size=20", &token_b, None))
         .await
         .unwrap();
 
@@ -267,10 +254,7 @@ async fn test_cross_workspace_isolation() {
     assert_eq!(json["code"], 0, "Expected success code");
 
     let data = json["result"]["data"].as_array().unwrap();
-    let device_ids: Vec<&str> = data
-        .iter()
-        .filter_map(|d| d["id"].as_str())
-        .collect();
+    let device_ids: Vec<&str> = data.iter().filter_map(|d| d["id"].as_str()).collect();
 
     assert!(
         !device_ids.contains(&device_id.as_str()),
@@ -280,22 +264,14 @@ async fn test_cross_workspace_isolation() {
 
     // User A should see their own device
     let response = app
-        .oneshot(auth_request(
-            "GET",
-            "/api/v1/devices?page=1&page_size=20",
-            &token_a,
-            None,
-        ))
+        .oneshot(auth_request("GET", "/api/v1/devices?page=1&page_size=20", &token_a, None))
         .await
         .unwrap();
 
     let (status, json) = response_parts(response).await;
     assert_eq!(json["code"], 0);
     let data = json["result"]["data"].as_array().unwrap();
-    let device_ids: Vec<&str> = data
-        .iter()
-        .filter_map(|d| d["id"].as_str())
-        .collect();
+    let device_ids: Vec<&str> = data.iter().filter_map(|d| d["id"].as_str()).collect();
     assert!(
         device_ids.contains(&device_id.as_str()),
         "User A should see their own device in workspace A"
@@ -312,12 +288,7 @@ async fn test_get_device_profile_not_found() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request(
-            "GET",
-            "/api/v1/devices/nonexistent-id-12345/profile",
-            &token,
-            None,
-        ))
+        .oneshot(auth_request("GET", "/api/v1/devices/nonexistent-id-12345/profile", &token, None))
         .await
         .unwrap();
 
@@ -361,10 +332,8 @@ async fn test_get_device_dashboard() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
-    let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices/dashboard", &token, None))
-        .await
-        .unwrap();
+    let response =
+        app.oneshot(auth_request("GET", "/api/v1/devices/dashboard", &token, None)).await.unwrap();
 
     let (status, json) = response_parts(response).await;
 
@@ -431,12 +400,7 @@ async fn test_get_device_status_not_found() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request(
-            "GET",
-            "/api/v1/devices/nonexistent-id-12345/status",
-            &token,
-            None,
-        ))
+        .oneshot(auth_request("GET", "/api/v1/devices/nonexistent-id-12345/status", &token, None))
         .await
         .unwrap();
 
@@ -468,7 +432,12 @@ async fn test_get_device_performance_not_found() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices/nonexistent-id-12345/performance", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/devices/nonexistent-id-12345/performance",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
     let (status, json) = response_parts(response).await;
@@ -481,7 +450,12 @@ async fn test_get_device_performance_history_not_found() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices/nonexistent-id-12345/performance/history", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/devices/nonexistent-id-12345/performance/history",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
     let (status, json) = response_parts(response).await;
@@ -494,7 +468,12 @@ async fn test_get_device_performance_alerts_not_found() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices/nonexistent-id-12345/performance/alerts", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/devices/nonexistent-id-12345/performance/alerts",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
     let (status, json) = response_parts(response).await;
@@ -508,10 +487,8 @@ async fn test_get_device_performance_alerts_not_found() {
 async fn test_get_system_overview() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
-    let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices/overview", &token, None))
-        .await
-        .unwrap();
+    let response =
+        app.oneshot(auth_request("GET", "/api/v1/devices/overview", &token, None)).await.unwrap();
     let (status, json) = response_parts(response).await;
     assert_eq!(status, StatusCode::OK);
     assert!(json["code"].is_number(), "Expected numeric code");
@@ -567,7 +544,12 @@ async fn test_get_device_trace_statistics_not_found() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices/nonexistent-id-12345/traces/statistics", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/devices/nonexistent-id-12345/traces/statistics",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
     let (status, json) = response_parts(response).await;
@@ -622,12 +604,7 @@ async fn test_enable_device_not_found() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request(
-            "POST",
-            "/api/v1/devices/nonexistent-id-12345/enable",
-            &token,
-            None,
-        ))
+        .oneshot(auth_request("POST", "/api/v1/devices/nonexistent-id-12345/enable", &token, None))
         .await
         .unwrap();
 
@@ -642,12 +619,7 @@ async fn test_disable_device_not_found() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request(
-            "POST",
-            "/api/v1/devices/nonexistent-id-12345/disable",
-            &token,
-            None,
-        ))
+        .oneshot(auth_request("POST", "/api/v1/devices/nonexistent-id-12345/disable", &token, None))
         .await
         .unwrap();
 
@@ -675,12 +647,7 @@ async fn test_create_device_from_template_not_found() {
     });
 
     let response = app
-        .oneshot(auth_request(
-            "POST",
-            "/api/v1/devices/from-template",
-            &token,
-            Some(body),
-        ))
+        .oneshot(auth_request("POST", "/api/v1/devices/from-template", &token, Some(body)))
         .await
         .unwrap();
 
@@ -883,12 +850,7 @@ async fn test_cleanup_expired_traces() {
     let body = json!({"days_to_keep": 30});
 
     let response = app
-        .oneshot(auth_request(
-            "POST",
-            "/api/v1/devices/system/traces/cleanup",
-            &token,
-            Some(body),
-        ))
+        .oneshot(auth_request("POST", "/api/v1/devices/system/traces/cleanup", &token, Some(body)))
         .await
         .unwrap();
 

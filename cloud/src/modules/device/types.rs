@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-
 use tinyiothub_core::models::device_command::DeviceCommand as DeviceCommandEntity;
 
 /// 设备指令响应DTO - 用于API返回
@@ -69,9 +68,8 @@ mod tests {
 
     #[test]
     fn test_from_entity_with_valid_json_params() {
-        let entity = test_entity_with_params(Some(
-            r#"{"interval": 30, "unit": "seconds"}"#.to_string(),
-        ));
+        let entity =
+            test_entity_with_params(Some(r#"{"interval": 30, "unit": "seconds"}"#.to_string()));
         let response = DeviceCommandResponse::from(entity);
 
         assert_eq!(response.id, "cmd-1");

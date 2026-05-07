@@ -21,11 +21,7 @@ impl JobExecutor for ShellExecutor {
         job_type == "shell"
     }
 
-    async fn execute(
-        &self,
-        job: &CronJob,
-        run_id: &str,
-    ) -> std::result::Result<ExecutionResult, ExecutorError> {
+    async fn execute(&self, job: &CronJob, run_id: &str) -> std::result::Result<ExecutionResult, ExecutorError> {
         let config: Value =
             serde_json::from_str(&job.config).map_err(|e| ExecutorError::InvalidConfig(e.to_string()))?;
 
@@ -34,10 +30,7 @@ impl JobExecutor for ShellExecutor {
             .and_then(|v| v.as_str())
             .ok_or_else(|| ExecutorError::InvalidConfig("missing 'script' field".to_string()))?;
 
-        let interpreter = config
-            .get("interpreter")
-            .and_then(|v| v.as_str())
-            .unwrap_or("sh");
+        let interpreter = config.get("interpreter").and_then(|v| v.as_str()).unwrap_or("sh");
 
         let allowed = match interpreter {
             "sh" | "bash" | "python" | "python3" => interpreter,
@@ -103,11 +96,7 @@ impl JobExecutor for AgentExecutor {
         job_type == "agent"
     }
 
-    async fn execute(
-        &self,
-        job: &CronJob,
-        _run_id: &str,
-    ) -> std::result::Result<ExecutionResult, ExecutorError> {
+    async fn execute(&self, job: &CronJob, _run_id: &str) -> std::result::Result<ExecutionResult, ExecutorError> {
         let config: Value =
             serde_json::from_str(&job.config).map_err(|e| ExecutorError::InvalidConfig(e.to_string()))?;
 
@@ -119,12 +108,9 @@ impl JobExecutor for AgentExecutor {
         let timeout_secs = job.timeout_seconds.max(1) as u64;
         let start = Instant::now();
 
-        let result = timeout(
-            std::time::Duration::from_secs(timeout_secs),
-            async {
-                tokio::task::yield_now().await;
-            },
-        )
+        let result = timeout(std::time::Duration::from_secs(timeout_secs), async {
+            tokio::task::yield_now().await;
+        })
         .await;
 
         let duration_ms = start.elapsed().as_millis() as i64;
@@ -159,11 +145,7 @@ impl JobExecutor for DeviceCommandExecutor {
         job_type == "device_command"
     }
 
-    async fn execute(
-        &self,
-        job: &CronJob,
-        _run_id: &str,
-    ) -> std::result::Result<ExecutionResult, ExecutorError> {
+    async fn execute(&self, job: &CronJob, _run_id: &str) -> std::result::Result<ExecutionResult, ExecutorError> {
         let device_id = job
             .target_device_id()
             .ok_or_else(|| ExecutorError::InvalidConfig("missing device_id in job config".to_string()))?;
@@ -181,9 +163,12 @@ impl JobExecutor for DeviceCommandExecutor {
         )
         .await
         .map_err(|e| ExecutorError::InvalidConfig(format!("DB error looking up command: {}", e)))?
-        .ok_or_else(|| ExecutorError::InvalidConfig(
-            format!("command '{}' not found for device '{}'", command_name, device_id)
-        ))?;
+        .ok_or_else(|| {
+            ExecutorError::InvalidConfig(format!(
+                "command '{}' not found for device '{}'",
+                command_name, device_id
+            ))
+        })?;
 
         // Apply params from job config if provided
         if let Some(params) = job.target_command_params() {
@@ -217,10 +202,7 @@ pub struct ExecutorRegistry {
 impl ExecutorRegistry {
     pub fn new() -> Self {
         Self {
-            executors: vec![
-                Box::new(ShellExecutor),
-                Box::new(AgentExecutor),
-            ],
+            executors: vec![Box::new(ShellExecutor), Box::new(AgentExecutor)],
         }
     }
 

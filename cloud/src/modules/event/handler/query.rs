@@ -1,23 +1,25 @@
 // Event query API endpoints
 // Provides event search, filtering, and pagination functionality
 
-use crate::shared::security::jwt::Claims;
-use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
     extract::{Query, State},
     response::Json,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
     modules::event::{
         repositories::{EventCriteria, SortBy, SortOrder},
         value_objects::{EventLevel, EventType},
     },
-    shared::pagination::PaginationQuery,
-    shared::api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
-    shared::{app_state::AppState},
+    shared::{
+        api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
+        app_state::AppState,
+        pagination::PaginationQuery,
+        security::jwt::Claims,
+    },
 };
 
 /// Query parameters for event search
@@ -107,15 +109,17 @@ pub async fn get_events(
 
     // Event types
     if let Some(types_str) = params.event_types
-        && let Ok(types) = EventType::parse_multiple(&types_str) {
-            criteria.event_types = Some(types);
-        }
+        && let Ok(types) = EventType::parse_multiple(&types_str)
+    {
+        criteria.event_types = Some(types);
+    }
 
     // Levels
     if let Some(levels_str) = params.levels
-        && let Ok(levels) = parse_event_levels(&levels_str) {
-            criteria.levels = Some(levels);
-        }
+        && let Ok(levels) = parse_event_levels(&levels_str)
+    {
+        criteria.levels = Some(levels);
+    }
 
     // Device IDs
     if let Some(device_ids_str) = params.device_ids {
@@ -155,9 +159,10 @@ pub async fn get_events(
 
     // Search text
     if let Some(search) = params.search
-        && !search.trim().is_empty() {
-            criteria.search_text = Some(search.trim().to_string());
-        }
+        && !search.trim().is_empty()
+    {
+        criteria.search_text = Some(search.trim().to_string());
+    }
 
     // Sorting
     criteria.sort_by = parse_sort_by(params.sort_by.as_deref()).unwrap_or(SortBy::Timestamp);
@@ -206,12 +211,7 @@ pub async fn get_events(
             };
             let paginated_data = PaginatedResponse {
                 data: event_responses,
-                pagination: PaginationInfo {
-                    page,
-                    page_size,
-                    total_pages,
-                    total_count,
-                },
+                pagination: PaginationInfo { page, page_size, total_pages, total_count },
             };
 
             ApiResponseBuilder::success(paginated_data)
@@ -274,11 +274,7 @@ fn generate_content_preview(content: &crate::modules::event::value_objects::Rich
     if let Some(first_element) = content.elements().first() {
         match first_element {
             crate::modules::event::value_objects::ContentElement::Text { content, .. } => {
-                if content.len() > 100 {
-                    format!("{}...", &content[..97])
-                } else {
-                    content.clone()
-                }
+                if content.len() > 100 { format!("{}...", &content[..97]) } else { content.clone() }
             }
             _ => content.title().to_string(),
         }

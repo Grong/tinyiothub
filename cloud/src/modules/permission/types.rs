@@ -208,10 +208,7 @@ mod tests {
 
     #[test]
     fn test_permission_defaults() {
-        let req = CreatePermissionRequest {
-            is_system: None,
-            ..test_create_request()
-        };
+        let req = CreatePermissionRequest { is_system: None, ..test_create_request() };
         let perm = Permission::new(req);
         assert!(!perm.is_system);
     }
@@ -249,10 +246,8 @@ mod tests {
 
     #[test]
     fn test_allows_action_wildcard_resource() {
-        let req = CreatePermissionRequest {
-            resource_type: "*".to_string(),
-            ..test_create_request()
-        };
+        let req =
+            CreatePermissionRequest { resource_type: "*".to_string(), ..test_create_request() };
         let perm = Permission::new(req);
         assert!(perm.allows_action("device", "read"));
         assert!(perm.allows_action("alarm", "read"));
@@ -260,10 +255,7 @@ mod tests {
 
     #[test]
     fn test_allows_action_wildcard_action() {
-        let req = CreatePermissionRequest {
-            action_type: "*".to_string(),
-            ..test_create_request()
-        };
+        let req = CreatePermissionRequest { action_type: "*".to_string(), ..test_create_request() };
         let perm = Permission::new(req);
         assert!(perm.allows_action("device", "read"));
         assert!(perm.allows_action("device", "write"));
@@ -271,10 +263,8 @@ mod tests {
 
     #[test]
     fn test_allows_action_admin() {
-        let req = CreatePermissionRequest {
-            action_type: "admin".to_string(),
-            ..test_create_request()
-        };
+        let req =
+            CreatePermissionRequest { action_type: "admin".to_string(), ..test_create_request() };
         let perm = Permission::new(req);
         assert!(perm.allows_action("device", "delete"));
     }

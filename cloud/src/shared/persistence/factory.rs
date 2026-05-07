@@ -1,12 +1,10 @@
 use std::sync::Arc;
 
-use tinyiothub_storage::traits::device::DeviceRepository;
-use tinyiothub_storage::sqlite::device::SqliteDeviceRepository;
-
-use crate::shared::persistence::{
-    adapters::device::TenantDeviceRepository,
-    database::Database,
+use tinyiothub_storage::{
+    sqlite::device::SqliteDeviceRepository, traits::device::DeviceRepository,
 };
+
+use crate::shared::persistence::{adapters::device::TenantDeviceRepository, database::Database};
 
 /// Factory for creating tenant-aware device repositories
 #[derive(Debug, Clone)]

@@ -4,7 +4,7 @@ use std::sync::Arc;
 pub use tinyiothub_config::EventSecurityConfig;
 
 use crate::{
-    modules::event::{repositories::EventRepository, EventError, Result},
+    modules::event::{EventError, Result, repositories::EventRepository},
     shared::event::security::{
         AesEventEncryption, DatabaseAuditLog, EventAccessControl, EventAuditLog, EventEncryption,
         InMemoryAuditLog, NoOpEncryption, RoleBasedAccessControl, SecureEventService,
@@ -148,14 +148,15 @@ impl EventSecurityFactory {
     /// Load security configuration from database, falling back to current config
     pub async fn load_config_from_db(&self) -> Result<EventSecurityConfig> {
         match sqlx::query_scalar::<_, String>(
-            "SELECT value FROM system_settings WHERE key = 'event_security_config'"
+            "SELECT value FROM system_settings WHERE key = 'event_security_config'",
         )
         .fetch_optional(self.db.pool())
         .await
         {
             Ok(Some(json)) => {
-                let config: EventSecurityConfig = serde_json::from_str(&json)
-                    .map_err(|e| EventError::Configuration(format!("Failed to parse config: {}", e)))?;
+                let config: EventSecurityConfig = serde_json::from_str(&json).map_err(|e| {
+                    EventError::Configuration(format!("Failed to parse config: {}", e))
+                })?;
                 validate_event_security_config(&config)?;
                 Ok(config)
             }

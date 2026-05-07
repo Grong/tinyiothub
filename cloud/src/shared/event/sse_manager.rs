@@ -1,8 +1,10 @@
 // Infrastructure Layer - SSE Connection Manager
 // Manages Server-Sent Events (SSE) connections and event distribution
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 use axum::response::Response;
 use serde::{Deserialize, Serialize};
@@ -50,7 +52,10 @@ impl SseConnectionManager {
         _event_types: Option<Vec<String>>,
         _event_levels: Option<Vec<String>>,
     ) -> Response {
-        info!("Creating authenticated SSE connection for user: {} workspace: {}", user_id, workspace_id);
+        info!(
+            "Creating authenticated SSE connection for user: {} workspace: {}",
+            user_id, workspace_id
+        );
 
         self.sse_channel.create_sse_stream(user_id, workspace_id).await
     }
@@ -83,7 +88,8 @@ impl SseConnectionManager {
     /// * `event` - The event to broadcast
     pub async fn broadcast_event(&self, event: &Event) {
         // Build dotted event_type string matching frontend expectations (e.g. "device.connection")
-        let event_type_str = format!("{}.{}", event.event_type().type_string(), event.event_type().subtype_string());
+        let event_type_str =
+            format!("{}.{}", event.event_type().type_string(), event.event_type().subtype_string());
 
         // Extract device_id from source if present
         let device_id = event.source().device_id().map(|s| s.to_string());
@@ -122,10 +128,11 @@ impl SseConnectionManager {
             // Extract new_value from content elements (look for "Current value: X")
             for element in event.content().elements() {
                 if let crate::modules::event::ContentElement::Text { content, .. } = element
-                    && let Some(val) = content.strip_prefix("Current value: ") {
-                        data["new_value"] = serde_json::Value::String(val.to_string());
-                        break;
-                    }
+                    && let Some(val) = content.strip_prefix("Current value: ")
+                {
+                    data["new_value"] = serde_json::Value::String(val.to_string());
+                    break;
+                }
             }
         }
 

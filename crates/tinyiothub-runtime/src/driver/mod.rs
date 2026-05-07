@@ -1,13 +1,13 @@
-pub use wrapper::DriverWrapper;
-pub use drivers::{snmp_driver::SnmpDriver, ModbusDriver, SimulatedDriver};
+pub use drivers::{ModbusDriver, SimulatedDriver, snmp_driver::SnmpDriver};
 pub use status::DeviceOverview;
+pub use wrapper::DriverWrapper;
 // Re-export core driver types for backward compatibility
-pub use tinyiothub_core::driver::{DeviceDriver, ResultValue, DriverConfig};
+pub use tinyiothub_core::driver::{DeviceDriver, DriverConfig, ResultValue};
 // Re-export SDK types for backward compatibility
 pub use tinyiothub_plugin_sdk::{ComponentInfo, ComponentOption, CreateComponentRequest};
 
-use tinyiothub_core::models::device::Device;
 use tinyiothub_core::error::Error;
+use tinyiothub_core::models::device::Device;
 
 pub mod drivers;
 pub mod retry;
@@ -22,10 +22,7 @@ tinyiothub_macros::register_drivers! {
 }
 
 /// Create a driver instance by name
-pub fn create_driver(
-    driver_name: &str,
-    device: &Device,
-) -> Result<DriverWrapper, Error> {
+pub fn create_driver(driver_name: &str, device: &Device) -> Result<DriverWrapper, Error> {
     if is_driver_supported(driver_name) {
         let base_driver = create_driver_by_name(driver_name, device)?;
         return Ok(DriverWrapper::new(base_driver));

@@ -1,23 +1,22 @@
-use crate::shared::security::jwt::Claims;
-use tinyiothub_web::response::ApiResponseBuilder;
-use tinyiothub_core::models::device::Device;
-use tinyiothub_core::models::device_property::DeviceProperty;
 use axum::{
+    Json, Router,
     extract::{Path, State},
     routing::get,
-    Json, Router
 };
 use serde::Serialize;
+use tinyiothub_core::models::{device::Device, device_property::DeviceProperty};
+use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
-    modules::event::{
-        repositories::{EventCriteria, SortBy, SortOrder},
-        value_objects::EventType,
-    },
-    shared::api_response::ApiResponse,
-    modules::device::types::DeviceCommandResponse,
-    shared::{app_state::AppState},
     api::middleware::WorkspaceScope,
+    modules::{
+        device::types::DeviceCommandResponse,
+        event::{
+            repositories::{EventCriteria, SortBy, SortOrder},
+            value_objects::EventType,
+        },
+    },
+    shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims},
 };
 
 /// 设备完整配置文件
@@ -153,10 +152,8 @@ async fn get_device_profile(
     // 加载设备标签
     match state.tag_service.find_tags_by_target_id(&device_id, &claims.tenant_id).await {
         Ok(tags) => {
-            let tag_values: Vec<serde_json::Value> = tags
-                .into_iter()
-                .map(|t| serde_json::to_value(t).unwrap_or_default())
-                .collect();
+            let tag_values: Vec<serde_json::Value> =
+                tags.into_iter().map(|t| serde_json::to_value(t).unwrap_or_default()).collect();
             device.tags = Some(tag_values);
         }
         Err(e) => tracing::warn!("Failed to load tags for device {}: {}", device_id, e),
@@ -191,8 +188,8 @@ async fn get_device_profile(
         commands: commands_response,
         recent_events,
         overview,
-        generated_at: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()
-};
+        generated_at: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+    };
 
     ApiResponseBuilder::success(profile)
 }
@@ -216,8 +213,8 @@ async fn fetch_recent_device_events(state: &AppState, device_id: &str) -> Vec<De
                     // 提取事件类型字符串
                     let event_type_str = match event.event_type() {
                         EventType::Device(device_type) => device_type.display_name(),
-                        EventType::System(_) => "System"
-};
+                        EventType::System(_) => "System",
+                    };
 
                     // 提取事件级别字符串
                     let level_str = match event.level() {
@@ -225,8 +222,8 @@ async fn fetch_recent_device_events(state: &AppState, device_id: &str) -> Vec<De
                         crate::modules::event::value_objects::EventLevel::Info => "Info",
                         crate::modules::event::value_objects::EventLevel::Warning => "Warning",
                         crate::modules::event::value_objects::EventLevel::Error => "Error",
-                        crate::modules::event::value_objects::EventLevel::Critical => "Critical"
-};
+                        crate::modules::event::value_objects::EventLevel::Critical => "Critical",
+                    };
 
                     // 提取内容
                     let content = event.content();

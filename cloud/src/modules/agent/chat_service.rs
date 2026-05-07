@@ -1,18 +1,22 @@
 // Chat Service - Core orchestration service for AI Agent chat
 
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context, Poll};
+use std::{
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
 use futures::Stream;
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-use super::types::{
-    ChatError, ChatEvent, ChatMessage, ChatRequest, ChatServiceConfig, ChatStream,
-    MemoryContext, ParsedSessionKey, SessionRepository,
+use super::{
+    memory_service::AgentMemoryService,
+    types::{
+        ChatError, ChatEvent, ChatMessage, ChatRequest, ChatServiceConfig, ChatStream,
+        MemoryContext, ParsedSessionKey, SessionRepository,
+    },
 };
-use super::memory_service::AgentMemoryService;
 use crate::shared::agent::AgentRuntime;
 
 impl ChatStream {
@@ -69,17 +73,19 @@ impl ChatService {
             false
         };
 
-        let system_prompt = self.build_system_prompt(
-            request.system_prompt_override.as_deref(),
-            &memory_context,
-        );
+        let system_prompt =
+            self.build_system_prompt(request.system_prompt_override.as_deref(), &memory_context);
 
         let (tx, rx) = mpsc::channel::<ChatEvent>(100);
         self.spawn_chat_task(request, parsed_key, system_prompt, should_compact, tx).await?;
         Ok(ChatStream::new(rx))
     }
 
-    pub async fn abort_chat(&self, session_key: &str, run_id: Option<&str>) -> Result<(), ChatError> {
+    pub async fn abort_chat(
+        &self,
+        session_key: &str,
+        run_id: Option<&str>,
+    ) -> Result<(), ChatError> {
         let parsed = ParsedSessionKey::parse_str(session_key)?;
         self.runtime
             .chat_abort(&parsed.agent_id, session_key, run_id)
@@ -103,7 +109,11 @@ impl ChatService {
         Ok(message_count > self.config.max_messages_before_compact)
     }
 
-    fn build_system_prompt(&self, override_prompt: Option<&str>, memory_context: &MemoryContext) -> String {
+    fn build_system_prompt(
+        &self,
+        override_prompt: Option<&str>,
+        memory_context: &MemoryContext,
+    ) -> String {
         let base_prompt = override_prompt.unwrap_or("");
         let mut full_prompt = base_prompt.to_string();
         if !memory_context.is_empty() {
@@ -127,36 +137,54 @@ impl ChatService {
         let agent_id = parsed_key.agent_id.clone();
 
         self.session_repo
-            .add_message(&session_key, ChatMessage {
-                role: "user".to_string(),
-                content: message.clone(),
-                timestamp: Some(chrono::Utc::now().timestamp_millis()),
-                run_id: Some(run_id.clone()),
-                tool_call_id: None,
-                tool_name: None,
-            })
+            .add_message(
+                &session_key,
+                ChatMessage {
+                    role: "user".to_string(),
+                    content: message.clone(),
+                    timestamp: Some(chrono::Utc::now().timestamp_millis()),
+                    run_id: Some(run_id.clone()),
+                    tool_call_id: None,
+                    tool_name: None,
+                },
+            )
             .await
             .map_err(|e| ChatError::RepositoryError(e.to_string()))?;
 
         let session_repo = Arc::clone(&self.session_repo);
 
         tokio::spawn(async move {
-            match runtime.chat_send(&agent_id, &session_key, &message, &run_id, &system_prompt).await {
+            match runtime
+                .chat_send(&agent_id, &session_key, &message, &run_id, &system_prompt)
+                .await
+            {
                 Ok(response) => {
-                    if let Err(e) = Self::process_sse_response(session_repo, response, &tx, &run_id, &session_key).await {
-                        let _ = tx.send(ChatEvent::Error {
-                            run_id: run_id.clone(),
-                            session_key: session_key.clone(),
-                            error: format!("SSE processing error: {}", e),
-                        }).await;
+                    if let Err(e) = Self::process_sse_response(
+                        session_repo,
+                        response,
+                        &tx,
+                        &run_id,
+                        &session_key,
+                    )
+                    .await
+                    {
+                        let _ = tx
+                            .send(ChatEvent::Error {
+                                run_id: run_id.clone(),
+                                session_key: session_key.clone(),
+                                error: format!("SSE processing error: {}", e),
+                            })
+                            .await;
                     }
                 }
                 Err(e) => {
-                    let _ = tx.send(ChatEvent::Error {
-                        run_id: run_id.clone(),
-                        session_key: session_key.clone(),
-                        error: format!("Chat send failed: {}", e),
-                    }).await;
+                    let _ = tx
+                        .send(ChatEvent::Error {
+                            run_id: run_id.clone(),
+                            session_key: session_key.clone(),
+                            error: format!("Chat send failed: {}", e),
+                        })
+                        .await;
                 }
             }
         });
@@ -181,28 +209,39 @@ impl ChatService {
                     let text = String::from_utf8_lossy(&bytes);
                     for line in text.lines() {
                         if let Some(data) = line.strip_prefix("data: ")
-                            && let Ok(event_value) = serde_json::from_str::<Value>(data) {
-                                if let Some(event) = Self::convert_runtime_event(event_value.clone(), run_id, session_key) {
-                                    if let ChatEvent::Final { message, .. } = &event
-                                        && let Some(content) = message.get("content").and_then(|v| v.as_array()) {
-                                            let content_json = serde_json::json!(content);
-                                            let _ = session_repo.add_message(
-                                                session_key,
-                                                ChatMessage {
-                                                    role: "assistant".to_string(),
-                                                    content: content_json.to_string(),
-                                                    timestamp: Some(chrono::Utc::now().timestamp_millis()),
-                                                    run_id: Some(run_id.to_string()),
-                                                    tool_call_id: None,
-                                                    tool_name: None,
-                                                },
-                                            ).await;
-                                        }
-                                    if tx.send(event).await.is_err() {
-                                        return Ok(());
-                                    }
+                            && let Ok(event_value) = serde_json::from_str::<Value>(data)
+                        {
+                            if let Some(event) = Self::convert_runtime_event(
+                                event_value.clone(),
+                                run_id,
+                                session_key,
+                            ) {
+                                if let ChatEvent::Final { message, .. } = &event
+                                    && let Some(content) =
+                                        message.get("content").and_then(|v| v.as_array())
+                                {
+                                    let content_json = serde_json::json!(content);
+                                    let _ = session_repo
+                                        .add_message(
+                                            session_key,
+                                            ChatMessage {
+                                                role: "assistant".to_string(),
+                                                content: content_json.to_string(),
+                                                timestamp: Some(
+                                                    chrono::Utc::now().timestamp_millis(),
+                                                ),
+                                                run_id: Some(run_id.to_string()),
+                                                tool_call_id: None,
+                                                tool_name: None,
+                                            },
+                                        )
+                                        .await;
+                                }
+                                if tx.send(event).await.is_err() {
+                                    return Ok(());
                                 }
                             }
+                        }
                     }
                 }
                 Err(e) => {
@@ -214,32 +253,57 @@ impl ChatService {
         Ok(())
     }
 
-    fn convert_runtime_event(value: Value, default_run_id: &str, default_session_key: &str) -> Option<ChatEvent> {
+    fn convert_runtime_event(
+        value: Value,
+        default_run_id: &str,
+        default_session_key: &str,
+    ) -> Option<ChatEvent> {
         let state = value.get("state")?.as_str()?;
-        let run_id = value.get("runId").and_then(|v| v.as_str()).unwrap_or(default_run_id).to_string();
-        let session_key = value.get("sessionKey").and_then(|v| v.as_str()).unwrap_or(default_session_key).to_string();
+        let run_id =
+            value.get("runId").and_then(|v| v.as_str()).unwrap_or(default_run_id).to_string();
+        let session_key = value
+            .get("sessionKey")
+            .and_then(|v| v.as_str())
+            .unwrap_or(default_session_key)
+            .to_string();
 
         match state {
-            "delta" => Some(ChatEvent::Delta { run_id, session_key, message: value.get("message")?.clone() }),
+            "delta" => Some(ChatEvent::Delta {
+                run_id,
+                session_key,
+                message: value.get("message")?.clone(),
+            }),
             "thinking" => Some(ChatEvent::Thinking {
-                run_id, session_key,
+                run_id,
+                session_key,
                 thinking: value.get("thinking").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             }),
             "tool_call_start" => Some(ChatEvent::ToolCallStart {
-                run_id, session_key,
+                run_id,
+                session_key,
                 tool_name: value.get("toolName").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                 tool_args: value.get("toolArgs").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                 a2ui: value.get("a2ui").and_then(|v| v.as_str()).map(String::from),
             }),
             "tool_result" => Some(ChatEvent::ToolResult {
-                run_id, session_key,
+                run_id,
+                session_key,
                 tool_name: value.get("toolName").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                 result: value.get("result").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             }),
-            "final" => Some(ChatEvent::Final { run_id, session_key, message: value.get("message")?.clone() }),
+            "final" => Some(ChatEvent::Final {
+                run_id,
+                session_key,
+                message: value.get("message")?.clone(),
+            }),
             "error" => Some(ChatEvent::Error {
-                run_id, session_key,
-                error: value.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string(),
+                run_id,
+                session_key,
+                error: value
+                    .get("error")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Unknown error")
+                    .to_string(),
             }),
             _ => None,
         }

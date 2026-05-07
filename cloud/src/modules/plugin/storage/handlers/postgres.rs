@@ -1,16 +1,16 @@
 //! PostgreSQL 存储处理器
 
 use std::any::Any;
+
 use async_trait::async_trait;
 use tokio_postgres::NoTls;
 use tracing::{debug, error};
 
-use super::StorageHandler;
-use crate::modules::plugin::storage::StorageData;
-use crate::shared::error::Error;
-
-use super::super::config::PostgresConfig;
-use crate::modules::plugin::{PluginHandler, PluginManifest, PluginType};
+use super::{super::config::PostgresConfig, StorageHandler};
+use crate::{
+    modules::plugin::{PluginHandler, PluginManifest, PluginType, storage::StorageData},
+    shared::error::Error,
+};
 
 pub struct PostgresHandler {
     config: PostgresConfig,
@@ -56,7 +56,8 @@ impl StorageHandler for PostgresHandler {
         let data_json = serde_json::to_string(&data.values)
             .map_err(|e| Error::SerializationError(format!("Failed to serialize data: {}", e)))?;
 
-        self.client.execute(&query, &[&data.device_id, &data.timestamp, &data_json])
+        self.client
+            .execute(&query, &[&data.device_id, &data.timestamp, &data_json])
             .await
             .map_err(|e| Error::DatabaseError(format!("Failed to write to Postgres: {}", e)))?;
 

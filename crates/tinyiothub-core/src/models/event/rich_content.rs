@@ -59,14 +59,21 @@ pub enum LinkTarget {
 impl RichContent {
     /// Create new rich content with title and elements
     pub fn new(title: String, elements: Vec<ContentElement>) -> Self {
-        Self { title, elements, metadata: HashMap::new() }
+        Self {
+            title,
+            elements,
+            metadata: HashMap::new(),
+        }
     }
 
     /// Create new rich content with just a title and text
     pub fn new_text(title: String, content: String) -> Self {
         Self {
             title,
-            elements: vec![ContentElement::Text { content, format: TextFormat::Plain }],
+            elements: vec![ContentElement::Text {
+                content,
+                format: TextFormat::Plain,
+            }],
             metadata: HashMap::new(),
         }
     }
@@ -75,14 +82,21 @@ impl RichContent {
     pub fn new_markdown(title: String, content: String) -> Self {
         Self {
             title,
-            elements: vec![ContentElement::Text { content, format: TextFormat::Markdown }],
+            elements: vec![ContentElement::Text {
+                content,
+                format: TextFormat::Markdown,
+            }],
             metadata: HashMap::new(),
         }
     }
 
     /// Create new empty rich content with just a title
     pub fn new_empty(title: String) -> Self {
-        Self { title, elements: Vec::new(), metadata: HashMap::new() }
+        Self {
+            title,
+            elements: Vec::new(),
+            metadata: HashMap::new(),
+        }
     }
 
     /// Get the title
@@ -132,8 +146,7 @@ impl RichContent {
 
     /// Validate content size (max 10MB as per requirements)
     pub fn validate_size(&self) -> Result<(), String> {
-        let serialized = serde_json::to_string(self)
-            .map_err(|e| format!("Failed to serialize content: {}", e))?;
+        let serialized = serde_json::to_string(self).map_err(|e| format!("Failed to serialize content: {}", e))?;
 
         const MAX_SIZE: usize = 10 * 1024 * 1024; // 10MB
 
@@ -206,22 +219,35 @@ impl RichContent {
 impl ContentElement {
     /// Create a plain text element
     pub fn plain_text(content: String) -> Self {
-        Self::Text { content, format: TextFormat::Plain }
+        Self::Text {
+            content,
+            format: TextFormat::Plain,
+        }
     }
 
     /// Create a markdown text element
     pub fn markdown(content: String) -> Self {
-        Self::Text { content, format: TextFormat::Markdown }
+        Self::Text {
+            content,
+            format: TextFormat::Markdown,
+        }
     }
 
     /// Create an HTML text element
     pub fn html(content: String) -> Self {
-        Self::Text { content, format: TextFormat::Html }
+        Self::Text {
+            content,
+            format: TextFormat::Html,
+        }
     }
 
     /// Create a simple link element
     pub fn link(url: String, text: String) -> Self {
-        Self::Link { url, text, target: LinkTarget::Self_ }
+        Self::Link {
+            url,
+            text,
+            target: LinkTarget::Self_,
+        }
     }
 
     /// Create a code element
@@ -275,7 +301,11 @@ mod tests {
     fn test_builder_pattern() {
         let content = RichContent::new_empty("Test".to_string())
             .add_text("Hello".to_string(), TextFormat::Plain)
-            .add_link("https://example.com".to_string(), "Example".to_string(), LinkTarget::Blank)
+            .add_link(
+                "https://example.com".to_string(),
+                "Example".to_string(),
+                LinkTarget::Blank,
+            )
             .add_code("println!(\"Hello\");".to_string(), Some("rust".to_string()))
             .with_metadata("key".to_string(), serde_json::Value::String("value".to_string()));
 
@@ -319,27 +349,41 @@ mod tests {
         let code = ContentElement::code("fn main() {}".to_string(), Some("rust".to_string()));
 
         match text {
-            ContentElement::Text { format: TextFormat::Plain, .. } => {}
+            ContentElement::Text {
+                format: TextFormat::Plain,
+                ..
+            } => {}
             _ => panic!("Expected plain text"),
         }
 
         match markdown {
-            ContentElement::Text { format: TextFormat::Markdown, .. } => {}
+            ContentElement::Text {
+                format: TextFormat::Markdown,
+                ..
+            } => {}
             _ => panic!("Expected markdown text"),
         }
 
         match html {
-            ContentElement::Text { format: TextFormat::Html, .. } => {}
+            ContentElement::Text {
+                format: TextFormat::Html,
+                ..
+            } => {}
             _ => panic!("Expected HTML text"),
         }
 
         match link {
-            ContentElement::Link { target: LinkTarget::Self_, .. } => {}
+            ContentElement::Link {
+                target: LinkTarget::Self_,
+                ..
+            } => {}
             _ => panic!("Expected link with Self target"),
         }
 
         match code {
-            ContentElement::Code { language: Some(lang), .. } => {
+            ContentElement::Code {
+                language: Some(lang), ..
+            } => {
                 assert_eq!(lang, "rust");
             }
             _ => panic!("Expected code with language"),

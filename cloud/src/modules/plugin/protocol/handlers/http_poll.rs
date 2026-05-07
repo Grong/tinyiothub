@@ -1,21 +1,20 @@
 //! HTTP 轮询协议处理器
 
-use std::any::Any;
+use std::{any::Any, collections::HashMap, time::Duration};
+
 use async_trait::async_trait;
 use reqwest::Client;
-use std::collections::HashMap;
-use std::time::Duration;
+use tinyiothub_core::models::device::Device;
 use tracing::debug;
 
-use super::ProtocolHandler;
-use tinyiothub_core::models::device::Device;
+use super::{super::config::HttpPollConfig, ProtocolHandler};
 use crate::{
-    modules::device::driver::ResultValue,
-    shared::error::Error
+    modules::{
+        device::driver::ResultValue,
+        plugin::{PluginHandler, PluginManifest, PluginType},
+    },
+    shared::error::Error,
 };
-
-use super::super::config::HttpPollConfig;
-use crate::modules::plugin::{PluginHandler, PluginManifest, PluginType};
 
 pub struct HttpPollHandler {
     config: HttpPollConfig,
@@ -45,11 +44,7 @@ impl HttpPollHandler {
     }
 
     fn build_url(&self) -> String {
-        format!(
-            "{}{}",
-            self.config.base_url.trim_end_matches('/'),
-            self.config.endpoint
-        )
+        format!("{}{}", self.config.base_url.trim_end_matches('/'), self.config.endpoint)
     }
 }
 
@@ -85,10 +80,14 @@ impl ProtocolHandler for HttpPollHandler {
             request = request.header(k, v);
         }
 
-        let resp = request.send().await
+        let resp = request
+            .send()
+            .await
             .map_err(|e| Error::NetworkError(format!("HTTP request failed: {}", e)))?;
 
-        let body = resp.text().await
+        let body = resp
+            .text()
+            .await
             .map_err(|e| Error::IOError(format!("Failed to read response: {}", e)))?;
 
         let json: serde_json::Value = serde_json::from_str(&body)

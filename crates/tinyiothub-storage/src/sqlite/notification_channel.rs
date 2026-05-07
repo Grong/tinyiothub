@@ -1,8 +1,8 @@
 use sqlx::Row;
 
 use crate::sqlite::database::Database;
-use tinyiothub_core::models::notification_channel::*;
 use tinyiothub_core::generate_id;
+use tinyiothub_core::models::notification_channel::*;
 
 /// 根据 ID 查询通知渠道
 pub async fn find_notification_channel_by_id(
@@ -36,9 +36,8 @@ pub async fn count_notification_channels(
     db: &Database,
     params: &NotificationChannelQueryParams,
 ) -> Result<i64, sqlx::Error> {
-    let mut query_builder = sqlx::query_builder::QueryBuilder::new(
-        "SELECT COUNT(*) FROM notification_channels WHERE 1=1",
-    );
+    let mut query_builder =
+        sqlx::query_builder::QueryBuilder::new("SELECT COUNT(*) FROM notification_channels WHERE 1=1");
 
     if let Some(ref channel_type) = params.channel_type {
         query_builder.push(" AND channel_type = ");
@@ -67,9 +66,7 @@ pub async fn find_all_notification_channels(
     let page_size = params.page_size.unwrap_or(20);
     let offset = (page - 1) * page_size;
 
-    let mut query_builder = sqlx::query_builder::QueryBuilder::new(
-        "SELECT * FROM notification_channels WHERE 1=1"
-    );
+    let mut query_builder = sqlx::query_builder::QueryBuilder::new("SELECT * FROM notification_channels WHERE 1=1");
 
     if let Some(ref channel_type) = params.channel_type {
         query_builder.push(" AND channel_type = ");
@@ -136,7 +133,9 @@ pub async fn create_notification_channel(
     .execute(db.pool())
     .await?;
 
-    find_notification_channel_by_id(db, &id).await?.ok_or(sqlx::Error::RowNotFound)
+    find_notification_channel_by_id(db, &id)
+        .await?
+        .ok_or(sqlx::Error::RowNotFound)
 }
 
 /// 更新通知渠道；workspace_id 用于 WHERE 子句确保租户隔离
@@ -148,9 +147,7 @@ pub async fn update_notification_channel(
 ) -> Result<NotificationChannel, sqlx::Error> {
     let now = chrono::Utc::now().to_rfc3339();
 
-    let mut query_builder = sqlx::query_builder::QueryBuilder::new(
-        "UPDATE notification_channels SET updated_at = "
-    );
+    let mut query_builder = sqlx::query_builder::QueryBuilder::new("UPDATE notification_channels SET updated_at = ");
     query_builder.push_bind(&now);
 
     if let Some(ref name) = req.name {
@@ -179,11 +176,17 @@ pub async fn update_notification_channel(
 
     query_builder.build().execute(db.pool()).await?;
 
-    find_notification_channel_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound)
+    find_notification_channel_by_id(db, id)
+        .await?
+        .ok_or(sqlx::Error::RowNotFound)
 }
 
 /// 删除通知渠道；workspace_id 用于 WHERE 子句确保租户隔离
-pub async fn delete_notification_channel(db: &Database, id: &str, workspace_id: Option<&str>) -> Result<u64, sqlx::Error> {
+pub async fn delete_notification_channel(
+    db: &Database,
+    id: &str,
+    workspace_id: Option<&str>,
+) -> Result<u64, sqlx::Error> {
     let query = if workspace_id.is_some() {
         "DELETE FROM notification_channels WHERE id = ? AND workspace_id = ?"
     } else {
@@ -211,7 +214,9 @@ pub async fn set_notification_channel_enabled(
         .execute(db.pool())
         .await?;
 
-    find_notification_channel_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound)
+    find_notification_channel_by_id(db, id)
+        .await?
+        .ok_or(sqlx::Error::RowNotFound)
 }
 
 /// 获取统计
@@ -220,12 +225,10 @@ pub async fn get_notification_channel_statistics(
     workspace_id: Option<&str>,
 ) -> Result<ChannelStatistics, sqlx::Error> {
     let total: i64 = if let Some(ws_id) = workspace_id {
-        sqlx::query_scalar(
-            "SELECT COUNT(*) FROM notification_channels WHERE workspace_id = ?"
-        )
-        .bind(ws_id)
-        .fetch_one(db.pool())
-        .await?
+        sqlx::query_scalar("SELECT COUNT(*) FROM notification_channels WHERE workspace_id = ?")
+            .bind(ws_id)
+            .fetch_one(db.pool())
+            .await?
     } else {
         sqlx::query_scalar("SELECT COUNT(*) FROM notification_channels")
             .fetch_one(db.pool())
@@ -233,12 +236,10 @@ pub async fn get_notification_channel_statistics(
     };
 
     let enabled: i64 = if let Some(ws_id) = workspace_id {
-        sqlx::query_scalar(
-            "SELECT COUNT(*) FROM notification_channels WHERE is_enabled = 1 AND workspace_id = ?"
-        )
-        .bind(ws_id)
-        .fetch_one(db.pool())
-        .await?
+        sqlx::query_scalar("SELECT COUNT(*) FROM notification_channels WHERE is_enabled = 1 AND workspace_id = ?")
+            .bind(ws_id)
+            .fetch_one(db.pool())
+            .await?
     } else {
         sqlx::query_scalar("SELECT COUNT(*) FROM notification_channels WHERE is_enabled = 1")
             .fetch_one(db.pool())
@@ -246,12 +247,10 @@ pub async fn get_notification_channel_statistics(
     };
 
     let sms: i64 = if let Some(ws_id) = workspace_id {
-        sqlx::query_scalar(
-            "SELECT COUNT(*) FROM notification_channels WHERE channel_type = 'sms' AND workspace_id = ?"
-        )
-        .bind(ws_id)
-        .fetch_one(db.pool())
-        .await?
+        sqlx::query_scalar("SELECT COUNT(*) FROM notification_channels WHERE channel_type = 'sms' AND workspace_id = ?")
+            .bind(ws_id)
+            .fetch_one(db.pool())
+            .await?
     } else {
         sqlx::query_scalar("SELECT COUNT(*) FROM notification_channels WHERE channel_type = 'sms'")
             .fetch_one(db.pool())
@@ -260,7 +259,7 @@ pub async fn get_notification_channel_statistics(
 
     let email: i64 = if let Some(ws_id) = workspace_id {
         sqlx::query_scalar(
-            "SELECT COUNT(*) FROM notification_channels WHERE channel_type = 'email' AND workspace_id = ?"
+            "SELECT COUNT(*) FROM notification_channels WHERE channel_type = 'email' AND workspace_id = ?",
         )
         .bind(ws_id)
         .fetch_one(db.pool())
@@ -273,7 +272,7 @@ pub async fn get_notification_channel_statistics(
 
     let webhook: i64 = if let Some(ws_id) = workspace_id {
         sqlx::query_scalar(
-            "SELECT COUNT(*) FROM notification_channels WHERE channel_type = 'webhook' AND workspace_id = ?"
+            "SELECT COUNT(*) FROM notification_channels WHERE channel_type = 'webhook' AND workspace_id = ?",
         )
         .bind(ws_id)
         .fetch_one(db.pool())

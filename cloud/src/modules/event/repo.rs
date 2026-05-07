@@ -4,15 +4,14 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 
-use crate::modules::event::{
-    entities::Event,
-    value_objects::{EventId, EventLevel, EventType},
-    Result,
-};
-
 pub use super::types::{
     DeviceStatusSummary, EventCriteria, EventStatistics, ExportFormat, GroupBy, RealTimeEvent,
     RealTimeFilter, SortBy, SortOrder, StatisticsGroup, StatisticsParams, StatusSummary,
+};
+use crate::modules::event::{
+    Result,
+    entities::Event,
+    value_objects::{EventId, EventLevel, EventType},
 };
 
 /// Repository interface for event persistence

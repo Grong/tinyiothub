@@ -4,14 +4,14 @@
 use std::collections::HashSet;
 
 use aes_gcm::{
-    aead::{Aead, KeyInit, OsRng},
     Aes256Gcm, Key, Nonce,
+    aead::{Aead, KeyInit, OsRng},
 };
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use crate::modules::event::{value_objects::RichContent, EventError, Result};
+use crate::modules::event::{EventError, Result, value_objects::RichContent};
 
 /// Event content encryption service
 #[async_trait::async_trait]
@@ -271,9 +271,10 @@ impl EventEncryption for AesEventEncryption {
 
         // Check metadata for sensitive markers
         if let Some(metadata) = content.metadata().get("sensitive")
-            && let Some(is_sensitive) = metadata.as_bool() {
-                return is_sensitive;
-            }
+            && let Some(is_sensitive) = metadata.as_bool()
+        {
+            return is_sensitive;
+        }
 
         false
     }

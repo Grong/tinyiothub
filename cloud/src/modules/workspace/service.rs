@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
-use super::repo::WorkspaceRepository;
-use super::types::{Workspace, WorkspaceWithDeviceCount};
+use super::{
+    repo::WorkspaceRepository,
+    types::{Workspace, WorkspaceWithDeviceCount},
+};
 use crate::shared::error::Result;
 
 pub struct WorkspaceService {
@@ -34,9 +36,7 @@ impl WorkspaceService {
         agent_id: Option<&str>,
         agent_config: Option<&str>,
     ) -> Result<Workspace> {
-        self.repository
-            .create(tenant_id, name, description, agent_id, agent_config)
-            .await
+        self.repository.create(tenant_id, name, description, agent_id, agent_config).await
     }
 
     pub async fn update(
@@ -47,9 +47,7 @@ impl WorkspaceService {
         agent_id: Option<&str>,
         agent_config: Option<&str>,
     ) -> Result<Option<WorkspaceWithDeviceCount>> {
-        self.repository
-            .update(id, name, description, agent_id, agent_config)
-            .await
+        self.repository.update(id, name, description, agent_id, agent_config).await
     }
 
     pub async fn delete(&self, id: &str) -> Result<()> {

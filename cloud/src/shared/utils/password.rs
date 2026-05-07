@@ -1,7 +1,7 @@
 // 密码哈希模块
 // 使用 bcrypt 进行安全密码哈希
 
-use bcrypt::{hash, verify, DEFAULT_COST};
+use bcrypt::{DEFAULT_COST, hash, verify};
 
 /// 哈希密码
 pub fn hash_password(password: &str) -> Result<String, String> {

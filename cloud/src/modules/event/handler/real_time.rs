@@ -1,22 +1,20 @@
 // Real-time event status API endpoints
 // Provides current active event status and acknowledgment functionality
 
-use crate::shared::security::jwt::Claims;
-use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
     extract::{Path, Query, State},
     response::Json,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
     modules::event::{
         repositories::{RealTimeEvent, RealTimeFilter, StatusSummary},
         value_objects::{EventId, EventLevel, EventType},
     },
-    shared::api_response::{ApiResponse},
-    shared::{app_state::AppState},
+    shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims},
 };
 
 /// Query parameters for real-time event filtering
@@ -120,9 +118,10 @@ pub async fn get_real_time_events(
 
     // Event types
     if let Some(types_str) = params.event_types
-        && let Ok(types) = EventType::parse_multiple(&types_str) {
-            filter.event_types = Some(types);
-        }
+        && let Ok(types) = EventType::parse_multiple(&types_str)
+    {
+        filter.event_types = Some(types);
+    }
 
     // Source types
     if let Some(source_types_str) = params.source_types {
@@ -143,9 +142,10 @@ pub async fn get_real_time_events(
 
     // Minimum level
     if let Some(min_level_str) = params.min_level
-        && let Ok(min_level) = parse_event_level(&min_level_str) {
-            filter.min_level = Some(min_level);
-        }
+        && let Ok(min_level) = parse_event_level(&min_level_str)
+    {
+        filter.min_level = Some(min_level);
+    }
 
     // Get real-time event repository from application state
     let real_time_repo = &state.real_time_event_repository;
@@ -193,9 +193,10 @@ pub async fn get_status_summary(
     }
 
     if let Some(types_str) = params.event_types
-        && let Ok(types) = EventType::parse_multiple(&types_str) {
-            filter.event_types = Some(types);
-        }
+        && let Ok(types) = EventType::parse_multiple(&types_str)
+    {
+        filter.event_types = Some(types);
+    }
 
     if let Some(source_types_str) = params.source_types {
         let source_types: Vec<String> = source_types_str
@@ -213,9 +214,10 @@ pub async fn get_status_summary(
     }
 
     if let Some(min_level_str) = params.min_level
-        && let Ok(min_level) = parse_event_level(&min_level_str) {
-            filter.min_level = Some(min_level);
-        }
+        && let Ok(min_level) = parse_event_level(&min_level_str)
+    {
+        filter.min_level = Some(min_level);
+    }
 
     // Get real-time event repository from application state
     let real_time_repo = &state.real_time_event_repository;

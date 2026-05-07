@@ -1,40 +1,42 @@
 // Notification HTTP handlers
 // Consolidated from api/notifications/management.rs and api/notification_channels/mod.rs
 
-use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     routing::{delete, get, post, put},
-    Json, Router,
 };
 use chrono::Utc;
-use tracing::{error, info};
-use uuid::Uuid;
-
-use crate::shared::security::jwt::Claims;
-use crate::{
-    shared::api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
-    shared::app_state::AppState,
-};
-
-use super::types::{
-    convert_device_filter, device_filter_to_json, CreateNotificationRuleRequest,
-    DeviceFilterResponse, DeviceFilterRequest, NotificationChannelType,
-    NotificationHistoryQuery, NotificationHistoryResponse, NotificationLevel,
-    NotificationRule, NotificationRuleQuery, NotificationRuleResponse,
-    TestNotificationRequest, UpdateNotificationRuleRequest,
-};
-use super::service::NotificationMessage;
-use crate::modules::notification::service::send_notification_message;
-use crate::shared::persistence::repositories::{
-    find_notification_channel_by_id, find_all_notification_channels,
-    count_notification_channels, create_notification_channel,
-    update_notification_channel, delete_notification_channel,
-    get_notification_channel_statistics,
-};
 use tinyiothub_core::models::notification_channel::{
     ChannelStatistics, CreateNotificationChannelRequest, NotificationChannel,
     NotificationChannelQueryParams, SendMessageRequest, UpdateNotificationChannelRequest,
+};
+use tinyiothub_web::response::ApiResponseBuilder;
+use tracing::{error, info};
+use uuid::Uuid;
+
+use super::{
+    service::NotificationMessage,
+    types::{
+        CreateNotificationRuleRequest, DeviceFilterRequest, DeviceFilterResponse,
+        NotificationChannelType, NotificationHistoryQuery, NotificationHistoryResponse,
+        NotificationLevel, NotificationRule, NotificationRuleQuery, NotificationRuleResponse,
+        TestNotificationRequest, UpdateNotificationRuleRequest, convert_device_filter,
+        device_filter_to_json,
+    },
+};
+use crate::{
+    modules::notification::service::send_notification_message,
+    shared::{
+        api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
+        app_state::AppState,
+        persistence::repositories::{
+            count_notification_channels, create_notification_channel, delete_notification_channel,
+            find_all_notification_channels, find_notification_channel_by_id,
+            get_notification_channel_statistics, update_notification_channel,
+        },
+        security::jwt::Claims,
+    },
 };
 
 // ──────────────────────────────────────────────
@@ -113,18 +115,21 @@ async fn get_notification_rules_impl(
                 }
             }
             if let Some(enabled) = query.enabled
-                && rule.enabled != enabled {
-                    return false;
-                }
+                && rule.enabled != enabled
+            {
+                return false;
+            }
             if let Some(ref event_type) = query.event_type
-                && rule.event_type.as_ref() != Some(event_type) {
-                    return false;
-                }
+                && rule.event_type.as_ref() != Some(event_type)
+            {
+                return false;
+            }
             if let Some(ref method) = query.notification_method
                 && let Some(channel) = NotificationChannelType::parse_str(method)
-                    && !rule.notification_methods.contains(&channel) {
-                        return false;
-                    }
+                && !rule.notification_methods.contains(&channel)
+            {
+                return false;
+            }
             true
         })
         .map(|rule| NotificationRuleResponse {
@@ -424,7 +429,11 @@ pub async fn delete_notification_rule(
     }
 }
 
-async fn delete_notification_rule_impl(state: &AppState, rule_id: &str, workspace_id: &str) -> Result<(), String> {
+async fn delete_notification_rule_impl(
+    state: &AppState,
+    rule_id: &str,
+    workspace_id: &str,
+) -> Result<(), String> {
     let notification_manager =
         state.get_notification_manager().ok_or("Notification manager not available")?;
 
@@ -579,11 +588,8 @@ async fn list_channels(
         Ok(channels) => {
             let total = count_result.unwrap_or(0);
             let total_count = total as u64;
-            let total_pages = if page_size > 0 {
-                ((total as f64) / (page_size as f64)).ceil() as u32
-            } else {
-                0
-            };
+            let total_pages =
+                if page_size > 0 { ((total as f64) / (page_size as f64)).ceil() as u32 } else { 0 };
             ApiResponseBuilder::success(PaginatedResponse {
                 data: channels,
                 pagination: PaginationInfo { page, page_size, total_pages, total_count },
@@ -665,15 +671,17 @@ async fn update_channel(
     }
 
     if let Some(ref channel_type) = payload.channel_type
-        && !["sms", "email", "webhook"].contains(&channel_type.as_str()) {
-            return ApiResponseBuilder::error_with_code(400, "无效的通知渠道类型");
-        }
+        && !["sms", "email", "webhook"].contains(&channel_type.as_str())
+    {
+        return ApiResponseBuilder::error_with_code(400, "无效的通知渠道类型");
+    }
 
     if let Some(ref config) = payload.config
-        && let Err(e) = serde_json::from_str::<serde_json::Value>(config) {
-            tracing::error!("Invalid config JSON: {}", e);
-            return ApiResponseBuilder::error_with_code(400, "无效的配置 JSON");
-        }
+        && let Err(e) = serde_json::from_str::<serde_json::Value>(config)
+    {
+        tracing::error!("Invalid config JSON: {}", e);
+        return ApiResponseBuilder::error_with_code(400, "无效的配置 JSON");
+    }
 
     match update_notification_channel(&db, &id, &payload, Some(&claims.workspace_id)).await {
         Ok(channel) => ApiResponseBuilder::success(channel),

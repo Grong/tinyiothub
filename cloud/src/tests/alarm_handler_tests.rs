@@ -6,7 +6,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use crate::test_utils::{
@@ -39,10 +39,8 @@ async fn test_list_alarm_rules() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
-    let response = app
-        .oneshot(auth_request("GET", "/api/v1/alarm-rules", &token, None))
-        .await
-        .unwrap();
+    let response =
+        app.oneshot(auth_request("GET", "/api/v1/alarm-rules", &token, None)).await.unwrap();
 
     let status = response.status();
     assert_eq!(status, StatusCode::OK, "Handler should return 200");
@@ -79,10 +77,8 @@ async fn test_create_alarm_rule() {
         }
     });
 
-    let response = app
-        .oneshot(auth_request("POST", "/api/v1/alarm-rules", &token, Some(body)))
-        .await
-        .unwrap();
+    let response =
+        app.oneshot(auth_request("POST", "/api/v1/alarm-rules", &token, Some(body))).await.unwrap();
 
     let (status, json) = response_parts(response).await;
 
@@ -128,7 +124,12 @@ async fn test_update_alarm_rule_not_found() {
     });
 
     let response = app
-        .oneshot(auth_request("PUT", "/api/v1/alarm-rules/nonexistent-rule-12345", &token, Some(body)))
+        .oneshot(auth_request(
+            "PUT",
+            "/api/v1/alarm-rules/nonexistent-rule-12345",
+            &token,
+            Some(body),
+        ))
         .await
         .unwrap();
 
@@ -170,10 +171,8 @@ async fn test_get_alarm_statistics() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
-    let response = app
-        .oneshot(auth_request("GET", "/api/v1/alarms/statistics", &token, None))
-        .await
-        .unwrap();
+    let response =
+        app.oneshot(auth_request("GET", "/api/v1/alarms/statistics", &token, None)).await.unwrap();
 
     let (status, json) = response_parts(response).await;
 
@@ -243,12 +242,7 @@ async fn test_list_alarms() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request(
-            "GET",
-            "/api/v1/alarms?page=1&page_size=20",
-            &token,
-            None,
-        ))
+        .oneshot(auth_request("GET", "/api/v1/alarms?page=1&page_size=20", &token, None))
         .await
         .unwrap();
 
@@ -316,9 +310,7 @@ async fn test_alarm_rule_workspace_isolation() {
     seed_test_workspace(&pool, "tenant-b", "ws-b").await;
 
     let api_router = crate::api::create_router();
-    let app = axum::Router::new()
-        .nest("/api", api_router)
-        .with_state(app_state);
+    let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
 
     // User A creates an alarm rule
     let token_a = create_test_token_with_workspace("user-a", "tenant-a", "ws-a");
@@ -356,6 +348,9 @@ async fn test_alarm_rule_workspace_isolation() {
             .unwrap();
 
         let (_status, json_b) = response_parts(response).await;
-        assert_ne!(json_b["code"], 0, "User B should NOT be able to access workspace A's alarm rule");
+        assert_ne!(
+            json_b["code"], 0,
+            "User B should NOT be able to access workspace A's alarm rule"
+        );
     }
 }

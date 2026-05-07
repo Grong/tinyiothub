@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use sqlx::{FromRow, QueryBuilder, Row};
+use tinyiothub_core::error::Result;
 
 use super::types::{CreateRoleRequest, Role, RoleQueryParams, RoleStats, UpdateRoleRequest};
-use tinyiothub_core::error::Result;
 
 // ── Trait ───────────────────────────────────────────────
 
@@ -20,7 +20,12 @@ pub trait RoleRepository: Send + Sync {
     async fn find_admin_roles(&self, workspace_id: Option<&str>) -> Result<Vec<Role>>;
     async fn find_user_roles(&self, workspace_id: Option<&str>) -> Result<Vec<Role>>;
     async fn exists_by_name(&self, name: &str, workspace_id: Option<&str>) -> Result<bool>;
-    async fn exists_by_name_exclude_id(&self, name: &str, exclude_id: &str, workspace_id: Option<&str>) -> Result<bool>;
+    async fn exists_by_name_exclude_id(
+        &self,
+        name: &str,
+        exclude_id: &str,
+        workspace_id: Option<&str>,
+    ) -> Result<bool>;
     async fn find_by_ids(&self, ids: &[String]) -> Result<Vec<Role>>;
     async fn find_roles_by_user_id(&self, user_id: &str) -> Result<Vec<Role>>;
     async fn is_administrator_role(&self, id: &str) -> Result<bool>;
@@ -87,7 +92,7 @@ impl RoleRepository for SqliteRoleRepository {
 
     async fn find_by_name(&self, name: &str, workspace_id: Option<&str>) -> Result<Option<Role>> {
         let mut query = QueryBuilder::new(
-            "SELECT id, name, description, is_administrator, workspace_id FROM roles WHERE name = "
+            "SELECT id, name, description, is_administrator, workspace_id FROM roles WHERE name = ",
         );
         query.push_bind(name);
 
@@ -95,9 +100,7 @@ impl RoleRepository for SqliteRoleRepository {
             query.push(" AND (workspace_id = ").push_bind(ws).push(" OR workspace_id IS NULL)");
         }
 
-        let row = query.build_query_as::<RoleRow>()
-            .fetch_optional(self.database.pool())
-            .await?;
+        let row = query.build_query_as::<RoleRow>().fetch_optional(self.database.pool()).await?;
 
         Ok(row.map(Into::into))
     }
@@ -175,8 +178,10 @@ impl RoleRepository for SqliteRoleRepository {
     }
 
     async fn delete(&self, id: &str) -> Result<u64> {
-        let result =
-            sqlx::query("DELETE FROM roles WHERE id = ?").bind(id).execute(self.database.pool()).await?;
+        let result = sqlx::query("DELETE FROM roles WHERE id = ?")
+            .bind(id)
+            .execute(self.database.pool())
+            .await?;
 
         Ok(result.rows_affected())
     }
@@ -217,7 +222,10 @@ impl RoleRepository for SqliteRoleRepository {
         }
 
         if let Some(workspace_id) = &params.workspace_id {
-            query.push(" AND (workspace_id = ").push_bind(workspace_id).push(" OR workspace_id IS NULL)");
+            query
+                .push(" AND (workspace_id = ")
+                .push_bind(workspace_id)
+                .push(" OR workspace_id IS NULL)");
         }
 
         query.push(" ORDER BY name");
@@ -249,7 +257,10 @@ impl RoleRepository for SqliteRoleRepository {
         }
 
         if let Some(workspace_id) = &params.workspace_id {
-            query.push(" AND (workspace_id = ").push_bind(workspace_id).push(" OR workspace_id IS NULL)");
+            query
+                .push(" AND (workspace_id = ")
+                .push_bind(workspace_id)
+                .push(" OR workspace_id IS NULL)");
         }
 
         let row = query.build().fetch_one(self.database.pool()).await?;
@@ -287,7 +298,7 @@ impl RoleRepository for SqliteRoleRepository {
 
     async fn find_admin_roles(&self, workspace_id: Option<&str>) -> Result<Vec<Role>> {
         let mut query = QueryBuilder::new(
-            "SELECT id, name, description, is_administrator, workspace_id FROM roles WHERE is_administrator = 1"
+            "SELECT id, name, description, is_administrator, workspace_id FROM roles WHERE is_administrator = 1",
         );
 
         if let Some(ws) = workspace_id {
@@ -303,7 +314,7 @@ impl RoleRepository for SqliteRoleRepository {
 
     async fn find_user_roles(&self, workspace_id: Option<&str>) -> Result<Vec<Role>> {
         let mut query = QueryBuilder::new(
-            "SELECT id, name, description, is_administrator, workspace_id FROM roles WHERE is_administrator = 0"
+            "SELECT id, name, description, is_administrator, workspace_id FROM roles WHERE is_administrator = 0",
         );
 
         if let Some(ws) = workspace_id {
@@ -331,7 +342,12 @@ impl RoleRepository for SqliteRoleRepository {
         Ok(count > 0)
     }
 
-    async fn exists_by_name_exclude_id(&self, name: &str, exclude_id: &str, workspace_id: Option<&str>) -> Result<bool> {
+    async fn exists_by_name_exclude_id(
+        &self,
+        name: &str,
+        exclude_id: &str,
+        workspace_id: Option<&str>,
+    ) -> Result<bool> {
         let mut query = QueryBuilder::new("SELECT COUNT(*) FROM roles WHERE name = ");
         query.push_bind(name);
         query.push(" AND id != ").push_bind(exclude_id);

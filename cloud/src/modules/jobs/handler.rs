@@ -1,30 +1,32 @@
 // Jobs API — moved from api/jobs/mod.rs
 // Compatibility layer over new cron system
 
-use crate::shared::security::jwt::Claims;
-use tinyiothub_web::response::ApiResponseBuilder;
-use std::str::FromStr;
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     routing::{get, post},
-    Json, Router,
 };
 use serde::Deserialize;
-
-use tinyiothub_core::models::cron_job::{
-    CreateCronJobRequest, CronJob, CronJobQuery, CronRun, CronRunQuery, UpdateCronJobRequest,
-};
-use tinyiothub_core::models::job::{
-    CreateJobRequest, Job, JobExecution, JobExecutionQueryParams, JobQueryParams, JobStatistics,
-    UpdateJobRequest,
-};
-use crate::{
-    shared::api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
-    shared::{app_state::AppState, error::Error},
+use tinyiothub_core::models::{
+    cron_job::{
+        CreateCronJobRequest, CronJob, CronJobQuery, CronRun, CronRunQuery, UpdateCronJobRequest,
+    },
+    job::{
+        CreateJobRequest, Job, JobExecution, JobExecutionQueryParams, JobQueryParams,
+        JobStatistics, UpdateJobRequest,
+    },
 };
 use tinyiothub_runtime::cron::ExecutorRegistry;
+use tinyiothub_web::response::ApiResponseBuilder;
+
+use crate::shared::{
+    api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
+    app_state::AppState,
+    error::Error,
+    security::jwt::Claims,
+};
 
 /// Create jobs router
 pub fn create_router() -> Router<AppState> {
@@ -64,11 +66,7 @@ fn map_cron_job_to_job(cj: CronJob) -> Job {
         id: cj.id,
         name: cj.name,
         description: cj.description,
-        job_type: if cj.job_type == "shell" {
-            "script".to_string()
-        } else {
-            cj.job_type
-        },
+        job_type: if cj.job_type == "shell" { "script".to_string() } else { cj.job_type },
         cron_expression: cj.cron_expression,
         config: cj.config,
         timeout_seconds: cj.timeout_seconds,
@@ -96,11 +94,8 @@ fn map_cron_job_to_job(cj: CronJob) -> Job {
 }
 
 fn map_create_request(req: &CreateJobRequest, workspace_id: &str) -> CreateCronJobRequest {
-    let job_type = if req.job_type == "script" {
-        "shell".to_string()
-    } else {
-        req.job_type.clone()
-    };
+    let job_type =
+        if req.job_type == "script" { "shell".to_string() } else { req.job_type.clone() };
 
     let config = if job_type == "device_command" {
         let mut cfg = serde_json::Map::new();
@@ -131,13 +126,8 @@ fn map_create_request(req: &CreateJobRequest, workspace_id: &str) -> CreateCronJ
 }
 
 fn map_update_request(req: &UpdateJobRequest) -> UpdateCronJobRequest {
-    let job_type = req.job_type.as_ref().map(|t| {
-        if t == "script" {
-            "shell".to_string()
-        } else {
-            t.clone()
-        }
-    });
+    let job_type =
+        req.job_type.as_ref().map(|t| if t == "script" { "shell".to_string() } else { t.clone() });
 
     let config = req.config.clone().or_else(|| {
         if job_type.as_deref() == Some("device_command") {
@@ -151,11 +141,7 @@ fn map_update_request(req: &UpdateJobRequest) -> UpdateCronJobRequest {
             if let Some(ref params) = req.target_command_params {
                 cfg.insert("params".to_string(), serde_json::Value::String(params.clone()));
             }
-            if !cfg.is_empty() {
-                Some(serde_json::Value::Object(cfg).to_string())
-            } else {
-                None
-            }
+            if !cfg.is_empty() { Some(serde_json::Value::Object(cfg).to_string()) } else { None }
         } else {
             None
         }
@@ -228,9 +214,9 @@ async fn list_jobs(
     };
     let query = map_cron_job_query(&params, ws_id);
     match state.cron_job_repo.find_all(&query).await {
-        Ok(jobs) => ApiResponseBuilder::success(
-            jobs.into_iter().map(map_cron_job_to_job).collect(),
-        ),
+        Ok(jobs) => {
+            ApiResponseBuilder::success(jobs.into_iter().map(map_cron_job_to_job).collect())
+        }
         Err(e) => {
             tracing::error!("Failed to list jobs: {}", e);
             ApiResponseBuilder::error("获取任务列表失败")
@@ -306,10 +292,11 @@ async fn update_job(
     }
 
     if let Some(ref cron) = payload.cron_expression
-        && let Err(e) = cron::Schedule::from_str(cron) {
-            tracing::error!("Invalid cron expression: {}", e);
-            return ApiResponseBuilder::error_with_code(400, "无效的 Cron 表达式");
-        }
+        && let Err(e) = cron::Schedule::from_str(cron)
+    {
+        tracing::error!("Invalid cron expression: {}", e);
+        return ApiResponseBuilder::error_with_code(400, "无效的 Cron 表达式");
+    }
 
     let _ws_id = match state.resolve_workspace(&claims.tenant_id, None).await {
         Ok(ws) => ws,
@@ -451,9 +438,7 @@ async fn run_job_now(
                 let _ = run_repo
                     .complete(&run_id, &workspace_id, status, None, Some(&err_msg), duration_ms)
                     .await;
-                let _ = job_repo
-                    .update_run_stats(&job_clone.id, status, Some(&err_msg))
-                    .await;
+                let _ = job_repo.update_run_stats(&job_clone.id, status, Some(&err_msg)).await;
             }
         }
 
@@ -476,10 +461,14 @@ async fn list_job_executions(
     let mut query = map_execution_query(&params);
     query.job_id = Some(id);
 
-    match state.cron_run_repo.find_by_job_id(&params.job_id.unwrap_or_default(), &ws_id, &query).await {
-        Ok(runs) => ApiResponseBuilder::success(
-            runs.into_iter().map(map_cron_run_to_execution).collect(),
-        ),
+    match state
+        .cron_run_repo
+        .find_by_job_id(&params.job_id.unwrap_or_default(), &ws_id, &query)
+        .await
+    {
+        Ok(runs) => {
+            ApiResponseBuilder::success(runs.into_iter().map(map_cron_run_to_execution).collect())
+        }
         Err(e) => {
             tracing::error!("Failed to list executions: {}", e);
             ApiResponseBuilder::error("获取执行记录失败")
@@ -497,16 +486,8 @@ async fn get_statistics(
     };
 
     let total = state.cron_job_repo.count().await.unwrap_or(0);
-    let success_runs = state
-        .cron_run_repo
-        .count_by_status(&ws_id, "success")
-        .await
-        .unwrap_or(0);
-    let failed_runs = state
-        .cron_run_repo
-        .count_by_status(&ws_id, "failed")
-        .await
-        .unwrap_or(0);
+    let success_runs = state.cron_run_repo.count_by_status(&ws_id, "success").await.unwrap_or(0);
+    let failed_runs = state.cron_run_repo.count_by_status(&ws_id, "failed").await.unwrap_or(0);
 
     let enabled_jobs = state.cron_job_repo.count_by_enabled(true).await.unwrap_or(0);
     let disabled_jobs = state.cron_job_repo.count_by_enabled(false).await.unwrap_or(0);

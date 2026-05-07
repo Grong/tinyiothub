@@ -1,11 +1,13 @@
 // tag module — Handler → Service → Repo 三层架构
 
-pub mod types;
+pub mod handler;
 pub mod repo;
 pub mod service;
-pub mod handler;
+pub mod types;
 
-pub use types::*;
-pub use repo::{TagRepository, TagBindingRepository, SqliteTagRepository, SqliteTagBindingRepository};
-pub use service::TagService;
 pub use handler::create_router;
+pub use repo::{
+    SqliteTagBindingRepository, SqliteTagRepository, TagBindingRepository, TagRepository,
+};
+pub use service::TagService;
+pub use types::*;

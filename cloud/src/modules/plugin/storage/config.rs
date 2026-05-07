@@ -15,7 +15,9 @@ pub struct PostgresConfig {
     pub table_name: String,
 }
 
-fn default_table() -> String { "device_data".to_string() }
+fn default_table() -> String {
+    "device_data".to_string()
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct InfluxdbConfig {

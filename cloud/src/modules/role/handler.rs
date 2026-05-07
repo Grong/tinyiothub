@@ -1,18 +1,16 @@
-use tinyiothub_web::response::ApiResponseBuilder;
-use super::types::{CreateRoleRequest, Role, UpdateRoleRequest};
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     routing::get,
-    Json, Router,
 };
 use serde::Deserialize;
+use tinyiothub_web::response::ApiResponseBuilder;
 
-use crate::{
-    shared::pagination::PaginationQuery,
-    shared::api_response::ApiResponse,
-    shared::app_state::AppState,
+use super::types::{CreateRoleRequest, Role, UpdateRoleRequest};
+use crate::shared::{
+    api_response::ApiResponse, app_state::AppState, pagination::PaginationQuery,
+    security::jwt::Claims,
 };
-use crate::shared::security::jwt::Claims;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -41,20 +39,19 @@ async fn list_roles(
     Query(query): Query<RoleQuery>,
     claims: Claims,
 ) -> Json<ApiResponse<Vec<Role>>> {
-    let workspace_id = if claims.workspace_id.is_empty() {
-        None
-    } else {
-        Some(claims.workspace_id.as_str())
-    };
+    let workspace_id =
+        if claims.workspace_id.is_empty() { None } else { Some(claims.workspace_id.as_str()) };
 
-    match state.role_service.find_with_filters(
-        None,
-        query.search.as_deref(),
-        workspace_id,
-        query.pagination.page.unwrap_or(1),
-        query.pagination.page_size.unwrap_or(20),
-    )
-    .await
+    match state
+        .role_service
+        .find_with_filters(
+            None,
+            query.search.as_deref(),
+            workspace_id,
+            query.pagination.page.unwrap_or(1),
+            query.pagination.page_size.unwrap_or(20),
+        )
+        .await
     {
         Ok(roles) => {
             tracing::debug!("Retrieved {} roles", roles.len());
@@ -164,11 +161,8 @@ async fn update_role(
             return ApiResponseBuilder::error("角色名称不能为空".to_string());
         }
 
-        let workspace_id = if claims.workspace_id.is_empty() {
-            None
-        } else {
-            Some(claims.workspace_id.as_str())
-        };
+        let workspace_id =
+            if claims.workspace_id.is_empty() { None } else { Some(claims.workspace_id.as_str()) };
 
         // 检查角色名称是否已被其他角色使用
         match state.role_service.exists_by_name_exclude_id(name, &id, workspace_id).await {
@@ -188,7 +182,9 @@ async fn update_role(
             tracing::info!("Role updated: {}", role.name);
             ApiResponseBuilder::success(role)
         }
-        Err(tinyiothub_core::error::Error::NotFound) => ApiResponseBuilder::error("角色不存在".to_string()),
+        Err(tinyiothub_core::error::Error::NotFound) => {
+            ApiResponseBuilder::error("角色不存在".to_string())
+        }
         Err(e) => {
             tracing::error!("Failed to update role {}: {}", id, e);
             ApiResponseBuilder::error("更新角色失败".to_string())

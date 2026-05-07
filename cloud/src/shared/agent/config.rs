@@ -3,7 +3,7 @@
 // This module provides configuration types and utilities for agent functionality.
 
 use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 /// Errors from Agent operations
@@ -22,8 +22,7 @@ pub enum AgentError {
 }
 
 /// Agent configuration passed when creating an agent
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentConfig {
     pub workspace_id: String,
     pub name: String,
@@ -44,7 +43,6 @@ impl AgentConfig {
         serde_json::to_string(self).ok()
     }
 }
-
 
 /// Default agent config returned when no persisted config exists
 pub fn default_agent_config() -> serde_json::Value {
@@ -142,10 +140,7 @@ mod tests {
         assert_eq!(parsed.temperature, Some(0.7));
         assert_eq!(parsed.max_tokens, Some(4096));
         assert_eq!(parsed.top_p, Some(1.0));
-        assert_eq!(
-            parsed.system_prompt.as_deref(),
-            Some("You are a helpful assistant.")
-        );
+        assert_eq!(parsed.system_prompt.as_deref(), Some("You are a helpful assistant."));
     }
 
     #[test]
@@ -201,10 +196,7 @@ mod tests {
         let hash = compute_hash("");
         assert_eq!(hash.len(), 64);
         // Known SHA-256 of empty string
-        assert_eq!(
-            hash,
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-        );
+        assert_eq!(hash, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
     }
 
     #[test]
@@ -212,27 +204,12 @@ mod tests {
         let config = default_agent_config();
         let obj = config.as_object().expect("should be an object");
 
-        assert_eq!(
-            obj.get("model").and_then(|v| v.as_str()),
-            Some("claude-sonnet-4-5")
-        );
-        assert_eq!(
-            obj.get("temperature").and_then(|v| v.as_f64()),
-            Some(0.7)
-        );
-        assert_eq!(
-            obj.get("maxTokens").and_then(|v| v.as_i64()),
-            Some(4096)
-        );
+        assert_eq!(obj.get("model").and_then(|v| v.as_str()), Some("claude-sonnet-4-5"));
+        assert_eq!(obj.get("temperature").and_then(|v| v.as_f64()), Some(0.7));
+        assert_eq!(obj.get("maxTokens").and_then(|v| v.as_i64()), Some(4096));
         assert_eq!(obj.get("topP").and_then(|v| v.as_f64()), Some(1.0));
-        assert_eq!(
-            obj.get("systemPrompt").and_then(|v| v.as_str()),
-            Some("")
-        );
-        assert_eq!(
-            obj.get("workspace").and_then(|v| v.as_str()),
-            Some("ws-default-001")
-        );
+        assert_eq!(obj.get("systemPrompt").and_then(|v| v.as_str()), Some(""));
+        assert_eq!(obj.get("workspace").and_then(|v| v.as_str()), Some("ws-default-001"));
     }
 
     #[test]

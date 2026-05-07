@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 use sqlx::{FromRow, QueryBuilder, Row};
+use tinyiothub_core::error::Result;
 
 use super::types::{
     CreatePermissionGroupRequest, CreatePermissionRequest, Permission, PermissionGroup,
     PermissionQuery, UpdatePermissionRequest,
 };
-use tinyiothub_core::error::Result;
 
 // ── Traits ──────────────────────────────────────────────
 
@@ -163,31 +163,41 @@ impl PermissionRepository for SqlitePermissionRepository {
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         if let Some(name) = &request.name {
-            if has_updates { query.push(", "); }
+            if has_updates {
+                query.push(", ");
+            }
             query.push("name = ").push_bind(name);
             has_updates = true;
         }
 
         if let Some(description) = &request.description {
-            if has_updates { query.push(", "); }
+            if has_updates {
+                query.push(", ");
+            }
             query.push("description = ").push_bind(description);
             has_updates = true;
         }
 
         if let Some(resource_type) = &request.resource_type {
-            if has_updates { query.push(", "); }
+            if has_updates {
+                query.push(", ");
+            }
             query.push("resource_type = ").push_bind(resource_type);
             has_updates = true;
         }
 
         if let Some(action_type) = &request.action_type {
-            if has_updates { query.push(", "); }
+            if has_updates {
+                query.push(", ");
+            }
             query.push("action_type = ").push_bind(action_type);
             has_updates = true;
         }
 
         if let Some(parent_id) = &request.parent_id {
-            if has_updates { query.push(", "); }
+            if has_updates {
+                query.push(", ");
+            }
             query.push("parent_id = ").push_bind(parent_id);
             has_updates = true;
         }
@@ -211,22 +221,29 @@ impl PermissionRepository for SqlitePermissionRepository {
 
     async fn delete(&self, id: &str) -> Result<u64> {
         if let Some(permission) = self.find_by_id(id).await?
-            && permission.is_system {
-                return Err(tinyiothub_core::error::Error::NotFound);
-            }
+            && permission.is_system
+        {
+            return Err(tinyiothub_core::error::Error::NotFound);
+        }
 
-        let result =
-            sqlx::query("DELETE FROM permissions WHERE id = ?").bind(id).execute(self.database.pool()).await?;
+        let result = sqlx::query("DELETE FROM permissions WHERE id = ?")
+            .bind(id)
+            .execute(self.database.pool())
+            .await?;
 
         Ok(result.rows_affected())
     }
 
     async fn delete_by_ids(&self, ids: &[String]) -> Result<u64> {
-        if ids.is_empty() { return Ok(0); }
+        if ids.is_empty() {
+            return Ok(0);
+        }
 
         let mut query = QueryBuilder::new("DELETE FROM permissions WHERE id IN (");
         let mut separated = query.separated(", ");
-        for id in ids { separated.push_bind(id); }
+        for id in ids {
+            separated.push_bind(id);
+        }
         separated.push_unseparated(") AND is_system = 0");
 
         let result = query.build().execute(self.database.pool()).await?;
@@ -235,7 +252,7 @@ impl PermissionRepository for SqlitePermissionRepository {
 
     async fn find_all(&self, params: &PermissionQuery) -> Result<Vec<Permission>> {
         let mut query = QueryBuilder::new(
-            "SELECT id, name, code, description, resource_type, action_type, is_system, parent_id, created_at, updated_at FROM permissions WHERE 1=1"
+            "SELECT id, name, code, description, resource_type, action_type, is_system, parent_id, created_at, updated_at FROM permissions WHERE 1=1",
         );
 
         if let Some(name) = &params.name {
@@ -363,13 +380,17 @@ impl PermissionRepository for SqlitePermissionRepository {
     }
 
     async fn find_by_ids(&self, ids: &[String]) -> Result<Vec<Permission>> {
-        if ids.is_empty() { return Ok(vec![]); }
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
 
         let mut query = QueryBuilder::new(
-            "SELECT id, name, code, description, resource_type, action_type, is_system, parent_id, created_at, updated_at FROM permissions WHERE id IN ("
+            "SELECT id, name, code, description, resource_type, action_type, is_system, parent_id, created_at, updated_at FROM permissions WHERE id IN (",
         );
         let mut separated = query.separated(", ");
-        for id in ids { separated.push_bind(id); }
+        for id in ids {
+            separated.push_bind(id);
+        }
         separated.push_unseparated(")");
 
         let rows = query.build_query_as::<PermissionRow>().fetch_all(self.database.pool()).await?;

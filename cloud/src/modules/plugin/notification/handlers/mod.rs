@@ -2,8 +2,7 @@
 
 use async_trait::async_trait;
 
-use crate::modules::plugin::notification::Notification;
-use crate::shared::error::Error;
+use crate::{modules::plugin::notification::Notification, shared::error::Error};
 
 #[async_trait]
 pub trait NotificationHandler: Send + Sync {
@@ -11,8 +10,8 @@ pub trait NotificationHandler: Send + Sync {
     fn name(&self) -> &str;
 }
 
-pub mod feishu;
 pub mod dingtalk;
+pub mod feishu;
 
-pub use feishu::FeishuHandler;
 pub use dingtalk::DingtalkHandler;
+pub use feishu::FeishuHandler;
