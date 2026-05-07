@@ -4,6 +4,7 @@ pub mod adapters;
 pub mod config;
 pub mod database;
 pub mod factory;
+pub mod migrations;
 pub mod pool;
 pub mod repositories;
 
@@ -16,28 +17,13 @@ pub use pool::create_pool;
 pub mod test_helpers {
     /// Run all cloud migrations in chronological order.
     ///
-    /// Test/seed data migrations referencing non-existent devices are skipped.
-    /// Migrations are embedded at compile time so tests work regardless of
-    /// the current working directory or `CARGO_MANIFEST_DIR`.
+    /// Delegates to the centralized migration runner which handles:
+    /// - Skipping deleted-file versions
+    /// - Cleaning up orphaned `_sqlx_migrations` records
+    /// - Post-migration schema consistency repair
     pub async fn run_all_migrations(
         pool: &sqlx::SqlitePool,
-    ) -> Result<(), sqlx::migrate::MigrateError> {
-        const SKIP_VERSIONS: &[i64] = &[
-            20260107000001, // test data: inserts properties/commands for non-existent devices
-            20260114000001, // test data: inserts events referencing non-existent devices
-            20260414102323, // broken: adds workspace_id index on table that may lack the column
-            20260429000001, // upgrade-only: adds workspace_id to notification tables that already exist without it
-        ];
-
-        let migrator = sqlx::migrate!("./migrations");
-
-        let mut combined: Vec<sqlx::migrate::Migration> = Vec::new();
-        for m in migrator.iter().cloned() {
-            if !SKIP_VERSIONS.contains(&m.version) {
-                combined.push(m);
-            }
-        }
-
-        sqlx::migrate::Migrator::with_migrations(combined).run(pool).await
+    ) -> Result<(), sqlx::Error> {
+        crate::shared::persistence::migrations::run_migrations(pool).await
     }
 }
