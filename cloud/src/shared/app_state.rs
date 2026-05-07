@@ -136,8 +136,6 @@ pub struct AppState {
     /// 权限服务 - CRUD 操作
     pub permission_service: Arc<crate::modules::permission::PermissionService>,
 
-    /// 产品服务 - CRUD 操作
-    pub product_service: Arc<crate::modules::product::ProductService>,
 
     /// Cron 任务仓库
     pub cron_job_repo: Arc<dyn crate::modules::cron::CronJobRepository>,
@@ -328,13 +326,6 @@ impl AppState {
             permission_group_repository,
         ));
 
-        // 产品服务
-        let product_repository: Arc<dyn crate::modules::product::ProductRepository> =
-            Arc::new(crate::modules::product::SqliteProductRepository::new(
-                database.as_ref().clone(),
-            ));
-        let product_service = Arc::new(crate::modules::product::ProductService::new(product_repository));
-
         // Cron 仓库
         let cron_job_repo: Arc<dyn crate::modules::cron::CronJobRepository> =
             Arc::new(tinyiothub_storage::sqlite::cron_job::SqliteCronJobRepository::new(
@@ -391,7 +382,6 @@ impl AppState {
             tag_repository,
             role_service,
             permission_service,
-            product_service,
             cron_job_repo,
             cron_run_repo,
             session_service,

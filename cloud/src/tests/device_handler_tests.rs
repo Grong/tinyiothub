@@ -226,7 +226,7 @@ async fn test_cross_workspace_isolation() {
         .nest("/api", api_router)
         .with_state(app_state);
 
-    // User A (workspace ws-a) creates a device
+    // User A (workspace ws-a) creates a device — first ensure workspace exists
     let token_a = create_test_token_with_workspace("user-a", "tenant-a", "ws-a");
 
     let body = json!({

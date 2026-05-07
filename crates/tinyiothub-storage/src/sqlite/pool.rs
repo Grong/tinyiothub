@@ -36,10 +36,7 @@ pub async fn create_pool_with_harmonyos(
             .connect_with(harmonyos_options)
             .await?;
 
-        // Run migrations
-        tracing::info!("Running database migrations...");
-        sqlx::migrate!("./migrations").run(&pool).await?;
-        tracing::info!("Database migrations completed successfully");
+        tracing::info!("Database pool created (migrations managed by cloud crate)");
 
         return Ok(pool);
     }
@@ -52,10 +49,7 @@ pub async fn create_pool_with_harmonyos(
         .connect_with(connect_options)
         .await?;
 
-    // Run migrations
-    tracing::info!("Running database migrations...");
-    sqlx::migrate!("./migrations").run(&pool).await?;
-    tracing::info!("Database migrations completed successfully");
+    tracing::info!("Database pool created (migrations managed by cloud crate)");
 
     Ok(pool)
 }
