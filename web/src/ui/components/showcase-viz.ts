@@ -1,6 +1,5 @@
 import { LitElement, html } from "lit";
 import { customElement, query } from "lit/decorators.js";
-import type * as THREE from "three";
 
 interface SceneData {
   name: string;
@@ -64,7 +63,7 @@ export class ShowcaseViz extends LitElement {
     import("three").then((mod) => {
       this.THREE = mod;
       this.initThree();
-      this.animate();
+      this._doAnimate();
     });
   }
 
@@ -592,8 +591,8 @@ export class ShowcaseViz extends LitElement {
     return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
   }
 
-  private animate = () => {
-    this.animFrame = requestAnimationFrame(this.animate);
+  private _doAnimate = () => {
+    this.animFrame = requestAnimationFrame(this._doAnimate);
     this.time += 0.016;
 
     if (this.morphProgress >= 1) {

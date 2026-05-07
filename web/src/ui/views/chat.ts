@@ -103,6 +103,7 @@ export class ChatView extends LitElement {
     };
   }
 
+  // @ts-ignore — kept for future A2UI surface attachment flow
   private _attachLastSurfaceToMessage(): void {
     const surfaceId = this.chatState.lastA2uiSurfaceId;
     if (!surfaceId) return;

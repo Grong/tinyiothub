@@ -21,7 +21,7 @@ export function renderToolsTab(
   let totalCount = 0;
   let filteredCount = 0;
   for (const group of groups) {
-    for (const tool of group.tools || []) {
+    for (const tool of group.tools || [] as ToolCatalogEntry[]) {
       totalCount++;
       if (!filter || (tool.label || tool.id || "").toLowerCase().includes(filter) || (tool.description || "").toLowerCase().includes(filter)) {
         filteredCount++;
@@ -84,7 +84,7 @@ export function renderToolsTab(
 
       <div class="agent-tools-grid" style="margin-top: 20px;">
         ${groups.map((group) => {
-          const filtered = (group.tools || []).filter((t) =>
+          const filtered = (group.tools || []).filter((t: ToolCatalogEntry) =>
             !filter || (t.label || t.id || "").toLowerCase().includes(filter) || (t.description || "").toLowerCase().includes(filter)
           );
           if (!filtered.length) return nothing;
