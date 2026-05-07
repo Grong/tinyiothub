@@ -122,15 +122,15 @@ async fn create_test_app_state() -> AppState {
         .await
         .expect("Failed to create in-memory SQLite pool");
 
-    // Load cloud migrations only (storage migrations consolidated into cloud crate)
-    let migrator =
-        sqlx::migrate::Migrator::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations"))
-            .await
-            .expect("Failed to load cloud migrations");
+    // Load cloud migrations (embedded at compile time so tests work regardless of
+    // the current working directory or CARGO_MANIFEST_DIR).
+    let migrator = sqlx::migrate!("./migrations");
 
     let skip_versions: &[i64] = &[
         20260107000001, // test data: inserts properties/commands for non-existent devices
         20260114000001, // test data: inserts events referencing non-existent devices
+        20260414102323, // broken: adds workspace_id index on table that may lack the column
+        20260429000001, // upgrade-only: adds workspace_id to notification tables that already exist without it
     ];
     let mut combined: Vec<sqlx::migrate::Migration> = Vec::new();
     for m in migrator.iter() {

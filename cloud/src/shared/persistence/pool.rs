@@ -11,7 +11,9 @@ use super::config::DatabaseConfig;
 const SKIP_MIGRATIONS: &[i64] = &[
     20260107000001, // inserts properties/commands for devices that don't exist in prod
     20260114000001, // inserts test events referencing non-existent devices
+    20260414102323, // broken: adds workspace_id index on table that may lack the column
     20260418000001, // storage: add tenant_id to tags — already in cloud base schema
+    20260429000001, // upgrade-only: adds workspace_id to notification tables that already exist without it
 ];
 
 /// Load cloud migrations, filtering out test/seed data versions.
