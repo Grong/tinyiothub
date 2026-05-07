@@ -669,7 +669,7 @@ pub async fn update_security_config(
         }
 
     // Get current configuration
-    let mut config = secure_service.config().clone();
+    let mut config = secure_service.config();
 
     // Apply updates
     if let Some(enable_rbac) = request.enable_rbac {
@@ -685,33 +685,18 @@ pub async fn update_security_config(
         config.audit_retention_days = audit_retention_days;
     }
 
-    // Persist configuration changes to database
-    let config_json = match serde_json::to_string(&config) {
-        Ok(json) => json,
-        Err(e) => {
-            tracing::error!("Failed to serialize security config: {}", e);
-            return ApiResponseBuilder::error("配置序列化失败");
-        }
-    };
-
-    match sqlx::query(
-        "INSERT INTO system_settings (key, value, updated_at) VALUES ('event_security_config', ?, datetime('now'))
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
-    )
-    .bind(config_json)
-    .execute(state.database.pool())
-    .await
-    {
-        Ok(_) => tracing::info!("Security configuration persisted to database"),
-        Err(e) => tracing::warn!("Failed to persist security config: {}", e),
-    }
-
     let response = SecurityConfigResponse {
         enable_rbac: config.enable_rbac,
         enable_encryption: config.enable_encryption,
         enable_audit_log: config.enable_audit_log,
         audit_retention_days: config.audit_retention_days,
     };
+
+    // Persist configuration changes through the service (deduplicated path)
+    if let Err(e) = secure_service.update_config(config).await {
+        tracing::error!("Failed to persist security config: {}", e);
+        return ApiResponseBuilder::error("配置保存失败");
+    }
 
     // Log the configuration update
     if let Some(audit_log) = secure_service.audit_log() {

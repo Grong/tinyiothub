@@ -171,14 +171,22 @@ async fn test_validate_session() {
 }
 
 #[tokio::test]
-async fn test_refresh_token_missing() {
+async fn test_refresh_token_returns_new_token() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app
         .oneshot(auth_request("POST", "/api/v1/auth/session/refresh", &token))
         .await
         .unwrap();
-    assert!(response.status().is_success() || response.status().is_client_error());
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert_eq!(json["code"].as_i64(), Some(0), "Token refresh should succeed");
+    assert!(
+        json["result"]["access_token"].as_str().is_some(),
+        "Should return a new access token"
+    );
+    assert_eq!(json["result"]["token_type"], "Bearer");
+    assert_eq!(json["result"]["expires_in"].as_i64(), Some(24 * 60 * 60));
 }
 
 // ============================================================================

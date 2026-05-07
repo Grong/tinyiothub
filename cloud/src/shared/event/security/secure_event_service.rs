@@ -22,7 +22,8 @@ pub struct SecureEventService {
     access_control: Arc<dyn EventAccessControl>,
     encryption: Arc<dyn EventEncryption>,
     audit_log: Arc<dyn EventAuditLog>,
-    config: EventSecurityConfig,
+    config: std::sync::RwLock<EventSecurityConfig>,
+    db: Arc<crate::shared::persistence::Database>,
 }
 
 impl SecureEventService {
@@ -33,8 +34,9 @@ impl SecureEventService {
         encryption: Arc<dyn EventEncryption>,
         audit_log: Arc<dyn EventAuditLog>,
         config: EventSecurityConfig,
+        db: Arc<crate::shared::persistence::Database>,
     ) -> Result<Self> {
-        Ok(Self { event_repository, access_control, encryption, audit_log, config })
+        Ok(Self { event_repository, access_control, encryption, audit_log, config: std::sync::RwLock::new(config), db })
     }
 
     /// Create an event with security checks
@@ -56,7 +58,7 @@ impl SecureEventService {
         }
 
         // Encrypt sensitive content if enabled
-        if self.config.enable_encryption && self.encryption.should_encrypt(event.content()) {
+        if self.config.read().unwrap().enable_encryption && self.encryption.should_encrypt(event.content()) {
             let encrypted_content = self.encryption.encrypt_content(event.content())?;
             // Convert encrypted content back to RichContent for storage
             // This is a simplified approach - in practice you might store encrypted data differently
@@ -112,7 +114,7 @@ impl SecureEventService {
         }
 
         // Decrypt content if encrypted
-        if self.config.enable_encryption {
+        if self.config.read().unwrap().enable_encryption {
             // Check if content appears to be encrypted (simplified check)
             if event.content().title() == "Encrypted Content"
                 && let Some(first_element) = event.content().elements().first()
@@ -170,7 +172,7 @@ impl SecureEventService {
         for mut event in events {
             if self.access_control.can_read_event(user_id, &event).await? {
                 // Decrypt content if encrypted
-                if self.config.enable_encryption && event.content().title() == "Encrypted Content"
+                if self.config.read().unwrap().enable_encryption && event.content().title() == "Encrypted Content"
                     && let Some(first_element) = event.content().elements().first()
                         && let crate::modules::event::value_objects::ContentElement::Text {
                             content,
@@ -242,7 +244,7 @@ impl SecureEventService {
         }
 
         // Encrypt content if enabled
-        if self.config.enable_encryption && self.encryption.should_encrypt(updated_event.content())
+        if self.config.read().unwrap().enable_encryption && self.encryption.should_encrypt(updated_event.content())
         {
             let encrypted_content = self.encryption.encrypt_content(updated_event.content())?;
             let encrypted_rich_content = RichContent::new_text(
@@ -372,7 +374,7 @@ impl SecureEventService {
 
     /// Get audit log service
     pub fn audit_log(&self) -> Option<&dyn EventAuditLog> {
-        if self.config.enable_audit_log {
+        if self.config.read().unwrap().enable_audit_log {
             Some(self.audit_log.as_ref())
         } else {
             None
@@ -384,9 +386,39 @@ impl SecureEventService {
         self.encryption.as_ref()
     }
 
-    /// Get configuration
-    pub fn config(&self) -> &EventSecurityConfig {
-        &self.config
+    /// Get configuration (cloned snapshot)
+    pub fn config(&self) -> EventSecurityConfig {
+        self.config.read().unwrap().clone()
+    }
+
+    /// Persist the current security configuration to the database.
+    pub async fn save_config_to_db(&self) -> Result<()> {
+        let json = {
+            let cfg = self.config.read().unwrap();
+            serde_json::to_string(&*cfg)
+                .map_err(|e| EventError::Configuration(format!("Failed to serialize config: {}", e)))?
+        };
+
+        sqlx::query(
+            "INSERT INTO system_settings (key, value, updated_at) VALUES ('event_security_config', ?, datetime('now'))
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+        )
+        .bind(json)
+        .execute(self.db.pool())
+        .await
+        .map_err(|e| EventError::Configuration(format!("Failed to save config: {}", e)))?;
+
+        tracing::info!("Event security configuration saved to database");
+        Ok(())
+    }
+
+    /// Update the in-memory configuration and persist it.
+    pub async fn update_config(&self, config: EventSecurityConfig) -> Result<()> {
+        {
+            let mut cfg = self.config.write().unwrap();
+            *cfg = config;
+        }
+        self.save_config_to_db().await
     }
 }
 

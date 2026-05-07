@@ -151,6 +151,9 @@ pub struct AppState {
 
     /// 聊天服务 - Agent 聊天编排
     pub chat_service: Arc<crate::modules::agent::ChatService>,
+
+    /// 缓存的系统信息对象，避免每次请求重新扫描
+    pub sysinfo_system: Arc<std::sync::Mutex<sysinfo::System>>,
 }
 
 impl AppState {
@@ -387,6 +390,7 @@ impl AppState {
             session_service,
             agent_memory_service,
             chat_service,
+            sysinfo_system: Arc::new(std::sync::Mutex::new(sysinfo::System::new_all())),
         }
     }
 
@@ -454,6 +458,26 @@ impl AppState {
             )
             .with_tag_repository(self.tag_repository.clone())
         )
+    }
+
+    /// Resolve workspace ID for a tenant.
+    /// If an explicit workspace_id is provided, returns it directly.
+    /// Otherwise queries the database for the tenant's default workspace.
+    pub async fn resolve_workspace(
+        &self,
+        tenant_id: &str,
+        explicit: Option<String>,
+    ) -> Result<String, (i32, String)> {
+        if let Some(ws) = explicit {
+            return Ok(ws);
+        }
+        match self.workspace_service.find_by_tenant(tenant_id, Some(1), Some(1)).await {
+            Ok(workspaces) if !workspaces.is_empty() => Ok(workspaces[0].id.clone()),
+            _ => {
+                tracing::warn!("No workspace found for tenant {}", tenant_id);
+                Err((400, "未找到工作空间".to_string()))
+            }
+        }
     }
 
     // === 兼容性方法 ===

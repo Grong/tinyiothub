@@ -46,7 +46,7 @@ impl RoleRepository for SqliteRoleRepository {
 
         sqlx::query(
             r#"
-            INSERT INTO roles (id, name, description, IsAdministrator)
+            INSERT INTO roles (id, name, description, is_administrator)
             VALUES (?, ?, ?, ?)
             "#,
         )

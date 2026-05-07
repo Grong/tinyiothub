@@ -62,6 +62,10 @@ async fn main_impl() -> std::io::Result<()> {
             .map(tinyiothub_web::security::Claims::from)
     }));
 
+    // Initialize global start time for uptime calculation (before any health checks)
+    let _ = tinyiothub_cloud::modules::monitoring::handler::health::START_TIME
+        .set(std::time::SystemTime::now());
+
     info!("🚀 TinyIoTHub Starting...");
     info!("Environment: {}", config::environment());
     info!("Server: {}", config::get().server_bind_address());

@@ -54,16 +54,12 @@ async fn get_logs(
     claims: Claims,
 ) -> Json<ApiResponse<Vec<LogEntry>>> {
     // Resolve workspace and fetch allowed device IDs
-    let workspace_id = if claims.workspace_id.is_empty() {
-        None
-    } else {
-        Some(claims.workspace_id.clone())
+    let workspace_id = match state.resolve_workspace(&claims.tenant_id, None).await {
+        Ok(ws) => Some(ws),
+        Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
     };
 
-    let device_service = match workspace_id {
-        Some(ref ws) => state.tenant_device_service(&Some(ws.clone())),
-        None => state.device_service.clone(),
-    };
+    let device_service = state.tenant_device_service(&workspace_id);
 
     let allowed_device_ids: Vec<String> = match device_service
         .get_devices(&tinyiothub_core::models::device::DeviceQueryParams::default())

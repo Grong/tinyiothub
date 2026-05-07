@@ -44,22 +44,8 @@ struct WorkspaceQuery {
     workspace_id: Option<String>,
 }
 
-async fn resolve_workspace(
-    state: &AppState,
-    tenant_id: &str,
-    explicit: Option<String>,
-) -> Result<String, (i32, String)> {
-    if let Some(ws) = explicit {
-        return Ok(ws);
-    }
-    match state.workspace_service.find_by_tenant(tenant_id, Some(1), Some(1)).await {
-        Ok(workspaces) if !workspaces.is_empty() => Ok(workspaces[0].id.clone()),
-        _ => {
-            tracing::warn!("No workspace found for tenant {}", tenant_id);
-            Err((400, "未找到工作空间".to_string()))
-        }
-    }
-}
+// NOTE: resolve_workspace is now a method on AppState (shared/app_state.rs)
+// Use state.resolve_workspace(&claims.tenant_id, explicit_workspace_id).await
 
 // ─── DTO mapping: legacy Job <-> CronJob ──────────────────────────────────
 
@@ -236,7 +222,7 @@ async fn list_jobs(
     Query(params): Query<JobQueryParams>,
     claims: Claims,
 ) -> Json<ApiResponse<Vec<Job>>> {
-    let ws_id = match resolve_workspace(&state, &claims.tenant_id, None).await {
+    let ws_id = match state.resolve_workspace(&claims.tenant_id, None).await {
         Ok(ws) => Some(ws),
         Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
     };
@@ -258,7 +244,7 @@ async fn get_job(
     Query(q): Query<WorkspaceQuery>,
     claims: Claims,
 ) -> Json<ApiResponse<Job>> {
-    let _ws_id = match resolve_workspace(&state, &claims.tenant_id, q.workspace_id).await {
+    let _ws_id = match state.resolve_workspace(&claims.tenant_id, q.workspace_id).await {
         Ok(ws) => ws,
         Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
     };
@@ -290,7 +276,7 @@ async fn create_job(
         return ApiResponseBuilder::error_with_code(400, "无效的 Cron 表达式");
     }
 
-    let ws_id = match resolve_workspace(&state, &claims.tenant_id, None).await {
+    let ws_id = match state.resolve_workspace(&claims.tenant_id, None).await {
         Ok(ws) => ws,
         Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
     };
@@ -325,7 +311,7 @@ async fn update_job(
             return ApiResponseBuilder::error_with_code(400, "无效的 Cron 表达式");
         }
 
-    let _ws_id = match resolve_workspace(&state, &claims.tenant_id, None).await {
+    let _ws_id = match state.resolve_workspace(&claims.tenant_id, None).await {
         Ok(ws) => ws,
         Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
     };
@@ -347,7 +333,7 @@ async fn delete_job(
     Query(q): Query<WorkspaceQuery>,
     claims: Claims,
 ) -> Json<ApiResponse<bool>> {
-    let ws_id = match resolve_workspace(&state, &claims.tenant_id, q.workspace_id).await {
+    let ws_id = match state.resolve_workspace(&claims.tenant_id, q.workspace_id).await {
         Ok(ws) => ws,
         Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
     };
@@ -369,7 +355,7 @@ async fn run_job_now(
     Path(id): Path<String>,
     claims: Claims,
 ) -> Json<ApiResponse<JobExecution>> {
-    let ws_id = match resolve_workspace(&state, &claims.tenant_id, None).await {
+    let ws_id = match state.resolve_workspace(&claims.tenant_id, None).await {
         Ok(ws) => ws,
         Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
     };
@@ -483,7 +469,7 @@ async fn list_job_executions(
     Query(params): Query<JobExecutionQueryParams>,
     claims: Claims,
 ) -> Json<ApiResponse<Vec<JobExecution>>> {
-    let ws_id = match resolve_workspace(&state, &claims.tenant_id, None).await {
+    let ws_id = match state.resolve_workspace(&claims.tenant_id, None).await {
         Ok(ws) => ws,
         Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
     };
@@ -505,7 +491,7 @@ async fn get_statistics(
     State(state): State<AppState>,
     claims: Claims,
 ) -> Json<ApiResponse<JobStatistics>> {
-    let ws_id = match resolve_workspace(&state, &claims.tenant_id, None).await {
+    let ws_id = match state.resolve_workspace(&claims.tenant_id, None).await {
         Ok(ws) => ws,
         Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
     };
@@ -546,7 +532,7 @@ async fn list_all_executions(
     Query(params): Query<JobExecutionQueryParams>,
     claims: Claims,
 ) -> Json<ApiResponse<PaginatedResponse<JobExecution>>> {
-    let ws_id = match resolve_workspace(&state, &claims.tenant_id, None).await {
+    let ws_id = match state.resolve_workspace(&claims.tenant_id, None).await {
         Ok(ws) => ws,
         Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
     };

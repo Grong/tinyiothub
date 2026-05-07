@@ -75,32 +75,32 @@ async fn get_detailed_health(
         Err(_) => ("degraded", "disconnected"),
     };
 
-    let workspace_id = if claims.workspace_id.is_empty() {
-        None
-    } else {
-        Some(claims.workspace_id.clone())
+    let workspace_id = match state.resolve_workspace(&claims.tenant_id, None).await {
+        Ok(ws) => Some(ws),
+        Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
     };
 
-    let device_service = match workspace_id {
-        Some(ref ws) => state.tenant_device_service(&Some(ws.clone())),
-        None => state.device_service.clone(),
-    };
+    let device_service = state.tenant_device_service(&workspace_id);
 
     let mut device_count = 0u32;
     let mut active_device_count = 0u32;
 
+    match device_service.count_devices(&tinyiothub_core::models::device::DeviceQueryParams::default()).await {
+        Ok(count) => device_count = count as u32,
+        Err(e) => tracing::warn!("Failed to get device count for health check: {}", e),
+    }
+
     match device_service.get_devices(&tinyiothub_core::models::device::DeviceQueryParams::default()).await {
         Ok(devices) => {
-            device_count = devices.len() as u32;
             active_device_count = devices.iter().filter(|d| d.status.is_online()).count() as u32;
         }
         Err(e) => {
-            tracing::warn!("Failed to get device counts for health check: {}", e);
+            tracing::warn!("Failed to get device list for health check: {}", e);
         }
     }
 
-    // Query real system metrics via sysinfo
-    let mut sys = sysinfo::System::new_all();
+    // Query real system metrics via cached sysinfo
+    let mut sys = state.sysinfo_system.lock().unwrap();
     sys.refresh_cpu_usage();
     sys.refresh_memory();
     let cpu_usage_percent = if !sys.cpus().is_empty() {
@@ -109,6 +109,7 @@ async fn get_detailed_health(
         0.0
     };
     let memory_usage_mb = sys.used_memory() / 1024;
+    drop(sys);
 
     // MQTT status: no direct health check available, report honestly
     let mqtt_status = if state.data_server().is_some() {

@@ -99,6 +99,7 @@ impl EventSecurityFactory {
             components.encryption,
             components.audit_log,
             self.config.clone(),
+            self.db.clone(),
         )
     }
 

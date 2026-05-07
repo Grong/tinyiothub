@@ -3,7 +3,7 @@ use axum::Router;
 use crate::shared::app_state::AppState;
 
 mod dashboard;
-mod health;
+pub mod health;
 mod logs;
 mod metrics;
 
