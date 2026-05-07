@@ -1,0 +1,45 @@
+[advisories]
+ignore = [
+    # RUSTSEC-2023-0071: rsa crate Marvin Attack (timing side-channel)
+    # Affects: jwt-simple -> superboring -> rsa 0.9.10
+    # Severity: medium
+    # Status: NO FIXED VERSION AVAILABLE as of 2026-05-07.
+    # The rsa crate maintainers have not released a fix. jwt-simple
+    # (our JWT library) depends on superboring which depends on rsa.
+    # There is no alternative JWT library with equivalent pure-Rust Ed25519
+    # support that avoids this dependency entirely.
+    # Impact: TinyIoTHub uses JWT only for token signing/verification
+    # with pre-generated keys, not for interactive key generation where
+    # timing attacks are most relevant.
+    # TODO: Re-evaluate when rsa 0.10+ or jwt-simple releases a fix.
+    "RUSTSEC-2023-0071",
+
+    # RUSTSEC-2025-0134: rustls-pemfile is unmaintained
+    # Affects: reqwest 0.11 (via influxdb2), rumqttc 0.24, zeroclaw
+    # Severity: warning (unmaintained, not a vulnerability)
+    # Status: rustls-pemfile functionality was merged into rustls itself.
+    # Upstream crates (influxdb2, rumqttc) have not yet migrated away.
+    # reqwest 0.12+ no longer uses rustls-pemfile, but influxdb2 0.4-0.5
+    # still depends on reqwest 0.11.
+    # TODO: Upgrade influxdb2 and rumqttc when they publish new versions
+    # that drop rustls-pemfile.
+    "RUSTSEC-2025-0134",
+
+    # RUSTSEC-2026-0104: Reachable panic in certificate revocation list parsing
+    # Affects: rustls-webpki 0.102.8 (via rumqttc 0.24 -> rustls 0.22)
+    # Status: rumqttc 0.24 pins rustls 0.22 which pins webpki 0.102.
+    # No upgrade path available. TinyIoTHub does not use CRL parsing.
+    "RUSTSEC-2026-0104",
+
+    # RUSTSEC-2026-0098: Name constraints for URI names were incorrectly accepted
+    # Same root cause as RUSTSEC-2026-0104 — pinned by rumqttc 0.24.
+    "RUSTSEC-2026-0098",
+
+    # RUSTSEC-2026-0099: Name constraints accepted for wildcard certificates
+    # Same root cause as above.
+    "RUSTSEC-2026-0099",
+
+    # RUSTSEC-2026-0049: CRLs not considered authoritative by Distribution Point
+    # Same root cause as above.
+    "RUSTSEC-2026-0049",
+]

@@ -1,6 +1,8 @@
 # cargo-deny configuration for TinyIoTHub workspace
 # https://embarkstudios.github.io/cargo-deny/
 
+# Targets are now under [graph]
+[graph]
 targets = [
     { triple = "x86_64-unknown-linux-gnu" },
     { triple = "aarch64-unknown-linux-gnu" },
@@ -19,17 +21,15 @@ allow = [
     "BSD-3-Clause",
     "ISC",
     "Unicode-DFS-2016",
+    "Unicode-3.0",
     "MPL-2.0",
     "CC0-1.0",
     "Unlicense",
     "Zlib",
     "BSL-1.0",
     "OpenSSL",
-]
-deny = [
-    "GPL-2.0",
-    "GPL-3.0",
-    "AGPL-3.0",
+    "0BSD",
+    "CDLA-Permissive-2.0",
 ]
 
 # -----------------------------------------------------------------------------
@@ -44,9 +44,6 @@ highlight = "all"
 skip = [
     # syn 1.x vs 2.x — proc-macro ecosystem transition
     { name = "syn", version = "1.0" },
-    # windows-sys versions
-    { name = "windows-sys", version = "0.48" },
-    { name = "windows-sys", version = "0.52" },
 ]
 
 # -----------------------------------------------------------------------------
@@ -56,8 +53,55 @@ skip = [
 version = 2
 yanked = "warn"
 ignore = [
-    # Add ignored advisories here with justification:
-    # "RUSTSEC-YYYY-NNNN", # reason: ...
+    # RUSTSEC-2023-0071: rsa crate Marvin Attack (timing side-channel)
+    # Affects: jwt-simple -> superboring -> rsa 0.9.10
+    # Status: NO FIXED VERSION AVAILABLE. jwt-simple has no alternative
+    # that avoids rsa entirely while keeping pure-Rust Ed25519 support.
+    "RUSTSEC-2023-0071",
+
+    # RUSTSEC-2025-0134: rustls-pemfile is unmaintained
+    # Affects: reqwest 0.11 (via influxdb2), rumqttc 0.24, zeroclaw
+    # Status: Upstream crates (influxdb2, rumqttc) have not migrated.
+    # This is a maintenance warning, not an active vulnerability.
+    "RUSTSEC-2025-0134",
+
+    # RUSTSEC-2026-0104: Reachable panic in certificate revocation list parsing
+    # Affects: rustls-webpki 0.102.8 (via rumqttc 0.24 -> rustls 0.22)
+    # Status: rumqttc 0.24 pins rustls 0.22 which pins webpki 0.102.
+    # rumqttc 0.25 still uses webpki 0.102. No upgrade path available.
+    # Impact: TinyIoTHub does not use CRL parsing in rustls.
+    "RUSTSEC-2026-0104",
+
+    # RUSTSEC-2026-0098: Name constraints for URI names were incorrectly accepted
+    # Affects: rustls-webpki 0.102.8 (via rumqttc 0.24)
+    # Same root cause as RUSTSEC-2026-0104 — pinned by rumqttc 0.24.
+    "RUSTSEC-2026-0098",
+
+    # RUSTSEC-2026-0099: Name constraints accepted for wildcard certificates
+    # Affects: rustls-webpki 0.102.8 (via rumqttc 0.24)
+    # Same root cause as above.
+    "RUSTSEC-2026-0099",
+
+    # RUSTSEC-2026-0049: CRLs not considered authoritative by Distribution Point
+    # Affects: rustls-webpki 0.102.8 (via rumqttc 0.24)
+    # Same root cause as above.
+    "RUSTSEC-2026-0049",
+
+    # RUSTSEC-2025-0012: backoff is unmaintained
+    # Affects: backoff 0.4.0 (transitive dependency)
+    # Status: No direct use in TinyIoTHub code. Replaced by backon in
+    # newer ecosystem but our transitive deps still pull it in.
+    "RUSTSEC-2025-0012",
+
+    # RUSTSEC-2025-0057: fxhash is no longer maintained
+    # Affects: fxhash 0.2.1 (transitive dependency)
+    # Status: Unmaintained only. Functional hash implementation.
+    "RUSTSEC-2025-0057",
+
+    # RUSTSEC-2024-0384: instant is unmaintained
+    # Affects: instant 0.1.13 (transitive dependency)
+    # Status: Unmaintained only. Used for wasm time emulation.
+    "RUSTSEC-2024-0384",
 ]
 
 # -----------------------------------------------------------------------------

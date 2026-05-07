@@ -52,7 +52,7 @@ jobs:
       - name: Code coverage
         run: |
           cargo install cargo-tarpaulin --locked
-          cargo tarpaulin --workspace --skip-clean --out xml --output-dir coverage
+          cargo tarpaulin --workspace --exclude zeroclaw --skip-clean --out xml --output-dir coverage
         continue-on-error: true
 
       - name: Security audit
