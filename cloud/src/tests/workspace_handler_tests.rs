@@ -9,7 +9,10 @@ use axum::{
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-use crate::test_utils::{auth_header, create_test_token, response_parts, setup_test_app};
+use crate::test_utils::{
+    auth_header, create_test_token, create_test_token_with_workspace, response_parts,
+    seed_test_workspace, setup_test_app, setup_test_app_with_pool,
+};
 
 fn auth_request(method: &str, uri: &str, token: &str, body: Option<Value>) -> Request<Body> {
     let builder = Request::builder()
@@ -117,6 +120,69 @@ async fn test_delete_workspace_not_found() {
     let status = response.status();
     assert_eq!(status, StatusCode::OK);
 
+    let (_s, json) = response_parts(response).await;
+    assert!(json["code"].is_number(), "Expected numeric code");
+}
+
+// ============================================================================
+// Workspace — cross-tenant isolation
+// ============================================================================
+
+#[tokio::test]
+async fn test_workspace_cross_tenant_isolation() {
+    let (app_state, pool) = setup_test_app_with_pool().await;
+
+    seed_test_workspace(&pool, "tenant-a", "ws-a").await;
+    seed_test_workspace(&pool, "tenant-b", "ws-b").await;
+
+    let api_router = crate::api::create_router();
+    let app = axum::Router::new()
+        .nest("/api", api_router)
+        .with_state(app_state);
+
+    let token_a = create_test_token_with_workspace("user-a", "tenant-a", "ws-a");
+
+    let response = app
+        .clone()
+        .oneshot(auth_request("GET", "/api/v1/workspaces", &token_a, None))
+        .await
+        .unwrap();
+
+    let status = response.status();
+    if status == StatusCode::OK {
+        let (_s, json) = response_parts(response).await;
+        if json["code"] == 0 && json["result"].is_array() {
+            for ws in json["result"].as_array().unwrap() {
+                if let Some(tid) = ws["tenant_id"].as_str() {
+                    assert_eq!(tid, "tenant-a", "Workspace should belong to user's tenant");
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Assign Device to Workspace
+// ============================================================================
+
+#[tokio::test]
+async fn test_assign_device_to_workspace_not_found() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+
+    let body = json!({"device_id": "nonexistent-device"});
+    let response = app
+        .oneshot(auth_request(
+            "POST",
+            "/api/v1/workspaces/nonexistent-ws-12345/devices",
+            &token,
+            Some(body),
+        ))
+        .await
+        .unwrap();
+
+    let status = response.status();
+    assert_eq!(status, StatusCode::OK);
     let (_s, json) = response_parts(response).await;
     assert!(json["code"].is_number(), "Expected numeric code");
 }

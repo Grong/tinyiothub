@@ -161,6 +161,28 @@ impl AgentRuntimeImpl {
         let mut ag = self.agent.lock().await;
         ag.run_single(message).await.map_err(|e| AgentError::RequestFailed(e.to_string()))
     }
+
+    /// Verify that an agent belongs to the given workspace.
+    pub async fn verify_agent_workspace(
+        &self,
+        agent_id: &str,
+        workspace_id: &str,
+    ) -> Result<(), AgentError> {
+        let db_pool = self.db_pool.clone();
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT workspace_id FROM agents WHERE agent_id = ?"
+        )
+        .bind(agent_id)
+        .fetch_optional(&db_pool)
+        .await
+        .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
+
+        match row {
+            Some((ws,)) if ws == workspace_id => Ok(()),
+            Some(_) => Err(AgentError::NotFound(agent_id.to_string())),
+            None => Err(AgentError::NotFound(agent_id.to_string())),
+        }
+    }
 }
 
 #[async_trait]
@@ -482,11 +504,12 @@ impl AgentClient for AgentRuntimeImpl {
         Ok(())
     }
 
-    async fn list_agents(&self) -> Result<serde_json::Value, AgentError> {
+    async fn list_agents(&self, workspace_id: &str) -> Result<serde_json::Value, AgentError> {
         let db_pool = self.db_pool.clone();
         let rows: Vec<(String, String, String, String)> = sqlx::query_as(
-            "SELECT agent_id, workspace_id, name, status FROM agents ORDER BY created_at DESC"
+            "SELECT agent_id, workspace_id, name, status FROM agents WHERE workspace_id = ? ORDER BY created_at DESC"
         )
+        .bind(workspace_id)
         .fetch_all(&db_pool)
         .await
         .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
@@ -506,7 +529,9 @@ impl AgentClient for AgentRuntimeImpl {
         Ok(serde_json::json!({ "agents": agents }))
     }
 
-    async fn get_agent_config(&self, agent_id: &str) -> Result<serde_json::Value, AgentError> {
+    async fn get_agent_config(&self, agent_id: &str, workspace_id: &str) -> Result<serde_json::Value, AgentError> {
+        self.verify_agent_workspace(agent_id, workspace_id).await?;
+
         let agent_id = agent_id.to_string();
         let db_pool = self.db_pool.clone();
         let row = sqlx::query_as::<_, (String, String)>(
@@ -528,7 +553,9 @@ impl AgentClient for AgentRuntimeImpl {
         }))
     }
 
-    async fn set_agent_config(&self, agent_id: &str, config: &str, _base_hash: Option<&str>) -> Result<(), AgentError> {
+    async fn set_agent_config(&self, agent_id: &str, config: &str, _base_hash: Option<&str>, workspace_id: &str) -> Result<(), AgentError> {
+        self.verify_agent_workspace(agent_id, workspace_id).await?;
+
         let agent_id = agent_id.to_string();
         let config = config.to_string();
         let db_pool = self.db_pool.clone();
@@ -556,7 +583,8 @@ impl AgentClient for AgentRuntimeImpl {
         Ok(build_dynamic_catalog().await)
     }
 
-    async fn tools_effective(&self, agent_id: &str) -> Result<serde_json::Value, AgentError> {
+    async fn tools_effective(&self, agent_id: &str, workspace_id: &str) -> Result<serde_json::Value, AgentError> {
+        self.verify_agent_workspace(agent_id, workspace_id).await?;
         let agent_id = agent_id.to_string();
         let db_pool = self.db_pool.clone();
         let overrides_row = sqlx::query_as::<_, (String,)>(
@@ -618,7 +646,8 @@ impl AgentClient for AgentRuntimeImpl {
         Ok(serde_json::json!({ "groups": filtered_groups }))
     }
 
-    async fn tools_toggle(&self, agent_id: &str, tool_name: &str, enabled: bool) -> Result<(), AgentError> {
+    async fn tools_toggle(&self, agent_id: &str, tool_name: &str, enabled: bool, workspace_id: &str) -> Result<(), AgentError> {
+        self.verify_agent_workspace(agent_id, workspace_id).await?;
         let agent_id = agent_id.to_string();
         let tool_name = tool_name.to_string();
         let db_pool = self.db_pool.clone();

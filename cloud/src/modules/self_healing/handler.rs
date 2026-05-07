@@ -132,7 +132,7 @@ async fn update_policy(
 /// POST /self-healing/actions/{level} - Execute recovery action
 async fn execute_action(
     State(_state): State<AppState>,
-    _claims: Claims,
+    claims: Claims,
     Path(level): Path<String>,
     Json(request): Json<ExecuteSelfHealRequest>,
 ) -> Json<ApiResponse<ExecuteSelfHealResponse>> {
@@ -180,7 +180,8 @@ async fn execute_action(
 
     drop(state);
 
-    match executor.execute(severity, action_type, request.target.clone(), cooldown).await {
+    let tenant_id = claims.workspace_id.clone();
+    match executor.execute(&tenant_id, severity, action_type, request.target.clone(), cooldown).await {
         Ok(execution) => {
             if let Err(e) = repository.save(&execution).await {
                 tracing::error!("Failed to persist healing execution: {}", e);
@@ -200,7 +201,7 @@ async fn execute_action(
 /// GET /self-healing/executions - Get recovery history
 async fn get_executions(
     State(_state): State<AppState>,
-    _claims: Claims,
+    claims: Claims,
     Query(params): Query<HistoryQuery>,
 ) -> Json<ApiResponse<Vec<HealingExecutionDto>>> {
     let state = match get_self_healing_state() {
@@ -211,7 +212,7 @@ async fn get_executions(
     let state = state.read().await;
     let limit = params.limit.unwrap_or(50);
     let offset = params.offset.unwrap_or(0);
-    let tenant_id = "default".to_string();
+    let tenant_id = claims.workspace_id;
 
     match state.repository.get_recent(&tenant_id, limit, offset).await {
         Ok(execs) => {

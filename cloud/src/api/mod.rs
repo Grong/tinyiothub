@@ -71,6 +71,7 @@ pub fn create_router() -> Router<AppState> {
     // 创建v1版本的API路由
     let v1_routes = Router::new()
         .nest("/auth", crate::modules::auth::handler::login::create_router())
+        .nest("/auth/token", crate::modules::auth::handler::token::create_router())
         .nest("/auth/sms", crate::modules::auth::handler::sms::create_router())
         .nest("/auth/social", crate::modules::auth::handler::social::create_router())
         .nest("/tenants", crate::modules::tenant::create_auth_router()) // 租户注册登录

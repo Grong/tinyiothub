@@ -210,3 +210,80 @@ pub fn generate_numeric_id() -> u64 {
     let mut rng = rand::thread_rng();
     rng.gen_range(1000000000..9999999999)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_uptime() {
+        assert_eq!(format_uptime(0), "0s");
+        assert_eq!(format_uptime(45), "45s");
+        assert_eq!(format_uptime(125), "2m 5s");
+        assert_eq!(format_uptime(3665), "1h 1m 5s");
+        assert_eq!(format_uptime(90061), "1d 1h 1m 1s");
+        assert_eq!(format_uptime(86400), "1d 0h 0m 0s");
+    }
+
+    #[test]
+    fn test_generate_sn_format() {
+        let sn = generate_sn();
+        assert!(sn.starts_with("TINYIOTHUB-"));
+        assert_eq!(sn.len(), 17); // "TINYIOTHUB-" (11) + 6 digits
+    }
+
+    #[test]
+    fn test_generate_short_id() {
+        let id = generate_short_id();
+        assert_eq!(id.len(), 8);
+        assert!(id.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()));
+    }
+
+    #[test]
+    fn test_generate_numeric_id_range() {
+        let id = generate_numeric_id();
+        assert!(id >= 1000000000);
+        assert!(id <= 9999999999);
+    }
+
+    #[test]
+    fn test_memory_info_usage_percentage() {
+        let mem = MemoryInfo {
+            total: 1024,
+            used: 512,
+            free: 512,
+        };
+        assert!((mem.usage_percentage() - 50.0).abs() < f32::EPSILON);
+
+        let mem_zero = MemoryInfo {
+            total: 0,
+            used: 0,
+            free: 0,
+        };
+        assert_eq!(mem_zero.usage_percentage(), 0.0);
+
+        let mem_full = MemoryInfo {
+            total: 100,
+            used: 100,
+            free: 0,
+        };
+        assert!((mem_full.usage_percentage() - 100.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_disk_info_usage_percentage() {
+        let disk = DiskInfo {
+            total: 1024,
+            used: 256,
+            free: 768,
+        };
+        assert!((disk.usage_percentage() - 25.0).abs() < f32::EPSILON);
+
+        let disk_zero = DiskInfo {
+            total: 0,
+            used: 0,
+            free: 0,
+        };
+        assert_eq!(disk_zero.usage_percentage(), 0.0);
+    }
+}

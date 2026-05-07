@@ -107,6 +107,11 @@ impl CronJobRepository for SqliteCronJobRepository {
             builder.push_bind(if is_enabled { 1 } else { 0 });
         }
 
+        if let Some(ref ws_id) = query.workspace_id {
+            builder.push(" AND workspace_id = ");
+            builder.push_bind(ws_id);
+        }
+
         builder.push(" ORDER BY created_at DESC");
 
         let page = query.page.unwrap_or(1);

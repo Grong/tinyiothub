@@ -12,7 +12,7 @@ use tinyiothub_storage::sqlite::Database;
 pub trait AlarmRepository: Send + Sync {
     async fn create(&self, alarm: &Alarm) -> AlarmResult<()>;
     async fn update(&self, alarm: &Alarm) -> AlarmResult<()>;
-    async fn find_by_id(&self, id: &str) -> AlarmResult<Option<Alarm>>;
+    async fn find_by_id(&self, id: &str, workspace_id: Option<&str>) -> AlarmResult<Option<Alarm>>;
     async fn find_by_criteria(&self, criteria: &AlarmQueryCriteria) -> AlarmResult<Vec<Alarm>>;
     async fn find_active(&self, device_id: Option<&str>) -> AlarmResult<Vec<Alarm>>;
     async fn find_unacknowledged(&self, device_id: Option<&str>) -> AlarmResult<Vec<Alarm>>;
@@ -29,18 +29,21 @@ pub trait AlarmRepository: Send + Sync {
 #[async_trait]
 pub trait AlarmRuleRepository: Send + Sync {
     async fn create(&self, rule: &AlarmRule) -> AlarmResult<()>;
-    async fn update(&self, rule: &AlarmRule) -> AlarmResult<()>;
-    async fn delete(&self, id: &str) -> AlarmResult<()>;
+    /// 更新规则；workspace_id 用于 WHERE 子句确保租户隔离
+    async fn update(&self, rule: &AlarmRule, workspace_id: Option<&str>) -> AlarmResult<()>;
+    /// 删除规则；workspace_id 用于 WHERE 子句确保租户隔离
+    async fn delete(&self, id: &str, workspace_id: Option<&str>) -> AlarmResult<()>;
     async fn find_by_id(&self, id: &str) -> AlarmResult<Option<AlarmRule>>;
-    async fn find_enabled(&self) -> AlarmResult<Vec<AlarmRule>>;
-    async fn find_by_device(&self, device_id: &str) -> AlarmResult<Vec<AlarmRule>>;
+    async fn find_enabled(&self, workspace_id: Option<&str>) -> AlarmResult<Vec<AlarmRule>>;
+    async fn find_by_device(&self, device_id: &str, workspace_id: Option<&str>) -> AlarmResult<Vec<AlarmRule>>;
     async fn find_by_property(
         &self,
         device_id: &str,
         property_id: &str,
     ) -> AlarmResult<Vec<AlarmRule>>;
     async fn find_global_rules(&self) -> AlarmResult<Vec<AlarmRule>>;
-    async fn set_enabled(&self, id: &str, enabled: bool) -> AlarmResult<()>;
+    /// 启用/禁用规则；workspace_id 用于 WHERE 子句确保租户隔离
+    async fn set_enabled(&self, id: &str, enabled: bool, workspace_id: Option<&str>) -> AlarmResult<()>;
 }
 
 /// 报警查询条件
@@ -282,9 +285,17 @@ impl AlarmRepository for SqliteAlarmRepository {
         Ok(())
     }
 
-    async fn find_by_id(&self, id: &str) -> AlarmResult<Option<Alarm>> {
-        let query = "SELECT * FROM device_alarms WHERE id = ?";
-        let row = sqlx::query(query).bind(id).fetch_optional(self.database.pool()).await?;
+    async fn find_by_id(&self, id: &str, workspace_id: Option<&str>) -> AlarmResult<Option<Alarm>> {
+        let query = if workspace_id.is_some() {
+            "SELECT * FROM device_alarms WHERE id = ? AND workspace_id = ?"
+        } else {
+            "SELECT * FROM device_alarms WHERE id = ?"
+        };
+        let mut sqlx_query = sqlx::query(query).bind(id);
+        if let Some(ws) = workspace_id {
+            sqlx_query = sqlx_query.bind(ws);
+        }
+        let row = sqlx_query.fetch_optional(self.database.pool()).await?;
         if let Some(row) = row {
             Ok(Some(self.row_to_alarm(row)?))
         } else {
@@ -590,6 +601,7 @@ impl SqliteAlarmRuleRepository {
             .with_timezone(&Utc);
 
         let notification_config = NotificationConfig::default();
+        let workspace_id: Option<String> = row.get("workspace_id");
 
         Ok(AlarmRule {
             id,
@@ -602,6 +614,7 @@ impl SqliteAlarmRuleRepository {
             alarm_level,
             is_enabled,
             notification_config,
+            workspace_id,
             created_at,
             updated_at,
         })
@@ -621,8 +634,8 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
             INSERT INTO device_alarm_rules (
                 id, device_id, property_id, rule_name, rule_type,
                 condition_config, alarm_level, is_enabled, description,
-                created_by, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                workspace_id, created_by, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
         "#;
 
         sqlx::query(query)
@@ -635,6 +648,7 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
             .bind(rule.alarm_level.as_str())
             .bind(rule.is_enabled)
             .bind(&rule.description)
+            .bind(&rule.workspace_id)
             .bind(rule.created_at.to_rfc3339())
             .bind(rule.updated_at.to_rfc3339())
             .execute(self.database.pool())
@@ -644,11 +658,24 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
         Ok(())
     }
 
-    async fn update(&self, rule: &AlarmRule) -> AlarmResult<()> {
+    async fn update(&self, rule: &AlarmRule, workspace_id: Option<&str>) -> AlarmResult<()> {
         let condition_json = serde_json::to_string(&rule.condition)
             .map_err(|e| AlarmError::InternalError(format!("序列化条件配置失败: {}", e)))?;
 
-        let query = r#"
+        let query = if workspace_id.is_some() {
+            r#"
+            UPDATE device_alarm_rules SET
+                rule_name = ?,
+                rule_type = ?,
+                condition_config = ?,
+                alarm_level = ?,
+                is_enabled = ?,
+                description = ?,
+                updated_at = ?
+            WHERE id = ? AND workspace_id = ?
+            "#
+        } else {
+            r#"
             UPDATE device_alarm_rules SET
                 rule_name = ?,
                 rule_type = ?,
@@ -658,9 +685,10 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
                 description = ?,
                 updated_at = ?
             WHERE id = ?
-        "#;
+            "#
+        };
 
-        sqlx::query(query)
+        let mut sqlx_query = sqlx::query(query)
             .bind(&rule.name)
             .bind(rule.rule_type.as_str())
             .bind(&condition_json)
@@ -668,7 +696,11 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
             .bind(rule.is_enabled)
             .bind(&rule.description)
             .bind(rule.updated_at.to_rfc3339())
-            .bind(&rule.id)
+            .bind(&rule.id);
+        if let Some(ws) = workspace_id {
+            sqlx_query = sqlx_query.bind(ws);
+        }
+        sqlx_query
             .execute(self.database.pool())
             .await
             .map_err(|e| AlarmError::InternalError(format!("更新规则失败: {}", e)))?;
@@ -676,10 +708,17 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
         Ok(())
     }
 
-    async fn delete(&self, id: &str) -> AlarmResult<()> {
-        let query = "DELETE FROM device_alarm_rules WHERE id = ?";
-        sqlx::query(query)
-            .bind(id)
+    async fn delete(&self, id: &str, workspace_id: Option<&str>) -> AlarmResult<()> {
+        let query = if workspace_id.is_some() {
+            "DELETE FROM device_alarm_rules WHERE id = ? AND workspace_id = ?"
+        } else {
+            "DELETE FROM device_alarm_rules WHERE id = ?"
+        };
+        let mut sqlx_query = sqlx::query(query).bind(id);
+        if let Some(ws) = workspace_id {
+            sqlx_query = sqlx_query.bind(ws);
+        }
+        sqlx_query
             .execute(self.database.pool())
             .await
             .map_err(|e| AlarmError::InternalError(format!("删除规则失败: {}", e)))?;
@@ -701,9 +740,17 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
         }
     }
 
-    async fn find_enabled(&self) -> AlarmResult<Vec<AlarmRule>> {
-        let query = "SELECT * FROM device_alarm_rules WHERE is_enabled = true ORDER BY created_at DESC";
-        let rows = sqlx::query(query)
+    async fn find_enabled(&self, workspace_id: Option<&str>) -> AlarmResult<Vec<AlarmRule>> {
+        let (query, bind_val) = if let Some(ws) = workspace_id {
+            ("SELECT * FROM device_alarm_rules WHERE is_enabled = true AND workspace_id = ? ORDER BY created_at DESC", Some(ws))
+        } else {
+            ("SELECT * FROM device_alarm_rules WHERE is_enabled = true ORDER BY created_at DESC", None)
+        };
+        let mut sqlx_query = sqlx::query(query);
+        if let Some(ws) = bind_val {
+            sqlx_query = sqlx_query.bind(ws);
+        }
+        let rows = sqlx_query
             .fetch_all(self.database.pool())
             .await
             .map_err(|e| AlarmError::InternalError(format!("查询启用规则失败: {}", e)))?;
@@ -715,10 +762,17 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
         Ok(rules)
     }
 
-    async fn find_by_device(&self, device_id: &str) -> AlarmResult<Vec<AlarmRule>> {
-        let query = "SELECT * FROM device_alarm_rules WHERE device_id = ? ORDER BY created_at DESC";
-        let rows = sqlx::query(query)
-            .bind(device_id)
+    async fn find_by_device(&self, device_id: &str, workspace_id: Option<&str>) -> AlarmResult<Vec<AlarmRule>> {
+        let (query, bind_ws) = if let Some(ws) = workspace_id {
+            ("SELECT * FROM device_alarm_rules WHERE device_id = ? AND workspace_id = ? ORDER BY created_at DESC", Some(ws))
+        } else {
+            ("SELECT * FROM device_alarm_rules WHERE device_id = ? ORDER BY created_at DESC", None)
+        };
+        let mut sqlx_query = sqlx::query(query).bind(device_id);
+        if let Some(ws) = bind_ws {
+            sqlx_query = sqlx_query.bind(ws);
+        }
+        let rows = sqlx_query
             .fetch_all(self.database.pool())
             .await
             .map_err(|e| AlarmError::InternalError(format!("查询设备规则失败: {}", e)))?;
@@ -764,12 +818,20 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
         Ok(rules)
     }
 
-    async fn set_enabled(&self, id: &str, enabled: bool) -> AlarmResult<()> {
-        let query = "UPDATE device_alarm_rules SET is_enabled = ?, updated_at = ? WHERE id = ?";
-        sqlx::query(query)
+    async fn set_enabled(&self, id: &str, enabled: bool, workspace_id: Option<&str>) -> AlarmResult<()> {
+        let query = if workspace_id.is_some() {
+            "UPDATE device_alarm_rules SET is_enabled = ?, updated_at = ? WHERE id = ? AND workspace_id = ?"
+        } else {
+            "UPDATE device_alarm_rules SET is_enabled = ?, updated_at = ? WHERE id = ?"
+        };
+        let mut sqlx_query = sqlx::query(query)
             .bind(enabled)
             .bind(Utc::now().to_rfc3339())
-            .bind(id)
+            .bind(id);
+        if let Some(ws) = workspace_id {
+            sqlx_query = sqlx_query.bind(ws);
+        }
+        sqlx_query
             .execute(self.database.pool())
             .await
             .map_err(|e| AlarmError::InternalError(format!("更新规则状态失败: {}", e)))?;

@@ -4,10 +4,12 @@
 // domain/event/specifications/notification_specifications.rs
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use tracing::warn;
 
+use super::repo::NotificationRuleRepository;
 use super::types::{
     NotificationAggregate, NotificationChannelType,
     NotificationRecord, NotificationRule,
@@ -401,13 +403,15 @@ async fn send_webhook(
 pub struct NotificationManager {
     channels: HashMap<NotificationChannelType, Box<dyn NotificationChannel>>,
     notification_service: NotificationService,
+    rule_repository: Arc<dyn NotificationRuleRepository>,
 }
 
 impl NotificationManager {
-    pub fn new() -> Self {
+    pub fn new(rule_repository: Arc<dyn NotificationRuleRepository>) -> Self {
         Self {
             channels: HashMap::new(),
             notification_service: NotificationService::new(),
+            rule_repository,
         }
     }
 
@@ -488,22 +492,35 @@ impl NotificationManager {
 
     /// Get all notification rules
     pub async fn get_rules(&self) -> std::result::Result<Vec<NotificationRule>, String> {
-        Ok(Vec::new())
+        self.rule_repository
+            .get_all_rules()
+            .await
+            .map_err(|e| e.to_string())
     }
 
     /// Add a new notification rule
-    pub async fn add_rule(&self, _rule: NotificationRule) -> std::result::Result<(), String> {
-        Ok(())
+    pub async fn add_rule(&self, rule: NotificationRule) -> std::result::Result<(), String> {
+        self.rule_repository
+            .create_rule(&rule)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     /// Update an existing notification rule
-    pub async fn update_rule(&self, _rule_id: &str, _rule: NotificationRule) -> std::result::Result<(), String> {
-        Ok(())
+    pub async fn update_rule(&self, rule_id: &str, mut rule: NotificationRule) -> std::result::Result<(), String> {
+        rule.id = rule_id.to_string();
+        self.rule_repository
+            .update_rule(&rule)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     /// Remove a notification rule
-    pub async fn remove_rule(&self, _rule_id: &str) -> std::result::Result<(), String> {
-        Ok(())
+    pub async fn remove_rule(&self, rule_id: &str) -> std::result::Result<(), String> {
+        self.rule_repository
+            .delete_rule(rule_id)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     /// Get notification history for an event
@@ -803,6 +820,7 @@ mod tests {
             enabled: true,
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            workspace_id: None,
             event_types: vec!["device.warning".to_string()],
             event_levels: vec![EventLevel::Warning],
             channels: vec![NotificationChannelType::Email],
@@ -932,6 +950,7 @@ mod tests {
             enabled: true,
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            workspace_id: None,
             event_types: vec!["device.warning".to_string()],
             event_levels: vec![EventLevel::Warning],
             channels: vec![NotificationChannelType::Email],

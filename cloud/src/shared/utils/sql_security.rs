@@ -78,4 +78,55 @@ mod tests {
         assert!(!is_safe_identifier("user;drop table"));
         assert!(!is_safe_identifier("user name"));
     }
+
+    #[test]
+    fn test_escape_like_pattern() {
+        assert_eq!(escape_like_pattern("test"), "test");
+        assert_eq!(escape_like_pattern("100%"), "100\\%");
+        assert_eq!(escape_like_pattern("_name"), "\\_name");
+        assert_eq!(escape_like_pattern("a\\b"), "a\\\\b");
+        let result = escape_like_pattern("_%");
+        assert!(result.contains("\\_"));
+        assert!(result.contains("\\%"));
+    }
+
+    #[test]
+    fn test_build_where_clause() {
+        let (clause, values) = build_where_clause(vec![]);
+        assert_eq!(clause, "");
+        assert!(values.is_empty());
+
+        let (clause, values) = build_where_clause(vec![
+            ("username", Some("john".to_string())),
+            ("email", None),
+            ("status", Some("active".to_string())),
+        ]);
+        assert_eq!(clause, "WHERE username = ? AND status = ?");
+        assert_eq!(values, vec!["john", "active"]);
+
+        let (clause, values) = build_where_clause(vec![
+            ("username", Some("".to_string())),
+            ("email", Some("test@example.com".to_string())),
+        ]);
+        assert_eq!(clause, "WHERE email = ?");
+        assert_eq!(values, vec!["test@example.com"]);
+    }
+
+    #[test]
+    fn test_build_pagination() {
+        let (sql, page, page_size) = build_pagination(None, None);
+        assert_eq!(sql, "LIMIT 20 OFFSET 0");
+        assert_eq!(page, 1);
+        assert_eq!(page_size, 20);
+
+        let (sql, page, page_size) = build_pagination(Some(3), Some(50));
+        assert_eq!(sql, "LIMIT 50 OFFSET 100");
+        assert_eq!(page, 3);
+        assert_eq!(page_size, 50);
+
+        let (sql, page, page_size) = build_pagination(Some(0), Some(200));
+        assert_eq!(sql, "LIMIT 100 OFFSET 0");
+        assert_eq!(page, 1);
+        assert_eq!(page_size, 100);
+    }
 }

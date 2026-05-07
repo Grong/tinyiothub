@@ -58,9 +58,7 @@ fn ensure_test_config() {
 /// - Test JWT configuration
 /// - Full API route tree
 pub async fn setup_test_app() -> Router {
-    ensure_test_config();
-
-    let app_state = create_test_app_state().await;
+    let (app_state, _pool) = setup_test_app_with_pool().await;
 
     // Create API router (same as production, without MCP/agent init)
     let api_router = crate::api::create_router();
@@ -70,24 +68,92 @@ pub async fn setup_test_app() -> Router {
         .with_state(app_state)
 }
 
+/// Create test AppState and return it along with the pool (for seeding test data).
+pub async fn setup_test_app_with_pool() -> (AppState, sqlx::SqlitePool) {
+    ensure_test_config();
+
+    let app_state = create_test_app_state().await;
+    let pool = app_state.db_pool().clone();
+    (app_state, pool)
+}
+
+/// Seed a tenant and workspace for testing cross-workspace isolation.
+pub async fn seed_test_workspace(pool: &sqlx::SqlitePool, tenant_id: &str, workspace_id: &str) {
+    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+
+    sqlx::query(
+        "INSERT OR IGNORE INTO tenants (id, name, slug, status, plan_id, subscription_status, timezone, locale, created_at, updated_at) VALUES (?, ?, ?, 'active', 'plan_free', 'active', 'UTC', 'zh-CN', ?, ?)",
+    )
+    .bind(tenant_id)
+    .bind(format!("Test Tenant {}", tenant_id))
+    .bind(tenant_id)
+    .bind(&now)
+    .bind(&now)
+    .execute(pool)
+    .await
+    .expect("Failed to seed test tenant");
+
+    sqlx::query(
+        "INSERT OR IGNORE INTO workspaces (id, name, description, tenant_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(workspace_id)
+    .bind(format!("Test Workspace {}", workspace_id))
+    .bind("Test workspace for cross-workspace isolation tests")
+    .bind(tenant_id)
+    .bind(&now)
+    .bind(&now)
+    .execute(pool)
+    .await
+    .expect("Failed to seed test workspace");
+}
+
 /// Create an AppState backed by in-memory SQLite with migrations applied.
+///
+/// Runs cloud and storage migrations interleaved by version (same as production),
+/// skipping the broken chat_sessions migration (20260414102323) which has a
+/// column conflict with the storage version.
 async fn create_test_app_state() -> AppState {
     use tinyiothub_storage::cache::DeviceCache;
     use std::sync::Arc;
+    use std::path::Path;
 
     // In-memory SQLite — no temp file, no cleanup issues
-    // Disable foreign keys for tests to avoid needing full referential data seeding
-    use sqlx::sqlite::SqliteConnectOptions;
-    use std::str::FromStr;
-    let opts = SqliteConnectOptions::from_str("sqlite::memory:")
-        .expect("Invalid SQLite URL")
-        .foreign_keys(false);
-    let pool = sqlx::SqlitePool::connect_with(opts)
+    let pool = sqlx::SqlitePool::connect("sqlite::memory:")
         .await
         .expect("Failed to create in-memory SQLite pool");
 
-    // Run cloud migrations
-    crate::shared::persistence::test_helpers::run_all_migrations(&pool)
+    // Load both migrators
+    let cloud_migrator = sqlx::migrate::Migrator::new(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations"),
+    ).await.expect("Failed to load cloud migrations");
+
+    let storage_migrator = sqlx::migrate::Migrator::new(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../crates/tinyiothub-storage/migrations"),
+    ).await.expect("Failed to load storage migrations");
+
+    // Combine and sort by version (interleaved), skipping broken/test-data migrations
+    let skip_versions: &[i64] = &[
+        20260107000001, // test data: inserts properties/commands for non-existent devices
+        20260114000001, // test data: inserts events referencing non-existent devices
+        20260418000001, // storage: add tenant_id to tags — already in cloud base schema
+    ];
+    let mut seen: std::collections::HashMap<i64, bool> = std::collections::HashMap::new();
+    let mut combined: Vec<sqlx::migrate::Migration> = Vec::new();
+    for m in cloud_migrator.iter() {
+        // Skip broken cloud version of 20260414102323 (column conflicts); storage version is canonical
+        if !skip_versions.contains(&m.version) && m.version != 20260414102323 {
+            seen.insert(m.version, true);
+            combined.push(m.clone());
+        }
+    }
+    for m in storage_migrator.iter() {
+        if !seen.contains_key(&m.version) && !skip_versions.contains(&m.version) {
+            combined.push(m.clone());
+        }
+    }
+
+    sqlx::migrate::Migrator::with_migrations(combined)
+        .run(&pool)
         .await
         .expect("Failed to run migrations");
 
@@ -104,29 +170,6 @@ async fn create_test_app_state() -> AppState {
     .execute(&pool)
     .await
     .expect("Failed to seed test user");
-
-    // Seed default tenant so FK constraints (workspaces.tenant_id REFERENCES tenants(id)) don't fail
-    sqlx::query(
-        "INSERT OR IGNORE INTO tenants (id, name, slug, status, plan_id, subscription_status, timezone, locale)
-         VALUES ('tenant-default-001', 'Default', 'default', 'active', 'plan_free', 'active', 'UTC', 'zh-CN')",
-    )
-    .execute(&pool)
-    .await
-    .expect("Failed to seed default tenant");
-
-    // Seed default workspaces so FK constraints (devices.workspace_id REFERENCES workspaces(id)) don't fail
-    for ws_id in &["ws-default-001", "ws-a", "ws-b"] {
-        sqlx::query(
-            "INSERT OR IGNORE INTO workspaces (id, name, description, tenant_id)
-             VALUES (?, ?, ?, 'tenant-default-001')",
-        )
-        .bind(ws_id)
-        .bind(&format!("Workspace {}", ws_id))
-        .bind("Test workspace")
-        .execute(&pool)
-        .await
-        .expect("Failed to seed workspace");
-    }
 
     let device_cache = Arc::new(DeviceCache::new());
 

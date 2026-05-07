@@ -53,9 +53,9 @@ impl HealingExecutionRepository {
 
     pub async fn get_recent(
         &self,
-        _tenant_id: &str,
-        _limit: u32,
-        _offset: u32,
+        tenant_id: &str,
+        limit: u32,
+        offset: u32,
     ) -> std::result::Result<Vec<HealingExecution>, sqlx::Error> {
         let sql = r#"
             SELECT id, tenant_id, timestamp, level, action_type, target, result, logs
@@ -65,7 +65,15 @@ impl HealingExecutionRepository {
             LIMIT ? OFFSET ?
         "#;
 
-        self.db.query(sql, |row| {
+        let rows = sqlx::query(sql)
+            .bind(tenant_id)
+            .bind(limit as i64)
+            .bind(offset as i64)
+            .fetch_all(self.db.pool())
+            .await?;
+
+        let mut executions = Vec::new();
+        for row in rows {
             let id: String = row.try_get("id")?;
             let tenant_id: String = row.try_get("tenant_id")?;
             let timestamp_str: String = row.try_get("timestamp")?;
@@ -109,7 +117,7 @@ impl HealingExecutionRepository {
             let logs: Vec<String> =
                 serde_json::from_str(&logs_str).unwrap_or_else(|_| Vec::new());
 
-            Ok(HealingExecution {
+            executions.push(HealingExecution {
                 id,
                 tenant_id,
                 timestamp,
@@ -118,19 +126,23 @@ impl HealingExecutionRepository {
                 target,
                 result,
                 logs,
-            })
-        }).await
+            });
+        }
+
+        Ok(executions)
     }
 
-    pub async fn count(&self, _tenant_id: &str) -> std::result::Result<u32, sqlx::Error> {
+    pub async fn count(&self, tenant_id: &str) -> std::result::Result<u32, sqlx::Error> {
         let sql = r#"
             SELECT COUNT(*) as cnt FROM healing_executions WHERE tenant_id = ?
         "#;
 
-        self.db
-            .query_first(sql, |row| row.try_get::<i64, _>("cnt"))
-            .await
-            .map(|cnt| cnt.unwrap_or(0) as u32)
+        let row = sqlx::query(sql)
+            .bind(tenant_id)
+            .fetch_one(self.db.pool())
+            .await?;
+        let cnt: i64 = row.try_get("cnt")?;
+        Ok(cnt as u32)
     }
 
     pub async fn ensure_table(&self) -> std::result::Result<(), sqlx::Error> {

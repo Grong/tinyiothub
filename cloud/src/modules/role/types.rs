@@ -8,6 +8,7 @@ pub struct Role {
     pub name: String,
     pub description: Option<String>,
     pub is_administrator: i32,
+    pub workspace_id: Option<String>,
 }
 
 /// Role query parameters
@@ -17,6 +18,7 @@ pub struct RoleQueryParams {
     pub name: Option<String>,
     pub description: Option<String>,
     pub is_administrator: Option<i32>,
+    pub workspace_id: Option<String>,
     pub page: Option<u32>,
     pub page_size: Option<u32>,
 }
@@ -28,6 +30,7 @@ pub struct CreateRoleRequest {
     pub name: String,
     pub description: Option<String>,
     pub is_administrator: Option<i32>,
+    pub workspace_id: Option<String>,
 }
 
 /// Update role request
@@ -37,6 +40,7 @@ pub struct UpdateRoleRequest {
     pub name: Option<String>,
     pub description: Option<String>,
     pub is_administrator: Option<i32>,
+    pub workspace_id: Option<String>,
 }
 
 /// Role statistics
@@ -55,7 +59,22 @@ impl Default for Role {
             name: String::new(),
             description: None,
             is_administrator: 0,
+            workspace_id: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_role_default() {
+        let role = Role::default();
+        assert!(!role.id.is_empty());
+        assert!(role.name.is_empty());
+        assert_eq!(role.description, None);
+        assert_eq!(role.is_administrator, 0);
     }
 }
 

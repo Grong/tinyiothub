@@ -1,8 +1,57 @@
+use std::collections::HashMap;
 use std::{str::FromStr, time::Duration};
 
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+use sqlx::migrate::{Migrator, Migration};
 
 use super::config::DatabaseConfig;
+
+/// Versions to skip in production (test/seed data referencing non-existent devices).
+const SKIP_MIGRATIONS: &[i64] = &[
+    20260107000001, // inserts properties/commands for devices that don't exist in prod
+    20260114000001, // inserts test events referencing non-existent devices
+    20260418000001, // storage: add tenant_id to tags — already in cloud base schema
+];
+
+/// Load migrations from cloud/ and storage crate, interleaved by version.
+///
+/// Cloud migrations take precedence when a version exists in both directories,
+/// except for 20260414102323 where the storage version is the canonical one.
+async fn load_all_migrations() -> Result<Vec<Migration>, sqlx::migrate::MigrateError> {
+    let cloud_migrations = Migrator::new(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations"),
+    )
+    .await?;
+
+    let storage_migrations = Migrator::new(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../crates/tinyiothub-storage/migrations"),
+    )
+    .await?;
+
+    let mut seen: HashMap<i64, bool> = HashMap::new();
+    let mut combined: Vec<Migration> = Vec::new();
+
+    // Cloud migrations first (preferred), skip broken cloud version
+    for m in cloud_migrations.iter().cloned() {
+        if m.version != 20260414102323 && !SKIP_MIGRATIONS.contains(&m.version) {
+            seen.insert(m.version, true);
+            combined.push(m);
+        }
+    }
+
+    // Storage migrations for versions not already covered by cloud
+    for m in storage_migrations.iter().cloned() {
+        if !seen.contains_key(&m.version) && !SKIP_MIGRATIONS.contains(&m.version) {
+            combined.push(m);
+        }
+    }
+
+    // Sort by version to apply chronologically
+    combined.sort_by_key(|m| m.version);
+
+    Ok(combined)
+}
 
 pub async fn create_pool(config: &DatabaseConfig) -> Result<SqlitePool, sqlx::Error> {
     tracing::info!("Creating database connection pool with config: {:?}", config);
@@ -32,9 +81,12 @@ pub async fn create_pool(config: &DatabaseConfig) -> Result<SqlitePool, sqlx::Er
                 .connect_with(harmonyos_options)
                 .await?;
 
-            // Run migrations
+            // Run migrations (cloud + storage, interleaved by version)
             tracing::info!("Running database migrations...");
-            sqlx::migrate!("./migrations").run(&pool).await?;
+            let migrations = load_all_migrations().await.map_err(|e| {
+                sqlx::Error::Configuration(format!("Failed to load migrations: {}", e).into())
+            })?;
+            Migrator::with_migrations(migrations).run(&pool).await?;
             tracing::info!("Database migrations completed successfully");
 
             return Ok(pool);
@@ -49,9 +101,12 @@ pub async fn create_pool(config: &DatabaseConfig) -> Result<SqlitePool, sqlx::Er
         .connect_with(connect_options)
         .await?;
 
-    // Run migrations
+    // Run migrations (cloud + storage, interleaved by version)
     tracing::info!("Running database migrations...");
-    sqlx::migrate!("./migrations").run(&pool).await?;
+    let migrations = load_all_migrations().await.map_err(|e| {
+        sqlx::Error::Configuration(format!("Failed to load migrations: {}", e).into())
+    })?;
+    Migrator::with_migrations(migrations).run(&pool).await?;
     tracing::info!("Database migrations completed successfully");
 
     Ok(pool)

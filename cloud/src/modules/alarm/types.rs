@@ -505,6 +505,7 @@ pub struct AlarmRule {
     pub alarm_level: AlarmLevel,
     pub is_enabled: bool,
     pub notification_config: NotificationConfig,
+    pub workspace_id: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -519,6 +520,7 @@ impl AlarmRule {
         condition: AlarmCondition,
         alarm_level: AlarmLevel,
         notification_config: NotificationConfig,
+        workspace_id: String,
     ) -> AlarmResult<Self> {
         Self::validate_config(&name, &condition, &notification_config)?;
 
@@ -534,6 +536,7 @@ impl AlarmRule {
             alarm_level,
             is_enabled: true,
             notification_config,
+            workspace_id: Some(workspace_id),
             created_at: now,
             updated_at: now,
         })
@@ -827,4 +830,437 @@ pub struct StatisticsQueryParams {
 pub struct BatchOperationResult {
     pub success_count: usize,
     pub total_count: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_alarm_level_as_str() {
+        assert_eq!(AlarmLevel::Info.as_str(), "info");
+        assert_eq!(AlarmLevel::Warning.as_str(), "warning");
+        assert_eq!(AlarmLevel::Error.as_str(), "error");
+        assert_eq!(AlarmLevel::Critical.as_str(), "critical");
+    }
+
+    #[test]
+    fn test_alarm_level_parse_str() {
+        assert_eq!(AlarmLevel::parse_str("info"), Some(AlarmLevel::Info));
+        assert_eq!(AlarmLevel::parse_str("warning"), Some(AlarmLevel::Warning));
+        assert_eq!(AlarmLevel::parse_str("error"), Some(AlarmLevel::Error));
+        assert_eq!(AlarmLevel::parse_str("critical"), Some(AlarmLevel::Critical));
+        assert_eq!(AlarmLevel::parse_str("unknown"), None);
+    }
+
+    #[test]
+    fn test_alarm_level_priority() {
+        assert_eq!(AlarmLevel::Info.priority(), 1);
+        assert_eq!(AlarmLevel::Warning.priority(), 2);
+        assert_eq!(AlarmLevel::Error.priority(), 3);
+        assert_eq!(AlarmLevel::Critical.priority(), 4);
+    }
+
+    #[test]
+    fn test_alarm_level_display() {
+        assert_eq!(format!("{}", AlarmLevel::Warning), "warning");
+    }
+
+    #[test]
+    fn test_alarm_status_as_str() {
+        assert_eq!(AlarmStatus::Active.as_str(), "active");
+        assert_eq!(AlarmStatus::Acknowledged.as_str(), "acknowledged");
+        assert_eq!(AlarmStatus::Resolved.as_str(), "resolved");
+        assert_eq!(AlarmStatus::Suppressed.as_str(), "suppressed");
+    }
+
+    #[test]
+    fn test_alarm_status_parse_str() {
+        assert_eq!(AlarmStatus::parse_str("active"), Some(AlarmStatus::Active));
+        assert_eq!(AlarmStatus::parse_str("acknowledged"), Some(AlarmStatus::Acknowledged));
+        assert_eq!(AlarmStatus::parse_str("resolved"), Some(AlarmStatus::Resolved));
+        assert_eq!(AlarmStatus::parse_str("suppressed"), Some(AlarmStatus::Suppressed));
+        assert_eq!(AlarmStatus::parse_str("unknown"), None);
+    }
+
+    #[test]
+    fn test_alarm_status_is_active() {
+        assert!(AlarmStatus::Active.is_active());
+        assert!(AlarmStatus::Acknowledged.is_active());
+        assert!(!AlarmStatus::Resolved.is_active());
+        assert!(!AlarmStatus::Suppressed.is_active());
+    }
+
+    #[test]
+    fn test_alarm_status_is_resolved() {
+        assert!(AlarmStatus::Resolved.is_resolved());
+        assert!(!AlarmStatus::Active.is_resolved());
+        assert!(!AlarmStatus::Acknowledged.is_resolved());
+        assert!(!AlarmStatus::Suppressed.is_resolved());
+    }
+
+    #[test]
+    fn test_alarm_type_as_str() {
+        assert_eq!(AlarmType::DeviceOffline.as_str(), "device_offline");
+        assert_eq!(AlarmType::DeviceError.as_str(), "device_error");
+        assert_eq!(AlarmType::PropertyThreshold.as_str(), "property_threshold");
+        assert_eq!(AlarmType::PropertyAnomaly.as_str(), "property_anomaly");
+        assert_eq!(AlarmType::CommandFailed.as_str(), "command_failed");
+        assert_eq!(AlarmType::Custom { name: "special".to_string() }.as_str(), "custom_special");
+    }
+
+    #[test]
+    fn test_alarm_type_parse_str() {
+        assert_eq!(AlarmType::parse_str("device_offline"), AlarmType::DeviceOffline);
+        assert_eq!(AlarmType::parse_str("device_error"), AlarmType::DeviceError);
+        assert_eq!(AlarmType::parse_str("property_threshold"), AlarmType::PropertyThreshold);
+        assert_eq!(AlarmType::parse_str("property_anomaly"), AlarmType::PropertyAnomaly);
+        assert_eq!(AlarmType::parse_str("command_failed"), AlarmType::CommandFailed);
+        assert_eq!(AlarmType::parse_str("custom_foo"), AlarmType::Custom { name: "foo".to_string() });
+        assert_eq!(AlarmType::parse_str("other"), AlarmType::Custom { name: "other".to_string() });
+    }
+
+    #[test]
+    fn test_comparison_operator_evaluate() {
+        assert!(ComparisonOperator::GreaterThan.evaluate(5.0, 3.0));
+        assert!(!ComparisonOperator::GreaterThan.evaluate(3.0, 5.0));
+
+        assert!(ComparisonOperator::LessThan.evaluate(2.0, 5.0));
+        assert!(!ComparisonOperator::LessThan.evaluate(5.0, 2.0));
+
+        assert!(ComparisonOperator::GreaterThanOrEqual.evaluate(5.0, 5.0));
+        assert!(ComparisonOperator::GreaterThanOrEqual.evaluate(6.0, 5.0));
+
+        assert!(ComparisonOperator::LessThanOrEqual.evaluate(3.0, 5.0));
+        assert!(ComparisonOperator::LessThanOrEqual.evaluate(5.0, 5.0));
+
+        assert!(ComparisonOperator::Equal.evaluate(1.0, 1.0));
+        assert!(!ComparisonOperator::Equal.evaluate(1.0, 2.0));
+
+        assert!(ComparisonOperator::NotEqual.evaluate(1.0, 2.0));
+        assert!(!ComparisonOperator::NotEqual.evaluate(1.0, 1.0));
+    }
+
+    #[test]
+    fn test_resolution_type_as_str() {
+        assert_eq!(ResolutionType::Fixed.as_str(), "fixed");
+        assert_eq!(ResolutionType::FalseAlarm.as_str(), "false_alarm");
+        assert_eq!(ResolutionType::Ignored.as_str(), "ignored");
+        assert_eq!(ResolutionType::AutoResolved.as_str(), "auto_resolved");
+    }
+
+    #[test]
+    fn test_acknowledgement_new() {
+        let ack = Acknowledgement::new("user-1".to_string(), Some("noted".to_string()));
+        assert_eq!(ack.acknowledged_by, "user-1");
+        assert_eq!(ack.note, Some("noted".to_string()));
+    }
+
+    #[test]
+    fn test_resolution_new() {
+        let res = Resolution::new("user-1".to_string(), ResolutionType::Fixed, None);
+        assert_eq!(res.resolved_by, "user-1");
+        assert_eq!(res.resolution_type, ResolutionType::Fixed);
+        assert!(res.note.is_none());
+    }
+
+    #[test]
+    fn test_alarm_new() {
+        let alarm = Alarm::new(
+            "device-1".to_string(),
+            Some("prop-1".to_string()),
+            Some("rule-1".to_string()),
+            AlarmType::DeviceOffline,
+            AlarmLevel::Warning,
+            "Device went offline".to_string(),
+            None,
+            None,
+        );
+        assert!(!alarm.id.is_empty());
+        assert_eq!(alarm.device_id, "device-1");
+        assert_eq!(alarm.status, AlarmStatus::Active);
+        assert!(alarm.acknowledgement.is_none());
+        assert!(alarm.resolution.is_none());
+    }
+
+    #[test]
+    fn test_alarm_acknowledge_success() {
+        let mut alarm = Alarm::new(
+            "device-1".to_string(), None, None,
+            AlarmType::DeviceOffline, AlarmLevel::Warning, "msg".to_string(), None, None,
+        );
+        assert!(alarm.acknowledge("user-1".to_string(), Some("ack note".to_string())).is_ok());
+        assert_eq!(alarm.status, AlarmStatus::Acknowledged);
+        assert!(alarm.acknowledgement.is_some());
+    }
+
+    #[test]
+    fn test_alarm_acknowledge_already_acknowledged() {
+        let mut alarm = Alarm::new(
+            "device-1".to_string(), None, None,
+            AlarmType::DeviceOffline, AlarmLevel::Warning, "msg".to_string(), None, None,
+        );
+        alarm.acknowledge("user-1".to_string(), None).unwrap();
+        let result = alarm.acknowledge("user-2".to_string(), None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_alarm_resolve_success() {
+        let mut alarm = Alarm::new(
+            "device-1".to_string(), None, None,
+            AlarmType::DeviceOffline, AlarmLevel::Warning, "msg".to_string(), None, None,
+        );
+        assert!(alarm.resolve("user-1".to_string(), ResolutionType::Fixed, None).is_ok());
+        assert_eq!(alarm.status, AlarmStatus::Resolved);
+    }
+
+    #[test]
+    fn test_alarm_resolve_after_acknowledge() {
+        let mut alarm = Alarm::new(
+            "device-1".to_string(), None, None,
+            AlarmType::DeviceOffline, AlarmLevel::Warning, "msg".to_string(), None, None,
+        );
+        alarm.acknowledge("user-1".to_string(), None).unwrap();
+        assert!(alarm.resolve("user-1".to_string(), ResolutionType::Fixed, None).is_ok());
+    }
+
+    #[test]
+    fn test_alarm_resolve_already_resolved_fails() {
+        let mut alarm = Alarm::new(
+            "device-1".to_string(), None, None,
+            AlarmType::DeviceOffline, AlarmLevel::Warning, "msg".to_string(), None, None,
+        );
+        alarm.resolve("user-1".to_string(), ResolutionType::Fixed, None).unwrap();
+        let result = alarm.resolve("user-1".to_string(), ResolutionType::Fixed, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_alarm_suppress_success() {
+        let mut alarm = Alarm::new(
+            "device-1".to_string(), None, None,
+            AlarmType::DeviceOffline, AlarmLevel::Warning, "msg".to_string(), None, None,
+        );
+        assert!(alarm.suppress().is_ok());
+        assert_eq!(alarm.status, AlarmStatus::Suppressed);
+    }
+
+    #[test]
+    fn test_alarm_suppress_non_active_fails() {
+        let mut alarm = Alarm::new(
+            "device-1".to_string(), None, None,
+            AlarmType::DeviceOffline, AlarmLevel::Warning, "msg".to_string(), None, None,
+        );
+        alarm.acknowledge("user-1".to_string(), None).unwrap();
+        assert!(alarm.suppress().is_err());
+    }
+
+    #[test]
+    fn test_alarm_can_acknowledge() {
+        let mut alarm = Alarm::new(
+            "device-1".to_string(), None, None,
+            AlarmType::DeviceOffline, AlarmLevel::Warning, "msg".to_string(), None, None,
+        );
+        assert!(alarm.can_acknowledge());
+        alarm.acknowledge("user-1".to_string(), None).unwrap();
+        assert!(!alarm.can_acknowledge());
+    }
+
+    #[test]
+    fn test_alarm_can_resolve() {
+        let mut alarm = Alarm::new(
+            "device-1".to_string(), None, None,
+            AlarmType::DeviceOffline, AlarmLevel::Warning, "msg".to_string(), None, None,
+        );
+        assert!(alarm.can_resolve());
+        alarm.acknowledge("user-1".to_string(), None).unwrap();
+        assert!(alarm.can_resolve());
+        alarm.resolve("user-1".to_string(), ResolutionType::Fixed, None).unwrap();
+        assert!(!alarm.can_resolve());
+    }
+
+    #[test]
+    fn test_alarm_is_active() {
+        let mut alarm = Alarm::new(
+            "device-1".to_string(), None, None,
+            AlarmType::DeviceOffline, AlarmLevel::Warning, "msg".to_string(), None, None,
+        );
+        assert!(alarm.is_active());
+        alarm.acknowledge("user-1".to_string(), None).unwrap();
+        assert!(alarm.is_active());
+        alarm.resolve("user-1".to_string(), ResolutionType::Fixed, None).unwrap();
+        assert!(!alarm.is_active());
+    }
+
+    #[test]
+    fn test_alarm_rule_new_success() {
+        let config = NotificationConfig {
+            enabled: false,
+            channels: vec![],
+            recipients: vec![],
+            suppress_duration: None,
+            repeat_interval: None,
+        };
+        let rule = AlarmRule::new(
+            "Test Rule".to_string(),
+            None,
+            Some("device-1".to_string()),
+            None,
+            RuleType::Threshold,
+            AlarmCondition::Threshold { operator: ComparisonOperator::GreaterThan, value: 50.0 },
+            AlarmLevel::Warning,
+            config,
+            "ws-1".to_string(),
+        );
+        assert!(rule.is_ok());
+        let rule = rule.unwrap();
+        assert_eq!(rule.name, "Test Rule");
+        assert!(rule.is_enabled);
+    }
+
+    #[test]
+    fn test_alarm_rule_new_empty_name_fails() {
+        let config = NotificationConfig::default();
+        let rule = AlarmRule::new(
+            "".to_string(),
+            None, None, None,
+            RuleType::Threshold,
+            AlarmCondition::Threshold { operator: ComparisonOperator::GreaterThan, value: 50.0 },
+            AlarmLevel::Warning,
+            config,
+            "ws-1".to_string(),
+        );
+        assert!(rule.is_err());
+    }
+
+    #[test]
+    fn test_alarm_rule_new_enabled_notification_no_channels_fails() {
+        let config = NotificationConfig {
+            enabled: true,
+            channels: vec![],
+            recipients: vec![],
+            suppress_duration: None,
+            repeat_interval: None,
+        };
+        let rule = AlarmRule::new(
+            "Test".to_string(),
+            None, None, None,
+            RuleType::Threshold,
+            AlarmCondition::Threshold { operator: ComparisonOperator::GreaterThan, value: 50.0 },
+            AlarmLevel::Warning,
+            config,
+            "ws-1".to_string(),
+        );
+        assert!(rule.is_err());
+    }
+
+    #[test]
+    fn test_alarm_rule_update_name() {
+        let config = NotificationConfig {
+            enabled: false,
+            channels: vec![],
+            recipients: vec![],
+            suppress_duration: None,
+            repeat_interval: None,
+        };
+        let mut rule = AlarmRule::new(
+            "Old Name".to_string(),
+            None, None, None,
+            RuleType::Threshold,
+            AlarmCondition::Threshold { operator: ComparisonOperator::GreaterThan, value: 50.0 },
+            AlarmLevel::Warning,
+            config,
+            "ws-1".to_string(),
+        ).unwrap();
+
+        let result = rule.update(Some("New Name".to_string()), None, None, None, None);
+        assert!(result.is_ok());
+        assert_eq!(rule.name, "New Name");
+    }
+
+    #[test]
+    fn test_alarm_rule_update_empty_name_fails() {
+        let config = NotificationConfig {
+            enabled: false,
+            channels: vec![],
+            recipients: vec![],
+            suppress_duration: None,
+            repeat_interval: None,
+        };
+        let mut rule = AlarmRule::new(
+            "Name".to_string(),
+            None, None, None,
+            RuleType::Threshold,
+            AlarmCondition::Threshold { operator: ComparisonOperator::GreaterThan, value: 50.0 },
+            AlarmLevel::Warning,
+            config,
+            "ws-1".to_string(),
+        ).unwrap();
+
+        let result = rule.update(Some("".to_string()), None, None, None, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_alarm_rule_enable_disable() {
+        let config = NotificationConfig {
+            enabled: false,
+            channels: vec![],
+            recipients: vec![],
+            suppress_duration: None,
+            repeat_interval: None,
+        };
+        let mut rule = AlarmRule::new(
+            "Name".to_string(),
+            None, None, None,
+            RuleType::Threshold,
+            AlarmCondition::Threshold { operator: ComparisonOperator::GreaterThan, value: 50.0 },
+            AlarmLevel::Warning,
+            config,
+            "ws-1".to_string(),
+        ).unwrap();
+
+        rule.disable();
+        assert!(!rule.is_enabled);
+        rule.enable();
+        assert!(rule.is_enabled);
+    }
+
+    #[test]
+    fn test_alarm_dto_from_alarm() {
+        let alarm = Alarm::new(
+            "device-1".to_string(),
+            Some("prop-1".to_string()),
+            Some("rule-1".to_string()),
+            AlarmType::DeviceOffline,
+            AlarmLevel::Warning,
+            "offline".to_string(),
+            Some("0".to_string()),
+            Some("1".to_string()),
+        );
+        let dto = AlarmDto::from(alarm.clone());
+        assert_eq!(dto.device_id, "device-1");
+        assert_eq!(dto.alarm_type, "device_offline");
+        assert_eq!(dto.alarm_level, "warning");
+        assert_eq!(dto.status, "active");
+        assert!(!dto.is_acknowledged);
+        assert!(!dto.is_resolved);
+    }
+
+    #[test]
+    fn test_alarm_statistics_dto_from() {
+        use crate::modules::alarm::AlarmStatistics;
+        let stats = AlarmStatistics {
+            total_count: 10,
+            active_count: 3,
+            acknowledged_count: 2,
+            resolved_count: 5,
+        };
+        let dto = AlarmStatisticsDto::from(stats);
+        assert_eq!(dto.total_count, 10);
+        assert_eq!(dto.active_count, 3);
+        assert_eq!(dto.acknowledged_count, 2);
+        assert_eq!(dto.resolved_count, 5);
+    }
 }

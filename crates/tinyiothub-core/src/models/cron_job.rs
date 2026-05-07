@@ -66,6 +66,7 @@ pub struct CronJobQuery {
     pub name: Option<String>,
     pub job_type: Option<String>,
     pub is_enabled: Option<bool>,
+    pub workspace_id: Option<String>,
     pub page: Option<u32>,
     pub page_size: Option<u32>,
 }

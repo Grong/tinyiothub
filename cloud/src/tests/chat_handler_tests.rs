@@ -81,3 +81,13 @@ async fn test_tools_toggle() {
     let response = app.oneshot(auth_request("POST", "/api/v1/tools/toggle", &token, Some(json!({})))).await.unwrap();
     assert!(response.status().is_success() || response.status().is_client_error());
 }
+
+// ── Abort ──
+
+#[tokio::test]
+async fn test_abort_chat_session_not_found() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app.oneshot(auth_request("POST", "/api/v1/chat/abort", &token, Some(json!({"session_key": "nonexistent"})))).await.unwrap();
+    assert!(response.status().is_success() || response.status().is_client_error());
+}

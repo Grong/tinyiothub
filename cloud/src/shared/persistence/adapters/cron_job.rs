@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use async_trait::async_trait;
 use tinyiothub_core::error::Result;
 use tinyiothub_core::models::cron_job::{CreateCronJobRequest, CronJob, CronJobQuery, UpdateCronJobRequest};
@@ -45,7 +47,6 @@ impl<R: CronJobRepository> TenantCronJobRepository<R> {
 #[async_trait]
 impl<R: CronJobRepository + Send + Sync> CronJobRepository for TenantCronJobRepository<R> {
     async fn find_by_id(&self, id: &str) -> Result<Option<CronJob>> {
-        // Verify job belongs to this workspace
         if !self.job_belongs_to_workspace(id).await? {
             return Ok(None);
         }
@@ -53,10 +54,9 @@ impl<R: CronJobRepository + Send + Sync> CronJobRepository for TenantCronJobRepo
     }
 
     async fn find_all(&self, query: &CronJobQuery) -> Result<Vec<CronJob>> {
-        // TODO: Add workspace filtering to query
-        // Since CronJobQuery doesn't have workspace_id field,
-        // we need to modify the SQL query or filter results after fetching.
-        self.inner.find_all(query).await
+        let mut filtered_query = query.clone();
+        filtered_query.workspace_id = Some(self.workspace_id.clone());
+        self.inner.find_all(&filtered_query).await
     }
 
     async fn create(
@@ -72,12 +72,16 @@ impl<R: CronJobRepository + Send + Sync> CronJobRepository for TenantCronJobRepo
         id: &str,
         req: &UpdateCronJobRequest,
     ) -> Result<CronJob> {
-        // TODO: Verify job belongs to this workspace before updating
+        if !self.job_belongs_to_workspace(id).await? {
+            return Err(tinyiothub_core::error::Error::NotFound);
+        }
         self.inner.update(id, req).await
     }
 
     async fn delete(&self, id: &str) -> Result<bool> {
-        // TODO: Verify job belongs to this workspace before deleting
+        if !self.job_belongs_to_workspace(id).await? {
+            return Err(tinyiothub_core::error::Error::NotFound);
+        }
         self.inner.delete(id).await
     }
 
@@ -87,43 +91,79 @@ impl<R: CronJobRepository + Send + Sync> CronJobRepository for TenantCronJobRepo
         status: &str,
         error: Option<&str>,
     ) -> Result<bool> {
-        // TODO: Verify job belongs to this workspace
+        if !self.job_belongs_to_workspace(id).await? {
+            return Ok(false);
+        }
         self.inner.update_run_stats(id, status, error).await
     }
 
     async fn set_running(&self, id: &str, running: bool) -> Result<bool> {
-        // TODO: Verify job belongs to this workspace
+        if !self.job_belongs_to_workspace(id).await? {
+            return Ok(false);
+        }
         self.inner.set_running(id, running).await
     }
 
     async fn find_due_jobs(&self) -> Result<Vec<CronJob>> {
-        // TODO: Add workspace filtering - only due jobs in this workspace
-        self.inner.find_due_jobs().await
+        let ws_job_ids: Vec<(String,)> = sqlx::query_as(
+            "SELECT id FROM cron_jobs WHERE workspace_id = ?"
+        )
+        .bind(&self.workspace_id)
+        .fetch_all(self.database.pool())
+        .await?;
+
+        let ws_ids: HashSet<String> = ws_job_ids.into_iter().map(|(id,)| id).collect();
+
+        let due_jobs = self.inner.find_due_jobs().await?;
+        Ok(due_jobs.into_iter().filter(|j| ws_ids.contains(&j.id)).collect())
     }
 
     async fn claim_job(&self, id: &str) -> Result<bool> {
-        // TODO: Verify job belongs to this workspace and claim only if it does
+        if !self.job_belongs_to_workspace(id).await? {
+            return Ok(false);
+        }
         self.inner.claim_job(id).await
     }
 
     async fn clear_all_running(&self) -> Result<u64> {
-        // TODO: Clear only running jobs in this workspace
-        self.inner.clear_all_running().await
+        let result = sqlx::query(
+            "UPDATE cron_jobs SET is_running = 0, updated_at = datetime('now') WHERE is_running = 1 AND workspace_id = ?"
+        )
+        .bind(&self.workspace_id)
+        .execute(self.database.pool())
+        .await?;
+        Ok(result.rows_affected())
     }
 
     async fn count(&self) -> Result<i64> {
-        // TODO: Count only jobs in this workspace
-        self.inner.count().await
+        let result: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM cron_jobs WHERE workspace_id = ?"
+        )
+        .bind(&self.workspace_id)
+        .fetch_one(self.database.pool())
+        .await?;
+        Ok(result.0)
     }
 
     async fn count_by_enabled(&self, is_enabled: bool) -> Result<i64> {
-        // TODO: Count only jobs in this workspace with given enabled status
-        self.inner.count_by_enabled(is_enabled).await
+        let result: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM cron_jobs WHERE workspace_id = ? AND is_enabled = ?"
+        )
+        .bind(&self.workspace_id)
+        .bind(if is_enabled { 1 } else { 0 })
+        .fetch_one(self.database.pool())
+        .await?;
+        Ok(result.0)
     }
 
     async fn count_running(&self) -> Result<i64> {
-        // TODO: Count only running jobs in this workspace
-        self.inner.count_running().await
+        let result: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM cron_jobs WHERE workspace_id = ? AND is_running = 1"
+        )
+        .bind(&self.workspace_id)
+        .fetch_one(self.database.pool())
+        .await?;
+        Ok(result.0)
     }
 
     async fn update_next_run_at(
@@ -131,7 +171,9 @@ impl<R: CronJobRepository + Send + Sync> CronJobRepository for TenantCronJobRepo
         id: &str,
         next_run_at: Option<&str>,
     ) -> Result<bool> {
-        // TODO: Verify job belongs to this workspace
+        if !self.job_belongs_to_workspace(id).await? {
+            return Ok(false);
+        }
         self.inner.update_next_run_at(id, next_run_at).await
     }
 }

@@ -197,3 +197,52 @@ async fn test_get_tag_bindings() {
     let (_s, json) = response_parts(response).await;
     assert!(json["code"].is_number());
 }
+
+#[tokio::test]
+async fn test_batch_create_bindings_missing_fields() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app.oneshot(auth_request("POST", "/api/v1/tags/bindings/batch", &token, Some(json!({})))).await.unwrap();
+    assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY || response.status() == StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_batch_delete_bindings_missing_fields() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app.oneshot(auth_request("DELETE", "/api/v1/tags/bindings/batch", &token, Some(json!({})))).await.unwrap();
+    assert!(response.status().is_success() || response.status().is_client_error());
+}
+
+// ── Tag Lifecycle ──
+
+#[tokio::test]
+async fn test_tag_lifecycle() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+
+    // 1. Create
+    let body = json!({"name": "lifecycle-tag", "type": "device"});
+    let response = app.clone().oneshot(auth_request("POST", "/api/v1/tags", &token, Some(body))).await.unwrap();
+    let (_s, json) = response_parts(response).await;
+    assert_eq!(json["code"], 0, "Expected success creating tag: {}", json);
+    let tag_id = json["result"]["id"].as_str().unwrap().to_string();
+
+    // 2. Get by ID
+    let response = app.clone().oneshot(auth_request("GET", &format!("/api/v1/tags/{}", tag_id), &token, None)).await.unwrap();
+    let (_s, json) = response_parts(response).await;
+    assert_eq!(json["code"], 0, "Expected success getting tag: {}", json);
+    assert_eq!(json["result"]["name"], "lifecycle-tag");
+
+    // 3. Update
+    let body = json!({"name": "lifecycle-tag-updated"});
+    let response = app.clone().oneshot(auth_request("PUT", &format!("/api/v1/tags/{}", tag_id), &token, Some(body))).await.unwrap();
+    let (_s, json) = response_parts(response).await;
+    assert_eq!(json["code"], 0, "Expected success updating tag: {}", json);
+    assert_eq!(json["result"]["name"], "lifecycle-tag-updated");
+
+    // 4. Delete
+    let response = app.oneshot(auth_request("DELETE", &format!("/api/v1/tags/{}", tag_id), &token, None)).await.unwrap();
+    let (_s, json) = response_parts(response).await;
+    assert_eq!(json["code"], 0, "Expected success deleting tag: {}", json);
+}

@@ -103,6 +103,7 @@ pub struct NotificationRule {
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub workspace_id: Option<String>,
 
     // Legacy compatibility fields
     pub event_types: Vec<String>,
@@ -134,6 +135,7 @@ impl NotificationRule {
             enabled: true,
             created_at: now,
             updated_at: now,
+            workspace_id: None,
             event_types: Vec::new(),
             event_levels: Vec::new(),
             channels: notification_methods,
@@ -227,6 +229,7 @@ impl NotificationAggregate {
             enabled: true,
             created_at: now,
             updated_at: now,
+            workspace_id: None,
             event_types,
             event_levels,
             channels,

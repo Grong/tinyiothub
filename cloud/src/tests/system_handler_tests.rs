@@ -110,3 +110,162 @@ async fn test_delete_system_task_not_found() {
     let (_s, json) = response_parts(response).await;
     assert!(json["code"].is_number());
 }
+
+// ── Products ──
+
+#[tokio::test]
+async fn test_list_products() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app.oneshot(auth_request("GET", "/api/v1/system/products?page=1&page_size=20", &token, None)).await.unwrap();
+    assert!(response.status().is_success() || response.status().is_client_error());
+    if response.status() == StatusCode::OK {
+        let (_s, json) = response_parts(response).await;
+        assert!(json["code"].is_number());
+    }
+}
+
+#[tokio::test]
+async fn test_create_product_missing_fields() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app.oneshot(auth_request("POST", "/api/v1/system/products", &token, Some(json!({})))).await.unwrap();
+    assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY || response.status() == StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_get_product_not_found() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app.oneshot(auth_request("GET", "/api/v1/system/products/nonexistent-product-12345", &token, None)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert_ne!(json["code"], 0, "Expected error for nonexistent product");
+}
+
+#[tokio::test]
+async fn test_update_product_not_found() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app.oneshot(auth_request("PUT", "/api/v1/system/products/nonexistent-product-12345", &token, Some(json!({"name": "updated"})))).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert_ne!(json["code"], 0, "Expected error for nonexistent product");
+}
+
+#[tokio::test]
+async fn test_delete_product_not_found() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app.oneshot(auth_request("DELETE", "/api/v1/system/products/nonexistent-product-12345", &token, None)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert!(json["code"].is_number());
+}
+
+// ── Configuration — write endpoints ──
+
+#[tokio::test]
+async fn test_update_system_config() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app.oneshot(auth_request("POST", "/api/v1/system/system", &token, Some(json!({"system_name": "test"})))).await.unwrap();
+    assert!(response.status().is_success() || response.status().is_client_error());
+    if response.status() == StatusCode::OK {
+        let (_s, json) = response_parts(response).await;
+        assert!(json["code"].is_number());
+    }
+}
+
+#[tokio::test]
+async fn test_update_network_config() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app.oneshot(auth_request("POST", "/api/v1/system/network", &token, Some(json!({"host": "0.0.0.0"})))).await.unwrap();
+    assert!(response.status().is_success() || response.status().is_client_error());
+    if response.status() == StatusCode::OK {
+        let (_s, json) = response_parts(response).await;
+        assert!(json["code"].is_number());
+    }
+}
+
+#[tokio::test]
+async fn test_update_mqtt_config() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app.oneshot(auth_request("POST", "/api/v1/system/mqtt", &token, Some(json!({"broker": "mqtt.example.com"})))).await.unwrap();
+    assert!(response.status().is_success() || response.status().is_client_error());
+    if response.status() == StatusCode::OK {
+        let (_s, json) = response_parts(response).await;
+        assert!(json["code"].is_number());
+    }
+}
+
+#[tokio::test]
+async fn test_initialize_system() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app.oneshot(auth_request("POST", "/api/v1/system/initialize", &token, Some(json!({})))).await.unwrap();
+    assert!(response.status().is_success() || response.status().is_client_error());
+    if response.status() == StatusCode::OK {
+        let (_s, json) = response_parts(response).await;
+        assert!(json["code"].is_number());
+    }
+}
+
+#[tokio::test]
+async fn test_restart_system() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app.oneshot(auth_request("POST", "/api/v1/system/restart", &token, None)).await.unwrap();
+    assert!(response.status().is_success() || response.status().is_client_error());
+}
+
+#[tokio::test]
+async fn test_shutdown_system() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app.oneshot(auth_request("POST", "/api/v1/system/shutdown", &token, None)).await.unwrap();
+    assert!(response.status().is_success() || response.status().is_client_error());
+}
+
+// ── Task Actions ──
+
+#[tokio::test]
+async fn test_enable_system_task_not_found() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app
+        .oneshot(auth_request("POST", "/api/v1/system/tasks/nonexistent-task-12345/enable", &token, None))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert!(json["code"].is_number(), "Expected numeric code");
+}
+
+#[tokio::test]
+async fn test_disable_system_task_not_found() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app
+        .oneshot(auth_request("POST", "/api/v1/system/tasks/nonexistent-task-12345/disable", &token, None))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert!(json["code"].is_number(), "Expected numeric code");
+}
+
+#[tokio::test]
+async fn test_run_system_task_not_found() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app
+        .oneshot(auth_request("POST", "/api/v1/system/tasks/nonexistent-task-12345/run", &token, None))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert!(json["code"].is_number(), "Expected numeric code");
+}

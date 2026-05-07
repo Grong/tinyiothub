@@ -30,8 +30,8 @@ impl AlarmService {
         Ok(alarm)
     }
 
-    pub async fn get_alarm_by_id(&self, id: &str) -> AlarmResult<Option<Alarm>> {
-        self.alarm_repository.find_by_id(id).await
+    pub async fn get_alarm_by_id(&self, id: &str, workspace_id: Option<&str>) -> AlarmResult<Option<Alarm>> {
+        self.alarm_repository.find_by_id(id, workspace_id).await
     }
 
     pub async fn acknowledge_alarm(
@@ -42,7 +42,7 @@ impl AlarmService {
     ) -> AlarmResult<()> {
         let mut alarm = self
             .alarm_repository
-            .find_by_id(alarm_id)
+            .find_by_id(alarm_id, None)
             .await?
             .ok_or_else(|| AlarmError::NotFound(alarm_id.to_string()))?;
 
@@ -67,7 +67,7 @@ impl AlarmService {
     ) -> AlarmResult<()> {
         let mut alarm = self
             .alarm_repository
-            .find_by_id(alarm_id)
+            .find_by_id(alarm_id, None)
             .await?
             .ok_or_else(|| AlarmError::NotFound(alarm_id.to_string()))?;
 
@@ -129,8 +129,13 @@ impl AlarmService {
     pub async fn get_alarm_statistics(
         &self,
         time_range: TimeRange,
+        workspace_id: &str,
     ) -> AlarmResult<AlarmStatistics> {
-        let criteria = AlarmQueryCriteria { time_range: Some(time_range), ..Default::default() };
+        let criteria = AlarmQueryCriteria {
+            time_range: Some(time_range),
+            workspace_id: Some(workspace_id.to_string()),
+            ..Default::default()
+        };
 
         let alarms = self.alarm_repository.find_by_criteria(&criteria).await?;
 
@@ -167,25 +172,25 @@ impl AlarmService {
         self.rule_repository.find_by_id(id).await
     }
 
-    pub async fn get_all_rules(&self) -> AlarmResult<Vec<AlarmRule>> {
-        self.rule_repository.find_enabled().await
+    pub async fn get_all_rules(&self, workspace_id: &str) -> AlarmResult<Vec<AlarmRule>> {
+        self.rule_repository.find_enabled(Some(workspace_id)).await
     }
 
-    pub async fn get_rules_by_device(&self, device_id: &str) -> AlarmResult<Vec<AlarmRule>> {
-        self.rule_repository.find_by_device(device_id).await
+    pub async fn get_rules_by_device(&self, device_id: &str, workspace_id: &str) -> AlarmResult<Vec<AlarmRule>> {
+        self.rule_repository.find_by_device(device_id, Some(workspace_id)).await
     }
 
-    pub async fn update_rule(&self, rule: AlarmRule) -> AlarmResult<()> {
+    pub async fn update_rule(&self, rule: AlarmRule, workspace_id: Option<&str>) -> AlarmResult<()> {
         AlarmSpecifications::is_valid_rule(&rule).map_err(AlarmError::InvalidRuleConfig)?;
-        self.rule_repository.update(&rule).await
+        self.rule_repository.update(&rule, workspace_id).await
     }
 
-    pub async fn delete_rule(&self, id: &str) -> AlarmResult<()> {
-        self.rule_repository.delete(id).await
+    pub async fn delete_rule(&self, id: &str, workspace_id: Option<&str>) -> AlarmResult<()> {
+        self.rule_repository.delete(id, workspace_id).await
     }
 
-    pub async fn set_rule_enabled(&self, id: &str, enabled: bool) -> AlarmResult<()> {
-        self.rule_repository.set_enabled(id, enabled).await
+    pub async fn set_rule_enabled(&self, id: &str, enabled: bool, workspace_id: Option<&str>) -> AlarmResult<()> {
+        self.rule_repository.set_enabled(id, enabled, workspace_id).await
     }
 
     pub fn rule_engine(&self) -> Arc<RuleEngine> {
@@ -396,7 +401,7 @@ impl RuleEngine {
     ) -> AlarmResult<Vec<AlarmRule>> {
         let mut rules = Vec::new();
         rules.extend(self.rule_repository.find_global_rules().await?);
-        rules.extend(self.rule_repository.find_by_device(device_id).await?);
+        rules.extend(self.rule_repository.find_by_device(device_id, None).await?);
         if let Some(prop_id) = property_id {
             rules.extend(self.rule_repository.find_by_property(device_id, prop_id).await?);
         }

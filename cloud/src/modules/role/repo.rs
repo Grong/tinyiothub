@@ -9,24 +9,25 @@ use tinyiothub_core::error::Result;
 #[async_trait]
 pub trait RoleRepository: Send + Sync {
     async fn find_by_id(&self, id: &str) -> Result<Option<Role>>;
-    async fn find_by_name(&self, name: &str) -> Result<Option<Role>>;
+    async fn find_by_name(&self, name: &str, workspace_id: Option<&str>) -> Result<Option<Role>>;
     async fn create(&self, request: &CreateRoleRequest) -> Result<Role>;
     async fn update(&self, id: &str, request: &UpdateRoleRequest) -> Result<Role>;
     async fn delete(&self, id: &str) -> Result<u64>;
     async fn delete_by_ids(&self, ids: &[String]) -> Result<u64>;
     async fn find_all(&self, params: &RoleQueryParams) -> Result<Vec<Role>>;
     async fn count(&self, params: &RoleQueryParams) -> Result<i64>;
-    async fn get_stats(&self) -> Result<RoleStats>;
-    async fn find_admin_roles(&self) -> Result<Vec<Role>>;
-    async fn find_user_roles(&self) -> Result<Vec<Role>>;
-    async fn exists_by_name(&self, name: &str) -> Result<bool>;
-    async fn exists_by_name_exclude_id(&self, name: &str, exclude_id: &str) -> Result<bool>;
+    async fn get_stats(&self, workspace_id: Option<&str>) -> Result<RoleStats>;
+    async fn find_admin_roles(&self, workspace_id: Option<&str>) -> Result<Vec<Role>>;
+    async fn find_user_roles(&self, workspace_id: Option<&str>) -> Result<Vec<Role>>;
+    async fn exists_by_name(&self, name: &str, workspace_id: Option<&str>) -> Result<bool>;
+    async fn exists_by_name_exclude_id(&self, name: &str, exclude_id: &str, workspace_id: Option<&str>) -> Result<bool>;
     async fn find_by_ids(&self, ids: &[String]) -> Result<Vec<Role>>;
     async fn is_administrator_role(&self, id: &str) -> Result<bool>;
     async fn find_with_filters(
         &self,
         enabled: Option<bool>,
         search: Option<&str>,
+        workspace_id: Option<&str>,
         page: u32,
         page_size: u32,
     ) -> Result<Vec<Role>>;
@@ -41,6 +42,7 @@ struct RoleRow {
     name: String,
     description: Option<String>,
     is_administrator: i32,
+    workspace_id: Option<String>,
 }
 
 impl From<RoleRow> for Role {
@@ -50,6 +52,7 @@ impl From<RoleRow> for Role {
             name: row.name,
             description: row.description,
             is_administrator: row.is_administrator,
+            workspace_id: row.workspace_id,
         }
     }
 }
@@ -70,7 +73,7 @@ impl SqliteRoleRepository {
 impl RoleRepository for SqliteRoleRepository {
     async fn find_by_id(&self, id: &str) -> Result<Option<Role>> {
         let row = sqlx::query_as::<_, RoleRow>(
-            "SELECT id, name, description, is_administrator FROM roles WHERE id = ?",
+            "SELECT id, name, description, is_administrator, workspace_id FROM roles WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(self.database.pool())
@@ -79,13 +82,19 @@ impl RoleRepository for SqliteRoleRepository {
         Ok(row.map(Into::into))
     }
 
-    async fn find_by_name(&self, name: &str) -> Result<Option<Role>> {
-        let row = sqlx::query_as::<_, RoleRow>(
-            "SELECT id, name, description, is_administrator FROM roles WHERE name = ?",
-        )
-        .bind(name)
-        .fetch_optional(self.database.pool())
-        .await?;
+    async fn find_by_name(&self, name: &str, workspace_id: Option<&str>) -> Result<Option<Role>> {
+        let mut query = QueryBuilder::new(
+            "SELECT id, name, description, is_administrator, workspace_id FROM roles WHERE name = "
+        );
+        query.push_bind(name);
+
+        if let Some(ws) = workspace_id {
+            query.push(" AND (workspace_id = ").push_bind(ws).push(" OR workspace_id IS NULL)");
+        }
+
+        let row = query.build_query_as::<RoleRow>()
+            .fetch_optional(self.database.pool())
+            .await?;
 
         Ok(row.map(Into::into))
     }
@@ -96,14 +105,15 @@ impl RoleRepository for SqliteRoleRepository {
 
         sqlx::query(
             r#"
-            INSERT INTO roles (id, name, description, IsAdministrator)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO roles (id, name, description, IsAdministrator, workspace_id)
+            VALUES (?, ?, ?, ?, ?)
             "#,
         )
         .bind(&id)
         .bind(&request.name)
         .bind(&request.description)
         .bind(is_admin)
+        .bind(&request.workspace_id)
         .execute(self.database.pool())
         .await?;
 
@@ -135,6 +145,14 @@ impl RoleRepository for SqliteRoleRepository {
                 query.push(", ");
             }
             query.push("is_administrator = ").push_bind(is_administrator);
+            has_updates = true;
+        }
+
+        if let Some(workspace_id) = &request.workspace_id {
+            if has_updates {
+                query.push(", ");
+            }
+            query.push("workspace_id = ").push_bind(workspace_id);
             has_updates = true;
         }
 
@@ -180,7 +198,7 @@ impl RoleRepository for SqliteRoleRepository {
 
     async fn find_all(&self, params: &RoleQueryParams) -> Result<Vec<Role>> {
         let mut query = QueryBuilder::new(
-            "SELECT id, name, description, is_administrator FROM roles WHERE 1=1",
+            "SELECT id, name, description, is_administrator, workspace_id FROM roles WHERE 1=1",
         );
 
         if let Some(name) = &params.name {
@@ -193,6 +211,10 @@ impl RoleRepository for SqliteRoleRepository {
 
         if let Some(is_administrator) = params.is_administrator {
             query.push(" AND is_administrator = ").push_bind(is_administrator);
+        }
+
+        if let Some(workspace_id) = &params.workspace_id {
+            query.push(" AND (workspace_id = ").push_bind(workspace_id).push(" OR workspace_id IS NULL)");
         }
 
         query.push(" ORDER BY name");
@@ -223,24 +245,33 @@ impl RoleRepository for SqliteRoleRepository {
             query.push(" AND is_administrator = ").push_bind(is_administrator);
         }
 
+        if let Some(workspace_id) = &params.workspace_id {
+            query.push(" AND (workspace_id = ").push_bind(workspace_id).push(" OR workspace_id IS NULL)");
+        }
+
         let row = query.build().fetch_one(self.database.pool()).await?;
         let count: i64 = row.get("count");
 
         Ok(count)
     }
 
-    async fn get_stats(&self) -> Result<RoleStats> {
-        let row = sqlx::query(
+    async fn get_stats(&self, workspace_id: Option<&str>) -> Result<RoleStats> {
+        let mut query = QueryBuilder::new(
             r#"
             SELECT
                 COUNT(*) as total_roles,
                 COUNT(CASE WHEN is_administrator = 1 THEN 1 END) as admin_roles,
                 COUNT(CASE WHEN is_administrator = 0 THEN 1 END) as user_roles
             FROM roles
+            WHERE 1=1
             "#,
-        )
-        .fetch_one(self.database.pool())
-        .await?;
+        );
+
+        if let Some(ws) = workspace_id {
+            query.push(" AND (workspace_id = ").push_bind(ws).push(" OR workspace_id IS NULL)");
+        }
+
+        let row = query.build().fetch_one(self.database.pool()).await?;
 
         let stats = RoleStats {
             total_roles: row.get("total_roles"),
@@ -251,42 +282,63 @@ impl RoleRepository for SqliteRoleRepository {
         Ok(stats)
     }
 
-    async fn find_admin_roles(&self) -> Result<Vec<Role>> {
-        let rows = sqlx::query_as::<_, RoleRow>(
-            "SELECT id, name, description, is_administrator FROM roles WHERE is_administrator = 1 ORDER BY name"
-        )
-        .fetch_all(self.database.pool())
-        .await?;
+    async fn find_admin_roles(&self, workspace_id: Option<&str>) -> Result<Vec<Role>> {
+        let mut query = QueryBuilder::new(
+            "SELECT id, name, description, is_administrator, workspace_id FROM roles WHERE is_administrator = 1"
+        );
+
+        if let Some(ws) = workspace_id {
+            query.push(" AND (workspace_id = ").push_bind(ws).push(" OR workspace_id IS NULL)");
+        }
+
+        query.push(" ORDER BY name");
+
+        let rows = query.build_query_as::<RoleRow>().fetch_all(self.database.pool()).await?;
 
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
-    async fn find_user_roles(&self) -> Result<Vec<Role>> {
-        let rows = sqlx::query_as::<_, RoleRow>(
-            "SELECT id, name, description, is_administrator FROM roles WHERE is_administrator = 0 ORDER BY name"
-        )
-        .fetch_all(self.database.pool())
-        .await?;
+    async fn find_user_roles(&self, workspace_id: Option<&str>) -> Result<Vec<Role>> {
+        let mut query = QueryBuilder::new(
+            "SELECT id, name, description, is_administrator, workspace_id FROM roles WHERE is_administrator = 0"
+        );
+
+        if let Some(ws) = workspace_id {
+            query.push(" AND (workspace_id = ").push_bind(ws).push(" OR workspace_id IS NULL)");
+        }
+
+        query.push(" ORDER BY name");
+
+        let rows = query.build_query_as::<RoleRow>().fetch_all(self.database.pool()).await?;
 
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
-    async fn exists_by_name(&self, name: &str) -> Result<bool> {
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM roles WHERE name = ?")
-            .bind(name)
-            .fetch_one(self.database.pool())
-            .await?;
+    async fn exists_by_name(&self, name: &str, workspace_id: Option<&str>) -> Result<bool> {
+        let mut query = QueryBuilder::new("SELECT COUNT(*) FROM roles WHERE name = ");
+        query.push_bind(name);
+
+        if let Some(ws) = workspace_id {
+            query.push(" AND (workspace_id = ").push_bind(ws).push(" OR workspace_id IS NULL)");
+        }
+
+        let row = query.build().fetch_one(self.database.pool()).await?;
+        let count: i64 = row.try_get::<i64, _>(0)?;
 
         Ok(count > 0)
     }
 
-    async fn exists_by_name_exclude_id(&self, name: &str, exclude_id: &str) -> Result<bool> {
-        let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM roles WHERE name = ? AND id != ?")
-                .bind(name)
-                .bind(exclude_id)
-                .fetch_one(self.database.pool())
-                .await?;
+    async fn exists_by_name_exclude_id(&self, name: &str, exclude_id: &str, workspace_id: Option<&str>) -> Result<bool> {
+        let mut query = QueryBuilder::new("SELECT COUNT(*) FROM roles WHERE name = ");
+        query.push_bind(name);
+        query.push(" AND id != ").push_bind(exclude_id);
+
+        if let Some(ws) = workspace_id {
+            query.push(" AND (workspace_id = ").push_bind(ws).push(" OR workspace_id IS NULL)");
+        }
+
+        let row = query.build().fetch_one(self.database.pool()).await?;
+        let count: i64 = row.try_get::<i64, _>(0)?;
 
         Ok(count > 0)
     }
@@ -297,7 +349,7 @@ impl RoleRepository for SqliteRoleRepository {
         }
 
         let mut query = QueryBuilder::new(
-            "SELECT id, name, description, is_administrator FROM roles WHERE id IN (",
+            "SELECT id, name, description, is_administrator, workspace_id FROM roles WHERE id IN (",
         );
 
         let mut separated = query.separated(", ");
@@ -325,12 +377,14 @@ impl RoleRepository for SqliteRoleRepository {
         &self,
         _enabled: Option<bool>,
         search: Option<&str>,
+        workspace_id: Option<&str>,
         page: u32,
         page_size: u32,
     ) -> Result<Vec<Role>> {
         let mut params = RoleQueryParams::default();
         params.page = Some(page);
         params.page_size = Some(page_size);
+        params.workspace_id = workspace_id.map(|s| s.to_string());
 
         if let Some(search) = search {
             params.name = Some(search.to_string());

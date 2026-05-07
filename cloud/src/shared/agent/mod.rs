@@ -59,32 +59,34 @@ pub trait AgentClient: Send + Sync {
         run_id: Option<&str>,
     ) -> Result<(), AgentError>;
 
-    /// List all agents
-    async fn list_agents(&self) -> Result<serde_json::Value, AgentError>;
+    /// List agents scoped to a workspace
+    async fn list_agents(&self, workspace_id: &str) -> Result<serde_json::Value, AgentError>;
 
-    /// Get agent config
-    async fn get_agent_config(&self, agent_id: &str) -> Result<serde_json::Value, AgentError>;
+    /// Get agent config (verifies workspace ownership)
+    async fn get_agent_config(&self, agent_id: &str, workspace_id: &str) -> Result<serde_json::Value, AgentError>;
 
-    /// Set agent config
+    /// Set agent config (verifies workspace ownership)
     async fn set_agent_config(
         &self,
         agent_id: &str,
         config: &str,
         base_hash: Option<&str>,
+        workspace_id: &str,
     ) -> Result<(), AgentError>;
 
     /// Get tools catalog for an agent
     async fn tools_catalog(&self, agent_id: &str) -> Result<serde_json::Value, AgentError>;
 
-    /// Get effective tools for an agent
-    async fn tools_effective(&self, agent_id: &str) -> Result<serde_json::Value, AgentError>;
+    /// Get effective tools for an agent (verifies workspace ownership)
+    async fn tools_effective(&self, agent_id: &str, workspace_id: &str) -> Result<serde_json::Value, AgentError>;
 
-    /// Toggle a tool on/off for an agent
+    /// Toggle a tool on/off for an agent (verifies workspace ownership)
     async fn tools_toggle(
         &self,
         agent_id: &str,
         tool_name: &str,
         enabled: bool,
+        workspace_id: &str,
     ) -> Result<(), AgentError>;
 }
 

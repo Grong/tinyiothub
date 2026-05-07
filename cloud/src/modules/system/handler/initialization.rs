@@ -153,16 +153,21 @@ pub async fn ensure_default_admin_user(state: &AppState) -> Result<()> {
     Ok(())
 }
 
-/// 确保任意用户关联到默认租户和工作空间（幂等，可多次调用）
+/// 确保任意用户关联到默认租户，并为其创建独立 workspace（幂等）
 pub async fn ensure_user_has_workspace(state: &AppState, user_id: &str) -> Result<()> {
-    ensure_default_tenant(state, user_id).await
+    // Step 1: 确保默认租户存在 + 用户关联到租户
+    ensure_tenant_membership(state, user_id).await?;
+
+    // Step 2: 为用户创建独立 workspace
+    ensure_user_workspace(state, user_id).await?;
+
+    Ok(())
 }
 
-/// 确保默认租户、租户用户关联和默认工作空间/Agent 存在
-async fn ensure_default_tenant(state: &AppState, user_id: &str) -> Result<()> {
+/// 确保用户关联到默认租户（不创建 workspace）
+async fn ensure_tenant_membership(state: &AppState, user_id: &str) -> Result<()> {
     let pool = state.database().pool();
 
-    // 检查 admin 是否已有租户
     let has_tenant: bool = sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM tenant_users WHERE user_id = ?)"
     )
@@ -172,9 +177,8 @@ async fn ensure_default_tenant(state: &AppState, user_id: &str) -> Result<()> {
     .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
 
     if !has_tenant {
-        tracing::info!("[init] User has no tenant, bootstrapping default tenant...");
+        tracing::info!("[init] User {} has no tenant, bootstrapping default tenant...", user_id);
 
-        // 检查是否有任何租户
         let tenant_exists: bool = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM tenants WHERE id = 'tenant-default-001')"
         )
@@ -183,7 +187,6 @@ async fn ensure_default_tenant(state: &AppState, user_id: &str) -> Result<()> {
         .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
 
         if !tenant_exists {
-            // 创建默认租户
             sqlx::query(
                 r#"INSERT INTO tenants
                    (id, name, slug, status, plan_id, subscription_status,
@@ -199,7 +202,6 @@ async fn ensure_default_tenant(state: &AppState, user_id: &str) -> Result<()> {
             tracing::info!("[init] Created default tenant");
         }
 
-        // 关联 admin 用户到默认租户
         let tenant_user_id = format!("tu-{}", user_id);
         sqlx::query(
             r#"INSERT OR IGNORE INTO tenant_users
@@ -212,10 +214,105 @@ async fn ensure_default_tenant(state: &AppState, user_id: &str) -> Result<()> {
         .execute(pool)
         .await
         .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
-        tracing::info!("[init] Linked admin user to default tenant");
+        tracing::info!("[init] Linked user {} to default tenant", user_id);
     }
 
-    // 确保默认工作空间和 Agent 存在（无论租户是否新建）
+    Ok(())
+}
+
+/// 为用户创建独立 workspace `ws-{user_id}`（幂等）
+async fn ensure_user_workspace(state: &AppState, user_id: &str) -> Result<()> {
+    let pool = state.database().pool();
+    let ws_id = format!("ws-{}", user_id);
+
+    let ws_exists: bool = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = ?)"
+    )
+    .bind(&ws_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
+
+    if ws_exists {
+        return Ok(());
+    }
+
+    tracing::info!("[init] Creating per-user workspace {} for user {}", ws_id, user_id);
+
+    // 获取用户信息用于 workspace 名称
+    let user_name: Option<String> = sqlx::query_scalar(
+        "SELECT display_name FROM users WHERE id = ?"
+    )
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?
+    .flatten();
+
+    let ws_name = user_name.unwrap_or_else(|| user_id.to_string());
+
+    sqlx::query(
+        r#"INSERT INTO workspaces
+           (id, name, description, tenant_id, created_at, updated_at)
+           VALUES (?, ?, '用户个人工作空间', 'tenant-default-001', datetime('now'), datetime('now'))"#
+    )
+    .bind(&ws_id)
+    .bind(&format!("{}的工作空间", ws_name))
+    .execute(pool)
+    .await
+    .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
+    tracing::info!("[init] Created workspace {} for user {}", ws_id, user_id);
+
+    // Scaffold workspace directory
+    let ws_dir = crate::shared::paths::workspace_dir(&ws_id);
+    match crate::shared::agent::scaffold_service::scaffold_workspace(&ws_dir).await {
+        Ok(result) => {
+            tracing::info!("[init] Scaffolded workspace {}: {}", ws_id, result);
+        }
+        Err(e) => {
+            tracing::warn!("[init] Failed to scaffold workspace {} (non-fatal): {}", ws_id, e);
+        }
+    }
+
+    // Create agent for workspace
+    let agent_result = state
+        .agent_runtime
+        .create_agent(&crate::shared::agent::AgentConfig {
+            workspace_id: ws_id.clone(),
+            name: format!("{}的工作空间", ws_name),
+            ..Default::default()
+        })
+        .await;
+
+    match agent_result {
+        Ok(agent_id) => {
+            sqlx::query("UPDATE workspaces SET agent_id = ? WHERE id = ?")
+                .bind(&agent_id)
+                .bind(&ws_id)
+                .execute(pool)
+                .await
+                .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
+            tracing::info!("[init] Created agent {} for workspace {}", agent_id, ws_id);
+        }
+        Err(e) => {
+            tracing::warn!(
+                "[init] Failed to create agent for workspace {} (non-fatal): {}",
+                ws_id, e
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// 确保默认租户、默认工作空间和 Agent 存在（仅 admin 使用）
+async fn ensure_default_tenant(state: &AppState, user_id: &str) -> Result<()> {
+    let pool = state.database().pool();
+
+    // 确保租户关联
+    ensure_tenant_membership(state, user_id).await?;
+
+    // 确保默认工作空间和 Agent 存在
     ensure_default_workspace_and_agent(state, pool).await?;
 
     // 将未分配的设备归属到默认租户和工作空间

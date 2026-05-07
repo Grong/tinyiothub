@@ -19,12 +19,25 @@ async fn test_list_batches() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app.oneshot(auth_request("GET", "/api/v1/batch", &token, None)).await.unwrap();
-    // May return 200 with JSON or 400 if pagination required
+    // May return 200 with JSON or 400 if required params missing
     assert!(response.status().is_success() || response.status().is_client_error());
     if response.status() == StatusCode::OK {
         let (_s, json) = response_parts(response).await;
         assert!(json["code"].is_number());
     }
+}
+
+#[tokio::test]
+async fn test_list_batches_with_workspace() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+    let response = app
+        .oneshot(auth_request("GET", "/api/v1/batch?workspace_id=ws-default-001", &token, None))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_s, json) = response_parts(response).await;
+    assert!(json["code"].is_number(), "Expected numeric code");
 }
 
 #[tokio::test]

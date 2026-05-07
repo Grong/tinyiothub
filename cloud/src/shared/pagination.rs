@@ -44,6 +44,93 @@ pub struct DataObjectWithPagination<T> {
     pub data: Vec<T>,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pagination_query_deserialization() {
+        let json = r#"{"page": "2", "page_size": "50"}"#;
+        let query: PaginationQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(query.page, Some(2));
+        assert_eq!(query.page_size, Some(50));
+
+        let json_empty = r#"{"page": null, "page_size": null}"#;
+        let query: PaginationQuery = serde_json::from_str(json_empty).unwrap();
+        assert_eq!(query.page, None);
+        assert_eq!(query.page_size, None);
+    }
+
+    #[test]
+    fn test_pagination_query_invalid_number() {
+        let json = r#"{"page": "not_a_number"}"#;
+        let result: Result<PaginationQuery, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_data_object_with_pagination_basic() {
+        let data: Vec<i32> = (1..=25).collect();
+        let result = DataObjectWithPagination::new(&data, 1, 10);
+        assert_eq!(result.pagination.page, 1);
+        assert_eq!(result.pagination.page_size, 10);
+        assert_eq!(result.pagination.total_pages, 3);
+        assert_eq!(result.pagination.total_count, 25);
+        assert_eq!(result.data.len(), 10);
+        assert_eq!(result.data[0], 1);
+        assert_eq!(result.data[9], 10);
+    }
+
+    #[test]
+    fn test_data_object_with_pagination_second_page() {
+        let data: Vec<i32> = (1..=25).collect();
+        let result = DataObjectWithPagination::new(&data, 2, 10);
+        assert_eq!(result.pagination.page, 2);
+        assert_eq!(result.data.len(), 10);
+        assert_eq!(result.data[0], 11);
+        assert_eq!(result.data[9], 20);
+    }
+
+    #[test]
+    fn test_data_object_with_pagination_last_partial_page() {
+        let data: Vec<i32> = (1..=25).collect();
+        let result = DataObjectWithPagination::new(&data, 3, 10);
+        assert_eq!(result.pagination.page, 3);
+        assert_eq!(result.data.len(), 5);
+        assert_eq!(result.data[0], 21);
+        assert_eq!(result.data[4], 25);
+    }
+
+    #[test]
+    fn test_data_object_with_pagination_page_beyond_total() {
+        let data: Vec<i32> = (1..=10).collect();
+        let result = DataObjectWithPagination::new(&data, 100, 10);
+        assert_eq!(result.pagination.page, 1);
+        assert_eq!(result.pagination.total_pages, 1);
+        assert_eq!(result.data.len(), 10);
+    }
+
+    #[test]
+    fn test_data_object_with_pagination_empty_data() {
+        let data: Vec<i32> = vec![];
+        let result = DataObjectWithPagination::new(&data, 1, 10);
+        assert_eq!(result.pagination.page, 0); // total_page=0, tmp_page clamped to 0
+        assert_eq!(result.pagination.total_pages, 0);
+        assert_eq!(result.pagination.total_count, 0);
+        assert!(result.data.is_empty());
+    }
+
+    #[test]
+    fn test_data_object_with_pagination_default() {
+        let result: DataObjectWithPagination<i32> = DataObjectWithPagination::default(1, 20);
+        assert_eq!(result.pagination.page, 1);
+        assert_eq!(result.pagination.page_size, 20);
+        assert_eq!(result.pagination.total_pages, 0);
+        assert_eq!(result.pagination.total_count, 0);
+        assert!(result.data.is_empty());
+    }
+}
+
 impl<T> DataObjectWithPagination<T>
 where
     T: Serialize + Clone,

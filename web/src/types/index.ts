@@ -36,6 +36,16 @@ export interface LoginResponse {
   workspaceId?: string;
 }
 
+export interface RegisterRequest {
+  username: string;
+  phone: string;
+  password: string;
+  email?: string;
+  displayName?: string;
+}
+
+export type RegisterResponse = LoginResponse;
+
 export interface CreateUserRequest {
   name: string;
   username: string;

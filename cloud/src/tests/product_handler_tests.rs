@@ -1,4 +1,4 @@
-//! Role handler integration tests
+//! Product handler integration tests
 
 use axum::{
     body::Body,
@@ -25,18 +25,18 @@ fn auth_request(method: &str, uri: &str, token: &str, body: Option<Value>) -> Re
 }
 
 // ============================================================================
-// List Roles
+// List Products
 // ============================================================================
 
 #[tokio::test]
-async fn test_list_roles() {
+async fn test_list_products() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
         .oneshot(auth_request(
             "GET",
-            "/api/v1/users/roles?page=1&page_size=20",
+            "/api/v1/system/products?page=1&page_size=20",
             &token,
             None,
         ))
@@ -46,51 +46,49 @@ async fn test_list_roles() {
     let (status, json) = response_parts(response).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["code"], 0, "Expected success code");
-    assert!(json["result"].is_array(), "Expected array of roles");
+    assert!(json["result"].is_array(), "Expected array of products");
 }
 
 // ============================================================================
-// Create Role
+// Create Product
 // ============================================================================
 
 #[tokio::test]
-async fn test_create_role() {
+async fn test_create_product() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
     let body = json!({
-        "name": "test-role-001",
-        "description": "A test role"
+        "name": "test-product-001",
+        "description": "A test product",
+        "device_type": "sensor",
+        "protocol_type": "modbus"
     });
 
     let response = app
-        .oneshot(auth_request("POST", "/api/v1/users/roles", &token, Some(body)))
+        .oneshot(auth_request("POST", "/api/v1/system/products", &token, Some(body)))
         .await
         .unwrap();
 
-    let status = response.status();
-    assert!(
-        !status.is_informational() && status != StatusCode::SWITCHING_PROTOCOLS,
-        "Unexpected status: {}",
-        status
-    );
-    let (_, json) = response_parts(response).await;
-    assert!(json["code"].is_number(), "Response must have numeric code field");
+    let (status, json) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["code"], 0, "Expected success code, got: {}", json);
+    assert!(json["result"]["id"].is_string(), "Created product should have an id");
 }
 
 // ============================================================================
-// Create Role — missing name
+// Create Product — missing name
 // ============================================================================
 
 #[tokio::test]
-async fn test_create_role_missing_name() {
+async fn test_create_product_missing_name() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
     let body = json!({});
 
     let response = app
-        .oneshot(auth_request("POST", "/api/v1/users/roles", &token, Some(body)))
+        .oneshot(auth_request("POST", "/api/v1/system/products", &token, Some(body)))
         .await
         .unwrap();
 
@@ -103,11 +101,11 @@ async fn test_create_role_missing_name() {
 }
 
 // ============================================================================
-// Create Role — empty name
+// Create Product — empty name
 // ============================================================================
 
 #[tokio::test]
-async fn test_create_role_empty_name() {
+async fn test_create_product_empty_name() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
@@ -116,7 +114,7 @@ async fn test_create_role_empty_name() {
     });
 
     let response = app
-        .oneshot(auth_request("POST", "/api/v1/users/roles", &token, Some(body)))
+        .oneshot(auth_request("POST", "/api/v1/system/products", &token, Some(body)))
         .await
         .unwrap();
 
@@ -126,18 +124,18 @@ async fn test_create_role_empty_name() {
 }
 
 // ============================================================================
-// Get Role — not found
+// Get Product — not found
 // ============================================================================
 
 #[tokio::test]
-async fn test_get_role_not_found() {
+async fn test_get_product_not_found() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
         .oneshot(auth_request(
             "GET",
-            "/api/v1/users/roles/nonexistent-role-id",
+            "/api/v1/system/products/nonexistent-product-id",
             &token,
             None,
         ))
@@ -146,26 +144,26 @@ async fn test_get_role_not_found() {
 
     let (status, json) = response_parts(response).await;
     assert_eq!(status, StatusCode::OK);
-    assert_ne!(json["code"], 0, "Expected error code for nonexistent role");
+    assert_ne!(json["code"], 0, "Expected error code for nonexistent product");
 }
 
 // ============================================================================
-// Update Role — not found
+// Update Product — not found
 // ============================================================================
 
 #[tokio::test]
-async fn test_update_role_not_found() {
+async fn test_update_product_not_found() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
     let body = json!({
-        "name": "updated-role-name"
+        "name": "updated-product-name"
     });
 
     let response = app
         .oneshot(auth_request(
             "PUT",
-            "/api/v1/users/roles/nonexistent-role-id",
+            "/api/v1/system/products/nonexistent-product-id",
             &token,
             Some(body),
         ))
@@ -174,22 +172,22 @@ async fn test_update_role_not_found() {
 
     let (status, json) = response_parts(response).await;
     assert_eq!(status, StatusCode::OK);
-    assert_ne!(json["code"], 0, "Expected error code for nonexistent role");
+    assert_ne!(json["code"], 0, "Expected error code for nonexistent product");
 }
 
 // ============================================================================
-// Delete Role — not found
+// Delete Product — not found
 // ============================================================================
 
 #[tokio::test]
-async fn test_delete_role_not_found() {
+async fn test_delete_product_not_found() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
         .oneshot(auth_request(
             "DELETE",
-            "/api/v1/users/roles/nonexistent-role-id",
+            "/api/v1/system/products/nonexistent-product-id",
             &token,
             None,
         ))
@@ -198,35 +196,5 @@ async fn test_delete_role_not_found() {
 
     let (status, json) = response_parts(response).await;
     assert_eq!(status, StatusCode::OK);
-    assert_ne!(json["code"], 0, "Expected error code for nonexistent role");
-}
-
-// ============================================================================
-// Role Permissions
-// ============================================================================
-
-#[tokio::test]
-async fn test_get_role_permissions_not_found() {
-    let app = setup_test_app().await;
-    let token = create_test_token("user-1", "tenant-1");
-    let response = app
-        .oneshot(auth_request("GET", "/api/v1/users/roles/nonexistent-role-id/permissions", &token, None))
-        .await
-        .unwrap();
-    let (status, json) = response_parts(response).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(json["code"].is_number(), "Expected numeric code");
-}
-
-#[tokio::test]
-async fn test_update_role_permissions_not_found() {
-    let app = setup_test_app().await;
-    let token = create_test_token("user-1", "tenant-1");
-    let body = json!({"permission_ids": ["perm-1", "perm-2"]});
-    let response = app
-        .oneshot(auth_request("PUT", "/api/v1/users/roles/nonexistent-role-id/permissions", &token, Some(body)))
-        .await
-        .unwrap();
-    let status = response.status();
-    assert!(!status.is_server_error(), "Expected non-5xx status, got: {}", status);
+    assert_ne!(json["code"], 0, "Expected error code for nonexistent product");
 }
