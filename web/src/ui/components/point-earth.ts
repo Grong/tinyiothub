@@ -1,6 +1,5 @@
 import { LitElement, html } from "lit";
 import { customElement, query } from "lit/decorators.js";
-import type * as THREE from "three";
 
 @customElement("point-earth")
 export class PointEarth extends LitElement {
@@ -11,7 +10,6 @@ export class PointEarth extends LitElement {
   private scene: any = null;
   private camera: any = null;
   private earth: any = null;
-  private atmosphere: any = null;
   private animFrame: number | null = null;
   private mouseX = 0;
   private mouseY = 0;
@@ -78,7 +76,7 @@ export class PointEarth extends LitElement {
     import("three").then((mod) => {
       this.THREE = mod;
       this.initThree();
-      this.animate();
+      this._doAnimate();
     });
   }
 
@@ -191,8 +189,8 @@ export class PointEarth extends LitElement {
     colors.needsUpdate = true;
   }
 
-  private animate = () => {
-    this.animFrame = requestAnimationFrame(this.animate);
+  private _doAnimate = () => {
+    this.animFrame = requestAnimationFrame(this._doAnimate);
 
     // Smooth follow mouse
     this.targetX += (this.mouseX - this.targetX) * 0.02;

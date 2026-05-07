@@ -206,11 +206,18 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check commit message
         run: |
-          COMMITS=$(git log origin/${{ github.base_ref || 'main' }}..HEAD --oneline --format="%s")
+          BASE_REF="${{ github.base_ref || 'main' }}"
+          git fetch origin "$BASE_REF" --depth=1 2>/dev/null || true
+          COMMITS=$(git log "origin/$BASE_REF..HEAD" --oneline --format="%s" 2>/dev/null || echo "")
+          if [ -z "$COMMITS" ]; then
+            echo "✅ No commits to check"
+            exit 0
+          fi
           echo "=== Commit Messages ==="
           echo "$COMMITS"
           echo ""
-          for msg in $COMMITS; do
+          echo "$COMMITS" | while IFS= read -r msg; do
+            [ -z "$msg" ] && continue
             # 跳过 merge commits
             if echo "$msg" | grep -qE "^Merge"; then
               continue
