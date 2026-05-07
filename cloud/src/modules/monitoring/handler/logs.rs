@@ -47,12 +47,48 @@ pub fn create_router() -> Router<AppState> {
     Router::new().route("/", get(get_logs)).route("/levels", get(get_log_levels))
 }
 
-/// 获取日志列表
+/// 获取日志列表（已启用 workspace 隔离）
 async fn get_logs(
     State(state): State<AppState>,
     Query(query): Query<LogQuery>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<Vec<LogEntry>>> {
+    // Resolve workspace and fetch allowed device IDs
+    let workspace_id = if claims.workspace_id.is_empty() {
+        None
+    } else {
+        Some(claims.workspace_id.clone())
+    };
+
+    let device_service = match workspace_id {
+        Some(ref ws) => state.tenant_device_service(&Some(ws.clone())),
+        None => state.device_service.clone(),
+    };
+
+    let allowed_device_ids: Vec<String> = match device_service
+        .get_devices(&tinyiothub_core::models::device::DeviceQueryParams::default())
+        .await
+    {
+        Ok(devices) => devices.into_iter().map(|d| d.id).collect(),
+        Err(e) => {
+            tracing::warn!("Failed to get devices for log workspace isolation: {}", e);
+            return ApiResponseBuilder::error("获取日志失败".to_string());
+        }
+    };
+
+    // If user specified a device_id, verify it belongs to their workspace
+    if let Some(ref requested_device_id) = query.device_id {
+        if !allowed_device_ids.contains(requested_device_id) {
+            return ApiResponseBuilder::success(vec![]);
+        }
+    }
+
+    let device_ids_filter = if query.device_id.is_none() && !allowed_device_ids.is_empty() {
+        Some(allowed_device_ids)
+    } else {
+        None
+    };
+
     let levels = query.level.as_ref().map(|l| vec![l.to_lowercase()]);
     let sources = query.source.as_ref().map(|s| vec![s.clone()]);
     let limit = query.pagination.page_size.unwrap_or(50);
@@ -64,6 +100,7 @@ async fn get_logs(
             levels.as_deref(),
             sources.as_deref(),
             query.device_id.as_deref(),
+            device_ids_filter.as_deref(),
             query.start_time.as_deref(),
             query.end_time.as_deref(),
             Some(limit),
@@ -89,7 +126,7 @@ async fn get_logs(
         }
         Err(e) => {
             tracing::warn!("Failed to get logs: {}", e);
-            ApiResponseBuilder::success(vec![])
+            ApiResponseBuilder::error("获取日志失败".to_string())
         }
     }
 }

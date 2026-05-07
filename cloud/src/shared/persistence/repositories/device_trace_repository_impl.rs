@@ -238,6 +238,7 @@ impl DeviceTraceRepository {
         levels: Option<&[String]>,
         sources: Option<&[String]>,
         device_id: Option<&str>,
+        device_ids: Option<&[String]>,
         start_time: Option<&str>,
         end_time: Option<&str>,
         limit: u32,
@@ -249,6 +250,14 @@ impl DeviceTraceRepository {
         if let Some(did) = device_id {
             query.push_str(" AND device_id = ?");
             bind_values.push(did.to_string());
+        }
+
+        if let Some(dids) = device_ids {
+            if !dids.is_empty() {
+                let placeholders = dids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                query.push_str(&format!(" AND device_id IN ({})", placeholders));
+                bind_values.extend(dids.iter().cloned());
+            }
         }
 
         if let Some(lvls) = levels {

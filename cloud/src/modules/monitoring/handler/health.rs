@@ -7,7 +7,8 @@ use std::time::SystemTime;
 
 use crate::{shared::app_state::AppState, shared::api_response::ApiResponse};
 
-static START_TIME: OnceLock<SystemTime> = OnceLock::new();
+/// Global start time for uptime calculation (shared with metrics)
+pub static START_TIME: OnceLock<SystemTime> = OnceLock::new();
 
 fn get_uptime_seconds() -> u64 {
     let start = START_TIME.get_or_init(SystemTime::now);
@@ -98,16 +99,34 @@ async fn get_detailed_health(
         }
     }
 
+    // Query real system metrics via sysinfo
+    let mut sys = sysinfo::System::new_all();
+    sys.refresh_cpu_usage();
+    sys.refresh_memory();
+    let cpu_usage_percent = if !sys.cpus().is_empty() {
+        sys.cpus().iter().map(|cpu| cpu.cpu_usage()).sum::<f32>() / sys.cpus().len() as f32
+    } else {
+        0.0
+    };
+    let memory_usage_mb = sys.used_memory() / 1024;
+
+    // MQTT status: no direct health check available, report honestly
+    let mqtt_status = if state.data_server().is_some() {
+        "available"
+    } else {
+        "unavailable"
+    };
+
     let detailed_health = DetailedHealthStatus {
         overall_status: overall_status.to_string(),
         timestamp: chrono::Utc::now(),
         uptime_seconds: get_uptime_seconds(),
         database_status: database_status.to_string(),
-        mqtt_status: "connected".to_string(),
+        mqtt_status: mqtt_status.to_string(),
         device_count,
         active_device_count,
-        memory_usage_mb: 0,
-        cpu_usage_percent: 0.0,
+        memory_usage_mb,
+        cpu_usage_percent: cpu_usage_percent as f64,
     };
 
     ApiResponseBuilder::success(detailed_health)

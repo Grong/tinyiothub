@@ -3,7 +3,7 @@ use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{extract::State, routing::get, Json, Router};
 use serde::{Deserialize, Serialize};
 
-use crate::{shared::app_state::AppState, shared::api_response::ApiResponse};
+use crate::{shared::app_state::AppState, shared::api_response::ApiResponse, shared::error_handling::AuthHelper};
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]
@@ -46,11 +46,17 @@ pub fn create_router() -> Router<AppState> {
         .route("/gateway", get(get_gateway_metrics))
 }
 
-/// 获取系统指标
+/// 获取系统指标（仅管理员可访问）
 async fn get_system_metrics(
-    State(_state): State<AppState>,
-    _claims: Claims,
+    State(state): State<AppState>,
+    claims: Claims,
 ) -> Json<ApiResponse<SystemMetrics>> {
+    match AuthHelper::require_admin_role(&state, &claims.user_id, "get_system_metrics").await {
+        Ok(()) => {}
+        Err(_) => {
+            return ApiResponseBuilder::error_with_code(403, "Access denied: admin role required");
+        }
+    }
     let mut sys = sysinfo::System::new_all();
     sys.refresh_cpu_usage();
     sys.refresh_memory();
@@ -173,14 +179,22 @@ async fn get_gateway_metrics(
         }
     }
 
+    // Real uptime from global start time
+    let uptime_seconds = crate::modules::monitoring::handler::health::START_TIME
+        .get()
+        .and_then(|t| t.elapsed().ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
     let metrics = GatewayMetrics {
         total_devices,
         online_devices,
         offline_devices,
+        // TODO: implement real message counting when message pipeline metrics are available
         total_messages: 0,
         messages_per_minute: 0.0,
         error_rate_percent: 0.0,
-        uptime_seconds: 0,
+        uptime_seconds,
     };
 
     ApiResponseBuilder::success(metrics)

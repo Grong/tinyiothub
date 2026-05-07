@@ -187,12 +187,12 @@ fn map_update_request(req: &UpdateJobRequest) -> UpdateCronJobRequest {
     }
 }
 
-fn map_cron_job_query(params: &JobQueryParams) -> CronJobQuery {
+fn map_cron_job_query(params: &JobQueryParams, workspace_id: Option<String>) -> CronJobQuery {
     CronJobQuery {
         name: params.name.clone(),
         job_type: params.job_type.clone(),
         is_enabled: params.is_enabled,
-        workspace_id: None,
+        workspace_id,
         page: params.page,
         page_size: params.page_size,
     }
@@ -234,8 +234,13 @@ fn map_execution_query(params: &JobExecutionQueryParams) -> CronRunQuery {
 async fn list_jobs(
     State(state): State<AppState>,
     Query(params): Query<JobQueryParams>,
+    claims: Claims,
 ) -> Json<ApiResponse<Vec<Job>>> {
-    let query = map_cron_job_query(&params);
+    let ws_id = match resolve_workspace(&state, &claims.tenant_id, None).await {
+        Ok(ws) => Some(ws),
+        Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
+    };
+    let query = map_cron_job_query(&params, ws_id);
     match state.cron_job_repo.find_all(&query).await {
         Ok(jobs) => ApiResponseBuilder::success(
             jobs.into_iter().map(map_cron_job_to_job).collect(),
