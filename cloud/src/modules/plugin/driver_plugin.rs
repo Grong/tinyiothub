@@ -2,12 +2,15 @@
 //!
 //! 将现有驱动系统（DriverWrapper）适配为插件系统（PluginHandler）
 
-use tinyiothub_core::models::device::Device;
 use std::{any::Any, sync::Arc};
 
+use tinyiothub_core::models::device::Device;
+
 use crate::{
-    modules::device::driver::{create_driver, DriverWrapper},
-    modules::plugin::{AppContext, PluginHandler, PluginManifest, PluginType},
+    modules::{
+        device::driver::{DriverWrapper, create_driver},
+        plugin::{AppContext, PluginHandler, PluginManifest, PluginType},
+    },
     shared::error::Error,
 };
 
@@ -34,8 +37,7 @@ impl DriverPluginHandler {
             description: None,
         };
 
-        let driver =
-            create_driver(&driver_name, &device)?;
+        let driver = create_driver(&driver_name, &device)?;
 
         Ok(Self { driver, manifest })
     }
@@ -64,7 +66,6 @@ impl PluginHandler for DriverPluginHandler {
         PluginType::Protocol
     }
 }
-
 
 /// 注册内置驱动到插件注册表
 pub fn register_builtin_drivers(registry: &crate::modules::plugin::PluginRegistry) {
@@ -127,8 +128,7 @@ pub fn init_plugins(_context: Arc<AppContext>) -> Result<(), Error> {
     register_builtin_drivers(registry);
 
     // 2. 从 plugins 目录加载 TOML 插件配置
-    let plugins_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("plugins");
+    let plugins_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("plugins");
 
     if let Err(e) = registry.load_from_dir(&plugins_dir) {
         tracing::warn!("Failed to load some plugins from {:?}: {}", plugins_dir, e);

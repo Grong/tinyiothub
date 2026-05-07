@@ -1,8 +1,8 @@
-use tinyiothub_core::models::{device::Device, device_command::DeviceCommand};
 use std::collections::HashMap;
+use tinyiothub_core::models::{device::Device, device_command::DeviceCommand};
 
-use tinyiothub_core::driver::{DeviceDriver, ResultValue, BackoffStrategy, RetryConfig};
-use rand::{rngs::StdRng, SeedableRng, Rng};
+use rand::{Rng, SeedableRng, rngs::StdRng};
+use tinyiothub_core::driver::{BackoffStrategy, DeviceDriver, ResultValue, RetryConfig};
 use tinyiothub_core::error::Error;
 
 #[derive(Debug, Clone, tinyiothub_macros::DeviceDriver)]
@@ -48,7 +48,12 @@ pub struct SimulatedDriver {
 
 impl SimulatedDriver {
     pub fn new(device: Device) -> Self {
-        Self { device, retry_count: 0, tick_counter: 0, rng: StdRng::from_entropy() }
+        Self {
+            device,
+            retry_count: 0,
+            tick_counter: 0,
+            rng: StdRng::from_entropy(),
+        }
     }
 }
 
@@ -125,40 +130,33 @@ impl DeviceDriver for SimulatedDriver {
                         };
                         ResultValue::boolean(property.name.clone(), power_on)
                     }
-                    _ => {
-                        match property.data_type.as_deref() {
-                            Some("number") | Some("float") => {
-                                let value = if simulation_mode == "fixed" {
-                                    50.0
-                                } else {
-                                    self.rng.r#gen::<f64>() * 100.0
-                                };
-                                ResultValue::float_with_precision(property.name.clone(), value, 2)
-                            }
-                            Some("integer") | Some("int") => {
-                                let value = if simulation_mode == "fixed" {
-                                    50
-                                } else {
-                                    self.rng.gen_range(0..100)
-                                };
-                                ResultValue::integer(property.name.clone(), value)
-                            }
-                            Some("boolean") | Some("bool") => {
-                                let value = if simulation_mode == "fixed" {
-                                    true
-                                } else {
-                                    self.rng.r#gen::<bool>()
-                                };
-                                ResultValue::boolean(property.name.clone(), value)
-                            }
-                            _ => {
-                                ResultValue::string(
-                                    property.name.clone(),
-                                    format!("模拟值_{}", simulation_mode),
-                                )
-                            }
+                    _ => match property.data_type.as_deref() {
+                        Some("number") | Some("float") => {
+                            let value = if simulation_mode == "fixed" {
+                                50.0
+                            } else {
+                                self.rng.r#gen::<f64>() * 100.0
+                            };
+                            ResultValue::float_with_precision(property.name.clone(), value, 2)
                         }
-                    }
+                        Some("integer") | Some("int") => {
+                            let value = if simulation_mode == "fixed" {
+                                50
+                            } else {
+                                self.rng.gen_range(0..100)
+                            };
+                            ResultValue::integer(property.name.clone(), value)
+                        }
+                        Some("boolean") | Some("bool") => {
+                            let value = if simulation_mode == "fixed" {
+                                true
+                            } else {
+                                self.rng.r#gen::<bool>()
+                            };
+                            ResultValue::boolean(property.name.clone(), value)
+                        }
+                        _ => ResultValue::string(property.name.clone(), format!("模拟值_{}", simulation_mode)),
+                    },
                 };
                 results.push(result_value);
             }
@@ -173,7 +171,11 @@ impl DeviceDriver for SimulatedDriver {
     }
 
     fn execute_command(&mut self, cmd: &DeviceCommand) -> Result<bool, Error> {
-        tracing::info!("Executing Simulated command: {} on device {}", cmd.name, self.device.name);
+        tracing::info!(
+            "Executing Simulated command: {} on device {}",
+            cmd.name,
+            self.device.name
+        );
         Ok(true)
     }
 }

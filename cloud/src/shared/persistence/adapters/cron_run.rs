@@ -1,6 +1,8 @@
 use async_trait::async_trait;
-use tinyiothub_core::error::Result;
-use tinyiothub_core::models::cron_job::{CronRun, CronRunQuery};
+use tinyiothub_core::{
+    error::Result,
+    models::cron_job::{CronRun, CronRunQuery},
+};
 use tinyiothub_storage::traits::cron::CronRunRepository;
 
 /// Tenant-aware cron run repository adapter

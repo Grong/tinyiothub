@@ -5,8 +5,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::modules::device::trace_service::DeviceTraceStatistics;
-use crate::shared::app_state::AppState;
+use crate::{modules::device::trace_service::DeviceTraceStatistics, shared::app_state::AppState};
 
 /// Device fault diagnosis result
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,8 +22,8 @@ pub struct DeviceDiagnosis {
 /// Individual device issue
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceIssue {
-    pub severity: String,     // "critical", "warning", "info"
-    pub code: String,        // e.g., "OFFLINE", "HIGH_ERROR_RATE"
+    pub severity: String, // "critical", "warning", "info"
+    pub code: String,     // e.g., "OFFLINE", "HIGH_ERROR_RATE"
     pub message: String,
     pub timestamp: Option<String>,
 }
@@ -81,11 +80,8 @@ impl DiagnosticsService {
             .ok_or_else(|| "Device not found".to_string())?;
 
         // Get trace statistics (last 7 days)
-        let trace_stats = state
-            .trace_service
-            .get_device_trace_statistics(device_id, Some(7))
-            .await
-            .ok();
+        let trace_stats =
+            state.trace_service.get_device_trace_statistics(device_id, Some(7)).await.ok();
 
         let mut issues = Vec::new();
         let mut fault_score: u32 = 0;
@@ -112,8 +108,10 @@ impl DiagnosticsService {
                     issues.push(DeviceIssue {
                         severity: "critical".to_string(),
                         code: "HIGH_ERROR_RATE".to_string(),
-                        message: format!("Error rate is {:.1}% ({} errors / {} total traces)",
-                            error_rate, stats.error_traces, stats.total_traces),
+                        message: format!(
+                            "Error rate is {:.1}% ({} errors / {} total traces)",
+                            error_rate, stats.error_traces, stats.total_traces
+                        ),
                         timestamp: stats.last_trace_time.clone(),
                     });
                     fault_score += 30;
@@ -134,12 +132,15 @@ impl DiagnosticsService {
                 issues.push(DeviceIssue {
                     severity: "warning".to_string(),
                     code: "UNSTABLE".to_string(),
-                    message: format!("{} warning traces in 7 days, device may be unstable",
-                        stats.warning_traces),
+                    message: format!(
+                        "{} warning traces in 7 days, device may be unstable",
+                        stats.warning_traces
+                    ),
                     timestamp: stats.last_trace_time.clone(),
                 });
                 fault_score += 15;
-                recommendations.push("Consider checking physical connections and signal strength".to_string());
+                recommendations
+                    .push("Consider checking physical connections and signal strength".to_string());
             }
 
             // No recent traces
@@ -198,13 +199,10 @@ impl DiagnosticsService {
             // Get property from data context (real-time) or database
             let property_value = if let Some(cached) = state.device_cache.get(device_id) {
                 cached.properties.as_ref().and_then(|props| {
-                    props.iter().find(|p| p.name == property_name).map(|p| {
-                        (
-                            p.current_value.clone(),
-                            p.unit.clone(),
-                            p.updated_at.clone(),
-                        )
-                    })
+                    props
+                        .iter()
+                        .find(|p| p.name == property_name)
+                        .map(|p| (p.current_value.clone(), p.unit.clone(), p.updated_at.clone()))
                 })
             } else {
                 None
@@ -251,11 +249,7 @@ impl DiagnosticsService {
             }
         };
 
-        Ok(PropertyComparison {
-            property: property_name.to_string(),
-            values,
-            statistics,
-        })
+        Ok(PropertyComparison { property: property_name.to_string(), values, statistics })
     }
 
     /// Scan for available serial ports
@@ -263,13 +257,7 @@ impl DiagnosticsService {
     pub fn scan_serial_ports() -> Result<Vec<SerialPortInfo>, String> {
         use crate::shared::hardware::list_serial_ports;
         let ports = list_serial_ports().map_err(|e| e.to_string())?;
-        Ok(ports
-            .into_iter()
-            .map(|port| SerialPortInfo {
-                port,
-                available: true,
-            })
-            .collect())
+        Ok(ports.into_iter().map(|port| SerialPortInfo { port, available: true }).collect())
     }
 
     /// Scan for available serial ports (non-harmonyos stub)

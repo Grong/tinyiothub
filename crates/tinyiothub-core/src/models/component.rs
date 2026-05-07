@@ -29,13 +29,7 @@ pub struct ComponentOption {
 }
 
 impl ComponentOption {
-    pub fn new(
-        label: String,
-        name: String,
-        default_value: String,
-        option_type: String,
-        required: bool,
-    ) -> Self {
+    pub fn new(label: String, name: String, default_value: String, option_type: String, required: bool) -> Self {
         Self {
             label,
             name,

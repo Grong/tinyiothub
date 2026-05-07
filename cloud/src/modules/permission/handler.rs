@@ -1,17 +1,13 @@
-use tinyiothub_web::response::ApiResponseBuilder;
-use super::types::{Permission, PermissionQuery};
 use axum::{
+    Json, Router,
     extract::{Path, State},
     routing::get,
-    Json, Router,
 };
 use serde::Serialize;
+use tinyiothub_web::response::ApiResponseBuilder;
 
-use crate::{
-    shared::api_response::ApiResponse,
-    shared::app_state::AppState,
-};
-use crate::shared::security::jwt::Claims;
+use super::types::{Permission, PermissionQuery};
+use crate::shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims};
 
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -59,7 +55,9 @@ async fn get_user_permissions(
                 match state.role_service.get_permissions(&role.id).await {
                     Ok(permission_ids) => {
                         for permission_id in permission_ids {
-                            if let Ok(Some(permission)) = state.permission_service.find_permission_by_id(&permission_id).await {
+                            if let Ok(Some(permission)) =
+                                state.permission_service.find_permission_by_id(&permission_id).await
+                            {
                                 user_permissions.push(UserPermission {
                                     permission_id: permission.id.clone(),
                                     permission_name: permission.name.clone(),

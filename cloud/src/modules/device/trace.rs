@@ -1,8 +1,9 @@
 // Device trace service — migrated from domain/device/trace_service.rs
 
 use std::sync::Arc;
-use tinyiothub_core::error::Error;
-use tinyiothub_core::generate_id;
+
+use tinyiothub_core::{error::Error, generate_id};
+
 use crate::shared::persistence::repositories::DeviceTraceRepository;
 
 pub struct DeviceTraceService {
@@ -15,9 +16,17 @@ impl DeviceTraceService {
     }
 
     pub async fn record_device_trace(
-        &self, device_id: &str, trace_type: &str, level: &str, category: &str,
-        title: &str, message: &str, details: Option<serde_json::Value>,
-        source: Option<&str>, user_id: Option<&str>, session_id: Option<&str>,
+        &self,
+        device_id: &str,
+        trace_type: &str,
+        level: &str,
+        category: &str,
+        title: &str,
+        message: &str,
+        details: Option<serde_json::Value>,
+        source: Option<&str>,
+        user_id: Option<&str>,
+        session_id: Option<&str>,
     ) -> Result<String, Error> {
         if !self.repository.device_exists(device_id).await? {
             return Err(Error::IOError("Device not found".to_string()));
@@ -25,31 +34,72 @@ impl DeviceTraceService {
         let trace_id = generate_id();
         let details_json = details.map(|d| d.to_string());
         let source = source.unwrap_or("system");
-        self.repository.insert_trace(&trace_id, device_id, trace_type, level, category, title, message, details_json, source, user_id, session_id).await?;
-        tracing::info!("Device trace recorded: device={}, type={}, level={}, title={}, trace_id={}", device_id, trace_type, level, title, trace_id);
+        self.repository
+            .insert_trace(
+                &trace_id,
+                device_id,
+                trace_type,
+                level,
+                category,
+                title,
+                message,
+                details_json,
+                source,
+                user_id,
+                session_id,
+            )
+            .await?;
+        tracing::info!(
+            "Device trace recorded: device={}, type={}, level={}, title={}, trace_id={}",
+            device_id,
+            trace_type,
+            level,
+            title,
+            trace_id
+        );
         if level == "error" || level == "critical" {
-            tracing::warn!("Critical trace recorded for device {}: {} - {}", device_id, title, message);
+            tracing::warn!(
+                "Critical trace recorded for device {}: {} - {}",
+                device_id,
+                title,
+                message
+            );
         }
         Ok(trace_id)
     }
 
     pub async fn get_device_traces(
-        &self, device_id: &str, trace_types: Option<&[String]>, levels: Option<&[String]>,
-        limit: Option<u32>, offset: Option<u32>,
+        &self,
+        device_id: &str,
+        trace_types: Option<&[String]>,
+        levels: Option<&[String]>,
+        limit: Option<u32>,
+        offset: Option<u32>,
     ) -> Result<Vec<DeviceTrace>, Error> {
-        if !self.repository.device_exists(device_id).await? { return Err(Error::NotFound); }
+        if !self.repository.device_exists(device_id).await? {
+            return Err(Error::NotFound);
+        }
         let limit = limit.unwrap_or(50);
         let offset = offset.unwrap_or(0);
         self.repository.find_traces(device_id, trace_types, levels, limit, offset).await
     }
 
-    pub async fn get_device_trace_statistics(&self, device_id: &str, days: Option<u32>) -> Result<DeviceTraceStatistics, Error> {
-        if !self.repository.device_exists(device_id).await? { return Err(Error::NotFound); }
+    pub async fn get_device_trace_statistics(
+        &self,
+        device_id: &str,
+        days: Option<u32>,
+    ) -> Result<DeviceTraceStatistics, Error> {
+        if !self.repository.device_exists(device_id).await? {
+            return Err(Error::NotFound);
+        }
         self.repository.get_trace_statistics(device_id, days.unwrap_or(7)).await
     }
 
     pub async fn clear_device_traces(
-        &self, device_id: &str, before_date: Option<&str>, trace_types: Option<&[String]>,
+        &self,
+        device_id: &str,
+        before_date: Option<&str>,
+        trace_types: Option<&[String]>,
     ) -> Result<u32, Error> {
         if !self.repository.device_exists(device_id).await? {
             return Err(Error::IOError("Device not found".to_string()));
@@ -76,16 +126,18 @@ impl DeviceTraceService {
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> Result<Vec<DeviceTrace>, Error> {
-        self.repository.find_all_traces(
-            levels,
-            sources,
-            device_id,
-            device_ids,
-            start_time,
-            end_time,
-            limit.unwrap_or(50),
-            offset.unwrap_or(0),
-        ).await
+        self.repository
+            .find_all_traces(
+                levels,
+                sources,
+                device_id,
+                device_ids,
+                start_time,
+                end_time,
+                limit.unwrap_or(50),
+                offset.unwrap_or(0),
+            )
+            .await
     }
 }
 

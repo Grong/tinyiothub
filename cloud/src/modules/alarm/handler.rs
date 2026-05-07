@@ -1,25 +1,33 @@
 // Alarm HTTP handlers — query + recent + alarm rules CRUD
 
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     routing::{delete, get, post, put},
-    Json, Router,
 };
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use tinyiothub_web::response::ApiResponseBuilder;
 
-use crate::modules::alarm::types::{AlarmDto, AlarmRuleDto, AlarmStatisticsDto,
-    AlarmQueryParams, CreateAlarmRuleRequest, StatisticsQueryParams, ToggleRuleRequest,
-    UpdateAlarmRuleRequest};
-use crate::shared::api_response::{ApiResponse, PaginatedResponse, PaginationInfo};
-use crate::modules::monitoring::types::RecentAlarm;
-use crate::shared::app_state::AppState;
-use crate::shared::error_handling::ErrorCode;
-use crate::shared::security::jwt::Claims;
-
-use super::types::*;
-use super::repo::{AlarmQueryCriteria, TimeRange, SortOrder};
+use super::{
+    repo::{AlarmQueryCriteria, SortOrder, TimeRange},
+    types::*,
+};
+use crate::{
+    modules::{
+        alarm::types::{
+            AlarmDto, AlarmQueryParams, AlarmRuleDto, AlarmStatisticsDto, CreateAlarmRuleRequest,
+            StatisticsQueryParams, ToggleRuleRequest, UpdateAlarmRuleRequest,
+        },
+        monitoring::types::RecentAlarm,
+    },
+    shared::{
+        api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
+        app_state::AppState,
+        error_handling::ErrorCode,
+        security::jwt::Claims,
+    },
+};
 
 pub fn create_alarm_router() -> Router<AppState> {
     Router::new()
@@ -181,10 +189,18 @@ async fn get_recent_alarms_list(
     limit: i32,
     workspace_id: Option<&str>,
 ) -> Result<Vec<RecentAlarm>, sqlx::Error> {
-    let alarms: Vec<(String, String, Option<String>, String, String, chrono::NaiveDateTime, bool, bool)> =
-        if let Some(wid) = workspace_id {
-            sqlx::query_as(
-                r#"
+    let alarms: Vec<(
+        String,
+        String,
+        Option<String>,
+        String,
+        String,
+        chrono::NaiveDateTime,
+        bool,
+        bool,
+    )> = if let Some(wid) = workspace_id {
+        sqlx::query_as(
+            r#"
             SELECT
                 da.id,
                 da.device_id,
@@ -199,14 +215,14 @@ async fn get_recent_alarms_list(
             WHERE da.workspace_id = ?
             ORDER BY da.alarm_time DESC
             LIMIT ?"#,
-            )
-            .bind(wid)
-            .bind(limit)
-            .fetch_all(db.pool())
-            .await?
-        } else {
-            sqlx::query_as(
-                r#"
+        )
+        .bind(wid)
+        .bind(limit)
+        .fetch_all(db.pool())
+        .await?
+    } else {
+        sqlx::query_as(
+            r#"
             SELECT
                 da.id,
                 da.device_id,
@@ -220,32 +236,43 @@ async fn get_recent_alarms_list(
             LEFT JOIN devices d ON da.device_id = d.id
             ORDER BY da.alarm_time DESC
             LIMIT ?"#,
-            )
-            .bind(limit)
-            .fetch_all(db.pool())
-            .await?
-        };
+        )
+        .bind(limit)
+        .fetch_all(db.pool())
+        .await?
+    };
 
     let recent_alarms = alarms
         .into_iter()
-        .map(|(id, device_id, device_name, level, message, alarm_time, is_acknowledged, is_resolved)| {
-            let status = if is_resolved {
-                "resolved".to_string()
-            } else if is_acknowledged {
-                "acknowledged".to_string()
-            } else {
-                "active".to_string()
-            };
-            RecentAlarm {
+        .map(
+            |(
                 id,
                 device_id,
-                device_name: device_name.unwrap_or_else(|| "未知设备".to_string()),
+                device_name,
                 level,
                 message,
-                created_at: alarm_time.and_utc(),
-                status,
-            }
-        })
+                alarm_time,
+                is_acknowledged,
+                is_resolved,
+            )| {
+                let status = if is_resolved {
+                    "resolved".to_string()
+                } else if is_acknowledged {
+                    "acknowledged".to_string()
+                } else {
+                    "active".to_string()
+                };
+                RecentAlarm {
+                    id,
+                    device_id,
+                    device_name: device_name.unwrap_or_else(|| "未知设备".to_string()),
+                    level,
+                    message,
+                    created_at: alarm_time.and_utc(),
+                    status,
+                }
+            },
+        )
         .collect();
 
     Ok(recent_alarms)
@@ -282,9 +309,10 @@ async fn list_alarm_rules(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
     use tinyiothub_storage::sqlite::Database;
+
+    use super::*;
 
     async fn create_minimal_pool() -> SqlitePool {
         let pool = SqlitePoolOptions::new()
@@ -297,7 +325,7 @@ mod tests {
             "CREATE TABLE IF NOT EXISTS devices (
                 id TEXT PRIMARY KEY,
                 name TEXT
-            )"
+            )",
         )
         .execute(&pool)
         .await
@@ -313,7 +341,7 @@ mod tests {
                 alarm_time TEXT NOT NULL,
                 is_acknowledged INTEGER NOT NULL DEFAULT 0,
                 is_resolved INTEGER NOT NULL DEFAULT 0
-            )"
+            )",
         )
         .execute(&pool)
         .await
@@ -474,7 +502,10 @@ async fn get_alarm_rule(
         Ok(Some(rule)) => {
             if let Some(ref rule_ws) = rule.workspace_id {
                 if rule_ws != &claims.workspace_id {
-                    return ApiResponseBuilder::error_with_code(ErrorCode::NotFound.as_i32(), "规则不存在");
+                    return ApiResponseBuilder::error_with_code(
+                        ErrorCode::NotFound.as_i32(),
+                        "规则不存在",
+                    );
                 }
             }
             ApiResponseBuilder::success(AlarmRuleDto::from(rule))

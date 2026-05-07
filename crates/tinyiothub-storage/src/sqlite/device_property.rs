@@ -45,10 +45,7 @@ impl From<DevicePropertyRow> for DeviceProperty {
 }
 
 /// Find a device property by ID
-pub async fn find_device_property_by_id(
-    db: &Database,
-    id: &str,
-) -> Result<Option<DeviceProperty>, sqlx::Error> {
+pub async fn find_device_property_by_id(db: &Database, id: &str) -> Result<Option<DeviceProperty>, sqlx::Error> {
     let row = sqlx::query_as::<_, DevicePropertyRow>(
         r#"
         SELECT id, device_id, name, display_name, description, data_type, unit,

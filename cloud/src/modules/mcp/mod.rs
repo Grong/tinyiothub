@@ -3,8 +3,7 @@
 
 use std::sync::Arc;
 
-use tokio::sync::OnceCell as TokioOnceCell;
-use tokio::sync::RwLock;
+use tokio::sync::{OnceCell as TokioOnceCell, RwLock};
 
 pub mod handlers;
 pub mod tool_metadata;
@@ -15,13 +14,12 @@ pub mod tools;
 mod tests; // Integration tests in tests/ directory
 
 // Re-export types for use in other modules
+pub use handlers::{ToolCallParams, create_router};
 pub use tool_metadata::{IoTToolMetadata, PermissionLevel};
 pub use tool_registry::{HandlerRegistry, ToolError, ToolHandler, ToolMetadata};
-pub use handlers::{create_router, ToolCallParams};
 
 /// Global MCP tool registry (shared across requests)
-static MCP_REGISTRY: std::sync::OnceLock<Arc<RwLock<HandlerRegistry>>> =
-    std::sync::OnceLock::new();
+static MCP_REGISTRY: std::sync::OnceLock<Arc<RwLock<HandlerRegistry>>> = std::sync::OnceLock::new();
 
 /// Global AppState for MCP tool handlers (initialized before tool registration)
 static APP_STATE: TokioOnceCell<Arc<crate::shared::app_state::AppState>> =
@@ -29,9 +27,7 @@ static APP_STATE: TokioOnceCell<Arc<crate::shared::app_state::AppState>> =
 
 /// Initialize the global MCP registry
 pub fn init_mcp_registry() -> Arc<RwLock<HandlerRegistry>> {
-    MCP_REGISTRY
-        .get_or_init(|| Arc::new(RwLock::new(HandlerRegistry::new())))
-        .clone()
+    MCP_REGISTRY.get_or_init(|| Arc::new(RwLock::new(HandlerRegistry::new()))).clone()
 }
 
 /// Get the global MCP registry (returns None if not yet initialized)

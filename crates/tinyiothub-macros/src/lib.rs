@@ -1,8 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{
-    parse_macro_input, punctuated::Punctuated, Attribute, DeriveInput, Lit, Meta, NestedMeta, Token,
-};
+use syn::{Attribute, DeriveInput, Lit, Meta, NestedMeta, Token, parse_macro_input, punctuated::Punctuated};
 
 #[proc_macro_derive(EdgeEvent)]
 pub fn derive_event(input: TokenStream) -> TokenStream {
@@ -49,16 +47,12 @@ fn parse_driver_attributes(
                                 name = Some(lit_str.value());
                             }
                         }
-                        NestedMeta::Meta(Meta::NameValue(nv))
-                            if nv.path.is_ident("version") =>
-                        {
+                        NestedMeta::Meta(Meta::NameValue(nv)) if nv.path.is_ident("version") => {
                             if let Lit::Str(lit_str) = nv.lit {
                                 version = Some(lit_str.value());
                             }
                         }
-                        NestedMeta::Meta(Meta::NameValue(nv))
-                            if nv.path.is_ident("description") =>
-                        {
+                        NestedMeta::Meta(Meta::NameValue(nv)) if nv.path.is_ident("description") => {
                             if let Lit::Str(lit_str) = nv.lit {
                                 description = Some(lit_str.value());
                             }
@@ -87,23 +81,17 @@ fn parse_driver_attributes(
                                 opt_name = Some(lit_str.value());
                             }
                         }
-                        NestedMeta::Meta(Meta::NameValue(nv))
-                            if nv.path.is_ident("default") =>
-                        {
+                        NestedMeta::Meta(Meta::NameValue(nv)) if nv.path.is_ident("default") => {
                             if let Lit::Str(lit_str) = nv.lit {
                                 opt_default = Some(lit_str.value());
                             }
                         }
-                        NestedMeta::Meta(Meta::NameValue(nv))
-                            if nv.path.is_ident("option_type") =>
-                        {
+                        NestedMeta::Meta(Meta::NameValue(nv)) if nv.path.is_ident("option_type") => {
                             if let Lit::Str(lit_str) = nv.lit {
                                 opt_type = Some(lit_str.value());
                             }
                         }
-                        NestedMeta::Meta(Meta::NameValue(nv))
-                            if nv.path.is_ident("required") =>
-                        {
+                        NestedMeta::Meta(Meta::NameValue(nv)) if nv.path.is_ident("required") => {
                             if let Lit::Bool(lit_bool) = nv.lit {
                                 opt_required = lit_bool.value;
                             }
@@ -128,8 +116,7 @@ fn parse_driver_attributes(
     }
 
     let name = name.ok_or_else(|| syn::Error::new_spanned(&attrs[0], "Missing driver name"))?;
-    let version =
-        version.ok_or_else(|| syn::Error::new_spanned(&attrs[0], "Missing driver version"))?;
+    let version = version.ok_or_else(|| syn::Error::new_spanned(&attrs[0], "Missing driver version"))?;
 
     Ok((name, version, description, options))
 }
@@ -183,10 +170,7 @@ pub fn derive_device_driver(input: TokenStream) -> TokenStream {
         quote! { None }
     };
 
-    let class_name = format!(
-        "tinyiothub::domain::device::driver::drivers::{}",
-        name
-    );
+    let class_name = format!("tinyiothub::domain::device::driver::drivers::{}", name);
 
     // 生成默认配置代码
     let default_config_entries = options.iter().map(|opt| {
@@ -242,8 +226,7 @@ pub fn derive_device_driver(input: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro]
 pub fn register_drivers(input: TokenStream) -> TokenStream {
-    let drivers =
-        parse_macro_input!(input with Punctuated::<syn::Ident, Token![,]>::parse_terminated);
+    let drivers = parse_macro_input!(input with Punctuated::<syn::Ident, Token![,]>::parse_terminated);
 
     let registry_entries = drivers.iter().map(|driver| {
         quote! {

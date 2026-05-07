@@ -51,31 +51,42 @@ pub struct ApiResponseBuilder;
 impl ApiResponseBuilder {
     /// 创建成功响应
     pub fn success<T: Serialize>(data: T) -> Json<ApiResponse<T>> {
-        Json(ApiResponse { code: 0, msg: String::new(), result: Some(data) })
+        Json(ApiResponse {
+            code: 0,
+            msg: String::new(),
+            result: Some(data),
+        })
     }
 
     /// 创建成功响应（带消息）
-    pub fn success_with_message<T: Serialize>(
-        data: T,
-        message: impl Into<String>,
-    ) -> Json<ApiResponse<T>> {
-        Json(ApiResponse { code: 0, msg: message.into(), result: Some(data) })
+    pub fn success_with_message<T: Serialize>(data: T, message: impl Into<String>) -> Json<ApiResponse<T>> {
+        Json(ApiResponse {
+            code: 0,
+            msg: message.into(),
+            result: Some(data),
+        })
     }
 
     /// 创建错误响应
     pub fn error<T>(message: impl Into<String>) -> Json<ApiResponse<T>> {
-        Json(ApiResponse { code: -1, msg: message.into(), result: None })
+        Json(ApiResponse {
+            code: -1,
+            msg: message.into(),
+            result: None,
+        })
     }
 
     /// 创建带错误码的错误响应
     pub fn error_with_code<T>(code: i32, message: impl Into<String>) -> Json<ApiResponse<T>> {
-        Json(ApiResponse { code, msg: message.into(), result: None })
+        Json(ApiResponse {
+            code,
+            msg: message.into(),
+            result: None,
+        })
     }
 
     /// 从Result创建响应
-    pub fn from_result<T: Serialize, E: std::fmt::Display>(
-        result: Result<T, E>,
-    ) -> Json<ApiResponse<T>> {
+    pub fn from_result<T: Serialize, E: std::fmt::Display>(result: Result<T, E>) -> Json<ApiResponse<T>> {
         match result {
             Ok(data) => Self::success(data),
             Err(error) => Self::error(error.to_string()),
@@ -128,8 +139,7 @@ mod tests {
 
     #[test]
     fn test_from_result_err() {
-        let resp: Json<ApiResponse<String>> =
-            ApiResponseBuilder::from_result(Err::<String, _>("fail"));
+        let resp: Json<ApiResponse<String>> = ApiResponseBuilder::from_result(Err::<String, _>("fail"));
         assert_eq!(resp.0.code, -1);
         assert_eq!(resp.0.msg, "fail");
         assert_eq!(resp.0.result, None);

@@ -2,9 +2,8 @@
 //!
 //! Design inspired by HORUS shared-memory architecture:
 //! - **DashMap**: O(1) lookups by ID / name (per-shard locks, held for nanoseconds)
-//! - **ArcSwap**: atomic snapshot of device IDs for `all()`
-//!   → readers do an atomic pointer load (no lock, no contention)
-//!   → writers do an atomic pointer swap (no lock, no contention with readers)
+//! - **ArcSwap**: atomic snapshot of device IDs for `all()` → readers do an atomic pointer load (no
+//!   lock, no contention) → writers do an atomic pointer swap (no lock, no contention with readers)
 //!
 //! The old `RwLock<Vec<String>>` / `DashMap::iter()` approaches are gone.
 //! This cache is safe to call from any tokio task without blocking the runtime.
@@ -43,9 +42,7 @@ impl DeviceCache {
     }
 
     pub fn get_by_name(&self, name: &str) -> Option<Device> {
-        self.name_to_id
-            .get(name)
-            .and_then(|id| self.get(id.as_str()))
+        self.name_to_id.get(name).and_then(|id| self.get(id.as_str()))
     }
 
     pub fn insert(&self, device: Device) {
@@ -76,12 +73,7 @@ impl DeviceCache {
         self.devices.insert(id, Arc::new(device));
     }
 
-    pub fn update_property(
-        &self,
-        device_id: &str,
-        _property_id: &str,
-        update_fn: impl FnOnce(&mut Device),
-    ) {
+    pub fn update_property(&self, device_id: &str, _property_id: &str, update_fn: impl FnOnce(&mut Device)) {
         // Clone the device OUTSIDE the read-lock scope.
         // DashMap::get() holds a per-shard read lock; if we try to
         // DashMap::insert() (which needs a write lock) while that

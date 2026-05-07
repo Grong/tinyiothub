@@ -1,9 +1,13 @@
 use async_trait::async_trait;
 use sqlx::Row;
-use tinyiothub_core::error::Result;
-use tinyiothub_core::models::device::{CreateDeviceRequest, Device, DeviceStatusUpdate, UpdateDeviceRequest};
-use tinyiothub_core::{generate_id, now_string};
+use tinyiothub_core::{
+    error::Result,
+    generate_id,
+    models::device::{CreateDeviceRequest, Device, DeviceStatusUpdate, UpdateDeviceRequest},
+    now_string,
+};
 use tinyiothub_storage::traits::device::{DeviceCriteria, DeviceRepository};
+
 use crate::shared::persistence::database::Database;
 
 /// Tenant-aware device repository adapter
@@ -30,12 +34,11 @@ impl<R: DeviceRepository> TenantDeviceRepository<R> {
 
     /// Check if a device belongs to this workspace
     async fn device_belongs_to_workspace(&self, device_id: &str) -> Result<bool> {
-        let result: Option<(String,)> = sqlx::query_as(
-            "SELECT workspace_id FROM devices WHERE id = ?"
-        )
-            .bind(device_id)
-            .fetch_optional(self.database.pool())
-            .await?;
+        let result: Option<(String,)> =
+            sqlx::query_as("SELECT workspace_id FROM devices WHERE id = ?")
+                .bind(device_id)
+                .fetch_optional(self.database.pool())
+                .await?;
 
         match result {
             Some((workspace_id,)) => Ok(workspace_id == self.workspace_id),
@@ -67,7 +70,10 @@ impl<R: DeviceRepository> TenantDeviceRepository<R> {
     }
 
     /// Filter device state updates to only those belonging to this workspace
-    async fn filter_state_updates_by_workspace(&self, updates: &[(String, i32)]) -> Result<Vec<(String, i32)>> {
+    async fn filter_state_updates_by_workspace(
+        &self,
+        updates: &[(String, i32)],
+    ) -> Result<Vec<(String, i32)>> {
         if updates.is_empty() {
             return Ok(Vec::new());
         }
@@ -78,17 +84,17 @@ impl<R: DeviceRepository> TenantDeviceRepository<R> {
         // Create a set for fast lookup
         let filtered_set: std::collections::HashSet<String> = filtered_ids.into_iter().collect();
 
-        let filtered_updates: Vec<(String, i32)> = updates
-            .iter()
-            .filter(|(id, _)| filtered_set.contains(id))
-            .cloned()
-            .collect();
+        let filtered_updates: Vec<(String, i32)> =
+            updates.iter().filter(|(id, _)| filtered_set.contains(id)).cloned().collect();
 
         Ok(filtered_updates)
     }
 
     /// Filter device status updates to only those belonging to this workspace
-    async fn filter_status_updates_by_workspace(&self, updates: &[DeviceStatusUpdate]) -> Result<Vec<DeviceStatusUpdate>> {
+    async fn filter_status_updates_by_workspace(
+        &self,
+        updates: &[DeviceStatusUpdate],
+    ) -> Result<Vec<DeviceStatusUpdate>> {
         if updates.is_empty() {
             return Ok(Vec::new());
         }
@@ -177,10 +183,12 @@ impl<R: DeviceRepository + Send + Sync> DeviceRepository for TenantDeviceReposit
         .await?;
 
         // Fetch the created device
-        self.find_by_id(&id).await?
-            .ok_or_else(|| tinyiothub_core::error::Error::InvalidArgument(
-                format!("Failed to find created device with id {}", id)
+        self.find_by_id(&id).await?.ok_or_else(|| {
+            tinyiothub_core::error::Error::InvalidArgument(format!(
+                "Failed to find created device with id {}",
+                id
             ))
+        })
     }
 
     async fn update(&self, id: &str, request: &UpdateDeviceRequest) -> Result<Device> {
@@ -266,9 +274,10 @@ impl<R: DeviceRepository + Send + Sync> DeviceRepository for TenantDeviceReposit
     async fn update_state(&self, id: &str, state: i32) -> Result<()> {
         let device = self.find_by_id(id).await?;
         if device.is_none() {
-            return Err(tinyiothub_core::error::Error::InvalidArgument(
-                format!("Device with id {} not found in workspace {}", id, self.workspace_id)
-            ));
+            return Err(tinyiothub_core::error::Error::InvalidArgument(format!(
+                "Device with id {} not found in workspace {}",
+                id, self.workspace_id
+            )));
         }
 
         self.inner.update_state(id, state).await
@@ -286,9 +295,10 @@ impl<R: DeviceRepository + Send + Sync> DeviceRepository for TenantDeviceReposit
     async fn update_enabled_status(&self, id: &str, enabled: bool) -> Result<bool> {
         let device = self.find_by_id(id).await?;
         if device.is_none() {
-            return Err(tinyiothub_core::error::Error::InvalidArgument(
-                format!("Device with id {} not found in workspace {}", id, self.workspace_id)
-            ));
+            return Err(tinyiothub_core::error::Error::InvalidArgument(format!(
+                "Device with id {} not found in workspace {}",
+                id, self.workspace_id
+            )));
         }
 
         self.inner.update_enabled_status(id, enabled).await
@@ -322,9 +332,7 @@ impl<R: DeviceRepository + Send + Sync> DeviceRepository for TenantDeviceReposit
 
     async fn exists_by_name(&self, name: &str) -> Result<bool> {
         // Check within this workspace
-        let criteria = DeviceCriteria::builder()
-            .name(name.to_string())
-            .build();
+        let criteria = DeviceCriteria::builder().name(name.to_string()).build();
 
         let count = self.count(&criteria).await?;
         Ok(count > 0)

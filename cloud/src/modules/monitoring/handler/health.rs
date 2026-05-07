@@ -1,11 +1,10 @@
-use crate::shared::security::jwt::Claims;
-use tinyiothub_web::response::ApiResponseBuilder;
-use axum::{extract::State, routing::get, Json, Router};
-use serde::{Deserialize, Serialize};
-use std::sync::OnceLock;
-use std::time::SystemTime;
+use std::{sync::OnceLock, time::SystemTime};
 
-use crate::{shared::app_state::AppState, shared::api_response::ApiResponse};
+use axum::{Json, Router, extract::State, routing::get};
+use serde::{Deserialize, Serialize};
+use tinyiothub_web::response::ApiResponseBuilder;
+
+use crate::shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims};
 
 /// Global start time for uptime calculation (shared with metrics)
 pub static START_TIME: OnceLock<SystemTime> = OnceLock::new();
@@ -43,9 +42,7 @@ pub fn create_router() -> Router<AppState> {
 
 /// 基础健康检查
 async fn get_health(State(state): State<AppState>) -> Json<ApiResponse<HealthStatus>> {
-    let db_status = sqlx::query("SELECT 1")
-        .fetch_optional(state.database().pool())
-        .await;
+    let db_status = sqlx::query("SELECT 1").fetch_optional(state.database().pool()).await;
 
     let status = match db_status {
         Ok(_) => "healthy",
@@ -66,9 +63,7 @@ async fn get_detailed_health(
     State(state): State<AppState>,
     claims: Claims,
 ) -> Json<ApiResponse<DetailedHealthStatus>> {
-    let db_status = sqlx::query("SELECT 1")
-        .fetch_optional(state.database().pool())
-        .await;
+    let db_status = sqlx::query("SELECT 1").fetch_optional(state.database().pool()).await;
 
     let (overall_status, database_status) = match db_status {
         Ok(_) => ("healthy", "connected"),
@@ -85,12 +80,18 @@ async fn get_detailed_health(
     let mut device_count = 0u32;
     let mut active_device_count = 0u32;
 
-    match device_service.count_devices(&tinyiothub_core::models::device::DeviceQueryParams::default()).await {
+    match device_service
+        .count_devices(&tinyiothub_core::models::device::DeviceQueryParams::default())
+        .await
+    {
         Ok(count) => device_count = count as u32,
         Err(e) => tracing::warn!("Failed to get device count for health check: {}", e),
     }
 
-    match device_service.get_devices(&tinyiothub_core::models::device::DeviceQueryParams::default()).await {
+    match device_service
+        .get_devices(&tinyiothub_core::models::device::DeviceQueryParams::default())
+        .await
+    {
         Ok(devices) => {
             active_device_count = devices.iter().filter(|d| d.status.is_online()).count() as u32;
         }
@@ -112,11 +113,7 @@ async fn get_detailed_health(
     drop(sys);
 
     // MQTT status: no direct health check available, report honestly
-    let mqtt_status = if state.data_server().is_some() {
-        "available"
-    } else {
-        "unavailable"
-    };
+    let mqtt_status = if state.data_server().is_some() { "available" } else { "unavailable" };
 
     let detailed_health = DetailedHealthStatus {
         overall_status: overall_status.to_string(),

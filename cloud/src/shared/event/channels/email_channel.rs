@@ -3,9 +3,11 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
-use crate::modules::event::{EventError, Result};
-use crate::modules::notification::types::{
-    NotificationChannel, NotificationChannelType, NotificationLevel, NotificationMessage,
+use crate::modules::{
+    event::{EventError, Result},
+    notification::types::{
+        NotificationChannel, NotificationChannelType, NotificationLevel, NotificationMessage,
+    },
 };
 
 /// Email configuration for SMTP

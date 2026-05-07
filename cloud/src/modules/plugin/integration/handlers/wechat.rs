@@ -1,17 +1,20 @@
 //! 微信集成处理器
 
 use std::any::Any;
+
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
 
-use crate::modules::plugin::integration::IntegrationRequest;
-use crate::modules::plugin::{PluginHandler, PluginManifest, PluginType};
-use crate::shared::error::Error;
-
-use crate::modules::plugin::integration::handlers::IntegrationHandler;
 use super::super::config::WechatConfig;
+use crate::{
+    modules::plugin::{
+        PluginHandler, PluginManifest, PluginType,
+        integration::{IntegrationRequest, handlers::IntegrationHandler},
+    },
+    shared::error::Error,
+};
 
 #[derive(Serialize)]
 struct WechatSendRequest {
@@ -54,11 +57,13 @@ impl WechatHandler {
             self.config.app_id, self.config.app_secret
         );
 
-        let resp = self.client.get(&url)
-            .send().await
-            .map_err(|e| Error::NetworkError(format!("Failed to get WeChat access token: {}", e)))?;
+        let resp = self.client.get(&url).send().await.map_err(|e| {
+            Error::NetworkError(format!("Failed to get WeChat access token: {}", e))
+        })?;
 
-        let token_resp: WechatAccessTokenResponse = resp.json().await
+        let token_resp: WechatAccessTokenResponse = resp
+            .json()
+            .await
             .map_err(|e| Error::NetworkError(format!("Failed to parse WeChat response: {}", e)))?;
 
         Ok(token_resp.access_token)
@@ -83,10 +88,10 @@ impl IntegrationHandler for WechatHandler {
             text: serde_json::json!({ "content": request.content.clone() }),
         };
 
-        let resp = self.client.post(&url)
-            .json(&send_req)
-            .send().await
-            .map_err(|e| Error::NetworkError(format!("Failed to send WeChat message: {}", e)))?;
+        let resp =
+            self.client.post(&url).json(&send_req).send().await.map_err(|e| {
+                Error::NetworkError(format!("Failed to send WeChat message: {}", e))
+            })?;
 
         if !resp.status().is_success() {
             error!("WeChat API returned: {}", resp.status());

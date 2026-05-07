@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder, Row};
-
-use super::types::{CreateUserRequest, UpdateUserRequest, User, UserStatisticsNew};
 use tinyiothub_core::error::{Error, Result};
 use tinyiothub_storage::sqlite::Database;
+
+use super::types::{CreateUserRequest, UpdateUserRequest, User, UserStatisticsNew};
 
 /// Repository interface for user persistence
 #[async_trait]
@@ -159,9 +159,7 @@ pub struct UserCriteriaBuilder {
 
 impl UserCriteriaBuilder {
     pub fn new() -> Self {
-        Self {
-            criteria: UserCriteria::default(),
-        }
+        Self { criteria: UserCriteria::default() }
     }
 
     pub fn username(mut self, username: String) -> Self {
@@ -374,9 +372,7 @@ impl UserRepository for SqliteUserRepository {
             builder.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let rows = builder.build_query_as::<UserRow>()
-            .fetch_all(self.database.pool())
-            .await?;
+        let rows = builder.build_query_as::<UserRow>().fetch_all(self.database.pool()).await?;
 
         Ok(rows.into_iter().map(Into::into).collect())
     }
@@ -585,14 +581,12 @@ impl UserRepository for SqliteUserRepository {
     async fn update_enabled_status(&self, id: &str, enabled: bool) -> Result<User> {
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-        let result = sqlx::query(
-            "UPDATE users SET is_enabled = ?, updated_at = ? WHERE id = ?"
-        )
-        .bind(enabled)
-        .bind(&now)
-        .bind(id)
-        .execute(self.database.pool())
-        .await?;
+        let result = sqlx::query("UPDATE users SET is_enabled = ?, updated_at = ? WHERE id = ?")
+            .bind(enabled)
+            .bind(&now)
+            .bind(id)
+            .execute(self.database.pool())
+            .await?;
 
         if result.rows_affected() == 0 {
             return Err(Error::NotFound);
@@ -604,14 +598,12 @@ impl UserRepository for SqliteUserRepository {
     async fn update_password(&self, id: &str, hashed_password: &str) -> Result<()> {
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-        let result = sqlx::query(
-            "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?"
-        )
-        .bind(hashed_password)
-        .bind(&now)
-        .bind(id)
-        .execute(self.database.pool())
-        .await?;
+        let result = sqlx::query("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")
+            .bind(hashed_password)
+            .bind(&now)
+            .bind(id)
+            .execute(self.database.pool())
+            .await?;
 
         if result.rows_affected() == 0 {
             return Err(Error::NotFound);
@@ -633,10 +625,9 @@ impl UserRepository for SqliteUserRepository {
     }
 
     async fn get_user_statistics(&self) -> Result<UserStatisticsNew> {
-        let total_users: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM users")
-                .fetch_one(self.database.pool())
-                .await?;
+        let total_users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+            .fetch_one(self.database.pool())
+            .await?;
 
         let enabled_users: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE is_enabled = true")
@@ -649,17 +640,12 @@ impl UserRepository for SqliteUserRepository {
                 .await?;
 
         let recent_logins: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM users WHERE last_login_at >= datetime('now', '-7 days')"
+            "SELECT COUNT(*) FROM users WHERE last_login_at >= datetime('now', '-7 days')",
         )
         .fetch_one(self.database.pool())
         .await?;
 
-        Ok(UserStatisticsNew {
-            total_users,
-            enabled_users,
-            disabled_users,
-            recent_logins,
-        })
+        Ok(UserStatisticsNew { total_users, enabled_users, disabled_users, recent_logins })
     }
 }
 

@@ -1,16 +1,21 @@
-use std::str::FromStr;
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 
 use chrono::Utc;
 use cron::Schedule;
-use tokio::sync::{broadcast, Semaphore};
-use tokio::task::JoinHandle;
+use tinyiothub_core::models::cron_job::CronJob;
+use tinyiothub_runtime::cron::{
+    DeviceCommandExecutor, ExecutionResult, ExecutorError, ExecutorRegistry,
+};
+use tinyiothub_storage::{
+    sqlite::database::Database,
+    traits::cron::{CronJobRepository, CronRunRepository},
+};
+use tokio::{
+    sync::{Semaphore, broadcast},
+    task::JoinHandle,
+};
 use tracing::{error, info, warn};
 
-use tinyiothub_runtime::cron::{ExecutionResult, ExecutorError, ExecutorRegistry, DeviceCommandExecutor};
-use tinyiothub_storage::traits::cron::{CronJobRepository, CronRunRepository};
-use tinyiothub_core::models::cron_job::CronJob;
-use tinyiothub_storage::sqlite::database::Database;
 use crate::shared::error::Result;
 
 /// Cron job scheduler service that polls for due jobs and executes them.
@@ -173,10 +178,7 @@ async fn execute_job(
     let workspace_id = job.workspace_id.as_deref().unwrap_or("");
 
     // Create run record
-    let run = match run_repo
-        .create(&job.id, workspace_id, "schedule", None)
-        .await
-    {
+    let run = match run_repo.create(&job.id, workspace_id, "schedule", None).await {
         Ok(r) => r,
         Err(e) => {
             error!("Failed to create run record for job {}: {}", job.id, e);
@@ -205,10 +207,7 @@ async fn execute_job(
             Err(_) => Err(ExecutorError::Timeout(timeout_secs)),
         }
     } else {
-        Err(ExecutorError::InvalidConfig(format!(
-            "no executor for job type {}",
-            job.job_type
-        )))
+        Err(ExecutorError::InvalidConfig(format!("no executor for job type {}", job.job_type)))
     };
 
     // Update run record and job stats
@@ -228,21 +227,13 @@ async fn execute_job(
                 error!("Failed to complete run {}: {}", run_id, e);
             }
 
-            if let Err(e) = job_repo
-                .update_run_stats(
-                    &job.id,
-                    &res.status,
-                    res.error_message.as_deref(),
-                )
-                .await
+            if let Err(e) =
+                job_repo.update_run_stats(&job.id, &res.status, res.error_message.as_deref()).await
             {
                 error!("Failed to update run stats for job {}: {}", job.id, e);
             }
 
-            info!(
-                "Job {} executed successfully ({}ms)",
-                job.id, res.duration_ms
-            );
+            info!("Job {} executed successfully ({}ms)", job.id, res.duration_ms);
         }
         Err(err) => {
             let duration_ms = start.elapsed().as_millis() as i64;
@@ -258,10 +249,7 @@ async fn execute_job(
                 error!("Failed to complete run {}: {}", run_id, e);
             }
 
-            if let Err(e) = job_repo
-                .update_run_stats(&job.id, status, Some(&err_msg))
-                .await
-            {
+            if let Err(e) = job_repo.update_run_stats(&job.id, status, Some(&err_msg)).await {
                 error!("Failed to update run stats for job {}: {}", job.id, e);
             }
 
@@ -272,10 +260,7 @@ async fn execute_job(
     // Compute and update next_run_at
     let next_run = compute_next_run_at(&job.cron_expression);
     if let Some(ref next) = next_run {
-        if let Err(e) = job_repo
-            .update_next_run_at(&job.id, Some(next))
-            .await
-        {
+        if let Err(e) = job_repo.update_next_run_at(&job.id, Some(next)).await {
             warn!("Failed to update next_run_at for job {}: {}", job.id, e);
         }
         info!("Job {} next run at: {}", job.id, next);

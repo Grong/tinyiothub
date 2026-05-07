@@ -1,21 +1,20 @@
 //! MQTT 订阅协议处理器
 
-use std::any::Any;
+use std::{any::Any, collections::HashMap, sync::Arc};
+
 use async_trait::async_trait;
-use std::collections::HashMap;
-use std::sync::Arc;
+use tinyiothub_core::models::device::Device;
 use tokio::sync::RwLock;
 use tracing::debug;
 
-use super::ProtocolHandler;
-use tinyiothub_core::models::device::Device;
+use super::{super::config::MqttConfig, ProtocolHandler};
 use crate::{
-    modules::device::driver::ResultValue,
-    shared::error::Error
+    modules::{
+        device::driver::ResultValue,
+        plugin::{PluginHandler, PluginManifest, PluginType},
+    },
+    shared::error::Error,
 };
-
-use super::super::config::MqttConfig;
-use crate::modules::plugin::{PluginHandler, PluginManifest, PluginType};
 
 pub struct MqttSubscribeHandler {
     _config: MqttConfig,

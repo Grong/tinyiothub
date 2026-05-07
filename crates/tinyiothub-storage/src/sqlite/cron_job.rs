@@ -4,10 +4,10 @@ use cron::Schedule;
 use sqlx::{QueryBuilder, Row};
 use std::str::FromStr;
 
-use crate::traits::cron::CronJobRepository;
-use tinyiothub_core::models::cron_job::{CreateCronJobRequest, CronJob, CronJobQuery, UpdateCronJobRequest};
 use crate::sqlite::database::Database;
+use crate::traits::cron::CronJobRepository;
 use tinyiothub_core::error::Result;
+use tinyiothub_core::models::cron_job::{CreateCronJobRequest, CronJob, CronJobQuery, UpdateCronJobRequest};
 use tinyiothub_core::{generate_id, now_string};
 
 pub struct SqliteCronJobRepository {
@@ -92,7 +92,6 @@ impl CronJobRepository for SqliteCronJobRepository {
             "#,
         );
 
-
         if let Some(ref name) = query.name {
             builder.push(" AND name LIKE ");
             builder.push_bind(format!("%{}%", name));
@@ -129,11 +128,7 @@ impl CronJobRepository for SqliteCronJobRepository {
         Ok(jobs)
     }
 
-    async fn create(
-        &self,
-        job: &CreateCronJobRequest,
-        created_by: Option<&str>,
-    ) -> Result<CronJob> {
+    async fn create(&self, job: &CreateCronJobRequest, created_by: Option<&str>) -> Result<CronJob> {
         let id = generate_id();
         let now = now_string();
         let timeout_seconds = job.timeout_seconds.unwrap_or(300);
@@ -171,11 +166,7 @@ impl CronJobRepository for SqliteCronJobRepository {
             .ok_or(tinyiothub_core::error::Error::NotFound)
     }
 
-    async fn update(
-        &self,
-        id: &str,
-        req: &UpdateCronJobRequest,
-    ) -> Result<CronJob> {
+    async fn update(&self, id: &str, req: &UpdateCronJobRequest) -> Result<CronJob> {
         let now = now_string();
 
         let mut builder = QueryBuilder::<sqlx::Sqlite>::new("UPDATE cron_jobs SET updated_at = ");
@@ -263,12 +254,7 @@ impl CronJobRepository for SqliteCronJobRepository {
         Ok(result.rows_affected() > 0)
     }
 
-    async fn update_run_stats(
-        &self,
-        id: &str,
-        status: &str,
-        error: Option<&str>,
-    ) -> Result<bool> {
+    async fn update_run_stats(&self, id: &str, status: &str, error: Option<&str>) -> Result<bool> {
         let now = now_string();
         let success_inc = if status == "success" { 1 } else { 0 };
         let fail_inc = if status == "failed" { 1 } else { 0 };
@@ -302,14 +288,12 @@ impl CronJobRepository for SqliteCronJobRepository {
     async fn set_running(&self, id: &str, running: bool) -> Result<bool> {
         let now = now_string();
 
-        let result = sqlx::query(
-            "UPDATE cron_jobs SET is_running = ?, updated_at = ? WHERE id = ?",
-        )
-        .bind(if running { 1 } else { 0 })
-        .bind(&now)
-        .bind(id)
-        .execute(self.database.pool())
-        .await?;
+        let result = sqlx::query("UPDATE cron_jobs SET is_running = ?, updated_at = ? WHERE id = ?")
+            .bind(if running { 1 } else { 0 })
+            .bind(&now)
+            .bind(id)
+            .execute(self.database.pool())
+            .await?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -340,22 +324,18 @@ impl CronJobRepository for SqliteCronJobRepository {
 
     async fn claim_job(&self, id: &str) -> Result<bool> {
         let now = now_string();
-        let result = sqlx::query(
-            "UPDATE cron_jobs SET is_running = 1, updated_at = ? WHERE id = ? AND is_running = 0",
-        )
-        .bind(&now)
-        .bind(id)
-        .execute(self.database.pool())
-        .await?;
+        let result = sqlx::query("UPDATE cron_jobs SET is_running = 1, updated_at = ? WHERE id = ? AND is_running = 0")
+            .bind(&now)
+            .bind(id)
+            .execute(self.database.pool())
+            .await?;
 
         Ok(result.rows_affected() > 0)
     }
 
     async fn clear_all_running(&self) -> Result<u64> {
         let now = now_string();
-        let mut builder = QueryBuilder::<sqlx::Sqlite>::new(
-            "UPDATE cron_jobs SET is_running = 0, updated_at = ",
-        );
+        let mut builder = QueryBuilder::<sqlx::Sqlite>::new("UPDATE cron_jobs SET is_running = 0, updated_at = ");
         builder.push_bind(&now);
         builder.push(" WHERE is_running = 1");
 
@@ -373,43 +353,33 @@ impl CronJobRepository for SqliteCronJobRepository {
     }
 
     async fn count_by_enabled(&self, is_enabled: bool) -> Result<i64> {
-        let row = sqlx::query(
-            "SELECT COUNT(*) as count FROM cron_jobs WHERE is_enabled = ?",
-        )
-        .bind(if is_enabled { 1 } else { 0 })
-        .fetch_one(self.database.pool())
-        .await?;
+        let row = sqlx::query("SELECT COUNT(*) as count FROM cron_jobs WHERE is_enabled = ?")
+            .bind(if is_enabled { 1 } else { 0 })
+            .fetch_one(self.database.pool())
+            .await?;
 
         let count: i64 = row.get("count");
         Ok(count)
     }
 
     async fn count_running(&self) -> Result<i64> {
-        let row = sqlx::query(
-            "SELECT COUNT(*) as count FROM cron_jobs WHERE is_running = 1",
-        )
-        .fetch_one(self.database.pool())
-        .await?;
+        let row = sqlx::query("SELECT COUNT(*) as count FROM cron_jobs WHERE is_running = 1")
+            .fetch_one(self.database.pool())
+            .await?;
 
         let count: i64 = row.get("count");
         Ok(count)
     }
 
-    async fn update_next_run_at(
-        &self,
-        id: &str,
-        next_run_at: Option<&str>,
-    ) -> Result<bool> {
+    async fn update_next_run_at(&self, id: &str, next_run_at: Option<&str>) -> Result<bool> {
         let now = now_string();
 
-        let result = sqlx::query(
-            "UPDATE cron_jobs SET next_run_at = ?, updated_at = ? WHERE id = ?",
-        )
-        .bind(next_run_at)
-        .bind(&now)
-        .bind(id)
-        .execute(self.database.pool())
-        .await?;
+        let result = sqlx::query("UPDATE cron_jobs SET next_run_at = ?, updated_at = ? WHERE id = ?")
+            .bind(next_run_at)
+            .bind(&now)
+            .bind(id)
+            .execute(self.database.pool())
+            .await?;
 
         Ok(result.rows_affected() > 0)
     }

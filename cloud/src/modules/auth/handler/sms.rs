@@ -2,24 +2,23 @@
 // 短信验证码认证模块
 // 支持手机验证码登录/注册
 
-use tinyiothub_web::response::ApiResponseBuilder;
+use std::net::SocketAddr;
+
 use axum::{
+    Router,
     extract::{ConnectInfo, Query, State},
     http::StatusCode,
     response::Json,
     routing::{get, post},
-    Router,
 };
-use std::net::SocketAddr;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
+use tinyiothub_web::response::ApiResponseBuilder;
 
-use crate::{
-    shared::app_state::AppState,
-    shared::api_response::ApiResponse,
-    shared::{config::get as get_config, redis::RedisClient},
-    shared::security::jwt,
+use crate::shared::{
+    api_response::ApiResponse, app_state::AppState, config::get as get_config, redis::RedisClient,
+    security::jwt,
 };
 
 // 验证码有效期（秒）
@@ -38,9 +37,9 @@ pub fn create_router() -> Router<AppState> {
 #[serde(rename_all = "snake_case")]
 pub struct SendCodeRequest {
     pub phone: String,
-    pub purpose: Option<String>, // login, register, reset_password
-    pub captcha_ticket: Option<String>,   // 腾讯防水墙票据
-    pub captcha_randstr: Option<String>,  // 腾讯防水墙随机串
+    pub purpose: Option<String>,        // login, register, reset_password
+    pub captcha_ticket: Option<String>, // 腾讯防水墙票据
+    pub captcha_randstr: Option<String>, // 腾讯防水墙随机串
 }
 
 #[derive(Debug, Deserialize)]
@@ -115,18 +114,20 @@ async fn check_rate_limit(
     let daily_key = format!("sms:count:daily:{}", phone);
     if let Ok(count) = redis.get(&daily_key).await
         && let Ok(c) = count.unwrap_or_default().parse::<i64>()
-            && c >= daily_limit {
-                return Ok(RateLimitResult::DailyLimitExceeded);
-            }
+        && c >= daily_limit
+    {
+        return Ok(RateLimitResult::DailyLimitExceeded);
+    }
 
     // 检查同 IP 5分钟内发送次数
     if let Some(ip_addr) = ip {
         let ip_key = format!("sms:count:ip:{}", ip_addr);
         if let Ok(count) = redis.get(&ip_key).await
             && let Ok(c) = count.unwrap_or_default().parse::<i64>()
-                && c >= 3 {
-                    return Ok(RateLimitResult::NeedsCaptcha);
-                }
+            && c >= 3
+        {
+            return Ok(RateLimitResult::NeedsCaptcha);
+        }
     }
 
     Ok(RateLimitResult::Allowed)
@@ -194,28 +195,22 @@ async fn send_aliyun_sms(
     // 构建规范的查询字符串
     let canonical_query_string: String = params
         .iter()
-        .map(|(k, v)| {
-            format!(
-                "{}={}",
-                percent_encode(k),
-                percent_encode(v)
-            )
-        })
+        .map(|(k, v)| format!("{}={}", percent_encode(k), percent_encode(v)))
         .collect::<Vec<_>>()
         .join("&");
 
     // 构建待签名字符串
-    let string_to_sign = format!(
-        "GET&{}&{}",
-        percent_encode("/"),
-        percent_encode(canonical_query_string.as_str())
-    );
+    let string_to_sign =
+        format!("GET&{}&{}", percent_encode("/"), percent_encode(canonical_query_string.as_str()));
 
     // 计算 HMAC-SHA1 签名
     let mut mac = HmacSha1::new_from_slice(format!("{}&", config.access_key_secret).as_bytes())
         .map_err(|e| format!("HMAC error: {}", e))?;
     mac.update(string_to_sign.as_bytes());
-    let signature = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, mac.finalize().into_bytes());
+    let signature = base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        mac.finalize().into_bytes(),
+    );
 
     // 构建完整 URL
     let url = format!(
@@ -225,21 +220,17 @@ async fn send_aliyun_sms(
         canonical_query_string
     );
 
-    tracing::debug!("[SMS] Sending request to Aliyun: {}", url.replace(&config.access_key_secret, "***"));
+    tracing::debug!(
+        "[SMS] Sending request to Aliyun: {}",
+        url.replace(&config.access_key_secret, "***")
+    );
 
     // 发送请求
     let client = reqwest::Client::new();
-    let resp = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("Request failed: {}", e))?;
+    let resp = client.get(&url).send().await.map_err(|e| format!("Request failed: {}", e))?;
 
     let status = resp.status();
-    let body = resp
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read response body: {}", e))?;
+    let body = resp.text().await.map_err(|e| format!("Failed to read response body: {}", e))?;
 
     tracing::debug!("[SMS] Aliyun response status={}, body={}", status, body);
 
@@ -256,32 +247,22 @@ async fn send_aliyun_sms(
         Err(json_err) => {
             // Aliyun returns XML on some errors (e.g. RequestParameterMalformed)
             if body.trim_start().starts_with("<?xml") {
-                let code = extract_xml_text(&body, "Code")
-                    .unwrap_or_else(|| "UnknownError".to_string());
-                let message = extract_xml_text(&body, "Message")
-                    .unwrap_or_else(|| json_err.to_string());
+                let code =
+                    extract_xml_text(&body, "Code").unwrap_or_else(|| "UnknownError".to_string());
+                let message =
+                    extract_xml_text(&body, "Message").unwrap_or_else(|| json_err.to_string());
                 AliyunResponse { code, message }
             } else {
-                return Err(format!(
-                    "Failed to parse response: {} — body: {}",
-                    json_err, body
-                ));
+                return Err(format!("Failed to parse response: {} — body: {}", json_err, body));
             }
         }
     };
 
     if result.code == "OK" {
-        tracing::info!(
-            "[SMS] Successfully sent code to {} via Aliyun",
-            phone
-        );
+        tracing::info!("[SMS] Successfully sent code to {} via Aliyun", phone);
         Ok(())
     } else {
-        tracing::error!(
-            "[SMS] Aliyun API error: {} - {}",
-            result.code,
-            result.message
-        );
+        tracing::error!("[SMS] Aliyun API error: {} - {}", result.code, result.message);
         Err(format!("{}: {}", result.code, result.message))
     }
 }
@@ -377,12 +358,8 @@ async fn send_code(
 
         // 设置发送间隔（90秒）
         let interval_key = format!("sms:interval:{}", phone);
-        let interval_secs = config
-            .sms
-            .rate_limit
-            .as_ref()
-            .and_then(|r| r.interval_secs)
-            .unwrap_or(90);
+        let interval_secs =
+            config.sms.rate_limit.as_ref().and_then(|r| r.interval_secs).unwrap_or(90);
         if let Err(e) = r.set_ex(&interval_key, "1", interval_secs).await {
             tracing::error!("Failed to set rate limit interval: {}", e);
         }
@@ -543,19 +520,20 @@ async fn login_with_code(
     };
 
     // 确保新用户关联到默认租户和工作空间（幂等）
-    if let Err(e) = crate::modules::system::handler::ensure_user_has_workspace(&state, &user.id).await {
+    if let Err(e) =
+        crate::modules::system::handler::ensure_user_has_workspace(&state, &user.id).await
+    {
         tracing::warn!("[SMS] Failed to ensure workspace for user {}: {}", user.id, e);
     }
 
     // 查找该用户关联的租户和默认 workspace
-    let tenant_id: String = sqlx::query_scalar(
-        "SELECT tenant_id FROM tenant_users WHERE user_id = ? LIMIT 1"
-    )
-    .bind(&user.id)
-    .fetch_optional(db.pool())
-    .await
-    .unwrap_or(None)
-    .unwrap_or_else(|| "default".to_string());
+    let tenant_id: String =
+        sqlx::query_scalar("SELECT tenant_id FROM tenant_users WHERE user_id = ? LIMIT 1")
+            .bind(&user.id)
+            .fetch_optional(db.pool())
+            .await
+            .unwrap_or(None)
+            .unwrap_or_else(|| "default".to_string());
 
     // 优先查找用户自己的 workspace (ws-{user_id})，fallback 到 tenant 下第一个
     let user_ws_id = format!("ws-{}", user.id);
@@ -570,13 +548,14 @@ async fn login_with_code(
     .unwrap_or(None);
 
     let workspace_id_for_token = workspace_id.clone().unwrap_or_default();
-    let token = match jwt::generate_token(&user.id, &user.username, &tenant_id, &workspace_id_for_token) {
-        Ok(t) => t,
-        Err(e) => {
-            tracing::error!("Failed to generate token: {}", e);
-            return ApiResponseBuilder::error("登录失败，请稍后重试".to_string());
-        }
-    };
+    let token =
+        match jwt::generate_token(&user.id, &user.username, &tenant_id, &workspace_id_for_token) {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::error!("Failed to generate token: {}", e);
+                return ApiResponseBuilder::error("登录失败，请稍后重试".to_string());
+            }
+        };
 
     ApiResponseBuilder::success(LoginWithCodeResponse {
         access_token: token,
@@ -662,10 +641,7 @@ pub struct VerifyCodeResponse {
 // ============== 辅助函数 ==============
 
 /// 从数据库获取验证码（Redis 不可用时的 fallback）
-async fn get_code_from_db(
-    state: &AppState,
-    phone: &str,
-) -> Option<String> {
+async fn get_code_from_db(state: &AppState, phone: &str) -> Option<String> {
     let db = state.database();
 
     let rows = match sqlx::query(
@@ -705,9 +681,10 @@ async fn get_code_from_db(
 
     // 检查验证码是否过期
     if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(&expires_at)
-        && exp < chrono::Utc::now() {
-            return None;
-        }
+        && exp < chrono::Utc::now()
+    {
+        return None;
+    }
 
     Some(stored_code)
 }
@@ -847,9 +824,9 @@ mod tests {
     #[test]
     fn test_validate_phone_invalid() {
         // 无效手机号 - 长度不对
-        assert!(!validate_phone("1381234567"));   // 10位
+        assert!(!validate_phone("1381234567")); // 10位
         assert!(!validate_phone("138123456789")); // 12位
-        assert!(!validate_phone(""));              // 空
+        assert!(!validate_phone("")); // 空
 
         // 无效手机号 - 不是1开头
         assert!(!validate_phone("23812345678"));
@@ -908,10 +885,7 @@ mod tests {
     <Message>Request parameters has malformed encoded characters.</Message>
     <Recommend><![CDATA[...]]></Recommend>
 </Error>"#;
-        assert_eq!(
-            extract_xml_text(xml, "Code"),
-            Some("RequestParameterMalformed".to_string())
-        );
+        assert_eq!(extract_xml_text(xml, "Code"), Some("RequestParameterMalformed".to_string()));
         assert_eq!(
             extract_xml_text(xml, "Message"),
             Some("Request parameters has malformed encoded characters.".to_string())

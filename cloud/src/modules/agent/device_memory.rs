@@ -14,9 +14,17 @@ pub struct DeviceMemory {
 }
 
 impl DeviceMemory {
-    pub fn new(workspace_id: String, agent_id: String, device_id: String, snapshot_data: serde_json::Value) -> Self {
+    pub fn new(
+        workspace_id: String,
+        agent_id: String,
+        device_id: String,
+        snapshot_data: serde_json::Value,
+    ) -> Self {
         Self {
-            id: None, workspace_id, agent_id, device_id,
+            id: None,
+            workspace_id,
+            agent_id,
+            device_id,
             snapshot_data: serde_json::to_string(&snapshot_data).unwrap_or_default(),
             snapshot_time: chrono::Utc::now().timestamp_millis(),
             created_at: None,

@@ -1,20 +1,22 @@
-use tinyiothub_web::response::ApiResponseBuilder;
-use super::types::{
-    BatchTagBindingRequest, CreateTagBindingRequest, CreateTagRequest, Tag, TagBinding,
-    TagQuery, UpdateTagRequest,
-};
 use axum::{
+    Router,
     extract::{Path, Query, State},
     http::StatusCode,
     response::Json,
     routing::{get, post},
-    Router,
 };
 use serde::Deserialize;
+use tinyiothub_web::response::ApiResponseBuilder;
 
-use crate::shared::app_state::AppState;
-use crate::shared::api_response::{ApiResponse, PaginatedResponse, PaginationInfo};
-use crate::shared::security::jwt::Claims;
+use super::types::{
+    BatchTagBindingRequest, CreateTagBindingRequest, CreateTagRequest, Tag, TagBinding, TagQuery,
+    UpdateTagRequest,
+};
+use crate::shared::{
+    api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
+    app_state::AppState,
+    security::jwt::Claims,
+};
 
 #[derive(Debug, Deserialize)]
 pub struct TagListQuery {
@@ -75,19 +77,11 @@ pub async fn list_tags(
         Ok(tags) => {
             let total = count_result.unwrap_or(0);
             let total_count = total as u64;
-            let total_pages = if page_size > 0 {
-                ((total as f64) / (page_size as f64)).ceil() as u32
-            } else {
-                0
-            };
+            let total_pages =
+                if page_size > 0 { ((total as f64) / (page_size as f64)).ceil() as u32 } else { 0 };
             Ok(ApiResponseBuilder::success(PaginatedResponse {
                 data: tags,
-                pagination: PaginationInfo {
-                    page,
-                    page_size,
-                    total_pages,
-                    total_count,
-                },
+                pagination: PaginationInfo { page, page_size, total_pages, total_count },
             }))
         }
         Err(e) => {
@@ -138,11 +132,7 @@ pub async fn create_tag(
         }
     }
 
-    match state
-        .tag_service
-        .create_tag(&request, &claims.user_id, &claims.tenant_id)
-        .await
-    {
+    match state.tag_service.create_tag(&request, &claims.user_id, &claims.tenant_id).await {
         Ok(tag) => Ok(ApiResponseBuilder::success_with_message(tag, "Tag created successfully")),
         Err(e) => {
             tracing::error!("Failed to create tag: {}", e);
@@ -174,7 +164,12 @@ pub async fn update_tag(
 
         match state
             .tag_service
-            .tag_exists_by_name_and_type_exclude_id(name, &current_tag.tag_type, &id, &claims.tenant_id)
+            .tag_exists_by_name_and_type_exclude_id(
+                name,
+                &current_tag.tag_type,
+                &id,
+                &claims.tenant_id,
+            )
             .await
         {
             Ok(true) => return Err(StatusCode::CONFLICT),
@@ -186,11 +181,7 @@ pub async fn update_tag(
         }
     }
 
-    match state
-        .tag_service
-        .update_tag(&id, &request, &claims.tenant_id)
-        .await
-    {
+    match state.tag_service.update_tag(&id, &request, &claims.tenant_id).await {
         Ok(tag) => Ok(ApiResponseBuilder::success_with_message(tag, "Tag updated successfully")),
         Err(tinyiothub_core::error::Error::NotFound) => Err(StatusCode::NOT_FOUND),
         Err(e) => {
@@ -248,19 +239,11 @@ pub async fn search_tags(
         Ok(tags) => {
             let total = count_result.unwrap_or(0);
             let total_count = total as u64;
-            let total_pages = if page_size > 0 {
-                ((total as f64) / (page_size as f64)).ceil() as u32
-            } else {
-                0
-            };
+            let total_pages =
+                if page_size > 0 { ((total as f64) / (page_size as f64)).ceil() as u32 } else { 0 };
             Ok(ApiResponseBuilder::success(PaginatedResponse {
                 data: tags,
-                pagination: PaginationInfo {
-                    page,
-                    page_size,
-                    total_pages,
-                    total_count,
-                },
+                pagination: PaginationInfo { page, page_size, total_pages, total_count },
             }))
         }
         Err(e) => {
@@ -329,11 +312,7 @@ pub async fn create_tag_binding(
         }
     }
 
-    match state
-        .tag_service
-        .create_binding(&request, &claims.user_id, &claims.tenant_id)
-        .await
-    {
+    match state.tag_service.create_binding(&request, &claims.user_id, &claims.tenant_id).await {
         Ok(binding) => Ok(ApiResponseBuilder::success_with_message(
             binding,
             "Tag binding created successfully",
@@ -413,7 +392,9 @@ pub async fn batch_delete_bindings(
         .delete_all_bindings_by_target_id(&query.target_id, &claims.tenant_id)
         .await
     {
-        Ok(_) => Ok(ApiResponseBuilder::success_with_message((), "Tag bindings deleted successfully")),
+        Ok(_) => {
+            Ok(ApiResponseBuilder::success_with_message((), "Tag bindings deleted successfully"))
+        }
         Err(e) => {
             tracing::error!("Failed to delete tag bindings: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
@@ -439,19 +420,11 @@ pub async fn get_target_bindings(
         Ok(tags) => {
             let total = count_result.unwrap_or(0);
             let total_count = total as u64;
-            let total_pages = if page_size > 0 {
-                ((total as f64) / (page_size as f64)).ceil() as u32
-            } else {
-                0
-            };
+            let total_pages =
+                if page_size > 0 { ((total as f64) / (page_size as f64)).ceil() as u32 } else { 0 };
             Ok(ApiResponseBuilder::success(PaginatedResponse {
                 data: tags,
-                pagination: PaginationInfo {
-                    page,
-                    page_size,
-                    total_pages,
-                    total_count,
-                },
+                pagination: PaginationInfo { page, page_size, total_pages, total_count },
             }))
         }
         Err(e) => {
@@ -479,19 +452,11 @@ pub async fn get_tag_bindings(
         Ok(bindings) => {
             let total = count_result.unwrap_or(0);
             let total_count = total as u64;
-            let total_pages = if page_size > 0 {
-                ((total as f64) / (page_size as f64)).ceil() as u32
-            } else {
-                0
-            };
+            let total_pages =
+                if page_size > 0 { ((total as f64) / (page_size as f64)).ceil() as u32 } else { 0 };
             Ok(ApiResponseBuilder::success(PaginatedResponse {
                 data: bindings,
-                pagination: PaginationInfo {
-                    page,
-                    page_size,
-                    total_pages,
-                    total_count,
-                },
+                pagination: PaginationInfo { page, page_size, total_pages, total_count },
             }))
         }
         Err(e) => {

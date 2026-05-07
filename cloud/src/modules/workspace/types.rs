@@ -111,38 +111,26 @@ mod tests {
 
     #[test]
     fn test_workspace_with_agent() {
-        let ws = Workspace::new(
-            "ws-1".to_string(),
-            "Test".to_string(),
-            None,
-            "tenant-1".to_string(),
-        )
-        .with_agent("agent-1".to_string());
+        let ws =
+            Workspace::new("ws-1".to_string(), "Test".to_string(), None, "tenant-1".to_string())
+                .with_agent("agent-1".to_string());
         assert_eq!(ws.agent_id, Some("agent-1".to_string()));
     }
 
     #[test]
     fn test_workspace_with_config() {
-        let ws = Workspace::new(
-            "ws-1".to_string(),
-            "Test".to_string(),
-            None,
-            "tenant-1".to_string(),
-        )
-        .with_config(r#"{"model": "gpt-4"}"#.to_string());
+        let ws =
+            Workspace::new("ws-1".to_string(), "Test".to_string(), None, "tenant-1".to_string())
+                .with_config(r#"{"model": "gpt-4"}"#.to_string());
         assert_eq!(ws.agent_config, Some(r#"{"model": "gpt-4"}"#.to_string()));
     }
 
     #[test]
     fn test_workspace_with_agent_and_config() {
-        let ws = Workspace::new(
-            "ws-1".to_string(),
-            "Test".to_string(),
-            None,
-            "tenant-1".to_string(),
-        )
-        .with_agent("agent-1".to_string())
-        .with_config("config".to_string());
+        let ws =
+            Workspace::new("ws-1".to_string(), "Test".to_string(), None, "tenant-1".to_string())
+                .with_agent("agent-1".to_string())
+                .with_config("config".to_string());
         assert_eq!(ws.agent_id, Some("agent-1".to_string()));
         assert_eq!(ws.agent_config, Some("config".to_string()));
     }

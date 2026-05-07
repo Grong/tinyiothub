@@ -1,15 +1,14 @@
-use crate::shared::security::jwt::Claims;
-use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     routing::{get, post},
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use tinyiothub_web::response::ApiResponseBuilder;
 
-use crate::{
-    shared::pagination::PaginationQuery, shared::api_response::ApiResponse,
-    shared::{app_state::AppState},
+use crate::shared::{
+    api_response::ApiResponse, app_state::AppState, pagination::PaginationQuery,
+    security::jwt::Claims,
 };
 
 #[derive(Serialize, Deserialize, Debug)]

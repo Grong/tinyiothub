@@ -1,19 +1,17 @@
 // Event overview and statistics API endpoints
 // Provides event statistics, trends, and analysis functionality
 
-use crate::shared::security::jwt::Claims;
-use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
     extract::{Query, State},
     response::Json,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
     modules::event::repo::{EventStatistics, GroupBy, StatisticsGroup, StatisticsParams},
-    shared::api_response::{ApiResponse},
-    shared::{app_state::AppState},
+    shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims},
 };
 
 /// Query parameters for event overview/statistics
@@ -152,11 +150,7 @@ pub async fn get_event_overview(
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
-        if ids.is_empty() {
-            None
-        } else {
-            Some(ids)
-        }
+        if ids.is_empty() { None } else { Some(ids) }
     } else {
         None
     };

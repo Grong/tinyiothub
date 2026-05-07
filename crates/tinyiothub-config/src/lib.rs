@@ -982,9 +982,7 @@ impl ApplicationSettings {
             ));
         }
 
-        if self.security.jwt.secret.contains("your-secret-key")
-            || self.security.jwt.secret.contains("change-this")
-        {
+        if self.security.jwt.secret.contains("your-secret-key") || self.security.jwt.secret.contains("change-this") {
             return Err(ConfigError::ValidationError(
                 "JWT secret must be changed from default value".to_string(),
             ));

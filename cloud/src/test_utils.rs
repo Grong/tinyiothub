@@ -4,9 +4,10 @@
 //! - `setup_test_app()` — creates Router with in-memory SQLite
 //! - `create_test_token()` — generates valid JWT for authenticated requests
 
+use std::sync::OnceLock;
+
 use axum::Router;
 use http_body_util::BodyExt;
-use std::sync::OnceLock;
 use serde_json::Value;
 
 use crate::shared::app_state::AppState;
@@ -25,7 +26,10 @@ fn ensure_test_config() {
             std::env::set_var("TINYIOTHUB__SERVER__HOST", "127.0.0.1");
             std::env::set_var("TINYIOTHUB__SERVER__PORT", "19999");
             std::env::set_var("TINYIOTHUB__DATABASE__URL", "sqlite::memory:");
-            std::env::set_var("TINYIOTHUB__SECURITY__JWT__SECRET", "test-jwt-secret-that-is-at-least-32-chars-long");
+            std::env::set_var(
+                "TINYIOTHUB__SECURITY__JWT__SECRET",
+                "test-jwt-secret-that-is-at-least-32-chars-long",
+            );
             std::env::set_var("TINYIOTHUB__SECURITY__JWT__EXPIRATION_SECS", "3600");
             std::env::set_var("TINYIOTHUB__SECURITY__JWT__ISSUER", "tinyiothub-test");
             std::env::set_var("TINYIOTHUB__SECURITY__JWT__AUDIENCE", "tinyiothub-test");
@@ -46,8 +50,7 @@ fn ensure_test_config() {
         }
 
         // Initialize config — panic if it fails so we know immediately
-        crate::shared::config::initialize()
-            .expect("Failed to initialize test config");
+        crate::shared::config::initialize().expect("Failed to initialize test config");
     });
 }
 
@@ -63,9 +66,7 @@ pub async fn setup_test_app() -> Router {
     // Create API router (same as production, without MCP/agent init)
     let api_router = crate::api::create_router();
 
-    Router::new()
-        .nest("/api", api_router)
-        .with_state(app_state)
+    Router::new().nest("/api", api_router).with_state(app_state)
 }
 
 /// Create test AppState and return it along with the pool (for seeding test data).
@@ -112,9 +113,9 @@ pub async fn seed_test_workspace(pool: &sqlx::SqlitePool, tenant_id: &str, works
 /// Runs cloud migrations, skipping test-data migrations that reference
 /// non-existent devices.
 async fn create_test_app_state() -> AppState {
+    use std::{path::Path, sync::Arc};
+
     use tinyiothub_storage::cache::DeviceCache;
-    use std::sync::Arc;
-    use std::path::Path;
 
     // In-memory SQLite — no temp file, no cleanup issues
     let pool = sqlx::SqlitePool::connect("sqlite::memory:")
@@ -122,9 +123,10 @@ async fn create_test_app_state() -> AppState {
         .expect("Failed to create in-memory SQLite pool");
 
     // Load cloud migrations only (storage migrations consolidated into cloud crate)
-    let migrator = sqlx::migrate::Migrator::new(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations"),
-    ).await.expect("Failed to load cloud migrations");
+    let migrator =
+        sqlx::migrate::Migrator::new(Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations"))
+            .await
+            .expect("Failed to load cloud migrations");
 
     let skip_versions: &[i64] = &[
         20260107000001, // test data: inserts properties/commands for non-existent devices
@@ -159,8 +161,8 @@ async fn create_test_app_state() -> AppState {
     let device_cache = Arc::new(DeviceCache::new());
 
     // Initialize START_TIME for uptime tests
-    let _ = crate::modules::monitoring::handler::health::START_TIME
-        .set(std::time::SystemTime::now());
+    let _ =
+        crate::modules::monitoring::handler::health::START_TIME.set(std::time::SystemTime::now());
 
     AppState::new(device_cache, pool)
 }
@@ -190,10 +192,7 @@ pub fn auth_header(token: &str) -> String {
 pub async fn response_json(response: axum::response::Response) -> Value {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     serde_json::from_slice(&body).unwrap_or_else(|_| {
-        panic!(
-            "Failed to parse response as JSON: {}",
-            String::from_utf8_lossy(&body)
-        )
+        panic!("Failed to parse response as JSON: {}", String::from_utf8_lossy(&body))
     })
 }
 

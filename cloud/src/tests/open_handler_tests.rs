@@ -2,16 +2,22 @@
 //! NOTE: Open routes use API Key auth (X-API-Key header), not JWT.
 //! Routes have double /open/open/ prefix due to nesting bug in handler.
 
-use axum::{body::Body, http::{Request, StatusCode}};
+use axum::{
+    body::Body,
+    http::{Request, StatusCode},
+};
 use serde_json::Value;
 use tower::ServiceExt;
+
 use crate::test_utils::response_parts;
 
 fn open_request(method: &str, uri: &str) -> Request<Body> {
     Request::builder()
-        .method(method).uri(uri)
+        .method(method)
+        .uri(uri)
         .header("Content-Type", "application/json")
-        .body(Body::empty()).unwrap()
+        .body(Body::empty())
+        .unwrap()
 }
 
 // NOTE: The open routes are defined with /open/ prefix inside the router,
@@ -36,7 +42,10 @@ async fn test_open_devices_unauthorized() {
 #[tokio::test]
 async fn test_open_device_not_found() {
     let app = crate::test_utils::setup_test_app().await;
-    let response = app.oneshot(open_request("GET", "/api/open/open/devices/nonexistent-device-12345")).await.unwrap();
+    let response = app
+        .oneshot(open_request("GET", "/api/open/open/devices/nonexistent-device-12345"))
+        .await
+        .unwrap();
     assert!(response.status() == StatusCode::UNAUTHORIZED || response.status().is_success());
 }
 

@@ -1,19 +1,17 @@
-use crate::shared::security::jwt::Claims;
-use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
+    Json, Router,
     extract::{Query, State},
     routing::get,
-    Json, Router,
 };
 use serde::Deserialize;
+use tinyiothub_web::response::ApiResponseBuilder;
 use tracing::{error, info};
 
 use crate::{
-    shared::api_response::ApiResponse,
+    api::middleware::WorkspaceScope,
     modules::monitoring::types::{DeviceStatusDistribution, QuickDevice},
-    shared::{app_state::AppState},
+    shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims},
 };
-use crate::api::middleware::WorkspaceScope;
 
 #[derive(Debug, Deserialize)]
 pub struct QuickDevicesQuery {

@@ -1,17 +1,19 @@
-use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
+    Json, Router,
     extract::State,
     routing::{get, post},
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
-    shared::app_state::AppState,
     modules::auth::types::{RefreshTokenResponse, UserInfo},
-    shared::api_response::ApiResponse,
+    shared::{
+        api_response::ApiResponse,
+        app_state::AppState,
+        security::jwt::{Claims, generate_token},
+    },
 };
-use crate::shared::security::jwt::{Claims, generate_token};
 
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -47,10 +49,9 @@ async fn get_profile(State(state): State<AppState>, claims: Claims) -> Json<ApiR
 }
 
 /// 刷新访问令牌
-async fn refresh_token(
-    claims: Claims,
-) -> Json<ApiResponse<RefreshTokenResponse>> {
-    match generate_token(&claims.user_id, &claims.username, &claims.tenant_id, &claims.workspace_id) {
+async fn refresh_token(claims: Claims) -> Json<ApiResponse<RefreshTokenResponse>> {
+    match generate_token(&claims.user_id, &claims.username, &claims.tenant_id, &claims.workspace_id)
+    {
         Ok(new_token) => {
             tracing::info!("Token refreshed for user: {}", claims.user_id);
             ApiResponseBuilder::success(RefreshTokenResponse {

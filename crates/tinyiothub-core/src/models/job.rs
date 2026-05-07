@@ -234,13 +234,7 @@ mod tests {
 
     #[test]
     fn test_cron_expression_validation() {
-        let valid_expressions = [
-            "*/5 * * * *",
-            "0 * * * *",
-            "0 0 * * *",
-            "0 0 * * 0",
-            "0 0 1 * *",
-        ];
+        let valid_expressions = ["*/5 * * * *", "0 * * * *", "0 0 * * *", "0 0 * * 0", "0 0 1 * *"];
 
         for expr in valid_expressions.iter() {
             assert!(!expr.is_empty());

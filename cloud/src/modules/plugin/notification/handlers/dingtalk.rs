@@ -1,16 +1,16 @@
 //! 钉钉通知处理器
 
 use std::any::Any;
+
 use async_trait::async_trait;
 use reqwest::Client;
 use tracing::{debug, error};
 
-use super::NotificationHandler;
-use crate::modules::plugin::notification::Notification;
-use crate::shared::error::Error;
-
-use super::super::config::DingtalkConfig;
-use crate::modules::plugin::{PluginHandler, PluginManifest, PluginType};
+use super::{super::config::DingtalkConfig, NotificationHandler};
+use crate::{
+    modules::plugin::{PluginHandler, PluginManifest, PluginType, notification::Notification},
+    shared::error::Error,
+};
 
 pub struct DingtalkHandler {
     config: DingtalkConfig,
@@ -45,9 +45,12 @@ impl NotificationHandler for DingtalkHandler {
             }
         });
 
-        let resp = self.client.post(&self.config.webhook_url)
+        let resp = self
+            .client
+            .post(&self.config.webhook_url)
             .json(&payload)
-            .send().await
+            .send()
+            .await
             .map_err(|e| Error::NetworkError(format!("Dingtalk request failed: {}", e)))?;
 
         if !resp.status().is_success() {

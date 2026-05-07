@@ -31,10 +31,7 @@ impl From<DeviceCommandRow> for DeviceCommand {
 }
 
 /// Find a device command by ID
-pub async fn find_device_command_by_id(
-    db: &Database,
-    id: &str,
-) -> Result<Option<DeviceCommand>, sqlx::Error> {
+pub async fn find_device_command_by_id(db: &Database, id: &str) -> Result<Option<DeviceCommand>, sqlx::Error> {
     let row = sqlx::query_as::<_, DeviceCommandRow>(
         r#"
         SELECT id, device_id, name, display_name, description, parameters, created_at

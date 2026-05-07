@@ -2,6 +2,7 @@ pub mod handler;
 pub mod types;
 
 use std::sync::{Arc, OnceLock};
+
 use tokio::sync::RwLock;
 use types::{HeartbeatConfig, HeartbeatStatus};
 
@@ -11,12 +12,10 @@ static HEARTBEAT_CONFIG: OnceLock<Arc<RwLock<HeartbeatConfig>>> = OnceLock::new(
 
 /// Initialize global heartbeat state
 pub fn init_heartbeat_state() -> (Arc<RwLock<HeartbeatStatus>>, Arc<RwLock<HeartbeatConfig>>) {
-    let status = HEARTBEAT_STATUS
-        .get_or_init(|| Arc::new(RwLock::new(HeartbeatStatus::default())))
-        .clone();
-    let config = HEARTBEAT_CONFIG
-        .get_or_init(|| Arc::new(RwLock::new(HeartbeatConfig::default())))
-        .clone();
+    let status =
+        HEARTBEAT_STATUS.get_or_init(|| Arc::new(RwLock::new(HeartbeatStatus::default()))).clone();
+    let config =
+        HEARTBEAT_CONFIG.get_or_init(|| Arc::new(RwLock::new(HeartbeatConfig::default()))).clone();
     (status, config)
 }
 

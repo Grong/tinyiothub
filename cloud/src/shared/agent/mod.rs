@@ -14,7 +14,7 @@ pub mod heartbeat_service;
 pub mod runtime;
 pub mod scaffold_service;
 
-pub use config::{AgentConfig, AgentInfo, AgentError, compute_hash, default_agent_config};
+pub use config::{AgentConfig, AgentError, AgentInfo, compute_hash, default_agent_config};
 pub use heartbeat_service::HeartbeatService;
 pub use runtime::AgentRuntimeImpl;
 
@@ -63,7 +63,11 @@ pub trait AgentClient: Send + Sync {
     async fn list_agents(&self, workspace_id: &str) -> Result<serde_json::Value, AgentError>;
 
     /// Get agent config (verifies workspace ownership)
-    async fn get_agent_config(&self, agent_id: &str, workspace_id: &str) -> Result<serde_json::Value, AgentError>;
+    async fn get_agent_config(
+        &self,
+        agent_id: &str,
+        workspace_id: &str,
+    ) -> Result<serde_json::Value, AgentError>;
 
     /// Set agent config (verifies workspace ownership)
     async fn set_agent_config(
@@ -78,7 +82,11 @@ pub trait AgentClient: Send + Sync {
     async fn tools_catalog(&self, agent_id: &str) -> Result<serde_json::Value, AgentError>;
 
     /// Get effective tools for an agent (verifies workspace ownership)
-    async fn tools_effective(&self, agent_id: &str, workspace_id: &str) -> Result<serde_json::Value, AgentError>;
+    async fn tools_effective(
+        &self,
+        agent_id: &str,
+        workspace_id: &str,
+    ) -> Result<serde_json::Value, AgentError>;
 
     /// Toggle a tool on/off for an agent (verifies workspace ownership)
     async fn tools_toggle(
@@ -220,7 +228,8 @@ pub async fn build_full_system_prompt(
         String::new()
     };
 
-    let full_prompt = format!("{}{}{}{}", workspace_prompt, persona_layer, skills_layer, context_layer);
+    let full_prompt =
+        format!("{}{}{}{}", workspace_prompt, persona_layer, skills_layer, context_layer);
     tracing::info!("[SYSTEM_PROMPT]\n{}", full_prompt);
     full_prompt
 }
@@ -228,7 +237,10 @@ pub async fn build_full_system_prompt(
 /// Get the workspace directory path for loading prompt files.
 ///
 /// Uses system_prompts.workspace_dir as the base path and appends workspace_id.
-fn get_workspace_dir(system_prompts: &crate::shared::config::SystemPromptsConfig, workspace_id: Option<&str>) -> std::path::PathBuf {
+fn get_workspace_dir(
+    system_prompts: &crate::shared::config::SystemPromptsConfig,
+    workspace_id: Option<&str>,
+) -> std::path::PathBuf {
     use crate::shared::paths::DEFAULT_WORKSPACE_ID;
     let ws = workspace_id.unwrap_or(DEFAULT_WORKSPACE_ID);
     let base = &system_prompts.workspace_dir;
@@ -266,12 +278,13 @@ async fn load_workspace_prompt(workspace_dir: &std::path::Path) -> String {
     for (filename, section_name) in files {
         let file_path = workspace_dir.join(filename);
         if file_path.exists()
-            && let Ok(content) = fs::read_to_string(&file_path).await {
-                let trimmed = content.trim();
-                if !trimmed.is_empty() {
-                    sections.push(format!("## {}\n{}\n", section_name, trimmed));
-                }
+            && let Ok(content) = fs::read_to_string(&file_path).await
+        {
+            let trimmed = content.trim();
+            if !trimmed.is_empty() {
+                sections.push(format!("## {}\n{}\n", section_name, trimmed));
             }
+        }
     }
 
     if sections.is_empty() {
@@ -330,7 +343,9 @@ fn get_embedded_template(filename: &str) -> Option<&'static str> {
 /// - ./data/agents/{workspace_id}/{agent_id}/skills/
 /// - ./data/agents/{workspace_id}/skills/
 async fn load_skills_prompt(workspace_id: Option<&str>, agent_id: Option<&str>) -> String {
-    use crate::shared::paths::{global_skills_dir, workspace_skills_dir, agent_skills_dir, DEFAULT_WORKSPACE_ID};
+    use crate::shared::paths::{
+        DEFAULT_WORKSPACE_ID, agent_skills_dir, global_skills_dir, workspace_skills_dir,
+    };
 
     let _ws = workspace_id.unwrap_or(DEFAULT_WORKSPACE_ID);
 
@@ -368,8 +383,9 @@ async fn load_skills_prompt(workspace_id: Option<&str>, agent_id: Option<&str>) 
 }
 
 async fn read_skill_dir(dir: &std::path::Path) -> String {
-    use crate::modules::agent::skill::AgentSkill;
     use tokio::fs;
+
+    use crate::modules::agent::skill::AgentSkill;
 
     let mut entries = match fs::read_dir(dir).await {
         Ok(e) => e,
@@ -412,20 +428,13 @@ async fn read_skill_dir(dir: &std::path::Path) -> String {
             .and_then(|v| v.as_str())
             .unwrap_or(skill_name);
 
-        let version = fm
-            .as_ref()
-            .and_then(|f| f.get("version"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let version =
+            fm.as_ref().and_then(|f| f.get("version")).and_then(|v| v.as_str()).unwrap_or("");
 
         all_skills.push_str(&format!(
             "### {}{}\n{}\n{}\n",
             skill_name,
-            if version.is_empty() {
-                String::new()
-            } else {
-                format!(" (v{})", version)
-            },
+            if version.is_empty() { String::new() } else { format!(" (v{})", version) },
             description,
             body
         ));
@@ -452,61 +461,30 @@ mod tests {
             .and_then(|v| v.as_array())
             .expect("catalog should have 'groups' array");
 
-        assert!(
-            !groups.is_empty(),
-            "catalog should have at least one tool group"
-        );
+        assert!(!groups.is_empty(), "catalog should have at least one tool group");
 
         // Verify at least the device and workspace groups exist
-        let group_ids: Vec<&str> = groups
-            .iter()
-            .filter_map(|g| g.get("id").and_then(|v| v.as_str()))
-            .collect();
+        let group_ids: Vec<&str> =
+            groups.iter().filter_map(|g| g.get("id").and_then(|v| v.as_str())).collect();
 
-        assert!(
-            group_ids.contains(&"device"),
-            "catalog should have a 'device' group"
-        );
-        assert!(
-            group_ids.contains(&"workspace"),
-            "catalog should have a 'workspace' group"
-        );
+        assert!(group_ids.contains(&"device"), "catalog should have a 'device' group");
+        assert!(group_ids.contains(&"workspace"), "catalog should have a 'workspace' group");
 
         // Verify each group has required fields
         for group in groups {
             let g_obj = group.as_object().expect("group should be an object");
-            assert!(
-                g_obj.contains_key("id"),
-                "group should have 'id' field"
-            );
-            assert!(
-                g_obj.contains_key("label"),
-                "group should have 'label' field"
-            );
-            assert!(
-                g_obj.contains_key("tools"),
-                "group should have 'tools' field"
-            );
+            assert!(g_obj.contains_key("id"), "group should have 'id' field");
+            assert!(g_obj.contains_key("label"), "group should have 'label' field");
+            assert!(g_obj.contains_key("tools"), "group should have 'tools' field");
 
-            let tools = g_obj
-                .get("tools")
-                .and_then(|v| v.as_array())
-                .expect("tools should be an array");
+            let tools =
+                g_obj.get("tools").and_then(|v| v.as_array()).expect("tools should be an array");
 
             for tool in tools {
                 let t_obj = tool.as_object().expect("tool should be an object");
-                assert!(
-                    t_obj.contains_key("id"),
-                    "tool should have 'id' field"
-                );
-                assert!(
-                    t_obj.contains_key("danger"),
-                    "tool should have 'danger' field"
-                );
-                assert!(
-                    t_obj.contains_key("enabled"),
-                    "tool should have 'enabled' field"
-                );
+                assert!(t_obj.contains_key("id"), "tool should have 'id' field");
+                assert!(t_obj.contains_key("danger"), "tool should have 'danger' field");
+                assert!(t_obj.contains_key("enabled"), "tool should have 'enabled' field");
             }
         }
     }
@@ -540,11 +518,7 @@ mod tests {
                     .unwrap_or(false);
 
                 if is_dangerous {
-                    assert!(
-                        !is_enabled,
-                        "dangerous tool {:?} should be disabled by default",
-                        tool
-                    );
+                    assert!(!is_enabled, "dangerous tool {:?} should be disabled by default", tool);
                 }
             }
         }

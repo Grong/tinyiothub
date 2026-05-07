@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 use sqlx::{FromRow, QueryBuilder, Row};
+use tinyiothub_core::error::Result;
 
 use super::types::{
     CreateTagBindingRequest, CreateTagRequest, Tag, TagBinding, TagQuery, UpdateTagRequest,
 };
-use tinyiothub_core::error::Result;
 
 // ── Traits ──────────────────────────────────────────────
 
@@ -12,13 +12,23 @@ use tinyiothub_core::error::Result;
 pub trait TagRepository: Send + Sync {
     async fn find_by_id(&self, id: &str) -> Result<Option<Tag>>;
     async fn find_by_name_and_type(&self, name: &str, tag_type: &str) -> Result<Option<Tag>>;
-    async fn create(&self, request: &CreateTagRequest, created_by: &str, tenant_id: &str) -> Result<Tag>;
+    async fn create(
+        &self,
+        request: &CreateTagRequest,
+        created_by: &str,
+        tenant_id: &str,
+    ) -> Result<Tag>;
     async fn update(&self, id: &str, request: &UpdateTagRequest) -> Result<Tag>;
     async fn delete(&self, id: &str, tenant_id: &str) -> Result<u64>;
     async fn find_all(&self, params: &TagQuery) -> Result<Vec<Tag>>;
     async fn count(&self, params: &TagQuery) -> Result<i64>;
     async fn find_by_target_id(&self, target_id: &str, tenant_id: &str) -> Result<Vec<Tag>>;
-    async fn exists_by_name_and_type(&self, name: &str, tag_type: &str, tenant_id: &str) -> Result<bool>;
+    async fn exists_by_name_and_type(
+        &self,
+        name: &str,
+        tag_type: &str,
+        tenant_id: &str,
+    ) -> Result<bool>;
     async fn exists_by_name_and_type_exclude_id(
         &self,
         name: &str,
@@ -31,15 +41,30 @@ pub trait TagRepository: Send + Sync {
 #[async_trait]
 pub trait TagBindingRepository: Send + Sync {
     async fn find_by_id(&self, id: &str) -> Result<Option<TagBinding>>;
-    async fn create(&self, request: &CreateTagBindingRequest, created_by: &str, tenant_id: &str) -> Result<TagBinding>;
+    async fn create(
+        &self,
+        request: &CreateTagBindingRequest,
+        created_by: &str,
+        tenant_id: &str,
+    ) -> Result<TagBinding>;
     async fn delete(&self, id: &str, tenant_id: &str) -> Result<u64>;
-    async fn delete_by_tag_and_target(&self, tag_id: &str, target_id: &str, tenant_id: &str) -> Result<u64>;
+    async fn delete_by_tag_and_target(
+        &self,
+        tag_id: &str,
+        target_id: &str,
+        tenant_id: &str,
+    ) -> Result<u64>;
     async fn find_by_tag_id(&self, tag_id: &str, tenant_id: &str) -> Result<Vec<TagBinding>>;
     async fn find_by_target_id(&self, target_id: &str, tenant_id: &str) -> Result<Vec<TagBinding>>;
     async fn count_by_tag_id(&self, tag_id: &str, tenant_id: &str) -> Result<i64>;
     async fn count_by_target_id(&self, target_id: &str, tenant_id: &str) -> Result<i64>;
     async fn exists(&self, tag_id: &str, target_id: &str, tenant_id: &str) -> Result<bool>;
-    async fn find_by_tag_and_target(&self, tag_id: &str, target_id: &str, tenant_id: &str) -> Result<Option<TagBinding>>;
+    async fn find_by_tag_and_target(
+        &self,
+        tag_id: &str,
+        target_id: &str,
+        tenant_id: &str,
+    ) -> Result<Option<TagBinding>>;
     async fn create_batch(
         &self,
         bindings: &[CreateTagBindingRequest],
@@ -136,7 +161,12 @@ impl TagRepository for SqliteTagRepository {
         Ok(row.map(Into::into))
     }
 
-    async fn create(&self, request: &CreateTagRequest, created_by: &str, tenant_id: &str) -> Result<Tag> {
+    async fn create(
+        &self,
+        request: &CreateTagRequest,
+        created_by: &str,
+        tenant_id: &str,
+    ) -> Result<Tag> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
@@ -275,13 +305,20 @@ impl TagRepository for SqliteTagRepository {
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
-    async fn exists_by_name_and_type(&self, name: &str, tag_type: &str, tenant_id: &str) -> Result<bool> {
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tags WHERE name = ? AND type = ? AND tenant_id = ?")
-            .bind(name)
-            .bind(tag_type)
-            .bind(tenant_id)
-            .fetch_one(self.database.pool())
-            .await?;
+    async fn exists_by_name_and_type(
+        &self,
+        name: &str,
+        tag_type: &str,
+        tenant_id: &str,
+    ) -> Result<bool> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM tags WHERE name = ? AND type = ? AND tenant_id = ?",
+        )
+        .bind(name)
+        .bind(tag_type)
+        .bind(tenant_id)
+        .fetch_one(self.database.pool())
+        .await?;
 
         Ok(count > 0)
     }
@@ -293,14 +330,15 @@ impl TagRepository for SqliteTagRepository {
         exclude_id: &str,
         tenant_id: &str,
     ) -> Result<bool> {
-        let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM tags WHERE name = ? AND type = ? AND id != ? AND tenant_id = ?")
-                .bind(name)
-                .bind(tag_type)
-                .bind(exclude_id)
-                .bind(tenant_id)
-                .fetch_one(self.database.pool())
-                .await?;
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM tags WHERE name = ? AND type = ? AND id != ? AND tenant_id = ?",
+        )
+        .bind(name)
+        .bind(tag_type)
+        .bind(exclude_id)
+        .bind(tenant_id)
+        .fetch_one(self.database.pool())
+        .await?;
 
         Ok(count > 0)
     }
@@ -367,13 +405,20 @@ impl TagBindingRepository for SqliteTagBindingRepository {
         Ok(result.rows_affected())
     }
 
-    async fn delete_by_tag_and_target(&self, tag_id: &str, target_id: &str, tenant_id: &str) -> Result<u64> {
-        let result = sqlx::query("DELETE FROM tag_bindings WHERE tag_id = ? AND target_id = ? AND tenant_id = ?")
-            .bind(tag_id)
-            .bind(target_id)
-            .bind(tenant_id)
-            .execute(self.database.pool())
-            .await?;
+    async fn delete_by_tag_and_target(
+        &self,
+        tag_id: &str,
+        target_id: &str,
+        tenant_id: &str,
+    ) -> Result<u64> {
+        let result = sqlx::query(
+            "DELETE FROM tag_bindings WHERE tag_id = ? AND target_id = ? AND tenant_id = ?",
+        )
+        .bind(tag_id)
+        .bind(target_id)
+        .bind(tenant_id)
+        .execute(self.database.pool())
+        .await?;
 
         Ok(result.rows_affected())
     }
@@ -403,20 +448,24 @@ impl TagBindingRepository for SqliteTagBindingRepository {
     }
 
     async fn count_by_tag_id(&self, tag_id: &str, tenant_id: &str) -> Result<i64> {
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tag_bindings WHERE tag_id = ? AND tenant_id = ?")
-            .bind(tag_id)
-            .bind(tenant_id)
-            .fetch_one(self.database.pool())
-            .await?;
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM tag_bindings WHERE tag_id = ? AND tenant_id = ?",
+        )
+        .bind(tag_id)
+        .bind(tenant_id)
+        .fetch_one(self.database.pool())
+        .await?;
         Ok(count)
     }
 
     async fn count_by_target_id(&self, target_id: &str, tenant_id: &str) -> Result<i64> {
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tag_bindings WHERE target_id = ? AND tenant_id = ?")
-            .bind(target_id)
-            .bind(tenant_id)
-            .fetch_one(self.database.pool())
-            .await?;
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM tag_bindings WHERE target_id = ? AND tenant_id = ?",
+        )
+        .bind(target_id)
+        .bind(tenant_id)
+        .fetch_one(self.database.pool())
+        .await?;
         Ok(count)
     }
 
@@ -433,7 +482,12 @@ impl TagBindingRepository for SqliteTagBindingRepository {
         Ok(count > 0)
     }
 
-    async fn find_by_tag_and_target(&self, tag_id: &str, target_id: &str, tenant_id: &str) -> Result<Option<TagBinding>> {
+    async fn find_by_tag_and_target(
+        &self,
+        tag_id: &str,
+        target_id: &str,
+        tenant_id: &str,
+    ) -> Result<Option<TagBinding>> {
         let row = sqlx::query_as::<_, TagBindingRow>(
             "SELECT id, tag_id, target_id, tenant_id, created_by, created_at FROM tag_bindings WHERE tag_id = ? AND target_id = ? AND tenant_id = ? LIMIT 1",
         )

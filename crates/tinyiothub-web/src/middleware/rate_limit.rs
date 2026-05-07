@@ -10,7 +10,7 @@ use std::{
 use axum::{
     body::Body,
     extract::Request,
-    http::{header::HeaderName, HeaderValue, Method, StatusCode},
+    http::{HeaderValue, Method, StatusCode, header::HeaderName},
     middleware::Next,
     response::Response,
 };
@@ -50,7 +50,10 @@ pub struct RateLimiter {
 
 impl RateLimiter {
     pub fn new(config: RateLimitConfig) -> Self {
-        Self { records: Arc::new(RwLock::new(HashMap::new())), config }
+        Self {
+            records: Arc::new(RwLock::new(HashMap::new())),
+            config,
+        }
     }
 
     /// 检查是否应该限制请求
@@ -59,8 +62,7 @@ impl RateLimiter {
         let now = Instant::now();
         let window = Duration::from_secs(60);
 
-        let (requests, blocked_until) =
-            records.entry(client_id.to_string()).or_insert((Vec::new(), None));
+        let (requests, blocked_until) = records.entry(client_id.to_string()).or_insert((Vec::new(), None));
 
         // 如果之前被限制，检查是否还有效
         if let Some(until) = blocked_until {
@@ -68,10 +70,7 @@ impl RateLimiter {
                 let remaining = until.duration_since(now).as_secs();
                 return RateLimitResult::Blocked {
                     retry_after: remaining as u32,
-                    message: format!(
-                        "Too many requests. Please try again in {} seconds",
-                        remaining
-                    ),
+                    message: format!("Too many requests. Please try again in {} seconds", remaining),
                 };
             } else {
                 // 限制期已过，清除限制
@@ -130,19 +129,13 @@ pub enum RateLimitResult {
 }
 
 /// 速率限制中间件
-pub async fn rate_limit_middleware(
-    rate_limiter: RateLimiter,
-    request: Request<Body>,
-    next: Next,
-) -> Response {
+pub async fn rate_limit_middleware(rate_limiter: RateLimiter, request: Request<Body>, next: Next) -> Response {
     let path = request.uri().path().to_string();
     let method = request.method().clone();
 
     // 检查是否应该跳过速率限制
     let config = rate_limiter.config.clone();
-    if config.exclude_paths.iter().any(|p| path.starts_with(p))
-        || config.exclude_methods.contains(&method)
-    {
+    if config.exclude_paths.iter().any(|p| path.starts_with(p)) || config.exclude_methods.contains(&method) {
         return next.run(request).await;
     }
 
@@ -161,9 +154,10 @@ pub async fn rate_limit_middleware(
                 HeaderName::from_static("x-rateLimit-remaining"),
                 HeaderValue::from(remaining),
             );
-            response
-                .headers_mut()
-                .insert(HeaderName::from_static("x-rateLimit-reset"), HeaderValue::from(reset_in));
+            response.headers_mut().insert(
+                HeaderName::from_static("x-rateLimit-reset"),
+                HeaderValue::from(reset_in),
+            );
 
             response
         }

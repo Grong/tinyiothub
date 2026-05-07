@@ -15,7 +15,9 @@ pub struct HttpPollConfig {
     pub auth: Option<HttpAuth>,
 }
 
-fn default_get() -> String { "GET".to_string() }
+fn default_get() -> String {
+    "GET".to_string()
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct HttpAuth {
@@ -50,7 +52,9 @@ pub struct ModbusConfig {
     pub timeout_ms: u64,
 }
 
-fn default_timeout() -> u64 { 5000 }
+fn default_timeout() -> u64 {
+    5000
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SnmpConfig {

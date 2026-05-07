@@ -205,9 +205,7 @@ impl DeviceEventType {
     pub fn is_property_event(&self) -> bool {
         matches!(
             self,
-            DeviceEventType::PropertyChange
-                | DeviceEventType::PropertyAlarm
-                | DeviceEventType::PropertyNormal
+            DeviceEventType::PropertyChange | DeviceEventType::PropertyAlarm | DeviceEventType::PropertyNormal
         )
     }
 
@@ -215,9 +213,7 @@ impl DeviceEventType {
     pub fn is_command_event(&self) -> bool {
         matches!(
             self,
-            DeviceEventType::CommandStarted
-                | DeviceEventType::CommandCompleted
-                | DeviceEventType::CommandFailed
+            DeviceEventType::CommandStarted | DeviceEventType::CommandCompleted | DeviceEventType::CommandFailed
         )
     }
 

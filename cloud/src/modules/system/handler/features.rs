@@ -1,12 +1,9 @@
-use tinyiothub_web::response::ApiResponseBuilder;
-use axum::{extract::State, routing::get, Json, Router};
+use axum::{Json, Router, extract::State, routing::get};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use tinyiothub_web::response::ApiResponseBuilder;
 
-use crate::{
-    shared::api_response::{ApiResponse},
-    shared::app_state::AppState,
-};
+use crate::shared::{api_response::ApiResponse, app_state::AppState};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "snake_case")]
@@ -150,7 +147,6 @@ pub fn create_router() -> Router<AppState> {
 /// 返回系统支持的功能特性、版本信息、许可证信息等
 /// 这个接口通常用于前端初始化时获取系统能力
 async fn get_system_features(State(_state): State<AppState>) -> Json<ApiResponse<SystemFeatures>> {
-
     let features = SystemFeatures::default();
 
     tracing::debug!(

@@ -1,17 +1,20 @@
 use std::{collections::HashMap, sync::Arc};
 
+use tinyiothub_core::models::{
+    device::CreateDeviceRequest,
+    device_command::CreateDeviceCommandRequest,
+    device_property::CreateDevicePropertyRequest,
+    template_error::{TemplateError, ValidationError, ValidationResult},
+};
 use tracing::{debug, info, warn};
 
-use tinyiothub_core::models::device::CreateDeviceRequest;
-use tinyiothub_core::models::device_command::CreateDeviceCommandRequest;
-use tinyiothub_core::models::device_property::CreateDevicePropertyRequest;
-use tinyiothub_core::models::template_error::{TemplateError, ValidationError, ValidationResult};
-
-use super::types::{
-    CommandInfo, CommandTemplate, CreateDeviceTemplateRequest, DeviceCreationInput, DeviceInfo,
-    DevicePreview, DeviceTemplate, PropertyInfo, PropertyTemplate, TemplateRequirements,
+use super::{
+    repo::TemplateRepository,
+    types::{
+        CommandInfo, CommandTemplate, CreateDeviceTemplateRequest, DeviceCreationInput, DeviceInfo,
+        DevicePreview, DeviceTemplate, PropertyInfo, PropertyTemplate, TemplateRequirements,
+    },
 };
-use super::repo::TemplateRepository;
 
 // ─── TemplateEngine ───────────────────────────────────────────
 
@@ -259,7 +262,8 @@ impl TemplateEngine {
         user_input: &DeviceCreationInput,
     ) -> Option<String> {
         pattern.as_ref().map(|patterns| {
-            let template = patterns.get("zh")
+            let template = patterns
+                .get("zh")
                 .or_else(|| patterns.values().next())
                 .cloned()
                 .unwrap_or_default();
@@ -502,26 +506,28 @@ impl TemplateValidator {
             // 验证数值范围
             if property.data_type == "number"
                 && let (Some(min), Some(max)) = (property.min_value, property.max_value)
-                    && min >= max {
-                        result.add_error(
-                            &format!("{}.range", field_prefix),
-                            "最小值必须小于最大值",
-                            "INVALID_RANGE",
-                        );
-                    }
+                && min >= max
+            {
+                result.add_error(
+                    &format!("{}.range", field_prefix),
+                    "最小值必须小于最大值",
+                    "INVALID_RANGE",
+                );
+            }
 
             // 验证默认值与数据类型的匹配
             if let Some(default_value) = &property.default_value
-                && !self.validate_value_type(default_value, &property.data_type) {
-                    result.add_warning(
-                        &format!("{}.default_value", field_prefix),
-                        &format!(
-                            "默认值 '{}' 与数据类型 '{}' 不匹配",
-                            default_value, property.data_type
-                        ),
-                        "TYPE_MISMATCH",
-                    );
-                }
+                && !self.validate_value_type(default_value, &property.data_type)
+            {
+                result.add_warning(
+                    &format!("{}.default_value", field_prefix),
+                    &format!(
+                        "默认值 '{}' 与数据类型 '{}' 不匹配",
+                        default_value, property.data_type
+                    ),
+                    "TYPE_MISMATCH",
+                );
+            }
 
             // 验证多语言显示名称
             if property.display_name.is_empty() {
@@ -576,24 +582,26 @@ impl TemplateValidator {
             // 验证参数定义JSON格式
             if let Some(parameters) = &command.parameters
                 && !parameters.trim().is_empty()
-                    && let Err(e) = serde_json::from_str::<serde_json::Value>(parameters) {
-                        result.add_error(
-                            &format!("{}.parameters", field_prefix),
-                            &format!("参数定义JSON格式错误: {}", e),
-                            "INVALID_JSON",
-                        );
-                    }
+                && let Err(e) = serde_json::from_str::<serde_json::Value>(parameters)
+            {
+                result.add_error(
+                    &format!("{}.parameters", field_prefix),
+                    &format!("参数定义JSON格式错误: {}", e),
+                    "INVALID_JSON",
+                );
+            }
 
             // 验证参数Schema格式
             if let Some(schema) = &command.parameter_schema
                 && !schema.trim().is_empty()
-                    && let Err(e) = serde_json::from_str::<serde_json::Value>(schema) {
-                        result.add_error(
-                            &format!("{}.parameter_schema", field_prefix),
-                            &format!("参数Schema JSON格式错误: {}", e),
-                            "INVALID_JSON",
-                        );
-                    }
+                && let Err(e) = serde_json::from_str::<serde_json::Value>(schema)
+            {
+                result.add_error(
+                    &format!("{}.parameter_schema", field_prefix),
+                    &format!("参数Schema JSON格式错误: {}", e),
+                    "INVALID_JSON",
+                );
+            }
         }
 
         result
@@ -624,21 +632,23 @@ impl TemplateValidator {
             for required_field in &device_info.required_fields {
                 match required_field.as_str() {
                     "driver_options"
-                        if input.driver_options.as_ref().is_none_or(|opt| opt.trim().is_empty()) => {
-                            result.add_error(
-                                "driver_options",
-                                "驱动选项是必填字段",
-                                "REQUIRED_FIELD",
-                            );
-                        }
+                        if input
+                            .driver_options
+                            .as_ref()
+                            .is_none_or(|opt| opt.trim().is_empty()) =>
+                    {
+                        result.add_error("driver_options", "驱动选项是必填字段", "REQUIRED_FIELD");
+                    }
                     "parent_id"
-                        if input.parent_id.as_ref().is_none_or(|id| id.trim().is_empty()) => {
-                            result.add_error("parent_id", "父设备ID是必填字段", "REQUIRED_FIELD");
-                        }
+                        if input.parent_id.as_ref().is_none_or(|id| id.trim().is_empty()) =>
+                    {
+                        result.add_error("parent_id", "父设备ID是必填字段", "REQUIRED_FIELD");
+                    }
                     "product_id"
-                        if input.product_id.as_ref().is_none_or(|id| id.trim().is_empty()) => {
-                            result.add_error("product_id", "产品ID是必填字段", "REQUIRED_FIELD");
-                        }
+                        if input.product_id.as_ref().is_none_or(|id| id.trim().is_empty()) =>
+                    {
+                        result.add_error("product_id", "产品ID是必填字段", "REQUIRED_FIELD");
+                    }
                     _ => {
                         // 其他自定义必填字段的验证可以在这里扩展
                     }
@@ -663,24 +673,27 @@ impl TemplateValidator {
 
                     // 验证数值范围
                     if property.data_type == "number"
-                        && let Ok(value) = prop_value.parse::<f64>() {
-                            if let Some(min) = property.min_value
-                                && value < min {
-                                    result.add_error(
-                                        &format!("property_values.{}", prop_name),
-                                        &format!("属性值 {} 小于最小值 {}", value, min),
-                                        "VALUE_TOO_SMALL",
-                                    );
-                                }
-                            if let Some(max) = property.max_value
-                                && value > max {
-                                    result.add_error(
-                                        &format!("property_values.{}", prop_name),
-                                        &format!("属性值 {} 大于最大值 {}", value, max),
-                                        "VALUE_TOO_LARGE",
-                                    );
-                                }
+                        && let Ok(value) = prop_value.parse::<f64>()
+                    {
+                        if let Some(min) = property.min_value
+                            && value < min
+                        {
+                            result.add_error(
+                                &format!("property_values.{}", prop_name),
+                                &format!("属性值 {} 小于最小值 {}", value, min),
+                                "VALUE_TOO_SMALL",
+                            );
                         }
+                        if let Some(max) = property.max_value
+                            && value > max
+                        {
+                            result.add_error(
+                                &format!("property_values.{}", prop_name),
+                                &format!("属性值 {} 大于最大值 {}", value, max),
+                                "VALUE_TOO_LARGE",
+                            );
+                        }
+                    }
                 } else {
                     result.add_warning(
                         &format!("property_values.{}", prop_name),
@@ -758,13 +771,10 @@ impl TemplateValidator {
 
         // 验证描述JSON
         if let Some(description) = &template.description
-            && let Err(e) = serde_json::from_str::<HashMap<String, String>>(description) {
-                result.add_error(
-                    "description",
-                    &format!("描述JSON格式错误: {}", e),
-                    "INVALID_JSON",
-                );
-            }
+            && let Err(e) = serde_json::from_str::<HashMap<String, String>>(description)
+        {
+            result.add_error("description", &format!("描述JSON格式错误: {}", e), "INVALID_JSON");
+        }
 
         // 验证标签JSON
         if let Err(e) = serde_json::from_str::<Vec<String>>(&template.tags) {
@@ -849,28 +859,29 @@ impl TemplateValidator {
     /// 验证驱动引用 (需求 6.5)
     fn validate_driver_reference(&self, template: &DeviceTemplate, result: &mut ValidationResult) {
         if let Some(driver_name) = &template.driver_name
-            && !driver_name.trim().is_empty() {
-                let known_drivers = vec![
-                    "modbus_rtu",
-                    "modbus_tcp",
-                    "onvif",
-                    "snmp",
-                    "mqtt",
-                    "http",
-                    "tcp",
-                    "udp",
-                    "serial",
-                    "custom",
-                ];
+            && !driver_name.trim().is_empty()
+        {
+            let known_drivers = vec![
+                "modbus_rtu",
+                "modbus_tcp",
+                "onvif",
+                "snmp",
+                "mqtt",
+                "http",
+                "tcp",
+                "udp",
+                "serial",
+                "custom",
+            ];
 
-                if !known_drivers.contains(&driver_name.as_str()) {
-                    result.add_warning(
-                        "driver_name",
-                        &format!("驱动 '{}' 可能不存在，请确认驱动已正确安装", driver_name),
-                        "UNKNOWN_DRIVER",
-                    );
-                }
+            if !known_drivers.contains(&driver_name.as_str()) {
+                result.add_warning(
+                    "driver_name",
+                    &format!("驱动 '{}' 可能不存在，请确认驱动已正确安装", driver_name),
+                    "UNKNOWN_DRIVER",
+                );
             }
+        }
     }
 
     /// 验证数据类型是否有效
@@ -967,10 +978,10 @@ impl TemplateValidator {
         // 检查是否为必需字段
         if let Ok(device_info) = template.get_device_info()
             && device_info.required_fields.contains(&field_name.to_string())
-                && field_value.trim().is_empty()
-            {
-                result.add_error(field_name, "此字段为必填项", "FIELD_REQUIRED");
-            }
+            && field_value.trim().is_empty()
+        {
+            result.add_error(field_name, "此字段为必填项", "FIELD_REQUIRED");
+        }
 
         debug!(
             "单个字段验证完成: 字段={}, 错误数={}, 警告数={}",

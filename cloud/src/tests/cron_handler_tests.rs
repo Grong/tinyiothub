@@ -4,7 +4,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use crate::test_utils::{
@@ -37,12 +37,7 @@ async fn test_list_jobs() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request(
-            "GET",
-            "/api/v1/jobs?page=1&page_size=20",
-            &token,
-            None,
-        ))
+        .oneshot(auth_request("GET", "/api/v1/jobs?page=1&page_size=20", &token, None))
         .await
         .unwrap();
 
@@ -62,9 +57,7 @@ async fn test_create_job() {
     seed_test_workspace(&pool, "tenant-1", "ws-job-test-001").await;
 
     let api_router = crate::api::create_router();
-    let app = axum::Router::new()
-        .nest("/api", api_router)
-        .with_state(app_state);
+    let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
 
     let token = create_test_token_with_workspace("user-1", "tenant-1", "ws-job-test-001");
 
@@ -75,10 +68,8 @@ async fn test_create_job() {
         "config": "{\"command\":\"echo hello\"}"
     });
 
-    let response = app
-        .oneshot(auth_request("POST", "/api/v1/jobs", &token, Some(body)))
-        .await
-        .unwrap();
+    let response =
+        app.oneshot(auth_request("POST", "/api/v1/jobs", &token, Some(body))).await.unwrap();
 
     let (status, json) = response_parts(response).await;
     assert_eq!(status, StatusCode::OK);
@@ -96,9 +87,7 @@ async fn test_create_job_invalid_cron() {
     seed_test_workspace(&pool, "tenant-1", "ws-job-test-001").await;
 
     let api_router = crate::api::create_router();
-    let app = axum::Router::new()
-        .nest("/api", api_router)
-        .with_state(app_state);
+    let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
 
     let token = create_test_token("user-1", "tenant-1");
 
@@ -109,10 +98,8 @@ async fn test_create_job_invalid_cron() {
         "config": "{}"
     });
 
-    let response = app
-        .oneshot(auth_request("POST", "/api/v1/jobs", &token, Some(body)))
-        .await
-        .unwrap();
+    let response =
+        app.oneshot(auth_request("POST", "/api/v1/jobs", &token, Some(body))).await.unwrap();
 
     let (status, json) = response_parts(response).await;
     assert_eq!(status, StatusCode::OK);
@@ -129,19 +116,12 @@ async fn test_get_job_not_found() {
     seed_test_workspace(&pool, "tenant-1", "ws-job-test-001").await;
 
     let api_router = crate::api::create_router();
-    let app = axum::Router::new()
-        .nest("/api", api_router)
-        .with_state(app_state);
+    let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
 
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request(
-            "GET",
-            "/api/v1/jobs/nonexistent-job-id",
-            &token,
-            None,
-        ))
+        .oneshot(auth_request("GET", "/api/v1/jobs/nonexistent-job-id", &token, None))
         .await
         .unwrap();
 
@@ -160,9 +140,7 @@ async fn test_update_job_not_found() {
     seed_test_workspace(&pool, "tenant-1", "ws-job-test-001").await;
 
     let api_router = crate::api::create_router();
-    let app = axum::Router::new()
-        .nest("/api", api_router)
-        .with_state(app_state);
+    let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
 
     let token = create_test_token("user-1", "tenant-1");
 
@@ -171,12 +149,7 @@ async fn test_update_job_not_found() {
     });
 
     let response = app
-        .oneshot(auth_request(
-            "PUT",
-            "/api/v1/jobs/nonexistent-job-id",
-            &token,
-            Some(body),
-        ))
+        .oneshot(auth_request("PUT", "/api/v1/jobs/nonexistent-job-id", &token, Some(body)))
         .await
         .unwrap();
 
@@ -195,19 +168,12 @@ async fn test_delete_job_not_found() {
     seed_test_workspace(&pool, "tenant-1", "ws-job-test-001").await;
 
     let api_router = crate::api::create_router();
-    let app = axum::Router::new()
-        .nest("/api", api_router)
-        .with_state(app_state);
+    let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
 
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request(
-            "DELETE",
-            "/api/v1/jobs/nonexistent-job-id",
-            &token,
-            None,
-        ))
+        .oneshot(auth_request("DELETE", "/api/v1/jobs/nonexistent-job-id", &token, None))
         .await
         .unwrap();
 
@@ -226,16 +192,12 @@ async fn test_job_statistics() {
     seed_test_workspace(&pool, "tenant-1", "ws-job-test-001").await;
 
     let api_router = crate::api::create_router();
-    let app = axum::Router::new()
-        .nest("/api", api_router)
-        .with_state(app_state);
+    let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
 
     let token = create_test_token("user-1", "tenant-1");
 
-    let response = app
-        .oneshot(auth_request("GET", "/api/v1/jobs/statistics", &token, None))
-        .await
-        .unwrap();
+    let response =
+        app.oneshot(auth_request("GET", "/api/v1/jobs/statistics", &token, None)).await.unwrap();
 
     let (status, json) = response_parts(response).await;
     assert_eq!(status, StatusCode::OK);
@@ -255,9 +217,7 @@ async fn test_job_workspace_isolation() {
     seed_test_workspace(&pool, "tenant-b", "ws-b").await;
 
     let api_router = crate::api::create_router();
-    let app = axum::Router::new()
-        .nest("/api", api_router)
-        .with_state(app_state);
+    let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
 
     // User A (ws-a) creates a job
     let token_a = create_test_token_with_workspace("user-a", "tenant-a", "ws-a");
@@ -286,12 +246,7 @@ async fn test_job_workspace_isolation() {
 
     let response = app
         .clone()
-        .oneshot(auth_request(
-            "GET",
-            "/api/v1/jobs?page=1&page_size=20",
-            &token_b,
-            None,
-        ))
+        .oneshot(auth_request("GET", "/api/v1/jobs?page=1&page_size=20", &token_b, None))
         .await
         .unwrap();
 
@@ -302,12 +257,8 @@ async fn test_job_workspace_isolation() {
     // Once the handler is fixed to scope by workspace, this test should verify
     // that User B cannot see workspace A's jobs.
     if json["result"].is_array() {
-        let job_ids: Vec<&str> = json["result"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(|j| j["id"].as_str())
-            .collect();
+        let job_ids: Vec<&str> =
+            json["result"].as_array().unwrap().iter().filter_map(|j| j["id"].as_str()).collect();
         // When workspace scoping is implemented, uncomment:
         // assert!(!job_ids.contains(&job_id.as_str()), "SECURITY BUG...");
         let _ = job_ids; // suppress unused warning

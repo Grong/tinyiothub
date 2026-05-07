@@ -5,17 +5,16 @@
 // errors: SelfHealingError
 // handler: HTTP routes (delegates to api/self_healing/)
 
-pub mod types;
 pub mod errors;
+pub mod handler;
+pub mod probe_scheduler;
 pub mod repo;
 pub mod service;
-pub mod probe_scheduler;
-pub mod handler;
+pub mod types;
 
-pub use probe_scheduler::ProbeScheduler;
-
-pub use types::*;
 pub use errors::*;
+pub use handler::*;
+pub use probe_scheduler::ProbeScheduler;
 pub use repo::*;
 pub use service::*;
-pub use handler::*;
+pub use types::*;

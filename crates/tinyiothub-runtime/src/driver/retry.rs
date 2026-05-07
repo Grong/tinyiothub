@@ -11,9 +11,20 @@ use tinyiothub_core::error::Error;
 #[derive(Debug, Clone)]
 pub enum RetryResult<T> {
     Success(T),
-    Retrying { attempt: u32, next_retry_at: Instant, last_error: Error },
-    Failed { attempts: u32, last_error: Error, total_duration: Duration },
-    Timeout { attempts: u32, total_duration: Duration },
+    Retrying {
+        attempt: u32,
+        next_retry_at: Instant,
+        last_error: Error,
+    },
+    Failed {
+        attempts: u32,
+        last_error: Error,
+        total_duration: Duration,
+    },
+    Timeout {
+        attempts: u32,
+        total_duration: Duration,
+    },
 }
 
 /// 重试状态
@@ -91,8 +102,9 @@ impl RetryState {
                 (config.base_interval + total_increment).min(config.max_interval)
             }
             BackoffStrategy::Exponential { multiplier } => {
-                let multiplied =
-                    config.base_interval.mul_f64(multiplier.powi(self.current_attempt as i32 - 1));
+                let multiplied = config
+                    .base_interval
+                    .mul_f64(multiplier.powi(self.current_attempt as i32 - 1));
                 multiplied.min(config.max_interval)
             }
             BackoffStrategy::Custom { intervals } => {
@@ -113,7 +125,10 @@ pub struct RetryManager {
 
 impl RetryManager {
     pub fn new(config: RetryConfig) -> Self {
-        Self { config, state: RetryState::default() }
+        Self {
+            config,
+            state: RetryState::default(),
+        }
     }
 
     pub fn with_default_config() -> Self {
@@ -197,9 +212,11 @@ impl RetryManager {
                 return RetryResult::Retrying {
                     attempt: self.state.current_attempt,
                     next_retry_at: next_retry,
-                    last_error: self.state.last_error.clone().unwrap_or_else(|| {
-                        Error::Internal("Waiting for retry".to_string())
-                    }),
+                    last_error: self
+                        .state
+                        .last_error
+                        .clone()
+                        .unwrap_or_else(|| Error::Internal("Waiting for retry".to_string())),
                 };
             }
         }

@@ -1,22 +1,22 @@
 // Heartbeat API — moved from api/heartbeat/
 
-use crate::shared::security::jwt::Claims;
-use tinyiothub_web::response::ApiResponseBuilder;
-use crate::modules::heartbeat::types::{
-    ConfigureHeartbeatRequest, HeartbeatConfig, HeartbeatStatus, ReportHeartbeatResponse,
-};
 use axum::{
+    Json, Router,
     extract::State,
     routing::{get, post},
-    Json, Router,
 };
 use chrono::Utc;
 use serde::Deserialize;
+use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
-    modules::heartbeat::{get_heartbeat_config, get_heartbeat_status},
-    shared::api_response::ApiResponse,
-    shared::app_state::AppState,
+    modules::heartbeat::{
+        get_heartbeat_config, get_heartbeat_status,
+        types::{
+            ConfigureHeartbeatRequest, HeartbeatConfig, HeartbeatStatus, ReportHeartbeatResponse,
+        },
+    },
+    shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims},
 };
 
 /// Create the heartbeat router
@@ -69,11 +69,10 @@ async fn report_heartbeat(
     status.gateway_id = request.gateway_id.unwrap_or_else(|| status.gateway_id.clone());
     status.timestamp = Utc::now();
     status.cpu_usage_percent = request.cpu_usage_percent.unwrap_or(status.cpu_usage_percent);
-    status.memory_usage_percent = request.memory_usage_percent.unwrap_or(status.memory_usage_percent);
+    status.memory_usage_percent =
+        request.memory_usage_percent.unwrap_or(status.memory_usage_percent);
     status.disk_usage_percent = request.disk_usage_percent.unwrap_or(status.disk_usage_percent);
-    status.network_status = request
-        .network_status
-        .unwrap_or_else(|| status.network_status.clone());
+    status.network_status = request.network_status.unwrap_or_else(|| status.network_status.clone());
     status.connected_devices = request.connected_devices.unwrap_or(status.connected_devices);
     status.active_alarms = request.active_alarms.unwrap_or(status.active_alarms);
     status.uptime_seconds = request.uptime_seconds.unwrap_or(status.uptime_seconds);

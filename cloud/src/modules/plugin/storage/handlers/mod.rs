@@ -2,8 +2,7 @@
 
 use async_trait::async_trait;
 
-use crate::modules::plugin::storage::StorageData;
-use crate::shared::error::Error;
+use crate::{modules::plugin::storage::StorageData, shared::error::Error};
 
 #[async_trait]
 pub trait StorageHandler: Send + Sync {
@@ -11,8 +10,8 @@ pub trait StorageHandler: Send + Sync {
     fn name(&self) -> &str;
 }
 
-pub mod postgres;
 pub mod influxdb;
+pub mod postgres;
 
-pub use postgres::PostgresHandler;
 pub use influxdb::InfluxdbHandler;
+pub use postgres::PostgresHandler;

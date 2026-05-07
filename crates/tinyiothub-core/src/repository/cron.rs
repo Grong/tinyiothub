@@ -2,10 +2,10 @@
 
 use async_trait::async_trait;
 
+use crate::error::Result;
 use crate::models::cron_job::{
     CreateCronJobRequest, CronJob, CronJobQuery, CronRun, CronRunQuery, UpdateCronJobRequest,
 };
-use crate::error::Result;
 
 /// Repository for cron job definitions.
 #[async_trait]
@@ -29,8 +29,22 @@ pub trait CronJobRepository: Send + Sync {
 /// Repository for cron job execution records.
 #[async_trait]
 pub trait CronRunRepository: Send + Sync {
-    async fn create(&self, job_id: &str, workspace_id: &str, trigger_type: &str, triggered_by: Option<&str>) -> Result<CronRun>;
-    async fn complete(&self, id: &str, workspace_id: &str, status: &str, output: Option<&str>, error: Option<&str>, duration_ms: i64) -> Result<CronRun>;
+    async fn create(
+        &self,
+        job_id: &str,
+        workspace_id: &str,
+        trigger_type: &str,
+        triggered_by: Option<&str>,
+    ) -> Result<CronRun>;
+    async fn complete(
+        &self,
+        id: &str,
+        workspace_id: &str,
+        status: &str,
+        output: Option<&str>,
+        error: Option<&str>,
+        duration_ms: i64,
+    ) -> Result<CronRun>;
     async fn find_by_job_id(&self, job_id: &str, workspace_id: &str, query: &CronRunQuery) -> Result<Vec<CronRun>>;
     async fn find_by_id(&self, id: &str, workspace_id: &str) -> Result<Option<CronRun>>;
     async fn delete_by_job_id(&self, job_id: &str, workspace_id: &str) -> Result<u64>;

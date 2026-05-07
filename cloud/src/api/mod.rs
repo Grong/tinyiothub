@@ -1,7 +1,10 @@
 // API Layer
 // Contains all HTTP API handlers and middleware
 
-use axum::{middleware as axum_middleware, routing::{get, post}, Router};
+use axum::{
+    Router, middleware as axum_middleware,
+    routing::{get, post},
+};
 
 use crate::shared::app_state::AppState;
 
@@ -46,7 +49,10 @@ pub fn create_router() -> Router<AppState> {
         .nest("/device-templates", crate::modules::template::handler::create_router())
         .nest("/marketplace", crate::modules::marketplace::handler::create_router())
         .nest("/notifications", crate::modules::notification::handler::create_router())
-        .nest("/notification-channels", crate::modules::notification::handler::create_channel_router())
+        .nest(
+            "/notification-channels",
+            crate::modules::notification::handler::create_channel_router(),
+        )
         .nest("/tenants", crate::modules::tenant::create_router())
         .nest("/events", crate::modules::event::handler::create_router())
         .nest("/jobs", crate::modules::jobs::handler::create_router())
@@ -77,7 +83,10 @@ pub fn create_router() -> Router<AppState> {
         .nest("/tenants", crate::modules::tenant::create_auth_router()) // 租户注册登录
         .nest("/system", crate::modules::system::handler::create_router())
         // 公开的SSE端点（不需要认证）
-        .route("/events/sse/public", get(crate::modules::event::handler::sse::handle_sse_connection_public))
+        .route(
+            "/events/sse/public",
+            get(crate::modules::event::handler::sse::handle_sse_connection_public),
+        )
         .merge(protected_routes);
 
     // 合并所有路由

@@ -4,7 +4,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use crate::test_utils::{auth_header, create_test_token, response_parts, setup_test_app};
@@ -34,12 +34,7 @@ async fn test_list_roles() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request(
-            "GET",
-            "/api/v1/users/roles?page=1&page_size=20",
-            &token,
-            None,
-        ))
+        .oneshot(auth_request("GET", "/api/v1/users/roles?page=1&page_size=20", &token, None))
         .await
         .unwrap();
 
@@ -63,10 +58,8 @@ async fn test_create_role() {
         "description": "A test role"
     });
 
-    let response = app
-        .oneshot(auth_request("POST", "/api/v1/users/roles", &token, Some(body)))
-        .await
-        .unwrap();
+    let response =
+        app.oneshot(auth_request("POST", "/api/v1/users/roles", &token, Some(body))).await.unwrap();
 
     let status = response.status();
     assert!(
@@ -89,10 +82,8 @@ async fn test_create_role_missing_name() {
 
     let body = json!({});
 
-    let response = app
-        .oneshot(auth_request("POST", "/api/v1/users/roles", &token, Some(body)))
-        .await
-        .unwrap();
+    let response =
+        app.oneshot(auth_request("POST", "/api/v1/users/roles", &token, Some(body))).await.unwrap();
 
     let status = response.status();
     assert!(
@@ -115,10 +106,8 @@ async fn test_create_role_empty_name() {
         "name": ""
     });
 
-    let response = app
-        .oneshot(auth_request("POST", "/api/v1/users/roles", &token, Some(body)))
-        .await
-        .unwrap();
+    let response =
+        app.oneshot(auth_request("POST", "/api/v1/users/roles", &token, Some(body))).await.unwrap();
 
     let (status, json) = response_parts(response).await;
     assert_eq!(status, StatusCode::OK);
@@ -135,12 +124,7 @@ async fn test_get_role_not_found() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request(
-            "GET",
-            "/api/v1/users/roles/nonexistent-role-id",
-            &token,
-            None,
-        ))
+        .oneshot(auth_request("GET", "/api/v1/users/roles/nonexistent-role-id", &token, None))
         .await
         .unwrap();
 
@@ -163,12 +147,7 @@ async fn test_update_role_not_found() {
     });
 
     let response = app
-        .oneshot(auth_request(
-            "PUT",
-            "/api/v1/users/roles/nonexistent-role-id",
-            &token,
-            Some(body),
-        ))
+        .oneshot(auth_request("PUT", "/api/v1/users/roles/nonexistent-role-id", &token, Some(body)))
         .await
         .unwrap();
 
@@ -187,12 +166,7 @@ async fn test_delete_role_not_found() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request(
-            "DELETE",
-            "/api/v1/users/roles/nonexistent-role-id",
-            &token,
-            None,
-        ))
+        .oneshot(auth_request("DELETE", "/api/v1/users/roles/nonexistent-role-id", &token, None))
         .await
         .unwrap();
 
@@ -210,7 +184,12 @@ async fn test_get_role_permissions_not_found() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/users/roles/nonexistent-role-id/permissions", &token, None))
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/users/roles/nonexistent-role-id/permissions",
+            &token,
+            None,
+        ))
         .await
         .unwrap();
     let (status, json) = response_parts(response).await;
@@ -224,7 +203,12 @@ async fn test_update_role_permissions_not_found() {
     let token = create_test_token("user-1", "tenant-1");
     let body = json!({"permission_ids": ["perm-1", "perm-2"]});
     let response = app
-        .oneshot(auth_request("PUT", "/api/v1/users/roles/nonexistent-role-id/permissions", &token, Some(body)))
+        .oneshot(auth_request(
+            "PUT",
+            "/api/v1/users/roles/nonexistent-role-id/permissions",
+            &token,
+            Some(body),
+        ))
         .await
         .unwrap();
     let status = response.status();
@@ -253,7 +237,12 @@ async fn test_get_role_permissions_empty_for_new_role() {
 
     // Get permissions for the new role
     let response = app
-        .oneshot(auth_request("GET", &format!("/api/v1/users/roles/{}/permissions", role_id), &token, None))
+        .oneshot(auth_request(
+            "GET",
+            &format!("/api/v1/users/roles/{}/permissions", role_id),
+            &token,
+            None,
+        ))
         .await
         .unwrap();
     let (status, json) = response_parts(response).await;
@@ -280,10 +269,16 @@ async fn test_update_and_get_role_permissions() {
     let role_id = json["result"]["id"].as_str().expect("Role should have an ID");
 
     // Update permissions (use real permission IDs from migrations)
-    let perm_ids = json!({"permission_ids": ["perm-device-read", "perm-device-write", "perm-user-read"]});
+    let perm_ids =
+        json!({"permission_ids": ["perm-device-read", "perm-device-write", "perm-user-read"]});
     let response = app
         .clone()
-        .oneshot(auth_request("PUT", &format!("/api/v1/users/roles/{}/permissions", role_id), &token, Some(perm_ids)))
+        .oneshot(auth_request(
+            "PUT",
+            &format!("/api/v1/users/roles/{}/permissions", role_id),
+            &token,
+            Some(perm_ids),
+        ))
         .await
         .unwrap();
     let (status, json) = response_parts(response).await;
@@ -293,7 +288,12 @@ async fn test_update_and_get_role_permissions() {
 
     // Get permissions and verify
     let response = app
-        .oneshot(auth_request("GET", &format!("/api/v1/users/roles/{}/permissions", role_id), &token, None))
+        .oneshot(auth_request(
+            "GET",
+            &format!("/api/v1/users/roles/{}/permissions", role_id),
+            &token,
+            None,
+        ))
         .await
         .unwrap();
     let (status, json) = response_parts(response).await;
@@ -301,7 +301,8 @@ async fn test_update_and_get_role_permissions() {
     assert_eq!(json["code"], 0, "Expected success code");
     let perms = json["result"].as_array().expect("Permissions should be an array");
     assert_eq!(perms.len(), 3, "Should have 3 permissions");
-    let perm_strings: Vec<String> = perms.iter().filter_map(|p| p.as_str().map(String::from)).collect();
+    let perm_strings: Vec<String> =
+        perms.iter().filter_map(|p| p.as_str().map(String::from)).collect();
     assert!(perm_strings.contains(&"perm-device-read".to_string()));
     assert!(perm_strings.contains(&"perm-device-write".to_string()));
     assert!(perm_strings.contains(&"perm-user-read".to_string()));

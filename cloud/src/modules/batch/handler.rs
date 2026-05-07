@@ -1,20 +1,20 @@
 // Batch Command API — moved from api/batch/mod.rs
 
-use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     routing::{get, post},
-    Json, Router,
 };
 use serde::Deserialize;
+use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
-    shared::api_response::ApiResponse,
-    modules::batch::batch_command::{
-        BatchCommandExecutor, BatchCommandRepository, BatchCommandWithItems, CreateBatchCommandRequest,
-    },
-    shared::app_state::AppState,
     api::middleware::WorkspaceScope,
+    modules::batch::batch_command::{
+        BatchCommandExecutor, BatchCommandRepository, BatchCommandWithItems,
+        CreateBatchCommandRequest,
+    },
+    shared::{api_response::ApiResponse, app_state::AppState},
 };
 
 /// Query params for listing batches
@@ -50,9 +50,8 @@ async fn create_batch(
     .unwrap_or(None)
     {
         // Return existing batch (idempotent)
-        let batch_with_items = BatchCommandRepository::get_batch_with_items(&db, &existing.id)
-            .await
-            .unwrap_or(None);
+        let batch_with_items =
+            BatchCommandRepository::get_batch_with_items(&db, &existing.id).await.unwrap_or(None);
         if let Some(bwi) = batch_with_items {
             return ApiResponseBuilder::success(bwi);
         }

@@ -1,9 +1,9 @@
 //! TinyIoTHub 驱动开发SDK
-//! 
+//!
 //! 提供驱动开发所需的所有接口和工具
-//! 
+//!
 //! # 快速开始
-//! 
+//!
 //! ```rust,ignore
 //! use tinyiothub_plugin_sdk::*;
 //!
@@ -27,15 +27,15 @@
 //! export_driver!(MyDriver);
 //! ```
 
-pub mod driver;
-pub mod types;
-pub mod error;
 pub mod config;
+pub mod driver;
+pub mod error;
 pub mod ffi;
 pub mod macros;
+pub mod types;
 
 // 重新导出核心类型
-pub use driver::DeviceDriver;
-pub use types::*;
-pub use error::*;
 pub use config::*;
+pub use driver::DeviceDriver;
+pub use error::*;
+pub use types::*;

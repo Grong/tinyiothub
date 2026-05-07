@@ -1,16 +1,16 @@
-use tinyiothub_web::response::ApiResponseBuilder;
-use axum::{extract::State, response::Json, routing::get, Router};
+use axum::{Router, extract::State, response::Json, routing::get};
 use serde::Deserialize;
+use tinyiothub_web::response::ApiResponseBuilder;
 use tracing::info;
 
 use crate::{
-    shared::app_state::AppState,
-    shared::api_response::ApiResponse,
+    api::middleware::WorkspaceScope,
     modules::monitoring::types::{DashboardMetrics, DashboardStats, MonthlyGrowth, NetworkMetrics},
-    shared::persistence::Database,
+    shared::{
+        api_response::ApiResponse, app_state::AppState, persistence::Database,
+        security::jwt::Claims,
+    },
 };
-use crate::api::middleware::WorkspaceScope;
-use crate::shared::security::jwt::Claims;
 
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
@@ -87,31 +87,46 @@ pub async fn get_dashboard_metrics(
 // 辅助函数
 
 /// 获取设备总数
-async fn get_total_devices_count(db: &Database, workspace_id: Option<&str>) -> Result<i64, sqlx::Error> {
+async fn get_total_devices_count(
+    db: &Database,
+    workspace_id: Option<&str>,
+) -> Result<i64, sqlx::Error> {
     let (query_str, wid) = match workspace_id {
         Some(wid) => ("SELECT COUNT(*) FROM devices WHERE workspace_id = ?", Some(wid)),
         None => ("SELECT COUNT(*) FROM devices", None),
     };
     let mut q = sqlx::query_scalar(sqlx::AssertSqlSafe(query_str));
-    if let Some(w) = wid { q = q.bind(w); }
+    if let Some(w) = wid {
+        q = q.bind(w);
+    }
     let count: i64 = q.fetch_one(db.pool()).await?;
     Ok(count)
 }
 
 /// 获取在线设备数
-async fn get_online_devices_count(db: &Database, workspace_id: Option<&str>) -> Result<i64, sqlx::Error> {
+async fn get_online_devices_count(
+    db: &Database,
+    workspace_id: Option<&str>,
+) -> Result<i64, sqlx::Error> {
     let (query_str, wid) = match workspace_id {
-        Some(wid) => ("SELECT COUNT(*) FROM devices WHERE state = 1 AND workspace_id = ?", Some(wid)),
+        Some(wid) => {
+            ("SELECT COUNT(*) FROM devices WHERE state = 1 AND workspace_id = ?", Some(wid))
+        }
         None => ("SELECT COUNT(*) FROM devices WHERE state = 1", None),
     };
     let mut q = sqlx::query_scalar(sqlx::AssertSqlSafe(query_str));
-    if let Some(w) = wid { q = q.bind(w); }
+    if let Some(w) = wid {
+        q = q.bind(w);
+    }
     let count: i64 = q.fetch_one(db.pool()).await?;
     Ok(count)
 }
 
 /// 获取活跃告警数（通过 devices 表 JOIN 过滤 workspace）
-async fn get_active_alarms_count(db: &Database, workspace_id: Option<&str>) -> Result<i64, sqlx::Error> {
+async fn get_active_alarms_count(
+    db: &Database,
+    workspace_id: Option<&str>,
+) -> Result<i64, sqlx::Error> {
     let (query_str, wid) = match workspace_id {
         Some(wid) => (
             "SELECT COUNT(*) FROM device_alarms da JOIN devices d ON da.device_id = d.id WHERE da.is_resolved = 0 AND d.workspace_id = ?",
@@ -120,7 +135,9 @@ async fn get_active_alarms_count(db: &Database, workspace_id: Option<&str>) -> R
         None => ("SELECT COUNT(*) FROM device_alarms WHERE is_resolved = 0", None),
     };
     let mut q = sqlx::query_scalar(sqlx::AssertSqlSafe(query_str));
-    if let Some(w) = wid { q = q.bind(w); }
+    if let Some(w) = wid {
+        q = q.bind(w);
+    }
     let count: i64 = q.fetch_one(db.pool()).await?;
     Ok(count)
 }

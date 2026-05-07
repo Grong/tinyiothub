@@ -1,23 +1,25 @@
-use tinyiothub_web::response::ApiResponseBuilder;
-use crate::modules::template::types::{
-    CreateDeviceTemplateRequest, DeviceCreationInput, DevicePreview, DeviceTemplate,
-    TemplateCategory, TemplateQueryParams, UpdateDeviceTemplateRequest,
-};
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     routing::{delete, get, post, put},
-    Json, Router,
 };
 use serde::Deserialize;
+use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
-    shared::app_state::AppState,
     modules::template::{
         service::{TemplateEngine, TemplateService, TemplateValidator},
+        types::{
+            CreateDeviceTemplateRequest, DeviceCreationInput, DevicePreview, DeviceTemplate,
+            TemplateCategory, TemplateQueryParams, UpdateDeviceTemplateRequest,
+        },
     },
-    shared::api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
+    shared::{
+        api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
+        app_state::AppState,
+        security::jwt::Claims,
+    },
 };
-use crate::shared::security::jwt::Claims;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -82,12 +84,7 @@ async fn list_templates(
 
             ApiResponseBuilder::success(PaginatedResponse {
                 data: templates,
-                pagination: PaginationInfo {
-                    page,
-                    page_size,
-                    total_pages,
-                    total_count,
-                },
+                pagination: PaginationInfo { page, page_size, total_pages, total_count },
             })
         }
         Err(e) => {
@@ -172,15 +169,13 @@ async fn update_template(
 
     // 检查模板是否存在
     match template_service.get_repository().find_by_id(&id).await {
-        Ok(Some(_template)) => {
-            match template_service.get_repository().update(&id, &req).await {
-                Ok(updated_template) => ApiResponseBuilder::success(updated_template),
-                Err(e) => {
-                    tracing::error!("Failed to update template {}: {}", id, e);
-                    ApiResponseBuilder::error("更新模板失败".to_string())
-                }
+        Ok(Some(_template)) => match template_service.get_repository().update(&id, &req).await {
+            Ok(updated_template) => ApiResponseBuilder::success(updated_template),
+            Err(e) => {
+                tracing::error!("Failed to update template {}: {}", id, e);
+                ApiResponseBuilder::error("更新模板失败".to_string())
             }
-        }
+        },
         Ok(None) => ApiResponseBuilder::error("模板不存在".to_string()),
         Err(e) => {
             tracing::error!("Failed to find template {}: {}", id, e);

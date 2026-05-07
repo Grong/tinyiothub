@@ -1,28 +1,26 @@
 // Tenant API handlers — includes CRUD, auth, and API key management
 
-use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
+    Router,
     extract::{Path, Query, State},
     http::StatusCode,
     response::Json,
     routing::{delete, get, post, put},
-    Router,
 };
 use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use sha2::Sha256;
 use sqlx::Row;
+use tinyiothub_web::response::ApiResponseBuilder;
 
 use super::types::{
     ApiKey, ApiUsageStats, CreateApiKeyRequest, CreateTenantRequest, SubscriptionPlan, Tenant,
     TenantQueryParams, TenantUsage,
 };
 use crate::{
-    shared::api_response::ApiResponse,
-    shared::app_state::AppState,
+    api::middleware::WorkspaceScope,
+    shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims},
 };
-use crate::api::middleware::WorkspaceScope;
-use crate::shared::security::jwt::Claims;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -169,7 +167,9 @@ async fn register_tenant(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    if state.tenant_service.find_tenant_by_slug(&slug)
+    if state
+        .tenant_service
+        .find_tenant_by_slug(&slug)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .is_some()
@@ -230,7 +230,9 @@ async fn register_tenant(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    state.workspace_service.create(&tenant.id, "默认工作空间", Some("系统自动创建的默认工作空间"), None, None)
+    state
+        .workspace_service
+        .create(&tenant.id, "默认工作空间", Some("系统自动创建的默认工作空间"), None, None)
         .await
         .map_err(|e| {
             tracing::error!("Failed to create default workspace: {}", e);
@@ -263,7 +265,7 @@ async fn login(
     }
 
     let rows = sqlx::query(
-        "SELECT id, username, password_hash FROM users WHERE email = ? AND is_enabled = 1 LIMIT 1"
+        "SELECT id, username, password_hash FROM users WHERE email = ? AND is_enabled = 1 LIMIT 1",
     )
     .bind(&email)
     .fetch_all(db.pool())
@@ -514,12 +516,10 @@ async fn create_api_key(
     }
 
     match state.tenant_service.create_api_key(&payload.workspace_id, &payload).await {
-        Ok((key, raw_key)) => {
-            ApiResponseBuilder::success(serde_json::json!({
-                "api_key": key,
-                "raw_key": raw_key
-            }))
-        }
+        Ok((key, raw_key)) => ApiResponseBuilder::success(serde_json::json!({
+            "api_key": key,
+            "raw_key": raw_key
+        })),
         Err(e) => {
             tracing::error!("Failed to create api key: {}", e);
             ApiResponseBuilder::error("创建 API Key 失败")

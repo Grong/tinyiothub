@@ -1,6 +1,6 @@
-use tinyiothub_core::models::device::Device;
-use tinyiothub_core::error::Result;
 use sqlx::Row;
+use tinyiothub_core::error::Result;
+use tinyiothub_core::models::device::Device;
 
 /// Centralized SELECT column list for the `devices` table.
 pub const SELECT_COLUMNS: &str = r#"

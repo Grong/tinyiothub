@@ -1,8 +1,8 @@
+use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::{info, warn};
-use serde_json::Value;
 
 use crate::cache::SledCache;
 
@@ -32,16 +32,18 @@ impl SyncService {
         if templates_dir.is_dir() {
             match tokio::fs::read_dir(&templates_dir).await {
                 Ok(mut entries) => {
-                    while let Some(entry) = entries.next_entry().await.map_err(|e| SyncError::Failed(e.to_string()))? {
+                    while let Some(entry) = entries
+                        .next_entry()
+                        .await
+                        .map_err(|e| SyncError::Failed(e.to_string()))?
+                    {
                         let path = entry.path();
                         if path.extension().and_then(|s| s.to_str()) == Some("json") {
                             match tokio::fs::read_to_string(&path).await {
-                                Ok(content) => {
-                                    match serde_json::from_str::<Value>(&content) {
-                                        Ok(item) => all_templates.push(item),
-                                        Err(e) => warn!("Failed to parse template {:?}: {}", path, e),
-                                    }
-                                }
+                                Ok(content) => match serde_json::from_str::<Value>(&content) {
+                                    Ok(item) => all_templates.push(item),
+                                    Err(e) => warn!("Failed to parse template {:?}: {}", path, e),
+                                },
                                 Err(e) => warn!("Failed to read template {:?}: {}", path, e),
                             }
                         }
@@ -57,16 +59,18 @@ impl SyncService {
         if drivers_dir.is_dir() {
             match tokio::fs::read_dir(&drivers_dir).await {
                 Ok(mut entries) => {
-                    while let Some(entry) = entries.next_entry().await.map_err(|e| SyncError::Failed(e.to_string()))? {
+                    while let Some(entry) = entries
+                        .next_entry()
+                        .await
+                        .map_err(|e| SyncError::Failed(e.to_string()))?
+                    {
                         let path = entry.path();
                         if path.extension().and_then(|s| s.to_str()) == Some("json") {
                             match tokio::fs::read_to_string(&path).await {
-                                Ok(content) => {
-                                    match serde_json::from_str::<Value>(&content) {
-                                        Ok(item) => all_drivers.push(item),
-                                        Err(e) => warn!("Failed to parse driver {:?}: {}", path, e),
-                                    }
-                                }
+                                Ok(content) => match serde_json::from_str::<Value>(&content) {
+                                    Ok(item) => all_drivers.push(item),
+                                    Err(e) => warn!("Failed to parse driver {:?}: {}", path, e),
+                                },
                                 Err(e) => warn!("Failed to read driver {:?}: {}", path, e),
                             }
                         }
@@ -78,20 +82,28 @@ impl SyncService {
             info!("Drivers directory not found: {:?}", drivers_dir);
         }
 
-        self.cache.set_templates(&all_templates)
+        self.cache
+            .set_templates(&all_templates)
             .map_err(|e| SyncError::Failed(format!("Failed to write templates to cache: {}", e)))?;
-        self.cache.set_drivers(&all_drivers)
+        self.cache
+            .set_drivers(&all_drivers)
             .map_err(|e| SyncError::Failed(format!("Failed to write drivers to cache: {}", e)))?;
 
         let now = chrono::Utc::now().timestamp();
-        self.cache.set_last_sync(now)
+        self.cache
+            .set_last_sync(now)
             .map_err(|e| SyncError::Failed(format!("Failed to update last_sync: {}", e)))?;
 
         // Batch flush after all writes complete
-        self.cache.flush()
+        self.cache
+            .flush()
             .map_err(|e| SyncError::Failed(format!("Failed to flush cache: {}", e)))?;
 
-        info!("Local data load completed: {} templates, {} drivers", all_templates.len(), all_drivers.len());
+        info!(
+            "Local data load completed: {} templates, {} drivers",
+            all_templates.len(),
+            all_drivers.len()
+        );
         Ok(())
     }
 }

@@ -82,14 +82,32 @@ mod tests {
     fn test_error_display() {
         assert_eq!(Error::Internal("boom".into()).to_string(), "internal error: boom");
         assert_eq!(Error::NotFound.to_string(), "not found");
-        assert_eq!(Error::InvalidArgument("bad".into()).to_string(), "invalid argument: bad");
+        assert_eq!(
+            Error::InvalidArgument("bad".into()).to_string(),
+            "invalid argument: bad"
+        );
         assert_eq!(Error::Unsupported("feat".into()).to_string(), "unsupported: feat");
         assert_eq!(Error::IOError("disk".into()).to_string(), "io error: disk");
-        assert_eq!(Error::NetworkError("timeout".into()).to_string(), "network error: timeout");
-        assert_eq!(Error::ConfigError("missing".into()).to_string(), "config error: missing");
-        assert_eq!(Error::ValidationError("required".into()).to_string(), "validation error: required");
-        assert_eq!(Error::DatabaseError("locked".into()).to_string(), "database error: locked");
-        assert_eq!(Error::SerializationError("json".into()).to_string(), "serialization error: json");
+        assert_eq!(
+            Error::NetworkError("timeout".into()).to_string(),
+            "network error: timeout"
+        );
+        assert_eq!(
+            Error::ConfigError("missing".into()).to_string(),
+            "config error: missing"
+        );
+        assert_eq!(
+            Error::ValidationError("required".into()).to_string(),
+            "validation error: required"
+        );
+        assert_eq!(
+            Error::DatabaseError("locked".into()).to_string(),
+            "database error: locked"
+        );
+        assert_eq!(
+            Error::SerializationError("json".into()).to_string(),
+            "serialization error: json"
+        );
     }
 
     #[test]
@@ -133,4 +151,3 @@ mod tests {
         assert_send_sync::<Error>();
     }
 }
-

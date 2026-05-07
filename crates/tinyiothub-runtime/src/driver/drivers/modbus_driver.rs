@@ -1,5 +1,5 @@
-use tinyiothub_core::models::{device::Device, device_command::DeviceCommand};
 use std::collections::HashMap;
+use tinyiothub_core::models::{device::Device, device_command::DeviceCommand};
 
 #[cfg(feature = "serialport")]
 use serialport::SerialPort;
@@ -125,15 +125,13 @@ impl DeviceDriver for ModbusDriver {
                         let humidity = 40.0 + (rand::random::<f64>() * 40.0);
                         ResultValue::float_with_precision(property.name.clone(), humidity, 1)
                     }
-                    _ => {
-                        match property.data_type.as_deref() {
-                            Some("number") | Some("float") => {
-                                let value = rand::random::<f64>() * 100.0;
-                                ResultValue::float_with_precision(property.name.clone(), value, 2)
-                            }
-                            _ => ResultValue::string(property.name.clone(), "Modbus数据".to_string()),
+                    _ => match property.data_type.as_deref() {
+                        Some("number") | Some("float") => {
+                            let value = rand::random::<f64>() * 100.0;
+                            ResultValue::float_with_precision(property.name.clone(), value, 2)
                         }
-                    }
+                        _ => ResultValue::string(property.name.clone(), "Modbus数据".to_string()),
+                    },
                 };
                 results.push(result_value);
             }

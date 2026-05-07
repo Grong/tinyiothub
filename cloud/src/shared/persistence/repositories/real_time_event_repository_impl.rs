@@ -4,13 +4,13 @@ use sqlx::Row;
 
 use crate::{
     modules::event::{
+        Result,
         entities::Event,
         repositories::{
             DeviceStatusSummary, RealTimeEvent, RealTimeEventRepository, RealTimeFilter,
             StatusSummary,
         },
         value_objects::{EventId, EventLevel, EventSource, EventType},
-        Result,
     },
     shared::persistence::Database,
 };

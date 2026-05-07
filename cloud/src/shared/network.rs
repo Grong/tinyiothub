@@ -52,7 +52,6 @@ pub fn get_network_info() -> NetworkInfo {
 pub fn set_network_info(info: &NetworkInfo) -> bool {
     tracing::info!("Setting network configuration: {:?}", info);
 
-
     true
 }
 
@@ -76,9 +75,10 @@ pub fn get_interface_ip(interface: &str) -> Option<String> {
             // This is a simplified implementation
             if let Some(line) = output_str.lines().find(|line| line.contains("inet "))
                 && let Some(ip_part) = line.split_whitespace().nth(1)
-                    && let Some(ip) = ip_part.split('/').next() {
-                        return Some(ip.to_string());
-                    }
+                && let Some(ip) = ip_part.split('/').next()
+            {
+                return Some(ip.to_string());
+            }
             None
         }
         Err(_) => None,
@@ -99,9 +99,10 @@ pub fn get_default_gateway() -> Option<String> {
         Ok(output) => {
             let output_str = String::from_utf8_lossy(&output.stdout);
             if let Some(line) = output_str.lines().next()
-                && let Some(gateway) = line.split_whitespace().nth(2) {
-                    return Some(gateway.to_string());
-                }
+                && let Some(gateway) = line.split_whitespace().nth(2)
+            {
+                return Some(gateway.to_string());
+            }
             None
         }
         Err(_) => None,
@@ -125,7 +126,6 @@ pub fn get_dns_servers() -> Vec<String> {
 pub fn set_static_ip(interface: &str, ip: &str, _netmask: &str, _gateway: &str) -> bool {
     tracing::info!("Setting static IP: {} on {}", ip, interface);
 
-
     true
 }
 
@@ -141,7 +141,6 @@ pub fn enable_dhcp(interface: &str) -> bool {
 /// Restart network service
 pub fn restart_network() -> bool {
     tracing::info!("Restarting network service");
-
 
     thread::sleep(Duration::from_secs(2)); // Simulate restart time
     true

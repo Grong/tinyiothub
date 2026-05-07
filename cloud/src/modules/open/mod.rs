@@ -1,21 +1,18 @@
 // Open API Module
 // Public API for AI platform integration
 
-use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{
+    Json, Router,
     body::Body,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::Response,
     routing::{get, post},
-    Json, Router,
 };
 use sqlx::Row;
+use tinyiothub_web::response::ApiResponseBuilder;
 
-use crate::{
-    shared::api_response::ApiResponse,
-    shared::app_state::AppState,
-};
+use crate::shared::{api_response::ApiResponse, app_state::AppState};
 
 /// Create open API router (public API, requires API Key)
 pub fn create_open_router() -> Router<AppState> {
@@ -38,7 +35,9 @@ async fn validate_api_key(
 ) -> Result<(crate::modules::tenant::ApiKey, crate::modules::tenant::Tenant, String), StatusCode> {
     let raw_key = api_key.ok_or(StatusCode::UNAUTHORIZED)?;
 
-    let key = state.tenant_service.find_api_key_by_prefix(&raw_key)
+    let key = state
+        .tenant_service
+        .find_api_key_by_prefix(&raw_key)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::UNAUTHORIZED)?;
@@ -53,17 +52,22 @@ async fn validate_api_key(
 
     if let Some(expires) = &key.expires_at
         && let Ok(exp) = chrono::DateTime::parse_from_rfc3339(expires)
-            && exp < chrono::Utc::now() {
-                return Err(StatusCode::FORBIDDEN);
-            }
+        && exp < chrono::Utc::now()
+    {
+        return Err(StatusCode::FORBIDDEN);
+    }
 
     // Resolve tenant_id from workspace for quota check
-    let workspace = state.workspace_service.find_by_id(&key.workspace_id)
+    let workspace = state
+        .workspace_service
+        .find_by_id(&key.workspace_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let tenant = state.tenant_service.find_tenant_by_id(&workspace.tenant_id)
+    let tenant = state
+        .tenant_service
+        .find_tenant_by_id(&workspace.tenant_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -72,7 +76,9 @@ async fn validate_api_key(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    let can_proceed = state.tenant_service.check_quota(&workspace.tenant_id, "api_call")
+    let can_proceed = state
+        .tenant_service
+        .check_quota(&workspace.tenant_id, "api_call")
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -94,20 +100,24 @@ async fn record_api_usage(
     status_code: StatusCode,
     latency_ms: i32,
 ) {
-    let _ = state.tenant_service.record_api_usage(
-        workspace_id,
-        api_key_id,
-        method,
-        path,
-        status_code.as_u16() as i32,
-        latency_ms,
-        None,
-    )
-    .await;
+    let _ = state
+        .tenant_service
+        .record_api_usage(
+            workspace_id,
+            api_key_id,
+            method,
+            path,
+            status_code.as_u16() as i32,
+            latency_ms,
+            None,
+        )
+        .await;
 }
 
 /// Open API health check
-async fn open_health(State(_state): State<AppState>) -> Result<Json<serde_json::Value>, StatusCode> {
+async fn open_health(
+    State(_state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
     Ok(Json(serde_json::json!({
         "status": "ok",
         "service": "TinyIoTHub Open API",
@@ -253,11 +263,11 @@ async fn get_device_properties(
             let get = |r: &sqlx::sqlite::SqliteRow, col: &str| -> Result<String, StatusCode> {
                 r.try_get::<String, _>(col).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
             };
-            let get_opt =
-                |r: &sqlx::sqlite::SqliteRow, col: &str| -> Result<Option<String>, StatusCode> {
-                    r.try_get::<Option<String>, _>(col)
-                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-                };
+            let get_opt = |r: &sqlx::sqlite::SqliteRow,
+                           col: &str|
+             -> Result<Option<String>, StatusCode> {
+                r.try_get::<Option<String>, _>(col).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+            };
             Ok(serde_json::json!({
                 "name": get(&row, "name")?,
                 "display_name": get_opt(&row, "display_name")?,
@@ -314,11 +324,11 @@ async fn list_commands(
             let get = |r: &sqlx::sqlite::SqliteRow, col: &str| -> Result<String, StatusCode> {
                 r.try_get::<String, _>(col).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
             };
-            let get_opt =
-                |r: &sqlx::sqlite::SqliteRow, col: &str| -> Result<Option<String>, StatusCode> {
-                    r.try_get::<Option<String>, _>(col)
-                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-                };
+            let get_opt = |r: &sqlx::sqlite::SqliteRow,
+                           col: &str|
+             -> Result<Option<String>, StatusCode> {
+                r.try_get::<Option<String>, _>(col).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+            };
             Ok(serde_json::json!({
                 "id": get(&row, "id")?,
                 "name": get(&row, "name")?,

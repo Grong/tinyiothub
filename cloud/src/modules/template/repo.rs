@@ -1,18 +1,15 @@
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use parking_lot::RwLock;
 use sqlx::{QueryBuilder, Row};
-use tracing::{debug, error, info, warn};
-
 use tinyiothub_core::models::template_error::{TemplateError, ValidationError};
-
-use crate::shared::persistence::Database;
+use tracing::{debug, error, info, warn};
 
 use super::types::{
     CreateDeviceTemplateRequest, DeviceTemplate, TemplateCategory, TemplateQueryParams,
     UpdateDeviceTemplateRequest,
 };
+use crate::shared::persistence::Database;
 
 // ─── TemplateRepository ───────────────────────────────────────
 
@@ -47,17 +44,25 @@ impl TemplateRepository {
         params: &TemplateQueryParams,
     ) -> Result<Vec<DeviceTemplate>, TemplateError> {
         let cache = self.cache.read();
-        let mut templates: Vec<DeviceTemplate> = cache.iter()
+        let mut templates: Vec<DeviceTemplate> = cache
+            .iter()
             .filter(|t| t.is_active == 1)
             .filter(|t| params.category.as_ref().map_or(true, |c| &t.category == c))
             .filter(|t| params.device_type.as_ref().map_or(true, |dt| &t.device_type == dt))
-            .filter(|t| params.protocol_type.as_ref().map_or(true, |pt| t.protocol_type.as_ref() == Some(pt)))
-            .filter(|t| params.keyword.as_ref().map_or(true, |kw| {
-                let kw = kw.to_lowercase();
-                t.name.to_lowercase().contains(&kw)
-                    || t.display_name.to_lowercase().contains(&kw)
-                    || t.tags.to_lowercase().contains(&kw)
-            }))
+            .filter(|t| {
+                params
+                    .protocol_type
+                    .as_ref()
+                    .map_or(true, |pt| t.protocol_type.as_ref() == Some(pt))
+            })
+            .filter(|t| {
+                params.keyword.as_ref().map_or(true, |kw| {
+                    let kw = kw.to_lowercase();
+                    t.name.to_lowercase().contains(&kw)
+                        || t.display_name.to_lowercase().contains(&kw)
+                        || t.tags.to_lowercase().contains(&kw)
+                })
+            })
             .cloned()
             .collect();
 
@@ -69,7 +74,8 @@ impl TemplateRepository {
         let page_size = params.page_size.unwrap_or(20).max(1) as usize;
         let start = (page - 1) * page_size;
         if start < templates.len() {
-            templates = templates[start..std::cmp::min(start + page_size, templates.len())].to_vec();
+            templates =
+                templates[start..std::cmp::min(start + page_size, templates.len())].to_vec();
         } else {
             templates = vec![];
         }
@@ -96,13 +102,16 @@ impl TemplateRepository {
     pub async fn search(&self, keyword: &str) -> Result<Vec<DeviceTemplate>, TemplateError> {
         let kw = keyword.to_lowercase();
         let cache = self.cache.read();
-        Ok(cache.iter().filter(|t| {
-            t.is_active == 1 && (
-                t.name.to_lowercase().contains(&kw)
-                    || t.display_name.to_lowercase().contains(&kw)
-                    || t.tags.to_lowercase().contains(&kw)
-            )
-        }).cloned().collect())
+        Ok(cache
+            .iter()
+            .filter(|t| {
+                t.is_active == 1
+                    && (t.name.to_lowercase().contains(&kw)
+                        || t.display_name.to_lowercase().contains(&kw)
+                        || t.tags.to_lowercase().contains(&kw))
+            })
+            .cloned()
+            .collect())
     }
 
     /// 高级搜索模板
@@ -211,9 +220,10 @@ impl TemplateRepository {
         if let Some(new_name) = &request.name {
             let existing = DeviceTemplate::find_by_name(&self.database, new_name).await?;
             if let Some(existing_template) = existing
-                && existing_template.id != id {
-                    return Err(TemplateError::TemplateNameExists { name: new_name.clone() });
-                }
+                && existing_template.id != id
+            {
+                return Err(TemplateError::TemplateNameExists { name: new_name.clone() });
+            }
         }
 
         // 如果更新分类，验证分类是否存在
@@ -259,9 +269,8 @@ impl TemplateRepository {
         self.file_manager.ensure_directory_structure()?;
 
         let requests = self.file_manager.load_builtin_templates()?;
-        let templates: Vec<DeviceTemplate> = requests.iter()
-            .map(DeviceTemplate::from_request)
-            .collect();
+        let templates: Vec<DeviceTemplate> =
+            requests.iter().map(DeviceTemplate::from_request).collect();
 
         info!("加载了 {} 个内置设备模板", templates.len());
         Ok(templates)
@@ -274,9 +283,9 @@ impl TemplateRepository {
         let mut categories: Vec<TemplateCategory> = Vec::new();
         for t in cache.iter().filter(|t| t.is_active == 1) {
             if !categories.iter().any(|c| c.name == t.category) {
-                let count = cache.iter()
-                    .filter(|x| x.category == t.category && x.is_active == 1)
-                    .count() as i64;
+                let count =
+                    cache.iter().filter(|x| x.category == t.category && x.is_active == 1).count()
+                        as i64;
                 categories.push(TemplateCategory {
                     name: t.category.clone(),
                     display_name: t.category.clone(),
@@ -294,13 +303,17 @@ impl TemplateRepository {
     /// 统计模板数量
     pub async fn count(&self, params: &TemplateQueryParams) -> Result<i64, TemplateError> {
         let cache = self.cache.read();
-        let count = cache.iter()
+        let count = cache
+            .iter()
             .filter(|t| t.is_active == 1)
             .filter(|t| params.category.as_ref().map_or(true, |c| &t.category == c))
-            .filter(|t| params.keyword.as_ref().map_or(true, |kw| {
-                let kw = kw.to_lowercase();
-                t.name.to_lowercase().contains(&kw) || t.display_name.to_lowercase().contains(&kw)
-            }))
+            .filter(|t| {
+                params.keyword.as_ref().map_or(true, |kw| {
+                    let kw = kw.to_lowercase();
+                    t.name.to_lowercase().contains(&kw)
+                        || t.display_name.to_lowercase().contains(&kw)
+                })
+            })
             .count();
         Ok(count as i64)
     }
@@ -447,7 +460,8 @@ impl TemplateSearchService {
             query.push(" LIMIT ").push_bind(limit as i64);
         }
 
-        let templates = query.build_query_as::<DeviceTemplate>().fetch_all(self.database.pool()).await?;
+        let templates =
+            query.build_query_as::<DeviceTemplate>().fetch_all(self.database.pool()).await?;
 
         info!("在分类 {} 中找到 {} 个模板", category, templates.len());
         Ok(templates)
@@ -478,7 +492,8 @@ impl TemplateSearchService {
             query.push(" LIMIT ").push_bind(limit as i64);
         }
 
-        let templates = query.build_query_as::<DeviceTemplate>().fetch_all(self.database.pool()).await?;
+        let templates =
+            query.build_query_as::<DeviceTemplate>().fetch_all(self.database.pool()).await?;
 
         info!("厂商 {} 的模板找到 {} 个", manufacturer, templates.len());
         Ok(templates)
@@ -509,7 +524,8 @@ impl TemplateSearchService {
             query.push(" LIMIT ").push_bind(limit as i64);
         }
 
-        let templates = query.build_query_as::<DeviceTemplate>().fetch_all(self.database.pool()).await?;
+        let templates =
+            query.build_query_as::<DeviceTemplate>().fetch_all(self.database.pool()).await?;
 
         info!("协议类型 {} 的模板找到 {} 个", protocol_type, templates.len());
         Ok(templates)
@@ -709,10 +725,7 @@ pub struct TemplateFilters {
 
 // ─── TemplateFileManager ──────────────────────────────────────
 
-use std::{
-    fs,
-    path::Path,
-};
+use std::{fs, path::Path};
 
 /// 模板文件系统管理器 - 负责模板文件的加载和解析
 #[derive(Debug)]

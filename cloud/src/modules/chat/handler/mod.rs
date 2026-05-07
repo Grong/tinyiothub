@@ -1,7 +1,11 @@
 pub mod proxy;
 pub mod types;
 
-use axum::{routing::{get, post}, Router};
+use axum::{
+    Router,
+    routing::{get, post},
+};
+
 use crate::shared::app_state::AppState;
 
 pub fn create_router() -> Router<AppState> {

@@ -1,14 +1,13 @@
-use tinyiothub_web::response::ApiResponseBuilder;
-use axum::{extract::State, routing::post, Json, Router};
+use axum::{Json, Router, extract::State, routing::post};
 use serde::Deserialize;
+use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
-    shared::app_state::AppState,
-    modules::auth::types::{LoginResponse, UserInfo},
-    modules::user::types::CreateUserRequest,
-    shared::api_response::ApiResponse,
-    shared::security::jwt,
-    shared::utils::validation,
+    modules::{
+        auth::types::{LoginResponse, UserInfo},
+        user::types::CreateUserRequest,
+    },
+    shared::{api_response::ApiResponse, app_state::AppState, security::jwt, utils::validation},
 };
 
 #[derive(Deserialize)]
@@ -146,7 +145,9 @@ async fn register(
     };
 
     // 确保新用户关联到默认租户和工作空间（幂等）
-    if let Err(e) = crate::modules::system::handler::ensure_user_has_workspace(&state, &user.id).await {
+    if let Err(e) =
+        crate::modules::system::handler::ensure_user_has_workspace(&state, &user.id).await
+    {
         tracing::warn!("[REGISTER] Failed to ensure workspace for user {}: {}", user.id, e);
     }
 
@@ -160,7 +161,12 @@ async fn register(
     };
 
     let workspace_id_for_token = workspace_id.clone().unwrap_or_default();
-    let token = match jwt::generate_token(&user.id, user.get_display_name(), &tenant_id, &workspace_id_for_token) {
+    let token = match jwt::generate_token(
+        &user.id,
+        user.get_display_name(),
+        &tenant_id,
+        &workspace_id_for_token,
+    ) {
         Ok(t) => t,
         Err(e) => {
             tracing::error!("Failed to generate token: {}", e);
@@ -217,7 +223,8 @@ async fn login(
 
             tracing::debug!("Generating JWT token for user: {}", user.id);
 
-            let (tenant_id, workspace_id) = match resolve_user_login_context(&state, &user.id).await {
+            let (tenant_id, workspace_id) = match resolve_user_login_context(&state, &user.id).await
+            {
                 Ok(ctx) => ctx,
                 Err(e) => {
                     tracing::error!("Failed to resolve user login context: {}", e);
@@ -234,7 +241,12 @@ async fn login(
 
             // 生成 JWT 令牌（HarmonyOS 会自动使用 HMAC-SHA256）
             let workspace_id_for_token = workspace_id.clone().unwrap_or_default();
-            match jwt::generate_token(&user.id, user.get_display_name(), &tenant_id, &workspace_id_for_token) {
+            match jwt::generate_token(
+                &user.id,
+                user.get_display_name(),
+                &tenant_id,
+                &workspace_id_for_token,
+            ) {
                 Ok(token) => {
                     let login_response = LoginResponse {
                         access_token: token,
@@ -288,13 +300,12 @@ async fn resolve_user_login_context(
 ) -> Result<(String, Option<String>), crate::shared::error::Error> {
     let pool = state.database().pool();
 
-    let tenant_id: Option<String> = sqlx::query_scalar(
-        "SELECT tenant_id FROM tenant_users WHERE user_id = ? LIMIT 1"
-    )
-    .bind(user_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
+    let tenant_id: Option<String> =
+        sqlx::query_scalar("SELECT tenant_id FROM tenant_users WHERE user_id = ? LIMIT 1")
+            .bind(user_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
 
     let tenant_id = tenant_id.unwrap_or_else(|| "default".to_string());
 

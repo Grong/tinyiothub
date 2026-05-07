@@ -8,11 +8,12 @@ use std::collections::HashMap;
 use chrono::{DateTime, Duration, Utc};
 
 use crate::modules::event::{
+    EventError, Result,
     entities::Event,
     errors::{DomainResult, EventDomainError, EventServiceDomainError},
-    value_objects::{DeviceEventType, EventId, EventLevel, EventSource, EventType, RichContent,
-        SystemEventType},
-    EventError, Result,
+    value_objects::{
+        DeviceEventType, EventId, EventLevel, EventSource, EventType, RichContent, SystemEventType,
+    },
 };
 
 // ════════════════════════════════════════════════
@@ -41,15 +42,33 @@ impl EventAggregate {
         Self { event, metadata: HashMap::new(), version: 1 }
     }
 
-    pub fn event(&self) -> &Event { &self.event }
-    pub fn id(&self) -> &EventId { self.event.id() }
-    pub fn event_type(&self) -> &EventType { self.event.event_type() }
-    pub fn level(&self) -> EventLevel { self.event.level() }
-    pub fn source(&self) -> &EventSource { self.event.source() }
-    pub fn content(&self) -> &RichContent { self.event.content() }
-    pub fn timestamp(&self) -> DateTime<Utc> { self.event.timestamp() }
-    pub fn metadata(&self) -> &HashMap<String, String> { &self.metadata }
-    pub fn version(&self) -> u64 { self.version }
+    pub fn event(&self) -> &Event {
+        &self.event
+    }
+    pub fn id(&self) -> &EventId {
+        self.event.id()
+    }
+    pub fn event_type(&self) -> &EventType {
+        self.event.event_type()
+    }
+    pub fn level(&self) -> EventLevel {
+        self.event.level()
+    }
+    pub fn source(&self) -> &EventSource {
+        self.event.source()
+    }
+    pub fn content(&self) -> &RichContent {
+        self.event.content()
+    }
+    pub fn timestamp(&self) -> DateTime<Utc> {
+        self.event.timestamp()
+    }
+    pub fn metadata(&self) -> &HashMap<String, String> {
+        &self.metadata
+    }
+    pub fn version(&self) -> u64 {
+        self.version
+    }
 
     pub fn add_metadata(&mut self, key: String, value: String) {
         self.metadata.insert(key, value);
@@ -101,7 +120,9 @@ impl EventAggregate {
         Ok(())
     }
 
-    pub fn into_event(self) -> Event { self.event }
+    pub fn into_event(self) -> Event {
+        self.event
+    }
 }
 
 // ════════════════════════════════════════════════
@@ -116,8 +137,12 @@ pub trait EventSpecification: Send + Sync {
 
 pub struct EventContentValidSpec;
 impl EventSpecification for EventContentValidSpec {
-    fn is_satisfied_by(&self, event: &Event) -> bool { !event.content().is_empty() }
-    fn error_message(&self) -> String { "Event content cannot be empty".to_string() }
+    fn is_satisfied_by(&self, event: &Event) -> bool {
+        !event.content().is_empty()
+    }
+    fn error_message(&self) -> String {
+        "Event content cannot be empty".to_string()
+    }
 }
 
 pub struct CriticalEventDeviceSourceSpec;
@@ -129,15 +154,21 @@ impl EventSpecification for CriticalEventDeviceSourceSpec {
             true
         }
     }
-    fn error_message(&self) -> String { "Critical events must have device source".to_string() }
+    fn error_message(&self) -> String {
+        "Critical events must have device source".to_string()
+    }
 }
 
 pub struct EventTimestampRecentSpec {
     max_age: Duration,
 }
 impl EventTimestampRecentSpec {
-    pub fn new(max_age: Duration) -> Self { Self { max_age } }
-    pub fn default_spec() -> Self { Self::new(Duration::hours(1)) }
+    pub fn new(max_age: Duration) -> Self {
+        Self { max_age }
+    }
+    pub fn default_spec() -> Self {
+        Self::new(Duration::hours(1))
+    }
 }
 impl EventSpecification for EventTimestampRecentSpec {
     fn is_satisfied_by(&self, event: &Event) -> bool {
@@ -157,7 +188,9 @@ impl EventSpecification for SystemEventValidSourceSpec {
             _ => true,
         }
     }
-    fn error_message(&self) -> String { "System events must have system source".to_string() }
+    fn error_message(&self) -> String {
+        "System events must have system source".to_string()
+    }
 }
 
 pub struct DeviceEventValidSourceSpec;
@@ -168,7 +201,9 @@ impl EventSpecification for DeviceEventValidSourceSpec {
             _ => true,
         }
     }
-    fn error_message(&self) -> String { "Device events must have device source".to_string() }
+    fn error_message(&self) -> String {
+        "Device events must have device source".to_string()
+    }
 }
 
 pub struct EventLevelMatchesTypeSpec;
@@ -195,7 +230,9 @@ impl EventSpecification for EventLevelMatchesTypeSpec {
             _ => false,
         }
     }
-    fn error_message(&self) -> String { "Event level does not match event type severity".to_string() }
+    fn error_message(&self) -> String {
+        "Event level does not match event type severity".to_string()
+    }
 }
 
 /// Composite specification for all event validation rules
@@ -232,7 +269,9 @@ impl EventValidationSpec {
 }
 
 impl Default for EventValidationSpec {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Event priority specification
@@ -338,14 +377,17 @@ impl EventService {
         let now = Utc::now();
         let time_diff = now.signed_duration_since(current_event.timestamp());
         if time_diff.num_minutes() > EVENT_UPDATE_TIME_LIMIT_MINUTES {
-            return Err(EventDomainError::immutable(
-                format!("Cannot update event content after {} minutes", EVENT_UPDATE_TIME_LIMIT_MINUTES),
-            ).into());
+            return Err(EventDomainError::immutable(format!(
+                "Cannot update event content after {} minutes",
+                EVENT_UPDATE_TIME_LIMIT_MINUTES
+            ))
+            .into());
         }
         if new_content.is_empty() {
             return Err(EventDomainError::invalid_content(
                 "Event content cannot be empty".to_string(),
-            ).into());
+            )
+            .into());
         }
         Ok(())
     }
@@ -395,14 +437,25 @@ impl EventService {
             .iter()
             .filter(|event| {
                 if let Some(min_level) = &min_level
-                    && &event.level() < min_level { return false; }
+                    && &event.level() < min_level
+                {
+                    return false;
+                }
                 if let Some(types) = event_types
-                    && !types.contains(event.event_type()) { return false; }
+                    && !types.contains(event.event_type())
+                {
+                    return false;
+                }
                 if let Some(sources) = sources
-                    && !sources.contains(event.source()) { return false; }
+                    && !sources.contains(event.source())
+                {
+                    return false;
+                }
                 if let Some((start, end)) = time_range {
                     let ts = event.timestamp();
-                    if ts < start || ts > end { return false; }
+                    if ts < start || ts > end {
+                        return false;
+                    }
                 }
                 true
             })
@@ -434,7 +487,8 @@ impl EventService {
                         PATTERN_SEVERITY_HIGH
                     } else {
                         PATTERN_SEVERITY_MEDIUM
-                    }.to_string(),
+                    }
+                    .to_string(),
                     event_count: count,
                     sources: vec![source],
                 });
@@ -448,7 +502,8 @@ impl EventService {
             return Err(EventServiceDomainError::CapacityExceeded {
                 current: events.len(),
                 max: EVENT_BATCH_SIZE_LIMIT,
-            }.into());
+            }
+            .into());
         }
         for event in events {
             self.validation_spec
@@ -465,7 +520,9 @@ impl EventService {
 }
 
 impl Default for EventService {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Event pattern detection result
@@ -492,7 +549,8 @@ mod tests {
             level,
             EventSource::system("test".to_string(), None),
             RichContent::new_text("Test".to_string(), "Test content".to_string()),
-        ).unwrap()
+        )
+        .unwrap()
     }
 
     fn create_test_aggregate() -> EventAggregate {
@@ -501,7 +559,8 @@ mod tests {
             EventLevel::Info,
             EventSource::system("test".to_string(), None),
             RichContent::new_text("Test".to_string(), "Test content".to_string()),
-        ).unwrap()
+        )
+        .unwrap()
     }
 
     // ── Aggregate tests ──
@@ -528,7 +587,8 @@ mod tests {
             EventLevel::Critical,
             EventSource::device("device-1".to_string(), Some("Device 1".to_string())),
             RichContent::new_text("Critical".to_string(), "Device connection lost".to_string()),
-        ).unwrap();
+        )
+        .unwrap();
         assert!(aggregate.is_critical());
         assert!(aggregate.requires_immediate_notification());
         assert_eq!(aggregate.processing_priority(), 1);
@@ -556,8 +616,12 @@ mod tests {
             EventType::Device(DeviceEventType::Connection),
             EventLevel::Error,
             EventSource::device("device-1".to_string(), Some("Device 1".to_string())),
-            RichContent::new_text("Connection Lost".to_string(), "Device connection lost".to_string()),
-        ).unwrap();
+            RichContent::new_text(
+                "Connection Lost".to_string(),
+                "Device connection lost".to_string(),
+            ),
+        )
+        .unwrap();
         assert!(spec.is_satisfied_by(&device_event));
         let system_event = create_test_event(EventLevel::Info);
         assert!(spec.is_satisfied_by(&system_event));
@@ -576,8 +640,12 @@ mod tests {
             EventType::Device(DeviceEventType::DeviceCreated),
             EventLevel::Critical,
             EventSource::device("device-1".to_string(), Some("Device 1".to_string())),
-            RichContent::new_text("Critical Error".to_string(), "Critical error occurred".to_string()),
-        ).unwrap();
+            RichContent::new_text(
+                "Critical Error".to_string(),
+                "Critical error occurred".to_string(),
+            ),
+        )
+        .unwrap();
         assert_eq!(EventPrioritySpec::get_priority(&critical_event), 1);
         assert!(EventPrioritySpec::requires_immediate_processing(&critical_event));
         assert!(EventPrioritySpec::should_persist(&critical_event));
@@ -587,7 +655,8 @@ mod tests {
             EventLevel::Debug,
             EventSource::system("auth-service".to_string(), None),
             RichContent::new_text("Debug".to_string(), "Debug message".to_string()),
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(EventPrioritySpec::get_priority(&debug_event), 5);
         assert!(!EventPrioritySpec::requires_immediate_processing(&debug_event));
         assert!(!EventPrioritySpec::should_persist(&debug_event));
@@ -598,12 +667,14 @@ mod tests {
     #[test]
     fn test_create_event() {
         let service = EventService::new();
-        let aggregate = service.create_event(
-            EventType::System(SystemEventType::UserAuth),
-            EventLevel::Info,
-            EventSource::system("test".to_string(), None),
-            RichContent::new_text("Test".to_string(), "Test content".to_string()),
-        ).unwrap();
+        let aggregate = service
+            .create_event(
+                EventType::System(SystemEventType::UserAuth),
+                EventLevel::Info,
+                EventSource::system("test".to_string(), None),
+                RichContent::new_text("Test".to_string(), "Test content".to_string()),
+            )
+            .unwrap();
         assert_eq!(aggregate.level(), EventLevel::Info);
     }
 
@@ -639,7 +710,8 @@ mod tests {
             EventLevel::Error,
             EventSource::device("device-1".to_string(), Some("Device 1".to_string())),
             RichContent::new_text("Error".to_string(), "Connection lost".to_string()),
-        ).unwrap();
+        )
+        .unwrap();
         let events = [system_event, device_event];
         let groups = service.group_events_by_category(&events);
         assert_eq!(groups.len(), 2);
@@ -653,7 +725,8 @@ mod tests {
         let critical_event = create_test_event(EventLevel::Critical);
         let info_event = create_test_event(EventLevel::Info);
         let events = vec![critical_event, info_event];
-        let filtered = service.filter_events_by_criteria(&events, Some(EventLevel::Error), None, None, None);
+        let filtered =
+            service.filter_events_by_criteria(&events, Some(EventLevel::Error), None, None, None);
         assert_eq!(filtered.len(), 1);
     }
 
@@ -677,7 +750,8 @@ mod tests {
                     EventLevel::Error,
                     source.clone(),
                     RichContent::new_text("Error".to_string(), "Test error".to_string()),
-                ).unwrap()
+                )
+                .unwrap()
             })
             .collect();
         let patterns = service.detect_event_patterns(&events);

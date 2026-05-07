@@ -1,19 +1,24 @@
 // File-based skills CRUD — writes to data/agents/<workspace_id>/skills/<skill_name>.md
 
-use crate::shared::security::jwt::Claims;
-use tinyiothub_web::response::ApiResponseBuilder;
+use std::path::PathBuf;
+
 use axum::{
+    Router,
     extract::{Path, State},
     http::StatusCode,
     response::Json,
     routing::get,
-    Router,
 };
 use serde::Deserialize;
-use std::path::PathBuf;
+use tinyiothub_web::response::ApiResponseBuilder;
 use tokio::fs;
 
-use crate::{shared::app_state::AppState, shared::api_response::ApiResponse, shared::{paths::{self, workspace_skills_dir, global_skills_dir}}};
+use crate::shared::{
+    api_response::ApiResponse,
+    app_state::AppState,
+    paths::{self, global_skills_dir, workspace_skills_dir},
+    security::jwt::Claims,
+};
 
 #[derive(Debug, Deserialize)]
 pub struct CreateSkillRequest {
@@ -57,11 +62,7 @@ pub fn create_router() -> Router<AppState> {
 }
 
 fn resolve_workspace_id(claims: &Claims) -> &str {
-    if claims.workspace_id.is_empty() {
-        paths::DEFAULT_WORKSPACE_ID
-    } else {
-        &claims.workspace_id
-    }
+    if claims.workspace_id.is_empty() { paths::DEFAULT_WORKSPACE_ID } else { &claims.workspace_id }
 }
 
 // GET /api/v1/agents/skills
@@ -91,17 +92,18 @@ pub async fn get_skill(
     claims: Claims,
 ) -> Result<Json<ApiResponse<SkillInfoDto>>, StatusCode> {
     let workspace_id = resolve_workspace_id(&claims);
-    let file_path = skill_file_path(workspace_id, &name)
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let file_path = skill_file_path(workspace_id, &name).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     match fs::read_to_string(&file_path).await {
         Ok(content) => {
             let (fm, body) = crate::modules::agent::skill::AgentSkill::parse_frontmatter(&content);
             let skill_name = name.clone();
-            let description = fm.as_ref()
+            let description = fm
+                .as_ref()
                 .and_then(|f| f.get("description"))
                 .and_then(|v| v.as_str())
-                .unwrap_or(&skill_name).to_string();
+                .unwrap_or(&skill_name)
+                .to_string();
             Ok(ApiResponseBuilder::success(SkillInfoDto {
                 name: skill_name,
                 description,
@@ -120,8 +122,8 @@ pub async fn create_skill(
 ) -> Result<Json<ApiResponse<SkillInfoDto>>, StatusCode> {
     let workspace_id = resolve_workspace_id(&claims);
     // Validate path
-    let file_path = skill_file_path(workspace_id, &req.skill_name)
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let file_path =
+        skill_file_path(workspace_id, &req.skill_name).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     if file_path.exists() {
         return Err(StatusCode::CONFLICT); // File already exists
@@ -155,8 +157,7 @@ pub async fn update_skill(
     Json(req): Json<UpdateSkillRequest>,
 ) -> Result<Json<ApiResponse<SkillInfoDto>>, StatusCode> {
     let workspace_id = resolve_workspace_id(&claims);
-    let file_path = skill_file_path(workspace_id, &name)
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let file_path = skill_file_path(workspace_id, &name).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     if fs::metadata(&file_path).await.is_err() {
         return Err(StatusCode::NOT_FOUND);
@@ -182,8 +183,7 @@ pub async fn delete_skill(
     claims: Claims,
 ) -> Result<Json<ApiResponse<()>>, StatusCode> {
     let workspace_id = resolve_workspace_id(&claims);
-    let file_path = skill_file_path(workspace_id, &name)
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let file_path = skill_file_path(workspace_id, &name).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     if fs::metadata(&file_path).await.is_ok() {
         fs::remove_file(&file_path).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -195,7 +195,9 @@ pub async fn delete_skill(
 
 async fn list_skill_files(dir: &std::path::Path) -> Vec<SkillInfoDto> {
     let mut skills = Vec::new();
-    if !dir.exists() { return skills; }
+    if !dir.exists() {
+        return skills;
+    }
 
     let mut entries = match fs::read_dir(dir).await {
         Ok(e) => e,
@@ -208,10 +210,12 @@ async fn list_skill_files(dir: &std::path::Path) -> Vec<SkillInfoDto> {
             let file_name = path.file_stem().unwrap().to_string_lossy().to_string();
             let content = fs::read_to_string(&path).await.unwrap_or_default();
             let (fm, body) = crate::modules::agent::skill::AgentSkill::parse_frontmatter(&content);
-            let description = fm.as_ref()
+            let description = fm
+                .as_ref()
                 .and_then(|f| f.get("description"))
                 .and_then(|v| v.as_str())
-                .unwrap_or(&file_name).to_string();
+                .unwrap_or(&file_name)
+                .to_string();
             skills.push(SkillInfoDto {
                 name: file_name,
                 description,
@@ -310,6 +314,7 @@ Some body content here."#;
     #[test]
     fn skill_files_sorted_deterministically() {
         use std::fs;
+
         use tempfile::TempDir;
 
         let dir = TempDir::new().unwrap();
@@ -320,13 +325,15 @@ Some body content here."#;
         fs::write(ws_dir.join("a-skill.md"), "---\nname: a\n---\n\nA").unwrap();
         fs::write(ws_dir.join("m-skill.md"), "---\nname: m\n---\n\nM").unwrap();
 
-        let mut entries: Vec<_> = fs::read_dir(&ws_dir).unwrap()
+        let mut entries: Vec<_> = fs::read_dir(&ws_dir)
+            .unwrap()
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
             .collect();
         entries.sort_by_key(|e| e.file_name().to_string_lossy().to_string());
 
-        let names: Vec<_> = entries.iter()
+        let names: Vec<_> = entries
+            .iter()
             .map(|e| e.file_name().to_string_lossy().trim_end_matches(".md").to_string())
             .collect();
         assert_eq!(names, vec!["a-skill", "m-skill", "z-skill"]);
@@ -335,6 +342,7 @@ Some body content here."#;
     #[test]
     fn create_and_read_skill_file() {
         use std::fs;
+
         use tempfile::TempDir;
 
         let dir = TempDir::new().unwrap();
@@ -352,6 +360,7 @@ Some body content here."#;
     #[test]
     fn skill_file_yaml_roundtrip() {
         use std::fs;
+
         use tempfile::TempDir;
 
         let dir = TempDir::new().unwrap();
@@ -379,5 +388,4 @@ Some detailed content here."#;
         assert_eq!(fm.get("name").unwrap().as_str().unwrap(), "alarm-management");
         assert!(body.trim().contains("Alarm Management"));
     }
-
 }

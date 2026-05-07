@@ -1,11 +1,12 @@
 // Alarm repository traits + SQLite implementations
 
 use std::sync::Arc;
+
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use tinyiothub_storage::sqlite::Database;
 
 use super::types::*;
-use tinyiothub_storage::sqlite::Database;
 
 /// 报警仓储接口
 #[async_trait]
@@ -35,7 +36,11 @@ pub trait AlarmRuleRepository: Send + Sync {
     async fn delete(&self, id: &str, workspace_id: Option<&str>) -> AlarmResult<()>;
     async fn find_by_id(&self, id: &str) -> AlarmResult<Option<AlarmRule>>;
     async fn find_enabled(&self, workspace_id: Option<&str>) -> AlarmResult<Vec<AlarmRule>>;
-    async fn find_by_device(&self, device_id: &str, workspace_id: Option<&str>) -> AlarmResult<Vec<AlarmRule>>;
+    async fn find_by_device(
+        &self,
+        device_id: &str,
+        workspace_id: Option<&str>,
+    ) -> AlarmResult<Vec<AlarmRule>>;
     async fn find_by_property(
         &self,
         device_id: &str,
@@ -43,7 +48,12 @@ pub trait AlarmRuleRepository: Send + Sync {
     ) -> AlarmResult<Vec<AlarmRule>>;
     async fn find_global_rules(&self) -> AlarmResult<Vec<AlarmRule>>;
     /// 启用/禁用规则；workspace_id 用于 WHERE 子句确保租户隔离
-    async fn set_enabled(&self, id: &str, enabled: bool, workspace_id: Option<&str>) -> AlarmResult<()>;
+    async fn set_enabled(
+        &self,
+        id: &str,
+        enabled: bool,
+        workspace_id: Option<&str>,
+    ) -> AlarmResult<()>;
 }
 
 /// 报警查询条件
@@ -118,13 +128,15 @@ impl SqliteAlarmRepository {
 
         let alarm_type = AlarmType::PropertyThreshold;
 
-        let alarm_time = chrono::NaiveDateTime::parse_from_str(&alarm_time_str, "%Y-%m-%d %H:%M:%S")
-            .map_err(|e| AlarmError::InternalError(format!("Parse alarm_time failed: {}", e)))?
-            .and_utc();
+        let alarm_time =
+            chrono::NaiveDateTime::parse_from_str(&alarm_time_str, "%Y-%m-%d %H:%M:%S")
+                .map_err(|e| AlarmError::InternalError(format!("Parse alarm_time failed: {}", e)))?
+                .and_utc();
 
-        let created_at = chrono::NaiveDateTime::parse_from_str(&created_at_str, "%Y-%m-%d %H:%M:%S")
-            .map_err(|e| AlarmError::InternalError(format!("Parse created_at failed: {}", e)))?
-            .and_utc();
+        let created_at =
+            chrono::NaiveDateTime::parse_from_str(&created_at_str, "%Y-%m-%d %H:%M:%S")
+                .map_err(|e| AlarmError::InternalError(format!("Parse created_at failed: {}", e)))?
+                .and_utc();
 
         let acknowledgement = if is_acknowledged {
             let acknowledged_at = acknowledged_at_str
@@ -196,16 +208,19 @@ impl SqliteAlarmRepository {
 
     /// 统计所有活跃告警数量
     pub async fn count_all_active_alarms(&self) -> Result<u32, sqlx::Error> {
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM device_alarms WHERE is_resolved = 0",
-        )
-        .fetch_one(&*self.database.pool())
-        .await?;
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE is_resolved = 0")
+                .fetch_one(&*self.database.pool())
+                .await?;
         Ok(count as u32)
     }
 
     /// 统计设备离线告警数量（最近N天）
-    pub async fn count_offline_alarms(&self, device_id: &str, days: u32) -> Result<u32, sqlx::Error> {
+    pub async fn count_offline_alarms(
+        &self,
+        device_id: &str,
+        days: u32,
+    ) -> Result<u32, sqlx::Error> {
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM device_alarms WHERE device_id = ? AND alarm_message LIKE '%离线%' AND alarm_time > datetime('now', ?)",
         )
@@ -296,11 +311,7 @@ impl AlarmRepository for SqliteAlarmRepository {
             sqlx_query = sqlx_query.bind(ws);
         }
         let row = sqlx_query.fetch_optional(self.database.pool()).await?;
-        if let Some(row) = row {
-            Ok(Some(self.row_to_alarm(row)?))
-        } else {
-            Ok(None)
-        }
+        if let Some(row) = row { Ok(Some(self.row_to_alarm(row)?)) } else { Ok(None) }
     }
 
     async fn find_by_criteria(&self, criteria: &AlarmQueryCriteria) -> AlarmResult<Vec<Alarm>> {
@@ -313,44 +324,47 @@ impl AlarmRepository for SqliteAlarmRepository {
         }
 
         if let Some(device_ids) = &criteria.device_ids
-            && !device_ids.is_empty() {
-                let placeholders = vec!["?"; device_ids.len()].join(",");
-                query.push_str(&format!(" AND device_id IN ({})", placeholders));
-                for id in device_ids {
-                    bindings.push(id.clone());
-                }
+            && !device_ids.is_empty()
+        {
+            let placeholders = vec!["?"; device_ids.len()].join(",");
+            query.push_str(&format!(" AND device_id IN ({})", placeholders));
+            for id in device_ids {
+                bindings.push(id.clone());
             }
+        }
 
         if let Some(levels) = &criteria.alarm_levels
-            && !levels.is_empty() {
-                let placeholders = vec!["?"; levels.len()].join(",");
-                query.push_str(&format!(" AND alarm_level IN ({})", placeholders));
-                for level in levels {
-                    bindings.push(level.clone().to_string());
-                }
+            && !levels.is_empty()
+        {
+            let placeholders = vec!["?"; levels.len()].join(",");
+            query.push_str(&format!(" AND alarm_level IN ({})", placeholders));
+            for level in levels {
+                bindings.push(level.clone().to_string());
             }
+        }
 
         if let Some(statuses) = &criteria.statuses
-            && !statuses.is_empty() {
-                let mut status_conditions: Vec<&str> = Vec::new();
-                for status in statuses {
-                    match status {
-                        AlarmStatus::Active => {
-                            status_conditions.push("(is_resolved = false AND is_acknowledged = false)");
-                        }
-                        AlarmStatus::Acknowledged => {
-                            status_conditions.push("(is_resolved = false AND is_acknowledged = true)");
-                        }
-                        AlarmStatus::Resolved => {
-                            status_conditions.push("is_resolved = true");
-                        }
-                        AlarmStatus::Suppressed => {}
+            && !statuses.is_empty()
+        {
+            let mut status_conditions: Vec<&str> = Vec::new();
+            for status in statuses {
+                match status {
+                    AlarmStatus::Active => {
+                        status_conditions.push("(is_resolved = false AND is_acknowledged = false)");
                     }
-                }
-                if !status_conditions.is_empty() {
-                    query.push_str(&format!(" AND ({})", status_conditions.join(" OR ")));
+                    AlarmStatus::Acknowledged => {
+                        status_conditions.push("(is_resolved = false AND is_acknowledged = true)");
+                    }
+                    AlarmStatus::Resolved => {
+                        status_conditions.push("is_resolved = true");
+                    }
+                    AlarmStatus::Suppressed => {}
                 }
             }
+            if !status_conditions.is_empty() {
+                query.push_str(&format!(" AND ({})", status_conditions.join(" OR ")));
+            }
+        }
 
         if let Some(time_range) = &criteria.time_range {
             query.push_str(" AND alarm_time >= ? AND alarm_time <= ?");
@@ -375,7 +389,9 @@ impl AlarmRepository for SqliteAlarmRepository {
             sqlx_query = sqlx_query.bind(binding);
         }
 
-        let rows = sqlx_query.fetch_all(self.database.pool()).await
+        let rows = sqlx_query
+            .fetch_all(self.database.pool())
+            .await
             .map_err(|e| AlarmError::InternalError(format!("Query failed: {}", e)))?;
 
         let mut alarms = Vec::new();
@@ -398,7 +414,9 @@ impl AlarmRepository for SqliteAlarmRepository {
             sqlx_query = sqlx_query.bind(id);
         }
 
-        let rows = sqlx_query.fetch_all(self.database.pool()).await
+        let rows = sqlx_query
+            .fetch_all(self.database.pool())
+            .await
             .map_err(|e| AlarmError::InternalError(format!("find_active query failed: {}", e)))?;
 
         let mut alarms = Vec::new();
@@ -421,8 +439,9 @@ impl AlarmRepository for SqliteAlarmRepository {
             sqlx_query = sqlx_query.bind(id);
         }
 
-        let rows = sqlx_query.fetch_all(self.database.pool()).await
-            .map_err(|e| AlarmError::InternalError(format!("find_unacknowledged query failed: {}", e)))?;
+        let rows = sqlx_query.fetch_all(self.database.pool()).await.map_err(|e| {
+            AlarmError::InternalError(format!("find_unacknowledged query failed: {}", e))
+        })?;
 
         let mut alarms = Vec::new();
         for row in rows {
@@ -442,44 +461,47 @@ impl AlarmRepository for SqliteAlarmRepository {
         }
 
         if let Some(device_ids) = &criteria.device_ids
-            && !device_ids.is_empty() {
-                let placeholders = vec!["?"; device_ids.len()].join(",");
-                query.push_str(&format!(" AND device_id IN ({})", placeholders));
-                for id in device_ids {
-                    bindings.push(id.clone());
-                }
+            && !device_ids.is_empty()
+        {
+            let placeholders = vec!["?"; device_ids.len()].join(",");
+            query.push_str(&format!(" AND device_id IN ({})", placeholders));
+            for id in device_ids {
+                bindings.push(id.clone());
             }
+        }
 
         if let Some(levels) = &criteria.alarm_levels
-            && !levels.is_empty() {
-                let placeholders = vec!["?"; levels.len()].join(",");
-                query.push_str(&format!(" AND alarm_level IN ({})", placeholders));
-                for level in levels {
-                    bindings.push(level.clone().to_string());
-                }
+            && !levels.is_empty()
+        {
+            let placeholders = vec!["?"; levels.len()].join(",");
+            query.push_str(&format!(" AND alarm_level IN ({})", placeholders));
+            for level in levels {
+                bindings.push(level.clone().to_string());
             }
+        }
 
         if let Some(statuses) = &criteria.statuses
-            && !statuses.is_empty() {
-                let mut status_conditions: Vec<&str> = Vec::new();
-                for status in statuses {
-                    match status {
-                        AlarmStatus::Active => {
-                            status_conditions.push("(is_resolved = false AND is_acknowledged = false)");
-                        }
-                        AlarmStatus::Acknowledged => {
-                            status_conditions.push("(is_resolved = false AND is_acknowledged = true)");
-                        }
-                        AlarmStatus::Resolved => {
-                            status_conditions.push("is_resolved = true");
-                        }
-                        AlarmStatus::Suppressed => {}
+            && !statuses.is_empty()
+        {
+            let mut status_conditions: Vec<&str> = Vec::new();
+            for status in statuses {
+                match status {
+                    AlarmStatus::Active => {
+                        status_conditions.push("(is_resolved = false AND is_acknowledged = false)");
                     }
-                }
-                if !status_conditions.is_empty() {
-                    query.push_str(&format!(" AND ({})", status_conditions.join(" OR ")));
+                    AlarmStatus::Acknowledged => {
+                        status_conditions.push("(is_resolved = false AND is_acknowledged = true)");
+                    }
+                    AlarmStatus::Resolved => {
+                        status_conditions.push("is_resolved = true");
+                    }
+                    AlarmStatus::Suppressed => {}
                 }
             }
+            if !status_conditions.is_empty() {
+                query.push_str(&format!(" AND ({})", status_conditions.join(" OR ")));
+            }
+        }
 
         if let Some(time_range) = &criteria.time_range {
             query.push_str(" AND alarm_time >= ? AND alarm_time <= ?");
@@ -492,7 +514,9 @@ impl AlarmRepository for SqliteAlarmRepository {
             sqlx_query = sqlx_query.bind(binding);
         }
 
-        let row = sqlx_query.fetch_one(self.database.pool()).await
+        let row = sqlx_query
+            .fetch_one(self.database.pool())
+            .await
             .map_err(|e| AlarmError::InternalError(format!("Count query failed: {}", e)))?;
 
         use sqlx::Row;
@@ -522,14 +546,15 @@ impl AlarmRepository for SqliteAlarmRepository {
             placeholders
         );
 
-        let mut sqlx_query = sqlx::query(sqlx::AssertSqlSafe(query.clone()))
-            .bind(is_resolved)
-            .bind(is_acknowledged);
+        let mut sqlx_query =
+            sqlx::query(sqlx::AssertSqlSafe(query.clone())).bind(is_resolved).bind(is_acknowledged);
         for id in alarm_ids {
             sqlx_query = sqlx_query.bind(id);
         }
 
-        let result = sqlx_query.execute(self.database.pool()).await
+        let result = sqlx_query
+            .execute(self.database.pool())
+            .await
             .map_err(|e| AlarmError::InternalError(format!("batch_update_status failed: {}", e)))?;
 
         Ok(result.rows_affected() as usize)
@@ -582,7 +607,7 @@ impl SqliteAlarmRuleRepository {
                 return Err(AlarmError::InvalidRuleConfig(format!(
                     "未知的规则类型: {}",
                     rule_type_str
-                )))
+                )));
             }
         };
 
@@ -733,18 +758,20 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
             .await
             .map_err(|e| AlarmError::InternalError(format!("查询规则失败: {}", e)))?;
 
-        if let Some(row) = row {
-            Ok(Some(self.row_to_alarm_rule(row)?))
-        } else {
-            Ok(None)
-        }
+        if let Some(row) = row { Ok(Some(self.row_to_alarm_rule(row)?)) } else { Ok(None) }
     }
 
     async fn find_enabled(&self, workspace_id: Option<&str>) -> AlarmResult<Vec<AlarmRule>> {
         let (query, bind_val) = if let Some(ws) = workspace_id {
-            ("SELECT * FROM device_alarm_rules WHERE is_enabled = true AND workspace_id = ? ORDER BY created_at DESC", Some(ws))
+            (
+                "SELECT * FROM device_alarm_rules WHERE is_enabled = true AND workspace_id = ? ORDER BY created_at DESC",
+                Some(ws),
+            )
         } else {
-            ("SELECT * FROM device_alarm_rules WHERE is_enabled = true ORDER BY created_at DESC", None)
+            (
+                "SELECT * FROM device_alarm_rules WHERE is_enabled = true ORDER BY created_at DESC",
+                None,
+            )
         };
         let mut sqlx_query = sqlx::query(query);
         if let Some(ws) = bind_val {
@@ -762,9 +789,16 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
         Ok(rules)
     }
 
-    async fn find_by_device(&self, device_id: &str, workspace_id: Option<&str>) -> AlarmResult<Vec<AlarmRule>> {
+    async fn find_by_device(
+        &self,
+        device_id: &str,
+        workspace_id: Option<&str>,
+    ) -> AlarmResult<Vec<AlarmRule>> {
         let (query, bind_ws) = if let Some(ws) = workspace_id {
-            ("SELECT * FROM device_alarm_rules WHERE device_id = ? AND workspace_id = ? ORDER BY created_at DESC", Some(ws))
+            (
+                "SELECT * FROM device_alarm_rules WHERE device_id = ? AND workspace_id = ? ORDER BY created_at DESC",
+                Some(ws),
+            )
         } else {
             ("SELECT * FROM device_alarm_rules WHERE device_id = ? ORDER BY created_at DESC", None)
         };
@@ -805,7 +839,8 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
     }
 
     async fn find_global_rules(&self) -> AlarmResult<Vec<AlarmRule>> {
-        let query = "SELECT * FROM device_alarm_rules WHERE device_id IS NULL ORDER BY created_at DESC";
+        let query =
+            "SELECT * FROM device_alarm_rules WHERE device_id IS NULL ORDER BY created_at DESC";
         let rows = sqlx::query(query)
             .fetch_all(self.database.pool())
             .await
@@ -818,16 +853,19 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
         Ok(rules)
     }
 
-    async fn set_enabled(&self, id: &str, enabled: bool, workspace_id: Option<&str>) -> AlarmResult<()> {
+    async fn set_enabled(
+        &self,
+        id: &str,
+        enabled: bool,
+        workspace_id: Option<&str>,
+    ) -> AlarmResult<()> {
         let query = if workspace_id.is_some() {
             "UPDATE device_alarm_rules SET is_enabled = ?, updated_at = ? WHERE id = ? AND workspace_id = ?"
         } else {
             "UPDATE device_alarm_rules SET is_enabled = ?, updated_at = ? WHERE id = ?"
         };
-        let mut sqlx_query = sqlx::query(query)
-            .bind(enabled)
-            .bind(Utc::now().to_rfc3339())
-            .bind(id);
+        let mut sqlx_query =
+            sqlx::query(query).bind(enabled).bind(Utc::now().to_rfc3339()).bind(id);
         if let Some(ws) = workspace_id {
             sqlx_query = sqlx_query.bind(ws);
         }

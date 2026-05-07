@@ -44,7 +44,6 @@ impl HarmonyGpioManager {
     pub fn export_pin(&self, chip: u32, pin: u32) -> Result<(), std::io::Error> {
         debug!("Exporting GPIO pin {}/{} on HarmonyOS", chip, pin);
 
-
         let mut pins = self.pins.lock().unwrap();
         pins.insert(
             (chip, pin),
@@ -63,7 +62,6 @@ impl HarmonyGpioManager {
     ) -> Result<(), std::io::Error> {
         debug!("Setting GPIO pin {}/{} direction to {:?} on HarmonyOS", chip, pin, direction);
 
-
         let mut pins = self.pins.lock().unwrap();
         if let Some(gpio_pin) = pins.get_mut(&(chip, pin)) {
             gpio_pin.direction = direction;
@@ -79,7 +77,6 @@ impl HarmonyGpioManager {
     /// 设置GPIO引脚值
     pub fn set_value(&self, chip: u32, pin: u32, value: GpioValue) -> Result<(), std::io::Error> {
         debug!("Setting GPIO pin {}/{} value to {:?} on HarmonyOS", chip, pin, value);
-
 
         let mut pins = self.pins.lock().unwrap();
         if let Some(gpio_pin) = pins.get_mut(&(chip, pin)) {
@@ -104,7 +101,6 @@ impl HarmonyGpioManager {
     pub fn get_value(&self, chip: u32, pin: u32) -> Result<GpioValue, std::io::Error> {
         debug!("Reading GPIO pin {}/{} value on HarmonyOS", chip, pin);
 
-
         let pins = self.pins.lock().unwrap();
         if let Some(gpio_pin) = pins.get(&(chip, pin)) {
             Ok(gpio_pin.value)
@@ -119,7 +115,6 @@ impl HarmonyGpioManager {
     /// 取消导出GPIO引脚
     pub fn unexport_pin(&self, chip: u32, pin: u32) -> Result<(), std::io::Error> {
         debug!("Unexporting GPIO pin {}/{} on HarmonyOS", chip, pin);
-
 
         let mut pins = self.pins.lock().unwrap();
         pins.remove(&(chip, pin));
@@ -167,7 +162,7 @@ pub fn init_gpio_pin(chip: u32, pin: u32, direction: &str) -> Result<(), std::io
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 format!("Invalid GPIO direction: {}", direction),
-            ))
+            ));
         }
     };
 

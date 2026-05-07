@@ -33,17 +33,21 @@ pub struct ResultValue {
 
 impl ResultValue {
     pub fn new(name: String, value_type: String, value: Option<String>) -> Self {
-        Self { name, value_type, value }
+        Self {
+            name,
+            value_type,
+            value,
+        }
     }
-    
+
     pub fn integer(name: String, value: i64) -> Self {
         Self::new(name, "int".to_string(), Some(value.to_string()))
     }
-    
+
     pub fn float(name: String, value: f64) -> Self {
         Self::new(name, "float".to_string(), Some(value.to_string()))
     }
-    
+
     pub fn float_with_precision(name: String, value: f64, decimal_places: u32) -> Self {
         let multiplier = 10_f64.powi(decimal_places as i32);
         let rounded = (value * multiplier).round() / multiplier;
@@ -53,15 +57,15 @@ impl ResultValue {
             Some(format!("{:.precision$}", rounded, precision = decimal_places as usize)),
         )
     }
-    
+
     pub fn string(name: String, value: String) -> Self {
         Self::new(name, "string".to_string(), Some(value))
     }
-    
+
     pub fn boolean(name: String, value: bool) -> Self {
         Self::new(name, "boolean".to_string(), Some(value.to_string()))
     }
-    
+
     pub fn enum_value(name: String, value: String) -> Self {
         Self::new(name, "enum".to_string(), Some(value))
     }
@@ -78,14 +82,14 @@ pub struct ComponentOption {
 }
 
 impl ComponentOption {
-    pub fn new(
-        label: String,
-        name: String,
-        default_value: String,
-        option_type: String,
-        required: bool,
-    ) -> Self {
-        Self { label, name, default_value, option_type, required }
+    pub fn new(label: String, name: String, default_value: String, option_type: String, required: bool) -> Self {
+        Self {
+            label,
+            name,
+            default_value,
+            option_type,
+            required,
+        }
     }
 }
 

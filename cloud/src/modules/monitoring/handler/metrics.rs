@@ -1,9 +1,11 @@
-use crate::shared::security::jwt::Claims;
-use tinyiothub_web::response::ApiResponseBuilder;
-use axum::{extract::State, routing::get, Json, Router};
+use axum::{Json, Router, extract::State, routing::get};
 use serde::{Deserialize, Serialize};
+use tinyiothub_web::response::ApiResponseBuilder;
 
-use crate::{shared::app_state::AppState, shared::api_response::ApiResponse, shared::error_handling::AuthHelper};
+use crate::shared::{
+    api_response::ApiResponse, app_state::AppState, error_handling::AuthHelper,
+    security::jwt::Claims,
+};
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]
@@ -160,7 +162,10 @@ async fn get_gateway_metrics(
     let mut online_devices = 0u32;
     let mut offline_devices = 0u32;
 
-    match device_service.get_devices(&tinyiothub_core::models::device::DeviceQueryParams::default()).await {
+    match device_service
+        .get_devices(&tinyiothub_core::models::device::DeviceQueryParams::default())
+        .await
+    {
         Ok(devices) => {
             total_devices = devices.len() as u32;
             online_devices = devices.iter().filter(|d| d.status.is_online()).count() as u32;

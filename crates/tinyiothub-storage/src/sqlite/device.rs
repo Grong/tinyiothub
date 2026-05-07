@@ -1,15 +1,11 @@
 use async_trait::async_trait;
 use sqlx::{QueryBuilder, Row};
 
-use crate::traits::device::{
-        DeviceCriteria, DeviceRepository, DeviceSortBy, DeviceSortOrder,
-    };
-use tinyiothub_core::models::device::{
-        CreateDeviceRequest, Device, DeviceStatusUpdate, UpdateDeviceRequest,
-    };
-use tinyiothub_core::{generate_id, now_string};
 use crate::sqlite::database::Database;
+use crate::traits::device::{DeviceCriteria, DeviceRepository, DeviceSortBy, DeviceSortOrder};
 use tinyiothub_core::error::{Error, Result};
+use tinyiothub_core::models::device::{CreateDeviceRequest, Device, DeviceStatusUpdate, UpdateDeviceRequest};
+use tinyiothub_core::{generate_id, now_string};
 
 use super::device_row_mapper;
 
@@ -42,7 +38,10 @@ impl DeviceRepository for SqliteDeviceRepository {
     }
 
     async fn find_by_name(&self, name: &str) -> Result<Option<Device>> {
-        let sql = format!("SELECT {} FROM devices WHERE name = ?", device_row_mapper::SELECT_COLUMNS);
+        let sql = format!(
+            "SELECT {} FROM devices WHERE name = ?",
+            device_row_mapper::SELECT_COLUMNS
+        );
         let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(name)
             .fetch_optional(self.database.pool())
@@ -66,7 +65,8 @@ impl DeviceRepository for SqliteDeviceRepository {
             builder.push(" AND name LIKE ").push_bind(format!("%{}%", name));
         }
         if let Some(display_name) = &criteria.display_name {
-            builder.push(" AND display_name LIKE ")
+            builder
+                .push(" AND display_name LIKE ")
                 .push_bind(format!("%{}%", display_name));
         }
         if let Some(device_type) = &criteria.device_type {
@@ -140,7 +140,8 @@ impl DeviceRepository for SqliteDeviceRepository {
             builder.push(" AND name LIKE ").push_bind(format!("%{}%", name));
         }
         if let Some(display_name) = &criteria.display_name {
-            builder.push(" AND display_name LIKE ")
+            builder
+                .push(" AND display_name LIKE ")
                 .push_bind(format!("%{}%", display_name));
         }
         if let Some(device_type) = &criteria.device_type {
@@ -215,9 +216,7 @@ impl DeviceRepository for SqliteDeviceRepository {
         .execute(self.database.pool())
         .await?;
 
-        self.find_by_id(&id)
-            .await?
-            .ok_or(Error::NotFound)
+        self.find_by_id(&id).await?.ok_or(Error::NotFound)
     }
 
     async fn update(&self, id: &str, request: &UpdateDeviceRequest) -> Result<Device> {
@@ -345,10 +344,7 @@ impl DeviceRepository for SqliteDeviceRepository {
             return Err(Error::NotFound);
         }
 
-        let sql = format!(
-            "SELECT {} FROM devices WHERE id = ?",
-            device_row_mapper::SELECT_COLUMNS
-        );
+        let sql = format!("SELECT {} FROM devices WHERE id = ?", device_row_mapper::SELECT_COLUMNS);
         let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(id)
             .fetch_one(&mut *tx)
@@ -622,13 +618,12 @@ impl DeviceRepository for SqliteDeviceRepository {
         let mut total_affected = 0u64;
 
         for update in updates {
-            let result =
-                sqlx::query("UPDATE devices SET state = ?, updated_at = ? WHERE id = ?")
-                    .bind(update.state)
-                    .bind(&update.updated_at)
-                    .bind(&update.device_id)
-                    .execute(&mut *tx)
-                    .await?;
+            let result = sqlx::query("UPDATE devices SET state = ?, updated_at = ? WHERE id = ?")
+                .bind(update.state)
+                .bind(&update.updated_at)
+                .bind(&update.device_id)
+                .execute(&mut *tx)
+                .await?;
             total_affected += result.rows_affected();
         }
 

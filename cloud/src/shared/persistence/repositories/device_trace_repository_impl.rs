@@ -1,8 +1,12 @@
-use tinyiothub_core::error::{Error, Result};
-use tinyiothub_core::now_string;
+use tinyiothub_core::{
+    error::{Error, Result},
+    now_string,
+};
 
-use crate::shared::persistence::Database;
-use crate::modules::device::trace_service::{DeviceTrace, DeviceTraceStatistics, SystemTraceOverview};
+use crate::{
+    modules::device::trace_service::{DeviceTrace, DeviceTraceStatistics, SystemTraceOverview},
+    shared::persistence::Database,
+};
 
 /// 设备追踪记录仓库 - 处理所有 device_traces 表的数据库操作
 #[derive(Debug, Clone)]
@@ -100,10 +104,11 @@ impl DeviceTraceRepository {
         bind_values.push(limit.to_string());
         bind_values.push(offset.to_string());
 
-        let query_builder = bind_values.iter().fold(
-            sqlx::query_as::<_, DeviceTrace>(sqlx::AssertSqlSafe(query)),
-            |qb, value| qb.bind(value),
-        );
+        let query_builder = bind_values
+            .iter()
+            .fold(sqlx::query_as::<_, DeviceTrace>(sqlx::AssertSqlSafe(query)), |qb, value| {
+                qb.bind(value)
+            });
 
         query_builder
             .fetch_all(self.database.pool())
@@ -119,20 +124,15 @@ impl DeviceTraceRepository {
     ) -> Result<DeviceTraceStatistics> {
         let days_param = format!("-{} days", days);
 
-        let total_traces = self
-            .count_traces(device_id, Some(&days_param), None)
-            .await
-            .unwrap_or(0);
+        let total_traces = self.count_traces(device_id, Some(&days_param), None).await.unwrap_or(0);
 
         let error_traces = self
             .count_traces(device_id, Some(&days_param), Some("error_critical"))
             .await
             .unwrap_or(0);
 
-        let warning_traces = self
-            .count_traces(device_id, Some(&days_param), Some("warn"))
-            .await
-            .unwrap_or(0);
+        let warning_traces =
+            self.count_traces(device_id, Some(&days_param), Some("warn")).await.unwrap_or(0);
 
         let info_traces = total_traces - error_traces - warning_traces;
 
@@ -167,9 +167,15 @@ impl DeviceTraceRepository {
         level_filter: Option<&str>,
     ) -> Result<u32> {
         let sql = match level_filter {
-            Some("error_critical") => "SELECT COUNT(*) FROM device_traces WHERE device_id = ? AND level IN ('error', 'critical') AND created_at > datetime('now', ?)",
-            Some("warn") => "SELECT COUNT(*) FROM device_traces WHERE device_id = ? AND level = 'warn' AND created_at > datetime('now', ?)",
-            _ => "SELECT COUNT(*) FROM device_traces WHERE device_id = ? AND created_at > datetime('now', ?)",
+            Some("error_critical") => {
+                "SELECT COUNT(*) FROM device_traces WHERE device_id = ? AND level IN ('error', 'critical') AND created_at > datetime('now', ?)"
+            }
+            Some("warn") => {
+                "SELECT COUNT(*) FROM device_traces WHERE device_id = ? AND level = 'warn' AND created_at > datetime('now', ?)"
+            }
+            _ => {
+                "SELECT COUNT(*) FROM device_traces WHERE device_id = ? AND created_at > datetime('now', ?)"
+            }
         };
 
         let days_str = days_param.unwrap_or("-7 days");
@@ -209,10 +215,9 @@ impl DeviceTraceRepository {
             }
         }
 
-        let query_builder = bind_values.iter().fold(
-            sqlx::query(sqlx::AssertSqlSafe(query)),
-            |qb, value| qb.bind(value),
-        );
+        let query_builder = bind_values
+            .iter()
+            .fold(sqlx::query(sqlx::AssertSqlSafe(query)), |qb, value| qb.bind(value));
 
         match query_builder.execute(self.database.pool()).await {
             Ok(result) => Ok(result.rows_affected() as u32),
@@ -290,10 +295,11 @@ impl DeviceTraceRepository {
         bind_values.push(limit.to_string());
         bind_values.push(offset.to_string());
 
-        let query_builder = bind_values.iter().fold(
-            sqlx::query_as::<_, DeviceTrace>(sqlx::AssertSqlSafe(query)),
-            |qb, value| qb.bind(value),
-        );
+        let query_builder = bind_values
+            .iter()
+            .fold(sqlx::query_as::<_, DeviceTrace>(sqlx::AssertSqlSafe(query)), |qb, value| {
+                qb.bind(value)
+            });
 
         query_builder
             .fetch_all(self.database.pool())
@@ -306,8 +312,12 @@ impl DeviceTraceRepository {
         let days_param = format!("-{} days", days);
 
         let total_traces = self.count_all_traces(Some(&days_param)).await.unwrap_or(0);
-        let error_traces = self.count_all_traces_with_level(Some(&days_param), "error_critical").await.unwrap_or(0);
-        let warning_traces = self.count_all_traces_with_level(Some(&days_param), "warn").await.unwrap_or(0);
+        let error_traces = self
+            .count_all_traces_with_level(Some(&days_param), "error_critical")
+            .await
+            .unwrap_or(0);
+        let warning_traces =
+            self.count_all_traces_with_level(Some(&days_param), "warn").await.unwrap_or(0);
         let info_traces = total_traces - error_traces - warning_traces;
 
         let active_devices = match sqlx::query_scalar::<_, i64>(
@@ -346,11 +356,19 @@ impl DeviceTraceRepository {
         }
     }
 
-    async fn count_all_traces_with_level(&self, days_param: Option<&str>, level_filter: &str) -> Result<u32> {
+    async fn count_all_traces_with_level(
+        &self,
+        days_param: Option<&str>,
+        level_filter: &str,
+    ) -> Result<u32> {
         let days_str = days_param.unwrap_or("-7 days");
         let sql = match level_filter {
-            "error_critical" => "SELECT COUNT(*) FROM device_traces WHERE level IN ('error', 'critical') AND created_at > datetime('now', ?)",
-            "warn" => "SELECT COUNT(*) FROM device_traces WHERE level = 'warn' AND created_at > datetime('now', ?)",
+            "error_critical" => {
+                "SELECT COUNT(*) FROM device_traces WHERE level IN ('error', 'critical') AND created_at > datetime('now', ?)"
+            }
+            "warn" => {
+                "SELECT COUNT(*) FROM device_traces WHERE level = 'warn' AND created_at > datetime('now', ?)"
+            }
             _ => "SELECT COUNT(*) FROM device_traces WHERE created_at > datetime('now', ?)",
         };
 

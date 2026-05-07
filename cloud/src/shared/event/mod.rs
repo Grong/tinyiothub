@@ -8,7 +8,7 @@ pub mod security;
 pub mod sse_manager;
 
 // Re-export core event infrastructure from tinyiothub-runtime
-pub use tinyiothub_runtime::event_bus::{EventBus, publish_event_safe};
-pub use tinyiothub_core::event::EventHandler;
 // Export SSE connection manager
 pub use sse_manager::SseConnectionManager;
+pub use tinyiothub_core::event::EventHandler;
+pub use tinyiothub_runtime::event_bus::{EventBus, publish_event_safe};

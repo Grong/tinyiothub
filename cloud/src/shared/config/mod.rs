@@ -2,7 +2,9 @@
 pub use tinyiothub_config::*;
 
 pub mod settings {
-    pub use tinyiothub_config::{AliyunSmsConfig, ApplicationSettings, MarketplaceConfig, SmsConfig};
+    pub use tinyiothub_config::{
+        AliyunSmsConfig, ApplicationSettings, MarketplaceConfig, SmsConfig,
+    };
 }
 
 use std::sync::OnceLock;

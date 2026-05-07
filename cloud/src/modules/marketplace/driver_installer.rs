@@ -35,12 +35,13 @@ impl DriverInstaller {
 
         // 3. Check version (if specified)
         if let Some(ver) = version
-            && driver_meta.version != ver {
-                return Err(MarketplaceError::NotFound(format!(
-                    "Driver {} version {}",
-                    driver_id, ver
-                )));
-            }
+            && driver_meta.version != ver
+        {
+            return Err(MarketplaceError::NotFound(format!(
+                "Driver {} version {}",
+                driver_id, ver
+            )));
+        }
 
         // 4. Select binary for current platform
         let platform = MarketplaceClient::get_current_platform();
@@ -91,7 +92,8 @@ impl DriverInstaller {
     /// Load driver (static drivers are compiled in; dynamic loading not supported)
     async fn load_driver(&self, _driver_file: &PathBuf) -> Result<String> {
         Err(MarketplaceError::InstallationFailed(
-            "Dynamic driver loading is not supported. Drivers must be compiled into the binary.".to_string()
+            "Dynamic driver loading is not supported. Drivers must be compiled into the binary."
+                .to_string(),
         ))
     }
 
@@ -102,8 +104,6 @@ impl DriverInstaller {
 
     /// Uninstall driver (static drivers cannot be uninstalled at runtime)
     pub async fn uninstall(&self, _driver_name: &str) -> Result<()> {
-        Err(MarketplaceError::Driver(
-            "Dynamic driver unloading is not supported.".to_string()
-        ))
+        Err(MarketplaceError::Driver("Dynamic driver unloading is not supported.".to_string()))
     }
 }

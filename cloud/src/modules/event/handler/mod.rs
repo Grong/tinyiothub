@@ -2,8 +2,8 @@
 // Provides REST API endpoints for event querying and statistics
 
 use axum::{
-    routing::{get, post, put},
     Router,
+    routing::{get, post, put},
 };
 
 use crate::shared::app_state::AppState;

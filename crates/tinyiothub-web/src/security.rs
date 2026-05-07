@@ -1,12 +1,12 @@
 use std::sync::OnceLock;
 
 use axum::{
-    extract::FromRequestParts,
-    http::{request::Parts, StatusCode},
-    response::{IntoResponse, Response},
     Json,
+    extract::FromRequestParts,
+    http::{StatusCode, request::Parts},
+    response::{IntoResponse, Response},
 };
-use headers::{authorization::Bearer, Authorization, HeaderMapExt};
+use headers::{Authorization, HeaderMapExt, authorization::Bearer};
 use serde::{Deserialize, Serialize};
 
 /// JWT Claims 结构体 — 从认证 token 中提取的用户身份
@@ -76,8 +76,7 @@ impl IntoResponse for AuthError {
 }
 
 /// JWT 验证器回调类型 — 由 cloud binary 在启动时注入
-static JWT_VALIDATOR: OnceLock<Box<dyn Fn(&str) -> Result<Claims, String> + Send + Sync>> =
-    OnceLock::new();
+static JWT_VALIDATOR: OnceLock<Box<dyn Fn(&str) -> Result<Claims, String> + Send + Sync>> = OnceLock::new();
 
 /// 设置全局 JWT 验证器（必须在应用启动时调用一次）
 pub fn set_jwt_validator(validator: Box<dyn Fn(&str) -> Result<Claims, String> + Send + Sync>) {

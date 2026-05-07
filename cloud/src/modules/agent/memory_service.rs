@@ -2,8 +2,10 @@
 
 use std::sync::Arc;
 
-use super::device_memory::DeviceMemory;
-use super::types::{DeviceSnapshot, MemoryContext, MemoryError};
+use super::{
+    device_memory::DeviceMemory,
+    types::{DeviceSnapshot, MemoryContext, MemoryError},
+};
 use crate::shared::persistence::repositories::device_memory_repository_impl::SqliteDeviceMemoryRepository;
 
 /// Service for managing agent memory and building context
@@ -16,7 +18,11 @@ impl AgentMemoryService {
         Self { repo }
     }
 
-    pub async fn build_context(&self, workspace_id: &str, agent_id: &str) -> Result<MemoryContext, MemoryError> {
+    pub async fn build_context(
+        &self,
+        workspace_id: &str,
+        agent_id: &str,
+    ) -> Result<MemoryContext, MemoryError> {
         let mut context = MemoryContext::new();
 
         let memories = self
@@ -71,7 +77,11 @@ impl AgentMemoryService {
         }
     }
 
-    pub async fn build_memory_prompt(&self, workspace_id: &str, agent_id: &str) -> Result<String, MemoryError> {
+    pub async fn build_memory_prompt(
+        &self,
+        workspace_id: &str,
+        agent_id: &str,
+    ) -> Result<String, MemoryError> {
         let context = self.build_context(workspace_id, agent_id).await?;
         Ok(context.to_prompt_fragment())
     }
@@ -89,18 +99,27 @@ impl AgentMemoryService {
             .map_err(|e| MemoryError::RepositoryError(e.to_string()))
     }
 
-    pub async fn get_tracked_devices(&self, workspace_id: &str, agent_id: &str) -> Result<Vec<String>, MemoryError> {
+    pub async fn get_tracked_devices(
+        &self,
+        workspace_id: &str,
+        agent_id: &str,
+    ) -> Result<Vec<String>, MemoryError> {
         let memories = self
             .repo
             .get_all_for_agent(workspace_id, agent_id)
             .await
             .map_err(|e| MemoryError::RepositoryError(e.to_string()))?;
 
-        let device_ids: std::collections::HashSet<String> = memories.into_iter().map(|m| m.device_id).collect();
+        let device_ids: std::collections::HashSet<String> =
+            memories.into_iter().map(|m| m.device_id).collect();
         Ok(device_ids.into_iter().collect())
     }
 
-    pub async fn clear_agent_memory(&self, workspace_id: &str, agent_id: &str) -> Result<u64, MemoryError> {
+    pub async fn clear_agent_memory(
+        &self,
+        workspace_id: &str,
+        agent_id: &str,
+    ) -> Result<u64, MemoryError> {
         let devices = self.get_tracked_devices(workspace_id, agent_id).await?;
         let mut total_deleted = 0u64;
         for device_id in devices {

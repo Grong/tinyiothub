@@ -2,8 +2,6 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-
-
 /// 设备模板实体 - 使用 snake_case 数据库字段
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -171,7 +169,6 @@ pub struct CreateDeviceFromTemplateRequest {
     pub template_id: String,
     pub device_input: DeviceCreationInput,
 }
-
 
 impl Default for DeviceTemplate {
     fn default() -> Self {

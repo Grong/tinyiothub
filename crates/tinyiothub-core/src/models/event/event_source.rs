@@ -11,18 +11,23 @@ pub struct EventSource {
 
 impl EventSource {
     /// Create a new event source
-    pub fn new(
-        source_type: String,
-        source_id: String,
-        device_id: Option<String>,
-        user_id: Option<String>,
-    ) -> Self {
-        Self { source_type, source_id, device_id, user_id }
+    pub fn new(source_type: String, source_id: String, device_id: Option<String>, user_id: Option<String>) -> Self {
+        Self {
+            source_type,
+            source_id,
+            device_id,
+            user_id,
+        }
     }
 
     /// Create a system event source
     pub fn system(source_id: String, user_id: Option<String>) -> Self {
-        Self { source_type: "system".to_string(), source_id, device_id: None, user_id }
+        Self {
+            source_type: "system".to_string(),
+            source_id,
+            device_id: None,
+            user_id,
+        }
     }
 
     /// Create a device event source
@@ -47,7 +52,12 @@ impl EventSource {
 
     /// Create a user event source
     pub fn user(user_id: String, source_id: String) -> Self {
-        Self { source_type: "user".to_string(), source_id, device_id: None, user_id: Some(user_id) }
+        Self {
+            source_type: "user".to_string(),
+            source_id,
+            device_id: None,
+            user_id: Some(user_id),
+        }
     }
 
     /// Get source type
@@ -159,8 +169,7 @@ mod tests {
 
     #[test]
     fn test_device_source() {
-        let source =
-            EventSource::device("device123".to_string(), Some("modbus_driver".to_string()));
+        let source = EventSource::device("device123".to_string(), Some("modbus_driver".to_string()));
 
         assert_eq!(source.source_type(), "device");
         assert_eq!(source.source_id(), "modbus_driver");
@@ -188,10 +197,16 @@ mod tests {
     fn test_validation() {
         // Valid sources
         assert!(EventSource::system("service".to_string(), None).validate().is_ok());
-        assert!(EventSource::device("dev1".to_string(), Some("driver".to_string()))
-            .validate()
-            .is_ok());
-        assert!(EventSource::user("user1".to_string(), "ui".to_string()).validate().is_ok());
+        assert!(
+            EventSource::device("dev1".to_string(), Some("driver".to_string()))
+                .validate()
+                .is_ok()
+        );
+        assert!(
+            EventSource::user("user1".to_string(), "ui".to_string())
+                .validate()
+                .is_ok()
+        );
 
         // Invalid sources
         let invalid_device = EventSource::new(

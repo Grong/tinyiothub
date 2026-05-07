@@ -6,7 +6,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use crate::test_utils::{
@@ -37,10 +37,8 @@ async fn test_list_workspaces() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
-    let response = app
-        .oneshot(auth_request("GET", "/api/v1/workspaces", &token, None))
-        .await
-        .unwrap();
+    let response =
+        app.oneshot(auth_request("GET", "/api/v1/workspaces", &token, None)).await.unwrap();
 
     let status = response.status();
     assert_eq!(status, StatusCode::OK);
@@ -59,10 +57,8 @@ async fn test_create_workspace() {
         "description": "Integration test workspace"
     });
 
-    let response = app
-        .oneshot(auth_request("POST", "/api/v1/workspaces", &token, Some(body)))
-        .await
-        .unwrap();
+    let response =
+        app.oneshot(auth_request("POST", "/api/v1/workspaces", &token, Some(body))).await.unwrap();
 
     let (status, json) = response_parts(response).await;
     assert!(
@@ -96,7 +92,12 @@ async fn test_update_workspace_not_found() {
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request("PUT", "/api/v1/workspaces/nonexistent-ws-12345", &token, Some(json!({"name": "updated"}))))
+        .oneshot(auth_request(
+            "PUT",
+            "/api/v1/workspaces/nonexistent-ws-12345",
+            &token,
+            Some(json!({"name": "updated"})),
+        ))
         .await
         .unwrap();
 
@@ -136,9 +137,7 @@ async fn test_workspace_cross_tenant_isolation() {
     seed_test_workspace(&pool, "tenant-b", "ws-b").await;
 
     let api_router = crate::api::create_router();
-    let app = axum::Router::new()
-        .nest("/api", api_router)
-        .with_state(app_state);
+    let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
 
     let token_a = create_test_token_with_workspace("user-a", "tenant-a", "ws-a");
 

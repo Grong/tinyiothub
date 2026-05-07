@@ -1,15 +1,15 @@
 // Token 刷新模块
 // 支持 Token 刷新和黑名单
 
-use tinyiothub_web::response::ApiResponseBuilder;
-use axum::{extract::State, response::Json, routing::post, Router};
+use axum::{Router, extract::State, response::Json, routing::post};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
+use tinyiothub_web::response::ApiResponseBuilder;
 
-use crate::{
-    shared::app_state::AppState,
-    shared::api_response::ApiResponse,
-    shared::security::jwt::{generate_token, validate_jwt},
+use crate::shared::{
+    api_response::ApiResponse,
+    app_state::AppState,
+    security::jwt::{generate_token, validate_jwt},
 };
 
 pub fn create_router() -> Router<AppState> {
@@ -54,7 +54,8 @@ async fn refresh_token(
     };
 
     // 生成新的 token
-    match generate_token(&claims.user_id, &claims.username, &claims.tenant_id, &claims.workspace_id) {
+    match generate_token(&claims.user_id, &claims.username, &claims.tenant_id, &claims.workspace_id)
+    {
         Ok(new_token) => {
             tracing::info!("Token refreshed for user: {}", claims.user_id);
             ApiResponseBuilder::success(RefreshTokenResponse {

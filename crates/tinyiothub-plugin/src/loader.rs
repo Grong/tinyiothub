@@ -48,15 +48,12 @@ impl PluginLoader {
     /// the library remains loaded for as long as the returned function
     /// pointers are used.
     pub unsafe fn load(&self, path: &Path) -> Result<PluginFfi, PluginLoadError> {
-        let lib = unsafe { Library::new(path) }.map_err(|e| {
-            PluginLoadError::LibraryNotFound(format!("{}: {}", path.display(), e))
-        })?;
+        let lib = unsafe { Library::new(path) }
+            .map_err(|e| PluginLoadError::LibraryNotFound(format!("{}: {}", path.display(), e)))?;
 
         let info: PluginInfo = {
-            let info_fn: Symbol<unsafe extern "C" fn() -> *const PluginInfo> = unsafe {
-                lib.get(b"plugin_info\0")
-            }
-            .map_err(|_| PluginLoadError::SymbolNotFound("plugin_info".into()))?;
+            let info_fn: Symbol<unsafe extern "C" fn() -> *const PluginInfo> = unsafe { lib.get(b"plugin_info\0") }
+                .map_err(|_| PluginLoadError::SymbolNotFound("plugin_info".into()))?;
             unsafe { std::ptr::read((*info_fn)()) }
         };
 
@@ -68,18 +65,14 @@ impl PluginLoader {
         }
 
         let init_ptr: unsafe extern "C" fn() -> i32 = {
-            let init_fn: Symbol<unsafe extern "C" fn() -> i32> = unsafe {
-                lib.get(b"plugin_init\0")
-            }
-            .map_err(|_| PluginLoadError::SymbolNotFound("plugin_init".into()))?;
+            let init_fn: Symbol<unsafe extern "C" fn() -> i32> = unsafe { lib.get(b"plugin_init\0") }
+                .map_err(|_| PluginLoadError::SymbolNotFound("plugin_init".into()))?;
             *init_fn
         };
 
         let shutdown_ptr: unsafe extern "C" fn() -> i32 = {
-            let shutdown_fn: Symbol<unsafe extern "C" fn() -> i32> = unsafe {
-                lib.get(b"plugin_shutdown\0")
-            }
-            .map_err(|_| PluginLoadError::SymbolNotFound("plugin_shutdown".into()))?;
+            let shutdown_fn: Symbol<unsafe extern "C" fn() -> i32> = unsafe { lib.get(b"plugin_shutdown\0") }
+                .map_err(|_| PluginLoadError::SymbolNotFound("plugin_shutdown".into()))?;
             *shutdown_fn
         };
 

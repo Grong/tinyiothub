@@ -159,10 +159,7 @@ impl HandlerRegistry {
 
     /// List all tool metadata
     pub fn list_tools(&self) -> Vec<ToolMetadata> {
-        self.handlers
-            .values()
-            .map(|h| ToolMetadata::from_handler(h.as_ref()))
-            .collect()
+        self.handlers.values().map(|h| ToolMetadata::from_handler(h.as_ref())).collect()
     }
 
     /// Check if a tool is registered
@@ -183,8 +180,9 @@ impl HandlerRegistry {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use async_trait::async_trait;
+
+    use super::*;
 
     struct DummyHandler;
 
@@ -202,7 +200,10 @@ mod tests {
             let mut props = HashMap::new();
             props.insert(
                 "param1".to_string(),
-                PropertySchema { prop_type: "string".to_string(), description: Some("Test param".to_string()) },
+                PropertySchema {
+                    prop_type: "string".to_string(),
+                    description: Some("Test param".to_string()),
+                },
             );
             InputSchema::object(vec!["param1".to_string()], props)
         }
@@ -237,7 +238,10 @@ mod tests {
         let mut props = HashMap::new();
         props.insert(
             "name".to_string(),
-            PropertySchema { prop_type: "string".to_string(), description: Some("User name".to_string()) },
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("User name".to_string()),
+            },
         );
         let schema = InputSchema::object(vec!["name".to_string()], props);
 

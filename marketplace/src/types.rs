@@ -184,7 +184,12 @@ pub struct PaginatedList<T> {
 
 impl<T> PaginatedList<T> {
     pub fn new(items: Vec<T>, total: usize, page: usize, per_page: usize) -> Self {
-        Self { items, total, page, per_page }
+        Self {
+            items,
+            total,
+            page,
+            per_page,
+        }
     }
 }
 
@@ -204,32 +209,62 @@ mod tests {
 
     #[test]
     fn valid_params() {
-        let params = PaginationParams { page: 1, per_page: 20, search: None, category: None, protocol: None };
+        let params = PaginationParams {
+            page: 1,
+            per_page: 20,
+            search: None,
+            category: None,
+            protocol: None,
+        };
         params.validate().unwrap();
         assert_eq!(params.offset(), 0);
     }
 
     #[test]
     fn page_zero_invalid() {
-        let params = PaginationParams { page: 0, per_page: 20, search: None, category: None, protocol: None };
+        let params = PaginationParams {
+            page: 0,
+            per_page: 20,
+            search: None,
+            category: None,
+            protocol: None,
+        };
         assert!(params.validate().is_err());
     }
 
     #[test]
     fn per_page_over_100_invalid() {
-        let params = PaginationParams { page: 1, per_page: 101, search: None, category: None, protocol: None };
+        let params = PaginationParams {
+            page: 1,
+            per_page: 101,
+            search: None,
+            category: None,
+            protocol: None,
+        };
         assert!(params.validate().is_err());
     }
 
     #[test]
     fn per_page_zero_invalid() {
-        let params = PaginationParams { page: 1, per_page: 0, search: None, category: None, protocol: None };
+        let params = PaginationParams {
+            page: 1,
+            per_page: 0,
+            search: None,
+            category: None,
+            protocol: None,
+        };
         assert!(params.validate().is_err());
     }
 
     #[test]
     fn offset_calculation() {
-        let params = PaginationParams { page: 3, per_page: 10, search: None, category: None, protocol: None };
+        let params = PaginationParams {
+            page: 3,
+            per_page: 10,
+            search: None,
+            category: None,
+            protocol: None,
+        };
         assert_eq!(params.offset(), 20);
     }
 }

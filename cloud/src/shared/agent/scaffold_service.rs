@@ -5,6 +5,7 @@
 // to maintain user modifications.
 
 use std::path::Path;
+
 use anyhow::Result;
 
 /// Template files to be copied to workspace
@@ -55,19 +56,12 @@ pub async fn scaffold_workspace(workspace_dir: &Path) -> Result<WorkspaceScaffol
         }
     }
 
-    Ok(WorkspaceScaffoldResult {
-        created_files,
-        skipped_files,
-        created_dirs,
-    })
+    Ok(WorkspaceScaffoldResult { created_files, skipped_files, created_dirs })
 }
 
 /// Get template content by filename
 fn get_template_content(filename: &str) -> Option<&'static str> {
-    WORKSPACE_TEMPLATE_FILES
-        .iter()
-        .find(|(name, _)| *name == filename)
-        .map(|(_, content)| *content)
+    WORKSPACE_TEMPLATE_FILES.iter().find(|(name, _)| *name == filename).map(|(_, content)| *content)
 }
 
 /// Result of workspace scaffolding
@@ -90,8 +84,9 @@ impl std::fmt::Display for WorkspaceScaffoldResult {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::tempdir;
+
+    use super::*;
 
     #[tokio::test]
     async fn test_scaffold_creates_files_and_dirs() {

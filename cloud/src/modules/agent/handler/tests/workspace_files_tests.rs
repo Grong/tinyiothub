@@ -17,10 +17,7 @@ fn test_validate_path_accepts_valid_workspace() {
     ];
 
     for filename in valid_files {
-        assert!(
-            filename.contains(".md"),
-            "Test data should contain .md files"
-        );
+        assert!(filename.contains(".md"), "Test data should contain .md files");
     }
     assert_eq!(valid_files.len(), 8, "Should have 8 workspace files");
 }
@@ -45,17 +42,13 @@ fn test_path_validation_rejects_traversal() {
 fn test_workspace_file_info_serde() {
     use crate::modules::agent::handler::files::{WorkspaceFileInfo, WorkspaceFileResponse};
 
-    let info = WorkspaceFileInfo {
-        name: "IDENTITY.md".to_string(),
-    };
+    let info = WorkspaceFileInfo { name: "IDENTITY.md".to_string() };
 
     let json = serde_json::to_string(&info).unwrap();
     assert!(json.contains("IDENTITY.md"));
 
-    let response = WorkspaceFileResponse {
-        name: "SOUL.md".to_string(),
-        content: "# Soul".to_string(),
-    };
+    let response =
+        WorkspaceFileResponse { name: "SOUL.md".to_string(), content: "# Soul".to_string() };
 
     let json = serde_json::to_string(&response).unwrap();
     assert!(json.contains("SOUL.md"));

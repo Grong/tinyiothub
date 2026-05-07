@@ -13,5 +13,4 @@ pub mod test_utils;
 mod tests;
 
 // Re-export commonly used types for easier access
-pub use shared::persistence::Database;
-pub use shared::error::Error;
+pub use shared::{error::Error, persistence::Database};

@@ -1,22 +1,21 @@
-use crate::shared::security::jwt::Claims;
-use tinyiothub_web::response::ApiResponseBuilder;
 use std::collections::HashMap;
 
-use axum::{
-    extract::{Path, Query, State},
-    response::{sse::Event as SseEvent, IntoResponse, Response, Sse},
-    Json,
-};
 use async_stream::stream;
-
-use crate::{
-    modules::agent::ChatRequest,
-    shared::api_response::ApiResponse,
-    shared::{app_state::AppState},
+use axum::{
+    Json,
+    extract::{Path, Query, State},
+    response::{IntoResponse, Response, Sse, sse::Event as SseEvent},
 };
+use tinyiothub_web::response::ApiResponseBuilder;
 
 use super::types::*;
-use crate::modules::agent::handler::types::{AgentConfigUpdateRequest, ToolToggleRequest};
+use crate::{
+    modules::agent::{
+        ChatRequest,
+        handler::types::{AgentConfigUpdateRequest, ToolToggleRequest},
+    },
+    shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims},
+};
 
 /// POST /api/v1/chat/stream — SSE streaming chat
 pub async fn chat_stream(
@@ -25,12 +24,13 @@ pub async fn chat_stream(
     Json(req): Json<ChatStreamRequest>,
 ) -> Response {
     // 后端自行读取 agent 配置获取 system_prompt
-    let agent_config = state.agent_runtime.get_agent_config(&req.agent_id, &claims.workspace_id).await
+    let agent_config = state
+        .agent_runtime
+        .get_agent_config(&req.agent_id, &claims.workspace_id)
+        .await
         .map(|v| v.get("config").cloned().unwrap_or_default())
         .unwrap_or_default();
-    let user_persona = agent_config.get("systemPrompt")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let user_persona = agent_config.get("systemPrompt").and_then(|v| v.as_str()).unwrap_or("");
 
     // session_key format: agent:<workspace_id>:<agent_id>/<sess_uuid>
     // Use claims.workspace_id (from JWT) as the source of truth.
@@ -62,7 +62,8 @@ pub async fn chat_stream(
         user_persona,
         Some(&workspace_id),
         None,
-    ).await;
+    )
+    .await;
 
     let chat_request = ChatRequest {
         session_key,
@@ -74,7 +75,8 @@ pub async fn chat_stream(
     let mut chat_stream = match state.chat_service.chat(chat_request).await {
         Ok(stream) => stream,
         Err(e) => {
-            let err: Json<ApiResponse<()>> = ApiResponseBuilder::error(format!("Chat stream failed: {}", e));
+            let err: Json<ApiResponse<()>> =
+                ApiResponseBuilder::error(format!("Chat stream failed: {}", e));
             return err.into_response();
         }
     };
@@ -144,12 +146,7 @@ pub async fn list_sessions(
     };
     match state
         .session_service
-        .list_sessions(
-            workspace_id,
-            query.agent_id.as_deref(),
-            limit,
-            offset,
-        )
+        .list_sessions(workspace_id, query.agent_id.as_deref(), limit, offset)
         .await
     {
         Ok(sessions) => ApiResponseBuilder::success(serde_json::json!({ "sessions": sessions })),

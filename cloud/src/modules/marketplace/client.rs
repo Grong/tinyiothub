@@ -2,12 +2,12 @@ use std::{path::Path, time::Duration};
 
 use reqwest::Client;
 use sha2::{Digest, Sha256};
+use tinyiothub_config::MarketplaceConfig;
 
 use super::{
     error::{MarketplaceError, Result},
     metadata::{DriverIndex, DriverMetadata, TemplateIndex, TemplateMetadata},
 };
-use tinyiothub_config::MarketplaceConfig;
 
 pub struct MarketplaceClient {
     http_client: Client,

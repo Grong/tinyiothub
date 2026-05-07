@@ -7,9 +7,13 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::modules::mcp::handlers::get_mcp_context;
-use crate::modules::mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler};
-use crate::modules::device::driver;
+use crate::modules::{
+    device::driver,
+    mcp::{
+        handlers::get_mcp_context,
+        tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler},
+    },
+};
 
 /// Driver list response
 #[derive(Debug, Serialize)]
@@ -78,9 +82,8 @@ impl ToolHandler for ListDriversHandler {
     }
 
     async fn execute(&self, _args: Value) -> Result<Value, ToolError> {
-        let _claims = get_mcp_context().ok_or_else(|| {
-            ToolError::Unauthorized("MCP context not initialized".to_string())
-        })?;
+        let _claims = get_mcp_context()
+            .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
 
         let all_names = driver::get_all_driver_names();
 
@@ -116,18 +119,35 @@ impl ToolHandler for TestDriverHandler {
 
     fn input_schema(&self) -> InputSchema {
         let mut props = HashMap::new();
-        props.insert("driverName".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Name of the driver to test (required)".to_string()) });
-        props.insert("address".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("Device address for connection test (optional)".to_string()) });
-        props.insert("connectionConfig".to_string(), PropertySchema { prop_type: "string".to_string(), description: Some("JSON string with connection parameters (optional)".to_string()) });
+        props.insert(
+            "driverName".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("Name of the driver to test (required)".to_string()),
+            },
+        );
+        props.insert(
+            "address".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("Device address for connection test (optional)".to_string()),
+            },
+        );
+        props.insert(
+            "connectionConfig".to_string(),
+            PropertySchema {
+                prop_type: "string".to_string(),
+                description: Some("JSON string with connection parameters (optional)".to_string()),
+            },
+        );
         InputSchema::object(vec!["driverName".to_string()], props)
     }
 
     async fn execute(&self, args: Value) -> Result<Value, ToolError> {
-        let _claims = get_mcp_context().ok_or_else(|| {
-            ToolError::Unauthorized("MCP context not initialized".to_string())
-        })?;
-        let input: TestDriverInput = serde_json::from_value(args)
-            .map_err(|e| ToolError::InvalidParams(e.to_string()))?;
+        let _claims = get_mcp_context()
+            .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
+        let input: TestDriverInput =
+            serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
         let start = std::time::Instant::now();
 

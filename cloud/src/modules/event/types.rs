@@ -6,9 +6,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::modules::event::{
+    Result,
     entities::Event,
     value_objects::{EventId, EventLevel, EventSource, EventType},
-    Result,
 };
 
 // ──────────────────────────────────────────────

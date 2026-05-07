@@ -1,15 +1,15 @@
-use tinyiothub_core::models::device::{Device, DeviceStats};
 use async_trait::async_trait;
 use sqlx::{QueryBuilder, Row};
+use tinyiothub_core::models::device::{Device, DeviceStats};
+use tinyiothub_storage::sqlite::device_row_mapper;
 
 use crate::{
-    modules::device::query_service::DeviceQueryService,
-    modules::monitoring::types::{DeviceStatusDistribution, QuickDevice},
-    shared::persistence::Database,
-    shared::error::Result,
+    modules::{
+        device::query_service::DeviceQueryService,
+        monitoring::types::{DeviceStatusDistribution, QuickDevice},
+    },
+    shared::{error::Result, persistence::Database},
 };
-
-use tinyiothub_storage::sqlite::device_row_mapper;
 
 /// SQLite implementation of DeviceQueryService
 #[derive(Debug, Clone)]
@@ -178,9 +178,8 @@ impl DeviceQueryService for SqliteDeviceQueryService {
         limit: i32,
         workspace_id: Option<&str>,
     ) -> Result<Vec<QuickDevice>> {
-        let mut builder = QueryBuilder::new(
-            "SELECT id, name, device_type, state, updated_at FROM devices",
-        );
+        let mut builder =
+            QueryBuilder::new("SELECT id, name, device_type, state, updated_at FROM devices");
 
         if let Some(wid) = workspace_id {
             builder.push(" WHERE workspace_id = ").push_bind(wid);

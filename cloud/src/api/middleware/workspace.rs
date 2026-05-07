@@ -1,8 +1,6 @@
-use axum::{
-    extract::FromRequestParts,
-    http::request::Parts,
-};
 use std::convert::Infallible;
+
+use axum::{extract::FromRequestParts, http::request::Parts};
 
 /// Workspace context extracted from JWT Claims — NOT from the X-Workspace-Id header.
 ///

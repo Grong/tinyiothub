@@ -1,33 +1,30 @@
 // Self-Healing HTTP handlers — moved from api/self_healing/
 
-use crate::shared::security::jwt::Claims;
-use tinyiothub_web::response::ApiResponseBuilder;
-use crate::modules::self_healing::types::{
-    ExecuteSelfHealRequest, ExecuteSelfHealResponse, HealingExecutionDto,
-    ProbeConfig as ProbeConfigDto, ProbeResultDto, SelfHealingPolicyDto,
-};
-use std::sync::Arc;
-use std::sync::OnceLock;
-
-use tokio::sync::RwLock;
+use std::sync::{Arc, OnceLock};
 
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     routing::{get, post, put},
-    Json, Router,
 };
 use serde::Deserialize;
-
-use crate::modules::self_healing::{
-    ActionExecutor, PolicyEvaluator, SelfHealingPolicy, HealingExecutionRepository,
-};
-use crate::modules::self_healing::types::ProbeConfig as ProbeConfigEntity;
-use crate::shared::persistence::Database;
-use crate::modules::self_healing::ProbeScheduler;
+use tinyiothub_web::response::ApiResponseBuilder;
+use tokio::sync::RwLock;
 
 use crate::{
-    shared::api_response::ApiResponse,
-    shared::app_state::AppState,
+    modules::self_healing::{
+        ActionExecutor, HealingExecutionRepository, PolicyEvaluator, ProbeScheduler,
+        SelfHealingPolicy,
+        types::{
+            ExecuteSelfHealRequest, ExecuteSelfHealResponse, HealingExecutionDto,
+            ProbeConfig as ProbeConfigDto, ProbeConfig as ProbeConfigEntity, ProbeResultDto,
+            SelfHealingPolicyDto,
+        },
+    },
+    shared::{
+        api_response::ApiResponse, app_state::AppState, persistence::Database,
+        security::jwt::Claims,
+    },
 };
 
 /// Global self-healing state
@@ -68,9 +65,7 @@ impl SelfHealingState {
 
 /// Initialize global self-healing state (call once at startup)
 pub fn init_self_healing_state(db: Arc<Database>) -> Arc<RwLock<SelfHealingState>> {
-    SELF_HEALING_STATE
-        .get_or_init(|| Arc::new(RwLock::new(SelfHealingState::new(db))))
-        .clone()
+    SELF_HEALING_STATE.get_or_init(|| Arc::new(RwLock::new(SelfHealingState::new(db)))).clone()
 }
 
 /// Get self-healing state
@@ -164,15 +159,12 @@ async fn execute_action(
         _ => return ApiResponseBuilder::error("Invalid action type"),
     };
 
-    let cooldown = state.policy.levels.get(&severity)
-        .map(|p| p.cooldown_secs)
-        .unwrap_or(0);
+    let cooldown = state.policy.levels.get(&severity).map(|p| p.cooldown_secs).unwrap_or(0);
 
-    if state.policy.levels.get(&severity)
-        .map(|p| p.require_approval)
-        .unwrap_or(false)
-    {
-        return ApiResponseBuilder::error("This action requires approval per policy — direct execution not allowed");
+    if state.policy.levels.get(&severity).map(|p| p.require_approval).unwrap_or(false) {
+        return ApiResponseBuilder::error(
+            "This action requires approval per policy — direct execution not allowed",
+        );
     }
 
     let executor = state.executor.clone();
@@ -181,7 +173,10 @@ async fn execute_action(
     drop(state);
 
     let tenant_id = claims.workspace_id.clone();
-    match executor.execute(&tenant_id, severity, action_type, request.target.clone(), cooldown).await {
+    match executor
+        .execute(&tenant_id, severity, action_type, request.target.clone(), cooldown)
+        .await
+    {
         Ok(execution) => {
             if let Err(e) = repository.save(&execution).await {
                 tracing::error!("Failed to persist healing execution: {}", e);
@@ -216,7 +211,8 @@ async fn get_executions(
 
     match state.repository.get_recent(&tenant_id, limit, offset).await {
         Ok(execs) => {
-            let dtos: Vec<HealingExecutionDto> = execs.iter().map(HealingExecutionDto::from).collect();
+            let dtos: Vec<HealingExecutionDto> =
+                execs.iter().map(HealingExecutionDto::from).collect();
             ApiResponseBuilder::success(dtos)
         }
         Err(e) => {

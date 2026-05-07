@@ -1,25 +1,27 @@
-use crate::shared::security::jwt::Claims;
-use tinyiothub_web::response::ApiResponseBuilder;
-use tinyiothub_core::models::device::{CreateDeviceRequest, Device, DeviceQueryParams, UpdateDeviceRequest};
-use tinyiothub_core::models::template_error::ValidationResult;
-
-use crate::modules::template::types::{
-    CreateDeviceFromTemplateRequest, DeviceCreationInput, DevicePreview,
-    TemplateRequirements,
-};
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
     routing::{get, post},
-    Json, Router
 };
 use serde::Deserialize;
+use tinyiothub_core::models::{
+    device::{CreateDeviceRequest, Device, DeviceQueryParams, UpdateDeviceRequest},
+    template_error::ValidationResult,
+};
+use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
-    shared::pagination::PaginationQuery,
-    shared::api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
-    shared::app_state::AppState
+    api::middleware::WorkspaceScope,
+    modules::template::types::{
+        CreateDeviceFromTemplateRequest, DeviceCreationInput, DevicePreview, TemplateRequirements,
+    },
+    shared::{
+        api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
+        app_state::AppState,
+        pagination::PaginationQuery,
+        security::jwt::Claims,
+    },
 };
-use crate::api::middleware::WorkspaceScope;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -111,11 +113,8 @@ async fn list_devices(
 
     // Get total count for pagination
     let total_count = tenant_device_service.count_devices(&params).await.unwrap_or(0) as u64;
-    let total_pages = if page_size > 0 {
-        ((total_count as f64) / (page_size as f64)).ceil() as u32
-    } else {
-        0
-    };
+    let total_pages =
+        if page_size > 0 { ((total_count as f64) / (page_size as f64)).ceil() as u32 } else { 0 };
 
     match tenant_device_service.get_devices_with_tags(&params, &claims.tenant_id).await {
         Ok(mut devices) => {
@@ -146,12 +145,7 @@ async fn list_devices(
 
             ApiResponseBuilder::success(PaginatedResponse {
                 data: devices,
-                pagination: PaginationInfo {
-                    page,
-                    page_size,
-                    total_pages,
-                    total_count,
-                },
+                pagination: PaginationInfo { page, page_size, total_pages, total_count },
             })
         }
         Err(e) => {
@@ -215,27 +209,27 @@ async fn get_device(
     match device_result {
         Ok(device_opt) => {
             let device = device_opt.map(|mut device| {
-                    // 从 DeviceCache 同步实时状态
-                    if let Some(cached_device) = state.device_cache.get(&device.id) {
-                        // 始终更新实时状态字段
-                        device.status = cached_device.status.clone();
-                        device.status = cached_device.status.clone();
-                        device.last_heartbeat = cached_device.last_heartbeat.clone();
+                // 从 DeviceCache 同步实时状态
+                if let Some(cached_device) = state.device_cache.get(&device.id) {
+                    // 始终更新实时状态字段
+                    device.status = cached_device.status.clone();
+                    device.status = cached_device.status.clone();
+                    device.last_heartbeat = cached_device.last_heartbeat.clone();
 
-                        // 根据参数决定是否包含属性和命令
-                        if include_properties {
-                            device.properties = cached_device.properties.clone();
-                            device.commands = cached_device.commands.clone();
-                        } else {
-                            device.properties = None;
-                            device.commands = None;
-                        }
-                    } else if !include_properties {
+                    // 根据参数决定是否包含属性和命令
+                    if include_properties {
+                        device.properties = cached_device.properties.clone();
+                        device.commands = cached_device.commands.clone();
+                    } else {
                         device.properties = None;
                         device.commands = None;
                     }
-                    device
-                });
+                } else if !include_properties {
+                    device.properties = None;
+                    device.commands = None;
+                }
+                device
+            });
 
             if device.is_some() {
                 ApiResponseBuilder::success(device)

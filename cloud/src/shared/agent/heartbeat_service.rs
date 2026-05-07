@@ -7,7 +7,6 @@
 use std::sync::Arc;
 
 use futures::StreamExt;
-
 use zeroclaw::heartbeat::engine::{HeartbeatEngine, TaskPriority};
 
 /// Execution record for a single heartbeat run
@@ -32,7 +31,12 @@ pub struct HeartbeatState {
 }
 
 impl HeartbeatState {
-    pub fn new(workspace_id: String, agent_id: String, interval_minutes: u32, workspace_dir: std::path::PathBuf) -> Self {
+    pub fn new(
+        workspace_id: String,
+        agent_id: String,
+        interval_minutes: u32,
+        workspace_dir: std::path::PathBuf,
+    ) -> Self {
         Self {
             enabled: true,
             interval_minutes,
@@ -85,10 +89,26 @@ pub async fn write_heartbeat_tasks(
 
 fn get_default_tasks() -> Vec<HeartbeatTask> {
     vec![
-        HeartbeatTask { priority: "high".into(), text: "检查离线设备并尝试自动重连".into(), paused: false },
-        HeartbeatTask { priority: "medium".into(), text: "扫描未处理的高优先级告警".into(), paused: false },
-        HeartbeatTask { priority: "medium".into(), text: "生成设备状态日报摘要".into(), paused: false },
-        HeartbeatTask { priority: "low".into(), text: "检查系统磁盘和内存使用率".into(), paused: true },
+        HeartbeatTask {
+            priority: "high".into(),
+            text: "检查离线设备并尝试自动重连".into(),
+            paused: false,
+        },
+        HeartbeatTask {
+            priority: "medium".into(),
+            text: "扫描未处理的高优先级告警".into(),
+            paused: false,
+        },
+        HeartbeatTask {
+            priority: "medium".into(),
+            text: "生成设备状态日报摘要".into(),
+            paused: false,
+        },
+        HeartbeatTask {
+            priority: "low".into(),
+            text: "检查系统磁盘和内存使用率".into(),
+            paused: true,
+        },
     ]
 }
 
@@ -116,7 +136,11 @@ fn parse_heartbeat_md(content: &str) -> Vec<HeartbeatTask> {
         } else if let Some(text) = line.strip_prefix("- ") {
             let text = text.trim();
             if !text.is_empty() {
-                tasks.push(HeartbeatTask { priority: "low".into(), text: text.to_string(), paused: false });
+                tasks.push(HeartbeatTask {
+                    priority: "low".into(),
+                    text: text.to_string(),
+                    paused: false,
+                });
             }
         }
     }
@@ -126,14 +150,16 @@ fn parse_heartbeat_md(content: &str) -> Vec<HeartbeatTask> {
 fn build_heartbeat_md(tasks: &[HeartbeatTask]) -> String {
     let mut s = "# Periodic Tasks\n".to_string();
     for task in tasks {
-        let flag = if task.paused { format!("{}|paused", task.priority) } else { task.priority.clone() };
+        let flag =
+            if task.paused { format!("{}|paused", task.priority) } else { task.priority.clone() };
         s.push_str(&format!("- [{}] {}\n", flag, task.text));
     }
     s
 }
 
 // Global heartbeat state - initialized when HeartbeatService is created
-static HEARTBEAT_STATE: std::sync::OnceLock<Arc<tokio::sync::RwLock<HeartbeatState>>> = std::sync::OnceLock::new();
+static HEARTBEAT_STATE: std::sync::OnceLock<Arc<tokio::sync::RwLock<HeartbeatState>>> =
+    std::sync::OnceLock::new();
 
 /// Initialize the global heartbeat state
 fn init_heartbeat_state(state: HeartbeatState) {
@@ -214,7 +240,8 @@ impl HeartbeatService {
         }
 
         let interval_mins = self.interval_minutes as u64;
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(interval_mins * 60));
+        let mut interval =
+            tokio::time::interval(tokio::time::Duration::from_secs(interval_mins * 60));
 
         tracing::info!(
             "💓 HeartbeatService started for workspace={} agent={} (interval={}min)",
@@ -245,11 +272,12 @@ impl HeartbeatService {
                     }
                     for task in tasks {
                         if task.priority == TaskPriority::High
-                            && let Err(e) = self.execute_task(&task.text).await {
-                                status = "error".to_string();
-                                error_message = Some(e);
-                                break;
-                            }
+                            && let Err(e) = self.execute_task(&task.text).await
+                        {
+                            status = "error".to_string();
+                            error_message = Some(e);
+                            break;
+                        }
                     }
                 }
                 Err(e) => {
@@ -281,8 +309,7 @@ impl HeartbeatService {
         let run_id = format!("heartbeat-{}", chrono::Utc::now().timestamp_millis());
         let prompt = format!(
             "{}\n\n## 本次巡检任务\n\n{}\n\n请执行后给出简洁的结构化结果。",
-            self.heartbeat_prompt,
-            task_text
+            self.heartbeat_prompt, task_text
         );
 
         // Set MCP context for in-process tool calls (heartbeat system task)

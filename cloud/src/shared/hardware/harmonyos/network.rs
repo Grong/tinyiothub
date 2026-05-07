@@ -62,7 +62,6 @@ impl HarmonyNetworkManager {
     ) -> Result<(), std::io::Error> {
         info!("Setting IP address for interface '{}' to {} on HarmonyOS", name, ip);
 
-
         let mut interfaces = self.interfaces.lock().unwrap();
         if let Some(interface) = interfaces.get_mut(name) {
             interface.ip_address = Some(ip);
@@ -87,7 +86,6 @@ impl HarmonyNetworkManager {
     pub fn bring_interface_up(&self, name: &str) -> Result<(), std::io::Error> {
         info!("Bringing up network interface '{}' on HarmonyOS", name);
 
-
         let mut interfaces = self.interfaces.lock().unwrap();
         if let Some(interface) = interfaces.get_mut(name) {
             interface.is_up = true;
@@ -99,7 +97,6 @@ impl HarmonyNetworkManager {
     /// 禁用网络接口
     pub fn bring_interface_down(&self, name: &str) -> Result<(), std::io::Error> {
         info!("Bringing down network interface '{}' on HarmonyOS", name);
-
 
         let mut interfaces = self.interfaces.lock().unwrap();
         if let Some(interface) = interfaces.get_mut(name) {
@@ -113,14 +110,12 @@ impl HarmonyNetworkManager {
     pub fn set_default_gateway(&self, gateway: IpAddr) -> Result<(), std::io::Error> {
         info!("Setting default gateway to {} on HarmonyOS", gateway);
 
-
         Ok(())
     }
 
     /// 获取默认网关
     pub fn get_default_gateway(&self) -> Result<Option<IpAddr>, std::io::Error> {
         debug!("Getting default gateway on HarmonyOS");
-
 
         Ok(None)
     }
@@ -129,14 +124,12 @@ impl HarmonyNetworkManager {
     pub fn ping(&self, host: &str, timeout_secs: u64) -> Result<bool, std::io::Error> {
         debug!("Pinging {} with timeout {}s on HarmonyOS", host, timeout_secs);
 
-
         Ok(true) // 暂时返回成功
     }
 
     /// 获取网络统计信息
     pub fn get_network_stats(&self, interface: &str) -> Result<NetworkStats, std::io::Error> {
         debug!("Getting network stats for interface '{}' on HarmonyOS", interface);
-
 
         Ok(NetworkStats {
             interface: interface.to_string(),
@@ -152,7 +145,6 @@ impl HarmonyNetworkManager {
     /// 刷新网络接口信息
     pub fn refresh_interfaces(&self) -> Result<(), std::io::Error> {
         debug!("Refreshing network interfaces on HarmonyOS");
-
 
         let mut interfaces = self.interfaces.lock().unwrap();
         interfaces.clear();

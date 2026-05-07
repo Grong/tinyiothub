@@ -8,20 +8,19 @@
 //
 // Supported files: IDENTITY.md, SOUL.md, AGENTS.md, USER.md, TOOLS.md, MEMORY.md, HEARTBEAT.md, BOOTSTRAP.md
 
-use crate::shared::security::jwt::Claims;
-use tinyiothub_web::response::ApiResponseBuilder;
+use std::path::PathBuf;
+
 use axum::{
     extract::{Path, State},
     response::Json,
 };
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
-    shared::api_response::{ApiResponse},
-    shared::{app_state::AppState},
+    api::middleware::WorkspaceScope,
+    shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims},
 };
-use crate::api::middleware::WorkspaceScope;
 
 /// Supported workspace files (pub(crate) for testing)
 pub(crate) const WORKSPACE_FILES: &[&str] = &[
@@ -76,10 +75,7 @@ fn validate_workspace_file_path(workspace_id: &str, filename: &str) -> Result<Pa
 
     // Validate filename is in our allowlist
     if !WORKSPACE_FILES.contains(&filename) {
-        return Err(format!(
-            "Invalid filename: {}. Allowed: {:?}",
-            filename, WORKSPACE_FILES
-        ));
+        return Err(format!("Invalid filename: {}. Allowed: {:?}", filename, WORKSPACE_FILES));
     }
 
     let workspace_dir = crate::shared::paths::workspace_dir(workspace_id);
@@ -105,12 +101,8 @@ pub async fn list_workspace_files(
     _workspace: WorkspaceScope,
     Path(_agent_id): Path<String>,
 ) -> Json<ApiResponse<WorkspaceFilesListResponse>> {
-    let files: Vec<WorkspaceFileInfo> = WORKSPACE_FILES
-        .iter()
-        .map(|name| WorkspaceFileInfo {
-            name: name.to_string(),
-        })
-        .collect();
+    let files: Vec<WorkspaceFileInfo> =
+        WORKSPACE_FILES.iter().map(|name| WorkspaceFileInfo { name: name.to_string() }).collect();
 
     ApiResponseBuilder::success(WorkspaceFilesListResponse { files })
 }
@@ -150,10 +142,9 @@ pub async fn get_workspace_file(
     };
 
     match tokio::fs::read_to_string(&file_path).await {
-        Ok(content) => ApiResponseBuilder::success(WorkspaceFileResponse {
-            name: filename,
-            content,
-        }),
+        Ok(content) => {
+            ApiResponseBuilder::success(WorkspaceFileResponse { name: filename, content })
+        }
         Err(_) => {
             // File doesn't exist - return empty content
             ApiResponseBuilder::success(WorkspaceFileResponse {

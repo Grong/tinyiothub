@@ -1,10 +1,12 @@
 use async_trait::async_trait;
 use sqlx::Row;
 
-use crate::modules::agent::types::{
-    ChatMessage, CompactedSession, Session, SessionError, SessionRepository,
+use crate::{
+    modules::agent::types::{
+        ChatMessage, CompactedSession, Session, SessionError, SessionRepository,
+    },
+    shared::persistence::Database,
 };
-use crate::shared::persistence::Database;
 
 /// SQLite implementation of SessionRepository
 #[derive(Debug, Clone)]
@@ -48,41 +50,32 @@ impl SqliteSessionRepository {
         let label: Option<String> = row.try_get("label").ok();
 
         // Handle both integer and text timestamps for compatibility
-        let created_at: i64 = row
-            .try_get::<i64, _>("created_at")
-            .or_else(|_| {
-                row.try_get::<String, _>("created_at")
-                    .and_then(|s| {
-                        Self::parse_timestamp(&s)
-                            .ok_or_else(|| sqlx::Error::ColumnDecode {
-                                index: "created_at".into(),
-                                source: Box::new(std::io::Error::new(
-                                    std::io::ErrorKind::InvalidData,
-                                    "invalid datetime",
-                                )),
-                            })
-                    })
-            })?;
-        let updated_at: i64 = row
-            .try_get::<i64, _>("updated_at")
-            .or_else(|_| {
-                row.try_get::<String, _>("updated_at")
-                    .and_then(|s| {
-                        Self::parse_timestamp(&s)
-                            .ok_or_else(|| sqlx::Error::ColumnDecode {
-                                index: "updated_at".into(),
-                                source: Box::new(std::io::Error::new(
-                                    std::io::ErrorKind::InvalidData,
-                                    "invalid datetime",
-                                )),
-                            })
-                    })
-            })?;
+        let created_at: i64 = row.try_get::<i64, _>("created_at").or_else(|_| {
+            row.try_get::<String, _>("created_at").and_then(|s| {
+                Self::parse_timestamp(&s).ok_or_else(|| sqlx::Error::ColumnDecode {
+                    index: "created_at".into(),
+                    source: Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "invalid datetime",
+                    )),
+                })
+            })
+        })?;
+        let updated_at: i64 = row.try_get::<i64, _>("updated_at").or_else(|_| {
+            row.try_get::<String, _>("updated_at").and_then(|s| {
+                Self::parse_timestamp(&s).ok_or_else(|| sqlx::Error::ColumnDecode {
+                    index: "updated_at".into(),
+                    source: Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "invalid datetime",
+                    )),
+                })
+            })
+        })?;
 
         let metadata_str: String = row.try_get("metadata").unwrap_or_else(|_| "{}".to_string());
-        let metadata: serde_json::Value = serde_json::from_str(&metadata_str).unwrap_or_else(|_| {
-            serde_json::json!({})
-        });
+        let metadata: serde_json::Value =
+            serde_json::from_str(&metadata_str).unwrap_or_else(|_| serde_json::json!({}));
 
         Ok(Session {
             session_key,
@@ -213,7 +206,7 @@ impl SessionRepository for SqliteSessionRepository {
 
         let mut builder = QueryBuilder::new(
             "SELECT session_key, workspace_id, agent_id, label, created_at, updated_at, metadata \
-             FROM chat_sessions WHERE 1=1"
+             FROM chat_sessions WHERE 1=1",
         );
 
         if let Some(ws) = workspace_id {
@@ -225,7 +218,8 @@ impl SessionRepository for SqliteSessionRepository {
         builder.push(" ORDER BY updated_at DESC LIMIT ").push_bind(limit as i64);
         builder.push(" OFFSET ").push_bind(offset as i64);
 
-        let rows = builder.build()
+        let rows = builder
+            .build()
             .fetch_all(self.database.pool())
             .await
             .map_err(|e| SessionError::RepositoryError(e.to_string()))?;
@@ -300,13 +294,12 @@ impl SessionRepository for SqliteSessionRepository {
     }
 
     async fn get_message_count(&self, session_key: &str) -> Result<usize, SessionError> {
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM chat_messages WHERE session_key = ?"
-        )
-        .bind(session_key)
-        .fetch_one(self.database.pool())
-        .await
-        .map_err(|e| SessionError::RepositoryError(e.to_string()))?;
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM chat_messages WHERE session_key = ?")
+                .bind(session_key)
+                .fetch_one(self.database.pool())
+                .await
+                .map_err(|e| SessionError::RepositoryError(e.to_string()))?;
 
         #[allow(clippy::cast_sign_loss)]
         Ok(count as usize)
@@ -317,23 +310,19 @@ impl SessionRepository for SqliteSessionRepository {
         session_key: &str,
         timestamp: i64,
     ) -> Result<usize, SessionError> {
-        let result = sqlx::query(
-            "DELETE FROM chat_messages WHERE session_key = ? AND timestamp < ?"
-        )
-        .bind(session_key)
-        .bind(timestamp)
-        .execute(self.database.pool())
-        .await
-        .map_err(|e| SessionError::RepositoryError(e.to_string()))?;
+        let result =
+            sqlx::query("DELETE FROM chat_messages WHERE session_key = ? AND timestamp < ?")
+                .bind(session_key)
+                .bind(timestamp)
+                .execute(self.database.pool())
+                .await
+                .map_err(|e| SessionError::RepositoryError(e.to_string()))?;
 
         #[allow(clippy::cast_sign_loss)]
         Ok(result.rows_affected() as usize)
     }
 
-    async fn save_compacted(
-        &self,
-        compacted: &CompactedSession,
-    ) -> Result<(), SessionError> {
+    async fn save_compacted(&self, compacted: &CompactedSession) -> Result<(), SessionError> {
         let system_messages = serde_json::to_string(&compacted.system_messages)
             .map_err(|e| SessionError::RepositoryError(e.to_string()))?;
         let summary_message = compacted
@@ -388,17 +377,23 @@ impl SessionRepository for SqliteSessionRepository {
 
         match row {
             Some(r) => {
-                let session_key: String = r.try_get("session_key")
+                let session_key: String = r
+                    .try_get("session_key")
                     .map_err(|e| SessionError::RepositoryError(e.to_string()))?;
-                let system_messages_str: String = r.try_get("system_messages")
+                let system_messages_str: String = r
+                    .try_get("system_messages")
                     .map_err(|e| SessionError::RepositoryError(e.to_string()))?;
-                let summary_message_str: Option<String> = r.try_get("summary_message")
+                let summary_message_str: Option<String> = r
+                    .try_get("summary_message")
                     .map_err(|e| SessionError::RepositoryError(e.to_string()))?;
-                let recent_messages_str: String = r.try_get("recent_messages")
+                let recent_messages_str: String = r
+                    .try_get("recent_messages")
                     .map_err(|e| SessionError::RepositoryError(e.to_string()))?;
-                let compacted_at: i64 = r.try_get("compacted_at")
+                let compacted_at: i64 = r
+                    .try_get("compacted_at")
                     .map_err(|e| SessionError::RepositoryError(e.to_string()))?;
-                let original_message_count: i64 = r.try_get("original_message_count")
+                let original_message_count: i64 = r
+                    .try_get("original_message_count")
                     .map_err(|e| SessionError::RepositoryError(e.to_string()))?;
 
                 let system_messages: Vec<ChatMessage> = serde_json::from_str(&system_messages_str)
@@ -427,13 +422,11 @@ impl SessionRepository for SqliteSessionRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::agent::types::{SessionRepository, Session};
+    use crate::modules::agent::types::{Session, SessionRepository};
 
     async fn create_test_repo() -> SqliteSessionRepository {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        crate::shared::persistence::test_helpers::run_all_migrations(&pool)
-            .await
-            .unwrap();
+        crate::shared::persistence::test_helpers::run_all_migrations(&pool).await.unwrap();
         SqliteSessionRepository::new(Database::new(pool))
     }
 

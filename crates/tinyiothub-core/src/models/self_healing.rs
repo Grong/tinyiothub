@@ -5,7 +5,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-
 /// Recovery action DTO
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -16,7 +15,6 @@ pub struct RecoveryActionDto {
     pub cooldown_secs: u64,
 }
 
-
 /// Healing condition DTO
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -25,7 +23,6 @@ pub struct HealingConditionDto {
     pub threshold: f64,
     pub count: u32,
 }
-
 
 /// Level policy DTO
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,7 +35,6 @@ pub struct LevelPolicyDto {
     pub cooldown_secs: u64,
 }
 
-
 /// Self-healing policy DTO
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -46,7 +42,6 @@ pub struct SelfHealingPolicyDto {
     pub enabled: bool,
     pub levels: HashMap<String, LevelPolicyDto>,
 }
-
 
 /// Probe finding DTO
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,7 +53,6 @@ pub struct ProbeFindingDto {
     pub target: String,
     pub value: Option<String>,
 }
-
 
 /// Probe result DTO
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,7 +66,6 @@ pub struct ProbeResultDto {
     pub metadata: HashMap<String, String>,
 }
 
-
 /// Healing execution DTO
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -85,7 +78,6 @@ pub struct HealingExecutionDto {
     pub result: String,
     pub logs: Vec<String>,
 }
-
 
 /// Probe configuration DTO
 #[derive(Debug, Clone, Serialize, Deserialize)]

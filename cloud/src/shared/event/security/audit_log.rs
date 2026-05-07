@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
 use crate::modules::event::{
+    EventError, Result,
     entities::Event,
     value_objects::{EventId, EventLevel, EventType},
-    EventError, Result,
 };
 
 /// Audit log entry

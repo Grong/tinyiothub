@@ -4,19 +4,29 @@
 // using zeroclaw for AI Agent functionality.
 
 use std::sync::Arc;
-use async_trait::async_trait;
 
-use crate::shared::agent::config::{AgentConfig, AgentError, AgentInfo};
-use crate::shared::agent::AgentClient;
-use crate::shared::agent::AgentRuntime;
-use crate::modules::mcp::handlers::McpAuthContext;
-use crate::modules::mcp::tool_metadata::{name_infers_concurrency_safe, name_infers_destructive, name_infers_read_only, IoTToolMetadata, PermissionLevel};
-use crate::modules::mcp::tool_registry::ToolHandler;
-use zeroclaw::tools::traits::{Tool, ToolResult};
-use zeroclaw::memory::Memory;
-use zeroclaw::observability::Observer;
-use zeroclaw::agent::dispatcher::NativeToolDispatcher;
-use zeroclaw::agent::TurnEvent;
+use async_trait::async_trait;
+use zeroclaw::{
+    agent::{TurnEvent, dispatcher::NativeToolDispatcher},
+    memory::Memory,
+    observability::Observer,
+    tools::traits::{Tool, ToolResult},
+};
+
+use crate::{
+    modules::mcp::{
+        handlers::McpAuthContext,
+        tool_metadata::{
+            IoTToolMetadata, PermissionLevel, name_infers_concurrency_safe,
+            name_infers_destructive, name_infers_read_only,
+        },
+        tool_registry::ToolHandler,
+    },
+    shared::agent::{
+        AgentClient, AgentRuntime,
+        config::{AgentConfig, AgentError, AgentInfo},
+    },
+};
 
 // ============================================================================
 // AgentRuntimeImpl - zeroclaw Agent driver
@@ -35,7 +45,8 @@ pub struct AgentRuntimeImpl {
     /// Observability observer — survives tool refresh
     observer: Arc<dyn zeroclaw::observability::Observer>,
     /// Active chat run handles for abort support
-    chat_handles: Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
+    chat_handles:
+        Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
 }
 
 impl AgentRuntimeImpl {
@@ -59,7 +70,13 @@ impl AgentRuntimeImpl {
         memory_config.hygiene_enabled = true;
 
         let memory = zeroclaw::memory::create_memory(&memory_config, &workspace_dir, None)
-            .map_err(|e| anyhow::anyhow!("Failed to create memory backend '{}': {}", agent_settings.memory_backend, e))?;
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to create memory backend '{}': {}",
+                    agent_settings.memory_backend,
+                    e
+                )
+            })?;
         let memory: Arc<dyn Memory> = Arc::from(memory);
 
         let mut observer_config = zeroclaw::config::schema::ObservabilityConfig::default();
@@ -107,12 +124,19 @@ impl AgentRuntimeImpl {
             let tool_metas = reg.list_tools();
             let tool_count = tool_metas.len();
             for meta in tool_metas {
-                if meta.name.trim().is_empty() { continue; }
+                if meta.name.trim().is_empty() {
+                    continue;
+                }
                 let name = meta.name.clone();
                 let description = meta.description.clone();
                 let input_schema = meta.input_schema.clone();
                 if let Some(handler) = reg.get_owned(&name) {
-                    tool_boxed.push(Box::new(IoTToolAdapter::new(name, description, input_schema, handler)));
+                    tool_boxed.push(Box::new(IoTToolAdapter::new(
+                        name,
+                        description,
+                        input_schema,
+                        handler,
+                    )));
                 }
             }
             tracing::info!("Loaded {} tools from MCP registry", tool_count);
@@ -130,10 +154,9 @@ impl AgentRuntimeImpl {
             .clone()
             .ok_or_else(|| anyhow::anyhow!("minimax config required"))?;
 
-        let provider = zeroclaw::providers::create_provider(
-            "minimaxi",
-            Some(&minimax_config.auth_token)
-        ).map_err(|e| anyhow::anyhow!("Failed to create provider: {}", e))?;
+        let provider =
+            zeroclaw::providers::create_provider("minimaxi", Some(&minimax_config.auth_token))
+                .map_err(|e| anyhow::anyhow!("Failed to create provider: {}", e))?;
 
         let agent = zeroclaw::agent::Agent::builder()
             .provider(provider)
@@ -169,13 +192,12 @@ impl AgentRuntimeImpl {
         workspace_id: &str,
     ) -> Result<(), AgentError> {
         let db_pool = self.db_pool.clone();
-        let row: Option<(String,)> = sqlx::query_as(
-            "SELECT workspace_id FROM agents WHERE agent_id = ?"
-        )
-        .bind(agent_id)
-        .fetch_optional(&db_pool)
-        .await
-        .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT workspace_id FROM agents WHERE agent_id = ?")
+                .bind(agent_id)
+                .fetch_optional(&db_pool)
+                .await
+                .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
 
         match row {
             Some((ws,)) if ws == workspace_id => Ok(()),
@@ -231,7 +253,7 @@ impl AgentClient for AgentRuntimeImpl {
         let agent_id = agent_id.to_string();
         let db_pool = self.db_pool.clone();
         let row: Option<(String, String, String, String)> = sqlx::query_as(
-            "SELECT agent_id, workspace_id, name, status FROM agents WHERE agent_id = ?"
+            "SELECT agent_id, workspace_id, name, status FROM agents WHERE agent_id = ?",
         )
         .bind(&agent_id)
         .fetch_optional(&db_pool)
@@ -239,12 +261,9 @@ impl AgentClient for AgentRuntimeImpl {
         .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
 
         match row {
-            Some((id, _workspace, name, status)) => Ok(AgentInfo {
-                id,
-                name,
-                status,
-                created_at: None,
-            }),
+            Some((id, _workspace, name, status)) => {
+                Ok(AgentInfo { id, name, status, created_at: None })
+            }
             None => Err(AgentError::NotFound(agent_id)),
         }
     }
@@ -267,32 +286,38 @@ impl AgentClient for AgentRuntimeImpl {
         let agent = Arc::clone(&self.agent);
         let system_prompt = system_prompt.to_string();
         let chat_handles = Arc::clone(&self.chat_handles);
-            // Set system prompt (only first time)
-            {
-                let mut ag = agent.lock().await;
-                if ag.history().is_empty() && !system_prompt.is_empty() {
-                    ag.seed_history(&[
-                        zeroclaw::providers::traits::ChatMessage {
-                            role: "system".into(),
-                            content: system_prompt,
-                        },
-                    ]);
-                }
+        // Set system prompt (only first time)
+        {
+            let mut ag = agent.lock().await;
+            if ag.history().is_empty() && !system_prompt.is_empty() {
+                ag.seed_history(&[zeroclaw::providers::traits::ChatMessage {
+                    role: "system".into(),
+                    content: system_prompt,
+                }]);
             }
+        }
 
-            // SSE channel
-            let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Result<bytes::Bytes, std::io::Error>>();
-            let tx_stream = tx.clone();
-            let session_key_clone = session_key.clone();
-            let run_id_clone = run_id.clone();
+        // SSE channel
+        let (tx, rx) =
+            tokio::sync::mpsc::unbounded_channel::<Result<bytes::Bytes, std::io::Error>>();
+        let tx_stream = tx.clone();
+        let session_key_clone = session_key.clone();
+        let run_id_clone = run_id.clone();
 
-            let chat_handles_for_spawn = chat_handles.clone();
-            let run_id_for_spawn = run_id.clone();
+        let chat_handles_for_spawn = chat_handles.clone();
+        let run_id_for_spawn = run_id.clone();
 
-            // Run Agent::turn_streamed in background with task-local MCP context
-            let workspace_id = session_key.split(':').nth(1).map(|s| s.split('/').next().unwrap_or(s)).unwrap_or("").to_string();
-            let mcp_ctx = McpAuthContext::for_jwt(workspace_id, "agent".to_string());
-            let handle = tokio::spawn(crate::modules::mcp::handlers::with_mcp_context(mcp_ctx, || async move {
+        // Run Agent::turn_streamed in background with task-local MCP context
+        let workspace_id = session_key
+            .split(':')
+            .nth(1)
+            .map(|s| s.split('/').next().unwrap_or(s))
+            .unwrap_or("")
+            .to_string();
+        let mcp_ctx = McpAuthContext::for_jwt(workspace_id, "agent".to_string());
+        let handle = tokio::spawn(crate::modules::mcp::handlers::with_mcp_context(
+            mcp_ctx,
+            || async move {
                 let mut ag = agent.lock().await;
 
                 // Send channel to turn_streamed (using mpsc)
@@ -301,7 +326,10 @@ impl AgentClient for AgentRuntimeImpl {
                 let event_rx_main = Arc::clone(&event_rx_shared);
                 let event_rx_fwd = Arc::clone(&event_rx_shared);
 
-                let forward_sse = |evt: &TurnEvent, forward_run: &str, forward_session: &str| -> bytes::Bytes {
+                let forward_sse = |evt: &TurnEvent,
+                                   forward_run: &str,
+                                   forward_session: &str|
+                 -> bytes::Bytes {
                     let sse_data = match evt {
                         TurnEvent::Chunk { delta } => {
                             serde_json::json!({
@@ -329,15 +357,23 @@ impl AgentClient for AgentRuntimeImpl {
                             let is_destructive = name_infers_destructive(name);
                             tracing::info!(
                                 "Tool call: {} (concurrency_safe: {}, read_only: {}, destructive: {})",
-                                name, is_safe, is_readonly, is_destructive
+                                name,
+                                is_safe,
+                                is_readonly,
+                                is_destructive
                             );
                             let args_str = serde_json::to_string(&args).unwrap_or_default();
                             let a2ui_jsonl = if name == "canvas" {
-                                let jsonl = args.get("jsonl")
+                                let jsonl = args
+                                    .get("jsonl")
                                     .and_then(|v| v.as_str())
                                     .map(|s| s.to_string())
                                     .unwrap_or_default();
-                                tracing::info!("Canvas tool call - a2ui_jsonl length: {}, first 200 chars: {}", jsonl.len(), &jsonl[..jsonl.len().min(200)]);
+                                tracing::info!(
+                                    "Canvas tool call - a2ui_jsonl length: {}, first 200 chars: {}",
+                                    jsonl.len(),
+                                    &jsonl[..jsonl.len().min(200)]
+                                );
                                 jsonl
                             } else {
                                 String::new()
@@ -377,13 +413,19 @@ impl AgentClient for AgentRuntimeImpl {
                 });
 
                 // Run turn_streamed (executes tool loop internally), with 120s timeout
-                match tokio::time::timeout(std::time::Duration::from_secs(120), ag.turn_streamed(&message, event_tx)).await {
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(120),
+                    ag.turn_streamed(&message, event_tx),
+                )
+                .await
+                {
                     Ok(Ok(final_text)) => {
                         // Drain any remaining tool result events from the main receiver
                         {
                             let mut rx = event_rx_main.lock().await;
                             while let Ok(evt) = rx.try_recv() {
-                                let sse_bytes = forward_sse(&evt, &run_id_clone, &session_key_clone);
+                                let sse_bytes =
+                                    forward_sse(&evt, &run_id_clone, &session_key_clone);
                                 let _ = tx_stream.send(Ok(sse_bytes));
                             }
                         }
@@ -397,7 +439,8 @@ impl AgentClient for AgentRuntimeImpl {
                                 "content": [{ "type": "text", "text": final_text }],
                             }
                         });
-                        let _ = tx_stream.send(Ok(bytes::Bytes::from(format!("data: {}\n\n", sse_final))));
+                        let _ = tx_stream
+                            .send(Ok(bytes::Bytes::from(format!("data: {}\n\n", sse_final))));
                     }
                     Ok(Err(e)) => {
                         let err_json = serde_json::json!({
@@ -406,7 +449,8 @@ impl AgentClient for AgentRuntimeImpl {
                             "state": "error",
                             "error": e.to_string(),
                         });
-                        let _ = tx_stream.send(Ok(bytes::Bytes::from(format!("data: {}\n\n", err_json))));
+                        let _ = tx_stream
+                            .send(Ok(bytes::Bytes::from(format!("data: {}\n\n", err_json))));
                     }
                     Err(_) => {
                         // Timeout
@@ -416,31 +460,38 @@ impl AgentClient for AgentRuntimeImpl {
                             "state": "error",
                             "error": "Agent execution timed out after 120 seconds",
                         });
-                        let _ = tx_stream.send(Ok(bytes::Bytes::from(format!("data: {}\n\n", err_json))));
+                        let _ = tx_stream
+                            .send(Ok(bytes::Bytes::from(format!("data: {}\n\n", err_json))));
                     }
                 }
 
                 // Explicit cleanup when the task completes naturally.
                 // Abort paths are handled by chat_abort which removes the entry.
                 chat_handles_for_spawn.lock().await.remove(&run_id_for_spawn);
-            }));
+            },
+        ));
 
-            chat_handles.lock().await.insert(run_id, handle);
+        chat_handles.lock().await.insert(run_id, handle);
 
-            let http_response = http::Response::builder()
-                .status(200)
-                .header("content-type", "text/event-stream")
-                .header("cache-control", "no-cache")
-                .header("connection", "keep-alive")
-                .body(reqwest::Body::wrap_stream(
-                    tokio_stream::wrappers::UnboundedReceiverStream::new(rx),
-                ))
-                .map_err(|e| AgentError::RequestFailed(format!("SSE build error: {}", e)))?;
+        let http_response = http::Response::builder()
+            .status(200)
+            .header("content-type", "text/event-stream")
+            .header("cache-control", "no-cache")
+            .header("connection", "keep-alive")
+            .body(reqwest::Body::wrap_stream(tokio_stream::wrappers::UnboundedReceiverStream::new(
+                rx,
+            )))
+            .map_err(|e| AgentError::RequestFailed(format!("SSE build error: {}", e)))?;
 
-            Ok(reqwest::Response::from(http_response))
+        Ok(reqwest::Response::from(http_response))
     }
 
-    async fn chat_history(&self, _agent_id: &str, session_key: &str, limit: u32) -> Result<serde_json::Value, AgentError> {
+    async fn chat_history(
+        &self,
+        _agent_id: &str,
+        session_key: &str,
+        limit: u32,
+    ) -> Result<serde_json::Value, AgentError> {
         let session_key = session_key.to_string();
         let db_pool = self.db_pool.clone();
         // First check for any system messages (for debugging)
@@ -449,7 +500,8 @@ impl AgentClient for AgentRuntimeImpl {
         )
         .bind(&session_key)
         .fetch_one(&db_pool)
-        .await {
+        .await
+        {
             Ok(count) => count,
             Err(e) => {
                 tracing::warn!("Failed to count system messages: {}", e);
@@ -497,10 +549,11 @@ impl AgentClient for AgentRuntimeImpl {
         let run_id = run_id.map(String::from);
         let chat_handles = Arc::clone(&self.chat_handles);
         if let Some(rid) = run_id
-            && let Some(handle) = chat_handles.lock().await.remove(&rid) {
-                handle.abort();
-                tracing::info!("Aborted chat run {}", rid);
-            }
+            && let Some(handle) = chat_handles.lock().await.remove(&rid)
+        {
+            handle.abort();
+            tracing::info!("Aborted chat run {}", rid);
+        }
         Ok(())
     }
 
@@ -529,7 +582,11 @@ impl AgentClient for AgentRuntimeImpl {
         Ok(serde_json::json!({ "agents": agents }))
     }
 
-    async fn get_agent_config(&self, agent_id: &str, workspace_id: &str) -> Result<serde_json::Value, AgentError> {
+    async fn get_agent_config(
+        &self,
+        agent_id: &str,
+        workspace_id: &str,
+    ) -> Result<serde_json::Value, AgentError> {
         self.verify_agent_workspace(agent_id, workspace_id).await?;
 
         let agent_id = agent_id.to_string();
@@ -553,7 +610,13 @@ impl AgentClient for AgentRuntimeImpl {
         }))
     }
 
-    async fn set_agent_config(&self, agent_id: &str, config: &str, _base_hash: Option<&str>, workspace_id: &str) -> Result<(), AgentError> {
+    async fn set_agent_config(
+        &self,
+        agent_id: &str,
+        config: &str,
+        _base_hash: Option<&str>,
+        workspace_id: &str,
+    ) -> Result<(), AgentError> {
         self.verify_agent_workspace(agent_id, workspace_id).await?;
 
         let agent_id = agent_id.to_string();
@@ -583,7 +646,11 @@ impl AgentClient for AgentRuntimeImpl {
         Ok(build_dynamic_catalog().await)
     }
 
-    async fn tools_effective(&self, agent_id: &str, workspace_id: &str) -> Result<serde_json::Value, AgentError> {
+    async fn tools_effective(
+        &self,
+        agent_id: &str,
+        workspace_id: &str,
+    ) -> Result<serde_json::Value, AgentError> {
         self.verify_agent_workspace(agent_id, workspace_id).await?;
         let agent_id = agent_id.to_string();
         let db_pool = self.db_pool.clone();
@@ -617,12 +684,15 @@ impl AgentClient for AgentRuntimeImpl {
         let filtered_groups: Vec<serde_json::Value> = groups
             .into_iter()
             .map(|group| {
-                let tools = group.get("tools").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                let tools =
+                    group.get("tools").and_then(|v| v.as_array()).cloned().unwrap_or_default();
                 let filtered_tools: Vec<serde_json::Value> = tools
                     .into_iter()
                     .map(|mut tool| {
-                        let tool_id = tool.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        let is_dangerous = tool.get("danger").and_then(|v| v.as_bool()).unwrap_or(false);
+                        let tool_id =
+                            tool.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let is_dangerous =
+                            tool.get("danger").and_then(|v| v.as_bool()).unwrap_or(false);
                         let effective_enabled = if !enabled_list.is_empty() {
                             enabled_list.contains(&tool_id)
                         } else if !disabled_list.is_empty() {
@@ -646,7 +716,13 @@ impl AgentClient for AgentRuntimeImpl {
         Ok(serde_json::json!({ "groups": filtered_groups }))
     }
 
-    async fn tools_toggle(&self, agent_id: &str, tool_name: &str, enabled: bool, workspace_id: &str) -> Result<(), AgentError> {
+    async fn tools_toggle(
+        &self,
+        agent_id: &str,
+        tool_name: &str,
+        enabled: bool,
+        workspace_id: &str,
+    ) -> Result<(), AgentError> {
         self.verify_agent_workspace(agent_id, workspace_id).await?;
         let agent_id = agent_id.to_string();
         let tool_name = tool_name.to_string();
@@ -683,7 +759,8 @@ impl AgentClient for AgentRuntimeImpl {
             disabled_list.push(tool_name);
         }
 
-        let new_overrides = serde_json::json!({ "enabled": enabled_list, "disabled": disabled_list });
+        let new_overrides =
+            serde_json::json!({ "enabled": enabled_list, "disabled": disabled_list });
 
         sqlx::query(
             "INSERT INTO agent_tools (agent_id, tool_overrides, updated_at)
@@ -800,12 +877,14 @@ async fn build_dynamic_catalog() -> serde_json::Value {
     let groups_vec: Vec<serde_json::Value> = group_order
         .into_iter()
         .filter_map(|(id, label)| {
-            groups.get(id).map(|tools| serde_json::json!({
-                "id": id,
-                "label": label,
-                "source": "core",
-                "tools": tools,
-            }))
+            groups.get(id).map(|tools| {
+                serde_json::json!({
+                    "id": id,
+                    "label": label,
+                    "source": "core",
+                    "tools": tools,
+                })
+            })
         })
         .collect();
 
@@ -835,8 +914,12 @@ pub struct CanvasTool;
 
 #[async_trait]
 impl Tool for CanvasTool {
-    fn name(&self) -> &str { "canvas" }
-    fn description(&self) -> &str { "Push A2UI UI components to frontend. jsonl must be a string with TWO lines: Line1={\"createSurface\":{\"id\":\"<id>\",\"surfaceKind\":\"inline\"}}, Line2={\"updateComponents\":{\"components\":[{\"id\":\"<id>\",\"componentKind\":\"DeviceCard\",\"dataModel\":{...}}]}}. Example: canvas(toolCallId, {action:\"a2ui_push\",jsonl:JSON.stringify({createSurface:{id:\"s1\",surfaceKind:\"inline\"}})+\"\\n\"+JSON.stringify({updateComponents:{components:[{id:\"c1\",componentKind:\"DeviceCard\",dataModel:{deviceId:\"d1\",name:\"Device\",status:\"online\",properties:[]}}]}})})" }
+    fn name(&self) -> &str {
+        "canvas"
+    }
+    fn description(&self) -> &str {
+        "Push A2UI UI components to frontend. jsonl must be a string with TWO lines: Line1={\"createSurface\":{\"id\":\"<id>\",\"surfaceKind\":\"inline\"}}, Line2={\"updateComponents\":{\"components\":[{\"id\":\"<id>\",\"componentKind\":\"DeviceCard\",\"dataModel\":{...}}]}}. Example: canvas(toolCallId, {action:\"a2ui_push\",jsonl:JSON.stringify({createSurface:{id:\"s1\",surfaceKind:\"inline\"}})+\"\\n\"+JSON.stringify({updateComponents:{components:[{id:\"c1\",componentKind:\"DeviceCard\",dataModel:{deviceId:\"d1\",name:\"Device\",status:\"online\",properties:[]}}]}})})"
+    }
     fn parameters_schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
@@ -851,9 +934,17 @@ impl Tool for CanvasTool {
         let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("");
         let jsonl = args.get("jsonl").and_then(|v| v.as_str()).unwrap_or("");
         if action == "a2ui_push" {
-            Ok(ToolResult { success: true, output: format!("A2UI pushed: {} bytes", jsonl.len()), error: None })
+            Ok(ToolResult {
+                success: true,
+                output: format!("A2UI pushed: {} bytes", jsonl.len()),
+                error: None,
+            })
         } else {
-            Ok(ToolResult { success: false, output: String::new(), error: Some("Unknown action".into()) })
+            Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some("Unknown action".into()),
+            })
         }
     }
 }
@@ -870,28 +961,39 @@ pub struct IoTToolAdapter {
 }
 
 impl IoTToolAdapter {
-    pub fn new(name: String, description: String, input_schema: serde_json::Value, handler: Arc<dyn ToolHandler>) -> Self {
+    pub fn new(
+        name: String,
+        description: String,
+        input_schema: serde_json::Value,
+        handler: Arc<dyn ToolHandler>,
+    ) -> Self {
         Self { name, description, input_schema, handler }
     }
 }
 
 #[async_trait]
 impl Tool for IoTToolAdapter {
-    fn name(&self) -> &str { &self.name }
-    fn description(&self) -> &str { &self.description }
-    fn parameters_schema(&self) -> serde_json::Value { self.input_schema.clone() }
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn description(&self) -> &str {
+        &self.description
+    }
+    fn parameters_schema(&self) -> serde_json::Value {
+        self.input_schema.clone()
+    }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         tracing::info!("Executing IoT tool: {} with args: {}", self.name, args);
         match self.handler.execute(args).await {
             Ok(output) => {
                 let output_str = serde_json::to_string(&output).unwrap_or_default();
-                tracing::info!("IoT tool {} succeeded: output length = {}", self.name, output_str.len());
-                Ok(ToolResult {
-                    success: true,
-                    output: output_str,
-                    error: None,
-                })
+                tracing::info!(
+                    "IoT tool {} succeeded: output length = {}",
+                    self.name,
+                    output_str.len()
+                );
+                Ok(ToolResult { success: true, output: output_str, error: None })
             }
             Err(err) => {
                 tracing::error!("IoT tool {} failed: {}", self.name, err);
@@ -906,9 +1008,15 @@ impl Tool for IoTToolAdapter {
 }
 
 impl IoTToolMetadata for IoTToolAdapter {
-    fn name(&self) -> &str { &self.name }
-    fn description(&self) -> &str { &self.description }
-    fn input_schema(&self) -> serde_json::Value { self.input_schema.clone() }
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn description(&self) -> &str {
+        &self.description
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        self.input_schema.clone()
+    }
 
     fn is_concurrency_safe(&self, _input: &serde_json::Value) -> bool {
         name_infers_concurrency_safe(&self.name)

@@ -6,8 +6,8 @@ use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 
-use tinyiothub_core::models::device::DeviceStatus;
 use tinyiothub_core::models::device::Device;
+use tinyiothub_core::models::device::DeviceStatus;
 
 /// 设备健康状态
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,8 +54,7 @@ impl HealthStatus {
         if self.total_successes == 1 {
             self.average_response_time = response_time;
         } else {
-            let total_time = self.average_response_time.as_millis() as u64
-                * (self.total_successes - 1)
+            let total_time = self.average_response_time.as_millis() as u64 * (self.total_successes - 1)
                 + response_time.as_millis() as u64;
             self.average_response_time = Duration::from_millis(total_time / self.total_successes);
         }
@@ -136,7 +135,9 @@ pub struct DeviceStatusManager {
 
 impl DeviceStatusManager {
     pub fn new(device: &Device) -> Self {
-        Self { overview: DeviceOverview::new(device) }
+        Self {
+            overview: DeviceOverview::new(device),
+        }
     }
 
     pub fn get_connection_status(&self) -> DeviceStatus {

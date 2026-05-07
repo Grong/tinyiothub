@@ -55,7 +55,10 @@ pub async fn create_pool_with_harmonyos(
 }
 
 pub async fn create_pool_from_url(database_url: &str) -> Result<SqlitePool, sqlx::Error> {
-    let config = DatabaseConfig { url: database_url.to_string(), ..Default::default() };
+    let config = DatabaseConfig {
+        url: database_url.to_string(),
+        ..Default::default()
+    };
 
     create_pool(&config).await
 }

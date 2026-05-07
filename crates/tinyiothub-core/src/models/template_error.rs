@@ -50,7 +50,9 @@ pub enum TemplateError {
 #[cfg(feature = "sqlx")]
 impl From<sqlx::Error> for TemplateError {
     fn from(err: sqlx::Error) -> Self {
-        TemplateError::DatabaseError { message: err.to_string() }
+        TemplateError::DatabaseError {
+            message: err.to_string(),
+        }
     }
 }
 
@@ -114,17 +116,29 @@ pub struct ValidationResult {
 impl ValidationResult {
     /// 创建成功的验证结果
     pub fn success() -> Self {
-        Self { is_valid: true, errors: Vec::new(), warnings: Vec::new() }
+        Self {
+            is_valid: true,
+            errors: Vec::new(),
+            warnings: Vec::new(),
+        }
     }
 
     /// 创建失败的验证结果
     pub fn failure(errors: Vec<ValidationError>) -> Self {
-        Self { is_valid: false, errors, warnings: Vec::new() }
+        Self {
+            is_valid: false,
+            errors,
+            warnings: Vec::new(),
+        }
     }
 
     /// 创建带警告的成功验证结果
     pub fn success_with_warnings(warnings: Vec<ValidationWarning>) -> Self {
-        Self { is_valid: true, errors: Vec::new(), warnings }
+        Self {
+            is_valid: true,
+            errors: Vec::new(),
+            warnings,
+        }
     }
 
     /// 添加错误
@@ -244,26 +258,30 @@ impl ValidationWarning {
 impl From<TemplateError> for ApiError {
     fn from(err: TemplateError) -> Self {
         match err {
-            TemplateError::TemplateNotFound { .. } => {
-                ApiError::NotFound { resource: "设备模板".to_string() }
-            }
-            TemplateError::ValidationFailed { .. } => {
-                ApiError::BadRequest { message: err.to_string() }
-            }
-            TemplateError::JsonFormatError { .. } => {
-                ApiError::BadRequest { message: err.to_string() }
-            }
-            TemplateError::InvalidUserInput { .. } => {
-                ApiError::BadRequest { message: err.to_string() }
-            }
-            TemplateError::TemplateNameExists { .. } => {
-                ApiError::Conflict { message: err.to_string() }
-            }
-            TemplateError::CategoryNotFound { .. } => {
-                ApiError::BadRequest { message: err.to_string() }
-            }
-            TemplateError::TemplateInUse { .. } => ApiError::Conflict { message: err.to_string() },
-            _ => ApiError::InternalServerError { message: err.to_string() },
+            TemplateError::TemplateNotFound { .. } => ApiError::NotFound {
+                resource: "设备模板".to_string(),
+            },
+            TemplateError::ValidationFailed { .. } => ApiError::BadRequest {
+                message: err.to_string(),
+            },
+            TemplateError::JsonFormatError { .. } => ApiError::BadRequest {
+                message: err.to_string(),
+            },
+            TemplateError::InvalidUserInput { .. } => ApiError::BadRequest {
+                message: err.to_string(),
+            },
+            TemplateError::TemplateNameExists { .. } => ApiError::Conflict {
+                message: err.to_string(),
+            },
+            TemplateError::CategoryNotFound { .. } => ApiError::BadRequest {
+                message: err.to_string(),
+            },
+            TemplateError::TemplateInUse { .. } => ApiError::Conflict {
+                message: err.to_string(),
+            },
+            _ => ApiError::InternalServerError {
+                message: err.to_string(),
+            },
         }
     }
 }
@@ -301,11 +319,19 @@ pub struct ErrorResponse {
 
 impl ErrorResponse {
     pub fn new(error: &str, message: &str) -> Self {
-        Self { error: error.to_string(), message: message.to_string(), details: None }
+        Self {
+            error: error.to_string(),
+            message: message.to_string(),
+            details: None,
+        }
     }
 
     pub fn with_details(error: &str, message: &str, details: serde_json::Value) -> Self {
-        Self { error: error.to_string(), message: message.to_string(), details: Some(details) }
+        Self {
+            error: error.to_string(),
+            message: message.to_string(),
+            details: Some(details),
+        }
     }
 
     pub fn from_template_error(err: &TemplateError) -> Self {
@@ -322,14 +348,10 @@ impl ErrorResponse {
     pub fn from_api_error(err: &ApiError) -> Self {
         match err {
             ApiError::BadRequest { message } => Self::new("BAD_REQUEST", message),
-            ApiError::NotFound { resource } => {
-                Self::new("NOT_FOUND", &format!("{} 未找到", resource))
-            }
+            ApiError::NotFound { resource } => Self::new("NOT_FOUND", &format!("{} 未找到", resource)),
             ApiError::Forbidden => Self::new("FORBIDDEN", "权限不足"),
             ApiError::Conflict { message } => Self::new("CONFLICT", message),
-            ApiError::InternalServerError { message } => {
-                Self::new("INTERNAL_SERVER_ERROR", message)
-            }
+            ApiError::InternalServerError { message } => Self::new("INTERNAL_SERVER_ERROR", message),
             ApiError::TemplateError { source } => Self::from_template_error(source),
         }
     }

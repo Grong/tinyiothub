@@ -1,7 +1,7 @@
 // Event access control implementations
 use std::sync::Arc;
 
-use crate::modules::event::{entities::Event, value_objects::EventType, Result};
+use crate::modules::event::{Result, entities::Event, value_objects::EventType};
 
 /// Access control result
 #[derive(Debug, Clone, PartialEq)]
@@ -45,7 +45,7 @@ pub trait EventAccessControl: Send + Sync {
 
     /// Get user permissions for a resource type
     async fn get_user_permissions(&self, user_id: &str, resource_type: &str)
-        -> Result<Vec<String>>;
+    -> Result<Vec<String>>;
 }
 
 /// Role-based access control implementation

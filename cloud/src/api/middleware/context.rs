@@ -1,15 +1,15 @@
 use axum::{
+    Json,
     extract::{Request, State},
     http::{HeaderMap, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
-    Json,
 };
-use headers::{authorization::Bearer, Authorization, HeaderMapExt};
+use headers::{Authorization, HeaderMapExt, authorization::Bearer};
 
-use crate::{
-    shared::api_response::{ReqCtx, UserInfo},
-    shared::security::jwt::{validate_jwt, is_token_blacklisted_sync},
+use crate::shared::{
+    api_response::{ReqCtx, UserInfo},
+    security::jwt::{is_token_blacklisted_sync, validate_jwt},
 };
 
 /// Context middleware for request processing with Axum
@@ -24,7 +24,8 @@ pub async fn context_middleware(
     let path = request.uri().path().to_string();
 
     // Try to extract and validate JWT token
-    let user_info = extract_user_from_jwt(request.headers(), request.uri(), Some(&state.database)).unwrap_or_default();
+    let user_info = extract_user_from_jwt(request.headers(), request.uri(), Some(&state.database))
+        .unwrap_or_default();
 
     // Create context with user information
     let ctx = ReqCtx {
@@ -53,33 +54,35 @@ fn extract_bearer_token<'a>(headers: &'a HeaderMap, uri: &'a axum::http::Uri) ->
     for pair in query.split('&') {
         let mut parts = pair.splitn(2, '=');
         if parts.next() == Some("token")
-            && let Some(val) = parts.next() {
-                return Some(val.to_string());
-            }
+            && let Some(val) = parts.next()
+        {
+            return Some(val.to_string());
+        }
     }
     None
 }
 
 /// Extract user information from JWT token in headers or query string
-fn extract_user_from_jwt(headers: &HeaderMap, uri: &axum::http::Uri, db: Option<&crate::shared::persistence::Database>) -> Option<UserInfo> {
+fn extract_user_from_jwt(
+    headers: &HeaderMap,
+    uri: &axum::http::Uri,
+    db: Option<&crate::shared::persistence::Database>,
+) -> Option<UserInfo> {
     let token = extract_bearer_token(headers, uri)?;
 
     // Check token blacklist if DB is available
     if let Some(database) = db
-        && is_token_blacklisted_sync(database, &token) {
-            tracing::warn!("Rejected blacklisted token");
-            return None;
-        }
+        && is_token_blacklisted_sync(database, &token)
+    {
+        tracing::warn!("Rejected blacklisted token");
+        return None;
+    }
 
     // Validate JWT token
     let claims = validate_jwt(&token).ok()?;
 
     // Convert claims to UserInfo
-    Some(UserInfo {
-        id: claims.user_id,
-        name: claims.username,
-        token_id: claims.token_id,
-    })
+    Some(UserInfo { id: claims.user_id, name: claims.username, token_id: claims.token_id })
 }
 
 /// JWT authentication middleware - requires valid JWT token

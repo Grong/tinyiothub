@@ -2,8 +2,7 @@
 
 use async_trait::async_trait;
 
-use crate::modules::plugin::integration::IntegrationRequest;
-use crate::shared::error::Error;
+use crate::{modules::plugin::integration::IntegrationRequest, shared::error::Error};
 
 #[async_trait]
 pub trait IntegrationHandler: Send + Sync {

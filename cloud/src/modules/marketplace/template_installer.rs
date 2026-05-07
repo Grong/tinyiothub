@@ -41,12 +41,13 @@ impl TemplateInstaller {
 
         // 3. Check version (if specified)
         if let Some(ver) = version
-            && template_meta.version != ver {
-                return Err(MarketplaceError::NotFound(format!(
-                    "Template {} version {}",
-                    template_id, ver
-                )));
-            }
+            && template_meta.version != ver
+        {
+            return Err(MarketplaceError::NotFound(format!(
+                "Template {} version {}",
+                template_id, ver
+            )));
+        }
 
         // 4. Download template file
         let temp_file = self.download_template(template_meta).await?;
