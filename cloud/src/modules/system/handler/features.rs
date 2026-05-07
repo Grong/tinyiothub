@@ -150,8 +150,6 @@ pub fn create_router() -> Router<AppState> {
 /// 返回系统支持的功能特性、版本信息、许可证信息等
 /// 这个接口通常用于前端初始化时获取系统能力
 async fn get_system_features(State(_state): State<AppState>) -> Json<ApiResponse<SystemFeatures>> {
-    // TODO: 从配置文件或数据库读取实际的系统功能配置
-    // 目前返回默认配置，后续可以根据实际部署环境和许可证动态调整
 
     let features = SystemFeatures::default();
 

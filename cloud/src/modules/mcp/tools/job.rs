@@ -501,9 +501,10 @@ impl ToolHandler for DeleteScheduleHandler {
             .await
             .map_err(|e| ToolError::Internal(format!("failed to delete schedule: {}", e)))?;
 
+        let workspace_id = existing.workspace_id.as_deref().unwrap_or("");
         let _ = state
             .cron_run_repo
-            .delete_by_job_id(&input.id)
+            .delete_by_job_id(&input.id, workspace_id)
             .await;
 
         Ok(serde_json::json!({

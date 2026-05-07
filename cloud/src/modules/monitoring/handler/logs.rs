@@ -49,15 +49,49 @@ pub fn create_router() -> Router<AppState> {
 
 /// 获取日志列表
 async fn get_logs(
-    State(_state): State<AppState>,
-    Query(_query): Query<LogQuery>,
+    State(state): State<AppState>,
+    Query(query): Query<LogQuery>,
     _claims: Claims,
 ) -> Json<ApiResponse<Vec<LogEntry>>> {
-    // TODO: 实现日志查询逻辑
-    tracing::info!("Getting logs with filters");
+    let levels = query.level.as_ref().map(|l| vec![l.to_lowercase()]);
+    let sources = query.source.as_ref().map(|s| vec![s.clone()]);
+    let limit = query.pagination.page_size.unwrap_or(50);
+    let offset = (query.pagination.page.unwrap_or(1).saturating_sub(1)) * limit;
 
-    let logs = vec![];
-    ApiResponseBuilder::success(logs)
+    match state
+        .trace_service
+        .find_all_traces(
+            levels.as_deref(),
+            sources.as_deref(),
+            query.device_id.as_deref(),
+            query.start_time.as_deref(),
+            query.end_time.as_deref(),
+            Some(limit),
+            Some(offset),
+        )
+        .await
+    {
+        Ok(traces) => {
+            let logs: Vec<LogEntry> = traces
+                .into_iter()
+                .map(|t| LogEntry {
+                    id: t.id,
+                    timestamp: chrono::DateTime::parse_from_rfc3339(&t.created_at)
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                        .unwrap_or_else(|_| chrono::Utc::now()),
+                    level: t.level.to_uppercase(),
+                    message: format!("{}: {}", t.title, t.message),
+                    source: t.source.unwrap_or_else(|| t.category),
+                    device_id: Some(t.device_id),
+                })
+                .collect();
+            ApiResponseBuilder::success(logs)
+        }
+        Err(e) => {
+            tracing::warn!("Failed to get logs: {}", e);
+            ApiResponseBuilder::success(vec![])
+        }
+    }
 }
 
 /// 获取日志级别列表

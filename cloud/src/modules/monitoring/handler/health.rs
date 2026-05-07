@@ -2,8 +2,17 @@ use crate::shared::security::jwt::Claims;
 use tinyiothub_web::response::ApiResponseBuilder;
 use axum::{extract::State, routing::get, Json, Router};
 use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
+use std::time::SystemTime;
 
 use crate::{shared::app_state::AppState, shared::api_response::ApiResponse};
+
+static START_TIME: OnceLock<SystemTime> = OnceLock::new();
+
+fn get_uptime_seconds() -> u64 {
+    let start = START_TIME.get_or_init(SystemTime::now);
+    start.elapsed().unwrap_or_default().as_secs()
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "snake_case")]
@@ -32,11 +41,20 @@ pub fn create_router() -> Router<AppState> {
 }
 
 /// 基础健康检查
-async fn get_health(State(_state): State<AppState>) -> Json<ApiResponse<HealthStatus>> {
+async fn get_health(State(state): State<AppState>) -> Json<ApiResponse<HealthStatus>> {
+    let db_status = sqlx::query("SELECT 1")
+        .fetch_optional(state.database().pool())
+        .await;
+
+    let status = match db_status {
+        Ok(_) => "healthy",
+        Err(_) => "degraded",
+    };
+
     let health = HealthStatus {
-        status: "healthy".to_string(),
+        status: status.to_string(),
         timestamp: chrono::Utc::now(),
-        uptime_seconds: 0, // TODO: 实现实际的运行时间计算
+        uptime_seconds: get_uptime_seconds(),
     };
 
     ApiResponseBuilder::success(health)
@@ -44,18 +62,50 @@ async fn get_health(State(_state): State<AppState>) -> Json<ApiResponse<HealthSt
 
 /// 详细健康状态
 async fn get_detailed_health(
-    State(_state): State<AppState>,
-    _claims: Claims,
+    State(state): State<AppState>,
+    claims: Claims,
 ) -> Json<ApiResponse<DetailedHealthStatus>> {
-    // TODO: 实现详细健康状态检查逻辑
+    let db_status = sqlx::query("SELECT 1")
+        .fetch_optional(state.database().pool())
+        .await;
+
+    let (overall_status, database_status) = match db_status {
+        Ok(_) => ("healthy", "connected"),
+        Err(_) => ("degraded", "disconnected"),
+    };
+
+    let workspace_id = if claims.workspace_id.is_empty() {
+        None
+    } else {
+        Some(claims.workspace_id.clone())
+    };
+
+    let device_service = match workspace_id {
+        Some(ref ws) => state.tenant_device_service(&Some(ws.clone())),
+        None => state.device_service.clone(),
+    };
+
+    let mut device_count = 0u32;
+    let mut active_device_count = 0u32;
+
+    match device_service.get_devices(&tinyiothub_core::models::device::DeviceQueryParams::default()).await {
+        Ok(devices) => {
+            device_count = devices.len() as u32;
+            active_device_count = devices.iter().filter(|d| d.status.is_online()).count() as u32;
+        }
+        Err(e) => {
+            tracing::warn!("Failed to get device counts for health check: {}", e);
+        }
+    }
+
     let detailed_health = DetailedHealthStatus {
-        overall_status: "healthy".to_string(),
+        overall_status: overall_status.to_string(),
         timestamp: chrono::Utc::now(),
-        uptime_seconds: 0,
-        database_status: "connected".to_string(),
+        uptime_seconds: get_uptime_seconds(),
+        database_status: database_status.to_string(),
         mqtt_status: "connected".to_string(),
-        device_count: 0,
-        active_device_count: 0,
+        device_count,
+        active_device_count,
         memory_usage_mb: 0,
         cpu_usage_percent: 0.0,
     };

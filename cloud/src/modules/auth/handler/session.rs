@@ -11,13 +11,7 @@ use crate::{
     modules::auth::types::{RefreshTokenResponse, UserInfo},
     shared::api_response::ApiResponse,
 };
-use crate::shared::security::jwt::Claims;
-
-#[derive(Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct RefreshRequest {
-    pub refresh_token: String,
-}
+use crate::shared::security::jwt::{Claims, generate_token};
 
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -54,18 +48,22 @@ async fn get_profile(State(state): State<AppState>, claims: Claims) -> Json<ApiR
 
 /// 刷新访问令牌
 async fn refresh_token(
-    State(_state): State<AppState>,
-    Json(_request): Json<RefreshRequest>,
+    claims: Claims,
 ) -> Json<ApiResponse<RefreshTokenResponse>> {
-    // TODO: 实现刷新令牌逻辑
-    // 在实际应用中，需要：
-    // 1. 验证 refresh_token 的有效性
-    // 2. 检查用户状态
-    // 3. 生成新的 access_token
-    // 4. 可选：生成新的 refresh_token
-
-    tracing::info!("Token refresh requested");
-    ApiResponseBuilder::error("刷新令牌功能暂未实现".to_string())
+    match generate_token(&claims.user_id, &claims.username, &claims.tenant_id, &claims.workspace_id) {
+        Ok(new_token) => {
+            tracing::info!("Token refreshed for user: {}", claims.user_id);
+            ApiResponseBuilder::success(RefreshTokenResponse {
+                access_token: new_token,
+                token_type: "Bearer".to_string(),
+                expires_in: 24 * 60 * 60,
+            })
+        }
+        Err(e) => {
+            tracing::error!("Failed to generate new token: {}", e);
+            ApiResponseBuilder::error("刷新令牌失败".to_string())
+        }
+    }
 }
 
 /// 验证会话有效性

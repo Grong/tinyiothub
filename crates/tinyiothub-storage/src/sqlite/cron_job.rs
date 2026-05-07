@@ -42,6 +42,7 @@ fn map_cron_job_row(row: &sqlx::sqlite::SqliteRow) -> std::result::Result<CronJo
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
         created_by: row.try_get("created_by")?,
+        workspace_id: row.try_get("workspace_id").ok(),
     })
 }
 
@@ -64,7 +65,7 @@ impl CronJobRepository for SqliteCronJobRepository {
     async fn find_by_id(&self, id: &str) -> Result<Option<CronJob>> {
         let row = sqlx::query(
             r#"
-            SELECT id, name, description, job_type, cron_expression, config,
+            SELECT id, workspace_id, name, description, job_type, cron_expression, config,
                    timeout_seconds, max_retries, is_enabled, is_running,
                    last_run_at, last_run_status, last_run_error, next_run_at,
                    run_count, success_count, fail_count,
@@ -82,7 +83,7 @@ impl CronJobRepository for SqliteCronJobRepository {
     async fn find_all(&self, query: &CronJobQuery) -> Result<Vec<CronJob>> {
         let mut builder = QueryBuilder::<sqlx::Sqlite>::new(
             r#"
-            SELECT id, name, description, job_type, cron_expression, config,
+            SELECT id, workspace_id, name, description, job_type, cron_expression, config,
                    timeout_seconds, max_retries, is_enabled, is_running,
                    last_run_at, last_run_status, last_run_error, next_run_at,
                    run_count, success_count, fail_count,
@@ -316,7 +317,7 @@ impl CronJobRepository for SqliteCronJobRepository {
     async fn find_due_jobs(&self) -> Result<Vec<CronJob>> {
         let mut builder = QueryBuilder::<sqlx::Sqlite>::new(
             r#"
-            SELECT id, name, description, job_type, cron_expression, config,
+            SELECT id, workspace_id, name, description, job_type, cron_expression, config,
                    timeout_seconds, max_retries, is_enabled, is_running,
                    last_run_at, last_run_status, last_run_error, next_run_at,
                    run_count, success_count, fail_count,

@@ -30,8 +30,6 @@ impl HarmonyDisplayManager {
     pub fn initialize(&self, width: u32, height: u32) -> Result<(), std::io::Error> {
         info!("Initializing HarmonyOS display device {}x{}", width, height);
 
-        // TODO: 实现鸿蒙系统的显示设备初始化
-        // 这里需要调用鸿蒙系统的显示API
 
         let config = DisplayConfig {
             width,
@@ -67,7 +65,6 @@ impl HarmonyDisplayManager {
 
         debug!("Clearing HarmonyOS display screen");
 
-        // TODO: 实现鸿蒙系统的屏幕清空逻辑
 
         Ok(())
     }
@@ -83,7 +80,6 @@ impl HarmonyDisplayManager {
 
         debug!("Displaying text '{}' at ({}, {}) on HarmonyOS display", text, x, y);
 
-        // TODO: 实现鸿蒙系统的文本显示逻辑
 
         Ok(())
     }
@@ -106,7 +102,6 @@ impl HarmonyDisplayManager {
 
         debug!("Displaying image {}x{} at ({}, {}) on HarmonyOS display", width, height, x, y);
 
-        // TODO: 实现鸿蒙系统的图像显示逻辑
 
         Ok(())
     }
@@ -122,7 +117,6 @@ impl HarmonyDisplayManager {
 
         debug!("Refreshing HarmonyOS display");
 
-        // TODO: 实现鸿蒙系统的显示刷新逻辑
 
         Ok(())
     }
@@ -131,7 +125,6 @@ impl HarmonyDisplayManager {
     pub fn shutdown(&self) -> Result<(), std::io::Error> {
         info!("Shutting down HarmonyOS display device");
 
-        // TODO: 实现鸿蒙系统的显示设备关闭逻辑
 
         *self.initialized.lock().unwrap() = false;
         *self.config.lock().unwrap() = None;

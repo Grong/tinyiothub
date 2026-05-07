@@ -22,6 +22,7 @@ pub trait RoleRepository: Send + Sync {
     async fn exists_by_name(&self, name: &str, workspace_id: Option<&str>) -> Result<bool>;
     async fn exists_by_name_exclude_id(&self, name: &str, exclude_id: &str, workspace_id: Option<&str>) -> Result<bool>;
     async fn find_by_ids(&self, ids: &[String]) -> Result<Vec<Role>>;
+    async fn find_roles_by_user_id(&self, user_id: &str) -> Result<Vec<Role>>;
     async fn is_administrator_role(&self, id: &str) -> Result<bool>;
     async fn find_with_filters(
         &self,
@@ -361,6 +362,23 @@ impl RoleRepository for SqliteRoleRepository {
         separated.push_unseparated(")");
 
         let rows = query.build_query_as::<RoleRow>().fetch_all(self.database.pool()).await?;
+
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    async fn find_roles_by_user_id(&self, user_id: &str) -> Result<Vec<Role>> {
+        let rows = sqlx::query_as::<_, RoleRow>(
+            r#"
+            SELECT r.id, r.name, r.description, r.is_administrator, r.workspace_id
+            FROM roles r
+            INNER JOIN user_roles ur ON r.id = ur.role_id
+            WHERE ur.user_id = ?
+            ORDER BY r.name
+            "#,
+        )
+        .bind(user_id)
+        .fetch_all(self.database.pool())
+        .await?;
 
         Ok(rows.into_iter().map(Into::into).collect())
     }

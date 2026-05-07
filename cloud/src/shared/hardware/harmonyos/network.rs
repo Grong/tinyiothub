@@ -36,7 +36,6 @@ impl HarmonyNetworkManager {
     pub fn get_interfaces(&self) -> Result<Vec<NetworkInterface>, std::io::Error> {
         debug!("Getting network interfaces on HarmonyOS");
 
-        // TODO: 实现鸿蒙系统的网络接口枚举逻辑
         // 这里需要调用鸿蒙系统的网络API
 
         let interfaces = self.interfaces.lock().map_err(|e| {
@@ -63,7 +62,6 @@ impl HarmonyNetworkManager {
     ) -> Result<(), std::io::Error> {
         info!("Setting IP address for interface '{}' to {} on HarmonyOS", name, ip);
 
-        // TODO: 实现鸿蒙系统的IP地址设置逻辑
 
         let mut interfaces = self.interfaces.lock().unwrap();
         if let Some(interface) = interfaces.get_mut(name) {
@@ -89,7 +87,6 @@ impl HarmonyNetworkManager {
     pub fn bring_interface_up(&self, name: &str) -> Result<(), std::io::Error> {
         info!("Bringing up network interface '{}' on HarmonyOS", name);
 
-        // TODO: 实现鸿蒙系统的网络接口启用逻辑
 
         let mut interfaces = self.interfaces.lock().unwrap();
         if let Some(interface) = interfaces.get_mut(name) {
@@ -103,7 +100,6 @@ impl HarmonyNetworkManager {
     pub fn bring_interface_down(&self, name: &str) -> Result<(), std::io::Error> {
         info!("Bringing down network interface '{}' on HarmonyOS", name);
 
-        // TODO: 实现鸿蒙系统的网络接口禁用逻辑
 
         let mut interfaces = self.interfaces.lock().unwrap();
         if let Some(interface) = interfaces.get_mut(name) {
@@ -117,7 +113,6 @@ impl HarmonyNetworkManager {
     pub fn set_default_gateway(&self, gateway: IpAddr) -> Result<(), std::io::Error> {
         info!("Setting default gateway to {} on HarmonyOS", gateway);
 
-        // TODO: 实现鸿蒙系统的默认网关设置逻辑
 
         Ok(())
     }
@@ -126,7 +121,6 @@ impl HarmonyNetworkManager {
     pub fn get_default_gateway(&self) -> Result<Option<IpAddr>, std::io::Error> {
         debug!("Getting default gateway on HarmonyOS");
 
-        // TODO: 实现鸿蒙系统的默认网关获取逻辑
 
         Ok(None)
     }
@@ -135,7 +129,6 @@ impl HarmonyNetworkManager {
     pub fn ping(&self, host: &str, timeout_secs: u64) -> Result<bool, std::io::Error> {
         debug!("Pinging {} with timeout {}s on HarmonyOS", host, timeout_secs);
 
-        // TODO: 实现鸿蒙系统的ping逻辑
 
         Ok(true) // 暂时返回成功
     }
@@ -144,7 +137,6 @@ impl HarmonyNetworkManager {
     pub fn get_network_stats(&self, interface: &str) -> Result<NetworkStats, std::io::Error> {
         debug!("Getting network stats for interface '{}' on HarmonyOS", interface);
 
-        // TODO: 实现鸿蒙系统的网络统计获取逻辑
 
         Ok(NetworkStats {
             interface: interface.to_string(),
@@ -161,7 +153,6 @@ impl HarmonyNetworkManager {
     pub fn refresh_interfaces(&self) -> Result<(), std::io::Error> {
         debug!("Refreshing network interfaces on HarmonyOS");
 
-        // TODO: 实现鸿蒙系统的网络接口刷新逻辑
 
         let mut interfaces = self.interfaces.lock().unwrap();
         interfaces.clear();

@@ -348,7 +348,19 @@ pub async fn get_user_audit_logs(
                     return false;
                 }
 
-            // TODO: Add time range filtering when we have proper DateTime parsing
+            // Filter by time range
+            if let Some(start_time) = params.start_time {
+                let start_str = start_time.format("%Y-%m-%d %H:%M:%S").to_string();
+                if entry.created_at < start_str {
+                    return false;
+                }
+            }
+            if let Some(end_time) = params.end_time {
+                let end_str = end_time.format("%Y-%m-%d %H:%M:%S").to_string();
+                if entry.created_at > end_str {
+                    return false;
+                }
+            }
 
             true
         })
@@ -673,8 +685,26 @@ pub async fn update_security_config(
         config.audit_retention_days = audit_retention_days;
     }
 
-    // TODO: In a full implementation, we would persist the configuration changes to database
-    // For now, we'll just return the updated configuration
+    // Persist configuration changes to database
+    let config_json = match serde_json::to_string(&config) {
+        Ok(json) => json,
+        Err(e) => {
+            tracing::error!("Failed to serialize security config: {}", e);
+            return ApiResponseBuilder::error("配置序列化失败");
+        }
+    };
+
+    match sqlx::query(
+        "INSERT INTO system_settings (key, value, updated_at) VALUES ('event_security_config', ?, datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+    )
+    .bind(config_json)
+    .execute(state.database.pool())
+    .await
+    {
+        Ok(_) => tracing::info!("Security configuration persisted to database"),
+        Err(e) => tracing::warn!("Failed to persist security config: {}", e),
+    }
 
     let response = SecurityConfigResponse {
         enable_rbac: config.enable_rbac,

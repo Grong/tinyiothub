@@ -47,13 +47,41 @@ async fn list_permissions(
 
 /// 获取用户权限
 async fn get_user_permissions(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(user_id): Path<String>,
     _claims: Claims,
 ) -> Json<ApiResponse<Vec<UserPermission>>> {
-    // TODO: 实现获取用户权限逻辑
-    tracing::info!("Getting permissions for user: {}", user_id);
+    let mut user_permissions: Vec<UserPermission> = vec![];
 
-    let permissions = vec![];
-    ApiResponseBuilder::success(permissions)
+    match state.role_service.find_roles_by_user_id(&user_id).await {
+        Ok(roles) => {
+            for role in roles {
+                match state.role_service.get_permissions(&role.id).await {
+                    Ok(permission_ids) => {
+                        for permission_id in permission_ids {
+                            if let Ok(Some(permission)) = state.permission_service.find_permission_by_id(&permission_id).await {
+                                user_permissions.push(UserPermission {
+                                    permission_id: permission.id.clone(),
+                                    permission_name: permission.name.clone(),
+                                    resource: permission.resource_type.clone(),
+                                    action: permission.action_type.clone(),
+                                    granted_by_role: true,
+                                    granted_directly: false,
+                                });
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to get permissions for role {}: {}", role.id, e);
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Failed to get roles for user {}: {}", user_id, e);
+        }
+    }
+
+    tracing::info!("Retrieved {} permissions for user: {}", user_permissions.len(), user_id);
+    ApiResponseBuilder::success(user_permissions)
 }

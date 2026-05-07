@@ -2,6 +2,7 @@
 // Manages Server-Sent Events (SSE) connections and event distribution
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::response::Response;
 use serde::{Deserialize, Serialize};
@@ -19,12 +20,17 @@ use crate::{
 pub struct SseConnectionManager {
     /// SSE notification channel for managing connections
     sse_channel: Arc<SseNotificationChannel>,
+    /// Total events sent counter
+    events_sent: AtomicU64,
 }
 
 impl SseConnectionManager {
     /// Create a new SSE connection manager
     pub fn new() -> Self {
-        Self { sse_channel: Arc::new(SseNotificationChannel::new()) }
+        Self {
+            sse_channel: Arc::new(SseNotificationChannel::new()),
+            events_sent: AtomicU64::new(0),
+        }
     }
 
     /// Create an authenticated SSE connection
@@ -132,6 +138,8 @@ impl SseConnectionManager {
 
         if let Err(e) = self.sse_channel.broadcast(sse_message).await {
             error!("Failed to broadcast event: {}", e);
+        } else {
+            self.events_sent.fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -156,6 +164,8 @@ impl SseConnectionManager {
 
         if let Err(e) = self.sse_channel.send_to_user(user_id, sse_message).await {
             error!("Failed to send event to user {}: {}", user_id, e);
+        } else {
+            self.events_sent.fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -166,7 +176,7 @@ impl SseConnectionManager {
         SseOverview {
             total_connections: connection_count,
             active_connections: connection_count,
-            total_events_sent: 0, // TODO: Implement event counter
+            total_events_sent: self.events_sent.load(Ordering::Relaxed),
             average_latency_ms: 0.0,
         }
     }

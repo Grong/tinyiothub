@@ -151,13 +151,28 @@ impl AlarmService {
 
     pub async fn check_auto_resolution(&self) -> AlarmResult<usize> {
         let active_alarms = self.alarm_repository.find_active(None).await?;
-        let resolved_count = 0;
+        let mut auto_resolve_ids: Vec<String> = Vec::new();
 
-        for _alarm in active_alarms {
-            // TODO: 实现自动解决逻辑
+        let now = Utc::now();
+        for alarm in active_alarms {
+            // Auto-resolve alarms older than 24 hours
+            let age = now.signed_duration_since(alarm.created_at);
+            if age.num_hours() >= 24 {
+                auto_resolve_ids.push(alarm.id);
+            }
         }
 
-        Ok(resolved_count)
+        if auto_resolve_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let count = self
+            .alarm_repository
+            .batch_update_status(&auto_resolve_ids, AlarmStatus::Resolved)
+            .await?;
+
+        tracing::info!("Auto-resolved {} alarms", count);
+        Ok(count)
     }
 
     // 规则管理方法

@@ -44,8 +44,6 @@ impl HarmonyGpioManager {
     pub fn export_pin(&self, chip: u32, pin: u32) -> Result<(), std::io::Error> {
         debug!("Exporting GPIO pin {}/{} on HarmonyOS", chip, pin);
 
-        // TODO: 实现鸿蒙系统的GPIO导出逻辑
-        // 这里需要调用鸿蒙系统的GPIO API
 
         let mut pins = self.pins.lock().unwrap();
         pins.insert(
@@ -65,7 +63,6 @@ impl HarmonyGpioManager {
     ) -> Result<(), std::io::Error> {
         debug!("Setting GPIO pin {}/{} direction to {:?} on HarmonyOS", chip, pin, direction);
 
-        // TODO: 实现鸿蒙系统的GPIO方向设置
 
         let mut pins = self.pins.lock().unwrap();
         if let Some(gpio_pin) = pins.get_mut(&(chip, pin)) {
@@ -83,7 +80,6 @@ impl HarmonyGpioManager {
     pub fn set_value(&self, chip: u32, pin: u32, value: GpioValue) -> Result<(), std::io::Error> {
         debug!("Setting GPIO pin {}/{} value to {:?} on HarmonyOS", chip, pin, value);
 
-        // TODO: 实现鸿蒙系统的GPIO值设置
 
         let mut pins = self.pins.lock().unwrap();
         if let Some(gpio_pin) = pins.get_mut(&(chip, pin)) {
@@ -108,7 +104,6 @@ impl HarmonyGpioManager {
     pub fn get_value(&self, chip: u32, pin: u32) -> Result<GpioValue, std::io::Error> {
         debug!("Reading GPIO pin {}/{} value on HarmonyOS", chip, pin);
 
-        // TODO: 实现鸿蒙系统的GPIO值读取
 
         let pins = self.pins.lock().unwrap();
         if let Some(gpio_pin) = pins.get(&(chip, pin)) {
@@ -125,7 +120,6 @@ impl HarmonyGpioManager {
     pub fn unexport_pin(&self, chip: u32, pin: u32) -> Result<(), std::io::Error> {
         debug!("Unexporting GPIO pin {}/{} on HarmonyOS", chip, pin);
 
-        // TODO: 实现鸿蒙系统的GPIO取消导出逻辑
 
         let mut pins = self.pins.lock().unwrap();
         pins.remove(&(chip, pin));

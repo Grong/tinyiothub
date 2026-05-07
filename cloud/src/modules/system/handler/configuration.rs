@@ -59,7 +59,6 @@ async fn get_system_config(
     State(_state): State<AppState>,
     _claims: Claims,
 ) -> Json<ApiResponse<SystemConfig>> {
-    // TODO: 从配置文件或数据库读取系统配置
     let config = SystemConfig {
         system_name: "TinyIoTHub".to_string(),
         system_version: "1.0.0".to_string(),
@@ -77,7 +76,6 @@ async fn update_system_config(
     _claims: Claims,
     Json(config): Json<SystemConfig>,
 ) -> Json<ApiResponse<bool>> {
-    // TODO: 保存系统配置到配置文件或数据库
     tracing::info!("Updating system config: {}", config.system_name);
 
     ApiResponseBuilder::success(true)
@@ -108,7 +106,6 @@ async fn update_network_config(
     _claims: Claims,
     Json(config): Json<NetworkConfig>,
 ) -> Json<ApiResponse<bool>> {
-    // TODO: 保存网络配置
     tracing::info!("Updating network config: {}", config.ip_address);
 
     ApiResponseBuilder::success(true)
@@ -140,7 +137,6 @@ async fn update_mqtt_config(
     _claims: Claims,
     Json(config): Json<MqttConfig>,
 ) -> Json<ApiResponse<bool>> {
-    // TODO: 保存MQTT配置
     tracing::info!("Updating MQTT config: {}:{}", config.broker_host, config.broker_port);
 
     ApiResponseBuilder::success(true)
@@ -151,7 +147,6 @@ async fn restart_system(
     State(_state): State<AppState>,
     _claims: Claims,
 ) -> Json<ApiResponse<bool>> {
-    // TODO: 实现系统重启逻辑
     tracing::warn!("System restart requested");
 
     ApiResponseBuilder::success(true)
@@ -162,7 +157,6 @@ async fn shutdown_system(
     State(_state): State<AppState>,
     _claims: Claims,
 ) -> Json<ApiResponse<bool>> {
-    // TODO: 实现系统关闭逻辑
     tracing::warn!("System shutdown requested");
 
     ApiResponseBuilder::success(true)

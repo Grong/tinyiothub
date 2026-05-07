@@ -1,4 +1,3 @@
-use sqlx::Row;
 use tinyiothub_core::error::{Error, Result};
 use tinyiothub_core::now_string;
 
@@ -231,6 +230,66 @@ impl DeviceTraceRepository {
             Ok(result) => Ok(result.rows_affected() as u32),
             Err(e) => Err(Error::IOError(format!("Failed to cleanup traces: {}", e))),
         }
+    }
+
+    /// 查询所有追踪记录（支持系统级日志查询）
+    pub async fn find_all_traces(
+        &self,
+        levels: Option<&[String]>,
+        sources: Option<&[String]>,
+        device_id: Option<&str>,
+        start_time: Option<&str>,
+        end_time: Option<&str>,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<DeviceTrace>> {
+        let mut query = "SELECT id, device_id, trace_type, level, category, title, message, details, source, user_id, session_id, created_at FROM device_traces WHERE 1=1".to_string();
+        let mut bind_values: Vec<String> = Vec::new();
+
+        if let Some(did) = device_id {
+            query.push_str(" AND device_id = ?");
+            bind_values.push(did.to_string());
+        }
+
+        if let Some(lvls) = levels {
+            if !lvls.is_empty() {
+                let placeholders = lvls.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                query.push_str(&format!(" AND level IN ({})", placeholders));
+                bind_values.extend(lvls.iter().cloned());
+            }
+        }
+
+        if let Some(srcs) = sources {
+            if !srcs.is_empty() {
+                let placeholders = srcs.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                query.push_str(&format!(" AND source IN ({})", placeholders));
+                bind_values.extend(srcs.iter().cloned());
+            }
+        }
+
+        if let Some(start) = start_time {
+            query.push_str(" AND created_at >= ?");
+            bind_values.push(start.to_string());
+        }
+
+        if let Some(end) = end_time {
+            query.push_str(" AND created_at <= ?");
+            bind_values.push(end.to_string());
+        }
+
+        query.push_str(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
+        bind_values.push(limit.to_string());
+        bind_values.push(offset.to_string());
+
+        let query_builder = bind_values.iter().fold(
+            sqlx::query_as::<_, DeviceTrace>(sqlx::AssertSqlSafe(query)),
+            |qb, value| qb.bind(value),
+        );
+
+        query_builder
+            .fetch_all(self.database.pool())
+            .await
+            .map_err(|e| Error::IOError(format!("Failed to get traces: {}", e)))
     }
 
     /// 获取系统追踪概览

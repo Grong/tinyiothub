@@ -70,6 +70,10 @@ impl RoleService {
         self.role_repository.find_by_ids(ids).await
     }
 
+    pub async fn find_roles_by_user_id(&self, user_id: &str) -> Result<Vec<Role>> {
+        self.role_repository.find_roles_by_user_id(user_id).await
+    }
+
     pub async fn is_administrator_role(&self, id: &str) -> Result<bool> {
         self.role_repository.is_administrator_role(id).await
     }

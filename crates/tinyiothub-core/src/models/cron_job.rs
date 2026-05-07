@@ -24,6 +24,7 @@ pub struct CronJob {
     pub created_at: String,
     pub updated_at: String,
     pub created_by: Option<String>,
+    pub workspace_id: Option<String>,
 }
 
 impl CronJob {
@@ -105,6 +106,7 @@ pub struct UpdateCronJobRequest {
 pub struct CronRun {
     pub id: String,
     pub job_id: String,
+    pub workspace_id: String,
     pub started_at: String,
     pub ended_at: Option<String>,
     pub duration_ms: Option<i64>,
@@ -121,6 +123,7 @@ pub struct CronRun {
 #[serde(rename_all = "snake_case")]
 pub struct CronRunQuery {
     pub job_id: Option<String>,
+    pub workspace_id: Option<String>,
     pub status: Option<String>,
     pub trigger_type: Option<String>,
     pub page: Option<u32>,
@@ -168,6 +171,7 @@ mod tests {
             created_at: "2026-04-18 08:00:00".to_string(),
             updated_at: "2026-04-18 08:00:00".to_string(),
             created_by: Some("admin".to_string()),
+            workspace_id: None,
         };
 
         assert_eq!(job.target_device_id(), Some("dev-123".to_string()));
@@ -198,6 +202,7 @@ mod tests {
             created_at: "2026-04-18 08:00:00".to_string(),
             updated_at: "2026-04-18 08:00:00".to_string(),
             created_by: None,
+            workspace_id: None,
         };
 
         assert_eq!(job.target_device_id(), Some("dev-456".to_string()));
@@ -231,6 +236,7 @@ mod tests {
             created_at: "2026-04-18 08:00:00".to_string(),
             updated_at: "2026-04-18 08:00:00".to_string(),
             created_by: None,
+            workspace_id: None,
         };
 
         assert_eq!(job.target_device_id(), None);
@@ -261,6 +267,7 @@ mod tests {
             created_at: "2026-04-18 08:00:00".to_string(),
             updated_at: "2026-04-18 08:00:00".to_string(),
             created_by: None,
+            workspace_id: None,
         };
 
         assert_eq!(job.target_device_id(), None);
@@ -312,6 +319,7 @@ mod tests {
         let run = CronRun {
             id: "run-001".to_string(),
             job_id: "job-001".to_string(),
+            workspace_id: "ws-test".to_string(),
             started_at: "2026-04-18 08:00:00".to_string(),
             ended_at: Some("2026-04-18 08:00:05".to_string()),
             duration_ms: Some(5000),

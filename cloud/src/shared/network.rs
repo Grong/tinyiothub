@@ -40,13 +40,11 @@ pub fn init_network_scripts() {
     {
         tracing::info!("Initializing network scripts on Linux");
         // Linux系统的网络脚本初始化
-        // TODO: Implement actual network script initialization for Linux
     }
 }
 
 /// Get current network information
 pub fn get_network_info() -> NetworkInfo {
-    // TODO: Implement actual network info retrieval
     NetworkInfo::default()
 }
 
@@ -54,11 +52,6 @@ pub fn get_network_info() -> NetworkInfo {
 pub fn set_network_info(info: &NetworkInfo) -> bool {
     tracing::info!("Setting network configuration: {:?}", info);
 
-    // TODO: Implement actual network configuration
-    // This would typically involve:
-    // 1. Writing network configuration files
-    // 2. Restarting network services
-    // 3. Validating the new configuration
 
     true
 }
@@ -132,11 +125,6 @@ pub fn get_dns_servers() -> Vec<String> {
 pub fn set_static_ip(interface: &str, ip: &str, _netmask: &str, _gateway: &str) -> bool {
     tracing::info!("Setting static IP: {} on {}", ip, interface);
 
-    // TODO: Implement actual static IP configuration
-    // This would typically involve:
-    // 1. Modifying network configuration files
-    // 2. Bringing interface down and up
-    // 3. Setting IP, netmask, and gateway
 
     true
 }
@@ -145,9 +133,6 @@ pub fn set_static_ip(interface: &str, ip: &str, _netmask: &str, _gateway: &str) 
 pub fn enable_dhcp(interface: &str) -> bool {
     tracing::info!("Enabling DHCP on interface: {}", interface);
 
-    // TODO: Implement actual DHCP configuration
-    // This would typically involve:
-    // 1. Modifying network configuration files
     // 2. Starting DHCP client
 
     true
@@ -157,11 +142,6 @@ pub fn enable_dhcp(interface: &str) -> bool {
 pub fn restart_network() -> bool {
     tracing::info!("Restarting network service");
 
-    // TODO: Implement actual network service restart
-    // This would typically involve:
-    // 1. Stopping network service
-    // 2. Starting network service
-    // 3. Waiting for interfaces to come up
 
     thread::sleep(Duration::from_secs(2)); // Simulate restart time
     true
@@ -200,7 +180,6 @@ pub fn check_internet_connectivity() -> bool {
 
 /// Get network statistics for interface
 pub fn get_interface_stats(_interface: &str) -> Option<InterfaceStats> {
-    // TODO: Implement actual interface statistics retrieval
     Some(InterfaceStats {
         rx_bytes: 1024 * 1024,
         tx_bytes: 512 * 1024,

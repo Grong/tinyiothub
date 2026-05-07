@@ -170,9 +170,11 @@ async fn execute_job(
         return Ok(());
     }
 
+    let workspace_id = job.workspace_id.as_deref().unwrap_or("");
+
     // Create run record
     let run = match run_repo
-        .create(&job.id, "schedule", None)
+        .create(&job.id, workspace_id, "schedule", None)
         .await
     {
         Ok(r) => r,
@@ -215,6 +217,7 @@ async fn execute_job(
             if let Err(e) = run_repo
                 .complete(
                     &run_id,
+                    workspace_id,
                     &res.status,
                     res.output.as_deref(),
                     res.error_message.as_deref(),
@@ -249,7 +252,7 @@ async fn execute_job(
                 _ => "failed",
             };
             if let Err(e) = run_repo
-                .complete(&run_id, status, None, Some(&err_msg), duration_ms)
+                .complete(&run_id, workspace_id, status, None, Some(&err_msg), duration_ms)
                 .await
             {
                 error!("Failed to complete run {}: {}", run_id, e);
