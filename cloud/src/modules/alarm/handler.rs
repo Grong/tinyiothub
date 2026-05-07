@@ -115,9 +115,9 @@ async fn list_alarms(
 async fn get_alarm(
     Path(id): Path<String>,
     State(state): State<AppState>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<AlarmDto>> {
-    match state.alarm_service.get_alarm_by_id(&id).await {
+    match state.alarm_service.get_alarm_by_id(&id, Some(&claims.workspace_id)).await {
         Ok(Some(alarm)) => ApiResponseBuilder::success(AlarmDto::from(alarm)),
         Ok(None) => ApiResponseBuilder::error_with_code(ErrorCode::NotFound.as_i32(), "报警不存在"),
         Err(e) => ApiResponseBuilder::error(format!("获取报警失败: {}", e)),
@@ -555,7 +555,7 @@ async fn update_alarm_rule(
         return ApiResponseBuilder::error(format!("更新规则失败: {}", e));
     }
 
-    match state.alarm_service.update_rule(rule.clone()).await {
+    match state.alarm_service.update_rule(rule.clone(), Some(&claims.workspace_id)).await {
         Ok(()) => ApiResponseBuilder::success(AlarmRuleDto::from(rule)),
         Err(e) => ApiResponseBuilder::error(format!("保存规则失败: {}", e)),
     }
@@ -566,16 +566,8 @@ async fn delete_alarm_rule(
     State(state): State<AppState>,
     claims: Claims,
 ) -> Json<ApiResponse<()>> {
-    // Verify workspace ownership before delete
-    if let Ok(Some(rule)) = state.alarm_service.get_rule_by_id(&id).await {
-        if let Some(ref rule_ws) = rule.workspace_id {
-            if rule_ws != &claims.workspace_id {
-                return ApiResponseBuilder::error_with_code(404, "规则不存在");
-            }
-        }
-    }
-
-    match state.alarm_service.delete_rule(&id).await {
+    // Verify workspace ownership before delete (DB-level WHERE clause enforces isolation)
+    match state.alarm_service.delete_rule(&id, Some(&claims.workspace_id)).await {
         Ok(()) => ApiResponseBuilder::success(()),
         Err(e) => ApiResponseBuilder::error(format!("删除规则失败: {}", e)),
     }
@@ -587,16 +579,8 @@ async fn toggle_alarm_rule(
     Path(id): Path<String>,
     Json(req): Json<ToggleRuleRequest>,
 ) -> Json<ApiResponse<()>> {
-    // Verify workspace ownership before toggle
-    if let Ok(Some(rule)) = state.alarm_service.get_rule_by_id(&id).await {
-        if let Some(ref rule_ws) = rule.workspace_id {
-            if rule_ws != &claims.workspace_id {
-                return ApiResponseBuilder::error_with_code(404, "规则不存在");
-            }
-        }
-    }
-
-    match state.alarm_service.set_rule_enabled(&id, req.enabled).await {
+    // Verify workspace ownership before toggle (DB-level WHERE clause enforces isolation)
+    match state.alarm_service.set_rule_enabled(&id, req.enabled, Some(&claims.workspace_id)).await {
         Ok(()) => ApiResponseBuilder::success(()),
         Err(e) => ApiResponseBuilder::error(format!("切换规则状态失败: {}", e)),
     }

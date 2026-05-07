@@ -675,7 +675,7 @@ async fn update_channel(
             return ApiResponseBuilder::error_with_code(400, "无效的配置 JSON");
         }
 
-    match update_notification_channel(&db, &id, &payload).await {
+    match update_notification_channel(&db, &id, &payload, Some(&claims.workspace_id)).await {
         Ok(channel) => ApiResponseBuilder::success(channel),
         Err(e) => {
             tracing::error!("Failed to update channel: {}", e);
@@ -692,16 +692,7 @@ async fn delete_channel(
 ) -> Json<ApiResponse<bool>> {
     let db = state.database.clone();
 
-    // Verify workspace ownership
-    if let Ok(Some(channel)) = find_notification_channel_by_id(&db, &id).await {
-        if let Some(ref channel_ws) = channel.workspace_id {
-            if channel_ws != &claims.workspace_id {
-                return ApiResponseBuilder::error_with_code(404, "通知渠道不存在");
-            }
-        }
-    }
-
-    match delete_notification_channel(&db, &id).await {
+    match delete_notification_channel(&db, &id, Some(&claims.workspace_id)).await {
         Ok(_) => ApiResponseBuilder::success(true),
         Err(e) => {
             tracing::error!("Failed to delete channel: {}", e);

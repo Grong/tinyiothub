@@ -124,10 +124,22 @@ async fn register(
         parent_id: request.parent_id.clone(),
     };
 
-    // 创建用户
+    // 创建用户（依赖数据库 UNIQUE 约束兜底竞态条件）
     let user = match state.user_service.create_user(&create_request).await {
         Ok(u) => u,
         Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("UNIQUE constraint failed") {
+                if msg.contains("users.username") {
+                    return ApiResponseBuilder::error("用户名已存在".to_string());
+                }
+                if msg.contains("users.phone") {
+                    return ApiResponseBuilder::error("手机号已注册".to_string());
+                }
+                if msg.contains("users.email") {
+                    return ApiResponseBuilder::error("邮箱已注册".to_string());
+                }
+            }
             tracing::error!("Failed to create user: {}", e);
             return ApiResponseBuilder::error("注册失败，请稍后重试".to_string());
         }
@@ -139,26 +151,13 @@ async fn register(
     }
 
     // 注册后自动登录 — 查找租户和用户自己的 workspace
-    let tenant_id: String = sqlx::query_scalar(
-        "SELECT tenant_id FROM tenant_users WHERE user_id = ? LIMIT 1"
-    )
-    .bind(&user.id)
-    .fetch_optional(state.database().pool())
-    .await
-    .unwrap_or(None)
-    .unwrap_or_else(|| "default".to_string());
-
-    // 优先查找用户自己的 workspace (ws-{user_id})，fallback 到 tenant 下第一个
-    let user_ws_id = format!("ws-{}", user.id);
-    let workspace_id: Option<String> = sqlx::query_scalar(
-        "SELECT id FROM workspaces WHERE id = ? UNION ALL SELECT id FROM workspaces WHERE tenant_id = ? AND id != ? LIMIT 1"
-    )
-    .bind(&user_ws_id)
-    .bind(&tenant_id)
-    .bind(&user_ws_id)
-    .fetch_optional(state.database().pool())
-    .await
-    .unwrap_or(None);
+    let (tenant_id, workspace_id) = match resolve_user_login_context(&state, &user.id).await {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            tracing::error!("[REGISTER] Failed to resolve user context: {}", e);
+            return ApiResponseBuilder::error("注册成功，但登录失败".to_string());
+        }
+    };
 
     let workspace_id_for_token = workspace_id.clone().unwrap_or_default();
     let token = match jwt::generate_token(&user.id, user.get_display_name(), &tenant_id, &workspace_id_for_token) {
@@ -218,46 +217,19 @@ async fn login(
 
             tracing::debug!("Generating JWT token for user: {}", user.id);
 
-            // 查找用户关联的租户，默认为 "default"
-            let tenant_id: String = sqlx::query_scalar(
-                "SELECT tenant_id FROM tenant_users WHERE user_id = ? LIMIT 1"
-            )
-            .bind(&user.id)
-            .fetch_optional(state.database().pool())
-            .await
-            .map_err(|e| {
-                tracing::error!("DB error fetching tenant_id: {}", e);
-            })
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| "default".to_string());
+            let (tenant_id, workspace_id) = match resolve_user_login_context(&state, &user.id).await {
+                Ok(ctx) => ctx,
+                Err(e) => {
+                    tracing::error!("Failed to resolve user login context: {}", e);
+                    return ApiResponseBuilder::error("登录失败，请稍后重试".to_string());
+                }
+            };
 
             tracing::debug!(
-                "Found tenant_id {} for user: {}",
+                "Found tenant_id {} workspace_id {:?} for user: {}",
                 tenant_id,
-                user.id
-            );
-
-            // 优先查找用户自己的 workspace (ws-{user_id})，fallback 到 tenant 下第一个
-            let user_ws_id = format!("ws-{}", user.id);
-            let workspace_id: Option<String> = sqlx::query_scalar(
-                "SELECT id FROM workspaces WHERE id = ? UNION ALL SELECT id FROM workspaces WHERE tenant_id = ? AND id != ? LIMIT 1"
-            )
-            .bind(&user_ws_id)
-            .bind(&tenant_id)
-            .bind(&user_ws_id)
-            .fetch_optional(state.database().pool())
-            .await
-            .map_err(|e| {
-                tracing::error!("DB error fetching workspace_id: {}", e);
-            })
-            .ok()
-            .flatten();
-
-            tracing::debug!(
-                "Found default workspace_id {:?} for tenant {}",
                 workspace_id,
-                tenant_id
+                user.id
             );
 
             // 生成 JWT 令牌（HarmonyOS 会自动使用 HMAC-SHA256）
@@ -304,4 +276,38 @@ async fn logout(
     // 目前只是返回成功响应
     tracing::info!("User logged out");
     ApiResponseBuilder::success("登出成功".to_string())
+}
+
+/// 查询用户的 tenant_id 和 workspace_id（注册/登录后使用）
+///
+/// 返回 (tenant_id, workspace_id)。tenant_id 缺省为 "default"；
+/// workspace_id 优先取用户自己的 ws-{user_id}，否则取租户下第一个。
+async fn resolve_user_login_context(
+    state: &AppState,
+    user_id: &str,
+) -> Result<(String, Option<String>), crate::shared::error::Error> {
+    let pool = state.database().pool();
+
+    let tenant_id: Option<String> = sqlx::query_scalar(
+        "SELECT tenant_id FROM tenant_users WHERE user_id = ? LIMIT 1"
+    )
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
+
+    let tenant_id = tenant_id.unwrap_or_else(|| "default".to_string());
+
+    let user_ws_id = format!("ws-{}", user_id);
+    let workspace_id: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM workspaces WHERE id = ? UNION ALL SELECT id FROM workspaces WHERE tenant_id = ? AND id != ? LIMIT 1"
+    )
+    .bind(&user_ws_id)
+    .bind(&tenant_id)
+    .bind(&user_ws_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
+
+    Ok((tenant_id, workspace_id))
 }

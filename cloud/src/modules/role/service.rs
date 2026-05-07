@@ -18,8 +18,8 @@ impl RoleService {
         self.role_repository.find_by_id(id).await
     }
 
-    pub async fn find_by_name(&self, name: &str) -> Result<Option<Role>> {
-        self.role_repository.find_by_name(name).await
+    pub async fn find_by_name(&self, name: &str, workspace_id: Option<&str>) -> Result<Option<Role>> {
+        self.role_repository.find_by_name(name, workspace_id).await
     }
 
     pub async fn create(&self, request: &CreateRoleRequest) -> Result<Role> {
@@ -46,24 +46,24 @@ impl RoleService {
         self.role_repository.count(params).await
     }
 
-    pub async fn get_stats(&self) -> Result<RoleStats> {
-        self.role_repository.get_stats().await
+    pub async fn get_stats(&self, workspace_id: Option<&str>) -> Result<RoleStats> {
+        self.role_repository.get_stats(workspace_id).await
     }
 
-    pub async fn find_admin_roles(&self) -> Result<Vec<Role>> {
-        self.role_repository.find_admin_roles().await
+    pub async fn find_admin_roles(&self, workspace_id: Option<&str>) -> Result<Vec<Role>> {
+        self.role_repository.find_admin_roles(workspace_id).await
     }
 
-    pub async fn find_user_roles(&self) -> Result<Vec<Role>> {
-        self.role_repository.find_user_roles().await
+    pub async fn find_user_roles(&self, workspace_id: Option<&str>) -> Result<Vec<Role>> {
+        self.role_repository.find_user_roles(workspace_id).await
     }
 
-    pub async fn exists_by_name(&self, name: &str) -> Result<bool> {
-        self.role_repository.exists_by_name(name).await
+    pub async fn exists_by_name(&self, name: &str, workspace_id: Option<&str>) -> Result<bool> {
+        self.role_repository.exists_by_name(name, workspace_id).await
     }
 
-    pub async fn exists_by_name_exclude_id(&self, name: &str, exclude_id: &str) -> Result<bool> {
-        self.role_repository.exists_by_name_exclude_id(name, exclude_id).await
+    pub async fn exists_by_name_exclude_id(&self, name: &str, exclude_id: &str, workspace_id: Option<&str>) -> Result<bool> {
+        self.role_repository.exists_by_name_exclude_id(name, exclude_id, workspace_id).await
     }
 
     pub async fn find_by_ids(&self, ids: &[String]) -> Result<Vec<Role>> {
@@ -78,10 +78,11 @@ impl RoleService {
         &self,
         enabled: Option<bool>,
         search: Option<&str>,
+        workspace_id: Option<&str>,
         page: u32,
         page_size: u32,
     ) -> Result<Vec<Role>> {
-        self.role_repository.find_with_filters(enabled, search, page, page_size).await
+        self.role_repository.find_with_filters(enabled, search, workspace_id, page, page_size).await
     }
 
     pub async fn update_enabled_status(&self, id: &str, enabled: bool) -> Result<bool> {

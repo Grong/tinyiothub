@@ -77,15 +77,16 @@ pub trait AgentClient: Send + Sync {
     /// Get tools catalog for an agent
     async fn tools_catalog(&self, agent_id: &str) -> Result<serde_json::Value, AgentError>;
 
-    /// Get effective tools for an agent
-    async fn tools_effective(&self, agent_id: &str) -> Result<serde_json::Value, AgentError>;
+    /// Get effective tools for an agent (verifies workspace ownership)
+    async fn tools_effective(&self, agent_id: &str, workspace_id: &str) -> Result<serde_json::Value, AgentError>;
 
-    /// Toggle a tool on/off for an agent
+    /// Toggle a tool on/off for an agent (verifies workspace ownership)
     async fn tools_toggle(
         &self,
         agent_id: &str,
         tool_name: &str,
         enabled: bool,
+        workspace_id: &str,
     ) -> Result<(), AgentError>;
 }
 

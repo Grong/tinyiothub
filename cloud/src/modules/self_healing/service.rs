@@ -80,6 +80,7 @@ impl ActionExecutor {
 
     pub async fn execute(
         &self,
+        tenant_id: &str,
         level: SeverityLevel,
         action_type: RecoveryActionType,
         target: String,
@@ -104,33 +105,34 @@ impl ActionExecutor {
             last_exec.insert(key, Utc::now());
         }
 
+        let tenant_id = tenant_id.to_string();
         let execution = match action_type {
             RecoveryActionType::RestartDriver => {
                 tracing::info!("Restarting driver: {}", target);
-                HealingExecution::new("default".to_string(), level, action_type, target, ExecutionResult::Success)
+                HealingExecution::new(tenant_id, level, action_type, target, ExecutionResult::Success)
             }
             RecoveryActionType::RejoinLora => {
                 tracing::info!("Rejoining LoRa network: {}", target);
-                HealingExecution::new("default".to_string(), level, action_type, target, ExecutionResult::Success)
+                HealingExecution::new(tenant_id, level, action_type, target, ExecutionResult::Success)
             }
             RecoveryActionType::ReconnectDevice => {
                 tracing::info!("Reconnecting device: {}", target);
-                HealingExecution::new("default".to_string(), level, action_type, target, ExecutionResult::Success)
+                HealingExecution::new(tenant_id, level, action_type, target, ExecutionResult::Success)
             }
             RecoveryActionType::CleanLogs => {
                 tracing::info!("Cleaning logs: {}", target);
-                HealingExecution::new("default".to_string(), level, action_type, target, ExecutionResult::Success)
+                HealingExecution::new(tenant_id, level, action_type, target, ExecutionResult::Success)
             }
             RecoveryActionType::ReportCloud => {
                 tracing::info!("Reporting to cloud: {}", target);
-                HealingExecution::new("default".to_string(), level, action_type, target, ExecutionResult::Success)
+                HealingExecution::new(tenant_id, level, action_type, target, ExecutionResult::Success)
             }
             RecoveryActionType::CreateTicket => {
                 tracing::info!("Creating support ticket: {}", target);
-                HealingExecution::new("default".to_string(), level, action_type, target, ExecutionResult::Success)
+                HealingExecution::new(tenant_id, level, action_type, target, ExecutionResult::Success)
             }
             RecoveryActionType::LogOnly => {
-                HealingExecution::new("default".to_string(), level, action_type, target, ExecutionResult::Success)
+                HealingExecution::new(tenant_id, level, action_type, target, ExecutionResult::Success)
             }
         };
 
@@ -242,25 +244,25 @@ mod tests {
     #[tokio::test]
     async fn test_execute_with_cooldown_blocks() {
         let executor = ActionExecutor::new();
-        let result = executor.execute(SeverityLevel::L1, RecoveryActionType::RestartDriver, "driver-1".to_string(), 300).await;
+        let result = executor.execute("tenant-1", SeverityLevel::L1, RecoveryActionType::RestartDriver, "driver-1".to_string(), 300).await;
         assert!(result.is_ok());
-        let result = executor.execute(SeverityLevel::L1, RecoveryActionType::RestartDriver, "driver-1".to_string(), 300).await;
+        let result = executor.execute("tenant-1", SeverityLevel::L1, RecoveryActionType::RestartDriver, "driver-1".to_string(), 300).await;
         assert!(matches!(result, Err(SelfHealingError::CooldownActive(_))));
     }
 
     #[tokio::test]
     async fn test_execute_different_targets_no_cooldown() {
         let executor = ActionExecutor::new();
-        let result = executor.execute(SeverityLevel::L1, RecoveryActionType::RestartDriver, "driver-1".to_string(), 300).await;
+        let result = executor.execute("tenant-1", SeverityLevel::L1, RecoveryActionType::RestartDriver, "driver-1".to_string(), 300).await;
         assert!(result.is_ok());
-        let result = executor.execute(SeverityLevel::L1, RecoveryActionType::RestartDriver, "driver-2".to_string(), 300).await;
+        let result = executor.execute("tenant-1", SeverityLevel::L1, RecoveryActionType::RestartDriver, "driver-2".to_string(), 300).await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_execute_log_only() {
         let executor = ActionExecutor::new();
-        let result = executor.execute(SeverityLevel::L0, RecoveryActionType::LogOnly, "gateway-1".to_string(), 0).await;
+        let result = executor.execute("tenant-1", SeverityLevel::L0, RecoveryActionType::LogOnly, "gateway-1".to_string(), 0).await;
         assert!(result.is_ok());
         let execution = result.unwrap();
         assert_eq!(execution.result, ExecutionResult::Success);

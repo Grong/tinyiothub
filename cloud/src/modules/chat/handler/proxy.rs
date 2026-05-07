@@ -94,9 +94,16 @@ pub async fn chat_stream(
 pub async fn chat_history(
     State(state): State<AppState>,
     Query(query): Query<ChatHistoryQuery>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
     let limit = query.limit.unwrap_or(200);
+
+    // Verify workspace isolation: session_key must belong to the authenticated workspace
+    let session_workspace = extract_workspace_from_session_key(&query.session_key);
+    if session_workspace != claims.workspace_id {
+        return ApiResponseBuilder::error_with_code(404, "Session not found");
+    }
+
     match state.chat_service.get_history(&query.session_key, limit).await {
         Ok(data) => ApiResponseBuilder::success(data),
         Err(e) => ApiResponseBuilder::error(format!("Failed to load chat history: {}", e)),
@@ -106,9 +113,15 @@ pub async fn chat_history(
 /// POST /api/v1/chat/abort
 pub async fn chat_abort(
     State(state): State<AppState>,
-    _claims: Claims,
+    claims: Claims,
     Json(req): Json<ChatAbortRequest>,
 ) -> Json<ApiResponse<serde_json::Value>> {
+    // Verify workspace isolation
+    let session_workspace = extract_workspace_from_session_key(&req.session_key);
+    if session_workspace != claims.workspace_id {
+        return ApiResponseBuilder::error_with_code(404, "Session not found");
+    }
+
     let run_id_ref = req.run_id.as_deref();
     match state.chat_service.abort_chat(&req.session_key, run_id_ref).await {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({"aborted": true})),
@@ -148,9 +161,15 @@ pub async fn list_sessions(
 pub async fn update_session_label(
     State(state): State<AppState>,
     Path(session_key): Path<String>,
-    _claims: Claims,
+    claims: Claims,
     Json(req): Json<UpdateSessionLabelRequest>,
 ) -> Json<ApiResponse<serde_json::Value>> {
+    // Verify workspace isolation
+    let session_workspace = extract_workspace_from_session_key(&session_key);
+    if session_workspace != claims.workspace_id {
+        return ApiResponseBuilder::error_with_code(404, "Session not found");
+    }
+
     match state.session_service.update_label(&session_key, &req.label).await {
         Ok(session) => ApiResponseBuilder::success(serde_json::json!({ "session": session })),
         Err(e) => ApiResponseBuilder::error(format!("Failed to update session label: {}", e)),
@@ -161,8 +180,14 @@ pub async fn update_session_label(
 pub async fn delete_session(
     State(state): State<AppState>,
     Path(session_key): Path<String>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
+    // Verify workspace isolation
+    let session_workspace = extract_workspace_from_session_key(&session_key);
+    if session_workspace != claims.workspace_id {
+        return ApiResponseBuilder::error_with_code(404, "Session not found");
+    }
+
     match state.session_service.delete_session(&session_key).await {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({ "deleted": true })),
         Err(e) => ApiResponseBuilder::error(format!("Failed to delete session: {}", e)),
@@ -215,7 +240,7 @@ pub async fn set_agent_config(
 pub async fn tools_catalog(
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String>>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
     let agent_id = params.get("agent_id").map(|s| s.as_str()).unwrap_or("");
     match state.agent_runtime.tools_catalog(agent_id).await {
@@ -228,10 +253,10 @@ pub async fn tools_catalog(
 pub async fn tools_effective(
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String>>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
     let agent_id = params.get("agent_id").map(|s| s.as_str()).unwrap_or("");
-    match state.agent_runtime.tools_effective(agent_id).await {
+    match state.agent_runtime.tools_effective(agent_id, &claims.workspace_id).await {
         Ok(data) => ApiResponseBuilder::success(data),
         Err(e) => ApiResponseBuilder::error(format!("Failed to get effective tools: {}", e)),
     }
@@ -240,15 +265,25 @@ pub async fn tools_effective(
 /// POST /api/v1/tools/toggle
 pub async fn tools_toggle(
     State(state): State<AppState>,
-    _claims: Claims,
+    claims: Claims,
     Json(req): Json<ToolToggleRequest>,
 ) -> Json<ApiResponse<serde_json::Value>> {
     match state
         .agent_runtime
-        .tools_toggle(&req.agent_id, &req.tool_name, req.enabled)
+        .tools_toggle(&req.agent_id, &req.tool_name, req.enabled, &claims.workspace_id)
         .await
     {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({"toggled": true})),
         Err(e) => ApiResponseBuilder::error(format!("Failed to toggle tool: {}", e)),
     }
+}
+
+/// Extract workspace_id from session key in format: agent:{workspace_id}:{agent_id}/{session_uuid}
+fn extract_workspace_from_session_key(session_key: &str) -> String {
+    session_key
+        .split(':')
+        .nth(1)
+        .and_then(|s| s.split('/').next())
+        .map(|s| s.to_string())
+        .unwrap_or_default()
 }

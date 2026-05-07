@@ -139,11 +139,12 @@ pub async fn create_notification_channel(
     find_notification_channel_by_id(db, &id).await?.ok_or(sqlx::Error::RowNotFound)
 }
 
-/// 更新通知渠道
+/// 更新通知渠道；workspace_id 用于 WHERE 子句确保租户隔离
 pub async fn update_notification_channel(
     db: &Database,
     id: &str,
     req: &UpdateNotificationChannelRequest,
+    workspace_id: Option<&str>,
 ) -> Result<NotificationChannel, sqlx::Error> {
     let now = chrono::Utc::now().to_rfc3339();
 
@@ -171,18 +172,28 @@ pub async fn update_notification_channel(
 
     query_builder.push(" WHERE id = ");
     query_builder.push_bind(id);
+    if let Some(ws) = workspace_id {
+        query_builder.push(" AND workspace_id = ");
+        query_builder.push_bind(ws);
+    }
 
     query_builder.build().execute(db.pool()).await?;
 
     find_notification_channel_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound)
 }
 
-/// 删除通知渠道
-pub async fn delete_notification_channel(db: &Database, id: &str) -> Result<u64, sqlx::Error> {
-    let result = sqlx::query("DELETE FROM notification_channels WHERE id = ?")
-        .bind(id)
-        .execute(db.pool())
-        .await?;
+/// 删除通知渠道；workspace_id 用于 WHERE 子句确保租户隔离
+pub async fn delete_notification_channel(db: &Database, id: &str, workspace_id: Option<&str>) -> Result<u64, sqlx::Error> {
+    let query = if workspace_id.is_some() {
+        "DELETE FROM notification_channels WHERE id = ? AND workspace_id = ?"
+    } else {
+        "DELETE FROM notification_channels WHERE id = ?"
+    };
+    let mut sqlx_query = sqlx::query(query).bind(id);
+    if let Some(ws) = workspace_id {
+        sqlx_query = sqlx_query.bind(ws);
+    }
+    let result = sqlx_query.execute(db.pool()).await?;
     Ok(result.rows_affected())
 }
 

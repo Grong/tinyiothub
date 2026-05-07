@@ -583,7 +583,8 @@ impl AgentClient for AgentRuntimeImpl {
         Ok(build_dynamic_catalog().await)
     }
 
-    async fn tools_effective(&self, agent_id: &str) -> Result<serde_json::Value, AgentError> {
+    async fn tools_effective(&self, agent_id: &str, workspace_id: &str) -> Result<serde_json::Value, AgentError> {
+        self.verify_agent_workspace(agent_id, workspace_id).await?;
         let agent_id = agent_id.to_string();
         let db_pool = self.db_pool.clone();
         let overrides_row = sqlx::query_as::<_, (String,)>(
@@ -645,7 +646,8 @@ impl AgentClient for AgentRuntimeImpl {
         Ok(serde_json::json!({ "groups": filtered_groups }))
     }
 
-    async fn tools_toggle(&self, agent_id: &str, tool_name: &str, enabled: bool) -> Result<(), AgentError> {
+    async fn tools_toggle(&self, agent_id: &str, tool_name: &str, enabled: bool, workspace_id: &str) -> Result<(), AgentError> {
+        self.verify_agent_workspace(agent_id, workspace_id).await?;
         let agent_id = agent_id.to_string();
         let tool_name = tool_name.to_string();
         let db_pool = self.db_pool.clone();

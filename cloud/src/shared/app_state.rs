@@ -34,7 +34,7 @@ use crate::{
         persistence::{
             factory::DeviceRepositoryFactory,
             repositories::{
-                NotificationHistoryRepositoryImpl,
+                NotificationHistoryRepositoryImpl, NotificationRuleRepositoryImpl,
                 SqliteEventRepository, SqliteRealTimeEventRepository, SqliteDeviceMemoryRepository,
                 DeviceTraceRepository,
             },
@@ -642,18 +642,17 @@ impl AppState {
         // Create notification history store
         let _history_store = Arc::new(NotificationHistoryRepositoryImpl::new(database.clone()));
 
-        // Create notification manager
-        let mut notification_manager = NotificationManager::new();
+        // Create notification rule repository
+        let rule_repo = Arc::new(NotificationRuleRepositoryImpl::new(database));
+
+        // Create notification manager with rule repository
+        let mut notification_manager = NotificationManager::new(rule_repo);
 
         // Register notification channels
         let channels = NotificationChannelFactory::create_all_channels();
         for channel in channels {
             notification_manager.register_channel(channel);
         }
-
-        // Load notification rules from database
-        // For now, we'll start with empty rules - they can be loaded later
-        // In a full implementation, we would load rules from the database here
 
         Ok(Arc::new(notification_manager))
     }

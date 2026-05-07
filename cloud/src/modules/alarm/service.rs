@@ -30,8 +30,8 @@ impl AlarmService {
         Ok(alarm)
     }
 
-    pub async fn get_alarm_by_id(&self, id: &str) -> AlarmResult<Option<Alarm>> {
-        self.alarm_repository.find_by_id(id).await
+    pub async fn get_alarm_by_id(&self, id: &str, workspace_id: Option<&str>) -> AlarmResult<Option<Alarm>> {
+        self.alarm_repository.find_by_id(id, workspace_id).await
     }
 
     pub async fn acknowledge_alarm(
@@ -42,7 +42,7 @@ impl AlarmService {
     ) -> AlarmResult<()> {
         let mut alarm = self
             .alarm_repository
-            .find_by_id(alarm_id)
+            .find_by_id(alarm_id, None)
             .await?
             .ok_or_else(|| AlarmError::NotFound(alarm_id.to_string()))?;
 
@@ -67,7 +67,7 @@ impl AlarmService {
     ) -> AlarmResult<()> {
         let mut alarm = self
             .alarm_repository
-            .find_by_id(alarm_id)
+            .find_by_id(alarm_id, None)
             .await?
             .ok_or_else(|| AlarmError::NotFound(alarm_id.to_string()))?;
 
@@ -180,17 +180,17 @@ impl AlarmService {
         self.rule_repository.find_by_device(device_id, Some(workspace_id)).await
     }
 
-    pub async fn update_rule(&self, rule: AlarmRule) -> AlarmResult<()> {
+    pub async fn update_rule(&self, rule: AlarmRule, workspace_id: Option<&str>) -> AlarmResult<()> {
         AlarmSpecifications::is_valid_rule(&rule).map_err(AlarmError::InvalidRuleConfig)?;
-        self.rule_repository.update(&rule).await
+        self.rule_repository.update(&rule, workspace_id).await
     }
 
-    pub async fn delete_rule(&self, id: &str) -> AlarmResult<()> {
-        self.rule_repository.delete(id).await
+    pub async fn delete_rule(&self, id: &str, workspace_id: Option<&str>) -> AlarmResult<()> {
+        self.rule_repository.delete(id, workspace_id).await
     }
 
-    pub async fn set_rule_enabled(&self, id: &str, enabled: bool) -> AlarmResult<()> {
-        self.rule_repository.set_enabled(id, enabled).await
+    pub async fn set_rule_enabled(&self, id: &str, enabled: bool, workspace_id: Option<&str>) -> AlarmResult<()> {
+        self.rule_repository.set_enabled(id, enabled, workspace_id).await
     }
 
     pub fn rule_engine(&self) -> Arc<RuleEngine> {

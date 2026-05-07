@@ -267,7 +267,7 @@ impl ToolHandler for AlarmAcknowledgeHandler {
 
         // SECURITY: Verify alarm belongs to the authenticated workspace before acknowledging
         // 1. Fetch the alarm
-        let alarm = state.alarm_service.get_alarm_by_id(&input.id)
+        let alarm = state.alarm_service.get_alarm_by_id(&input.id, None)
             .await
             .map_err(|e| ToolError::Internal(format!("Failed to fetch alarm: {}", e)))?
             .ok_or_else(|| ToolError::NotFound("Alarm not found".to_string()))?;
