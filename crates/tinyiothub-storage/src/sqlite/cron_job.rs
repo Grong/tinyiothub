@@ -343,8 +343,9 @@ impl CronJobRepository for SqliteCronJobRepository {
         Ok(result.rows_affected())
     }
 
-    async fn count(&self) -> Result<i64> {
-        let row = sqlx::query("SELECT COUNT(*) as count FROM cron_jobs")
+    async fn count(&self, workspace_id: &str) -> Result<i64> {
+        let row = sqlx::query("SELECT COUNT(*) as count FROM cron_jobs WHERE workspace_id = ?")
+            .bind(workspace_id)
             .fetch_one(self.database.pool())
             .await?;
 
@@ -352,8 +353,9 @@ impl CronJobRepository for SqliteCronJobRepository {
         Ok(count)
     }
 
-    async fn count_by_enabled(&self, is_enabled: bool) -> Result<i64> {
-        let row = sqlx::query("SELECT COUNT(*) as count FROM cron_jobs WHERE is_enabled = ?")
+    async fn count_by_enabled(&self, workspace_id: &str, is_enabled: bool) -> Result<i64> {
+        let row = sqlx::query("SELECT COUNT(*) as count FROM cron_jobs WHERE workspace_id = ? AND is_enabled = ?")
+            .bind(workspace_id)
             .bind(if is_enabled { 1 } else { 0 })
             .fetch_one(self.database.pool())
             .await?;
@@ -362,8 +364,9 @@ impl CronJobRepository for SqliteCronJobRepository {
         Ok(count)
     }
 
-    async fn count_running(&self) -> Result<i64> {
-        let row = sqlx::query("SELECT COUNT(*) as count FROM cron_jobs WHERE is_running = 1")
+    async fn count_running(&self, workspace_id: &str) -> Result<i64> {
+        let row = sqlx::query("SELECT COUNT(*) as count FROM cron_jobs WHERE workspace_id = ? AND is_running = 1")
+            .bind(workspace_id)
             .fetch_one(self.database.pool())
             .await?;
 
