@@ -238,3 +238,79 @@ impl Default for DriverRegistry {
         Self::new()
     }
 }
+
+// TODO(#44): Load-related failure paths (ABI mismatch, null vtable, null init,
+// missing symbols, duplicate driver, ref_count blocking unload) require
+// integration tests with real shared-library files. Unit tests below cover
+// empty-registry and not-found paths only.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_find_nonexistent_driver() {
+        let registry = DriverRegistry::new();
+        assert!(registry.find("ws1", "modbus").is_none());
+    }
+
+    #[test]
+    fn test_acquire_nonexistent_workspace() {
+        let registry = DriverRegistry::new();
+        let err = registry.acquire("ws1", "modbus").unwrap_err();
+        assert!(err.to_string().contains("workspace 'ws1' not found"));
+    }
+
+    #[test]
+    fn test_release_nonexistent_driver() {
+        let registry = DriverRegistry::new();
+        // First create workspace by loading, but since we can't load without .so,
+        // we verify the error path via a helper. Instead, we test empty registry.
+        let err = registry.release("ws1", "modbus").unwrap_err();
+        assert!(err.to_string().contains("workspace 'ws1' not found"));
+    }
+
+    #[test]
+    fn test_unload_nonexistent_workspace() {
+        let registry = DriverRegistry::new();
+        let err = registry.unload("modbus", "ws1").unwrap_err();
+        assert!(err.to_string().contains("workspace 'ws1' not found"));
+    }
+
+    #[test]
+    fn test_unload_nonexistent_driver() {
+        let registry = DriverRegistry::new();
+        // Manually insert a workspace registry without drivers
+        {
+            let mut dynamic = registry.dynamic.write();
+            dynamic.insert(
+                "ws1".to_string(),
+                WorkspaceRegistry {
+                    workspace_id: "ws1".to_string(),
+                    drivers: HashMap::new(),
+                },
+            );
+        }
+        let err = registry.unload("modbus", "ws1").unwrap_err();
+        assert!(err.to_string().contains("driver 'modbus' not found"));
+    }
+
+    #[test]
+    fn test_list_for_workspace_empty() {
+        let registry = DriverRegistry::new();
+        assert!(registry.list_for_workspace("ws1").is_empty());
+    }
+
+    #[test]
+    fn test_list_workspaces_empty() {
+        let registry = DriverRegistry::new();
+        assert!(registry.list_workspaces().is_empty());
+    }
+
+    #[test]
+    fn test_load_nonexistent_file() {
+        let registry = DriverRegistry::new();
+        let err = registry.load(&PathBuf::from("/nonexistent/driver.so"), "ws1").unwrap_err();
+        assert!(err.to_string().contains("failed to load library"));
+    }
+}

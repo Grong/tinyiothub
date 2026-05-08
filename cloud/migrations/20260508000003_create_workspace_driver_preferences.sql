@@ -1,3 +1,6 @@
+-- TODO: This table is reserved for future workspace-level driver version
+-- pinning and auto-update preferences. No Rust code references it yet.
+-- See issue #43.
 CREATE TABLE IF NOT EXISTS workspace_driver_preferences (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     workspace_id TEXT NOT NULL,
