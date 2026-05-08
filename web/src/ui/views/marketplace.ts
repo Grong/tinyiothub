@@ -108,7 +108,12 @@ export class MarketplaceView extends LitElement {
     this.detailTemplate = null;
     try {
       const res = await marketplaceApi.getTemplate(id);
-      this.detailTemplate = res.result;
+      const data = res.result;
+      if (data && typeof data === "object") {
+        this.detailTemplate = data;
+      } else {
+        toastError("模板详情格式错误");
+      }
     } catch (e: any) {
       toastError(e.message || "获取模板详情失败");
     } finally {
@@ -116,10 +121,10 @@ export class MarketplaceView extends LitElement {
     }
   }
 
-  closeDetail() {
+  closeDetail = () => {
     this.detailTemplate = null;
     this.detailLoading = false;
-  }
+  };
 
   async installTemplate(id: string) {
     this.installingId = id;
@@ -379,7 +384,9 @@ export class MarketplaceView extends LitElement {
 
   renderDetailContent() {
     const t = this.detailTemplate;
-    if (!t) return nothing;
+    if (!t || typeof t !== "object" || Array.isArray(t)) {
+      return html`<div style="color: var(--muted);">暂无数据</div>`;
+    }
 
     const tags = Array.isArray(t.tags) ? t.tags : [];
     const metaItems = [
@@ -392,7 +399,6 @@ export class MarketplaceView extends LitElement {
       { label: "下载", value: typeof t.downloadCount === "number" ? String(t.downloadCount) : "-" },
     ];
 
-    // Collect array/object fields to show as JSON
     const knownScalarFields = new Set([
       "id", "name", "version", "description", "category", "author",
       "tags", "deviceType", "protocolType", "driverName", "rating", "downloadCount",
@@ -400,6 +406,34 @@ export class MarketplaceView extends LitElement {
     const extraFields = Object.entries(t).filter(
       ([k, v]) => !knownScalarFields.has(k) && v != null
     );
+
+    const extraFieldsHtml = (() => {
+      if (extraFields.length === 0) return nothing;
+      try {
+        return html`
+          <div style="margin-top: 12px;">
+            <div style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">扩展数据</div>
+            ${extraFields.map(([k, v]) => {
+              let json = "无法序列化";
+              try {
+                json = JSON.stringify(v, null, 2);
+              } catch {
+                json = String(v);
+              }
+              return html`
+                <div style="margin-bottom: 10px;">
+                  <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px; text-transform: capitalize;">${k}</div>
+                  <pre style="margin: 0; padding: 10px; background: var(--bg-elevated); border-radius: var(--radius-md); font-size: 12px; overflow-x: auto; border: 1px solid var(--border);"
+                  ><code>${json}</code></pre>
+                </div>
+              `;
+            })}
+          </div>
+        `;
+      } catch {
+        return nothing;
+      }
+    })();
 
     return html`
       <div style="margin-bottom: 12px;">
@@ -409,7 +443,7 @@ export class MarketplaceView extends LitElement {
 
       ${tags.length > 0 ? html`
         <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px;">
-          ${tags.map((tag: string) => html`
+          ${tags.map((tag: any) => html`
             <span style="font-size: 11px; color: var(--muted); background: var(--bg-muted); padding: 2px 8px; border-radius: var(--radius-sm);">${safeString(tag)}</span>
           `)}
         </div>
@@ -424,18 +458,7 @@ export class MarketplaceView extends LitElement {
         `)}
       </div>
 
-      ${extraFields.length > 0 ? html`
-        <div style="margin-top: 12px;">
-          <div style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">扩展数据</div>
-          ${extraFields.map(([k, v]) => html`
-            <div style="margin-bottom: 10px;">
-              <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px; text-transform: capitalize;">${k}</div>
-              <pre style="margin: 0; padding: 10px; background: var(--bg-elevated); border-radius: var(--radius-md); font-size: 12px; overflow-x: auto; border: 1px solid var(--border);"
-              ><code>${JSON.stringify(v, null, 2)}</code></pre>
-            </div>
-          `)}
-        </div>
-      ` : nothing}
+      ${extraFieldsHtml}
     `;
   }
 
