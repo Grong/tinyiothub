@@ -22,6 +22,7 @@ use crate::{
     shared::{
         api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
         app_state::AppState,
+        error_handling::AuthHelper,
         pagination::PaginationQuery,
         security::jwt::Claims,
     },
@@ -534,9 +535,18 @@ async fn validate_single_field(
 async fn export_device_template(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    _claims: Claims,
+    claims: Claims,
     WorkspaceScope(workspace_id): WorkspaceScope,
 ) -> Json<ApiResponse<serde_json::Value>> {
+    match AuthHelper::check_role(&state, &claims.user_id, "admin").await {
+        Ok(true) => {}
+        Ok(false) => return ApiResponseBuilder::error("需要管理员权限"),
+        Err(e) => {
+            tracing::warn!("权限检查失败: {}", e);
+            return ApiResponseBuilder::error("权限检查失败");
+        }
+    }
+
     let tenant_device_service = state.tenant_device_service(&workspace_id);
     match tenant_device_service.get_device_by_id(&id).await {
         Ok(Some(device)) => {
@@ -612,9 +622,18 @@ async fn export_device_template(
 async fn clone_device(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    _claims: Claims,
+    claims: Claims,
     WorkspaceScope(workspace_id): WorkspaceScope,
 ) -> Json<ApiResponse<Device>> {
+    match AuthHelper::check_role(&state, &claims.user_id, "admin").await {
+        Ok(true) => {}
+        Ok(false) => return ApiResponseBuilder::error("需要管理员权限"),
+        Err(e) => {
+            tracing::warn!("权限检查失败: {}", e);
+            return ApiResponseBuilder::error("权限检查失败");
+        }
+    }
+
     let tenant_device_service = state.tenant_device_service(&workspace_id);
 
     // Get the source device

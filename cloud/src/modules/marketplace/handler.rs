@@ -20,7 +20,10 @@ use crate::{
         },
         template::TemplateRepository,
     },
-    shared::{api_response::ApiResponse, app_state::AppState, config, security::jwt::Claims},
+    shared::{
+        api_response::ApiResponse, app_state::AppState, config, error_handling::AuthHelper,
+        security::jwt::Claims,
+    },
 };
 
 pub fn create_router() -> Router<AppState> {
@@ -219,11 +222,20 @@ async fn install_marketplace_template(
 }
 
 async fn install_marketplace_driver(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(id): Path<String>,
-    _claims: Claims,
+    claims: Claims,
     Json(req): Json<InstallRequest>,
 ) -> Json<ApiResponse<String>> {
+    match AuthHelper::check_role(&state, &claims.user_id, "admin").await {
+        Ok(true) => {}
+        Ok(false) => return ApiResponseBuilder::error("需要管理员权限"),
+        Err(e) => {
+            tracing::warn!("权限检查失败: {}", e);
+            return ApiResponseBuilder::error("权限检查失败");
+        }
+    }
+
     let config = config::get();
 
     let client = match MarketplaceClient::new(config.marketplace.clone()) {
@@ -259,8 +271,17 @@ pub struct PublishTemplateApiRequest {
 async fn publish_template_handler(
     State(state): State<AppState>,
     WorkspaceScope(workspace_id): WorkspaceScope,
+    claims: Claims,
     Json(req): Json<PublishTemplateApiRequest>,
 ) -> Json<ApiResponse<serde_json::Value>> {
+    match AuthHelper::check_role(&state, &claims.user_id, "admin").await {
+        Ok(true) => {}
+        Ok(false) => return ApiResponseBuilder::error("需要管理员权限"),
+        Err(e) => {
+            tracing::warn!("权限检查失败: {}", e);
+            return ApiResponseBuilder::error("权限检查失败");
+        }
+    }
     let config = crate::shared::config::get();
     let marketplace_config = &config.marketplace;
     if !marketplace_config.enabled {
