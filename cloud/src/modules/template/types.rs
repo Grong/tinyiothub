@@ -28,6 +28,7 @@ pub struct DeviceTemplate {
     pub is_active: i32,      // 是否激活
     pub created_at: String,
     pub updated_at: String,
+    pub workspace_id: Option<String>,
 }
 
 /// 设备信息模板
@@ -117,6 +118,7 @@ pub struct CreateDeviceTemplateRequest {
     pub device_info: DeviceInfo,
     pub properties: Vec<PropertyTemplate>,
     pub commands: Vec<CommandTemplate>,
+    pub workspace_id: Option<String>,
 }
 
 /// 更新设备模板请求
@@ -237,6 +239,7 @@ impl DeviceTemplate {
             is_active: 1,
             created_at: now.clone(),
             updated_at: now,
+            workspace_id: None,
         }
     }
 
@@ -244,17 +247,20 @@ impl DeviceTemplate {
     pub async fn find_by_id(
         db: &Database,
         id: &str,
+        workspace_id: &str,
     ) -> Result<Option<DeviceTemplate>, sqlx::Error> {
         let template = sqlx::query_as::<_, DeviceTemplate>(
             r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, device_type, protocol_type, driver_name, tags,
                    device_info, properties, commands, is_builtin, is_active,
-                   created_at, updated_at
+                   created_at, updated_at, workspace_id
             FROM device_templates WHERE id = ? AND is_active = 1
+              AND (workspace_id IS NULL OR workspace_id = ?)
             "#,
         )
         .bind(id)
+        .bind(workspace_id)
         .fetch_optional(db.pool())
         .await?;
 
@@ -265,17 +271,20 @@ impl DeviceTemplate {
     pub async fn find_by_name(
         db: &Database,
         name: &str,
+        workspace_id: &str,
     ) -> Result<Option<DeviceTemplate>, sqlx::Error> {
         let template = sqlx::query_as::<_, DeviceTemplate>(
             r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, device_type, protocol_type, driver_name, tags,
                    device_info, properties, commands, is_builtin, is_active,
-                   created_at, updated_at
+                   created_at, updated_at, workspace_id
             FROM device_templates WHERE name = ? AND is_active = 1
+              AND (workspace_id IS NULL OR workspace_id = ?)
             "#,
         )
         .bind(name)
+        .bind(workspace_id)
         .fetch_optional(db.pool())
         .await?;
 
@@ -316,8 +325,8 @@ impl DeviceTemplate {
                 id, name, display_name, description, version, author, category,
                 manufacturer, device_type, protocol_type, driver_name, tags,
                 device_info, properties, commands, is_builtin, is_active,
-                created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                created_at, updated_at, workspace_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&id)
@@ -339,13 +348,14 @@ impl DeviceTemplate {
         .bind(1) // 默认激活
         .bind(&now)
         .bind(&now)
+        .bind(&request.workspace_id)
         .execute(&mut *tx)
         .await?;
 
         tx.commit().await?;
 
         // 返回创建的模板
-        Self::find_by_id(db, &id).await?.ok_or(sqlx::Error::RowNotFound)
+        Self::find_by_id(db, &id, "").await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 更新设备模板
@@ -489,7 +499,7 @@ impl DeviceTemplate {
         }
 
         if !has_updates {
-            return Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound);
+            return Self::find_by_id(db, id, "").await?.ok_or(sqlx::Error::RowNotFound);
         }
 
         // 总是更新 updated_at
@@ -502,7 +512,7 @@ impl DeviceTemplate {
             return Err(sqlx::Error::RowNotFound);
         }
 
-        Self::find_by_id(db, id).await?.ok_or(sqlx::Error::RowNotFound)
+        Self::find_by_id(db, id, "").await?.ok_or(sqlx::Error::RowNotFound)
     }
 
     /// 删除设备模板（软删除）
@@ -532,16 +542,19 @@ impl DeviceTemplate {
     pub async fn find_all(
         db: &Database,
         params: &TemplateQueryParams,
+        workspace_id: &str,
     ) -> Result<Vec<DeviceTemplate>, sqlx::Error> {
         let mut query = QueryBuilder::new(
             r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, device_type, protocol_type, driver_name, tags,
                    device_info, properties, commands, is_builtin, is_active,
-                   created_at, updated_at
+                   created_at, updated_at, workspace_id
             FROM device_templates WHERE is_active = 1
+              AND (workspace_id IS NULL OR workspace_id = ?)
             "#,
         );
+        query.push_bind(workspace_id);
 
         // 动态添加查询条件
         if let Some(category) = &params.category {
@@ -587,9 +600,15 @@ impl DeviceTemplate {
     }
 
     /// 统计设备模板数量
-    pub async fn count(db: &Database, params: &TemplateQueryParams) -> Result<i64, sqlx::Error> {
-        let mut query =
-            QueryBuilder::new("SELECT COUNT(*) as count FROM device_templates WHERE is_active = 1");
+    pub async fn count(
+        db: &Database,
+        params: &TemplateQueryParams,
+        workspace_id: &str,
+    ) -> Result<i64, sqlx::Error> {
+        let mut query = QueryBuilder::new(
+            "SELECT COUNT(*) as count FROM device_templates WHERE is_active = 1 AND (workspace_id IS NULL OR workspace_id = ?)",
+        );
+        query.push_bind(workspace_id);
 
         if let Some(category) = &params.category {
             query.push(" AND category = ").push_bind(category);
@@ -628,18 +647,21 @@ impl DeviceTemplate {
     pub async fn find_by_category(
         db: &Database,
         category: &str,
+        workspace_id: &str,
     ) -> Result<Vec<DeviceTemplate>, sqlx::Error> {
         let templates = sqlx::query_as::<_, DeviceTemplate>(
             r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, device_type, protocol_type, driver_name, tags,
                    device_info, properties, commands, is_builtin, is_active,
-                   created_at, updated_at
+                   created_at, updated_at, workspace_id
             FROM device_templates WHERE category = ? AND is_active = 1
+              AND (workspace_id IS NULL OR workspace_id = ?)
             ORDER BY is_builtin DESC, name
             "#,
         )
         .bind(category)
+        .bind(workspace_id)
         .fetch_all(db.pool())
         .await?;
 
@@ -650,6 +672,7 @@ impl DeviceTemplate {
     pub async fn search(
         db: &Database,
         keyword: &str,
+        workspace_id: &str,
         limit: Option<u32>,
     ) -> Result<Vec<DeviceTemplate>, sqlx::Error> {
         let search_pattern = format!("%{}%", keyword);
@@ -659,12 +682,13 @@ impl DeviceTemplate {
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, device_type, protocol_type, driver_name, tags,
                    device_info, properties, commands, is_builtin, is_active,
-                   created_at, updated_at
+                   created_at, updated_at, workspace_id
             FROM device_templates WHERE is_active = 1 AND (
                 name LIKE ? OR
                 display_name LIKE ? OR
                 tags LIKE ?
             )
+              AND (workspace_id IS NULL OR workspace_id = ?)
             ORDER BY is_builtin DESC, name
             "#,
         );
@@ -677,6 +701,7 @@ impl DeviceTemplate {
             .bind(&search_pattern)
             .bind(&search_pattern)
             .bind(&search_pattern)
+            .bind(workspace_id)
             .fetch_all(db.pool())
             .await?;
 
@@ -859,6 +884,7 @@ impl Default for DeviceTemplate {
             is_active: 1,
             created_at: now.clone(),
             updated_at: now,
+            workspace_id: None,
         }
     }
 }

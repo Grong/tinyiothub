@@ -34,6 +34,12 @@ pub enum MarketplaceError {
 
     #[error("Driver error: {0}")]
     Driver(String),
+
+    #[error("Unauthorized: {0}")]
+    Unauthorized(String),
+
+    #[error("Publish failed: {0}")]
+    PublishFailed(String),
 }
 
 pub type Result<T> = std::result::Result<T, MarketplaceError>;

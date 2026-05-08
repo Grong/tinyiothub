@@ -218,7 +218,7 @@ impl TemplateRepository {
 
         // 如果更新名称，检查新名称是否已存在
         if let Some(new_name) = &request.name {
-            let existing = DeviceTemplate::find_by_name(&self.database, new_name).await?;
+            let existing = DeviceTemplate::find_by_name(&self.database, new_name, "").await?;
             if let Some(existing_template) = existing
                 && existing_template.id != id
             {
