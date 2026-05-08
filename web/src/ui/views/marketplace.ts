@@ -54,7 +54,9 @@ export class MarketplaceView extends LitElement {
   async loadLocalTemplates() {
     try {
       const res = await templateApi.getTemplates({ pageSize: 100 });
-      this.localTemplates = (res.result?.data ?? []).map((t: any) => ({ id: t.id, name: t.name }));
+      const data = res.result;
+      const templates = Array.isArray(data) ? data : (data?.data ?? []);
+      this.localTemplates = templates.map((t: any) => ({ id: t.id, name: t.name }));
     } catch {
       // ignore — publish section just won't show templates
     }
