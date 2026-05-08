@@ -31,7 +31,8 @@ export class MarketplaceView extends LitElement {
     this.loading = true;
     try {
       const res = await marketplaceApi.getTemplates({ pageSize: 100 });
-      this.templates = res.result?.data ?? [];
+      const result = res.result;
+      this.templates = Array.isArray(result) ? result : (result?.data ?? []);
     } catch (e: any) {
       toastError(e.message || "加载市场模板失败");
     } finally {
@@ -43,7 +44,8 @@ export class MarketplaceView extends LitElement {
     this.loading = true;
     try {
       const res = await marketplaceApi.getDrivers({ pageSize: 100 });
-      this.drivers = res.result?.data ?? [];
+      const result = res.result;
+      this.drivers = Array.isArray(result) ? result : (result?.data ?? []);
     } catch (e: any) {
       toastError(e.message || "加载市场驱动失败");
     } finally {
