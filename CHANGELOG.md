@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.2.0] - 2026-05-08
+
+### Added
+- C FFI driver hot-loading with `libloading`, `DynamicDeviceDriver`, and `DriverRegistry`
+- Per-workspace driver isolation in `DriverRegistry` with `WorkspaceRegistry`
+- Driver rehydration on startup from `driver_installations` database records
+- `TemplateExporter` — export existing device as reusable `DeviceTemplate`
+- `MarketplacePublisher` — publish device templates to marketplace.tinyiothub.com
+- `/api/v1/devices/{id}/export-template` endpoint
+- `/api/v1/devices/{id}/clone` endpoint
+- `/api/v1/marketplace/publish/template` endpoint
+- Driver health dashboard module with `/api/v1/driver-health/drivers` endpoint
+- Workspace-scoped driver preference support via `workspace_driver_preferences` table
+- Driver installation tracking with `driver_installations` table
+- Integration test for `DriverRegistry` workspace isolation
+
+### Fixed
+- Export-template description handling (plain string vs JSON object)
+- Removed raw SQL UPDATE from handler by adding `workspace_id` to `CreateDeviceTemplateRequest`
+- Localized marketplace handler error messages to Chinese
+- Registry write lock now released between rehydration iterations
+- Removed redundant `driver_registry` field from `AppState` (uses global singleton)
+
 ## [0.1.3] - 2026-05-07
 
 ### Fixed
