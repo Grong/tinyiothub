@@ -99,6 +99,32 @@ async fn main_impl() -> std::io::Result<()> {
     // === 4. 驱动（静态编译，无需加载） ===
     info!("✅ Drivers registered (static compilation)");
 
+    // === 4.1 重新加载已安装的动态驱动 ===
+    {
+        use tinyiothub_cloud::shared::persistence::repositories::driver_installation::DriverInstallationRepo;
+        let repo = DriverInstallationRepo::new((*app_state.database).clone());
+        match repo.find_all().await {
+            Ok(installations) => {
+                let registry = tinyiothub_runtime::driver_registry();
+                for inst in installations {
+                    let path = std::path::PathBuf::from(&inst.file_path);
+                    match registry.write().load(&path, &inst.workspace_id) {
+                        Ok(name) => info!(
+                            "✅ Rehydrated driver '{}' for workspace {}",
+                            name, inst.workspace_id
+                        ),
+                        Err(e) => {
+                            warn!("⚠️ Failed to rehydrate driver {}: {}", inst.driver_name, e)
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("⚠️ Failed to load driver installations: {}", e);
+            }
+        }
+    }
+
     // === 4.5 从数据库加载完整设备（含属性、指令）到缓存 ===
     {
         use tinyiothub_core::models::device::DeviceQueryParams;
