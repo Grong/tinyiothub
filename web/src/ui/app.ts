@@ -32,6 +32,8 @@ const lazyViews: Record<string, () => Promise<void>> = {
   cron:      () => import("./views/cron.js").then(() => {}),
   terms:     () => import("./views/terms.js").then(() => {}),
   privacy:   () => import("./views/privacy.js").then(() => {}),
+  marketplace: () => import("./views/marketplace.js").then(() => {}),
+  "driver-health": () => import("./views/driver-health.js").then(() => {}),
 };
 
 interface NavItem {
@@ -58,6 +60,7 @@ const NAV_GROUPS: NavGroup[] = [
       { route: "devices", label: "设备列表", icon: "M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" },
       { route: "templates", label: "设备模板", icon: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" },
       { route: "drivers", label: "驱动管理", icon: "M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" },
+      { route: "marketplace", label: "应用市场", icon: "M3 3h18v18H3V3zm4 4v10h4V7H7zm6 0v10h4V7h-4z" },
     ],
   },
   {
@@ -66,6 +69,7 @@ const NAV_GROUPS: NavGroup[] = [
       { route: "alarms", label: "告警中心", icon: "M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01" },
       { route: "events", label: "事件日志", icon: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" },
       { route: "monitoring", label: "系统监控", icon: "M18 20V10M12 20V4M6 20v-6" },
+      { route: "driver-health", label: "驱动健康", icon: "M22 12h-4l-3 9L9 3l-3 9H2" },
       { route: "cron", label: "定时任务", icon: "M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm1-8h4v2H11V6h2z" },
     ],
   },
@@ -296,7 +300,8 @@ export class TinyIoTHubApp extends LitElement {
       tags: "标签管理",
       users: "用户管理",
       settings: "系统设置",
-      marketplace: "市场",
+      marketplace: "应用市场",
+      "driver-health": "驱动健康",
       chat: "AI 聊天",
       agents: "Agent 管理",
       cron: "定时任务",
@@ -318,7 +323,8 @@ export class TinyIoTHubApp extends LitElement {
       tags: "管理设备标签和分组",
       users: "管理系统用户和权限",
       settings: "系统配置和参数管理",
-      marketplace: "驱动和模板市场",
+      marketplace: "浏览和安装模板与驱动",
+      "driver-health": "查看已加载动态驱动的运行状态",
       chat: "与 AI Agent 对话",
       agents: "管理和配置 Agent",
       cron: "管理定时执行的任务和作业",
@@ -485,6 +491,8 @@ export class TinyIoTHubApp extends LitElement {
     if (base === "chat") return html`<view-chat></view-chat>`;
     if (base === "agents") return html`<view-agents></view-agents>`;
     if (base === "cron") return html`<view-cron></view-cron>`;
+    if (base === "marketplace") return html`<view-marketplace></view-marketplace>`;
+    if (base === "driver-health") return html`<view-driver-health></view-driver-health>`;
     return html`<div style="padding: 40px; text-align: center; color: var(--muted);">页面不存在</div>`;
   }
 
