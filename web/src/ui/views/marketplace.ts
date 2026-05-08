@@ -30,6 +30,10 @@ export class MarketplaceView extends LitElement {
   @state() totalPages = 0;
   @state() totalCount = 0;
 
+  // detail modal
+  @state() detailTemplate: any | null = null;
+  @state() detailLoading = false;
+
   createRenderRoot() {
     return this;
   }
@@ -97,6 +101,24 @@ export class MarketplaceView extends LitElement {
     } catch {
       // ignore
     }
+  }
+
+  async openDetail(id: string) {
+    this.detailLoading = true;
+    this.detailTemplate = null;
+    try {
+      const res = await marketplaceApi.getTemplate(id);
+      this.detailTemplate = res.result;
+    } catch (e: any) {
+      toastError(e.message || "获取模板详情失败");
+    } finally {
+      this.detailLoading = false;
+    }
+  }
+
+  closeDetail() {
+    this.detailTemplate = null;
+    this.detailLoading = false;
   }
 
   async installTemplate(id: string) {
@@ -202,6 +224,7 @@ export class MarketplaceView extends LitElement {
         : this.renderDriversTab()}
 
       ${this.localTemplates.length > 0 ? this.renderPublishSection() : nothing}
+      ${this.detailTemplate || this.detailLoading ? this.renderDetailModal() : nothing}
     `;
   }
 
@@ -223,7 +246,13 @@ export class MarketplaceView extends LitElement {
             <div style="color: var(--text); font-size: 13px; line-height: 1.5; margin-bottom: 12px; min-height: 40px;">
               ${safeString(t.description, "暂无描述")}
             </div>
-            <div style="display: flex; justify-content: flex-end;">
+            <div style="display: flex; justify-content: flex-end; gap: 8px;">
+              <button
+                class="btn btn--sm"
+                @click=${() => this.openDetail(t.id)}
+              >
+                详情
+              </button>
               <button
                 class="btn primary btn--sm"
                 ?disabled=${this.installingId === t.id}
@@ -312,6 +341,101 @@ export class MarketplaceView extends LitElement {
           `)}
         </div>
       </div>
+    `;
+  }
+
+  renderDetailModal() {
+    return html`
+      <div class="modal-overlay" @click=${this.closeDetail}>
+        <div class="modal-box modal--wide" @click=${(e: Event) => e.stopPropagation()}>
+          <div class="modal-header">
+            <h3>模板详情</h3>
+            <button class="modal-close" @click=${this.closeDetail}>×</button>
+          </div>
+          <div class="modal-body">
+            ${this.detailLoading
+              ? html`<div>加载中...</div>`
+              : this.renderDetailContent()}
+          </div>
+          <div class="modal-footer">
+            <button class="btn" @click=${this.closeDetail}>关闭</button>
+            ${this.detailTemplate?.id ? html`
+              <button
+                class="btn primary"
+                ?disabled=${this.installingId === this.detailTemplate.id}
+                @click=${() => {
+                  this.installTemplate(this.detailTemplate.id);
+                  this.closeDetail();
+                }}
+              >
+                ${this.installingId === this.detailTemplate.id ? "安装中..." : "安装"}
+              </button>
+            ` : nothing}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  renderDetailContent() {
+    const t = this.detailTemplate;
+    if (!t) return nothing;
+
+    const tags = Array.isArray(t.tags) ? t.tags : [];
+    const metaItems = [
+      { label: "版本", value: safeString(t.version) },
+      { label: "分类", value: safeString(t.category, "-") },
+      { label: "设备类型", value: safeString(t.deviceType, "-") },
+      { label: "协议", value: safeString(t.protocolType, "-") },
+      { label: "作者", value: safeString(t.author, "-") },
+      { label: "评分", value: typeof t.rating === "number" ? String(t.rating) : "-" },
+      { label: "下载", value: typeof t.downloadCount === "number" ? String(t.downloadCount) : "-" },
+    ];
+
+    // Collect array/object fields to show as JSON
+    const knownScalarFields = new Set([
+      "id", "name", "version", "description", "category", "author",
+      "tags", "deviceType", "protocolType", "driverName", "rating", "downloadCount",
+    ]);
+    const extraFields = Object.entries(t).filter(
+      ([k, v]) => !knownScalarFields.has(k) && v != null
+    );
+
+    return html`
+      <div style="margin-bottom: 12px;">
+        <div style="font-size: 18px; font-weight: 600; margin-bottom: 4px;">${safeString(t.name)}</div>
+        <div style="color: var(--muted); font-size: 13px;">${safeString(t.description, "暂无描述")}</div>
+      </div>
+
+      ${tags.length > 0 ? html`
+        <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px;">
+          ${tags.map((tag: string) => html`
+            <span style="font-size: 11px; color: var(--muted); background: var(--bg-muted); padding: 2px 8px; border-radius: var(--radius-sm);">${safeString(tag)}</span>
+          `)}
+        </div>
+      ` : nothing}
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin-bottom: 16px;">
+        ${metaItems.map((item) => html`
+          <div style="background: var(--bg-muted); padding: 8px 12px; border-radius: var(--radius-md);">
+            <div style="font-size: 11px; color: var(--muted); margin-bottom: 2px;">${item.label}</div>
+            <div style="font-size: 13px; font-weight: 500;">${item.value}</div>
+          </div>
+        `)}
+      </div>
+
+      ${extraFields.length > 0 ? html`
+        <div style="margin-top: 12px;">
+          <div style="font-size: 13px; font-weight: 600; margin-bottom: 8px;">扩展数据</div>
+          ${extraFields.map(([k, v]) => html`
+            <div style="margin-bottom: 10px;">
+              <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px; text-transform: capitalize;">${k}</div>
+              <pre style="margin: 0; padding: 10px; background: var(--bg-elevated); border-radius: var(--radius-md); font-size: 12px; overflow-x: auto; border: 1px solid var(--border);"
+              ><code>${JSON.stringify(v, null, 2)}</code></pre>
+            </div>
+          `)}
+        </div>
+      ` : nothing}
     `;
   }
 
