@@ -485,13 +485,13 @@ async fn get_statistics(
         Err((code, msg)) => return ApiResponseBuilder::error_with_code(code, &msg),
     };
 
-    let total = state.cron_job_repo.count().await.unwrap_or(0);
+    let total = state.cron_job_repo.count(&ws_id).await.unwrap_or(0);
     let success_runs = state.cron_run_repo.count_by_status(&ws_id, "success").await.unwrap_or(0);
     let failed_runs = state.cron_run_repo.count_by_status(&ws_id, "failed").await.unwrap_or(0);
 
-    let enabled_jobs = state.cron_job_repo.count_by_enabled(true).await.unwrap_or(0);
-    let disabled_jobs = state.cron_job_repo.count_by_enabled(false).await.unwrap_or(0);
-    let running_jobs = state.cron_job_repo.count_running().await.unwrap_or(0);
+    let enabled_jobs = state.cron_job_repo.count_by_enabled(&ws_id, true).await.unwrap_or(0);
+    let disabled_jobs = state.cron_job_repo.count_by_enabled(&ws_id, false).await.unwrap_or(0);
+    let running_jobs = state.cron_job_repo.count_running(&ws_id).await.unwrap_or(0);
     let avg_duration_ms = state.cron_run_repo.avg_duration_ms(&ws_id).await.unwrap_or(0);
 
     let stats = JobStatistics {

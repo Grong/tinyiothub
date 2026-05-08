@@ -127,7 +127,7 @@ impl<R: CronJobRepository + Send + Sync> CronJobRepository for TenantCronJobRepo
         Ok(result.rows_affected())
     }
 
-    async fn count(&self) -> Result<i64> {
+    async fn count(&self, _workspace_id: &str) -> Result<i64> {
         let result: (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM cron_jobs WHERE workspace_id = ?")
                 .bind(&self.workspace_id)
@@ -136,7 +136,7 @@ impl<R: CronJobRepository + Send + Sync> CronJobRepository for TenantCronJobRepo
         Ok(result.0)
     }
 
-    async fn count_by_enabled(&self, is_enabled: bool) -> Result<i64> {
+    async fn count_by_enabled(&self, _workspace_id: &str, is_enabled: bool) -> Result<i64> {
         let result: (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM cron_jobs WHERE workspace_id = ? AND is_enabled = ?",
         )
@@ -147,7 +147,7 @@ impl<R: CronJobRepository + Send + Sync> CronJobRepository for TenantCronJobRepo
         Ok(result.0)
     }
 
-    async fn count_running(&self) -> Result<i64> {
+    async fn count_running(&self, _workspace_id: &str) -> Result<i64> {
         let result: (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM cron_jobs WHERE workspace_id = ? AND is_running = 1",
         )

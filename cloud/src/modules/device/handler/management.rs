@@ -12,12 +12,17 @@ use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
     api::middleware::WorkspaceScope,
-    modules::template::types::{
-        CreateDeviceFromTemplateRequest, DeviceCreationInput, DevicePreview, TemplateRequirements,
+    modules::template::{
+        TemplateExporter,
+        types::{
+            CreateDeviceFromTemplateRequest, DeviceCreationInput, DevicePreview,
+            TemplateRequirements,
+        },
     },
     shared::{
         api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
         app_state::AppState,
+        error_handling::AuthHelper,
         pagination::PaginationQuery,
         security::jwt::Claims,
     },
@@ -526,12 +531,160 @@ async fn validate_single_field(
     }
 }
 
+/// Export a device as a template
+async fn export_device_template(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    claims: Claims,
+    WorkspaceScope(workspace_id): WorkspaceScope,
+) -> Json<ApiResponse<serde_json::Value>> {
+    match AuthHelper::check_role(&state, &claims.user_id, "admin").await {
+        Ok(true) => {}
+        Ok(false) => return ApiResponseBuilder::error("需要管理员权限"),
+        Err(e) => {
+            tracing::warn!("权限检查失败: {}", e);
+            return ApiResponseBuilder::error("权限检查失败");
+        }
+    }
+
+    let tenant_device_service = state.tenant_device_service(&workspace_id);
+    match tenant_device_service.get_device_by_id(&id).await {
+        Ok(Some(device)) => {
+            match TemplateExporter::export_from_device(&device) {
+                Ok(template) => {
+                    // Save the template to the database
+                    let display_name: std::collections::HashMap<String, String> =
+                        serde_json::from_str(&template.display_name).unwrap_or_default();
+                    let description = template.description.as_ref().map(|d| {
+                        let mut map = std::collections::HashMap::new();
+                        map.insert("zh".to_string(), d.clone());
+                        map.insert("en".to_string(), d.clone());
+                        map
+                    });
+                    let create_req = crate::modules::template::types::CreateDeviceTemplateRequest {
+                        name: template.name.clone(),
+                        display_name,
+                        description,
+                        version: template.version.clone(),
+                        author: template.author.clone(),
+                        category: template.category.clone(),
+                        manufacturer: template.manufacturer.clone(),
+                        device_type: template.device_type.clone(),
+                        protocol_type: template.protocol_type.clone(),
+                        driver_name: template.driver_name.clone(),
+                        tags: template.get_tags(),
+                        device_info: template.get_device_info().unwrap_or(
+                            crate::modules::template::types::DeviceInfo {
+                                default_name_pattern: format!("{}_{{index}}", device.name),
+                                default_display_name_pattern: None,
+                                default_description: None,
+                                default_position: device.position.clone(),
+                                default_driver_options: None,
+                                required_fields: vec!["name".to_string()],
+                            },
+                        ),
+                        properties: template.get_properties().unwrap_or_default(),
+                        commands: template.get_commands().unwrap_or_default(),
+                        workspace_id: workspace_id.clone(),
+                    };
+
+                    match crate::modules::template::types::DeviceTemplate::create(
+                        &state.database,
+                        &create_req,
+                    )
+                    .await
+                    {
+                        Ok(saved) => ApiResponseBuilder::success(serde_json::json!({
+                            "template_id": saved.id,
+                            "name": saved.name,
+                        })),
+                        Err(e) => {
+                            tracing::error!("Failed to save exported template: {}", e);
+                            ApiResponseBuilder::error(format!("Failed to save template: {}", e))
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to export device {} as template: {}", id, e);
+                    ApiResponseBuilder::error(format!("Export failed: {}", e))
+                }
+            }
+        }
+        Ok(None) => ApiResponseBuilder::error("Device not found"),
+        Err(e) => {
+            tracing::error!("Failed to get device {}: {}", id, e);
+            ApiResponseBuilder::error("Failed to get device")
+        }
+    }
+}
+
+/// Clone an existing device
+async fn clone_device(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    claims: Claims,
+    WorkspaceScope(workspace_id): WorkspaceScope,
+) -> Json<ApiResponse<Device>> {
+    match AuthHelper::check_role(&state, &claims.user_id, "admin").await {
+        Ok(true) => {}
+        Ok(false) => return ApiResponseBuilder::error("需要管理员权限"),
+        Err(e) => {
+            tracing::warn!("权限检查失败: {}", e);
+            return ApiResponseBuilder::error("权限检查失败");
+        }
+    }
+
+    let tenant_device_service = state.tenant_device_service(&workspace_id);
+
+    // Get the source device
+    let source_device = match tenant_device_service.get_device_by_id(&id).await {
+        Ok(Some(d)) => d,
+        Ok(None) => return ApiResponseBuilder::error("Device not found"),
+        Err(e) => {
+            tracing::error!("Failed to get device {}: {}", id, e);
+            return ApiResponseBuilder::error("Failed to get device");
+        }
+    };
+
+    // Create a new device based on the source
+    let new_name = format!("{}_copy", source_device.name);
+    let request = CreateDeviceRequest {
+        name: new_name,
+        display_name: source_device.display_name.clone(),
+        device_type: source_device.device_type.clone(),
+        address: source_device.address.clone(),
+        description: source_device.description.clone(),
+        position: source_device.position.clone(),
+        driver_name: source_device.driver_name.clone(),
+        device_model: source_device.device_model.clone(),
+        protocol_type: source_device.protocol_type.clone(),
+        factory_name: source_device.factory_name.clone(),
+        linked_data: source_device.linked_data.clone(),
+        driver_options: source_device.driver_options.clone(),
+        parent_id: source_device.parent_id.clone(),
+        product_id: source_device.product_id.clone(),
+    };
+
+    match tenant_device_service.create_device(&request).await {
+        Ok(created_device) => ApiResponseBuilder::success(created_device),
+        Err(e) => {
+            tracing::error!("Failed to clone device {}: {}", id, e);
+            match e {
+                crate::shared::error::Error::ValidationError(msg) => ApiResponseBuilder::error(msg),
+                _ => ApiResponseBuilder::error("Clone device failed"),
+            }
+        }
+    }
+}
+
 pub fn create_router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_devices).post(create_device))
         .route("/{id}", get(get_device).put(update_device).delete(delete_device))
         .route("/{id}/enable", post(enable_device))
         .route("/{id}/disable", post(disable_device))
+        .route("/{id}/export-template", post(export_device_template))
+        .route("/{id}/clone", post(clone_device))
         .route("/from-template", post(create_device_from_template))
         .route("/from-template/{template_id}/preview", post(preview_device_from_template))
         .route("/from-template/{template_id}/validate", post(validate_device_input))

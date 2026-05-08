@@ -21,9 +21,7 @@ pub mod test_helpers {
     /// - Skipping deleted-file versions
     /// - Cleaning up orphaned `_sqlx_migrations` records
     /// - Post-migration schema consistency repair
-    pub async fn run_all_migrations(
-        pool: &sqlx::SqlitePool,
-    ) -> Result<(), sqlx::Error> {
+    pub async fn run_all_migrations(pool: &sqlx::SqlitePool) -> Result<(), sqlx::Error> {
         crate::shared::persistence::migrations::run_migrations(pool).await
     }
 }

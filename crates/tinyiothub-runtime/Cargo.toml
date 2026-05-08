@@ -48,8 +48,14 @@ arc-swap = "1.9"
 # Futures utilities (join_all)
 futures-util = { workspace = true }
 
+# Dynamic library loading
+libloading = "0.8"
+
 # Date/time
 chrono = { workspace = true }
+
+# Regex
+regex = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

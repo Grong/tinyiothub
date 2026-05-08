@@ -12,6 +12,9 @@ use crate::error::Error;
 use crate::models::device::Device;
 use crate::models::device_command::DeviceCommand;
 
+pub mod dynamic;
+pub use dynamic::{DRIVER_ABI_VERSION, DriverDestroyFn, DriverInitFn, DriverVTable, DriverVTableFn};
+
 // ─── Retry configuration ────────────────────────────────────────────
 
 /// 退避策略

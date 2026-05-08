@@ -13,6 +13,7 @@ mod device_handler_tests;
 mod driver_handler_tests;
 mod event_handler_tests;
 mod heartbeat_handler_tests;
+mod jobs_handler_tests;
 mod marketplace_handler_tests;
 mod mcp_handler_tests;
 mod monitoring_handler_tests;

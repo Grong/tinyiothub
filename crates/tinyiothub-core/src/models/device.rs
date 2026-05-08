@@ -99,6 +99,7 @@ pub struct Device {
     pub status: DeviceStatus,
     pub parent_id: Option<String>,
     pub product_id: Option<String>,
+    pub workspace_id: Option<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
     /// 关联的标签列表 (不存储在数据库中，通过关联查询获取)
@@ -274,6 +275,7 @@ impl Default for Device {
             status: DeviceStatus::Offline,
             parent_id: None,
             product_id: None,
+            workspace_id: None,
             created_at: Some(now.clone()),
             updated_at: Some(now),
             tags: None,           // 默认无标签

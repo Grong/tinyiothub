@@ -12,6 +12,7 @@ use serde::Deserialize;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
+    api::middleware::WorkspaceScope,
     modules::{
         marketplace::{
             client::MarketplaceClient, driver_installer::DriverInstaller,
@@ -19,7 +20,10 @@ use crate::{
         },
         template::TemplateRepository,
     },
-    shared::{api_response::ApiResponse, app_state::AppState, config, security::jwt::Claims},
+    shared::{
+        api_response::ApiResponse, app_state::AppState, config, error_handling::AuthHelper,
+        security::jwt::Claims,
+    },
 };
 
 pub fn create_router() -> Router<AppState> {
@@ -30,6 +34,7 @@ pub fn create_router() -> Router<AppState> {
         .route("/drivers", get(proxy_marketplace_drivers))
         .route("/drivers/{id}", get(proxy_marketplace_driver))
         .route("/drivers/{id}/install", post(install_marketplace_driver))
+        .route("/publish/template", post(publish_template_handler))
 }
 
 const EXTERNAL_MARKETPLACE_API: &str = "https://marketplace.tinyiothub.com/api/v1";
@@ -217,11 +222,20 @@ async fn install_marketplace_template(
 }
 
 async fn install_marketplace_driver(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Path(id): Path<String>,
-    _claims: Claims,
+    claims: Claims,
     Json(req): Json<InstallRequest>,
 ) -> Json<ApiResponse<String>> {
+    match AuthHelper::check_role(&state, &claims.user_id, "admin").await {
+        Ok(true) => {}
+        Ok(false) => return ApiResponseBuilder::error("需要管理员权限"),
+        Err(e) => {
+            tracing::warn!("权限检查失败: {}", e);
+            return ApiResponseBuilder::error("权限检查失败");
+        }
+    }
+
     let config = config::get();
 
     let client = match MarketplaceClient::new(config.marketplace.clone()) {
@@ -246,5 +260,64 @@ async fn install_marketplace_driver(
             tracing::error!("Failed to install driver {}: {}", id, e);
             ApiResponseBuilder::error(format!("安装驱动失败: {}", e))
         }
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct PublishTemplateApiRequest {
+    pub template_id: String,
+}
+
+async fn publish_template_handler(
+    State(state): State<AppState>,
+    WorkspaceScope(workspace_id): WorkspaceScope,
+    claims: Claims,
+    Json(req): Json<PublishTemplateApiRequest>,
+) -> Json<ApiResponse<serde_json::Value>> {
+    match AuthHelper::check_role(&state, &claims.user_id, "admin").await {
+        Ok(true) => {}
+        Ok(false) => return ApiResponseBuilder::error("需要管理员权限"),
+        Err(e) => {
+            tracing::warn!("权限检查失败: {}", e);
+            return ApiResponseBuilder::error("权限检查失败");
+        }
+    }
+    let config = crate::shared::config::get();
+    let marketplace_config = &config.marketplace;
+    if !marketplace_config.enabled {
+        return ApiResponseBuilder::error("市场未启用");
+    }
+    if marketplace_config.api_url.is_none() || marketplace_config.api_key.is_none() {
+        return ApiResponseBuilder::error("市场未配置");
+    }
+
+    let workspace_id_str = workspace_id.as_deref().unwrap_or("");
+    let template = match crate::modules::template::types::DeviceTemplate::find_by_id(
+        &state.database,
+        &req.template_id,
+        workspace_id_str,
+    )
+    .await
+    {
+        Ok(Some(t)) => t,
+        Ok(None) => {
+            return ApiResponseBuilder::error("模板不存在");
+        }
+        Err(e) => {
+            return ApiResponseBuilder::error(format!("数据库错误: {}", e));
+        }
+    };
+
+    let publisher =
+        match crate::modules::marketplace::MarketplacePublisher::new(&marketplace_config) {
+            Ok(p) => p,
+            Err(e) => {
+                return ApiResponseBuilder::error(format!("发布器初始化失败: {}", e));
+            }
+        };
+
+    match publisher.publish_template(&template).await {
+        Ok(result) => ApiResponseBuilder::success(result),
+        Err(e) => ApiResponseBuilder::error(format!("发布失败: {}", e)),
     }
 }

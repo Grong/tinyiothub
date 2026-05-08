@@ -67,6 +67,7 @@ pub fn create_router() -> Router<AppState> {
         // API Keys — 直接在 /v1/api-keys/ 下，不嵌套在 /tenants 下
         .nest("/api-keys", crate::modules::tenant::create_api_key_router())
         .nest("/agents", crate::modules::agent::handler::create_router())
+        .nest("/driver-health", crate::modules::driver_health::handler::create_router())
         .route("/tools/catalog", get(crate::modules::chat::handler::proxy::tools_catalog))
         .route("/tools/effective", get(crate::modules::chat::handler::proxy::tools_effective))
         .route("/tools/toggle", post(crate::modules::chat::handler::proxy::tools_toggle))

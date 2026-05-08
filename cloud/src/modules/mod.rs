@@ -8,6 +8,7 @@ pub mod batch;
 pub mod chat;
 pub mod cron;
 pub mod device;
+pub mod driver_health;
 pub mod drivers;
 pub mod event;
 pub mod heartbeat;

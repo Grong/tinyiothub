@@ -176,6 +176,7 @@ mod core_interop {
                 },
                 parent_id: None,
                 product_id: None,
+                workspace_id: None,
                 created_at: None,
                 updated_at: None,
                 tags: None,

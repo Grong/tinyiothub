@@ -20,9 +20,9 @@ pub trait CronJobRepository: Send + Sync {
     async fn find_due_jobs(&self) -> Result<Vec<CronJob>>;
     async fn claim_job(&self, id: &str) -> Result<bool>;
     async fn clear_all_running(&self) -> Result<u64>;
-    async fn count(&self) -> Result<i64>;
-    async fn count_by_enabled(&self, is_enabled: bool) -> Result<i64>;
-    async fn count_running(&self) -> Result<i64>;
+    async fn count(&self, workspace_id: &str) -> Result<i64>;
+    async fn count_by_enabled(&self, workspace_id: &str, is_enabled: bool) -> Result<i64>;
+    async fn count_running(&self, workspace_id: &str) -> Result<i64>;
     async fn update_next_run_at(&self, id: &str, next_run_at: Option<&str>) -> Result<bool>;
 }
 
