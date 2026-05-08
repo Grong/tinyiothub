@@ -123,41 +123,36 @@ export class MarketplaceView extends LitElement {
 
   render() {
     return html`
-      <div class="page">
-        <div class="page-header">
-          <h1 class="page-title">应用市场</h1>
-          <div class="tabs">
-            <button
-              class="tab ${this.activeTab === "templates" ? "tab--active" : ""}"
-              @click=${() => this.switchTab("templates")}
-            >
-              模板
-            </button>
-            <button
-              class="tab ${this.activeTab === "drivers" ? "tab--active" : ""}"
-              @click=${() => this.switchTab("drivers")}
-            >
-              驱动
-            </button>
-          </div>
-        </div>
-
-        <div class="toolbar">
+      <div style="display: flex; gap: 10px; margin-bottom: 16px; align-items: center; flex-wrap: wrap;">
+        <div class="field" style="flex: 1; max-width: 280px; min-width: 160px;">
           <input
-            class="input"
             type="text"
-            placeholder="搜索..."
+            placeholder="搜索名称、分类、协议..."
             .value=${this.searchKeyword}
             @input=${(e: InputEvent) => { this.searchKeyword = (e.target as HTMLInputElement).value; }}
           />
         </div>
-
-        ${this.activeTab === "templates"
-          ? this.renderTemplatesTab()
-          : this.renderDriversTab()}
-
-        ${this.localTemplates.length > 0 ? this.renderPublishSection() : nothing}
+        <div class="detail-tabs">
+          <button
+            class="detail-tab ${this.activeTab === "templates" ? "active" : ""}"
+            @click=${() => this.switchTab("templates")}
+          >
+            模板
+          </button>
+          <button
+            class="detail-tab ${this.activeTab === "drivers" ? "active" : ""}"
+            @click=${() => this.switchTab("drivers")}
+          >
+            驱动
+          </button>
+        </div>
       </div>
+
+      ${this.activeTab === "templates"
+        ? this.renderTemplatesTab()
+        : this.renderDriversTab()}
+
+      ${this.localTemplates.length > 0 ? this.renderPublishSection() : nothing}
     `;
   }
 
