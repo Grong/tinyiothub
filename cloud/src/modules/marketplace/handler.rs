@@ -53,19 +53,48 @@ pub struct InstallRequest {
 
 /// 将外部市场 API 的响应统一包装为 ApiResponse 格式。
 /// - 如果外部响应已经是 ApiResponse 格式（包含 code + result），则直接透传，
-///   同时把 result 内部的 `items` 重命名为 `data`（对齐项目 PaginatedResponse 规范）。
+///   同时把 result 内部的 `items` 重命名为 `data`，并把分页元数据规范化为
+///   PaginatedResponse 格式（对齐项目规范）。
 /// - 否则将原始数据包装为 ApiResponse::success。
 fn normalize_marketplace_response(data: serde_json::Value) -> Json<ApiResponse<serde_json::Value>> {
     if data.get("code").is_some() && data.get("result").is_some() {
         let code = data["code"].as_i64().unwrap_or(0) as i32;
         let msg = data["msg"].as_str().unwrap_or("").to_string();
         let mut result = data.get("result").cloned();
-        // 外部市场使用 `items`，内部规范使用 `data`，在这里做统一转换
         if let Some(ref mut obj) = result {
+            // 外部市场使用 `items`，内部规范使用 `data`
             if obj.get("items").is_some() && obj.get("data").is_none() {
                 if let Some(items) = obj.as_object_mut().and_then(|m| m.remove("items")) {
                     obj["data"] = items;
                 }
+            }
+            // 规范化分页元数据为 PaginatedResponse 格式
+            if obj.get("data").is_some() && obj.get("pagination").is_none() {
+                let page = obj.get("page")
+                    .and_then(|v| v.as_u64())
+                    .or_else(|| obj.get("current_page").and_then(|v| v.as_u64()))
+                    .unwrap_or(1) as u32;
+                let page_size = obj.get("page_size")
+                    .and_then(|v| v.as_u64())
+                    .or_else(|| obj.get("pageSize").and_then(|v| v.as_u64()))
+                    .or_else(|| obj.get("per_page").and_then(|v| v.as_u64()))
+                    .unwrap_or(20) as u32;
+                let total_count = obj.get("total_count")
+                    .and_then(|v| v.as_u64())
+                    .or_else(|| obj.get("totalCount").and_then(|v| v.as_u64()))
+                    .or_else(|| obj.get("total").and_then(|v| v.as_u64()))
+                    .unwrap_or(0) as u64;
+                let total_pages = if page_size > 0 {
+                    ((total_count as f64) / (page_size as f64)).ceil() as u32
+                } else {
+                    0
+                };
+                obj["pagination"] = serde_json::json!({
+                    "page": page,
+                    "page_size": page_size,
+                    "total_pages": total_pages,
+                    "total_count": total_count
+                });
             }
         }
         Json(ApiResponse { code, msg, result })

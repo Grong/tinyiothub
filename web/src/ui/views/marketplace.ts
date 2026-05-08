@@ -6,6 +6,13 @@ import { success, error as toastError } from "../components/toast.js";
 
 type Tab = "templates" | "drivers";
 
+function safeString(value: any, fallback = "-"): string {
+  if (value == null) return fallback;
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return fallback;
+}
+
 @customElement("view-marketplace")
 export class MarketplaceView extends LitElement {
   @state() activeTab: Tab = "templates";
@@ -16,6 +23,12 @@ export class MarketplaceView extends LitElement {
   @state() installingId: string | null = null;
   @state() publishingId: string | null = null;
   @state() localTemplates: { id: string; name: string }[] = [];
+
+  // pagination
+  @state() page = 1;
+  @state() pageSize = 12;
+  @state() totalPages = 0;
+  @state() totalCount = 0;
 
   createRenderRoot() {
     return this;
@@ -30,9 +43,20 @@ export class MarketplaceView extends LitElement {
   async loadTemplates() {
     this.loading = true;
     try {
-      const res = await marketplaceApi.getTemplates({ pageSize: 100 });
+      const res = await marketplaceApi.getTemplates({
+        page: this.page,
+        pageSize: this.pageSize,
+      });
       const result = res.result;
-      this.templates = Array.isArray(result) ? result : (result?.data ?? []);
+      if (Array.isArray(result)) {
+        this.templates = result;
+        this.totalPages = 1;
+        this.totalCount = result.length;
+      } else {
+        this.templates = result?.data ?? [];
+        this.totalPages = result?.pagination?.totalPages ?? 0;
+        this.totalCount = result?.pagination?.totalCount ?? 0;
+      }
     } catch (e: any) {
       toastError(e.message || "加载市场模板失败");
     } finally {
@@ -43,9 +67,20 @@ export class MarketplaceView extends LitElement {
   async loadDrivers() {
     this.loading = true;
     try {
-      const res = await marketplaceApi.getDrivers({ pageSize: 100 });
+      const res = await marketplaceApi.getDrivers({
+        page: this.page,
+        pageSize: this.pageSize,
+      });
       const result = res.result;
-      this.drivers = Array.isArray(result) ? result : (result?.data ?? []);
+      if (Array.isArray(result)) {
+        this.drivers = result;
+        this.totalPages = 1;
+        this.totalCount = result.length;
+      } else {
+        this.drivers = result?.data ?? [];
+        this.totalPages = result?.pagination?.totalPages ?? 0;
+        this.totalCount = result?.pagination?.totalCount ?? 0;
+      }
     } catch (e: any) {
       toastError(e.message || "加载市场驱动失败");
     } finally {
@@ -60,7 +95,7 @@ export class MarketplaceView extends LitElement {
       const templates = Array.isArray(data) ? data : (data?.data ?? []);
       this.localTemplates = templates.map((t: any) => ({ id: t.id, name: t.name }));
     } catch {
-      // ignore — publish section just won't show templates
+      // ignore
     }
   }
 
@@ -102,7 +137,15 @@ export class MarketplaceView extends LitElement {
 
   switchTab(tab: Tab) {
     this.activeTab = tab;
+    this.page = 1;
     if (tab === "templates") this.loadTemplates();
+    else this.loadDrivers();
+  }
+
+  goToPage(p: number) {
+    if (p < 1 || p > this.totalPages) return;
+    this.page = p;
+    if (this.activeTab === "templates") this.loadTemplates();
     else this.loadDrivers();
   }
 
@@ -111,9 +154,9 @@ export class MarketplaceView extends LitElement {
     const kw = this.searchKeyword.toLowerCase();
     return this.templates.filter(
       (t) =>
-        t.name?.toLowerCase().includes(kw) ||
-        t.description?.toLowerCase().includes(kw) ||
-        t.category?.toLowerCase().includes(kw)
+        safeString(t.name, "").toLowerCase().includes(kw) ||
+        safeString(t.description, "").toLowerCase().includes(kw) ||
+        safeString(t.category, "").toLowerCase().includes(kw)
     );
   }
 
@@ -121,7 +164,9 @@ export class MarketplaceView extends LitElement {
     if (!this.searchKeyword) return this.drivers;
     const kw = this.searchKeyword.toLowerCase();
     return this.drivers.filter(
-      (d) => d.name?.toLowerCase().includes(kw) || d.description?.toLowerCase().includes(kw)
+      (d) =>
+        safeString(d.name, "").toLowerCase().includes(kw) ||
+        safeString(d.description, "").toLowerCase().includes(kw)
     );
   }
 
@@ -138,13 +183,13 @@ export class MarketplaceView extends LitElement {
         </div>
         <div class="detail-tabs">
           <button
-            class="detail-tab ${this.activeTab === "templates" ? "active" : ""}"
+            class="btn ${this.activeTab === "templates" ? "active" : ""}"
             @click=${() => this.switchTab("templates")}
           >
             模板
           </button>
           <button
-            class="detail-tab ${this.activeTab === "drivers" ? "active" : ""}"
+            class="btn ${this.activeTab === "drivers" ? "active" : ""}"
             @click=${() => this.switchTab("drivers")}
           >
             驱动
@@ -163,20 +208,24 @@ export class MarketplaceView extends LitElement {
   renderTemplatesTab() {
     if (this.loading) return html`<div class="card">加载中...</div>`;
     const items = this.filteredTemplates;
-    if (items.length === 0) return html`<div class="card empty-hint">暂无模板</div>`;
+    if (items.length === 0) return html`<div class="card" style="color: var(--muted);">暂无模板</div>`;
     return html`
-      <div class="card-grid">
+      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px;">
         ${items.map((t) => html`
-          <div class="card card--hover">
-            <div class="card__header">
-              <h3 class="card__title">${t.name}</h3>
-              <span class="badge">${t.version}</span>
+          <div class="card">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+              <div class="card-title">${safeString(t.name)}</div>
+              <span style="font-size: 11px; color: var(--muted); background: var(--bg-muted); padding: 2px 8px; border-radius: var(--radius-sm);">${safeString(t.version)}</span>
             </div>
-            <p class="card__meta">${t.category || "其他"} · ${t.deviceType || "-"}</p>
-            <p class="card__desc">${t.description || "暂无描述"}</p>
-            <div class="card__footer">
+            <div class="card-sub" style="margin-top: 0; margin-bottom: 8px;">
+              ${safeString(t.category, "其他")} · ${safeString(t.deviceType, "-")}
+            </div>
+            <div style="color: var(--text); font-size: 13px; line-height: 1.5; margin-bottom: 12px; min-height: 40px;">
+              ${safeString(t.description, "暂无描述")}
+            </div>
+            <div style="display: flex; justify-content: flex-end;">
               <button
-                class="btn btn--primary btn--sm"
+                class="btn primary btn--sm"
                 ?disabled=${this.installingId === t.id}
                 @click=${() => this.installTemplate(t.id)}
               >
@@ -186,26 +235,31 @@ export class MarketplaceView extends LitElement {
           </div>
         `)}
       </div>
+      ${this.renderPagination()}
     `;
   }
 
   renderDriversTab() {
     if (this.loading) return html`<div class="card">加载中...</div>`;
     const items = this.filteredDrivers;
-    if (items.length === 0) return html`<div class="card empty-hint">暂无驱动</div>`;
+    if (items.length === 0) return html`<div class="card" style="color: var(--muted);">暂无驱动</div>`;
     return html`
-      <div class="card-grid">
+      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px;">
         ${items.map((d) => html`
-          <div class="card card--hover">
-            <div class="card__header">
-              <h3 class="card__title">${d.name}</h3>
-              <span class="badge">${d.version}</span>
+          <div class="card">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+              <div class="card-title">${safeString(d.name)}</div>
+              <span style="font-size: 11px; color: var(--muted); background: var(--bg-muted); padding: 2px 8px; border-radius: var(--radius-sm);">${safeString(d.version)}</span>
             </div>
-            <p class="card__meta">${d.protocolType || "-"}</p>
-            <p class="card__desc">${d.description || "暂无描述"}</p>
-            <div class="card__footer">
+            <div class="card-sub" style="margin-top: 0; margin-bottom: 8px;">
+              ${safeString(d.protocolType, "-")}
+            </div>
+            <div style="color: var(--text); font-size: 13px; line-height: 1.5; margin-bottom: 12px; min-height: 40px;">
+              ${safeString(d.description, "暂无描述")}
+            </div>
+            <div style="display: flex; justify-content: flex-end;">
               <button
-                class="btn btn--primary btn--sm"
+                class="btn primary btn--sm"
                 ?disabled=${this.installingId === d.id}
                 @click=${() => this.installDriver(d.id)}
               >
@@ -215,17 +269,41 @@ export class MarketplaceView extends LitElement {
           </div>
         `)}
       </div>
+      ${this.renderPagination()}
+    `;
+  }
+
+  renderPagination() {
+    if (this.totalPages <= 1) return nothing;
+    return html`
+      <div class="pagination" style="margin-top: 16px;">
+        <button
+          class="btn btn--sm"
+          ?disabled=${this.page <= 1}
+          @click=${() => this.goToPage(this.page - 1)}
+        >
+          上一页
+        </button>
+        <span class="pagination-info">第 ${this.page} / ${this.totalPages} 页，共 ${this.totalCount} 条</span>
+        <button
+          class="btn btn--sm"
+          ?disabled=${this.page >= this.totalPages}
+          @click=${() => this.goToPage(this.page + 1)}
+        >
+          下一页
+        </button>
+      </div>
     `;
   }
 
   renderPublishSection() {
     return html`
       <div class="card" style="margin-top: 24px;">
-        <h3 class="card__title">发布本地模板到市场</h3>
+        <div class="card-title">发布本地模板到市场</div>
         <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 12px;">
           ${this.localTemplates.map((t) => html`
             <button
-              class="btn btn--secondary btn--sm"
+              class="btn btn--sm"
               ?disabled=${this.publishingId === t.id}
               @click=${() => this.publishTemplate(t.id)}
             >
