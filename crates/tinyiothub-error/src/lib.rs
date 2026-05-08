@@ -36,6 +36,9 @@ pub enum Error {
 
     #[error("serialization error: {0}")]
     SerializationError(String),
+
+    #[error("driver error: {0}")]
+    DriverError(String),
 }
 
 /// Unified Result type alias.

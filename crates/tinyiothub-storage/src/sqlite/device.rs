@@ -443,6 +443,7 @@ impl DeviceRepository for SqliteDeviceRepository {
                 status: tinyiothub_core::models::device::DeviceStatus::Offline,
                 parent_id: request.parent_id.clone(),
                 product_id: request.product_id.clone(),
+                workspace_id: None,
                 created_at: Some(now.clone()),
                 updated_at: Some(now.clone()),
                 tags: None,

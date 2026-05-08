@@ -739,6 +739,8 @@ pub struct MarketplaceConfig {
     pub cache_ttl_hours: u64,
     #[serde(default = "default_download_timeout")]
     pub download_timeout_secs: u64,
+    #[serde(default)]
+    pub api_key: Option<String>,
 }
 
 impl Default for MarketplaceConfig {
@@ -750,6 +752,7 @@ impl Default for MarketplaceConfig {
             github_branch: "main".to_string(),
             cache_ttl_hours: 24,
             download_timeout_secs: 300,
+            api_key: None,
         }
     }
 }
