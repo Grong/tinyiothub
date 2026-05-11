@@ -13,6 +13,11 @@ function safeString(value: any, fallback = "-"): string {
   return fallback;
 }
 
+function getItemId(item: any): string | undefined {
+  if (!item || typeof item !== "object") return undefined;
+  return item.id ?? item._id ?? item.slug ?? item.templateId ?? item.template_id;
+}
+
 @customElement("view-marketplace")
 export class MarketplaceView extends LitElement {
   @state() activeTab: Tab = "templates";
@@ -252,19 +257,25 @@ export class MarketplaceView extends LitElement {
               ${safeString(t.description, "暂无描述")}
             </div>
             <div style="display: flex; justify-content: flex-end; gap: 8px;">
-              <button
-                class="btn btn--sm"
-                @click=${() => this.openDetail(t.id)}
-              >
-                详情
-              </button>
-              <button
-                class="btn primary btn--sm"
-                ?disabled=${this.installingId === t.id}
-                @click=${() => this.installTemplate(t.id)}
-              >
-                ${this.installingId === t.id ? "安装中..." : "安装"}
-              </button>
+              ${(() => {
+                const id = getItemId(t);
+                return id ? html`
+                  <button
+                    class="btn btn--sm"
+                    @click=${() => this.openDetail(id)}
+                  >
+                    详情
+                  </button>
+                  <button
+                    class="btn primary btn--sm"
+                    ?disabled=${this.installingId === id}
+                    @click=${() => this.installTemplate(id)}
+                  >
+                    ${this.installingId === id ? "安装中..." : "安装"}
+                  </button>
+                ` : html`<span style="font-size: 11px; color: var(--warn);">ID 缺失</span>
+                `;
+              })()}
             </div>
           </div>
         `)}

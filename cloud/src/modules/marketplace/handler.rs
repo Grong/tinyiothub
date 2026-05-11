@@ -65,7 +65,25 @@ fn normalize_marketplace_response(data: serde_json::Value) -> Json<ApiResponse<s
             // 外部市场使用 `items`，内部规范使用 `data`
             if obj.get("items").is_some() && obj.get("data").is_none() {
                 if let Some(items) = obj.as_object_mut().and_then(|m| m.remove("items")) {
-                    obj["data"] = items;
+                    obj["data"] = items.clone();
+                    // 外部 item 可能用 `_id` / `slug` / `template_id` 而不是 `id`，统一映射
+                    if let Some(data_arr) = obj.get_mut("data").and_then(|v| v.as_array_mut()) {
+                        for item in data_arr.iter_mut() {
+                            if let Some(item_obj) = item.as_object_mut() {
+                                if !item_obj.contains_key("id") {
+                                    if let Some(id_val) = item_obj
+                                        .get("_id")
+                                        .or_else(|| item_obj.get("slug"))
+                                        .or_else(|| item_obj.get("template_id"))
+                                        .or_else(|| item_obj.get("templateId"))
+                                        .cloned()
+                                    {
+                                        item_obj.insert("id".to_string(), id_val);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
             // 规范化分页元数据为 PaginatedResponse 格式
