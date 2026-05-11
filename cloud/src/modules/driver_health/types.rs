@@ -8,6 +8,7 @@ pub struct DriverHealthEntry {
     pub version: String,
     pub loaded_at: String,
     pub status: String,
+    pub ref_count: usize,
 }
 
 /// Overall driver health summary for a workspace.

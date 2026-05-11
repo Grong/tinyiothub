@@ -13,11 +13,12 @@ impl DriverHealthService {
         let drivers = registry.list_for_workspace(workspace_id);
         let entries: Vec<DriverHealthEntry> = drivers
             .into_iter()
-            .map(|(name, version, loaded_at)| DriverHealthEntry {
+            .map(|(name, version, loaded_at, ref_count)| DriverHealthEntry {
                 driver_name: name,
                 version,
                 loaded_at: loaded_at.format("%Y-%m-%d %H:%M:%S").to_string(),
-                status: "active".to_string(),
+                status: if ref_count > 0 { "active".to_string() } else { "idle".to_string() },
+                ref_count,
             })
             .collect();
 
