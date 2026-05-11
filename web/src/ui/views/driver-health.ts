@@ -54,20 +54,15 @@ export class DriverHealthView extends LitElement {
 
   render() {
     return html`
-      <div class="page">
-        <div class="page-header">
-          <h1 class="page-title">驱动健康</h1>
-          <button class="btn btn--secondary btn--sm" @click=${() => this.loadHealth()}>
-            刷新
-          </button>
-        </div>
-
-        ${this.loading
-          ? html`<div class="card">加载中...</div>`
-          : this.error
-            ? html`<div class="card card--error">${this.error}</div>`
-            : this.renderTable()}
+      <div style="display: flex; justify-content: flex-end; margin-bottom: 16px;">
+        <button class="btn btn--sm" @click=${() => this.loadHealth()}>刷新</button>
       </div>
+
+      ${this.loading
+        ? html`<div class="card">加载中...</div>`
+        : this.error
+          ? html`<div class="card" style="color: var(--danger);">${this.error}</div>`
+          : this.renderTable()}
     `;
   }
 
