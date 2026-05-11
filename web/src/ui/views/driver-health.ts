@@ -37,6 +37,7 @@ export class DriverHealthView extends LitElement {
   statusColor(status: string): string {
     switch (status) {
       case "active": return "var(--success)";
+      case "idle": return "var(--info)";
       case "error": return "var(--danger)";
       case "unloading": return "var(--warning)";
       default: return "var(--muted)";
@@ -45,7 +46,8 @@ export class DriverHealthView extends LitElement {
 
   statusLabel(status: string): string {
     switch (status) {
-      case "active": return "正常";
+      case "active": return "使用中";
+      case "idle": return "空闲";
       case "error": return "故障";
       case "unloading": return "卸载中";
       default: return status;

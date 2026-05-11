@@ -9,7 +9,7 @@ export interface DriverHealthInfo {
   version: string;
   loadedAt: string;
   refCount: number;
-  status: 'active' | 'error' | 'unloading';
+  status: 'active' | 'idle' | 'error' | 'unloading';
 }
 
 export interface WorkspaceDriverHealth {
