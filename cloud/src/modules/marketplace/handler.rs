@@ -29,15 +29,22 @@ use crate::{
 pub fn create_router() -> Router<AppState> {
     Router::new()
         .route("/templates", get(proxy_marketplace_templates))
-        .route("/templates/{id}", get(proxy_marketplace_template))
-        .route("/templates/{id}/install", post(install_marketplace_template))
+        .route("/templates/{name}", get(proxy_marketplace_template))
+        .route("/templates/{name}/install", post(install_marketplace_template))
         .route("/drivers", get(proxy_marketplace_drivers))
         .route("/drivers/{id}", get(proxy_marketplace_driver))
         .route("/drivers/{id}/install", post(install_marketplace_driver))
         .route("/publish/template", post(publish_template_handler))
 }
 
-const EXTERNAL_MARKETPLACE_API: &str = "https://marketplace.tinyiothub.com/api/v1";
+fn marketplace_api_url() -> String {
+    let config = config::get();
+    config
+        .marketplace
+        .api_url
+        .clone()
+        .unwrap_or_else(|| "https://marketplace.tinyiothub.com/api/v1".to_string())
+}
 
 static HTTP_CLIENT: std::sync::LazyLock<Client, fn() -> Client> = std::sync::LazyLock::new(|| {
     Client::builder()
@@ -65,25 +72,7 @@ fn normalize_marketplace_response(data: serde_json::Value) -> Json<ApiResponse<s
             // 外部市场使用 `items`，内部规范使用 `data`
             if obj.get("items").is_some() && obj.get("data").is_none() {
                 if let Some(items) = obj.as_object_mut().and_then(|m| m.remove("items")) {
-                    obj["data"] = items.clone();
-                    // 外部 item 可能用 `_id` / `slug` / `template_id` 而不是 `id`，统一映射
-                    if let Some(data_arr) = obj.get_mut("data").and_then(|v| v.as_array_mut()) {
-                        for item in data_arr.iter_mut() {
-                            if let Some(item_obj) = item.as_object_mut() {
-                                if !item_obj.contains_key("id") {
-                                    if let Some(id_val) = item_obj
-                                        .get("_id")
-                                        .or_else(|| item_obj.get("slug"))
-                                        .or_else(|| item_obj.get("template_id"))
-                                        .or_else(|| item_obj.get("templateId"))
-                                        .cloned()
-                                    {
-                                        item_obj.insert("id".to_string(), id_val);
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    obj["data"] = items;
                 }
             }
             // 规范化分页元数据为 PaginatedResponse 格式
@@ -125,7 +114,7 @@ async fn proxy_marketplace_templates(
     State(_state): State<AppState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    let mut url = format!("{}/templates", EXTERNAL_MARKETPLACE_API);
+    let mut url = format!("{}/templates", marketplace_api_url());
 
     if !params.is_empty() {
         let query_string =
@@ -152,9 +141,9 @@ async fn proxy_marketplace_templates(
 
 async fn proxy_marketplace_template(
     State(_state): State<AppState>,
-    Path(id): Path<String>,
+    Path(name): Path<String>,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    let url = format!("{}/templates/{}", EXTERNAL_MARKETPLACE_API, id);
+    let url = format!("{}/templates/{}", marketplace_api_url(), name);
     tracing::info!("Proxying marketplace template request to: {}", url);
 
     match HTTP_CLIENT.get(&url).send().await {
@@ -166,7 +155,7 @@ async fn proxy_marketplace_template(
             }
         },
         Err(e) => {
-            tracing::error!("Failed to fetch marketplace template {}: {}", id, e);
+            tracing::error!("Failed to fetch marketplace template {}: {}", name, e);
             ApiResponseBuilder::error(format!("获取模板详情失败: {}", e))
         }
     }
@@ -176,7 +165,7 @@ async fn proxy_marketplace_drivers(
     State(_state): State<AppState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    let mut url = format!("{}/drivers", EXTERNAL_MARKETPLACE_API);
+    let mut url = format!("{}/drivers", marketplace_api_url());
 
     if !params.is_empty() {
         let query_string =
@@ -205,7 +194,7 @@ async fn proxy_marketplace_driver(
     State(_state): State<AppState>,
     Path(id): Path<String>,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    let url = format!("{}/drivers/{}", EXTERNAL_MARKETPLACE_API, id);
+    let url = format!("{}/drivers/{}", marketplace_api_url(), id);
     tracing::info!("Proxying marketplace driver request to: {}", url);
 
     match HTTP_CLIENT.get(&url).send().await {
@@ -225,7 +214,7 @@ async fn proxy_marketplace_driver(
 
 async fn install_marketplace_template(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path(name): Path<String>,
     _claims: Claims,
     Json(req): Json<InstallRequest>,
 ) -> Json<ApiResponse<String>> {
@@ -247,13 +236,13 @@ async fn install_marketplace_template(
     let installer =
         TemplateInstaller::new(client, repository, std::path::PathBuf::from("templates"));
 
-    match installer.install_from_marketplace(&id, req.version.as_deref()).await {
+    match installer.install_from_marketplace(&name, req.version.as_deref()).await {
         Ok(template_id) => {
             tracing::info!("Successfully installed template: {}", template_id);
             ApiResponseBuilder::success(template_id)
         }
         Err(e) => {
-            tracing::error!("Failed to install template {}: {}", id, e);
+            tracing::error!("Failed to install template {}: {}", name, e);
             ApiResponseBuilder::error(format!("安装模板失败: {}", e))
         }
     }

@@ -1318,7 +1318,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
     return html`
       <div class="device-card__wrap">
-        <div class="device-card">
+        <div class="card device-card">
           <!-- Header -->
           <div class="device-card__header">
             <div class="device-card__header-left">

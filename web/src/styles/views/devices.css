@@ -17,34 +17,14 @@
   display: flex;
   flex-direction: column;
   min-height: 180px;
-  background: rgba(10, 14, 22, 0.75);
-  border-radius: 20px;
-  box-shadow:
-    0 4px 20px var(--overlay-hover),
-    0 16px 60px rgba(0, 0, 0, 0.28),
-    0 40px 100px rgba(0, 212, 255, 0.04),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.04);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  padding: 0;
+  box-shadow: var(--glass-shadow);
   transition: transform var(--duration-normal) var(--ease-out), box-shadow var(--duration-normal) var(--ease-out);
   contain: layout style;
 }
 
-:root[data-theme="light"] .device-card {
-  background: rgba(255, 255, 255, 0.8);
-  box-shadow:
-    0 4px 20px rgba(0, 0, 0, 0.06),
-    0 16px 60px var(--shadow-sm),
-    inset 0 0 0 1px rgba(0, 0, 0, 0.04);
-}
-
 .device-card:hover {
-  transform: translateY(-3px);
-  box-shadow:
-    0 8px 32px rgba(0, 0, 0, 0.4),
-    0 24px 80px var(--overlay-hover),
-    0 60px 140px rgba(0, 212, 255, 0.06),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  box-shadow: var(--glass-shadow-hover);
 }
 
 /* Header */

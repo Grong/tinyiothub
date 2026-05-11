@@ -33,10 +33,10 @@ impl TemplateInstaller {
         // 1. Fetch template list
         let templates = self.client.fetch_templates().await?;
 
-        // 2. Find target template
+        // 2. Find target template (by id or name)
         let template_meta = templates
             .iter()
-            .find(|t| t.id == template_id)
+            .find(|t| t.id == template_id || t.name == template_id)
             .ok_or_else(|| MarketplaceError::NotFound(format!("Template: {}", template_id)))?;
 
         // 3. Check version (if specified)

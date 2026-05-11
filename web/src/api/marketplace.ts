@@ -4,11 +4,44 @@
 
 import { apiGet, apiPost } from './client.js';
 
+export interface LocalizedString {
+  zh?: string;
+  en?: string;
+}
+
+export interface TemplateProperty {
+  name: string;
+  display_name?: string | LocalizedString;
+  description?: string | LocalizedString;
+  data_type: string;
+  unit?: string;
+  min_value?: number;
+  max_value?: number;
+  default_value?: string;
+  is_read_only?: boolean;
+  is_required?: boolean;
+}
+
+export interface TemplateCommand {
+  name: string;
+  display_name?: string | LocalizedString;
+  description?: string | LocalizedString;
+  parameters?: string;
+  parameter_schema?: string;
+  is_required?: boolean;
+}
+
+export interface TemplateDeviceInfo {
+  default_name_pattern?: string;
+  default_display_name_pattern?: string | LocalizedString;
+  default_description?: string | LocalizedString;
+  required_fields?: string[];
+}
+
 export interface MarketplaceTemplate {
-  id: string;
   name: string;
   version: string;
-  description?: string;
+  description?: string | LocalizedString;
   category?: string;
   author?: string;
   tags?: string[];
@@ -17,6 +50,10 @@ export interface MarketplaceTemplate {
   driverName?: string;
   rating?: number;
   downloadCount?: number;
+  manufacturer?: string;
+  properties?: TemplateProperty[];
+  commands?: TemplateCommand[];
+  device_info?: TemplateDeviceInfo;
 }
 
 export interface MarketplaceDriver {

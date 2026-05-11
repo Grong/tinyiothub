@@ -5602,6 +5602,7 @@ dependencies = [
  "tinyiothub-config",
  "tinyiothub-core",
  "tinyiothub-macros",
+ "tinyiothub-marketplace",
  "tinyiothub-plugin-sdk",
  "tinyiothub-runtime",
  "tinyiothub-storage",

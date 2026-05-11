@@ -103,6 +103,7 @@ tinyiothub-plugin-sdk = { workspace = true }
 tinyiothub-storage = { workspace = true }
 tinyiothub-runtime = { workspace = true }
 tinyiothub-web = { workspace = true }
+tinyiothub-marketplace = { path = "../marketplace" }
 
 # Dynamic loading
 libloading = { workspace = true }

@@ -27,10 +27,10 @@ impl DriverInstaller {
         // 1. Fetch driver list
         let drivers = self.client.fetch_drivers().await?;
 
-        // 2. Find target driver
+        // 2. Find target driver (by id or name)
         let driver_meta = drivers
             .iter()
-            .find(|d| d.id == driver_id)
+            .find(|d| d.id == driver_id || d.name == driver_id)
             .ok_or_else(|| MarketplaceError::NotFound(format!("Driver: {}", driver_id)))?;
 
         // 3. Check version (if specified)
