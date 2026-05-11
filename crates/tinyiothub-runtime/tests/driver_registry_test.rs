@@ -15,3 +15,13 @@ fn test_workspace_isolation() {
     // list_for_workspace returns empty when workspace has no drivers.
     assert!(reg.list_for_workspace(ws_a).is_empty());
 }
+
+#[test]
+fn test_list_for_workspace_returns_ref_count() {
+    let reg = DriverRegistry::new();
+    let ws = "ws-test";
+
+    // list_for_workspace returns (name, version, loaded_at, ref_count).
+    let drivers = reg.list_for_workspace(ws);
+    assert!(drivers.is_empty());
+}

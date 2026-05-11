@@ -7,6 +7,12 @@ pub mod validation;
 // Re-export commonly used utilities
 pub use spawn::{execute_or_spawn, spawn_safe, spawn_with_error_handling};
 
+/// Sanitize a user-provided identifier for use as a filename.
+/// Replaces path separator characters with underscores to prevent directory traversal.
+pub fn sanitize_filename(name: &str) -> String {
+    name.replace(|c: char| c == '/' || c == '\\' || c == '\0', "_")
+}
+
 // Note: trace_device macro is exported at crate root due to #[macro_export]
 
 /// Publish event with platform-specific handling

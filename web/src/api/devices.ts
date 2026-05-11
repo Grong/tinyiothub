@@ -56,4 +56,12 @@ export const deviceApi = {
   async createDeviceFromTemplate(data: { templateId: string; deviceInput: any }) {
     return apiPost<any>('/devices/from-template', data);
   },
+
+  async exportDeviceAsTemplate(id: string) {
+    return apiPost<{ templateId: string; name: string }>(`/devices/${id}/export-template`);
+  },
+
+  async cloneDevice(id: string) {
+    return apiPost<Device>(`/devices/${id}/clone`);
+  },
 };

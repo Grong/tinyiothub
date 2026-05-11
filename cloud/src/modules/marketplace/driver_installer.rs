@@ -4,7 +4,7 @@ use super::{
     client::MarketplaceClient,
     error::{MarketplaceError, Result},
 };
-use crate::modules::device::driver;
+use crate::{modules::device::driver, shared::utils::sanitize_filename};
 
 pub struct DriverInstaller {
     client: Arc<MarketplaceClient>,
@@ -27,10 +27,10 @@ impl DriverInstaller {
         // 1. Fetch driver list
         let drivers = self.client.fetch_drivers().await?;
 
-        // 2. Find target driver
+        // 2. Find target driver (by id or name)
         let driver_meta = drivers
             .iter()
-            .find(|d| d.id == driver_id)
+            .find(|d| d.id == driver_id || d.name == driver_id)
             .ok_or_else(|| MarketplaceError::NotFound(format!("Driver: {}", driver_id)))?;
 
         // 3. Check version (if specified)
@@ -82,7 +82,15 @@ impl DriverInstaller {
         // Determine file extension
         let extension = if platform.starts_with("windows") { "dll" } else { "so" };
 
-        let dest_file = self.drivers_dir.join(format!("{}_driver.{}", driver_id, extension));
+        let safe_id = sanitize_filename(driver_id);
+        let dest_file = self.drivers_dir.join(format!("{}_driver.{}", safe_id, extension));
+
+        // Verify the resolved path is still within the intended directory
+        if !dest_file.starts_with(&self.drivers_dir) {
+            return Err(MarketplaceError::Driver(
+                "Invalid driver ID: path traversal detected".to_string(),
+            ));
+        }
 
         self.client.download_resource(&binary_info.file_url, &dest_file).await?;
 

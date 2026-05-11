@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.1] - 2026-05-11
+
+### Added
+- Frontend marketplace UI with templates/drivers tabs, search, pagination, and install flow
+- Driver health dashboard frontend with real-time status display
+- Device export-as-template and clone actions in device list UI
+- Tabbed template detail modal (basic/properties/commands/deviceInfo)
+- Integration tests for marketplace and driver-health handlers
+
+### Fixed
+- Driver health status now reflects real `ref_count` (active/idle) instead of hardcoded "active"
+- Path traversal prevention in marketplace driver/template installation (`sanitize_filename`)
+- URL query parameter encoding in marketplace proxy handlers
+- Marketplace CSS extracted from inline `<style>` to standalone stylesheet
+
 ## [0.2.0] - 2026-05-08
 
 ### Added

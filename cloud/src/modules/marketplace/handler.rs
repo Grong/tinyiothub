@@ -29,15 +29,22 @@ use crate::{
 pub fn create_router() -> Router<AppState> {
     Router::new()
         .route("/templates", get(proxy_marketplace_templates))
-        .route("/templates/{id}", get(proxy_marketplace_template))
-        .route("/templates/{id}/install", post(install_marketplace_template))
+        .route("/templates/{name}", get(proxy_marketplace_template))
+        .route("/templates/{name}/install", post(install_marketplace_template))
         .route("/drivers", get(proxy_marketplace_drivers))
         .route("/drivers/{id}", get(proxy_marketplace_driver))
         .route("/drivers/{id}/install", post(install_marketplace_driver))
         .route("/publish/template", post(publish_template_handler))
 }
 
-const EXTERNAL_MARKETPLACE_API: &str = "https://marketplace.tinyiothub.com/api/v1";
+fn marketplace_api_url() -> String {
+    let config = config::get();
+    config
+        .marketplace
+        .api_url
+        .clone()
+        .unwrap_or_else(|| "https://marketplace.tinyiothub.com/api/v1".to_string())
+}
 
 static HTTP_CLIENT: std::sync::LazyLock<Client, fn() -> Client> = std::sync::LazyLock::new(|| {
     Client::builder()
@@ -51,15 +58,70 @@ pub struct InstallRequest {
     pub version: Option<String>,
 }
 
+/// 将外部市场 API 的响应统一包装为 ApiResponse 格式。
+/// - 如果外部响应已经是 ApiResponse 格式（包含 code + result），则直接透传，
+///   同时把 result 内部的 `items` 重命名为 `data`，并把分页元数据规范化为
+///   PaginatedResponse 格式（对齐项目规范）。
+/// - 否则将原始数据包装为 ApiResponse::success。
+fn normalize_marketplace_response(data: serde_json::Value) -> Json<ApiResponse<serde_json::Value>> {
+    if data.get("code").is_some() && data.get("result").is_some() {
+        let code = data["code"].as_i64().unwrap_or(0) as i32;
+        let msg = data["msg"].as_str().unwrap_or("").to_string();
+        let mut result = data.get("result").cloned();
+        if let Some(ref mut obj) = result {
+            // 外部市场使用 `items`，内部规范使用 `data`
+            if obj.get("items").is_some() && obj.get("data").is_none() {
+                if let Some(items) = obj.as_object_mut().and_then(|m| m.remove("items")) {
+                    obj["data"] = items;
+                }
+            }
+            // 规范化分页元数据为 PaginatedResponse 格式
+            if obj.get("data").is_some() && obj.get("pagination").is_none() {
+                let page = obj.get("page")
+                    .and_then(|v| v.as_u64())
+                    .or_else(|| obj.get("current_page").and_then(|v| v.as_u64()))
+                    .unwrap_or(1) as u32;
+                let page_size = obj.get("page_size")
+                    .and_then(|v| v.as_u64())
+                    .or_else(|| obj.get("pageSize").and_then(|v| v.as_u64()))
+                    .or_else(|| obj.get("per_page").and_then(|v| v.as_u64()))
+                    .unwrap_or(20) as u32;
+                let total_count = obj.get("total_count")
+                    .and_then(|v| v.as_u64())
+                    .or_else(|| obj.get("totalCount").and_then(|v| v.as_u64()))
+                    .or_else(|| obj.get("total").and_then(|v| v.as_u64()))
+                    .unwrap_or(0) as u64;
+                let total_pages = if page_size > 0 {
+                    ((total_count as f64) / (page_size as f64)).ceil() as u32
+                } else {
+                    0
+                };
+                obj["pagination"] = serde_json::json!({
+                    "page": page,
+                    "page_size": page_size,
+                    "total_pages": total_pages,
+                    "total_count": total_count
+                });
+            }
+        }
+        Json(ApiResponse { code, msg, result })
+    } else {
+        ApiResponseBuilder::success(data)
+    }
+}
+
 async fn proxy_marketplace_templates(
     State(_state): State<AppState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
-) -> Json<serde_json::Value> {
-    let mut url = format!("{}/templates", EXTERNAL_MARKETPLACE_API);
+) -> Json<ApiResponse<serde_json::Value>> {
+    let mut url = format!("{}/templates", marketplace_api_url());
 
     if !params.is_empty() {
-        let query_string =
-            params.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join("&");
+        let query_string = params
+            .iter()
+            .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
+            .collect::<Vec<_>>()
+            .join("&");
         url = format!("{}?{}", url, query_string);
     }
 
@@ -67,53 +129,37 @@ async fn proxy_marketplace_templates(
 
     match HTTP_CLIENT.get(&url).send().await {
         Ok(response) => match response.json::<serde_json::Value>().await {
-            Ok(data) => Json(data),
+            Ok(data) => normalize_marketplace_response(data),
             Err(e) => {
                 tracing::error!("Failed to parse marketplace response: {}", e);
-                Json(serde_json::json!({
-                    "code": -1,
-                    "msg": format!("解析市场响应失败: {}", e),
-                    "result": null
-                }))
+                ApiResponseBuilder::error(format!("解析市场响应失败: {}", e))
             }
         },
         Err(e) => {
             tracing::error!("Failed to fetch marketplace templates: {}", e);
-            Json(serde_json::json!({
-                "code": -1,
-                "msg": format!("获取市场模板失败: {}", e),
-                "result": null
-            }))
+            ApiResponseBuilder::error(format!("获取市场模板失败: {}", e))
         }
     }
 }
 
 async fn proxy_marketplace_template(
     State(_state): State<AppState>,
-    Path(id): Path<String>,
-) -> Json<serde_json::Value> {
-    let url = format!("{}/templates/{}", EXTERNAL_MARKETPLACE_API, id);
+    Path(name): Path<String>,
+) -> Json<ApiResponse<serde_json::Value>> {
+    let url = format!("{}/templates/{}", marketplace_api_url(), name);
     tracing::info!("Proxying marketplace template request to: {}", url);
 
     match HTTP_CLIENT.get(&url).send().await {
         Ok(response) => match response.json::<serde_json::Value>().await {
-            Ok(data) => Json(data),
+            Ok(data) => normalize_marketplace_response(data),
             Err(e) => {
                 tracing::error!("Failed to parse marketplace response: {}", e);
-                Json(serde_json::json!({
-                    "code": -1,
-                    "msg": format!("解析市场响应失败: {}", e),
-                    "result": null
-                }))
+                ApiResponseBuilder::error(format!("解析市场响应失败: {}", e))
             }
         },
         Err(e) => {
-            tracing::error!("Failed to fetch marketplace template {}: {}", id, e);
-            Json(serde_json::json!({
-                "code": -1,
-                "msg": format!("获取模板详情失败: {}", e),
-                "result": null
-            }))
+            tracing::error!("Failed to fetch marketplace template {}: {}", name, e);
+            ApiResponseBuilder::error(format!("获取模板详情失败: {}", e))
         }
     }
 }
@@ -121,12 +167,15 @@ async fn proxy_marketplace_template(
 async fn proxy_marketplace_drivers(
     State(_state): State<AppState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
-) -> Json<serde_json::Value> {
-    let mut url = format!("{}/drivers", EXTERNAL_MARKETPLACE_API);
+) -> Json<ApiResponse<serde_json::Value>> {
+    let mut url = format!("{}/drivers", marketplace_api_url());
 
     if !params.is_empty() {
-        let query_string =
-            params.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join("&");
+        let query_string = params
+            .iter()
+            .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
+            .collect::<Vec<_>>()
+            .join("&");
         url = format!("{}?{}", url, query_string);
     }
 
@@ -134,23 +183,15 @@ async fn proxy_marketplace_drivers(
 
     match HTTP_CLIENT.get(&url).send().await {
         Ok(response) => match response.json::<serde_json::Value>().await {
-            Ok(data) => Json(data),
+            Ok(data) => normalize_marketplace_response(data),
             Err(e) => {
                 tracing::error!("Failed to parse marketplace response: {}", e);
-                Json(serde_json::json!({
-                    "code": -1,
-                    "msg": format!("解析市场响应失败: {}", e),
-                    "result": null
-                }))
+                ApiResponseBuilder::error(format!("解析市场响应失败: {}", e))
             }
         },
         Err(e) => {
             tracing::error!("Failed to fetch marketplace drivers: {}", e);
-            Json(serde_json::json!({
-                "code": -1,
-                "msg": format!("获取市场驱动失败: {}", e),
-                "result": null
-            }))
+            ApiResponseBuilder::error(format!("获取市场驱动失败: {}", e))
         }
     }
 }
@@ -158,36 +199,28 @@ async fn proxy_marketplace_drivers(
 async fn proxy_marketplace_driver(
     State(_state): State<AppState>,
     Path(id): Path<String>,
-) -> Json<serde_json::Value> {
-    let url = format!("{}/drivers/{}", EXTERNAL_MARKETPLACE_API, id);
+) -> Json<ApiResponse<serde_json::Value>> {
+    let url = format!("{}/drivers/{}", marketplace_api_url(), id);
     tracing::info!("Proxying marketplace driver request to: {}", url);
 
     match HTTP_CLIENT.get(&url).send().await {
         Ok(response) => match response.json::<serde_json::Value>().await {
-            Ok(data) => Json(data),
+            Ok(data) => normalize_marketplace_response(data),
             Err(e) => {
                 tracing::error!("Failed to parse marketplace response: {}", e);
-                Json(serde_json::json!({
-                    "code": -1,
-                    "msg": format!("解析市场响应失败: {}", e),
-                    "result": null
-                }))
+                ApiResponseBuilder::error(format!("解析市场响应失败: {}", e))
             }
         },
         Err(e) => {
             tracing::error!("Failed to fetch marketplace driver {}: {}", id, e);
-            Json(serde_json::json!({
-                "code": -1,
-                "msg": format!("获取驱动详情失败: {}", e),
-                "result": null
-            }))
+            ApiResponseBuilder::error(format!("获取驱动详情失败: {}", e))
         }
     }
 }
 
 async fn install_marketplace_template(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path(name): Path<String>,
     _claims: Claims,
     Json(req): Json<InstallRequest>,
 ) -> Json<ApiResponse<String>> {
@@ -209,13 +242,13 @@ async fn install_marketplace_template(
     let installer =
         TemplateInstaller::new(client, repository, std::path::PathBuf::from("templates"));
 
-    match installer.install_from_marketplace(&id, req.version.as_deref()).await {
+    match installer.install_from_marketplace(&name, req.version.as_deref()).await {
         Ok(template_id) => {
             tracing::info!("Successfully installed template: {}", template_id);
             ApiResponseBuilder::success(template_id)
         }
         Err(e) => {
-            tracing::error!("Failed to install template {}: {}", id, e);
+            tracing::error!("Failed to install template {}: {}", name, e);
             ApiResponseBuilder::error(format!("安装模板失败: {}", e))
         }
     }

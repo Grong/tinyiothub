@@ -827,6 +827,27 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }
   }
 
+  async exportDeviceTemplate(d: Device) {
+    if (!confirm(`将设备 "${d.name}" 导出为模板？`)) return;
+    try {
+      const res = await deviceApi.exportDeviceAsTemplate(d.id);
+      success(`导出成功：模板 ID ${res.result?.templateId ?? ""}`);
+    } catch (e: any) {
+      toastError(e.message || "导出失败");
+    }
+  }
+
+  async cloneDevice(d: Device) {
+    if (!confirm(`克隆设备 "${d.name}"？`)) return;
+    try {
+      await deviceApi.cloneDevice(d.id);
+      success("设备克隆成功");
+      this.loadDevices();
+    } catch (e: any) {
+      toastError(e.message || "克隆失败");
+    }
+  }
+
   async executeCommand(deviceId: string, commandName: string) {
     if (this.executingCommand) return;
     this.executingCommand = commandName;
@@ -1196,6 +1217,8 @@ export class DevicesView extends SignalWatcher(LitElement) {
                   <td class="cell-actions">
                     <button class="btn btn--ghost btn--sm" @click=${() => this.navigateToDevice(d.id)}>详情</button>
                     <button class="btn btn--ghost btn--sm" @click=${() => this.openEdit(d)}>编辑</button>
+                    <button class="btn btn--ghost btn--sm" @click=${() => this.exportDeviceTemplate(d)}>导出模板</button>
+                    <button class="btn btn--ghost btn--sm" @click=${() => this.cloneDevice(d)}>克隆</button>
                     <button class="btn btn--ghost btn--sm btn--danger-text" @click=${() => this.deleteDevice(d)}>删除</button>
                   </td>
                 </tr>
@@ -1295,7 +1318,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
     return html`
       <div class="device-card__wrap">
-        <div class="device-card">
+        <div class="card device-card">
           <!-- Header -->
           <div class="device-card__header">
             <div class="device-card__header-left">
