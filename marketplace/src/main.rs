@@ -1,19 +1,7 @@
-mod cache;
-mod handler;
-mod service;
-mod types;
-
 use axum::Router;
-use cache::SledCache;
-use service::SyncService;
 use std::sync::Arc;
+use tinyiothub_marketplace::{cache::SledCache, handler, service::SyncService, AppState};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
-#[derive(Clone)]
-pub struct AppState {
-    pub cache: Arc<SledCache>,
-    pub sync: Arc<SyncService>,
-}
 
 fn build_app(state: AppState) -> Router {
     Router::new().merge(handler::routes()).with_state(state)

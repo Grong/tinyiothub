@@ -1,6 +1,7 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { templateApi } from "../../api/templates.js";
+import { marketplaceApi } from "../../api/marketplace.js";
 import type { CreateTemplateRequest } from "../../types/index.js";
 import { success, error as toastError } from "../components/toast.js";
 
@@ -89,6 +90,7 @@ export class TemplatesView extends LitElement {
   @state() selectedTemplate: ProcessedTemplate | null = null;
   @state() detailTab = "props";
   @state() saving = false;
+  @state() publishing = false;
   @state() formName = "";
   @state() formDisplayName = "";
   @state() formCategory = "";
@@ -204,6 +206,18 @@ export class TemplatesView extends LitElement {
       await this.loadData();
     } catch (err: any) {
       toastError(err.message || "删除失败");
+    }
+  }
+
+  async publishToMarketplace(t: ProcessedTemplate) {
+    this.publishing = true;
+    try {
+      await marketplaceApi.publishTemplate(t.id);
+      success("模板已发布到市场");
+    } catch (e: any) {
+      toastError(e.message || "发布失败");
+    } finally {
+      this.publishing = false;
     }
   }
 
@@ -481,7 +495,16 @@ export class TemplatesView extends LitElement {
           <!-- Fixed Footer -->
           <div class="tdc-footer">
             <button class="btn btn--ghost" @click=${() => this.selectedTemplate = null}>关闭</button>
-            ${!t.isBuiltin ? html`<button class="btn btn--primary btn--sm" @click=${() => { this.openEdit(t); this.selectedTemplate = null; }}>编辑模板</button>` : nothing}
+            <div style="display: flex; gap: 8px;">
+              ${!t.isBuiltin ? html`<button class="btn btn--primary btn--sm" @click=${() => { this.openEdit(t); this.selectedTemplate = null; }}>编辑模板</button>` : nothing}
+              <button
+                class="btn btn--secondary btn--sm"
+                ?disabled=${this.publishing}
+                @click=${() => this.publishToMarketplace(t)}
+              >
+                ${this.publishing ? "发布中..." : "发布到市场"}
+              </button>
+            </div>
           </div>
         </div>
       </div>
