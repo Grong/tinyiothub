@@ -214,7 +214,8 @@ impl DriverRegistry {
     }
 
     /// List all loaded dynamic drivers for a workspace.
-    pub fn list_for_workspace(&self, workspace_id: &str) -> Vec<(String, String, DateTime<Utc>)> {
+    /// Returns Vec of (name, version, loaded_at, ref_count).
+    pub fn list_for_workspace(&self, workspace_id: &str) -> Vec<(String, String, DateTime<Utc>, usize)> {
         let dynamic = self.dynamic.read();
         let ws = match dynamic.get(workspace_id) {
             Some(ws) => ws,
@@ -222,7 +223,10 @@ impl DriverRegistry {
         };
         ws.drivers
             .iter()
-            .map(|(name, loaded)| (name.clone(), loaded.entry.version.clone(), loaded.entry.loaded_at))
+            .map(|(name, loaded)| {
+                let ref_count = loaded.ref_count.load(std::sync::atomic::Ordering::SeqCst);
+                (name.clone(), loaded.entry.version.clone(), loaded.entry.loaded_at, ref_count)
+            })
             .collect()
     }
 
