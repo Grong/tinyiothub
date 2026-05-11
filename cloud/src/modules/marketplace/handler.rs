@@ -117,8 +117,11 @@ async fn proxy_marketplace_templates(
     let mut url = format!("{}/templates", marketplace_api_url());
 
     if !params.is_empty() {
-        let query_string =
-            params.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join("&");
+        let query_string = params
+            .iter()
+            .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
+            .collect::<Vec<_>>()
+            .join("&");
         url = format!("{}?{}", url, query_string);
     }
 
@@ -168,8 +171,11 @@ async fn proxy_marketplace_drivers(
     let mut url = format!("{}/drivers", marketplace_api_url());
 
     if !params.is_empty() {
-        let query_string =
-            params.iter().map(|(k, v)| format!("{}={}", k, v)).collect::<Vec<_>>().join("&");
+        let query_string = params
+            .iter()
+            .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
+            .collect::<Vec<_>>()
+            .join("&");
         url = format!("{}?{}", url, query_string);
     }
 

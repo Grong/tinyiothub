@@ -5,7 +5,7 @@ use super::{
     error::{MarketplaceError, Result},
     metadata::TemplateMetadata,
 };
-use crate::modules::template::TemplateRepository;
+use crate::{modules::template::TemplateRepository, shared::utils::sanitize_filename};
 
 pub struct TemplateInstaller {
     client: Arc<MarketplaceClient>,
@@ -86,7 +86,16 @@ impl TemplateInstaller {
         let custom_dir = self.templates_dir.join("custom");
         tokio::fs::create_dir_all(&custom_dir).await?;
 
-        let dest_file = custom_dir.join(format!("{}.json", template_id));
+        let safe_id = sanitize_filename(template_id);
+        let dest_file = custom_dir.join(format!("{}.json", safe_id));
+
+        // Verify the resolved path is still within the intended directory
+        if !dest_file.starts_with(&custom_dir) {
+            return Err(MarketplaceError::Template(
+                "Invalid template ID: path traversal detected".to_string(),
+            ));
+        }
+
         tokio::fs::copy(temp_file, &dest_file).await?;
 
         // Delete temporary file
