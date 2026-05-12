@@ -296,6 +296,8 @@ struct PairingEntry {
 | 网关在线 + 子设备超时未上报 | 子设备 = 离线（超时阈值可配置，默认 2 倍心跳间隔） |
 | 网关离线 | 所有子设备自动标记离线 |
 
+**子设备批量创建：** 事务包裹 `INSERT OR IGNORE` 批量语句，保证原子性和单次 DB 往返。逐个子设备的失败不影响其他子设备（IGNORE 跳过冲突）。
+
 ---
 
 ## 数据上报 & 指令下发
@@ -434,6 +436,14 @@ ALTER TABLE devices ADD COLUMN fingerprint TEXT;      -- 网关硬件指纹（MA
 - `parent_id` 保留原有语义不变（层级关系，与 linked_gateway 独立）
 - 子设备的 linked_gateway = 网关 device_id，数据上报路由由此字段决定
 
+**级联删除规则：** 删除网关设备时，级联删除所有 `linked_gateway` 指向该网关的子设备。应用层实现（service 层事务内），不是 DB 层 `ON DELETE CASCADE` — 保留业务逻辑控制权。
+
+### 平台 MQTT 客户端
+
+- 单连接，rumqttc 内置自动重连（`reconnect_delay` 指数退避）
+- 重连期间：新配对宣告丢失（网关 30s 重发自动恢复），已有网关离线标记不触发（重连后心跳恢复）
+- 客户端崩溃：tokio 进程级异常保护，panic 时整个 task 重启
+
 ### 无需新建表
 
 复用现有 `devices` 表，不引入 `gateway_tokens` 或独立网关表。
@@ -469,6 +479,8 @@ ALTER TABLE devices ADD COLUMN fingerprint TEXT;      -- 网关硬件指纹（MA
 
 ## 边缘网关变更
 
+### 代码结构
+
 | 组件 | 说明 |
 |------|------|
 | 配对码生成 | 6 位随机数字，5 分钟刷新，屏幕显示 |
@@ -479,6 +491,14 @@ ALTER TABLE devices ADD COLUMN fingerprint TEXT;      -- 网关硬件指纹（MA
 | 子设备发现 | 扫描本地 Modbus/ONVIF 等设备，上报 discover |
 | 数据代理 | 采集子设备数据，代为上报到子设备 topic |
 | 指令转发 | 监听子设备 command topic，转发到本地协议 |
+
+### 构建与分发
+
+边缘网关作为独立 Docker 镜像发布，复用项目已有的多架构 CI（linux/amd64 + linux/arm64）。
+
+- **Dockerfile:** `deploy/docker/Dockerfile.edge` — 基于 `rust:1.82-slim-bookworm` 构建 `edge/` crate，生成轻量镜像
+- **用户获取方式:** `docker pull chenguorongz/tinyiothub-edge:latest` 或包含在 docker-compose 中
+- **配置注入:** 通过环境变量或 volume mount 覆盖 MQTT broker 地址（默认 `mqtt.tinyiothub.com:1883`）
 
 ---
 
