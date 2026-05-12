@@ -186,6 +186,7 @@ tinyiothub/
 struct PairingCache {
     // key = pairing_code
     entries: HashMap<String, PairingEntry>,
+    max_entries: usize,  // 硬上限，默认 10000
 }
 
 struct PairingEntry {
@@ -197,6 +198,40 @@ struct PairingEntry {
     created_at: Instant,      // 5 分钟过期自动清理
     attempts: HashMap<UserId, u32>,  // 按用户尝试次数
 }
+```
+
+并发保护：`PairingCache` 用 `Arc<RwLock<HashMap<...>>>` 包裹，与现有 `rate_limit.rs:47` 一致。
+
+宣告全局限流：在 announce 消息处理入口用 token bucket 限流（每秒 20 个宣告、burst 50），超限直接丢弃不写 cache，防止恶意/故障网关刷码填满 cache。
+
+### 缓存满处理
+
+当 `entries.len() >= max_entries` 时，拒绝新宣告：日志记录 WARN，MQTT 不做任何响应。网关收不到 pairing_ack 会持续重发，过期淘汰后自然恢复。`max_entries=10000` 远超正常部署规模（同时 100 个未配对网关 = 100 个条目）。
+
+### 配对校验事务性（关键）
+
+配对成功时先创建 Device（写 DB），**然后**发布 MQTT 响应。如果 MQTT publish 失败：
+
+1. Device 已写入 DB → 回滚：删除刚创建的 Device
+2. 回滚成功后，从 cache 移除该 code
+3. 返回 HTTP 500 + "配对暂时失败，请稍后重试，无需重新输入配对码"
+
+确保不会出现"用户看到成功、网关收不到凭据"的半状态。
+
+```
+配对流程事务边界：
+
+  code 存在且未过期?
+      ↓ Y
+  max_attempts 未超?
+      ↓ Y
+  创建 Device (DB write)        ← 事务边界开始
+      ↓
+  发布配对响应 (MQTT publish)   ← 如果失败，回滚 Device
+      ↓
+  code 从 cache 移除            ← 事务边界结束
+      ↓
+  返回 HTTP 200 + device_id
 ```
 
 ---
@@ -323,6 +358,68 @@ struct PairingEntry {
 
 ---
 
+## 错误处理
+
+### API 错误响应
+
+| 场景 | HTTP Code | msg |
+|------|-----------|-----|
+| 配对码未找到 | 404 | "未发现设备，请确认配对码是否正确" |
+| 配对码已过期（5 分钟） | 410 | "配对码已过期，请查看网关屏幕上的新配对码" |
+| 尝试次数过多 | 429 | "尝试次数过多，请 1 分钟后重试" |
+| IP 限流 | 429 | "请求过频，请稍后重试" |
+| 缓存满 | 503 | "服务繁忙，请稍后重试" |
+| 设备创建/回滚失败 | 500 | "配对暂时失败，请稍后重试" |
+
+### 网关侧错误处理
+
+| 场景 | 网关行为 |
+|------|----------|
+| 宣告发布失败（broker 不可达） | 指数退避重连（1s → 2s → 4s → 8s，最大 30s） |
+| 配对响应超时（5 分钟内无响应） | 刷新配对码，重新宣告 |
+| 正式凭据连接失败 | 重试 3 次（间隔 5s），失败后回退到匿名配对模式 |
+| 子设备指令超时 | 返回错误事件到 event topic，不阻塞后续指令 |
+
+---
+
+---
+
+## 部署配置
+
+### MQTT Broker ACL (Mosquitto)
+
+配对阶段网关匿名连接，仅能访问配对 topic。需修改 mosquitto.conf：
+
+```conf
+# 允许匿名连接（受 ACL 限制）
+allow_anonymous true
+password_file /mosquitto/config/passwd
+acl_file /mosquitto/config/acl
+
+# ...其他现有配置不变
+```
+
+新建 `deploy/docker/mosquitto/config/acl`：
+
+```
+# 匿名客户端：只能访问配对 topic
+user anonymous
+topic readwrite tinyiothub/pairing/#
+
+# 平台客户端：完整访问
+user admin
+topic readwrite tinyiothub/#
+```
+
+**topic 访问矩阵：**
+
+| 角色 | 用户 | publish | subscribe |
+|------|------|---------|-----------|
+| 配对中的网关 | anonymous | `pairing/announce` | `pairing/{code}/response` |
+| 平台服务 | admin (已配 MQTT_PASSWORD) | `pairing/{code}/response`, `{ws_id}/gateway/{gw_id}/command`, `{ws_id}/gateway/{gw_id}/config` | `pairing/announce`, `{ws_id}/gateway/+/status`, `{ws_id}/gateway/+/telemetry`, `{ws_id}/gateway/+/event`, `{ws_id}/gateway/+/device/#` |
+| 已注册网关 | `dev_xyz` (配对后下发) | 自身 workspace 下 topic | 自身 command/config topic |
+
+
 ## 数据库变更
 
 ### device 表新增字段
@@ -354,6 +451,12 @@ ALTER TABLE devices ADD COLUMN fingerprint TEXT;      -- 网关硬件指纹（MA
 | 前端添加设备页 | `web/src/ui/` | 网关配对码输入界面 |
 | 前端设备列表 | `web/src/ui/` | 显示"via 网关名称"标签 |
 
+### 可观测性
+
+- 配对事件结构化日志（含 code、fingerprint、成功/失败原因、latency）
+- 配对成功率 metric（简单计数器：`pairing_attempts_total` / `pairing_successes_total`）
+- MQTT 连接状态 metric（平台 MQTT client 是否连上 broker）
+
 ### API 变更
 
 | 方法 | 路径 | 说明 |
@@ -371,6 +474,7 @@ ALTER TABLE devices ADD COLUMN fingerprint TEXT;      -- 网关硬件指纹（MA
 | 配对码生成 | 6 位随机数字，5 分钟刷新，屏幕显示 |
 | 匿名 MQTT 连接 | 连接 broker，发布配对宣告，等待响应 |
 | 认证重连 | 收到凭据后断开匿名连接，用正式凭据重连 |
+| 凭据持久化 | 配对成功后将 `device_id` + `password` 写入本地 JSON 文件，断电重启后直接读取重连，无需重新配对 |
 | 心跳上报 | 周期性发布 status |
 | 子设备发现 | 扫描本地 Modbus/ONVIF 等设备，上报 discover |
 | 数据代理 | 采集子设备数据，代为上报到子设备 topic |
@@ -385,3 +489,39 @@ ALTER TABLE devices ADD COLUMN fingerprint TEXT;      -- 网关硬件指纹（MA
 - **ApiResponseBuilder** — 复用 `tinyiothub-web::response::ApiResponseBuilder`
 - **前端 API Client** — 复用 `web/src/api/client.ts`
 - **MQTT 依赖** — 复用 `rumqttc`（已在项目中）
+
+---
+
+## NOT in scope
+
+- **网关 OTA 固件升级** — v0.2+ 功能，当前 spec 聚焦注册和数据通道
+- **网关群组/批量管理** — 单网关注册流程，不涉及多网关同时操作
+- **MQTT 消息持久化/离线消息队列** — 网关离线期间的消息缓存待后续版本
+- **MQTT over TLS/SSL** — broker 已支持 TLS（nginx 反向代理 8883），但网关侧 TLS 配置留待部署文档
+- **配对码格式扩展（二维码/蓝牙/NFC）** — 当前仅 6 位数字屏幕显示
+- **子设备移除/注销** — 发现协议只处理新增，子设备移除逻辑待 v0.2
+
+## What already exists
+
+| 已有组件 | 位置 | 复用方式 |
+|----------|------|----------|
+| Device 模型 (protocol_type, parent_id) | `crates/tinyiothub-core/src/models/device.rs` | 新增 linked_gateway, fingerprint 字段 |
+| Device CRUD + Repository | `crates/tinyiothub-storage/`, `cloud/src/modules/device/` | 网关注册后创建 Device，复用手法 |
+| MQTT 依赖 (rumqttc) | `Cargo.toml` (workspace dep) | 平台 + 网关均使用 |
+| ApiResponseBuilder | `tinyiothub-web::response` | 所有新 API 使用 |
+| Arc<RwLock<HashMap>> 模式 | `rate_limit.rs:47` | PairingCache 并发保护 |
+| Mosquitto broker | `deploy/docker/docker-compose.yml` | 新增 ACL 配置 |
+| 前端 API Client | `web/src/api/client.ts` | 新增 gateway/pair 调用 |
+
+## Dream state delta
+
+```
+v0.1 (本 spec)              v0.2                    v0.3
+配对码注册网关              扫码/蓝牙配对           自发现（网关局域网广播）
+子设备自动发现              子设备模板匹配            子设备即插即用
+基础遥测/指令               规则引擎告警              边缘侧规则执行
+MQTT 明文                   MQTT over TLS           端到端加密
+本地凭据持久化              远程凭据轮换              OTA 固件升级
+```
+
+本 spec 是正确的基础。不贪多，每一步都有清晰的退出条件。
