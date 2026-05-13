@@ -59,4 +59,23 @@ impl GatewayCredentials {
         }
         std::fs::write(path, serde_json::to_string_pretty(self)?)
     }
+
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.device_id.is_empty() {
+            return Err("device_id is empty");
+        }
+        if self.client_id.is_empty() {
+            return Err("client_id is empty");
+        }
+        if self.username.is_empty() {
+            return Err("username is empty");
+        }
+        if self.password.is_empty() {
+            return Err("password is empty");
+        }
+        if self.workspace_id.is_empty() {
+            return Err("workspace_id is empty");
+        }
+        Ok(())
+    }
 }

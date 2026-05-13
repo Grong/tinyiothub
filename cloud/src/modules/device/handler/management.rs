@@ -184,6 +184,7 @@ async fn create_device(
         product_id: req.product_id,
         linked_gateway: None,
         fingerprint: None,
+        workspace_id: None,
     };
 
     let tenant_device_service = state.tenant_device_service(&workspace_id);
@@ -669,6 +670,7 @@ async fn clone_device(
         product_id: source_device.product_id.clone(),
         linked_gateway: source_device.linked_gateway.clone(),
         fingerprint: None,
+        workspace_id: None,
     };
 
     match tenant_device_service.create_device(&request).await {

@@ -83,11 +83,43 @@ Source: `/plan-ceo-review` on `feat/device-ecosystem-v0.2` (2026-05-08)
 
 Source: `/plan-eng-review` on `main` (2026-05-11)
 
+Source: `/plan-eng-review` on `feature/mqtt-gateway-pairing` (2026-05-13)
+
 ### P1 — HIGH
 
 - **Gateway e2e test with mock gateway**
   - Core pairing flow crosses 3 systems (gateway → broker → platform), unit tests can't cover it. CI e2e with `tests/e2e/docker-compose.yml` + mosquitto + mock MQTT gateway that sends announce, waits for ack, sends telemetry.
   - **Depends on:** edge/ base implementation complete
+  - **Effort:** M (human: 2 days / CC: 30min)
+  - **Owner:** TBD
+
+- **Edge Docker image CI/CD build and publish**
+  - `deploy/docker/Dockerfile.edge` exists but `release.yml` doesn't build/push it. Users can't `docker pull` the edge image as documented. Extend `release.yml` to build multi-arch (amd64 + arm64) edge image and push to Docker Hub.
+  - **Depends on:** — (CI workflow already supports multi-arch builds for main image)
+  - **Effort:** S (human: 1h / CC: 15min)
+  - **Owner:** TBD
+
+### P1 — HIGH (continued)
+
+- **Gateway offline detection and data message handling**
+  - `PlatformMqttClient` subscribes to gateway status/telemetry/event/discover topics but event loop drops all messages with `Ok(_) => {}`. Implement basic message routing (status→offline detection, discover→sub-device creation). Offline detection: track last heartbeat, mark gateway+sub-devices offline on timeout.
+  - **Source:** Outside voice (`/plan-eng-review`, 2026-05-13)
+  - **Depends on:** Gateway data message handling framework (eng review, current PR)
+  - **Effort:** M (human: 1.5 days / CC: 20min)
+  - **Owner:** TBD
+
+### P2 — MEDIUM
+
+- **Batch INSERT optimization for handle_device_discover**
+  - `service.rs:218-238` loops individual INSERTs per sub-device. Switch to single batch INSERT (`VALUES (row1), (row2), ...`) for N SQL round-trips → 1. Current approach fine for < 20 sub-devices; optimize when gateway reports 50+.
+  - **Depends on:** Device Repository extension (eng review Issue 4)
+  - **Effort:** S (human: 1h / CC: 10min)
+  - **Owner:** TBD
+
+- **Implement DeviceScanner with real protocol drivers**
+  - `edge/src/device_discovery.rs:scan()` returns empty `Vec::new()`. `load_from_config()` never called from main.rs. Implement actual auto-discovery: scan local Modbus/ONVIF buses, or at minimum load devices from local JSON config file and report via device_discover MQTT message.
+  - **Source:** Outside voice (`/plan-eng-review`, 2026-05-13)
+  - **Depends on:** Device discover message handling on platform side
   - **Effort:** M (human: 2 days / CC: 30min)
   - **Owner:** TBD
 

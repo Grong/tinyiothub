@@ -77,7 +77,9 @@ async fn run_pairing(config: EdgeConfig) {
                                     password: ack["credentials"]["password"].as_str().unwrap_or_default().to_string(),
                                     workspace_id: ack["workspace_id"].as_str().unwrap_or_default().to_string(),
                                 };
-                                if let Err(e) = creds.save(&config.credentials_file) {
+                                if let Err(e) = creds.validate() {
+                                    tracing::error!(?e, device_id = %creds.device_id, "Invalid credentials from pairing ack");
+                                } else if let Err(e) = creds.save(&config.credentials_file) {
                                     tracing::error!(?e, "Failed to save credentials");
                                 }
                                 run_authenticated(config, creds).await;
@@ -139,8 +141,16 @@ async fn run_authenticated(config: EdgeConfig, creds: GatewayCredentials) {
                 }
                 Some(event) = event_rx.recv() => {
                     match event {
-                        MqttEvent::Command(cmd) => tracing::info!(?cmd, "Received command"),
-                        MqttEvent::Config(cfg) => tracing::info!(?cfg, "Received config update"),
+                        MqttEvent::Command(cmd) => tracing::info!(
+                            action = "command_received",
+                            device_id = %creds.device_id,
+                            command = ?cmd,
+                        ),
+                        MqttEvent::Config(cfg) => tracing::info!(
+                            action = "config_received",
+                            device_id = %creds.device_id,
+                            config = ?cfg,
+                        ),
                         _ => {}
                     }
                 }

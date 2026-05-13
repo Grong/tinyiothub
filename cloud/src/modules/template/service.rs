@@ -88,6 +88,7 @@ impl TemplateEngine {
             product_id: user_input.product_id.clone(),
             linked_gateway: None,
             fingerprint: None,
+            workspace_id: None,
         };
 
         debug!("设备创建请求已生成: {:?}", device_request);

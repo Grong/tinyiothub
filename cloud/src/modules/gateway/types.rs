@@ -66,7 +66,7 @@ pub struct GatewayTopics {
 }
 
 /// 子设备发现消息（MQTT，网关→平台）
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "snake_case")]
 pub struct DeviceDiscoverMessage {
     #[serde(rename = "type")]
@@ -107,7 +107,7 @@ pub struct DeviceTelemetryMessage {
 }
 
 /// 状态消息（MQTT，网关→平台）
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "snake_case")]
 pub struct StatusMessage {
     #[serde(rename = "type")]
@@ -147,4 +147,29 @@ pub struct ConfigMessage {
     pub msg_type: String,
     pub config: serde_json::Value,
     pub timestamp: i64,
+}
+
+/// 网关上行数据消息（MQTT，网关→平台）
+#[derive(Debug)]
+pub enum GatewayDataMessage {
+    Status {
+        gateway_id: String,
+        workspace_id: String,
+        msg: StatusMessage,
+    },
+    Telemetry {
+        gateway_id: String,
+        workspace_id: String,
+        msg: TelemetryMessage,
+    },
+    DeviceDiscover {
+        gateway_id: String,
+        workspace_id: String,
+        msg: DeviceDiscoverMessage,
+    },
+    DeviceTelemetry {
+        gateway_id: String,
+        workspace_id: String,
+        msg: DeviceTelemetryMessage,
+    },
 }

@@ -192,8 +192,8 @@ impl DeviceRepository for SqliteDeviceRepository {
                 id, name, display_name, device_type, address, description, position,
                 driver_name, device_model, protocol_type, factory_name, linked_data,
                 driver_options, state, parent_id, product_id,
-                linked_gateway, fingerprint, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                linked_gateway, fingerprint, workspace_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&id)
@@ -214,6 +214,7 @@ impl DeviceRepository for SqliteDeviceRepository {
         .bind(&request.product_id)
         .bind(&request.linked_gateway)
         .bind(&request.fingerprint)
+        .bind(&request.workspace_id)
         .bind(&now)
         .bind(&now)
         .execute(self.database.pool())
@@ -419,8 +420,8 @@ impl DeviceRepository for SqliteDeviceRepository {
                     id, name, display_name, device_type, address, description, position,
                     driver_name, device_model, protocol_type, factory_name, linked_data,
                     driver_options, state, parent_id, product_id,
-                    linked_gateway, fingerprint, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    linked_gateway, fingerprint, workspace_id, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 "#,
             )
             .bind(&id)
@@ -441,6 +442,7 @@ impl DeviceRepository for SqliteDeviceRepository {
             .bind(&request.product_id)
             .bind(&request.linked_gateway)
             .bind(&request.fingerprint)
+            .bind(&request.workspace_id)
             .bind(&now)
             .bind(&now)
             .execute(&mut *tx)

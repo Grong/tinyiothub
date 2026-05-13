@@ -135,7 +135,7 @@ pub struct DeviceQueryParams {
 }
 
 /// 创建设备请求
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct CreateDeviceRequest {
     pub name: String,
@@ -154,6 +154,8 @@ pub struct CreateDeviceRequest {
     pub linked_gateway: Option<String>,
     pub fingerprint: Option<String>,
     pub product_id: Option<String>,
+    #[serde(default)]
+    pub workspace_id: Option<String>,
 }
 
 /// 更新设备请求

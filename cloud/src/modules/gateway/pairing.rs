@@ -85,6 +85,16 @@ impl PairingCache {
         entries.len() >= self.max_entries
     }
 
+    /// Returns true if the code exists in cache but its TTL has expired.
+    /// Distinguishes "expired" from "never existed" for 410 Gone responses.
+    pub async fn is_code_expired(&self, code: &str) -> bool {
+        let entries = self.entries.read().await;
+        match entries.get(code) {
+            Some(entry) => entry.created_at.elapsed() > PAIRING_CODE_TTL,
+            None => false,
+        }
+    }
+
     fn spawn_cleanup_task(&self) {
         let entries = Arc::clone(&self.entries);
         tokio::spawn(async move {

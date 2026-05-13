@@ -5,13 +5,14 @@ use tokio::sync::{mpsc, RwLock};
 
 use crate::modules::gateway::pairing::{PairingCache, PairingEntry};
 use crate::modules::gateway::types::*;
-use sqlx::SqlitePool;
+use crate::shared::persistence::factory::DeviceRepositoryFactory;
+use tinyiothub_core::models::device::CreateDeviceRequest;
 
 const MAX_PAIRING_REQUESTS_PER_IP_PER_MINUTE: usize = 3;
 const IP_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
 
 pub struct GatewayService {
-    pool: SqlitePool,
+    device_repo_factory: Arc<DeviceRepositoryFactory>,
     cache: Arc<PairingCache>,
     mqtt_tx: mpsc::Sender<MqttPublish>,
     ip_attempts: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
@@ -22,9 +23,13 @@ pub enum MqttPublish {
 }
 
 impl GatewayService {
-    pub fn new(pool: SqlitePool, cache: Arc<PairingCache>, mqtt_tx: mpsc::Sender<MqttPublish>) -> Self {
+    pub fn new(
+        device_repo_factory: Arc<DeviceRepositoryFactory>,
+        cache: Arc<PairingCache>,
+        mqtt_tx: mpsc::Sender<MqttPublish>,
+    ) -> Self {
         let service = Self {
-            pool,
+            device_repo_factory,
             cache,
             mqtt_tx,
             ip_attempts: Arc::new(RwLock::new(HashMap::new())),
@@ -54,38 +59,38 @@ impl GatewayService {
             return Err(PairingError::ServiceBusy);
         }
 
+        // Check for expired code before not-found to return correct status
+        if self.cache.is_code_expired(&code).await {
+            return Err(PairingError::CodeExpired);
+        }
+
         let announce = self.cache.get(&code).await.ok_or(PairingError::CodeNotFound)?;
 
         if !self.cache.check_and_increment_attempts(&code, user_id).await {
             return Err(PairingError::TooManyAttempts);
         }
 
-        let device_id = uuid::Uuid::new_v4().to_string();
         let device_name = announce.hostname.clone();
         let workspace_id = req.workspace_id.clone().unwrap_or_default();
         let password = generate_device_password();
-        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-        sqlx::query(
-            "INSERT INTO devices (id, name, device_type, protocol_type, fingerprint, linked_gateway, state, workspace_id, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-        )
-        .bind(&device_id)
-        .bind(&device_name)
-        .bind("gateway")
-        .bind("mqtt")
-        .bind(&announce.fingerprint)
-        .bind::<Option<String>>(None)
-        .bind(1i32)
-        .bind(&workspace_id)
-        .bind(&now)
-        .bind(&now)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| {
+        let repo = self.device_repo_factory.create_for_workspace(workspace_id.clone());
+        let create_req = CreateDeviceRequest {
+            name: device_name.clone(),
+            device_type: Some("gateway".into()),
+            protocol_type: Some("mqtt".into()),
+            fingerprint: Some(announce.fingerprint.clone()),
+            workspace_id: Some(workspace_id.clone()),
+            ..Default::default()
+        };
+        let device = repo.create(&create_req).await.map_err(|e| {
             tracing::error!(?e, "Failed to create device during pairing");
             PairingError::Internal
         })?;
+        let device_id = device.id.clone();
+
+        // Set gateway as online
+        let _ = repo.update_state(&device_id, 1i32).await;
 
         // Remove code BEFORE MQTT publish to prevent simultaneous pairing of same code
         self.cache.remove(&code).await;
@@ -127,11 +132,20 @@ impl GatewayService {
             .await
             .is_err()
         {
-            let _ = sqlx::query("DELETE FROM devices WHERE id = ?1")
-                .bind(&device_id)
-                .execute(&self.pool)
+            let _ = repo.delete(&device_id).await;
+            // Restore the code to cache so the gateway can still be paired
+            self.cache
+                .insert(code.clone(), PairingEntry {
+                    fingerprint: announce.fingerprint.clone(),
+                    hostname: announce.hostname.clone(),
+                    os: announce.os.clone(),
+                    ip: announce.ip.clone(),
+                    hw_model: announce.hw_model.clone(),
+                    created_at: std::time::Instant::now(),
+                    attempts: std::collections::HashMap::new(),
+                })
                 .await;
-            tracing::error!("MQTT channel closed, rolled back device creation");
+            tracing::error!(code = %code, "MQTT channel closed, rolled back device and restored cache entry");
             return Err(PairingError::MqttPublishFailed);
         }
 
@@ -212,32 +226,54 @@ impl GatewayService {
         gateway_id: &str,
         workspace_id: &str,
         msg: DeviceDiscoverMessage,
-    ) -> Result<(), sqlx::Error> {
-        let mut tx = self.pool.begin().await?;
-        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        for device in &msg.devices {
-            let sub_id = uuid::Uuid::new_v4().to_string();
-            sqlx::query(
-                "INSERT OR IGNORE INTO devices (id, name, device_type, protocol_type, address, driver_name, driver_options, linked_gateway, parent_id, state, workspace_id, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-            )
-            .bind(&sub_id)
-            .bind(&device.name)
-            .bind(device.device_type.as_deref().unwrap_or("sensor"))
-            .bind(device.protocol_type.as_deref())
-            .bind(device.address.as_deref())
-            .bind(device.driver_name.as_deref())
-            .bind(device.driver_options.as_deref())
-            .bind(gateway_id)
-            .bind(gateway_id)
-            .bind(1i32)
-            .bind(workspace_id)
-            .bind(&now)
-            .bind(&now)
-            .execute(&mut *tx)
-            .await?;
+    ) -> Result<(), tinyiothub_core::error::Error> {
+        if msg.devices.is_empty() {
+            return Ok(());
         }
-        tx.commit().await
+
+        let repo = self.device_repo_factory.create_for_workspace(workspace_id.to_string());
+        let requests: Vec<CreateDeviceRequest> = msg
+            .devices
+            .iter()
+            .map(|d| CreateDeviceRequest {
+                name: d.name.clone(),
+                device_type: Some(d.device_type.clone().unwrap_or_else(|| "sensor".into())),
+                protocol_type: d.protocol_type.clone(),
+                address: d.address.clone(),
+                driver_name: d.driver_name.clone(),
+                driver_options: d.driver_options.clone(),
+                linked_gateway: Some(gateway_id.to_string()),
+                parent_id: Some(gateway_id.to_string()),
+                workspace_id: Some(workspace_id.to_string()),
+                ..Default::default()
+            })
+            .collect();
+
+        repo.create_batch(&requests).await.map(|_| ())
+    }
+
+    pub async fn handle_gateway_data(&self, data: GatewayDataMessage) {
+        match &data {
+            GatewayDataMessage::Status { gateway_id, .. } => {
+                // TODO(v0.2): Track last_seen timestamp per gateway.
+                // Background task should periodically scan and mark stale
+                // gateways + their sub-devices as offline.
+                tracing::debug!(gateway_id = %gateway_id, "Gateway status received");
+            }
+            GatewayDataMessage::DeviceDiscover { gateway_id, workspace_id, msg } => {
+                if let Err(e) = self.handle_device_discover(gateway_id, workspace_id, msg.clone()).await {
+                    tracing::error!(?e, gateway_id = %gateway_id, "Failed to handle device discover");
+                }
+            }
+            GatewayDataMessage::Telemetry { gateway_id, .. } => {
+                // TODO(v0.2): Store telemetry data in time-series storage.
+                tracing::debug!(gateway_id = %gateway_id, "Gateway telemetry received");
+            }
+            GatewayDataMessage::DeviceTelemetry { gateway_id, .. } => {
+                // TODO(v0.2): Route sub-device telemetry to time-series storage.
+                tracing::debug!(gateway_id = %gateway_id, "Device telemetry received");
+            }
+        }
     }
 }
 
@@ -253,7 +289,7 @@ fn generate_device_password() -> String {
 mod tests {
     use super::*;
     use crate::modules::gateway::pairing::PairingEntry;
-    use sqlx::Row;
+    use sqlx::{Row, SqlitePool};
 
     async fn make_pool() -> SqlitePool {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
@@ -275,7 +311,9 @@ mod tests {
     fn make_service(pool: SqlitePool) -> (GatewayService, mpsc::Receiver<MqttPublish>) {
         let (tx, rx) = mpsc::channel(100);
         let cache = Arc::new(PairingCache::new(1000));
-        let service = GatewayService::new(pool, cache, tx);
+        let database = Arc::new(crate::shared::persistence::Database::new(pool));
+        let factory = Arc::new(DeviceRepositoryFactory::new(database));
+        let service = GatewayService::new(factory, cache, tx);
         (service, rx)
     }
 
@@ -473,12 +511,159 @@ mod tests {
 
         svc.handle_device_discover("gw-xyz", "ws1", msg).await.unwrap();
     }
+
+    // ── handle_announce ──
+
+    #[tokio::test]
+    async fn handle_announce_success() {
+        let pool = make_pool().await;
+        let (svc, _rx) = make_service(pool);
+
+        let announce = PairingAnnounce {
+            msg_type: "pairing_announce".into(),
+            code: "123456".into(),
+            fingerprint: "aa:bb:cc".into(),
+            hostname: "gw-01".into(),
+            os: "Linux".into(),
+            ip: "192.168.1.1".into(),
+            hw_model: "RPi5".into(),
+        };
+        svc.handle_announce(announce).await.unwrap();
+
+        let entry = svc.cache.get("123456").await.unwrap();
+        assert_eq!(entry.fingerprint, "aa:bb:cc");
+        assert_eq!(entry.hostname, "gw-01");
+    }
+
+    #[tokio::test]
+    async fn handle_announce_cache_full() {
+        let pool = make_pool().await;
+        let (_svc, _rx) = make_service(pool.clone());
+
+        // Create a tiny cache and fill it
+        let tiny_cache = Arc::new(PairingCache::new(1));
+        let (tx, _rx2) = mpsc::channel(1);
+        let database = Arc::new(crate::shared::persistence::Database::new(pool));
+        let factory = Arc::new(DeviceRepositoryFactory::new(database));
+        let svc2 = GatewayService::new(factory, tiny_cache.clone(), tx);
+
+        // Fill the cache
+        tiny_cache.insert("111111".into(), make_announce("111111")).await;
+
+        let announce = PairingAnnounce {
+            msg_type: "pairing_announce".into(),
+            code: "222222".into(),
+            fingerprint: "dd:ee:ff".into(),
+            hostname: "gw-02".into(),
+            os: "Linux".into(),
+            ip: "192.168.1.2".into(),
+            hw_model: "RPi5".into(),
+        };
+        let result = svc2.handle_announce(announce).await;
+        assert!(matches!(result, Err(AnnounceError::CacheFull)));
+    }
+
+    // ── ServiceBusy on full cache ──
+
+    #[tokio::test]
+    async fn pair_device_service_busy() {
+        let pool = make_pool().await;
+        let (svc, _rx) = make_service(pool);
+
+        // Fill the cache
+        for i in 0..1000 {
+            svc.cache.insert(format!("{:06}", i), make_announce("")).await;
+        }
+        assert!(svc.cache.is_full().await);
+
+        let req = PairingRequest { code: "123456".into(), workspace_id: None };
+        let result = svc.pair_device("user1", None, req).await;
+        assert!(matches!(result, Err(PairingError::ServiceBusy)));
+    }
+
+    // ── MQTT channel closed = rollback ──
+
+    #[tokio::test]
+    async fn pair_device_mqtt_rollback() {
+        let pool = make_pool().await;
+        let (tx, rx) = mpsc::channel(1);
+        drop(rx); // Close the receiver to simulate MQTT channel failure
+
+        let cache = Arc::new(PairingCache::new(1000));
+        let database = Arc::new(crate::shared::persistence::Database::new(pool.clone()));
+        let factory = Arc::new(DeviceRepositoryFactory::new(database));
+        let svc = GatewayService::new(factory, cache.clone(), tx);
+
+        let code = "123456";
+        cache.insert(code.into(), make_announce(code)).await;
+
+        let req = PairingRequest { code: code.into(), workspace_id: Some("ws1".into()) };
+        let result = svc.pair_device("user1", None, req).await;
+        assert!(matches!(result, Err(PairingError::MqttPublishFailed)));
+
+        // Verify the code was restored to cache (race condition fix)
+        assert!(cache.get(code).await.is_some());
+
+        // Verify no device was created (rollback)
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE name = 'gw-01'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    // ── Different IPs not blocked together ──
+
+    #[tokio::test]
+    async fn different_ips_not_blocked() {
+        let pool = make_pool().await;
+        let (svc, _rx) = make_service(pool);
+        let code = "123456";
+
+        // Burn attempts from IP 10.0.0.1
+        for _ in 0..3 {
+            svc.cache.insert(code.into(), make_announce(code)).await;
+            let req = PairingRequest { code: code.into(), workspace_id: None };
+            let _ = svc.pair_device("user1", Some("10.0.0.1"), req).await;
+        }
+        // 4th attempt from 10.0.0.1 should be rate-limited
+        svc.cache.insert(code.into(), make_announce(code)).await;
+        let req = PairingRequest { code: code.into(), workspace_id: None };
+        let result = svc.pair_device("user1", Some("10.0.0.1"), req).await;
+        assert!(matches!(result, Err(PairingError::TooManyAttemptsIp)));
+
+        // Same code from DIFFERENT IP should NOT be rate-limited
+        svc.cache.insert(code.into(), make_announce(code)).await;
+        let req = PairingRequest { code: code.into(), workspace_id: None };
+        let result = svc.pair_device("user1", Some("10.0.0.2"), req).await;
+        // Should NOT be TooManyAttemptsIp (may succeed or fail for other reasons)
+        assert!(!matches!(result, Err(PairingError::TooManyAttemptsIp)));
+    }
+
+    // ── Code expired aka 410 Gone ──
+
+    #[tokio::test]
+    async fn code_expired_returns_410() {
+        let pool = make_pool().await;
+        let (svc, _rx) = make_service(pool);
+        let code = "123456";
+
+        let mut entry = make_announce(code);
+        entry.created_at = Instant::now() - Duration::from_secs(301);
+        svc.cache.insert(code.into(), entry).await;
+
+        let req = PairingRequest { code: code.into(), workspace_id: None };
+        let result = svc.pair_device("user1", None, req).await;
+        assert!(matches!(result, Err(PairingError::CodeExpired)));
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum PairingError {
     #[error("未发现设备，请确认配对码是否正确")]
     CodeNotFound,
+    #[error("配对码已过期，请查看网关屏幕上的新配对码")]
+    CodeExpired,
     #[error("配对码格式无效")]
     InvalidCode,
     #[error("尝试次数过多，请1分钟后重试")]

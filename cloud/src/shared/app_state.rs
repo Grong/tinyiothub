@@ -376,11 +376,13 @@ impl AppState {
         >(100);
         let (announce_tx, mut announce_rx) =
             tokio::sync::mpsc::channel::<crate::modules::gateway::types::PairingAnnounce>(1000);
+        let (data_tx, mut data_rx) =
+            tokio::sync::mpsc::channel::<crate::modules::gateway::types::GatewayDataMessage>(1000);
         let pairing_cache =
             Arc::new(crate::modules::gateway::pairing::PairingCache::new(10000));
         let gateway_service =
             Arc::new(crate::modules::gateway::service::GatewayService::new(
-                database.pool().clone(),
+                device_repository_factory.clone(),
                 pairing_cache,
                 mqtt_tx,
             ));
@@ -398,6 +400,7 @@ impl AppState {
             &mqtt_password,
             announce_tx,
             mqtt_rx,
+            data_tx,
         ));
 
         // 启动宣告处理任务
@@ -407,6 +410,14 @@ impl AppState {
                 if let Err(e) = gs.handle_announce(announce).await {
                     tracing::warn!(?e, "Failed to handle pairing announce");
                 }
+            }
+        });
+
+        // 启动网关数据消息处理任务
+        let gs_data = gateway_service.clone();
+        tokio::spawn(async move {
+            while let Some(msg) = data_rx.recv().await {
+                gs_data.handle_gateway_data(msg).await;
             }
         });
 

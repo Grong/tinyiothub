@@ -4,6 +4,7 @@ use axum::http::HeaderMap;
 use crate::modules::gateway::service::PairingError;
 use crate::modules::gateway::types::{PairingRequest, PairingResponse};
 use crate::shared::app_state::AppState;
+use crate::shared::security::jwt::Claims;
 use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder};
 
 fn extract_client_ip(headers: &HeaderMap) -> Option<String> {
@@ -22,18 +23,21 @@ fn extract_client_ip(headers: &HeaderMap) -> Option<String> {
 
 pub async fn pair_device(
     State(state): State<AppState>,
+    claims: Claims,
     headers: HeaderMap,
     Json(req): Json<PairingRequest>,
 ) -> Result<Json<ApiResponse<PairingResponse>>, (StatusCode, Json<ApiResponse<PairingResponse>>)> {
-    let user_id = "anonymous";
     let client_ip = extract_client_ip(&headers);
 
-    match state.gateway_service.pair_device(user_id, client_ip.as_deref(), req).await {
+    match state.gateway_service.pair_device(&claims.user_id, client_ip.as_deref(), req).await {
         Ok(response) => Ok(ApiResponseBuilder::success(response)),
         Err(e) => {
             let (status, code, msg) = match &e {
                 PairingError::CodeNotFound => {
                     (StatusCode::NOT_FOUND, 404, e.to_string())
+                }
+                PairingError::CodeExpired => {
+                    (StatusCode::GONE, 410, e.to_string())
                 }
                 PairingError::InvalidCode => {
                     (StatusCode::BAD_REQUEST, 400, e.to_string())
