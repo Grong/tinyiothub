@@ -1,6 +1,8 @@
-#[tokio::test]
-#[ignore = "requires mosquitto container — will be implemented in Task 13"]
-async fn test_pairing_to_telemetry_green_path() {
-    // E2E: Edge boots → pairs → scans → collects telemetry → heartbeats
-    // Requires mosquitto container + test edge binary
-}
+// E2E integration tests that require a mosquitto MQTT broker container.
+// All tests are #[ignore] — run manually with:
+//
+//   docker compose -f edge/tests/e2e/docker-compose.yml up -d
+//   cargo build -p tinyiothub-edge
+//   cargo test -p tinyiothub-edge --test e2e_tests -- --ignored --test-threads=1
+//
+mod e2e;
