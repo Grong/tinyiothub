@@ -1,41 +1,35 @@
-# TinyIoTHub - Rust Implementation
+# TinyIoTHub
 
-**版本**: v1.1.0  
+轻量级工业边缘 IoT 平台。多协议设备接入、L0-L3 自愈引擎、自然语言运维 — 让边缘网络管理像聊天一样简单。
+
 **官方网站**: https://tinyiothub.com  
 **仓库地址**: https://github.com/Grong/tinyiothub  
-**Docker Hub**: https://hub.docker.com/r/grong/tinyiothub  
-**发布日期**: 2026-01-19
-
-基于 Rust 的云端 SaaS 物联网平台，支持配置和管理边缘网关设备，兼容多协议设备接入。
-
-## 版本说明
-
-本项目基于 Rust 2024 Edition，针对鸿蒙系统进行了优化。
+**Docker Hub**: https://hub.docker.com/r/grong/tinyiothub
 
 ## 特性
 
-- 🚀 **高性能异步架构**（基于 Tokio）
-- 🔌 **多协议支持**（Modbus RTU/TCP、ONVIF、SNMP、Ping）
-- 📊 **实时数据采集和处理**
-- 🌐 **现代化 REST API**（基于 Axum + 统一响应格式）
-- 📱 **MQTT 消息推送**（支持主备双通道）
-- 🔐 **JWT 身份认证**（支持会话管理）
-- 📈 **设备监控和告警**（实时状态监控 + 规则引擎）
-- 🎯 **事件驱动架构**（设备联动、SSE 流式推送）
-- ⏰ **定时任务调度**（Cron 表达式、任务执行记录、Workspace 隔离）
-- 🏢 **多租户 SaaS 架构**（租户隔离、订阅管理）
-- 🏗️ **工作空间管理**（物理环境分组、AI Agent 绑定）
-- ⚡ **自动化规则**（触发器-动作引擎）
-- 🔧 **自愈引擎**（探测调度器 + 自动故障恢复，支持 system/device/task 探针）
-- 📢 **通知系统**（多渠道通知：Email、SMS、SSE、Webhook）
-- 🤖 **AI Agent 集成**（内嵌 MCP Server + A2UI 聊天，Claude Desktop/Cursor 支持）
-- 🛒 **应用市场**（驱动市场、模板市场）
-- 💾 **SQLite 数据存储**（支持自动迁移）
-- 🔄 **自动重连和故障恢复**
-- 🤖 **鸿蒙系统原生支持**
-- ⚙️ **专业配置系统**（层次化配置，环境感知）
-- 🔒 **安全加固**（配置验证，权限控制）
-- 🎨 **现代化前端界面**（Lit 3 + TypeScript + Vite + nanostore）
+**设备接入**
+- 多协议支持：Modbus RTU/TCP、ONVIF、SNMP、MQTT，开箱即用
+- AI 驱动匹配：描述设备类型，自动匹配或生成驱动代码
+- 设备模板：JSON 模板一键创建，支持验证和预览
+
+**智能运维**
+- L0-L3 分级自愈引擎：system/device/task 三级探针，自动故障检测与恢复
+- 规则引擎：阈值、范围、变化、持续时间、组合五种条件类型
+- 心跳探针：定期自检网关与子设备，提前发现隐患
+- Cron 定时任务：Workspace 隔离，执行记录与统计
+
+**AI 原生**
+- 自然语言交互：用日常语言配置设备、查询状态、排查故障
+- MCP Server：内嵌 Model Context Protocol 服务，Claude Desktop、Cursor 直接连接
+- A2UI 聊天界面：SSE 流式对话，Agent 技能调用
+- 设备自发现：AI 辅助识别设备类型并推荐驱动
+
+**部署灵活**
+- 单进程部署：~80MB 内存占用，无需外部数据库
+- SQLite 存储：零依赖，自动迁移
+- 开源 MIT 协议：可私有化部署，可商用
+- Lit 3 前端：Web Components，轻量快速
 
 ## 项目结构（多 Crate 架构）
 
@@ -50,10 +44,10 @@ tinyiothub/
 │   ├── Cargo.toml           # Rust 项目配置
 │   └── tinyiothub.db        # SQLite 数据库
 ├── crates/                  # 内部库 Crate
-│   ├── tinyiothub-core/     # 通用基础类型与领域模型
-│   ├── tinyiothub-storage/  # 纯 IoT 数据存取抽象与轻量级缓存
-│   ├── tinyiothub-engine/   # 可独立部署的通用 IoT 业务引擎
-│   ├── tinyiothub-web/      # 共享的 HTTP 基础设施层
+│   ├── tinyiothub-core/     # 契约层：traits + 领域模型 + repository 接口
+│   ├── tinyiothub-runtime/  # 基础设施：EventBus, DataServer, drivers
+│   ├── tinyiothub-storage/  # 数据层：SQLite 实现（re-export core traits）
+│   ├── tinyiothub-web/      # HTTP 基础设施层（中间件、ApiResponseBuilder）
 │   ├── tinyiothub-error/    # 错误类型（带 `thiserror` 派生）
 │   └── ...（其他支持库）
 ├── web/                     # Lit 3 前端应用 (Web Components)
@@ -690,41 +684,13 @@ gateway/{sn}/data             # 数据上传
 gateway/{sn}/alarm            # 告警消息
 ```
 
-## 项目状态
+## 最新动态
 
-✅ **最新完成的工作**:
-- **Cron 定时任务重构**: 从旧双调度器迁移到统一的 `CronSchedulerService`，基于 `cron_jobs`/`cron_runs` 表，支持 Workspace 隔离
-- **AI Agent 架构重构**: 内嵌 MCP Server + A2UI 聊天界面，支持 SSE 流式对话和 Agent 技能调用
-- **前端架构迁移**: 从 Next.js 迁移到 Lit 3 + Vite，采用 Web Components 和 nanostore 状态管理
-- **告警规则引擎**: 支持阈值、范围、变化、持续时间、组合五种条件类型
-- **工作空间管理**: 物理环境分组，每个 Workspace 绑定一个 AI Agent
+- **Cron 定时任务**: 统一调度服务，Workspace 隔离，执行记录与统计
+- **AI Agent**: 内嵌 MCP Server + A2UI 聊天界面，SSE 流式对话
+- **告警规则引擎**: 阈值、范围、变化、持续时间、组合五种条件类型
 - **自愈引擎**: system/device/task 三级探针，自动故障检测与恢复
-- **API 规范统一**: 建立完整的前后端API开发规范，确保数据对接一致性
-- **统一响应格式**: 所有API使用 `ApiResponse<T>` 包装格式
-- **设备创建向导**: 完整的模板选择和设备配置流程
-- **驱动管理系统**: 动态驱动加载，配置参数管理
-- **多语言支持**: 模板和界面的国际化处理
-
-✅ **核心功能**:
-- **REST API 系统**: 基于 Axum 的现代化 API，统一响应格式
-- **前端界面**: Lit 3 + TypeScript + Vite 现代化界面
-- **设备驱动系统**: 支持重试机制和状态管理的驱动框架
-- **设备模板系统**: 模板化设备创建，支持验证和预览
-- **配置管理**: 多源配置加载，环境变量覆盖，配置验证
-- **认证授权**: JWT 会话管理，角色权限控制
-- **监控告警**: 健康检查，指标收集，告警规则引擎
-- **定时任务**: Cron 表达式调度，任务执行记录，Workspace 隔离
-- **事件系统**: SSE 流式推送，设备联动
-- **鸿蒙系统适配**: 硬件抽象层，资源优化配置
-
-🔧 **技术栈**:
-- **后端**: Rust 2024 + Axum + SQLite + Tokio
-- **前端**: Lit 3 + TypeScript + Vite + nanostore
-- **数据库**: SQLite + SQLx (自动迁移)
-- **认证**: JWT + 会话管理
-- **通信协议**: MQTT, HTTP, Modbus RTU/TCP, ONVIF, SNMP
-- **AI 集成**: 内嵌 MCP Server + A2UI (SSE 流式)
-- **包管理**: pnpm (前端)，Cargo (后端)
+- **前端架构**: Lit 3 + Vite + nanostore，Web Components
 
 
 ## 许可证
