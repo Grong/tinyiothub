@@ -50,7 +50,7 @@ impl AppState {
         );
         let command_service =
             CommandService::new(device_service.clone(), gateway_service.clone());
-        let config_service = ConfigService::new(db.clone(), config.clone(), gateway_service.clone());
+        let config_service = ConfigService::new(db.clone(), config.clone());
         let health_service = HealthService::new(
             gateway_service.clone(),
             offline_buffer.clone(),
