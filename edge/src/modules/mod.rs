@@ -7,3 +7,4 @@ pub mod config_mgmt;
 pub mod health;
 pub mod intelligence;
 pub mod offline;
+pub mod http;

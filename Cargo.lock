@@ -5797,8 +5797,10 @@ dependencies = [
 name = "tinyiothub-edge"
 version = "0.2.1"
 dependencies = [
+ "axum",
  "chrono",
  "hostname",
+ "libloading",
  "local-ip-address",
  "mac_address",
  "rand 0.8.6",
@@ -5806,12 +5808,17 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2 0.10.9",
+ "sqlx",
  "tempfile",
+ "thiserror 1.0.69",
  "tinyiothub-core",
  "tinyiothub-plugin",
  "tinyiothub-runtime",
  "tinyiothub-storage",
+ "tinyiothub-web",
  "tokio",
+ "tower",
  "tracing",
  "tracing-subscriber",
  "uuid",

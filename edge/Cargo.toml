@@ -18,7 +18,10 @@ tinyiothub-core = { workspace = true }
 tinyiothub-runtime = { workspace = true }
 tinyiothub-plugin = { workspace = true }
 tinyiothub-storage = { workspace = true }
+tinyiothub-web = { workspace = true }
 tokio = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
 rumqttc = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
