@@ -25,10 +25,11 @@ auto_migrate = true
 [mqtt]
 # MQTT主要配置
 [mqtt.primary]
-host = "192.168.1.124"
+host = "mqtt.tinyiothub.com"
 port = 1883
-username = "${MQTT_USERNAME}"
-password = "${MQTT_PASSWORD}"
+# username/password 通过环境变量 TINYIOTHUB__MQTT__PRIMARY__USERNAME/PASSWORD 设置
+# username = ""
+# password = ""
 use_tls = false
 connect_timeout_secs = 30
 keep_alive_secs = 60
