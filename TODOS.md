@@ -79,5 +79,17 @@ Source: `/plan-ceo-review` on `feat/device-ecosystem-v0.2` (2026-05-08)
   - **Action:** Either remove migration or add TODO comment explaining future use
   - **Owner:** TBD
 
+## MQTT Gateway Pairing (v0.1)
+
+Source: `/plan-eng-review` on `main` (2026-05-11)
+
+### P1 — HIGH
+
+- **Gateway e2e test with mock gateway**
+  - Core pairing flow crosses 3 systems (gateway → broker → platform), unit tests can't cover it. CI e2e with `tests/e2e/docker-compose.yml` + mosquitto + mock MQTT gateway that sends announce, waits for ack, sends telemetry.
+  - **Depends on:** edge/ base implementation complete
+  - **Effort:** M (human: 2 days / CC: 30min)
+  - **Owner:** TBD
+
 ## Completed
 
