@@ -2,7 +2,7 @@ use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-use crate::config::{EdgeConfig, GatewayCredentials};
+use tinyiothub_edge::config::{EdgeConfig, GatewayCredentials};
 
 pub struct EdgeMqttClient {
     client: AsyncClient,

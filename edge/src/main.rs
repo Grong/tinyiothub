@@ -1,9 +1,8 @@
-mod config;
 mod device_discovery;
 mod mqtt_client;
 mod pairing;
 
-use config::{EdgeConfig, GatewayCredentials};
+use tinyiothub_edge::config::{EdgeConfig, GatewayCredentials};
 use device_discovery::DeviceScanner;
 use mqtt_client::{EdgeMqttClient, MqttEvent};
 use pairing::PairingCodeGenerator;
