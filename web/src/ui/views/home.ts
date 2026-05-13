@@ -174,14 +174,14 @@ export class HomeView extends LitElement {
             <div class="hero-content">
               <div class="hero-badge">
                 <span class="hero-badge-dot"></span>
-                内置人工智能 · 物联行业的 OpenAI
+                AI 原生 · 边缘智能
               </div>
               <h1>
-                构建下一代<br />
-                <span class="gradient">IoT 智能平台</span>
+                设备接入到自愈运维<br />
+                <span class="gradient">一句话的事</span>
               </h1>
               <p class="hero-desc">
-                轻量级、高性能、企业级的云端 SaaS 物联网平台。基于 Rust + AI 构建，支持配置和管理边缘网关设备，为工业物联网场景提供可靠的设备接入、数据采集和云端管理能力。
+                轻量级工业边缘 IoT 平台。支持 Modbus/ONVIF/SNMP/MQTT 多协议设备接入，内置 L0-L3 分级自愈引擎，用自然语言即可完成设备配置、状态查询和故障排查。
               </p>
               <div class="hero-cta">
                 <button class="btn btn--primary btn--lg" @click=${() => this.navigate('/login')}>
@@ -212,34 +212,34 @@ export class HomeView extends LitElement {
         <section class="stats-section reveal">
           <div class="section-inner">
             <div class="stats-header">
-              <div class="section-label">全球生态</div>
-              <h2 class="stats-title">10,000+ <span>接入设备</span></h2>
-              <p class="stats-desc">TinyIoTHub 已服务全球开发者与企业客户，为工业、能源、农业等场景提供稳定可靠的物联网边缘计算能力，助力设备快速上云。</p>
+              <div class="section-label">平台数据</div>
+              <h2 class="stats-title">开源 <span>轻量部署</span></h2>
+              <p class="stats-desc">TinyIoTHub 专为工业边缘场景设计，单进程 ~80MB 内存即可运行，覆盖工厂、楼宇、能源、农业等典型 IoT 场景。</p>
             </div>
             <div class="stats-grid">
               <div class="stats-item reveal reveal-delay-1">
-                <div class="stats-item__num">200+</div>
-                <div class="stats-item__label">覆盖国家与地区</div>
-              </div>
-              <div class="stats-item reveal reveal-delay-2">
                 <div class="stats-item__num">4</div>
                 <div class="stats-item__label">核心协议支持</div>
               </div>
+              <div class="stats-item reveal reveal-delay-2">
+                <div class="stats-item__num">~80MB</div>
+                <div class="stats-item__label">内存占用</div>
+              </div>
               <div class="stats-item reveal reveal-delay-3">
-                <div class="stats-item__num">&lt;1天</div>
-                <div class="stats-item__label">完成私有化部署</div>
+                <div class="stats-item__num">5</div>
+                <div class="stats-item__label">种告警条件</div>
               </div>
               <div class="stats-item reveal reveal-delay-1">
                 <div class="stats-item__num">L0-L3</div>
                 <div class="stats-item__label">全栈自愈等级</div>
               </div>
               <div class="stats-item reveal reveal-delay-2">
-                <div class="stats-item__num">开源</div>
-                <div class="stats-item__label">活跃社区支持</div>
+                <div class="stats-item__num">MIT</div>
+                <div class="stats-item__label">开源协议</div>
               </div>
               <div class="stats-item reveal reveal-delay-3">
-                <div class="stats-item__num">7×24</div>
-                <div class="stats-item__label">稳定运行保障</div>
+                <div class="stats-item__num">MCP</div>
+                <div class="stats-item__label">原生 AI 接入</div>
               </div>
             </div>
           </div>
@@ -250,53 +250,53 @@ export class HomeView extends LitElement {
           <div class="section-inner">
             <div class="section-header">
               <div class="section-label">核心能力</div>
-              <h2 class="section-title">边缘智能体驱动的新一代 IoT</h2>
+              <h2 class="section-title">四大核心能力</h2>
               <p class="section-desc">
-                将大模型驱动的智能体嵌入边缘侧，从根本上重塑设备接入与运维流程
+                从设备接入到智能运维，覆盖工业边缘全生命周期
               </p>
             </div>
             <div class="feature-grid">
               <div class="feature-card reveal reveal-delay-1">
                 <div class="feature-icon">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="url(#icon-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3L14.5 8.5L20 11L14.5 13.5L12 19L9.5 13.5L4 11L9.5 8.5L12 3Z"/></svg>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="url(#icon-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>
                 </div>
-                <h3>接入即自治</h3>
-                <p>自然语言描述设备，自动完成驱动匹配与生成，无需专业背景</p>
+                <h3>多协议设备接入</h3>
+                <p>Modbus RTU/TCP、ONVIF、SNMP、MQTT，开箱即用</p>
               </div>
               <div class="feature-card reveal reveal-delay-2">
+                <div class="feature-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="url(#icon-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3L14.5 8.5L20 11L14.5 13.5L12 19L9.5 13.5L4 11L9.5 8.5L12 3Z"/></svg>
+                </div>
+                <h3>AI 驱动匹配</h3>
+                <p>描述设备类型，自动匹配或生成驱动代码</p>
+              </div>
+              <div class="feature-card reveal reveal-delay-3">
                 <div class="feature-icon">
                   <svg viewBox="0 0 24 24" fill="none" stroke="url(#icon-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
                 </div>
-                <h3>运行即自愈</h3>
-                <p>L0-L3 分级自愈机制，主动发现并修复故障</p>
-              </div>
-              <div class="feature-card reveal reveal-delay-3">
-                <div class="feature-icon">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="url(#icon-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>
-                </div>
-                <h3>LoRa 无线化</h3>
-                <p>免布线施工，内置 LoRa 网关，改造无需停产</p>
+                <h3>L0-L3 自愈引擎</h3>
+                <p>system/device/task 三级探针，自动故障检测与恢复</p>
               </div>
               <div class="feature-card reveal reveal-delay-1">
                 <div class="feature-icon">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="url(#icon-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="url(#icon-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
                 </div>
-                <h3>自然语言交互</h3>
-                <p>用日常语言配置设备、查询状态，降低使用门槛</p>
+                <h3>规则引擎</h3>
+                <p>阈值、范围、变化、持续时间、组合五种条件，灵活配置告警与自动化</p>
               </div>
               <div class="feature-card reveal reveal-delay-2">
                 <div class="feature-icon">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="url(#icon-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="url(#icon-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
                 </div>
-                <h3>智能驱动匹配</h3>
-                <p>AI 自动匹配驱动库，无匹配则自动生成并测试验证</p>
+                <h3>自然语言运维</h3>
+                <p>用日常语言配置设备、查询状态、排查故障，内嵌 MCP Server</p>
               </div>
               <div class="feature-card reveal reveal-delay-3">
                 <div class="feature-icon">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="url(#icon-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="url(#icon-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
                 </div>
-                <h3>心跳探针</h3>
-                <p>定期自检网关与子设备，提前发现隐患，防患于未然</p>
+                <h3>轻量部署</h3>
+                <p>~80MB 内存占用，SQLite 零依赖，MIT 开源协议</p>
               </div>
             </div>
           </div>
@@ -382,7 +382,7 @@ export class HomeView extends LitElement {
         <section class="cta-section reveal">
           <div class="cta-inner">
             <h2 class="cta-title">准备好开始了吗？</h2>
-            <p class="cta-desc">立即部署 TinyIoTHub，开启您的物联网之旅。开源免费，支持私有化部署。</p>
+            <p class="cta-desc">几分钟接入第一台设备，体验自然语言运维。开源免费，支持私有化部署。</p>
             <div class="cta-buttons">
               <button class="btn btn--primary btn--lg" @click=${() => this.navigate('/login')}>
                 免费开始使用
