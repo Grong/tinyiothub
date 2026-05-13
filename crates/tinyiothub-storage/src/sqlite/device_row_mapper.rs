@@ -6,7 +6,8 @@ use tinyiothub_core::models::device::Device;
 pub const SELECT_COLUMNS: &str = r#"
     id, name, display_name, device_type, address, description, position,
     driver_name, device_model, protocol_type, factory_name, linked_data,
-    driver_options, state, parent_id, product_id, workspace_id, created_at, updated_at
+    driver_options, state, parent_id, product_id, workspace_id,
+    linked_gateway, fingerprint, created_at, updated_at
 "#;
 
 /// Map a `SqliteRow` to a `Device`.
@@ -24,6 +25,8 @@ pub fn row_to_device(row: sqlx::sqlite::SqliteRow) -> Result<Device> {
         device_model: row.get("device_model"),
         protocol_type: row.get("protocol_type"),
         factory_name: row.get("factory_name"),
+        linked_gateway: row.get("linked_gateway"),
+        fingerprint: row.get("fingerprint"),
         linked_data: row.get("linked_data"),
         driver_options: row.get("driver_options"),
         status: state_i32.into(),

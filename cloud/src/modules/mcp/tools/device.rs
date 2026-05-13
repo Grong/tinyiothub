@@ -670,6 +670,9 @@ impl ToolHandler for CreateDeviceHandler {
                 driver_options: input.connection_config,
                 parent_id: input.parent_id,
                 product_id: input.product_id,
+                linked_gateway: None,
+                fingerprint: None,
+                workspace_id: None,
             };
             match tenant_device_service.create_device(&request).await {
                 Ok(device) => Ok(serde_json::to_value(device).unwrap()),

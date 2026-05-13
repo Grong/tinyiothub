@@ -98,6 +98,8 @@ pub struct Device {
     pub driver_options: Option<String>,
     pub status: DeviceStatus,
     pub parent_id: Option<String>,
+    pub linked_gateway: Option<String>,
+    pub fingerprint: Option<String>,
     pub product_id: Option<String>,
     pub workspace_id: Option<String>,
     pub created_at: Option<String>,
@@ -133,7 +135,7 @@ pub struct DeviceQueryParams {
 }
 
 /// 创建设备请求
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct CreateDeviceRequest {
     pub name: String,
@@ -149,7 +151,11 @@ pub struct CreateDeviceRequest {
     pub linked_data: Option<String>,
     pub driver_options: Option<String>,
     pub parent_id: Option<String>,
+    pub linked_gateway: Option<String>,
+    pub fingerprint: Option<String>,
     pub product_id: Option<String>,
+    #[serde(default)]
+    pub workspace_id: Option<String>,
 }
 
 /// 更新设备请求
@@ -170,6 +176,8 @@ pub struct UpdateDeviceRequest {
     pub driver_options: Option<String>,
     pub state: Option<i32>,
     pub parent_id: Option<String>,
+    pub linked_gateway: Option<String>,
+    pub fingerprint: Option<String>,
     pub product_id: Option<String>,
 }
 
@@ -274,6 +282,8 @@ impl Default for Device {
             driver_options: None,
             status: DeviceStatus::Offline,
             parent_id: None,
+            linked_gateway: None,
+            fingerprint: None,
             product_id: None,
             workspace_id: None,
             created_at: Some(now.clone()),

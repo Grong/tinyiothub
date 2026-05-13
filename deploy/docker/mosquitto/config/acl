@@ -1,0 +1,12 @@
+# 匿名客户端：只能访问配对 topic
+user anonymous
+topic readwrite tinyiothub/pairing/#
+
+# 平台客户端：完整访问
+user admin
+topic readwrite tinyiothub/#
+
+# 网关设备模板（动态下发后，每个网关有独立的 username = device_id）
+# Mosquitto 2.0 支持 %u 变量匹配 client username
+pattern readwrite tinyiothub/%u/gateway/%u/#
+pattern readwrite tinyiothub/%u/device/%u/#

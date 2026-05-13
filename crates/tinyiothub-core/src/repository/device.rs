@@ -24,6 +24,7 @@ pub trait DeviceRepository: Send + Sync {
     async fn find_children(&self, parent_id: &str) -> Result<Vec<Device>>;
     async fn find_by_product_id(&self, product_id: &str) -> Result<Vec<Device>>;
     async fn find_by_driver_name(&self, driver_name: &str) -> Result<Vec<Device>>;
+    async fn find_by_linked_gateway(&self, linked_gateway: &str) -> Result<Vec<Device>>;
     async fn exists_by_name(&self, name: &str) -> Result<bool>;
     async fn find_by_ids(&self, ids: &[String]) -> Result<Vec<Device>>;
     async fn find_with_filters(

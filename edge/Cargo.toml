@@ -14,3 +14,14 @@ tinyiothub-core = { workspace = true }
 tinyiothub-runtime = { workspace = true }
 tinyiothub-plugin = { workspace = true }
 tokio = { workspace = true }
+rumqttc = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rand = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+hostname = "0.4"
+mac_address = "1.1"
+local-ip-address = "0.6"
