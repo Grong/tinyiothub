@@ -27,5 +27,6 @@ pub mod agent;
 pub mod config;
 pub mod event;
 pub mod hardware;
+pub mod mqtt_client;
 pub mod persistence;
 pub mod redis;

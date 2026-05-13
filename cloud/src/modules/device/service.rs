@@ -335,6 +335,20 @@ impl DeviceService {
     pub async fn delete_device(&self, device_id: &str) -> Result<bool, Error> {
         tracing::info!("Deleting device: {}", device_id);
         let device = self.repository.find_by_id(device_id).await?.ok_or(Error::NotFound)?;
+
+        // Cascade: delete all sub-devices linked to this gateway
+        if let Ok(sub_devices) = self.repository.find_by_linked_gateway(device_id).await {
+            let sub_ids: Vec<String> = sub_devices.iter().map(|d| d.id.clone()).collect();
+            if !sub_ids.is_empty() {
+                tracing::info!(
+                    gateway_id = %device_id,
+                    sub_device_count = sub_ids.len(),
+                    "Cascade deleting sub-devices"
+                );
+                self.repository.delete_by_ids(&sub_ids).await?;
+            }
+        }
+
         let deleted_count = self.repository.delete(device_id).await?;
         let success = deleted_count > 0;
         if success {
