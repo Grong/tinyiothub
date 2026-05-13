@@ -3,8 +3,8 @@ layout: home
 
 hero:
   name: "TinyIoTHub"
-  text: "云端 SaaS 物联网平台"
-  tagline: 基于 Rust 的高性能云端 SaaS IoT 平台，支持配置和管理边缘网关设备，兼容多协议（Modbus、ONVIF、SNMP、MQTT）
+  text: "轻量级工业边缘 IoT 平台"
+  tagline: 多协议设备接入、L0-L3 自愈引擎、自然语言运维 — 让边缘网络管理像聊天一样简单
   actions:
     - theme: brand
       text: 快速开始
@@ -14,24 +14,16 @@ hero:
       link: /api/
 
 features:
-  - title: 多协议支持
-    details: 内置 Modbus RTU/TCP、ONVIF、SNMP、MQTT 等协议驱动，开箱即用
-  - title: 事件驱动架构
-    details: 基于 Tokio 异步运行时，高并发低延迟，支持 SSE 实时推送
-  - title: AI 集成
-    details: MCP Server + A2UI 聊天界面，支持 Claude Desktop、Cursor 自然语言控制设备
+  - title: 多协议设备接入
+    details: 内置 Modbus RTU/TCP、ONVIF、SNMP、MQTT 驱动，AI 辅助匹配与生成驱动代码，JSON 模板一键创建设备
+  - title: L0-L3 自愈引擎
+    details: system/device/task 三级探针自动检测故障并恢复，心跳探针主动巡检，Cron 定时任务调度
+  - title: 自然语言运维
+    details: 用日常语言配置设备、查询状态、排查故障。内嵌 MCP Server，支持 Claude Desktop、Cursor 直接连接
   - title: 规则引擎
-    details: 灵活的告警规则配置，支持阈值、范围、变化、持续时间、组合五种条件类型
-  - title: 定时任务调度
-    details: Cron 表达式定时任务，Workspace 隔离，支持执行记录和统计
+    details: 阈值、范围、变化、持续时间、组合五种条件类型，灵活配置告警和自动化规则
   - title: 工作空间管理
-    details: 按物理环境分组设备，每个 Workspace 绑定独立 AI Agent
-  - title: 自愈引擎
-    details: system/device/task 三级探针，自动故障检测与恢复
-  - title: 设备模板
-    details: JSON 模板快速创建设备，一键配置
-  - title: SaaS 多租户
-    details: 支持云端部署，多租户隔离，订阅管理
-  - title: 应用市场
-    details: 驱动市场、模板市场，支持第三方扩展
+    details: 按物理环境分组设备，每个 Workspace 绑定独立 AI Agent，租户级数据隔离
+  - title: 轻量部署
+    details: 单进程运行，~80MB 内存占用，SQLite 免外部依赖，开源 MIT 协议，支持私有化
 ---

@@ -84,7 +84,6 @@ Source: `/plan-ceo-review` on `feat/device-ecosystem-v0.2` (2026-05-08)
 Source: `/plan-eng-review` on `main` (2026-05-11)
 
 Source: `/plan-eng-review` on `feature/mqtt-gateway-pairing` (2026-05-13)
-
 ### P1 — HIGH
 
 - **Gateway e2e test with mock gateway**
@@ -122,6 +121,5 @@ Source: `/plan-eng-review` on `feature/mqtt-gateway-pairing` (2026-05-13)
   - **Depends on:** Device discover message handling on platform side
   - **Effort:** M (human: 2 days / CC: 30min)
   - **Owner:** TBD
-
 ## Completed
 
