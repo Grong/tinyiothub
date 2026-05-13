@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use tinyiothub_storage::sqlite::device::SqliteDeviceRepository;
 use crate::config::{EdgeConfig, GatewayCredentials};
 use crate::shared::storage::init_database;
 use crate::modules::gateway::GatewayService;
@@ -36,7 +37,8 @@ impl AppState {
         let offline_buffer = OfflineBuffer::new(db.clone(), config.clone());
 
         // Layer 2: Depends on Layer 1
-        let device_service = DeviceService::new(db.clone());
+        let device_repo = Arc::new(SqliteDeviceRepository::new(db.as_ref().clone()));
+        let device_service = DeviceService::new(device_repo);
         let gateway_service = GatewayService::new(&credentials, &config);
         let driver_service = DriverService::new(db.clone(), config.scan_timeout_secs);
 
