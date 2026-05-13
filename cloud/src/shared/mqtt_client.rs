@@ -31,7 +31,9 @@ impl PlatformMqttClient {
         let password = password.to_string();
         let client_id = format!("tinyiothub-platform-{}", uuid::Uuid::new_v4());
         let mut options = MqttOptions::new(&client_id, &broker_url, broker_port);
-        options.set_credentials(&username, &password);
+        if !username.is_empty() || !password.is_empty() {
+            options.set_credentials(&username, &password);
+        }
         options.set_keep_alive(Duration::from_secs(30));
         options.set_max_packet_size(256 * 1024, 256 * 1024);
 

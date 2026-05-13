@@ -21,7 +21,6 @@ services:
     depends_on:
       - tinyiothub-api
       - tinyiothub-mqtt
-      - tinyiothub-docs
 
     logging:
       driver: "json-file"
@@ -42,20 +41,13 @@ services:
 
     user: "${UID:-1000}:${GID:-1000}"
 
-    depends_on:
-      zeroclaw:
-        condition: service_healthy
-
     environment:
       - RUST_LOG=info
       - TZ=Asia/Shanghai
       - TINYIOTHUB__PROJECT_ROOT=/app
       - TINYIOTHUB__DATABASE__URL=/app/data/tinyiothub.db
       - TINYIOTHUB__SECURITY__JWT__SECRET=${JWT_SECRET}
-      - TINYIOTHUB__OPENCLAW__URL=http://zeroclaw:42617
-      - TINYIOTHUB__OPENCLAW__WS_URL=ws://zeroclaw:42617
-      - TINYIOTHUB__MQTT__PRIMARY__USERNAME=${MQTT_USERNAME:-admin}
-      - TINYIOTHUB__MQTT__PRIMARY__PASSWORD=${MQTT_PASSWORD}
+      - TINYIOTHUB__MQTT__PRIMARY__HOST=tinyiothub-mqtt
 
     volumes:
       - ./data:/app/data
@@ -70,36 +62,6 @@ services:
       start_period: 10s
       retries: 3
 
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  # ============================================
-  # ZeroClaw AI Agent Gateway
-  # ============================================
-  zeroclaw:
-    image: ghcr.io/zeroclaw-labs/zeroclaw:latest
-    container_name: zeroclaw
-    restart: unless-stopped
-    environment:
-      - API_KEY=${ANTHROPIC_API_KEY:-}
-      - PROVIDER=${ZEROCLAW_PROVIDER:-anthropic}
-      - ZEROCLAW_ALLOW_PUBLIC_BIND=true
-      - ZEROCLAW_GATEWAY_PORT=42617
-    volumes:
-      - ./data/zeroclaw:/zeroclaw-data
-    expose:
-      - "42617"
-    ports:
-      - "42617:42617"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:42617/health"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
     logging:
       driver: "json-file"
       options:
