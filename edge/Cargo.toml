@@ -17,6 +17,7 @@ path = "src/main.rs"
 tinyiothub-core = { workspace = true }
 tinyiothub-runtime = { workspace = true }
 tinyiothub-plugin = { workspace = true }
+tinyiothub-storage = { workspace = true }
 tokio = { workspace = true }
 rumqttc = { workspace = true }
 serde = { workspace = true }
