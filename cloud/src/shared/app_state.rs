@@ -144,6 +144,12 @@ pub struct AppState {
 
     /// 缓存的系统信息对象，避免每次请求重新扫描
     pub sysinfo_system: Arc<std::sync::Mutex<sysinfo::System>>,
+
+    /// 网关服务 - MQTT 网关配对
+    pub gateway_service: Arc<crate::modules::gateway::service::GatewayService>,
+
+    /// MQTT 客户端（可选，未配置时为空）
+    pub mqtt_client: Option<Arc<crate::shared::mqtt_client::PlatformMqttClient>>,
 }
 
 impl AppState {
@@ -364,6 +370,46 @@ impl AppState {
             },
         ));
 
+        // === 网关配对服务 ===
+        let (mqtt_tx, mqtt_rx) = tokio::sync::mpsc::channel::<
+            crate::modules::gateway::service::MqttPublish,
+        >(100);
+        let (announce_tx, mut announce_rx) =
+            tokio::sync::mpsc::channel::<crate::modules::gateway::types::PairingAnnounce>(1000);
+        let pairing_cache =
+            Arc::new(crate::modules::gateway::pairing::PairingCache::new(10000));
+        let gateway_service =
+            Arc::new(crate::modules::gateway::service::GatewayService::new(
+                database.pool().clone(),
+                pairing_cache,
+                mqtt_tx,
+            ));
+
+        // MQTT 客户端
+        let config = crate::shared::config::get();
+        let mqtt_broker = config.mqtt.primary.host.clone();
+        let mqtt_port = config.mqtt.primary.port;
+        let mqtt_username = config.mqtt.primary.username.clone().unwrap_or_default();
+        let mqtt_password = config.mqtt.primary.password.clone().unwrap_or_default();
+        let mqtt_client = Arc::new(crate::shared::mqtt_client::PlatformMqttClient::new(
+            &mqtt_broker,
+            mqtt_port,
+            &mqtt_username,
+            &mqtt_password,
+            announce_tx,
+            mqtt_rx,
+        ));
+
+        // 启动宣告处理任务
+        let gs = gateway_service.clone();
+        tokio::spawn(async move {
+            while let Some(announce) = announce_rx.recv().await {
+                if let Err(e) = gs.handle_announce(announce).await {
+                    tracing::warn!(?e, "Failed to handle pairing announce");
+                }
+            }
+        });
+
         Self {
             device_cache,
             database,
@@ -397,6 +443,8 @@ impl AppState {
             agent_memory_service,
             chat_service,
             sysinfo_system: Arc::new(std::sync::Mutex::new(sysinfo::System::new_all())),
+            gateway_service,
+            mqtt_client: Some(mqtt_client),
         }
     }
 

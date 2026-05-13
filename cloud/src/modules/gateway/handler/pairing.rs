@@ -1,17 +1,17 @@
 use axum::{extract::State, Json};
-use std::sync::Arc;
-use tinyiothub_web::response::{ApiResponseBuilder, ApiResponse};
 
-use crate::modules::gateway::service::{GatewayService, PairingError};
+use crate::modules::gateway::service::PairingError;
 use crate::modules::gateway::types::{PairingRequest, PairingResponse};
+use crate::shared::app_state::AppState;
+use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder};
 
 pub async fn pair_device(
-    State(service): State<Arc<GatewayService>>,
+    State(state): State<AppState>,
     Json(req): Json<PairingRequest>,
 ) -> Json<ApiResponse<PairingResponse>> {
     let user_id = "anonymous";
 
-    match service.pair_device(user_id, req).await {
+    match state.gateway_service.pair_device(user_id, req).await {
         Ok(response) => ApiResponseBuilder::success(response),
         Err(e) => {
             let (code, msg) = match &e {

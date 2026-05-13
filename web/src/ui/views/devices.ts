@@ -10,6 +10,7 @@ import { deviceCache } from "../../stores/device-cache.js";
 import type { Device, DeviceProfile, DeviceProperty, CreateDeviceRequest, DriverConfigOption, Tag, DeviceEvent } from "../../types/index.js";
 import { success, error as toastError } from "../components/toast.js";
 import { icons } from "../icons.js";
+import "./gateway-pairing.js";
 
 // Template with parsed JSON fields (backend returns JSON-as-string)
 interface ProcessedTemplate {
@@ -156,6 +157,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
   // Create/Edit modal
   @state() showModal = false;
   @state() editingDevice: Device | null = null;
+  @state() showPairingDialog = false;
   @state() saving = false;
   @state() formName = "";
   @state() formType = "";
@@ -1122,6 +1124,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
           >&#9638;</button>
         </div>
         <button class="btn btn--primary" @click=${this.openWizard}>新建设备</button>
+        <button class="btn btn--outline" @click=${() => { this.showPairingDialog = true; }}>Add Gateway</button>
       </div>
     `;
   }
@@ -1136,6 +1139,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
         ${this.renderPagination()}
         ${this.showModal ? this.renderModal() : nothing}
         ${this.showWizard ? this.renderWizard() : nothing}
+        ${this.showPairingDialog
+          ? html`<gateway-pairing-dialog @close=${() => { this.showPairingDialog = false; }}></gateway-pairing-dialog>`
+          : nothing}
       </div>
     `;
   }
@@ -1324,6 +1330,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
             <div class="device-card__header-left">
               <span class="status-dot status-dot--sm" style="background: ${this.statusColor(d.status)};"></span>
               <span class="device-card__title" title="${d.displayName || d.name}">${d.displayName || d.name}</span>
+              ${d.linked_gateway ? html`<span class="device-card__gateway-tag">via gateway</span>` : nothing}
             </div>
             <div class="device-card__actions">
               <button
