@@ -6,6 +6,13 @@ use crate::config::{EdgeConfig, GatewayCredentials};
 
 pub struct EdgeMqttClient {
     client: AsyncClient,
+    event_loop_handle: tokio::task::JoinHandle<()>,
+}
+
+impl EdgeMqttClient {
+    pub fn is_event_loop_alive(&self) -> bool {
+        !self.event_loop_handle.is_finished()
+    }
 }
 
 pub enum MqttEvent {
@@ -24,13 +31,17 @@ impl EdgeMqttClient {
         options.set_clean_session(true);
 
         let (client, mut eventloop) = AsyncClient::new(options, 100);
-        let _sub_client = client.clone();
+        let sub_client = client.clone();
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             loop {
                 match eventloop.poll().await {
                     Ok(Event::Incoming(Packet::ConnAck(_))) => {
                         tracing::info!("Edge MQTT connected (anonymous)");
+                        sub_client
+                            .subscribe("tinyiothub/pairing/+/response", QoS::AtLeastOnce)
+                            .await
+                            .ok();
                     }
                     Ok(Event::Incoming(Packet::Publish(publish))) => {
                         if publish.topic.starts_with("tinyiothub/pairing/")
@@ -52,7 +63,10 @@ impl EdgeMqttClient {
             }
         });
 
-        Self { client }
+        Self {
+            client,
+            event_loop_handle: handle,
+        }
     }
 
     pub fn new_authenticated(
@@ -67,13 +81,29 @@ impl EdgeMqttClient {
         options.set_keep_alive(Duration::from_secs(60));
 
         let (client, mut eventloop) = AsyncClient::new(options, 100);
-        let _sub_client = client.clone();
+        let sub_client = client.clone();
+        let ws_id = credentials.workspace_id.clone();
+        let dev_id = credentials.device_id.clone();
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             loop {
                 match eventloop.poll().await {
                     Ok(Event::Incoming(Packet::ConnAck(_))) => {
                         tracing::info!("Edge MQTT connected (authenticated)");
+                        sub_client
+                            .subscribe(
+                                &format!("tinyiothub/{}/gateway/{}/command", ws_id, dev_id),
+                                QoS::AtLeastOnce,
+                            )
+                            .await
+                            .ok();
+                        sub_client
+                            .subscribe(
+                                &format!("tinyiothub/{}/gateway/{}/config", ws_id, dev_id),
+                                QoS::AtLeastOnce,
+                            )
+                            .await
+                            .ok();
                     }
                     Ok(Event::Incoming(Packet::Publish(publish))) => {
                         if publish.topic.contains("/command") {
@@ -97,7 +127,10 @@ impl EdgeMqttClient {
             }
         });
 
-        Self { client }
+        Self {
+            client,
+            event_loop_handle: handle,
+        }
     }
 
     pub async fn publish_announce(&self, payload: &[u8]) {
