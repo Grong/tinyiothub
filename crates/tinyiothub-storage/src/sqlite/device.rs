@@ -191,8 +191,9 @@ impl DeviceRepository for SqliteDeviceRepository {
             INSERT INTO devices (
                 id, name, display_name, device_type, address, description, position,
                 driver_name, device_model, protocol_type, factory_name, linked_data,
-                driver_options, state, parent_id, product_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                driver_options, state, parent_id, product_id,
+                linked_gateway, fingerprint, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&id)
@@ -211,6 +212,8 @@ impl DeviceRepository for SqliteDeviceRepository {
         .bind(0i32)
         .bind(&request.parent_id)
         .bind(&request.product_id)
+        .bind(&request.linked_gateway)
+        .bind(&request.fingerprint)
         .bind(&now)
         .bind(&now)
         .execute(self.database.pool())
@@ -301,6 +304,20 @@ impl DeviceRepository for SqliteDeviceRepository {
                 builder.push(", ");
             }
             builder.push("linked_data = ").push_bind(linked_data);
+            has_updates = true;
+        }
+        if let Some(linked_gateway) = &request.linked_gateway {
+            if has_updates {
+                builder.push(", ");
+            }
+            builder.push("linked_gateway = ").push_bind(linked_gateway);
+            has_updates = true;
+        }
+        if let Some(fingerprint) = &request.fingerprint {
+            if has_updates {
+                builder.push(", ");
+            }
+            builder.push("fingerprint = ").push_bind(fingerprint);
             has_updates = true;
         }
         if let Some(driver_options) = &request.driver_options {
@@ -401,8 +418,9 @@ impl DeviceRepository for SqliteDeviceRepository {
                 INSERT INTO devices (
                     id, name, display_name, device_type, address, description, position,
                     driver_name, device_model, protocol_type, factory_name, linked_data,
-                    driver_options, state, parent_id, product_id, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    driver_options, state, parent_id, product_id,
+                    linked_gateway, fingerprint, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 "#,
             )
             .bind(&id)
@@ -421,6 +439,8 @@ impl DeviceRepository for SqliteDeviceRepository {
             .bind(0i32)
             .bind(&request.parent_id)
             .bind(&request.product_id)
+            .bind(&request.linked_gateway)
+            .bind(&request.fingerprint)
             .bind(&now)
             .bind(&now)
             .execute(&mut *tx)
@@ -443,6 +463,8 @@ impl DeviceRepository for SqliteDeviceRepository {
                 status: tinyiothub_core::models::device::DeviceStatus::Offline,
                 parent_id: request.parent_id.clone(),
                 product_id: request.product_id.clone(),
+                linked_gateway: request.linked_gateway.clone(),
+                fingerprint: request.fingerprint.clone(),
                 workspace_id: None,
                 created_at: Some(now.clone()),
                 updated_at: Some(now.clone()),
@@ -547,6 +569,23 @@ impl DeviceRepository for SqliteDeviceRepository {
         );
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(driver_name)
+            .fetch_all(self.database.pool())
+            .await?;
+
+        let mut devices = Vec::new();
+        for row in rows {
+            devices.push(device_row_mapper::row_to_device(row)?);
+        }
+        Ok(devices)
+    }
+
+    async fn find_by_linked_gateway(&self, linked_gateway: &str) -> Result<Vec<Device>> {
+        let sql = format!(
+            "SELECT {} FROM devices WHERE linked_gateway = ? ORDER BY created_at DESC",
+            device_row_mapper::SELECT_COLUMNS
+        );
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+            .bind(linked_gateway)
             .fetch_all(self.database.pool())
             .await?;
 
