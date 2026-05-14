@@ -31,21 +31,15 @@ async fn test_green_path_pairing_to_telemetry() {
     let status_filter = "tinyiothub/ws-e2e-test/gateway/test-gw-1/status";
     mqtt.subscribe(status_filter).await;
 
-    let heartbeat = mqtt
-        .wait_for_message(status_filter, 20)
-        .await;
+    let heartbeat = mqtt.wait_for_message(status_filter, 20).await;
     assert!(
         heartbeat.is_some(),
         "Edge should publish heartbeat on {status_filter} within 20s"
     );
 
     let (_topic, payload) = heartbeat.unwrap();
-    let report: serde_json::Value =
-        serde_json::from_slice(&payload).expect("Heartbeat payload should be valid JSON");
-    assert_eq!(
-        report["status"], "online",
-        "Health report status should be 'online'"
-    );
+    let report: serde_json::Value = serde_json::from_slice(&payload).expect("Heartbeat payload should be valid JSON");
+    assert_eq!(report["status"], "online", "Health report status should be 'online'");
     assert!(
         report["uptime_secs"].as_u64().is_some(),
         "Health report should include uptime_secs"
@@ -55,9 +49,7 @@ async fn test_green_path_pairing_to_telemetry() {
     let telemetry_filter = "tinyiothub/ws-e2e-test/gateway/test-gw-1/telemetry";
     mqtt.subscribe(telemetry_filter).await;
 
-    let telemetry = mqtt
-        .wait_for_message(telemetry_filter, 15)
-        .await;
+    let telemetry = mqtt.wait_for_message(telemetry_filter, 15).await;
     assert!(
         telemetry.is_some(),
         "Edge should publish telemetry on {telemetry_filter} within 15s"

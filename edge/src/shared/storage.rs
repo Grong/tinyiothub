@@ -1,6 +1,6 @@
+use super::error::EdgeResult;
 use std::sync::Arc;
 use tinyiothub_storage::sqlite::{Database, DatabaseConfig, create_pool};
-use super::error::EdgeResult;
 
 /// Initialize the SQLite database and return an Arc<Database>.
 pub async fn init_database(db_path: &str) -> EdgeResult<Arc<Database>> {

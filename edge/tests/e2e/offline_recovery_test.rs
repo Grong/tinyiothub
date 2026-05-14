@@ -31,19 +31,14 @@ async fn test_offline_recovery_buffer_and_flush() {
     let status_filter = "tinyiothub/ws-e2e-test/gateway/test-gw-2/status";
     mqtt.subscribe(status_filter).await;
 
-    let heartbeat1 = mqtt
-        .wait_for_message(status_filter, 20)
-        .await;
+    let heartbeat1 = mqtt.wait_for_message(status_filter, 20).await;
     assert!(
         heartbeat1.is_some(),
         "Edge should publish heartbeat on {status_filter} within 20s"
     );
 
     // ---- Phase 2: stop MQTT broker ---
-    let docker_compose_dir = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/e2e"
-    );
+    let docker_compose_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/e2e");
     let stop_output = std::process::Command::new("docker")
         .args([
             "compose",
@@ -86,12 +81,7 @@ async fn test_offline_recovery_buffer_and_flush() {
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
     // ---- Phase 4: verify edge recovers and resumes heartbeats ----
-    let heartbeat2 = mqtt
-        .wait_for_message(
-            &format!("{status_filter}"),
-            30,
-        )
-        .await;
+    let heartbeat2 = mqtt.wait_for_message(&format!("{status_filter}"), 30).await;
     assert!(
         heartbeat2.is_some(),
         "Edge should reconnect and resume heartbeats after broker restart"

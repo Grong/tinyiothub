@@ -34,23 +34,23 @@ impl GatewayMessage {
     pub fn from_topic_payload(topic: &str, payload: &[u8]) -> Result<Self, String> {
         // Check longest prefix first: /config/device before /config
         if topic.ends_with("/config/device") {
-            let inner: ConfigDevicePayload = serde_json::from_slice(payload)
-                .map_err(|e| format!("ConfigDevice parse error: {}", e))?;
+            let inner: ConfigDevicePayload =
+                serde_json::from_slice(payload).map_err(|e| format!("ConfigDevice parse error: {}", e))?;
             return Ok(GatewayMessage::ConfigDevice(inner));
         }
         if topic.ends_with("/driver/install") {
-            let inner: DriverInstallPayload = serde_json::from_slice(payload)
-                .map_err(|e| format!("DriverInstall parse error: {}", e))?;
+            let inner: DriverInstallPayload =
+                serde_json::from_slice(payload).map_err(|e| format!("DriverInstall parse error: {}", e))?;
             return Ok(GatewayMessage::DriverInstall(inner));
         }
         if topic.ends_with("/config") {
-            let v: serde_json::Value = serde_json::from_slice(payload)
-                .map_err(|e| format!("Config parse error: {}", e))?;
+            let v: serde_json::Value =
+                serde_json::from_slice(payload).map_err(|e| format!("Config parse error: {}", e))?;
             return Ok(GatewayMessage::Config(v));
         }
         if topic.ends_with("/command") {
-            let v: serde_json::Value = serde_json::from_slice(payload)
-                .map_err(|e| format!("Command parse error: {}", e))?;
+            let v: serde_json::Value =
+                serde_json::from_slice(payload).map_err(|e| format!("Command parse error: {}", e))?;
             return Ok(GatewayMessage::Command(v));
         }
         Err(format!("unknown topic: {}", topic))

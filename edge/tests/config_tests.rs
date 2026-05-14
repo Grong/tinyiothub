@@ -1,5 +1,5 @@
-use tinyiothub_edge::config::EdgeConfig;
 use std::path::PathBuf;
+use tinyiothub_edge::config::EdgeConfig;
 
 #[test]
 fn test_default_config_has_new_fields() {
@@ -45,8 +45,7 @@ mqtt_reconnect_max_backoff_secs: 600
 
 #[test]
 fn test_load_from_file_not_found_returns_default() {
-    let config =
-        EdgeConfig::load_from_file(&PathBuf::from("/nonexistent/path/config.yaml")).unwrap();
+    let config = EdgeConfig::load_from_file(&PathBuf::from("/nonexistent/path/config.yaml")).unwrap();
     assert_eq!(config.mqtt_broker, "mqtt.tinyiothub.com"); // default
 }
 

@@ -1,8 +1,8 @@
-use tinyiothub_edge::config::{EdgeConfig, GatewayCredentials};
-use tinyiothub_edge::app_state::AppState;
-use tinyiothub_edge::modules::gateway::GatewayMessage;
 use std::sync::Arc;
 use std::time::Duration;
+use tinyiothub_edge::app_state::AppState;
+use tinyiothub_edge::config::{EdgeConfig, GatewayCredentials};
+use tinyiothub_edge::modules::gateway::GatewayMessage;
 use tokio::task::JoinHandle;
 
 /// Holds JoinHandles for the 5 long-running background tasks.
@@ -40,8 +40,7 @@ impl TaskHandles {
         }
         if self.event_loop.as_ref().is_some_and(|h| h.is_finished()) {
             tracing::warn!("MQTT event loop died, restarting");
-            self.event_loop =
-                Some(state.gateway_service.start_event_loop(msg_tx.clone()).await);
+            self.event_loop = Some(state.gateway_service.start_event_loop(msg_tx.clone()).await);
         }
     }
 }
@@ -68,8 +67,7 @@ fn spawn_heartbeat_loop(state: Arc<AppState>) -> JoinHandle<()> {
 
 fn spawn_intelligence_loop(state: Arc<AppState>) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let mut tick =
-            tokio::time::interval(Duration::from_secs(state.config.intelligence_interval_secs));
+        let mut tick = tokio::time::interval(Duration::from_secs(state.config.intelligence_interval_secs));
         loop {
             tick.tick().await;
             state.intelligence_service.evaluate_and_probe().await.ok();
@@ -134,10 +132,14 @@ async fn run_authenticated(config: EdgeConfig, creds: GatewayCredentials) {
     // Flush any leftover offline buffer from previous run
     {
         let gw = state.gateway_service.clone();
-        match state.offline_buffer.flush_batch_with(500, move |topic, payload| {
-            let gw = gw.clone();
-            async move { gw.publish_raw(&topic, payload).await }
-        }).await {
+        match state
+            .offline_buffer
+            .flush_batch_with(500, move |topic, payload| {
+                let gw = gw.clone();
+                async move { gw.publish_raw(&topic, payload).await }
+            })
+            .await
+        {
             Ok(count) if count > 0 => tracing::info!(count, "Flushed offline buffer on startup"),
             Err(e) => tracing::warn!(?e, "Failed to flush offline buffer on startup"),
             _ => {}

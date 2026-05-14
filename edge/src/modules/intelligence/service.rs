@@ -1,8 +1,8 @@
-use std::sync::Arc;
 use crate::modules::device::DeviceService;
 use crate::modules::driver::DriverService;
 use crate::modules::gateway::GatewayService;
 use crate::shared::error::{EdgeError, EdgeResult};
+use std::sync::Arc;
 
 pub struct IntelligenceService {
     #[allow(dead_code)]
@@ -27,9 +27,7 @@ impl IntelligenceService {
     }
 
     /// Evaluate alarm rules and run self-healing probes (with catch_unwind protection)
-    pub async fn evaluate_and_probe(
-        &self,
-    ) -> EdgeResult<()> {
+    pub async fn evaluate_and_probe(&self) -> EdgeResult<()> {
         // Evaluate alarm rules from config
         // In production: read rules from ConfigService, evaluate against current telemetry
 

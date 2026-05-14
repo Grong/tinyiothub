@@ -1,6 +1,6 @@
-use tinyiothub_edge::modules::telemetry::{TelemetryService, TransformRule};
-use tinyiothub_edge::modules::health::HealthReport;
 use serde_json::json;
+use tinyiothub_edge::modules::health::HealthReport;
+use tinyiothub_edge::modules::telemetry::{TelemetryService, TransformRule};
 
 // === Telemetry Tests ===
 

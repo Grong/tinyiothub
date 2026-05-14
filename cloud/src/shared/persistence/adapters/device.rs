@@ -337,10 +337,12 @@ impl<R: DeviceRepository + Send + Sync> DeviceRepository for TenantDeviceReposit
     }
 
     async fn find_by_linked_gateway(&self, linked_gateway: &str) -> Result<Vec<Device>> {
-        let criteria = DeviceCriteria::default()
-            .with_workspace_id(self.workspace_id.clone());
+        let criteria = DeviceCriteria::default().with_workspace_id(self.workspace_id.clone());
         let all = self.inner.find_all(&criteria).await?;
-        Ok(all.into_iter().filter(|d| d.linked_gateway.as_deref() == Some(linked_gateway)).collect())
+        Ok(all
+            .into_iter()
+            .filter(|d| d.linked_gateway.as_deref() == Some(linked_gateway))
+            .collect())
     }
 
     async fn exists_by_name(&self, name: &str) -> Result<bool> {

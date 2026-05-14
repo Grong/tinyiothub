@@ -1,9 +1,9 @@
 pub mod green_path_test;
 pub mod offline_recovery_test;
 
+use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 use std::process::{Child, Command};
 use std::time::Duration;
-use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 use uuid::Uuid;
 
 /// Lightweight async MQTT client for publishing/subscribing to test topics.
@@ -13,11 +13,7 @@ pub struct MqttTestClient {
 
 impl MqttTestClient {
     pub async fn new() -> Self {
-        let mut options = MqttOptions::new(
-            &format!("e2e-test-{}", Uuid::new_v4()),
-            "localhost",
-            1883,
-        );
+        let mut options = MqttOptions::new(&format!("e2e-test-{}", Uuid::new_v4()), "localhost", 1883);
         options.set_keep_alive(Duration::from_secs(10));
         let (client, mut eventloop) = AsyncClient::new(options, 100);
 
@@ -46,31 +42,17 @@ impl MqttTestClient {
 
     #[allow(dead_code)]
     pub async fn publish(&self, topic: &str, payload: &[u8]) {
-        self.client
-            .publish(topic, QoS::AtLeastOnce, false, payload)
-            .await
-            .ok();
+        self.client.publish(topic, QoS::AtLeastOnce, false, payload).await.ok();
     }
 
     /// Create a fresh listener client, subscribe to a wildcard topic, and
     /// wait up to `timeout_secs` for a publish matching the prefix.
-    pub async fn wait_for_message(
-        &self,
-        topic_filter: &str,
-        timeout_secs: u64,
-    ) -> Option<(String, Vec<u8>)> {
-        let mut options = MqttOptions::new(
-            &format!("e2e-listener-{}", Uuid::new_v4()),
-            "localhost",
-            1883,
-        );
+    pub async fn wait_for_message(&self, topic_filter: &str, timeout_secs: u64) -> Option<(String, Vec<u8>)> {
+        let mut options = MqttOptions::new(&format!("e2e-listener-{}", Uuid::new_v4()), "localhost", 1883);
         options.set_keep_alive(Duration::from_secs(10));
         let (client, mut eventloop) = AsyncClient::new(options, 100);
 
-        client
-            .subscribe(topic_filter, QoS::AtLeastOnce)
-            .await
-            .ok();
+        client.subscribe(topic_filter, QoS::AtLeastOnce).await.ok();
 
         let deadline = tokio::time::sleep(Duration::from_secs(timeout_secs));
         tokio::pin!(deadline);
@@ -150,10 +132,7 @@ fn find_edge_binary() -> String {
 
     // Fallback: look relative to CARGO_MANIFEST_DIR (edge/ directory during tests)
     if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
-        for rel in &[
-            "target/debug/tinyiothub-edge",
-            "../target/debug/tinyiothub-edge",
-        ] {
+        for rel in &["target/debug/tinyiothub-edge", "../target/debug/tinyiothub-edge"] {
             let candidate = std::path::Path::new(&manifest_dir).join(rel);
             if candidate.exists() {
                 return candidate.to_string_lossy().to_string();

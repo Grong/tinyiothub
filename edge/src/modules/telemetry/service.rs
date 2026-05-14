@@ -1,9 +1,9 @@
-use std::sync::Arc;
 use super::types::TransformRule;
-use crate::modules::gateway::GatewayService;
 use crate::modules::driver::DriverService;
+use crate::modules::gateway::GatewayService;
 use crate::modules::offline::{BufferMessage, BufferPriority, OfflineBuffer};
 use crate::shared::error::EdgeResult;
+use std::sync::Arc;
 
 pub struct TelemetryService {
     driver_service: Arc<DriverService>,
@@ -26,9 +26,7 @@ impl TelemetryService {
 
     /// Collect telemetry from all drivers and forward to cloud.
     /// On publish failure, buffer locally for later flush.
-    pub async fn collect_and_forward(
-        &self,
-    ) -> EdgeResult<()> {
+    pub async fn collect_and_forward(&self) -> EdgeResult<()> {
         let devices = self.driver_service.scan_all().await?;
         let payload = serde_json::to_vec(&devices)?;
 
@@ -53,10 +51,7 @@ impl TelemetryService {
     }
 
     /// Apply value mapping transforms to telemetry data (zero-dependency, pure function)
-    pub fn apply_transform(
-        input: &serde_json::Value,
-        rules: &[TransformRule],
-    ) -> serde_json::Value {
+    pub fn apply_transform(input: &serde_json::Value, rules: &[TransformRule]) -> serde_json::Value {
         let mut output = input.clone();
         for rule in rules {
             if let Some(source_val) = input.get(&rule.source).and_then(|v| v.as_f64()) {

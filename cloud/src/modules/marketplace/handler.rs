@@ -77,16 +77,19 @@ fn normalize_marketplace_response(data: serde_json::Value) -> Json<ApiResponse<s
             }
             // 规范化分页元数据为 PaginatedResponse 格式
             if obj.get("data").is_some() && obj.get("pagination").is_none() {
-                let page = obj.get("page")
+                let page = obj
+                    .get("page")
                     .and_then(|v| v.as_u64())
                     .or_else(|| obj.get("current_page").and_then(|v| v.as_u64()))
                     .unwrap_or(1) as u32;
-                let page_size = obj.get("page_size")
+                let page_size = obj
+                    .get("page_size")
                     .and_then(|v| v.as_u64())
                     .or_else(|| obj.get("pageSize").and_then(|v| v.as_u64()))
                     .or_else(|| obj.get("per_page").and_then(|v| v.as_u64()))
                     .unwrap_or(20) as u32;
-                let total_count = obj.get("total_count")
+                let total_count = obj
+                    .get("total_count")
                     .and_then(|v| v.as_u64())
                     .or_else(|| obj.get("totalCount").and_then(|v| v.as_u64()))
                     .or_else(|| obj.get("total").and_then(|v| v.as_u64()))

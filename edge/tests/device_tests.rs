@@ -33,10 +33,7 @@ CREATE TABLE IF NOT EXISTS devices (
 )
 "#;
 
-async fn setup_test_repo() -> Result<
-    (Arc<Database>, Arc<SqliteDeviceRepository>),
-    Box<dyn std::error::Error>,
-> {
+async fn setup_test_repo() -> Result<(Arc<Database>, Arc<SqliteDeviceRepository>), Box<dyn std::error::Error>> {
     let config = DatabaseConfig {
         url: "sqlite::memory:".to_string(),
         ..Default::default()
@@ -101,10 +98,7 @@ async fn test_list_devices_with_driver_filter() {
 #[tokio::test]
 async fn test_get_device_found() {
     let (_db, repo) = setup_test_repo().await.unwrap();
-    let created = repo
-        .create(&make_create_request("my-device", "modbus"))
-        .await
-        .unwrap();
+    let created = repo.create(&make_create_request("my-device", "modbus")).await.unwrap();
 
     let svc = DeviceService::new(repo as Arc<dyn tinyiothub_core::repository::device::DeviceRepository>);
 

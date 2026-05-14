@@ -1,11 +1,14 @@
-use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 use std::time::{Duration, Instant};
+
+use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 use tokio::sync::mpsc;
 
-use crate::modules::gateway::service::MqttPublish;
-use crate::modules::gateway::types::{
-    DeviceDiscoverMessage, DeviceTelemetryMessage, GatewayDataMessage, PairingAnnounce,
-    StatusMessage, TelemetryMessage,
+use crate::modules::gateway::{
+    service::MqttPublish,
+    types::{
+        DeviceDiscoverMessage, DeviceTelemetryMessage, GatewayDataMessage, PairingAnnounce,
+        StatusMessage, TelemetryMessage,
+    },
 };
 
 const ANNOUNCE_MAX_BURST: usize = 50;
@@ -147,25 +150,21 @@ impl PlatformMqttClient {
         let gateway_id = parts[3].to_string();
 
         let msg = match parts.get(4).copied() {
-            Some("status") => {
-                serde_json::from_slice::<StatusMessage>(payload).ok().map(|msg| {
-                    GatewayDataMessage::Status { gateway_id, workspace_id, msg }
-                })
-            }
-            Some("telemetry") => {
-                serde_json::from_slice::<TelemetryMessage>(payload).ok().map(|msg| {
-                    GatewayDataMessage::Telemetry { gateway_id, workspace_id, msg }
-                })
-            }
+            Some("status") => serde_json::from_slice::<StatusMessage>(payload)
+                .ok()
+                .map(|msg| GatewayDataMessage::Status { gateway_id, workspace_id, msg }),
+            Some("telemetry") => serde_json::from_slice::<TelemetryMessage>(payload)
+                .ok()
+                .map(|msg| GatewayDataMessage::Telemetry { gateway_id, workspace_id, msg }),
             Some("event") => {
                 // Events are logged but not yet handled by GatewayService
                 tracing::debug!(gateway_id = %gateway_id, "Gateway event received (not yet handled)");
                 None
             }
             Some("device") if parts.len() >= 7 && parts[5] == "discover" => {
-                serde_json::from_slice::<DeviceDiscoverMessage>(payload).ok().map(|msg| {
-                    GatewayDataMessage::DeviceDiscover { gateway_id, workspace_id, msg }
-                })
+                serde_json::from_slice::<DeviceDiscoverMessage>(payload)
+                    .ok()
+                    .map(|msg| GatewayDataMessage::DeviceDiscover { gateway_id, workspace_id, msg })
             }
             Some("device") if parts.len() >= 7 && parts[5] != "discover" => {
                 let sub_id = parts[5].to_string();
@@ -185,14 +184,9 @@ impl PlatformMqttClient {
         let status = format!("tinyiothub/{}/gateway/{}/status", workspace_id, device_id);
         let telemetry = format!("tinyiothub/{}/gateway/{}/telemetry", workspace_id, device_id);
         let event = format!("tinyiothub/{}/gateway/{}/event", workspace_id, device_id);
-        let discover = format!(
-            "tinyiothub/{}/gateway/{}/device/discover",
-            workspace_id, device_id
-        );
-        let device_telemetry = format!(
-            "tinyiothub/{}/gateway/{}/device/+/telemetry",
-            workspace_id, device_id
-        );
+        let discover = format!("tinyiothub/{}/gateway/{}/device/discover", workspace_id, device_id);
+        let device_telemetry =
+            format!("tinyiothub/{}/gateway/{}/device/+/telemetry", workspace_id, device_id);
 
         self.client.subscribe(&status, QoS::AtMostOnce).await.ok();
         self.client.subscribe(&telemetry, QoS::AtMostOnce).await.ok();

@@ -371,21 +371,18 @@ impl AppState {
         ));
 
         // === 网关配对服务 ===
-        let (mqtt_tx, mqtt_rx) = tokio::sync::mpsc::channel::<
-            crate::modules::gateway::service::MqttPublish,
-        >(100);
+        let (mqtt_tx, mqtt_rx) =
+            tokio::sync::mpsc::channel::<crate::modules::gateway::service::MqttPublish>(100);
         let (announce_tx, mut announce_rx) =
             tokio::sync::mpsc::channel::<crate::modules::gateway::types::PairingAnnounce>(1000);
         let (data_tx, mut data_rx) =
             tokio::sync::mpsc::channel::<crate::modules::gateway::types::GatewayDataMessage>(1000);
-        let pairing_cache =
-            Arc::new(crate::modules::gateway::pairing::PairingCache::new(10000));
-        let gateway_service =
-            Arc::new(crate::modules::gateway::service::GatewayService::new(
-                device_repository_factory.clone(),
-                pairing_cache,
-                mqtt_tx,
-            ));
+        let pairing_cache = Arc::new(crate::modules::gateway::pairing::PairingCache::new(10000));
+        let gateway_service = Arc::new(crate::modules::gateway::service::GatewayService::new(
+            device_repository_factory.clone(),
+            pairing_cache,
+            mqtt_tx,
+        ));
 
         // MQTT 客户端
         let config = crate::shared::config::get();

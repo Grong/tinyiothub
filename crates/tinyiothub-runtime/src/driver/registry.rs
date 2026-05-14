@@ -225,7 +225,12 @@ impl DriverRegistry {
             .iter()
             .map(|(name, loaded)| {
                 let ref_count = loaded.ref_count.load(std::sync::atomic::Ordering::SeqCst);
-                (name.clone(), loaded.entry.version.clone(), loaded.entry.loaded_at, ref_count)
+                (
+                    name.clone(),
+                    loaded.entry.version.clone(),
+                    loaded.entry.loaded_at,
+                    ref_count,
+                )
             })
             .collect()
     }
@@ -314,7 +319,9 @@ mod tests {
     #[test]
     fn test_load_nonexistent_file() {
         let registry = DriverRegistry::new();
-        let err = registry.load(&PathBuf::from("/nonexistent/driver.so"), "ws1").unwrap_err();
+        let err = registry
+            .load(&PathBuf::from("/nonexistent/driver.so"), "ws1")
+            .unwrap_err();
         assert!(err.to_string().contains("failed to load library"));
     }
 }

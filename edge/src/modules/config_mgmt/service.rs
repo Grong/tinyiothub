@@ -40,9 +40,7 @@ impl ConfigService {
             .or_insert(serde_json::Value::from(100_000));
     }
 
-    pub async fn sync_from_cloud(
-        &self,
-    ) -> EdgeResult<()> {
+    pub async fn sync_from_cloud(&self) -> EdgeResult<()> {
         // In production: fetch current config from cloud via GatewayService MQTT
         // For now, no-op — config comes via apply_cloud_config
         Ok(())
@@ -62,10 +60,7 @@ impl ConfigService {
     }
 
     /// Apply cloud config — last-write-wins merge
-    pub async fn apply_cloud_config(
-        &self,
-        cloud: &serde_json::Value,
-    ) -> EdgeResult<()> {
+    pub async fn apply_cloud_config(&self, cloud: &serde_json::Value) -> EdgeResult<()> {
         {
             let mut merged = self.merged.write().await;
             if merged.is_empty() {
@@ -107,24 +102,20 @@ impl ConfigService {
 
     async fn get_local_version(&self) -> Option<String> {
         let pool = self.db.pool();
-        sqlx::query_scalar::<_, String>(
-            "SELECT local_version FROM config_meta WHERE key = 'main'",
-        )
-        .fetch_one(pool)
-        .await
-        .ok()
+        sqlx::query_scalar::<_, String>("SELECT local_version FROM config_meta WHERE key = 'main'")
+            .fetch_one(pool)
+            .await
+            .ok()
     }
 
     pub async fn set_local_version(&self, version: &str) {
         let pool = self.db.pool();
-        sqlx::query(
-            "INSERT OR REPLACE INTO config_meta (key, local_version, updated_at) VALUES ('main', ?, ?)",
-        )
-        .bind(version)
-        .bind(chrono::Utc::now().timestamp_millis())
-        .execute(pool)
-        .await
-        .ok();
+        sqlx::query("INSERT OR REPLACE INTO config_meta (key, local_version, updated_at) VALUES ('main', ?, ?)")
+            .bind(version)
+            .bind(chrono::Utc::now().timestamp_millis())
+            .execute(pool)
+            .await
+            .ok();
     }
 
     pub fn config_path(&self) -> &std::path::Path {

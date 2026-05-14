@@ -1,18 +1,14 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, mpsc};
 
+use super::types::GatewayMessage;
 use crate::config::{EdgeConfig, GatewayCredentials};
 use crate::shared::error::EdgeResult;
-use super::types::GatewayMessage;
 
 fn build_mqtt_options(credentials: &GatewayCredentials, config: &EdgeConfig) -> rumqttc::MqttOptions {
-    let mut options = rumqttc::MqttOptions::new(
-        &credentials.client_id,
-        &config.mqtt_broker,
-        config.mqtt_port,
-    );
+    let mut options = rumqttc::MqttOptions::new(&credentials.client_id, &config.mqtt_broker, config.mqtt_port);
     options.set_credentials(&credentials.username, &credentials.password);
     options.set_keep_alive(Duration::from_secs(60));
     options
@@ -48,10 +44,7 @@ impl GatewayService {
 
     /// Take the stored EventLoop and spawn a task to poll it.
     /// Subscribes on the same AsyncClient (cloned) used for publishing.
-    pub async fn start_event_loop(
-        self: &Arc<Self>,
-        tx: mpsc::Sender<GatewayMessage>,
-    ) -> tokio::task::JoinHandle<()> {
+    pub async fn start_event_loop(self: &Arc<Self>, tx: mpsc::Sender<GatewayMessage>) -> tokio::task::JoinHandle<()> {
         let mut eventloop = self
             .eventloop
             .lock()
@@ -73,17 +66,11 @@ impl GatewayService {
                         let prefix = format!("tinyiothub/{}/gateway/{}", ws_id, dev_id);
                         // Subscribe longer prefixes before shorter ones
                         sub_client
-                            .subscribe(
-                                &format!("{}/config/device", prefix),
-                                rumqttc::QoS::AtLeastOnce,
-                            )
+                            .subscribe(&format!("{}/config/device", prefix), rumqttc::QoS::AtLeastOnce)
                             .await
                             .ok();
                         sub_client
-                            .subscribe(
-                                &format!("{}/driver/install", prefix),
-                                rumqttc::QoS::AtLeastOnce,
-                            )
+                            .subscribe(&format!("{}/driver/install", prefix), rumqttc::QoS::AtLeastOnce)
                             .await
                             .ok();
                         sub_client
@@ -97,9 +84,7 @@ impl GatewayService {
                     }
                     Ok(rumqttc::Event::Incoming(rumqttc::Packet::Publish(publish))) => {
                         last_heard.store(chrono::Utc::now().timestamp(), Ordering::Release);
-                        if let Ok(msg) =
-                            GatewayMessage::from_topic_payload(&publish.topic, &publish.payload)
-                        {
+                        if let Ok(msg) = GatewayMessage::from_topic_payload(&publish.topic, &publish.payload) {
                             let _ = tx.send(msg).await;
                         }
                     }
@@ -127,10 +112,7 @@ impl GatewayService {
         )
     }
 
-    pub async fn publish_status(
-        &self,
-        payload: &[u8],
-    ) -> EdgeResult<()> {
+    pub async fn publish_status(&self, payload: &[u8]) -> EdgeResult<()> {
         self.client
             .read()
             .await
@@ -144,10 +126,7 @@ impl GatewayService {
             .map_err(|e| e.to_string().into())
     }
 
-    pub async fn publish_telemetry(
-        &self,
-        payload: &[u8],
-    ) -> EdgeResult<()> {
+    pub async fn publish_telemetry(&self, payload: &[u8]) -> EdgeResult<()> {
         self.client
             .read()
             .await
@@ -161,10 +140,7 @@ impl GatewayService {
             .map_err(|e| e.to_string().into())
     }
 
-    pub async fn publish_event(
-        &self,
-        payload: &[u8],
-    ) -> EdgeResult<()> {
+    pub async fn publish_event(&self, payload: &[u8]) -> EdgeResult<()> {
         self.client
             .read()
             .await
@@ -178,10 +154,7 @@ impl GatewayService {
             .map_err(|e| e.to_string().into())
     }
 
-    pub async fn publish_discovery(
-        &self,
-        payload: &[u8],
-    ) -> EdgeResult<()> {
+    pub async fn publish_discovery(&self, payload: &[u8]) -> EdgeResult<()> {
         self.client
             .read()
             .await
@@ -206,10 +179,7 @@ impl GatewayService {
 
     /// Abort the old event loop, create a fresh MQTT connection, and restart.
     /// Returns the new JoinHandle so the caller can update the watchdog.
-    pub async fn reconnect(
-        self: &Arc<Self>,
-        tx: mpsc::Sender<GatewayMessage>,
-    ) -> tokio::task::JoinHandle<()> {
+    pub async fn reconnect(self: &Arc<Self>, tx: mpsc::Sender<GatewayMessage>) -> tokio::task::JoinHandle<()> {
         if let Some(handle) = self.event_loop_abort.lock().await.take() {
             handle.abort();
         }
@@ -226,11 +196,7 @@ impl GatewayService {
     }
 
     /// Publish to an arbitrary topic. Used by offline buffer flush.
-    pub async fn publish_raw(
-        &self,
-        topic: &str,
-        payload: Vec<u8>,
-    ) -> EdgeResult<()> {
+    pub async fn publish_raw(&self, topic: &str, payload: Vec<u8>) -> EdgeResult<()> {
         self.client
             .read()
             .await

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tinyiothub_edge::config::EdgeConfig;
 use tinyiothub_edge::modules::config_mgmt::ConfigService;
-use tinyiothub_storage::sqlite::{create_pool, Database, DatabaseConfig};
+use tinyiothub_storage::sqlite::{Database, DatabaseConfig, create_pool};
 
 async fn test_db() -> Arc<Database> {
     let config = DatabaseConfig {
@@ -34,14 +34,8 @@ async fn test_get_merged_config_returns_defaults() {
     let merged = svc.get_merged_config().await.unwrap();
 
     assert!(merged.contains_key("telemetry_interval_secs"));
-    assert_eq!(
-        merged["telemetry_interval_secs"],
-        serde_json::Value::from(30)
-    );
-    assert_eq!(
-        merged["intelligence_interval_secs"],
-        serde_json::Value::from(60)
-    );
+    assert_eq!(merged["telemetry_interval_secs"], serde_json::Value::from(30));
+    assert_eq!(merged["intelligence_interval_secs"], serde_json::Value::from(60));
 }
 
 #[tokio::test]
@@ -62,10 +56,7 @@ async fn test_apply_cloud_config_merges_fields() {
     svc.apply_cloud_config(&cloud_config).await.unwrap();
     let merged = svc.get_merged_config().await.unwrap();
 
-    assert_eq!(
-        merged["telemetry_interval_secs"],
-        serde_json::Value::from(60)
-    );
+    assert_eq!(merged["telemetry_interval_secs"], serde_json::Value::from(60));
     assert_eq!(
         merged["new_custom_key"],
         serde_json::Value::String("custom_value".into())
@@ -85,18 +76,14 @@ async fn test_last_write_wins_overwrite() {
     let svc = ConfigService::new(db, config);
 
     // First write
-    svc.apply_cloud_config(&serde_json::json!({"key": "v1"}))
-        .await
-        .unwrap();
+    svc.apply_cloud_config(&serde_json::json!({"key": "v1"})).await.unwrap();
     assert_eq!(
         svc.get_merged_config().await.unwrap()["key"],
         serde_json::Value::String("v1".into())
     );
 
     // Second write overwrites
-    svc.apply_cloud_config(&serde_json::json!({"key": "v2"}))
-        .await
-        .unwrap();
+    svc.apply_cloud_config(&serde_json::json!({"key": "v2"})).await.unwrap();
     assert_eq!(
         svc.get_merged_config().await.unwrap()["key"],
         serde_json::Value::String("v2".into())

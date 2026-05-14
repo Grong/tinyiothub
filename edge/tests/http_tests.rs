@@ -205,8 +205,8 @@ async fn test_auth_middleware_no_key_passes() {
         middleware,
         routing::get,
     };
-    use tower::ServiceExt;
     use tinyiothub_edge::modules::http::auth::auth_middleware;
+    use tower::ServiceExt;
 
     let app = Router::new()
         .route("/health", get(|| async { "ok" }))
@@ -234,8 +234,8 @@ async fn test_auth_with_valid_token_passes() {
         middleware,
         routing::get,
     };
-    use tower::ServiceExt;
     use tinyiothub_edge::modules::http::auth::auth_middleware;
+    use tower::ServiceExt;
 
     let app = Router::new()
         .route("/health", get(|| async { "ok" }))
@@ -268,8 +268,8 @@ async fn test_auth_with_invalid_token_returns_401() {
         middleware,
         routing::get,
     };
-    use tower::ServiceExt;
     use tinyiothub_edge::modules::http::auth::auth_middleware;
+    use tower::ServiceExt;
 
     let app = Router::new()
         .route("/health", get(|| async { "ok" }))
@@ -302,20 +302,15 @@ async fn test_auth_with_missing_header_returns_401() {
         middleware,
         routing::get,
     };
-    use tower::ServiceExt;
     use tinyiothub_edge::modules::http::auth::auth_middleware;
+    use tower::ServiceExt;
 
     let app = Router::new()
         .route("/health", get(|| async { "ok" }))
         .layer(middleware::from_fn(auth_middleware));
 
     let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/health")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
         .await
         .unwrap();
 

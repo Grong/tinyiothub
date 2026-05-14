@@ -32,11 +32,7 @@ async fn test_concurrent_scan_returns_busy_error() {
         r2
     );
     let err = r1.err().or(r2.err()).unwrap();
-    assert!(
-        matches!(err, EdgeError::ScanBusy),
-        "Expected ScanBusy, got {:?}",
-        err
-    );
+    assert!(matches!(err, EdgeError::ScanBusy), "Expected ScanBusy, got {:?}", err);
 }
 
 #[tokio::test]
@@ -67,9 +63,7 @@ async fn test_sha256_verification_accepts_match() {
     hasher.update(data);
     let expected_hash = format!("{:x}", hasher.finalize());
 
-    let result = svc
-        .load_dynamic_driver("test_driver", data, &expected_hash)
-        .await;
+    let result = svc.load_dynamic_driver("test_driver", data, &expected_hash).await;
     // May fail due to libloading (not a real .so), but should NOT fail with SHA256 mismatch
     match &result {
         Err(e) => assert!(

@@ -1,10 +1,5 @@
+use axum::{extract::Request, http::StatusCode, middleware::Next, response::Response};
 use std::sync::Mutex;
-use axum::{
-    extract::Request,
-    http::StatusCode,
-    middleware::Next,
-    response::Response,
-};
 
 /// Cached API key — read once from env, cached for subsequent requests.
 /// Uses Mutex instead of OnceLock so tests can reset the cache.
@@ -45,10 +40,7 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 /// If the variable is not set, all requests pass through.
 /// If set, requests must include an `Authorization: Bearer <key>` header
 /// matching the configured key. Uses constant-time comparison.
-pub async fn auth_middleware(
-    req: Request,
-    next: Next,
-) -> Result<Response, StatusCode> {
+pub async fn auth_middleware(req: Request, next: Next) -> Result<Response, StatusCode> {
     // Skip auth if no API key is configured
     if let Some(expected_key) = get_api_key() {
         let auth_header = req

@@ -13,9 +13,7 @@ impl PairingClient {
     /// 4. Subscribe to `tinyiothub/pairing/+/response`
     /// 5. Wait for a PairingAck with success=true
     /// 6. Validate and return credentials
-    pub async fn run_pairing(
-        config: &EdgeConfig,
-    ) -> Result<GatewayCredentials, Box<dyn std::error::Error>> {
+    pub async fn run_pairing(config: &EdgeConfig) -> Result<GatewayCredentials, Box<dyn std::error::Error>> {
         let hostname = hostname::get()
             .map(|h| h.to_string_lossy().to_string())
             .unwrap_or_else(|_| "unknown".into());
@@ -73,20 +71,13 @@ impl PairingClient {
                     Ok(rumqttc::Event::Incoming(rumqttc::Packet::ConnAck(_))) => {
                         tracing::info!("Pairing MQTT connected (anonymous)");
                         sub_client
-                            .subscribe(
-                                "tinyiothub/pairing/+/response",
-                                rumqttc::QoS::AtLeastOnce,
-                            )
+                            .subscribe("tinyiothub/pairing/+/response", rumqttc::QoS::AtLeastOnce)
                             .await
                             .ok();
                     }
                     Ok(rumqttc::Event::Incoming(rumqttc::Packet::Publish(publish))) => {
-                        if publish.topic.starts_with("tinyiothub/pairing/")
-                            && publish.topic.ends_with("/response")
-                        {
-                            if let Ok(msg) =
-                                serde_json::from_slice::<serde_json::Value>(&publish.payload)
-                            {
+                        if publish.topic.starts_with("tinyiothub/pairing/") && publish.topic.ends_with("/response") {
+                            if let Ok(msg) = serde_json::from_slice::<serde_json::Value>(&publish.payload) {
                                 let _ = event_tx.send(PairingEvent::Ack(msg)).await;
                             }
                         }
@@ -154,8 +145,10 @@ fn generate_code() -> String {
 fn format_code(code: &str) -> String {
     let chars: Vec<char> = code.chars().collect();
     if chars.len() == 6 {
-        format!("{} {} - {} {} - {} {}",
-            chars[0], chars[1], chars[2], chars[3], chars[4], chars[5])
+        format!(
+            "{} {} - {} {} - {} {}",
+            chars[0], chars[1], chars[2], chars[3], chars[4], chars[5]
+        )
     } else {
         code.to_string()
     }

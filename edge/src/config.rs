@@ -1,6 +1,6 @@
+use crate::shared::error::EdgeResult;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use crate::shared::error::EdgeResult;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
