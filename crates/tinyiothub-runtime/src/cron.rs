@@ -42,12 +42,12 @@ impl JobExecutor for ShellExecutor {
         };
 
         let working_dir = config.get("working_dir").and_then(|v| v.as_str());
-        if let Some(dir) = working_dir {
-            if dir.contains("..") {
-                return Err(ExecutorError::InvalidConfig(format!(
-                    "working_dir '{dir}' contains '..' which is not allowed"
-                )));
-            }
+        if let Some(dir) = working_dir
+            && dir.contains("..")
+        {
+            return Err(ExecutorError::InvalidConfig(format!(
+                "working_dir '{dir}' contains '..' which is not allowed"
+            )));
         }
 
         let timeout_secs = job.timeout_seconds.max(1) as u64;

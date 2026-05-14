@@ -14,11 +14,11 @@ impl DriverConfig {
     pub fn from_device(device: &Device) -> Self {
         let mut config = HashMap::new();
 
-        if let Some(ref driver_options) = device.driver_options {
-            if let Ok(parsed) = serde_json::from_str::<HashMap<String, serde_json::Value>>(driver_options) {
-                for (key, value) in parsed {
-                    config.insert(key, value.to_string().trim_matches('"').to_string());
-                }
+        if let Some(ref driver_options) = device.driver_options
+            && let Ok(parsed) = serde_json::from_str::<HashMap<String, serde_json::Value>>(driver_options)
+        {
+            for (key, value) in parsed {
+                config.insert(key, value.to_string().trim_matches('"').to_string());
             }
         }
 

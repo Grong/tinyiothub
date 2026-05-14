@@ -80,7 +80,7 @@ pub struct Command {
     pub is_required: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DeviceInfo {
     #[serde(default)]
     pub default_name_pattern: Option<String>,
@@ -90,17 +90,6 @@ pub struct DeviceInfo {
     pub default_description: Option<LocalizedString>,
     #[serde(default)]
     pub required_fields: Vec<String>,
-}
-
-impl Default for DeviceInfo {
-    fn default() -> Self {
-        Self {
-            default_name_pattern: None,
-            default_display_name_pattern: None,
-            default_description: None,
-            required_fields: Vec::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

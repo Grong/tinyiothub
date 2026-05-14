@@ -44,6 +44,7 @@ impl Default for RateLimitConfig {
 #[derive(Clone)]
 pub struct RateLimiter {
     /// 客户端请求记录: key = client_id, value = (请求时间列表, 第一次被限制的时间)
+    #[allow(clippy::type_complexity)]
     records: Arc<RwLock<HashMap<String, (Vec<Instant>, Option<Instant>)>>>,
     config: RateLimitConfig,
 }
@@ -104,16 +105,16 @@ impl RateLimiter {
     /// 从请求中提取客户端标识
     pub fn get_client_id(request: &Request) -> String {
         // 优先使用 IP 地址
-        if let Some(forwarded) = request.headers().get("x-forwarded-for") {
-            if let Ok(ip) = forwarded.to_str() {
-                return ip.split(',').next().unwrap_or("unknown").to_string();
-            }
+        if let Some(forwarded) = request.headers().get("x-forwarded-for")
+            && let Ok(ip) = forwarded.to_str()
+        {
+            return ip.split(',').next().unwrap_or("unknown").to_string();
         }
 
-        if let Some(real_ip) = request.headers().get("x-real-ip") {
-            if let Ok(ip) = real_ip.to_str() {
-                return ip.to_string();
-            }
+        if let Some(real_ip) = request.headers().get("x-real-ip")
+            && let Ok(ip) = real_ip.to_str()
+        {
+            return ip.to_string();
         }
 
         // 默认使用 "unknown"
@@ -164,7 +165,7 @@ pub async fn rate_limit_middleware(rate_limiter: RateLimiter, request: Request<B
         RateLimitResult::Blocked { retry_after, message } => {
             tracing::warn!("Rate limit exceeded for client: {} on {}", client_id, path);
 
-            let response = Response::builder()
+            Response::builder()
                 .status(StatusCode::TOO_MANY_REQUESTS)
                 .header("Content-Type", "application/json")
                 .header("Retry-After", retry_after)
@@ -179,9 +180,7 @@ pub async fn rate_limit_middleware(rate_limiter: RateLimiter, request: Request<B
                     })
                     .to_string(),
                 ))
-                .unwrap();
-
-            response
+                .unwrap()
         }
     }
 }

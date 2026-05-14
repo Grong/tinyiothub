@@ -636,9 +636,11 @@ impl DeviceRepository for SqliteDeviceRepository {
         page: u32,
         page_size: u32,
     ) -> Result<Vec<Device>> {
-        let mut criteria = DeviceCriteria::default();
-        criteria.limit = Some(page_size);
-        criteria.offset = Some((page.saturating_sub(1)) * page_size);
+        let mut criteria = DeviceCriteria {
+            limit: Some(page_size),
+            offset: Some((page.saturating_sub(1)) * page_size),
+            ..Default::default()
+        };
 
         if let Some(enabled) = enabled {
             criteria.state = Some(if enabled { 1 } else { 0 });

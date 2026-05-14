@@ -123,16 +123,16 @@ fn filter_templates(items: &[serde_json::Value], params: &PaginationParams) -> V
     items
         .iter()
         .filter(|item| {
-            if let Some(ref cat) = params.category {
-                if item.get("category").and_then(|v| v.as_str()) != Some(cat.as_str()) {
-                    return false;
-                }
+            if let Some(ref cat) = params.category
+                && item.get("category").and_then(|v| v.as_str()) != Some(cat.as_str())
+            {
+                return false;
             }
 
-            if let Some(ref proto) = params.protocol {
-                if item.get("protocol_type").and_then(|v| v.as_str()) != Some(proto.as_str()) {
-                    return false;
-                }
+            if let Some(ref proto) = params.protocol
+                && item.get("protocol_type").and_then(|v| v.as_str()) != Some(proto.as_str())
+            {
+                return false;
             }
 
             if let Some(ref search) = search_lower {

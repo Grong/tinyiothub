@@ -126,7 +126,7 @@ impl DeviceDriver for SimulatedDriver {
                         let power_on = if simulation_mode == "fixed" {
                             true
                         } else {
-                            self.tick_counter % 5 != 0
+                            !self.tick_counter.is_multiple_of(5)
                         };
                         ResultValue::boolean(property.name.clone(), power_on)
                     }

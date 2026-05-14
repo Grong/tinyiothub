@@ -84,8 +84,8 @@ async fn get_system_metrics(
 
     let networks = sysinfo::Networks::new_with_refreshed_list();
     let (network_rx_bytes, network_tx_bytes) = networks
-        .iter()
-        .map(|(_name, network)| (network.total_received(), network.total_transmitted()))
+        .values()
+        .map(|network| (network.total_received(), network.total_transmitted()))
         .fold((0, 0), |(acc_rx, acc_tx), (rx, tx)| (acc_rx + rx, acc_tx + tx));
 
     let metrics = SystemMetrics {

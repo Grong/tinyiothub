@@ -86,10 +86,10 @@ impl RetryState {
         if self.start_time.elapsed() >= config.timeout {
             return false;
         }
-        if let Some(next_retry) = self.next_retry_at {
-            if Instant::now() < next_retry {
-                return false;
-            }
+        if let Some(next_retry) = self.next_retry_at
+            && Instant::now() < next_retry
+        {
+            return false;
         }
         true
     }
@@ -202,23 +202,23 @@ impl RetryManager {
     where
         F: FnOnce() -> Result<T, Error>,
     {
-        let past_backoff = self.state.next_retry_at.map_or(true, |t| Instant::now() >= t);
+        let past_backoff = self.state.next_retry_at.is_none_or(|t| Instant::now() >= t);
         if past_backoff && self.state.start_time.elapsed() >= self.config.timeout {
             self.state.reset();
         }
 
-        if let Some(next_retry) = self.state.next_retry_at {
-            if Instant::now() < next_retry {
-                return RetryResult::Retrying {
-                    attempt: self.state.current_attempt,
-                    next_retry_at: next_retry,
-                    last_error: self
-                        .state
-                        .last_error
-                        .clone()
-                        .unwrap_or_else(|| Error::Internal("Waiting for retry".to_string())),
-                };
-            }
+        if let Some(next_retry) = self.state.next_retry_at
+            && Instant::now() < next_retry
+        {
+            return RetryResult::Retrying {
+                attempt: self.state.current_attempt,
+                next_retry_at: next_retry,
+                last_error: self
+                    .state
+                    .last_error
+                    .clone()
+                    .unwrap_or_else(|| Error::Internal("Waiting for retry".to_string())),
+            };
         }
 
         if self.state.current_attempt >= self.config.max_attempts {

@@ -500,13 +500,13 @@ async fn get_alarm_rule(
 ) -> Json<ApiResponse<AlarmRuleDto>> {
     match state.alarm_service.get_rule_by_id(&id).await {
         Ok(Some(rule)) => {
-            if let Some(ref rule_ws) = rule.workspace_id {
-                if rule_ws != &claims.workspace_id {
-                    return ApiResponseBuilder::error_with_code(
-                        ErrorCode::NotFound.as_i32(),
-                        "规则不存在",
-                    );
-                }
+            if let Some(ref rule_ws) = rule.workspace_id
+                && rule_ws != &claims.workspace_id
+            {
+                return ApiResponseBuilder::error_with_code(
+                    ErrorCode::NotFound.as_i32(),
+                    "规则不存在",
+                );
             }
             ApiResponseBuilder::success(AlarmRuleDto::from(rule))
         }
@@ -569,10 +569,10 @@ async fn update_alarm_rule(
         Err(e) => return ApiResponseBuilder::error(format!("获取规则失败: {}", e)),
     };
 
-    if let Some(ref rule_ws) = rule.workspace_id {
-        if rule_ws != &claims.workspace_id {
-            return ApiResponseBuilder::error_with_code(404, "规则不存在");
-        }
+    if let Some(ref rule_ws) = rule.workspace_id
+        && rule_ws != &claims.workspace_id
+    {
+        return ApiResponseBuilder::error_with_code(404, "规则不存在");
     }
 
     let condition = req.condition.and_then(|c| serde_json::from_value(c).ok());

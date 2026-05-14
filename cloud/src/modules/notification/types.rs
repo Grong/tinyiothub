@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::modules::event::{
     EventError, Result,
-    errors::{DomainResult, NotificationDomainError},
     value_objects::{EventId, EventLevel},
 };
 

@@ -138,37 +138,37 @@ impl DeviceProperty {
             Some("int") | Some("integer") => {
                 let val: i64 = value.parse().map_err(|_| "无效的整数值".to_string())?;
 
-                if let Some(min) = self.min_value {
-                    if (val as f64) < min {
-                        return Err(format!("值 {} 小于最小值 {}", val, min));
-                    }
+                if let Some(min) = self.min_value
+                    && (val as f64) < min
+                {
+                    return Err(format!("值 {} 小于最小值 {}", val, min));
                 }
 
-                if let Some(max) = self.max_value {
-                    if (val as f64) > max {
-                        return Err(format!("值 {} 大于最大值 {}", val, max));
-                    }
+                if let Some(max) = self.max_value
+                    && (val as f64) > max
+                {
+                    return Err(format!("值 {} 大于最大值 {}", val, max));
                 }
             }
             Some("float") | Some("double") | Some("number") => {
                 let val: f64 = value.parse().map_err(|_| "无效的数值".to_string())?;
 
-                if let Some(min) = self.min_value {
-                    if val < min {
-                        return Err(format!("值 {} 小于最小值 {}", val, min));
-                    }
+                if let Some(min) = self.min_value
+                    && val < min
+                {
+                    return Err(format!("值 {} 小于最小值 {}", val, min));
                 }
 
-                if let Some(max) = self.max_value {
-                    if val > max {
-                        return Err(format!("值 {} 大于最大值 {}", val, max));
-                    }
+                if let Some(max) = self.max_value
+                    && val > max
+                {
+                    return Err(format!("值 {} 大于最大值 {}", val, max));
                 }
             }
-            Some("bool") | Some("boolean") => {
-                if !matches!(value.to_lowercase().as_str(), "true" | "false" | "0" | "1") {
-                    return Err("无效的布尔值".to_string());
-                }
+            Some("bool") | Some("boolean")
+                if !matches!(value.to_lowercase().as_str(), "true" | "false" | "0" | "1") =>
+            {
+                return Err("无效的布尔值".to_string());
             }
             _ => {
                 // 字符串类型或其他类型，暂不验证

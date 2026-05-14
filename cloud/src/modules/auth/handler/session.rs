@@ -3,7 +3,7 @@ use axum::{
     extract::State,
     routing::{get, post},
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{

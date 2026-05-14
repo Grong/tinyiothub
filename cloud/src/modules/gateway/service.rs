@@ -51,10 +51,10 @@ impl GatewayService {
         client_ip: Option<&str>,
         req: PairingRequest,
     ) -> Result<PairingResponse, PairingError> {
-        if let Some(ip) = client_ip {
-            if !self.check_ip_rate_limit(ip).await {
-                return Err(PairingError::TooManyAttemptsIp);
-            }
+        if let Some(ip) = client_ip
+            && !self.check_ip_rate_limit(ip).await
+        {
+            return Err(PairingError::TooManyAttemptsIp);
         }
 
         let code = req.code.trim().to_string();

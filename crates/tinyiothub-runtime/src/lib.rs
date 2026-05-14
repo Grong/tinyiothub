@@ -1,3 +1,4 @@
+#![allow(clippy::duplicated_attributes)]
 //! TinyIoTHub shared runtime infrastructure
 //!
 //! Modules:

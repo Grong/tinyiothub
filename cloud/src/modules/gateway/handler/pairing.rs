@@ -14,15 +14,15 @@ use crate::{
 };
 
 fn extract_client_ip(headers: &HeaderMap) -> Option<String> {
-    if let Some(forwarded) = headers.get("x-forwarded-for") {
-        if let Ok(val) = forwarded.to_str() {
-            return val.split(',').next().map(|s| s.trim().to_string());
-        }
+    if let Some(forwarded) = headers.get("x-forwarded-for")
+        && let Ok(val) = forwarded.to_str()
+    {
+        return val.split(',').next().map(|s| s.trim().to_string());
     }
-    if let Some(real_ip) = headers.get("x-real-ip") {
-        if let Ok(val) = real_ip.to_str() {
-            return Some(val.to_string());
-        }
+    if let Some(real_ip) = headers.get("x-real-ip")
+        && let Ok(val) = real_ip.to_str()
+    {
+        return Some(val.to_string());
     }
     None
 }

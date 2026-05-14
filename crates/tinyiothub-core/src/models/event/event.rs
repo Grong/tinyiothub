@@ -19,7 +19,7 @@ impl Event {
     /// Create a new event with validation
     pub fn new(event_type: EventType, level: EventLevel, source: EventSource, content: RichContent) -> Result<Self> {
         // Validate content size
-        content.validate_size().map_err(|e| Error::ValidationError(e))?;
+        content.validate_size().map_err(Error::ValidationError)?;
 
         let event = Self {
             id: EventId::new(),
@@ -98,7 +98,7 @@ impl Event {
         }
 
         // Validate new content
-        new_content.validate_size().map_err(|e| Error::ValidationError(e))?;
+        new_content.validate_size().map_err(Error::ValidationError)?;
 
         self.content = new_content;
         Ok(())

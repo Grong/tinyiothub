@@ -76,10 +76,11 @@ impl PairingClient {
                             .ok();
                     }
                     Ok(rumqttc::Event::Incoming(rumqttc::Packet::Publish(publish))) => {
-                        if publish.topic.starts_with("tinyiothub/pairing/") && publish.topic.ends_with("/response") {
-                            if let Ok(msg) = serde_json::from_slice::<serde_json::Value>(&publish.payload) {
-                                let _ = event_tx.send(PairingEvent::Ack(msg)).await;
-                            }
+                        if publish.topic.starts_with("tinyiothub/pairing/")
+                            && publish.topic.ends_with("/response")
+                            && let Ok(msg) = serde_json::from_slice::<serde_json::Value>(&publish.payload)
+                        {
+                            let _ = event_tx.send(PairingEvent::Ack(msg)).await;
                         }
                     }
                     Ok(_) => {}

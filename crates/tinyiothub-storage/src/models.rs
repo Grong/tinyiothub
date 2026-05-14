@@ -38,16 +38,11 @@ impl Pagination {
 }
 
 /// Sort order for queries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum SortOrder {
     Ascending,
+    #[default]
     Descending,
-}
-
-impl Default for SortOrder {
-    fn default() -> Self {
-        Self::Descending
-    }
 }
 
 /// Filter operator for query conditions.

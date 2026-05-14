@@ -69,11 +69,7 @@ pub struct DefaultRetryPolicy;
 
 impl RetryPolicy for DefaultRetryPolicy {
     fn should_retry(&self, error: &Error) -> bool {
-        match error {
-            Error::NetworkError(_) => true,
-            Error::IOError(_) => true,
-            _ => false,
-        }
+        matches!(error, Error::NetworkError(_) | Error::IOError(_))
     }
 
     fn retry_config(&self, error: &Error) -> RetryConfig {
@@ -109,15 +105,15 @@ impl DriverConfig {
     /// 从设备信息创建配置管理器
     pub fn from_device(device: &Device) -> Self {
         let mut config = HashMap::new();
-        if let Some(ref driver_options) = device.driver_options {
-            if let Ok(parsed_config) = serde_json::from_str::<HashMap<String, serde_json::Value>>(driver_options) {
-                for (key, value) in parsed_config {
-                    let value_str = match &value {
-                        serde_json::Value::String(s) => s.clone(),
-                        other => other.to_string(),
-                    };
-                    config.insert(key, value_str);
-                }
+        if let Some(ref driver_options) = device.driver_options
+            && let Ok(parsed_config) = serde_json::from_str::<HashMap<String, serde_json::Value>>(driver_options)
+        {
+            for (key, value) in parsed_config {
+                let value_str = match &value {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                config.insert(key, value_str);
             }
         }
         Self { config }
@@ -131,15 +127,15 @@ impl DriverConfig {
     /// 合并默认配置和设备配置
     pub fn from_device_with_defaults(device: &Device, defaults: HashMap<String, String>) -> Self {
         let mut config = defaults;
-        if let Some(ref driver_options) = device.driver_options {
-            if let Ok(parsed_config) = serde_json::from_str::<HashMap<String, serde_json::Value>>(driver_options) {
-                for (key, value) in parsed_config {
-                    let value_str = match &value {
-                        serde_json::Value::String(s) => s.clone(),
-                        other => other.to_string(),
-                    };
-                    config.insert(key, value_str);
-                }
+        if let Some(ref driver_options) = device.driver_options
+            && let Ok(parsed_config) = serde_json::from_str::<HashMap<String, serde_json::Value>>(driver_options)
+        {
+            for (key, value) in parsed_config {
+                let value_str = match &value {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                config.insert(key, value_str);
             }
         }
         Self { config }

@@ -9,7 +9,6 @@ use chrono::{DateTime, Utc};
 use tinyiothub_core::models::notification_channel::{
     NotificationChannel as CoreNotificationChannel, SendMessageRequest,
 };
-use tracing::warn;
 
 // Re-export types from types.rs so they're accessible via service path
 pub use super::types::{

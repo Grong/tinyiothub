@@ -366,10 +366,10 @@ async fn send_code(
 
         // 增加当日计数（incr 原子创建/递增，expire 仅设置 TTL 不覆盖值）
         let daily_key = format!("sms:count:daily:{}", phone);
-        if let Ok(_count) = r.incr(&daily_key).await {
-            if let Err(e) = r.expire(&daily_key, 86400).await {
-                tracing::error!("Failed to set daily counter expiry: {}", e);
-            }
+        if let Ok(_count) = r.incr(&daily_key).await
+            && let Err(e) = r.expire(&daily_key, 86400).await
+        {
+            tracing::error!("Failed to set daily counter expiry: {}", e);
         }
 
         // 增加 IP 计数
@@ -483,10 +483,10 @@ async fn login_with_code(
                 }
             };
             // 首次 incr 时设置过期时间
-            if fail_count == 1 {
-                if let Err(e) = r.expire(&fail_key, 300).await {
-                    tracing::error!("Failed to set fail count expiry: {}", e);
-                }
+            if fail_count == 1
+                && let Err(e) = r.expire(&fail_key, 300).await
+            {
+                tracing::error!("Failed to set fail count expiry: {}", e);
             }
 
             if fail_count >= 3 {

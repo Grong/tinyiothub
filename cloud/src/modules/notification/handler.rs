@@ -18,11 +18,10 @@ use uuid::Uuid;
 use super::{
     service::NotificationMessage,
     types::{
-        CreateNotificationRuleRequest, DeviceFilterRequest, DeviceFilterResponse,
-        NotificationChannelType, NotificationHistoryQuery, NotificationHistoryResponse,
-        NotificationLevel, NotificationRule, NotificationRuleQuery, NotificationRuleResponse,
-        TestNotificationRequest, UpdateNotificationRuleRequest, convert_device_filter,
-        device_filter_to_json,
+        CreateNotificationRuleRequest, NotificationChannelType, NotificationHistoryQuery,
+        NotificationHistoryResponse, NotificationLevel, NotificationRule, NotificationRuleQuery,
+        NotificationRuleResponse, TestNotificationRequest, UpdateNotificationRuleRequest,
+        convert_device_filter, device_filter_to_json,
     },
 };
 use crate::{
@@ -109,10 +108,10 @@ async fn get_notification_rules_impl(
     let filtered_rules: Vec<_> = rules
         .into_iter()
         .filter(|rule| {
-            if let Some(ref rule_ws) = rule.workspace_id {
-                if rule_ws != workspace_id {
-                    return false;
-                }
+            if let Some(ref rule_ws) = rule.workspace_id
+                && rule_ws != workspace_id
+            {
+                return false;
             }
             if let Some(enabled) = query.enabled
                 && rule.enabled != enabled
@@ -277,10 +276,10 @@ async fn get_notification_rule_impl(
 
     if let Some(rule) = rule {
         // Verify workspace ownership
-        if let Some(ref rule_ws) = rule.workspace_id {
-            if rule_ws != workspace_id {
-                return Ok(None);
-            }
+        if let Some(ref rule_ws) = rule.workspace_id
+            && rule_ws != workspace_id
+        {
+            return Ok(None);
         }
         Ok(Some(NotificationRuleResponse {
             id: rule.id,
@@ -340,10 +339,10 @@ async fn update_notification_rule_impl(
         rules.into_iter().find(|r| r.id == rule_id).ok_or("Notification rule not found")?;
 
     // Verify workspace ownership
-    if let Some(ref rule_ws) = rule.workspace_id {
-        if rule_ws != workspace_id {
-            return Err("Notification rule not found".to_string());
-        }
+    if let Some(ref rule_ws) = rule.workspace_id
+        && rule_ws != workspace_id
+    {
+        return Err("Notification rule not found".to_string());
     }
 
     if let Some(name) = request.name {
@@ -442,12 +441,11 @@ async fn delete_notification_rule_impl(
         .get_rules()
         .await
         .map_err(|e| format!("Failed to get notification rules: {}", e))?;
-    if let Some(rule) = rules.into_iter().find(|r| r.id == rule_id) {
-        if let Some(ref rule_ws) = rule.workspace_id {
-            if rule_ws != workspace_id {
-                return Err("Notification rule not found".to_string());
-            }
-        }
+    if let Some(rule) = rules.into_iter().find(|r| r.id == rule_id)
+        && let Some(ref rule_ws) = rule.workspace_id
+        && rule_ws != workspace_id
+    {
+        return Err("Notification rule not found".to_string());
     }
 
     notification_manager
@@ -611,10 +609,10 @@ async fn get_channel(
     let db = state.database.clone();
     match find_notification_channel_by_id(&db, &id).await {
         Ok(Some(channel)) => {
-            if let Some(ref channel_ws) = channel.workspace_id {
-                if channel_ws != &claims.workspace_id {
-                    return ApiResponseBuilder::error_with_code(404, "通知渠道不存在");
-                }
+            if let Some(ref channel_ws) = channel.workspace_id
+                && channel_ws != &claims.workspace_id
+            {
+                return ApiResponseBuilder::error_with_code(404, "通知渠道不存在");
             }
             ApiResponseBuilder::success(channel)
         }
@@ -662,12 +660,11 @@ async fn update_channel(
     let db = state.database.clone();
 
     // Verify workspace ownership
-    if let Ok(Some(channel)) = find_notification_channel_by_id(&db, &id).await {
-        if let Some(ref channel_ws) = channel.workspace_id {
-            if channel_ws != &claims.workspace_id {
-                return ApiResponseBuilder::error_with_code(404, "通知渠道不存在");
-            }
-        }
+    if let Ok(Some(channel)) = find_notification_channel_by_id(&db, &id).await
+        && let Some(ref channel_ws) = channel.workspace_id
+        && channel_ws != &claims.workspace_id
+    {
+        return ApiResponseBuilder::error_with_code(404, "通知渠道不存在");
     }
 
     if let Some(ref channel_type) = payload.channel_type
@@ -720,10 +717,10 @@ async fn test_channel(
 
     let channel = match find_notification_channel_by_id(&db, &id).await {
         Ok(Some(c)) => {
-            if let Some(ref channel_ws) = c.workspace_id {
-                if channel_ws != &claims.workspace_id {
-                    return ApiResponseBuilder::error_with_code(404, "通知渠道不存在");
-                }
+            if let Some(ref channel_ws) = c.workspace_id
+                && channel_ws != &claims.workspace_id
+            {
+                return ApiResponseBuilder::error_with_code(404, "通知渠道不存在");
             }
             c
         }

@@ -70,10 +70,11 @@ fn normalize_marketplace_response(data: serde_json::Value) -> Json<ApiResponse<s
         let mut result = data.get("result").cloned();
         if let Some(ref mut obj) = result {
             // 外部市场使用 `items`，内部规范使用 `data`
-            if obj.get("items").is_some() && obj.get("data").is_none() {
-                if let Some(items) = obj.as_object_mut().and_then(|m| m.remove("items")) {
-                    obj["data"] = items;
-                }
+            if obj.get("items").is_some()
+                && obj.get("data").is_none()
+                && let Some(items) = obj.as_object_mut().and_then(|m| m.remove("items"))
+            {
+                obj["data"] = items;
             }
             // 规范化分页元数据为 PaginatedResponse 格式
             if obj.get("data").is_some() && obj.get("pagination").is_none() {
@@ -93,7 +94,7 @@ fn normalize_marketplace_response(data: serde_json::Value) -> Json<ApiResponse<s
                     .and_then(|v| v.as_u64())
                     .or_else(|| obj.get("totalCount").and_then(|v| v.as_u64()))
                     .or_else(|| obj.get("total").and_then(|v| v.as_u64()))
-                    .unwrap_or(0) as u64;
+                    .unwrap_or(0);
                 let total_pages = if page_size > 0 {
                     ((total_count as f64) / (page_size as f64)).ceil() as u32
                 } else {
@@ -344,13 +345,13 @@ async fn publish_template_handler(
         }
     };
 
-    let publisher =
-        match crate::modules::marketplace::MarketplacePublisher::new(&marketplace_config) {
-            Ok(p) => p,
-            Err(e) => {
-                return ApiResponseBuilder::error(format!("发布器初始化失败: {}", e));
-            }
-        };
+    let publisher = match crate::modules::marketplace::MarketplacePublisher::new(marketplace_config)
+    {
+        Ok(p) => p,
+        Err(e) => {
+            return ApiResponseBuilder::error(format!("发布器初始化失败: {}", e));
+        }
+    };
 
     match publisher.publish_template(&template).await {
         Ok(result) => ApiResponseBuilder::success(result),

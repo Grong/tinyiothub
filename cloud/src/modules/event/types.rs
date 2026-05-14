@@ -1,15 +1,10 @@
 // Event module types
 // Consolidated from domain/event/repositories/*.rs and domain/event/services/event_service.rs
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::modules::event::{
-    Result,
-    entities::Event,
-    value_objects::{EventId, EventLevel, EventSource, EventType},
-};
+use crate::modules::event::value_objects::{EventId, EventLevel, EventSource, EventType};
 
 // ──────────────────────────────────────────────
 // Event Repository DTOs (from event_repository.rs)

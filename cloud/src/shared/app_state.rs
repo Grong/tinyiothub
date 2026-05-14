@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
 use tinyiothub_core::models::device_property::DeviceProperty;
 use tinyiothub_storage::cache::DeviceCache;

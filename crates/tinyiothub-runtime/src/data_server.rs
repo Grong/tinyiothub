@@ -128,10 +128,8 @@ impl DataServer {
 
                     match read_result.result {
                         Ok(values) => {
-                            if !was_online {
-                                if let Some(event) = driver.on_connected(device_address) {
-                                    pending_events.push(event);
-                                }
+                            if !was_online && let Some(event) = driver.on_connected(device_address) {
+                                pending_events.push(event);
                             }
                             device.status = tinyiothub_core::models::device::DeviceStatus::Online;
                             device.last_heartbeat = Some(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string());
@@ -139,15 +137,13 @@ impl DataServer {
                             pending_events.extend(events);
                         }
                         Err(e) => {
-                            if let Some(retry_info) = &read_result.retry_info {
-                                if retry_info.will_retry {
-                                    continue;
-                                }
+                            if let Some(retry_info) = &read_result.retry_info
+                                && retry_info.will_retry
+                            {
+                                continue;
                             }
-                            if was_online {
-                                if let Some(event) = driver.on_disconnected(Some(e.to_string())) {
-                                    pending_events.push(event);
-                                }
+                            if was_online && let Some(event) = driver.on_disconnected(Some(e.to_string())) {
+                                pending_events.push(event);
                             }
                             device.status = tinyiothub_core::models::device::DeviceStatus::Offline;
                         }
@@ -189,25 +185,25 @@ impl DataServer {
         let device_name = device.name.clone();
         if let Some(ref mut properties) = device.properties {
             for property in properties.iter_mut() {
-                if let Some(result_value) = values.iter().find(|v| v.name == property.name) {
-                    if let Some(ref value_str) = result_value.value {
-                        let old_value = property.current_value.clone();
-                        let value_changed = match &old_value {
-                            Some(old_val) => old_val != value_str,
-                            None => true,
-                        };
-                        property.set_current_value(value_str.clone());
-                        if value_changed {
-                            if let Some(event) = Self::build_property_change_event_static(
-                                &device_id,
-                                &device_name,
-                                property,
-                                old_value,
-                                value_str,
-                            ) {
-                                pending_events.push(event);
-                            }
-                        }
+                if let Some(result_value) = values.iter().find(|v| v.name == property.name)
+                    && let Some(ref value_str) = result_value.value
+                {
+                    let old_value = property.current_value.clone();
+                    let value_changed = match &old_value {
+                        Some(old_val) => old_val != value_str,
+                        None => true,
+                    };
+                    property.set_current_value(value_str.clone());
+                    if value_changed
+                        && let Some(event) = Self::build_property_change_event_static(
+                            &device_id,
+                            &device_name,
+                            property,
+                            old_value,
+                            value_str,
+                        )
+                    {
+                        pending_events.push(event);
                     }
                 }
             }
@@ -366,21 +362,21 @@ impl DataServer {
     }
 
     pub fn reset_device_driver(&self, device_id: &str) -> bool {
-        if let Some(driver_arc) = self.driver_cache.get(device_id) {
-            if let Some(mut driver) = driver_arc.try_write() {
-                driver.reset();
-                return true;
-            }
+        if let Some(driver_arc) = self.driver_cache.get(device_id)
+            && let Some(mut driver) = driver_arc.try_write()
+        {
+            driver.reset();
+            return true;
         }
         false
     }
 
     pub fn set_device_offline(&self, device_id: &str) -> bool {
-        if let Some(driver_arc) = self.driver_cache.get(device_id) {
-            if let Some(mut driver) = driver_arc.try_write() {
-                driver.set_offline();
-                return true;
-            }
+        if let Some(driver_arc) = self.driver_cache.get(device_id)
+            && let Some(mut driver) = driver_arc.try_write()
+        {
+            driver.set_offline();
+            return true;
         }
         false
     }
@@ -412,8 +408,8 @@ impl EventHandler for DataServer {
             None => return Ok(()),
         };
 
-        match event.event_type() {
-            EventType::Device(device_event_type) => match device_event_type {
+        if let EventType::Device(device_event_type) = event.event_type() {
+            match device_event_type {
                 DeviceEventType::DeviceCreated | DeviceEventType::DeviceUpdated => {
                     tracing::info!("Handling {:?} event for device: {}", device_event_type, device_id);
                     // 从事件 metadata 中提取完整设备信息
@@ -428,21 +424,21 @@ impl EventHandler for DataServer {
                         // 插入/更新缓存（单一写入者）
                         self.device_cache.insert(device.clone());
                         // 创建驱动并加入采集循环
-                        if let Some(driver_name) = &device.driver_name {
-                            if !self.driver_cache.contains_key(device_id) {
-                                match create_driver(driver_name, &device) {
-                                    Ok(mut driver) => {
-                                        driver.set_event_bus(self.event_bus.clone());
-                                        self.driver_cache
-                                            .insert(device_id.to_string(), Arc::new(RwLock::new(driver)));
-                                        tracing::info!(
-                                            "Created driver for device '{}' and started data collection",
-                                            device.name
-                                        );
-                                    }
-                                    Err(e) => {
-                                        tracing::error!("Failed to create driver for device '{}': {}", device.name, e);
-                                    }
+                        if let Some(driver_name) = &device.driver_name
+                            && !self.driver_cache.contains_key(device_id)
+                        {
+                            match create_driver(driver_name, &device) {
+                                Ok(mut driver) => {
+                                    driver.set_event_bus(self.event_bus.clone());
+                                    self.driver_cache
+                                        .insert(device_id.to_string(), Arc::new(RwLock::new(driver)));
+                                    tracing::info!(
+                                        "Created driver for device '{}' and started data collection",
+                                        device.name
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to create driver for device '{}': {}", device.name, e);
                                 }
                             }
                         }
@@ -454,8 +450,7 @@ impl EventHandler for DataServer {
                     self.remove_device(device_id);
                 }
                 _ => {}
-            },
-            _ => {}
+            }
         }
         Ok(())
     }

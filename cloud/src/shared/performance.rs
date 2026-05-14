@@ -372,10 +372,10 @@ impl PerformanceMetrics {
         times.entry(operation.to_string()).or_insert_with(Vec::new).push(duration);
 
         // Keep only last 100 measurements to prevent memory growth
-        if let Some(measurements) = times.get_mut(operation) {
-            if measurements.len() > 100 {
-                measurements.drain(0..measurements.len() - 100);
-            }
+        if let Some(measurements) = times.get_mut(operation)
+            && measurements.len() > 100
+        {
+            measurements.drain(0..measurements.len() - 100);
         }
     }
 
