@@ -133,6 +133,7 @@ export interface Device {
   createdAt?: string;
   updatedAt?: string;
   status?: 'online' | 'offline' | 'error' | 'maintenance';
+  linked_gateway?: string;
   tags?: Tag[];
   properties?: DeviceProperty[];
   productName?: string;
