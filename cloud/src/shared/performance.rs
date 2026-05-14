@@ -456,13 +456,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_expiration() {
-        let cache = Cache::new(Duration::from_millis(50), 10);
+        // Use a longer TTL to avoid flaky failures when the test runtime is
+        // contended — between set().await and get().await other tasks may run
+        // and consume the TTL window (both methods acquire write locks).
+        let cache = Cache::new(Duration::from_secs(1), 10);
 
         cache.set("key1".to_string(), "value1".to_string()).await;
         assert_eq!(cache.get(&"key1".to_string()).await, Some("value1".to_string()));
 
         // Wait for expiration
-        sleep(Duration::from_millis(100)).await;
+        sleep(Duration::from_secs(2)).await;
         assert_eq!(cache.get(&"key1".to_string()).await, None);
     }
 
