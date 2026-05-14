@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use crate::modules::device::DeviceService;
 use crate::modules::gateway::GatewayService;
+use crate::shared::error::EdgeResult;
 
 pub struct CommandService {
     device_service: Arc<DeviceService>,
@@ -27,7 +28,7 @@ impl CommandService {
         &self,
         device_id: &str,
         command: &serde_json::Value,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> EdgeResult<()> {
         let _driver_name = self
             .device_service
             .get_driver_for_device(device_id)

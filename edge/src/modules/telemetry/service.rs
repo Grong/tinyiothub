@@ -3,6 +3,7 @@ use super::types::TransformRule;
 use crate::modules::gateway::GatewayService;
 use crate::modules::driver::DriverService;
 use crate::modules::offline::{BufferMessage, BufferPriority, OfflineBuffer};
+use crate::shared::error::EdgeResult;
 
 pub struct TelemetryService {
     driver_service: Arc<DriverService>,
@@ -27,7 +28,7 @@ impl TelemetryService {
     /// On publish failure, buffer locally for later flush.
     pub async fn collect_and_forward(
         &self,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> EdgeResult<()> {
         let devices = self.driver_service.scan_all().await?;
         let payload = serde_json::to_vec(&devices)?;
 

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use crate::shared::error::EdgeResult;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -83,7 +84,7 @@ impl EdgeConfig {
         config
     }
 
-    pub fn load_from_file(path: &PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn load_from_file(path: &PathBuf) -> EdgeResult<Self> {
         if !path.exists() {
             return Ok(Self::default());
         }

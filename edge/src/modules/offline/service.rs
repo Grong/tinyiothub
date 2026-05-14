@@ -1,7 +1,9 @@
 use std::sync::Arc;
+use std::future::Future;
 use sqlx::Row;
 use super::types::*;
 use crate::config::EdgeConfig;
+use crate::shared::error::EdgeResult;
 use tinyiothub_storage::sqlite::Database;
 
 pub struct OfflineBuffer {
@@ -14,7 +16,7 @@ impl OfflineBuffer {
         Arc::new(Self { db, config })
     }
 
-    pub async fn write(&self, msg: BufferMessage) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn write(&self, msg: BufferMessage) -> EdgeResult<()> {
         let pool = self.db.pool();
         let now = chrono::Utc::now().timestamp_millis();
 
@@ -48,9 +50,19 @@ impl OfflineBuffer {
         Ok(())
     }
 
-    /// Flush a batch of messages. Uses the Arc<Self> to publish.
-    /// Returns count of messages sent.
-    pub async fn flush_batch(&self, batch_size: usize) -> Result<usize, Box<dyn std::error::Error>> {
+    /// Flush a batch of messages, publishing each via the provided function.
+    /// Only deletes rows from the buffer after a confirmed successful publish.
+    /// Failed rows have their retry_count incremented.
+    /// Returns count of messages successfully flushed.
+    pub async fn flush_batch_with<F, Fut>(
+        &self,
+        batch_size: usize,
+        publish: F,
+    ) -> EdgeResult<usize>
+    where
+        F: Fn(String, Vec<u8>) -> Fut,
+        Fut: Future<Output = EdgeResult<()>>,
+    {
         let pool = self.db.pool();
         let rows = sqlx::query(
             "SELECT id, msg_type, topic, payload FROM offline_buffer ORDER BY created_at ASC LIMIT ?"
@@ -62,7 +74,48 @@ impl OfflineBuffer {
         let mut sent = 0;
         for row in &rows {
             let id: i64 = row.get("id");
-            // In production, publish to MQTT here. For now just mark as sent.
+            let topic: String = row.get("topic");
+            let payload: Vec<u8> = row.get("payload");
+
+            match publish(topic, payload).await {
+                Ok(()) => {
+                    // Confirmed — safe to delete
+                    sqlx::query("DELETE FROM offline_buffer WHERE id = ?")
+                        .bind(id)
+                        .execute(pool)
+                        .await?;
+                    sent += 1;
+                }
+                Err(e) => {
+                    // Failed — keep row, increment retry_count
+                    tracing::warn!(id, ?e, "Flush publish failed, keeping in buffer");
+                    sqlx::query(
+                        "UPDATE offline_buffer SET retry_count = retry_count + 1 WHERE id = ?"
+                    )
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+                }
+            }
+        }
+
+        Ok(sent)
+    }
+
+    /// Simple flush without publishing (for backwards compatibility in tests).
+    /// Deletes rows immediately — only use when you know MQTT is available.
+    pub async fn flush_batch(&self, batch_size: usize) -> EdgeResult<usize> {
+        let pool = self.db.pool();
+        let rows = sqlx::query(
+            "SELECT id, msg_type, topic, payload FROM offline_buffer ORDER BY created_at ASC LIMIT ?"
+        )
+        .bind(batch_size as i64)
+        .fetch_all(pool)
+        .await?;
+
+        let mut sent = 0;
+        for row in &rows {
+            let id: i64 = row.get("id");
             sqlx::query("DELETE FROM offline_buffer WHERE id = ?")
                 .bind(id).execute(pool).await?;
             sent += 1;

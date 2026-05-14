@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use tinyiothub_edge::modules::driver::DriverService;
+use tinyiothub_edge::shared::error::EdgeError;
 
 async fn test_db() -> Arc<tinyiothub_storage::sqlite::Database> {
     use tinyiothub_storage::sqlite::{DatabaseConfig, create_pool};
@@ -23,15 +24,19 @@ async fn test_scan_all_returns_ok() {
 async fn test_concurrent_scan_returns_busy_error() {
     let svc = DriverService::new(test_db().await, 10);
 
-    // First scan acquires the lock
-    // (in a real scenario, two concurrent calls would conflict)
-    // Test that the scanning flag mechanism exists
-    let result1 = svc.scan_all().await;
-    assert!(result1.is_ok());
-
-    // Second scan should also work since first completed
-    let result2 = svc.scan_all().await;
-    assert!(result2.is_ok());
+    let (r1, r2) = tokio::join!(svc.scan_all(), svc.scan_all());
+    assert!(
+        r1.is_ok() ^ r2.is_ok(),
+        "Exactly one concurrent scan must succeed, got r1={:?} r2={:?}",
+        r1,
+        r2
+    );
+    let err = r1.err().or(r2.err()).unwrap();
+    assert!(
+        matches!(err, EdgeError::ScanBusy),
+        "Expected ScanBusy, got {:?}",
+        err
+    );
 }
 
 #[tokio::test]

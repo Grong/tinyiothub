@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder};
 
 use crate::app_state::AppState;
+use crate::shared::error::EdgeError;
 
 type JsonResponse = Json<ApiResponse<serde_json::Value>>;
 
@@ -111,11 +112,10 @@ pub async fn post_driver_scan(
             "devices": devices,
         })),
         Err(e) => {
-            let msg = e.to_string();
-            if msg.contains("busy") {
-                ApiResponseBuilder::error_with_code(409, msg)
+            if matches!(e, EdgeError::ScanBusy) {
+                ApiResponseBuilder::error_with_code(409, e.to_string())
             } else {
-                ApiResponseBuilder::error(msg)
+                ApiResponseBuilder::error(e.to_string())
             }
         }
     }

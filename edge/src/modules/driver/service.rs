@@ -2,8 +2,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use sha2::{Digest, Sha256};
+use crate::shared::error::{EdgeError, EdgeResult};
 
 pub struct DriverService {
+    #[allow(dead_code)]
     db: Arc<tinyiothub_storage::sqlite::Database>,
     scanning: AtomicBool,
     scan_timeout_secs: u64,
@@ -25,11 +27,14 @@ impl DriverService {
     /// Uses AtomicBool CAS to prevent concurrent scans (dedup).
     pub async fn scan_all(
         &self,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> EdgeResult<Vec<String>> {
         // Dedup: only one scan at a time
         if self.scanning.swap(true, Ordering::AcqRel) {
-            return Err("scan already in progress (busy)".into());
+            return Err(EdgeError::ScanBusy);
         }
+
+        // Yield so concurrent callers see the flag before this scan completes
+        tokio::task::yield_now().await;
 
         // Ensure we clear the flag on return (including panic)
         let _guard = ScanGuard {
@@ -59,7 +64,7 @@ impl DriverService {
     pub async fn scan_single(
         &self,
         driver_name: &str,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> EdgeResult<Vec<String>> {
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(self.scan_timeout_secs),
             self.do_scan(driver_name),
@@ -79,7 +84,7 @@ impl DriverService {
     async fn do_scan(
         &self,
         _driver_name: &str,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> EdgeResult<Vec<String>> {
         // Delegate to tinyiothub-runtime driver registry in production
         // For now, return empty — drivers are loaded dynamically
         Ok(Vec::new())
@@ -91,7 +96,7 @@ impl DriverService {
         name: &str,
         data: &[u8],
         expected_sha256: &str,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> EdgeResult<()> {
         // SHA256 verification
         let mut hasher = Sha256::new();
         hasher.update(data);
@@ -143,7 +148,7 @@ impl DriverService {
 
     pub async fn list_drivers(
         &self,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> EdgeResult<Vec<String>> {
         // In production: query tinyiothub-runtime driver registry
         // For now: return built-in protocols
         Ok(vec![

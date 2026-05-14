@@ -2,6 +2,7 @@ use std::sync::Arc;
 use tinyiothub_storage::sqlite::device::SqliteDeviceRepository;
 use crate::config::{EdgeConfig, GatewayCredentials};
 use crate::shared::storage::init_database;
+use crate::shared::error::EdgeResult;
 use crate::modules::gateway::GatewayService;
 use crate::modules::device::DeviceService;
 use crate::modules::driver::DriverService;
@@ -31,7 +32,7 @@ impl AppState {
     pub async fn new(
         config: EdgeConfig,
         credentials: GatewayCredentials,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    ) -> EdgeResult<Self> {
         // Layer 1: No dependencies
         let db = init_database(&config.db_path.to_string_lossy()).await?;
         let offline_buffer = OfflineBuffer::new(db.clone(), config.clone());

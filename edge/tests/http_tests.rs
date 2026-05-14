@@ -174,11 +174,30 @@ async fn test_create_router_smoke() {
     let _router = tinyiothub_edge::modules::http::service::create_router(state);
 }
 
-// ── Auth middleware ──────────────────────────────────────────────
+// ── Auth helpers & serialization ────────────────────────────────
+// std::env::set_var/remove_var are process-global, so auth tests
+// that mutate the env must not run concurrently.
+
+use std::sync::Mutex;
+static AUTH_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+fn set_auth_key(key: &str) {
+    unsafe { std::env::set_var("EDGE_LOCAL_API_KEY", key) };
+    tinyiothub_edge::modules::http::auth::reset_api_key_cache();
+}
+
+fn clear_auth_key() {
+    unsafe { std::env::remove_var("EDGE_LOCAL_API_KEY") };
+    tinyiothub_edge::modules::http::auth::reset_api_key_cache();
+}
+
+// ── Auth middleware: no key configured ───────────────────────────
 
 #[tokio::test]
 async fn test_auth_middleware_no_key_passes() {
-    // With no EDGE_LOCAL_API_KEY set, all requests should pass
+    let _guard = AUTH_TEST_LOCK.lock().unwrap();
+    clear_auth_key();
+
     use axum::{
         Router,
         body::Body,
@@ -199,4 +218,107 @@ async fn test_auth_middleware_no_key_passes() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+// ── Auth middleware: with key configured ─────────────────────────
+
+#[tokio::test]
+async fn test_auth_with_valid_token_passes() {
+    let _guard = AUTH_TEST_LOCK.lock().unwrap();
+    set_auth_key("test-key");
+
+    use axum::{
+        Router,
+        body::Body,
+        http::{Request, StatusCode},
+        middleware,
+        routing::get,
+    };
+    use tower::ServiceExt;
+    use tinyiothub_edge::modules::http::auth::auth_middleware;
+
+    let app = Router::new()
+        .route("/health", get(|| async { "ok" }))
+        .layer(middleware::from_fn(auth_middleware));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .header("Authorization", "Bearer test-key")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    clear_auth_key();
+}
+
+#[tokio::test]
+async fn test_auth_with_invalid_token_returns_401() {
+    let _guard = AUTH_TEST_LOCK.lock().unwrap();
+    set_auth_key("test-key");
+
+    use axum::{
+        Router,
+        body::Body,
+        http::{Request, StatusCode},
+        middleware,
+        routing::get,
+    };
+    use tower::ServiceExt;
+    use tinyiothub_edge::modules::http::auth::auth_middleware;
+
+    let app = Router::new()
+        .route("/health", get(|| async { "ok" }))
+        .layer(middleware::from_fn(auth_middleware));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .header("Authorization", "Bearer wrong-key")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    clear_auth_key();
+}
+
+#[tokio::test]
+async fn test_auth_with_missing_header_returns_401() {
+    let _guard = AUTH_TEST_LOCK.lock().unwrap();
+    set_auth_key("test-key");
+
+    use axum::{
+        Router,
+        body::Body,
+        http::{Request, StatusCode},
+        middleware,
+        routing::get,
+    };
+    use tower::ServiceExt;
+    use tinyiothub_edge::modules::http::auth::auth_middleware;
+
+    let app = Router::new()
+        .route("/health", get(|| async { "ok" }))
+        .layer(middleware::from_fn(auth_middleware));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    clear_auth_key();
 }

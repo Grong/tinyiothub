@@ -2,6 +2,7 @@ use std::sync::Arc;
 use crate::modules::gateway::GatewayService;
 use crate::modules::offline::{BufferMessage, BufferPriority, OfflineBuffer};
 use crate::modules::driver::DriverService;
+use crate::shared::error::EdgeResult;
 use super::types::HealthReport;
 
 pub struct HealthService {
@@ -44,7 +45,7 @@ impl HealthService {
     /// Send heartbeat with health report, buffer on failure
     pub async fn beat_and_report(
         &self,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> EdgeResult<()> {
         let report = self.generate_report().await;
         let payload = serde_json::to_vec(&report)?;
         let topic = format!("{}/status", self.gateway_service.topic_prefix());

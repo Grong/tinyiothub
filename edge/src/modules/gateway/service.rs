@@ -1,32 +1,44 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex, RwLock};
 
 use crate::config::{EdgeConfig, GatewayCredentials};
+use crate::shared::error::EdgeResult;
 use super::types::GatewayMessage;
 
+fn build_mqtt_options(credentials: &GatewayCredentials, config: &EdgeConfig) -> rumqttc::MqttOptions {
+    let mut options = rumqttc::MqttOptions::new(
+        &credentials.client_id,
+        &config.mqtt_broker,
+        config.mqtt_port,
+    );
+    options.set_credentials(&credentials.username, &credentials.password);
+    options.set_keep_alive(Duration::from_secs(60));
+    options
+}
+
 pub struct GatewayService {
-    client: rumqttc::AsyncClient,
+    client: RwLock<rumqttc::AsyncClient>,
+    eventloop: Mutex<Option<rumqttc::EventLoop>>,
     config: EdgeConfig,
     credentials: GatewayCredentials,
-    event_loop_abort: tokio::sync::Mutex<Option<tokio::task::AbortHandle>>,
+    event_loop_abort: Mutex<Option<tokio::task::AbortHandle>>,
+    last_heard: Arc<AtomicI64>,
 }
 
 impl GatewayService {
+    /// Create a new GatewayService with a single (AsyncClient, EventLoop) pair.
     pub fn new(credentials: &GatewayCredentials, config: &EdgeConfig) -> Arc<Self> {
-        let mut options = rumqttc::MqttOptions::new(
-            &credentials.client_id,
-            &config.mqtt_broker,
-            config.mqtt_port,
-        );
-        options.set_credentials(&credentials.username, &credentials.password);
-        options.set_keep_alive(Duration::from_secs(60));
-        let (client, _eventloop) = rumqttc::AsyncClient::new(options, 100);
+        let options = build_mqtt_options(credentials, config);
+        let (client, eventloop) = rumqttc::AsyncClient::new(options, 100);
         Arc::new(Self {
-            client,
+            client: RwLock::new(client),
+            eventloop: Mutex::new(Some(eventloop)),
             config: config.clone(),
             credentials: credentials.clone(),
-            event_loop_abort: tokio::sync::Mutex::new(None),
+            event_loop_abort: Mutex::new(None),
+            last_heard: Arc::new(AtomicI64::new(chrono::Utc::now().timestamp())),
         })
     }
 
@@ -34,61 +46,65 @@ impl GatewayService {
         &self.credentials
     }
 
-    /// Start the MQTT event loop, returns JoinHandle.
-    /// Subscribes to topics with longest-prefix-first ordering
-    /// (e.g. /config/device before /config).
+    /// Take the stored EventLoop and spawn a task to poll it.
+    /// Subscribes on the same AsyncClient (cloned) used for publishing.
     pub async fn start_event_loop(
         self: &Arc<Self>,
         tx: mpsc::Sender<GatewayMessage>,
     ) -> tokio::task::JoinHandle<()> {
-        let mut options = rumqttc::MqttOptions::new(
-            &self.credentials.client_id,
-            &self.config.mqtt_broker,
-            self.config.mqtt_port,
-        );
-        options.set_credentials(&self.credentials.username, &self.credentials.password);
-        options.set_keep_alive(Duration::from_secs(60));
-        let (client, mut eventloop) = rumqttc::AsyncClient::new(options, 100);
+        let mut eventloop = self
+            .eventloop
+            .lock()
+            .await
+            .take()
+            .expect("start_event_loop called but no eventloop available");
 
+        let sub_client = self.client.read().await.clone();
         let ws_id = self.credentials.workspace_id.clone();
         let dev_id = self.credentials.device_id.clone();
+        let last_heard = self.last_heard.clone();
 
         let handle = tokio::spawn(async move {
             loop {
                 match eventloop.poll().await {
                     Ok(rumqttc::Event::Incoming(rumqttc::Packet::ConnAck(_))) => {
+                        last_heard.store(chrono::Utc::now().timestamp(), Ordering::Release);
                         tracing::info!("MQTT connected (authenticated)");
                         let prefix = format!("tinyiothub/{}/gateway/{}", ws_id, dev_id);
                         // Subscribe longer prefixes before shorter ones
-                        client
+                        sub_client
                             .subscribe(
                                 &format!("{}/config/device", prefix),
                                 rumqttc::QoS::AtLeastOnce,
                             )
                             .await
                             .ok();
-                        client
+                        sub_client
                             .subscribe(
                                 &format!("{}/driver/install", prefix),
                                 rumqttc::QoS::AtLeastOnce,
                             )
                             .await
                             .ok();
-                        client
+                        sub_client
                             .subscribe(&format!("{}/config", prefix), rumqttc::QoS::AtLeastOnce)
                             .await
                             .ok();
-                        client
+                        sub_client
                             .subscribe(&format!("{}/command", prefix), rumqttc::QoS::AtLeastOnce)
                             .await
                             .ok();
                     }
                     Ok(rumqttc::Event::Incoming(rumqttc::Packet::Publish(publish))) => {
+                        last_heard.store(chrono::Utc::now().timestamp(), Ordering::Release);
                         if let Ok(msg) =
                             GatewayMessage::from_topic_payload(&publish.topic, &publish.payload)
                         {
                             let _ = tx.send(msg).await;
                         }
+                    }
+                    Ok(rumqttc::Event::Incoming(rumqttc::Packet::PingResp)) => {
+                        last_heard.store(chrono::Utc::now().timestamp(), Ordering::Release);
                     }
                     Err(e) => {
                         tracing::error!(?e, "MQTT event loop error, reconnecting...");
@@ -114,8 +130,10 @@ impl GatewayService {
     pub async fn publish_status(
         &self,
         payload: &[u8],
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> EdgeResult<()> {
         self.client
+            .read()
+            .await
             .publish(
                 &format!("{}/status", self.topic_prefix()),
                 rumqttc::QoS::AtMostOnce,
@@ -129,8 +147,10 @@ impl GatewayService {
     pub async fn publish_telemetry(
         &self,
         payload: &[u8],
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> EdgeResult<()> {
         self.client
+            .read()
+            .await
             .publish(
                 &format!("{}/telemetry", self.topic_prefix()),
                 rumqttc::QoS::AtMostOnce,
@@ -144,8 +164,10 @@ impl GatewayService {
     pub async fn publish_event(
         &self,
         payload: &[u8],
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> EdgeResult<()> {
         self.client
+            .read()
+            .await
             .publish(
                 &format!("{}/event", self.topic_prefix()),
                 rumqttc::QoS::AtLeastOnce,
@@ -159,8 +181,10 @@ impl GatewayService {
     pub async fn publish_discovery(
         &self,
         payload: &[u8],
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> EdgeResult<()> {
         self.client
+            .read()
+            .await
             .publish(
                 &format!("{}/discovery", self.topic_prefix()),
                 rumqttc::QoS::AtLeastOnce,
@@ -171,17 +195,51 @@ impl GatewayService {
             .map_err(|e| e.to_string().into())
     }
 
+    /// Check if the MQTT connection is alive.
+    /// Returns true if we've heard from the broker within 90 seconds
+    /// (1.5x the 60s keep-alive).
     pub fn is_alive(&self) -> bool {
-        // The rumqttc event loop handles reconnection internally;
-        // stub for now — Task 11 will wire real health checks.
-        true
+        let last = self.last_heard.load(Ordering::Acquire);
+        let now = chrono::Utc::now().timestamp();
+        (now - last) < 90
     }
 
-    pub async fn reconnect(&self) {
-        // The rumqttc event loop handles reconnection internally
+    /// Abort the old event loop, create a fresh MQTT connection, and restart.
+    /// Returns the new JoinHandle so the caller can update the watchdog.
+    pub async fn reconnect(
+        self: &Arc<Self>,
+        tx: mpsc::Sender<GatewayMessage>,
+    ) -> tokio::task::JoinHandle<()> {
+        if let Some(handle) = self.event_loop_abort.lock().await.take() {
+            handle.abort();
+        }
+
+        // Create a fresh MQTT connection pair
+        let options = build_mqtt_options(&self.credentials, &self.config);
+        let (new_client, new_eventloop) = rumqttc::AsyncClient::new(options, 100);
+
+        *self.client.write().await = new_client;
+        *self.eventloop.lock().await = Some(new_eventloop);
+
+        tracing::info!("MQTT connection recreated, restarting event loop");
+        self.start_event_loop(tx).await
+    }
+
+    /// Publish to an arbitrary topic. Used by offline buffer flush.
+    pub async fn publish_raw(
+        &self,
+        topic: &str,
+        payload: Vec<u8>,
+    ) -> EdgeResult<()> {
+        self.client
+            .read()
+            .await
+            .publish(topic, rumqttc::QoS::AtLeastOnce, false, payload)
+            .await
+            .map_err(|e| e.to_string().into())
     }
 
     pub async fn disconnect(&self) {
-        self.client.disconnect().await.ok();
+        self.client.read().await.disconnect().await.ok();
     }
 }

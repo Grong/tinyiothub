@@ -3,6 +3,97 @@ use tinyiothub_edge::app_state::AppState;
 use tinyiothub_edge::modules::gateway::GatewayMessage;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::task::JoinHandle;
+
+/// Holds JoinHandles for the 5 long-running background tasks.
+/// The main loop watchdog checks for panics and restarts dead tasks.
+struct TaskHandles {
+    telemetry: Option<JoinHandle<()>>,
+    heartbeat: Option<JoinHandle<()>>,
+    intelligence: Option<JoinHandle<()>>,
+    http: Option<JoinHandle<()>>,
+    event_loop: Option<JoinHandle<()>>,
+}
+
+impl TaskHandles {
+    async fn check_and_restart(
+        &mut self,
+        state: &Arc<AppState>,
+        config: &EdgeConfig,
+        msg_tx: &tokio::sync::mpsc::Sender<GatewayMessage>,
+    ) {
+        if self.telemetry.as_ref().is_some_and(|h| h.is_finished()) {
+            tracing::warn!("Telemetry task died, restarting");
+            self.telemetry = Some(spawn_telemetry_loop(state.clone()));
+        }
+        if self.heartbeat.as_ref().is_some_and(|h| h.is_finished()) {
+            tracing::warn!("Heartbeat task died, restarting");
+            self.heartbeat = Some(spawn_heartbeat_loop(state.clone()));
+        }
+        if self.intelligence.as_ref().is_some_and(|h| h.is_finished()) {
+            tracing::warn!("Intelligence task died, restarting");
+            self.intelligence = Some(spawn_intelligence_loop(state.clone()));
+        }
+        if self.http.as_ref().is_some_and(|h| h.is_finished()) {
+            tracing::warn!("HTTP server task died, restarting");
+            self.http = Some(spawn_http_loop(state.clone(), config.local_api_port));
+        }
+        if self.event_loop.as_ref().is_some_and(|h| h.is_finished()) {
+            tracing::warn!("MQTT event loop died, restarting");
+            self.event_loop =
+                Some(state.gateway_service.start_event_loop(msg_tx.clone()).await);
+        }
+    }
+}
+
+fn spawn_telemetry_loop(state: Arc<AppState>) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs(state.config.telemetry_interval_secs));
+        loop {
+            tick.tick().await;
+            state.telemetry_service.collect_and_forward().await.ok();
+        }
+    })
+}
+
+fn spawn_heartbeat_loop(state: Arc<AppState>) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs(state.config.heartbeat_interval_secs));
+        loop {
+            tick.tick().await;
+            state.health_service.beat_and_report().await.ok();
+        }
+    })
+}
+
+fn spawn_intelligence_loop(state: Arc<AppState>) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut tick =
+            tokio::time::interval(Duration::from_secs(state.config.intelligence_interval_secs));
+        loop {
+            tick.tick().await;
+            state.intelligence_service.evaluate_and_probe().await.ok();
+        }
+    })
+}
+
+fn spawn_http_loop(state: Arc<AppState>, port: u16) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let router = tinyiothub_edge::modules::http::service::create_router(state);
+        let addr = format!("127.0.0.1:{}", port);
+        tracing::info!(%addr, "Local HTTP API enabled");
+        let listener = match tokio::net::TcpListener::bind(&addr).await {
+            Ok(l) => l,
+            Err(e) => {
+                tracing::error!(%addr, ?e, "Failed to bind HTTP API, disabling");
+                return;
+            }
+        };
+        if let Err(e) = axum::serve(listener, router).await {
+            tracing::error!(?e, "HTTP API server error");
+        }
+    })
+}
 
 #[tokio::main]
 async fn main() {
@@ -41,13 +132,19 @@ async fn run_authenticated(config: EdgeConfig, creds: GatewayCredentials) {
     }
 
     // Flush any leftover offline buffer from previous run
-    match state.offline_buffer.flush_batch(500).await {
-        Ok(count) if count > 0 => tracing::info!(count, "Flushed offline buffer on startup"),
-        Err(e) => tracing::warn!(?e, "Failed to flush offline buffer on startup"),
-        _ => {}
+    {
+        let gw = state.gateway_service.clone();
+        match state.offline_buffer.flush_batch_with(500, move |topic, payload| {
+            let gw = gw.clone();
+            async move { gw.publish_raw(&topic, payload).await }
+        }).await {
+            Ok(count) if count > 0 => tracing::info!(count, "Flushed offline buffer on startup"),
+            Err(e) => tracing::warn!(?e, "Failed to flush offline buffer on startup"),
+            _ => {}
+        }
     }
 
-    // Graceful shutdown: SIGTERM/SIGINT drain buffer, disconnect, exit
+    // Graceful shutdown
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
     let shutdown_tx_clone = shutdown_tx.clone();
     tokio::spawn(async move {
@@ -56,86 +153,56 @@ async fn run_authenticated(config: EdgeConfig, creds: GatewayCredentials) {
         let _ = shutdown_tx_clone.send(());
     });
 
-    // Spawn independent interval tasks (not blocking the main loop)
-    let s = state.clone();
-    tokio::spawn(async move {
-        let mut tick = tokio::time::interval(Duration::from_secs(s.config.telemetry_interval_secs));
-        loop {
-            tick.tick().await;
-            s.telemetry_service.collect_and_forward().await.ok();
-        }
-    });
-
-    let s = state.clone();
-    tokio::spawn(async move {
-        let mut tick = tokio::time::interval(Duration::from_secs(s.config.heartbeat_interval_secs));
-        loop {
-            tick.tick().await;
-            s.health_service.beat_and_report().await.ok();
-        }
-    });
-
-    let s = state.clone();
-    tokio::spawn(async move {
-        let mut tick =
-            tokio::time::interval(Duration::from_secs(s.config.intelligence_interval_secs));
-        loop {
-            tick.tick().await;
-            s.intelligence_service.evaluate_and_probe().await.ok();
-        }
-    });
-
-    // Optional HTTP server (bound to 127.0.0.1 for local access only)
-    if config.local_api_enabled {
-        let s = state.clone();
-        let port = config.local_api_port;
-        tokio::spawn(async move {
-            let router = tinyiothub_edge::modules::http::service::create_router(s);
-            let addr = format!("127.0.0.1:{}", port);
-            tracing::info!(%addr, "Local HTTP API enabled");
-            let listener = match tokio::net::TcpListener::bind(&addr).await {
-                Ok(l) => l,
-                Err(e) => {
-                    tracing::error!(%addr, ?e, "Failed to bind HTTP API, disabling");
-                    return;
-                }
-            };
-            if let Err(e) = axum::serve(listener, router).await {
-                tracing::error!(?e, "HTTP API server error");
-            }
-        });
-    }
-
-    // MQTT event loop: subscribe to cloud topics, route incoming messages
+    // MQTT event loop — start before other tasks so the channel is ready
     let (msg_tx, mut msg_rx) = tokio::sync::mpsc::channel::<GatewayMessage>(100);
-    let _event_loop = state.gateway_service.start_event_loop(msg_tx).await;
+    let msg_tx_restart = msg_tx.clone();
+    let event_loop_handle = state.gateway_service.start_event_loop(msg_tx).await;
 
-    // Main loop: connection management + message routing + shutdown
+    // Spawn background tasks with watchdog handles
+    let mut handles = TaskHandles {
+        telemetry: Some(spawn_telemetry_loop(state.clone())),
+        heartbeat: Some(spawn_heartbeat_loop(state.clone())),
+        intelligence: Some(spawn_intelligence_loop(state.clone())),
+        http: if config.local_api_enabled {
+            Some(spawn_http_loop(state.clone(), config.local_api_port))
+        } else {
+            None
+        },
+        event_loop: Some(event_loop_handle),
+    };
+
+    // Main loop: connection management + message routing + task watchdog + shutdown
     loop {
         tokio::select! {
-            // Graceful shutdown
             _ = shutdown_rx.recv() => {
                 tracing::info!("Draining offline buffer before shutdown...");
-                let _ = state.offline_buffer.flush_batch(500).await;
+                let gw = state.gateway_service.clone();
+                let flushed = state.offline_buffer.flush_batch_with(500, move |topic, payload| {
+                    let gw = gw.clone();
+                    async move { gw.publish_raw(&topic, payload).await }
+                }).await.unwrap_or(0);
+                tracing::info!(flushed, "Offline buffer drained");
                 state.gateway_service.disconnect().await;
                 tracing::info!("Shutdown complete");
                 std::process::exit(0);
             }
 
-            // Periodic health check + reconnect if needed
             _ = tokio::time::sleep(Duration::from_secs(5)) => {
+                // Task watchdog: detect and restart any dead background tasks
+                handles.check_and_restart(&state, &config, &msg_tx_restart).await;
+
+                // Periodic health check + reconnect if needed
                 if !state.gateway_service.is_alive() {
                     tracing::warn!("MQTT connection lost, reconnecting...");
-                    state.gateway_service.reconnect().await;
+                    handles.event_loop =
+                        Some(state.gateway_service.reconnect(msg_tx_restart.clone()).await);
 
-                    // After reconnect: check for newer cloud config and flush buffer
                     if state.config_service.cloud_version_is_newer("0").await {
                         state.config_service.sync_from_cloud().await.ok();
                     }
                 }
             }
 
-            // Route incoming MQTT messages with longest-prefix matching
             Some(msg) = msg_rx.recv() => {
                 match msg {
                     GatewayMessage::ConfigDevice(payload) => {
@@ -144,7 +211,6 @@ async fn run_authenticated(config: EdgeConfig, creds: GatewayCredentials) {
                             action = %payload.action,
                             "Config device"
                         );
-                        // Apply device-specific config via ConfigService
                     }
                     GatewayMessage::Config(config) => {
                         tracing::info!("Received cloud config");
@@ -162,8 +228,6 @@ async fn run_authenticated(config: EdgeConfig, creds: GatewayCredentials) {
                             chunk = payload.chunk_index,
                             "Driver install chunk"
                         );
-                        // Chunks are reassembled and verified in DriverService.
-                        // Full chunk reassembly will be implemented in a future iteration.
                     }
                 }
             }

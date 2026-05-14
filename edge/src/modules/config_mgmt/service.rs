@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::config::EdgeConfig;
+use crate::shared::error::EdgeResult;
 use tinyiothub_storage::sqlite::Database;
 
 pub struct ConfigService {
@@ -41,7 +42,7 @@ impl ConfigService {
 
     pub async fn sync_from_cloud(
         &self,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> EdgeResult<()> {
         // In production: fetch current config from cloud via GatewayService MQTT
         // For now, no-op — config comes via apply_cloud_config
         Ok(())
@@ -64,7 +65,7 @@ impl ConfigService {
     pub async fn apply_cloud_config(
         &self,
         cloud: &serde_json::Value,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> EdgeResult<()> {
         {
             let mut merged = self.merged.write().await;
             if merged.is_empty() {
