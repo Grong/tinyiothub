@@ -5813,6 +5813,7 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tinyiothub-core",
+ "tinyiothub-error",
  "tinyiothub-plugin",
  "tinyiothub-runtime",
  "tinyiothub-storage",
