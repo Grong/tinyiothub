@@ -829,4 +829,17 @@ export const zh_CN: TranslationMap = {
       nameRequiredShort: "Name required.",
     },
   },
+  gatewayPairing: {
+    title: "添加网关设备",
+    description: "输入网关屏幕上显示的 6 位配对码。",
+    codePlaceholder: "000000",
+    codeLabel: "6 位配对码",
+    cancel: "取消",
+    pair: "配对",
+    pairing: "配对中...",
+    paired: "已配对",
+    success: "网关配对成功！",
+    pairFailed: "配对失败",
+    close: "关闭",
+  },
 };

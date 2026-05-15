@@ -1140,7 +1140,10 @@ export class DevicesView extends SignalWatcher(LitElement) {
         ${this.showModal ? this.renderModal() : nothing}
         ${this.showWizard ? this.renderWizard() : nothing}
         ${this.showPairingDialog
-          ? html`<gateway-pairing-dialog @close=${() => { this.showPairingDialog = false; }}></gateway-pairing-dialog>`
+          ? html`<gateway-pairing-dialog
+              @close=${() => { this.showPairingDialog = false; }}
+              @paired=${() => { this.showPairingDialog = false; this.page = 1; this.loadDevices(); }}
+            ></gateway-pairing-dialog>`
           : nothing}
       </div>
     `;
