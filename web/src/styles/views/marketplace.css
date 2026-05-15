@@ -200,6 +200,12 @@
   margin: 0;
   color: var(--text-strong);
 }
+.mp-modal-subtitle {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 4px 0 0;
+  line-height: 1.5;
+}
 .mp-modal-close {
   background: none;
   border: none;
@@ -228,19 +234,6 @@
   justify-content: flex-end;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-5);
-}
-.mp-detail-title {
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--text-strong);
-  margin-bottom: var(--space-1);
-  letter-spacing: -0.02em;
-}
-.mp-detail-desc {
-  color: var(--muted);
-  font-size: 14px;
-  line-height: 1.6;
-  margin-bottom: var(--space-4);
 }
 .mp-tags {
   display: flex;

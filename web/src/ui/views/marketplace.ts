@@ -484,7 +484,10 @@ export class MarketplaceView extends LitElement {
       >
         <div class="mp-modal-box" @click=${(e: Event) => e.stopPropagation()}>
           <div class="mp-modal-header">
-            <h3>模板详情</h3>
+            <div>
+              <h3>${this.detailItem ? safeString(this.detailItem.displayName, this.detailItem.name) : "模板详情"}</h3>
+              ${this.detailItem?.description ? html`<p class="mp-modal-subtitle">${safeString(this.detailItem.description)}</p>` : nothing}
+            </div>
             <button class="mp-modal-close" @click=${this.closeDetail}>×</button>
           </div>
           <div class="mp-modal-body">
@@ -578,9 +581,6 @@ export class MarketplaceView extends LitElement {
     ];
 
     return html`
-      <div class="mp-detail-title">${safeString(t.displayName, t.name)}</div>
-      <div class="mp-detail-desc">${safeString(t.description, "暂无描述")}</div>
-
       ${tags.length > 0 ? html`
         <div class="mp-tags">
           ${tags.map((tag: any) => html`
