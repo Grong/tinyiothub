@@ -47,6 +47,9 @@ fn ensure_test_config() {
             std::env::set_var("TINYIOTHUB__MINIMAX__BASE_URL", "https://test.example.com");
             std::env::set_var("TINYIOTHUB__MINIMAX__AUTH_TOKEN", "test-token");
             std::env::set_var("TINYIOTHUB__MINIMAX__MODEL", "test-model");
+            // Use "none" memory backend in tests to avoid SQLite file lock
+            // contention when multiple tests open agent memory concurrently.
+            std::env::set_var("TINYIOTHUB__AGENT__MEMORY_BACKEND", "none");
         }
 
         // Initialize config — panic if it fails so we know immediately
