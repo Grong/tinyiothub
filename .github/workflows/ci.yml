@@ -71,7 +71,11 @@ jobs:
         id: new-files
         run: |
           NEW_FILES=$(git diff --name-only origin/${{ github.base_ref || 'main' }}...HEAD --diff-filter=A | grep -E "\.(rs)$" || true)
-          echo "new_files=$NEW_FILES" >> $GITHUB_OUTPUT
+          {
+            echo "new_files<<EOF"
+            echo "$NEW_FILES"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
           echo "=== New Rust files in this PR ==="
           if [ -z "$NEW_FILES" ]; then
             echo "(none)"
@@ -162,7 +166,11 @@ jobs:
         id: new-ts-files
         run: |
           NEW_FILES=$(git diff --name-only origin/${{ github.base_ref || 'main' }}...HEAD --diff-filter=A | grep -E "\.(ts|tsx)$" || true)
-          echo "new_files=$NEW_FILES" >> $GITHUB_OUTPUT
+          {
+            echo "new_files<<EOF"
+            echo "$NEW_FILES"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
           echo "=== New TypeScript files in this PR ==="
           if [ -z "$NEW_FILES" ]; then
             echo "(none)"
