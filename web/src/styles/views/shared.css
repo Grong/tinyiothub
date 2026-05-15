@@ -596,9 +596,6 @@
   flex-wrap: wrap;
   gap: var(--space-1);
 }
-.detail-stat-mini__value--success {
-  color: var(--success);
-}
 .detail-tabs {
   display: flex;
   gap: var(--space-2);

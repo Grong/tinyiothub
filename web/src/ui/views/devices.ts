@@ -1441,21 +1441,21 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
       <!-- Mini stat grid -->
       <div class="detail-stat-grid">
-        <div class="detail-stat-mini">
-          <div class="detail-stat-mini__label">属性总数</div>
-          <div class="detail-stat-mini__value">${ov.totalProperties}</div>
+        <div class="stat">
+          <div class="stat-label">属性总数</div>
+          <div class="stat-value">${ov.totalProperties}</div>
         </div>
-        <div class="detail-stat-mini">
-          <div class="detail-stat-mini__label">在线属性</div>
-          <div class="detail-stat-mini__value detail-stat-mini__value--success">${ov.onlineProperties}</div>
+        <div class="stat">
+          <div class="stat-label">在线属性</div>
+          <div class="stat-value ok">${ov.onlineProperties}</div>
         </div>
-        <div class="detail-stat-mini">
-          <div class="detail-stat-mini__label">命令数</div>
-          <div class="detail-stat-mini__value">${ov.totalCommands}</div>
+        <div class="stat">
+          <div class="stat-label">命令数</div>
+          <div class="stat-value">${ov.totalCommands}</div>
         </div>
-        <div class="detail-stat-mini">
-          <div class="detail-stat-mini__label">活跃告警</div>
-          <div class="detail-stat-mini__value" style="color: ${ov.activeAlarms > 0 ? 'var(--danger)' : 'inherit'};">${ov.activeAlarms}</div>
+        <div class="stat">
+          <div class="stat-label">活跃告警</div>
+          <div class="stat-value ${ov.activeAlarms > 0 ? 'warn' : ''}">${ov.activeAlarms}</div>
         </div>
       </div>
 

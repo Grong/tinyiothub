@@ -231,47 +231,6 @@
   }
 }
 
-.detail-stat-mini {
-  position: relative;
-  padding: var(--space-4);
-  border-radius: var(--radius-lg);
-  background: var(--card);
-  overflow: hidden;
-  transition: transform var(--duration-normal) var(--ease-out), box-shadow var(--duration-normal) var(--ease-out);
-  contain: layout style;
-}
-
-.detail-stat-mini::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 1px;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.03));
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  pointer-events: none;
-}
-
-.detail-stat-mini:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 32px var(--accent-glow);
-}
-
-.detail-stat-mini__label {
-  font-size: 12px;
-  color: var(--muted);
-  margin-bottom: var(--space-2);
-  letter-spacing: 0.2px;
-}
-
-.detail-stat-mini__value {
-  font-size: 22px;
-  font-weight: 700;
-  color: var(--text);
-  line-height: 1.2;
-}
 
 /* Device type tag */
 .type-tag {
