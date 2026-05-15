@@ -57,10 +57,10 @@ async fn register(
     }
 
     // 邮箱校验（选填，但提供时必须合法）
-    if let Some(ref email) = email {
-        if !validation::is_valid_email(email) {
-            return ApiResponseBuilder::error("邮箱格式不正确".to_string());
-        }
+    if let Some(ref email) = email
+        && !validation::is_valid_email(email)
+    {
+        return ApiResponseBuilder::error("邮箱格式不正确".to_string());
     }
 
     // 密码策略校验

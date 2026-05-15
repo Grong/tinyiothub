@@ -149,7 +149,7 @@ impl ServiceManager {
                 "default".to_string(),
                 agent_settings.system_prompts.heartbeat.clone(),
             );
-            let mut heartbeat_shutdown_rx = self.shutdown_tx.subscribe();
+            let heartbeat_shutdown_rx = self.shutdown_tx.subscribe();
             let handle: tokio::task::JoinHandle<Result<(), Error>> = tokio::spawn(async move {
                 heartbeat_service.run(heartbeat_shutdown_rx).await;
                 Ok(())

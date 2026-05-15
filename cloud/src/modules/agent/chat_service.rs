@@ -210,36 +210,33 @@ impl ChatService {
                     for line in text.lines() {
                         if let Some(data) = line.strip_prefix("data: ")
                             && let Ok(event_value) = serde_json::from_str::<Value>(data)
-                        {
-                            if let Some(event) = Self::convert_runtime_event(
+                            && let Some(event) = Self::convert_runtime_event(
                                 event_value.clone(),
                                 run_id,
                                 session_key,
-                            ) {
-                                if let ChatEvent::Final { message, .. } = &event
-                                    && let Some(content) =
-                                        message.get("content").and_then(|v| v.as_array())
-                                {
-                                    let content_json = serde_json::json!(content);
-                                    let _ = session_repo
-                                        .add_message(
-                                            session_key,
-                                            ChatMessage {
-                                                role: "assistant".to_string(),
-                                                content: content_json.to_string(),
-                                                timestamp: Some(
-                                                    chrono::Utc::now().timestamp_millis(),
-                                                ),
-                                                run_id: Some(run_id.to_string()),
-                                                tool_call_id: None,
-                                                tool_name: None,
-                                            },
-                                        )
-                                        .await;
-                                }
-                                if tx.send(event).await.is_err() {
-                                    return Ok(());
-                                }
+                            )
+                        {
+                            if let ChatEvent::Final { message, .. } = &event
+                                && let Some(content) =
+                                    message.get("content").and_then(|v| v.as_array())
+                            {
+                                let content_json = serde_json::json!(content);
+                                let _ = session_repo
+                                    .add_message(
+                                        session_key,
+                                        ChatMessage {
+                                            role: "assistant".to_string(),
+                                            content: content_json.to_string(),
+                                            timestamp: Some(chrono::Utc::now().timestamp_millis()),
+                                            run_id: Some(run_id.to_string()),
+                                            tool_call_id: None,
+                                            tool_name: None,
+                                        },
+                                    )
+                                    .await;
+                            }
+                            if tx.send(event).await.is_err() {
+                                return Ok(());
                             }
                         }
                     }

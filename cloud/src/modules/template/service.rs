@@ -11,7 +11,7 @@ use tracing::{debug, info, warn};
 use super::{
     repo::TemplateRepository,
     types::{
-        CommandInfo, CommandTemplate, CreateDeviceTemplateRequest, DeviceCreationInput, DeviceInfo,
+        CommandInfo, CommandTemplate, CreateDeviceTemplateRequest, DeviceCreationInput,
         DevicePreview, DeviceTemplate, PropertyInfo, PropertyTemplate, TemplateRequirements,
     },
 };

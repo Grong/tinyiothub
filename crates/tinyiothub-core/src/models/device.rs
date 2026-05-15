@@ -247,16 +247,16 @@ impl Device {
             return Err("设备名称长度不能超过100个字符".to_string());
         }
 
-        if let Some(display_name) = &self.display_name {
-            if display_name.len() > 200 {
-                return Err("显示名称长度不能超过200个字符".to_string());
-            }
+        if let Some(display_name) = &self.display_name
+            && display_name.len() > 200
+        {
+            return Err("显示名称长度不能超过200个字符".to_string());
         }
 
-        if let Some(address) = &self.address {
-            if address.len() > 500 {
-                return Err("地址长度不能超过500个字符".to_string());
-            }
+        if let Some(address) = &self.address
+            && address.len() > 500
+        {
+            return Err("地址长度不能超过500个字符".to_string());
         }
 
         Ok(())

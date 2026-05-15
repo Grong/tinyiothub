@@ -66,8 +66,16 @@ impl TemplateExporter {
 
     fn redact_sensitive_values(value: &mut serde_json::Value) {
         let sensitive = [
-            "password", "passwd", "secret", "api_key", "token", "auth", "private_key", "key",
-            "credential", "cert",
+            "password",
+            "passwd",
+            "secret",
+            "api_key",
+            "token",
+            "auth",
+            "private_key",
+            "key",
+            "credential",
+            "cert",
         ];
         match value {
             serde_json::Value::Object(map) => {
@@ -116,8 +124,7 @@ impl TemplateExporter {
         cmds: Option<&Vec<tinyiothub_core::models::device_command::DeviceCommand>>,
     ) -> Vec<CommandTemplate> {
         let Some(cmds) = cmds else { return Vec::new() };
-        cmds
-            .iter()
+        cmds.iter()
             .map(|c| CommandTemplate {
                 name: c.name.clone(),
                 display_name: Self::to_localized_map(c.display_name.as_deref()).unwrap_or_default(),

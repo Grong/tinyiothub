@@ -237,7 +237,7 @@ pub async fn set_agent_config(
 pub async fn tools_catalog(
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String>>,
-    claims: Claims,
+    _claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
     let agent_id = params.get("agent_id").map(|s| s.as_str()).unwrap_or("");
     match state.agent_runtime.tools_catalog(agent_id).await {

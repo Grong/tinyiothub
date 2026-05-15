@@ -325,17 +325,17 @@ where
         // Try Authorization header first
         if let Some(auth_header) = parts.headers.typed_get::<Authorization<Bearer>>() {
             let token = auth_header.token();
-            return validate_jwt(token).map_err(|e| WebAuthError::InvalidToken(e));
+            return validate_jwt(token).map_err(WebAuthError::InvalidToken);
         }
 
         // Fallback: query string ?token=xxx (needed for EventSource which can't set headers)
         if let Some(query) = parts.uri.query() {
             for pair in query.split('&') {
                 let mut kv = pair.splitn(2, '=');
-                if kv.next() == Some("token") {
-                    if let Some(token) = kv.next() {
-                        return validate_jwt(token).map_err(|e| WebAuthError::InvalidToken(e));
-                    }
+                if kv.next() == Some("token")
+                    && let Some(token) = kv.next()
+                {
+                    return validate_jwt(token).map_err(WebAuthError::InvalidToken);
                 }
             }
         }

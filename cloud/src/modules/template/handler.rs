@@ -8,7 +8,7 @@ use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
     modules::template::{
-        service::{TemplateEngine, TemplateService, TemplateValidator},
+        service::{TemplateService, TemplateValidator},
         types::{
             CreateDeviceTemplateRequest, DeviceCreationInput, DevicePreview, DeviceTemplate,
             TemplateCategory, TemplateQueryParams, UpdateDeviceTemplateRequest,

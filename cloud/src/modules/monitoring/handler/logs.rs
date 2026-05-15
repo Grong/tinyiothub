@@ -72,10 +72,10 @@ async fn get_logs(
     };
 
     // If user specified a device_id, verify it belongs to their workspace
-    if let Some(ref requested_device_id) = query.device_id {
-        if !allowed_device_ids.contains(requested_device_id) {
-            return ApiResponseBuilder::success(vec![]);
-        }
+    if let Some(ref requested_device_id) = query.device_id
+        && !allowed_device_ids.contains(requested_device_id)
+    {
+        return ApiResponseBuilder::success(vec![]);
     }
 
     let device_ids_filter = if query.device_id.is_none() && !allowed_device_ids.is_empty() {
@@ -113,7 +113,7 @@ async fn get_logs(
                         .unwrap_or_else(|_| chrono::Utc::now()),
                     level: t.level.to_uppercase(),
                     message: format!("{}: {}", t.title, t.message),
-                    source: t.source.unwrap_or_else(|| t.category),
+                    source: t.source.unwrap_or(t.category),
                     device_id: Some(t.device_id),
                 })
                 .collect();

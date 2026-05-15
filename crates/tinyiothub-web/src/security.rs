@@ -76,6 +76,7 @@ impl IntoResponse for AuthError {
 }
 
 /// JWT 验证器回调类型 — 由 cloud binary 在启动时注入
+#[allow(clippy::type_complexity)]
 static JWT_VALIDATOR: OnceLock<Box<dyn Fn(&str) -> Result<Claims, String> + Send + Sync>> = OnceLock::new();
 
 /// 设置全局 JWT 验证器（必须在应用启动时调用一次）
@@ -103,13 +104,13 @@ where
         if let Some(query) = parts.uri.query() {
             for pair in query.split('&') {
                 let mut kv = pair.splitn(2, '=');
-                if kv.next() == Some("token") {
-                    if let Some(token) = kv.next() {
-                        let validator = JWT_VALIDATOR
-                            .get()
-                            .ok_or_else(|| AuthError::InvalidToken("JWT validator not initialized".to_string()))?;
-                        return validator(token).map_err(AuthError::InvalidToken);
-                    }
+                if kv.next() == Some("token")
+                    && let Some(token) = kv.next()
+                {
+                    let validator = JWT_VALIDATOR
+                        .get()
+                        .ok_or_else(|| AuthError::InvalidToken("JWT validator not initialized".to_string()))?;
+                    return validator(token).map_err(AuthError::InvalidToken);
                 }
             }
         }

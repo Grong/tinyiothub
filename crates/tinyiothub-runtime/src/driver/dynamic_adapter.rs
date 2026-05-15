@@ -78,7 +78,7 @@ impl DeviceDriver for DynamicDeviceDriver {
     }
 
     fn read_data(&mut self) -> Result<Vec<ResultValue>, Error> {
-        let config = self.device.driver_options.as_ref().map(|s| s.as_str()).unwrap_or("{}");
+        let config = self.device.driver_options.as_deref().unwrap_or("{}");
         let config_c =
             std::ffi::CString::new(config).map_err(|e| Error::DriverError(format!("invalid config JSON: {}", e)))?;
 
@@ -93,7 +93,7 @@ impl DeviceDriver for DynamicDeviceDriver {
     }
 
     fn execute_command(&mut self, cmd: &DeviceCommand) -> Result<bool, Error> {
-        let config = self.device.driver_options.as_ref().map(|s| s.as_str()).unwrap_or("{}");
+        let config = self.device.driver_options.as_deref().unwrap_or("{}");
         let config_c =
             std::ffi::CString::new(config).map_err(|e| Error::DriverError(format!("invalid config JSON: {}", e)))?;
         let cmd_json =

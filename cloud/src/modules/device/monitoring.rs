@@ -135,13 +135,13 @@ impl DeviceMonitoringService {
             let online_properties = properties
                 .iter()
                 .filter(|p| {
-                    if let Some(last_update) = &p.updated_at {
-                        if let Ok(update_time) = chrono::DateTime::parse_from_str(
+                    if let Some(last_update) = &p.updated_at
+                        && let Ok(update_time) = chrono::DateTime::parse_from_str(
                             &format!("{} +00:00", last_update),
                             "%Y-%m-%d %H:%M:%S %z",
-                        ) {
-                            return update_time.with_timezone(&chrono::Utc) > online_threshold;
-                        }
+                        )
+                    {
+                        return update_time.with_timezone(&chrono::Utc) > online_threshold;
                     }
                     false
                 })

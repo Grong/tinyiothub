@@ -46,7 +46,7 @@ pub struct RuleParser;
 
 impl RuleParser {
     pub fn new() -> Self {
-        Self::default()
+        Self
     }
 
     /// Parse a rule expression string into a condition.
@@ -121,10 +121,10 @@ impl RuleParser {
         if let Ok(n) = s.parse::<i64>() {
             return Ok(serde_json::Value::Number(serde_json::Number::from(n)));
         }
-        if let Ok(n) = s.parse::<f64>() {
-            if let Some(num) = serde_json::Number::from_f64(n) {
-                return Ok(serde_json::Value::Number(num));
-            }
+        if let Ok(n) = s.parse::<f64>()
+            && let Some(num) = serde_json::Number::from_f64(n)
+        {
+            return Ok(serde_json::Value::Number(num));
         }
 
         // Fallback: treat as string

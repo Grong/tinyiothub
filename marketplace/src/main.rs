@@ -1,6 +1,6 @@
 use axum::Router;
 use std::sync::Arc;
-use tinyiothub_marketplace::{cache::SledCache, handler, service::SyncService, AppState};
+use tinyiothub_marketplace::{AppState, cache::SledCache, handler, service::SyncService};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 fn build_app(state: AppState) -> Router {

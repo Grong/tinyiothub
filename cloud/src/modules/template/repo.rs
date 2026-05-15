@@ -47,16 +47,13 @@ impl TemplateRepository {
         let mut templates: Vec<DeviceTemplate> = cache
             .iter()
             .filter(|t| t.is_active == 1)
-            .filter(|t| params.category.as_ref().map_or(true, |c| &t.category == c))
-            .filter(|t| params.device_type.as_ref().map_or(true, |dt| &t.device_type == dt))
+            .filter(|t| params.category.as_ref().is_none_or(|c| &t.category == c))
+            .filter(|t| params.device_type.as_ref().is_none_or(|dt| &t.device_type == dt))
             .filter(|t| {
-                params
-                    .protocol_type
-                    .as_ref()
-                    .map_or(true, |pt| t.protocol_type.as_ref() == Some(pt))
+                params.protocol_type.as_ref().is_none_or(|pt| t.protocol_type.as_ref() == Some(pt))
             })
             .filter(|t| {
-                params.keyword.as_ref().map_or(true, |kw| {
+                params.keyword.as_ref().is_none_or(|kw| {
                     let kw = kw.to_lowercase();
                     t.name.to_lowercase().contains(&kw)
                         || t.display_name.to_lowercase().contains(&kw)
@@ -306,9 +303,9 @@ impl TemplateRepository {
         let count = cache
             .iter()
             .filter(|t| t.is_active == 1)
-            .filter(|t| params.category.as_ref().map_or(true, |c| &t.category == c))
+            .filter(|t| params.category.as_ref().is_none_or(|c| &t.category == c))
             .filter(|t| {
-                params.keyword.as_ref().map_or(true, |kw| {
+                params.keyword.as_ref().is_none_or(|kw| {
                     let kw = kw.to_lowercase();
                     t.name.to_lowercase().contains(&kw)
                         || t.display_name.to_lowercase().contains(&kw)

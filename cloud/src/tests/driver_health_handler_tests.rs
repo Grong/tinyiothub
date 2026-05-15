@@ -22,10 +22,8 @@ fn auth_request(method: &str, uri: &str, token: &str) -> Request<Body> {
 async fn test_list_driver_health_empty() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
-    let response = app
-        .oneshot(auth_request("GET", "/api/v1/driver-health/drivers", &token))
-        .await
-        .unwrap();
+    let response =
+        app.oneshot(auth_request("GET", "/api/v1/driver-health/drivers", &token)).await.unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
     let (_status, json) = response_parts(response).await;
@@ -66,10 +64,8 @@ async fn test_list_driver_health_requires_auth() {
 async fn test_list_driver_health_response_fields() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
-    let response = app
-        .oneshot(auth_request("GET", "/api/v1/driver-health/drivers", &token))
-        .await
-        .unwrap();
+    let response =
+        app.oneshot(auth_request("GET", "/api/v1/driver-health/drivers", &token)).await.unwrap();
 
     let (_status, json) = response_parts(response).await;
     assert_eq!(json["code"], 0);

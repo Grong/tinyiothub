@@ -63,14 +63,12 @@ impl DeviceDriver for SnmpDriver {
     }
 
     fn read_data(&mut self) -> Result<Vec<ResultValue>, Error> {
-        let mut results = Vec::new();
-        results.push(ResultValue::string(
-            "system_name".to_string(),
-            "SNMP Device".to_string(),
-        ));
-        results.push(ResultValue::integer("uptime".to_string(), 86400));
-        results.push(ResultValue::float("cpu_usage".to_string(), 45.2));
-        results.push(ResultValue::float("memory_usage".to_string(), 67.8));
+        let results = vec![
+            ResultValue::string("system_name".to_string(), "SNMP Device".to_string()),
+            ResultValue::integer("uptime".to_string(), 86400),
+            ResultValue::float("cpu_usage".to_string(), 45.2),
+            ResultValue::float("memory_usage".to_string(), 67.8),
+        ];
         Ok(results)
     }
 

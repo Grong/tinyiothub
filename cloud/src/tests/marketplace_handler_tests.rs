@@ -22,26 +22,10 @@ fn auth_request(method: &str, uri: &str, token: &str, body: Option<Value>) -> Re
 /// Verify the response follows the ApiResponse wrapper format:
 /// { code: number, msg: string, result: T | null }
 fn assert_api_response_format(json: &Value) {
-    assert!(
-        json.get("code").is_some(),
-        "Response missing 'code' field: {}",
-        json
-    );
-    assert!(
-        json["code"].is_number(),
-        "Expected 'code' to be a number, got: {}",
-        json["code"]
-    );
-    assert!(
-        json.get("msg").is_some(),
-        "Response missing 'msg' field: {}",
-        json
-    );
-    assert!(
-        json.get("result").is_some(),
-        "Response missing 'result' field: {}",
-        json
-    );
+    assert!(json.get("code").is_some(), "Response missing 'code' field: {}", json);
+    assert!(json["code"].is_number(), "Expected 'code' to be a number, got: {}", json["code"]);
+    assert!(json.get("msg").is_some(), "Response missing 'msg' field: {}", json);
+    assert!(json.get("result").is_some(), "Response missing 'result' field: {}", json);
 }
 
 // ── Templates ──

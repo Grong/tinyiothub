@@ -84,20 +84,20 @@ impl DeviceTraceRepository {
         let mut query = "SELECT id, device_id, trace_type, level, category, title, message, details, source, user_id, session_id, created_at FROM device_traces WHERE device_id = ?".to_string();
         let mut bind_values: Vec<String> = vec![device_id.to_string()];
 
-        if let Some(types) = trace_types {
-            if !types.is_empty() {
-                let placeholders = types.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-                query.push_str(&format!(" AND trace_type IN ({})", placeholders));
-                bind_values.extend(types.iter().cloned());
-            }
+        if let Some(types) = trace_types
+            && !types.is_empty()
+        {
+            let placeholders = types.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            query.push_str(&format!(" AND trace_type IN ({})", placeholders));
+            bind_values.extend(types.iter().cloned());
         }
 
-        if let Some(lvls) = levels {
-            if !lvls.is_empty() {
-                let placeholders = lvls.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-                query.push_str(&format!(" AND level IN ({})", placeholders));
-                bind_values.extend(lvls.iter().cloned());
-            }
+        if let Some(lvls) = levels
+            && !lvls.is_empty()
+        {
+            let placeholders = lvls.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            query.push_str(&format!(" AND level IN ({})", placeholders));
+            bind_values.extend(lvls.iter().cloned());
         }
 
         query.push_str(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
@@ -207,12 +207,12 @@ impl DeviceTraceRepository {
             bind_values.push(date.to_string());
         }
 
-        if let Some(types) = trace_types {
-            if !types.is_empty() {
-                let placeholders = types.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-                query.push_str(&format!(" AND trace_type IN ({})", placeholders));
-                bind_values.extend(types.iter().cloned());
-            }
+        if let Some(types) = trace_types
+            && !types.is_empty()
+        {
+            let placeholders = types.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            query.push_str(&format!(" AND trace_type IN ({})", placeholders));
+            bind_values.extend(types.iter().cloned());
         }
 
         let query_builder = bind_values
@@ -257,28 +257,28 @@ impl DeviceTraceRepository {
             bind_values.push(did.to_string());
         }
 
-        if let Some(dids) = device_ids {
-            if !dids.is_empty() {
-                let placeholders = dids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-                query.push_str(&format!(" AND device_id IN ({})", placeholders));
-                bind_values.extend(dids.iter().cloned());
-            }
+        if let Some(dids) = device_ids
+            && !dids.is_empty()
+        {
+            let placeholders = dids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            query.push_str(&format!(" AND device_id IN ({})", placeholders));
+            bind_values.extend(dids.iter().cloned());
         }
 
-        if let Some(lvls) = levels {
-            if !lvls.is_empty() {
-                let placeholders = lvls.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-                query.push_str(&format!(" AND level IN ({})", placeholders));
-                bind_values.extend(lvls.iter().cloned());
-            }
+        if let Some(lvls) = levels
+            && !lvls.is_empty()
+        {
+            let placeholders = lvls.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            query.push_str(&format!(" AND level IN ({})", placeholders));
+            bind_values.extend(lvls.iter().cloned());
         }
 
-        if let Some(srcs) = sources {
-            if !srcs.is_empty() {
-                let placeholders = srcs.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-                query.push_str(&format!(" AND source IN ({})", placeholders));
-                bind_values.extend(srcs.iter().cloned());
-            }
+        if let Some(srcs) = sources
+            && !srcs.is_empty()
+        {
+            let placeholders = srcs.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            query.push_str(&format!(" AND source IN ({})", placeholders));
+            bind_values.extend(srcs.iter().cloned());
         }
 
         if let Some(start) = start_time {

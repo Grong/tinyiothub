@@ -38,7 +38,7 @@ pub trait DeviceRepository: Send + Sync {
 }
 
 /// Criteria for querying devices
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DeviceCriteria {
     pub name: Option<String>,
     pub display_name: Option<String>,
@@ -58,9 +58,10 @@ pub struct DeviceCriteria {
 }
 
 /// Sorting options for devices
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 pub enum DeviceSortBy {
     Name,
+    #[default]
     CreatedAt,
     UpdatedAt,
     DeviceType,
@@ -69,44 +70,11 @@ pub enum DeviceSortBy {
 }
 
 /// Sort order for devices
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 pub enum DeviceSortOrder {
     Ascending,
+    #[default]
     Descending,
-}
-
-impl Default for DeviceSortBy {
-    fn default() -> Self {
-        Self::CreatedAt
-    }
-}
-
-impl Default for DeviceSortOrder {
-    fn default() -> Self {
-        Self::Descending
-    }
-}
-
-impl Default for DeviceCriteria {
-    fn default() -> Self {
-        Self {
-            name: None,
-            display_name: None,
-            device_type: None,
-            address: None,
-            driver_name: None,
-            state: None,
-            parent_id: None,
-            product_id: None,
-            workspace_id: None,
-            search_text: None,
-            tag_name: None,
-            sort_by: DeviceSortBy::default(),
-            sort_order: DeviceSortOrder::default(),
-            limit: None,
-            offset: None,
-        }
-    }
 }
 
 impl DeviceCriteria {

@@ -1,12 +1,19 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, RwLock};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
-use crate::modules::gateway::pairing::{PairingCache, PairingEntry};
-use crate::modules::gateway::types::*;
-use crate::shared::persistence::factory::DeviceRepositoryFactory;
 use tinyiothub_core::models::device::CreateDeviceRequest;
+use tokio::sync::{RwLock, mpsc};
+
+use crate::{
+    modules::gateway::{
+        pairing::{PairingCache, PairingEntry},
+        types::*,
+    },
+    shared::persistence::factory::DeviceRepositoryFactory,
+};
 
 const MAX_PAIRING_REQUESTS_PER_IP_PER_MINUTE: usize = 3;
 const IP_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
@@ -44,10 +51,10 @@ impl GatewayService {
         client_ip: Option<&str>,
         req: PairingRequest,
     ) -> Result<PairingResponse, PairingError> {
-        if let Some(ip) = client_ip {
-            if !self.check_ip_rate_limit(ip).await {
-                return Err(PairingError::TooManyAttemptsIp);
-            }
+        if let Some(ip) = client_ip
+            && !self.check_ip_rate_limit(ip).await
+        {
+            return Err(PairingError::TooManyAttemptsIp);
         }
 
         let code = req.code.trim().to_string();
@@ -123,27 +130,22 @@ impl GatewayService {
             keepalive: 60,
         };
 
-        if self
-            .mqtt_tx
-            .send(MqttPublish::PairingAck {
-                code: code.clone(),
-                ack,
-            })
-            .await
-            .is_err()
-        {
+        if self.mqtt_tx.send(MqttPublish::PairingAck { code: code.clone(), ack }).await.is_err() {
             let _ = repo.delete(&device_id).await;
             // Restore the code to cache so the gateway can still be paired
             self.cache
-                .insert(code.clone(), PairingEntry {
-                    fingerprint: announce.fingerprint.clone(),
-                    hostname: announce.hostname.clone(),
-                    os: announce.os.clone(),
-                    ip: announce.ip.clone(),
-                    hw_model: announce.hw_model.clone(),
-                    created_at: std::time::Instant::now(),
-                    attempts: std::collections::HashMap::new(),
-                })
+                .insert(
+                    code.clone(),
+                    PairingEntry {
+                        fingerprint: announce.fingerprint.clone(),
+                        hostname: announce.hostname.clone(),
+                        os: announce.os.clone(),
+                        ip: announce.ip.clone(),
+                        hw_model: announce.hw_model.clone(),
+                        created_at: std::time::Instant::now(),
+                        attempts: std::collections::HashMap::new(),
+                    },
+                )
                 .await;
             tracing::error!(code = %code, "MQTT channel closed, rolled back device and restored cache entry");
             return Err(PairingError::MqttPublishFailed);
@@ -156,12 +158,7 @@ impl GatewayService {
             "Pairing successful"
         );
 
-        Ok(PairingResponse {
-            device_id,
-            device_name,
-            hostname: announce.hostname,
-            ip: announce.ip,
-        })
+        Ok(PairingResponse { device_id, device_name, hostname: announce.hostname, ip: announce.ip })
     }
 
     async fn check_ip_rate_limit(&self, ip: &str) -> bool {
@@ -261,7 +258,9 @@ impl GatewayService {
                 tracing::debug!(gateway_id = %gateway_id, "Gateway status received");
             }
             GatewayDataMessage::DeviceDiscover { gateway_id, workspace_id, msg } => {
-                if let Err(e) = self.handle_device_discover(gateway_id, workspace_id, msg.clone()).await {
+                if let Err(e) =
+                    self.handle_device_discover(gateway_id, workspace_id, msg.clone()).await
+                {
                     tracing::error!(?e, gateway_id = %gateway_id, "Failed to handle device discover");
                 }
             }
@@ -280,22 +279,19 @@ impl GatewayService {
 fn generate_device_password() -> String {
     use rand::Rng;
     let mut rng = rand::thread_rng();
-    (0..32)
-        .map(|_| rng.sample(rand::distributions::Alphanumeric) as char)
-        .collect()
+    (0..32).map(|_| rng.sample(rand::distributions::Alphanumeric) as char).collect()
 }
 
 #[cfg(test)]
 mod tests {
+    use sqlx::{Row, SqlitePool};
+
     use super::*;
     use crate::modules::gateway::pairing::PairingEntry;
-    use sqlx::{Row, SqlitePool};
 
     async fn make_pool() -> SqlitePool {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        crate::shared::persistence::test_helpers::run_all_migrations(&pool)
-            .await
-            .unwrap();
+        crate::shared::persistence::test_helpers::run_all_migrations(&pool).await.unwrap();
         // Create a tenant and workspace for FK references
         sqlx::query("INSERT INTO tenants (id, name, slug, created_at, updated_at) VALUES ('tenant1', 'test', 'tenant1', '2025-01-01', '2025-01-01')")
             .execute(&pool)
@@ -415,11 +411,12 @@ mod tests {
         assert_eq!(response.ip, "192.168.1.100");
 
         // Verify device was inserted into DB
-        let row = sqlx::query("SELECT id, name, fingerprint, workspace_id FROM devices WHERE id = ?1")
-            .bind(&response.device_id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let row =
+            sqlx::query("SELECT id, name, fingerprint, workspace_id FROM devices WHERE id = ?1")
+                .bind(&response.device_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(row.get::<String, _>("name"), "gw-01");
         assert_eq!(row.get::<String, _>("workspace_id"), "ws1");
 
@@ -487,12 +484,13 @@ mod tests {
         svc.handle_device_discover(&gw_id, "ws1", msg).await.unwrap();
 
         // Verify sub-devices created
-        let rows: Vec<(String, String, String)> =
-            sqlx::query_as("SELECT name, linked_gateway, parent_id FROM devices WHERE linked_gateway = ?1")
-                .bind(&gw_id)
-                .fetch_all(&pool)
-                .await
-                .unwrap();
+        let rows: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT name, linked_gateway, parent_id FROM devices WHERE linked_gateway = ?1",
+        )
+        .bind(&gw_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
 
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].1, gw_id); // linked_gateway
@@ -504,10 +502,7 @@ mod tests {
         let pool = make_pool().await;
         let (svc, _rx) = make_service(pool);
 
-        let msg = DeviceDiscoverMessage {
-            msg_type: "device_discover".into(),
-            devices: vec![],
-        };
+        let msg = DeviceDiscoverMessage { msg_type: "device_discover".into(), devices: vec![] };
 
         svc.handle_device_discover("gw-xyz", "ws1", msg).await.unwrap();
     }

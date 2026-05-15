@@ -201,7 +201,7 @@ impl SqliteAlarmRepository {
             "SELECT COUNT(*) FROM device_alarms WHERE device_id = ? AND is_resolved = 0",
         )
         .bind(device_id)
-        .fetch_one(&*self.database.pool())
+        .fetch_one(self.database.pool())
         .await?;
         Ok(count as u32)
     }
@@ -210,7 +210,7 @@ impl SqliteAlarmRepository {
     pub async fn count_all_active_alarms(&self) -> Result<u32, sqlx::Error> {
         let count: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE is_resolved = 0")
-                .fetch_one(&*self.database.pool())
+                .fetch_one(self.database.pool())
                 .await?;
         Ok(count as u32)
     }
@@ -226,7 +226,7 @@ impl SqliteAlarmRepository {
         )
         .bind(device_id)
         .bind(format!("-{} days", days))
-        .fetch_optional(&*self.database.pool())
+        .fetch_optional(self.database.pool())
         .await?
         .unwrap_or(0);
         Ok(count as u32)

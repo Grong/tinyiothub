@@ -8,7 +8,7 @@ pub struct RuleEvaluator;
 
 impl RuleEvaluator {
     pub fn new() -> Self {
-        Self::default()
+        Self
     }
 
     /// Evaluate a condition against a data point.

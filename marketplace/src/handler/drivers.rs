@@ -123,10 +123,10 @@ fn filter_drivers(items: &[serde_json::Value], params: &PaginationParams) -> Vec
     items
         .iter()
         .filter(|item| {
-            if let Some(ref proto) = params.protocol {
-                if item.get("protocol").and_then(|v| v.as_str()) != Some(proto.as_str()) {
-                    return false;
-                }
+            if let Some(ref proto) = params.protocol
+                && item.get("protocol").and_then(|v| v.as_str()) != Some(proto.as_str())
+            {
+                return false;
             }
 
             if let Some(ref search) = search_lower {

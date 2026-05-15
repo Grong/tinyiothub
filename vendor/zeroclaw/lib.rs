@@ -1,4 +1,5 @@
-#![warn(clippy::all, clippy::pedantic)]
+#![allow(clippy::all, clippy::pedantic)]
+#![allow(unexpected_cfgs)]
 #![allow(
     clippy::assigning_clones,
     clippy::bool_to_int_with_if,

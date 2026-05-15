@@ -254,7 +254,7 @@ async fn ensure_user_workspace(state: &AppState, user_id: &str) -> Result<()> {
            VALUES (?, ?, '用户个人工作空间', 'tenant-default-001', datetime('now'), datetime('now'))"#
     )
     .bind(&ws_id)
-    .bind(&format!("{}的工作空间", ws_name))
+    .bind(format!("{}的工作空间", ws_name))
     .execute(pool)
     .await
     .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;

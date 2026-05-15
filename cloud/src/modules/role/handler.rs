@@ -116,10 +116,10 @@ async fn get_role(
     match state.role_service.find_by_id(&id).await {
         Ok(Some(role)) => {
             // Verify workspace isolation
-            if let Some(ref role_ws) = role.workspace_id {
-                if role_ws != &claims.workspace_id {
-                    return ApiResponseBuilder::error("角色不存在".to_string());
-                }
+            if let Some(ref role_ws) = role.workspace_id
+                && role_ws != &claims.workspace_id
+            {
+                return ApiResponseBuilder::error("角色不存在".to_string());
             }
             tracing::debug!("Retrieved role: {}", role.name);
             ApiResponseBuilder::success(role)
@@ -142,10 +142,10 @@ async fn update_role(
     // Verify workspace isolation: get current role first
     match state.role_service.find_by_id(&id).await {
         Ok(Some(ref role)) => {
-            if let Some(ref role_ws) = role.workspace_id {
-                if role_ws != &claims.workspace_id {
-                    return ApiResponseBuilder::error("角色不存在".to_string());
-                }
+            if let Some(ref role_ws) = role.workspace_id
+                && role_ws != &claims.workspace_id
+            {
+                return ApiResponseBuilder::error("角色不存在".to_string());
             }
         }
         Ok(None) => return ApiResponseBuilder::error("角色不存在".to_string()),
@@ -201,10 +201,10 @@ async fn delete_role(
     // Verify workspace isolation: get current role first
     match state.role_service.find_by_id(&id).await {
         Ok(Some(ref role)) => {
-            if let Some(ref role_ws) = role.workspace_id {
-                if role_ws != &claims.workspace_id {
-                    return ApiResponseBuilder::error("角色不存在".to_string());
-                }
+            if let Some(ref role_ws) = role.workspace_id
+                && role_ws != &claims.workspace_id
+            {
+                return ApiResponseBuilder::error("角色不存在".to_string());
             }
         }
         Ok(None) => return ApiResponseBuilder::error("角色不存在".to_string()),
@@ -239,10 +239,10 @@ async fn get_role_permissions(
     // Verify workspace isolation: get current role first
     match state.role_service.find_by_id(&id).await {
         Ok(Some(ref role)) => {
-            if let Some(ref role_ws) = role.workspace_id {
-                if role_ws != &claims.workspace_id {
-                    return ApiResponseBuilder::error("角色不存在".to_string());
-                }
+            if let Some(ref role_ws) = role.workspace_id
+                && role_ws != &claims.workspace_id
+            {
+                return ApiResponseBuilder::error("角色不存在".to_string());
             }
         }
         Ok(None) => return ApiResponseBuilder::error("角色不存在".to_string()),
@@ -271,10 +271,10 @@ async fn update_role_permissions(
     // Verify workspace isolation: get current role first
     match state.role_service.find_by_id(&id).await {
         Ok(Some(ref role)) => {
-            if let Some(ref role_ws) = role.workspace_id {
-                if role_ws != &claims.workspace_id {
-                    return ApiResponseBuilder::error("角色不存在".to_string());
-                }
+            if let Some(ref role_ws) = role.workspace_id
+                && role_ws != &claims.workspace_id
+            {
+                return ApiResponseBuilder::error("角色不存在".to_string());
             }
         }
         Ok(None) => return ApiResponseBuilder::error("角色不存在".to_string()),
