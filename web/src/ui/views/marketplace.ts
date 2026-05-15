@@ -76,7 +76,7 @@ export class MarketplaceView extends LitElement {
   private normalizeTemplate(raw: any): MarketplaceTemplate {
     return {
       ...raw,
-      displayName: resolveLocalized(raw.display_name),
+      displayName: resolveLocalized(raw.displayName),
       description: resolveLocalized(raw.description),
       category: resolveLocalized(raw.category),
       author: resolveLocalized(raw.author),
@@ -227,7 +227,7 @@ export class MarketplaceView extends LitElement {
     const kw = this.searchKeyword.toLowerCase();
     return this.templates.filter(
       (t) =>
-        safeString((t as any).displayName || t.name, "").toLowerCase().includes(kw) ||
+        safeString(t.displayName, t.name).toLowerCase().includes(kw) ||
         safeString(t.description, "").toLowerCase().includes(kw) ||
         safeString(t.category, "").toLowerCase().includes(kw)
     );
@@ -301,7 +301,7 @@ export class MarketplaceView extends LitElement {
               style="animation-delay: ${i * 50}ms;"
             >
               <div class="mp-card-header">
-                <div class="mp-card-title">${safeString((t as any).displayName || t.name)}</div>
+                <div class="mp-card-title">${safeString(t.displayName, t.name)}</div>
                 <span class="mp-version">${safeString(t.version)}</span>
               </div>
               <div class="mp-meta">
@@ -578,7 +578,7 @@ export class MarketplaceView extends LitElement {
     ];
 
     return html`
-      <div class="mp-detail-title">${safeString((t as any).displayName || t.name)}</div>
+      <div class="mp-detail-title">${safeString(t.displayName, t.name)}</div>
       <div class="mp-detail-desc">${safeString(t.description, "暂无描述")}</div>
 
       ${tags.length > 0 ? html`
