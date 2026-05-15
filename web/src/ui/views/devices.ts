@@ -7,6 +7,7 @@ import { templateApi } from "../../api/templates.js";
 import { tagApi } from "../../api/tags.js";
 import { eventApi } from "../../api/events.js";
 import { deviceCache } from "../../stores/device-cache.js";
+import { i18n } from "../../i18n/index.js";
 import type { Device, DeviceProfile, DeviceProperty, CreateDeviceRequest, DriverConfigOption, Tag, DeviceEvent } from "../../types/index.js";
 import { success, error as toastError } from "../components/toast.js";
 import { icons } from "../icons.js";
@@ -76,7 +77,11 @@ function isFieldRequired(deviceInfo: DeviceInfo | undefined, fieldName: string):
 
 function getLocalizedText(obj: Record<string, string> | undefined, fallback: string): string {
   if (!obj || typeof obj !== "object") return fallback;
-  return obj["zh"] || obj["en"] || Object.values(obj)[0] || fallback;
+  const locale = i18n.getLocale();
+  if (locale.startsWith("zh")) {
+    return obj["zh"] || obj["en"] || Object.values(obj)[0] || fallback;
+  }
+  return obj["en"] || obj["zh"] || Object.values(obj)[0] || fallback;
 }
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -1258,10 +1263,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     return html`
       <div class="tag-editor-trigger">
         ${deviceTags.slice(0, 3).map(t => html`
-          <span class="tag-pill tag-pill--xs">
-            <span class="tag-pill__dot tag-pill__dot--xs" style="background: ${t.color || 'var(--primary)'};"></span>
-            ${t.name}
-          </span>
+          <span class="tag-pill tag-pill--xs">${t.name}</span>
         `)}
         ${deviceTags.length > 3 ? html`<span class="tag-overflow-count">+${deviceTags.length - 3}</span>` : nothing}
         ${deviceTags.length === 0 ? html`<span class="tag-overflow-count">-</span>` : nothing}
@@ -1380,10 +1382,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
           <!-- Footer -->
           <div class="device-card__footer">
             ${visibleTags.map(t => html`
-              <span class="tag-pill">
-                <span class="tag-pill__dot" style="background: ${t.color || 'var(--primary)'};"></span>
-                ${t.name}
-              </span>
+              <span class="tag-pill">${t.name}</span>
             `)}
             ${hiddenTagCount > 0 ? html`
               <span class="tag-pill tag-pill--muted" title="${deviceTags.slice(3).map(t => t.name).join(', ')}">
@@ -1434,10 +1433,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
         ${deviceTags.length > 0 ? html`
           <div class="detail-header__tags">
             ${deviceTags.map((t: Tag) => html`
-              <span class="tag-pill">
-                <span class="tag-pill__dot" style="background: ${t.color || 'var(--primary)'};"></span>
-                ${t.name}
-              </span>
+              <span class="tag-pill">${t.name}</span>
             `)}
           </div>
         ` : nothing}

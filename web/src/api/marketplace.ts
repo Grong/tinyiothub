@@ -40,6 +40,8 @@ export interface TemplateDeviceInfo {
 
 export interface MarketplaceTemplate {
   name: string;
+  display_name?: string | LocalizedString;
+  displayName?: string;
   version: string;
   description?: string | LocalizedString;
   category?: string;
