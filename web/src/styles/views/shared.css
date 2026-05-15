@@ -630,28 +630,3 @@
 }
 
 /* Compact data table variant */
-/* Gradient border card - Tuya-inspired tech aesthetic */
-.card--gradient-border {
-  position: relative;
-  background: var(--card);
-  border-radius: var(--radius-lg);
-}
-
-.card--gradient-border::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 1px;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.03));
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  pointer-events: none;
-}
-
-.card--gradient-border:hover {
-  box-shadow: 0 8px 32px var(--accent-glow);
-  transform: translateY(-2px);
-  transition: box-shadow var(--duration-normal) var(--ease-out), transform var(--duration-normal) var(--ease-out);
-}

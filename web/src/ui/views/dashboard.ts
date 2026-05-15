@@ -127,26 +127,26 @@ export class DashboardView extends LitElement {
     const s = this.stats;
     return html`
       <div class="stats-grid">
-        <div class="card card--gradient-border stat-card">
+        <div class="card stat-card">
           <div class="stat-card__label">设备总数</div>
           <div class="stat-card__value">${this.formatNumber(s?.totalDevices)}</div>
           <div class="stat-card__meta" style="color: var(--success);">${this.formatNumber(s?.onlineDevices)} 在线</div>
         </div>
-        <div class="card card--gradient-border stat-card">
+        <div class="card stat-card">
           <div class="stat-card__label">活跃告警</div>
           <div class="stat-card__value" style="color: ${(s?.activeAlarms ?? 0) > 0 ? 'var(--danger)' : 'inherit'};">
             ${this.formatNumber(s?.activeAlarms)}
           </div>
           <div class="stat-card__meta">需要处理</div>
         </div>
-        <div class="card card--gradient-border stat-card">
+        <div class="card stat-card">
           <div class="stat-card__label">今日消息</div>
           <div class="stat-card__value">${this.formatNumber(s?.todayMessages)}</div>
           <div class="stat-card__meta">
             ${s?.monthlyGrowth?.messages != null ? `月增长 ${s.monthlyGrowth.messages}%` : ""}
           </div>
         </div>
-        <div class="card card--gradient-border stat-card">
+        <div class="card stat-card">
           <div class="stat-card__label">系统状态</div>
           <div class="stat-card__value" style="color: ${s?.systemStatus === 'healthy' ? 'var(--success)' : s?.systemStatus === 'warning' ? 'var(--warning)' : 'var(--danger)'};">
             ${s?.systemStatus === 'healthy' ? '正常' : s?.systemStatus === 'warning' ? '告警' : '异常'}
@@ -163,7 +163,7 @@ export class DashboardView extends LitElement {
     const d = this.distribution;
     const total = (d?.online ?? 0) + (d?.offline ?? 0) + (d?.error ?? 0) + (d?.maintenance ?? 0);
     return html`
-      <div class="card card--gradient-border" style="padding: 20px;">
+      <div class="card" style="padding: 20px;">
         <div style="font-weight: 600; margin-bottom: 16px;">设备状态分布</div>
         ${d ? html`
           <div style="display: flex; flex-direction: column; gap: 12px;">
@@ -195,7 +195,7 @@ export class DashboardView extends LitElement {
   renderSystemMetrics() {
     const m = this.metrics;
     return html`
-      <div class="card card--gradient-border" style="padding: 20px;">
+      <div class="card" style="padding: 20px;">
         <div style="font-weight: 600; margin-bottom: 16px;">系统资源</div>
         ${m ? html`
           <div style="display: flex; flex-direction: column; gap: 12px;">
@@ -228,7 +228,7 @@ export class DashboardView extends LitElement {
 
   renderRecentAlarms() {
     return html`
-      <div class="card card--gradient-border" style="padding: 20px;">
+      <div class="card" style="padding: 20px;">
         <div style="font-weight: 600; margin-bottom: 16px;">最近告警</div>
         ${this.recentAlarms.length === 0
           ? html`
@@ -261,7 +261,7 @@ export class DashboardView extends LitElement {
 
   renderQuickDevices() {
     return html`
-      <div class="card card--gradient-border" style="padding: 20px;">
+      <div class="card" style="padding: 20px;">
         <div style="font-weight: 600; margin-bottom: 16px;">设备快捷入口</div>
         ${this.quickDevices.length === 0
           ? html`

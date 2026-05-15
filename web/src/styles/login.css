@@ -406,29 +406,37 @@
   .register-page-wrapper .container {
     grid-template-columns: 1fr;
   }
-  .register-page-wrapper .branding-side {
+  .register-page-wrapper .brand-side {
     display: none;
   }
 }
 
-/* Branding side */
-.register-page-wrapper .branding-side {
-  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
-  padding: 48px;
+/* Branding side — same visual as signin */
+.register-page-wrapper .brand-side {
+  background: linear-gradient(135deg, var(--bg) 0%, var(--bg-accent) 100%);
+  position: relative;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  color: var(--text-inverse);
+  padding: 48px;
 }
 
 .register-page-wrapper .brand-content {
-  max-width: 400px;
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 64px;
+  color: var(--text-inverse);
+  max-width: none;
 }
 
 .register-page-wrapper .brand-logo {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
   margin-bottom: 32px;
 }
 
@@ -437,44 +445,74 @@
   height: 48px;
 }
 
-.register-page-wrapper .brand-name {
-  font-size: 24px;
+.register-page-wrapper .brand-logo h1 {
+  font-size: 36px;
   font-weight: 700;
+  margin: 0;
+  letter-spacing: -0.02em;
+  color: var(--text);
 }
 
 .register-page-wrapper .brand-headline {
-  font-size: 32px;
+  font-family: var(--font-display);
+  font-size: 48px;
   font-weight: 700;
-  line-height: 1.2;
-  margin: 0 0 16px;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  color: var(--text-strong);
+  margin: 24px 0 16px;
 }
 
-.register-page-wrapper .brand-subheadline {
+.register-page-wrapper .brand-tagline {
   font-size: 16px;
-  opacity: 0.9;
   line-height: 1.6;
-  margin: 0 0 32px;
+  color: var(--muted);
+  max-width: 420px;
+  margin-bottom: 48px;
 }
 
-.register-page-wrapper .brand-features {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-
-.register-page-wrapper .brand-features li {
+.register-page-wrapper .brand-stats {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
-  font-size: 15px;
+  gap: 32px;
 }
 
-.register-page-wrapper .brand-features li svg {
-  width: 20px;
-  height: 20px;
-  opacity: 0.9;
-  flex-shrink: 0;
+.register-page-wrapper .brand-stat__num {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--text-strong);
+  text-transform: uppercase;
+}
+
+.register-page-wrapper .brand-stat__label {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+/* Decorative orbs */
+.register-page-wrapper .orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.3;
+}
+
+.register-page-wrapper .orb-1 {
+  width: 400px;
+  height: 400px;
+  background: var(--accent);
+  top: -100px;
+  right: -100px;
+}
+
+.register-page-wrapper .orb-2 {
+  width: 300px;
+  height: 300px;
+  background: var(--accent-2);
+  bottom: -50px;
+  left: -50px;
 }
 
 /* Form side */
@@ -598,19 +636,6 @@
   margin-top: 28px;
   font-size: 14px;
   color: var(--muted);
-}
-
-/* Success branding glyph */
-.register-page-wrapper .success-glyph {
-  width: 80px;
-  height: 80px;
-  margin-bottom: 24px;
-  color: rgba(255, 255, 255, 0.9);
-}
-
-.register-page-wrapper .success-glyph svg {
-  width: 100%;
-  height: 100%;
 }
 
 /* Terms */

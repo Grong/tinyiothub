@@ -167,7 +167,7 @@ export class LoginView extends LitElement {
               <img src="/logo.svg" alt="TinyIoTHub" style="width: 48px; height: 48px;" />
               <h1>TinyIoTHub</h1>
             </div>
-            <h2 class="brand-headline">云端 SaaS<br />物联网平台</h2>
+            <h2 class="brand-headline">物联网平台</h2>
             <p class="brand-tagline">
               支持配置和管理边缘网关设备，兼容多协议。在云端统一管理 Modbus、ONVIF、SNMP 与 MQTT 设备，实时监控和数据采集。
             </p>
