@@ -829,4 +829,17 @@ export const en: TranslationMap = {
       nameRequiredShort: "Name required.",
     },
   },
+  gatewayPairing: {
+    title: "Add Gateway Device",
+    description: "Enter the 6-digit code shown on your gateway screen.",
+    codePlaceholder: "000000",
+    codeLabel: "6-digit pairing code",
+    cancel: "Cancel",
+    pair: "Pair",
+    pairing: "Pairing...",
+    paired: "Paired",
+    success: "Gateway paired successfully!",
+    pairFailed: "Pairing failed",
+    close: "Close",
+  },
 };

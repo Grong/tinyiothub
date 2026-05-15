@@ -3,6 +3,7 @@ import { customElement, state } from "lit/decorators.js";
 import { marketplaceApi, type MarketplaceTemplate, type MarketplaceDriver } from "../../api/marketplace.js";
 import { templateApi } from "../../api/templates.js";
 import { success, error as toastError } from "../components/toast.js";
+import { i18n } from "../../i18n/index.js";
 
 type Tab = "templates" | "drivers";
 
@@ -13,8 +14,15 @@ function resolveLocalized(value: any): string {
   if (typeof value === "object" && !Array.isArray(value)) {
     const zh = value.zh;
     const en = value.en;
-    if (typeof zh === "string" && zh) return zh;
-    if (typeof en === "string" && en) return en;
+    const locale = i18n.getLocale();
+    if (locale.startsWith("zh")) {
+      if (typeof zh === "string" && zh) return zh;
+      if (typeof en === "string" && en) return en;
+    } else {
+      if (typeof en === "string" && en) return en;
+      if (typeof zh === "string" && zh) return zh;
+    }
+    return (Object.values(value).find(v => typeof v === "string" && v) as string) || "";
   }
   return "";
 }
@@ -68,7 +76,7 @@ export class MarketplaceView extends LitElement {
   private normalizeTemplate(raw: any): MarketplaceTemplate {
     return {
       ...raw,
-      name: resolveLocalized(raw.name),
+      displayName: resolveLocalized(raw.displayName),
       description: resolveLocalized(raw.description),
       category: resolveLocalized(raw.category),
       author: resolveLocalized(raw.author),
@@ -219,7 +227,7 @@ export class MarketplaceView extends LitElement {
     const kw = this.searchKeyword.toLowerCase();
     return this.templates.filter(
       (t) =>
-        safeString(t.name, "").toLowerCase().includes(kw) ||
+        safeString(t.displayName, t.name).toLowerCase().includes(kw) ||
         safeString(t.description, "").toLowerCase().includes(kw) ||
         safeString(t.category, "").toLowerCase().includes(kw)
     );
@@ -293,7 +301,7 @@ export class MarketplaceView extends LitElement {
               style="animation-delay: ${i * 50}ms;"
             >
               <div class="mp-card-header">
-                <div class="mp-card-title">${safeString(t.name)}</div>
+                <div class="mp-card-title">${safeString(t.displayName, t.name)}</div>
                 <span class="mp-version">${safeString(t.version)}</span>
               </div>
               <div class="mp-meta">
@@ -476,7 +484,10 @@ export class MarketplaceView extends LitElement {
       >
         <div class="mp-modal-box" @click=${(e: Event) => e.stopPropagation()}>
           <div class="mp-modal-header">
-            <h3>模板详情</h3>
+            <div>
+              <h3>${this.detailItem ? safeString(this.detailItem.displayName, this.detailItem.name) : "模板详情"}</h3>
+              ${this.detailItem?.description ? html`<p class="mp-modal-subtitle">${safeString(this.detailItem.description)}</p>` : nothing}
+            </div>
             <button class="mp-modal-close" @click=${this.closeDetail}>×</button>
           </div>
           <div class="mp-modal-body">
@@ -570,9 +581,6 @@ export class MarketplaceView extends LitElement {
     ];
 
     return html`
-      <div class="mp-detail-title">${safeString(t.name)}</div>
-      <div class="mp-detail-desc">${safeString(t.description, "暂无描述")}</div>
-
       ${tags.length > 0 ? html`
         <div class="mp-tags">
           ${tags.map((tag: any) => html`

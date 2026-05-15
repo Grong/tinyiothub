@@ -596,18 +596,15 @@
   flex-wrap: wrap;
   gap: var(--space-1);
 }
-.detail-stat-mini__value--success {
-  color: var(--success);
-}
 .detail-tabs {
   display: flex;
+  align-items: center;
   gap: var(--space-2);
   margin-bottom: var(--space-3);
   border-bottom: 1px solid var(--border);
-  padding-bottom: 8px;
 }
 .detail-tab {
-  padding: 8px 16px;
+  padding: 6px 16px;
   background: none;
   border: none;
   border-radius: var(--radius-md);
@@ -620,6 +617,24 @@
   align-items: center;
   gap: 6px;
 }
+.detail-tab svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+.detail-tab svg line,
+.detail-tab svg path,
+.detail-tab svg polyline,
+.detail-tab svg polygon,
+.detail-tab svg circle,
+.detail-tab svg rect {
+  stroke: currentColor;
+  fill: none;
+}
+.detail-tab svg polygon {
+  fill: currentColor;
+  stroke: none;
+}
 .detail-tab:hover {
   color: var(--text);
   background: var(--bg-hover);
@@ -630,28 +645,3 @@
 }
 
 /* Compact data table variant */
-/* Gradient border card - Tuya-inspired tech aesthetic */
-.card--gradient-border {
-  position: relative;
-  background: var(--card);
-  border-radius: var(--radius-lg);
-}
-
-.card--gradient-border::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 1px;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.03));
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  pointer-events: none;
-}
-
-.card--gradient-border:hover {
-  box-shadow: 0 8px 32px var(--accent-glow);
-  transform: translateY(-2px);
-  transition: box-shadow var(--duration-normal) var(--ease-out), transform var(--duration-normal) var(--ease-out);
-}

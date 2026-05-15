@@ -149,17 +149,33 @@ export class RegisterView extends LitElement {
       return html`
         <div class="register-page-wrapper">
           <div class="container">
-            <!-- Left — success branding -->
-            <div class="branding-side">
+            <!-- Left — branding -->
+            <div class="brand-side">
+              <div class="orb orb-1"></div>
+              <div class="orb orb-2"></div>
               <div class="brand-content">
-                <div class="success-glyph">
-                  <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="32" cy="32" r="28" />
-                    <path d="M20 34l8 8 16-16" stroke-linecap="round" stroke-linejoin="round" />
-                  </svg>
+                <div class="brand-logo">
+                  <img src="/logo.svg" alt="TinyIoTHub" style="width: 48px; height: 48px;" />
+                  <h1>TinyIoTHub</h1>
                 </div>
-                <h1 class="brand-headline">欢迎加入<br />TinyIoTHub</h1>
-                <p class="brand-subheadline">您的物联网平台已就绪，即刻开始接入设备、配置规则与监控数据。</p>
+                <h2 class="brand-headline">物联网平台</h2>
+                <p class="brand-tagline">
+                  支持配置和管理边缘网关设备，兼容多协议。在云端统一管理 Modbus、ONVIF、SNMP 与 MQTT 设备，实时监控和数据采集。
+                </p>
+                <div class="brand-stats">
+                  <div class="brand-stat">
+                    <div class="brand-stat__num">Modbus</div>
+                    <div class="brand-stat__label">工业协议</div>
+                  </div>
+                  <div class="brand-stat">
+                    <div class="brand-stat__num">MQTT</div>
+                    <div class="brand-stat__label">消息协议</div>
+                  </div>
+                  <div class="brand-stat">
+                    <div class="brand-stat__num">ONVIF</div>
+                    <div class="brand-stat__label">视频协议</div>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -189,42 +205,32 @@ export class RegisterView extends LitElement {
       <div class="register-page-wrapper">
         <div class="container">
           <!-- Branding Side -->
-          <div class="branding-side">
+          <div class="brand-side">
+            <div class="orb orb-1"></div>
+            <div class="orb orb-2"></div>
             <div class="brand-content">
               <div class="brand-logo">
                 <img src="/logo.svg" alt="TinyIoTHub" style="width: 48px; height: 48px;" />
-                <span class="brand-name">TinyIoTHub</span>
+                <h1>TinyIoTHub</h1>
               </div>
-              <h1 class="brand-headline">快速构建您的物联网平台</h1>
-              <p class="brand-subheadline">
-                几分钟内完成注册，即刻体验多协议设备接入、实时数据监控与智能告警功能
+              <h2 class="brand-headline">物联网平台</h2>
+              <p class="brand-tagline">
+                支持配置和管理边缘网关设备，兼容多协议。在云端统一管理 Modbus、ONVIF、SNMP 与 MQTT 设备，实时监控和数据采集。
               </p>
-              <ul class="brand-features">
-                <li>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                  </svg>
-                  支持 Modbus、ONVIF、SNMP、MQTT 等主流协议
-                </li>
-                <li>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                  </svg>
-                  实时数据监控与可视化仪表盘
-                </li>
-                <li>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                  </svg>
-                  智能告警引擎，支持多种通知方式
-                </li>
-                <li>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                  </svg>
-                  企业级安全，JWT 认证与多租户隔离
-                </li>
-              </ul>
+              <div class="brand-stats">
+                <div class="brand-stat">
+                  <div class="brand-stat__num">Modbus</div>
+                  <div class="brand-stat__label">工业协议</div>
+                </div>
+                <div class="brand-stat">
+                  <div class="brand-stat__num">MQTT</div>
+                  <div class="brand-stat__label">消息协议</div>
+                </div>
+                <div class="brand-stat">
+                  <div class="brand-stat__num">ONVIF</div>
+                  <div class="brand-stat__label">视频协议</div>
+                </div>
+              </div>
             </div>
           </div>
 
