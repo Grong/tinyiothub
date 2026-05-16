@@ -48,6 +48,8 @@ services:
       - TINYIOTHUB__DATABASE__URL=/app/data/tinyiothub.db
       - TINYIOTHUB__SECURITY__JWT__SECRET=${JWT_SECRET}
       - TINYIOTHUB__MQTT__PRIMARY__HOST=tinyiothub-mqtt
+      - TINYIOTHUB__MQTT__PRIMARY__USERNAME=${MQTT_USERNAME}
+      - TINYIOTHUB__MQTT__PRIMARY__PASSWORD=${MQTT_PASSWORD}
 
     volumes:
       - ./data:/app/data
