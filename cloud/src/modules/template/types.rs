@@ -551,7 +551,7 @@ impl DeviceTemplate {
                    device_info, properties, commands, is_builtin, is_active,
                    created_at, updated_at, workspace_id
             FROM device_templates WHERE is_active = 1
-            "#
+            "#,
         );
         query.push(" AND (workspace_id IS NULL OR workspace_id = ");
         query.push_bind(workspace_id);
@@ -606,9 +606,8 @@ impl DeviceTemplate {
         params: &TemplateQueryParams,
         workspace_id: &str,
     ) -> Result<i64, sqlx::Error> {
-        let mut query = QueryBuilder::new(
-            "SELECT COUNT(*) as count FROM device_templates WHERE is_active = 1"
-        );
+        let mut query =
+            QueryBuilder::new("SELECT COUNT(*) as count FROM device_templates WHERE is_active = 1");
         query.push(" AND (workspace_id IS NULL OR workspace_id = ");
         query.push_bind(workspace_id);
         query.push(")");

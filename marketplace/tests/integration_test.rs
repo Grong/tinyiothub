@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tempfile::TempDir;
-use tinyiothub_marketplace::{build_app, AppState, cache::SledCache, service::SyncService};
+use tinyiothub_marketplace::{AppState, build_app, cache::SledCache, service::SyncService};
 use tower::ServiceExt;
 
 const TEMPLATE_1: &str = r#"{
@@ -75,10 +75,7 @@ async fn setup() -> (axum::Router, TempDir) {
 
     let sled_path = tmp.path().join("cache.sled");
     let cache = Arc::new(SledCache::new(sled_path.to_str().unwrap()).expect("create sled cache"));
-    let sync = Arc::new(SyncService::new(
-        Arc::clone(&cache),
-        tmp.path().to_path_buf(),
-    ));
+    let sync = Arc::new(SyncService::new(Arc::clone(&cache), tmp.path().to_path_buf()));
     sync.load_local_data().await.expect("load seed data");
 
     (build_app(AppState::new(cache, sync)), tmp)

@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use tinyiothub_marketplace::{build_app, AppState, cache::SledCache, service::SyncService};
+use tinyiothub_marketplace::{AppState, build_app, cache::SledCache, service::SyncService};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]

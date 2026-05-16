@@ -596,4 +596,3 @@ pub struct TemplateFilters {
     pub limit: Option<u32>,
     pub offset: Option<u32>,
 }
-
