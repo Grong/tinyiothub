@@ -39,10 +39,9 @@ impl MarketplaceClient {
 
     /// Get API base URL (includes /api/v1).
     fn api_base(&self) -> Result<&str> {
-        self.config
-            .api_url
-            .as_deref()
-            .ok_or_else(|| MarketplaceError::InvalidConfig("No marketplace API URL configured".to_string()))
+        self.config.api_url.as_deref().ok_or_else(|| {
+            MarketplaceError::InvalidConfig("No marketplace API URL configured".to_string())
+        })
     }
 
     /// Fetch template list from marketplace API.
@@ -68,16 +67,9 @@ impl MarketplaceClient {
                     category: t.category,
                     protocol: t.protocol_type,
                     manufacturer: t.manufacturer.unwrap_or_default(),
-                    description: t
-                        .description
-                        .zh
-                        .or(t.description.en)
-                        .unwrap_or_default(),
+                    description: t.description.zh.or(t.description.en).unwrap_or_default(),
                     tags: t.tags,
-                    author: AuthorInfo {
-                        name: t.author,
-                        email: String::new(),
-                    },
+                    author: AuthorInfo { name: t.author, email: String::new() },
                     icon: t.icon,
                     downloads: t.downloads as u64,
                     rating: t.rating.unwrap_or(0.0) as f32,

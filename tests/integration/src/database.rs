@@ -18,27 +18,23 @@ pub async fn create_test_pool() -> SqlitePool {
 
 /// Seed required reference data (tenant + workspace) for FK constraints.
 pub async fn seed_test_workspace(pool: &SqlitePool, tenant_id: &str, workspace_id: &str) {
-    sqlx::query(
-        "INSERT INTO tenants (id, name, slug, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-    )
-    .bind(tenant_id)
-    .bind(tenant_id)
-    .bind(tenant_id)
-    .bind("2025-01-01T00:00:00Z")
-    .bind("2025-01-01T00:00:00Z")
-    .execute(pool)
-    .await
-    .unwrap();
+    sqlx::query("INSERT INTO tenants (id, name, slug, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)")
+        .bind(tenant_id)
+        .bind(tenant_id)
+        .bind(tenant_id)
+        .bind("2025-01-01T00:00:00Z")
+        .bind("2025-01-01T00:00:00Z")
+        .execute(pool)
+        .await
+        .unwrap();
 
-    sqlx::query(
-        "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-    )
-    .bind(workspace_id)
-    .bind(workspace_id)
-    .bind(tenant_id)
-    .bind("2025-01-01T00:00:00Z")
-    .bind("2025-01-01T00:00:00Z")
-    .execute(pool)
-    .await
-    .unwrap();
+    sqlx::query("INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)")
+        .bind(workspace_id)
+        .bind(workspace_id)
+        .bind(tenant_id)
+        .bind("2025-01-01T00:00:00Z")
+        .bind("2025-01-01T00:00:00Z")
+        .execute(pool)
+        .await
+        .unwrap();
 }

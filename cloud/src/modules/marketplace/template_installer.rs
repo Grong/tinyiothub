@@ -38,10 +38,7 @@ impl TemplateInstaller {
 
         // 3. Check version (if specified)
         if let Some(ver) = version {
-            let api_version = template_data
-                .get("version")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let api_version = template_data.get("version").and_then(|v| v.as_str()).unwrap_or("");
             if api_version != ver {
                 return Err(MarketplaceError::NotFound(format!(
                     "Template {} version {}",
@@ -73,8 +70,9 @@ impl TemplateInstaller {
         let safe_id = sanitize_filename(template_id);
         let temp_file = temp_dir.join(format!("template_{}.json", safe_id));
 
-        let json_bytes = serde_json::to_vec_pretty(data)
-            .map_err(|e| MarketplaceError::Template(format!("Failed to serialize template: {}", e)))?;
+        let json_bytes = serde_json::to_vec_pretty(data).map_err(|e| {
+            MarketplaceError::Template(format!("Failed to serialize template: {}", e))
+        })?;
         tokio::fs::write(&temp_file, &json_bytes).await?;
 
         Ok(temp_file)
