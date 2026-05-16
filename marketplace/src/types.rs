@@ -113,6 +113,24 @@ pub struct Template {
     pub properties: Vec<Property>,
     #[serde(default)]
     pub commands: Vec<Command>,
+    #[serde(default)]
+    pub icon: Option<String>,
+    #[serde(default = "default_zero")]
+    pub downloads: i64,
+    #[serde(default)]
+    pub rating: Option<f64>,
+    #[serde(default)]
+    pub reviews: Option<i32>,
+    #[serde(default = "default_mit_license")]
+    pub license: String,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub updated_at: String,
+}
+
+fn default_mit_license() -> String {
+    "MIT".to_string()
 }
 
 // ── Request types ──────────────────────────────────────────

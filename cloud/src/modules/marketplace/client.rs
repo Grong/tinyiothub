@@ -10,7 +10,7 @@ use super::{
     metadata::{AuthorInfo, DriverMetadata, TemplateMetadata},
 };
 
-/// Markspace API response wrapper.
+/// Marketplace API response wrapper.
 #[derive(Debug, Deserialize)]
 struct ApiResponse<T> {
     #[allow(dead_code)]
@@ -20,7 +20,7 @@ struct ApiResponse<T> {
     result: T,
 }
 
-/// Markspace paginated list.
+/// Marketplace paginated list.
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 struct PaginatedList<T> {
@@ -30,9 +30,9 @@ struct PaginatedList<T> {
     per_page: usize,
 }
 
-/// Template as returned by markspace API.
+/// Template as returned by marketplace API.
 #[derive(Debug, Deserialize)]
-struct MarkspaceTemplate {
+struct MarketplaceTemplate {
     name: String,
     version: String,
     category: String,
@@ -45,11 +45,25 @@ struct MarkspaceTemplate {
     tags: Vec<String>,
     #[serde(default)]
     author: String,
+    #[serde(default)]
+    icon: Option<String>,
+    #[serde(default)]
+    downloads: i64,
+    #[serde(default)]
+    rating: Option<f64>,
+    #[serde(default)]
+    reviews: Option<i32>,
+    #[serde(default)]
+    license: String,
+    #[serde(default)]
+    created_at: String,
+    #[serde(default)]
+    updated_at: String,
 }
 
-/// Driver as returned by markspace API.
+/// Driver as returned by marketplace API.
 #[derive(Debug, Deserialize)]
-struct MarkspaceDriver {
+struct MarketplaceDriver {
     id: String,
     name: String,
     version: String,
@@ -105,13 +119,13 @@ impl MarketplaceClient {
             .ok_or_else(|| MarketplaceError::InvalidConfig("No marketplace API URL configured".to_string()))
     }
 
-    /// Fetch template list from markspace API.
+    /// Fetch template list from marketplace API.
     pub async fn fetch_templates(&self) -> Result<Vec<TemplateMetadata>> {
         let base = self.api_base()?;
         let url = format!("{}/templates", base);
         tracing::info!("Fetching templates from: {}", url);
 
-        let response: ApiResponse<PaginatedList<MarkspaceTemplate>> =
+        let response: ApiResponse<PaginatedList<MarketplaceTemplate>> =
             self.http_client.get(&url).send().await?.json().await?;
 
         let templates = response
@@ -140,15 +154,15 @@ impl MarketplaceClient {
                         name: t.author,
                         email: String::new(),
                     },
-                    icon: None,
-                    downloads: 0,
-                    rating: 0.0,
-                    reviews: 0,
-                    license: "MIT".to_string(),
+                    icon: t.icon,
+                    downloads: t.downloads as u64,
+                    rating: t.rating.unwrap_or(0.0) as f32,
+                    reviews: t.reviews.unwrap_or(0) as u32,
+                    license: if t.license.is_empty() { "MIT".to_string() } else { t.license },
                     checksum: String::new(),
                     size: 0,
-                    created_at: String::new(),
-                    updated_at: String::new(),
+                    created_at: t.created_at,
+                    updated_at: t.updated_at,
                 }
             })
             .collect();
@@ -156,7 +170,7 @@ impl MarketplaceClient {
         Ok(templates)
     }
 
-    /// Fetch a single template definition from markspace API.
+    /// Fetch a single template definition from marketplace API.
     /// Returns the raw template JSON value (the `result` field).
     pub async fn fetch_template(&self, name: &str) -> Result<serde_json::Value> {
         let base = self.api_base()?;
@@ -169,13 +183,13 @@ impl MarketplaceClient {
         Ok(response.result)
     }
 
-    /// Fetch driver list from markspace API.
+    /// Fetch driver list from marketplace API.
     pub async fn fetch_drivers(&self) -> Result<Vec<DriverMetadata>> {
         let base = self.api_base()?;
         let url = format!("{}/drivers", base);
         tracing::info!("Fetching drivers from: {}", url);
 
-        let response: ApiResponse<PaginatedList<MarkspaceDriver>> =
+        let response: ApiResponse<PaginatedList<MarketplaceDriver>> =
             self.http_client.get(&url).send().await?.json().await?;
 
         let drivers = response

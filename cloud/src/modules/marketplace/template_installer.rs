@@ -22,7 +22,7 @@ impl TemplateInstaller {
     }
 
     /// Install template from marketplace.
-    /// Fetches the template definition directly from the markspace API.
+    /// Fetches the template definition directly from the marketplace API.
     pub async fn install_from_marketplace(
         &self,
         template_id: &str,
@@ -30,10 +30,13 @@ impl TemplateInstaller {
     ) -> Result<String> {
         tracing::info!("Installing template {} from marketplace", template_id);
 
-        // 1. Fetch template from markspace API
+        // 1. Fetch template from marketplace API
         let template_data = self.client.fetch_template(template_id).await?;
 
-        // 2. Check version (if specified)
+        // 2. Validate required fields before writing to disk
+        self.validate_template_structure(&template_data)?;
+
+        // 3. Check version (if specified)
         if let Some(ver) = version {
             let api_version = template_data
                 .get("version")
@@ -47,13 +50,13 @@ impl TemplateInstaller {
             }
         }
 
-        // 3. Write template data to temp file
+        // 4. Write template data to temp file
         let temp_file = self.write_temp_file(&template_data, template_id).await?;
 
-        // 4. Save to templates/custom/ directory
+        // 5. Save to templates/custom/ directory
         let dest_file = self.save_template(&temp_file, template_id).await?;
 
-        // 5. Import to database
+        // 6. Import to database
         self.import_template(&dest_file).await?;
 
         tracing::info!("Successfully installed template: {}", template_id);
@@ -117,6 +120,24 @@ impl TemplateInstaller {
             .await
             .map_err(|e| MarketplaceError::Template(e.to_string()))?;
 
+        Ok(())
+    }
+
+    /// Validate that fetched template data has the required structure.
+    fn validate_template_structure(&self, data: &serde_json::Value) -> Result<()> {
+        let required = ["name", "category", "version"];
+        let mut missing = Vec::new();
+        for field in &required {
+            if data.get(field).is_none() {
+                missing.push(*field);
+            }
+        }
+        if !missing.is_empty() {
+            return Err(MarketplaceError::Template(format!(
+                "Template missing required fields: {}",
+                missing.join(", ")
+            )));
+        }
         Ok(())
     }
 
