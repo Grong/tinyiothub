@@ -1,9 +1,8 @@
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
-use parking_lot::RwLock;
 use sqlx::{QueryBuilder, Row};
-use tinyiothub_core::models::template_error::{TemplateError, ValidationError};
-use tracing::{debug, error, info, warn};
+use tinyiothub_core::models::template_error::TemplateError;
+use tracing::{debug, info, warn};
 
 use super::types::{
     CreateDeviceTemplateRequest, DeviceTemplate, TemplateCategory, TemplateQueryParams,
@@ -13,29 +12,18 @@ use crate::shared::persistence::Database;
 
 // ─── TemplateRepository ───────────────────────────────────────
 
-/// 模板仓库 - 内置模板从 JSON 文件加载到内存，不经过数据库
+/// 模板仓库 - 所有模板（内置和自定义）都存储在数据库中。
+/// 内置模板通过 migration seed 写入 DB，无需文件系统加载。
 #[derive(Debug)]
 pub struct TemplateRepository {
     database: Arc<Database>,
-    file_manager: TemplateFileManager,
     search_service: TemplateSearchService,
-    cache: Arc<RwLock<Vec<DeviceTemplate>>>,
 }
 
 impl TemplateRepository {
-    /// 创建新的模板仓库实例
-    pub fn new(database: Arc<Database>, file_system_path: PathBuf) -> Self {
-        let file_manager = TemplateFileManager::new(file_system_path);
+    pub fn new(database: Arc<Database>) -> Self {
         let search_service = TemplateSearchService::new(database.clone());
-        let cache = Arc::new(RwLock::new(Vec::new()));
-        Self { database, file_manager, search_service, cache }
-    }
-
-    /// 初始化：从 JSON 文件加载模板到内存
-    pub fn init(&self) -> Result<(), TemplateError> {
-        let templates = self.load_builtin_templates()?;
-        *self.cache.write() = templates;
-        Ok(())
+        Self { database, search_service }
     }
 
     /// 查找所有模板（支持分页和筛选）
@@ -43,47 +31,12 @@ impl TemplateRepository {
         &self,
         params: &TemplateQueryParams,
     ) -> Result<Vec<DeviceTemplate>, TemplateError> {
-        let cache = self.cache.read();
-        let mut templates: Vec<DeviceTemplate> = cache
-            .iter()
-            .filter(|t| t.is_active == 1)
-            .filter(|t| params.category.as_ref().is_none_or(|c| &t.category == c))
-            .filter(|t| params.device_type.as_ref().is_none_or(|dt| &t.device_type == dt))
-            .filter(|t| {
-                params.protocol_type.as_ref().is_none_or(|pt| t.protocol_type.as_ref() == Some(pt))
-            })
-            .filter(|t| {
-                params.keyword.as_ref().is_none_or(|kw| {
-                    let kw = kw.to_lowercase();
-                    t.name.to_lowercase().contains(&kw)
-                        || t.display_name.to_lowercase().contains(&kw)
-                        || t.tags.to_lowercase().contains(&kw)
-                })
-            })
-            .cloned()
-            .collect();
-
-        // 按名称排序
-        templates.sort_by(|a, b| a.name.cmp(&b.name));
-
-        // 分页
-        let page = params.page.unwrap_or(1).max(1) as usize;
-        let page_size = params.page_size.unwrap_or(20).max(1) as usize;
-        let start = (page - 1) * page_size;
-        if start < templates.len() {
-            templates =
-                templates[start..std::cmp::min(start + page_size, templates.len())].to_vec();
-        } else {
-            templates = vec![];
-        }
-
-        Ok(templates)
+        Ok(DeviceTemplate::find_all(&self.database, params, "").await?)
     }
 
     /// 根据ID查找模板
     pub async fn find_by_id(&self, id: &str) -> Result<Option<DeviceTemplate>, TemplateError> {
-        let cache = self.cache.read();
-        Ok(cache.iter().find(|t| t.id == id).cloned())
+        Ok(DeviceTemplate::find_by_id(&self.database, id, "").await?)
     }
 
     /// 根据分类查找模板
@@ -91,24 +44,12 @@ impl TemplateRepository {
         &self,
         category: &str,
     ) -> Result<Vec<DeviceTemplate>, TemplateError> {
-        let cache = self.cache.read();
-        Ok(cache.iter().filter(|t| t.category == category && t.is_active == 1).cloned().collect())
+        Ok(DeviceTemplate::find_by_category(&self.database, category, "").await?)
     }
 
     /// 搜索模板
     pub async fn search(&self, keyword: &str) -> Result<Vec<DeviceTemplate>, TemplateError> {
-        let kw = keyword.to_lowercase();
-        let cache = self.cache.read();
-        Ok(cache
-            .iter()
-            .filter(|t| {
-                t.is_active == 1
-                    && (t.name.to_lowercase().contains(&kw)
-                        || t.display_name.to_lowercase().contains(&kw)
-                        || t.tags.to_lowercase().contains(&kw))
-            })
-            .cloned()
-            .collect())
+        Ok(DeviceTemplate::search(&self.database, keyword, "", None).await?)
     }
 
     /// 高级搜索模板
@@ -183,12 +124,10 @@ impl TemplateRepository {
     ) -> Result<DeviceTemplate, TemplateError> {
         info!("创建新设备模板: {}", request.name);
 
-        // 检查模板名称是否已存在
         if DeviceTemplate::exists_by_name(&self.database, &request.name).await? {
             return Err(TemplateError::TemplateNameExists { name: request.name.clone() });
         }
 
-        // 验证分类是否存在
         let categories = TemplateCategory::get_categories(&self.database).await?;
         if !categories.iter().any(|c| c.name == request.category) {
             return Err(TemplateError::CategoryNotFound { category: request.category.clone() });
@@ -208,12 +147,10 @@ impl TemplateRepository {
     ) -> Result<DeviceTemplate, TemplateError> {
         info!("更新设备模板: {}", id);
 
-        // 检查模板是否存在
-        if self.find_by_id(id).await?.is_none() {
+        if DeviceTemplate::find_by_id(&self.database, id, "").await?.is_none() {
             return Err(TemplateError::TemplateNotFound { id: id.to_string() });
         }
 
-        // 如果更新名称，检查新名称是否已存在
         if let Some(new_name) = &request.name {
             let existing = DeviceTemplate::find_by_name(&self.database, new_name, "").await?;
             if let Some(existing_template) = existing
@@ -223,7 +160,6 @@ impl TemplateRepository {
             }
         }
 
-        // 如果更新分类，验证分类是否存在
         if let Some(new_category) = &request.category {
             let categories = TemplateCategory::get_categories(&self.database).await?;
             if !categories.iter().any(|c| c.name == *new_category) {
@@ -241,9 +177,7 @@ impl TemplateRepository {
     pub async fn delete(&self, id: &str) -> Result<bool, TemplateError> {
         info!("删除设备模板: {}", id);
 
-        // 检查模板是否存在
-        let template = self.find_by_id(id).await?;
-        if template.is_none() {
+        if DeviceTemplate::find_by_id(&self.database, id, "").await?.is_none() {
             return Err(TemplateError::TemplateNotFound { id: id.to_string() });
         }
 
@@ -259,76 +193,19 @@ impl TemplateRepository {
         Ok(success)
     }
 
-    /// 加载内置模板（直接从 JSON 文件读取，不经过数据库）
-    pub fn load_builtin_templates(&self) -> Result<Vec<DeviceTemplate>, TemplateError> {
-        info!("加载内置设备模板");
-
-        self.file_manager.ensure_directory_structure()?;
-
-        let requests = self.file_manager.load_builtin_templates()?;
-        let templates: Vec<DeviceTemplate> =
-            requests.iter().map(DeviceTemplate::from_request).collect();
-
-        info!("加载了 {} 个内置设备模板", templates.len());
-        Ok(templates)
-    }
-
     /// 获取模板分类
     pub async fn get_categories(&self) -> Result<Vec<TemplateCategory>, TemplateError> {
-        let cache = self.cache.read();
-        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        let mut categories: Vec<TemplateCategory> = Vec::new();
-        for t in cache.iter().filter(|t| t.is_active == 1) {
-            if !categories.iter().any(|c| c.name == t.category) {
-                let count =
-                    cache.iter().filter(|x| x.category == t.category && x.is_active == 1).count()
-                        as i64;
-                categories.push(TemplateCategory {
-                    name: t.category.clone(),
-                    display_name: t.category.clone(),
-                    description: None,
-                    sort_order: 0,
-                    is_active: 1,
-                    created_at: now.clone(),
-                    template_count: count,
-                });
-            }
-        }
-        Ok(categories)
+        Ok(TemplateCategory::get_categories(&self.database).await?)
     }
 
     /// 统计模板数量
     pub async fn count(&self, params: &TemplateQueryParams) -> Result<i64, TemplateError> {
-        let cache = self.cache.read();
-        let count = cache
-            .iter()
-            .filter(|t| t.is_active == 1)
-            .filter(|t| params.category.as_ref().is_none_or(|c| &t.category == c))
-            .filter(|t| {
-                params.keyword.as_ref().is_none_or(|kw| {
-                    let kw = kw.to_lowercase();
-                    t.name.to_lowercase().contains(&kw)
-                        || t.display_name.to_lowercase().contains(&kw)
-                })
-            })
-            .count();
-        Ok(count as i64)
+        Ok(DeviceTemplate::count(&self.database, params, "").await?)
     }
 
     /// 检查模板名称是否存在
     pub async fn exists_by_name(&self, name: &str) -> Result<bool, TemplateError> {
-        let cache = self.cache.read();
-        Ok(cache.iter().any(|t| t.name == name))
-    }
-
-    /// 获取文件系统路径
-    pub fn get_file_system_path(&self) -> &PathBuf {
-        self.file_manager.get_templates_root()
-    }
-
-    /// 获取文件管理器
-    pub fn get_file_manager(&self) -> &TemplateFileManager {
-        &self.file_manager
+        Ok(DeviceTemplate::exists_by_name(&self.database, name).await?)
     }
 
     /// 获取搜索服务
@@ -720,279 +597,3 @@ pub struct TemplateFilters {
     pub offset: Option<u32>,
 }
 
-// ─── TemplateFileManager ──────────────────────────────────────
-
-use std::{fs, path::Path};
-
-/// 模板文件系统管理器 - 负责模板文件的加载和解析
-#[derive(Debug)]
-pub struct TemplateFileManager {
-    templates_root: PathBuf,
-}
-
-impl TemplateFileManager {
-    /// 创建新的模板文件管理器
-    pub fn new<P: AsRef<Path>>(templates_root: P) -> Self {
-        Self { templates_root: templates_root.as_ref().to_path_buf() }
-    }
-
-    /// 获取内置模板目录路径
-    pub fn get_builtin_path(&self) -> PathBuf {
-        self.templates_root.join("builtin")
-    }
-
-    /// 获取自定义模板目录路径
-    pub fn get_custom_path(&self) -> PathBuf {
-        self.templates_root.join("custom")
-    }
-
-    /// 获取模式定义目录路径
-    pub fn get_schemas_path(&self) -> PathBuf {
-        self.templates_root.join("schemas")
-    }
-
-    /// 确保模板目录结构存在
-    pub fn ensure_directory_structure(&self) -> Result<(), TemplateError> {
-        info!("确保模板目录结构存在");
-
-        let directories = vec![
-            self.get_builtin_path().join("sensors"),
-            self.get_builtin_path().join("cameras"),
-            self.get_builtin_path().join("controllers"),
-            self.get_builtin_path().join("robots"),
-            self.get_custom_path(),
-            self.get_schemas_path(),
-        ];
-
-        for dir in directories {
-            if !dir.exists() {
-                match fs::create_dir_all(&dir) {
-                    Ok(_) => info!("创建目录: {:?}", dir),
-                    Err(e) => warn!("创建目录失败（非致命）: {:?}, 错误: {}", dir, e),
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// 加载内置模板文件
-    pub fn load_builtin_templates(
-        &self,
-    ) -> Result<Vec<CreateDeviceTemplateRequest>, TemplateError> {
-        info!("加载内置模板文件");
-
-        let mut templates = Vec::new();
-        let builtin_path = self.get_builtin_path();
-
-        if !builtin_path.exists() {
-            warn!("内置模板目录不存在: {:?}", builtin_path);
-            return Ok(templates);
-        }
-
-        // 遍历所有子目录
-        let categories = vec!["sensors", "cameras", "controllers", "robots"];
-
-        for category in categories {
-            let category_path = builtin_path.join(category);
-            if !category_path.exists() {
-                continue;
-            }
-
-            match self.load_templates_from_directory(&category_path) {
-                Ok(mut category_templates) => {
-                    info!("从分类 {} 加载了 {} 个模板", category, category_templates.len());
-                    templates.append(&mut category_templates);
-                }
-                Err(e) => {
-                    error!("加载分类 {} 的模板失败: {}", category, e);
-                }
-            }
-        }
-
-        info!("总共加载了 {} 个内置模板", templates.len());
-        Ok(templates)
-    }
-
-    /// 从指定目录加载模板文件
-    fn load_templates_from_directory(
-        &self,
-        dir_path: &Path,
-    ) -> Result<Vec<CreateDeviceTemplateRequest>, TemplateError> {
-        let mut templates = Vec::new();
-
-        let entries = fs::read_dir(dir_path).map_err(|e| {
-            error!("读取目录失败: {:?}, 错误: {}", dir_path, e);
-            TemplateError::FileSystemError { source: e }
-        })?;
-
-        for entry in entries {
-            let entry = entry.map_err(|e| TemplateError::FileSystemError { source: e })?;
-            let path = entry.path();
-
-            // 只处理 .json 文件
-            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
-                match self.load_template_from_file(&path) {
-                    Ok(template) => {
-                        templates.push(template);
-                    }
-                    Err(e) => {
-                        error!("加载模板文件失败: {:?}, 错误: {}", path, e);
-                    }
-                }
-            }
-        }
-
-        Ok(templates)
-    }
-
-    /// 从文件加载单个模板
-    fn load_template_from_file(
-        &self,
-        file_path: &Path,
-    ) -> Result<CreateDeviceTemplateRequest, TemplateError> {
-        let content = fs::read_to_string(file_path).map_err(|e| {
-            error!("读取模板文件失败: {:?}, 错误: {}", file_path, e);
-            TemplateError::FileSystemError { source: e }
-        })?;
-
-        let template: CreateDeviceTemplateRequest =
-            serde_json::from_str(&content).map_err(|e| {
-                error!("解析模板文件JSON失败: {:?}, 错误: {}", file_path, e);
-                TemplateError::JsonFormatError {
-                    message: format!("文件 {:?} JSON格式错误: {}", file_path, e),
-                }
-            })?;
-
-        // 基本验证
-        self.validate_template_basic(&template)?;
-
-        Ok(template)
-    }
-
-    /// 基本模板验证
-    fn validate_template_basic(
-        &self,
-        template: &CreateDeviceTemplateRequest,
-    ) -> Result<(), TemplateError> {
-        if template.name.is_empty() {
-            return Err(TemplateError::ValidationFailed {
-                errors: vec![ValidationError::required_field("name")],
-            });
-        }
-
-        if template.category.is_empty() {
-            return Err(TemplateError::ValidationFailed {
-                errors: vec![ValidationError::required_field("category")],
-            });
-        }
-
-        if template.device_type.is_empty() {
-            return Err(TemplateError::ValidationFailed {
-                errors: vec![ValidationError::required_field("device_type")],
-            });
-        }
-
-        if template.display_name.is_empty() {
-            return Err(TemplateError::ValidationFailed {
-                errors: vec![ValidationError::required_field("display_name")],
-            });
-        }
-
-        Ok(())
-    }
-
-    /// 保存模板到文件
-    pub fn save_template_to_file(
-        &self,
-        template: &CreateDeviceTemplateRequest,
-        file_path: &Path,
-    ) -> Result<(), TemplateError> {
-        info!("保存模板到文件: {:?}", file_path);
-
-        if let Some(parent) = file_path.parent() {
-            fs::create_dir_all(parent).map_err(|e| {
-                error!("创建目录失败: {:?}, 错误: {}", parent, e);
-                TemplateError::FileSystemError { source: e }
-            })?;
-        }
-
-        let content = serde_json::to_string_pretty(template).map_err(|e| {
-            error!("序列化模板失败: {}", e);
-            TemplateError::SerializationError { source: e }
-        })?;
-
-        fs::write(file_path, content).map_err(|e| {
-            error!("写入模板文件失败: {:?}, 错误: {}", file_path, e);
-            TemplateError::FileSystemError { source: e }
-        })?;
-
-        info!("成功保存模板到文件: {:?}", file_path);
-        Ok(())
-    }
-
-    /// 删除模板文件
-    pub fn delete_template_file(&self, file_path: &Path) -> Result<(), TemplateError> {
-        info!("删除模板文件: {:?}", file_path);
-
-        if !file_path.exists() {
-            warn!("模板文件不存在: {:?}", file_path);
-            return Ok(());
-        }
-
-        fs::remove_file(file_path).map_err(|e| {
-            error!("删除模板文件失败: {:?}, 错误: {}", file_path, e);
-            TemplateError::FileSystemError { source: e }
-        })?;
-
-        info!("成功删除模板文件: {:?}", file_path);
-        Ok(())
-    }
-
-    /// 获取模板文件路径
-    pub fn get_template_file_path(&self, category: &str, template_name: &str) -> PathBuf {
-        self.get_builtin_path().join(category).join(format!("{}.json", template_name))
-    }
-
-    /// 获取自定义模板文件路径
-    pub fn get_custom_template_file_path(&self, template_name: &str) -> PathBuf {
-        self.get_custom_path().join(format!("{}.json", template_name))
-    }
-
-    /// 列出指定分类的所有模板文件
-    pub fn list_template_files(&self, category: &str) -> Result<Vec<PathBuf>, TemplateError> {
-        let category_path = self.get_builtin_path().join(category);
-
-        if !category_path.exists() {
-            return Ok(Vec::new());
-        }
-
-        let mut template_files = Vec::new();
-        let entries = fs::read_dir(&category_path).map_err(|e| {
-            error!("读取分类目录失败: {:?}, 错误: {}", category_path, e);
-            TemplateError::FileSystemError { source: e }
-        })?;
-
-        for entry in entries {
-            let entry = entry.map_err(|e| TemplateError::FileSystemError { source: e })?;
-            let path = entry.path();
-
-            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
-                template_files.push(path);
-            }
-        }
-
-        Ok(template_files)
-    }
-
-    /// 检查模板文件是否存在
-    pub fn template_file_exists(&self, category: &str, template_name: &str) -> bool {
-        let file_path = self.get_template_file_path(category, template_name);
-        file_path.exists()
-    }
-
-    /// 获取模板根目录
-    pub fn get_templates_root(&self) -> &PathBuf {
-        &self.templates_root
-    }
-}

@@ -747,7 +747,7 @@ impl Default for MarketplaceConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            api_url: None,
+            api_url: Some("https://marketplace.tinyiothub.com/api/v1".to_string()),
             github_repo: Some("tinyiothub/marketplace".to_string()),
             github_branch: "main".to_string(),
             cache_ttl_hours: 24,
