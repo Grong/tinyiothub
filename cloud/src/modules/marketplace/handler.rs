@@ -257,7 +257,7 @@ async fn install_marketplace_template(
     let repository = Arc::new(TemplateRepository::new(state.database.clone()));
 
     let installer =
-        TemplateInstaller::new(client, repository, std::path::PathBuf::from("templates"));
+        TemplateInstaller::new(client, repository, crate::shared::paths::templates_dir());
 
     match installer.install_from_marketplace(&name, req.version.as_deref()).await {
         Ok(template_id) => {
