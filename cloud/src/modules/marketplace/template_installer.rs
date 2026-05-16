@@ -1,28 +1,23 @@
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
 use super::{
     client::MarketplaceClient,
     error::{MarketplaceError, Result},
 };
-use crate::{modules::template::TemplateRepository, shared::utils::sanitize_filename};
+use crate::modules::template::TemplateRepository;
 
 pub struct TemplateInstaller {
     client: Arc<MarketplaceClient>,
     repository: Arc<TemplateRepository>,
-    templates_dir: PathBuf,
 }
 
 impl TemplateInstaller {
-    pub fn new(
-        client: Arc<MarketplaceClient>,
-        repository: Arc<TemplateRepository>,
-        templates_dir: PathBuf,
-    ) -> Self {
-        Self { client, repository, templates_dir }
+    pub fn new(client: Arc<MarketplaceClient>, repository: Arc<TemplateRepository>) -> Self {
+        Self { client, repository }
     }
 
     /// Install template from marketplace.
-    /// Fetches the template definition directly from the marketplace API.
+    /// Fetches the template definition from the marketplace API and imports directly into the database.
     pub async fn install_from_marketplace(
         &self,
         template_id: &str,
@@ -33,7 +28,7 @@ impl TemplateInstaller {
         // 1. Fetch template from marketplace API
         let template_data = self.client.fetch_template(template_id).await?;
 
-        // 2. Validate required fields before writing to disk
+        // 2. Validate required fields
         self.validate_template_structure(&template_data)?;
 
         // 3. Check version (if specified)
@@ -47,78 +42,19 @@ impl TemplateInstaller {
             }
         }
 
-        // 4. Write template data to temp file
-        let temp_file = self.write_temp_file(&template_data, template_id).await?;
-
-        // 5. Save to templates/custom/ directory
-        let dest_file = self.save_template(&temp_file, template_id).await?;
-
-        // 6. Import to database
-        self.import_template(&dest_file).await?;
-
-        tracing::info!("Successfully installed template: {}", template_id);
-        Ok(template_id.to_string())
-    }
-
-    /// Write template JSON to a temp file.
-    async fn write_temp_file(
-        &self,
-        data: &serde_json::Value,
-        template_id: &str,
-    ) -> Result<PathBuf> {
-        let temp_dir = std::env::temp_dir();
-        let safe_id = sanitize_filename(template_id);
-        let temp_file = temp_dir.join(format!("template_{}.json", safe_id));
-
-        let json_bytes = serde_json::to_vec_pretty(data).map_err(|e| {
-            MarketplaceError::Template(format!("Failed to serialize template: {}", e))
-        })?;
-        tokio::fs::write(&temp_file, &json_bytes).await?;
-
-        Ok(temp_file)
-    }
-
-    /// Save template to target directory.
-    async fn save_template(&self, temp_file: &PathBuf, template_id: &str) -> Result<PathBuf> {
-        let custom_dir = self.templates_dir.join("custom");
-        tokio::fs::create_dir_all(&custom_dir).await?;
-
-        let safe_id = sanitize_filename(template_id);
-        let dest_file = custom_dir.join(format!("{}.json", safe_id));
-
-        // Verify the resolved path is still within the intended directory
-        if !dest_file.starts_with(&custom_dir) {
-            return Err(MarketplaceError::Template(
-                "Invalid template ID: path traversal detected".to_string(),
-            ));
-        }
-
-        tokio::fs::copy(temp_file, &dest_file).await?;
-
-        // Delete temporary file
-        let _ = tokio::fs::remove_file(temp_file).await;
-
-        Ok(dest_file)
-    }
-
-    /// Import template to database.
-    async fn import_template(&self, file_path: &PathBuf) -> Result<()> {
-        let content = tokio::fs::read_to_string(file_path).await?;
-        let template_data: serde_json::Value = serde_json::from_str(&content)?;
-
-        // Convert JSON to CreateDeviceTemplateRequest
+        // 4. Import to database directly
         let request: crate::modules::template::types::CreateDeviceTemplateRequest =
             serde_json::from_value(template_data).map_err(|e| {
                 MarketplaceError::Template(format!("Invalid template format: {}", e))
             })?;
 
-        // Use repository's create method
         self.repository
             .create(&request)
             .await
             .map_err(|e| MarketplaceError::Template(e.to_string()))?;
 
-        Ok(())
+        tracing::info!("Successfully installed template: {}", template_id);
+        Ok(template_id.to_string())
     }
 
     /// Validate that fetched template data has the required structure.
