@@ -13,7 +13,7 @@ pub use config::DatabaseConfig;
 pub use database::Database;
 pub use pool::create_pool;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 pub mod test_helpers {
     /// Run all cloud migrations in chronological order.
     ///

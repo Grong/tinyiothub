@@ -8,9 +8,17 @@ use tinyiothub_core::models::device::CreateDeviceRequest;
 use tokio::sync::{RwLock, mpsc};
 
 use crate::{
-    modules::gateway::{
-        pairing::{PairingCache, PairingEntry},
-        types::*,
+    modules::{
+        event::{
+            entities::Event,
+            repositories::EventRepository,
+            value_objects::{ContentElement, DeviceEventType, EventLevel, EventSource, RichContent},
+            EventError,
+        },
+        gateway::{
+            pairing::{PairingCache, PairingEntry},
+            types::*,
+        },
     },
     shared::persistence::factory::DeviceRepositoryFactory,
 };
@@ -20,6 +28,7 @@ const IP_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
 
 pub struct GatewayService {
     device_repo_factory: Arc<DeviceRepositoryFactory>,
+    event_repository: Arc<dyn EventRepository>,
     cache: Arc<PairingCache>,
     mqtt_tx: mpsc::Sender<MqttPublish>,
     ip_attempts: Arc<RwLock<HashMap<String, Vec<Instant>>>>,
@@ -32,11 +41,13 @@ pub enum MqttPublish {
 impl GatewayService {
     pub fn new(
         device_repo_factory: Arc<DeviceRepositoryFactory>,
+        event_repository: Arc<dyn EventRepository>,
         cache: Arc<PairingCache>,
         mqtt_tx: mpsc::Sender<MqttPublish>,
     ) -> Self {
         let service = Self {
             device_repo_factory,
+            event_repository,
             cache,
             mqtt_tx,
             ip_attempts: Arc::new(RwLock::new(HashMap::new())),
@@ -251,11 +262,12 @@ impl GatewayService {
 
     pub async fn handle_gateway_data(&self, data: GatewayDataMessage) {
         match &data {
-            GatewayDataMessage::Status { gateway_id, .. } => {
-                // TODO(v0.2): Track last_seen timestamp per gateway.
-                // Background task should periodically scan and mark stale
-                // gateways + their sub-devices as offline.
-                tracing::debug!(gateway_id = %gateway_id, "Gateway status received");
+            GatewayDataMessage::Status { gateway_id, workspace_id, .. } => {
+                let repo = self.device_repo_factory.create_for_workspace(workspace_id.clone());
+                if let Err(e) = repo.update_state(gateway_id, 1i32).await {
+                    tracing::warn!(?e, gateway_id = %gateway_id, "Failed to update gateway last_seen");
+                }
+                tracing::debug!(gateway_id = %gateway_id, "Gateway status received, last_seen updated");
             }
             GatewayDataMessage::DeviceDiscover { gateway_id, workspace_id, msg } => {
                 if let Err(e) =
@@ -264,15 +276,63 @@ impl GatewayService {
                     tracing::error!(?e, gateway_id = %gateway_id, "Failed to handle device discover");
                 }
             }
-            GatewayDataMessage::Telemetry { gateway_id, .. } => {
-                // TODO(v0.2): Store telemetry data in time-series storage.
-                tracing::debug!(gateway_id = %gateway_id, "Gateway telemetry received");
+            GatewayDataMessage::Telemetry { gateway_id, workspace_id, msg } => {
+                if let Err(e) = self.store_telemetry_event(gateway_id, workspace_id, msg).await {
+                    tracing::warn!(?e, gateway_id = %gateway_id, "Failed to store gateway telemetry");
+                }
+                tracing::debug!(gateway_id = %gateway_id, "Gateway telemetry stored");
             }
-            GatewayDataMessage::DeviceTelemetry { gateway_id, .. } => {
-                // TODO(v0.2): Route sub-device telemetry to time-series storage.
-                tracing::debug!(gateway_id = %gateway_id, "Device telemetry received");
+            GatewayDataMessage::DeviceTelemetry { gateway_id, workspace_id, msg } => {
+                if let Err(e) =
+                    self.store_device_telemetry_event(gateway_id, workspace_id, msg).await
+                {
+                    tracing::warn!(?e, gateway_id = %gateway_id, device_id = %msg.device_id, "Failed to store device telemetry");
+                }
+                tracing::debug!(gateway_id = %gateway_id, device_id = %msg.device_id, "Device telemetry stored");
             }
         }
+    }
+
+    async fn store_telemetry_event(
+        &self,
+        gateway_id: &str,
+        workspace_id: &str,
+        msg: &TelemetryMessage,
+    ) -> Result<(), EventError> {
+        let content = vec![
+            ContentElement::plain_text(format!("timestamp: {}", msg.timestamp)),
+            ContentElement::code(msg.data.to_string(), Some("json".to_string())),
+        ];
+        let event = Event::new_device_event(
+            DeviceEventType::PropertyChange,
+            EventLevel::Debug,
+            EventSource::device(gateway_id.to_string(), Some(workspace_id.to_string())),
+            RichContent::new(format!("Gateway {} telemetry", gateway_id), content),
+        )
+        .map_err(|e| EventError::Validation { message: e.to_string() })?;
+        self.event_repository.save(&event).await?;
+        Ok(())
+    }
+
+    async fn store_device_telemetry_event(
+        &self,
+        _gateway_id: &str,
+        workspace_id: &str,
+        msg: &DeviceTelemetryMessage,
+    ) -> Result<(), EventError> {
+        let content = vec![
+            ContentElement::plain_text(format!("timestamp: {}", msg.timestamp)),
+            ContentElement::code(msg.data.to_string(), Some("json".to_string())),
+        ];
+        let event = Event::new_device_event(
+            DeviceEventType::PropertyChange,
+            EventLevel::Debug,
+            EventSource::device(msg.device_id.clone(), Some(workspace_id.to_string())),
+            RichContent::new(format!("Device {} telemetry", msg.device_id), content),
+        )
+        .map_err(|e| EventError::Validation { message: e.to_string() })?;
+        self.event_repository.save(&event).await?;
+        Ok(())
     }
 }
 
@@ -308,8 +368,12 @@ mod tests {
         let (tx, rx) = mpsc::channel(100);
         let cache = Arc::new(PairingCache::new(1000));
         let database = Arc::new(crate::shared::persistence::Database::new(pool));
-        let factory = Arc::new(DeviceRepositoryFactory::new(database));
-        let service = GatewayService::new(factory, cache, tx);
+        let factory = Arc::new(DeviceRepositoryFactory::new(database.clone()));
+        let event_repo: Arc<dyn EventRepository> =
+            Arc::new(crate::shared::persistence::repositories::SqliteEventRepository::new(
+                database.as_ref().clone(),
+            ));
+        let service = GatewayService::new(factory, event_repo, cache, tx);
         (service, rx)
     }
 
@@ -539,8 +603,12 @@ mod tests {
         let tiny_cache = Arc::new(PairingCache::new(1));
         let (tx, _rx2) = mpsc::channel(1);
         let database = Arc::new(crate::shared::persistence::Database::new(pool));
-        let factory = Arc::new(DeviceRepositoryFactory::new(database));
-        let svc2 = GatewayService::new(factory, tiny_cache.clone(), tx);
+        let factory = Arc::new(DeviceRepositoryFactory::new(database.clone()));
+        let event_repo: Arc<dyn EventRepository> =
+            Arc::new(crate::shared::persistence::repositories::SqliteEventRepository::new(
+                database.as_ref().clone(),
+            ));
+        let svc2 = GatewayService::new(factory, event_repo, tiny_cache.clone(), tx);
 
         // Fill the cache
         tiny_cache.insert("111111".into(), make_announce("111111")).await;
@@ -586,8 +654,12 @@ mod tests {
 
         let cache = Arc::new(PairingCache::new(1000));
         let database = Arc::new(crate::shared::persistence::Database::new(pool.clone()));
-        let factory = Arc::new(DeviceRepositoryFactory::new(database));
-        let svc = GatewayService::new(factory, cache.clone(), tx);
+        let factory = Arc::new(DeviceRepositoryFactory::new(database.clone()));
+        let event_repo: Arc<dyn EventRepository> =
+            Arc::new(crate::shared::persistence::repositories::SqliteEventRepository::new(
+                database.as_ref().clone(),
+            ));
+        let svc = GatewayService::new(factory, event_repo, cache.clone(), tx);
 
         let code = "123456";
         cache.insert(code.into(), make_announce(code)).await;

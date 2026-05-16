@@ -152,6 +152,7 @@ zeroclaw-macros = { path = "../vendor/zeroclaw-macros" }
 default = []
 harmonyos = []
 serial = ["serialport"]
+test-utils = []
 
 [dev-dependencies]
 proptest = { workspace = true }

@@ -8,6 +8,7 @@ members = [
     "cli",
     "plugins/*",
     "sdks/*",
+    "tests/integration",
 ]
 exclude = [
     # Has its own [workspace] — cannot nest

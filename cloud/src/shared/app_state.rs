@@ -380,6 +380,7 @@ impl AppState {
         let pairing_cache = Arc::new(crate::modules::gateway::pairing::PairingCache::new(10000));
         let gateway_service = Arc::new(crate::modules::gateway::service::GatewayService::new(
             device_repository_factory.clone(),
+            event_repository.clone(),
             pairing_cache,
             mqtt_tx,
         ));
