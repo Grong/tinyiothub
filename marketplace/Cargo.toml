@@ -31,3 +31,10 @@ futures = { workspace = true }
 sled = { workspace = true }
 
 tinyiothub-web = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+tempfile = { workspace = true }
+tower = { workspace = true }
+serde_json = { workspace = true }
+http-body-util = "0.1"

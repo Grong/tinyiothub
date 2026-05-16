@@ -1,11 +1,6 @@
-use axum::Router;
 use std::sync::Arc;
-use tinyiothub_marketplace::{AppState, cache::SledCache, handler, service::SyncService};
+use tinyiothub_marketplace::{build_app, AppState, cache::SledCache, service::SyncService};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
-fn build_app(state: AppState) -> Router {
-    Router::new().merge(handler::routes()).with_state(state)
-}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
