@@ -1,0 +1,34 @@
+{
+  "name": "air_quality_sensor",
+  "display_name": { "zh": "空气质量传感器", "en": "Air Quality Sensor" },
+  "description": {
+    "zh": "多合一空气质量传感器，监测PM2.5、CO2、温度、湿度，适用于智慧楼宇",
+    "en": "Multi-in-one air quality sensor, monitors PM2.5, CO2, temperature, humidity, for smart buildings"
+  },
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "environmental",
+  "manufacturer": "TinyIoT",
+  "device_type": "sensor",
+  "protocol_type": "modbus",
+  "driver_name": "modbus_rtu",
+  "tags": ["air", "quality", "pm25", "co2", "indoor"],
+  "device_info": {
+    "default_name_pattern": "air_quality_{index}",
+    "default_display_name_pattern": { "zh": "空气质量传感器 {index}", "en": "Air Quality Sensor {index}" },
+    "required_fields": ["name", "address"]
+  },
+  "properties": [
+    {"name": "pm25", "display_name": { "zh": "PM2.5", "en": "PM2.5" }, "description": { "zh": "细颗粒物浓度", "en": "PM2.5 concentration" }, "data_type": "number", "unit": "μg/m³", "min_value": 0.0, "max_value": 1000.0, "default_value": "35.0", "is_read_only": true, "is_required": true},
+    {"name": "pm10", "display_name": { "zh": "PM10", "en": "PM10" }, "description": { "zh": "可吸入颗粒物浓度", "en": "PM10 concentration" }, "data_type": "number", "unit": "μg/m³", "min_value": 0.0, "max_value": 1000.0, "default_value": "50.0", "is_read_only": true, "is_required": false},
+    {"name": "co2", "display_name": { "zh": "CO2浓度", "en": "CO2 Level" }, "description": { "zh": "二氧化碳浓度", "en": "Carbon dioxide concentration" }, "data_type": "number", "unit": "ppm", "min_value": 400.0, "max_value": 5000.0, "default_value": "400.0", "is_read_only": true, "is_required": true},
+    {"name": "temperature", "display_name": { "zh": "温度", "en": "Temperature" }, "description": { "zh": "环境温度", "en": "Ambient temperature" }, "data_type": "number", "unit": "°C", "min_value": -20.0, "max_value": 60.0, "default_value": "25.0", "is_read_only": true, "is_required": true},
+    {"name": "humidity", "display_name": { "zh": "湿度", "en": "Humidity" }, "description": { "zh": "相对湿度", "en": "Relative humidity" }, "data_type": "number", "unit": "%RH", "min_value": 0.0, "max_value": 100.0, "default_value": "50.0", "is_read_only": true, "is_required": true},
+    {"name": "tvoc", "display_name": { "zh": "TVOC", "en": "TVOC" }, "description": { "zh": "总挥发性有机化合物", "en": "Total volatile organic compounds" }, "data_type": "number", "unit": "ppb", "min_value": 0.0, "max_value": 50000.0, "default_value": "220.0", "is_read_only": true, "is_required": false},
+    {"name": "aqi", "display_name": { "zh": "AQI", "en": "AQI" }, "description": { "zh": "空气质量指数", "en": "Air quality index" }, "data_type": "number", "unit": "", "min_value": 0.0, "max_value": 500.0, "default_value": "50.0", "is_read_only": true, "is_required": true}
+  ],
+  "commands": [
+    {"name": "read_all", "display_name": { "zh": "读取全部", "en": "Read All" }, "description": { "zh": "读取所有空气质量数据", "en": "Read all air quality data" }, "parameters": "{}", "is_required": true},
+    {"name": "calibrate", "display_name": { "zh": "校准", "en": "Calibrate" }, "description": { "zh": "执行传感器校准", "en": "Execute sensor calibration" }, "parameters": "{\"sensor\": \"co2\"}", "parameter_schema": "{\"type\": \"object\", \"properties\": {\"sensor\": {\"type\": \"string\", \"enum\": [\"pm25\", \"co2\", \"tvoc\"]}}, \"required\": [\"sensor\"]}", "is_required": false}
+  ]
+}

@@ -1,0 +1,148 @@
+{
+  "name": "humidity_sensor",
+  "display_name": {
+    "zh": "湿度传感器",
+    "en": "Humidity Sensor"
+  },
+  "description": {
+    "zh": "标准湿度传感器设备模板，支持湿度监测和报警配置",
+    "en": "Standard humidity sensor device template with humidity monitoring and alarm configuration"
+  },
+  "version": "1.0.0",
+  "author": "System",
+  "category": "sensors",
+  "manufacturer": null,
+  "device_type": "sensor",
+  "protocol_type": "modbus",
+  "driver_name": "modbus_rtu",
+  "tags": ["sensor", "humidity", "monitoring"],
+  "device_info": {
+    "default_name_pattern": "humidity_sensor_{index}",
+    "default_display_name_pattern": {
+      "zh": "湿度传感器 {index}",
+      "en": "Humidity Sensor {index}"
+    },
+    "default_description": {
+      "zh": "湿度监测传感器",
+      "en": "Humidity monitoring sensor"
+    },
+    "required_fields": ["name", "address"]
+  },
+  "properties": [
+    {
+      "name": "humidity",
+      "display_name": {
+        "zh": "湿度",
+        "en": "Humidity"
+      },
+      "description": {
+        "zh": "当前环境湿度",
+        "en": "Current ambient humidity"
+      },
+      "data_type": "number",
+      "unit": "%RH",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "default_value": "50.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "alarm_high_humidity",
+      "display_name": {
+        "zh": "高湿度报警阈值",
+        "en": "High Humidity Alarm Threshold"
+      },
+      "description": {
+        "zh": "湿度超过此值时触发报警",
+        "en": "Trigger alarm when humidity exceeds this value"
+      },
+      "data_type": "number",
+      "unit": "%RH",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "default_value": "85.0",
+      "is_read_only": false,
+      "is_required": false
+    },
+    {
+      "name": "alarm_low_humidity",
+      "display_name": {
+        "zh": "低湿度报警阈值",
+        "en": "Low Humidity Alarm Threshold"
+      },
+      "description": {
+        "zh": "湿度低于此值时触发报警",
+        "en": "Trigger alarm when humidity below this value"
+      },
+      "data_type": "number",
+      "unit": "%RH",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "default_value": "20.0",
+      "is_read_only": false,
+      "is_required": false
+    },
+    {
+      "name": "sampling_interval",
+      "display_name": {
+        "zh": "采样间隔",
+        "en": "Sampling Interval"
+      },
+      "description": {
+        "zh": "数据采样时间间隔",
+        "en": "Data sampling time interval"
+      },
+      "data_type": "number",
+      "unit": "秒",
+      "min_value": 1.0,
+      "max_value": 3600.0,
+      "default_value": "60.0",
+      "is_read_only": false,
+      "is_required": false
+    }
+  ],
+  "commands": [
+    {
+      "name": "read_humidity",
+      "display_name": {
+        "zh": "读取湿度",
+        "en": "Read Humidity"
+      },
+      "description": {
+        "zh": "读取当前湿度值",
+        "en": "Read current humidity value"
+      },
+      "parameters": "{}",
+      "is_required": true
+    },
+    {
+      "name": "set_alarm_thresholds",
+      "display_name": {
+        "zh": "设置报警阈值",
+        "en": "Set Alarm Thresholds"
+      },
+      "description": {
+        "zh": "设置高低湿度报警阈值",
+        "en": "Set high and low humidity alarm thresholds"
+      },
+      "parameters": "{\"high_humidity\": 85, \"low_humidity\": 20}",
+      "parameter_schema": "{\"type\": \"object\", \"properties\": {\"high_humidity\": {\"type\": \"number\", \"minimum\": 0, \"maximum\": 100}, \"low_humidity\": {\"type\": \"number\", \"minimum\": 0, \"maximum\": 100}}, \"required\": [\"high_humidity\", \"low_humidity\"]}",
+      "is_required": false
+    },
+    {
+      "name": "calibrate_sensor",
+      "display_name": {
+        "zh": "校准传感器",
+        "en": "Calibrate Sensor"
+      },
+      "description": {
+        "zh": "执行传感器校准程序",
+        "en": "Execute sensor calibration procedure"
+      },
+      "parameters": "{\"reference_humidity\": 50}",
+      "parameter_schema": "{\"type\": \"object\", \"properties\": {\"reference_humidity\": {\"type\": \"number\", \"minimum\": 0, \"maximum\": 100}}, \"required\": [\"reference_humidity\"]}",
+      "is_required": false
+    }
+  ]
+}

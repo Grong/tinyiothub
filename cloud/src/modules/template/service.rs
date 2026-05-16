@@ -1019,15 +1019,7 @@ impl TemplateService {
 
     /// 初始化模板系统
     pub async fn initialize(&self) -> Result<(), TemplateError> {
-        info!("初始化模板系统");
-
-        // 确保目录结构存在
-        self.repository.get_file_manager().ensure_directory_structure()?;
-
-        // 加载内置模板
-        let _templates = self.repository.load_builtin_templates()?;
-
-        info!("模板系统初始化完成");
+        info!("模板系统初始化完成（内置模板已通过 migration seed 写入 DB）");
         Ok(())
     }
 

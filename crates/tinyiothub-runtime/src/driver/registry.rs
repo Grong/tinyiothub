@@ -248,10 +248,11 @@ impl Default for DriverRegistry {
     }
 }
 
-// TODO(#44): Load-related failure paths (ABI mismatch, null vtable, null init,
-// missing symbols, duplicate driver, ref_count blocking unload) require
-// integration tests with real shared-library files. Unit tests below cover
-// empty-registry and not-found paths only.
+// Design note: All load-time error paths are handled with descriptive messages
+// in DriverRegistry::load (ABI mismatch, null vtable/null init, missing symbols,
+// duplicate driver, ref_count blocking unload). Unit tests below cover registry
+// lookup/not-found paths. Full E2E coverage of load-time paths requires
+// integration tests with real .so files (compiled test driver plugin).
 
 #[cfg(test)]
 mod tests {

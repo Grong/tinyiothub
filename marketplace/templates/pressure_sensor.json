@@ -1,0 +1,113 @@
+{
+  "name": "pressure_sensor",
+  "display_name": {
+    "zh": "压力传感器",
+    "en": "Pressure Sensor"
+  },
+  "description": {
+    "zh": "工业压力传感器，支持表压/绝压测量，量程0~10MPa，输出4-20mA或RS485 Modbus",
+    "en": "Industrial pressure sensor with gauge/absolute pressure measurement, range 0~10MPa, output 4-20mA or RS485 Modbus"
+  },
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "sensors",
+  "manufacturer": "TinyIoT",
+  "device_type": "sensor",
+  "protocol_type": "modbus",
+  "driver_name": "modbus_rtu",
+  "tags": ["pressure", "sensor", "industrial", "hydraulic"],
+  "device_info": {
+    "default_name_pattern": "pressure_sensor_{index}",
+    "default_display_name_pattern": {
+      "zh": "压力传感器 {index}",
+      "en": "Pressure Sensor {index}"
+    },
+    "required_fields": ["name", "address", "range_max"]
+  },
+  "properties": [
+    {
+      "name": "pressure",
+      "display_name": { "zh": "压力值", "en": "Pressure" },
+      "description": { "zh": "当前测量压力", "en": "Current measured pressure" },
+      "data_type": "number",
+      "unit": "MPa",
+      "min_value": 0.0,
+      "max_value": 10.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "pressure_psi",
+      "display_name": { "zh": "压力(psi)", "en": "Pressure (psi)" },
+      "description": { "zh": "英制压力单位", "en": "Pressure in PSI" },
+      "data_type": "number",
+      "unit": "psi",
+      "min_value": 0.0,
+      "max_value": 1450.38,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": false
+    },
+    {
+      "name": "pressure_bar",
+      "display_name": { "zh": "压力(bar)", "en": "Pressure (bar)" },
+      "description": { "zh": "巴(bar)为单位", "en": "Pressure in bar" },
+      "data_type": "number",
+      "unit": "bar",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": false
+    },
+    {
+      "name": "alarm_high_pressure",
+      "display_name": { "zh": "高压力报警", "en": "High Pressure Alarm" },
+      "description": { "zh": "压力超过此值时报警", "en": "Alarm when pressure exceeds this value" },
+      "data_type": "number",
+      "unit": "MPa",
+      "min_value": 0.0,
+      "max_value": 10.0,
+      "default_value": "8.0",
+      "is_read_only": false,
+      "is_required": false
+    },
+    {
+      "name": "alarm_low_pressure",
+      "display_name": { "zh": "低压力报警", "en": "Low Pressure Alarm" },
+      "description": { "zh": "压力低于此值时报警", "en": "Alarm when pressure falls below this value" },
+      "data_type": "number",
+      "unit": "MPa",
+      "min_value": 0.0,
+      "max_value": 10.0,
+      "default_value": "0.5",
+      "is_read_only": false,
+      "is_required": false
+    }
+  ],
+  "commands": [
+    {
+      "name": "read_pressure",
+      "display_name": { "zh": "读取压力", "en": "Read Pressure" },
+      "description": { "zh": "读取当前压力值", "en": "Read current pressure value" },
+      "parameters": "{}",
+      "is_required": true
+    },
+    {
+      "name": "zero_calibration",
+      "display_name": { "zh": "零点校准", "en": "Zero Calibration" },
+      "description": { "zh": "执行零点校准", "en": "Execute zero point calibration" },
+      "parameters": "{}",
+      "is_required": false
+    },
+    {
+      "name": "set_range",
+      "display_name": { "zh": "设置量程", "en": "Set Range" },
+      "description": { "zh": "设置压力传感器量程", "en": "Set pressure sensor range" },
+      "parameters": "{\"range_max\": 10}",
+      "parameter_schema": "{\"type\": \"object\", \"properties\": {\"range_max\": {\"type\": \"number\", \"minimum\": 0.1, \"maximum\": 100}}, \"required\": [\"range_max\"]}",
+      "is_required": false
+    }
+  ]
+}

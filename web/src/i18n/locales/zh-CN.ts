@@ -841,5 +841,6 @@ export const zh_CN: TranslationMap = {
     success: "网关配对成功！",
     pairFailed: "配对失败",
     close: "关闭",
+    addGateway: "添加网关",
   },
 };

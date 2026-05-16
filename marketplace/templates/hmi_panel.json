@@ -1,0 +1,183 @@
+{
+  "name": "smart_valve_actuator",
+  "display_name": {
+    "zh": "智能阀门执行器",
+    "en": "Smart Valve Actuator"
+  },
+  "description": {
+    "zh": "电动阀门执行器，支持开关控制和PID调节，Modbus RTU通讯，可用于工业流体控制",
+    "en": "Electric valve actuator with on/off control and PID regulation, Modbus RTU, for industrial fluid control"
+  },
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "actuators",
+  "manufacturer": "TinyIoT",
+  "device_type": "actuator",
+  "protocol_type": "modbus",
+  "driver_name": "modbus_rtu",
+  "tags": ["valve", "actuator", "motor", "pid", "control"],
+  "device_info": {
+    "default_name_pattern": "valve_actuator_{index}",
+    "default_display_name_pattern": {
+      "zh": "阀门执行器 {index}",
+      "en": "Valve Actuator {index}"
+    },
+    "required_fields": ["name", "address", "valve_size"]
+  },
+  "properties": [
+    {
+      "name": "valve_position",
+      "display_name": { "zh": "阀门开度", "en": "Valve Position" },
+      "description": { "zh": "当前阀门开度", "en": "Current valve opening position" },
+      "data_type": "number",
+      "unit": "%",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "target_position",
+      "display_name": { "zh": "目标开度", "en": "Target Position" },
+      "description": { "zh": "设定阀门目标开度", "en": "Set target valve position" },
+      "data_type": "number",
+      "unit": "%",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "default_value": "50.0",
+      "is_read_only": false,
+      "is_required": true
+    },
+    {
+      "name": "valve_status",
+      "display_name": { "zh": "阀门状态", "en": "Valve Status" },
+      "description": { "zh": "0=关闭 1=开启 2=正在开关 3=故障", "en": "0=closed 1=open 2=moving 3=fault" },
+      "data_type": "number",
+      "unit": "",
+      "min_value": 0.0,
+      "max_value": 3.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "control_mode",
+      "display_name": { "zh": "控制模式", "en": "Control Mode" },
+      "description": { "zh": "0=手动 1=PID自动 2=位置模式", "en": "0=manual 1=PID auto 2=position mode" },
+      "data_type": "number",
+      "unit": "",
+      "min_value": 0.0,
+      "max_value": 2.0,
+      "default_value": "2.0",
+      "is_read_only": false,
+      "is_required": false
+    },
+    {
+      "name": "pid_setpoint",
+      "display_name": { "zh": "PID设定值", "en": "PID Setpoint" },
+      "description": { "zh": "PID调节的目标设定值", "en": "Target setpoint for PID control" },
+      "data_type": "number",
+      "unit": "",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "default_value": "50.0",
+      "is_read_only": false,
+      "is_required": false
+    },
+    {
+      "name": "pid_kp",
+      "display_name": { "zh": "PID_P", "en": "PID Proportional" },
+      "description": { "zh": "PID比例系数", "en": "PID proportional gain" },
+      "data_type": "number",
+      "unit": "",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "default_value": "1.0",
+      "is_read_only": false,
+      "is_required": false
+    },
+    {
+      "name": "pid_ki",
+      "display_name": { "zh": "PID_I", "en": "PID Integral" },
+      "description": { "zh": "PID积分系数", "en": "PID integral gain" },
+      "data_type": "number",
+      "unit": "",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "default_value": "0.0",
+      "is_read_only": false,
+      "is_required": false
+    },
+    {
+      "name": "pid_kd",
+      "display_name": { "zh": "PID_D", "en": "PID Derivative" },
+      "description": { "zh": "PID微分系数", "en": "PID derivative gain" },
+      "data_type": "number",
+      "unit": "",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "default_value": "0.0",
+      "is_read_only": false,
+      "is_required": false
+    },
+    {
+      "name": "alarm_fault",
+      "display_name": { "zh": "故障报警", "en": "Fault Alarm" },
+      "description": { "zh": "故障状态位", "en": "Fault status bits" },
+      "data_type": "number",
+      "unit": "",
+      "min_value": 0.0,
+      "max_value": 255.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": false
+    }
+  ],
+  "commands": [
+    {
+      "name": "open_valve",
+      "display_name": { "zh": "开阀", "en": "Open Valve" },
+      "description": { "zh": "打开阀门到100%", "en": "Open valve to 100%" },
+      "parameters": "{}",
+      "is_required": true
+    },
+    {
+      "name": "close_valve",
+      "display_name": { "zh": "关阀", "en": "Close Valve" },
+      "description": { "zh": "关闭阀门到0%", "en": "Close valve to 0%" },
+      "parameters": "{}",
+      "is_required": true
+    },
+    {
+      "name": "stop_valve",
+      "display_name": { "zh": "停止", "en": "Stop Valve" },
+      "description": { "zh": "停止阀门动作", "en": "Stop valve movement" },
+      "parameters": "{}",
+      "is_required": false
+    },
+    {
+      "name": "set_position",
+      "display_name": { "zh": "设置开度", "en": "Set Position" },
+      "description": { "zh": "设置目标开度", "en": "Set target valve position" },
+      "parameters": "{\"position\": 50}",
+      "parameter_schema": "{\"type\": \"object\", \"properties\": {\"position\": {\"type\": \"number\", \"minimum\": 0, \"maximum\": 100}}, \"required\": [\"position\"]}",
+      "is_required": true
+    },
+    {
+      "name": "set_pid_parameters",
+      "display_name": { "zh": "设置PID", "en": "Set PID Parameters" },
+      "description": { "zh": "设置PID参数", "en": "Set PID control parameters" },
+      "parameters": "{\"kp\": 1.0, \"ki\": 0.1, \"kd\": 0.0}",
+      "parameter_schema": "{\"type\": \"object\", \"properties\": {\"kp\": {\"type\": \"number\", \"minimum\": 0, \"maximum\": 100}, \"ki\": {\"type\": \"number\", \"minimum\": 0, \"maximum\": 100}, \"kd\": {\"type\": \"number\", \"minimum\": 0, \"maximum\": 100}}, \"required\": [\"kp\"]}",
+      "is_required": false
+    },
+    {
+      "name": "reset_fault",
+      "display_name": { "zh": "复位故障", "en": "Reset Fault" },
+      "description": { "zh": "清除故障状态", "en": "Clear fault status" },
+      "parameters": "{}",
+      "is_required": false
+    }
+  ]
+}

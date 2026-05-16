@@ -1,11 +1,6 @@
-use axum::Router;
 use std::sync::Arc;
-use tinyiothub_marketplace::{AppState, cache::SledCache, handler, service::SyncService};
+use tinyiothub_marketplace::{build_app, AppState, cache::SledCache, service::SyncService};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
-fn build_app(state: AppState) -> Router {
-    Router::new().merge(handler::routes()).with_state(state)
-}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -16,7 +11,7 @@ async fn main() -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let data_path = std::env::var("LOCAL_DATA_PATH").unwrap_or_else(|_| "data".into());
+    let data_path = std::env::var("LOCAL_DATA_PATH").unwrap_or_else(|_| "marketplace".into());
 
     let cache = Arc::new(SledCache::new(
         std::env::var("SLED_PATH").unwrap_or_else(|_| "/tmp/marketplace.sled".into()),

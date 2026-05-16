@@ -135,16 +135,13 @@ services:
     environment:
       - RUST_LOG=info
       - TZ=Asia/Shanghai
-      - TINYIOTHUB__PROJECT_ROOT=/app
-      - TINYIOTHUB__DATABASE__URL=/app/data/tinyiothub.db
       - PORT=3003
+      - LOCAL_DATA_PATH=/app/seed
       - SLED_PATH=/app/data/marketplace.sled
 
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
-      - ./templates:/app/templates
-      - ./config/app_settings.toml:/app/app_settings.toml:ro
 
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3003/health"]

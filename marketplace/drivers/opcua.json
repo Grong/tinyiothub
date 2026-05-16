@@ -1,0 +1,34 @@
+{
+  "id": "opcua",
+  "name": "OPC UA 驱动",
+  "version": "3.0.2",
+  "protocol": "opcua",
+  "description": "OPC UA 协议驱动，支持 OPC UA 客户端功能，用于工业自动化数据采集",
+  "tags": ["opcua", "opc", "industrial", "automation"],
+  "author_name": "Industrial Team",
+  "author_email": "industrial@tinyiothub.com",
+  "icon": "https://cdn.tinyiothub.com/drivers/opcua.png",
+  "downloads": 1234,
+  "rating": 4.8,
+  "reviews": 42,
+  "license": "MIT",
+  "homepage": "https://github.com/tinyiothub/drivers/opcua",
+  "documentation": "https://docs.tinyiothub.com/drivers/opcua",
+  "platforms": {
+    "windows-x64": {
+      "file_url": "https://github.com/tinyiothub/marketplace/releases/download/opcua-3.0.2/opcua_driver-3.0.2-win-x64.dll",
+      "checksum": "sha256:test-opcua-windows",
+      "size": 3145728
+    },
+    "linux-x64": {
+      "file_url": "https://github.com/tinyiothub/marketplace/releases/download/opcua-3.0.2/opcua_driver-3.0.2-linux-x64.so",
+      "checksum": "sha256:test-opcua-linux",
+      "size": 2789376
+    }
+  },
+  "requirements": {
+    "min_version": "1.0.0"
+  },
+  "created_at": "2023-09-15T10:00:00Z",
+  "updated_at": "2024-12-05T14:30:00Z"
+}

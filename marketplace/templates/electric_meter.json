@@ -1,0 +1,204 @@
+{
+  "name": "multi_function_power_meter",
+  "display_name": {
+    "zh": "多功能电力仪表",
+    "en": "Multi-Function Power Meter"
+  },
+  "description": {
+    "zh": "三相多功能电力仪表，测量电压、电流、功率、能耗、功率因数等，支持RS485 Modbus RTU/ASCII",
+    "en": "Three-phase multi-function power meter, measures voltage, current, power, energy, power factor, RS485 Modbus RTU/ASCII"
+  },
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "meters",
+  "manufacturer": "TinyIoT",
+  "device_type": "meter",
+  "protocol_type": "modbus",
+  "driver_name": "modbus_rtu",
+  "tags": ["power", "meter", "energy", "3phase", "ac"],
+  "device_info": {
+    "default_name_pattern": "power_meter_{index}",
+    "default_display_name_pattern": {
+      "zh": "电力仪表 {index}",
+      "en": "Power Meter {index}"
+    },
+    "required_fields": ["name", "address", "voltage_rating"]
+  },
+  "properties": [
+    {
+      "name": "voltage_a",
+      "display_name": { "zh": "A相电压", "en": "Voltage Phase A" },
+      "description": { "zh": "A相电压值", "en": "Phase A voltage" },
+      "data_type": "number",
+      "unit": "V",
+      "min_value": 0.0,
+      "max_value": 500.0,
+      "default_value": "220.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "voltage_b",
+      "display_name": { "zh": "B相电压", "en": "Voltage Phase B" },
+      "description": { "zh": "B相电压值", "en": "Phase B voltage" },
+      "data_type": "number",
+      "unit": "V",
+      "min_value": 0.0,
+      "max_value": 500.0,
+      "default_value": "220.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "voltage_c",
+      "display_name": { "zh": "C相电压", "en": "Voltage Phase C" },
+      "description": { "zh": "C相电压值", "en": "Phase C voltage" },
+      "data_type": "number",
+      "unit": "V",
+      "min_value": 0.0,
+      "max_value": 500.0,
+      "default_value": "220.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "current_a",
+      "display_name": { "zh": "A相电流", "en": "Current Phase A" },
+      "description": { "zh": "A相电流值", "en": "Phase A current" },
+      "data_type": "number",
+      "unit": "A",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "current_b",
+      "display_name": { "zh": "B相电流", "en": "Current Phase B" },
+      "description": { "zh": "B相电流值", "en": "Phase B current" },
+      "data_type": "number",
+      "unit": "A",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "current_c",
+      "display_name": { "zh": "C相电流", "en": "Current Phase C" },
+      "description": { "zh": "C相电流值", "en": "Phase C current" },
+      "data_type": "number",
+      "unit": "A",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "active_power",
+      "display_name": { "zh": "有功功率", "en": "Active Power" },
+      "description": { "zh": "总有有功功率", "en": "Total active power" },
+      "data_type": "number",
+      "unit": "kW",
+      "min_value": 0.0,
+      "max_value": 1000.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "reactive_power",
+      "display_name": { "zh": "无功功率", "en": "Reactive Power" },
+      "description": { "zh": "总无功功率", "en": "Total reactive power" },
+      "data_type": "number",
+      "unit": "kVAR",
+      "min_value": 0.0,
+      "max_value": 1000.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": false
+    },
+    {
+      "name": "power_factor",
+      "display_name": { "zh": "功率因数", "en": "Power Factor" },
+      "description": { "zh": "总功率因数", "en": "Total power factor" },
+      "data_type": "number",
+      "unit": "",
+      "min_value": -1.0,
+      "max_value": 1.0,
+      "default_value": "1.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "frequency",
+      "display_name": { "zh": "频率", "en": "Frequency" },
+      "description": { "zh": "电网频率", "en": "Grid frequency" },
+      "data_type": "number",
+      "unit": "Hz",
+      "min_value": 45.0,
+      "max_value": 65.0,
+      "default_value": "50.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "active_energy",
+      "display_name": { "zh": "有功电能", "en": "Active Energy" },
+      "description": { "zh": "累计有功电能", "en": "Cumulative active energy" },
+      "data_type": "number",
+      "unit": "kWh",
+      "min_value": 0.0,
+      "max_value": 999999999.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "reactive_energy",
+      "display_name": { "zh": "无功电能", "en": "Reactive Energy" },
+      "description": { "zh": "累计无功电能", "en": "Cumulative reactive energy" },
+      "data_type": "number",
+      "unit": "kVARh",
+      "min_value": 0.0,
+      "max_value": 999999999.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": false
+    }
+  ],
+  "commands": [
+    {
+      "name": "read_all",
+      "display_name": { "zh": "读取全部数据", "en": "Read All" },
+      "description": { "zh": "读取所有测量数据", "en": "Read all measurement data" },
+      "parameters": "{}",
+      "is_required": true
+    },
+    {
+      "name": "read_basic",
+      "display_name": { "zh": "读取基本数据", "en": "Read Basic" },
+      "description": { "zh": "读取电压电流功率", "en": "Read voltage, current and power" },
+      "parameters": "{}",
+      "is_required": true
+    },
+    {
+      "name": "reset_energy",
+      "display_name": { "zh": "复位电能", "en": "Reset Energy" },
+      "description": { "zh": "清除累计电能值", "en": "Clear cumulative energy values" },
+      "parameters": "{}",
+      "is_required": false
+    },
+    {
+      "name": "set_ct_ratio",
+      "display_name": { "zh": "设置CT变比", "en": "Set CT Ratio" },
+      "description": { "zh": "设置电流互感器变比", "en": "Set current transformer ratio" },
+      "parameters": "{\"primary\": 100, \"secondary\": 5}",
+      "parameter_schema": "{\"type\": \"object\", \"properties\": {\"primary\": {\"type\": \"number\", \"minimum\": 1, \"maximum\": 10000}, \"secondary\": {\"type\": \"number\", \"minimum\": 1, \"maximum\": 10}}, \"required\": [\"primary\", \"secondary\"]}",
+      "is_required": false
+    }
+  ]
+}

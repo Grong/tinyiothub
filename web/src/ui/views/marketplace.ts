@@ -2,6 +2,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { marketplaceApi, type MarketplaceTemplate, type MarketplaceDriver } from "../../api/marketplace.js";
 import { templateApi } from "../../api/templates.js";
+import { driverApi } from "../../api/drivers.js";
 import { success, error as toastError } from "../components/toast.js";
 import { i18n } from "../../i18n/index.js";
 
@@ -50,6 +51,8 @@ export class MarketplaceView extends LitElement {
   @state() installingId: string | null = null;
   @state() publishingId: string | null = null;
   @state() localTemplates: { id: string; name: string }[] = [];
+  @state() installedTemplateNames: Set<string> = new Set();
+  @state() installedDriverIds: Set<string> = new Set();
 
   // pagination
   @state() page = 1;
@@ -151,6 +154,15 @@ export class MarketplaceView extends LitElement {
       const data = res.result;
       const templates = Array.isArray(data) ? data : (data?.data ?? []);
       this.localTemplates = templates.map((t: any) => ({ id: t.id, name: t.name }));
+      this.installedTemplateNames = new Set(templates.map((t: any) => t.name));
+    } catch {
+      // ignore
+    }
+    try {
+      const res = await driverApi.getDrivers({ pageSize: 100 });
+      const data = res.result;
+      const drivers = Array.isArray(data) ? data : (data?.data ?? []);
+      this.installedDriverIds = new Set(drivers.map((d: any) => d.id));
     } catch {
       // ignore
     }
@@ -171,10 +183,16 @@ export class MarketplaceView extends LitElement {
     }, 300);
   };
 
+  navigateTo(route: string) {
+    window.history.pushState({}, "", `/${route}`);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  };
+
   async installTemplate(id: string) {
     this.installingId = id;
     try {
       await marketplaceApi.installTemplate(id);
+      this.installedTemplateNames = new Set([...this.installedTemplateNames, id]);
       success("模板安装成功");
     } catch (e: any) {
       toastError(e.message || "安装失败");
@@ -187,6 +205,7 @@ export class MarketplaceView extends LitElement {
     this.installingId = id;
     try {
       await marketplaceApi.installDriver(id);
+      this.installedDriverIds = new Set([...this.installedDriverIds, id]);
       success("驱动安装成功");
     } catch (e: any) {
       toastError(e.message || "安装失败");
@@ -295,9 +314,10 @@ export class MarketplaceView extends LitElement {
         ${items.map((t, i) => {
           const key = getTemplateKey(t);
           const isInstalling = this.installingId === key;
+          const isInstalled = this.installedTemplateNames.has(key);
           return html`
             <div
-              class="card mp-card ${isInstalling ? "mp-card--installing" : ""}"
+              class="card mp-card ${isInstalling ? "mp-card--installing" : ""} ${isInstalled ? "mp-card--installed" : ""}"
               style="animation-delay: ${i * 50}ms;"
             >
               <div class="mp-card-header">
@@ -318,15 +338,17 @@ export class MarketplaceView extends LitElement {
                 >
                   详情
                 </button>
-                <button
-                  class="btn primary btn--sm"
-                  ?disabled=${isInstalling}
-                  @click=${() => this.installTemplate(key)}
-                >
-                  ${isInstalling
-                    ? html`<span class="mp-spinner"></span>安装中...`
-                    : "安装"}
-                </button>
+                ${isInstalled
+                  ? html`<span class="mp-installed-badge">已安装</span>`
+                  : html`<button
+                      class="btn primary btn--sm"
+                      ?disabled=${isInstalling}
+                      @click=${() => this.installTemplate(key)}
+                    >
+                      ${isInstalling
+                        ? html`<span class="mp-spinner"></span>安装中...`
+                        : "安装"}
+                    </button>`}
               </div>
             </div>
           `;
@@ -347,9 +369,10 @@ export class MarketplaceView extends LitElement {
         ${items.map((d, i) => {
           const key = getDriverKey(d);
           const isInstalling = this.installingId === key;
+          const isInstalled = this.installedDriverIds.has(key);
           return html`
             <div
-              class="card mp-card ${isInstalling ? "mp-card--installing" : ""}"
+              class="card mp-card ${isInstalling ? "mp-card--installing" : ""} ${isInstalled ? "mp-card--installed" : ""}"
               style="animation-delay: ${i * 50}ms;"
             >
               <div class="mp-card-header">
@@ -362,15 +385,17 @@ export class MarketplaceView extends LitElement {
               <div class="mp-desc">${safeString(d.description, "暂无描述")}</div>
               <div class="mp-actions">
                 <div></div>
-                <button
-                  class="btn primary btn--sm"
-                  ?disabled=${isInstalling}
-                  @click=${() => this.installDriver(key)}
-                >
-                  ${isInstalling
-                    ? html`<span class="mp-spinner"></span>安装中...`
-                    : "安装"}
-                </button>
+                ${isInstalled
+                  ? html`<span class="mp-installed-badge">已安装</span>`
+                  : html`<button
+                      class="btn primary btn--sm"
+                      ?disabled=${isInstalling}
+                      @click=${() => this.installDriver(key)}
+                    >
+                      ${isInstalling
+                        ? html`<span class="mp-spinner"></span>安装中...`
+                        : "安装"}
+                    </button>`}
               </div>
             </div>
           `;
@@ -497,20 +522,25 @@ export class MarketplaceView extends LitElement {
           </div>
           <div class="mp-modal-footer">
             <button class="btn" @click=${this.closeDetail}>关闭</button>
-            ${this.detailItem?.name ? html`
-              <button
-                class="btn primary"
-                ?disabled=${this.installingId === this.detailItem.name}
-                @click=${() => {
-                  this.installTemplate(this.detailItem!.name);
-                  this.closeDetail();
-                }}
-              >
-                ${this.installingId === this.detailItem.name
-                  ? html`<span class="mp-spinner"></span>安装中...`
-                  : "安装"}
-              </button>
-            ` : nothing}
+            ${this.detailItem?.name
+              ? this.installedTemplateNames.has(this.detailItem.name)
+                ? html`
+                  <span class="mp-installed-badge">已安装</span>
+                  <button class="btn primary btn--sm" @click=${() => { this.closeDetail(); this.navigateTo('local-resources'); }}>在本地查看</button>
+                `
+                : html`<button
+                    class="btn primary"
+                    ?disabled=${this.installingId === this.detailItem.name}
+                    @click=${() => {
+                      this.installTemplate(this.detailItem!.name);
+                      this.closeDetail();
+                    }}
+                  >
+                    ${this.installingId === this.detailItem.name
+                      ? html`<span class="mp-spinner"></span>安装中...`
+                      : "安装"}
+                  </button>`
+              : nothing}
           </div>
         </div>
       </div>

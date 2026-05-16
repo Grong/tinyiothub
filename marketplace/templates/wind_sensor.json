@@ -1,0 +1,32 @@
+{
+  "name": "anemometer",
+  "display_name": { "zh": "风速风向传感器", "en": "Wind Speed & Direction Sensor" },
+  "description": {
+    "zh": "气象风速风向传感器，超声波原理无需机械磨损，用于气象站和风力发电监测",
+    "en": "Ultrasonic wind speed and direction sensor, no mechanical wear, for weather stations and wind power monitoring"
+  },
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "environmental",
+  "manufacturer": "TinyIoT",
+  "device_type": "sensor",
+  "protocol_type": "modbus",
+  "driver_name": "modbus_rtu",
+  "tags": ["wind", "speed", "direction", "weather", "ultrasonic"],
+  "device_info": {
+    "default_name_pattern": "wind_sensor_{index}",
+    "default_display_name_pattern": { "zh": "风速风向传感器 {index}", "en": "Wind Sensor {index}" },
+    "required_fields": ["name", "address"]
+  },
+  "properties": [
+    {"name": "wind_speed", "display_name": { "zh": "风速", "en": "Wind Speed" }, "description": { "zh": "当前风速", "en": "Current wind speed" }, "data_type": "number", "unit": "m/s", "min_value": 0.0, "max_value": 60.0, "default_value": "0.0", "is_read_only": true, "is_required": true},
+    {"name": "wind_speed_max", "display_name": { "zh": "最大风速", "en": "Max Wind Speed" }, "description": { "zh": "最大风速( gust)", "en": "Maximum wind speed (gust)" }, "data_type": "number", "unit": "m/s", "min_value": 0.0, "max_value": 60.0, "default_value": "0.0", "is_read_only": true, "is_required": false},
+    {"name": "wind_direction", "display_name": { "zh": "风向", "en": "Wind Direction" }, "description": { "zh": "风向角度(0-360)", "en": "Wind direction angle (0-360)" }, "data_type": "number", "unit": "°", "min_value": 0.0, "max_value": 360.0, "default_value": "0.0", "is_read_only": true, "is_required": true},
+    {"name": "wind_direction_compass", "display_name": { "zh": "风向方位", "en": "Compass Direction" }, "description": { "zh": "风向方位N/S/E/W", "en": "Compass direction N/S/E/W" }, "data_type": "number", "unit": "", "min_value": 0.0, "max_value": 15.0, "default_value": "0.0", "is_read_only": true, "is_required": false},
+    {"name": "alarm_gale", "display_name": { "zh": "大风报警", "en": "Gale Alarm" }, "description": { "zh": "大风报警阈值", "en": "Gale alarm threshold" }, "data_type": "number", "unit": "m/s", "min_value": 0.0, "max_value": 60.0, "default_value": "17.2", "is_read_only": false, "is_required": false}
+  ],
+  "commands": [
+    {"name": "read_wind", "display_name": { "zh": "读取风数据", "en": "Read Wind Data" }, "description": { "zh": "读取风速和风向", "en": "Read wind speed and direction" }, "parameters": "{}", "is_required": true},
+    {"name": "reset_max", "display_name": { "zh": "复位最大值", "en": "Reset Max" }, "description": { "zh": "清除最大风速记录", "en": "Clear max wind speed record" }, "parameters": "{}", "is_required": false}
+  ]
+}

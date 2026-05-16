@@ -83,6 +83,20 @@
   z-index: 10;
   pointer-events: all;
 }
+.mp-card--installed {
+  opacity: 0.7;
+  border-color: var(--ok-fill-20);
+}
+.mp-installed-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--ok-fill-10);
+  color: var(--success);
+  font-size: 12px;
+  font-weight: 500;
+}
 .mp-card-header {
   display: flex;
   align-items: flex-start;

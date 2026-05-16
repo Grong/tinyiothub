@@ -1,0 +1,11 @@
+[package]
+name = "integration-tests"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+tinyiothub-cloud = { path = "../../cloud", features = ["test-utils"] }
+sqlx = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+uuid = { workspace = true }

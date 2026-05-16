@@ -243,14 +243,8 @@ impl AppState {
         let trace_repository = Arc::new(DeviceTraceRepository::new((*database).clone()));
         let trace_service = Arc::new(DeviceTraceService::new(trace_repository));
 
-        // 模板引擎 - 复合服务，依赖仓库和验证器
-        let template_repository = Arc::new(TemplateRepository::new(
-            database.clone(),
-            crate::shared::paths::templates_dir(),
-        ));
-        if let Err(e) = template_repository.init() {
-            tracing::warn!("加载内置模板失败: {}", e);
-        }
+        // 模板引擎 - 内置模板通过 migration seed 写入 DB
+        let template_repository = Arc::new(TemplateRepository::new(database.clone()));
         let template_validator = Arc::new(TemplateValidator::new());
         let template_engine =
             Arc::new(TemplateEngine::new(template_repository, template_validator));
@@ -380,6 +374,7 @@ impl AppState {
         let pairing_cache = Arc::new(crate::modules::gateway::pairing::PairingCache::new(10000));
         let gateway_service = Arc::new(crate::modules::gateway::service::GatewayService::new(
             device_repository_factory.clone(),
+            event_repository.clone(),
             pairing_cache,
             mqtt_tx,
         ));

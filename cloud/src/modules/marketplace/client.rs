@@ -3,11 +3,22 @@ use std::{path::Path, time::Duration};
 use reqwest::Client;
 use sha2::{Digest, Sha256};
 use tinyiothub_config::MarketplaceConfig;
+use tinyiothub_marketplace::types::{Driver as MDriver, PaginatedList, Template as MTemplate};
 
 use super::{
     error::{MarketplaceError, Result},
-    metadata::{DriverIndex, DriverMetadata, TemplateIndex, TemplateMetadata},
+    metadata::{AuthorInfo, DriverMetadata, TemplateMetadata},
 };
+
+/// Marketplace API response wrapper.
+#[derive(Debug, serde::Deserialize)]
+struct ApiResponse<T> {
+    #[allow(dead_code)]
+    code: i32,
+    #[allow(dead_code)]
+    msg: String,
+    result: T,
+}
 
 pub struct MarketplaceClient {
     http_client: Client,
@@ -26,52 +37,132 @@ impl MarketplaceClient {
         Ok(Self { http_client, config })
     }
 
-    /// Fetch template list
+    /// Get API base URL (includes /api/v1).
+    fn api_base(&self) -> Result<&str> {
+        self.config
+            .api_url
+            .as_deref()
+            .ok_or_else(|| MarketplaceError::InvalidConfig("No marketplace API URL configured".to_string()))
+    }
+
+    /// Fetch template list from marketplace API.
     pub async fn fetch_templates(&self) -> Result<Vec<TemplateMetadata>> {
-        let url = self.build_url("templates/index.json")?;
+        let base = self.api_base()?;
+        let url = format!("{}/templates", base);
         tracing::info!("Fetching templates from: {}", url);
 
-        // Check if it's a local file
-        if url.starts_with("file://") || !url.starts_with("http") {
-            let file_path = url.trim_start_matches("file://");
-            let content = tokio::fs::read_to_string(file_path).await?;
-            let index: TemplateIndex = serde_json::from_str(&content)?;
-            return Ok(index.templates);
-        }
+        let response: ApiResponse<PaginatedList<MTemplate>> =
+            self.http_client.get(&url).send().await?.json().await?;
 
-        let response = self.http_client.get(&url).send().await?;
-        let index: TemplateIndex = response.json().await?;
+        let templates = response
+            .result
+            .items
+            .into_iter()
+            .map(|t| {
+                let name = t.name;
+                TemplateMetadata {
+                    id: name.clone(),
+                    file_url: format!("{}/templates/{}", base, urlencoding::encode(&name)),
+                    name,
+                    version: t.version,
+                    category: t.category,
+                    protocol: t.protocol_type,
+                    manufacturer: t.manufacturer.unwrap_or_default(),
+                    description: t
+                        .description
+                        .zh
+                        .or(t.description.en)
+                        .unwrap_or_default(),
+                    tags: t.tags,
+                    author: AuthorInfo {
+                        name: t.author,
+                        email: String::new(),
+                    },
+                    icon: t.icon,
+                    downloads: t.downloads as u64,
+                    rating: t.rating.unwrap_or(0.0) as f32,
+                    reviews: t.reviews.unwrap_or(0) as u32,
+                    license: if t.license.is_empty() { "MIT".to_string() } else { t.license },
+                    checksum: String::new(),
+                    size: 0,
+                    created_at: t.created_at,
+                    updated_at: t.updated_at,
+                }
+            })
+            .collect();
 
-        Ok(index.templates)
+        Ok(templates)
     }
 
-    /// Fetch driver list
+    /// Fetch a single template definition from marketplace API.
+    /// Returns the raw template JSON value (the `result` field).
+    pub async fn fetch_template(&self, name: &str) -> Result<serde_json::Value> {
+        let base = self.api_base()?;
+        let url = format!("{}/templates/{}", base, urlencoding::encode(name));
+        tracing::info!("Fetching template from: {}", url);
+
+        let response: ApiResponse<serde_json::Value> =
+            self.http_client.get(&url).send().await?.json().await?;
+
+        Ok(response.result)
+    }
+
+    /// Fetch driver list from marketplace API.
     pub async fn fetch_drivers(&self) -> Result<Vec<DriverMetadata>> {
-        let url = self.build_url("drivers/index.json")?;
+        let base = self.api_base()?;
+        let url = format!("{}/drivers", base);
         tracing::info!("Fetching drivers from: {}", url);
 
-        // Check if it's a local file
-        if url.starts_with("file://") || !url.starts_with("http") {
-            let file_path = url.trim_start_matches("file://");
-            let content = tokio::fs::read_to_string(file_path).await?;
-            let index: DriverIndex = serde_json::from_str(&content)?;
-            return Ok(index.drivers);
-        }
+        let response: ApiResponse<PaginatedList<MDriver>> =
+            self.http_client.get(&url).send().await?.json().await?;
 
-        let response = self.http_client.get(&url).send().await?;
-        let index: DriverIndex = response.json().await?;
+        let drivers = response
+            .result
+            .items
+            .into_iter()
+            .map(|d| DriverMetadata {
+                id: d.id,
+                name: d.name,
+                version: d.version,
+                protocol: d.protocol,
+                description: d.description,
+                tags: d.tags,
+                author: AuthorInfo {
+                    name: d.author_name,
+                    email: d.author_email.unwrap_or_default(),
+                },
+                icon: d.icon,
+                downloads: d.downloads as u64,
+                rating: d.rating.unwrap_or(0.0) as f32,
+                reviews: d.reviews.unwrap_or(0) as u32,
+                license: d.license,
+                homepage: d.homepage,
+                documentation: d.documentation,
+                platforms: d
+                    .platforms
+                    .and_then(|v| serde_json::from_value(v).ok())
+                    .unwrap_or_default(),
+                requirements: d
+                    .requirements
+                    .and_then(|v| serde_json::from_value(v).ok())
+                    .unwrap_or(super::metadata::DriverRequirements {
+                        min_version: "0.1.0".to_string(),
+                    }),
+                created_at: d.created_at,
+                updated_at: d.updated_at,
+            })
+            .collect();
 
-        Ok(index.drivers)
+        Ok(drivers)
     }
 
-    /// Download resource file
+    /// Download resource file from a URL.
     pub async fn download_resource(&self, url: &str, dest: &Path) -> Result<()> {
         tracing::info!("Downloading resource from {} to {:?}", url, dest);
 
         let response = self.http_client.get(url).send().await?;
         let bytes = response.bytes().await?;
 
-        // Ensure target directory exists
         if let Some(parent) = dest.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
@@ -82,7 +173,7 @@ impl MarketplaceClient {
         Ok(())
     }
 
-    /// Verify file checksum
+    /// Verify file checksum.
     pub async fn verify_checksum(&self, file_path: &Path, expected: &str) -> Result<()> {
         let content = tokio::fs::read(file_path).await?;
         let actual = self.calculate_checksum(&content);
@@ -97,7 +188,7 @@ impl MarketplaceClient {
         Ok(())
     }
 
-    /// Calculate file checksum
+    /// Calculate file checksum.
     fn calculate_checksum(&self, data: &[u8]) -> String {
         let mut hasher = Sha256::new();
         hasher.update(data);
@@ -105,26 +196,7 @@ impl MarketplaceClient {
         format!("sha256:{}", hex::encode(result))
     }
 
-    /// Build resource URL
-    fn build_url(&self, path: &str) -> Result<String> {
-        // Prefer API URL
-        if let Some(api_url) = &self.config.api_url {
-            return Ok(format!("{}/{}", api_url.trim_end_matches('/'), path));
-        }
-
-        // Use GitHub as marketplace source
-        if let Some(repo) = &self.config.github_repo {
-            let url = format!(
-                "https://raw.githubusercontent.com/{}/{}/{}",
-                repo, self.config.github_branch, path
-            );
-            return Ok(url);
-        }
-
-        Err(MarketplaceError::InvalidConfig("No marketplace source configured".to_string()))
-    }
-
-    /// Get current platform identifier
+    /// Get current platform identifier.
     pub fn get_current_platform() -> String {
         #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
         {

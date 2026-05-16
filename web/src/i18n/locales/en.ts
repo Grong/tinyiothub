@@ -841,5 +841,6 @@ export const en: TranslationMap = {
     success: "Gateway paired successfully!",
     pairFailed: "Pairing failed",
     close: "Close",
+    addGateway: "Add Gateway",
   },
 };

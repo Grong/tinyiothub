@@ -1,0 +1,39 @@
+{
+  "id": "snmp",
+  "name": "SNMP 驱动",
+  "version": "1.8.5",
+  "protocol": "snmp",
+  "description": "SNMP v1/v2c/v3 协议驱动，用于网络设备监控和管理",
+  "tags": ["snmp", "network", "monitoring", "management"],
+  "author_name": "Network Team",
+  "author_email": "network@tinyiothub.com",
+  "icon": "https://cdn.tinyiothub.com/drivers/snmp.png",
+  "downloads": 678,
+  "rating": 4.5,
+  "reviews": 18,
+  "license": "MIT",
+  "homepage": "https://github.com/tinyiothub/drivers/snmp",
+  "documentation": "https://docs.tinyiothub.com/drivers/snmp",
+  "platforms": {
+    "windows-x64": {
+      "file_url": "https://github.com/tinyiothub/marketplace/releases/download/snmp-1.8.5/snmp_driver-1.8.5-win-x64.dll",
+      "checksum": "sha256:test-snmp-windows",
+      "size": 1572864
+    },
+    "linux-x64": {
+      "file_url": "https://github.com/tinyiothub/marketplace/releases/download/snmp-1.8.5/snmp_driver-1.8.5-linux-x64.so",
+      "checksum": "sha256:test-snmp-linux",
+      "size": 1310720
+    },
+    "linux-armv7": {
+      "file_url": "https://github.com/tinyiothub/marketplace/releases/download/snmp-1.8.5/snmp_driver-1.8.5-linux-armv7.so",
+      "checksum": "sha256:test-snmp-arm",
+      "size": 1228800
+    }
+  },
+  "requirements": {
+    "min_version": "1.0.0"
+  },
+  "created_at": "2023-12-01T09:00:00Z",
+  "updated_at": "2024-11-20T11:45:00Z"
+}

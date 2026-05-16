@@ -1,0 +1,124 @@
+{
+  "name": "ultrasonic_water_meter",
+  "display_name": {
+    "zh": "超声波水表",
+    "en": "Ultrasonic Water Meter"
+  },
+  "description": {
+    "zh": "超声波时差法水表，无机械磨损，精度±2%，支持冷水/热水测量，Modbus RTU通讯",
+    "en": "Ultrasonic transit-time water meter, no mechanical wear, accuracy ±2%, supports cold/hot water measurement"
+  },
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "meters",
+  "manufacturer": "TinyIoT",
+  "device_type": "meter",
+  "protocol_type": "modbus",
+  "driver_name": "modbus_rtu",
+  "tags": ["water", "meter", "ultrasonic", "flow", "dn15"],
+  "device_info": {
+    "default_name_pattern": "water_meter_{index}",
+    "default_display_name_pattern": {
+      "zh": "超声波水表 {index}",
+      "en": "Ultrasonic Water Meter {index}"
+    },
+    "required_fields": ["name", "address", "pipe_diameter"]
+  },
+  "properties": [
+    {
+      "name": "instantaneous_flow",
+      "display_name": { "zh": "瞬时流量", "en": "Instantaneous Flow" },
+      "description": { "zh": "当前瞬时流量", "en": "Current instantaneous flow" },
+      "data_type": "number",
+      "unit": "m³/h",
+      "min_value": 0.0,
+      "max_value": 3.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "total_volume",
+      "display_name": { "zh": "累计体积", "en": "Total Volume" },
+      "description": { "zh": "累计用水体积", "en": "Cumulative water volume" },
+      "data_type": "number",
+      "unit": "m³",
+      "min_value": 0.0,
+      "max_value": 999999.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "reverse_flow",
+      "display_name": { "zh": "反向流量", "en": "Reverse Flow" },
+      "description": { "zh": "累计反向流量(检测偷水)", "en": "Cumulative reverse flow (leak detection)" },
+      "data_type": "number",
+      "unit": "m³",
+      "min_value": 0.0,
+      "max_value": 9999.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": false
+    },
+    {
+      "name": "water_temperature",
+      "display_name": { "zh": "水温", "en": "Water Temperature" },
+      "description": { "zh": "当前水温", "en": "Current water temperature" },
+      "data_type": "number",
+      "unit": "°C",
+      "min_value": 1.0,
+      "max_value": 90.0,
+      "default_value": "25.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "pipe_pressure",
+      "display_name": { "zh": "管道压力", "en": "Pipe Pressure" },
+      "description": { "zh": "管道内水压", "en": "Water pressure in pipe" },
+      "data_type": "number",
+      "unit": "bar",
+      "min_value": 0.0,
+      "max_value": 16.0,
+      "default_value": "3.0",
+      "is_read_only": true,
+      "is_required": false
+    },
+    {
+      "name": "battery_level",
+      "display_name": { "zh": "电池电量", "en": "Battery Level" },
+      "description": { "zh": "电池剩余电量", "en": "Remaining battery level" },
+      "data_type": "number",
+      "unit": "%",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "default_value": "100.0",
+      "is_read_only": true,
+      "is_required": false
+    }
+  ],
+  "commands": [
+    {
+      "name": "read_meter",
+      "display_name": { "zh": "读取数据", "en": "Read Meter" },
+      "description": { "zh": "读取水表数据", "en": "Read water meter data" },
+      "parameters": "{}",
+      "is_required": true
+    },
+    {
+      "name": "reset_meter",
+      "display_name": { "zh": "复位水表", "en": "Reset Meter" },
+      "description": { "zh": "复位水表，清除报警状态", "en": "Reset meter, clear alarm status" },
+      "parameters": "{}",
+      "is_required": false
+    },
+    {
+      "name": "read_alarm",
+      "display_name": { "zh": "读取报警", "en": "Read Alarm" },
+      "description": { "zh": "读取当前报警信息", "en": "Read current alarm information" },
+      "parameters": "{}",
+      "is_required": false
+    }
+  ]
+}

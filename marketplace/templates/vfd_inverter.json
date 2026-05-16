@@ -1,0 +1,37 @@
+{
+  "name": "vfd_inverter",
+  "display_name": { "zh": "变频器", "en": "Variable Frequency Drive" },
+  "description": {
+    "zh": "三相变频器，功率范围0.75-400kW，支持Modbus RTU，用于电机调速控制",
+    "en": "Three-phase VFD, power range 0.75-400kW, Modbus RTU, for motor speed control"
+  },
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "actuators",
+  "manufacturer": "TinyIoT",
+  "device_type": "actuator",
+  "protocol_type": "modbus",
+  "driver_name": "modbus_rtu",
+  "tags": ["vfd", "inverter", "motor", "speed", "control"],
+  "device_info": {
+    "default_name_pattern": "vfd_{index}",
+    "default_display_name_pattern": { "zh": "变频器 {index}", "en": "VFD {index}" },
+    "required_fields": ["name", "address", "rated_power"]
+  },
+  "properties": [
+    {"name": "output_frequency", "display_name": { "zh": "输出频率", "en": "Output Frequency" }, "description": { "zh": "电机输出频率", "en": "Motor output frequency" }, "data_type": "number", "unit": "Hz", "min_value": 0.0, "max_value": 400.0, "default_value": "0.0", "is_read_only": true, "is_required": true},
+    {"name": "output_speed", "display_name": { "zh": "输出转速", "en": "Output Speed" }, "description": { "zh": "电机转速", "en": "Motor speed (RPM)" }, "data_type": "number", "unit": "RPM", "min_value": 0.0, "max_value": 3000.0, "default_value": "0.0", "is_read_only": true, "is_required": true},
+    {"name": "output_voltage", "display_name": { "zh": "输出电压", "en": "Output Voltage" }, "description": { "zh": "输出电压", "en": "Output voltage" }, "data_type": "number", "unit": "V", "min_value": 0.0, "max_value": 480.0, "default_value": "0.0", "is_read_only": true, "is_required": false},
+    {"name": "output_current", "display_name": { "zh": "输出电流", "en": "Output Current" }, "description": { "zh": "输出电流", "en": "Output current" }, "data_type": "number", "unit": "A", "min_value": 0.0, "max_value": 800.0, "default_value": "0.0", "is_read_only": true, "is_required": true},
+    {"name": "dc_bus_voltage", "display_name": { "zh": "直流母线电压", "en": "DC Bus Voltage" }, "description": { "zh": "直流母线电压", "en": "DC bus voltage" }, "data_type": "number", "unit": "V", "min_value": 0.0, "max_value": 1000.0, "default_value": "0.0", "is_read_only": true, "is_required": false},
+    {"name": "target_frequency", "display_name": { "zh": "目标频率", "en": "Target Frequency" }, "description": { "zh": "设定目标频率", "en": "Set target frequency" }, "data_type": "number", "unit": "Hz", "min_value": 0.0, "max_value": 400.0, "default_value": "50.0", "is_read_only": false, "is_required": true},
+    {"name": "run_command", "display_name": { "zh": "运行命令", "en": "Run Command" }, "description": { "zh": "1=运行 0=停止", "en": "1=run 0=stop" }, "data_type": "number", "unit": "", "min_value": 0.0, "max_value": 1.0, "default_value": "0.0", "is_read_only": false, "is_required": true},
+    {"name": "fault_code", "display_name": { "zh": "故障代码", "en": "Fault Code" }, "description": { "zh": "故障代码", "en": "Fault code" }, "data_type": "number", "unit": "", "min_value": 0.0, "max_value": 99.0, "default_value": "0.0", "is_read_only": true, "is_required": true}
+  ],
+  "commands": [
+    {"name": "start", "display_name": { "zh": "启动", "en": "Start" }, "description": { "zh": "启动电机", "en": "Start motor" }, "parameters": "{}", "is_required": true},
+    {"name": "stop", "display_name": { "zh": "停止", "en": "Stop" }, "description": { "zh": "停止电机", "en": "Stop motor" }, "parameters": "{}", "is_required": true},
+    {"name": "set_frequency", "display_name": { "zh": "设置频率", "en": "Set Frequency" }, "description": { "zh": "设置输出频率", "en": "Set output frequency" }, "parameters": "{\"frequency\": 50}", "parameter_schema": "{\"type\": \"object\", \"properties\": {\"frequency\": {\"type\": \"number\", \"minimum\": 0, \"maximum\": 400}}, \"required\": [\"frequency\"]}", "is_required": true},
+    {"name": "reset_fault", "display_name": { "zh": "复位故障", "en": "Reset Fault" }, "description": { "zh": "清除故障并复位", "en": "Clear fault and reset" }, "parameters": "{}", "is_required": false}
+  ]
+}

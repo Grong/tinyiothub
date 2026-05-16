@@ -1,0 +1,114 @@
+{
+  "name": "temperature_sensor",
+  "display_name": {
+    "zh": "温度传感器",
+    "en": "Temperature Sensor"
+  },
+  "description": {
+    "zh": "工业级温度传感器，支持PT100/PT1000热电阻，输入范围-200°C~850°C，精度±0.1°C",
+    "en": "Industrial temperature sensor with PT100/PT1000 RTD input, range -200°C~850°C, accuracy ±0.1°C"
+  },
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "sensors",
+  "manufacturer": "TinyIoT",
+  "device_type": "sensor",
+  "protocol_type": "modbus",
+  "driver_name": "modbus_rtu",
+  "tags": ["temperature", "sensor", "pt100", "industrial"],
+  "device_info": {
+    "default_name_pattern": "temp_sensor_{index}",
+    "default_display_name_pattern": {
+      "zh": "温度传感器 {index}",
+      "en": "Temperature Sensor {index}"
+    },
+    "required_fields": ["name", "address", "slave_id"]
+  },
+  "properties": [
+    {
+      "name": "temperature",
+      "display_name": { "zh": "温度值", "en": "Temperature" },
+      "description": { "zh": "当前测量温度", "en": "Current measured temperature" },
+      "data_type": "number",
+      "unit": "°C",
+      "min_value": -200.0,
+      "max_value": 850.0,
+      "default_value": "25.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "temperature_fahrenheit",
+      "display_name": { "zh": "温度(°F)", "en": "Temperature (°F)" },
+      "description": { "zh": "华氏温度", "en": "Temperature in Fahrenheit" },
+      "data_type": "number",
+      "unit": "°F",
+      "min_value": -328.0,
+      "max_value": 1562.0,
+      "default_value": "77.0",
+      "is_read_only": true,
+      "is_required": false
+    },
+    {
+      "name": "alarm_high_temp",
+      "display_name": { "zh": "高温报警阈值", "en": "High Temperature Alarm" },
+      "description": { "zh": "温度超过此值时触发报警", "en": "Trigger alarm when temperature exceeds this value" },
+      "data_type": "number",
+      "unit": "°C",
+      "min_value": -200.0,
+      "max_value": 850.0,
+      "default_value": "80.0",
+      "is_read_only": false,
+      "is_required": false
+    },
+    {
+      "name": "alarm_low_temp",
+      "display_name": { "zh": "低温报警阈值", "en": "Low Temperature Alarm" },
+      "description": { "zh": "温度低于此值时触发报警", "en": "Trigger alarm when temperature falls below this value" },
+      "data_type": "number",
+      "unit": "°C",
+      "min_value": -200.0,
+      "max_value": 850.0,
+      "default_value": "-40.0",
+      "is_read_only": false,
+      "is_required": false
+    },
+    {
+      "name": "sampling_interval",
+      "display_name": { "zh": "采样间隔", "en": "Sampling Interval" },
+      "description": { "zh": "温度采样时间间隔", "en": "Temperature sampling interval" },
+      "data_type": "number",
+      "unit": "秒",
+      "min_value": 1.0,
+      "max_value": 3600.0,
+      "default_value": "10.0",
+      "is_read_only": false,
+      "is_required": false
+    }
+  ],
+  "commands": [
+    {
+      "name": "read_temperature",
+      "display_name": { "zh": "读取温度", "en": "Read Temperature" },
+      "description": { "zh": "读取当前温度值", "en": "Read current temperature value" },
+      "parameters": "{}",
+      "is_required": true
+    },
+    {
+      "name": "set_alarm_thresholds",
+      "display_name": { "zh": "设置报警阈值", "en": "Set Alarm Thresholds" },
+      "description": { "zh": "设置高低温度报警阈值", "en": "Set high and low temperature alarm thresholds" },
+      "parameters": "{\"high_temp\": 80, \"low_temp\": -40}",
+      "parameter_schema": "{\"type\": \"object\", \"properties\": {\"high_temp\": {\"type\": \"number\", \"minimum\": -200, \"maximum\": 850}, \"low_temp\": {\"type\": \"number\", \"minimum\": -200, \"maximum\": 850}}, \"required\": [\"high_temp\", \"low_temp\"]}",
+      "is_required": false
+    },
+    {
+      "name": "calibrate_sensor",
+      "display_name": { "zh": "校准传感器", "en": "Calibrate Sensor" },
+      "description": { "zh": "执行零点校准", "en": "Execute zero point calibration" },
+      "parameters": "{\"reference_temp\": 0}",
+      "parameter_schema": "{\"type\": \"object\", \"properties\": {\"reference_temp\": {\"type\": \"number\", \"minimum\": -200, \"maximum\": 850}}, \"required\": [\"reference_temp\"]}",
+      "is_required": false
+    }
+  ]
+}

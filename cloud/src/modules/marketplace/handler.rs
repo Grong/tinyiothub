@@ -76,8 +76,23 @@ fn normalize_marketplace_response(data: serde_json::Value) -> Json<ApiResponse<s
             {
                 obj["data"] = items;
             }
+            // 本地市场 JSON 使用 `templates` → 重命名为 `data`
+            if obj.get("templates").is_some()
+                && obj.get("data").is_none()
+                && let Some(templates) = obj.as_object_mut().and_then(|m| m.remove("templates"))
+            {
+                obj["data"] = templates;
+            }
+            // 本地市场 JSON 使用 `drivers` → 重命名为 `data`
+            if obj.get("drivers").is_some()
+                && obj.get("data").is_none()
+                && let Some(drivers) = obj.as_object_mut().and_then(|m| m.remove("drivers"))
+            {
+                obj["data"] = drivers;
+            }
             // 规范化分页元数据为 PaginatedResponse 格式
             if obj.get("data").is_some() && obj.get("pagination").is_none() {
+                let data_arr = obj["data"].as_array();
                 let page = obj
                     .get("page")
                     .and_then(|v| v.as_u64())
@@ -94,6 +109,7 @@ fn normalize_marketplace_response(data: serde_json::Value) -> Json<ApiResponse<s
                     .and_then(|v| v.as_u64())
                     .or_else(|| obj.get("totalCount").and_then(|v| v.as_u64()))
                     .or_else(|| obj.get("total").and_then(|v| v.as_u64()))
+                    .or_else(|| data_arr.map(|a| a.len() as u64))
                     .unwrap_or(0);
                 let total_pages = if page_size > 0 {
                     ((total_count as f64) / (page_size as f64)).ceil() as u32
@@ -238,10 +254,7 @@ async fn install_marketplace_template(
         }
     };
 
-    let repository = Arc::new(TemplateRepository::new(
-        state.database.clone(),
-        std::path::PathBuf::from("templates"),
-    ));
+    let repository = Arc::new(TemplateRepository::new(state.database.clone()));
 
     let installer =
         TemplateInstaller::new(client, repository, std::path::PathBuf::from("templates"));
@@ -336,7 +349,12 @@ async fn publish_template_handler(
     )
     .await
     {
-        Ok(Some(t)) => t,
+        Ok(Some(t)) => {
+            if t.is_builtin != 0 {
+                return ApiResponseBuilder::error("内置模板不能发布到市场");
+            }
+            t
+        }
         Ok(None) => {
             return ApiResponseBuilder::error("模板不存在");
         }

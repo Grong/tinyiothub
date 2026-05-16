@@ -58,10 +58,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY --from=backend-builder /out/tinyiothub-marketplace /app/
-COPY --from=backend-builder /build/marketplace/templates /app/templates
+COPY --from=backend-builder /build/marketplace/templates /app/seed/templates
+COPY --from=backend-builder /build/marketplace/drivers /app/seed/drivers
 
-RUN mkdir -p /app/data /app/logs /app/templates && \
-    chown -R 1001:1001 /app/data /app/logs /app/templates
+RUN mkdir -p /app/data /app/logs /app/seed && \
+    chown -R 1001:1001 /app/data /app/logs /app/seed
 
 ENV RUST_LOG=info \
     TZ=Asia/Shanghai \
