@@ -22,9 +22,7 @@ const lazyViews: Record<string, () => Promise<void>> = {
   alarms:    () => import("./views/alarms.js").then(() => {}),
   events:    () => import("./views/events.js").then(() => {}),
   monitoring:() => import("./views/monitoring.js").then(() => {}),
-  templates: () => import("./views/templates.js").then(() => {}),
-  drivers:   () => import("./views/drivers.js").then(() => {}),
-  tags:      () => import("./views/tags.js").then(() => {}),
+  "local-resources": () => import("./views/local-resources.js").then(() => {}),
   users:     () => import("./views/users.js").then(() => {}),
   settings:  () => import("./views/settings.js").then(() => {}),
   chat:      () => import("./views/chat.js").then(() => {}),
@@ -58,8 +56,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "设备管理",
     items: [
       { route: "devices", label: "设备列表", icon: "M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" },
-      { route: "templates", label: "设备模板", icon: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" },
-      { route: "drivers", label: "驱动管理", icon: "M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" },
+      { route: "local-resources", label: "本地资源", icon: "M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6" },
       { route: "marketplace", label: "应用市场", icon: "M3 3h18v18H3V3zm4 4v10h4V7H7zm6 0v10h4V7h-4z" },
     ],
   },
@@ -83,7 +80,6 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "系统管理",
     items: [
-      { route: "tags", label: "标签管理", icon: "M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82zM7 7h.01" },
       { route: "users", label: "用户管理", icon: "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 7a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75", adminOnly: true },
       { route: "settings", label: "系统设置", icon: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" },
     ],
@@ -292,12 +288,10 @@ export class TinyIoTHubApp extends LitElement {
     const titles: Record<string, string> = {
       dashboard: "概览",
       devices: "设备管理",
-      templates: "设备模板",
-      drivers: "驱动管理",
+      "local-resources": "本地资源",
       alarms: "告警中心",
       events: "事件日志",
       monitoring: "系统监控",
-      tags: "标签管理",
       users: "用户管理",
       settings: "系统设置",
       marketplace: "应用市场",
@@ -315,12 +309,10 @@ export class TinyIoTHubApp extends LitElement {
     const subs: Record<string, string> = {
       dashboard: "设备状态、告警概览和系统指标",
       devices: "管理所有接入的 IoT 设备",
-      templates: "管理设备模板和物模型",
-      drivers: "管理协议驱动（Modbus、ONVIF、SNMP、MQTT）",
+      "local-resources": "管理设备模板和协议驱动",
       alarms: "查看和管理设备告警",
       events: "查看设备事件日志",
       monitoring: "系统资源和性能监控",
-      tags: "管理设备标签和分组",
       users: "管理系统用户和权限",
       settings: "系统配置和参数管理",
       marketplace: "浏览和安装模板与驱动",
@@ -483,9 +475,7 @@ export class TinyIoTHubApp extends LitElement {
     if (base === "alarms") return html`<view-alarms></view-alarms>`;
     if (base === "events") return html`<view-events></view-events>`;
     if (base === "monitoring") return html`<view-monitoring></view-monitoring>`;
-    if (base === "templates") return html`<view-templates></view-templates>`;
-    if (base === "drivers") return html`<view-drivers></view-drivers>`;
-    if (base === "tags") return html`<view-tags></view-tags>`;
+    if (base === "local-resources") return html`<view-local-resources></view-local-resources>`;
     if (base === "users") return html`<view-users></view-users>`;
     if (base === "settings") return html`<view-settings></view-settings>`;
     if (base === "chat") return html`<view-chat></view-chat>`;

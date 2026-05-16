@@ -7,7 +7,7 @@ import { templateApi } from "../../api/templates.js";
 import { tagApi } from "../../api/tags.js";
 import { eventApi } from "../../api/events.js";
 import { deviceCache } from "../../stores/device-cache.js";
-import { i18n } from "../../i18n/index.js";
+import { i18n, t } from "../../i18n/index.js";
 import type { Device, DeviceProfile, DeviceProperty, CreateDeviceRequest, DriverConfigOption, Tag, DeviceEvent } from "../../types/index.js";
 import { success, error as toastError } from "../components/toast.js";
 import { icons } from "../icons.js";
@@ -200,6 +200,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
   @state() tagSearchKeyword = "";
   @state() tagSaving = false;
   private _boundCloseTagEditor = () => { this.editingTagsDeviceId = null; };
+  private _unsubI18n?: () => void;
 
   // Property history dialog
   @state() showHistoryDialog = false;
@@ -270,6 +271,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   connectedCallback() {
     super.connectedCallback();
+    this._unsubI18n = i18n.subscribe(() => this.requestUpdate());
     document.addEventListener("click", this._boundCloseTagEditor);
     // SSE 推送时刷新当前分页数据
     this._boundHandleDeviceUpdated = () => {
@@ -294,6 +296,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    this._unsubI18n?.();
     // 不断开 SSE — 缓存层管理连接生命周期
     document.removeEventListener("click", this._boundCloseTagEditor);
     document.removeEventListener("device-updated", this._boundHandleDeviceUpdated);
@@ -1129,7 +1132,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
           >&#9638;</button>
         </div>
         <button class="btn btn--primary" @click=${this.openWizard}>新建设备</button>
-        <button class="btn btn--outline" @click=${() => { this.showPairingDialog = true; }}>Add Gateway</button>
+        <button class="btn btn--outline" @click=${() => { this.showPairingDialog = true; }}>${t("gatewayPairing.addGateway")}</button>
       </div>
     `;
   }

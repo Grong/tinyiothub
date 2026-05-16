@@ -169,6 +169,56 @@ export class GatewayPairingDialog extends LitElement {
     @keyframes spin {
       to { transform: rotate(360deg); }
     }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: var(--space-2);
+      border: none;
+      background: var(--bg-muted);
+      padding: 9px var(--space-4);
+      border-radius: var(--radius-md);
+      font-size: 13px;
+      font-weight: 500;
+      letter-spacing: -0.01em;
+      cursor: pointer;
+      transition:
+        background var(--duration-fast) var(--ease-out),
+        box-shadow var(--duration-fast) var(--ease-out),
+        transform var(--duration-fast) var(--ease-out);
+      box-shadow: var(--shadow-sm);
+      color: var(--text);
+    }
+
+    .btn:hover {
+      background: var(--bg-hover);
+      transform: translateY(-1px);
+    }
+
+    .btn:active {
+      background: var(--secondary);
+      transform: translateY(0);
+    }
+
+    .btn.primary {
+      background: var(--accent-gradient);
+      color: var(--primary-foreground);
+      box-shadow: 0 2px 10px var(--accent-glow);
+    }
+
+    .btn.primary:hover {
+      background: var(--accent-gradient-soft);
+      box-shadow: 0 4px 16px var(--accent-glow-strong);
+      transform: translateY(-1px);
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: var(--shadow-sm);
+    }
   `;
 
   @state() private code = "";
