@@ -1,0 +1,189 @@
+{
+  "name": "hvac_thermostat",
+  "display_name": {
+    "zh": "HVAC温控器",
+    "en": "HVAC Thermostat Controller"
+  },
+  "description": {
+    "zh": "暖通空调温控器，支持制冷/制热/通风/除湿模式，Modbus RTU通讯，用于楼宇自动化",
+    "en": "HVAC thermostat controller with cooling/heating/ventilation/dehumidification modes, Modbus RTU, for building automation"
+  },
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "controllers",
+  "manufacturer": "TinyIoT",
+  "device_type": "controller",
+  "protocol_type": "modbus",
+  "driver_name": "modbus_rtu",
+  "tags": ["hvac", "thermostat", "temperature", "building", "automation"],
+  "device_info": {
+    "default_name_pattern": "hvac_thermostat_{index}",
+    "default_display_name_pattern": {
+      "zh": "HVAC温控器 {index}",
+      "en": "HVAC Thermostat {index}"
+    },
+    "required_fields": ["name", "address", "control_zone"]
+  },
+  "properties": [
+    {
+      "name": "room_temperature",
+      "display_name": { "zh": "房间温度", "en": "Room Temperature" },
+      "description": { "zh": "当前室内温度", "en": "Current room temperature" },
+      "data_type": "number",
+      "unit": "°C",
+      "min_value": 0.0,
+      "max_value": 50.0,
+      "default_value": "25.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "room_humidity",
+      "display_name": { "zh": "房间湿度", "en": "Room Humidity" },
+      "description": { "zh": "当前室内湿度", "en": "Current room humidity" },
+      "data_type": "number",
+      "unit": "%RH",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "default_value": "50.0",
+      "is_read_only": true,
+      "is_required": false
+    },
+    {
+      "name": "setpoint_heating",
+      "display_name": { "zh": "制热设定", "en": "Heating Setpoint" },
+      "description": { "zh": "制热模式目标温度", "en": "Target temperature for heating mode" },
+      "data_type": "number",
+      "unit": "°C",
+      "min_value": 5.0,
+      "max_value": 30.0,
+      "default_value": "20.0",
+      "is_read_only": false,
+      "is_required": true
+    },
+    {
+      "name": "setpoint_cooling",
+      "display_name": { "zh": "制冷设定", "en": "Cooling Setpoint" },
+      "description": { "zh": "制冷模式目标温度", "en": "Target temperature for cooling mode" },
+      "data_type": "number",
+      "unit": "°C",
+      "min_value": 18.0,
+      "max_value": 35.0,
+      "default_value": "26.0",
+      "is_read_only": false,
+      "is_required": true
+    },
+    {
+      "name": "operation_mode",
+      "display_name": { "zh": "运行模式", "en": "Operation Mode" },
+      "description": { "zh": "0=关闭 1=制冷 2=制热 3=通风 4=自动", "en": "0=off 1=cooling 2=heating 3=ventilation 4=auto" },
+      "data_type": "number",
+      "unit": "",
+      "min_value": 0.0,
+      "max_value": 4.0,
+      "default_value": "4.0",
+      "is_read_only": false,
+      "is_required": true
+    },
+    {
+      "name": "fan_speed",
+      "display_name": { "zh": "风速", "en": "Fan Speed" },
+      "description": { "zh": "0=自动 1=低速 2=中速 3=高速", "en": "0=auto 1=low 2=medium 3=high" },
+      "data_type": "number",
+      "unit": "",
+      "min_value": 0.0,
+      "max_value": 3.0,
+      "default_value": "0.0",
+      "is_read_only": false,
+      "is_required": false
+    },
+    {
+      "name": "valve_status_heating",
+      "display_name": { "zh": "供暖阀状态", "en": "Heating Valve Status" },
+      "description": { "zh": "供暖阀门开度", "en": "Heating valve opening" },
+      "data_type": "number",
+      "unit": "%",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": false
+    },
+    {
+      "name": "valve_status_cooling",
+      "display_name": { "zh": "制冷阀状态", "en": "Cooling Valve Status" },
+      "description": { "zh": "制冷阀门开度", "en": "Cooling valve opening" },
+      "data_type": "number",
+      "unit": "%",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": false
+    },
+    {
+      "name": "energy_consumption",
+      "display_name": { "zh": "能耗", "en": "Energy Consumption" },
+      "description": { "zh": "当前能耗", "en": "Current energy consumption" },
+      "data_type": "number",
+      "unit": "kWh",
+      "min_value": 0.0,
+      "max_value": 99999.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": false
+    },
+    {
+      "name": "alarm_status",
+      "display_name": { "zh": "报警状态", "en": "Alarm Status" },
+      "description": { "zh": "故障报警状态", "en": "Fault alarm status" },
+      "data_type": "number",
+      "unit": "",
+      "min_value": 0.0,
+      "max_value": 15.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": false
+    }
+  ],
+  "commands": [
+    {
+      "name": "read_status",
+      "display_name": { "zh": "读取状态", "en": "Read Status" },
+      "description": { "zh": "读取温控器状态", "en": "Read thermostat status" },
+      "parameters": "{}",
+      "is_required": true
+    },
+    {
+      "name": "set_mode",
+      "display_name": { "zh": "设置模式", "en": " Set Mode" },
+      "description": { "zh": "设置运行模式", "en": "Set operation mode" },
+      "parameters": "{\"mode\": 4}",
+      "parameter_schema": "{\"type\": \"object\", \"properties\": {\"mode\": {\"type\": \"number\", \"enum\": [0, 1, 2, 3, 4]}}, \"required\": [\"mode\"]}",
+      "is_required": true
+    },
+    {
+      "name": "set_temperature",
+      "display_name": { "zh": "设置温度", "en": "Set Temperature" },
+      "description": { "zh": "设置目标温度", "en": "Set target temperature" },
+      "parameters": "{\"heating\": 20, \"cooling\": 26}",
+      "parameter_schema": "{\"type\": \"object\", \"properties\": {\"heating\": {\"type\": \"number\", \"minimum\": 5, \"maximum\": 30}, \"cooling\": {\"type\": \"number\", \"minimum\": 18, \"maximum\": 35}}, \"required\": [\"heating\", \"cooling\"]}",
+      "is_required": true
+    },
+    {
+      "name": "set_fan_speed",
+      "display_name": { "zh": "设置风速", "en": "Set Fan Speed" },
+      "description": { "zh": "设置风机速度", "en": "Set fan speed" },
+      "parameters": "{\"speed\": 2}",
+      "parameter_schema": "{\"type\": \"object\", \"properties\": {\"speed\": {\"type\": \"number\", \"enum\": [0, 1, 2, 3]}}, \"required\": [\"speed\"]}",
+      "is_required": false
+    },
+    {
+      "name": "reset_alarm",
+      "display_name": { "zh": "复位报警", "en": "Reset Alarm" },
+      "description": { "zh": "清除报警状态", "en": "Clear alarm status" },
+      "parameters": "{}",
+      "is_required": false
+    }
+  ]
+}

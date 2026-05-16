@@ -1,0 +1,125 @@
+{
+  "name": "flow_meter",
+  "display_name": {
+    "zh": "涡轮流量计",
+    "en": "Turbine Flow Meter"
+  },
+  "description": {
+    "zh": "涡轮流量计，用于测量液体或气体流量，精度±0.5%，支持RS485 Modbus输出",
+    "en": "Turbine flow meter for liquid or gas flow measurement, accuracy ±0.5%, RS485 Modbus output"
+  },
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "meters",
+  "manufacturer": "TinyIoT",
+  "device_type": "meter",
+  "protocol_type": "modbus",
+  "driver_name": "modbus_rtu",
+  "tags": ["flow", "meter", "liquid", "gas", "turbine"],
+  "device_info": {
+    "default_name_pattern": "flow_meter_{index}",
+    "default_display_name_pattern": {
+      "zh": "涡轮流量计 {index}",
+      "en": "Turbine Flow Meter {index}"
+    },
+    "required_fields": ["name", "address", "pipe_size"]
+  },
+  "properties": [
+    {
+      "name": "instantaneous_flow",
+      "display_name": { "zh": "瞬时流量", "en": "Instantaneous Flow" },
+      "description": { "zh": "当前瞬时流量", "en": "Current instantaneous flow rate" },
+      "data_type": "number",
+      "unit": "m³/h",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "total_flow",
+      "display_name": { "zh": "累计流量", "en": "Total Flow" },
+      "description": { "zh": "累计流量总值", "en": "Cumulative total flow" },
+      "data_type": "number",
+      "unit": "m³",
+      "min_value": 0.0,
+      "max_value": 999999999.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "flow_rate_lpm",
+      "display_name": { "zh": "流量(L/min)", "en": "Flow Rate (L/min)" },
+      "description": { "zh": "升/分钟为单位", "en": "Flow rate in liters per minute" },
+      "data_type": "number",
+      "unit": "L/min",
+      "min_value": 0.0,
+      "max_value": 1666.67,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": false
+    },
+    {
+      "name": "medium_temperature",
+      "display_name": { "zh": "介质温度", "en": "Medium Temperature" },
+      "description": { "zh": "被测介质温度", "en": "Temperature of the measured medium" },
+      "data_type": "number",
+      "unit": "°C",
+      "min_value": -40.0,
+      "max_value": 120.0,
+      "default_value": "25.0",
+      "is_read_only": true,
+      "is_required": false
+    },
+    {
+      "name": "alarm_low_flow",
+      "display_name": { "zh": "低流量报警", "en": "Low Flow Alarm" },
+      "description": { "zh": "流量低于此值时报警", "en": "Alarm when flow falls below this value" },
+      "data_type": "number",
+      "unit": "m³/h",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "default_value": "1.0",
+      "is_read_only": false,
+      "is_required": false
+    },
+    {
+      "name": "alarm_high_flow",
+      "display_name": { "zh": "高流量报警", "en": "High Flow Alarm" },
+      "description": { "zh": "流量超过此值时报警", "en": "Alarm when flow exceeds this value" },
+      "data_type": "number",
+      "unit": "m³/h",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "default_value": "80.0",
+      "is_read_only": false,
+      "is_required": false
+    }
+  ],
+  "commands": [
+    {
+      "name": "read_flow",
+      "display_name": { "zh": "读取流量", "en": "Read Flow" },
+      "description": { "zh": "读取瞬时和累计流量", "en": "Read instantaneous and total flow" },
+      "parameters": "{}",
+      "is_required": true
+    },
+    {
+      "name": "reset_total",
+      "display_name": { "zh": "清零累计", "en": "Reset Total" },
+      "description": { "zh": "清除累计流量值", "en": "Reset cumulative flow counter" },
+      "parameters": "{}",
+      "is_required": false
+    },
+    {
+      "name": "set_unit",
+      "display_name": { "zh": "设置单位", "en": "Set Unit" },
+      "description": { "zh": "设置流量显示单位", "en": "Set flow display unit" },
+      "parameters": "{\"unit\": \"m3h\"}",
+      "parameter_schema": "{\"type\": \"object\", \"properties\": {\"unit\": {\"type\": \"string\", \"enum\": [\"m3h\", \"m3s\", \"lpm\", \"gpm\"]}}, \"required\": [\"unit\"]}",
+      "is_required": false
+    }
+  ]
+}

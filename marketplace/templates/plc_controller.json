@@ -1,0 +1,34 @@
+{
+  "name": "mini_plc",
+  "display_name": { "zh": "小型PLC控制器", "en": "Mini PLC Controller" },
+  "description": {
+    "zh": "16路输入+16路输出小型PLC，支持Modbus RTU，可编程用于简单逻辑控制",
+    "en": "16 DI + 16 DO mini PLC, Modbus RTU, programmable for simple logic control"
+  },
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "controllers",
+  "manufacturer": "TinyIoT",
+  "device_type": "controller",
+  "protocol_type": "modbus",
+  "driver_name": "modbus_rtu",
+  "tags": ["plc", "controller", "logic", "automation"],
+  "device_info": {
+    "default_name_pattern": "plc_{index}",
+    "default_display_name_pattern": { "zh": "PLC控制器 {index}", "en": "PLC Controller {index}" },
+    "required_fields": ["name", "address"]
+  },
+  "properties": [
+    {"name": "di_status", "display_name": { "zh": "输入状态", "en": "DI Status" }, "description": { "zh": "数字输入状态位", "en": "Digital input status bits" }, "data_type": "number", "unit": "", "min_value": 0.0, "max_value": 65535.0, "default_value": "0.0", "is_read_only": true, "is_required": true},
+    {"name": "do_status", "display_name": { "zh": "输出状态", "en": "DO Status" }, "description": { "zh": "数字输出状态位", "en": "Digital output status bits" }, "data_type": "number", "unit": "", "min_value": 0.0, "max_value": 65535.0, "default_value": "0.0", "is_read_only": false, "is_required": true},
+    {"name": "ai_1_value", "display_name": { "zh": "模拟输入1", "en": "AI1 Value" }, "description": { "zh": "模拟输入通道1", "en": "Analog input channel 1" }, "data_type": "number", "unit": "", "min_value": 0.0, "max_value": 4095.0, "default_value": "0.0", "is_read_only": true, "is_required": false},
+    {"name": "ai_2_value", "display_name": { "zh": "模拟输入2", "en": "AI2 Value" }, "description": { "zh": "模拟输入通道2", "en": "Analog input channel 2" }, "data_type": "number", "unit": "", "min_value": 0.0, "max_value": 4095.0, "default_value": "0.0", "is_read_only": true, "is_required": false},
+    {"name": "run_mode", "display_name": { "zh": "运行模式", "en": "Run Mode" }, "description": { "zh": "0=停止 1=运行 2=编程模式", "en": "0=stop 1=run 2=program mode" }, "data_type": "number", "unit": "", "min_value": 0.0, "max_value": 2.0, "default_value": "0.0", "is_read_only": false, "is_required": true},
+    {"name": "scan_time", "display_name": { "zh": "扫描周期", "en": "Scan Time" }, "description": { "zh": "程序扫描周期", "en": "Program scan cycle time" }, "data_type": "number", "unit": "ms", "min_value": 0.0, "max_value": 1000.0, "default_value": "10.0", "is_read_only": true, "is_required": false}
+  ],
+  "commands": [
+    {"name": "read_inputs", "display_name": { "zh": "读取输入", "en": "Read Inputs" }, "description": { "zh": "读取所有数字输入", "en": "Read all digital inputs" }, "parameters": "{}", "is_required": true},
+    {"name": "write_outputs", "display_name": { "zh": "写输出", "en": "Write Outputs" }, "description": { "zh": "设置数字输出", "en": "Set digital outputs" }, "parameters": "{\"value\": 0}", "parameter_schema": "{\"type\": \"object\", \"properties\": {\"value\": {\"type\": \"number\", \"minimum\": 0, \"maximum\": 65535}}, \"required\": [\"value\"]}", "is_required": true},
+    {"name": "set_run_mode", "display_name": { "zh": "设置模式", "en": "Set Mode" }, "description": { "zh": "设置运行模式", "en": "Set run mode" }, "parameters": "{\"mode\": 1}", "parameter_schema": "{\"type\": \"object\", \"properties\": {\"mode\": {\"type\": \"number\", \"enum\": [0, 1, 2]}}, \"required\": [\"mode\"]}", "is_required": false}
+  ]
+}

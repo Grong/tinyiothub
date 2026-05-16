@@ -1,0 +1,32 @@
+{
+  "name": "ultrasonic_level_sensor",
+  "display_name": { "zh": "超声波液位传感器", "en": "Ultrasonic Level Sensor" },
+  "description": {
+    "zh": "非接触式超声波液位传感器，量程0-10m，精度±0.5%，用于水池、罐体液位测量",
+    "en": "Non-contact ultrasonic level sensor, range 0-10m, accuracy ±0.5%, for tank and reservoir level measurement"
+  },
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "sensors",
+  "manufacturer": "TinyIoT",
+  "device_type": "sensor",
+  "protocol_type": "modbus",
+  "driver_name": "modbus_rtu",
+  "tags": ["level", "ultrasonic", "liquid", "tank"],
+  "device_info": {
+    "default_name_pattern": "level_sensor_{index}",
+    "default_display_name_pattern": { "zh": "液位传感器 {index}", "en": "Level Sensor {index}" },
+    "required_fields": ["name", "address", "tank_height"]
+  },
+  "properties": [
+    {"name": "level", "display_name": { "zh": "液位", "en": "Level" }, "description": { "zh": "当前液位高度", "en": "Current liquid level" }, "data_type": "number", "unit": "m", "min_value": 0.0, "max_value": 10.0, "default_value": "0.0", "is_read_only": true, "is_required": true},
+    {"name": "distance", "display_name": { "zh": "距离", "en": "Distance" }, "description": { "zh": "传感器到液面距离", "en": "Distance from sensor to liquid surface" }, "data_type": "number", "unit": "m", "min_value": 0.0, "max_value": 10.0, "default_value": "10.0", "is_read_only": true, "is_required": true},
+    {"name": "volume", "display_name": { "zh": "容积", "en": "Volume" }, "description": { "zh": "计算容积", "en": "Calculated volume" }, "data_type": "number", "unit": "m³", "min_value": 0.0, "max_value": 9999.0, "default_value": "0.0", "is_read_only": true, "is_required": false},
+    {"name": "tank_height", "display_name": { "zh": "罐体高度", "en": "Tank Height" }, "description": { "zh": "设置罐体高度", "en": "Set tank height" }, "data_type": "number", "unit": "m", "min_value": 0.1, "max_value": 20.0, "default_value": "5.0", "is_read_only": false, "is_required": true},
+    {"name": "alarm_high_level", "display_name": { "zh": "高液位报警", "en": "High Level Alarm" }, "description": { "zh": "液位超过此值报警", "en": "Alarm when level exceeds this value" }, "data_type": "number", "unit": "m", "min_value": 0.0, "max_value": 10.0, "default_value": "8.0", "is_read_only": false, "is_required": false}
+  ],
+  "commands": [
+    {"name": "read_level", "display_name": { "zh": "读取液位", "en": "Read Level" }, "description": { "zh": "读取当前液位", "en": "Read current level" }, "parameters": "{}", "is_required": true},
+    {"name": "set_tank_parameters", "display_name": { "zh": "设置罐体参数", "en": "Set Tank Parameters" }, "description": { "zh": "设置罐体形状和尺寸参数", "en": "Set tank shape and dimension parameters" }, "parameters": "{\"height\": 5, \"shape\": \"cylinder\"}", "parameter_schema": "{\"type\": \"object\", \"properties\": {\"height\": {\"type\": \"number\"}, \"shape\": {\"type\": \"string\", \"enum\": [\"cylinder\", \"rectangle\"]}}, \"required\": [\"height\"]}", "is_required": false}
+  ]
+}

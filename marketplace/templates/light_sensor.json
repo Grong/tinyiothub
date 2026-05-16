@@ -1,0 +1,31 @@
+{
+  "name": "illuminance_sensor",
+  "display_name": { "zh": "光照传感器", "en": "Illuminance Sensor" },
+  "description": {
+    "zh": "数字光照传感器，测量范围0-200000lux，用于智能照明控制和日光采集",
+    "en": "Digital illuminance sensor, range 0-200000lux, for smart lighting control and daylight harvesting"
+  },
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "sensors",
+  "manufacturer": "TinyIoT",
+  "device_type": "sensor",
+  "protocol_type": "modbus",
+  "driver_name": "modbus_rtu",
+  "tags": ["light", "illuminance", "lux", "lighting"],
+  "device_info": {
+    "default_name_pattern": "light_sensor_{index}",
+    "default_display_name_pattern": { "zh": "光照传感器 {index}", "en": "Light Sensor {index}" },
+    "required_fields": ["name", "address"]
+  },
+  "properties": [
+    {"name": "illuminance", "display_name": { "zh": "照度", "en": "Illuminance" }, "description": { "zh": "当前光照强度", "en": "Current illuminance" }, "data_type": "number", "unit": "lux", "min_value": 0.0, "max_value": 200000.0, "default_value": "300.0", "is_read_only": true, "is_required": true},
+    {"name": "illuminance_fc", "display_name": { "zh": "照度(英尺烛光)", "en": "Illuminance (fc)" }, "description": { "zh": "英尺烛光单位", "en": "Foot-candle unit" }, "data_type": "number", "unit": "fc", "min_value": 0.0, "max_value": 20000.0, "default_value": "30.0", "is_read_only": true, "is_required": false},
+    {"name": "alarm_high", "display_name": { "zh": "高照度报警", "en": "High Illuminance Alarm" }, "description": { "zh": "照度过高报警阈值", "en": "High illuminance alarm threshold" }, "data_type": "number", "unit": "lux", "min_value": 0.0, "max_value": 200000.0, "default_value": "10000.0", "is_read_only": false, "is_required": false},
+    {"name": "alarm_low", "display_name": { "zh": "低照度报警", "en": "Low Illuminance Alarm" }, "description": { "zh": "照度过低报警阈值", "en": "Low illuminance alarm threshold" }, "data_type": "number", "unit": "lux", "min_value": 0.0, "max_value": 200000.0, "default_value": "100.0", "is_read_only": false, "is_required": false}
+  ],
+  "commands": [
+    {"name": "read_illuminance", "display_name": { "zh": "读取照度", "en": "Read Illuminance" }, "description": { "zh": "读取当前光照强度", "en": "Read current illuminance" }, "parameters": "{}", "is_required": true},
+    {"name": "set_alarm", "display_name": { "zh": "设置报警", "en": "Set Alarm" }, "description": { "zh": "设置高低照度报警", "en": "Set high/low illuminance alarm" }, "parameters": "{\"high\": 10000, \"low\": 100}", "parameter_schema": "{\"type\": \"object\", \"properties\": {\"high\": {\"type\": \"number\"}, \"low\": {\"type\": \"number\"}}, \"required\": [\"high\", \"low\"]}", "is_required": false}
+  ]
+}

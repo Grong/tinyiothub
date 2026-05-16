@@ -1,0 +1,31 @@
+{
+  "name": "flow_switch",
+  "display_name": { "zh": "流量开关", "en": "Flow Switch" },
+  "description": {
+    "zh": "挡板式流量开关，用于监测管道内液体或气体流动，保护泵和冷却系统",
+    "en": "Baffle-type flow switch for monitoring liquid or gas flow in pipes, protects pumps and cooling systems"
+  },
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "sensors",
+  "manufacturer": "TinyIoT",
+  "device_type": "sensor",
+  "protocol_type": "modbus",
+  "driver_name": "modbus_rtu",
+  "tags": ["flow", "switch", "liquid", "protection"],
+  "device_info": {
+    "default_name_pattern": "flow_switch_{index}",
+    "default_display_name_pattern": { "zh": "流量开关 {index}", "en": "Flow Switch {index}" },
+    "required_fields": ["name", "address", "pipe_size"]
+  },
+  "properties": [
+    {"name": "flow_status", "display_name": { "zh": "流动状态", "en": "Flow Status" }, "description": { "zh": "0=无流动 1=有流动", "en": "0=no flow 1=flow detected" }, "data_type": "number", "unit": "", "min_value": 0.0, "max_value": 1.0, "default_value": "0.0", "is_read_only": true, "is_required": true},
+    {"name": "flow_rate", "display_name": { "zh": "流速", "en": "Flow Rate" }, "description": { "zh": "当前流速", "en": "Current flow rate" }, "data_type": "number", "unit": "m/s", "min_value": 0.0, "max_value": 10.0, "default_value": "0.0", "is_read_only": true, "is_required": false},
+    {"name": "alarm_status", "display_name": { "zh": "报警状态", "en": "Alarm Status" }, "description": { "zh": "0=正常 1=低流量报警 2=故障", "en": "0=normal 1=low flow alarm 2=fault" }, "data_type": "number", "unit": "", "min_value": 0.0, "max_value": 2.0, "default_value": "0.0", "is_read_only": true, "is_required": true},
+    {"name": "setpoint", "display_name": { "zh": "报警阈值", "en": "Alarm Setpoint" }, "description": { "zh": "低流量报警阈值", "en": "Low flow alarm threshold" }, "data_type": "number", "unit": "m/s", "min_value": 0.0, "max_value": 5.0, "default_value": "0.5", "is_read_only": false, "is_required": false}
+  ],
+  "commands": [
+    {"name": "read_status", "display_name": { "zh": "读取状态", "en": "Read Status" }, "description": { "zh": "读取流量开关状态", "en": "Read flow switch status" }, "parameters": "{}", "is_required": true},
+    {"name": "set_threshold", "display_name": { "zh": "设置阈值", "en": "Set Threshold" }, "description": { "zh": "设置报警阈值", "en": "Set alarm threshold" }, "parameters": "{\"threshold\": 0.5}", "parameter_schema": "{\"type\": \"object\", \"properties\": {\"threshold\": {\"type\": \"number\", \"minimum\": 0, \"maximum\": 5}}, \"required\": [\"threshold\"]}", "is_required": false}
+  ]
+}

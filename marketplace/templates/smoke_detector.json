@@ -1,0 +1,34 @@
+{
+  "name": "smoke_detector",
+  "display_name": { "zh": "烟感探测器", "en": "Smoke Detector" },
+  "description": {
+    "zh": "独立式光电烟雾探测器，支持Modbus RTU联网报警，用于火灾早期探测",
+    "en": "Standalone photoelectric smoke detector, Modbus RTU, for early fire detection"
+  },
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "safety",
+  "manufacturer": "TinyIoT",
+  "device_type": "sensor",
+  "protocol_type": "modbus",
+  "driver_name": "modbus_rtu",
+  "tags": ["smoke", "fire", "detector", "safety"],
+  "device_info": {
+    "default_name_pattern": "smoke_detector_{index}",
+    "default_display_name_pattern": { "zh": "烟感探测器 {index}", "en": "Smoke Detector {index}" },
+    "required_fields": ["name", "address", "zone_id"]
+  },
+  "properties": [
+    {"name": "smoke_level", "display_name": { "zh": "烟雾浓度", "en": "Smoke Level" }, "description": { "zh": "当前烟雾浓度", "en": "Current smoke concentration" }, "data_type": "number", "unit": "%", "min_value": 0.0, "max_value": 100.0, "default_value": "10.0", "is_read_only": true, "is_required": true},
+    {"name": "alarm_status", "display_name": { "zh": "报警状态", "en": "Alarm Status" }, "description": { "zh": "0=正常 1=预警 2=报警 3=故障", "en": "0=normal 1=pre-alarm 2=alarm 3=fault" }, "data_type": "number", "unit": "", "min_value": 0.0, "max_value": 3.0, "default_value": "0.0", "is_read_only": true, "is_required": true},
+    {"name": "sensitivity", "display_name": { "zh": "灵敏度", "en": "Sensitivity" }, "description": { "zh": "探测器灵敏度等级", "en": "Detector sensitivity level" }, "data_type": "number", "unit": "", "min_value": 1.0, "max_value": 3.0, "default_value": "2.0", "is_read_only": false, "is_required": false},
+    {"name": "chamber_status", "display_name": { "zh": "迷宫状态", "en": "Chamber Status" }, "description": { "zh": "烟雾探测迷宫状态", "en": "Smoke detection chamber status" }, "data_type": "number", "unit": "", "min_value": 0.0, "max_value": 1.0, "default_value": "1.0", "is_read_only": true, "is_required": false},
+    {"name": "battery_voltage", "display_name": { "zh": "电池电压", "en": "Battery Voltage" }, "description": { "zh": "电池电压", "en": "Battery voltage" }, "data_type": "number", "unit": "V", "min_value": 0.0, "max_value": 3.6, "default_value": "3.0", "is_read_only": true, "is_required": false}
+  ],
+  "commands": [
+    {"name": "read_status", "display_name": { "zh": "读取状态", "en": "Read Status" }, "description": { "zh": "读取探测器状态", "en": "Read detector status" }, "parameters": "{}", "is_required": true},
+    {"name": "test_alarm", "display_name": { "zh": "测试报警", "en": "Test Alarm" }, "description": { "zh": "触发探测器自检", "en": "Trigger detector self-test" }, "parameters": "{}", "is_required": false},
+    {"name": "reset_alarm", "display_name": { "zh": "复位报警", "en": "Reset Alarm" }, "description": { "zh": "复位报警状态", "en": "Reset alarm status" }, "parameters": "{}", "is_required": false},
+    {"name": "set_sensitivity", "display_name": { "zh": "设置灵敏度", "en": "Set Sensitivity" }, "description": { "zh": "设置探测器灵敏度", "en": "Set detector sensitivity" }, "parameters": "{\"level\": 2}", "parameter_schema": "{\"type\": \"object\", \"properties\": {\"level\": {\"type\": \"number\", \"enum\": [1, 2, 3]}}, \"required\": [\"level\"]}", "is_required": false}
+  ]
+}

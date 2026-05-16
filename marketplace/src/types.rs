@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 // ── Domain models ──────────────────────────────────────────
@@ -32,7 +31,9 @@ pub struct Driver {
     pub platforms: Option<serde_json::Value>,
     #[serde(default)]
     pub requirements: Option<serde_json::Value>,
-    pub updated_at: DateTime<Utc>,
+    #[serde(default)]
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 fn default_zero() -> i64 {
@@ -181,7 +182,7 @@ impl PaginationParams {
 
 // ── Response types ─────────────────────────────────────────
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PaginatedList<T> {
     pub items: Vec<T>,
     pub total: usize,

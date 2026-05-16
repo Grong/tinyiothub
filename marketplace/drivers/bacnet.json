@@ -1,0 +1,39 @@
+{
+  "id": "bacnet",
+  "name": "BACnet 驱动",
+  "version": "2.1.0",
+  "protocol": "bacnet",
+  "description": "BACnet 协议驱动，支持 BACnet/IP 和 BACnet MSTP，用于楼宇自动化系统",
+  "tags": ["bacnet", "building-automation", "hvac", "bas"],
+  "author_name": "TinyIoTHub Team",
+  "author_email": "support@tinyiothub.com",
+  "icon": "https://cdn.tinyiothub.com/drivers/bacnet.png",
+  "downloads": 856,
+  "rating": 4.6,
+  "reviews": 23,
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/tinyiothub/drivers/bacnet",
+  "documentation": "https://docs.tinyiothub.com/drivers/bacnet",
+  "platforms": {
+    "windows-x64": {
+      "file_url": "https://github.com/tinyiothub/marketplace/releases/download/bacnet-2.1.0/bacnet_driver-2.1.0-win-x64.dll",
+      "checksum": "sha256:test-bacnet-windows",
+      "size": 2457600
+    },
+    "linux-x64": {
+      "file_url": "https://github.com/tinyiothub/marketplace/releases/download/bacnet-2.1.0/bacnet_driver-2.1.0-linux-x64.so",
+      "checksum": "sha256:test-bacnet-linux",
+      "size": 2103296
+    },
+    "linux-armv7": {
+      "file_url": "https://github.com/tinyiothub/marketplace/releases/download/bacnet-2.1.0/bacnet_driver-2.1.0-linux-armv7.so",
+      "checksum": "sha256:test-bacnet-arm",
+      "size": 1945600
+    }
+  },
+  "requirements": {
+    "min_version": "1.0.0"
+  },
+  "created_at": "2024-03-10T08:00:00Z",
+  "updated_at": "2025-01-15T12:00:00Z"
+}

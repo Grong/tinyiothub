@@ -1,9 +1,9 @@
 use std::{path::Path, time::Duration};
 
 use reqwest::Client;
-use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tinyiothub_config::MarketplaceConfig;
+use tinyiothub_marketplace::types::{Driver as MDriver, PaginatedList, Template as MTemplate};
 
 use super::{
     error::{MarketplaceError, Result},
@@ -11,87 +11,13 @@ use super::{
 };
 
 /// Marketplace API response wrapper.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, serde::Deserialize)]
 struct ApiResponse<T> {
     #[allow(dead_code)]
     code: i32,
     #[allow(dead_code)]
     msg: String,
     result: T,
-}
-
-/// Marketplace paginated list.
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct PaginatedList<T> {
-    items: Vec<T>,
-    total: usize,
-    page: usize,
-    per_page: usize,
-}
-
-/// Template as returned by marketplace API.
-#[derive(Debug, Deserialize)]
-struct MarketplaceTemplate {
-    name: String,
-    version: String,
-    category: String,
-    protocol_type: String,
-    #[serde(default)]
-    manufacturer: Option<String>,
-    #[serde(default)]
-    description: serde_json::Value,
-    #[serde(default)]
-    tags: Vec<String>,
-    #[serde(default)]
-    author: String,
-    #[serde(default)]
-    icon: Option<String>,
-    #[serde(default)]
-    downloads: i64,
-    #[serde(default)]
-    rating: Option<f64>,
-    #[serde(default)]
-    reviews: Option<i32>,
-    #[serde(default)]
-    license: String,
-    #[serde(default)]
-    created_at: String,
-    #[serde(default)]
-    updated_at: String,
-}
-
-/// Driver as returned by marketplace API.
-#[derive(Debug, Deserialize)]
-struct MarketplaceDriver {
-    id: String,
-    name: String,
-    version: String,
-    protocol: String,
-    description: String,
-    #[serde(default)]
-    tags: Vec<String>,
-    author_name: String,
-    #[serde(default)]
-    author_email: Option<String>,
-    #[serde(default)]
-    icon: Option<String>,
-    #[serde(default)]
-    downloads: i64,
-    #[serde(default)]
-    rating: Option<f64>,
-    #[serde(default)]
-    reviews: Option<i32>,
-    license: String,
-    #[serde(default)]
-    homepage: Option<String>,
-    #[serde(default)]
-    documentation: Option<String>,
-    #[serde(default)]
-    platforms: Option<serde_json::Value>,
-    #[serde(default)]
-    requirements: Option<serde_json::Value>,
-    updated_at: String,
 }
 
 pub struct MarketplaceClient {
@@ -125,7 +51,7 @@ impl MarketplaceClient {
         let url = format!("{}/templates", base);
         tracing::info!("Fetching templates from: {}", url);
 
-        let response: ApiResponse<PaginatedList<MarketplaceTemplate>> =
+        let response: ApiResponse<PaginatedList<MTemplate>> =
             self.http_client.get(&url).send().await?.json().await?;
 
         let templates = response
@@ -144,11 +70,9 @@ impl MarketplaceClient {
                     manufacturer: t.manufacturer.unwrap_or_default(),
                     description: t
                         .description
-                        .get("zh")
-                        .or_else(|| t.description.get("en"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
+                        .zh
+                        .or(t.description.en)
+                        .unwrap_or_default(),
                     tags: t.tags,
                     author: AuthorInfo {
                         name: t.author,
@@ -189,7 +113,7 @@ impl MarketplaceClient {
         let url = format!("{}/drivers", base);
         tracing::info!("Fetching drivers from: {}", url);
 
-        let response: ApiResponse<PaginatedList<MarketplaceDriver>> =
+        let response: ApiResponse<PaginatedList<MDriver>> =
             self.http_client.get(&url).send().await?.json().await?;
 
         let drivers = response
@@ -224,7 +148,7 @@ impl MarketplaceClient {
                     .unwrap_or(super::metadata::DriverRequirements {
                         min_version: "0.1.0".to_string(),
                     }),
-                created_at: String::new(),
+                created_at: d.created_at,
                 updated_at: d.updated_at,
             })
             .collect();

@@ -16,7 +16,7 @@ async fn main() -> anyhow::Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let data_path = std::env::var("LOCAL_DATA_PATH").unwrap_or_else(|_| "data".into());
+    let data_path = std::env::var("LOCAL_DATA_PATH").unwrap_or_else(|_| ".".into());
 
     let cache = Arc::new(SledCache::new(
         std::env::var("SLED_PATH").unwrap_or_else(|_| "/tmp/marketplace.sled".into()),

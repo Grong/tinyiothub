@@ -1,0 +1,132 @@
+{
+  "name": "gas_detector",
+  "display_name": {
+    "zh": "气体探测器",
+    "en": "Gas Detector"
+  },
+  "description": {
+    "zh": "多气体检测仪，支持甲烷(CH4)、一氧化碳(CO)、氧气(O2)、硫化氢(H2S)等可燃和有毒气体检测",
+    "en": "Multi-gas detector supporting CH4, CO, O2, H2S combustible and toxic gas detection"
+  },
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "sensors",
+  "manufacturer": "TinyIoT",
+  "device_type": "sensor",
+  "protocol_type": "modbus",
+  "driver_name": "modbus_rtu",
+  "tags": ["gas", "detector", "safety", "ch4", "co", "h2s"],
+  "device_info": {
+    "default_name_pattern": "gas_detector_{index}",
+    "default_display_name_pattern": {
+      "zh": "气体探测器 {index}",
+      "en": "Gas Detector {index}"
+    },
+    "required_fields": ["name", "address", "gas_type"]
+  },
+  "properties": [
+    {
+      "name": "ch4_concentration",
+      "display_name": { "zh": "甲烷浓度", "en": "CH4 Concentration" },
+      "description": { "zh": "甲烷(CH4)浓度", "en": "Methane concentration" },
+      "data_type": "number",
+      "unit": "%LEL",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "co_concentration",
+      "display_name": { "zh": "一氧化碳浓度", "en": "CO Concentration" },
+      "description": { "zh": "一氧化碳(CO)浓度", "en": "Carbon monoxide concentration" },
+      "data_type": "number",
+      "unit": "ppm",
+      "min_value": 0.0,
+      "max_value": 1000.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "o2_concentration",
+      "display_name": { "zh": "氧气浓度", "en": "O2 Concentration" },
+      "description": { "zh": "氧气(O2)浓度", "en": "Oxygen concentration" },
+      "data_type": "number",
+      "unit": "%VOL",
+      "min_value": 0.0,
+      "max_value": 25.0,
+      "default_value": "20.9",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "h2s_concentration",
+      "display_name": { "zh": "硫化氢浓度", "en": "H2S Concentration" },
+      "description": { "zh": "硫化氢(H2S)浓度", "en": "Hydrogen sulfide concentration" },
+      "data_type": "number",
+      "unit": "ppm",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": false
+    },
+    {
+      "name": "alarm_status",
+      "display_name": { "zh": "报警状态", "en": "Alarm Status" },
+      "description": { "zh": "当前报警状态", "en": "Current alarm status" },
+      "data_type": "number",
+      "unit": "",
+      "min_value": 0.0,
+      "max_value": 3.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "sensor_life",
+      "display_name": { "zh": "传感器寿命", "en": "Sensor Life" },
+      "description": { "zh": "传感器剩余使用寿命", "en": "Remaining sensor life" },
+      "data_type": "number",
+      "unit": "%",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "default_value": "100.0",
+      "is_read_only": true,
+      "is_required": false
+    }
+  ],
+  "commands": [
+    {
+      "name": "read_concentration",
+      "display_name": { "zh": "读取浓度", "en": "Read Concentration" },
+      "description": { "zh": "读取所有气体浓度", "en": "Read all gas concentrations" },
+      "parameters": "{}",
+      "is_required": true
+    },
+    {
+      "name": "read_alarm_status",
+      "display_name": { "zh": "读取报警状态", "en": "Read Alarm Status" },
+      "description": { "zh": "读取当前报警状态", "en": "Read current alarm status" },
+      "parameters": "{}",
+      "is_required": true
+    },
+    {
+      "name": "silence_alarm",
+      "display_name": { "zh": "消音", "en": "Silence Alarm" },
+      "description": { "zh": "消除报警声音", "en": "Silence the alarm buzzer" },
+      "parameters": "{}",
+      "is_required": false
+    },
+    {
+      "name": "bump_test",
+      "display_name": { "zh": "标定测试", "en": "Bump Test" },
+      "description": { "zh": "执行传感器标定测试", "en": "Execute sensor bump test" },
+      "parameters": "{\"test_gas\": \"ch4\", \"expected_value\": 50}",
+      "parameter_schema": "{\"type\": \"object\", \"properties\": {\"test_gas\": {\"type\": \"string\", \"enum\": [\"ch4\", \"co\", \"o2\", \"h2s\"]}, \"expected_value\": {\"type\": \"number\"}}, \"required\": [\"test_gas\", \"expected_value\"]}",
+      "is_required": false
+    }
+  ]
+}

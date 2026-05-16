@@ -1,0 +1,33 @@
+{
+  "name": "conductivity_sensor",
+  "display_name": { "zh": "电导率传感器", "en": "Conductivity Sensor" },
+  "description": {
+    "zh": "工业电导率传感器，测量水质电导率，用于纯水制备和废水监测",
+    "en": "Industrial conductivity sensor for water quality conductivity measurement, for pure water preparation and wastewater monitoring"
+  },
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "sensors",
+  "manufacturer": "TinyIoT",
+  "device_type": "sensor",
+  "protocol_type": "modbus",
+  "driver_name": "modbus_rtu",
+  "tags": ["conductivity", "water", "quality", "tds"],
+  "device_info": {
+    "default_name_pattern": "conductivity_{index}",
+    "default_display_name_pattern": { "zh": "电导率传感器 {index}", "en": "Conductivity Sensor {index}" },
+    "required_fields": ["name", "address", "cell_constant"]
+  },
+  "properties": [
+    {"name": "conductivity", "display_name": { "zh": "电导率", "en": "Conductivity" }, "description": { "zh": "当前电导率", "en": "Current conductivity" }, "data_type": "number", "unit": "μS/cm", "min_value": 0.0, "max_value": 200000.0, "default_value": "100.0", "is_read_only": true, "is_required": true},
+    {"name": "tds", "display_name": { "zh": "TDS溶解固体", "en": "TDS" }, "description": { "zh": "总溶解固体含量", "en": "Total dissolved solids" }, "data_type": "number", "unit": "ppm", "min_value": 0.0, "max_value": 100000.0, "default_value": "50.0", "is_read_only": true, "is_required": false},
+    {"name": "salinity", "display_name": { "zh": "盐度", "en": "Salinity" }, "description": { "zh": "盐度", "en": "Salinity" }, "data_type": "number", "unit": "ppt", "min_value": 0.0, "max_value": 50.0, "default_value": "0.0", "is_read_only": true, "is_required": false},
+    {"name": "temperature", "display_name": { "zh": "温度", "en": "Temperature" }, "description": { "zh": "溶液温度", "en": "Solution temperature" }, "data_type": "number", "unit": "°C", "min_value": 0.0, "max_value": 100.0, "default_value": "25.0", "is_read_only": true, "is_required": true},
+    {"name": "alarm_high", "display_name": { "zh": "高电导率报警", "en": "High Conductivity Alarm" }, "description": { "zh": "电导率过高报警", "en": "High conductivity alarm" }, "data_type": "number", "unit": "μS/cm", "min_value": 0.0, "max_value": 200000.0, "default_value": "1000.0", "is_read_only": false, "is_required": false}
+  ],
+  "commands": [
+    {"name": "read_conductivity", "display_name": { "zh": "读取电导率", "en": "Read Conductivity" }, "description": { "zh": "读取电导率数据", "en": "Read conductivity data" }, "parameters": "{}", "is_required": true},
+    {"name": "set_cell_constant", "display_name": { "zh": "设置电极常数", "en": "Set Cell Constant" }, "description": { "zh": "设置电极常数", "en": "Set electrode cell constant" }, "parameters": "{\"k\": 1.0}", "parameter_schema": "{\"type\": \"object\", \"properties\": {\"k\": {\"type\": \"number\", \"minimum\": 0.01, \"maximum\": 10}}, \"required\": [\"k\"]}", "is_required": false},
+    {"name": "calibrate", "display_name": { "zh": "校准", "en": "Calibrate" }, "description": { "zh": "校准电导率传感器", "en": "Calibrate conductivity sensor" }, "parameters": "{\"reference\": 1413}", "parameter_schema": "{\"type\": \"object\", \"properties\": {\"reference\": {\"type\": \"number\"}}, \"required\": [\"reference\"]}", "is_required": false}
+  ]
+}

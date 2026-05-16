@@ -1,0 +1,229 @@
+{
+  "name": "modbus_io_module",
+  "display_name": {
+    "zh": "Modbus IO模块",
+    "en": "Modbus IO Module"
+  },
+  "description": {
+    "zh": "8路数字输入+8路数字输出+4路模拟输入IO模块，支持Modbus RTU，可扩展用于工业控制",
+    "en": "8-channel digital input + 8-channel digital output + 4-channel analog input IO module, Modbus RTU, for industrial control"
+  },
+  "version": "1.0.0",
+  "author": "TinyIoT",
+  "category": "controllers",
+  "manufacturer": "TinyIoT",
+  "device_type": "io_module",
+  "protocol_type": "modbus",
+  "driver_name": "modbus_rtu",
+  "tags": ["io", "module", "digital", "analog", "input", "output"],
+  "device_info": {
+    "default_name_pattern": "io_module_{index}",
+    "default_display_name_pattern": {
+      "zh": "IO模块 {index}",
+      "en": "IO Module {index}"
+    },
+    "required_fields": ["name", "address"]
+  },
+  "properties": [
+    {
+      "name": "di_1",
+      "display_name": { "zh": "数字输入1", "en": "Digital Input 1" },
+      "description": { "zh": "数字输入通道1状态", "en": "Digital input channel 1 status" },
+      "data_type": "number",
+      "unit": "",
+      "min_value": 0.0,
+      "max_value": 1.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "di_2",
+      "display_name": { "zh": "数字输入2", "en": "Digital Input 2" },
+      "description": { "zh": "数字输入通道2状态", "en": "Digital input channel 2 status" },
+      "data_type": "number",
+      "unit": "",
+      "min_value": 0.0,
+      "max_value": 1.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "di_3",
+      "display_name": { "zh": "数字输入3", "en": "Digital Input 3" },
+      "description": { "zh": "数字输入通道3状态", "en": "Digital input channel 3 status" },
+      "data_type": "number",
+      "unit": "",
+      "min_value": 0.0,
+      "max_value": 1.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "di_4",
+      "display_name": { "zh": "数字输入4", "en": "Digital Input 4" },
+      "description": { "zh": "数字输入通道4状态", "en": "Digital input channel 4 status" },
+      "data_type": "number",
+      "unit": "",
+      "min_value": 0.0,
+      "max_value": 1.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "di_5",
+      "display_name": { "zh": "数字输入5", "en": "Digital Input 5" },
+      "description": { "zh": "数字输入通道5状态", "en": "Digital input channel 5 status" },
+      "data_type": "number",
+      "unit": "",
+      "min_value": 0.0,
+      "max_value": 1.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "di_6",
+      "display_name": { "zh": "数字输入6", "en": "Digital Input 6" },
+      "description": { "zh": "数字输入通道6状态", "en": "Digital input channel 6 status" },
+      "data_type": "number",
+      "unit": "",
+      "min_value": 0.0,
+      "max_value": 1.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "di_7",
+      "display_name": { "zh": "数字输入7", "en": "Digital Input 7" },
+      "description": { "zh": "数字输入通道7状态", "en": "Digital input channel 7 status" },
+      "data_type": "number",
+      "unit": "",
+      "min_value": 0.0,
+      "max_value": 1.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "di_8",
+      "display_name": { "zh": "数字输入8", "en": "Digital Input 8" },
+      "description": { "zh": "数字输入通道8状态", "en": "Digital input channel 8 status" },
+      "data_type": "number",
+      "unit": "",
+      "min_value": 0.0,
+      "max_value": 1.0,
+      "default_value": "0.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "do_1",
+      "display_name": { "zh": "数字输出1", "en": "Digital Output 1" },
+      "description": { "zh": "数字输出通道1", "en": "Digital output channel 1" },
+      "data_type": "number",
+      "unit": "",
+      "min_value": 0.0,
+      "max_value": 1.0,
+      "default_value": "0.0",
+      "is_read_only": false,
+      "is_required": true
+    },
+    {
+      "name": "do_2",
+      "display_name": { "zh": "数字输出2", "en": "Digital Output 2" },
+      "description": { "zh": "数字输出通道2", "en": "Digital output channel 2" },
+      "data_type": "number",
+      "unit": "",
+      "min_value": 0.0,
+      "max_value": 1.0,
+      "default_value": "0.0",
+      "is_read_only": false,
+      "is_required": true
+    },
+    {
+      "name": "ai_1",
+      "display_name": { "zh": "模拟输入1", "en": "Analog Input 1" },
+      "description": { "zh": "模拟输入通道1 (4-20mA/0-10V)", "en": "Analog input channel 1 (4-20mA/0-10V)" },
+      "data_type": "number",
+      "unit": "mA",
+      "min_value": 0.0,
+      "max_value": 20.0,
+      "default_value": "4.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "ai_2",
+      "display_name": { "zh": "模拟输入2", "en": "Analog Input 2" },
+      "description": { "zh": "模拟输入通道2 (4-20mA/0-10V)", "en": "Analog input channel 2 (4-20mA/0-10V)" },
+      "data_type": "number",
+      "unit": "mA",
+      "min_value": 0.0,
+      "max_value": 20.0,
+      "default_value": "4.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "ai_3",
+      "display_name": { "zh": "模拟输入3", "en": "Analog Input 3" },
+      "description": { "zh": "模拟输入通道3 (4-20mA/0-10V)", "en": "Analog input channel 3 (4-20mA/0-10V)" },
+      "data_type": "number",
+      "unit": "mA",
+      "min_value": 0.0,
+      "max_value": 20.0,
+      "default_value": "4.0",
+      "is_read_only": true,
+      "is_required": true
+    },
+    {
+      "name": "ai_4",
+      "display_name": { "zh": "模拟输入4", "en": "Analog Input 4" },
+      "description": { "zh": "模拟输入通道4 (4-20mA/0-10V)", "en": "Analog input channel 4 (4-20mA/0-10V)" },
+      "data_type": "number",
+      "unit": "mA",
+      "min_value": 0.0,
+      "max_value": 20.0,
+      "default_value": "4.0",
+      "is_read_only": true,
+      "is_required": true
+    }
+  ],
+  "commands": [
+    {
+      "name": "read_all_di",
+      "display_name": { "zh": "读取所有数字输入", "en": "Read All DI" },
+      "description": { "zh": "读取所有数字输入状态", "en": "Read all digital input states" },
+      "parameters": "{}",
+      "is_required": true
+    },
+    {
+      "name": "read_all_ai",
+      "display_name": { "zh": "读取所有模拟输入", "en": "Read All AI" },
+      "description": { "zh": "读取所有模拟输入值", "en": "Read all analog input values" },
+      "parameters": "{}",
+      "is_required": true
+    },
+    {
+      "name": "write_do",
+      "display_name": { "zh": "写数字输出", "en": "Write DO" },
+      "description": { "zh": "设置数字输出状态", "en": "Set digital output state" },
+      "parameters": "{\"channel\": 1, \"value\": 1}",
+      "parameter_schema": "{\"type\": \"object\", \"properties\": {\"channel\": {\"type\": \"number\", \"minimum\": 1, \"maximum\": 8}, \"value\": {\"type\": \"number\", \"enum\": [0, 1]}}, \"required\": [\"channel\", \"value\"]}",
+      "is_required": true
+    },
+    {
+      "name": "write_all_do",
+      "display_name": { "zh": "批量写数字输出", "en": "Write All DO" },
+      "description": { "zh": "批量设置所有数字输出", "en": "Batch set all digital outputs" },
+      "parameters": "{\"value\": 170}",
+      "parameter_schema": "{\"type\": \"object\", \"properties\": {\"value\": {\"type\": \"number\", \"minimum\": 0, \"maximum\": 255}}, \"required\": [\"value\"]}",
+      "is_required": false
+    }
+  ]
+}
