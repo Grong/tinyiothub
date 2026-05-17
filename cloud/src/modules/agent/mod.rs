@@ -1,11 +1,26 @@
-// Agent module — 3-layer architecture
-// types:  domain types and DTOs
-// repo:   SessionRepository trait
-// service: SessionService + compact logic
-// chat_service: ChatService orchestration
-// memory_service: AgentMemoryService
-// handler: HTTP routes
+// Agent module — capability-based architecture
+// agent.rs:       Agent struct + AgentPool + zeroclaw Agent build
+// chat/:          Chat capability (ChatService stateless + ChatHandler)
+// tools/:         Tool capability (ToolService + CanvasTool + catalog)
+// config/:        Config capability (ConfigService + ConfigHandler)
+// session.rs:     SessionKey unified parse + verify_workspace
+// skills.rs:      SkillsCache with TTL + async/sync loading
+// memory.rs:      MemoryService (device snapshots)
+// heartbeat.rs:   HeartbeatService (moved from shared/agent/)
+// scaffold.rs:    Workspace scaffold + files CRUD
 
+pub mod agent;
+pub mod chat;
+pub mod config;
+pub mod tools;
+
+pub mod heartbeat;
+pub mod memory;
+pub mod scaffold;
+pub mod session;
+pub mod skills;
+
+// Re-exports from old modules/agent/ — kept until T7 migration
 pub mod chat_service;
 pub mod device_memory;
 pub mod handler;
