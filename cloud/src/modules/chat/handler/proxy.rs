@@ -11,8 +11,8 @@ use tinyiothub_web::response::ApiResponseBuilder;
 use super::types::*;
 use crate::{
     modules::agent::{
-        ChatRequest,
         handler::types::{AgentConfigUpdateRequest, ToolToggleRequest},
+        session::SessionKey,
     },
     shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims},
 };
@@ -23,30 +23,26 @@ pub async fn chat_stream(
     claims: Claims,
     Json(req): Json<ChatStreamRequest>,
 ) -> Response {
-    // 后端自行读取 agent 配置获取 system_prompt
+    // Backend reads agent config for system_prompt
     let agent_config = state
-        .agent_runtime
+        .agent_pool
         .get_agent_config(&req.agent_id, &claims.workspace_id)
         .await
         .map(|v| v.get("config").cloned().unwrap_or_default())
         .unwrap_or_default();
-    let user_persona = agent_config.get("systemPrompt").and_then(|v| v.as_str()).unwrap_or("");
+    let user_persona =
+        agent_config.get("systemPrompt").and_then(|v| v.as_str()).unwrap_or("");
 
     // session_key format: agent:<workspace_id>:<agent_id>/<sess_uuid>
-    // Use claims.workspace_id (from JWT) as the source of truth.
-    // If claims has a workspace_id, replace the session_key's workspace segment
-    // to ensure the correct workspace is used for MCP tool calls.
     let session_key = if !claims.workspace_id.is_empty() {
-        // Parse agent_id and uuid from the incoming session_key
         let parts: Vec<&str> = req.session_key.split(':').collect();
         if parts.len() >= 3 {
-            let agent_and_sess = parts[2]; // "agent_id/uuid"
+            let agent_and_sess = parts[2];
             format!("agent:{}:{}", claims.workspace_id, agent_and_sess)
         } else {
             req.session_key.clone()
         }
     } else {
-        // Old token without workspace_id — fallback to session_key parsing
         req.session_key.clone()
     };
 
@@ -65,15 +61,16 @@ pub async fn chat_stream(
     )
     .await;
 
-    let chat_request = ChatRequest {
-        session_key,
-        message: req.message,
-        run_id: req.run_id,
-        system_prompt_override: req.system_prompt.or(Some(full_prompt)),
-    };
+    let message = req.message.clone();
+    let run_id = req.run_id.clone();
+    let agent_id = req.agent_id.clone();
 
-    let mut chat_stream = match state.chat_service.chat(chat_request).await {
-        Ok(stream) => stream,
+    let mut rx = match state
+        .agent_pool
+        .chat_send(&agent_id, &session_key, &message, &run_id, &full_prompt)
+        .await
+    {
+        Ok(rx) => rx,
         Err(e) => {
             let err: Json<ApiResponse<()>> =
                 ApiResponseBuilder::error(format!("Chat stream failed: {}", e));
@@ -82,8 +79,7 @@ pub async fn chat_stream(
     };
 
     let event_stream = stream! {
-        use futures::StreamExt;
-        while let Some(event) = chat_stream.next().await {
+        while let Some(event) = rx.recv().await {
             let payload = serde_json::to_string(&event).unwrap_or_default();
             yield Ok::<_, std::io::Error>(SseEvent::default().data(payload));
         }
@@ -100,13 +96,21 @@ pub async fn chat_history(
 ) -> Json<ApiResponse<serde_json::Value>> {
     let limit = query.limit.unwrap_or(200);
 
-    // Verify workspace isolation: session_key must belong to the authenticated workspace
     let session_workspace = extract_workspace_from_session_key(&query.session_key);
     if session_workspace != claims.workspace_id {
         return ApiResponseBuilder::error_with_code(404, "Session not found");
     }
 
-    match state.chat_service.get_history(&query.session_key, limit).await {
+    let parsed = match SessionKey::parse(&query.session_key) {
+        Ok(k) => k,
+        Err(e) => return ApiResponseBuilder::error(format!("Invalid session key: {}", e)),
+    };
+
+    match state
+        .agent_pool
+        .chat_history(&parsed.agent_id, &query.session_key, limit)
+        .await
+    {
         Ok(data) => ApiResponseBuilder::success(data),
         Err(e) => ApiResponseBuilder::error(format!("Failed to load chat history: {}", e)),
     }
@@ -118,14 +122,22 @@ pub async fn chat_abort(
     claims: Claims,
     Json(req): Json<ChatAbortRequest>,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    // Verify workspace isolation
     let session_workspace = extract_workspace_from_session_key(&req.session_key);
     if session_workspace != claims.workspace_id {
         return ApiResponseBuilder::error_with_code(404, "Session not found");
     }
 
+    let parsed = match SessionKey::parse(&req.session_key) {
+        Ok(k) => k,
+        Err(e) => return ApiResponseBuilder::error(format!("Invalid session key: {}", e)),
+    };
+
     let run_id_ref = req.run_id.as_deref();
-    match state.chat_service.abort_chat(&req.session_key, run_id_ref).await {
+    match state
+        .agent_pool
+        .chat_abort(&parsed.agent_id, &req.session_key, run_id_ref)
+        .await
+    {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({"aborted": true})),
         Err(e) => ApiResponseBuilder::error(format!("Abort failed: {}", e)),
     }
@@ -161,7 +173,6 @@ pub async fn update_session_label(
     claims: Claims,
     Json(req): Json<UpdateSessionLabelRequest>,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    // Verify workspace isolation
     let session_workspace = extract_workspace_from_session_key(&session_key);
     if session_workspace != claims.workspace_id {
         return ApiResponseBuilder::error_with_code(404, "Session not found");
@@ -179,7 +190,6 @@ pub async fn delete_session(
     Path(session_key): Path<String>,
     claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    // Verify workspace isolation
     let session_workspace = extract_workspace_from_session_key(&session_key);
     if session_workspace != claims.workspace_id {
         return ApiResponseBuilder::error_with_code(404, "Session not found");
@@ -196,7 +206,7 @@ pub async fn list_agents(
     State(state): State<AppState>,
     claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    match state.agent_runtime.list_agents(&claims.workspace_id).await {
+    match state.agent_pool.list_agents(&claims.workspace_id).await {
         Ok(data) => ApiResponseBuilder::success(data),
         Err(e) => ApiResponseBuilder::error(format!("Failed to list agents: {}", e)),
     }
@@ -208,7 +218,7 @@ pub async fn get_agent_config(
     Path(agent_id): Path<String>,
     claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
-    match state.agent_runtime.get_agent_config(&agent_id, &claims.workspace_id).await {
+    match state.agent_pool.get_agent_config(&agent_id, &claims.workspace_id).await {
         Ok(data) => ApiResponseBuilder::success(data),
         Err(e) => ApiResponseBuilder::error(format!("Failed to get agent config: {}", e)),
     }
@@ -224,7 +234,7 @@ pub async fn set_agent_config(
     let config_str = serde_json::to_string(&req.config).unwrap_or_default();
     let base_hash_ref = req.base_hash.as_deref();
     match state
-        .agent_runtime
+        .agent_pool
         .set_agent_config(&agent_id, &config_str, base_hash_ref, &claims.workspace_id)
         .await
     {
@@ -240,7 +250,7 @@ pub async fn tools_catalog(
     _claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
     let agent_id = params.get("agent_id").map(|s| s.as_str()).unwrap_or("");
-    match state.agent_runtime.tools_catalog(agent_id).await {
+    match state.agent_pool.tools_catalog(agent_id).await {
         Ok(data) => ApiResponseBuilder::success(data),
         Err(e) => ApiResponseBuilder::error(format!("Failed to get tools catalog: {}", e)),
     }
@@ -253,7 +263,7 @@ pub async fn tools_effective(
     claims: Claims,
 ) -> Json<ApiResponse<serde_json::Value>> {
     let agent_id = params.get("agent_id").map(|s| s.as_str()).unwrap_or("");
-    match state.agent_runtime.tools_effective(agent_id, &claims.workspace_id).await {
+    match state.agent_pool.tools_effective(agent_id, &claims.workspace_id).await {
         Ok(data) => ApiResponseBuilder::success(data),
         Err(e) => ApiResponseBuilder::error(format!("Failed to get effective tools: {}", e)),
     }
@@ -266,7 +276,7 @@ pub async fn tools_toggle(
     Json(req): Json<ToolToggleRequest>,
 ) -> Json<ApiResponse<serde_json::Value>> {
     match state
-        .agent_runtime
+        .agent_pool
         .tools_toggle(&req.agent_id, &req.tool_name, req.enabled, &claims.workspace_id)
         .await
     {

@@ -1,121 +1,16 @@
 // Agent Runtime Module
 //
-// This module provides the consolidated agent runtime interface for TinyIoTHub.
-// It includes:
-// - AgentRuntime trait: the main interface for agent operations
-// - AgentClient trait: lower-level agent operations
-// - Config types: AgentConfig, AgentInfo, AgentError
-// - AgentRuntimeImpl: the concrete implementation using zeroclaw
-
-use async_trait::async_trait;
+// Provides shared agent configuration types and system prompt building utilities.
+// Runtime/execution logic lives in modules/agent/.
 
 pub mod config;
-pub mod heartbeat_service;
-pub mod runtime;
-pub mod scaffold_service;
 
-pub use config::{AgentConfig, AgentError, AgentInfo, compute_hash, default_agent_config};
-pub use heartbeat_service::HeartbeatService;
-pub use runtime::AgentRuntimeImpl;
-
-/// Trait for Agent operations — implemented by AgentRuntimeImpl
-#[async_trait]
-pub trait AgentClient: Send + Sync {
-    /// Create a new agent for the given workspace
-    async fn create_agent(&self, config: &AgentConfig) -> Result<String, AgentError>;
-
-    /// Delete an agent by ID
-    async fn delete_agent(&self, agent_id: &str) -> Result<(), AgentError>;
-
-    /// Get agent info by ID
-    async fn get_agent(&self, agent_id: &str) -> Result<AgentInfo, AgentError>;
-
-    /// Update agent configuration
-    async fn update_agent(&self, agent_id: &str, config: &str) -> Result<(), AgentError>;
-
-    /// Send a chat message and get SSE stream response
-    async fn chat_send(
-        &self,
-        agent_id: &str,
-        session_key: &str,
-        message: &str,
-        run_id: &str,
-        system_prompt: &str,
-    ) -> Result<reqwest::Response, AgentError>;
-
-    /// Get chat history
-    async fn chat_history(
-        &self,
-        agent_id: &str,
-        session_key: &str,
-        limit: u32,
-    ) -> Result<serde_json::Value, AgentError>;
-
-    /// Abort a chat run
-    async fn chat_abort(
-        &self,
-        agent_id: &str,
-        session_key: &str,
-        run_id: Option<&str>,
-    ) -> Result<(), AgentError>;
-
-    /// List agents scoped to a workspace
-    async fn list_agents(&self, workspace_id: &str) -> Result<serde_json::Value, AgentError>;
-
-    /// Get agent config (verifies workspace ownership)
-    async fn get_agent_config(
-        &self,
-        agent_id: &str,
-        workspace_id: &str,
-    ) -> Result<serde_json::Value, AgentError>;
-
-    /// Set agent config (verifies workspace ownership)
-    async fn set_agent_config(
-        &self,
-        agent_id: &str,
-        config: &str,
-        base_hash: Option<&str>,
-        workspace_id: &str,
-    ) -> Result<(), AgentError>;
-
-    /// Get tools catalog for an agent
-    async fn tools_catalog(&self, agent_id: &str) -> Result<serde_json::Value, AgentError>;
-
-    /// Get effective tools for an agent (verifies workspace ownership)
-    async fn tools_effective(
-        &self,
-        agent_id: &str,
-        workspace_id: &str,
-    ) -> Result<serde_json::Value, AgentError>;
-
-    /// Toggle a tool on/off for an agent (verifies workspace ownership)
-    async fn tools_toggle(
-        &self,
-        agent_id: &str,
-        tool_name: &str,
-        enabled: bool,
-        workspace_id: &str,
-    ) -> Result<(), AgentError>;
-}
-
-/// Trait that consolidates all agent runtime functionality
-///
-/// This trait is implemented by AgentRuntimeImpl and provides:
-/// - All AgentClient operations (chat, history, config, tools)
-/// - Tool refresh capability (refresh_tools)
-#[async_trait]
-pub trait AgentRuntime: AgentClient + Send + Sync {
-    /// Refresh the agent's tool registry
-    async fn refresh_tools(&self) -> anyhow::Result<()>;
-
-    /// Execute a single agent turn with the given message.
-    ///
-    /// This is useful for cron job execution where we want to run a prompt
-    /// and get the complete response without SSE streaming.
-    async fn run_single(&self, message: &str) -> Result<String, AgentError>;
-}
+pub use config::{
+    AgentConfig, AgentError, AgentInfo, AgentRuntimeConfig, compute_hash, default_agent_config,
+};
 
 /// Returns the static catalog of all available TinyIoTHub tools grouped by category.
+/// Aligned with the 16 MCP-registered handlers in modules/mcp/mod.rs.
 pub fn build_tools_catalog_json() -> serde_json::Value {
     serde_json::json!({
         "groups": [
@@ -124,12 +19,13 @@ pub fn build_tools_catalog_json() -> serde_json::Value {
                 "label": "设备管理",
                 "source": "core",
                 "tools": [
-                    { "id": "device_list",          "name": "device_list",          "label": "获取设备列表",       "description": "分页查询设备列表，支持按名称、类型、状态等过滤",          "danger": false, "enabled": true  },
-                    { "id": "device_profile",       "name": "device_profile",       "label": "获取设备 Profile",   "description": "获取设备完整信息，包含属性定义和当前值",                 "danger": false, "enabled": true  },
-                    { "id": "device_property_get",  "name": "device_property_get",  "label": "获取属性详情",       "description": "获取设备指定属性的定义信息（类型、单位、读写权限等）",    "danger": false, "enabled": true  },
-                    { "id": "device_create",        "name": "device_create",        "label": "根据模板创建设备",   "description": "基于设备模板创建新设备，需先查询模板列表获取template_id", "danger": false, "enabled": true  },
-                    { "id": "device_command",       "name": "device_command",       "label": "执行设备命令",       "description": "向设备下发控制命令并获取执行结果",                        "danger": false, "enabled": true  },
-                    { "id": "device_template_list", "name": "device_template_list", "label": "查询设备模板列表",   "description": "列出系统中所有可用的设备模板，用于创建设备前查询template_id", "danger": false, "enabled": true },
+                    { "id": "search_devices",   "name": "search_devices",   "label": "搜索设备",         "description": "分页搜索设备列表，支持按名称、类型、状态等过滤",           "danger": false, "enabled": true  },
+                    { "id": "get_device",       "name": "get_device",       "label": "获取设备 Profile", "description": "获取设备完整信息，包含属性定义和当前值",                   "danger": false, "enabled": true  },
+                    { "id": "read_properties",  "name": "read_properties",  "label": "读取属性",         "description": "读取设备指定属性的当前值",                                   "danger": false, "enabled": true  },
+                    { "id": "write_properties", "name": "write_properties", "label": "写入属性",         "description": "写入设备指定属性的值",                                       "danger": false, "enabled": true  },
+                    { "id": "send_command",     "name": "send_command",     "label": "执行设备命令",     "description": "向设备下发控制命令并获取执行结果",                          "danger": false, "enabled": true  },
+                    { "id": "create_device",    "name": "create_device",    "label": "创建设备",         "description": "根据模板创建新设备",                                        "danger": false, "enabled": true  },
+                    { "id": "delete_device",    "name": "delete_device",    "label": "删除设备",         "description": "删除指定设备",                                              "danger": true,  "enabled": false },
                 ]
             },
             {
@@ -137,20 +33,9 @@ pub fn build_tools_catalog_json() -> serde_json::Value {
                 "label": "告警管理",
                 "source": "core",
                 "tools": [
-                    { "id": "alarm_list",      "name": "alarm_list",      "label": "查询告警列表",  "description": "列出当前告警和历史告警记录",                  "danger": false, "enabled": true },
-                    { "id": "alarm_get",       "name": "alarm_get",       "label": "获取告警详情",  "description": "获取指定告警的详细信息",                    "danger": false, "enabled": true },
-                    { "id": "alarm_ack",       "name": "alarm_ack",       "label": "确认告警",      "description": "确认并关闭一条告警",                      "danger": false, "enabled": true },
-                    { "id": "alarm_rule_list", "name": "alarm_rule_list", "label": "查询告警规则",  "description": "列出系统中所有告警规则",                  "danger": false, "enabled": true },
-                    { "id": "alarm_stats",     "name": "alarm_stats",     "label": "告警统计",      "description": "获取告警统计摘要（总数、等级分布等）",      "danger": false, "enabled": true },
-                ]
-            },
-            {
-                "id": "monitoring",
-                "label": "系统监控",
-                "source": "core",
-                "tools": [
-                    { "id": "system_health", "name": "system_health", "label": "系统健康检查", "description": "查询系统各组件的运行状态和健康度",    "danger": false, "enabled": true },
-                    { "id": "event_list",    "name": "event_list",    "label": "查询事件列表", "description": "列出系统事件日志，支持过滤和分页",  "danger": false, "enabled": true },
+                    { "id": "alarm_list",        "name": "alarm_list",        "label": "查询告警列表", "description": "列出当前告警和历史告警记录",                  "danger": false, "enabled": true },
+                    { "id": "alarm_acknowledge", "name": "alarm_acknowledge", "label": "确认告警",     "description": "确认并关闭一条告警",                          "danger": false, "enabled": true },
+                    { "id": "alarm_rule_add",    "name": "alarm_rule_add",    "label": "添加告警规则", "description": "创建新的告警规则",                            "danger": false, "enabled": true },
                 ]
             },
             {
@@ -158,20 +43,8 @@ pub fn build_tools_catalog_json() -> serde_json::Value {
                 "label": "驱动管理",
                 "source": "core",
                 "tools": [
-                    { "id": "driver_list", "name": "driver_list", "label": "查询驱动列表", "description": "列出系统中所有已注册的协议驱动（Modbus/ONVIF等）", "danger": false, "enabled": true },
-                    { "id": "driver_get",  "name": "driver_get",  "label": "获取驱动详情", "description": "获取指定驱动的配置和状态信息",                     "danger": false, "enabled": true },
-                ]
-            },
-            {
-                "id": "workspace",
-                "label": "工作空间",
-                "source": "core",
-                "tools": [
-                    { "id": "workspace_list",   "name": "workspace_list",   "label": "查询工作空间列表", "description": "列出所有工作空间",                  "danger": false, "enabled": true },
-                    { "id": "workspace_get",    "name": "workspace_get",    "label": "获取工作空间详情", "description": "获取指定工作空间的详细信息",      "danger": false, "enabled": true },
-                    { "id": "workspace_create", "name": "workspace_create", "label": "创建工作空间",     "description": "创建新的工作空间",                  "danger": false, "enabled": true },
-                    { "id": "workspace_update", "name": "workspace_update", "label": "更新工作空间",     "description": "更新工作空间配置",                  "danger": false, "enabled": true },
-                    { "id": "workspace_delete", "name": "workspace_delete", "label": "删除工作空间",     "description": "删除指定工作空间",                  "danger": true,  "enabled": false },
+                    { "id": "list_drivers", "name": "list_drivers", "label": "查询驱动列表", "description": "列出系统中所有已注册的协议驱动（Modbus/ONVIF等）", "danger": false, "enabled": true },
+                    { "id": "test_driver",  "name": "test_driver",  "label": "测试驱动",     "description": "测试驱动的连接状态",                             "danger": false, "enabled": true },
                 ]
             },
             {
@@ -179,9 +52,10 @@ pub fn build_tools_catalog_json() -> serde_json::Value {
                 "label": "任务管理",
                 "source": "core",
                 "tools": [
-                    { "id": "job_list",   "name": "job_list",   "label": "查询任务列表", "description": "列出系统中所有调度任务",                    "danger": false, "enabled": true },
-                    { "id": "job_get",    "name": "job_get",    "label": "获取任务详情", "description": "获取指定任务的执行状态和历史记录",          "danger": false, "enabled": true },
-                    { "id": "job_cancel", "name": "job_cancel", "label": "取消任务",     "description": "取消一个正在等待或运行中的调度任务",        "danger": true,  "enabled": false },
+                    { "id": "list_schedules",   "name": "list_schedules",   "label": "查询任务列表",   "description": "列出系统中所有调度任务",                "danger": false, "enabled": true },
+                    { "id": "create_schedule",  "name": "create_schedule",  "label": "创建调度任务",   "description": "创建新的调度任务",                      "danger": false, "enabled": true },
+                    { "id": "update_schedule",  "name": "update_schedule",  "label": "更新调度任务",   "description": "更新已有调度任务的配置",                "danger": false, "enabled": true },
+                    { "id": "delete_schedule",  "name": "delete_schedule",  "label": "删除调度任务",   "description": "删除指定的调度任务",                    "danger": true,  "enabled": false },
                 ]
             },
         ]
@@ -308,7 +182,7 @@ fn load_template_fallback() -> String {
     ];
 
     for (filename, section_name) in files {
-        // Templates are embedded at compile time in scaffold_service
+        // Templates are embedded at compile time via include_str!
         let content = get_embedded_template(filename);
         if let Some(c) = content {
             let trimmed = c.trim();
@@ -468,7 +342,9 @@ mod tests {
             groups.iter().filter_map(|g| g.get("id").and_then(|v| v.as_str())).collect();
 
         assert!(group_ids.contains(&"device"), "catalog should have a 'device' group");
-        assert!(group_ids.contains(&"workspace"), "catalog should have a 'workspace' group");
+        assert!(group_ids.contains(&"alarm"), "catalog should have an 'alarm' group");
+        assert!(group_ids.contains(&"driver"), "catalog should have a 'driver' group");
+        assert!(group_ids.contains(&"job"), "catalog should have a 'job' group");
 
         // Verify each group has required fields
         for group in groups {

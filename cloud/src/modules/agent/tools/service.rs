@@ -12,6 +12,7 @@ use zeroclaw::tools::{Tool, ToolResult};
 
 use super::canvas::CanvasTool;
 
+use crate::modules::mcp::handlers::{McpAuthContext, McpContextGuard};
 use crate::modules::mcp::tool_metadata::{
     name_infers_concurrency_safe, name_infers_destructive, name_infers_read_only, IoTToolMetadata,
     PermissionLevel,
@@ -28,6 +29,7 @@ pub struct IoTToolAdapter {
     description: String,
     input_schema: serde_json::Value,
     handler: Arc<dyn ToolHandler>,
+    workspace_id: String,
 }
 
 impl IoTToolAdapter {
@@ -36,8 +38,9 @@ impl IoTToolAdapter {
         description: String,
         input_schema: serde_json::Value,
         handler: Arc<dyn ToolHandler>,
+        workspace_id: String,
     ) -> Self {
-        Self { name, description, input_schema, handler }
+        Self { name, description, input_schema, handler, workspace_id }
     }
 }
 
@@ -56,6 +59,10 @@ impl Tool for IoTToolAdapter {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        let _guard = McpContextGuard::new(McpAuthContext::for_heartbeat(
+            self.workspace_id.clone(),
+            "agent".to_string(),
+        ));
         match self.handler.execute(args).await {
             Ok(output) => {
                 Ok(ToolResult {
@@ -119,7 +126,7 @@ impl IoTToolMetadata for IoTToolAdapter {
 ///
 /// CanvasTool is always included first. MCP tools are loaded from the
 /// global handler registry if available.
-pub async fn load_all_tools() -> Vec<Box<dyn Tool>> {
+pub async fn load_all_tools(workspace_id: &str) -> Vec<Box<dyn Tool>> {
     let mut tool_boxed: Vec<Box<dyn Tool>> = Vec::new();
     tool_boxed.push(Box::new(CanvasTool));
 
@@ -134,7 +141,11 @@ pub async fn load_all_tools() -> Vec<Box<dyn Tool>> {
             let input_schema = meta.input_schema.clone();
             if let Some(handler) = reg.get_owned(&name) {
                 tool_boxed.push(Box::new(IoTToolAdapter::new(
-                    name, description, input_schema, handler,
+                    name,
+                    description,
+                    input_schema,
+                    handler,
+                    workspace_id.to_string(),
                 )));
             }
         }
@@ -169,8 +180,11 @@ pub fn filter_by_denylist(tools: Vec<Box<dyn Tool>>, denylist: &[String]) -> Vec
 }
 
 /// Load and filter tools for an agent based on its runtime config.
-pub async fn resolve_tools_for_agent(config: &AgentRuntimeConfig) -> Vec<Box<dyn Tool>> {
-    let all_tools = load_all_tools().await;
+pub async fn resolve_tools_for_agent(
+    config: &AgentRuntimeConfig,
+    workspace_id: &str,
+) -> Vec<Box<dyn Tool>> {
+    let all_tools = load_all_tools(workspace_id).await;
     filter_by_denylist(all_tools, &config.tool_denylist)
 }
 

@@ -16,14 +16,12 @@ use axum::{
 use serde::Deserialize;
 use tinyiothub_web::response::ApiResponseBuilder;
 
-use crate::shared::{
-    agent::heartbeat_service::{
+use crate::{
+    modules::agent::heartbeat::{
         HeartbeatExecutionRecord, HeartbeatTask, get_heartbeat_state, read_heartbeat_tasks,
         write_heartbeat_tasks,
     },
-    api_response::ApiResponse,
-    app_state::AppState,
-    security::jwt::Claims,
+    shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims},
 };
 
 /// Request to update heartbeat config

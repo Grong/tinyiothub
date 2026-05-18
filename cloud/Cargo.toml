@@ -144,9 +144,8 @@ validator = { workspace = true }
 # Performance
 smallvec = { workspace = true }
 
-# ZeroClaw Agent runtime
-zeroclaw = { path = "../vendor/zeroclaw" }
-zeroclaw-macros = { path = "../vendor/zeroclaw-macros" }
+# ZeroClaw Agent runtime (forked with pub security + pub heartbeat, v0.7.5)
+zeroclaw = { git = "https://github.com/Grong/zeroclaw.git", tag = "v0.7.5-patched", package = "zeroclawlabs", features = ["agent-runtime"] }
 
 [features]
 default = []

@@ -107,7 +107,7 @@ impl ServiceManager {
 
             // Initialize workspace with template files
             let scaffold_result =
-                crate::shared::agent::scaffold_service::scaffold_workspace(&workspace_dir).await;
+                crate::modules::agent::scaffold::scaffold_workspace(&workspace_dir).await;
             match scaffold_result {
                 Ok(result) => {
                     if result.created_files > 0 || result.created_dirs > 0 {
@@ -122,11 +122,11 @@ impl ServiceManager {
             let heartbeat_config = zeroclaw::config::schema::HeartbeatConfig {
                 enabled: agent_settings.heartbeat_enabled,
                 interval_minutes: agent_settings.heartbeat_interval_minutes,
-                two_phase: false,
+                two_phase: true,
                 message: None,
                 target: None,
                 to: None,
-                adaptive: false,
+                adaptive: true,
                 min_interval_minutes: 5,
                 max_interval_minutes: 120,
                 deadman_timeout_minutes: 0,
@@ -140,11 +140,11 @@ impl ServiceManager {
             observer_config.backend = agent_settings.observer_backend.clone();
             let heartbeat_observer: std::sync::Arc<dyn zeroclaw::observability::Observer> =
                 std::sync::Arc::from(zeroclaw::observability::create_observer(&observer_config));
-            let heartbeat_service = crate::shared::agent::HeartbeatService::new(
+            let heartbeat_service = crate::modules::agent::heartbeat::HeartbeatService::new(
                 workspace_dir.clone(),
                 heartbeat_config,
                 heartbeat_observer,
-                app_state.chat_service.clone(),
+                app_state.agent_pool.clone(),
                 crate::shared::paths::DEFAULT_WORKSPACE_ID.to_string(),
                 "default".to_string(),
                 agent_settings.system_prompts.heartbeat.clone(),

@@ -21,7 +21,7 @@ pub async fn create_app_router(app_state: AppState) -> Router {
     tracing::info!("MCP tools initialized");
 
     // Refresh agent tools after MCP registration
-    if let Err(e) = app_state.agent_runtime.refresh_tools().await {
+    if let Err(e) = app_state.agent_pool.refresh_tools().await {
         tracing::error!("Failed to refresh agent tools: {}", e);
     }
 

@@ -233,7 +233,7 @@ impl AgentPool {
 
                 let ws_dir = crate::shared::paths::workspace_dir(workspace_id);
 
-                let tools = tool_service::resolve_tools_for_agent(&config).await;
+                let tools = tool_service::resolve_tools_for_agent(&config, workspace_id).await;
 
                 let agent = Self::build_agent(
                     &namespaced,
@@ -455,7 +455,7 @@ impl AgentPool {
     ) -> Result<serde_json::Value, AgentError> {
         config_service::verify_agent_workspace(&self.db_pool, agent_id, workspace_id).await?;
         let config = config_service::get_config(&self.db_pool, agent_id).await?;
-        let all_tools = tool_service::load_all_tools().await;
+        let all_tools = tool_service::load_all_tools(workspace_id).await;
         let effective = tool_service::filter_by_denylist(all_tools, &config.tool_denylist);
         let names: Vec<&str> = effective.iter().map(|t| t.name()).collect();
         Ok(serde_json::json!({ "tools": names }))
@@ -515,14 +515,74 @@ impl AgentPool {
         session_key: &str,
         _limit: u32,
     ) -> Result<serde_json::Value, AgentError> {
-        // chat_history is session-scoped — agent_id is for verification only
-        let _ = agent_id;
         let parsed = super::session::SessionKey::parse(session_key)?;
         parsed.verify_workspace(&parsed.workspace_id)?;
-        // History is managed by the session repository (OpenClaw side)
-        Ok(serde_json::json!({ "messages": [], "sessionKey": session_key }))
-    }
 
+        let agent = self.get_or_create(agent_id, &parsed.workspace_id).await?;
+        let ag = agent.lock().await;
+        let history = ag.history();
+
+        let messages: Vec<serde_json::Value> = history
+            .iter()
+            .filter_map(|msg| {
+                let value = serde_json::to_value(msg).ok()?;
+                match value.get("type")?.as_str()? {
+                    "Chat" => {
+                        let mut data = value.get("data")?.clone();
+                        // Skip system messages
+                        if data.get("role")?.as_str()? == "system" {
+                            return None;
+                        }
+                        // Frontend expects content as array: [{ type: "text", text: "..." }]
+                        normalize_content(&mut data);
+                        Some(data)
+                    }
+                    "AssistantToolCalls" => {
+                        let data = value.get("data")?;
+                        let text = data
+                            .get("text")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let tool_calls = data.get("tool_calls").cloned().unwrap_or(serde_json::json!([]));
+                        let content = if text.is_empty() {
+                            serde_json::json!([])
+                        } else {
+                            serde_json::json!([{ "type": "text", "text": text }])
+                        };
+                        Some(serde_json::json!({
+                            "role": "assistant",
+                            "content": content,
+                            "toolCalls": tool_calls,
+                        }))
+                    }
+                    _ => {
+                        // ToolResults and other variants — skip for display
+                        None
+                    }
+                }
+            })
+            .collect();
+
+        Ok(serde_json::json!({ "messages": messages, "sessionKey": session_key }))
+    }
+}
+
+/// Convert content from plain string to frontend-compatible array format.
+///
+/// Frontend expects: `[{ "type": "text", "text": "..." }]`
+/// zeroclaw stores:   `"plain string"`
+fn normalize_content(data: &mut serde_json::Value) {
+    if let Some(content) = data.get("content") {
+        if content.is_string() {
+            let text = content.as_str().unwrap_or("");
+            data["content"] = serde_json::json!([{ "type": "text", "text": text }]);
+        } else if !content.is_array() {
+            data["content"] = serde_json::json!([]);
+        }
+    }
+}
+
+impl AgentPool {
     pub async fn chat_abort(
         &self,
         agent_id: &str,
