@@ -75,7 +75,6 @@ pub fn build_tools_catalog_json() -> serde_json::Value {
 /// 8. [Context]     — dynamic context (device snapshots, etc.)
 pub async fn build_full_system_prompt(
     system_prompts: &crate::shared::config::SystemPromptsConfig,
-    user_persona: &str,
     workspace_id: Option<&str>,
     agent_id: Option<&str>,
 ) -> String {
@@ -83,14 +82,6 @@ pub async fn build_full_system_prompt(
 
     // Layer 1-6: Load from workspace files
     let workspace_prompt = load_workspace_prompt(&workspace_dir).await;
-
-    // Layer 7: Persona override (user can override the default persona from config)
-    // Only add persona layer if user provided one explicitly (via systemPrompt field)
-    let persona_layer = if !user_persona.trim().is_empty() {
-        format!("\n\n## Agent Persona（用户配置）\n{}\n", user_persona)
-    } else {
-        String::new()
-    };
 
     // Skills from skills/ directory (existing behavior)
     let skills_layer = load_skills_prompt(workspace_id, agent_id).await;
@@ -103,7 +94,7 @@ pub async fn build_full_system_prompt(
     };
 
     let full_prompt =
-        format!("{}{}{}{}", workspace_prompt, persona_layer, skills_layer, context_layer);
+        format!("{}{}{}", workspace_prompt, skills_layer, context_layer);
     tracing::info!("[SYSTEM_PROMPT]\n{}", full_prompt);
     full_prompt
 }

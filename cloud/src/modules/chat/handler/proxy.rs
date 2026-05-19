@@ -23,16 +23,6 @@ pub async fn chat_stream(
     claims: Claims,
     Json(req): Json<ChatStreamRequest>,
 ) -> Response {
-    // Backend reads agent config for system_prompt
-    let agent_config = state
-        .agent_pool
-        .get_agent_config(&req.agent_id, &claims.workspace_id)
-        .await
-        .map(|v| v.get("config").cloned().unwrap_or_default())
-        .unwrap_or_default();
-    let user_persona =
-        agent_config.get("systemPrompt").and_then(|v| v.as_str()).unwrap_or("");
-
     // session_key format: agent:<workspace_id>:<agent_id>/<sess_uuid>
     let session_key = if !claims.workspace_id.is_empty() {
         let parts: Vec<&str> = req.session_key.split(':').collect();
@@ -55,7 +45,6 @@ pub async fn chat_stream(
     let system_prompts = &crate::shared::config::get().agent.system_prompts;
     let full_prompt = crate::shared::agent::build_full_system_prompt(
         system_prompts,
-        user_persona,
         Some(&workspace_id),
         None,
     )
