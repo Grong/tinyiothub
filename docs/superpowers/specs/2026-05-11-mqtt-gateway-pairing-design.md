@@ -409,7 +409,7 @@ user anonymous
 topic readwrite tinyiothub/pairing/#
 
 # 平台客户端：完整访问
-user admin
+user tinyiothub
 topic readwrite tinyiothub/#
 ```
 
@@ -418,7 +418,7 @@ topic readwrite tinyiothub/#
 | 角色 | 用户 | publish | subscribe |
 |------|------|---------|-----------|
 | 配对中的网关 | anonymous | `pairing/announce` | `pairing/{code}/response` |
-| 平台服务 | admin (已配 MQTT_PASSWORD) | `pairing/{code}/response`, `{ws_id}/gateway/{gw_id}/command`, `{ws_id}/gateway/{gw_id}/config` | `pairing/announce`, `{ws_id}/gateway/+/status`, `{ws_id}/gateway/+/telemetry`, `{ws_id}/gateway/+/event`, `{ws_id}/gateway/+/device/#` |
+| 平台服务 | tinyiothub (已配 MQTT_PASSWORD) | `pairing/{code}/response`, `{ws_id}/gateway/{gw_id}/command`, `{ws_id}/gateway/{gw_id}/config` | `pairing/announce`, `{ws_id}/gateway/+/status`, `{ws_id}/gateway/+/telemetry`, `{ws_id}/gateway/+/event`, `{ws_id}/gateway/+/device/#` |
 | 已注册网关 | `dev_xyz` (配对后下发) | 自身 workspace 下 topic | 自身 command/config topic |
 
 
