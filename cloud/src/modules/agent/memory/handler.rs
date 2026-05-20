@@ -2,6 +2,7 @@ use axum::{Json, extract::{Path, Query, State}, routing::get};
 use serde::Deserialize;
 
 use tinyiothub_web::response::ApiResponseBuilder;
+use crate::api::middleware::WorkspaceScope;
 use crate::shared::app_state::AppState;
 use tinyiothub_core::memory::AgentMemory;
 
@@ -9,43 +10,45 @@ use super::types::ListMemoriesQuery;
 
 pub fn create_router() -> axum::Router<AppState> {
     axum::Router::new()
-        .route("/{workspace_id}/memories", get(list_active_memories))
-        .route("/{workspace_id}/memories/queue", get(get_pending_queue))
+        .route("/memories", get(list_active_memories))
+        .route("/memories/queue", get(get_pending_queue))
         .route(
-            "/{workspace_id}/memories/queue/{queue_id}/resolve",
+            "/memories/queue/{queue_id}/resolve",
             axum::routing::post(resolve_queue_item),
         )
         .route(
-            "/{workspace_id}/memories/{memory_id}/pin",
+            "/memories/{memory_id}/pin",
             axum::routing::put(pin_memory),
         )
 }
 
-/// GET /workspaces/{workspace_id}/memories?agent_id=...
+/// GET /memories?agent_id=...
 async fn list_active_memories(
     State(state): State<AppState>,
-    Path(workspace_id): Path<String>,
+    WorkspaceScope(workspace_id): WorkspaceScope,
     Query(query): Query<ListMemoriesQuery>,
 ) -> Json<tinyiothub_web::response::ApiResponse<Vec<AgentMemory>>> {
-    match state.memory_store.list_active(&workspace_id, &query.agent_id).await {
+    let ws = workspace_id.unwrap_or_default();
+    match state.memory_store.list_active(&ws, &query.agent_id).await {
         Ok(memories) => ApiResponseBuilder::success(memories),
         Err(e) => ApiResponseBuilder::error(format!("Failed to list memories: {}", e)),
     }
 }
 
-/// GET /workspaces/{workspace_id}/memories/queue?agent_id=...
+/// GET /memories/queue?agent_id=...
 async fn get_pending_queue(
     State(state): State<AppState>,
-    Path(workspace_id): Path<String>,
+    WorkspaceScope(workspace_id): WorkspaceScope,
     Query(query): Query<ListMemoriesQuery>,
 ) -> Json<tinyiothub_web::response::ApiResponse<Vec<tinyiothub_core::memory::ReflectionQueueItem>>> {
-    match state.memory_store.get_pending_queue(&workspace_id, &query.agent_id).await {
+    let ws = workspace_id.unwrap_or_default();
+    match state.memory_store.get_pending_queue(&ws, &query.agent_id).await {
         Ok(items) => ApiResponseBuilder::success(items),
         Err(e) => ApiResponseBuilder::error(format!("Failed to get queue: {}", e)),
     }
 }
 
-/// POST /workspaces/{workspace_id}/memories/queue/{queue_id}/resolve
+/// POST /memories/queue/{queue_id}/resolve
 #[derive(Deserialize)]
 struct ResolveBody {
     approved: bool,
@@ -55,16 +58,18 @@ struct ResolveBody {
 
 async fn resolve_queue_item(
     State(state): State<AppState>,
-    Path((_workspace_id, queue_id)): Path<(String, String)>,
+    WorkspaceScope(workspace_id): WorkspaceScope,
+    Path(queue_id): Path<String>,
     Json(body): Json<ResolveBody>,
 ) -> Json<tinyiothub_web::response::ApiResponse<serde_json::Value>> {
+    let _ws = workspace_id.unwrap_or_default();
     match state.memory_store.resolve_queue_item(&queue_id, body.approved, body.reviewer_note.as_deref()).await {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({"resolved": true})),
         Err(e) => ApiResponseBuilder::error(format!("Failed to resolve queue item: {}", e)),
     }
 }
 
-/// PUT /workspaces/{workspace_id}/memories/{memory_id}/pin
+/// PUT /memories/{memory_id}/pin
 #[derive(Deserialize)]
 struct PinBody {
     pinned: bool,
@@ -72,9 +77,11 @@ struct PinBody {
 
 async fn pin_memory(
     State(state): State<AppState>,
-    Path((_workspace_id, memory_id)): Path<(String, String)>,
+    WorkspaceScope(workspace_id): WorkspaceScope,
+    Path(memory_id): Path<String>,
     Json(body): Json<PinBody>,
 ) -> Json<tinyiothub_web::response::ApiResponse<serde_json::Value>> {
+    let _ws = workspace_id.unwrap_or_default();
     match state.memory_store.set_pinned(&memory_id, body.pinned).await {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({"pinned": body.pinned})),
         Err(e) => ApiResponseBuilder::error(format!("Failed to pin memory: {}", e)),

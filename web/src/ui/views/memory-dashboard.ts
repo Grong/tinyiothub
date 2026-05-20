@@ -2,7 +2,6 @@ import { LitElement, html } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { listActiveMemories, getPendingQueue, resolveQueueItem, pinMemory } from "../../api/memory";
 import type { AgentMemory, ReflectionQueueItem } from "../../api/memory";
-import { apiGet } from "../../api/client.js";
 
 const ZONE_LABELS: Record<string, string> = {
   core: "核心",
@@ -30,7 +29,6 @@ export class ViewMemoryDashboard extends LitElement {
   @state() private activeTab: "memories" | "queue" | "audit" = "memories";
   @state() private memories: AgentMemory[] = [];
   @state() private queue: ReflectionQueueItem[] = [];
-  @state() private workspaceId = "";
   @state() private agentId = "";
   @state() private loading = false;
   @state() private error: string | null = null;
@@ -42,39 +40,23 @@ export class ViewMemoryDashboard extends LitElement {
   connectedCallback(): void {
     super.connectedCallback();
     const params = new URLSearchParams(window.location.search);
-    this.workspaceId = params.get("workspace") || localStorage.getItem("workspace-id") || "";
     this.agentId = params.get("agent") || "default";
-    this.init();
-  }
-
-  private async init() {
-    if (!this.workspaceId) {
-      try {
-        const wsRes = await apiGet<{ id: string; name: string }[]>('/workspaces');
-        if (wsRes.result && wsRes.result.length > 0) {
-          this.workspaceId = wsRes.result[0].id;
-          localStorage.setItem("workspace-id", this.workspaceId);
-        }
-      } catch {
-        // API failed — will show error
-      }
-    }
     this.loadData();
   }
 
   private async loadData() {
-    if (!this.workspaceId || !this.agentId) {
-      this.error = "缺少 workspace 或 agent 参数";
+    if (!this.agentId) {
+      this.error = "缺少 agent 参数";
       return;
     }
     this.loading = true;
     this.error = null;
     try {
       if (this.activeTab === "memories") {
-        const res = await listActiveMemories(this.workspaceId, this.agentId);
+        const res = await listActiveMemories(this.agentId);
         this.memories = res.result || [];
       } else if (this.activeTab === "queue") {
-        const res = await getPendingQueue(this.workspaceId, this.agentId);
+        const res = await getPendingQueue(this.agentId);
         this.queue = res.result || [];
       }
     } catch (e: any) {
@@ -86,7 +68,7 @@ export class ViewMemoryDashboard extends LitElement {
 
   private async handleResolve(queueId: string, approved: boolean) {
     try {
-      await resolveQueueItem(this.workspaceId, queueId, approved);
+      await resolveQueueItem(queueId, approved);
       await this.loadData();
     } catch (e: any) {
       this.error = e.message || "操作失败";
@@ -95,7 +77,7 @@ export class ViewMemoryDashboard extends LitElement {
 
   private async handlePin(memoryId: string, currentlyPinned: boolean) {
     try {
-      await pinMemory(this.workspaceId, memoryId, !currentlyPinned);
+      await pinMemory(memoryId, !currentlyPinned);
       await this.loadData();
     } catch (e: any) {
       this.error = e.message || "操作失败";
