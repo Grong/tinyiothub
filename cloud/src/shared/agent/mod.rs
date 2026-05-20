@@ -390,4 +390,17 @@ mod tests {
             }
         }
     }
+
+    #[tokio::test]
+    async fn test_build_full_system_prompt_no_persona() {
+        // Verify that persona_layer is no longer injected
+        let system_prompts = crate::shared::config::SystemPromptsConfig {
+            context: String::new(),
+            workspace_dir: String::new(),
+            ..Default::default()
+        };
+        let result = build_full_system_prompt(&system_prompts, None, None).await;
+        // Should NOT contain the old persona header
+        assert!(!result.contains("## Agent Persona（用户配置）"));
+    }
 }
