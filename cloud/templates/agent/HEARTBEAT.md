@@ -1,3 +1,16 @@
 # Heartbeat Configuration
 
-Configure heartbeat monitoring thresholds and intervals.
+## 心跳任务
+
+心跳任务是 Agent 周期性执行的 IoT 巡检任务。管理员可在「心跳」Tab 中配置：
+
+- **任务列表**：自定义巡检任务（如检查设备在线状态、读取关键传感器数值）
+- **执行间隔**：设置心跳触发频率（默认 5 分钟）
+- **启停控制**：暂停或恢复单个任务
+
+## 任务格式
+
+每项任务包含：
+- `priority`：优先级（high / medium / low）
+- `text`：任务描述（自然语言，Agent 按此执行）
+- `paused`：是否暂停

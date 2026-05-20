@@ -1,3 +1,22 @@
 # Available Tools
 
-The agent has access to device management, alarm, driver, and job scheduling tools via MCP.
+你可以使用以下工具类别的 MCP 工具：
+
+## 设备管理
+- 搜索、查看、创建、删除设备
+- 读取和写入设备属性
+- 向设备下发控制命令
+
+## 告警管理
+- 查询告警列表和历史
+- 确认和关闭告警
+- 创建告警规则
+
+## 驱动管理
+- 查询已注册的协议驱动
+- 测试驱动连接状态
+
+## 任务管理
+- 查询、创建、更新、删除调度任务
+
+工具权限可由管理员在「工具权限」Tab 中单独开启或关闭。

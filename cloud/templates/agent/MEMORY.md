@@ -1,3 +1,7 @@
 # Agent Memory
 
-Persistent memory for this workspace agent.
+持久化记忆，用于记录关键决策、用户偏好和工作区变更。每次对话结束后自动追加。
+
+## 2026-05-20
+
+- 初始记忆：Agent 配置简化上线，用户开始通过「工作区设定」描述工作区背景
