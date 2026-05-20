@@ -67,10 +67,12 @@ pub struct AgentRuntimeConfig {
     /// Top-P sampling
     #[serde(default = "default_top_p")]
     pub top_p: f64,
-    /// System prompt / agent persona instructions
+    /// System prompt — deprecated: use USER.md workspace file instead
+    #[deprecated(note = "Use USER.md workspace file instead")]
     #[serde(default)]
     pub system_prompt: String,
-    /// Preset persona id: "ops" | "monitor" | "support" | "custom"
+    /// Preset persona id — deprecated: persona is now inferred from workspace context
+    #[deprecated(note = "Persona is now inferred from workspace context")]
     #[serde(default)]
     pub persona_preset: String,
     /// Tool names disabled for this agent (denylist mode)
@@ -98,6 +100,7 @@ fn default_tool_denylist() -> Vec<String> {
     vec!["delete_device".into(), "delete_schedule".into()]
 }
 
+#[allow(deprecated)]
 impl Default for AgentRuntimeConfig {
     fn default() -> Self {
         Self {
@@ -120,8 +123,6 @@ pub fn default_agent_config() -> serde_json::Value {
             "temperature": 0.7,
             "max_tokens": 4096,
             "top_p": 1.0,
-            "system_prompt": "",
-            "persona_preset": "",
             "tool_denylist": ["delete_device", "delete_schedule"]
         })
     })
