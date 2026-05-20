@@ -181,7 +181,8 @@ pub trait MemoryStore: Send + Sync {
     /// Record a load event (memory injected into prompt). Increments load_count.
     async fn record_load(&self, id: &str) -> Result<()>;
 
-    /// Record a reference event (LLM actually used this memory). Increments reference_count.
+    /// Record a reference event (LLM actually used this memory).
+    /// Increments reference_count and recomputes effectiveness.
     async fn record_reference(&self, id: &str) -> Result<()>;
 
     /// Get pending reflection queue items.
