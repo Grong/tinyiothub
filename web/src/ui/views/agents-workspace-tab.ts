@@ -44,10 +44,6 @@ export function renderWorkspaceTab(
     return html`<div class="callout info">加载中...</div>`;
   }
 
-  if (state.error) {
-    return html`<div class="callout error">${state.error}</div>`;
-  }
-
   return html`
     <section class="card">
       <div class="card-title">工作区设定</div>
