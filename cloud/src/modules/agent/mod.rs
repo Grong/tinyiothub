@@ -10,6 +10,8 @@
 pub mod agent;
 pub mod chat;
 pub mod config;
+pub mod memory;
+pub mod reflection;
 pub mod tools;
 
 pub mod heartbeat;
