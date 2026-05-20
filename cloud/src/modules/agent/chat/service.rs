@@ -88,6 +88,10 @@ pub async fn send_message(
     chat_handles: &Arc<
         tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>,
     >,
+    reflection_service: Option<std::sync::Arc<super::super::reflection::service::ReflectionService>>,
+    enable_reflection: bool,
+    workspace_id: &str,
+    agent_id: &str,
 ) -> Result<mpsc::Receiver<ChatEvent>, ChatError> {
     let agent = Arc::clone(agent);
     let message = message.to_string();
@@ -96,6 +100,8 @@ pub async fn send_message(
     let system_prompt = system_prompt.to_string();
     let chat_handles = Arc::clone(chat_handles);
     let chat_handles_inner = Arc::clone(&chat_handles);
+    let workspace_id = workspace_id.to_string();
+    let agent_id = agent_id.to_string();
 
     let (tx, rx) = mpsc::channel::<ChatEvent>(100);
 
@@ -147,18 +153,19 @@ pub async fn send_message(
         .await;
         drop(ag);
 
-        match result {
-            Ok(Ok(final_text)) => {
+        let final_text = match result {
+            Ok(Ok(text)) => {
                 let _ = tx
                     .send(ChatEvent::Final {
                         run_id: run_id.clone(),
                         session_key: session_key.clone(),
                         message: serde_json::json!({
                             "role": "assistant",
-                            "content": [{ "type": "text", "text": final_text }],
+                            "content": [{ "type": "text", "text": &text }],
                         }),
                     })
                     .await;
+                Some(text)
             }
             Ok(Err(e)) => {
                 let _ = tx
@@ -168,6 +175,7 @@ pub async fn send_message(
                         error: e.to_string(),
                     })
                     .await;
+                None
             }
             Err(_) => {
                 let _ = tx
@@ -177,6 +185,27 @@ pub async fn send_message(
                         error: "Agent execution timed out after 120 seconds".to_string(),
                     })
                     .await;
+                None
+            }
+        };
+
+        // Spawn micro_reflect after the turn completes (fire-and-forget)
+        if enable_reflection {
+            if let (Some(svc), Some(assistant_text)) = (reflection_service, final_text) {
+                let turn_messages = vec![
+                    super::super::reflection::pipeline::ChatMessage {
+                        role: "user".into(),
+                        content: message.clone(),
+                    },
+                    super::super::reflection::pipeline::ChatMessage {
+                        role: "assistant".into(),
+                        content: assistant_text,
+                    },
+                ];
+                tokio::spawn(async move {
+                    svc.micro_reflect(&workspace_id, &agent_id, &session_key, &turn_messages)
+                        .await;
+                });
             }
         }
 

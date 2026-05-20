@@ -22,6 +22,7 @@ use zeroclaw::tools::Tool;
 
 use super::chat::service as chat_service;
 use super::config::service as config_service;
+use super::reflection::service::ReflectionService;
 use super::tools::service as tool_service;
 use crate::shared::agent::config::{
     AgentConfig, AgentError, AgentInfo, AgentRuntimeConfig,
@@ -148,12 +149,15 @@ pub struct AgentPool {
     pub(crate) agent_settings: crate::shared::config::AgentSettings,
     pub chat_handles:
         Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
+    pub memory_store: Arc<dyn tinyiothub_core::memory::MemoryStore>,
+    pub reflection_service: Option<Arc<ReflectionService>>,
 }
 
 impl AgentPool {
     /// Create a new AgentPool with shared memory and observer backends.
     pub fn new(
         db_pool: SqlitePool,
+        memory_store: Arc<dyn tinyiothub_core::memory::MemoryStore>,
         agent_settings: &crate::shared::config::AgentSettings,
     ) -> anyhow::Result<Self> {
         let workspace_dir = crate::shared::paths::default_workspace_dir();
@@ -179,6 +183,11 @@ impl AgentPool {
         let observer = zeroclaw::observability::create_observer(&observer_config);
         let observer: Arc<dyn Observer> = Arc::from(observer);
 
+        let reflection_service = Some(Arc::new(ReflectionService::new(
+            Arc::clone(&memory_store),
+            db_pool.clone(),
+        )));
+
         Ok(Self {
             db_pool,
             agents: Arc::new(DashMap::new()),
@@ -187,6 +196,8 @@ impl AgentPool {
             response_cache,
             agent_settings: agent_settings.clone(),
             chat_handles: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            memory_store,
+            reflection_service,
         })
     }
 
@@ -497,6 +508,8 @@ impl AgentPool {
         let parsed = super::session::SessionKey::parse(session_key)?;
         parsed.verify_workspace(&parsed.workspace_id)?;
         let agent = self.get_or_create(agent_id, &parsed.workspace_id).await?;
+        let config = config_service::get_config(&self.db_pool, agent_id).await?;
+        let enable_reflection = config.enable_reflection;
         chat_service::send_message(
             &agent,
             message,
@@ -504,6 +517,10 @@ impl AgentPool {
             session_key,
             system_prompt,
             &self.chat_handles,
+            self.reflection_service.clone(),
+            enable_reflection,
+            &parsed.workspace_id,
+            agent_id,
         )
         .await
         .map_err(|e| AgentError::RequestFailed(e.to_string()))

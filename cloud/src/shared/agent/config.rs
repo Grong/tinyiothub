@@ -78,6 +78,14 @@ pub struct AgentRuntimeConfig {
     /// Tool names disabled for this agent (denylist mode)
     #[serde(default = "default_tool_denylist")]
     pub tool_denylist: Vec<String>,
+    /// Enable the reflection engine (post-turn memory/skill extraction).
+    /// Safe to disable — only affects background processing, never core chat.
+    #[serde(default = "default_enable_reflection")]
+    pub enable_reflection: bool,
+}
+
+fn default_enable_reflection() -> bool {
+    true
 }
 
 fn default_model() -> String {
@@ -111,6 +119,7 @@ impl Default for AgentRuntimeConfig {
             system_prompt: String::new(),
             persona_preset: String::new(),
             tool_denylist: default_tool_denylist(),
+            enable_reflection: default_enable_reflection(),
         }
     }
 }
