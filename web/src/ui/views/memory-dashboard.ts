@@ -2,6 +2,7 @@ import { LitElement, html } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { listActiveMemories, getPendingQueue, resolveQueueItem, pinMemory } from "../../api/memory";
 import type { AgentMemory, ReflectionQueueItem } from "../../api/memory";
+import { apiGet } from "../../api/client.js";
 
 const ZONE_LABELS: Record<string, string> = {
   core: "核心",
@@ -41,8 +42,23 @@ export class ViewMemoryDashboard extends LitElement {
   connectedCallback(): void {
     super.connectedCallback();
     const params = new URLSearchParams(window.location.search);
-    this.workspaceId = params.get("workspace") || "";
-    this.agentId = params.get("agent") || "";
+    this.workspaceId = params.get("workspace") || localStorage.getItem("workspace-id") || "";
+    this.agentId = params.get("agent") || "default";
+    this.init();
+  }
+
+  private async init() {
+    if (!this.workspaceId) {
+      try {
+        const wsRes = await apiGet<{ id: string; name: string }[]>('/workspaces');
+        if (wsRes.result && wsRes.result.length > 0) {
+          this.workspaceId = wsRes.result[0].id;
+          localStorage.setItem("workspace-id", this.workspaceId);
+        }
+      } catch {
+        // API failed — will show error
+      }
+    }
     this.loadData();
   }
 
