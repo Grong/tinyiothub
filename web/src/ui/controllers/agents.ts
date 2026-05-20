@@ -15,6 +15,7 @@ export type AgentConfig = {
   temperature?: number;
   maxTokens?: number;
   topP?: number;
+  enableReflection?: boolean;
   tools?: {
     profile?: string;
     allow?: string[];

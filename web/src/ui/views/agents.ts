@@ -2,7 +2,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import type { AgentsState, AgentsPanel } from "../controllers/agents.js";
 import type { AgentItem } from "../types.js";
-import { createAgentsState, loadAgents, loadAgentConfig, loadToolsCatalog, toggleTool, loadSkills, loadHeartbeatConfig, loadHeartbeatLogs, updateHeartbeatConfig, updateHeartbeatTasks } from "../controllers/agents.js";
+import { createAgentsState, loadAgents, loadAgentConfig, loadToolsCatalog, toggleTool, loadSkills, loadHeartbeatConfig, loadHeartbeatLogs, updateHeartbeatConfig, updateHeartbeatTasks, saveAgentConfig } from "../controllers/agents.js";
 import { renderWorkspaceTab } from "./agents-workspace-tab.js";
 import { renderToolsTab } from "./agents-tools-tab.js";
 import { renderSkillsTab } from "./agents-skills-tab.js";
@@ -104,6 +104,18 @@ export class ViewAgents extends LitElement {
     this.requestUpdate();
   }
 
+  private async onToggleReflection(enabled: boolean): Promise<void> {
+    const agentId = this.state.selectedAgentId;
+    if (!agentId || !this.state.config) return;
+    this.state = {
+      ...this.state,
+      config: { ...this.state.config, enableReflection: enabled },
+      configDirty: true,
+    };
+    await saveAgentConfig(this.state, agentId);
+    this.requestUpdate();
+  }
+
   private _patchState(patch: Partial<AgentsState>): void {
     this.state = { ...this.state, ...patch };
   }
@@ -146,6 +158,18 @@ export class ViewAgents extends LitElement {
               ${panelLabels[panel]}
             </button>
           `)}
+        </div>
+
+        <div class="agent-config-bar">
+          <label class="toggle-item">
+            <input
+              type="checkbox"
+              .checked=${this.state.config?.enableReflection !== false}
+              @change=${(e: Event) => this.onToggleReflection((e.target as HTMLInputElement).checked)}
+            />
+            <span class="toggle-label">反思引擎</span>
+          </label>
+          <small class="toggle-hint">从对话中学习并提取记忆（不影响正常聊天）</small>
         </div>
 
         <div class="agents-main">
