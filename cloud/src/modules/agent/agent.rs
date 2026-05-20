@@ -22,6 +22,7 @@ use zeroclaw::tools::Tool;
 
 use super::chat::service as chat_service;
 use super::config::service as config_service;
+use super::reflection::notifications::NotificationService;
 use super::reflection::service::ReflectionService;
 use super::tools::service as tool_service;
 use crate::shared::agent::config::{
@@ -151,6 +152,7 @@ pub struct AgentPool {
         Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
     pub memory_store: Arc<dyn tinyiothub_core::memory::MemoryStore>,
     pub reflection_service: Option<Arc<ReflectionService>>,
+    pub notification_service: Arc<NotificationService>,
 }
 
 impl AgentPool {
@@ -183,9 +185,11 @@ impl AgentPool {
         let observer = zeroclaw::observability::create_observer(&observer_config);
         let observer: Arc<dyn Observer> = Arc::from(observer);
 
+        let notification_service = Arc::new(NotificationService::new());
         let reflection_service = Some(Arc::new(ReflectionService::new(
             Arc::clone(&memory_store),
             db_pool.clone(),
+            Arc::clone(&notification_service),
         )));
 
         Ok(Self {
@@ -198,6 +202,7 @@ impl AgentPool {
             chat_handles: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             memory_store,
             reflection_service,
+            notification_service,
         })
     }
 

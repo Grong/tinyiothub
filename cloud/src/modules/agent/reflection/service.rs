@@ -9,6 +9,7 @@ use super::analyzers::memory_analyzer::MemoryAnalyzer;
 use super::analyzers::security_analyzer::SecurityAnalyzer;
 use super::analyzers::skill_analyzer::SkillAnalyzer;
 use super::metrics::ReflectionMetrics;
+use super::notifications::NotificationService;
 use super::pipeline::*;
 
 pub struct ReflectionService {
@@ -16,10 +17,15 @@ pub struct ReflectionService {
     memory_store: Arc<dyn MemoryStore>,
     db: SqlitePool,
     pub metrics: Arc<ReflectionMetrics>,
+    notification_service: Arc<NotificationService>,
 }
 
 impl ReflectionService {
-    pub fn new(memory_store: Arc<dyn MemoryStore>, db: SqlitePool) -> Self {
+    pub fn new(
+        memory_store: Arc<dyn MemoryStore>,
+        db: SqlitePool,
+        notification_service: Arc<NotificationService>,
+    ) -> Self {
         let mut pipeline = ReflectionPipeline::new();
         pipeline.add_analyzer(Box::new(MemoryAnalyzer::new()));
         pipeline.add_analyzer(Box::new(SkillAnalyzer::new()));
@@ -30,6 +36,7 @@ impl ReflectionService {
             memory_store,
             db,
             metrics: Arc::new(ReflectionMetrics::new()),
+            notification_service,
         }
     }
 
@@ -244,6 +251,15 @@ impl ReflectionService {
             &candidate.name,
         )
         .await?;
+
+        // Push skill discovery notification to frontend
+        self.notification_service.notify_skill_discovered(
+            workspace_id,
+            &candidate.name,
+            &candidate.description,
+        )
+        .await;
+
         Ok(())
     }
 
