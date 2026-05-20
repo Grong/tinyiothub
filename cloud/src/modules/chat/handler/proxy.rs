@@ -47,6 +47,7 @@ pub async fn chat_stream(
         system_prompts,
         Some(&workspace_id),
         None,
+        None, // memory_store not wired yet — see Task 9
     )
     .await;
 

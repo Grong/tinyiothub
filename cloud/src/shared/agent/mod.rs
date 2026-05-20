@@ -72,21 +72,32 @@ pub fn build_tools_catalog_json() -> serde_json::Value {
 /// 5. [Memory]      — from MEMORY.md (curated long-term memory)
 /// 6. [User]        — from USER.md (who I'm helping)
 /// 7. [Persona]     — user persona override or default from config
-/// 8. [Context]     — dynamic context (device snapshots, etc.)
+/// 8. [Dynamic]     — PROFILE.md or active agent memories (NEW)
+/// 9. [Context]     — dynamic context (device snapshots, etc.)
 pub async fn build_full_system_prompt(
     system_prompts: &crate::shared::config::SystemPromptsConfig,
     workspace_id: Option<&str>,
     agent_id: Option<&str>,
+    memory_store: Option<&std::sync::Arc<dyn tinyiothub_core::memory::MemoryStore>>,
 ) -> String {
     let workspace_dir = get_workspace_dir(system_prompts, workspace_id);
 
     // Layer 1-6: Load from workspace files
     let workspace_prompt = load_workspace_prompt(&workspace_dir).await;
 
+    // Layer 7: Dynamic memory layer (PROFILE.md or active memories)
+    let memory_layer = if let Some(store) = memory_store {
+        let ws_id = workspace_id.unwrap_or(crate::shared::paths::DEFAULT_WORKSPACE_ID);
+        let a_id = agent_id.unwrap_or("default");
+        build_memory_layer(store.as_ref(), &workspace_dir, ws_id, a_id, 4096).await
+    } else {
+        String::new()
+    };
+
     // Skills from skills/ directory (existing behavior)
     let skills_layer = load_skills_prompt(workspace_id, agent_id).await;
 
-    // Layer 8: Additional context from config (device snapshots injected at runtime)
+    // Layer 9: Additional context from config (device snapshots injected at runtime)
     let context_layer = if !system_prompts.context.is_empty() {
         format!("\n\n## 当前状态上下文\n{}\n", system_prompts.context)
     } else {
@@ -94,7 +105,7 @@ pub async fn build_full_system_prompt(
     };
 
     let full_prompt =
-        format!("{}{}{}", workspace_prompt, skills_layer, context_layer);
+        format!("{}{}{}{}", workspace_prompt, memory_layer, skills_layer, context_layer);
     tracing::info!("[SYSTEM_PROMPT]\n{}", full_prompt);
     full_prompt
 }
@@ -312,6 +323,60 @@ async fn read_skill_dir(dir: &std::path::Path) -> String {
     }
 }
 
+/// Build the dynamic memory layer for the system prompt.
+/// Prefers PROFILE.md if available; otherwise injects top active memories.
+async fn build_memory_layer(
+    memory_store: &dyn tinyiothub_core::memory::MemoryStore,
+    workspace_dir: &std::path::Path,
+    workspace_id: &str,
+    agent_id: &str,
+    max_tokens: usize,
+) -> String {
+    // 1. Prefer compiled PROFILE.md
+    let profile_path = workspace_dir.join("PROFILE.md");
+    if profile_path.exists() {
+        if let Ok(profile) = tokio::fs::read_to_string(&profile_path).await {
+            let trimmed = profile.trim();
+            if !trimmed.is_empty() {
+                return format!("\n## Agent Memory (Compiled Profile)\n{}\n", trimmed);
+            }
+        }
+    }
+
+    // 2. Fall back to dynamic memory injection
+    let active = match memory_store.list_active(workspace_id, agent_id).await {
+        Ok(memories) => memories,
+        Err(e) => {
+            tracing::warn!(%e, "Failed to load active memories");
+            return String::new();
+        }
+    };
+
+    if active.is_empty() {
+        return String::new();
+    }
+
+    let mut fragments = vec!["\n## Dynamic Memory\n".to_string()];
+    let mut token_budget = max_tokens / 5;
+
+    for mem in &active {
+        if mem.source == tinyiothub_core::memory::MemorySource::DeviceSnapshot {
+            continue;
+        }
+        let entry = format!("- [{}] {}\n", mem.zone.as_str(), mem.content);
+        let entry_tokens = entry.len() / 4;
+        if entry_tokens > token_budget {
+            break;
+        }
+        token_budget -= entry_tokens;
+        fragments.push(entry);
+
+        let _ = memory_store.record_load(&mem.id).await;
+    }
+
+    fragments.concat()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -399,7 +464,7 @@ mod tests {
             workspace_dir: String::new(),
             ..Default::default()
         };
-        let result = build_full_system_prompt(&system_prompts, None, None).await;
+        let result = build_full_system_prompt(&system_prompts, None, None, None).await;
         // Should NOT contain the old persona header
         assert!(!result.contains("## Agent Persona（用户配置）"));
     }
