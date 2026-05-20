@@ -3,6 +3,7 @@ pub mod cron;
 pub mod driver;
 pub mod error;
 pub mod event;
+pub mod memory;
 pub mod models;
 pub mod repository;
 pub mod rule;
