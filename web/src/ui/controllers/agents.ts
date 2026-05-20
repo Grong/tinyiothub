@@ -11,9 +11,6 @@ export type AgentConfig = {
   alternativeModels?: string[];
   workspace?: string;
   skills?: string[];
-  // Agent 灵魂设定
-  systemPrompt?: string;
-  personaPreset?: string;
   // ZeroClaw 层
   temperature?: number;
   maxTokens?: number;
@@ -24,7 +21,6 @@ export type AgentConfig = {
     alsoAllow?: string[];
     deny?: string[];
   };
-  [key: string]: unknown;
 };
 
 export type AgentsState = {
@@ -254,41 +250,3 @@ export async function updateHeartbeatTasks(
   }
 }
 
-// Workspace Files API
-export interface WorkspaceFile {
-  name: string;
-  content: string;
-}
-
-export interface WorkspaceFilesListResponse {
-  files: { name: string }[];
-}
-
-export async function loadWorkspaceFiles(state: AgentsState, agentId: string): Promise<void> {
-  (state as any).workspaceFilesLoading = true;
-  (state as any).workspaceFilesError = null;
-  try {
-    const filesState: Record<string, WorkspaceFile> = {};
-    // Load all workspace files in parallel
-    const fileNames = ["IDENTITY.md", "SOUL.md", "AGENTS.md", "USER.md", "TOOLS.md", "MEMORY.md", "HEARTBEAT.md", "BOOTSTRAP.md"];
-    await Promise.all(
-      fileNames.map(async (name) => {
-        try {
-          const res = await apiGet<WorkspaceFile>(`/agents/${agentId}/files/${name}`);
-          if (res.result) {
-            filesState[name] = res.result;
-          }
-        } catch {
-          // File might not exist yet, create empty content
-          filesState[name] = { name, content: "" };
-        }
-      })
-    );
-    (state as any).workspaceFiles = filesState;
-    (state as any).selectedWorkspaceFile = fileNames[0];
-  } catch (err) {
-    (state as any).workspaceFilesError = String(err);
-  } finally {
-    (state as any).workspaceFilesLoading = false;
-  }
-}

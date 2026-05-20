@@ -54,14 +54,13 @@ export type ChatState = {
   onA2ui?: (jsonl: string) => void;
   lastA2uiSurfaceId?: string;
   abortController?: AbortController;
-  systemPrompt?: string;
 };
 
 // ============================================================================
 // State
 // ============================================================================
 
-export function createChatState(sessionKey: string, agentId: string, systemPrompt?: string): ChatState {
+export function createChatState(sessionKey: string, agentId: string): ChatState {
   return {
     sessionKey,
     agentId,
@@ -75,7 +74,6 @@ export function createChatState(sessionKey: string, agentId: string, systemPromp
     toolStreamById: new Map(),
     toolStreamOrder: [],
     lastError: null,
-    systemPrompt,
   };
 }
 
