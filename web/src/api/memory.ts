@@ -33,14 +33,14 @@ export async function listActiveMemories(
   workspaceId: string,
   agentId: string,
 ): Promise<ApiResponse<AgentMemory[]>> {
-  return apiGet(`/api/v1/workspaces/${workspaceId}/memories?agent_id=${agentId}`);
+  return apiGet(`/workspaces/${workspaceId}/memories?agent_id=${agentId}`);
 }
 
 export async function getPendingQueue(
   workspaceId: string,
   agentId: string,
 ): Promise<ApiResponse<ReflectionQueueItem[]>> {
-  return apiGet(`/api/v1/workspaces/${workspaceId}/memories/queue?agent_id=${agentId}`);
+  return apiGet(`/workspaces/${workspaceId}/memories/queue?agent_id=${agentId}`);
 }
 
 export async function resolveQueueItem(
@@ -50,7 +50,7 @@ export async function resolveQueueItem(
   reviewerNote?: string,
 ): Promise<ApiResponse<{ resolved: boolean }>> {
   return apiPost(
-    `/api/v1/workspaces/${workspaceId}/memories/queue/${queueId}`,
+    `/workspaces/${workspaceId}/memories/queue/${queueId}`,
     { approved, reviewer_note: reviewerNote },
   );
 }
@@ -61,7 +61,7 @@ export async function pinMemory(
   pinned: boolean,
 ): Promise<ApiResponse<{ pinned: boolean }>> {
   return apiPost(
-    `/api/v1/workspaces/${workspaceId}/memories/${memoryId}/pin`,
+    `/workspaces/${workspaceId}/memories/${memoryId}/pin`,
     { pinned },
   );
 }

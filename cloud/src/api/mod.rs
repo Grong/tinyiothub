@@ -60,6 +60,7 @@ pub fn create_router() -> Router<AppState> {
         .nest("/heartbeat", crate::modules::heartbeat::handler::create_router())
         .nest("/self-healing", crate::modules::self_healing::handler::create_router())
         .nest("/workspaces", crate::modules::workspace::create_router()) // 工作空间端点
+        .nest("/workspaces", crate::modules::agent::memory::handler::create_router()) // Agent 记忆
         .nest("/mcp", crate::modules::mcp::create_router())
         .nest("/chat", crate::modules::chat::handler::create_router())
         .nest("/agents/skills", crate::modules::agent::handler::skills::create_router())
