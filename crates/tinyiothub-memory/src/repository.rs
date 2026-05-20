@@ -22,13 +22,10 @@ impl MemoryStore for SqliteAgentMemoryRepository {
     async fn put(&self, input: MemoryInput) -> Result<AgentMemory> {
         let id = uuid::Uuid::new_v4().to_string();
         let tags_json = serde_json::to_string(&input.tags).unwrap_or_default();
-        let now = chrono::Utc::now()
-            .format("%Y-%m-%dT%H:%M:%S%.3fZ")
-            .to_string();
 
         sqlx::query(
             "INSERT INTO agent_memories (id, workspace_id, agent_id, zone, content, source, confidence, tags, supersedes, device_id, snapshot_data, snapshot_time, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
         )
         .bind(&id)
         .bind(&input.workspace_id)
@@ -52,13 +49,31 @@ impl MemoryStore for SqliteAgentMemoryRepository {
         .bind(&input.device_id)
         .bind(&input.snapshot_data)
         .bind(input.snapshot_time)
-        .bind(&now)
-        .bind(&now)
         .execute(&self.pool)
         .await
         .map_err(|e| tinyiothub_core::error::Error::DatabaseError(e.to_string()))?;
 
-        self.get(&id).await.map(|o| o.unwrap())
+        // Construct return value from input + generated fields (avoid read-after-write race)
+        Ok(AgentMemory {
+            id,
+            workspace_id: input.workspace_id,
+            agent_id: input.agent_id,
+            zone: input.zone,
+            content: input.content,
+            source: input.source,
+            confidence: input.confidence,
+            tags: input.tags,
+            pinned: false,
+            supersedes: input.supersedes,
+            device_id: input.device_id,
+            snapshot_data: input.snapshot_data,
+            snapshot_time: input.snapshot_time,
+            effectiveness: 1.0,
+            load_count: 0,
+            reference_count: 0,
+            created_at: String::new(),
+            updated_at: String::new(),
+        })
     }
 
     async fn get(&self, id: &str) -> Result<Option<AgentMemory>> {
@@ -179,29 +194,16 @@ impl MemoryStore for SqliteAgentMemoryRepository {
         Ok(())
     }
 
+    /// Atomic read-modify-write — no SELECT needed, no race condition.
     async fn record_reference(&self, id: &str) -> Result<()> {
-        let row = sqlx::query_as::<_, MemoryRow>(
-            "SELECT * FROM agent_memories WHERE id = ?",
-        )
-        .bind(id)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| tinyiothub_core::error::Error::DatabaseError(e.to_string()))?;
-        let mem: AgentMemory = row.into();
-        let new_load = mem.load_count + 1;
-        let new_ref = mem.reference_count + 1;
-        let eff = if new_load == 0 {
-            1.0
-        } else {
-            0.5 + 0.5 * (new_ref as f64 / new_load as f64)
-        };
-
         sqlx::query(
-            "UPDATE agent_memories SET load_count = ?, reference_count = ?, effectiveness = ?, updated_at = datetime('now') WHERE id = ?",
+            "UPDATE agent_memories SET \
+             load_count = load_count + 1, \
+             reference_count = reference_count + 1, \
+             effectiveness = 0.5 + 0.5 * (CAST(reference_count + 1 AS REAL) / CAST(load_count + 1 AS REAL)), \
+             updated_at = datetime('now') \
+             WHERE id = ?",
         )
-        .bind(new_load as i64)
-        .bind(new_ref as i64)
-        .bind(eff)
         .bind(id)
         .execute(&self.pool)
         .await
