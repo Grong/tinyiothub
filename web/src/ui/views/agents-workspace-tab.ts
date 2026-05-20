@@ -6,6 +6,26 @@ interface WorkspaceFileContent {
   content: string;
 }
 
+interface TabState {
+  content: string;
+  loading: boolean;
+  saving: boolean;
+  dirty: boolean;
+  error: string;
+  loadedAgentId: string | null;
+}
+
+const tabStates = new Map<string, TabState>();
+
+function getTabState(agentId: string): TabState {
+  let s = tabStates.get(agentId);
+  if (!s || s.loadedAgentId !== agentId) {
+    s = { content: "", loading: true, saving: false, dirty: false, error: "", loadedAgentId: agentId };
+    tabStates.set(agentId, s);
+  }
+  return s;
+}
+
 async function loadWorkspaceDescription(agentId: string): Promise<string> {
   try {
     const res = await apiGet<WorkspaceFileContent>(`/agents/${agentId}/files/USER.md`);
@@ -26,21 +46,15 @@ export function renderWorkspaceTab(
   agentId: string,
   onUpdate: () => void,
 ): ReturnType<typeof html> {
-  const state = {
-    content: "",
-    loading: true,
-    saving: false,
-    dirty: false,
-    error: "",
-  };
-
-  loadWorkspaceDescription(agentId).then((content) => {
-    state.content = content;
-    state.loading = false;
-    onUpdate();
-  });
+  const state = getTabState(agentId);
 
   if (state.loading) {
+    loadWorkspaceDescription(agentId).then((content) => {
+      state.content = content;
+      state.loading = false;
+      state.dirty = false;
+      onUpdate();
+    });
     return html`<div class="callout info">加载中...</div>`;
   }
 
@@ -75,7 +89,7 @@ export function renderWorkspaceTab(
               await saveWorkspaceDescription(agentId, state.content);
               state.dirty = false;
             } catch (err) {
-              state.error = String(err);
+              state.error = err instanceof Error ? err.message : String(err);
             } finally {
               state.saving = false;
               onUpdate();
