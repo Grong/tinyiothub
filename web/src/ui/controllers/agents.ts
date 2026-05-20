@@ -4,7 +4,7 @@ import type { Skill, CreateSkillRequest, UpdateSkillRequest } from "../../api/cl
 import { listSkills, createSkill, updateSkill, deleteSkill } from "../../api/client.js";
 import type { HeartbeatConfig, HeartbeatLogsResponse, HeartbeatTask } from "../views/agents-heartbeat-tab.js";
 
-export type AgentsPanel = "overview" | "tools" | "skills" | "heartbeat" | "files";
+export type AgentsPanel = "overview" | "tools" | "skills" | "heartbeat";
 
 export type AgentConfig = {
   model?: string;

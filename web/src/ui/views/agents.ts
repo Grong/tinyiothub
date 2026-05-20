@@ -2,20 +2,17 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import type { AgentsState, AgentsPanel } from "../controllers/agents.js";
 import type { AgentItem } from "../types.js";
-import { createAgentsState, loadAgents, loadAgentConfig, saveAgentConfig, loadToolsCatalog, toggleTool, loadSkills, loadHeartbeatConfig, loadHeartbeatLogs, updateHeartbeatConfig, updateHeartbeatTasks } from "../controllers/agents.js";
-import { renderModelTab } from "./agents-model-tab.js";
+import { createAgentsState, loadAgents, loadAgentConfig, loadToolsCatalog, toggleTool, loadSkills, loadHeartbeatConfig, loadHeartbeatLogs, updateHeartbeatConfig, updateHeartbeatTasks } from "../controllers/agents.js";
+import { renderWorkspaceTab } from "./agents-workspace-tab.js";
 import { renderToolsTab } from "./agents-tools-tab.js";
 import { renderSkillsTab } from "./agents-skills-tab.js";
 import { renderHeartbeatTab, type HeartbeatTask } from "./agents-heartbeat-tab.js";
-import { renderFilesTab } from "./agents-files-tab.js";
-import { loadWorkspaceFiles } from "../controllers/agents.js";
 
 const panelLabels: Record<AgentsPanel, string> = {
-  overview: "配置",
+  overview: "工作区设定",
   tools: "工具权限",
   skills: "技能",
   heartbeat: "心跳",
-  files: "工作区文件",
 };
 
 @customElement("view-agents")
@@ -47,16 +44,7 @@ export class ViewAgents extends LitElement {
       loadSkills(this.state),
       loadHeartbeatConfig(this.state, agentId),
       loadHeartbeatLogs(this.state, agentId),
-      loadWorkspaceFiles(this.state, agentId),
     ]).then(() => this.requestUpdate());
-  }
-
-  private async onSaveConfig(): Promise<void> {
-    if (!this.state.selectedAgentId) return;
-    const ok = await saveAgentConfig(this.state, this.state.selectedAgentId);
-    if (ok) {
-      this.requestUpdate();
-    }
   }
 
   private async onToggleTool(toolName: string, enabled: boolean): Promise<void> {
@@ -130,7 +118,7 @@ export class ViewAgents extends LitElement {
       return html`<div class="agents-layout"><div class="agent-panel-error">${this.state.agentsError}</div></div>`;
     }
 
-    const allPanels: AgentsPanel[] = ["overview", "tools", "skills", "heartbeat", "files"];
+    const allPanels: AgentsPanel[] = ["overview", "tools", "skills", "heartbeat"];
 
     // Tools tab search — local state to avoid re-render on other panels
     const searchFilter = (this as any)._searchFilter || "";
@@ -161,7 +149,7 @@ export class ViewAgents extends LitElement {
         </div>
 
         <div class="agents-main">
-          ${this.state.activePanel === "overview" ? renderModelTab(this.state, this._patchState.bind(this), this.onSaveConfig.bind(this), () => { if (this.state.selectedAgentId) loadAgentConfig(this.state, this.state.selectedAgentId).then(() => this.requestUpdate()); }) : nothing}
+          ${this.state.activePanel === "overview" && this.state.selectedAgentId ? renderWorkspaceTab(this.state.selectedAgentId, this.requestUpdate.bind(this)) : nothing}
           ${this.state.activePanel === "tools" ? renderToolsTab(this.state, searchFilter, setSearchFilter, this.onToggleTool.bind(this)) : nothing}
           ${this.state.activePanel === "skills" ? renderSkillsTab(
             this.state,
@@ -176,11 +164,6 @@ export class ViewAgents extends LitElement {
             this.onAddHeartbeatTask.bind(this),
             this.onRemoveHeartbeatTask.bind(this),
             this.onUpdateHeartbeatTask.bind(this)
-          ) : nothing}
-          ${this.state.activePanel === "files" && this.state.selectedAgentId ? renderFilesTab(
-            this.state,
-            this.state.selectedAgentId,
-            this.requestUpdate.bind(this)
           ) : nothing}
         </div>
       </div>
