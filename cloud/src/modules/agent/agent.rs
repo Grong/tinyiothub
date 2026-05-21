@@ -54,21 +54,17 @@ impl PromptSection for TinyIoTHubSkillsSection {
 
 fn load_skills_sync(workspace_dir: &std::path::Path) -> String {
     let ws_skills = workspace_dir.join("skills");
-    if ws_skills.exists() {
-        if let Some(content) = read_skills_dir_sync(&ws_skills) {
-            if !content.is_empty() {
+    if ws_skills.exists()
+        && let Some(content) = read_skills_dir_sync(&ws_skills)
+            && !content.is_empty() {
                 return content;
             }
-        }
-    }
     let global_skills = std::path::PathBuf::from("data/skills");
-    if global_skills.exists() {
-        if let Some(content) = read_skills_dir_sync(&global_skills) {
-            if !content.is_empty() {
+    if global_skills.exists()
+        && let Some(content) = read_skills_dir_sync(&global_skills)
+            && !content.is_empty() {
                 return content;
             }
-        }
-    }
     String::new()
 }
 
@@ -108,6 +104,7 @@ fn read_skills_dir_sync(dir: &std::path::Path) -> Option<String> {
 
 pub(crate) struct PoolEntry {
     pub zeroclaw_agent: Arc<tokio::sync::Mutex<zeroclaw::agent::Agent>>,
+    #[allow(dead_code)]
     pub metadata: Agent,
     pub last_used: Instant,
 }
@@ -142,6 +139,7 @@ pub struct AgentPool {
     pub(crate) shared_memory: Arc<dyn Memory>,
     pub(crate) observer: Arc<dyn Observer>,
     pub(crate) response_cache: Option<Arc<zeroclaw::memory::ResponseCache>>,
+    #[allow(dead_code)]
     pub(crate) agent_settings: crate::shared::config::AgentSettings,
     pub chat_handles:
         Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
@@ -160,11 +158,13 @@ impl AgentPool {
         let workspace_dir = crate::shared::paths::default_workspace_dir();
         std::fs::create_dir_all(&workspace_dir).ok();
 
-        let mut memory_config = zeroclaw::config::schema::MemoryConfig::default();
-        memory_config.backend = agent_settings.memory_backend.clone();
-        memory_config.auto_save = true;
-        memory_config.hygiene_enabled = true;
-        memory_config.response_cache_enabled = true;
+        let memory_config = zeroclaw::config::schema::MemoryConfig {
+            backend: agent_settings.memory_backend.clone(),
+            auto_save: true,
+            hygiene_enabled: true,
+            response_cache_enabled: true,
+            ..Default::default()
+        };
 
         let memory = zeroclaw::memory::create_memory(&memory_config, &workspace_dir, None)
             .map_err(|e| {
@@ -179,8 +179,10 @@ impl AgentPool {
         let response_cache =
             zeroclaw::memory::create_response_cache(&memory_config, &workspace_dir).map(Arc::new);
 
-        let mut observer_config = zeroclaw::config::schema::ObservabilityConfig::default();
-        observer_config.backend = agent_settings.observer_backend.clone();
+        let observer_config = zeroclaw::config::schema::ObservabilityConfig {
+            backend: agent_settings.observer_backend.clone(),
+            ..Default::default()
+        };
         let observer = zeroclaw::observability::create_observer(&observer_config);
         let observer: Arc<dyn Observer> = Arc::from(observer);
 

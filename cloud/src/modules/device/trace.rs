@@ -15,6 +15,7 @@ impl DeviceTraceService {
         Self { repository }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn record_device_trace(
         &self,
         device_id: &str,
@@ -115,6 +116,7 @@ impl DeviceTraceService {
         self.repository.get_system_overview(days.unwrap_or(7)).await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn find_all_traces(
         &self,
         levels: Option<&[String]>,

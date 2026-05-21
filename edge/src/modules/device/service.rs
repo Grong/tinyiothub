@@ -22,9 +22,7 @@ impl DeviceService {
 
     pub async fn list_devices(&self, driver_name: Option<&str>) -> EdgeResult<Vec<Device>> {
         let criteria = if let Some(dn) = driver_name {
-            let mut c = DeviceCriteria::default();
-            c.driver_name = Some(dn.to_string());
-            c
+            DeviceCriteria { driver_name: Some(dn.to_string()), ..Default::default() }
         } else {
             DeviceCriteria::default()
         };

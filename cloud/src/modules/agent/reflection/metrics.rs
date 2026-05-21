@@ -6,6 +6,12 @@ pub struct ReflectionMetrics {
     pub consecutive_failures: AtomicU64,
 }
 
+impl Default for ReflectionMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ReflectionMetrics {
     pub fn new() -> Self {
         Self {

@@ -66,8 +66,11 @@ impl From<crate::shared::error::Error> for EventError {
 }
 
 // Re-export core event types
+#[allow(ambiguous_glob_reexports)]
 pub use handler::*;
+#[allow(ambiguous_glob_reexports)]
 pub use repo::*;
+#[allow(ambiguous_glob_reexports)]
 pub use service::*;
 pub use tinyiothub_core::models::event::{
     ConnectionStatus, ContentElement, DeviceEventType, Event, EventId, EventLevel, EventSource,

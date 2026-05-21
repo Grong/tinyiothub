@@ -16,7 +16,7 @@ use crate::test_utils::{
 
 /// Helper: build a request with auth and optional body.
 fn auth_request(method: &str, uri: &str, token: &str, body: Option<Value>) -> Request<Body> {
-    let mut builder = Request::builder()
+    let builder = Request::builder()
         .method(method)
         .uri(uri)
         .header("Authorization", auth_header(token))
@@ -268,7 +268,7 @@ async fn test_cross_workspace_isolation() {
         .await
         .unwrap();
 
-    let (status, json) = response_parts(response).await;
+    let (_status, json) = response_parts(response).await;
     assert_eq!(json["code"], 0);
     let data = json["result"]["data"].as_array().unwrap();
     let device_ids: Vec<&str> = data.iter().filter_map(|d| d["id"].as_str()).collect();

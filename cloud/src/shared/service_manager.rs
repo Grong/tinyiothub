@@ -36,6 +36,7 @@ pub struct ServiceManager {
 
 impl ServiceManager {
     /// 创建新的服务管理器
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
 
@@ -136,8 +137,10 @@ impl ServiceManager {
                 load_session_context: false,
                 task_timeout_secs: 600,
             };
-            let mut observer_config = zeroclaw::config::schema::ObservabilityConfig::default();
-            observer_config.backend = agent_settings.observer_backend.clone();
+            let observer_config = zeroclaw::config::schema::ObservabilityConfig {
+                backend: agent_settings.observer_backend.clone(),
+                ..Default::default()
+            };
             let heartbeat_observer: std::sync::Arc<dyn zeroclaw::observability::Observer> =
                 std::sync::Arc::from(zeroclaw::observability::create_observer(&observer_config));
             let heartbeat_service = crate::modules::agent::heartbeat::HeartbeatService::new(

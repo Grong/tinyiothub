@@ -6,10 +6,8 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use serde_json::Value;
 use tower::ServiceExt;
 
-use crate::test_utils::response_parts;
 
 fn open_request(method: &str, uri: &str) -> Request<Body> {
     Request::builder()

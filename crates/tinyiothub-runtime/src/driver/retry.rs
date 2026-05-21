@@ -348,8 +348,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut state = RetryState::default();
-        state.current_attempt = 1;
+        let mut state = RetryState { current_attempt: 1, ..Default::default() };
         state.calculate_next_retry(&config);
         assert!(state.next_retry_at.is_some());
     }

@@ -7,6 +7,7 @@
 // heartbeat.rs:   HeartbeatService (uses AgentPool directly)
 // scaffold.rs:    Workspace scaffold + files CRUD
 
+#[allow(clippy::module_inception)]
 pub mod agent;
 pub mod chat;
 pub mod config;

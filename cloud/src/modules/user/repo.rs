@@ -543,13 +543,13 @@ impl UserRepository for SqliteUserRepository {
         page: u32,
         page_size: u32,
     ) -> Result<Vec<User>> {
-        let mut criteria = UserCriteria::default();
-        criteria.is_enabled = enabled;
-        if let Some(search) = search {
-            criteria.search_text = Some(search);
-        }
-        criteria.limit = Some(page_size);
-        criteria.offset = Some((page.saturating_sub(1)) * page_size);
+        let criteria = UserCriteria {
+            is_enabled: enabled,
+            search_text: search,
+            limit: Some(page_size),
+            offset: Some((page.saturating_sub(1)) * page_size),
+            ..Default::default()
+        };
 
         self.find_all(&criteria).await
     }

@@ -59,6 +59,12 @@ pub struct ReflectionPipeline {
     analyzers: Vec<Arc<dyn Analyzer>>,
 }
 
+impl Default for ReflectionPipeline {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ReflectionPipeline {
     pub fn new() -> Self {
         Self { analyzers: vec![] }

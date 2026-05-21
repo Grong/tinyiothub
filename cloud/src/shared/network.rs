@@ -3,7 +3,6 @@ use std::{fs, process::Command, thread, time::Duration};
 use serde::{Deserialize, Serialize};
 
 /// Network configuration and utilities
-
 /// Network information structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

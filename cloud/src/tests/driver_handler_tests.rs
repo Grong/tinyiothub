@@ -6,7 +6,6 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use serde_json::Value;
 use tower::ServiceExt;
 
 use crate::test_utils::{auth_header, create_test_token, response_parts, setup_test_app};

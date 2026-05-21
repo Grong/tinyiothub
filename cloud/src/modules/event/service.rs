@@ -209,26 +209,26 @@ impl EventSpecification for DeviceEventValidSourceSpec {
 pub struct EventLevelMatchesTypeSpec;
 impl EventSpecification for EventLevelMatchesTypeSpec {
     fn is_satisfied_by(&self, event: &Event) -> bool {
-        match (event.event_type(), event.level()) {
-            (EventType::System(SystemEventType::UserAuth), EventLevel::Info) => true,
-            (EventType::System(SystemEventType::UserAuth), EventLevel::Warning) => true,
-            (EventType::System(SystemEventType::SystemConfig), EventLevel::Info) => true,
-            (EventType::System(SystemEventType::SystemConfig), EventLevel::Warning) => true,
-            (EventType::System(SystemEventType::SystemError), EventLevel::Error) => true,
-            (EventType::System(SystemEventType::SystemError), EventLevel::Critical) => true,
-            (EventType::Device(DeviceEventType::Connection), EventLevel::Error) => true,
-            (EventType::Device(DeviceEventType::Connection), EventLevel::Critical) => true,
-            (EventType::Device(DeviceEventType::Connection), EventLevel::Info) => true,
-            (EventType::Device(DeviceEventType::PropertyChange), EventLevel::Debug) => true,
-            (EventType::Device(DeviceEventType::PropertyChange), EventLevel::Info) => true,
-            (EventType::Device(DeviceEventType::PropertyAlarm), EventLevel::Warning) => true,
-            (EventType::Device(DeviceEventType::PropertyAlarm), EventLevel::Error) => true,
-            (EventType::Device(DeviceEventType::PropertyNormal), EventLevel::Info) => true,
-            (EventType::Device(DeviceEventType::CommandStarted), EventLevel::Info) => true,
-            (EventType::Device(DeviceEventType::CommandCompleted), EventLevel::Info) => true,
-            (EventType::Device(DeviceEventType::CommandFailed), EventLevel::Error) => true,
-            _ => false,
-        }
+        matches!(
+            (event.event_type(), event.level()),
+            (EventType::System(SystemEventType::UserAuth), EventLevel::Info)
+                | (EventType::System(SystemEventType::UserAuth), EventLevel::Warning)
+                | (EventType::System(SystemEventType::SystemConfig), EventLevel::Info)
+                | (EventType::System(SystemEventType::SystemConfig), EventLevel::Warning)
+                | (EventType::System(SystemEventType::SystemError), EventLevel::Error)
+                | (EventType::System(SystemEventType::SystemError), EventLevel::Critical)
+                | (EventType::Device(DeviceEventType::Connection), EventLevel::Error)
+                | (EventType::Device(DeviceEventType::Connection), EventLevel::Critical)
+                | (EventType::Device(DeviceEventType::Connection), EventLevel::Info)
+                | (EventType::Device(DeviceEventType::PropertyChange), EventLevel::Debug)
+                | (EventType::Device(DeviceEventType::PropertyChange), EventLevel::Info)
+                | (EventType::Device(DeviceEventType::PropertyAlarm), EventLevel::Warning)
+                | (EventType::Device(DeviceEventType::PropertyAlarm), EventLevel::Error)
+                | (EventType::Device(DeviceEventType::PropertyNormal), EventLevel::Info)
+                | (EventType::Device(DeviceEventType::CommandStarted), EventLevel::Info)
+                | (EventType::Device(DeviceEventType::CommandCompleted), EventLevel::Info)
+                | (EventType::Device(DeviceEventType::CommandFailed), EventLevel::Error)
+        )
     }
     fn error_message(&self) -> String {
         "Event level does not match event type severity".to_string()

@@ -195,8 +195,10 @@ fn clear_auth_key() {
 
 #[tokio::test]
 async fn test_auth_middleware_no_key_passes() {
-    let _guard = AUTH_TEST_LOCK.lock().unwrap();
-    clear_auth_key();
+    {
+        let _guard = AUTH_TEST_LOCK.lock().unwrap();
+        clear_auth_key();
+    }
 
     use axum::{
         Router,
@@ -224,8 +226,10 @@ async fn test_auth_middleware_no_key_passes() {
 
 #[tokio::test]
 async fn test_auth_with_valid_token_passes() {
-    let _guard = AUTH_TEST_LOCK.lock().unwrap();
-    set_auth_key("test-key");
+    {
+        let _guard = AUTH_TEST_LOCK.lock().unwrap();
+        set_auth_key("test-key");
+    }
 
     use axum::{
         Router,
@@ -253,13 +257,18 @@ async fn test_auth_with_valid_token_passes() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-    clear_auth_key();
+    {
+        let _guard = AUTH_TEST_LOCK.lock().unwrap();
+        clear_auth_key();
+    }
 }
 
 #[tokio::test]
 async fn test_auth_with_invalid_token_returns_401() {
-    let _guard = AUTH_TEST_LOCK.lock().unwrap();
-    set_auth_key("test-key");
+    {
+        let _guard = AUTH_TEST_LOCK.lock().unwrap();
+        set_auth_key("test-key");
+    }
 
     use axum::{
         Router,
@@ -287,13 +296,18 @@ async fn test_auth_with_invalid_token_returns_401() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    clear_auth_key();
+    {
+        let _guard = AUTH_TEST_LOCK.lock().unwrap();
+        clear_auth_key();
+    }
 }
 
 #[tokio::test]
 async fn test_auth_with_missing_header_returns_401() {
-    let _guard = AUTH_TEST_LOCK.lock().unwrap();
-    set_auth_key("test-key");
+    {
+        let _guard = AUTH_TEST_LOCK.lock().unwrap();
+        set_auth_key("test-key");
+    }
 
     use axum::{
         Router,
@@ -315,5 +329,8 @@ async fn test_auth_with_missing_header_returns_401() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    clear_auth_key();
+    {
+        let _guard = AUTH_TEST_LOCK.lock().unwrap();
+        clear_auth_key();
+    }
 }

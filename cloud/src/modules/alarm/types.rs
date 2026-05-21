@@ -530,6 +530,7 @@ pub struct AlarmRule {
 }
 
 impl AlarmRule {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: String,
         description: Option<String>,

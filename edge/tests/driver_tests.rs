@@ -65,13 +65,12 @@ async fn test_sha256_verification_accepts_match() {
 
     let result = svc.load_dynamic_driver("test_driver", data, &expected_hash).await;
     // May fail due to libloading (not a real .so), but should NOT fail with SHA256 mismatch
-    match &result {
-        Err(e) => assert!(
+    if let Err(e) = &result {
+        assert!(
             !e.to_string().contains("SHA256") && !e.to_string().contains("mismatch"),
             "Should not be SHA256 error for matching hash, got: {}",
             e
-        ),
-        Ok(_) => {}
+        );
     }
 }
 

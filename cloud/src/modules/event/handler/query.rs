@@ -94,7 +94,7 @@ pub async fn get_events(
 
     // Parse pagination parameters
     let page = params.pagination.page.unwrap_or(1).max(1);
-    let page_size = params.pagination.page_size.unwrap_or(20).min(100).max(1);
+    let page_size = params.pagination.page_size.unwrap_or(20).clamp(1, 100);
 
     // Build event criteria
     let mut criteria = EventCriteria::default();

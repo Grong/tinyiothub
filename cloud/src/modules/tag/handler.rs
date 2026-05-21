@@ -258,8 +258,7 @@ pub async fn get_tag_stats(
     State(state): State<AppState>,
     claims: Claims,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, StatusCode> {
-    let mut tag_query = TagQuery::default();
-    tag_query.tenant_id = Some(claims.tenant_id);
+    let tag_query = TagQuery { tenant_id: Some(claims.tenant_id), ..Default::default() };
 
     match state.tag_service.find_all_tags(&tag_query).await {
         Ok(tags) => {

@@ -81,7 +81,7 @@ async fn test_offline_recovery_buffer_and_flush() {
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
     // ---- Phase 4: verify edge recovers and resumes heartbeats ----
-    let heartbeat2 = mqtt.wait_for_message(&format!("{status_filter}"), 30).await;
+    let heartbeat2 = mqtt.wait_for_message(status_filter, 30).await;
     assert!(
         heartbeat2.is_some(),
         "Edge should reconnect and resume heartbeats after broker restart"

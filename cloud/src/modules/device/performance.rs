@@ -11,6 +11,7 @@ use crate::shared::{
 };
 
 pub struct DevicePerformanceService {
+    #[allow(dead_code)]
     database: Arc<Database>,
     device_cache: Arc<DeviceCache>,
     monitoring_service: DeviceMonitoringService,

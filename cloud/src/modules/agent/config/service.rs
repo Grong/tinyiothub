@@ -17,11 +17,10 @@ pub async fn get_config(
             .fetch_optional(db_pool)
             .await
             .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
-    if let Some((config_str,)) = row {
-        if let Ok(config) = serde_json::from_str::<AgentRuntimeConfig>(&config_str) {
+    if let Some((config_str,)) = row
+        && let Ok(config) = serde_json::from_str::<AgentRuntimeConfig>(&config_str) {
             return Ok(config);
         }
-    }
     Ok(AgentRuntimeConfig::default())
 }
 

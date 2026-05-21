@@ -15,7 +15,7 @@ use crate::test_utils::{
 };
 
 fn auth_request(method: &str, uri: &str, token: &str, body: Option<Value>) -> Request<Body> {
-    let mut builder = Request::builder()
+    let builder = Request::builder()
         .method(method)
         .uri(uri)
         .header("Authorization", auth_header(token))
@@ -232,7 +232,7 @@ async fn test_get_job_statistics_no_workspace() {
     assert_eq!(status, StatusCode::OK);
     assert_ne!(json["code"], 0, "Expected error code when no workspace found");
     assert!(
-        json["msg"].as_str().map_or(false, |m| !m.is_empty()),
+        json["msg"].as_str().is_some_and(|m| !m.is_empty()),
         "Should have a non-empty error message, got: {:?}",
         json["msg"]
     );

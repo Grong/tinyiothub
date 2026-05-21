@@ -11,6 +11,12 @@ use super::super::pipeline::*;
 /// production data (TODOS.md TODO-4).
 pub struct SecurityAnalyzer;
 
+impl Default for SecurityAnalyzer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SecurityAnalyzer {
     pub fn new() -> Self {
         Self

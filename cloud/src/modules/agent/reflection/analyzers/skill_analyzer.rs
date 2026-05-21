@@ -4,6 +4,12 @@ use super::super::pipeline::*;
 
 pub struct SkillAnalyzer;
 
+impl Default for SkillAnalyzer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SkillAnalyzer {
     pub fn new() -> Self {
         Self

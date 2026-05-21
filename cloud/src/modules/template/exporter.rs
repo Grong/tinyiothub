@@ -223,7 +223,7 @@ mod tests {
         assert_eq!(result[0].name, "temperature");
         assert_eq!(result[0].data_type, "float");
         assert_eq!(result[0].unit, Some("°C".to_string()));
-        assert_eq!(result[0].is_read_only, true);
+        assert!(result[0].is_read_only);
         assert_eq!(result[0].display_name.get("zh"), Some(&"温度".to_string()));
     }
 
