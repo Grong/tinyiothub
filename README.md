@@ -543,13 +543,13 @@ async fn list_items(
 
 #### 添加新设备驱动
 
-1. 在 `src/domain/device/driver/drivers/` 创建驱动文件
+1. 在 `crates/tinyiothub-runtime/src/driver/drivers/` 创建驱动文件
 2. 实现 `DeviceDriver` trait
 3. 在 `mod.rs` 中注册驱动
 
 ```rust
 // 示例：创建新驱动
-use crate::domain::device::driver::{DeviceDriver, DriverResult};
+use tinyiothub_core::driver::{DeviceDriver, DriverResult};
 
 pub struct MyCustomDriver {
     // 驱动配置
