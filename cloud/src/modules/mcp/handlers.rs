@@ -494,6 +494,7 @@ mod tests {
     use super::*;
     use crate::modules::mcp::tool_registry::ToolHandler;
 
+    #[allow(dead_code)]
     struct DummyHandler;
 
     #[async_trait]

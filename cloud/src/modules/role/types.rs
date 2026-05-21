@@ -64,6 +64,9 @@ impl Default for Role {
     }
 }
 
+/// Backward compatibility alias
+pub type RoleDto = Role;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -77,6 +80,3 @@ mod tests {
         assert_eq!(role.is_administrator, 0);
     }
 }
-
-/// Backward compatibility alias
-pub type RoleDto = Role;

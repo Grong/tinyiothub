@@ -83,7 +83,7 @@ async fn create_workspace(
     };
 
     let agent_result = state
-        .agent_runtime
+        .agent_pool
         .create_agent(&crate::shared::agent::AgentConfig {
             workspace_id: workspace.id.clone(),
             name: workspace.name.clone(),
@@ -211,7 +211,7 @@ async fn delete_workspace(
     };
 
     if let Some(agent_id) = workspace.agent_id
-        && let Err(e) = state.agent_runtime.delete_agent(&agent_id).await
+        && let Err(e) = state.agent_pool.delete_agent(&agent_id).await
     {
         tracing::warn!(
             "Failed to delete agent {}: {}. Proceeding with workspace deletion.",

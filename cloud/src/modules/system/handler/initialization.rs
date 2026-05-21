@@ -262,7 +262,7 @@ async fn ensure_user_workspace(state: &AppState, user_id: &str) -> Result<()> {
 
     // Scaffold workspace directory
     let ws_dir = crate::shared::paths::workspace_dir(&ws_id);
-    match crate::shared::agent::scaffold_service::scaffold_workspace(&ws_dir).await {
+    match crate::modules::agent::scaffold::scaffold_workspace(&ws_dir).await {
         Ok(result) => {
             tracing::info!("[init] Scaffolded workspace {}: {}", ws_id, result);
         }
@@ -273,7 +273,7 @@ async fn ensure_user_workspace(state: &AppState, user_id: &str) -> Result<()> {
 
     // Create agent for workspace
     let agent_result = state
-        .agent_runtime
+        .agent_pool
         .create_agent(&crate::shared::agent::AgentConfig {
             workspace_id: ws_id.clone(),
             name: format!("{}的工作空间", ws_name),
@@ -358,7 +358,7 @@ async fn ensure_default_workspace_and_agent(
 
         // Scaffold workspace directory with prompt templates and subdirectories
         let workspace_dir = crate::shared::paths::default_workspace_dir();
-        match crate::shared::agent::scaffold_service::scaffold_workspace(&workspace_dir).await {
+        match crate::modules::agent::scaffold::scaffold_workspace(&workspace_dir).await {
             Ok(result) => {
                 tracing::info!("[init] Scaffolded workspace directory: {}", result);
             }
@@ -378,7 +378,7 @@ async fn ensure_default_workspace_and_agent(
 
     if needs_agent {
         let agent_result = state
-            .agent_runtime
+            .agent_pool
             .create_agent(&crate::shared::agent::AgentConfig {
                 workspace_id: "ws-default-001".to_string(),
                 name: "默认工作空间".to_string(),

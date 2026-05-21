@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
-use tinyiothub_core::models::device_property::DeviceProperty;
+use tinyiothub_core::{memory::MemoryStore, models::device_property::DeviceProperty};
 use tinyiothub_storage::cache::DeviceCache;
 use tokio::sync::OnceCell;
 
 use crate::{
     modules::{
+        agent::agent::AgentPool,
         device::{
             monitoring_service::DeviceMonitoringService,
             performance_service::DevicePerformanceService, query_service::DeviceQueryService,
@@ -16,7 +17,6 @@ use crate::{
         template::{TemplateEngine, TemplateRepository, TemplateValidator},
     },
     shared::{
-        agent::AgentRuntime,
         error::Error,
         event::{
             EventBus, SseConnectionManager,
@@ -103,8 +103,8 @@ pub struct AppState {
     /// 报警服务 - 报警规则和报警管理
     pub alarm_service: Arc<crate::modules::alarm::AlarmService>,
 
-    /// Agent Runtime - consolidated agent interface
-    pub agent_runtime: Arc<dyn AgentRuntime>,
+    /// Agent Pool — central agent lifecycle manager
+    pub agent_pool: Arc<AgentPool>,
 
     /// 用户服务 - CRUD 操作
     pub user_service: Arc<crate::modules::user::UserService>,
@@ -139,9 +139,6 @@ pub struct AppState {
     /// Agent 记忆服务 - 构建设备快照等上下文
     pub agent_memory_service: Arc<crate::modules::agent::AgentMemoryService>,
 
-    /// 聊天服务 - Agent 聊天编排
-    pub chat_service: Arc<crate::modules::agent::ChatService>,
-
     /// 缓存的系统信息对象，避免每次请求重新扫描
     pub sysinfo_system: Arc<std::sync::Mutex<sysinfo::System>>,
 
@@ -150,6 +147,9 @@ pub struct AppState {
 
     /// MQTT 客户端（可选，未配置时为空）
     pub mqtt_client: Option<Arc<crate::shared::mqtt_client::PlatformMqttClient>>,
+
+    /// Agent 记忆存储 - 持久化 agent 记忆到 SQLite
+    pub memory_store: Arc<dyn MemoryStore>,
 }
 
 impl AppState {
@@ -260,27 +260,24 @@ impl AppState {
             .and_then(|config| RedisClient::new(&config.url).ok());
 
         // Agent Runtime - 使用 zeroclaw 内置的 OpenAiCompatibleProvider (MiniMax)
-        let minimax_config = crate::shared::config::get()
+        // Validate minimax config exists (used by get_or_create_agent at provider creation time)
+        let _minimax_config = crate::shared::config::get()
             .minimax
             .clone()
             .expect("minimax config is required - set [minimax] in app_settings.toml");
         let agent_settings = crate::shared::config::get().agent.clone();
-        let provider =
-            zeroclaw::providers::create_provider("minimaxi", Some(&minimax_config.auth_token))
-                .expect("failed to create MiniMax provider");
         tracing::info!(
-            "TinyIoTHub Agent initialized with zeroclaw MiniMax provider (memory_backend={}, observer_backend={})",
+            "TinyIoTHub Agent runtime initialized (memory_backend={}, observer_backend={})",
             agent_settings.memory_backend,
             agent_settings.observer_backend
         );
-        let agent_runtime: Arc<dyn AgentRuntime> = Arc::new(
-            crate::shared::agent::AgentRuntimeImpl::new(
-                database.pool().clone(),
-                provider,
-                minimax_config.model,
-                &agent_settings,
-            )
-            .expect("failed to build AgentRuntimeImpl"),
+        // Agent Memory Store
+        let memory_store: Arc<dyn MemoryStore> =
+            Arc::new(tinyiothub_memory::SqliteAgentMemoryRepository::new(database.pool().clone()));
+
+        let agent_pool: Arc<AgentPool> = Arc::new(
+            AgentPool::new(database.pool().clone(), memory_store.clone(), &agent_settings)
+                .expect("failed to build AgentPool"),
         );
 
         // Agent Memory Service
@@ -352,18 +349,6 @@ impl AppState {
         let session_service =
             Arc::new(crate::modules::agent::SessionService::new(Arc::clone(&session_repository)));
 
-        // 聊天服务 - 编排 Agent 聊天、会话、记忆上下文
-        let chat_service = Arc::new(crate::modules::agent::ChatService::new(
-            agent_runtime.clone(),
-            session_repository,
-            agent_memory_service.clone(),
-            crate::modules::agent::ChatServiceConfig {
-                system_prompts: agent_settings.system_prompts.clone(),
-                max_messages_before_compact: agent_settings.max_messages_before_compact,
-                enable_compaction: agent_settings.enable_compaction,
-            },
-        ));
-
         // === 网关配对服务 ===
         let (mqtt_tx, mqtt_rx) =
             tokio::sync::mpsc::channel::<crate::modules::gateway::service::MqttPublish>(100);
@@ -432,7 +417,7 @@ impl AppState {
             sse_manager,
             secure_event_service,
             alarm_service,
-            agent_runtime,
+            agent_pool,
             user_service,
             tenant_service,
             workspace_service,
@@ -444,10 +429,11 @@ impl AppState {
             cron_run_repo,
             session_service,
             agent_memory_service,
-            chat_service,
             sysinfo_system: Arc::new(std::sync::Mutex::new(sysinfo::System::new_all())),
             gateway_service,
             mqtt_client: Some(mqtt_client),
+
+            memory_store,
         }
     }
 

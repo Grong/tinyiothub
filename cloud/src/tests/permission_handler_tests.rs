@@ -4,13 +4,13 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use serde_json::{Value, json};
+use serde_json::Value;
 use tower::ServiceExt;
 
 use crate::test_utils::{auth_header, create_test_token, response_parts, setup_test_app};
 
 fn auth_request(method: &str, uri: &str, token: &str, body: Option<Value>) -> Request<Body> {
-    let mut builder = Request::builder()
+    let builder = Request::builder()
         .method(method)
         .uri(uri)
         .header("Authorization", auth_header(token))

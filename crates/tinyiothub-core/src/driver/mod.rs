@@ -335,7 +335,7 @@ mod tests {
         assert_eq!(int_result.value_type, "int");
         assert_eq!(int_result.value, Some("42".to_string()));
 
-        let float_result = ResultValue::float("test_float".to_string(), 3.14);
+        let float_result = ResultValue::float("test_float".to_string(), std::f64::consts::PI);
         assert_eq!(float_result.name, "test_float");
         assert_eq!(float_result.value_type, "float");
 
@@ -354,7 +354,7 @@ mod tests {
 
     #[test]
     fn test_result_value_float_with_precision() {
-        let result1 = ResultValue::float_with_precision("temp".to_string(), 3.14159265359, 2);
+        let result1 = ResultValue::float_with_precision("temp".to_string(), std::f64::consts::PI, 2);
         assert_eq!(result1.value, Some("3.14".to_string()));
 
         let result2 = ResultValue::float_with_precision("humidity".to_string(), 81.77753185790122, 2);

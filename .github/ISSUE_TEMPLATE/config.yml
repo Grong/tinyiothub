@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全漏洞报告
+    url: https://github.com/Grong/tinyiothub/security/policy
+    about: 请通过 SECURITY.md 中描述的渠道私下报告安全漏洞。
+  - name: 贡献指南
+    url: https://github.com/Grong/tinyiothub/blob/main/CONTRIBUTING.md
+    about: 请在提交 Issue 前阅读贡献指南和 PR 要求。

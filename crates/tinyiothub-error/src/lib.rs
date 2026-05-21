@@ -142,7 +142,7 @@ mod tests {
     #[test]
     fn test_result_type_alias() {
         let ok: Result<i32> = Ok(42);
-        assert_eq!(ok.unwrap(), 42);
+        assert!(matches!(ok, Ok(42)));
 
         let err: Result<i32> = Err(Error::NotFound);
         assert!(err.is_err());

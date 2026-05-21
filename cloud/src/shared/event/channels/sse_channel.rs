@@ -42,6 +42,7 @@ pub struct SseNotificationChannel {
 
 impl SseNotificationChannel {
     /// Create a new SSE notification channel
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         let (sender, receiver) = broadcast::channel(1000);
 

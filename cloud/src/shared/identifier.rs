@@ -1,7 +1,6 @@
 use std::{fs, path::Path};
 
 /// Serial number and device identification utilities
-
 const SN_FILE: &str = "device_sn.txt";
 const DEFAULT_SN: &str = "TINYIOTHUB-DEFAULT-001";
 
@@ -58,9 +57,8 @@ pub fn get_mac_address() -> String {
 /// Get device IP address (placeholder implementation)
 pub fn get_ip_address() -> String {
     // 尝试从配置读取
-    match crate::shared::config::get() {
-        config => config.network.defaults.ip_address.clone(),
-    }
+    let config = crate::shared::config::get();
+    config.network.defaults.ip_address.clone()
 }
 
 /// Get device hostname

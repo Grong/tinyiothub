@@ -389,7 +389,7 @@ pub async fn get_all_audit_logs(
     let operation = "get_all_audit_logs";
 
     // Check admin permissions first
-    if let Err(_) = AuthHelper::require_admin_role(&state, &claims.user_id, operation).await {
+    if AuthHelper::require_admin_role(&state, &claims.user_id, operation).await.is_err() {
         return ApiResponseBuilder::error_with_code(403, "Access denied: admin role required");
     }
 
@@ -491,7 +491,7 @@ pub async fn cleanup_audit_logs(
     let operation = "cleanup_audit_logs";
 
     // Check admin permissions first
-    if let Err(_) = AuthHelper::require_admin_role(&state, &claims.user_id, operation).await {
+    if AuthHelper::require_admin_role(&state, &claims.user_id, operation).await.is_err() {
         return ApiResponseBuilder::error_with_code(403, "Access denied: admin role required");
     }
 

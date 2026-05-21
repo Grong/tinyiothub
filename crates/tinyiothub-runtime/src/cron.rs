@@ -245,10 +245,9 @@ mod tests {
 
     #[test]
     fn test_registry_register_device_command() {
-        use tinyiothub_storage::sqlite::database::Database;
         // DeviceCommandExecutor requires DataServer + Database, so test registration
         // with a mock-like approach: just verify the registry accepts new executors.
-        let mut registry = ExecutorRegistry::new();
+        let registry = ExecutorRegistry::new();
         assert!(registry.find("device_command").is_none());
         // In production, DeviceCommandExecutor is registered via CronSchedulerService
     }

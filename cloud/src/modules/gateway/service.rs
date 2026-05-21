@@ -379,7 +379,7 @@ mod tests {
         (service, rx)
     }
 
-    fn make_announce(code: &str) -> PairingEntry {
+    fn make_announce(_code: &str) -> PairingEntry {
         PairingEntry {
             fingerprint: "aa:bb:cc:dd:ee:ff".into(),
             hostname: "gw-01".into(),
@@ -429,7 +429,7 @@ mod tests {
 
         for _ in 0..5 {
             let req = PairingRequest { code: code.into(), workspace_id: None };
-            let result = svc.pair_device("user1", None, req).await;
+            let _result = svc.pair_device("user1", None, req).await;
             // First 5 attempts may succeed or fail based on attempt counting
             // but the 6th should fail with TooManyAttempts
         }

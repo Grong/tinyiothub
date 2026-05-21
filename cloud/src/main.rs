@@ -184,7 +184,7 @@ async fn main_impl() -> std::io::Result<()> {
         tinyiothub_cloud::api::mcp::init_app_state(Arc::new(app_state.clone()));
         tinyiothub_cloud::api::mcp::register_tools().await;
         // Refresh agent tools after MCP registration
-        if let Err(e) = app_state.agent_runtime.refresh_tools().await {
+        if let Err(e) = app_state.agent_pool.refresh_tools().await {
             tracing::error!("Failed to refresh agent tools: {}", e);
         }
         let api_router = tinyiothub_cloud::api::create_router();

@@ -417,14 +417,13 @@ impl RoleRepository for SqliteRoleRepository {
         page: u32,
         page_size: u32,
     ) -> Result<Vec<Role>> {
-        let mut params = RoleQueryParams::default();
-        params.page = Some(page);
-        params.page_size = Some(page_size);
-        params.workspace_id = workspace_id.map(|s| s.to_string());
-
-        if let Some(search) = search {
-            params.name = Some(search.to_string());
-        }
+        let params = RoleQueryParams {
+            page: Some(page),
+            page_size: Some(page_size),
+            workspace_id: workspace_id.map(|s| s.to_string()),
+            name: search.map(|s| s.to_string()),
+            ..Default::default()
+        };
 
         self.find_all(&params).await
     }

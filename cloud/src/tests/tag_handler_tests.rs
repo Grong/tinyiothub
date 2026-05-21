@@ -54,7 +54,7 @@ async fn test_list_tags_with_data() {
     let token = create_test_token("user-1", "tenant-1");
 
     // Setup: create tags first
-    let app = axum::Router::from(app);
+    let app = app;
     create_tag(&app, &token, "tag-alpha", "device").await;
     create_tag(&app, &token, "tag-beta", "device").await;
 
@@ -100,7 +100,7 @@ async fn test_get_tag_by_id_with_data() {
     let token = create_test_token("user-1", "tenant-1");
 
     // Setup: create a tag
-    let app = axum::Router::from(app);
+    let app = app;
     let create_json = create_tag(&app, &token, "get-test-tag", "device").await;
     let tag_id = create_json["result"]["id"].as_str().unwrap_or("");
 
@@ -151,7 +151,7 @@ async fn test_search_tags_with_data() {
     let token = create_test_token("user-1", "tenant-1");
 
     // Setup: create a tag with known name
-    let app = axum::Router::from(app);
+    let app = app;
     create_tag(&app, &token, "searchable-unique-tag", "device").await;
 
     // Test: search should find it (exercises FromRow)
@@ -171,7 +171,7 @@ async fn test_get_tag_stats_with_data() {
     let token = create_test_token("user-1", "tenant-1");
 
     // Setup: create tags
-    let app = axum::Router::from(app);
+    let app = app;
     create_tag(&app, &token, "stats-tag-1", "device").await;
     create_tag(&app, &token, "stats-tag-2", "app").await;
 

@@ -1,12 +1,25 @@
-// Agent module — 3-layer architecture
-// types:  domain types and DTOs
-// repo:   SessionRepository trait
-// service: SessionService + compact logic
-// chat_service: ChatService orchestration
-// memory_service: AgentMemoryService
-// handler: HTTP routes
+// Agent module — capability-based architecture
+// agent.rs:       AgentPool + zeroclaw Agent build + skills loading
+// chat/:          Chat capability (stateless ChatService + ChatHandler)
+// tools/:         Tool capability (ToolService + CanvasTool + catalog)
+// config/:        Config capability (ConfigService + ConfigHandler)
+// session.rs:     SessionKey unified parse + verify_workspace
+// heartbeat.rs:   HeartbeatService (uses AgentPool directly)
+// scaffold.rs:    Workspace scaffold + files CRUD
 
-pub mod chat_service;
+#[allow(clippy::module_inception)]
+pub mod agent;
+pub mod chat;
+pub mod config;
+pub mod memory;
+pub mod reflection;
+pub mod tools;
+
+pub mod heartbeat;
+pub mod scaffold;
+pub mod session;
+
+// Re-exports from old modules/agent/ — kept for compat
 pub mod device_memory;
 pub mod handler;
 pub mod memory_service;
@@ -14,7 +27,6 @@ pub mod service;
 pub mod skill;
 pub mod types;
 
-pub use chat_service::ChatService;
 pub use device_memory::DeviceMemory;
 pub use memory_service::AgentMemoryService;
 pub use service::SessionService;

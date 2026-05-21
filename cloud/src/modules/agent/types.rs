@@ -5,12 +5,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::sync::mpsc;
 
 // Re-export sub-domain types
 pub use super::device_memory::DeviceMemory;
 pub use super::skill::{AgentSkill, SkillType};
-use crate::shared::config::SystemPromptsConfig;
 
 // --- Session types ---
 
@@ -245,6 +243,9 @@ impl ChatRequest {
     }
 }
 
+/// DEPRECATED: Use `crate::modules::agent::session::SessionKey` instead.
+/// Will be removed in T9.
+///
 /// Parsed components of a session key
 #[derive(Debug, Clone)]
 pub struct ParsedSessionKey {
@@ -363,28 +364,7 @@ impl ChatEvent {
     }
 }
 
-/// Configuration for the ChatService
-#[derive(Debug, Clone)]
-pub struct ChatServiceConfig {
-    pub system_prompts: SystemPromptsConfig,
-    pub max_messages_before_compact: usize,
-    pub enable_compaction: bool,
-}
-
-impl Default for ChatServiceConfig {
-    fn default() -> Self {
-        Self {
-            system_prompts: SystemPromptsConfig::default(),
-            max_messages_before_compact: 50,
-            enable_compaction: true,
-        }
-    }
-}
-
-/// Chat stream that yields ChatEvent items
-pub struct ChatStream {
-    pub(crate) receiver: mpsc::Receiver<ChatEvent>,
-}
+// ChatServiceConfig and ChatStream moved to chat_service.rs
 
 // --- Memory types ---
 
@@ -686,29 +666,6 @@ pub trait SessionRepository: Send + Sync {
             Err(e) => Err(e),
         }
     }
-
-    async fn add_message(
-        &self,
-        session_key: &str,
-        message: ChatMessage,
-    ) -> Result<(), SessionError>;
-    async fn get_messages(
-        &self,
-        session_key: &str,
-        limit: usize,
-        offset: usize,
-    ) -> Result<Vec<ChatMessage>, SessionError>;
-    async fn get_message_count(&self, session_key: &str) -> Result<usize, SessionError>;
-    async fn delete_messages_before(
-        &self,
-        session_key: &str,
-        timestamp: i64,
-    ) -> Result<usize, SessionError>;
-    async fn save_compacted(&self, compacted: &CompactedSession) -> Result<(), SessionError>;
-    async fn get_compacted(
-        &self,
-        session_key: &str,
-    ) -> Result<Option<CompactedSession>, SessionError>;
 }
 
 #[cfg(test)]
@@ -830,14 +787,6 @@ mod tests {
         };
         assert_eq!(event.run_id(), "run-123");
         assert_eq!(event.session_key(), "sess-456");
-    }
-
-    #[test]
-    fn test_chat_service_config_default() {
-        let config = ChatServiceConfig::default();
-        assert!(!config.system_prompts.workspace_dir.is_empty());
-        assert_eq!(config.max_messages_before_compact, 50);
-        assert!(config.enable_compaction);
     }
 
     #[test]

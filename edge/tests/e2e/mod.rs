@@ -13,7 +13,7 @@ pub struct MqttTestClient {
 
 impl MqttTestClient {
     pub async fn new() -> Self {
-        let mut options = MqttOptions::new(&format!("e2e-test-{}", Uuid::new_v4()), "localhost", 1883);
+        let mut options = MqttOptions::new(format!("e2e-test-{}", Uuid::new_v4()), "localhost", 1883);
         options.set_keep_alive(Duration::from_secs(10));
         let (client, mut eventloop) = AsyncClient::new(options, 100);
 
@@ -48,7 +48,7 @@ impl MqttTestClient {
     /// Create a fresh listener client, subscribe to a wildcard topic, and
     /// wait up to `timeout_secs` for a publish matching the prefix.
     pub async fn wait_for_message(&self, topic_filter: &str, timeout_secs: u64) -> Option<(String, Vec<u8>)> {
-        let mut options = MqttOptions::new(&format!("e2e-listener-{}", Uuid::new_v4()), "localhost", 1883);
+        let mut options = MqttOptions::new(format!("e2e-listener-{}", Uuid::new_v4()), "localhost", 1883);
         options.set_keep_alive(Duration::from_secs(10));
         let (client, mut eventloop) = AsyncClient::new(options, 100);
 
@@ -123,10 +123,10 @@ fn find_edge_binary() -> String {
         "CARGO_BIN_EXE_tinyiothub_edge",
     ];
     for name in &env_names {
-        if let Ok(path) = std::env::var(name) {
-            if std::path::Path::new(&path).exists() {
-                return path;
-            }
+        if let Ok(path) = std::env::var(name)
+            && std::path::Path::new(&path).exists()
+        {
+            return path;
         }
     }
 

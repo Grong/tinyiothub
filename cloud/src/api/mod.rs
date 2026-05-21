@@ -60,6 +60,7 @@ pub fn create_router() -> Router<AppState> {
         .nest("/heartbeat", crate::modules::heartbeat::handler::create_router())
         .nest("/self-healing", crate::modules::self_healing::handler::create_router())
         .nest("/workspaces", crate::modules::workspace::create_router()) // 工作空间端点
+        .nest("/workspaces", crate::modules::agent::memory::handler::create_router()) // Agent 记忆
         .nest("/mcp", crate::modules::mcp::create_router())
         .nest("/chat", crate::modules::chat::handler::create_router())
         .nest("/agents/skills", crate::modules::agent::handler::skills::create_router())
@@ -84,10 +85,14 @@ pub fn create_router() -> Router<AppState> {
         .nest("/tenants", crate::modules::tenant::create_auth_router()) // 租户注册登录
         .nest("/system", crate::modules::system::handler::create_router())
         .route("/gateway/pair", post(crate::modules::gateway::handler::pairing::pair_device))
-        // 公开的SSE端点（不需要认证）
+        // 公开的SSE端点（不需要认证，通过 query param token 鉴权）
         .route(
             "/events/sse/public",
             get(crate::modules::event::handler::sse::handle_sse_connection_public),
+        )
+        .route(
+            "/workspaces/notifications/stream",
+            get(crate::modules::agent::reflection::notifications::handle_notification_sse),
         )
         .merge(protected_routes);
 

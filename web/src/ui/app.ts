@@ -32,6 +32,7 @@ const lazyViews: Record<string, () => Promise<void>> = {
   privacy:   () => import("./views/privacy.js").then(() => {}),
   marketplace: () => import("./views/marketplace.js").then(() => {}),
   "driver-health": () => import("./views/driver-health.js").then(() => {}),
+  "memory-dashboard": () => import("./views/memory-dashboard.js").then(() => {}),
 };
 
 interface NavItem {
@@ -75,6 +76,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { route: "chat", label: "AI 聊天", icon: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" },
       { route: "agents", label: "Agent 管理", icon: "M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" },
+      { route: "memory-dashboard", label: "记忆面板", icon: "M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm0 4v8h16V8H4zm3 2h4v4H7v-4zm6 0h4v2h-4v-2z" },
     ],
   },
   {
@@ -299,6 +301,7 @@ export class TinyIoTHubApp extends LitElement {
       chat: "AI 聊天",
       agents: "Agent 管理",
       cron: "定时任务",
+      "memory-dashboard": "记忆面板",
     };
     // Handle /devices/:id
     if (this.currentRoute.startsWith("devices/")) return "设备详情";
@@ -320,6 +323,7 @@ export class TinyIoTHubApp extends LitElement {
       chat: "与 AI Agent 对话",
       agents: "管理和配置 Agent",
       cron: "管理定时执行的任务和作业",
+      "memory-dashboard": "查看和管理 Agent 记忆与反思队列",
     };
     if (this.currentRoute.startsWith("devices/")) return "查看设备属性、命令和事件";
     return subs[this.currentRoute] || "";
@@ -483,6 +487,7 @@ export class TinyIoTHubApp extends LitElement {
     if (base === "cron") return html`<view-cron></view-cron>`;
     if (base === "marketplace") return html`<view-marketplace></view-marketplace>`;
     if (base === "driver-health") return html`<view-driver-health></view-driver-health>`;
+    if (base === "memory-dashboard") return html`<view-memory-dashboard></view-memory-dashboard>`;
     return html`<div style="padding: 40px; text-align: center; color: var(--muted);">页面不存在</div>`;
   }
 

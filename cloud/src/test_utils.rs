@@ -116,7 +116,7 @@ pub async fn seed_test_workspace(pool: &sqlx::SqlitePool, tenant_id: &str, works
 /// Runs cloud migrations, skipping test-data migrations that reference
 /// non-existent devices.
 async fn create_test_app_state() -> AppState {
-    use std::{path::Path, sync::Arc};
+    use std::sync::Arc;
 
     use tinyiothub_storage::cache::DeviceCache;
 

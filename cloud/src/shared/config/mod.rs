@@ -57,6 +57,11 @@ pub fn get() -> &'static ApplicationSettings {
     CONFIG.get().expect("Configuration not initialized. Call config::initialize() first")
 }
 
+/// Get the global configuration if initialized, otherwise None.
+pub fn try_get() -> Option<&'static ApplicationSettings> {
+    CONFIG.get()
+}
+
 /// Get environment name
 pub fn environment() -> &'static str {
     get().environment()

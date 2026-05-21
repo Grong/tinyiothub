@@ -15,10 +15,10 @@ Dockerfile 已优化为两步构建：
 **第一步：构建依赖（可缓存）**
 ```dockerfile
 # 只复制 Cargo.toml 和 Cargo.lock
-COPY api/Cargo.toml api/Cargo.lock ./api/
+COPY Cargo.toml Cargo.lock ./
 
 # 创建虚拟 main.rs
-RUN mkdir -p ./api/src && echo "fn main() {}" > ./api/src/main.rs
+RUN mkdir -p ./cloud/src && echo "fn main() {}" > ./cloud/src/main.rs
 
 # 构建依赖（这一层会被 Docker 缓存）
 RUN cargo build --release
@@ -27,7 +27,7 @@ RUN cargo build --release
 **第二步：构建项目代码**
 ```dockerfile
 # 复制实际源码
-COPY api/src ./api/src
+COPY cloud/src ./cloud/src
 
 # 只重新编译项目代码（依赖已缓存）
 RUN rm -f ./target/release/deps/tinyiothub* && \

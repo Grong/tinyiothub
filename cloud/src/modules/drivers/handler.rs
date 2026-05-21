@@ -116,11 +116,7 @@ async fn get_driver_config(Path(name): Path<String>) -> Json<ApiResponse<DriverC
 
     if let Some(driver) = drivers.into_iter().find(|d| d.name == name) {
         let config_options: Vec<ComponentOption> =
-            if let Ok(options) = serde_json::from_str(&driver.options_descriptors) {
-                options
-            } else {
-                vec![]
-            };
+            serde_json::from_str(&driver.options_descriptors).unwrap_or_default();
 
         let mut default_config = HashMap::new();
         for option in &config_options {

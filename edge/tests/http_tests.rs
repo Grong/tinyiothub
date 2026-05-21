@@ -194,6 +194,7 @@ fn clear_auth_key() {
 // ── Auth middleware: no key configured ───────────────────────────
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)]
 async fn test_auth_middleware_no_key_passes() {
     let _guard = AUTH_TEST_LOCK.lock().unwrap();
     clear_auth_key();
@@ -223,6 +224,7 @@ async fn test_auth_middleware_no_key_passes() {
 // ── Auth middleware: with key configured ─────────────────────────
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)]
 async fn test_auth_with_valid_token_passes() {
     let _guard = AUTH_TEST_LOCK.lock().unwrap();
     set_auth_key("test-key");
@@ -257,6 +259,7 @@ async fn test_auth_with_valid_token_passes() {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)]
 async fn test_auth_with_invalid_token_returns_401() {
     let _guard = AUTH_TEST_LOCK.lock().unwrap();
     set_auth_key("test-key");
@@ -291,6 +294,7 @@ async fn test_auth_with_invalid_token_returns_401() {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)]
 async fn test_auth_with_missing_header_returns_401() {
     let _guard = AUTH_TEST_LOCK.lock().unwrap();
     set_auth_key("test-key");

@@ -1,3 +1,9 @@
-# User Preferences
+# User Context
 
-Customize the agent behavior by editing this file.
+## 工作区背景
+
+用户尚未填写工作区描述。请在「工作区设定」Tab 中描述你的工作区背景，例如：
+
+> 这是深圳龙华智能园区，总面积约 12 万平方米，包含 3 栋办公楼和 1 个数据中心。主要管理暖通空调系统、智能照明、门禁系统和消防设备，共计约 200 台 IoT 设备...
+
+Agent 会基于这段描述来理解你的工作区，提供更精准的设备管理和运维建议。

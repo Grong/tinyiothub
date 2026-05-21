@@ -380,9 +380,6 @@ view-home .hero-visual point-earth {
   width: 100%;
   height: 100%;
 }
-  perspective: 1200px;
-  pointer-events: none;
-}
 
 view-home .sphere-scene {
   position: relative;

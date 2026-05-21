@@ -179,6 +179,10 @@ impl PermissionGroup {
     }
 }
 
+/// Backward compatibility aliases
+pub type PermissionDto = Permission;
+pub type PermissionQueryParams = PermissionQuery;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,7 +351,3 @@ mod tests {
         assert!(group.get_permission_ids().is_empty());
     }
 }
-
-/// Backward compatibility aliases
-pub type PermissionDto = Permission;
-pub type PermissionQueryParams = PermissionQuery;

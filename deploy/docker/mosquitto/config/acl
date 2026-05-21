@@ -3,7 +3,7 @@ user anonymous
 topic readwrite tinyiothub/pairing/#
 
 # 平台客户端：完整访问
-user admin
+user tinyiothub
 topic readwrite tinyiothub/#
 
 # 网关设备模板（动态下发后，每个网关有独立的 username = device_id）

@@ -36,18 +36,25 @@ cloud/logs/
 # Worktrees
 .worktrees/
 
-# OMC tool state
+# OMC tool state (also catch stray .omc/ dirs in source trees)
 .omc/
+**/.omc/
 
-# Claude Code artifacts
-.claude/
+# Claude Code artifacts (keep project-level skills)
+.claude/*
+!.claude/skills/
 scheduled_tasks.lock
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# 诊断日志
+*.log
 
 # 其他
 /web-dify
 license
-
-api/wwwroot
 
 /dist
 /.gstack

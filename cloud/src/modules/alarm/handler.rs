@@ -164,6 +164,7 @@ async fn get_alarm_statistics(
 #[derive(Debug, Deserialize)]
 pub struct RecentAlarmsQuery {
     limit: Option<i32>,
+    #[allow(dead_code)]
     workspace_id: Option<String>,
 }
 
@@ -304,6 +305,130 @@ async fn list_alarm_rules(
             ApiResponseBuilder::success(dtos)
         }
         Err(e) => ApiResponseBuilder::error(format!("查询规则失败: {}", e)),
+    }
+}
+
+async fn get_alarm_rule(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    claims: Claims,
+) -> Json<ApiResponse<AlarmRuleDto>> {
+    match state.alarm_service.get_rule_by_id(&id).await {
+        Ok(Some(rule)) => {
+            if let Some(ref rule_ws) = rule.workspace_id
+                && rule_ws != &claims.workspace_id
+            {
+                return ApiResponseBuilder::error_with_code(
+                    ErrorCode::NotFound.as_i32(),
+                    "规则不存在",
+                );
+            }
+            ApiResponseBuilder::success(AlarmRuleDto::from(rule))
+        }
+        Ok(None) => ApiResponseBuilder::error_with_code(ErrorCode::NotFound.as_i32(), "规则不存在"),
+        Err(e) => ApiResponseBuilder::error(format!("获取规则失败: {}", e)),
+    }
+}
+
+async fn create_alarm_rule(
+    State(state): State<AppState>,
+    claims: Claims,
+    Json(req): Json<CreateAlarmRuleRequest>,
+) -> Json<ApiResponse<AlarmRuleDto>> {
+    let alarm_level = match AlarmLevel::parse_str(&req.alarm_level) {
+        Some(level) => level,
+        None => return ApiResponseBuilder::error("无效的报警级别"),
+    };
+
+    let condition: AlarmCondition = match serde_json::from_value(req.condition) {
+        Ok(c) => c,
+        Err(e) => return ApiResponseBuilder::error(format!("无效的条件配置: {}", e)),
+    };
+
+    let notification_config: NotificationConfig =
+        match serde_json::from_value(req.notification_config) {
+            Ok(nc) => nc,
+            Err(e) => return ApiResponseBuilder::error(format!("无效的通知配置: {}", e)),
+        };
+
+    let rule = match AlarmRule::new(
+        req.name,
+        req.description,
+        req.device_id,
+        req.property_id,
+        req.rule_type,
+        condition,
+        alarm_level,
+        notification_config,
+        claims.workspace_id.clone(),
+    ) {
+        Ok(r) => r,
+        Err(e) => return ApiResponseBuilder::error(format!("创建规则失败: {}", e)),
+    };
+
+    match state.alarm_service.create_rule(rule.clone()).await {
+        Ok(_) => ApiResponseBuilder::success(AlarmRuleDto::from(rule)),
+        Err(e) => ApiResponseBuilder::error(format!("保存规则失败: {}", e)),
+    }
+}
+
+async fn update_alarm_rule(
+    State(state): State<AppState>,
+    claims: Claims,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateAlarmRuleRequest>,
+) -> Json<ApiResponse<AlarmRuleDto>> {
+    let mut rule = match state.alarm_service.get_rule_by_id(&id).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return ApiResponseBuilder::error_with_code(404, "规则不存在"),
+        Err(e) => return ApiResponseBuilder::error(format!("获取规则失败: {}", e)),
+    };
+
+    if let Some(ref rule_ws) = rule.workspace_id
+        && rule_ws != &claims.workspace_id
+    {
+        return ApiResponseBuilder::error_with_code(404, "规则不存在");
+    }
+
+    let condition = req.condition.and_then(|c| serde_json::from_value(c).ok());
+    let alarm_level = req.alarm_level.and_then(|l| AlarmLevel::parse_str(&l));
+    let notification_config =
+        req.notification_config.and_then(|nc| serde_json::from_value(nc).ok());
+
+    if let Err(e) =
+        rule.update(req.name, req.description, condition, alarm_level, notification_config)
+    {
+        return ApiResponseBuilder::error(format!("更新规则失败: {}", e));
+    }
+
+    match state.alarm_service.update_rule(rule.clone(), Some(&claims.workspace_id)).await {
+        Ok(()) => ApiResponseBuilder::success(AlarmRuleDto::from(rule)),
+        Err(e) => ApiResponseBuilder::error(format!("保存规则失败: {}", e)),
+    }
+}
+
+async fn delete_alarm_rule(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    claims: Claims,
+) -> Json<ApiResponse<()>> {
+    // Verify workspace ownership before delete (DB-level WHERE clause enforces isolation)
+    match state.alarm_service.delete_rule(&id, Some(&claims.workspace_id)).await {
+        Ok(()) => ApiResponseBuilder::success(()),
+        Err(e) => ApiResponseBuilder::error(format!("删除规则失败: {}", e)),
+    }
+}
+
+async fn toggle_alarm_rule(
+    State(state): State<AppState>,
+    claims: Claims,
+    Path(id): Path<String>,
+    Json(req): Json<ToggleRuleRequest>,
+) -> Json<ApiResponse<()>> {
+    // Verify workspace ownership before toggle (DB-level WHERE clause enforces isolation)
+    match state.alarm_service.set_rule_enabled(&id, req.enabled, Some(&claims.workspace_id)).await {
+        Ok(()) => ApiResponseBuilder::success(()),
+        Err(e) => ApiResponseBuilder::error(format!("切换规则状态失败: {}", e)),
     }
 }
 
@@ -490,129 +615,5 @@ mod tests {
         let alarms = result.unwrap();
         assert_eq!(alarms.len(), 1);
         assert_eq!(alarms[0].id, "alarm-ws1");
-    }
-}
-
-async fn get_alarm_rule(
-    Path(id): Path<String>,
-    State(state): State<AppState>,
-    claims: Claims,
-) -> Json<ApiResponse<AlarmRuleDto>> {
-    match state.alarm_service.get_rule_by_id(&id).await {
-        Ok(Some(rule)) => {
-            if let Some(ref rule_ws) = rule.workspace_id
-                && rule_ws != &claims.workspace_id
-            {
-                return ApiResponseBuilder::error_with_code(
-                    ErrorCode::NotFound.as_i32(),
-                    "规则不存在",
-                );
-            }
-            ApiResponseBuilder::success(AlarmRuleDto::from(rule))
-        }
-        Ok(None) => ApiResponseBuilder::error_with_code(ErrorCode::NotFound.as_i32(), "规则不存在"),
-        Err(e) => ApiResponseBuilder::error(format!("获取规则失败: {}", e)),
-    }
-}
-
-async fn create_alarm_rule(
-    State(state): State<AppState>,
-    claims: Claims,
-    Json(req): Json<CreateAlarmRuleRequest>,
-) -> Json<ApiResponse<AlarmRuleDto>> {
-    let alarm_level = match AlarmLevel::parse_str(&req.alarm_level) {
-        Some(level) => level,
-        None => return ApiResponseBuilder::error("无效的报警级别"),
-    };
-
-    let condition: AlarmCondition = match serde_json::from_value(req.condition) {
-        Ok(c) => c,
-        Err(e) => return ApiResponseBuilder::error(format!("无效的条件配置: {}", e)),
-    };
-
-    let notification_config: NotificationConfig =
-        match serde_json::from_value(req.notification_config) {
-            Ok(nc) => nc,
-            Err(e) => return ApiResponseBuilder::error(format!("无效的通知配置: {}", e)),
-        };
-
-    let rule = match AlarmRule::new(
-        req.name,
-        req.description,
-        req.device_id,
-        req.property_id,
-        req.rule_type,
-        condition,
-        alarm_level,
-        notification_config,
-        claims.workspace_id.clone(),
-    ) {
-        Ok(r) => r,
-        Err(e) => return ApiResponseBuilder::error(format!("创建规则失败: {}", e)),
-    };
-
-    match state.alarm_service.create_rule(rule.clone()).await {
-        Ok(_) => ApiResponseBuilder::success(AlarmRuleDto::from(rule)),
-        Err(e) => ApiResponseBuilder::error(format!("保存规则失败: {}", e)),
-    }
-}
-
-async fn update_alarm_rule(
-    State(state): State<AppState>,
-    claims: Claims,
-    Path(id): Path<String>,
-    Json(req): Json<UpdateAlarmRuleRequest>,
-) -> Json<ApiResponse<AlarmRuleDto>> {
-    let mut rule = match state.alarm_service.get_rule_by_id(&id).await {
-        Ok(Some(r)) => r,
-        Ok(None) => return ApiResponseBuilder::error_with_code(404, "规则不存在"),
-        Err(e) => return ApiResponseBuilder::error(format!("获取规则失败: {}", e)),
-    };
-
-    if let Some(ref rule_ws) = rule.workspace_id
-        && rule_ws != &claims.workspace_id
-    {
-        return ApiResponseBuilder::error_with_code(404, "规则不存在");
-    }
-
-    let condition = req.condition.and_then(|c| serde_json::from_value(c).ok());
-    let alarm_level = req.alarm_level.and_then(|l| AlarmLevel::parse_str(&l));
-    let notification_config =
-        req.notification_config.and_then(|nc| serde_json::from_value(nc).ok());
-
-    if let Err(e) =
-        rule.update(req.name, req.description, condition, alarm_level, notification_config)
-    {
-        return ApiResponseBuilder::error(format!("更新规则失败: {}", e));
-    }
-
-    match state.alarm_service.update_rule(rule.clone(), Some(&claims.workspace_id)).await {
-        Ok(()) => ApiResponseBuilder::success(AlarmRuleDto::from(rule)),
-        Err(e) => ApiResponseBuilder::error(format!("保存规则失败: {}", e)),
-    }
-}
-
-async fn delete_alarm_rule(
-    Path(id): Path<String>,
-    State(state): State<AppState>,
-    claims: Claims,
-) -> Json<ApiResponse<()>> {
-    // Verify workspace ownership before delete (DB-level WHERE clause enforces isolation)
-    match state.alarm_service.delete_rule(&id, Some(&claims.workspace_id)).await {
-        Ok(()) => ApiResponseBuilder::success(()),
-        Err(e) => ApiResponseBuilder::error(format!("删除规则失败: {}", e)),
-    }
-}
-
-async fn toggle_alarm_rule(
-    State(state): State<AppState>,
-    claims: Claims,
-    Path(id): Path<String>,
-    Json(req): Json<ToggleRuleRequest>,
-) -> Json<ApiResponse<()>> {
-    // Verify workspace ownership before toggle (DB-level WHERE clause enforces isolation)
-    match state.alarm_service.set_rule_enabled(&id, req.enabled, Some(&claims.workspace_id)).await {
-        Ok(()) => ApiResponseBuilder::success(()),
-        Err(e) => ApiResponseBuilder::error(format!("切换规则状态失败: {}", e)),
     }
 }

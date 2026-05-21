@@ -61,15 +61,7 @@ export class ChatView extends LitElement {
       sessionKey = `agent:${ws}:${this.agentId}/${crypto.randomUUID()}`;
       localStorage.setItem("tinyiothub_chat_session_key", sessionKey);
     }
-    // Load agent config to get systemPrompt, then create chat state
-    try {
-      const res = await apiGet<{ config: { systemPrompt?: string } }>(`/agents/${this.agentId}/config`);
-      const systemPrompt = res.result?.config?.systemPrompt;
-      this.chatState = createChatState(sessionKey || "", this.agentId, systemPrompt);
-    } catch {
-      // ZeroClaw not connected or config unavailable — still allow chat
-      this.chatState = createChatState(sessionKey || "", this.agentId);
-    }
+    this.chatState = createChatState(sessionKey || "", this.agentId);
     this._bindA2uiCallback();
     await loadChatHistory(this.chatState);
     this.requestUpdate();

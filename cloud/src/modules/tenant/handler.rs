@@ -567,6 +567,19 @@ async fn revoke_api_key(
     }
 }
 
+async fn get_usage_stats(
+    State(state): State<AppState>,
+    Path(tenant_id): Path<String>,
+) -> Json<ApiResponse<ApiUsageStats>> {
+    match state.tenant_service.get_api_usage_stats(&tenant_id, 30).await {
+        Ok(stats) => ApiResponseBuilder::success(stats),
+        Err(e) => {
+            tracing::error!("Failed to get usage stats: {}", e);
+            ApiResponseBuilder::error("获取使用统计失败")
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -585,18 +598,5 @@ mod tests {
     fn test_api_keys_router_independent() {
         let _tenants = create_router();
         let _api_keys = create_api_key_router();
-    }
-}
-
-async fn get_usage_stats(
-    State(state): State<AppState>,
-    Path(tenant_id): Path<String>,
-) -> Json<ApiResponse<ApiUsageStats>> {
-    match state.tenant_service.get_api_usage_stats(&tenant_id, 30).await {
-        Ok(stats) => ApiResponseBuilder::success(stats),
-        Err(e) => {
-            tracing::error!("Failed to get usage stats: {}", e);
-            ApiResponseBuilder::error("获取使用统计失败")
-        }
     }
 }

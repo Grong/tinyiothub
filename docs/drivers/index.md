@@ -32,12 +32,12 @@ pub trait DeviceDriver {
 
 ### 1. 创建驱动文件
 
-在 `api/src/domain/device/driver/drivers/` 目录下创建新驱动：
+在 `crates/tinyiothub-runtime/src/driver/drivers/` 目录下创建新驱动：
 
 ```rust
 // my_driver.rs
 
-use crate::domain::device::driver::{DeviceDriver, DriverResult};
+use tinyiothub_core::driver::{DeviceDriver, DriverResult};
 use async_trait::async_trait;
 
 pub struct MyDriver {
@@ -67,7 +67,7 @@ impl DeviceDriver for MyDriver {
 
 ### 2. 注册驱动
 
-在 `api/src/domain/device/driver/mod.rs` 中注册：
+在 `crates/tinyiothub-runtime/src/driver/mod.rs` 中注册：
 
 ```rust
 pub mod my_driver;

@@ -9,7 +9,7 @@ fn test_default_config_has_new_fields() {
     assert_eq!(config.offline_buffer_max_telemetry, 100_000);
     assert_eq!(config.offline_buffer_disk_min_percent, 10);
     assert_eq!(config.offline_buffer_reserved_mb, 5);
-    assert_eq!(config.local_api_enabled, false);
+    assert!(!config.local_api_enabled);
     assert_eq!(config.config_file.to_string_lossy(), "/app/data/config.yaml");
     assert_eq!(config.scan_timeout_secs, 10);
     assert_eq!(config.mqtt_reconnect_max_backoff_secs, 300);
@@ -38,7 +38,7 @@ mqtt_reconnect_max_backoff_secs: 600
     assert_eq!(config.mqtt_broker, "test.mqtt.com");
     assert_eq!(config.mqtt_port, 8883);
     assert_eq!(config.telemetry_interval_secs, 15);
-    assert_eq!(config.local_api_enabled, true);
+    assert!(config.local_api_enabled);
     assert_eq!(config.local_api_port, 9090);
     std::fs::remove_file(&tmp).ok();
 }

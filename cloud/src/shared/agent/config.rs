@@ -19,6 +19,10 @@ pub enum AgentError {
     Unavailable(String),
     #[error("agent not found: {0}")]
     NotFound(String),
+    #[error("agent build failed: {0}")]
+    BuildError(String),
+    #[error("agent stream error: {0}")]
+    StreamError(String),
 }
 
 /// Agent configuration passed when creating an agent
@@ -44,15 +48,95 @@ impl AgentConfig {
     }
 }
 
+/// Agent runtime configuration persisted in agent_configs table.
+///
+/// This is the persistent "blueprint" used to build a zeroclaw Agent.
+/// Separate from `AgentConfig` (the create-request DTO).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRuntimeConfig {
+    /// Model name (provider-specific, e.g. "minimax-m2")
+    #[serde(default = "default_model")]
+    pub model: String,
+    /// Temperature (0.0 - 2.0)
+    #[serde(default = "default_temperature")]
+    pub temperature: f64,
+    /// Max output tokens
+    #[serde(default = "default_max_tokens")]
+    pub max_tokens: u32,
+    /// Top-P sampling
+    #[serde(default = "default_top_p")]
+    pub top_p: f64,
+    /// System prompt — deprecated: use USER.md workspace file instead
+    #[deprecated(note = "Use USER.md workspace file instead")]
+    #[serde(default)]
+    pub system_prompt: String,
+    /// Preset persona id — deprecated: persona is now inferred from workspace context
+    #[deprecated(note = "Persona is now inferred from workspace context")]
+    #[serde(default)]
+    pub persona_preset: String,
+    /// Tool names disabled for this agent (denylist mode)
+    #[serde(default = "default_tool_denylist")]
+    pub tool_denylist: Vec<String>,
+    /// Enable the reflection engine (post-turn memory/skill extraction).
+    /// Safe to disable — only affects background processing, never core chat.
+    #[serde(default = "default_enable_reflection")]
+    pub enable_reflection: bool,
+}
+
+fn default_enable_reflection() -> bool {
+    true
+}
+
+pub fn default_model() -> String {
+    crate::shared::config::try_get()
+        .and_then(|c| c.minimax.as_ref())
+        .map(|m| m.model.clone())
+        .unwrap_or_else(|| "minimax-m2".into())
+}
+
+fn default_temperature() -> f64 {
+    0.7
+}
+
+fn default_max_tokens() -> u32 {
+    4096
+}
+
+fn default_top_p() -> f64 {
+    1.0
+}
+
+fn default_tool_denylist() -> Vec<String> {
+    vec!["delete_device".into(), "delete_schedule".into()]
+}
+
+#[allow(deprecated)]
+impl Default for AgentRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            model: default_model(),
+            temperature: default_temperature(),
+            max_tokens: default_max_tokens(),
+            top_p: default_top_p(),
+            system_prompt: String::new(),
+            persona_preset: String::new(),
+            tool_denylist: default_tool_denylist(),
+            enable_reflection: default_enable_reflection(),
+        }
+    }
+}
+
 /// Default agent config returned when no persisted config exists
 pub fn default_agent_config() -> serde_json::Value {
-    serde_json::json!({
-        "model": "claude-sonnet-4-5",
-        "temperature": 0.7,
-        "maxTokens": 4096,
-        "topP": 1.0,
-        "systemPrompt": "",
-        "workspace": "ws-default-001"
+    serde_json::to_value(AgentRuntimeConfig::default()).unwrap_or_else(|_| {
+        serde_json::json!({
+            "model": "minimax-m2",
+            "temperature": 0.7,
+            "max_tokens": 4096,
+            "top_p": 1.0,
+            "tool_denylist": ["delete_device", "delete_schedule"]
+        })
     })
 }
 
@@ -204,12 +288,12 @@ mod tests {
         let config = default_agent_config();
         let obj = config.as_object().expect("should be an object");
 
-        assert_eq!(obj.get("model").and_then(|v| v.as_str()), Some("claude-sonnet-4-5"));
+        assert_eq!(obj.get("model").and_then(|v| v.as_str()), Some("minimax-m2"));
         assert_eq!(obj.get("temperature").and_then(|v| v.as_f64()), Some(0.7));
-        assert_eq!(obj.get("maxTokens").and_then(|v| v.as_i64()), Some(4096));
+        assert_eq!(obj.get("maxTokens").and_then(|v| v.as_u64()), Some(4096));
         assert_eq!(obj.get("topP").and_then(|v| v.as_f64()), Some(1.0));
         assert_eq!(obj.get("systemPrompt").and_then(|v| v.as_str()), Some(""));
-        assert_eq!(obj.get("workspace").and_then(|v| v.as_str()), Some("ws-default-001"));
+        assert!(obj.get("toolDenylist").and_then(|v| v.as_array()).is_some());
     }
 
     #[test]
@@ -230,5 +314,12 @@ mod tests {
     fn test_agent_error_timeout() {
         let err = AgentError::Timeout;
         assert!(err.to_string().contains("Agent API timeout"));
+    }
+
+    #[test]
+    fn test_agent_error_stream_error() {
+        let err = AgentError::StreamError("connection closed".to_string());
+        assert!(err.to_string().contains("agent stream error"));
+        assert!(err.to_string().contains("connection closed"));
     }
 }

@@ -121,5 +121,43 @@ Source: `/plan-eng-review` on `feature/mqtt-gateway-pairing` (2026-05-13)
   - **Depends on:** Device discover message handling on platform side
   - **Effort:** M (human: 2 days / CC: 30min)
   - **Owner:** TBD
+## Agent Config Simplification (v0.3)
+
+Source: `/plan-eng-review` on `feat/ai-agent-v0.3` (2026-05-19)
+
+### P2 — MEDIUM
+
+- **Post-Conversation Pipeline** — 对话后异步分析对话，更新 IDENTITY.md / MEMORY.md
+  - AgentMemoryItem::conversation_summary() 已存在（types.rs:477），可作为起点
+  - **Why:** Agent 身份和记忆随对话演进，完成「系统自动管理」闭环
+  - **Effort:** M (human: ~4h / CC: ~30min)
+  - **Depends on:** —
+
+- **TOOLS.md Auto-Generation** — 工具权限变更时重新生成 TOOLS.md
+  - tool_label() / tool_group() 已存在（service.rs:196-248），薄包装即可
+  - **Why:** 为 Agent 提供当前可用工具的可读清单，提升工具选择准确性
+  - **Effort:** S (human: ~1h / CC: ~10min)
+  - **Depends on:** —
+
+### P3 — LOW
+
+- **Workspace Description Templates** — 文本框下方 2-3 个填空式模板（"这是___园区，面积___平米"）
+  - CEO 评审 (SELECTIVE EXPANSION) 接受
+  - **Why:** 降低非技术用户写作门槛
+  - **Effort:** S (human: ~30min / CC: ~10min)
+  - **Depends on:** T6 (工作区设定 Tab)
+
+- **Zero-Config Agent** — 首次对话自动询问工作区背景，根据回答生成 USER.md
+  - CEO 评审推迟
+  - **Why:** 终极零摩擦体验
+  - **Effort:** M (human: ~3h / CC: ~20min)
+  - **Depends on:** T6 (工作区设定 Tab)
+
+- **Preview Role** — 保存后展示模拟对话，确认 Agent 身份
+  - CEO 评审推迟
+  - **Why:** 低成本加分项，降低不确定性
+  - **Effort:** S (human: ~30min / CC: ~5min)
+  - **Depends on:** T6 (工作区设定 Tab)
+
 ## Completed
 

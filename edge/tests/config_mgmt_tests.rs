@@ -43,8 +43,10 @@ async fn test_apply_cloud_config_merges_fields() {
     let db = test_db().await;
     let tmp_dir = std::env::temp_dir();
     let config_path = tmp_dir.join("test_merge_config.yaml");
-    let mut config = EdgeConfig::default();
-    config.config_file = config_path.clone();
+    let config = EdgeConfig {
+        config_file: config_path.clone(),
+        ..Default::default()
+    };
 
     let svc = ConfigService::new(db, config);
 
@@ -70,8 +72,10 @@ async fn test_last_write_wins_overwrite() {
     let db = test_db().await;
     let tmp_dir = std::env::temp_dir();
     let config_path = tmp_dir.join("test_lww_config.yaml");
-    let mut config = EdgeConfig::default();
-    config.config_file = config_path.clone();
+    let config = EdgeConfig {
+        config_file: config_path.clone(),
+        ..Default::default()
+    };
 
     let svc = ConfigService::new(db, config);
 
@@ -114,8 +118,10 @@ async fn test_atomic_write_creates_file() {
     let db = test_db().await;
     let tmp_dir = std::env::temp_dir();
     let config_path = tmp_dir.join("test_atomic_config.yaml");
-    let mut config = EdgeConfig::default();
-    config.config_file = config_path.clone();
+    let config = EdgeConfig {
+        config_file: config_path.clone(),
+        ..Default::default()
+    };
 
     let svc = ConfigService::new(db, config);
     svc.apply_cloud_config(&serde_json::json!({"test_key": "test_value"}))

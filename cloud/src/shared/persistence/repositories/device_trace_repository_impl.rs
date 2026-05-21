@@ -36,6 +36,7 @@ impl DeviceTraceRepository {
     }
 
     /// 插入追踪记录
+    #[allow(clippy::too_many_arguments)]
     pub async fn insert_trace(
         &self,
         trace_id: &str,
@@ -238,6 +239,7 @@ impl DeviceTraceRepository {
     }
 
     /// 查询所有追踪记录（支持系统级日志查询）
+    #[allow(clippy::too_many_arguments)]
     pub async fn find_all_traces(
         &self,
         levels: Option<&[String]>,

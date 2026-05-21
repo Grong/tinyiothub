@@ -18,7 +18,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.2.4"
+version = "0.3.0"
 edition = "2024"
 authors = ["TinyIoTHub Team"]
 license = "MIT"
@@ -161,6 +161,7 @@ tinyiothub-storage = { path = "crates/tinyiothub-storage" }
 tinyiothub-plugin = { path = "crates/tinyiothub-plugin" }
 tinyiothub-plugin-sdk = { path = "sdks/plugin-sdk" }
 tinyiothub-runtime = { path = "crates/tinyiothub-runtime" }
+tinyiothub-memory = { path = "crates/tinyiothub-memory" }
 tinyiothub-web = { path = "crates/tinyiothub-web" }
 
 [profile.release]

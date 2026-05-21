@@ -44,6 +44,48 @@ pub struct DataObjectWithPagination<T> {
     pub data: Vec<T>,
 }
 
+impl<T> DataObjectWithPagination<T>
+where
+    T: Serialize + Clone,
+{
+    pub fn new(data: &[T], page: u32, page_size: u32) -> Self {
+        let total_count = data.len();
+        let mut tmp_page = page;
+        let total_page = (total_count as f32 / page_size as f32).ceil() as u32;
+
+        if tmp_page > total_page {
+            tmp_page = total_page;
+        }
+
+        let pagination = Pagination {
+            page_size,
+            page: tmp_page,
+            total_pages: total_page,
+            total_count: total_count as u32,
+        };
+
+        if total_page == 0 {
+            return DataObjectWithPagination::<T> { pagination, data: data[0..0].to_vec() };
+        }
+
+        let start = ((pagination.page - 1) * pagination.page_size) as usize;
+        let mut end = start + pagination.page_size as usize;
+
+        if end > total_count {
+            end = total_count;
+        }
+
+        DataObjectWithPagination::<T> { pagination, data: data[start..end].to_vec() }
+    }
+
+    pub fn default(page: u32, page_size: u32) -> Self {
+        DataObjectWithPagination::<T> {
+            pagination: Pagination { page, page_size, total_pages: 0, total_count: 0 },
+            data: Vec::new(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,7 +156,7 @@ mod tests {
     fn test_data_object_with_pagination_empty_data() {
         let data: Vec<i32> = vec![];
         let result = DataObjectWithPagination::new(&data, 1, 10);
-        assert_eq!(result.pagination.page, 0); // total_page=0, tmp_page clamped to 0
+        assert_eq!(result.pagination.page, 0);
         assert_eq!(result.pagination.total_pages, 0);
         assert_eq!(result.pagination.total_count, 0);
         assert!(result.data.is_empty());
@@ -128,47 +170,5 @@ mod tests {
         assert_eq!(result.pagination.total_pages, 0);
         assert_eq!(result.pagination.total_count, 0);
         assert!(result.data.is_empty());
-    }
-}
-
-impl<T> DataObjectWithPagination<T>
-where
-    T: Serialize + Clone,
-{
-    pub fn new(data: &[T], page: u32, page_size: u32) -> Self {
-        let total_count = data.len();
-        let mut tmp_page = page;
-        let total_page = (total_count as f32 / page_size as f32).ceil() as u32;
-
-        if tmp_page > total_page {
-            tmp_page = total_page;
-        }
-
-        let pagination = Pagination {
-            page_size,
-            page: tmp_page,
-            total_pages: total_page,
-            total_count: total_count as u32,
-        };
-
-        if total_page == 0 {
-            return DataObjectWithPagination::<T> { pagination, data: data[0..0].to_vec() };
-        }
-
-        let start = ((pagination.page - 1) * pagination.page_size) as usize;
-        let mut end = start + pagination.page_size as usize;
-
-        if end > total_count {
-            end = total_count;
-        }
-
-        DataObjectWithPagination::<T> { pagination, data: data[start..end].to_vec() }
-    }
-
-    pub fn default(page: u32, page_size: u32) -> Self {
-        DataObjectWithPagination::<T> {
-            pagination: Pagination { page, page_size, total_pages: 0, total_count: 0 },
-            data: Vec::new(),
-        }
     }
 }

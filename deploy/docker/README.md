@@ -221,8 +221,8 @@ hdc -t $DEVICE_ID shell "ifconfig | grep 'inet addr'"
 | `TZ` | `Asia/Shanghai` | 时区设置 |
 | `TINYIOTHUB__DATABASE__URL` | `/app/data/tinyiothub.db` | 数据库路径 |
 | `JWT_SECRET` | (内置默认值) | JWT 密钥，生产环境必须修改 |
-| `MQTT_USERNAME` | `admin` | MQTT 用户名 |
-| `MQTT_PASSWORD` | `admin123` | MQTT 密码 |
+| `MQTT_USERNAME` | `tinyiothub` | MQTT 用户名 |
+| `MQTT_PASSWORD` | `tinyiothub.123` | MQTT 密码 |
 
 ### 自定义配置
 
