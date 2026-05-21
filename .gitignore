@@ -39,9 +39,16 @@ cloud/logs/
 # OMC tool state
 .omc/
 
-# Claude Code artifacts
-.claude/
+# Claude Code artifacts (keep project-level skills)
+.claude/*
+!.claude/skills/
 scheduled_tasks.lock
+
+# macOS
+.DS_Store
+
+# 诊断日志
+*.log
 
 # 其他
 /web-dify
