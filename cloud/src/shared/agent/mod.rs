@@ -106,7 +106,7 @@ pub async fn build_full_system_prompt(
 
     let full_prompt =
         format!("{}{}{}{}", workspace_prompt, memory_layer, skills_layer, context_layer);
-    tracing::info!("[SYSTEM_PROMPT]\n{}", full_prompt);
+    tracing::debug!("[SYSTEM_PROMPT] {}", &full_prompt[..full_prompt.len().min(500)]);
     full_prompt
 }
 

@@ -1,6 +1,7 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
 /// Reflection event passed to all analyzers.
 #[derive(Clone)]
@@ -69,16 +70,22 @@ impl ReflectionPipeline {
 
     pub async fn execute(&self, event: &ReflectionEvent) -> Vec<AnalyzerOutput> {
         let mut results = vec![];
+        let mut handles = tokio::task::JoinSet::new();
         for analyzer in &self.analyzers {
             let event = event.clone();
             let analyzer_name = analyzer.name().to_string();
             let analyzer = Arc::clone(analyzer);
-            let handle = tokio::spawn(async move {
-                analyzer.analyze(&event).await
+            handles.spawn(async move {
+                let result = analyzer.analyze(&event).await;
+                (analyzer_name, result)
             });
-            match handle.await {
-                Ok(Ok(output)) => results.push(output),
-                Ok(Err(e)) => tracing::error!(analyzer = %analyzer_name, error = %e, "Analyzer failed"),
+        }
+        while let Some(join_result) = handles.join_next().await {
+            match join_result {
+                Ok((_name, Ok(output))) => results.push(output),
+                Ok((name, Err(e))) => {
+                    tracing::error!(analyzer = %name, error = %e, "Analyzer failed")
+                }
                 Err(join_err) => {
                     let msg = match join_err.try_into_panic() {
                         Ok(p) => p
@@ -88,7 +95,7 @@ impl ReflectionPipeline {
                             .unwrap_or_else(|| "unknown panic".to_string()),
                         Err(_) => "cancelled".to_string(),
                     };
-                    tracing::error!(analyzer = %analyzer_name, panic = %msg, "Analyzer panicked");
+                    tracing::error!(panic = %msg, "Analyzer panicked");
                 }
             }
         }
@@ -98,8 +105,9 @@ impl ReflectionPipeline {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use async_trait::async_trait;
+
+    use super::*;
 
     struct PanicAnalyzer;
     #[async_trait]

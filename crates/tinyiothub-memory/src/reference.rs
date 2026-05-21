@@ -9,18 +9,12 @@ use tinyiothub_core::memory::AgentMemory;
 ///
 /// Length guard adapts to content length:
 /// - Content >= 20 chars: minimum probe of 20 chars (safe for CJK mixed text)
-/// - Content < 20 chars: minimum probe of 6 chars (handles short CJK phrases
-///   where single tokens carry more semantic weight)
+/// - Content < 20 chars: minimum probe of 6 chars (handles short CJK phrases where single tokens
+///   carry more semantic weight)
 pub fn check_reference(memory: &AgentMemory, assistant_text: &str) -> bool {
     let words: Vec<&str> = memory
         .content
-        .split(|c: char| {
-            c.is_whitespace()
-                || c.is_ascii_punctuation()
-                || c == '，'
-                || c == '。'
-                || c == '的'
-        })
+        .split(|c: char| c.is_whitespace() || c.is_ascii_punctuation() || c == '，' || c == '。' || c == '的')
         .filter(|s| !s.is_empty())
         .collect();
     if words.is_empty() {

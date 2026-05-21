@@ -7,27 +7,29 @@
 //   - NamespacedMemory: workspace-level isolation via zeroclaw NamespacedMemory
 //   - Invalidation: remove from pool on config change, rebuild on next access
 
-use std::sync::Arc;
-use std::time::Instant;
+use std::{sync::Arc, time::Instant};
 
 use anyhow::anyhow;
 use dashmap::DashMap;
 use sqlx::SqlitePool;
-use zeroclaw::agent::prompt::{PromptContext, PromptSection, SystemPromptBuilder};
-use zeroclaw::agent::dispatcher::NativeToolDispatcher;
-use zeroclaw::memory::{Memory, NamespacedMemory};
-use zeroclaw::observability::Observer;
-use zeroclaw::security::AutonomyLevel;
-use zeroclaw::tools::Tool;
-
-use super::chat::service as chat_service;
-use super::config::service as config_service;
-use super::reflection::notifications::NotificationService;
-use super::reflection::service::ReflectionService;
-use super::tools::service as tool_service;
-use crate::shared::agent::config::{
-    AgentConfig, AgentError, AgentInfo, AgentRuntimeConfig,
+use zeroclaw::{
+    agent::{
+        dispatcher::NativeToolDispatcher,
+        prompt::{PromptContext, PromptSection, SystemPromptBuilder},
+    },
+    memory::{Memory, NamespacedMemory},
+    observability::Observer,
+    security::AutonomyLevel,
+    tools::Tool,
 };
+
+use super::{
+    chat::service as chat_service,
+    config::service as config_service,
+    reflection::{notifications::NotificationService, service::ReflectionService},
+    tools::service as tool_service,
+};
+use crate::shared::agent::config::{AgentConfig, AgentError, AgentInfo, AgentRuntimeConfig};
 
 // ============================================================================
 // Skills Section (zeroclaw SystemPromptBuilder integration)
@@ -45,10 +47,7 @@ impl PromptSection for TinyIoTHubSkillsSection {
         if skills_content.is_empty() {
             Ok(String::new())
         } else {
-            Ok(format!(
-                "## 技能（Skills）\n你可以使用以下技能来完成任务：\n\n{}",
-                skills_content
-            ))
+            Ok(format!("## 技能（Skills）\n你可以使用以下技能来完成任务：\n\n{}", skills_content))
         }
     }
 }
@@ -100,11 +99,7 @@ fn read_skills_dir_sync(dir: &std::path::Path) -> Option<String> {
         all_skills.push_str(&format!("### {}\n{}\n", file_name, body));
     }
 
-    if all_skills.is_empty() {
-        None
-    } else {
-        Some(all_skills)
-    }
+    if all_skills.is_empty() { None } else { Some(all_skills) }
 }
 
 // ============================================================================
@@ -173,7 +168,11 @@ impl AgentPool {
 
         let memory = zeroclaw::memory::create_memory(&memory_config, &workspace_dir, None)
             .map_err(|e| {
-                anyhow!("Failed to create memory backend '{}': {}", agent_settings.memory_backend, e)
+                anyhow!(
+                    "Failed to create memory backend '{}': {}",
+                    agent_settings.memory_backend,
+                    e
+                )
             })?;
         let shared_memory: Arc<dyn Memory> = Arc::from(memory);
 
@@ -240,18 +239,16 @@ impl AgentPool {
                     workspace_id.to_string(),
                 ));
 
-                let minimax_config =
-                    crate::shared::config::get().minimax.clone().ok_or_else(|| {
-                        AgentError::BuildError("minimax config required".to_string())
-                    })?;
+                let minimax_config = crate::shared::config::get()
+                    .minimax
+                    .clone()
+                    .ok_or_else(|| AgentError::BuildError("minimax config required".to_string()))?;
 
                 let provider = zeroclaw::providers::create_provider(
                     "minimaxi",
                     Some(&minimax_config.auth_token),
                 )
-                .map_err(|e| {
-                    AgentError::BuildError(format!("Failed to create provider: {}", e))
-                })?;
+                .map_err(|e| AgentError::BuildError(format!("Failed to create provider: {}", e)))?;
 
                 let ws_dir = crate::shared::paths::workspace_dir(workspace_id);
 
@@ -277,11 +274,7 @@ impl AgentPool {
                 let entry = PoolEntry::new(agent, metadata);
                 let agent_arc = Arc::clone(&entry.zeroclaw_agent);
                 vacant.insert(entry);
-                tracing::info!(
-                    agent_id = agent_id,
-                    pool_size = self.agents.len(),
-                    "Agent created"
-                );
+                tracing::info!(agent_id = agent_id, pool_size = self.agents.len(), "Agent created");
                 Ok(agent_arc)
             }
         }
@@ -463,10 +456,7 @@ impl AgentPool {
     // Tools (delegated to ToolService)
     // ========================================================================
 
-    pub async fn tools_catalog(
-        &self,
-        _agent_id: &str,
-    ) -> Result<serde_json::Value, AgentError> {
+    pub async fn tools_catalog(&self, _agent_id: &str) -> Result<serde_json::Value, AgentError> {
         Ok(tool_service::build_catalog().await)
     }
 
@@ -497,8 +487,8 @@ impl AgentPool {
         } else if !config.tool_denylist.contains(&tool_name.to_string()) {
             config.tool_denylist.push(tool_name.to_string());
         }
-        let config_str = serde_json::to_string(&config)
-            .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
+        let config_str =
+            serde_json::to_string(&config).map_err(|e| AgentError::RequestFailed(e.to_string()))?;
         config_service::set_config(&self.db_pool, agent_id, &config_str).await?;
         self.invalidate(agent_id);
         Ok(())
@@ -569,11 +559,9 @@ impl AgentPool {
                     }
                     "AssistantToolCalls" => {
                         let data = value.get("data")?;
-                        let text = data
-                            .get("text")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
-                        let tool_calls = data.get("tool_calls").cloned().unwrap_or(serde_json::json!([]));
+                        let text = data.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                        let tool_calls =
+                            data.get("tool_calls").cloned().unwrap_or(serde_json::json!([]));
                         let content = if text.is_empty() {
                             serde_json::json!([])
                         } else {
@@ -642,9 +630,7 @@ impl AgentPool {
     ) -> Result<String, AgentError> {
         let agent = self.get_or_create("default", workspace_id).await?;
         let mut ag = agent.lock().await;
-        ag.run_single(message)
-            .await
-            .map_err(|e| AgentError::RequestFailed(e.to_string()))
+        ag.run_single(message).await.map_err(|e| AgentError::RequestFailed(e.to_string()))
     }
 
     // ========================================================================

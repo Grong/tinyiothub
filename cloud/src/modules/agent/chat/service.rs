@@ -29,10 +29,7 @@ fn turn_event_to_chat_event(evt: &TurnEvent, run_id: &str, session_key: &str) ->
         TurnEvent::ToolCall { name, args, .. } => {
             let args_str = serde_json::to_string(args).unwrap_or_default();
             let a2ui_jsonl = if name == "canvas" {
-                args.get("jsonl")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string()
+                args.get("jsonl").and_then(|v| v.as_str()).unwrap_or("").to_string()
             } else {
                 String::new()
             };
@@ -41,11 +38,7 @@ fn turn_event_to_chat_event(evt: &TurnEvent, run_id: &str, session_key: &str) ->
                 session_key: session_key.to_string(),
                 tool_name: name.clone(),
                 tool_args: args_str,
-                a2ui: if a2ui_jsonl.is_empty() {
-                    None
-                } else {
-                    Some(a2ui_jsonl)
-                },
+                a2ui: if a2ui_jsonl.is_empty() { None } else { Some(a2ui_jsonl) },
             }
         }
         TurnEvent::ToolResult { name, output, .. } => ChatEvent::ToolResult {
@@ -54,17 +47,15 @@ fn turn_event_to_chat_event(evt: &TurnEvent, run_id: &str, session_key: &str) ->
             tool_name: name.clone(),
             result: output.clone(),
         },
-        TurnEvent::ApprovalRequest {
-            tool_name,
-            arguments_summary,
-            ..
-        } => ChatEvent::ToolCallStart {
-            run_id: run_id.to_string(),
-            session_key: session_key.to_string(),
-            tool_name: tool_name.clone(),
-            tool_args: arguments_summary.clone(),
-            a2ui: None,
-        },
+        TurnEvent::ApprovalRequest { tool_name, arguments_summary, .. } => {
+            ChatEvent::ToolCallStart {
+                run_id: run_id.to_string(),
+                session_key: session_key.to_string(),
+                tool_name: tool_name.clone(),
+                tool_args: arguments_summary.clone(),
+                a2ui: None,
+            }
+        }
         TurnEvent::Usage { .. } => {
             // Usage events are informational only; filter these out downstream
             ChatEvent::Delta {
@@ -88,7 +79,9 @@ pub async fn send_message(
     chat_handles: &Arc<
         tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>,
     >,
-    reflection_service: Option<std::sync::Arc<super::super::reflection::service::ReflectionService>>,
+    reflection_service: Option<
+        std::sync::Arc<super::super::reflection::service::ReflectionService>,
+    >,
     enable_reflection: bool,
     model: &str,
     workspace_id: &str,
@@ -132,8 +125,7 @@ pub async fn send_message(
         tokio::spawn(async move {
             let mut rx = event_rx.lock().await;
             while let Some(evt) = rx.recv().await {
-                let chat_event =
-                    turn_event_to_chat_event(&evt, &forward_run, &forward_session);
+                let chat_event = turn_event_to_chat_event(&evt, &forward_run, &forward_session);
                 // Skip usage-only events
                 if let ChatEvent::Delta { message, .. } = &chat_event {
                     if message.get("__usage").is_some() {
@@ -205,8 +197,14 @@ pub async fn send_message(
                     },
                 ];
                 tokio::spawn(async move {
-                    svc.micro_reflect(&workspace_id, &agent_id, &session_key, &reflection_model, &turn_messages)
-                        .await;
+                    svc.micro_reflect(
+                        &workspace_id,
+                        &agent_id,
+                        &session_key,
+                        &reflection_model,
+                        &turn_messages,
+                    )
+                    .await;
                 });
             }
         }
@@ -214,10 +212,7 @@ pub async fn send_message(
         chat_handles_inner.lock().await.remove(&run_id_for_remove);
     });
 
-    chat_handles
-        .lock()
-        .await
-        .insert(run_id_for_handle, handle);
+    chat_handles.lock().await.insert(run_id_for_handle, handle);
 
     Ok(rx)
 }
@@ -228,16 +223,10 @@ mod tests {
 
     #[test]
     fn test_turn_event_chunk_to_delta() {
-        let evt = TurnEvent::Chunk {
-            delta: "Hello".to_string(),
-        };
+        let evt = TurnEvent::Chunk { delta: "Hello".to_string() };
         let chat_evt = turn_event_to_chat_event(&evt, "run1", "sess1");
         match chat_evt {
-            ChatEvent::Delta {
-                run_id,
-                session_key,
-                message,
-            } => {
+            ChatEvent::Delta { run_id, session_key, message } => {
                 assert_eq!(run_id, "run1");
                 assert_eq!(session_key, "sess1");
                 let content = message["content"][0]["text"].as_str().unwrap();
@@ -249,9 +238,7 @@ mod tests {
 
     #[test]
     fn test_turn_event_thinking() {
-        let evt = TurnEvent::Thinking {
-            delta: "Hmm...".to_string(),
-        };
+        let evt = TurnEvent::Thinking { delta: "Hmm...".to_string() };
         let chat_evt = turn_event_to_chat_event(&evt, "r", "s");
         match chat_evt {
             ChatEvent::Thinking { thinking, .. } => assert_eq!(thinking, "Hmm..."),
@@ -269,9 +256,7 @@ mod tests {
         };
         let chat_evt = turn_event_to_chat_event(&evt, "r", "s");
         match chat_evt {
-            ChatEvent::ToolCallStart {
-                tool_name, a2ui, ..
-            } => {
+            ChatEvent::ToolCallStart { tool_name, a2ui, .. } => {
                 assert_eq!(tool_name, "canvas");
                 assert_eq!(a2ui, Some("line1\nline2".to_string()));
             }
@@ -288,9 +273,7 @@ mod tests {
         };
         let chat_evt = turn_event_to_chat_event(&evt, "r", "s");
         match chat_evt {
-            ChatEvent::ToolResult {
-                tool_name, result, ..
-            } => {
+            ChatEvent::ToolResult { tool_name, result, .. } => {
                 assert_eq!(tool_name, "bad_tool");
                 assert_eq!(result, "error output");
             }
@@ -308,9 +291,7 @@ mod tests {
         };
         let chat_evt = turn_event_to_chat_event(&evt, "r", "s");
         match chat_evt {
-            ChatEvent::ToolCallStart {
-                tool_name, tool_args, ..
-            } => {
+            ChatEvent::ToolCallStart { tool_name, tool_args, .. } => {
                 assert_eq!(tool_name, "delete_device");
                 assert_eq!(tool_args, "Delete device X");
             }

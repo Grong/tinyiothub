@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
-use tinyiothub_core::memory::MemoryStore;
-use tinyiothub_core::models::device_property::DeviceProperty;
+use tinyiothub_core::{memory::MemoryStore, models::device_property::DeviceProperty};
 use tinyiothub_storage::cache::DeviceCache;
 use tokio::sync::OnceCell;
 
@@ -273,17 +272,12 @@ impl AppState {
             agent_settings.observer_backend
         );
         // Agent Memory Store
-        let memory_store: Arc<dyn MemoryStore> = Arc::new(
-            tinyiothub_memory::SqliteAgentMemoryRepository::new(database.pool().clone()),
-        );
+        let memory_store: Arc<dyn MemoryStore> =
+            Arc::new(tinyiothub_memory::SqliteAgentMemoryRepository::new(database.pool().clone()));
 
         let agent_pool: Arc<AgentPool> = Arc::new(
-            AgentPool::new(
-                database.pool().clone(),
-                memory_store.clone(),
-                &agent_settings,
-            )
-            .expect("failed to build AgentPool"),
+            AgentPool::new(database.pool().clone(), memory_store.clone(), &agent_settings)
+                .expect("failed to build AgentPool"),
         );
 
         // Agent Memory Service

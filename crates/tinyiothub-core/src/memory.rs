@@ -168,12 +168,7 @@ pub trait MemoryStore: Send + Sync {
     async fn list_active(&self, workspace_id: &str, agent_id: &str) -> Result<Vec<AgentMemory>>;
 
     /// Get memories created after a timestamp.
-    async fn get_since(
-        &self,
-        workspace_id: &str,
-        agent_id: &str,
-        since: &str,
-    ) -> Result<Vec<AgentMemory>>;
+    async fn get_since(&self, workspace_id: &str, agent_id: &str, since: &str) -> Result<Vec<AgentMemory>>;
 
     /// Pin or unpin a memory.
     async fn set_pinned(&self, id: &str, pinned: bool) -> Result<()>;
@@ -187,16 +182,13 @@ pub trait MemoryStore: Send + Sync {
     async fn record_reference(&self, id: &str) -> Result<()>;
 
     /// Get pending reflection queue items.
-    async fn get_pending_queue(
-        &self,
-        workspace_id: &str,
-        agent_id: &str,
-    ) -> Result<Vec<ReflectionQueueItem>>;
+    async fn get_pending_queue(&self, workspace_id: &str, agent_id: &str) -> Result<Vec<ReflectionQueueItem>>;
 
-    /// Approve or reject a queue item.
+    /// Approve or reject a queue item. The workspace_id is required for authorization.
     async fn resolve_queue_item(
         &self,
         id: &str,
+        workspace_id: &str,
         approved: bool,
         reviewer_note: Option<&str>,
     ) -> Result<()>;
@@ -205,10 +197,5 @@ pub trait MemoryStore: Send + Sync {
     async fn enqueue_candidate(&self, item: QueueCandidateInput) -> Result<String>;
 
     /// Count memories by source.
-    async fn count_by_source(
-        &self,
-        workspace_id: &str,
-        agent_id: &str,
-        source: MemorySource,
-    ) -> Result<u64>;
+    async fn count_by_source(&self, workspace_id: &str, agent_id: &str, source: MemorySource) -> Result<u64>;
 }

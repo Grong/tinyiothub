@@ -222,8 +222,11 @@ mod tests {
     #[tokio::test]
     async fn test_session_crud() {
         let repo = create_test_repo().await;
-        let session =
-            Session::new("agent:ws:agent1/sess1".to_string(), "ws".to_string(), "agent1".to_string());
+        let session = Session::new(
+            "agent:ws:agent1/sess1".to_string(),
+            "ws".to_string(),
+            "agent1".to_string(),
+        );
 
         // Create
         repo.create(&session).await.unwrap();
@@ -279,7 +282,8 @@ mod tests {
     #[tokio::test]
     async fn test_update_nonexistent_session() {
         let repo = create_test_repo().await;
-        let session = Session::new("nonexistent:key".to_string(), "ws".to_string(), "agent".to_string());
+        let session =
+            Session::new("nonexistent:key".to_string(), "ws".to_string(), "agent".to_string());
         let result = repo.update(&session).await;
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), SessionError::NotFound(_)));

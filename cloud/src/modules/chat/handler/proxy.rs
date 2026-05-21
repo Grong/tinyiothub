@@ -96,11 +96,7 @@ pub async fn chat_history(
         Err(e) => return ApiResponseBuilder::error(format!("Invalid session key: {}", e)),
     };
 
-    match state
-        .agent_pool
-        .chat_history(&parsed.agent_id, &query.session_key, limit)
-        .await
-    {
+    match state.agent_pool.chat_history(&parsed.agent_id, &query.session_key, limit).await {
         Ok(data) => ApiResponseBuilder::success(data),
         Err(e) => ApiResponseBuilder::error(format!("Failed to load chat history: {}", e)),
     }
@@ -123,11 +119,7 @@ pub async fn chat_abort(
     };
 
     let run_id_ref = req.run_id.as_deref();
-    match state
-        .agent_pool
-        .chat_abort(&parsed.agent_id, &req.session_key, run_id_ref)
-        .await
-    {
+    match state.agent_pool.chat_abort(&parsed.agent_id, &req.session_key, run_id_ref).await {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({"aborted": true})),
         Err(e) => ApiResponseBuilder::error(format!("Abort failed: {}", e)),
     }

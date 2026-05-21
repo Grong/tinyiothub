@@ -201,7 +201,15 @@ impl HeartbeatService {
         init_heartbeat_state(state);
 
         let engine = HeartbeatEngine::new(config, workspace_dir.clone(), observer);
-        Self { engine, agent_pool, workspace_dir, workspace_id, agent_id, interval_minutes, heartbeat_prompt }
+        Self {
+            engine,
+            agent_pool,
+            workspace_dir,
+            workspace_id,
+            agent_id,
+            interval_minutes,
+            heartbeat_prompt,
+        }
     }
 
     /// Ensure HEARTBEAT.md exists with default IoT tasks
@@ -275,7 +283,12 @@ impl HeartbeatService {
             }
 
             if let Some(state) = get_heartbeat_state() {
-                let record = HeartbeatExecutionRecord { timestamp, task_count, status: status.clone(), error_message };
+                let record = HeartbeatExecutionRecord {
+                    timestamp,
+                    task_count,
+                    status: status.clone(),
+                    error_message,
+                };
                 let mut state_guard = state.write().await;
                 state_guard.add_execution_record(record);
             }
@@ -293,7 +306,11 @@ impl HeartbeatService {
             self.heartbeat_prompt, task_text
         );
 
-        match self.agent_pool.chat_send(&self.agent_id, &session_key, &prompt, &run_id, &prompt).await {
+        match self
+            .agent_pool
+            .chat_send(&self.agent_id, &session_key, &prompt, &run_id, &prompt)
+            .await
+        {
             Ok(mut rx) => {
                 use super::types::ChatEvent;
                 while let Some(event) = rx.recv().await {

@@ -1,12 +1,12 @@
-use std::collections::HashMap;
-use std::convert::Infallible;
-use std::sync::Arc;
-use axum::response::sse::{Event, KeepAlive};
-use axum::response::Sse;
+use std::{collections::HashMap, convert::Infallible, sync::Arc};
+
+use axum::response::{
+    Sse,
+    sse::{Event, KeepAlive},
+};
 use futures::stream::Stream;
 use tokio::sync::broadcast;
-use tokio_stream::wrappers::BroadcastStream;
-use tokio_stream::StreamExt;
+use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 
 /// Per-workspace broadcast channels for SSE skill notifications.
 pub struct NotificationService {
@@ -15,9 +15,7 @@ pub struct NotificationService {
 
 impl Default for NotificationService {
     fn default() -> Self {
-        Self {
-            channels: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
-        }
+        Self { channels: Arc::new(tokio::sync::RwLock::new(HashMap::new())) }
     }
 }
 
@@ -42,9 +40,8 @@ impl NotificationService {
 
     pub async fn subscribe(&self, workspace_id: &str) -> broadcast::Receiver<String> {
         let mut channels = self.channels.write().await;
-        let tx = channels
-            .entry(workspace_id.to_string())
-            .or_insert_with(|| broadcast::channel(64).0);
+        let tx =
+            channels.entry(workspace_id.to_string()).or_insert_with(|| broadcast::channel(64).0);
         tx.subscribe()
     }
 
@@ -66,8 +63,7 @@ impl NotificationService {
         skill_name: &str,
         skill_description: &str,
     ) {
-        let message =
-            format!("我发现你经常「{}」，要不要我把它自动化？", skill_description);
+        let message = format!("我发现你经常「{}」，要不要我把它自动化？", skill_description);
         self.broadcast(workspace_id, "skill_discovered", &message).await;
         tracing::info!(
             workspace_id,
@@ -84,12 +80,9 @@ pub async fn generate_weekly_digest(
     workspace_id: &str,
     agent_id: &str,
 ) -> anyhow::Result<String> {
-    let since = (chrono::Utc::now() - chrono::Duration::days(7))
-        .format("%Y-%m-%dT%H:%M:%S")
-        .to_string();
-    let new_memories = memory_store
-        .get_since(workspace_id, agent_id, &since)
-        .await?;
+    let since =
+        (chrono::Utc::now() - chrono::Duration::days(7)).format("%Y-%m-%dT%H:%M:%S").to_string();
+    let new_memories = memory_store.get_since(workspace_id, agent_id, &since).await?;
 
     let prompt = format!(
         "Generate a brief weekly summary (~100 words) of what you learned:\n\
@@ -97,11 +90,7 @@ pub async fn generate_weekly_digest(
          Write in the user's preferred language, friendly tone.\n\n\
          Recent memories:\n{}",
         new_memories.len(),
-        new_memories
-            .iter()
-            .map(|m| format!("- {}", m.content))
-            .collect::<Vec<_>>()
-            .join("\n"),
+        new_memories.iter().map(|m| format!("- {}", m.content)).collect::<Vec<_>>().join("\n"),
     );
 
     tracing::info!(

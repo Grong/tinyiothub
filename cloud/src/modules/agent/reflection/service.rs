@@ -1,16 +1,19 @@
 use std::sync::Arc;
+
 use sqlx::SqlitePool;
 use tinyiothub_core::memory::{
-    Confidence, MemoryInput, MemorySource, MemoryStore, MemoryZone,
-    QueueCandidateInput,
+    Confidence, MemoryInput, MemorySource, MemoryStore, MemoryZone, QueueCandidateInput,
 };
 
-use super::analyzers::memory_analyzer::MemoryAnalyzer;
-use super::analyzers::security_analyzer::SecurityAnalyzer;
-use super::analyzers::skill_analyzer::SkillAnalyzer;
-use super::metrics::ReflectionMetrics;
-use super::notifications::NotificationService;
-use super::pipeline::*;
+use super::{
+    analyzers::{
+        memory_analyzer::MemoryAnalyzer, security_analyzer::SecurityAnalyzer,
+        skill_analyzer::SkillAnalyzer,
+    },
+    metrics::ReflectionMetrics,
+    notifications::NotificationService,
+    pipeline::*,
+};
 
 pub struct ReflectionService {
     pipeline: ReflectionPipeline,
@@ -18,6 +21,9 @@ pub struct ReflectionService {
     db: SqlitePool,
     pub metrics: Arc<ReflectionMetrics>,
     notification_service: Arc<NotificationService>,
+    auth_token: String,
+    /// Max concurrent micro_reflect calls (default 3).
+    reflection_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 impl ReflectionService {
@@ -27,8 +33,11 @@ impl ReflectionService {
         notification_service: Arc<NotificationService>,
         auth_token: String,
     ) -> Self {
+        let provider = zeroclaw::providers::create_provider("minimaxi", Some(&auth_token))
+            .expect("Failed to create reflection provider");
+
         let mut pipeline = ReflectionPipeline::new();
-        pipeline.add_analyzer(Box::new(MemoryAnalyzer::new(auth_token)));
+        pipeline.add_analyzer(Box::new(MemoryAnalyzer::new(provider)));
         pipeline.add_analyzer(Box::new(SkillAnalyzer::new()));
         pipeline.add_analyzer(Box::new(SecurityAnalyzer::new()));
 
@@ -38,6 +47,8 @@ impl ReflectionService {
             db,
             metrics: Arc::new(ReflectionMetrics::new()),
             notification_service,
+            auth_token,
+            reflection_semaphore: Arc::new(tokio::sync::Semaphore::new(3)),
         }
     }
 
@@ -58,17 +69,19 @@ impl ReflectionService {
             "micro_reflect triggered after chat turn"
         );
 
+        // Rate limit: max 3 concurrent reflections globally
+        let _permit = match self.reflection_semaphore.acquire().await {
+            Ok(p) => p,
+            Err(_) => return, // semaphore closed
+        };
+
         // 10-second dedup window
         if self.should_skip_auto_reflect(session_key).await {
             tracing::info!(session = %session_key, "micro_reflect skipped — dedup window");
             return;
         }
 
-        let active_memories = match self
-            .memory_store
-            .list_active(workspace_id, agent_id)
-            .await
-        {
+        let active_memories = match self.memory_store.list_active(workspace_id, agent_id).await {
             Ok(m) => m,
             Err(e) => {
                 tracing::warn!(%e, "Failed to load active memories for reflection");
@@ -136,7 +149,6 @@ impl ReflectionService {
         &self,
         workspace_id: &str,
         agent_id: &str,
-        auth_token: &str,
         model: &str,
     ) -> anyhow::Result<String> {
         let memories = self.memory_store.list_active(workspace_id, agent_id).await?;
@@ -149,7 +161,7 @@ impl ReflectionService {
         let prompt = include_str!("../../../../templates/agent/COMPILE_PROMPT.md")
             .replace("{memories_text}", &memories_text);
 
-        let provider = zeroclaw::providers::create_provider("minimaxi", Some(auth_token))
+        let provider = zeroclaw::providers::create_provider("minimaxi", Some(&self.auth_token))
             .map_err(|e| anyhow::anyhow!("Failed to create provider: {}", e))?;
 
         let profile = provider
@@ -162,8 +174,7 @@ impl ReflectionService {
     }
 
     async fn should_skip_auto_reflect(&self, session_key: &str) -> bool {
-        let ten_secs_ago =
-            chrono::Utc::now() - chrono::TimeDelta::seconds(10);
+        let ten_secs_ago = chrono::Utc::now() - chrono::TimeDelta::seconds(10);
         let since = ten_secs_ago.format("%Y-%m-%dT%H:%M:%S").to_string();
         let row: Option<(i64,)> = sqlx::query_as(
             "SELECT COUNT(*) FROM reflection_log WHERE session_id = ? AND created_at > ? AND action = 'auto_accept'",
@@ -197,15 +208,9 @@ impl ReflectionService {
         };
 
         // Reflection source: never auto-accept to core zone (safety measure)
-        let actual_zone = if matches!(zone, MemoryZone::Core) {
-            MemoryZone::Work
-        } else {
-            zone
-        };
+        let actual_zone = if matches!(zone, MemoryZone::Core) { MemoryZone::Work } else { zone };
 
-        if matches!(confidence, Confidence::High)
-            && !matches!(actual_zone, MemoryZone::Core)
-        {
+        if matches!(confidence, Confidence::High) && !matches!(actual_zone, MemoryZone::Core) {
             // Auto-accept high-confidence, non-core memories
             tracing::info!(
                 workspace = %workspace_id,
@@ -279,25 +284,26 @@ impl ReflectionService {
                 candidate_data: data,
             })
             .await?;
-        self.log_action(
-            session_key,
-            workspace_id,
-            agent_id,
-            "deferred",
-            "skill",
-            &candidate.name,
-        )
-        .await?;
+        self.log_action(session_key, workspace_id, agent_id, "deferred", "skill", &candidate.name)
+            .await?;
 
         // Push skill discovery notification to frontend
-        self.notification_service.notify_skill_discovered(
-            workspace_id,
-            &candidate.name,
-            &candidate.description,
-        )
-        .await;
+        self.notification_service
+            .notify_skill_discovered(workspace_id, &candidate.name, &candidate.description)
+            .await;
 
         Ok(())
+    }
+
+    /// Generate a weekly digest via LLM.
+    pub async fn generate_digest(&self, prompt: &str, model: &str) -> anyhow::Result<String> {
+        let provider = zeroclaw::providers::create_provider("minimaxi", Some(&self.auth_token))
+            .map_err(|e| anyhow::anyhow!("Failed to create provider: {}", e))?;
+        let digest = provider
+            .chat_with_system(None, prompt, model, Some(0.5))
+            .await
+            .map_err(|e| anyhow::anyhow!("Weekly digest LLM call failed: {}", e))?;
+        Ok(digest)
     }
 
     async fn log_action(

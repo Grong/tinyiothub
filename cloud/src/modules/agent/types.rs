@@ -5,6 +5,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
 // Re-export sub-domain types
 pub use super::device_memory::DeviceMemory;
 pub use super::skill::{AgentSkill, SkillType};

@@ -1,34 +1,26 @@
-use axum::{Json, extract::{Path, Query, State}, routing::get};
+use axum::{
+    Json,
+    extract::{Path, Query, State},
+    routing::get,
+};
 use serde::Deserialize;
-
-use tinyiothub_web::response::ApiResponseBuilder;
-use crate::api::middleware::WorkspaceScope;
-use crate::shared::app_state::AppState;
-use crate::shared::agent::config::default_model;
 use tinyiothub_core::memory::AgentMemory;
+use tinyiothub_web::response::ApiResponseBuilder;
 
 use super::types::ListMemoriesQuery;
+use crate::{
+    api::middleware::WorkspaceScope,
+    shared::{agent::config::default_model, app_state::AppState},
+};
 
 pub fn create_router() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/memories", get(list_active_memories))
         .route("/memories/queue", get(get_pending_queue))
-        .route(
-            "/memories/queue/{queue_id}/resolve",
-            axum::routing::post(resolve_queue_item),
-        )
-        .route(
-            "/memories/{memory_id}/pin",
-            axum::routing::put(pin_memory),
-        )
-        .route(
-            "/memories/profile/compile",
-            axum::routing::post(compile_profile),
-        )
-        .route(
-            "/memories/digest/weekly",
-            axum::routing::post(generate_weekly_digest),
-        )
+        .route("/memories/queue/{queue_id}/resolve", axum::routing::post(resolve_queue_item))
+        .route("/memories/{memory_id}/pin", axum::routing::put(pin_memory))
+        .route("/memories/profile/compile", axum::routing::post(compile_profile))
+        .route("/memories/digest/weekly", axum::routing::post(generate_weekly_digest))
 }
 
 /// GET /memories?agent_id=...
@@ -49,7 +41,8 @@ async fn get_pending_queue(
     State(state): State<AppState>,
     WorkspaceScope(workspace_id): WorkspaceScope,
     Query(query): Query<ListMemoriesQuery>,
-) -> Json<tinyiothub_web::response::ApiResponse<Vec<tinyiothub_core::memory::ReflectionQueueItem>>> {
+) -> Json<tinyiothub_web::response::ApiResponse<Vec<tinyiothub_core::memory::ReflectionQueueItem>>>
+{
     let ws = workspace_id.unwrap_or_default();
     match state.memory_store.get_pending_queue(&ws, &query.agent_id).await {
         Ok(items) => ApiResponseBuilder::success(items),
@@ -71,8 +64,12 @@ async fn resolve_queue_item(
     Path(queue_id): Path<String>,
     Json(body): Json<ResolveBody>,
 ) -> Json<tinyiothub_web::response::ApiResponse<serde_json::Value>> {
-    let _ws = workspace_id.unwrap_or_default();
-    match state.memory_store.resolve_queue_item(&queue_id, body.approved, body.reviewer_note.as_deref()).await {
+    let ws = workspace_id.unwrap_or_default();
+    match state
+        .memory_store
+        .resolve_queue_item(&queue_id, &ws, body.approved, body.reviewer_note.as_deref())
+        .await
+    {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({"resolved": true})),
         Err(e) => ApiResponseBuilder::error(format!("Failed to resolve queue item: {}", e)),
     }
@@ -109,23 +106,19 @@ async fn compile_profile(
     Query(query): Query<ProfileCompileQuery>,
 ) -> Json<tinyiothub_web::response::ApiResponse<serde_json::Value>> {
     let ws = workspace_id.unwrap_or_default();
-    let auth_token = crate::shared::config::get()
-        .minimax
-        .as_ref()
-        .map(|m| m.auth_token.clone())
-        .unwrap_or_default();
 
-    let model = crate::modules::agent::config::service::get_config(&state.db_pool(), &query.agent_id)
-        .await
-        .map(|c| c.model)
-        .unwrap_or_else(|_| default_model());
+    let model =
+        crate::modules::agent::config::service::get_config(&state.db_pool(), &query.agent_id)
+            .await
+            .map(|c| c.model)
+            .unwrap_or_else(|_| default_model());
 
     let svc = match &state.agent_pool.reflection_service {
         Some(s) => s,
         None => return ApiResponseBuilder::error("Reflection engine not enabled".to_string()),
     };
 
-    match svc.compile_profile(&ws, &query.agent_id, &auth_token, &model).await {
+    match svc.compile_profile(&ws, &query.agent_id, &model).await {
         Ok(profile) => ApiResponseBuilder::success(serde_json::json!({"profile": profile})),
         Err(e) => ApiResponseBuilder::error(format!("Failed to compile profile: {}", e)),
     }
@@ -138,18 +131,13 @@ async fn generate_weekly_digest(
     Query(query): Query<ProfileCompileQuery>,
 ) -> Json<tinyiothub_web::response::ApiResponse<serde_json::Value>> {
     let ws = workspace_id.unwrap_or_default();
-    let auth_token = crate::shared::config::get()
-        .minimax
-        .as_ref()
-        .map(|m| m.auth_token.clone())
-        .unwrap_or_default();
 
-    let model = crate::modules::agent::config::service::get_config(&state.db_pool(), &query.agent_id)
-        .await
-        .map(|c| c.model)
-        .unwrap_or_else(|_| default_model());
+    let model =
+        crate::modules::agent::config::service::get_config(&state.db_pool(), &query.agent_id)
+            .await
+            .map(|c| c.model)
+            .unwrap_or_else(|_| default_model());
 
-    // Build the prompt from recent memories
     let prompt = match crate::modules::agent::reflection::notifications::generate_weekly_digest(
         &*state.memory_store,
         &ws,
@@ -161,13 +149,12 @@ async fn generate_weekly_digest(
         Err(e) => return ApiResponseBuilder::error(format!("Failed to build digest: {}", e)),
     };
 
-    // Call LLM to generate the digest
-    let provider = match zeroclaw::providers::create_provider("minimaxi", Some(&auth_token)) {
-        Ok(p) => p,
-        Err(e) => return ApiResponseBuilder::error(format!("Failed to create provider: {}", e)),
+    let svc = match &state.agent_pool.reflection_service {
+        Some(s) => s,
+        None => return ApiResponseBuilder::error("Reflection engine not enabled".to_string()),
     };
 
-    match provider.chat_with_system(None, &prompt, &model, Some(0.5)).await {
+    match svc.generate_digest(&prompt, &model).await {
         Ok(digest) => ApiResponseBuilder::success(serde_json::json!({"digest": digest})),
         Err(e) => ApiResponseBuilder::error(format!("Failed to generate digest: {}", e)),
     }

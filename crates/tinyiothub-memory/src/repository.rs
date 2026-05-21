@@ -1,6 +1,4 @@
 //! SqliteAgentMemoryRepository — SQLite implementation of MemoryStore.
-use std::collections::{HashMap, HashSet};
-
 use async_trait::async_trait;
 use sqlx::SqlitePool;
 use tinyiothub_core::error::Result;
@@ -85,11 +83,7 @@ impl MemoryStore for SqliteAgentMemoryRepository {
         Ok(row.map(|r| r.into()))
     }
 
-    async fn get_all(
-        &self,
-        workspace_id: &str,
-        agent_id: &str,
-    ) -> Result<Vec<AgentMemory>> {
+    async fn get_all(&self, workspace_id: &str, agent_id: &str) -> Result<Vec<AgentMemory>> {
         let rows = sqlx::query_as::<_, MemoryRow>(
             "SELECT * FROM agent_memories WHERE workspace_id = ? AND agent_id = ? ORDER BY created_at DESC",
         )
@@ -101,64 +95,27 @@ impl MemoryStore for SqliteAgentMemoryRepository {
         Ok(rows.into_iter().map(|r| r.into()).collect())
     }
 
-    async fn list_active(
-        &self,
-        workspace_id: &str,
-        agent_id: &str,
-    ) -> Result<Vec<AgentMemory>> {
-        let all = self.get_all(workspace_id, agent_id).await?;
-
-        // Compute superseded IDs as owned strings to release the &all borrow
-        // before all.into_iter() below.
-        let superseded: HashSet<String> = {
-            let mut supersedes_map: HashMap<&str, &str> = HashMap::new();
-            for mem in &all {
-                if let Some(ref sup) = mem.supersedes {
-                    supersedes_map.insert(mem.id.as_str(), sup.as_str());
-                }
-            }
-
-            let mut result: HashSet<&str> = HashSet::new();
-            for mem in &all {
-                if let Some(ref sup) = mem.supersedes {
-                    result.insert(sup.as_str());
-                }
-            }
-            // Transitively close the superseded set
-            let snapshot: Vec<_> = result.iter().cloned().collect();
-            for id in snapshot {
-                collect_superseded_transitive(id, &supersedes_map, &mut result);
-            }
-
-            result.into_iter().map(|s| s.to_string()).collect()
-        };
-
-        // Keep only non-superseded memories
-        let mut active: Vec<_> = all
-            .into_iter()
-            .filter(|m| !superseded.contains(&m.id))
-            .collect();
-
-        // Sort: pinned first, then by retrieval score descending
-        active.sort_by(|a, b| {
-            b.pinned
-                .cmp(&a.pinned)
-                .then_with(|| {
-                    retrieval_score(b)
-                        .partial_cmp(&retrieval_score(a))
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
-        });
-
-        Ok(active)
+    async fn list_active(&self, workspace_id: &str, agent_id: &str) -> Result<Vec<AgentMemory>> {
+        // Push superseded filtering to SQL — avoids O(n²) in-memory transitive closure.
+        // Memories whose id appears in any supersedes column are considered replaced.
+        let rows = sqlx::query_as::<_, MemoryRow>(
+            "SELECT * FROM agent_memories \
+             WHERE workspace_id = ? AND agent_id = ? \
+             AND source != 'device_snapshot' \
+             AND id NOT IN (SELECT supersedes FROM agent_memories WHERE supersedes IS NOT NULL AND workspace_id = ? AND agent_id = ?) \
+             ORDER BY pinned DESC, effectiveness DESC",
+        )
+        .bind(workspace_id)
+        .bind(agent_id)
+        .bind(workspace_id)
+        .bind(agent_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| tinyiothub_core::error::Error::DatabaseError(e.to_string()))?;
+        Ok(rows.into_iter().map(|r| r.into()).collect())
     }
 
-    async fn get_since(
-        &self,
-        workspace_id: &str,
-        agent_id: &str,
-        since: &str,
-    ) -> Result<Vec<AgentMemory>> {
+    async fn get_since(&self, workspace_id: &str, agent_id: &str, since: &str) -> Result<Vec<AgentMemory>> {
         let rows = sqlx::query_as::<_, MemoryRow>(
             "SELECT * FROM agent_memories WHERE workspace_id = ? AND agent_id = ? AND created_at > ? ORDER BY created_at DESC",
         )
@@ -172,25 +129,21 @@ impl MemoryStore for SqliteAgentMemoryRepository {
     }
 
     async fn set_pinned(&self, id: &str, pinned: bool) -> Result<()> {
-        sqlx::query(
-            "UPDATE agent_memories SET pinned = ?, updated_at = datetime('now') WHERE id = ?",
-        )
-        .bind(pinned as i32)
-        .bind(id)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| tinyiothub_core::error::Error::DatabaseError(e.to_string()))?;
+        sqlx::query("UPDATE agent_memories SET pinned = ?, updated_at = datetime('now') WHERE id = ?")
+            .bind(pinned as i32)
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| tinyiothub_core::error::Error::DatabaseError(e.to_string()))?;
         Ok(())
     }
 
     async fn record_load(&self, id: &str) -> Result<()> {
-        sqlx::query(
-            "UPDATE agent_memories SET load_count = load_count + 1, updated_at = datetime('now') WHERE id = ?",
-        )
-        .bind(id)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| tinyiothub_core::error::Error::DatabaseError(e.to_string()))?;
+        sqlx::query("UPDATE agent_memories SET load_count = load_count + 1, updated_at = datetime('now') WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| tinyiothub_core::error::Error::DatabaseError(e.to_string()))?;
         Ok(())
     }
 
@@ -211,11 +164,7 @@ impl MemoryStore for SqliteAgentMemoryRepository {
         Ok(())
     }
 
-    async fn get_pending_queue(
-        &self,
-        workspace_id: &str,
-        agent_id: &str,
-    ) -> Result<Vec<ReflectionQueueItem>> {
+    async fn get_pending_queue(&self, workspace_id: &str, agent_id: &str) -> Result<Vec<ReflectionQueueItem>> {
         let rows = sqlx::query_as::<_, QueueRow>(
             "SELECT id, workspace_id, agent_id, session_key, candidate_type, candidate_data, status, created_at \
              FROM reflection_queue WHERE workspace_id = ? AND agent_id = ? AND status = 'pending' \
@@ -232,16 +181,18 @@ impl MemoryStore for SqliteAgentMemoryRepository {
     async fn resolve_queue_item(
         &self,
         id: &str,
+        workspace_id: &str,
         approved: bool,
         reviewer_note: Option<&str>,
     ) -> Result<()> {
         let status = if approved { "approved" } else { "rejected" };
         sqlx::query(
-            "UPDATE reflection_queue SET status = ?, reviewed_at = datetime('now'), reviewer_note = ? WHERE id = ?",
+            "UPDATE reflection_queue SET status = ?, reviewed_at = datetime('now'), reviewer_note = ? WHERE id = ? AND workspace_id = ?",
         )
         .bind(status)
         .bind(reviewer_note)
         .bind(id)
+        .bind(workspace_id)
         .execute(&self.pool)
         .await
         .map_err(|e| tinyiothub_core::error::Error::DatabaseError(e.to_string()))?;
@@ -266,12 +217,7 @@ impl MemoryStore for SqliteAgentMemoryRepository {
         Ok(id)
     }
 
-    async fn count_by_source(
-        &self,
-        workspace_id: &str,
-        agent_id: &str,
-        source: MemorySource,
-    ) -> Result<u64> {
+    async fn count_by_source(&self, workspace_id: &str, agent_id: &str, source: MemorySource) -> Result<u64> {
         let source_str = match source {
             MemorySource::User => "user",
             MemorySource::Reflection => "reflection",
@@ -290,31 +236,6 @@ impl MemoryStore for SqliteAgentMemoryRepository {
         .map_err(|e| tinyiothub_core::error::Error::DatabaseError(e.to_string()))?;
         Ok(count as u64)
     }
-}
-
-/// DFS helper: transitively add all IDs superseded by `id`.
-fn collect_superseded_transitive<'a>(
-    id: &str,
-    map: &HashMap<&'a str, &'a str>,
-    result: &mut HashSet<&'a str>,
-) {
-    if let Some(&sup) = map.get(id) && result.insert(sup) {
-        collect_superseded_transitive(sup, map, result);
-    }
-}
-
-/// Compute retrieval score for memory ranking.
-fn retrieval_score(mem: &AgentMemory) -> f64 {
-    if mem.pinned {
-        return f64::MAX;
-    }
-    let zone_weight = match mem.zone {
-        MemoryZone::Core => 1.0,
-        MemoryZone::Work => 0.9,
-        MemoryZone::General => 0.7,
-        MemoryZone::Episode => 0.5,
-    };
-    mem.effectiveness * zone_weight
 }
 
 // ---------------------------------------------------------------------------

@@ -4,21 +4,23 @@
 // wraps them as zeroclaw Tools, filters by denylist, and builds the tool
 // catalog used by both the API and the agent runtime.
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 use zeroclaw::tools::{Tool, ToolResult};
 
 use super::canvas::CanvasTool;
-
-use crate::modules::mcp::handlers::{McpAuthContext, McpContextGuard};
-use crate::modules::mcp::tool_metadata::{
-    name_infers_concurrency_safe, name_infers_destructive, name_infers_read_only, IoTToolMetadata,
-    PermissionLevel,
+use crate::{
+    modules::mcp::{
+        handlers::{McpAuthContext, McpContextGuard},
+        tool_metadata::{
+            IoTToolMetadata, PermissionLevel, name_infers_concurrency_safe,
+            name_infers_destructive, name_infers_read_only,
+        },
+        tool_registry::ToolHandler,
+    },
+    shared::agent::config::AgentRuntimeConfig,
 };
-use crate::modules::mcp::tool_registry::ToolHandler;
-use crate::shared::agent::config::AgentRuntimeConfig;
 
 // ============================================================================
 // IoTToolAdapter — wraps MCP ToolHandler as zeroclaw Tool
@@ -64,20 +66,16 @@ impl Tool for IoTToolAdapter {
             "agent".to_string(),
         ));
         match self.handler.execute(args).await {
-            Ok(output) => {
-                Ok(ToolResult {
-                    success: true,
-                    output: serde_json::to_string(&output).unwrap_or_default(),
-                    error: None,
-                })
-            }
-            Err(err) => {
-                Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(err.to_string()),
-                })
-            }
+            Ok(output) => Ok(ToolResult {
+                success: true,
+                output: serde_json::to_string(&output).unwrap_or_default(),
+                error: None,
+            }),
+            Err(err) => Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(err.to_string()),
+            }),
         }
     }
 }
@@ -373,8 +371,7 @@ mod tests {
         let catalog = build_catalog().await;
         let groups = catalog["groups"].as_array().unwrap();
         assert!(!groups.is_empty(), "Static catalog should have groups");
-        let group_ids: Vec<&str> =
-            groups.iter().filter_map(|g| g["id"].as_str()).collect();
+        let group_ids: Vec<&str> = groups.iter().filter_map(|g| g["id"].as_str()).collect();
         assert!(group_ids.contains(&"device"));
         assert!(group_ids.contains(&"alarm"));
     }

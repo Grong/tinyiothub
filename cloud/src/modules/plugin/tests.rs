@@ -71,5 +71,5 @@ fn test_plugin_registry_has_plugin() {
 
     let registry = get_global_registry();
     // Just verify the registry can be accessed
-    assert!(registry.plugin_names().len() >= 0);
+    let _ = registry.plugin_names().len();
 }

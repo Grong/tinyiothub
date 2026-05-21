@@ -1,13 +1,15 @@
 use async_trait::async_trait;
+use zeroclaw::providers::traits::Provider;
+
 use super::super::pipeline::*;
 
 pub struct MemoryAnalyzer {
-    auth_token: String,
+    provider: Box<dyn Provider>,
 }
 
 impl MemoryAnalyzer {
-    pub fn new(auth_token: String) -> Self {
-        Self { auth_token }
+    pub fn new(provider: Box<dyn Provider>) -> Self {
+        Self { provider }
     }
 }
 
@@ -24,19 +26,10 @@ impl Analyzer for MemoryAnalyzer {
             .map(|m| format!("- [{}] {}\n", m.zone.as_str(), m.content))
             .collect();
 
-        let turn_text: String = event
-            .turn_messages
-            .iter()
-            .map(|m| format!("{}: {}\n", m.role, m.content))
-            .collect();
+        let turn_text: String =
+            event.turn_messages.iter().map(|m| format!("{}: {}\n", m.role, m.content)).collect();
 
-        // Build message: data first, instruction at END (recency bias).
-        // minimax merges system into user, so we skip system_prompt entirely
-        // and embed the instruction directly at the bottom of the user message.
         let message = build_reflection_message(&active_memories_text, &turn_text);
-
-        let provider = zeroclaw::providers::create_provider("minimaxi", Some(&self.auth_token))
-            .map_err(|e| anyhow::anyhow!("Failed to create reflection provider: {}", e))?;
 
         tracing::info!(
             message_len = message.len(),
@@ -44,7 +37,8 @@ impl Analyzer for MemoryAnalyzer {
             "MemoryAnalyzer sending LLM request"
         );
 
-        let response = provider
+        let response = self
+            .provider
             .chat_with_system(None, &message, &event.model, Some(0.3))
             .await
             .map_err(|e| anyhow::anyhow!("Reflection LLM call failed: {}", e))?;
@@ -107,11 +101,7 @@ fn parse_reflection_response(raw: &str) -> anyhow::Result<AnalyzerOutput> {
         }
     }
 
-    Ok(AnalyzerOutput {
-        memory_candidates,
-        skill_candidates: vec![],
-        notifications: vec![],
-    })
+    Ok(AnalyzerOutput { memory_candidates, skill_candidates: vec![], notifications: vec![] })
 }
 
 /// Parse `FACT|zone|confidence|content`
@@ -139,7 +129,8 @@ fn try_parse_pipe_format(line: &str) -> Option<MemoryCandidate> {
 
 /// Parse `FACT: content` (simple format, defaults to general/medium)
 fn try_parse_simple_format(line: &str) -> Option<MemoryCandidate> {
-    let content = line.strip_prefix("FACT: ")
+    let content = line
+        .strip_prefix("FACT: ")
         .or_else(|| line.strip_prefix("FACT:"))
         .or_else(|| line.strip_prefix("FACT："))
         .or_else(|| line.strip_prefix("FACT： "))?;
@@ -159,11 +150,7 @@ fn try_parse_simple_format(line: &str) -> Option<MemoryCandidate> {
 
 /// Fallback JSON parser (for models that can produce JSON).
 fn parse_json_format(raw: &str) -> anyhow::Result<AnalyzerOutput> {
-    let cleaned = raw
-        .trim()
-        .trim_start_matches("```json")
-        .trim_end_matches("```")
-        .trim();
+    let cleaned = raw.trim().trim_start_matches("```json").trim_end_matches("```").trim();
 
     let parsed: serde_json::Value =
         serde_json::from_str(cleaned).unwrap_or_else(|_| serde_json::json!({}));
@@ -190,9 +177,7 @@ fn parse_json_format(raw: &str) -> anyhow::Result<AnalyzerOutput> {
                             .get("tags")
                             .and_then(|v| v.as_array())
                             .map(|arr| {
-                                arr.iter()
-                                    .filter_map(|t| t.as_str().map(String::from))
-                                    .collect()
+                                arr.iter().filter_map(|t| t.as_str().map(String::from)).collect()
                             })
                             .unwrap_or_default(),
                         supersedes: item
@@ -227,16 +212,10 @@ fn parse_json_format(raw: &str) -> anyhow::Result<AnalyzerOutput> {
                             .get("triggers")
                             .and_then(|v| v.as_array())
                             .map(|arr| {
-                                arr.iter()
-                                    .filter_map(|t| t.as_str().map(String::from))
-                                    .collect()
+                                arr.iter().filter_map(|t| t.as_str().map(String::from)).collect()
                             })
                             .unwrap_or_default(),
-                        body: item
-                            .get("body")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string(),
+                        body: item.get("body").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                         reasoning: item
                             .get("reasoning")
                             .and_then(|v| v.as_str())
@@ -248,11 +227,7 @@ fn parse_json_format(raw: &str) -> anyhow::Result<AnalyzerOutput> {
         })
         .unwrap_or_default();
 
-    Ok(AnalyzerOutput {
-        memory_candidates,
-        skill_candidates,
-        notifications: vec![],
-    })
+    Ok(AnalyzerOutput { memory_candidates, skill_candidates, notifications: vec![] })
 }
 
 #[cfg(test)]
@@ -283,7 +258,8 @@ mod tests {
 
     #[test]
     fn built_message_contains_all_sections() {
-        let message = build_reflection_message("- [work] old memory\n", "user: query\nassistant: answer\n");
+        let message =
+            build_reflection_message("- [work] old memory\n", "user: query\nassistant: answer\n");
         assert!(message.contains("## Conversation Turn"));
         assert!(message.contains("## Active Memories"));
         assert!(message.contains("FACT|"));
