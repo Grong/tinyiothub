@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+#
+# pre-push hook — runs fmt, clippy, and tests before every push.
+# Install:  git config core.hooksPath .githooks
+# Skip:     git push --no-verify
+
+set -euo pipefail
+
+echo "==> pre-push: running rust quality gate..."
+
+echo "  -> fmt check..."
+cargo fmt --all -- --check || {
+    echo "FAIL: formatting issues found. Run 'just fmt' to fix."
+    exit 1
+}
+
+echo "  -> clippy..."
+cargo clippy --workspace --exclude zeroclaw --all-targets -- -D warnings || {
+    echo "FAIL: clippy reported errors."
+    exit 1
+}
+
+echo "  -> tests..."
+cargo test --workspace --exclude zeroclaw --lib --bins --tests || {
+    echo "FAIL: some tests did not pass."
+    exit 1
+}
+
+echo "==> pre-push: all checks passed."
