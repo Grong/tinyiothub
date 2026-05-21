@@ -18,9 +18,10 @@ pub async fn get_config(
             .await
             .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
     if let Some((config_str,)) = row
-        && let Ok(config) = serde_json::from_str::<AgentRuntimeConfig>(&config_str) {
-            return Ok(config);
-        }
+        && let Ok(config) = serde_json::from_str::<AgentRuntimeConfig>(&config_str)
+    {
+        return Ok(config);
+    }
     Ok(AgentRuntimeConfig::default())
 }
 

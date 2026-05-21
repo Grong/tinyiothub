@@ -401,7 +401,10 @@ mod tests {
 
     #[test]
     fn test_device_is_online() {
-        let mut device = Device { status: DeviceStatus::Online, ..Default::default() };
+        let mut device = Device {
+            status: DeviceStatus::Online,
+            ..Default::default()
+        };
         assert!(device.is_online());
         assert!(device.enabled());
 
@@ -412,7 +415,10 @@ mod tests {
 
     #[test]
     fn test_device_get_display_name() {
-        let mut device = Device { name: "sensor-01".to_string(), ..Default::default() };
+        let mut device = Device {
+            name: "sensor-01".to_string(),
+            ..Default::default()
+        };
         assert_eq!(device.get_display_name(), "sensor-01");
 
         device.display_name = Some("Temperature Sensor".to_string());
@@ -439,7 +445,10 @@ mod tests {
 
     #[test]
     fn test_device_validate_success() {
-        let device = Device { name: "valid-device".to_string(), ..Default::default() };
+        let device = Device {
+            name: "valid-device".to_string(),
+            ..Default::default()
+        };
         assert!(device.validate().is_ok());
     }
 
@@ -451,31 +460,48 @@ mod tests {
 
     #[test]
     fn test_device_validate_whitespace_name() {
-        let device = Device { name: "   ".to_string(), ..Default::default() };
+        let device = Device {
+            name: "   ".to_string(),
+            ..Default::default()
+        };
         assert!(device.validate().is_err());
     }
 
     #[test]
     fn test_device_validate_long_name() {
-        let device = Device { name: "a".repeat(101), ..Default::default() };
+        let device = Device {
+            name: "a".repeat(101),
+            ..Default::default()
+        };
         assert!(device.validate().is_err());
     }
 
     #[test]
     fn test_device_validate_long_display_name() {
-        let device = Device { name: "valid".to_string(), display_name: Some("b".repeat(201)), ..Default::default() };
+        let device = Device {
+            name: "valid".to_string(),
+            display_name: Some("b".repeat(201)),
+            ..Default::default()
+        };
         assert!(device.validate().is_err());
     }
 
     #[test]
     fn test_device_validate_long_address() {
-        let device = Device { name: "valid".to_string(), address: Some("c".repeat(501)), ..Default::default() };
+        let device = Device {
+            name: "valid".to_string(),
+            address: Some("c".repeat(501)),
+            ..Default::default()
+        };
         assert!(device.validate().is_err());
     }
 
     #[test]
     fn test_device_get_state_description() {
-        let mut device = Device { status: DeviceStatus::Online, ..Default::default() };
+        let mut device = Device {
+            status: DeviceStatus::Online,
+            ..Default::default()
+        };
         assert_eq!(device.get_state_description(), "在线");
 
         device.status = DeviceStatus::Offline;

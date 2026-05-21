@@ -56,15 +56,17 @@ fn load_skills_sync(workspace_dir: &std::path::Path) -> String {
     let ws_skills = workspace_dir.join("skills");
     if ws_skills.exists()
         && let Some(content) = read_skills_dir_sync(&ws_skills)
-            && !content.is_empty() {
-                return content;
-            }
+        && !content.is_empty()
+    {
+        return content;
+    }
     let global_skills = std::path::PathBuf::from("data/skills");
     if global_skills.exists()
         && let Some(content) = read_skills_dir_sync(&global_skills)
-            && !content.is_empty() {
-                return content;
-            }
+        && !content.is_empty()
+    {
+        return content;
+    }
     String::new()
 }
 

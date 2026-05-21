@@ -129,9 +129,10 @@ pub async fn send_message(
                 let chat_event = turn_event_to_chat_event(&evt, &forward_run, &forward_session);
                 // Skip usage-only events
                 if let ChatEvent::Delta { message, .. } = &chat_event
-                    && message.get("__usage").is_some() {
-                        continue;
-                    }
+                    && message.get("__usage").is_some()
+                {
+                    continue;
+                }
                 if forward_tx.send(chat_event).await.is_err() {
                     break;
                 }
@@ -185,28 +186,29 @@ pub async fn send_message(
 
         // Spawn micro_reflect after the turn completes (fire-and-forget)
         if enable_reflection
-            && let (Some(svc), Some(assistant_text)) = (reflection_service, final_text) {
-                let turn_messages = vec![
-                    super::super::reflection::pipeline::ChatMessage {
-                        role: "user".into(),
-                        content: message.clone(),
-                    },
-                    super::super::reflection::pipeline::ChatMessage {
-                        role: "assistant".into(),
-                        content: assistant_text,
-                    },
-                ];
-                tokio::spawn(async move {
-                    svc.micro_reflect(
-                        &workspace_id,
-                        &agent_id,
-                        &session_key,
-                        &reflection_model,
-                        &turn_messages,
-                    )
-                    .await;
-                });
-            }
+            && let (Some(svc), Some(assistant_text)) = (reflection_service, final_text)
+        {
+            let turn_messages = vec![
+                super::super::reflection::pipeline::ChatMessage {
+                    role: "user".into(),
+                    content: message.clone(),
+                },
+                super::super::reflection::pipeline::ChatMessage {
+                    role: "assistant".into(),
+                    content: assistant_text,
+                },
+            ];
+            tokio::spawn(async move {
+                svc.micro_reflect(
+                    &workspace_id,
+                    &agent_id,
+                    &session_key,
+                    &reflection_model,
+                    &turn_messages,
+                )
+                .await;
+            });
+        }
 
         chat_handles_inner.lock().await.remove(&run_id_for_remove);
     });

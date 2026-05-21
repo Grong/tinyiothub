@@ -8,7 +8,6 @@ use axum::{
 };
 use tower::ServiceExt;
 
-
 fn open_request(method: &str, uri: &str) -> Request<Body> {
     Request::builder()
         .method(method)

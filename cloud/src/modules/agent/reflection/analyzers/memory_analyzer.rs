@@ -76,9 +76,10 @@ fn parse_reflection_response(raw: &str) -> anyhow::Result<AnalyzerOutput> {
     // Also try JSON as fallback in case the model does output JSON
     if (text.starts_with('{') || text.starts_with("```json"))
         && let Ok(output) = parse_json_format(text)
-            && (!output.memory_candidates.is_empty() || !output.skill_candidates.is_empty()) {
-                return Ok(output);
-            }
+        && (!output.memory_candidates.is_empty() || !output.skill_candidates.is_empty())
+    {
+        return Ok(output);
+    }
 
     if text.contains("NO_FACTS") || text.contains("FACT: 无") || text.contains("FACT:无") {
         return Ok(AnalyzerOutput::default());

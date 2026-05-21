@@ -245,7 +245,6 @@ mod tests {
 
     #[test]
     fn test_registry_register_device_command() {
-        
         // DeviceCommandExecutor requires DataServer + Database, so test registration
         // with a mock-like approach: just verify the registry accepts new executors.
         let registry = ExecutorRegistry::new();

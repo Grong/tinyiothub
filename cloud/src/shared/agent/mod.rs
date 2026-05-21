@@ -335,12 +335,13 @@ async fn build_memory_layer(
     // 1. Prefer compiled PROFILE.md
     let profile_path = workspace_dir.join("PROFILE.md");
     if profile_path.exists()
-        && let Ok(profile) = tokio::fs::read_to_string(&profile_path).await {
-            let trimmed = profile.trim();
-            if !trimmed.is_empty() {
-                return format!("\n## Agent Memory (Compiled Profile)\n{}\n", trimmed);
-            }
+        && let Ok(profile) = tokio::fs::read_to_string(&profile_path).await
+    {
+        let trimmed = profile.trim();
+        if !trimmed.is_empty() {
+            return format!("\n## Agent Memory (Compiled Profile)\n{}\n", trimmed);
         }
+    }
 
     // 2. Fall back to dynamic memory injection
     let active = match memory_store.list_active(workspace_id, agent_id).await {
