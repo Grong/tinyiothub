@@ -185,11 +185,14 @@ jobs:
           NEW_FILES="${{ steps.new-ts-files.outputs.new_files }}"
           for file in $NEW_FILES; do
             echo "Checking: $file"
+            # git diff returns paths relative to repo root (web/src/...),
+            # but this step runs from web/ — strip the prefix.
+            rel="${file#web/}"
 
             # 禁止在 ui/ 组件中直接 fetch
             case "$file" in
               web/src/ui/*)
-                if grep -qE "fetch\(|axios\.|useQuery\s*\(" "$file" 2>/dev/null; then
+                if grep -qE "fetch\(|axios\.|useQuery\s*\(" "$rel" 2>/dev/null; then
                   echo "❌ ARCHITECTURE VIOLATION: Direct API call in component: $file"
                   echo "   ✅ Must use web/src/api/ layer"
                   exit 1
@@ -199,7 +202,7 @@ jobs:
 
             # 新增的 API 文件必须有导出
             if echo "$file" | grep -qE "^web/src/api/.*\.ts$"; then
-              if ! grep -qE "^export " "$file" 2>/dev/null; then
+              if ! grep -qE "^export " "$rel" 2>/dev/null; then
                 echo "❌ VIOLATION: API file has no exports: $file"
                 exit 1
               fi
