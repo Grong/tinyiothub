@@ -61,3 +61,15 @@ export async function pinMemory(
     { pinned },
   );
 }
+
+export async function compileProfile(
+  agentId: string,
+): Promise<ApiResponse<{ profile: string }>> {
+  return apiPost(`/workspaces/memories/profile/compile?agent_id=${agentId}`);
+}
+
+export async function generateWeeklyDigest(
+  agentId: string,
+): Promise<ApiResponse<{ digest: string }>> {
+  return apiPost(`/workspaces/memories/digest/weekly?agent_id=${agentId}`);
+}

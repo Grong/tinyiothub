@@ -1,6 +1,12 @@
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::sync::Arc;
+use axum::response::sse::{Event, KeepAlive};
+use axum::response::Sse;
+use futures::stream::Stream;
 use tokio::sync::broadcast;
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::StreamExt;
 
 /// Per-workspace broadcast channels for SSE skill notifications.
 pub struct NotificationService {
@@ -40,6 +46,18 @@ impl NotificationService {
             .entry(workspace_id.to_string())
             .or_insert_with(|| broadcast::channel(64).0);
         tx.subscribe()
+    }
+
+    /// Create an SSE stream for a workspace.
+    pub async fn sse_stream(
+        self: Arc<Self>,
+        workspace_id: String,
+    ) -> impl Stream<Item = Result<Event, Infallible>> {
+        let rx = self.subscribe(&workspace_id).await;
+        BroadcastStream::new(rx).map(|result| match result {
+            Ok(msg) => Ok(Event::default().data(msg).event("skill_notification")),
+            Err(_) => Ok(Event::default().comment("stream lagged")),
+        })
     }
 
     pub async fn notify_skill_discovered(
@@ -93,4 +111,20 @@ pub async fn generate_weekly_digest(
         "Weekly digest prompt prepared"
     );
     Ok(prompt)
+}
+
+/// SSE handler for agent skill notifications (public — auth via query param).
+pub async fn handle_notification_sse(
+    axum::extract::State(state): axum::extract::State<crate::shared::app_state::AppState>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, axum::http::StatusCode> {
+    // Auth via ?token=... query param (EventSource doesn't support custom headers)
+    let token = params.get("token").cloned().unwrap_or_default();
+    let claims = crate::shared::security::jwt::validate_jwt(&token)
+        .map_err(|_| axum::http::StatusCode::UNAUTHORIZED)?;
+    let ws = claims.workspace_id;
+
+    let svc = Arc::clone(&state.agent_pool.notification_service);
+    let stream = svc.sse_stream(ws).await;
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }

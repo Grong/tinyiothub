@@ -8,6 +8,7 @@ pub struct ReflectionEvent {
     pub workspace_id: String,
     pub agent_id: String,
     pub session_key: String,
+    pub model: String,
     pub turn_messages: Vec<ChatMessage>,
     pub active_memories: Vec<tinyiothub_core::memory::AgentMemory>,
 }
@@ -77,7 +78,7 @@ impl ReflectionPipeline {
             });
             match handle.await {
                 Ok(Ok(output)) => results.push(output),
-                Ok(Err(e)) => tracing::warn!(analyzer = %analyzer_name, error = %e, "Analyzer failed"),
+                Ok(Err(e)) => tracing::error!(analyzer = %analyzer_name, error = %e, "Analyzer failed"),
                 Err(join_err) => {
                     let msg = match join_err.try_into_panic() {
                         Ok(p) => p
@@ -132,6 +133,7 @@ mod tests {
             workspace_id: "ws".into(),
             agent_id: "a".into(),
             session_key: "sk".into(),
+            model: "minimax-m2".into(),
             turn_messages: vec![],
             active_memories: vec![],
         };

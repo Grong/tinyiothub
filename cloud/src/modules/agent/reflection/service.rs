@@ -25,9 +25,10 @@ impl ReflectionService {
         memory_store: Arc<dyn MemoryStore>,
         db: SqlitePool,
         notification_service: Arc<NotificationService>,
+        auth_token: String,
     ) -> Self {
         let mut pipeline = ReflectionPipeline::new();
-        pipeline.add_analyzer(Box::new(MemoryAnalyzer::new()));
+        pipeline.add_analyzer(Box::new(MemoryAnalyzer::new(auth_token)));
         pipeline.add_analyzer(Box::new(SkillAnalyzer::new()));
         pipeline.add_analyzer(Box::new(SecurityAnalyzer::new()));
 
@@ -46,10 +47,20 @@ impl ReflectionService {
         workspace_id: &str,
         agent_id: &str,
         session_key: &str,
+        model: &str,
         turn_messages: &[ChatMessage],
     ) {
+        tracing::info!(
+            workspace = %workspace_id,
+            agent = %agent_id,
+            session = %session_key,
+            turn_count = turn_messages.len(),
+            "micro_reflect triggered after chat turn"
+        );
+
         // 10-second dedup window
         if self.should_skip_auto_reflect(session_key).await {
+            tracing::info!(session = %session_key, "micro_reflect skipped — dedup window");
             return;
         }
 
@@ -70,6 +81,7 @@ impl ReflectionService {
             workspace_id: workspace_id.to_string(),
             agent_id: agent_id.to_string(),
             session_key: session_key.to_string(),
+            model: model.to_string(),
             turn_messages: turn_messages.to_vec(),
             active_memories,
         };
@@ -77,7 +89,21 @@ impl ReflectionService {
         let results = self.pipeline.execute(&event).await;
         let mut had_failure = false;
 
+        let total_candidates: usize = results.iter().map(|r| r.memory_candidates.len()).sum();
+        tracing::info!(
+            workspace = %workspace_id,
+            agent = %agent_id,
+            analyzer_count = results.len(),
+            memory_candidates = total_candidates,
+            "micro_reflect pipeline completed"
+        );
+
         for output in results {
+            for notification in &output.notifications {
+                self.notification_service
+                    .broadcast(workspace_id, "security_alert", notification)
+                    .await;
+            }
             for candidate in &output.memory_candidates {
                 if let Err(e) = self
                     .process_memory_candidate(workspace_id, agent_id, session_key, candidate)
@@ -110,6 +136,8 @@ impl ReflectionService {
         &self,
         workspace_id: &str,
         agent_id: &str,
+        auth_token: &str,
+        model: &str,
     ) -> anyhow::Result<String> {
         let memories = self.memory_store.list_active(workspace_id, agent_id).await?;
         let memories_text: String = memories
@@ -121,10 +149,16 @@ impl ReflectionService {
         let prompt = include_str!("../../../../templates/agent/COMPILE_PROMPT.md")
             .replace("{memories_text}", &memories_text);
 
-        // Return the prompt — LLM call is deferred to the caller
-        // (the agent's existing provider infrastructure handles LLM calls)
-        tracing::info!(workspace_id, agent_id, "Profile compilation prompt prepared");
-        Ok(prompt)
+        let provider = zeroclaw::providers::create_provider("minimaxi", Some(auth_token))
+            .map_err(|e| anyhow::anyhow!("Failed to create provider: {}", e))?;
+
+        let profile = provider
+            .chat_with_system(None, &prompt, model, Some(0.3))
+            .await
+            .map_err(|e| anyhow::anyhow!("Profile compilation LLM call failed: {}", e))?;
+
+        tracing::info!(workspace_id, agent_id, profile_len = profile.len(), "Profile compiled");
+        Ok(profile)
     }
 
     async fn should_skip_auto_reflect(&self, session_key: &str) -> bool {
@@ -162,22 +196,25 @@ impl ReflectionService {
             _ => MemoryZone::General,
         };
 
-        // Reflection source: confidence capped at medium, never auto-accept to core
-        let actual_confidence = if matches!(confidence, Confidence::High) {
-            Confidence::Medium
-        } else {
-            confidence
-        };
+        // Reflection source: never auto-accept to core zone (safety measure)
         let actual_zone = if matches!(zone, MemoryZone::Core) {
             MemoryZone::Work
         } else {
             zone
         };
 
-        if matches!(actual_confidence, Confidence::High)
+        if matches!(confidence, Confidence::High)
             && !matches!(actual_zone, MemoryZone::Core)
         {
-            // Auto-accept (but confidence is capped, so this branch won't fire often)
+            // Auto-accept high-confidence, non-core memories
+            tracing::info!(
+                workspace = %workspace_id,
+                agent = %agent_id,
+                zone = %actual_zone.as_str(),
+                confidence = ?confidence,
+                fact = %candidate.fact,
+                "Memory auto-accepted"
+            );
             self.memory_store
                 .put(MemoryInput {
                     workspace_id: workspace_id.into(),
@@ -185,7 +222,7 @@ impl ReflectionService {
                     zone: actual_zone,
                     content: candidate.fact.clone(),
                     source: MemorySource::Reflection,
-                    confidence: actual_confidence,
+                    confidence,
                     tags: candidate.tags.clone(),
                     supersedes: candidate.supersedes.clone(),
                     ..Default::default()

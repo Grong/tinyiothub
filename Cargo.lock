@@ -5815,6 +5815,7 @@ dependencies = [
  "tinyiothub-core",
  "tinyiothub-macros",
  "tinyiothub-marketplace",
+ "tinyiothub-memory",
  "tinyiothub-plugin-sdk",
  "tinyiothub-runtime",
  "tinyiothub-storage",
@@ -5982,6 +5983,22 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "tinyiothub-memory"
+version = "0.2.4"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tinyiothub-core",
+ "tinyiothub-storage",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 

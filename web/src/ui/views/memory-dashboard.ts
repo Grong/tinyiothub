@@ -1,7 +1,8 @@
 import { LitElement, html } from "lit";
 import { customElement, state } from "lit/decorators.js";
-import { listActiveMemories, getPendingQueue, resolveQueueItem, pinMemory } from "../../api/memory";
+import { listActiveMemories, getPendingQueue, resolveQueueItem, pinMemory, compileProfile, generateWeeklyDigest } from "../../api/memory";
 import type { AgentMemory, ReflectionQueueItem } from "../../api/memory";
+import { getAuthToken } from "../../api/client";
 
 const ZONE_LABELS: Record<string, string> = {
   core: "核心",
@@ -32,6 +33,8 @@ export class ViewMemoryDashboard extends LitElement {
   @state() private agentId = "";
   @state() private loading = false;
   @state() private error: string | null = null;
+  @state() private notifications: string[] = [];
+  private _sseSource: EventSource | null = null;
 
   createRenderRoot() {
     return this;
@@ -42,6 +45,41 @@ export class ViewMemoryDashboard extends LitElement {
     const params = new URLSearchParams(window.location.search);
     this.agentId = params.get("agent") || "default";
     this.loadData();
+    this._connectSSE();
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    if (this._sseSource) {
+      this._sseSource.close();
+      this._sseSource = null;
+    }
+  }
+
+  private _connectSSE() {
+    if (this._sseSource) this._sseSource.close();
+    const token = getAuthToken();
+    this._sseSource = new EventSource(`/api/v1/workspaces/notifications/stream?token=${encodeURIComponent(token || "")}`);
+    this._sseSource.addEventListener("skill_notification", (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        this.notifications = [...this.notifications, data.message];
+        this.requestUpdate();
+        setTimeout(() => {
+          this.notifications = this.notifications.filter((n) => n !== data.message);
+          this.requestUpdate();
+        }, 8000);
+      } catch {
+        // ignore malformed events
+      }
+    });
+    this._sseSource.onerror = () => {
+      setTimeout(() => {
+        if (this._sseSource?.readyState === EventSource.CLOSED) {
+          this._connectSSE();
+        }
+      }, 3000);
+    };
   }
 
   private async loadData() {
@@ -91,28 +129,35 @@ export class ViewMemoryDashboard extends LitElement {
 
   render() {
     if (this.error && this.memories.length === 0 && this.queue.length === 0) {
-      return html`<div class="empty-state">${this.error}</div>`;
+      return html`<div class="memory-empty">${this.error}</div>`;
     }
 
     return html`
-      <div class="memory-dashboard">
-        <div class="md-tabs">
+      <div>
+        ${this.notifications.length > 0
+          ? html`<div class="memory-notifications">
+              ${this.notifications.map(
+                (msg) => html`<div class="memory-notification">${msg}</div>`,
+              )}
+            </div>`
+          : ""}
+        <div class="detail-tabs">
           <button
-            class="md-tab ${this.activeTab === "memories" ? "active" : ""}"
+            class="detail-tab ${this.activeTab === "memories" ? "active" : ""}"
             @click=${() => this.switchTab("memories")}
           >活跃记忆</button>
           <button
-            class="md-tab ${this.activeTab === "queue" ? "active" : ""}"
+            class="detail-tab ${this.activeTab === "queue" ? "active" : ""}"
             @click=${() => this.switchTab("queue")}
-          >审核队列 ${this.queue.length > 0 ? html`(${this.queue.length})` : ""}</button>
+          >审核队列 ${this.queue.length > 0 ? html`<span class="chip">${this.queue.length}</span>` : ""}</button>
           <button
-            class="md-tab ${this.activeTab === "audit" ? "active" : ""}"
+            class="detail-tab ${this.activeTab === "audit" ? "active" : ""}"
             @click=${() => this.switchTab("audit")}
           >审计日志</button>
         </div>
 
         ${this.loading
-          ? html`<div class="md-loading">加载中…</div>`
+          ? html`<div class="memory-loading">加载中…</div>`
           : this.activeTab === "memories"
             ? this.renderMemories()
             : this.activeTab === "queue"
@@ -124,22 +169,22 @@ export class ViewMemoryDashboard extends LitElement {
 
   private renderMemories() {
     if (this.memories.length === 0) {
-      return html`<div class="empty-state">暂无活跃记忆</div>`;
+      return html`<div class="memory-empty">暂无活跃记忆</div>`;
     }
     return html`
-      <div class="md-list">
+      <div class="memory-list">
         ${this.memories.map(
           (m) => html`
-            <div class="md-card ${m.pinned ? "pinned" : ""}">
-              <div class="md-card-header">
-                <span class="md-badge zone-${m.zone}">${ZONE_LABELS[m.zone] || m.zone}</span>
-                <span class="md-badge source-${m.source}">${SOURCE_LABELS[m.source] || m.source}</span>
-                <span class="md-confidence">置信度: ${CONFIDENCE_LABELS[m.confidence] || m.confidence}</span>
-                <span class="md-effectiveness">有效: ${(m.effectiveness * 100).toFixed(0)}%</span>
-                ${m.pinned ? html`<span class="md-pin-badge">已置顶</span>` : ""}
+            <div class="card memory-card ${m.pinned ? "pinned" : ""}">
+              <div class="memory-card__header">
+                <span class="chip chip--zone-${m.zone}">${ZONE_LABELS[m.zone] || m.zone}</span>
+                <span class="chip">${SOURCE_LABELS[m.source] || m.source}</span>
+                <span class="memory-card__meta">${CONFIDENCE_LABELS[m.confidence] || m.confidence}</span>
+                <span class="memory-card__meta">${(m.effectiveness * 100).toFixed(0)}% 有效</span>
+                ${m.pinned ? html`<span class="chip chip--pinned">已置顶</span>` : ""}
               </div>
-              <div class="md-card-body">${m.content}</div>
-              <div class="md-card-footer">
+              <div class="memory-card__body">${m.content}</div>
+              <div class="memory-card__footer">
                 <button
                   class="btn btn--sm ${m.pinned ? "btn--outline" : "btn--primary"}"
                   @click=${() => this.handlePin(m.id, m.pinned)}
@@ -154,10 +199,10 @@ export class ViewMemoryDashboard extends LitElement {
 
   private renderQueue() {
     if (this.queue.length === 0) {
-      return html`<div class="empty-state">暂无待审核项</div>`;
+      return html`<div class="memory-empty">暂无待审核项</div>`;
     }
     return html`
-      <div class="md-list">
+      <div class="memory-list">
         ${this.queue.map((item) => {
           let data: any = {};
           try {
@@ -166,18 +211,18 @@ export class ViewMemoryDashboard extends LitElement {
             // use raw data
           }
           return html`
-            <div class="md-card">
-              <div class="md-card-header">
-                <span class="md-badge type-${item.candidateType}">${item.candidateType === "memory" ? "记忆" : "技能"}</span>
-                <span class="md-time">${item.createdAt?.slice(0, 16) || ""}</span>
+            <div class="card memory-card">
+              <div class="memory-card__header">
+                <span class="chip chip--zone-${item.candidateType === "memory" ? "core" : "work"}">${item.candidateType === "memory" ? "记忆" : "技能"}</span>
+                <span class="memory-card__meta">${item.createdAt?.slice(0, 16) || ""}</span>
               </div>
-              <div class="md-card-body">
+              <div class="memory-card__body">
                 ${data.fact || data.name || data.description || item.candidateData}
               </div>
               ${data.reasoning
-                ? html`<div class="md-reasoning">理由: ${data.reasoning}</div>`
+                ? html`<div class="queue-card__reasoning">理由: ${data.reasoning}</div>`
                 : ""}
-              <div class="md-card-footer">
+              <div class="memory-card__footer">
                 <button
                   class="btn btn--sm btn--success"
                   @click=${() => this.handleResolve(item.id, true)}
@@ -194,7 +239,52 @@ export class ViewMemoryDashboard extends LitElement {
     `;
   }
 
+  @state() private profile: string | null = null;
+  @state() private digest: string | null = null;
+
+  private async handleCompileProfile() {
+    this.loading = true;
+    try {
+      const res = await compileProfile(this.agentId);
+      this.profile = res.result?.profile || null;
+    } catch (e: any) {
+      this.error = e.message || "编译失败";
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  private async handleGenerateDigest() {
+    this.loading = true;
+    try {
+      const res = await generateWeeklyDigest(this.agentId);
+      this.digest = res.result?.digest || null;
+    } catch (e: any) {
+      this.error = e.message || "生成失败";
+    } finally {
+      this.loading = false;
+    }
+  }
+
   private renderAudit() {
-    return html`<div class="empty-state">审计日志功能即将推出</div>`;
+    return html`
+      <div class="audit-panel">
+        <div class="card">
+          <h3 class="card-title">画像编译</h3>
+          <p class="audit-section__desc">将活跃记忆编译为 Agent 画像 (PROFILE.md)</p>
+          <button class="btn btn--primary" @click=${this.handleCompileProfile} ?disabled=${this.loading}>
+            ${this.loading ? "编译中…" : "编译画像"}
+          </button>
+          ${this.profile ? html`<pre class="code-block audit-section__result">${this.profile}</pre>` : ""}
+        </div>
+        <div class="card">
+          <h3 class="card-title">周报生成</h3>
+          <p class="audit-section__desc">基于最近 7 天记忆生成学习周报</p>
+          <button class="btn btn--primary" @click=${this.handleGenerateDigest} ?disabled=${this.loading}>
+            ${this.loading ? "生成中…" : "生成周报"}
+          </button>
+          ${this.digest ? html`<pre class="code-block audit-section__result">${this.digest}</pre>` : ""}
+        </div>
+      </div>`;
   }
 }

@@ -88,8 +88,11 @@ fn default_enable_reflection() -> bool {
     true
 }
 
-fn default_model() -> String {
-    "minimax-m2".into()
+pub fn default_model() -> String {
+    crate::shared::config::try_get()
+        .and_then(|c| c.minimax.as_ref())
+        .map(|m| m.model.clone())
+        .unwrap_or_else(|| "minimax-m2".into())
 }
 
 fn default_temperature() -> f64 {

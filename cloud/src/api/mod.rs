@@ -85,10 +85,14 @@ pub fn create_router() -> Router<AppState> {
         .nest("/tenants", crate::modules::tenant::create_auth_router()) // 租户注册登录
         .nest("/system", crate::modules::system::handler::create_router())
         .route("/gateway/pair", post(crate::modules::gateway::handler::pairing::pair_device))
-        // 公开的SSE端点（不需要认证）
+        // 公开的SSE端点（不需要认证，通过 query param token 鉴权）
         .route(
             "/events/sse/public",
             get(crate::modules::event::handler::sse::handle_sse_connection_public),
+        )
+        .route(
+            "/workspaces/notifications/stream",
+            get(crate::modules::agent::reflection::notifications::handle_notification_sse),
         )
         .merge(protected_routes);
 

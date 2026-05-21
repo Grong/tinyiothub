@@ -4,6 +4,7 @@ use serde::Deserialize;
 use tinyiothub_web::response::ApiResponseBuilder;
 use crate::api::middleware::WorkspaceScope;
 use crate::shared::app_state::AppState;
+use crate::shared::agent::config::default_model;
 use tinyiothub_core::memory::AgentMemory;
 
 use super::types::ListMemoriesQuery;
@@ -19,6 +20,14 @@ pub fn create_router() -> axum::Router<AppState> {
         .route(
             "/memories/{memory_id}/pin",
             axum::routing::put(pin_memory),
+        )
+        .route(
+            "/memories/profile/compile",
+            axum::routing::post(compile_profile),
+        )
+        .route(
+            "/memories/digest/weekly",
+            axum::routing::post(generate_weekly_digest),
         )
 }
 
@@ -85,5 +94,81 @@ async fn pin_memory(
     match state.memory_store.set_pinned(&memory_id, body.pinned).await {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({"pinned": body.pinned})),
         Err(e) => ApiResponseBuilder::error(format!("Failed to pin memory: {}", e)),
+    }
+}
+
+/// POST /memories/profile/compile?agent_id=...
+#[derive(Deserialize)]
+struct ProfileCompileQuery {
+    agent_id: String,
+}
+
+async fn compile_profile(
+    State(state): State<AppState>,
+    WorkspaceScope(workspace_id): WorkspaceScope,
+    Query(query): Query<ProfileCompileQuery>,
+) -> Json<tinyiothub_web::response::ApiResponse<serde_json::Value>> {
+    let ws = workspace_id.unwrap_or_default();
+    let auth_token = crate::shared::config::get()
+        .minimax
+        .as_ref()
+        .map(|m| m.auth_token.clone())
+        .unwrap_or_default();
+
+    let model = crate::modules::agent::config::service::get_config(&state.db_pool(), &query.agent_id)
+        .await
+        .map(|c| c.model)
+        .unwrap_or_else(|_| default_model());
+
+    let svc = match &state.agent_pool.reflection_service {
+        Some(s) => s,
+        None => return ApiResponseBuilder::error("Reflection engine not enabled".to_string()),
+    };
+
+    match svc.compile_profile(&ws, &query.agent_id, &auth_token, &model).await {
+        Ok(profile) => ApiResponseBuilder::success(serde_json::json!({"profile": profile})),
+        Err(e) => ApiResponseBuilder::error(format!("Failed to compile profile: {}", e)),
+    }
+}
+
+/// POST /memories/digest/weekly?agent_id=...
+async fn generate_weekly_digest(
+    State(state): State<AppState>,
+    WorkspaceScope(workspace_id): WorkspaceScope,
+    Query(query): Query<ProfileCompileQuery>,
+) -> Json<tinyiothub_web::response::ApiResponse<serde_json::Value>> {
+    let ws = workspace_id.unwrap_or_default();
+    let auth_token = crate::shared::config::get()
+        .minimax
+        .as_ref()
+        .map(|m| m.auth_token.clone())
+        .unwrap_or_default();
+
+    let model = crate::modules::agent::config::service::get_config(&state.db_pool(), &query.agent_id)
+        .await
+        .map(|c| c.model)
+        .unwrap_or_else(|_| default_model());
+
+    // Build the prompt from recent memories
+    let prompt = match crate::modules::agent::reflection::notifications::generate_weekly_digest(
+        &*state.memory_store,
+        &ws,
+        &query.agent_id,
+    )
+    .await
+    {
+        Ok(p) => p,
+        Err(e) => return ApiResponseBuilder::error(format!("Failed to build digest: {}", e)),
+    };
+
+    // Call LLM to generate the digest
+    let provider = match zeroclaw::providers::create_provider("minimaxi", Some(&auth_token)) {
+        Ok(p) => p,
+        Err(e) => return ApiResponseBuilder::error(format!("Failed to create provider: {}", e)),
+    };
+
+    match provider.chat_with_system(None, &prompt, &model, Some(0.5)).await {
+        Ok(digest) => ApiResponseBuilder::success(serde_json::json!({"digest": digest})),
+        Err(e) => ApiResponseBuilder::error(format!("Failed to generate digest: {}", e)),
     }
 }

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use tinyiothub_core::memory::MemoryStore;
 use tinyiothub_core::models::device_property::DeviceProperty;
 use tinyiothub_storage::cache::DeviceCache;
 use tokio::sync::OnceCell;
@@ -147,6 +148,9 @@ pub struct AppState {
 
     /// MQTT 客户端（可选，未配置时为空）
     pub mqtt_client: Option<Arc<crate::shared::mqtt_client::PlatformMqttClient>>,
+
+    /// Agent 记忆存储 - 持久化 agent 记忆到 SQLite
+    pub memory_store: Arc<dyn MemoryStore>,
 }
 
 impl AppState {
@@ -268,9 +272,15 @@ impl AppState {
             agent_settings.memory_backend,
             agent_settings.observer_backend
         );
+        // Agent Memory Store
+        let memory_store: Arc<dyn MemoryStore> = Arc::new(
+            tinyiothub_memory::SqliteAgentMemoryRepository::new(database.pool().clone()),
+        );
+
         let agent_pool: Arc<AgentPool> = Arc::new(
             AgentPool::new(
                 database.pool().clone(),
+                memory_store.clone(),
                 &agent_settings,
             )
             .expect("failed to build AgentPool"),
@@ -428,6 +438,8 @@ impl AppState {
             sysinfo_system: Arc::new(std::sync::Mutex::new(sysinfo::System::new_all())),
             gateway_service,
             mqtt_client: Some(mqtt_client),
+
+            memory_store,
         }
     }
 

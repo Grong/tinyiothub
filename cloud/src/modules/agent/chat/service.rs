@@ -90,6 +90,7 @@ pub async fn send_message(
     >,
     reflection_service: Option<std::sync::Arc<super::super::reflection::service::ReflectionService>>,
     enable_reflection: bool,
+    model: &str,
     workspace_id: &str,
     agent_id: &str,
 ) -> Result<mpsc::Receiver<ChatEvent>, ChatError> {
@@ -102,6 +103,7 @@ pub async fn send_message(
     let chat_handles_inner = Arc::clone(&chat_handles);
     let workspace_id = workspace_id.to_string();
     let agent_id = agent_id.to_string();
+    let reflection_model = model.to_string();
 
     let (tx, rx) = mpsc::channel::<ChatEvent>(100);
 
@@ -203,7 +205,7 @@ pub async fn send_message(
                     },
                 ];
                 tokio::spawn(async move {
-                    svc.micro_reflect(&workspace_id, &agent_id, &session_key, &turn_messages)
+                    svc.micro_reflect(&workspace_id, &agent_id, &session_key, &reflection_model, &turn_messages)
                         .await;
                 });
             }

@@ -185,11 +185,17 @@ impl AgentPool {
         let observer = zeroclaw::observability::create_observer(&observer_config);
         let observer: Arc<dyn Observer> = Arc::from(observer);
 
+        let minimax_auth_token = crate::shared::config::get()
+            .minimax
+            .as_ref()
+            .map(|m| m.auth_token.clone())
+            .unwrap_or_default();
         let notification_service = Arc::new(NotificationService::new());
         let reflection_service = Some(Arc::new(ReflectionService::new(
             Arc::clone(&memory_store),
             db_pool.clone(),
             Arc::clone(&notification_service),
+            minimax_auth_token,
         )));
 
         Ok(Self {
@@ -515,6 +521,7 @@ impl AgentPool {
         let agent = self.get_or_create(agent_id, &parsed.workspace_id).await?;
         let config = config_service::get_config(&self.db_pool, agent_id).await?;
         let enable_reflection = config.enable_reflection;
+        let model = config.model.clone();
         chat_service::send_message(
             &agent,
             message,
@@ -524,6 +531,7 @@ impl AgentPool {
             &self.chat_handles,
             self.reflection_service.clone(),
             enable_reflection,
+            &model,
             &parsed.workspace_id,
             agent_id,
         )
