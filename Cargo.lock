@@ -2650,7 +2650,7 @@ dependencies = [
 
 [[package]]
 name = "integration-tests"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "sqlx",
  "tinyiothub-cloud",
@@ -5756,7 +5756,7 @@ dependencies = [
 
 [[package]]
 name = "tinyiothub-cli"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "tinyiothub-core",
  "tinyiothub-runtime",
@@ -5764,7 +5764,7 @@ dependencies = [
 
 [[package]]
 name = "tinyiothub-cloud"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -5839,7 +5839,7 @@ dependencies = [
 
 [[package]]
 name = "tinyiothub-config"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -5847,7 +5847,7 @@ dependencies = [
 
 [[package]]
 name = "tinyiothub-core"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5862,56 +5862,56 @@ dependencies = [
 
 [[package]]
 name = "tinyiothub-driver-bacnet"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "tinyiothub-plugin",
 ]
 
 [[package]]
 name = "tinyiothub-driver-modbus"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "tinyiothub-plugin",
 ]
 
 [[package]]
 name = "tinyiothub-driver-mqtt"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "tinyiothub-plugin",
 ]
 
 [[package]]
 name = "tinyiothub-driver-mqtt-bridge"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "tinyiothub-plugin",
 ]
 
 [[package]]
 name = "tinyiothub-driver-onvif"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "tinyiothub-plugin",
 ]
 
 [[package]]
 name = "tinyiothub-driver-opcua"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "tinyiothub-plugin",
 ]
 
 [[package]]
 name = "tinyiothub-driver-snmp"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "tinyiothub-plugin",
 ]
 
 [[package]]
 name = "tinyiothub-edge"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "axum",
  "chrono",
@@ -5943,7 +5943,7 @@ dependencies = [
 
 [[package]]
 name = "tinyiothub-error"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -5953,7 +5953,7 @@ dependencies = [
 
 [[package]]
 name = "tinyiothub-macros"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5964,7 +5964,7 @@ dependencies = [
 
 [[package]]
 name = "tinyiothub-marketplace"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -5988,7 +5988,7 @@ dependencies = [
 
 [[package]]
 name = "tinyiothub-memory"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -6004,7 +6004,7 @@ dependencies = [
 
 [[package]]
 name = "tinyiothub-plugin"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "libloading",
  "tinyiothub-core",
@@ -6012,7 +6012,7 @@ dependencies = [
 
 [[package]]
 name = "tinyiothub-plugin-sdk"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "serde",
@@ -6024,7 +6024,7 @@ dependencies = [
 
 [[package]]
 name = "tinyiothub-runtime"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -6050,7 +6050,7 @@ dependencies = [
 
 [[package]]
 name = "tinyiothub-storage"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -6070,7 +6070,7 @@ dependencies = [
 
 [[package]]
 name = "tinyiothub-web"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "axum",
