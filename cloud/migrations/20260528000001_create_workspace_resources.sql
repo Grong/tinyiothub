@@ -14,3 +14,4 @@ CREATE TABLE workspace_resources (
 CREATE INDEX idx_resources_workspace ON workspace_resources(workspace_id);
 CREATE INDEX idx_resources_type ON workspace_resources(resource_type);
 CREATE INDEX idx_resources_name ON workspace_resources(name);
+CREATE INDEX idx_resources_workspace_type ON workspace_resources(workspace_id, resource_type);
