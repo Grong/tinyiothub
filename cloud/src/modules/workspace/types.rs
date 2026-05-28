@@ -55,6 +55,69 @@ pub struct AssignDeviceRequest {
     pub device_id: String,
 }
 
+/// Workspace resource entity
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct WorkspaceResource {
+    pub id: String,
+    pub workspace_id: String,
+    pub resource_type: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub file_path: String,
+    pub tags: Vec<String>,
+    pub metadata: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Search result with relevance score
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ResourceSearchResult {
+    pub id: String,
+    pub workspace_id: String,
+    pub resource_type: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub file_path: String,
+    pub tags: Vec<String>,
+    pub metadata: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub relevance: i64,
+}
+
+/// Create resource request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct CreateResourceRequest {
+    pub name: String,
+    pub description: Option<String>,
+    pub resource_type: String,
+    pub tags: Vec<String>,
+    pub metadata: Option<String>,
+}
+
+/// Update resource request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct UpdateResourceRequest {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub tags: Option<Vec<String>>,
+    pub metadata: Option<String>,
+}
+
+/// Resource query params
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct ResourceQueryParams {
+    pub page: Option<u32>,
+    pub page_size: Option<u32>,
+    pub resource_type: Option<String>,
+}
+
 /// Workspace query params
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
