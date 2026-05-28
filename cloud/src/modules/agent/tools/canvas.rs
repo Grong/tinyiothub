@@ -16,7 +16,10 @@ impl Tool for CanvasTool {
     }
 
     fn description(&self) -> &str {
-        "Push A2UI UI components to frontend. jsonl must be a string with TWO lines: Line1={\"createSurface\":{\"id\":\"<id>\",\"surfaceKind\":\"inline\"}}, Line2={\"updateComponents\":{\"components\":[{\"id\":\"<id>\",\"componentKind\":\"DeviceCard\",\"dataModel\":{...}}]}}. Example: canvas(toolCallId, {action:\"a2ui_push\",jsonl:JSON.stringify({createSurface:{id:\"s1\",surfaceKind:\"inline\"}})+\"\\n\"+JSON.stringify({updateComponents:{components:[{id:\"c1\",componentKind:\"DeviceCard\",dataModel:{deviceId:\"d1\",name:\"Device\",status:\"online\",properties:[]}}]}})})"
+        "Push A2UI UI components to frontend. jsonl must be a string with TWO lines: Line1={\"createSurface\":{\"id\":\"<id>\",\"surfaceKind\":\"inline\"}}, Line2={\"updateComponents\":{\"components\":[{\"id\":\"<id>\",\"componentKind\":\"DeviceCard\",\"dataModel\":{...}}]}}. \
+Component kinds: Basic: Text(content), Image(src), Icon(name), Row(children), Column(children), List(items), Card(title,children), Tabs(tabs), Modal(title,children,visible), Button(label), TextField(label,value), CheckBox(label,checked), ChoicePicker(options), Slider(min,max,value), DateTimeInput(value). \
+IoT: DeviceCard(deviceId,name,status,properties[]), DeviceTable(devices[],columns?), DataChart(type,data[],labels?), Scene3D(resourceId,activeFloorId?,selectedDeviceId?,deviceFilter?{floorId?,status?[],deviceType?[]},interactions?{enableOrbit?,enableFloorCut?,showMiniMap?,deviceLabelMode?}), ControlPanel(controls[],layout?), ProgressIndicator(value,max,label?). \
+Example: canvas(toolCallId, {action:\"a2ui_push\",jsonl:JSON.stringify({createSurface:{id:\"s1\",surfaceKind:\"inline\"}})+\"\\n\"+JSON.stringify({updateComponents:{components:[{id:\"c1\",componentKind:\"DeviceCard\",dataModel:{deviceId:\"d1\",name:\"Device\",status:\"online\",properties:[]}}]}})})"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
