@@ -47,9 +47,13 @@ export class A2uiRendererEngine {
       });
     } else if (msg.updateComponents) {
       const u = msg.updateComponents as Record<string, unknown>;
+      const targetSurfaceId = u.surfaceId as string | undefined;
       const components = u.components as Array<Record<string, unknown>>;
       for (const comp of components) {
-        for (const surface of this.surfaces.values()) {
+        const surfaces = targetSurfaceId
+          ? [this.surfaces.get(targetSurfaceId)].filter(Boolean) as A2uiSurface[]
+          : Array.from(this.surfaces.values());
+        for (const surface of surfaces) {
           const idx = surface.components.findIndex((c) => c.id === comp.id);
           const a2uiComp: A2uiComponent = {
             id: comp.id as string,

@@ -64,6 +64,13 @@ export class ChatView extends LitElement {
     this.chatState = createChatState(sessionKey || "", this.agentId);
     this._bindA2uiCallback();
     await loadChatHistory(this.chatState);
+    // Re-hydrate A2UI surfaces from history
+    for (const msg of this.chatState.chatMessages) {
+      const a2ui = (msg as Record<string, unknown>).a2ui as string | undefined;
+      if (a2ui) {
+        this.a2uiRenderer.handleA2uiMessage(a2ui);
+      }
+    }
     this.requestUpdate();
   }
 
@@ -111,6 +118,21 @@ export class ChatView extends LitElement {
   }
 
   private _handleA2uiAction(functionId: string, data: Record<string, unknown>): void {
+    const deviceId = data.deviceId as string | undefined;
+
+    // Navigation actions — go directly to the page, don't send a chat message
+    if (functionId === "viewDevice" && deviceId) {
+      window.history.pushState({}, "", `/devices/${deviceId}`);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+      return;
+    }
+    if (functionId === "controlDevice" && deviceId) {
+      window.history.pushState({}, "", `/devices/${deviceId}`);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+      return;
+    }
+
+    // Other A2UI actions — send as chat message for the agent to handle
     const actionMsg = `[操作] ${functionId}: ${JSON.stringify(data)}`;
     sendChatMessage(this.chatState, actionMsg);
     this._startStreamPolling();
