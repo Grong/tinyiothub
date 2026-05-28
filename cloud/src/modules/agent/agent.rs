@@ -148,6 +148,7 @@ pub struct AgentPool {
     pub memory_store: Arc<dyn tinyiothub_core::memory::MemoryStore>,
     pub reflection_service: Option<Arc<ReflectionService>>,
     pub notification_service: Arc<NotificationService>,
+    pub workspace_service: tokio::sync::RwLock<Option<Arc<crate::modules::workspace::WorkspaceService>>>,
 }
 
 impl AgentPool {
@@ -212,7 +213,16 @@ impl AgentPool {
             memory_store,
             reflection_service,
             notification_service,
+            workspace_service: tokio::sync::RwLock::new(None),
         })
+    }
+
+    pub async fn set_workspace_service(
+        &self,
+        service: Arc<crate::modules::workspace::WorkspaceService>,
+    ) {
+        let mut guard = self.workspace_service.write().await;
+        *guard = Some(service);
     }
 
     // ========================================================================
@@ -256,7 +266,8 @@ impl AgentPool {
 
                 let ws_dir = crate::shared::paths::workspace_dir(workspace_id);
 
-                let tools = tool_service::resolve_tools_for_agent(&config, workspace_id).await;
+                let ws_svc = self.workspace_service.read().await.clone();
+                let tools = tool_service::resolve_tools_for_agent(&config, workspace_id, ws_svc).await;
 
                 let agent = Self::build_agent(
                     &namespaced,
@@ -471,7 +482,8 @@ impl AgentPool {
     ) -> Result<serde_json::Value, AgentError> {
         config_service::verify_agent_workspace(&self.db_pool, agent_id, workspace_id).await?;
         let config = config_service::get_config(&self.db_pool, agent_id).await?;
-        let all_tools = tool_service::load_all_tools(workspace_id).await;
+        let ws_svc = self.workspace_service.read().await.clone();
+        let all_tools = tool_service::load_all_tools(workspace_id, ws_svc).await;
         let effective = tool_service::filter_by_denylist(all_tools, &config.tool_denylist);
         let names: Vec<&str> = effective.iter().map(|t| t.name()).collect();
         Ok(serde_json::json!({ "tools": names }))
