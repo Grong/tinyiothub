@@ -587,7 +587,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         }
 
         let mut builder = QueryBuilder::new(
-            "SELECT id, workspace_id, resource_type, name, description, file_path, tags, metadata, created_at, updated_at, relevance FROM ("
+            "SELECT id, workspace_id, resource_type, name, description, file_path, tags, metadata, created_at, updated_at, SUM(relevance) as relevance FROM ("
         );
 
         for (i, keyword) in keywords.iter().enumerate() {
@@ -627,7 +627,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
             );
         }
 
-        builder.push(") WHERE relevance > 0 ORDER BY relevance DESC LIMIT ");
+        builder.push(") GROUP BY id HAVING relevance > 0 ORDER BY relevance DESC LIMIT ");
         builder.push_bind(limit);
 
         let rows = builder

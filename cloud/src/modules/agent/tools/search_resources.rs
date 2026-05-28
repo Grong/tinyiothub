@@ -33,6 +33,10 @@ impl Tool for SearchWorkspaceResourcesTool {
         serde_json::json!({
             "type": "object",
             "properties": {
+                "workspace_id": {
+                    "type": "string",
+                    "description": "The workspace ID to search within"
+                },
                 "query": {
                     "type": "string",
                     "description": "Natural language search query, e.g. '3楼车间温度传感器' or 'factory floor plan'"
@@ -50,7 +54,7 @@ impl Tool for SearchWorkspaceResourcesTool {
                     "default": 10
                 }
             },
-            "required": ["query"],
+            "required": ["workspace_id", "query"],
         })
     }
 

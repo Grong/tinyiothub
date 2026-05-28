@@ -9,8 +9,8 @@ use tinyiothub_web::response::ApiResponseBuilder;
 
 use super::types::{
     AssignDeviceRequest, CreateResourceRequest, CreateWorkspaceRequest, ResourceQueryParams,
-    UpdateWorkspaceRequest, WorkspaceQueryParams, WorkspaceWithDeviceCount, WorkspaceResource,
-    ResourceSearchResult,
+    UpdateResourceRequest, UpdateWorkspaceRequest, WorkspaceQueryParams, WorkspaceWithDeviceCount,
+    WorkspaceResource, ResourceSearchResult,
 };
 use crate::shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims};
 
@@ -27,6 +27,7 @@ pub fn create_router() -> Router<AppState> {
         .route("/{id}/resources", post(create_resource))
         .route("/{id}/resources/search", get(search_resources))
         .route("/{id}/resources/{rid}", get(get_resource))
+        .route("/{id}/resources/{rid}", put(update_resource))
         .route("/{id}/resources/{rid}", delete(delete_resource))
 }
 
@@ -400,9 +401,7 @@ async fn create_resource(
 
     let sanitized_name = payload
         .name
-        .chars()
-        .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
-        .collect::<String>();
+        .replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', "_");
 
     let file_path = format!("{}/{}.bin", payload.resource_type, sanitized_name);
 
@@ -423,6 +422,47 @@ async fn create_resource(
         Err(e) => {
             tracing::error!("Failed to create resource: {}", e);
             ApiResponseBuilder::error("创建资源失败")
+        }
+    }
+}
+
+/// Update resource in workspace
+async fn update_resource(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path((workspace_id, resource_id)): Path<(String, String)>,
+    Json(payload): Json<UpdateResourceRequest>,
+) -> Json<ApiResponse<WorkspaceResource>> {
+    match state.workspace_service.find_by_id(&workspace_id).await {
+        Ok(Some(workspace)) => {
+            if workspace.tenant_id != claims.tenant_id {
+                return ApiResponseBuilder::error_with_code(403, "无权访问此工作空间");
+            }
+        }
+        Ok(None) => return ApiResponseBuilder::error_with_code(404, "工作空间不存在"),
+        Err(e) => {
+            tracing::error!("Failed to get workspace: {}", e);
+            return ApiResponseBuilder::error("获取工作空间失败");
+        }
+    }
+
+    match state
+        .workspace_service
+        .update_resource(
+            &workspace_id,
+            &resource_id,
+            payload.name.as_deref(),
+            payload.description.as_deref(),
+            payload.tags.as_deref(),
+            payload.metadata.as_deref(),
+        )
+        .await
+    {
+        Ok(Some(resource)) => ApiResponseBuilder::success(resource),
+        Ok(None) => ApiResponseBuilder::error_with_code(404, "资源不存在"),
+        Err(e) => {
+            tracing::error!("Failed to update resource: {}", e);
+            ApiResponseBuilder::error("更新资源失败")
         }
     }
 }

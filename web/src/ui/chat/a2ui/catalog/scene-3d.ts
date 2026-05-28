@@ -425,6 +425,7 @@ export class A2uiScene3D extends LitElement {
   private dispose() {
     if (this.rafId) cancelAnimationFrame(this.rafId);
     this.resizeObserver?.disconnect();
+    this.resizeObserver = undefined;
     for (const m of this.markers) m.element.remove();
     this.markers = [];
     this.controls?.dispose();
