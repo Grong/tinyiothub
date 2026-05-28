@@ -8,8 +8,9 @@ use axum::{
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use super::types::{
-    AssignDeviceRequest, CreateWorkspaceRequest, UpdateWorkspaceRequest, WorkspaceQueryParams,
-    WorkspaceWithDeviceCount,
+    AssignDeviceRequest, CreateResourceRequest, CreateWorkspaceRequest, ResourceQueryParams,
+    UpdateWorkspaceRequest, WorkspaceQueryParams, WorkspaceWithDeviceCount, WorkspaceResource,
+    ResourceSearchResult,
 };
 use crate::shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims};
 
@@ -22,6 +23,11 @@ pub fn create_router() -> Router<AppState> {
         .route("/{id}", put(update_workspace))
         .route("/{id}", delete(delete_workspace))
         .route("/{id}/devices", post(assign_device))
+        .route("/{id}/resources", get(list_resources))
+        .route("/{id}/resources", post(create_resource))
+        .route("/{id}/resources/search", get(search_resources))
+        .route("/{id}/resources/{rid}", get(get_resource))
+        .route("/{id}/resources/{rid}", delete(delete_resource))
 }
 
 /// List workspaces for current tenant
@@ -252,5 +258,203 @@ async fn assign_device(
     match state.workspace_service.assign_device(&payload.device_id, &workspace_id).await {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({"success": true})),
         Err(e) => ApiResponseBuilder::error_with_code(409, e.to_string()),
+    }
+}
+
+/// List resources in workspace
+async fn list_resources(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(id): Path<String>,
+    Query(params): Query<ResourceQueryParams>,
+) -> Json<ApiResponse<Vec<WorkspaceResource>>> {
+    match state.workspace_service.find_by_id(&id).await {
+        Ok(Some(workspace)) => {
+            if workspace.tenant_id != claims.tenant_id {
+                return ApiResponseBuilder::error_with_code(403, "无权访问此工作空间");
+            }
+        }
+        Ok(None) => return ApiResponseBuilder::error_with_code(404, "工作空间不存在"),
+        Err(e) => {
+            tracing::error!("Failed to get workspace: {}", e);
+            return ApiResponseBuilder::error("获取工作空间失败");
+        }
+    }
+
+    match state
+        .workspace_service
+        .list_resources(&id, params.resource_type.as_deref(), params.page, params.page_size)
+        .await
+    {
+        Ok(resources) => ApiResponseBuilder::success(resources),
+        Err(e) => {
+            tracing::error!("Failed to list resources: {}", e);
+            ApiResponseBuilder::error("获取资源列表失败")
+        }
+    }
+}
+
+/// Search resources in workspace
+async fn search_resources(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(id): Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Json<ApiResponse<Vec<ResourceSearchResult>>> {
+    match state.workspace_service.find_by_id(&id).await {
+        Ok(Some(workspace)) => {
+            if workspace.tenant_id != claims.tenant_id {
+                return ApiResponseBuilder::error_with_code(403, "无权访问此工作空间");
+            }
+        }
+        Ok(None) => return ApiResponseBuilder::error_with_code(404, "工作空间不存在"),
+        Err(e) => {
+            tracing::error!("Failed to get workspace: {}", e);
+            return ApiResponseBuilder::error("获取工作空间失败");
+        }
+    }
+
+    let query = match params.get("q") {
+        Some(q) if !q.is_empty() => q.as_str(),
+        _ => return ApiResponseBuilder::error_with_code(400, "搜索关键词不能为空"),
+    };
+
+    let resource_type = params.get("type").map(|s| s.as_str());
+
+    let limit: i64 = params
+        .get("limit")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10)
+        .clamp(1, 50);
+
+    match state
+        .workspace_service
+        .search_resources(&id, query, resource_type, limit)
+        .await
+    {
+        Ok(results) => ApiResponseBuilder::success(results),
+        Err(e) => {
+            tracing::error!("Failed to search resources: {}", e);
+            ApiResponseBuilder::error("搜索资源失败")
+        }
+    }
+}
+
+/// Get resource by ID
+async fn get_resource(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path((workspace_id, resource_id)): Path<(String, String)>,
+) -> Json<ApiResponse<WorkspaceResource>> {
+    match state.workspace_service.find_by_id(&workspace_id).await {
+        Ok(Some(workspace)) => {
+            if workspace.tenant_id != claims.tenant_id {
+                return ApiResponseBuilder::error_with_code(403, "无权访问此工作空间");
+            }
+        }
+        Ok(None) => return ApiResponseBuilder::error_with_code(404, "工作空间不存在"),
+        Err(e) => {
+            tracing::error!("Failed to get workspace: {}", e);
+            return ApiResponseBuilder::error("获取工作空间失败");
+        }
+    }
+
+    match state
+        .workspace_service
+        .find_resource_by_id(&workspace_id, &resource_id)
+        .await
+    {
+        Ok(Some(resource)) => ApiResponseBuilder::success(resource),
+        Ok(None) => ApiResponseBuilder::error_with_code(404, "资源不存在"),
+        Err(e) => {
+            tracing::error!("Failed to get resource: {}", e);
+            ApiResponseBuilder::error("获取资源失败")
+        }
+    }
+}
+
+/// Create resource in workspace
+async fn create_resource(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(workspace_id): Path<String>,
+    Json(payload): Json<CreateResourceRequest>,
+) -> Json<ApiResponse<WorkspaceResource>> {
+    match state.workspace_service.find_by_id(&workspace_id).await {
+        Ok(Some(workspace)) => {
+            if workspace.tenant_id != claims.tenant_id {
+                return ApiResponseBuilder::error_with_code(403, "无权访问此工作空间");
+            }
+        }
+        Ok(None) => return ApiResponseBuilder::error_with_code(404, "工作空间不存在"),
+        Err(e) => {
+            tracing::error!("Failed to get workspace: {}", e);
+            return ApiResponseBuilder::error("获取工作空间失败");
+        }
+    }
+
+    let valid_types = ["scene", "device_model", "image", "document"];
+    if !valid_types.contains(&payload.resource_type.as_str()) {
+        return ApiResponseBuilder::error_with_code(400, "无效的资源类型");
+    }
+
+    let sanitized_name = payload
+        .name
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+        .collect::<String>();
+
+    let file_path = format!("{}/{}.bin", payload.resource_type, sanitized_name);
+
+    match state
+        .workspace_service
+        .create_resource(
+            &workspace_id,
+            &payload.resource_type,
+            &payload.name,
+            payload.description.as_deref(),
+            &file_path,
+            &payload.tags,
+            payload.metadata.as_deref(),
+        )
+        .await
+    {
+        Ok(resource) => ApiResponseBuilder::success(resource),
+        Err(e) => {
+            tracing::error!("Failed to create resource: {}", e);
+            ApiResponseBuilder::error("创建资源失败")
+        }
+    }
+}
+
+/// Delete resource from workspace
+async fn delete_resource(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path((workspace_id, resource_id)): Path<(String, String)>,
+) -> Json<ApiResponse<serde_json::Value>> {
+    match state.workspace_service.find_by_id(&workspace_id).await {
+        Ok(Some(workspace)) => {
+            if workspace.tenant_id != claims.tenant_id {
+                return ApiResponseBuilder::error_with_code(403, "无权访问此工作空间");
+            }
+        }
+        Ok(None) => return ApiResponseBuilder::error_with_code(404, "工作空间不存在"),
+        Err(e) => {
+            tracing::error!("Failed to get workspace: {}", e);
+            return ApiResponseBuilder::error("获取工作空间失败");
+        }
+    }
+
+    match state
+        .workspace_service
+        .delete_resource(&workspace_id, &resource_id)
+        .await
+    {
+        Ok(()) => ApiResponseBuilder::success(serde_json::json!({"success": true})),
+        Err(e) => {
+            tracing::error!("Failed to delete resource: {}", e);
+            ApiResponseBuilder::error("删除资源失败")
+        }
     }
 }
