@@ -59,10 +59,7 @@ impl Tool for SearchWorkspaceResourcesTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        let workspace_id = args
-            .get("workspace_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let workspace_id = args.get("workspace_id").and_then(|v| v.as_str()).unwrap_or("");
 
         if workspace_id.is_empty() {
             return Ok(ToolResult {
@@ -72,18 +69,11 @@ impl Tool for SearchWorkspaceResourcesTool {
             });
         }
 
-        let query = args
-            .get("query")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
 
         let resource_type = args.get("resource_type").and_then(|v| v.as_str());
 
-        let limit = args
-            .get("limit")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(10)
-            .clamp(1, 50);
+        let limit = args.get("limit").and_then(|v| v.as_i64()).unwrap_or(10).clamp(1, 50);
 
         match self
             .workspace_service

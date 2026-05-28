@@ -86,7 +86,17 @@ impl WorkspaceService {
         tags: &[String],
         metadata: Option<&str>,
     ) -> Result<WorkspaceResource> {
-        self.repository.create_resource(workspace_id, resource_type, name, description, file_path, tags, metadata).await
+        self.repository
+            .create_resource(
+                workspace_id,
+                resource_type,
+                name,
+                description,
+                file_path,
+                tags,
+                metadata,
+            )
+            .await
     }
 
     pub async fn update_resource(
@@ -98,12 +108,15 @@ impl WorkspaceService {
         tags: Option<&[String]>,
         metadata: Option<&str>,
     ) -> Result<Option<WorkspaceResource>> {
-        self.repository.update_resource(workspace_id, resource_id, name, description, tags, metadata).await
+        self.repository
+            .update_resource(workspace_id, resource_id, name, description, tags, metadata)
+            .await
     }
 
     pub async fn delete_resource(&self, workspace_id: &str, resource_id: &str) -> Result<()> {
         // Delete file first, then DB record
-        if let Ok(Some(res)) = self.repository.find_resource_by_id(workspace_id, resource_id).await {
+        if let Ok(Some(res)) = self.repository.find_resource_by_id(workspace_id, resource_id).await
+        {
             let base_dir = crate::shared::paths::workspace_dir(workspace_id);
             let file_path = base_dir.join("resources").join(&res.file_path);
             if file_path.exists() {

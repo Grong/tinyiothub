@@ -135,9 +135,8 @@ pub async fn load_all_tools(
     tool_boxed.push(Box::new(CanvasTool));
 
     if let Some(ws_svc) = workspace_service {
-        tool_boxed.push(Box::new(
-            super::search_resources::SearchWorkspaceResourcesTool::new(ws_svc),
-        ));
+        tool_boxed
+            .push(Box::new(super::search_resources::SearchWorkspaceResourcesTool::new(ws_svc)));
     }
 
     if let Some(registry) = crate::modules::mcp::get_mcp_registry() {

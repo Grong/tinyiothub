@@ -9,8 +9,8 @@ use tinyiothub_web::response::ApiResponseBuilder;
 
 use super::types::{
     AssignDeviceRequest, CreateResourceRequest, CreateWorkspaceRequest, ResourceQueryParams,
-    UpdateResourceRequest, UpdateWorkspaceRequest, WorkspaceQueryParams, WorkspaceWithDeviceCount,
-    WorkspaceResource, ResourceSearchResult,
+    ResourceSearchResult, UpdateResourceRequest, UpdateWorkspaceRequest, WorkspaceQueryParams,
+    WorkspaceResource, WorkspaceWithDeviceCount,
 };
 use crate::shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims};
 
@@ -322,17 +322,9 @@ async fn search_resources(
 
     let resource_type = params.get("type").map(|s| s.as_str());
 
-    let limit: i64 = params
-        .get("limit")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(10)
-        .clamp(1, 50);
+    let limit: i64 = params.get("limit").and_then(|s| s.parse().ok()).unwrap_or(10).clamp(1, 50);
 
-    match state
-        .workspace_service
-        .search_resources(&id, query, resource_type, limit)
-        .await
-    {
+    match state.workspace_service.search_resources(&id, query, resource_type, limit).await {
         Ok(results) => ApiResponseBuilder::success(results),
         Err(e) => {
             tracing::error!("Failed to search resources: {}", e);
@@ -360,11 +352,7 @@ async fn get_resource(
         }
     }
 
-    match state
-        .workspace_service
-        .find_resource_by_id(&workspace_id, &resource_id)
-        .await
-    {
+    match state.workspace_service.find_resource_by_id(&workspace_id, &resource_id).await {
         Ok(Some(resource)) => ApiResponseBuilder::success(resource),
         Ok(None) => ApiResponseBuilder::error_with_code(404, "资源不存在"),
         Err(e) => {
@@ -399,9 +387,8 @@ async fn create_resource(
         return ApiResponseBuilder::error_with_code(400, "无效的资源类型");
     }
 
-    let sanitized_name = payload
-        .name
-        .replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', "_");
+    let sanitized_name =
+        payload.name.replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', "_");
 
     let file_path = format!("{}/{}.bin", payload.resource_type, sanitized_name);
 
@@ -486,11 +473,7 @@ async fn delete_resource(
         }
     }
 
-    match state
-        .workspace_service
-        .delete_resource(&workspace_id, &resource_id)
-        .await
-    {
+    match state.workspace_service.delete_resource(&workspace_id, &resource_id).await {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({"success": true})),
         Err(e) => {
             tracing::error!("Failed to delete resource: {}", e);

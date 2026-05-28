@@ -3,9 +3,7 @@ use sqlx::{FromRow, QueryBuilder};
 use tinyiothub_core::error::{Error, Result};
 use tinyiothub_storage::sqlite::Database;
 
-use super::types::{
-    ResourceSearchResult, Workspace, WorkspaceResource, WorkspaceWithDeviceCount,
-};
+use super::types::{ResourceSearchResult, Workspace, WorkspaceResource, WorkspaceWithDeviceCount};
 
 /// Repository interface for workspace persistence
 #[async_trait]
@@ -587,7 +585,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         }
 
         let mut builder = QueryBuilder::new(
-            "SELECT id, workspace_id, resource_type, name, description, file_path, tags, metadata, created_at, updated_at, SUM(relevance) as relevance FROM ("
+            "SELECT id, workspace_id, resource_type, name, description, file_path, tags, metadata, created_at, updated_at, SUM(relevance) as relevance FROM (",
         );
 
         for (i, keyword) in keywords.iter().enumerate() {
@@ -596,19 +594,24 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
             }
             builder.push(
                 "SELECT *, (
-                    (CASE WHEN name LIKE "
+                    (CASE WHEN name LIKE ",
             );
             builder.push_bind(format!("%{}%", keyword));
-            builder.push(" THEN 3 ELSE 0 END) +
-                    (CASE WHEN description LIKE ");
+            builder.push(
+                " THEN 3 ELSE 0 END) +
+                    (CASE WHEN description LIKE ",
+            );
             builder.push_bind(format!("%{}%", keyword));
-            builder.push(" THEN 2 ELSE 0 END) +
-                    (CASE WHEN EXISTS (SELECT 1 FROM json_each(tags) WHERE value LIKE ");
+            builder.push(
+                " THEN 2 ELSE 0 END) +
+                    (CASE WHEN EXISTS (SELECT 1 FROM json_each(tags) WHERE value LIKE ",
+            );
             builder.push_bind(format!("%{}%", keyword));
-            builder.push(") THEN 2 ELSE 0 END)
+            builder.push(
+                ") THEN 2 ELSE 0 END)
                 ) as relevance
                 FROM workspace_resources
-                WHERE workspace_id = "
+                WHERE workspace_id = ",
             );
             builder.push_bind(workspace_id);
             if let Some(rt) = resource_type {
@@ -619,12 +622,12 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
             builder.push_bind(format!("%{}%", keyword));
             builder.push(" OR description LIKE ");
             builder.push_bind(format!("%{}%", keyword));
-            builder.push(" OR EXISTS (
-                    SELECT 1 FROM json_each(tags) WHERE value LIKE ");
-            builder.push_bind(format!("%{}%", keyword));
             builder.push(
-                "))"
+                " OR EXISTS (
+                    SELECT 1 FROM json_each(tags) WHERE value LIKE ",
             );
+            builder.push_bind(format!("%{}%", keyword));
+            builder.push("))");
         }
 
         builder.push(") GROUP BY id HAVING relevance > 0 ORDER BY relevance DESC LIMIT ");

@@ -148,7 +148,8 @@ pub struct AgentPool {
     pub memory_store: Arc<dyn tinyiothub_core::memory::MemoryStore>,
     pub reflection_service: Option<Arc<ReflectionService>>,
     pub notification_service: Arc<NotificationService>,
-    pub workspace_service: tokio::sync::RwLock<Option<Arc<crate::modules::workspace::WorkspaceService>>>,
+    pub workspace_service:
+        tokio::sync::RwLock<Option<Arc<crate::modules::workspace::WorkspaceService>>>,
 }
 
 impl AgentPool {
@@ -267,7 +268,8 @@ impl AgentPool {
                 let ws_dir = crate::shared::paths::workspace_dir(workspace_id);
 
                 let ws_svc = self.workspace_service.read().await.clone();
-                let tools = tool_service::resolve_tools_for_agent(&config, workspace_id, ws_svc).await;
+                let tools =
+                    tool_service::resolve_tools_for_agent(&config, workspace_id, ws_svc).await;
 
                 let agent = Self::build_agent(
                     &namespaced,
