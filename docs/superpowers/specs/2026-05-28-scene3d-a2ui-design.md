@@ -572,7 +572,28 @@ A2UI 消息序列:
 
 ---
 
-## 10. 相关参考
+## 10. CEO Review 决策记录
+
+> 2026-05-28 `/plan-ceo-review` HOLD SCOPE 模式
+
+### 审查中确认的关键决策
+
+| # | 主题 | 决策 | 理由 |
+|---|------|------|------|
+| 1 | 文件上传安全 | 添加上传校验（大小限制 50MB、MIME 白名单、目录遍历防护） | CEO Review Section 3 关键发现 |
+| 2 | GLB 加载错误处理 | 完整错误边界（错误占位符 + 重试按钮 + WebGL 不支持降级） | CEO Review Section 2 关键发现 |
+| 3 | 500+ 设备标记性能 | 视锥体裁剪 + 距离 LOD | CEO Review Section 1/7 关键发现 |
+| 4 | Agent 多搜索结果 | 自动取 relevance 最高场景 | 简化交互，错误时 Agent 可道歉并重新搜索 |
+| 5 | 前端测试策略 | Playwright E2E + 手动视觉验证 | Three.js WebGL 组件无法 unit test |
+
+### 审查中发现的其他问题（非阻塞）
+
+- **Section 4:** 场景加载中用户离开需取消加载逻辑
+- **Section 6:** 需要制定 Playwright E2E 测试基础设施计划
+- **Section 8:** 缺少 Scene3D 加载时间指标和 GLB 加载失败日志
+- **Section 11:** GLB 加载 spinner、空设备提示、移动端高度适配
+
+## 11. 相关参考
 
 - [用友 BIP 本体智能体发布](http://stock.finance.sina.com.cn/stock/go.php/vReport_Show/kind/search/rptid/821928969835/index.phtml)
 - [Brick Schema — 智能建筑本体标准](https://brickschema.org/)
