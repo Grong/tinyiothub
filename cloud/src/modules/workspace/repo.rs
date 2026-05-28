@@ -590,44 +590,44 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
             "SELECT id, workspace_id, resource_type, name, description, file_path, tags, metadata, created_at, updated_at, relevance FROM ("
         );
 
-        for (i, _keyword) in keywords.iter().enumerate() {
+        for (i, keyword) in keywords.iter().enumerate() {
             if i > 0 {
-                builder.push(" UNION ");
+                builder.push(" UNION ALL ");
             }
             builder.push(
                 "SELECT *, (
                     (CASE WHEN name LIKE "
             );
-            builder.push_bind(format!("%{}%", _keyword));
+            builder.push_bind(format!("%{}%", keyword));
             builder.push(" THEN 3 ELSE 0 END) +
                     (CASE WHEN description LIKE ");
-            builder.push_bind(format!("%{}%", _keyword));
+            builder.push_bind(format!("%{}%", keyword));
             builder.push(" THEN 2 ELSE 0 END) +
                     (CASE WHEN EXISTS (SELECT 1 FROM json_each(tags) WHERE value LIKE ");
-            builder.push_bind(format!("%{}%", _keyword));
+            builder.push_bind(format!("%{}%", keyword));
             builder.push(") THEN 2 ELSE 0 END)
                 ) as relevance
                 FROM workspace_resources
                 WHERE workspace_id = "
             );
             builder.push_bind(workspace_id);
-            builder.push(" AND (");
-            builder.push_bind(resource_type);
-            builder.push(" IS NULL OR resource_type = ");
-            builder.push_bind(resource_type);
-            builder.push(") AND (name LIKE ");
-            builder.push_bind(format!("%{}%", _keyword));
+            if let Some(rt) = resource_type {
+                builder.push(" AND resource_type = ");
+                builder.push_bind(rt);
+            }
+            builder.push(" AND (name LIKE ");
+            builder.push_bind(format!("%{}%", keyword));
             builder.push(" OR description LIKE ");
-            builder.push_bind(format!("%{}%", _keyword));
+            builder.push_bind(format!("%{}%", keyword));
             builder.push(" OR EXISTS (
                     SELECT 1 FROM json_each(tags) WHERE value LIKE ");
-            builder.push_bind(format!("%{}%", _keyword));
+            builder.push_bind(format!("%{}%", keyword));
             builder.push(
                 "))"
             );
         }
 
-        builder.push(") ORDER BY relevance DESC LIMIT ");
+        builder.push(") WHERE relevance > 0 ORDER BY relevance DESC LIMIT ");
         builder.push_bind(limit);
 
         let rows = builder
