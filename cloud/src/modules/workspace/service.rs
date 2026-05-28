@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::{
     repo::WorkspaceRepository,
-    types::{Workspace, WorkspaceWithDeviceCount},
+    types::{ResourceSearchResult, Workspace, WorkspaceResource, WorkspaceWithDeviceCount},
 };
 use crate::shared::error::Result;
 
@@ -56,5 +56,70 @@ impl WorkspaceService {
 
     pub async fn assign_device(&self, device_id: &str, workspace_id: &str) -> Result<()> {
         self.repository.assign_device(device_id, workspace_id).await
+    }
+
+    pub async fn list_resources(
+        &self,
+        workspace_id: &str,
+        resource_type: Option<&str>,
+        page: Option<u32>,
+        page_size: Option<u32>,
+    ) -> Result<Vec<WorkspaceResource>> {
+        self.repository.list_resources(workspace_id, resource_type, page, page_size).await
+    }
+
+    pub async fn find_resource_by_id(
+        &self,
+        workspace_id: &str,
+        resource_id: &str,
+    ) -> Result<Option<WorkspaceResource>> {
+        self.repository.find_resource_by_id(workspace_id, resource_id).await
+    }
+
+    pub async fn create_resource(
+        &self,
+        workspace_id: &str,
+        resource_type: &str,
+        name: &str,
+        description: Option<&str>,
+        file_path: &str,
+        tags: &[String],
+        metadata: Option<&str>,
+    ) -> Result<WorkspaceResource> {
+        self.repository.create_resource(workspace_id, resource_type, name, description, file_path, tags, metadata).await
+    }
+
+    pub async fn update_resource(
+        &self,
+        workspace_id: &str,
+        resource_id: &str,
+        name: Option<&str>,
+        description: Option<&str>,
+        tags: Option<&[String]>,
+        metadata: Option<&str>,
+    ) -> Result<Option<WorkspaceResource>> {
+        self.repository.update_resource(workspace_id, resource_id, name, description, tags, metadata).await
+    }
+
+    pub async fn delete_resource(&self, workspace_id: &str, resource_id: &str) -> Result<()> {
+        // Delete file first, then DB record
+        if let Ok(Some(res)) = self.repository.find_resource_by_id(workspace_id, resource_id).await {
+            let base_dir = crate::shared::paths::workspace_dir(workspace_id);
+            let file_path = base_dir.join("resources").join(&res.file_path);
+            if file_path.exists() {
+                let _ = tokio::fs::remove_file(&file_path).await;
+            }
+        }
+        self.repository.delete_resource(workspace_id, resource_id).await
+    }
+
+    pub async fn search_resources(
+        &self,
+        workspace_id: &str,
+        query: &str,
+        resource_type: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<ResourceSearchResult>> {
+        self.repository.search_resources(workspace_id, query, resource_type, limit).await
     }
 }
