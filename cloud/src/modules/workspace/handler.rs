@@ -9,8 +9,8 @@ use tinyiothub_web::response::ApiResponseBuilder;
 
 use super::types::{
     AssignDeviceRequest, CreateResourceRequest, CreateWorkspaceRequest, ResourceQueryParams,
-    ResourceSearchResult, UpdateResourceRequest, UpdateWorkspaceRequest, WorkspaceQueryParams,
-    WorkspaceResource, WorkspaceWithDeviceCount,
+    ResourceSearchResult, SuggestTagsRequest, UpdateResourceRequest, UpdateWorkspaceRequest,
+    WorkspaceQueryParams, WorkspaceResource, WorkspaceWithDeviceCount,
 };
 use crate::shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims};
 
@@ -25,6 +25,7 @@ pub fn create_router() -> Router<AppState> {
         .route("/{id}/devices", post(assign_device))
         .route("/{id}/resources", get(list_resources))
         .route("/{id}/resources", post(create_resource))
+        .route("/{id}/resources/suggest-tags", post(suggest_tags))
         .route("/{id}/resources/search", get(search_resources))
         .route("/{id}/resources/{rid}", get(get_resource))
         .route("/{id}/resources/{rid}", put(update_resource))
@@ -390,7 +391,9 @@ async fn create_resource(
     let sanitized_name =
         payload.name.replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', "_");
 
-    let file_path = format!("{}/{}.bin", payload.resource_type, sanitized_name);
+    let file_path = payload
+        .file_path
+        .unwrap_or_else(|| format!("{}/{}.bin", payload.resource_type, sanitized_name));
 
     match state
         .workspace_service
@@ -478,6 +481,92 @@ async fn delete_resource(
         Err(e) => {
             tracing::error!("Failed to delete resource: {}", e);
             ApiResponseBuilder::error("删除资源失败")
+        }
+    }
+}
+
+/// Suggest tags for a resource using AI
+async fn suggest_tags(
+    State(_state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(workspace_id): Path<String>,
+    Json(payload): Json<SuggestTagsRequest>,
+) -> Json<ApiResponse<Vec<String>>> {
+    // Verify workspace access
+    match _state.workspace_service.find_by_id(&workspace_id).await {
+        Ok(Some(workspace)) => {
+            if workspace.tenant_id != claims.tenant_id {
+                return ApiResponseBuilder::error_with_code(403, "无权访问此工作空间");
+            }
+        }
+        Ok(None) => return ApiResponseBuilder::error_with_code(404, "工作空间不存在"),
+        Err(e) => {
+            tracing::error!("Failed to get workspace: {}", e);
+            return ApiResponseBuilder::error("获取工作空间失败");
+        }
+    }
+
+    let auth_token = match crate::shared::config::get()
+        .minimax
+        .as_ref()
+        .map(|m| m.auth_token.clone())
+    {
+        Some(t) => t,
+        None => return ApiResponseBuilder::error("AI 服务未配置"),
+    };
+
+    let model = crate::shared::config::get()
+        .minimax
+        .as_ref()
+        .map(|m| m.model.clone())
+        .unwrap_or_else(|| "minimax-m2".into());
+
+    let type_label = match payload.resource_type.as_str() {
+        "scene" => "3D 场景",
+        "device_model" => "设备模型",
+        "image" => "图片",
+        "document" => "文档",
+        other => other,
+    };
+
+    let prompt = format!(
+        "你是一个资源标签生成助手。根据用户提供的资源信息，生成 3-5 个简洁的中文标签。\n\
+         严格只返回逗号分隔的标签，不要任何解释或额外文字。\n\n\
+         示例输出：3D模型, 工厂, 设备, 车间\n\n\
+         资源信息：\n- 文件名：{}\n- 资源类型：{}{}",
+        payload.name,
+        type_label,
+        payload
+            .description
+            .as_deref()
+            .map_or(String::new(), |d| format!("\n- 描述：{}", d)),
+    );
+
+    let provider = match zeroclaw::providers::create_provider("minimaxi", Some(&auth_token)) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!("Failed to create AI provider: {}", e);
+            return ApiResponseBuilder::error("AI 服务初始化失败");
+        }
+    };
+
+    match provider.chat_with_system(None, &prompt, &model, Some(0.3)).await {
+        Ok(response) => {
+            let tags: Vec<String> = response
+                .split([',', '，', '、', '\n'])
+                .map(|t| t.trim().trim_matches('"').trim_matches('\'').to_string())
+                .filter(|t| !t.is_empty() && t.len() < 20)
+                .collect();
+
+            if tags.is_empty() {
+                ApiResponseBuilder::error("AI 未生成有效标签")
+            } else {
+                ApiResponseBuilder::success(tags)
+            }
+        }
+        Err(e) => {
+            tracing::error!("AI tag generation failed: {}", e);
+            ApiResponseBuilder::error("AI 生成标签失败，请稍后重试")
         }
     }
 }

@@ -2,7 +2,7 @@
  * Workspace Resources API
  */
 
-import { apiGet, apiPost, apiPut, apiDelete } from './client.js';
+import { apiGet, apiPost, apiPut, apiDelete, apiUpload } from './client.js';
 import type { PaginatedResponse } from './client.js';
 
 export interface WorkspaceResource {
@@ -28,6 +28,7 @@ export interface CreateResourceRequest {
   description?: string;
   tags?: string[];
   metadata?: string;
+  filePath?: string;
 }
 
 export interface UpdateResourceRequest {
@@ -41,6 +42,12 @@ export interface ResourceListParams {
   resourceType?: string;
   page?: number;
   pageSize?: number;
+}
+
+export interface SuggestTagsRequest {
+  name: string;
+  resourceType: string;
+  description?: string;
 }
 
 export interface ResourceSearchParams {
@@ -95,5 +102,23 @@ export const workspaceResourceApi = {
     const wsId = getWorkspaceId();
     if (!wsId) throw new Error('No workspace selected');
     return apiDelete<void>(`/workspaces/${wsId}/resources/${resourceId}`);
+  },
+
+  async suggestTags(data: SuggestTagsRequest) {
+    const wsId = getWorkspaceId();
+    if (!wsId) throw new Error('No workspace selected');
+    return apiPost<string[]>(`/workspaces/${wsId}/resources/suggest-tags`, data);
+  },
+
+  async uploadFile(file: File, onProgress?: (pct: number) => void) {
+    const wsId = getWorkspaceId();
+    if (!wsId) throw new Error('No workspace selected');
+    const formData = new FormData();
+    formData.append('file', file);
+    return apiUpload<{ filePath: string; fileSize: number }>(
+      `/workspaces/${wsId}/resources/upload`,
+      formData,
+      onProgress,
+    );
   },
 };

@@ -97,6 +97,7 @@ pub struct CreateResourceRequest {
     pub resource_type: String,
     pub tags: Vec<String>,
     pub metadata: Option<String>,
+    pub file_path: Option<String>,
 }
 
 /// Update resource request
@@ -107,6 +108,15 @@ pub struct UpdateResourceRequest {
     pub description: Option<String>,
     pub tags: Option<Vec<String>>,
     pub metadata: Option<String>,
+}
+
+/// Suggest tags request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SuggestTagsRequest {
+    pub name: String,
+    pub resource_type: String,
+    pub description: Option<String>,
 }
 
 /// Resource query params
