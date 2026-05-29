@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+pub mod knowledge;
+pub use knowledge::*;
+
 /// Workspace entity
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
