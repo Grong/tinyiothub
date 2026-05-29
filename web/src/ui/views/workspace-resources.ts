@@ -50,6 +50,10 @@ function parseTags(tags: string[] | string): string[] {
 
 @customElement('view-workspace-resources')
 export class ViewWorkspaceResources extends LitElement {
+  createRenderRoot() {
+    return this;
+  }
+
   @state() loading = true;
   @state() error = '';
   @state() resources: WorkspaceResource[] = [];
