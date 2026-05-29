@@ -1,3 +1,5 @@
+pub mod knowledge;
+
 use std::sync::Arc;
 
 use super::{
