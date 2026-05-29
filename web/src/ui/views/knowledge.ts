@@ -33,7 +33,7 @@ function getExcerpt(content: string): string {
   return content.replace(/^#+\s/gm, '').trim().slice(0, 120);
 }
 
-@customElement('knowledge-view')
+@customElement('view-knowledge')
 export class KnowledgeView extends LitElement {
   createRenderRoot() { return this; }
 

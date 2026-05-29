@@ -34,6 +34,7 @@ const lazyViews: Record<string, () => Promise<void>> = {
   'driver-health': () => import('./views/driver-health.js').then(() => {}),
   'memory-dashboard': () => import('./views/memory-dashboard.js').then(() => {}),
   'workspace-resources': () => import('./views/workspace-resources.js').then(() => {}),
+  knowledge: () => import('./views/knowledge.js').then(() => {}),
 };
 
 interface NavItem {
@@ -75,6 +76,11 @@ const NAV_GROUPS: NavGroup[] = [
         route: 'workspace-resources',
         label: '工作区资源',
         icon: 'M21.17 2.06A13.09 13.09 0 0 0 19 2a13.94 13.94 0 0 0-7.53 2.25A12.73 12.73 0 0 0 9 2a13.87 13.87 0 0 0-7.46 2.18A2 2 0 0 0 1 5.72v14.56a2 2 0 0 0 2.83 1.82A12 12 0 0 1 9 22a12.73 12.73 0 0 1 7.47-2.25 13.87 13.87 0 0 0 7.46-2.18A2 2 0 0 0 25 16.28V1.72a2 2 0 0 0-1.83-1.66zM17 18H7v-2h10zm4-4H7v-2h14z',
+      },
+      {
+        route: 'knowledge',
+        label: '知识图谱',
+        icon: 'M5 3a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M19 3a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M12 17a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M7 7l5 8 M17 7l-5 8',
       },
       {
         route: 'marketplace',
@@ -354,6 +360,7 @@ export class TinyIoTHubApp extends LitElement {
       users: '用户管理',
       settings: '系统设置',
       marketplace: '应用市场',
+      knowledge: '知识图谱',
       'workspace-resources': '工作区资源',
       'driver-health': '驱动健康',
       chat: 'AI 聊天',
@@ -377,6 +384,7 @@ export class TinyIoTHubApp extends LitElement {
       users: '管理系统用户和权限',
       settings: '系统配置和参数管理',
       marketplace: '浏览和安装模板与驱动',
+      knowledge: '管理知识文档，构建物联网场景知识图谱',
       'workspace-resources': '管理工作区中的场景、模型、图片和文档',
       'driver-health': '查看已加载动态驱动的运行状态',
       chat: '与 AI Agent 对话',
@@ -596,6 +604,7 @@ export class TinyIoTHubApp extends LitElement {
     if (base === 'marketplace') return html`<view-marketplace></view-marketplace>`;
     if (base === 'driver-health') return html`<view-driver-health></view-driver-health>`;
     if (base === 'memory-dashboard') return html`<view-memory-dashboard></view-memory-dashboard>`;
+    if (base === 'knowledge') return html`<view-knowledge></view-knowledge>`;
     if (base === 'workspace-resources')
       return html`<view-workspace-resources></view-workspace-resources>`;
     return html`<div style="padding: 40px; text-align: center; color: var(--muted);">
