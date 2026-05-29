@@ -43,13 +43,31 @@ pub async fn chat_stream(
         .map(|s| s.to_string())
         .unwrap_or_default();
     let system_prompts = &crate::shared::config::get().agent.system_prompts;
-    let full_prompt = crate::shared::agent::build_full_system_prompt(
+    let mut full_prompt = crate::shared::agent::build_full_system_prompt(
         system_prompts,
         Some(&workspace_id),
         None,
         Some(&state.memory_store),
     )
     .await;
+
+    // Inject workspace knowledge graph context into the system prompt
+    match state.knowledge_service.build_context(&workspace_id).await {
+        Ok(knowledge_ctx) if !knowledge_ctx.is_empty() => {
+            full_prompt = format!(
+                "{}\n\n## 工作区知识上下文\n{}",
+                full_prompt, knowledge_ctx
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                workspace_id = %workspace_id,
+                error = %e,
+                "Failed to build knowledge context for system prompt"
+            );
+        }
+        _ => {}
+    }
 
     let message = req.message.clone();
     let run_id = req.run_id.clone();

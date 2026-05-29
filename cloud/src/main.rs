@@ -95,6 +95,7 @@ async fn main_impl() -> std::io::Result<()> {
     // === 3. 创建 AppState（包含所有核心组件）===
     let mut app_state = tinyiothub_cloud::shared::app_state::AppState::new(device_cache, db_pool);
     app_state.agent_pool.set_workspace_service(app_state.workspace_service.clone()).await;
+    app_state.agent_pool.set_knowledge_service(app_state.knowledge_service.clone()).await;
     info!("✅ AppState created");
 
     // === 4. 驱动（静态编译，无需加载） ===
