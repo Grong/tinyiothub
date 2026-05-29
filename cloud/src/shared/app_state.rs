@@ -115,6 +115,9 @@ pub struct AppState {
     /// 工作空间服务 - CRUD 操作
     pub workspace_service: Arc<crate::modules::workspace::WorkspaceService>,
 
+    /// 知识图谱服务 - 文档解析、实体关系、上下文生成
+    pub knowledge_service: Arc<crate::modules::workspace::KnowledgeService>,
+
     /// 标签服务 - CRUD 操作
     pub tag_service: Arc<crate::modules::tag::TagService>,
 
@@ -305,6 +308,15 @@ impl AppState {
         let workspace_service =
             Arc::new(crate::modules::workspace::WorkspaceService::new(workspace_repository));
 
+        // 知识图谱服务
+        let knowledge_repo = Arc::new(
+            crate::modules::workspace::repo::SqliteKnowledgeRepository::new(
+                database.as_ref().clone(),
+            ),
+        );
+        let knowledge_service =
+            Arc::new(crate::modules::workspace::KnowledgeService::new(knowledge_repo));
+
         // 标签服务
         let tag_service = Arc::new(crate::modules::tag::TagService::new(
             tag_repository.clone(),
@@ -421,6 +433,7 @@ impl AppState {
             user_service,
             tenant_service,
             workspace_service,
+            knowledge_service,
             tag_service,
             tag_repository,
             role_service,
