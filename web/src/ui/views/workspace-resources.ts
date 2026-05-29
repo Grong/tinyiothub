@@ -1,4 +1,4 @@
-import { LitElement, html, css, nothing } from 'lit';
+import { LitElement, html, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import {
   workspaceResourceApi,
@@ -6,6 +6,7 @@ import {
   type ResourceSearchResult,
 } from '../../api/workspace-resources.js';
 import { success, error as toastError } from '../components/toast.js';
+import '../../styles/views/workspace-resources.css';
 
 // ── Resource type config ──
 const RESOURCE_TYPE_CONFIG: Record<string, { label: string; color: string; icon: string }> = {
@@ -75,10 +76,106 @@ export class ViewWorkspaceResources extends LitElement {
   @state() formMetadata = '';
   @state() formSubmitting = false;
 
+  // Focus management
+  private lastFocusedElement: Element | null = null;
+  private boundKeydown = this.onKeydown.bind(this);
+
   connectedCallback() {
     super.connectedCallback();
     this.loadResources();
   }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    this.removeModalListeners();
+  }
+
+  // ── Modal keyboard / focus management ──
+
+  private addModalListeners() {
+    document.addEventListener('keydown', this.boundKeydown);
+  }
+
+  private removeModalListeners() {
+    document.removeEventListener('keydown', this.boundKeydown);
+  }
+
+  private onKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      if (this.showCreateModal) this.closeCreateModal();
+      else if (this.showEditModal) this.closeEditModal();
+      else if (this.showDeleteModal) this.closeDeleteModal();
+      else if (this.showPreviewModal) this.closePreviewModal();
+    }
+    if (e.key === 'Tab') {
+      this.trapFocus(e);
+    }
+  }
+
+  private trapFocus(e: KeyboardEvent) {
+    const modal = this.renderRoot.querySelector('.wsr-modal') as HTMLElement | null;
+    if (!modal) return;
+    const focusable = modal.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+    );
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+
+  private saveFocus() {
+    this.lastFocusedElement = document.activeElement;
+  }
+
+  private restoreFocus() {
+    if (this.lastFocusedElement && 'focus' in this.lastFocusedElement) {
+      (this.lastFocusedElement as HTMLElement).focus();
+    }
+  }
+
+  private openModal(type: 'create' | 'edit' | 'delete' | 'preview', resource?: WorkspaceResource) {
+    this.saveFocus();
+    this.addModalListeners();
+    if (type === 'create') this.showCreateModal = true;
+    if (type === 'edit') {
+      this.selectedResource = resource ?? null;
+      if (resource) {
+        this.formName = resource.name;
+        this.formType = resource.resourceType;
+        this.formDescription = resource.description ?? '';
+        this.formTags = parseTags(resource.tags).join(', ');
+        this.formMetadata = resource.metadata ?? '';
+      }
+      this.showEditModal = true;
+    }
+    if (type === 'delete') {
+      this.selectedResource = resource ?? null;
+      this.showDeleteModal = true;
+    }
+    if (type === 'preview') {
+      this.selectedResource = resource ?? null;
+      this.showPreviewModal = true;
+    }
+    // Focus first focusable element after modal renders
+    requestAnimationFrame(() => {
+      const modal = this.renderRoot.querySelector('.wsr-modal') as HTMLElement | null;
+      if (modal) {
+        const focusable = modal.querySelector<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        );
+        focusable?.focus();
+      }
+    });
+  }
+
+  // ── Data ──
 
   private async loadResources() {
     this.loading = true;
@@ -127,8 +224,7 @@ export class ViewWorkspaceResources extends LitElement {
     try {
       await workspaceResourceApi.deleteResource(this.selectedResource.id);
       success('资源已删除');
-      this.showDeleteModal = false;
-      this.selectedResource = null;
+      this.closeDeleteModal();
       this.loadResources();
     } catch (e: any) {
       toastError(e.message || '删除失败');
@@ -190,54 +286,33 @@ export class ViewWorkspaceResources extends LitElement {
     }
   }
 
-  private openCreateModal() {
-    this.formName = '';
-    this.formType = 'scene';
-    this.formDescription = '';
-    this.formTags = '';
-    this.formMetadata = '';
-    this.showCreateModal = true;
-  }
-
   private closeCreateModal() {
     this.showCreateModal = false;
     this.formSubmitting = false;
-  }
-
-  private openEditModal(res: WorkspaceResource) {
-    this.selectedResource = res;
-    this.formName = res.name;
-    this.formType = res.resourceType;
-    this.formDescription = res.description ?? '';
-    this.formTags = parseTags(res.tags).join(', ');
-    this.formMetadata = res.metadata ?? '';
-    this.showEditModal = true;
+    this.removeModalListeners();
+    this.restoreFocus();
   }
 
   private closeEditModal() {
     this.showEditModal = false;
     this.selectedResource = null;
     this.formSubmitting = false;
-  }
-
-  private openDeleteModal(res: WorkspaceResource) {
-    this.selectedResource = res;
-    this.showDeleteModal = true;
+    this.removeModalListeners();
+    this.restoreFocus();
   }
 
   private closeDeleteModal() {
     this.showDeleteModal = false;
     this.selectedResource = null;
-  }
-
-  private openPreviewModal(res: WorkspaceResource) {
-    this.selectedResource = res;
-    this.showPreviewModal = true;
+    this.removeModalListeners();
+    this.restoreFocus();
   }
 
   private closePreviewModal() {
     this.showPreviewModal = false;
     this.selectedResource = null;
+    this.removeModalListeners();
+    this.restoreFocus();
   }
 
   private onTypeFilterChange(e: Event) {
@@ -276,6 +351,7 @@ export class ViewWorkspaceResources extends LitElement {
   }
 
   // ── Render ──
+
   render() {
     return html`
       <div class="wsr-container">
@@ -312,7 +388,7 @@ export class ViewWorkspaceResources extends LitElement {
             <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
             <line x1="12" y1="22.08" x2="12" y2="12" />
           </svg>
-          资源库
+          <span class="wsr-title__text">资源库</span>
         </h1>
         <p class="wsr-subtitle">管理工作空间的多媒体资源 — 3D 场景、设备模型、图片与文档</p>
       </div>
@@ -363,7 +439,7 @@ export class ViewWorkspaceResources extends LitElement {
               </option>`,
           )}
         </select>
-        <button class="wsr-btn-primary" @click=${this.openCreateModal}>
+        <button class="wsr-btn-primary" @click=${() => this.openModal('create')}>
           <svg
             viewBox="0 0 24 24"
             fill="none"
@@ -426,7 +502,11 @@ export class ViewWorkspaceResources extends LitElement {
             ${typeConfig.label}
           </span>
           <div class="wsr-card-actions">
-            <button class="wsr-action-btn" title="预览" @click=${() => this.openPreviewModal(res)}>
+            <button
+              class="wsr-action-btn"
+              title="预览"
+              @click=${() => this.openModal('preview', res)}
+            >
               <svg
                 viewBox="0 0 24 24"
                 fill="none"
@@ -439,7 +519,7 @@ export class ViewWorkspaceResources extends LitElement {
                 <circle cx="12" cy="12" r="3" />
               </svg>
             </button>
-            <button class="wsr-action-btn" title="编辑" @click=${() => this.openEditModal(res)}>
+            <button class="wsr-action-btn" title="编辑" @click=${() => this.openModal('edit', res)}>
               <svg
                 viewBox="0 0 24 24"
                 fill="none"
@@ -455,7 +535,7 @@ export class ViewWorkspaceResources extends LitElement {
             <button
               class="wsr-action-btn wsr-action-danger"
               title="删除"
-              @click=${() => this.openDeleteModal(res)}
+              @click=${() => this.openModal('delete', res)}
             >
               <svg
                 viewBox="0 0 24 24"
@@ -557,12 +637,14 @@ export class ViewWorkspaceResources extends LitElement {
         ${pages.map((p) =>
           p === '...'
             ? html`<span class="wsr-page-ellipsis">...</span>`
-            : html`<button
-                class="wsr-page-btn ${p === this.page ? 'wsr-page-btn--active' : ''}"
-                @click=${() => this.onPageChange(p as number)}
-              >
-                ${p}
-              </button>`,
+            : html`
+                <button
+                  class="wsr-page-btn ${p === this.page ? 'wsr-page-btn--active' : ''}"
+                  @click=${() => this.onPageChange(p as number)}
+                >
+                  ${p}
+                </button>
+              `,
         )}
         <button
           class="wsr-page-btn"
@@ -579,21 +661,27 @@ export class ViewWorkspaceResources extends LitElement {
   // ── Modals ──
 
   private renderCreateModal() {
-    return this.renderFormModal('新建资源', this.submitCreate, this.closeCreateModal);
+    return this.renderFormModal('新建资源', this.submitCreate, () => this.closeCreateModal());
   }
 
   private renderEditModal() {
-    return this.renderFormModal('编辑资源', this.submitEdit, this.closeEditModal);
+    return this.renderFormModal('编辑资源', this.submitEdit, () => this.closeEditModal());
   }
 
   private renderFormModal(title: string, onSubmit: () => void, onClose: () => void) {
     const isEdit = this.showEditModal;
     return html`
-      <div class="wsr-modal-overlay" @click=${onClose}>
+      <div
+        class="wsr-modal-overlay"
+        @click=${onClose}
+        role="dialog"
+        aria-modal="true"
+        aria-label=${title}
+      >
         <div class="wsr-modal" @click=${(e: Event) => e.stopPropagation()}>
           <div class="wsr-modal-header">
             <h2>${title}</h2>
-            <button class="wsr-modal-close" @click=${onClose}>&times;</button>
+            <button class="wsr-modal-close" @click=${onClose} aria-label="关闭">&times;</button>
           </div>
           <div class="wsr-modal-body">
             <label class="wsr-field">
@@ -664,15 +752,24 @@ export class ViewWorkspaceResources extends LitElement {
 
   private renderDeleteModal() {
     return html`
-      <div class="wsr-modal-overlay" @click=${this.closeDeleteModal}>
+      <div
+        class="wsr-modal-overlay"
+        @click=${this.closeDeleteModal}
+        role="dialog"
+        aria-modal="true"
+        aria-label="确认删除"
+      >
         <div class="wsr-modal wsr-modal--narrow" @click=${(e: Event) => e.stopPropagation()}>
           <div class="wsr-modal-header">
             <h2>确认删除</h2>
-            <button class="wsr-modal-close" @click=${this.closeDeleteModal}>&times;</button>
+            <button class="wsr-modal-close" @click=${this.closeDeleteModal} aria-label="关闭">
+              &times;
+            </button>
           </div>
           <div class="wsr-modal-body">
             <p>
-              确定要删除资源 <strong>${this.selectedResource?.name}</strong> 吗？此操作不可撤销。
+              确定要删除资源 <strong>${this.selectedResource?.name}</strong>
+              吗？此操作不可撤销。
             </p>
           </div>
           <div class="wsr-modal-footer">
@@ -699,7 +796,13 @@ export class ViewWorkspaceResources extends LitElement {
     };
 
     return html`
-      <div class="wsr-modal-overlay" @click=${this.closePreviewModal}>
+      <div
+        class="wsr-modal-overlay"
+        @click=${this.closePreviewModal}
+        role="dialog"
+        aria-modal="true"
+        aria-label="资源预览"
+      >
         <div class="wsr-modal wsr-modal--wide" @click=${(e: Event) => e.stopPropagation()}>
           <div class="wsr-modal-header">
             <h2>
@@ -708,7 +811,9 @@ export class ViewWorkspaceResources extends LitElement {
               >
               ${res.name}
             </h2>
-            <button class="wsr-modal-close" @click=${this.closePreviewModal}>&times;</button>
+            <button class="wsr-modal-close" @click=${this.closePreviewModal} aria-label="关闭">
+              &times;
+            </button>
           </div>
           <div class="wsr-modal-body">
             <div class="wsr-preview-grid">
@@ -786,710 +891,4 @@ export class ViewWorkspaceResources extends LitElement {
       </div>
     `;
   }
-
-  // ── Styles ──
-  static styles = css`
-    :host {
-      display: block;
-      padding: 24px;
-      color: var(--text, #e5e7eb);
-      --wsr-bg: #0b0f17;
-      --wsr-card-bg: #111827;
-      --wsr-card-border: rgba(255, 255, 255, 0.06);
-      --wsr-card-hover: #1a2236;
-      --wsr-muted: #6b7280;
-      --wsr-accent: #00d4aa;
-      --wsr-danger: #ef4444;
-      --wsr-radius: 10px;
-      --wsr-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
-    }
-
-    .wsr-container {
-      max-width: 1400px;
-      margin: 0 auto;
-    }
-
-    /* Header */
-    .wsr-header {
-      margin-bottom: 24px;
-    }
-    .wsr-title {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      font-size: 24px;
-      font-weight: 600;
-      margin: 0 0 6px;
-      color: var(--text, #e5e7eb);
-    }
-    .wsr-title svg {
-      color: var(--wsr-accent);
-    }
-    .wsr-subtitle {
-      margin: 0;
-      color: var(--wsr-muted);
-      font-size: 14px;
-    }
-
-    /* Toolbar */
-    .wsr-toolbar {
-      display: flex;
-      gap: 12px;
-      align-items: center;
-      margin-bottom: 20px;
-      flex-wrap: wrap;
-    }
-    .wsr-search {
-      position: relative;
-      flex: 1;
-      min-width: 240px;
-      max-width: 480px;
-    }
-    .wsr-search-icon {
-      position: absolute;
-      left: 12px;
-      top: 50%;
-      transform: translateY(-50%);
-      color: var(--wsr-muted);
-      pointer-events: none;
-    }
-    .wsr-search-input {
-      width: 100%;
-      padding: 10px 12px 10px 38px;
-      background: var(--wsr-card-bg);
-      border: 1px solid var(--wsr-card-border);
-      border-radius: var(--wsr-radius);
-      color: var(--text, #e5e7eb);
-      font-size: 14px;
-      outline: none;
-      transition:
-        border-color 0.2s,
-        box-shadow 0.2s;
-    }
-    .wsr-search-input:focus {
-      border-color: var(--wsr-accent);
-      box-shadow: 0 0 0 3px rgba(0, 212, 170, 0.1);
-    }
-    .wsr-search-input::placeholder {
-      color: var(--wsr-muted);
-    }
-    .wsr-search-clear {
-      position: absolute;
-      right: 8px;
-      top: 50%;
-      transform: translateY(-50%);
-      background: transparent;
-      border: none;
-      color: var(--wsr-muted);
-      font-size: 12px;
-      cursor: pointer;
-      padding: 4px 8px;
-    }
-    .wsr-search-clear:hover {
-      color: var(--text, #e5e7eb);
-    }
-
-    .wsr-filter {
-      padding: 10px 14px;
-      background: var(--wsr-card-bg);
-      border: 1px solid var(--wsr-card-border);
-      border-radius: var(--wsr-radius);
-      color: var(--text, #e5e7eb);
-      font-size: 14px;
-      cursor: pointer;
-      outline: none;
-    }
-    .wsr-filter:focus {
-      border-color: var(--wsr-accent);
-    }
-    .wsr-filter option {
-      background: var(--wsr-card-bg);
-    }
-
-    .wsr-btn-primary,
-    .wsr-btn-secondary,
-    .wsr-btn-danger {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 10px 18px;
-      border: none;
-      border-radius: var(--wsr-radius);
-      font-size: 14px;
-      font-weight: 500;
-      cursor: pointer;
-      transition:
-        opacity 0.15s,
-        transform 0.1s;
-    }
-    .wsr-btn-primary:active,
-    .wsr-btn-secondary:active,
-    .wsr-btn-danger:active {
-      transform: scale(0.98);
-    }
-    .wsr-btn-primary:disabled,
-    .wsr-btn-secondary:disabled,
-    .wsr-btn-danger:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
-    .wsr-btn-primary {
-      background: var(--wsr-accent);
-      color: #000;
-    }
-    .wsr-btn-primary:hover {
-      opacity: 0.9;
-    }
-
-    .wsr-btn-secondary {
-      background: var(--wsr-card-bg);
-      color: var(--text, #e5e7eb);
-      border: 1px solid var(--wsr-card-border);
-    }
-    .wsr-btn-secondary:hover {
-      background: var(--wsr-card-hover);
-    }
-
-    .wsr-btn-danger {
-      background: var(--wsr-danger);
-      color: #fff;
-    }
-    .wsr-btn-danger:hover {
-      opacity: 0.9;
-    }
-
-    /* Grid */
-    .wsr-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-      gap: 16px;
-    }
-
-    /* Card */
-    .wsr-card {
-      background: var(--wsr-card-bg);
-      border: 1px solid var(--wsr-card-border);
-      border-radius: var(--wsr-radius);
-      padding: 16px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      transition:
-        transform 0.15s,
-        border-color 0.2s,
-        box-shadow 0.2s;
-      cursor: default;
-    }
-    .wsr-card:hover {
-      border-color: rgba(0, 212, 170, 0.2);
-      box-shadow: var(--wsr-shadow);
-      transform: translateY(-2px);
-    }
-    .wsr-card[data-type='scene'] {
-      border-left: 3px solid #00d4aa;
-    }
-    .wsr-card[data-type='device_model'] {
-      border-left: 3px solid #3b82f6;
-    }
-    .wsr-card[data-type='image'] {
-      border-left: 3px solid #f59e0b;
-    }
-    .wsr-card[data-type='document'] {
-      border-left: 3px solid #8b5cf6;
-    }
-
-    .wsr-card-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-    }
-    .wsr-type-badge {
-      font-size: 11px;
-      font-weight: 600;
-      padding: 3px 10px;
-      border-radius: 999px;
-      background: color-mix(in srgb, var(--type-color, #6b7280) 12%, transparent);
-      color: var(--type-color, #6b7280);
-      letter-spacing: 0.02em;
-    }
-    .wsr-card-actions {
-      display: flex;
-      gap: 4px;
-      opacity: 0;
-      transition: opacity 0.15s;
-    }
-    .wsr-card:hover .wsr-card-actions {
-      opacity: 1;
-    }
-    .wsr-action-btn {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 28px;
-      height: 28px;
-      border: none;
-      border-radius: 6px;
-      background: transparent;
-      color: var(--wsr-muted);
-      cursor: pointer;
-      transition:
-        background 0.15s,
-        color 0.15s;
-    }
-    .wsr-action-btn:hover {
-      background: rgba(255, 255, 255, 0.06);
-      color: var(--text, #e5e7eb);
-    }
-    .wsr-action-danger:hover {
-      color: var(--wsr-danger);
-      background: rgba(239, 68, 68, 0.1);
-    }
-
-    .wsr-card-body {
-      flex: 1;
-      min-height: 0;
-    }
-    .wsr-card-name {
-      font-size: 15px;
-      font-weight: 600;
-      margin: 0 0 6px;
-      color: var(--text, #e5e7eb);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .wsr-card-desc {
-      font-size: 13px;
-      color: var(--wsr-muted);
-      margin: 0;
-      line-height: 1.5;
-      display: -webkit-box;
-      -webkit-line-clamp: 2;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
-    }
-    .wsr-card-desc--empty {
-      opacity: 0.5;
-      font-style: italic;
-    }
-
-    .wsr-card-footer {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 8px;
-      margin-top: auto;
-      padding-top: 8px;
-      border-top: 1px solid var(--wsr-card-border);
-    }
-    .wsr-card-tags {
-      display: flex;
-      gap: 4px;
-      flex-wrap: wrap;
-    }
-    .wsr-tag {
-      font-size: 11px;
-      padding: 2px 8px;
-      border-radius: 4px;
-      background: rgba(255, 255, 255, 0.05);
-      color: var(--wsr-muted);
-    }
-    .wsr-tag--empty {
-      opacity: 0.4;
-    }
-    .wsr-card-date {
-      font-size: 11px;
-      color: var(--wsr-muted);
-      white-space: nowrap;
-    }
-
-    /* Skeleton */
-    .wsr-card--skeleton {
-      gap: 10px;
-      pointer-events: none;
-    }
-    .wsr-skeleton-badge {
-      width: 60px;
-      height: 20px;
-      border-radius: 999px;
-      background: linear-gradient(
-        90deg,
-        rgba(255, 255, 255, 0.04) 25%,
-        rgba(255, 255, 255, 0.08) 50%,
-        rgba(255, 255, 255, 0.04) 75%
-      );
-      background-size: 200% 100%;
-      animation: wsr-skeleton 1.5s ease-in-out infinite;
-    }
-    .wsr-skeleton-title {
-      width: 70%;
-      height: 16px;
-      border-radius: 4px;
-      background: linear-gradient(
-        90deg,
-        rgba(255, 255, 255, 0.04) 25%,
-        rgba(255, 255, 255, 0.08) 50%,
-        rgba(255, 255, 255, 0.04) 75%
-      );
-      background-size: 200% 100%;
-      animation: wsr-skeleton 1.5s ease-in-out infinite;
-    }
-    .wsr-skeleton-line {
-      width: 100%;
-      height: 12px;
-      border-radius: 4px;
-      background: linear-gradient(
-        90deg,
-        rgba(255, 255, 255, 0.04) 25%,
-        rgba(255, 255, 255, 0.08) 50%,
-        rgba(255, 255, 255, 0.04) 75%
-      );
-      background-size: 200% 100%;
-      animation: wsr-skeleton 1.5s ease-in-out infinite;
-    }
-    .wsr-skeleton-line--short {
-      width: 50%;
-    }
-    @keyframes wsr-skeleton {
-      0% {
-        background-position: 200% 0;
-      }
-      100% {
-        background-position: -200% 0;
-      }
-    }
-
-    /* Empty / Error */
-    .wsr-empty,
-    .wsr-error {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 16px;
-      padding: 80px 24px;
-      color: var(--wsr-muted);
-      text-align: center;
-    }
-    .wsr-empty svg,
-    .wsr-error svg {
-      opacity: 0.3;
-    }
-    .wsr-empty p,
-    .wsr-error p {
-      margin: 0;
-      font-size: 15px;
-    }
-    .wsr-error {
-      color: var(--wsr-danger);
-    }
-    .wsr-error svg {
-      opacity: 0.5;
-      color: var(--wsr-danger);
-    }
-
-    /* Search badge */
-    .wsr-search-badge {
-      text-align: center;
-      margin-top: 12px;
-      font-size: 13px;
-      color: var(--wsr-muted);
-    }
-
-    /* Pagination */
-    .wsr-pagination {
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      gap: 6px;
-      margin-top: 24px;
-      flex-wrap: wrap;
-    }
-    .wsr-page-btn {
-      padding: 6px 12px;
-      background: var(--wsr-card-bg);
-      border: 1px solid var(--wsr-card-border);
-      border-radius: 6px;
-      color: var(--text, #e5e7eb);
-      font-size: 13px;
-      cursor: pointer;
-      transition: background 0.15s;
-    }
-    .wsr-page-btn:hover:not(:disabled) {
-      background: var(--wsr-card-hover);
-    }
-    .wsr-page-btn:disabled {
-      opacity: 0.4;
-      cursor: not-allowed;
-    }
-    .wsr-page-btn--active {
-      background: var(--wsr-accent);
-      color: #000;
-      border-color: var(--wsr-accent);
-      font-weight: 600;
-    }
-    .wsr-page-ellipsis {
-      color: var(--wsr-muted);
-      padding: 6px;
-      font-size: 13px;
-    }
-    .wsr-page-info {
-      font-size: 13px;
-      color: var(--wsr-muted);
-      margin-left: 8px;
-    }
-
-    /* Modal */
-    .wsr-modal-overlay {
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, 0.7);
-      backdrop-filter: blur(4px);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 24px;
-      z-index: 1000;
-      animation: wsr-fade-in 0.2s ease;
-    }
-    @keyframes wsr-fade-in {
-      from {
-        opacity: 0;
-      }
-      to {
-        opacity: 1;
-      }
-    }
-    .wsr-modal {
-      background: var(--wsr-card-bg);
-      border: 1px solid var(--wsr-card-border);
-      border-radius: 14px;
-      width: 100%;
-      max-width: 560px;
-      max-height: 90vh;
-      overflow: hidden;
-      display: flex;
-      flex-direction: column;
-      box-shadow: var(--wsr-shadow);
-      animation: wsr-slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-    }
-    .wsr-modal--narrow {
-      max-width: 420px;
-    }
-    .wsr-modal--wide {
-      max-width: 860px;
-    }
-    @keyframes wsr-slide-up {
-      from {
-        opacity: 0;
-        transform: translateY(20px) scale(0.98);
-      }
-      to {
-        opacity: 1;
-        transform: translateY(0) scale(1);
-      }
-    }
-    .wsr-modal-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 18px 20px;
-      border-bottom: 1px solid var(--wsr-card-border);
-    }
-    .wsr-modal-header h2 {
-      margin: 0;
-      font-size: 17px;
-      font-weight: 600;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    .wsr-modal-close {
-      background: transparent;
-      border: none;
-      color: var(--wsr-muted);
-      font-size: 22px;
-      line-height: 1;
-      cursor: pointer;
-      padding: 4px;
-      width: 32px;
-      height: 32px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 8px;
-      transition:
-        background 0.15s,
-        color 0.15s;
-    }
-    .wsr-modal-close:hover {
-      background: rgba(255, 255, 255, 0.06);
-      color: var(--text, #e5e7eb);
-    }
-    .wsr-modal-body {
-      padding: 20px;
-      overflow-y: auto;
-      flex: 1;
-    }
-    .wsr-modal-footer {
-      display: flex;
-      justify-content: flex-end;
-      gap: 10px;
-      padding: 14px 20px;
-      border-top: 1px solid var(--wsr-card-border);
-    }
-
-    /* Form fields */
-    .wsr-field {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      margin-bottom: 16px;
-    }
-    .wsr-field:last-child {
-      margin-bottom: 0;
-    }
-    .wsr-field span {
-      font-size: 13px;
-      font-weight: 500;
-      color: var(--text, #e5e7eb);
-    }
-    .wsr-field input,
-    .wsr-field select,
-    .wsr-field textarea {
-      padding: 10px 14px;
-      background: var(--wsr-bg);
-      border: 1px solid var(--wsr-card-border);
-      border-radius: 8px;
-      color: var(--text, #e5e7eb);
-      font-size: 14px;
-      outline: none;
-      transition:
-        border-color 0.2s,
-        box-shadow 0.2s;
-      font-family: inherit;
-    }
-    .wsr-field input:focus,
-    .wsr-field select:focus,
-    .wsr-field textarea:focus {
-      border-color: var(--wsr-accent);
-      box-shadow: 0 0 0 3px rgba(0, 212, 170, 0.08);
-    }
-    .wsr-field input::placeholder,
-    .wsr-field textarea::placeholder {
-      color: var(--wsr-muted);
-      opacity: 0.6;
-    }
-    .wsr-field select:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-    .wsr-field textarea {
-      resize: vertical;
-      min-height: 60px;
-    }
-
-    /* Preview modal content */
-    .wsr-preview-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 20px;
-    }
-    @media (max-width: 640px) {
-      .wsr-preview-grid {
-        grid-template-columns: 1fr;
-      }
-    }
-    .wsr-preview-info {
-      display: flex;
-      flex-direction: column;
-      gap: 14px;
-    }
-    .wsr-preview-desc {
-      margin: 0;
-      font-size: 14px;
-      color: var(--wsr-muted);
-      line-height: 1.6;
-    }
-    .wsr-preview-meta {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-    .wsr-meta-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-size: 13px;
-      padding: 6px 0;
-      border-bottom: 1px solid var(--wsr-card-border);
-    }
-    .wsr-meta-row span:first-child {
-      color: var(--wsr-muted);
-    }
-    .wsr-meta-row code {
-      font-family: ui-monospace, SFMono-Regular, monospace;
-      font-size: 12px;
-      background: var(--wsr-bg);
-      padding: 2px 8px;
-      border-radius: 4px;
-      color: var(--wsr-accent);
-      max-width: 200px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .wsr-preview-tags {
-      display: flex;
-      gap: 6px;
-      flex-wrap: wrap;
-    }
-    .wsr-preview-json {
-      background: var(--wsr-bg);
-      border-radius: 8px;
-      border: 1px solid var(--wsr-card-border);
-    }
-    .wsr-preview-json summary {
-      padding: 10px 14px;
-      font-size: 13px;
-      font-weight: 500;
-      cursor: pointer;
-      user-select: none;
-    }
-    .wsr-preview-json pre {
-      margin: 0;
-      padding: 10px 14px;
-      font-size: 12px;
-      color: var(--wsr-muted);
-      overflow-x: auto;
-      border-top: 1px solid var(--wsr-card-border);
-    }
-
-    .wsr-preview-scene,
-    .wsr-preview-media {
-      background: var(--wsr-bg);
-      border-radius: 10px;
-      border: 1px solid var(--wsr-card-border);
-      min-height: 240px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .wsr-preview-scene-placeholder,
-    .wsr-preview-media-placeholder {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 8px;
-      color: var(--wsr-muted);
-      text-align: center;
-      padding: 24px;
-    }
-    .wsr-preview-hint {
-      font-size: 12px;
-      opacity: 0.6;
-      max-width: 200px;
-    }
-  `;
 }
