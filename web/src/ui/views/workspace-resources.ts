@@ -12,7 +12,6 @@ const RESOURCE_TYPE_CONFIG: Record<string, { label: string; color: string }> = {
   scene: { label: '3D 场景', color: '#00d4aa' },
   device_model: { label: '设备模型', color: '#3b82f6' },
   image: { label: '图片', color: '#f59e0b' },
-  document: { label: '文档', color: '#8b5cf6' },
 };
 
 const TYPE_OPTIONS = [
@@ -20,7 +19,6 @@ const TYPE_OPTIONS = [
   { value: 'scene', label: '3D 场景' },
   { value: 'device_model', label: '设备模型' },
   { value: 'image', label: '图片' },
-  { value: 'document', label: '文档' },
 ];
 
 function formatDate(iso: string): string {

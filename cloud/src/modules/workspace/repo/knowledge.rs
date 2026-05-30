@@ -294,7 +294,7 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
         page_size: i64,
     ) -> Result<(Vec<KnowledgeDocument>, i64)> {
         let page = page.max(1);
-        let page_size = page_size.min(100).max(1);
+        let page_size = page_size.clamp(1, 100);
         let offset = (page - 1) * page_size;
 
         // Count query

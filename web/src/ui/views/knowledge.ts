@@ -52,6 +52,7 @@ export class KnowledgeView extends LitElement {
   @state() saving = false;
   @state() previewData: PreviewParseResponse | null = null;
   @state() previewLoading = false;
+  @state() uploading = false;
 
   private _searchTimer: ReturnType<typeof setTimeout> | null = null;
   private _previewTimer: ReturnType<typeof setTimeout> | null = null;
@@ -236,6 +237,69 @@ export class KnowledgeView extends LitElement {
 
   private removeTag(tag: string) {
     this.editorTags = this.editorTags.filter(t => t !== tag);
+  }
+
+  private async handleFileUpload(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    this.uploading = true;
+    try {
+      const result = await knowledgeApi.uploadFile(file);
+      const ext = file.name.split('.').pop()?.toLowerCase() || '';
+      const isImage = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'].includes(ext);
+      const isVideo = ['mp4', 'webm', 'mov'].includes(ext);
+      const isModel = ['glb', 'gltf'].includes(ext);
+
+      const filePath = (result.result as any).filePath || '';
+      let md = '';
+      if (isImage) {
+        md = `![${file.name}](${filePath})`;
+      } else if (isVideo) {
+        md = `<video src="${filePath}" controls></video>`;
+      } else if (isModel) {
+        md = `\`\`\`3d\n${filePath}\n\`\`\``;
+      } else {
+        md = `[${file.name}](${filePath})`;
+      }
+
+      const textarea = this.querySelector('.knowledge-editor-textarea') as HTMLTextAreaElement;
+      if (textarea) {
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        this.editorContent =
+          this.editorContent.slice(0, start) + '\n' + md + '\n' + this.editorContent.slice(end);
+        requestAnimationFrame(() => {
+          textarea.focus();
+          textarea.selectionStart = textarea.selectionEnd = start + md.length + 2;
+        });
+      }
+      success(`已上传 ${file.name}`);
+    } catch (e: any) {
+      toastError(e.message || '上传失败');
+    } finally {
+      this.uploading = false;
+      input.value = '';
+    }
+  }
+
+  private onEditorDrop(e: DragEvent) {
+    e.preventDefault();
+    const file = e.dataTransfer?.files?.[0];
+    if (!file) return;
+    // Create a synthetic input change event
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.files = dt.files;
+    input.onchange = (ev) => this.handleFileUpload(ev);
+    input.dispatchEvent(new Event('change'));
+  }
+
+  private onEditorDragOver(e: DragEvent) {
+    e.preventDefault();
   }
 
   private onTagInputKeydown(e: KeyboardEvent) {
@@ -429,23 +493,11 @@ export class KnowledgeView extends LitElement {
               <textarea
                 class="knowledge-editor-textarea"
                 placeholder="在此编写知识文档，AI 将自动抽取实体和关系...
-
-示例格式：
-
-# 园区概况
-智慧工厂园区总面积约 12.5 万平方米，包含生产区、仓储区、办公区。
-
-# 空间结构
-- 生产区：东侧，5 万㎡，含 A/B/C 三个车间
-- 仓储区：北侧，2 万㎡
-- 办公区：南侧，1.5 万㎡
-
-# 设备清单
-- 数控机床 x20（A 车间）
-- 工业机器人 x15（B 车间）
-- 温湿度传感器 x50（各区域）"
+                &#10;支持拖拽或粘贴图片、3D 模型等文件"
                 .value=${this.editorContent}
-                @input=${this.onContentChange}></textarea>
+                @input=${this.onContentChange}
+                @drop=${this.onEditorDrop}
+                @dragover=${this.onEditorDragOver}></textarea>
             </div>
             <div class="knowledge-editor-preview">
               <div class="knowledge-editor-preview-header">实时预览</div>
@@ -467,6 +519,10 @@ export class KnowledgeView extends LitElement {
                 @keydown=${this.onTagInputKeydown} />
             </div>
             <div class="knowledge-editor-actions">
+              <label class="knowledge-btn knowledge-btn-secondary" style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;">
+                <input type="file" hidden @change=${this.handleFileUpload} accept="image/*,.glb,.gltf,.mp4,.webm,.pdf,.zip" />
+                ${this.uploading ? html`<span class="knowledge-spinner"></span> 上传中...` : '附件'}
+              </label>
               <span style="font-size:12px;color:var(--muted);margin-right:var(--space-2)">Esc 关闭 · Ctrl+Enter 保存</span>
               <button class="knowledge-btn knowledge-btn-secondary" @click=${this.closeEditor}>取消</button>
               <button

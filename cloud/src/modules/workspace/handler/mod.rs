@@ -46,8 +46,6 @@ pub fn create_router() -> Router<AppState> {
         .route("/{id}/knowledge/relations", get(knowledge::list_relations))
         .route("/{id}/knowledge/search", get(knowledge::search_knowledge))
         .route("/{id}/knowledge/context", get(knowledge::get_context))
-        .route("/{id}/knowledge/files/upload", post(knowledge::upload_file))
-        .route("/{id}/knowledge/files/upload-raw", post(knowledge::upload_file_raw))
 }
 
 /// List workspaces for current tenant
@@ -401,7 +399,7 @@ async fn create_resource(
         }
     }
 
-    let valid_types = ["scene", "device_model", "image", "document"];
+    let valid_types = ["scene", "device_model", "image"];
     if !valid_types.contains(&payload.resource_type.as_str()) {
         return ApiResponseBuilder::error_with_code(400, "无效的资源类型");
     }
