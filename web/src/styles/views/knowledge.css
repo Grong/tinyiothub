@@ -1,6 +1,6 @@
 /* ================================================================
    Knowledge — knowledge documents list & editor
-   Follows workspace-resources patterns, uses shared CSS variables
+   Borderless glassmorphism design consistent with core.css
    ================================================================ */
 
 /* ── View scope ── */
@@ -15,32 +15,11 @@ view-knowledge {
   margin: 0 auto;
 }
 
-/* ── Header ── */
-.knowledge-header {
+/* ── Toolbar ── */
+.knowledge-toolbar {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  margin-bottom: var(--space-5);
-}
-
-.knowledge-header h2 {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--text-strong);
-  letter-spacing: -0.03em;
-}
-
-.knowledge-header-actions {
-  display: flex;
   gap: var(--space-2);
-}
-
-/* ── Filter bar ── */
-.knowledge-filter-bar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
   margin-bottom: var(--space-5);
   flex-wrap: wrap;
 }
@@ -48,8 +27,8 @@ view-knowledge {
 .knowledge-search {
   position: relative;
   flex: 1;
-  min-width: 240px;
-  max-width: 480px;
+  min-width: 200px;
+  max-width: 400px;
 }
 
 .knowledge-search-icon {
@@ -65,17 +44,18 @@ view-knowledge {
   width: 100%;
   padding: 10px var(--space-3) 10px 38px;
   background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  border: none;
+  border-radius: var(--radius-lg);
   color: var(--text);
   font-size: 14px;
   outline: none;
-  transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+  box-shadow: var(--glass-shadow-sm);
+  backdrop-filter: blur(4px);
+  transition: box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .knowledge-search input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-subtle);
+  box-shadow: 0 0 0 3px var(--accent-subtle), var(--glass-shadow-sm);
 }
 
 .knowledge-search input::placeholder { color: var(--muted); }
@@ -90,27 +70,31 @@ view-knowledge {
 .knowledge-filter-chip {
   padding: 7px 14px;
   background: var(--card);
-  border: 1px solid var(--border);
+  border: none;
   border-radius: var(--radius-full);
   color: var(--muted);
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  transition: background var(--duration-fast), border-color var(--duration-fast),
-    color var(--duration-fast), box-shadow var(--duration-fast);
+  box-shadow: var(--glass-shadow-sm);
+  backdrop-filter: blur(4px);
+  transition: background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
   font-family: inherit;
 }
 
 .knowledge-filter-chip:hover {
   color: var(--text);
-  border-color: var(--border-hover);
   background: var(--bg-hover);
+  box-shadow: var(--glass-shadow-hover);
+  transform: translateY(-1px);
 }
 
 .knowledge-filter-chip.active {
   background: var(--accent-gradient);
   color: var(--text-inverse);
-  border-color: transparent;
   box-shadow: 0 2px 8px rgba(0, 152, 255, 0.25);
 }
 
@@ -121,7 +105,7 @@ view-knowledge {
   gap: var(--space-4);
 }
 
-/* ── Card ── */
+/* ── Card — extends .card from core.css ── */
 .knowledge-card {
   padding: var(--space-4);
   display: flex;
@@ -214,6 +198,120 @@ view-knowledge {
   text-overflow: ellipsis;
 }
 
+/* ── Card thumbnail ── */
+.kg-card-thumb {
+  width: 100%;
+  height: 140px;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--bg-muted);
+  position: relative;
+  margin-bottom: 2px;
+}
+
+.kg-card-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.kg-card-thumb--placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  color: var(--muted);
+  opacity: 0.5;
+}
+
+.kg-card-badge-3d {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(4px);
+  border-radius: var(--radius-full);
+  font-size: 10px;
+  font-weight: 700;
+  color: #f59e0b;
+  letter-spacing: 0.03em;
+}
+
+.kg-card-badge-3d--overlay {
+  position: static;
+  margin-top: 4px;
+}
+
+/* ── Preview panel files ── */
+.kg-preview-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.kg-preview-file {
+  width: 72px;
+  height: 72px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--bg-muted);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  transition: transform var(--duration-fast), box-shadow var(--duration-fast);
+}
+
+.kg-preview-file:hover {
+  transform: scale(1.05);
+  box-shadow: 0 0 0 2px var(--accent-subtle);
+}
+
+.kg-preview-file img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.kg-preview-file-label {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 2px 0;
+  background: rgba(0, 0, 0, 0.6);
+  font-size: 9px;
+  font-weight: 600;
+  color: #fff;
+  text-align: center;
+  letter-spacing: 0.03em;
+}
+
+.kg-preview-file--3d {
+  flex-direction: column;
+  gap: 4px;
+  color: var(--muted);
+  border: 1px dashed var(--border);
+}
+
+.kg-preview-file-path {
+  font-size: 10px;
+  color: var(--muted);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 4px;
+}
+
 .knowledge-card-desc {
   font-size: 13px;
   color: var(--muted);
@@ -231,7 +329,6 @@ view-knowledge {
   align-items: center;
   gap: var(--space-2);
   padding-top: var(--space-2);
-  border-top: 1px solid var(--border);
 }
 
 .knowledge-card-tags {
@@ -349,8 +446,21 @@ view-knowledge {
 
 /* ── Editor modal ── */
 .knowledge-editor-modal {
-  max-width: 960px;
+  max-width: 1100px;
   width: 95vw;
+  border: none;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.knowledge-editor-modal .modal-header {
+  flex-shrink: 0;
+}
+
+.knowledge-editor-modal .modal-footer {
+  flex-shrink: 0;
 }
 
 .knowledge-editor-body {
@@ -358,54 +468,74 @@ view-knowledge {
   gap: var(--space-4);
   padding: 0 24px 16px;
   flex-direction: column;
+  overflow: hidden;
+  flex: 1;
+  min-height: 0;
+}
+
+.kg-editor-workspace {
+  display: flex;
+  gap: var(--space-4);
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .kg-editor-title {
   width: 100%;
-  padding: 10px 14px;
-  background: var(--bg);
-  border: 1px solid var(--border);
+  padding: 14px 16px;
+  background: var(--card);
+  border: 2px dashed var(--border);
   border-radius: var(--radius-md);
   color: var(--text);
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 600;
   outline: none;
   font-family: inherit;
-  transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+  box-shadow: var(--glass-shadow-sm);
+  transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .kg-editor-title:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-subtle);
+  box-shadow: 0 0 0 3px var(--accent-subtle), var(--glass-shadow-sm);
 }
 
-.kg-editor-title::placeholder { color: var(--muted); font-weight: 400; }
+.kg-editor-title::placeholder {
+  color: var(--accent);
+  font-weight: 500;
+  font-size: 16px;
+  opacity: 0.6;
+}
 
 .kg-editor-main {
   position: relative;
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-width: 0;
 }
 
 .kg-editor-textarea {
   width: 100%;
   min-height: 300px;
+  flex: 1;
   padding: var(--space-4);
-  background: var(--bg);
-  border: 1px solid var(--border);
+  background: var(--card);
+  border: none;
   border-radius: var(--radius-md);
   color: var(--text);
   font-size: 14px;
   font-family: var(--mono);
   line-height: 1.7;
   outline: none;
-  resize: vertical;
-  transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+  resize: none;
+  box-shadow: var(--glass-shadow-sm);
+  transition: box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .kg-editor-textarea:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-subtle);
+  box-shadow: 0 0 0 3px var(--accent-subtle), var(--glass-shadow-sm);
 }
 
 .kg-editor-textarea::placeholder { color: var(--muted); font-family: inherit; }
@@ -434,11 +564,12 @@ view-knowledge {
   align-items: center;
   gap: 3px;
   padding: 2px 4px 2px 9px;
-  background: var(--bg-subtle);
-  border: 1px solid var(--border);
+  background: var(--card);
+  border: none;
   border-radius: var(--radius-full);
   font-size: 12px;
   color: var(--text);
+  box-shadow: var(--shadow-sm);
 }
 
 .kg-editor-tag button {
@@ -472,14 +603,15 @@ view-knowledge {
 
 .kg-editor-tag-input::placeholder { color: var(--muted); }
 
-/* ── Preview panel (shown alongside editor for existing docs) ── */
+/* ── Preview panel ── */
 .kg-preview-panel {
-  background: var(--bg);
-  border: 1px solid var(--border);
+  background: var(--card);
+  border: none;
   border-radius: var(--radius-md);
   padding: var(--space-3) var(--space-4);
-  max-height: 200px;
+  max-height: 320px;
   overflow-y: auto;
+  box-shadow: var(--glass-shadow-sm);
 }
 
 .kg-preview-label {
@@ -549,6 +681,505 @@ view-knowledge {
   text-align: center;
 }
 
+/* ── Side Panel (tabs + content) ── */
+.kg-side-panel {
+  width: 400px;
+  min-width: 320px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border-radius: var(--radius-md);
+  box-shadow: var(--glass-shadow-sm);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.kg-panel-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  padding: 0 var(--space-2);
+  gap: 2px;
+}
+
+.kg-panel-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 10px 14px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: color var(--duration-fast), border-color var(--duration-fast);
+  margin-bottom: -1px;
+  white-space: nowrap;
+}
+
+.kg-panel-tab:hover:not(:disabled) { color: var(--text); }
+
+.kg-panel-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.kg-panel-tab:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.kg-panel-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  border-radius: var(--radius-full);
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 0 5px;
+}
+
+.kg-panel-content {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Results Panel ── */
+.kg-results-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-6);
+  color: var(--muted);
+  font-size: 13px;
+  flex: 1;
+}
+
+.kg-spinner-lg {
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: kg-spin 0.7s linear infinite;
+}
+
+@keyframes kg-spin {
+  to { transform: rotate(360deg); }
+}
+
+.kg-results-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-6);
+  color: var(--muted);
+  flex: 1;
+  text-align: center;
+}
+
+.kg-results-empty p {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.kg-results-empty span {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.kg-results-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-3) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.kg-results-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.kg-results-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 2px;
+}
+
+.kg-results-section-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.kg-results-section-count {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--bg-subtle);
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+}
+
+/* ── Entity Card ── */
+.kg-entity-card {
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  position: relative;
+  overflow: hidden;
+  transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+}
+
+.kg-entity-card:hover {
+  border-color: var(--accent-subtle);
+  box-shadow: 0 0 0 1px var(--accent-subtle);
+}
+
+.kg-entity-card--low {
+  opacity: 0.6;
+  border-style: dashed;
+}
+
+.kg-entity-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.kg-entity-type-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  letter-spacing: 0.03em;
+}
+
+.kg-entity-type-badge.space      { background: rgba(0, 212, 170, 0.12); color: #00d4aa; }
+.kg-entity-type-badge.device     { background: rgba(59, 130, 246, 0.15); color: #3b82f6; }
+.kg-entity-type-badge.functional { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
+.kg-entity-type-badge[class*="custom"] { background: rgba(179, 157, 219, 0.15); color: #b39ddb; }
+
+.kg-entity-confidences {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.kg-entity-confidence {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ok);
+  opacity: calc(0.5 + var(--conf, 0.7) * 0.5);
+}
+
+.kg-entity-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.kg-entity-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-strong);
+  line-height: 1.3;
+}
+
+.kg-entity-desc {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.kg-entity-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.kg-entity-tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* ── Entity Edit ── */
+.kg-entity-edit-input {
+  width: 100%;
+  padding: 6px 10px;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+
+.kg-entity-edit-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+/* ── Entity Actions ── */
+.kg-entity-actions {
+  display: flex;
+  gap: 2px;
+  margin-top: 2px;
+}
+
+.kg-entity-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+  font-weight: 500;
+  transition: background var(--duration-fast), color var(--duration-fast);
+  padding: 0 8px;
+  width: auto;
+}
+
+.kg-entity-action:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.kg-entity-action--confirm:hover { color: var(--ok); background: var(--ok-subtle); }
+.kg-entity-action--delete:hover  { color: var(--danger); background: var(--danger-subtle); }
+.kg-entity-action--save { color: var(--ok); }
+
+/* ── Confidence Bar ── */
+.kg-confidence-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--bg-muted);
+}
+
+.kg-confidence-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--ok), var(--accent));
+  border-radius: 0 1px 1px 0;
+  transition: width 0.6s var(--ease-out);
+}
+
+/* ── Relation Row ── */
+.kg-relation-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 8px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+}
+
+.kg-relation-entity {
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.kg-relation-type {
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-size: 10px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.kg-relation-confidence {
+  font-size: 10px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+/* ── Parse polling card indicator ── */
+.knowledge-card--polling {
+  position: relative;
+  overflow: hidden;
+}
+
+.knowledge-card--polling::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--info), transparent);
+  animation: kg-poll-scan 1.5s ease-in-out infinite;
+}
+
+@keyframes kg-poll-scan {
+  0% { left: -100%; }
+  100% { left: 100%; }
+}
+
+/* ── Pagination ── */
+.knowledge-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+}
+
+.knowledge-pagination-info {
+  font-size: 12px;
+  color: var(--muted);
+  margin-right: var(--space-3);
+}
+
+.knowledge-pagination-btn--active {
+  background: var(--accent-gradient) !important;
+  color: var(--text-inverse) !important;
+  box-shadow: 0 2px 8px rgba(0, 152, 255, 0.25);
+}
+
+/* ── Diff Summary ── */
+.kg-diff-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: var(--space-2);
+  background: var(--bg-subtle);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+}
+
+.kg-diff-summary-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-right: auto;
+}
+
+.kg-diff-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+}
+
+.kg-diff-badge--added    { background: rgba(0, 212, 170, 0.15); color: #00d4aa; }
+.kg-diff-badge--modified { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
+.kg-diff-badge--removed  { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+
+/* ── Results Actions ── */
+.kg-results-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: var(--space-2);
+}
+
+.kg-batch-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  color: var(--text);
+  font-size: 11px;
+  font-family: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--duration-fast), border-color var(--duration-fast);
+}
+
+.kg-batch-btn:hover:not(:disabled) { border-color: var(--accent); background: var(--bg-hover); }
+.kg-batch-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.kg-batch-btn--confirm:hover:not(:disabled) {
+  border-color: #00d4aa;
+  background: rgba(0, 212, 170, 0.1);
+  color: #00d4aa;
+}
+
+.kg-batch-btn--reparse { margin-left: auto; }
+
+.kg-batch-btn--reparse:hover {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+/* ── Diff-colored entity cards ── */
+.kg-entity-card--diff-added {
+  border-left: 3px solid #00d4aa;
+  background: rgba(0, 212, 170, 0.04);
+}
+
+.kg-entity-card--diff-modified {
+  border-left: 3px solid #f59e0b;
+  background: rgba(245, 158, 11, 0.04);
+}
+
+.kg-entity-card--diff-removed {
+  border-left: 3px solid #ef4444;
+  background: rgba(239, 68, 68, 0.04);
+  opacity: 0.55;
+}
+
 /* ── Reduced motion ── */
 @media (prefers-reduced-motion: reduce) {
   .knowledge-card { animation: none; opacity: 1; transform: none; }
@@ -562,22 +1193,24 @@ view-knowledge {
 
   .knowledge-grid { grid-template-columns: 1fr; }
 
-  .knowledge-filter-bar {
+  .knowledge-toolbar {
     flex-direction: column;
     align-items: stretch;
   }
 
   .knowledge-search { max-width: none; }
 
-  .knowledge-header {
-    flex-direction: column;
-    gap: var(--space-3);
-    align-items: flex-start;
-  }
-
   .knowledge-editor-modal {
     max-width: 100%;
     width: 100%;
     margin: var(--space-2);
+  }
+
+  .kg-editor-workspace { flex-direction: column; }
+
+  .kg-side-panel {
+    width: 100%;
+    min-width: 0;
+    max-height: 50vh;
   }
 }

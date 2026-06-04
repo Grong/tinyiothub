@@ -33,7 +33,6 @@ const lazyViews: Record<string, () => Promise<void>> = {
   marketplace: () => import('./views/marketplace.js').then(() => {}),
   'driver-health': () => import('./views/driver-health.js').then(() => {}),
   'memory-dashboard': () => import('./views/memory-dashboard.js').then(() => {}),
-  'workspace-resources': () => import('./views/workspace-resources.js').then(() => {}),
   knowledge: () => import('./views/knowledge.js').then(() => {}),
 };
 
@@ -53,6 +52,11 @@ const NAV_GROUPS: NavGroup[] = [
   {
     items: [
       {
+        route: 'chat',
+        label: 'AI 助手',
+        icon: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
+      },
+      {
         route: 'dashboard',
         label: '概览',
         icon: 'M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z',
@@ -71,16 +75,6 @@ const NAV_GROUPS: NavGroup[] = [
         route: 'local-resources',
         label: '本地资源',
         icon: 'M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6',
-      },
-      {
-        route: 'workspace-resources',
-        label: '工作区资源',
-        icon: 'M21.17 2.06A13.09 13.09 0 0 0 19 2a13.94 13.94 0 0 0-7.53 2.25A12.73 12.73 0 0 0 9 2a13.87 13.87 0 0 0-7.46 2.18A2 2 0 0 0 1 5.72v14.56a2 2 0 0 0 2.83 1.82A12 12 0 0 1 9 22a12.73 12.73 0 0 1 7.47-2.25 13.87 13.87 0 0 0 7.46-2.18A2 2 0 0 0 25 16.28V1.72a2 2 0 0 0-1.83-1.66zM17 18H7v-2h10zm4-4H7v-2h14z',
-      },
-      {
-        route: 'knowledge',
-        label: '知识图谱',
-        icon: 'M5 3a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M19 3a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M12 17a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M7 7l5 8 M17 7l-5 8',
       },
       {
         route: 'marketplace',
@@ -112,13 +106,8 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: 'AI 助手',
+    label: '智能管理',
     items: [
-      {
-        route: 'chat',
-        label: 'AI 聊天',
-        icon: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
-      },
       {
         route: 'agents',
         label: 'Agent 管理',
@@ -128,6 +117,11 @@ const NAV_GROUPS: NavGroup[] = [
         route: 'memory-dashboard',
         label: '记忆面板',
         icon: 'M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm0 4v8h16V8H4zm3 2h4v4H7v-4zm6 0h4v2h-4v-2z',
+      },
+      {
+        route: 'knowledge',
+        label: '知识图谱',
+        icon: 'M5 3a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M19 3a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M12 17a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M7 7l5 8 M17 7l-5 8',
       },
     ],
   },
@@ -296,11 +290,17 @@ export class TinyIoTHubApp extends LitElement {
       return;
     }
 
-    this.currentRoute = path || 'home';
+    this.currentRoute = path || 'chat';
 
     const publicRoutes = ['login', 'register', 'home', 'terms', 'privacy', ''];
     if (!publicRoutes.includes(path) && !this.isAuthenticated) {
       this.navigate('login');
+      return;
+    }
+
+    // Authenticated users landing on / get redirected to chat
+    if (!path && this.isAuthenticated) {
+      this.navigate('chat');
       return;
     }
 
@@ -361,7 +361,6 @@ export class TinyIoTHubApp extends LitElement {
       settings: '系统设置',
       marketplace: '应用市场',
       knowledge: '知识图谱',
-      'workspace-resources': '工作区资源',
       'driver-health': '驱动健康',
       chat: 'AI 聊天',
       agents: 'Agent 管理',
@@ -385,7 +384,6 @@ export class TinyIoTHubApp extends LitElement {
       settings: '系统配置和参数管理',
       marketplace: '浏览和安装模板与驱动',
       knowledge: '管理知识文档，构建物联网场景知识图谱',
-      'workspace-resources': '管理工作区中的场景、模型、图片和文档',
       'driver-health': '查看已加载动态驱动的运行状态',
       chat: '与 AI Agent 对话',
       agents: '管理和配置 Agent',
@@ -461,7 +459,7 @@ export class TinyIoTHubApp extends LitElement {
           class="brand"
           @click=${(e: Event) => {
             e.preventDefault();
-            this.navigate('dashboard');
+            this.navigate('chat');
           }}
           style="cursor: pointer; text-decoration: none;"
         >
@@ -605,8 +603,6 @@ export class TinyIoTHubApp extends LitElement {
     if (base === 'driver-health') return html`<view-driver-health></view-driver-health>`;
     if (base === 'memory-dashboard') return html`<view-memory-dashboard></view-memory-dashboard>`;
     if (base === 'knowledge') return html`<view-knowledge></view-knowledge>`;
-    if (base === 'workspace-resources')
-      return html`<view-workspace-resources></view-workspace-resources>`;
     return html`<div style="padding: 40px; text-align: center; color: var(--muted);">
       页面不存在
     </div>`;

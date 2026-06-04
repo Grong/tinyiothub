@@ -344,16 +344,7 @@ export function handleChatEvent(state: ChatState, payload: ChatEventPayload): vo
         return tc ? `${tc.toolName}::${tc.toolArgs}` : "";
       }));
       const key = `${toolName}::${toolArgs}`;
-      if (seen.has(key)) {
-        // Duplicate — skip adding to stream state, but still process A2UI
-        if (payload.a2ui && state.onA2ui) {
-          const surfaceId = extractA2uiSurfaceId(payload.a2ui);
-          if (surfaceId) state.lastA2uiSurfaceId = surfaceId;
-          state.a2uiChunks.push(payload.a2ui);
-          state.onA2ui(payload.a2ui);
-        }
-        break;
-      }
+      if (seen.has(key)) break; // Duplicate — skip entirely, A2UI already processed
       const toolCallId = `tc_${Date.now()}_${state.toolStreamOrder.length}`;
       state.toolStreamById.set(toolCallId, {
         toolCallId,
@@ -484,7 +475,7 @@ function buildToolMessages(state: ChatState): ChatMessage[] {
 }
 
 function extractA2uiSurfaceId(jsonl: string): string | null {
-  const lines = jsonl.split("\n").filter((l) => l.trim());
+  const lines = jsonl.split(/\\n|\n/).filter((l) => l.trim());
   for (const line of lines) {
     try {
       const msg = JSON.parse(line);

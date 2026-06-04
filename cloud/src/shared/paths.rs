@@ -74,6 +74,16 @@ pub fn builtin_templates_dir() -> PathBuf {
     templates_dir().join("builtin")
 }
 
+/// Uploaded files directory: <api_data>/uploads/
+pub fn uploads_dir() -> PathBuf {
+    api_data_dir().join("uploads")
+}
+
+/// Workspace-specific uploaded files directory: <workspace_dir>/uploads/
+pub fn workspace_uploads_dir(workspace_id: &str) -> PathBuf {
+    workspace_dir(workspace_id).join("uploads")
+}
+
 /// Agent prompt templates directory: <project_root>/cloud/templates/agent/
 /// Note: these are embedded at compile time via include_str!, this path is for reference.
 pub fn agent_templates_dir() -> PathBuf {

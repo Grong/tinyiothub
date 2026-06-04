@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use zeroclaw::tools::{Tool, ToolResult};
 
 use crate::modules::workspace::WorkspaceService;
+use crate::modules::workspace::types::ResourceType;
 
 pub struct SearchWorkspaceResourcesTool {
     workspace_service: Arc<WorkspaceService>,
@@ -43,8 +44,8 @@ impl Tool for SearchWorkspaceResourcesTool {
                 },
                 "resource_type": {
                     "type": "string",
-                    "enum": ["scene", "device_model", "image", "document"],
-                    "description": "Optional filter by resource type"
+                    "description": "Optional filter by resource type.",
+                    "enum": ResourceType::all().iter().map(|rt| rt.as_str()).collect::<Vec<_>>(),
                 },
                 "limit": {
                     "type": "integer",
@@ -71,7 +72,7 @@ impl Tool for SearchWorkspaceResourcesTool {
 
         let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
 
-        let resource_type = args.get("resource_type").and_then(|v| v.as_str());
+        let resource_type = args.get("resource_type").and_then(|v| v.as_str()).and_then(ResourceType::from_str);
 
         let limit = args.get("limit").and_then(|v| v.as_i64()).unwrap_or(10).clamp(1, 50);
 

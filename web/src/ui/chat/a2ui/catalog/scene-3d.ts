@@ -203,15 +203,30 @@ export class A2uiScene3D extends LitElement {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
     this.renderer.setSize(rect.width, rect.height);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.setClearColor(0x0a0e16);
+    this.renderer.setClearColor(0x1a1e2e);
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.5;
     this.renderer.localClippingEnabled = true;
 
     // Scene
     this.scene = new THREE.Scene();
-    this.scene.add(new THREE.AmbientLight(0xffffff, 0.4));
-    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    dirLight.position.set(10, 20, 10);
-    this.scene.add(dirLight);
+    // Ambient — base illumination so nothing is pitch black
+    this.scene.add(new THREE.AmbientLight(0xffffff, 4.0));
+    // Hemisphere — sky/ground gradient
+    const hemiLight = new THREE.HemisphereLight(0xddeeff, 0x8899aa, 3.0);
+    this.scene.add(hemiLight);
+    // Key light — strong main light
+    const keyLight = new THREE.DirectionalLight(0xffffff, 8.0);
+    keyLight.position.set(10, 20, 10);
+    this.scene.add(keyLight);
+    // Fill light — opposite side to reduce shadow
+    const fillLight = new THREE.DirectionalLight(0xffffff, 4.0);
+    fillLight.position.set(-10, 5, -10);
+    this.scene.add(fillLight);
+    // Rim light — highlights edges against dark background
+    const rimLight = new THREE.DirectionalLight(0xffffff, 3.0);
+    rimLight.position.set(0, 5, -20);
+    this.scene.add(rimLight);
 
     // Camera
     this.camera = new THREE.PerspectiveCamera(45, rect.width / rect.height, 0.1, 1000);
@@ -243,10 +258,19 @@ export class A2uiScene3D extends LitElement {
   }
 
   private async loadModel() {
-    const resourceId = String(this.dataModel.resourceId || "");
-    if (!resourceId) {
+    let modelUrl = String(this.dataModel.modelUrl || "");
+
+    // Resolve resourceId to modelUrl if modelUrl is not provided
+    if (!modelUrl) {
+      const resourceId = String(this.dataModel.resourceId || "");
+      if (resourceId) {
+        modelUrl = await this.resolveResourceUrl(resourceId);
+      }
+    }
+
+    if (!modelUrl) {
       this.loadState = "error";
-      this.errorMsg = "Missing resourceId";
+      this.errorMsg = "Missing modelUrl";
       this.requestUpdate();
       return;
     }
@@ -254,9 +278,7 @@ export class A2uiScene3D extends LitElement {
     this.loadState = "loading";
     this.requestUpdate();
 
-    // Build GLB URL from resourceId — the backend serves files at a known path
-    // For now, use a placeholder URL pattern; actual path TBD based on file serving endpoint
-    const glbUrl = `/api/workspaces/resources/file/${resourceId}`;
+    const glbUrl = modelUrl;
 
     const loader = new GLTFLoader();
     try {
@@ -293,7 +315,20 @@ export class A2uiScene3D extends LitElement {
     }
   }
 
+  private async resolveResourceUrl(resourceId: string): Promise<string> {
+    try {
+      const wsId = localStorage.getItem("workspace-id") || "ws-default-001";
+      const resp = await fetch(`/api/workspaces/${wsId}/resources/${resourceId}`);
+      if (!resp.ok) return "";
+      const json = await resp.json();
+      return (json.result?.file_path) || "";
+    } catch {
+      return "";
+    }
+  }
+
   private parseMetadata() {
+
     const metadataStr = String(this.dataModel.metadata || "{}");
     try {
       const metadata = JSON.parse(metadataStr) as SceneMetadata;
@@ -353,9 +388,9 @@ export class A2uiScene3D extends LitElement {
   }
 
   private onDataModelChanged() {
-    // If resourceId changed, reload
-    const newResourceId = String(this.dataModel.resourceId || "");
-    if (this.modelGroup && newResourceId) {
+    // If modelUrl changed, reload
+    const newModelUrl = String(this.dataModel.modelUrl || "");
+    if (this.modelGroup && newModelUrl) {
       // For now, just update markers; full reload on resourceId change
       this.parseMetadata();
       this.createMarkers();

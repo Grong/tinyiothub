@@ -23,7 +23,7 @@ export class A2uiRendererEngine {
 
   handleA2uiMessage(jsonl: string): void {
     console.log("[A2UI] handleA2uiMessage called, jsonl:", jsonl.substring(0, 300));
-    const lines = jsonl.split("\n").filter((l) => l.trim());
+    const lines = jsonl.split(/\\n|\n/).filter((l) => l.trim());
     console.log("[A2UI] Parsing", lines.length, "lines");
     for (const line of lines) {
       try {
@@ -40,10 +40,13 @@ export class A2uiRendererEngine {
   private handleSingleMessage(msg: Record<string, unknown>): void {
     if (msg.createSurface) {
       const s = msg.createSurface as Record<string, unknown>;
-      this.surfaces.set(s.id as string, {
-        id: s.id as string,
+      const surfaceId = s.id as string;
+      // Don't reset components if surface already exists (defensive against duplicate createSurface)
+      const existing = this.surfaces.get(surfaceId);
+      this.surfaces.set(surfaceId, {
+        id: surfaceId,
         surfaceKind: ((s.surfaceKind as string) || "inline") as "inline" | "overlay",
-        components: [],
+        components: existing?.components || [],
       });
     } else if (msg.updateComponents) {
       const u = msg.updateComponents as Record<string, unknown>;
@@ -55,10 +58,11 @@ export class A2uiRendererEngine {
           : Array.from(this.surfaces.values());
         for (const surface of surfaces) {
           const idx = surface.components.findIndex((c) => c.id === comp.id);
+          const { id, componentKind, dataModel, ...rest } = comp;
           const a2uiComp: A2uiComponent = {
-            id: comp.id as string,
-            componentKind: comp.componentKind as string,
-            dataModel: (comp.dataModel as Record<string, unknown>) || {},
+            id: id as string,
+            componentKind: componentKind as string,
+            dataModel: { ...rest, ...(dataModel as Record<string, unknown> || {}) },
           };
           if (idx >= 0) {
             surface.components[idx] = a2uiComp;

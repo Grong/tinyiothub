@@ -1,16 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KnowledgeDocument {
-    pub id: String,
-    pub workspace_id: String,
-    pub title: String,
-    pub content: String,
-    pub tags: Vec<String>,
-    pub parse_status: String,
-    pub created_at: String,
-    pub updated_at: String,
-}
+// KnowledgeDocument is removed — use WorkspaceResource (resource_type = "document").
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KnowledgeEntity {
@@ -125,6 +115,7 @@ pub struct KnowledgeDocumentListParams {
 pub struct KnowledgeEntityListParams {
     pub entity_type: Option<String>,
     pub tags: Option<String>,
+    pub document_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

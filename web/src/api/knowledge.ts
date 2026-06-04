@@ -7,10 +7,15 @@ import { apiGet, apiPost, apiPut, apiDelete, apiUpload } from './client.js';
 export interface KnowledgeDocument {
   id: string;
   workspaceId: string;
-  title: string;
-  content: string;
+  resourceType: string;
+  name: string;
+  description: string | null;
+  content: string | null;
+  filePath: string;
+  fileSize: number | null;
   tags: string[];
-  parseStatus: 'pending' | 'parsing' | 'parsed' | 'failed';
+  metadata: string | null;
+  parseStatus: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -94,9 +99,12 @@ export interface KnowledgeSearchResult {
 
 export interface DocumentListResponse {
   data: KnowledgeDocument[];
-  total: number;
-  page: number;
-  pageSize: number;
+  pagination: {
+    page: number;
+    pageSize: number;
+    totalPages: number;
+    totalCount: number;
+  };
 }
 
 function getWorkspaceId(): string | null {
@@ -156,7 +164,7 @@ export const knowledgeApi = {
   },
 
   // Entities & Relations
-  async listEntities(params?: { entityType?: string; tags?: string }) {
+  async listEntities(params?: { entityType?: string; tags?: string; documentId?: string }) {
     const wsId = getWorkspaceId();
     if (!wsId) throw new Error('No workspace selected');
     return apiGet<KnowledgeEntity[]>(`/workspaces/${wsId}/knowledge/entities`, params as Record<string, any>);

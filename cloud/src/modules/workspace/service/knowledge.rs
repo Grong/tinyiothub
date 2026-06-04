@@ -7,6 +7,7 @@ use crate::shared::error::Result;
 
 use super::super::repo::KnowledgeRepository;
 use super::super::types::knowledge::*;
+use super::super::types::{ResourceType, WorkspaceResource};
 
 /// Service for workspace knowledge graph operations.
 ///
@@ -32,14 +33,14 @@ impl KnowledgeService {
         status: Option<&str>,
         page: i64,
         page_size: i64,
-    ) -> Result<(Vec<KnowledgeDocument>, i64)> {
+    ) -> Result<(Vec<WorkspaceResource>, i64)> {
         self.repo
             .list_documents(workspace_id, q, tags, status, page, page_size)
             .await
     }
 
     /// Get a single document by ID.
-    pub async fn get_document(&self, id: &str) -> Result<Option<KnowledgeDocument>> {
+    pub async fn get_document(&self, id: &str) -> Result<Option<WorkspaceResource>> {
         self.repo.get_document(id).await
     }
 
@@ -50,17 +51,22 @@ impl KnowledgeService {
         title: String,
         content: String,
         tags: Vec<String>,
-    ) -> Result<KnowledgeDocument> {
+    ) -> Result<WorkspaceResource> {
         let now = chrono::Utc::now().to_rfc3339();
         let id = format!("doc-{}", uuid::Uuid::new_v4());
 
-        let doc = KnowledgeDocument {
+        let doc = WorkspaceResource {
             id,
             workspace_id: workspace_id.to_string(),
-            title,
-            content,
+            resource_type: ResourceType::Document,
+            name: title,
+            description: None,
+            content: Some(content),
+            file_path: String::new(),
+            file_size: None,
             tags,
-            parse_status: "pending".to_string(),
+            metadata: None,
+            parse_status: Some("pending".to_string()),
             created_at: now.clone(),
             updated_at: now,
         };
@@ -76,13 +82,13 @@ impl KnowledgeService {
         title: Option<String>,
         content: Option<String>,
         tags: Option<Vec<String>>,
-    ) -> Result<Option<KnowledgeDocument>> {
+    ) -> Result<Option<WorkspaceResource>> {
         // Determine if we need to reset parse status
         let mut parse_status: Option<&str> = None;
 
         if let Some(ref new_content) = content
             && let Some(existing) = self.repo.get_document(id).await?
-            && new_content != &existing.content
+            && existing.content.as_deref() != Some(new_content.as_str())
         {
             parse_status = Some("pending");
         }
@@ -114,8 +120,9 @@ impl KnowledgeService {
         workspace_id: &str,
         entity_type: Option<&str>,
         tags: Option<&str>,
+        document_id: Option<&str>,
     ) -> Result<Vec<KnowledgeEntity>> {
-        self.repo.list_entities(workspace_id, entity_type, tags).await
+        self.repo.list_entities(workspace_id, entity_type, tags, document_id).await
     }
 
     /// Get a single entity by ID.
@@ -207,9 +214,10 @@ impl KnowledgeService {
         let doc_id = document_id.to_string();
         let ws_id = workspace_id.to_string();
         let pid = parse_id.clone();
+        let doc_content = doc.content.unwrap_or_default();
 
         tokio::spawn(async move {
-            run_parse(repo, &doc_id, &ws_id, &pid, &doc.content).await;
+            run_parse(repo, &doc_id, &ws_id, &pid, &doc_content).await;
         });
 
         Ok(parse_id)
@@ -994,7 +1002,8 @@ fn render_tree_node(
             "│   "
         };
         let short_desc = if desc.len() > 80 {
-            format!("{}...", &desc[..80])
+            let end = desc.floor_char_boundary(80);
+            format!("{}...", &desc[..end])
         } else {
             desc.clone()
         };
@@ -1037,7 +1046,8 @@ async fn generate_tags_inner(content: &str) -> Result<Vec<String>> {
         "根据以下文档内容，生成 3-5 个简洁的中文标签。只返回逗号分隔的标签，不要任何解释。\n\n文档：\n{}",
         // Truncate long content for tag generation
         if content.len() > 2000 {
-            &content[..2000]
+            let end = content.floor_char_boundary(2000);
+            &content[..end]
         } else {
             content
         }

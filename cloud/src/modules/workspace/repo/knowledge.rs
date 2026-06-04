@@ -4,33 +4,44 @@ use tinyiothub_core::error::{Error, Result};
 use tinyiothub_storage::sqlite::Database;
 
 use super::super::types::{
-    KnowledgeDocument, KnowledgeEntity, KnowledgeParseJob, KnowledgeRelation,
-    KnowledgeSearchResult, ParseResultSummary,
+    KnowledgeEntity, KnowledgeParseJob, KnowledgeRelation, KnowledgeSearchResult,
+    ParseResultSummary, ResourceType, WorkspaceResource,
 };
 
 // --- Row types ---
 
+/// Row type for the unified resources table (document subset).
 #[derive(Debug, Clone, FromRow)]
-pub(crate) struct KnowledgeDocumentRow {
+pub(crate) struct ResourceRow {
     pub id: String,
     pub workspace_id: String,
-    pub title: String,
-    pub content: String,
-    pub tags: String, // JSON array string
-    pub parse_status: String,
+    pub resource_type: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub content: Option<String>,
+    pub file_path: String,
+    pub file_size: Option<i64>,
+    pub tags: String,
+    pub metadata: Option<String>,
+    pub parse_status: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
 
-impl From<KnowledgeDocumentRow> for KnowledgeDocument {
-    fn from(row: KnowledgeDocumentRow) -> Self {
+impl From<ResourceRow> for WorkspaceResource {
+    fn from(row: ResourceRow) -> Self {
         let tags: Vec<String> = serde_json::from_str(&row.tags).unwrap_or_default();
         Self {
             id: row.id,
             workspace_id: row.workspace_id,
-            title: row.title,
+            resource_type: ResourceType::from_str(&row.resource_type).unwrap_or(ResourceType::Document),
+            name: row.name,
+            description: row.description,
             content: row.content,
+            file_path: row.file_path,
+            file_size: row.file_size,
             tags,
+            metadata: row.metadata,
             parse_status: row.parse_status,
             created_at: row.created_at,
             updated_at: row.updated_at,
@@ -138,7 +149,7 @@ impl From<KnowledgeParseJobRow> for KnowledgeParseJob {
 
 #[async_trait]
 pub trait KnowledgeRepository: Send + Sync {
-    // Documents
+    // Documents (stored in unified resources table with resource_type='document')
     async fn list_documents(
         &self,
         workspace_id: &str,
@@ -147,17 +158,17 @@ pub trait KnowledgeRepository: Send + Sync {
         status: Option<&str>,
         page: i64,
         page_size: i64,
-    ) -> Result<(Vec<KnowledgeDocument>, i64)>;
-    async fn get_document(&self, id: &str) -> Result<Option<KnowledgeDocument>>;
-    async fn create_document(&self, doc: &KnowledgeDocument) -> Result<()>;
+    ) -> Result<(Vec<WorkspaceResource>, i64)>;
+    async fn get_document(&self, id: &str) -> Result<Option<WorkspaceResource>>;
+    async fn create_document(&self, doc: &WorkspaceResource) -> Result<()>;
     async fn update_document(
         &self,
         id: &str,
-        title: Option<&str>,
+        name: Option<&str>,
         content: Option<&str>,
         tags: Option<&str>,
         parse_status: Option<&str>,
-    ) -> Result<Option<KnowledgeDocument>>;
+    ) -> Result<Option<WorkspaceResource>>;
     async fn delete_document(&self, id: &str) -> Result<()>;
 
     // Entities
@@ -166,6 +177,7 @@ pub trait KnowledgeRepository: Send + Sync {
         workspace_id: &str,
         entity_type: Option<&str>,
         tags: Option<&str>,
+        document_id: Option<&str>,
     ) -> Result<Vec<KnowledgeEntity>>;
     async fn get_entity(&self, id: &str) -> Result<Option<KnowledgeEntity>>;
     async fn get_entities_by_document(
@@ -257,10 +269,11 @@ fn append_document_filters(
     tags: Option<&str>,
     status: Option<&str>,
 ) {
-    builder.push_bind(workspace_id);
+    builder.push("workspace_id = ").push_bind(workspace_id);
+    builder.push(" AND resource_type = ").push_bind(ResourceType::Document.as_str());
 
     if let Some(q) = q {
-        builder.push(" AND (title LIKE ");
+        builder.push(" AND (name LIKE ");
         builder.push_bind(format!("%{}%", q));
         builder.push(" OR content LIKE ");
         builder.push_bind(format!("%{}%", q));
@@ -292,14 +305,14 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
         status: Option<&str>,
         page: i64,
         page_size: i64,
-    ) -> Result<(Vec<KnowledgeDocument>, i64)> {
+    ) -> Result<(Vec<WorkspaceResource>, i64)> {
         let page = page.max(1);
         let page_size = page_size.clamp(1, 100);
         let offset = (page - 1) * page_size;
 
         // Count query
         let mut count_builder =
-            QueryBuilder::new("SELECT COUNT(*) as cnt FROM knowledge_documents WHERE ");
+            QueryBuilder::new("SELECT COUNT(*) as cnt FROM resources WHERE ");
         append_document_filters(
             &mut count_builder,
             workspace_id,
@@ -315,7 +328,7 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
 
         // Data query
         let mut data_builder =
-            QueryBuilder::new("SELECT * FROM knowledge_documents WHERE ");
+            QueryBuilder::new("SELECT * FROM resources WHERE ");
         append_document_filters(
             &mut data_builder,
             workspace_id,
@@ -329,17 +342,17 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
         data_builder.push_bind(offset);
 
         let rows = data_builder
-            .build_query_as::<KnowledgeDocumentRow>()
+            .build_query_as::<ResourceRow>()
             .fetch_all(self.database.pool())
             .await?;
 
-        let docs: Vec<KnowledgeDocument> = rows.into_iter().map(Into::into).collect();
+        let docs: Vec<WorkspaceResource> = rows.into_iter().map(Into::into).collect();
         Ok((docs, total))
     }
 
-    async fn get_document(&self, id: &str) -> Result<Option<KnowledgeDocument>> {
-        let row = sqlx::query_as::<_, KnowledgeDocumentRow>(
-            "SELECT * FROM knowledge_documents WHERE id = ?",
+    async fn get_document(&self, id: &str) -> Result<Option<WorkspaceResource>> {
+        let row = sqlx::query_as::<_, ResourceRow>(
+            "SELECT * FROM resources WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(self.database.pool())
@@ -348,15 +361,16 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
         Ok(row.map(Into::into))
     }
 
-    async fn create_document(&self, doc: &KnowledgeDocument) -> Result<()> {
+    async fn create_document(&self, doc: &WorkspaceResource) -> Result<()> {
         let tags_json = serde_json::to_string(&doc.tags).unwrap_or_else(|_| "[]".to_string());
 
         sqlx::query(
-            "INSERT INTO knowledge_documents (id, workspace_id, title, content, tags, parse_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO resources (id, workspace_id, resource_type, name, content, tags, parse_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&doc.id)
         .bind(&doc.workspace_id)
-        .bind(&doc.title)
+        .bind(doc.resource_type.as_str())
+        .bind(&doc.name)
         .bind(&doc.content)
         .bind(&tags_json)
         .bind(&doc.parse_status)
@@ -371,20 +385,20 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
     async fn update_document(
         &self,
         id: &str,
-        title: Option<&str>,
+        name: Option<&str>,
         content: Option<&str>,
         tags: Option<&str>,
         parse_status: Option<&str>,
-    ) -> Result<Option<KnowledgeDocument>> {
-        let mut builder = QueryBuilder::new("UPDATE knowledge_documents SET ");
+    ) -> Result<Option<WorkspaceResource>> {
+        let mut builder = QueryBuilder::new("UPDATE resources SET ");
         let mut has_updates = false;
         let now = chrono::Utc::now().to_rfc3339();
 
-        if let Some(t) = title {
+        if let Some(t) = name {
             if has_updates {
                 builder.push(", ");
             }
-            builder.push("title = ").push_bind(t);
+            builder.push("name = ").push_bind(t);
             has_updates = true;
         }
 
@@ -457,7 +471,7 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
             .await?;
 
         // Delete the document itself
-        sqlx::query("DELETE FROM knowledge_documents WHERE id = ?")
+        sqlx::query("DELETE FROM resources WHERE id = ?")
             .bind(id)
             .execute(self.database.pool())
             .await?;
@@ -472,6 +486,7 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
         workspace_id: &str,
         entity_type: Option<&str>,
         tags: Option<&str>,
+        document_id: Option<&str>,
     ) -> Result<Vec<KnowledgeEntity>> {
         let mut builder =
             QueryBuilder::new("SELECT * FROM knowledge_entities WHERE workspace_id = ");
@@ -480,6 +495,11 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
         if let Some(et) = entity_type {
             builder.push(" AND entity_type = ");
             builder.push_bind(et);
+        }
+
+        if let Some(did) = document_id {
+            builder.push(" AND source_document_id = ");
+            builder.push_bind(did);
         }
 
         let tag_list = split_tags(tags);
@@ -732,7 +752,7 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
         builder.push_bind(like_pattern.clone());
         builder.push(" THEN 3 ELSE 0 END) + (CASE WHEN e.description LIKE ");
         builder.push_bind(like_pattern.clone());
-        builder.push(" THEN 2 ELSE 0 END) as relevance, COALESCE(substr(d.content, 1, 500), '') as source_snippet FROM knowledge_entities e LEFT JOIN knowledge_documents d ON d.id = e.source_document_id WHERE e.workspace_id = ");
+        builder.push(" THEN 2 ELSE 0 END) as relevance, COALESCE(substr(d.content, 1, 500), '') as source_snippet FROM knowledge_entities e LEFT JOIN resources d ON d.id = e.source_document_id WHERE e.workspace_id = ");
         builder.push_bind(workspace_id);
 
         builder.push(" AND (e.name LIKE ");

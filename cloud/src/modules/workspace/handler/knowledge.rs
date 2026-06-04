@@ -9,29 +9,9 @@ use axum::{
 use tinyiothub_web::response::{ApiResponseBuilder, PaginatedResponse, PaginationInfo};
 
 use super::super::types::knowledge::*;
+use super::super::types::WorkspaceResource;
 use crate::shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims};
-
-// ── Helper ──
-
-/// Verify the workspace exists and belongs to the current tenant.
-/// Returns the workspace on success, or a Json error response.
-macro_rules! verify_workspace_access {
-    ($state:expr, $claims:expr, $id:expr) => {{
-        match $state.workspace_service.find_by_id(&$id).await {
-            Ok(Some(workspace)) => {
-                if workspace.tenant_id != $claims.tenant_id {
-                    return ApiResponseBuilder::error_with_code(403, "无权访问此工作空间");
-                }
-                workspace
-            }
-            Ok(None) => return ApiResponseBuilder::error_with_code(404, "工作空间不存在"),
-            Err(e) => {
-                tracing::error!("Failed to get workspace: {}", e);
-                return ApiResponseBuilder::error("获取工作空间失败");
-            }
-        }
-    }};
-}
+use crate::verify_workspace_access;
 
 // ── Document CRUD ──
 
@@ -42,7 +22,7 @@ pub async fn list_documents(
     Extension(claims): Extension<Claims>,
     Path(id): Path<String>,
     Query(params): Query<KnowledgeDocumentListParams>,
-) -> Json<ApiResponse<PaginatedResponse<KnowledgeDocument>>> {
+) -> Json<ApiResponse<PaginatedResponse<WorkspaceResource>>> {
     verify_workspace_access!(state, claims, id);
 
     let page = params.page.unwrap_or(1).max(1);
@@ -87,7 +67,7 @@ pub async fn create_document(
     Extension(claims): Extension<Claims>,
     Path(id): Path<String>,
     Json(payload): Json<CreateKnowledgeDocumentRequest>,
-) -> Json<ApiResponse<KnowledgeDocument>> {
+) -> Json<ApiResponse<WorkspaceResource>> {
     verify_workspace_access!(state, claims, id);
 
     match state
@@ -114,7 +94,7 @@ pub async fn get_document(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
     Path((id, did)): Path<(String, String)>,
-) -> Json<ApiResponse<KnowledgeDocument>> {
+) -> Json<ApiResponse<WorkspaceResource>> {
     verify_workspace_access!(state, claims, id);
 
     match state.knowledge_service.get_document(&did).await {
@@ -139,7 +119,7 @@ pub async fn update_document(
     Extension(claims): Extension<Claims>,
     Path((id, did)): Path<(String, String)>,
     Json(payload): Json<UpdateKnowledgeDocumentRequest>,
-) -> Json<ApiResponse<KnowledgeDocument>> {
+) -> Json<ApiResponse<WorkspaceResource>> {
     verify_workspace_access!(state, claims, id);
 
     match state
@@ -308,7 +288,7 @@ pub async fn list_entities(
 
     match state
         .knowledge_service
-        .list_entities(&id, params.entity_type.as_deref(), params.tags.as_deref())
+        .list_entities(&id, params.entity_type.as_deref(), params.tags.as_deref(), params.document_id.as_deref())
         .await
     {
         Ok(entities) => ApiResponseBuilder::success(entities),

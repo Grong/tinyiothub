@@ -39,7 +39,11 @@ export default defineConfig(function () {
         "/v1": {
           target: "http://localhost:3002",
           changeOrigin: true,
-        }
+        },
+        "/uploads": {
+          target: "http://localhost:3002",
+          changeOrigin: true,
+        },
       },
     },
     appType: 'spa',

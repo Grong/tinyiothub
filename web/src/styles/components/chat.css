@@ -699,6 +699,146 @@
 }
 
 /* ===========================================
+   Chat Welcome & Suggestions
+   =========================================== */
+
+.chat-welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: var(--space-10) var(--space-6);
+  min-height: 100%;
+  animation: welcomeFadeIn 0.6s ease-out both;
+}
+
+@keyframes welcomeFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.chat-welcome__icon {
+  width: 64px;
+  height: 64px;
+  border-radius: var(--radius-xl);
+  background: var(--glass-chat-input-bg, rgba(30, 30, 40, 0.7));
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: var(--space-5);
+  color: var(--accent);
+}
+
+.chat-welcome__icon svg {
+  width: 32px;
+  height: 32px;
+}
+
+.chat-welcome__title {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 var(--space-2);
+  letter-spacing: -0.02em;
+}
+
+.chat-welcome__desc {
+  font-size: 14px;
+  color: var(--muted);
+  max-width: 440px;
+  line-height: 1.6;
+  margin: 0 0 var(--space-8);
+}
+
+.chat-suggestions {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-3);
+  max-width: 520px;
+  width: 100%;
+}
+
+@media (max-width: 560px) {
+  .chat-suggestions {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-welcome {
+    padding: var(--space-6) var(--space-4);
+  }
+}
+
+.chat-suggestion-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--glass-chat-input-bg, rgba(30, 30, 40, 0.7));
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition:
+    border-color var(--duration-fast) ease,
+    background var(--duration-fast) ease,
+    transform 0.15s ease;
+  animation: welcomeFadeIn 0.6s ease-out both;
+}
+
+.chat-suggestion-chip:nth-child(1) { animation-delay: 0.1s; }
+.chat-suggestion-chip:nth-child(2) { animation-delay: 0.16s; }
+.chat-suggestion-chip:nth-child(3) { animation-delay: 0.22s; }
+.chat-suggestion-chip:nth-child(4) { animation-delay: 0.28s; }
+.chat-suggestion-chip:nth-child(5) { animation-delay: 0.34s; }
+.chat-suggestion-chip:nth-child(6) { animation-delay: 0.40s; }
+
+.chat-suggestion-chip:hover {
+  border-color: var(--accent);
+  background: var(--glass-chat-input-bg, rgba(40, 40, 55, 0.85));
+  transform: translateY(-1px);
+}
+
+.chat-suggestion-chip:active {
+  transform: translateY(0) scale(0.98);
+}
+
+.chat-suggestion-chip__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  background: var(--accent-subtle);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.chat-suggestion-chip__icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.chat-suggestion-chip__text {
+  line-height: 1.4;
+}
+
+/* ===========================================
    QR Code
    =========================================== */
 

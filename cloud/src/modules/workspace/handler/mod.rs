@@ -4,17 +4,40 @@ pub mod knowledge;
 
 use axum::{
     Json, Router,
-    extract::{Extension, Path, Query, State},
+    extract::{Extension, Multipart, Path, Query, State},
     routing::{delete, get, post, put},
 };
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use super::types::{
     AssignDeviceRequest, CreateResourceRequest, CreateWorkspaceRequest, ResourceQueryParams,
-    ResourceSearchResult, SuggestTagsRequest, UpdateResourceRequest, UpdateWorkspaceRequest,
-    WorkspaceQueryParams, WorkspaceResource, WorkspaceWithDeviceCount,
+    ResourceSearchResult, ResourceType, SuggestTagsRequest, UpdateResourceRequest,
+    UpdateWorkspaceRequest, WorkspaceQueryParams, WorkspaceResource, WorkspaceWithDeviceCount,
 };
 use crate::shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims};
+
+// ── Helper ──
+
+/// Verify the workspace exists and belongs to the current tenant.
+/// Returns the workspace on success, or a Json error response.
+#[macro_export]
+macro_rules! verify_workspace_access {
+    ($state:expr, $claims:expr, $id:expr) => {{
+        match $state.workspace_service.find_by_id(&$id).await {
+            Ok(Some(workspace)) => {
+                if workspace.tenant_id != $claims.tenant_id {
+                    return ApiResponseBuilder::error_with_code(403, "无权访问此工作空间");
+                }
+                workspace
+            }
+            Ok(None) => return ApiResponseBuilder::error_with_code(404, "工作空间不存在"),
+            Err(e) => {
+                tracing::error!("Failed to get workspace: {}", e);
+                return ApiResponseBuilder::error("获取工作空间失败");
+            }
+        }
+    }};
+}
 
 /// Create workspaces router
 pub fn create_router() -> Router<AppState> {
@@ -29,6 +52,7 @@ pub fn create_router() -> Router<AppState> {
         .route("/{id}/resources", post(create_resource))
         .route("/{id}/resources/suggest-tags", post(suggest_tags))
         .route("/{id}/resources/search", get(search_resources))
+        .route("/{id}/resources/upload", post(upload_file))
         .route("/{id}/resources/{rid}", get(get_resource))
         .route("/{id}/resources/{rid}", put(update_resource))
         .route("/{id}/resources/{rid}", delete(delete_resource))
@@ -301,7 +325,7 @@ async fn list_resources(
 
     match state
         .workspace_service
-        .list_resources(&id, params.resource_type.as_deref(), params.page, params.page_size)
+        .list_resources(&id, params.resource_type, params.page, params.page_size)
         .await
     {
         Ok(resources) => ApiResponseBuilder::success(resources),
@@ -337,7 +361,7 @@ async fn search_resources(
         _ => return ApiResponseBuilder::error_with_code(400, "搜索关键词不能为空"),
     };
 
-    let resource_type = params.get("type").map(|s| s.as_str());
+    let resource_type = params.get("type").and_then(|s| ResourceType::from_str(s));
 
     let limit: i64 = params.get("limit").and_then(|s| s.parse().ok()).unwrap_or(10).clamp(1, 50);
 
@@ -399,9 +423,8 @@ async fn create_resource(
         }
     }
 
-    let valid_types = ["scene", "device_model", "image"];
-    if !valid_types.contains(&payload.resource_type.as_str()) {
-        return ApiResponseBuilder::error_with_code(400, "无效的资源类型");
+    if payload.resource_type != ResourceType::File {
+        return ApiResponseBuilder::error_with_code(400, "无效的资源类型，仅支持 'file'");
     }
 
     let sanitized_name =
@@ -415,7 +438,7 @@ async fn create_resource(
         .workspace_service
         .create_resource(
             &workspace_id,
-            &payload.resource_type,
+            payload.resource_type,
             &payload.name,
             payload.description.as_deref(),
             &file_path,
@@ -537,13 +560,7 @@ async fn suggest_tags(
         .map(|m| m.model.clone())
         .unwrap_or_else(|| "minimax-m2".into());
 
-    let type_label = match payload.resource_type.as_str() {
-        "scene" => "3D 场景",
-        "device_model" => "设备模型",
-        "image" => "图片",
-        "document" => "文档",
-        other => other,
-    };
+    let type_label = payload.resource_type.label();
 
     let prompt = format!(
         "你是一个资源标签生成助手。根据用户提供的资源信息，生成 3-5 个简洁的中文标签。\n\
@@ -585,4 +602,66 @@ async fn suggest_tags(
             ApiResponseBuilder::error("AI 生成标签失败，请稍后重试")
         }
     }
+}
+
+/// POST /{id}/resources/upload
+/// Upload a file to the workspace. Saves to data/uploads/ and returns the access path.
+async fn upload_file(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(id): Path<String>,
+    mut multipart: Multipart,
+) -> Json<ApiResponse<serde_json::Value>> {
+    verify_workspace_access!(state, claims, id);
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let Some(name) = field.name().map(|s| s.to_string()) else { continue };
+
+        if name != "file" {
+            continue;
+        }
+
+        let Some(file_name) = field.file_name().map(|s| s.to_string()) else { continue };
+        let content_type = field.content_type().map(|s| s.to_string());
+
+        let data = match field.bytes().await {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    file_name = %file_name,
+                    ?content_type,
+                    "Failed to read upload data"
+                );
+                return ApiResponseBuilder::error("读取上传文件失败");
+            }
+        };
+
+        let uploads_dir = crate::shared::paths::workspace_uploads_dir(&id);
+        if let Err(e) = tokio::fs::create_dir_all(&uploads_dir).await {
+            tracing::error!("Failed to create uploads dir: {}", e);
+            return ApiResponseBuilder::error("创建上传目录失败");
+        }
+
+        let safe_name = file_name
+            .replace(|c: char| !c.is_alphanumeric() && c != '.' && c != '-' && c != '_', "_");
+        let stored_name = format!("{}_{}", uuid::Uuid::new_v4(), safe_name);
+
+        let dest = uploads_dir.join(&stored_name);
+        let file_size = data.len() as u64;
+
+        if let Err(e) = tokio::fs::write(&dest, &data).await {
+            tracing::error!("Failed to write uploaded file: {}", e);
+            return ApiResponseBuilder::error("保存文件失败");
+        }
+
+        let file_path = format!("/uploads/{}/uploads/{}", id, stored_name);
+
+        return ApiResponseBuilder::success(serde_json::json!({
+            "file_path": file_path,
+            "file_size": file_size,
+        }));
+    }
+
+    ApiResponseBuilder::error_with_code(400, "未找到上传文件")
 }

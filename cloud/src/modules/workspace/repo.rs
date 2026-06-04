@@ -6,7 +6,7 @@ use sqlx::{FromRow, QueryBuilder};
 use tinyiothub_core::error::{Error, Result};
 use tinyiothub_storage::sqlite::Database;
 
-use super::types::{ResourceSearchResult, Workspace, WorkspaceResource, WorkspaceWithDeviceCount};
+use super::types::{ResourceSearchResult, ResourceType, Workspace, WorkspaceResource, WorkspaceWithDeviceCount};
 
 /// Repository interface for workspace persistence
 #[async_trait]
@@ -39,7 +39,7 @@ pub trait WorkspaceRepository: Send + Sync {
     async fn list_resources(
         &self,
         workspace_id: &str,
-        resource_type: Option<&str>,
+        resource_type: Option<ResourceType>,
         page: Option<u32>,
         page_size: Option<u32>,
     ) -> Result<Vec<WorkspaceResource>>;
@@ -51,7 +51,7 @@ pub trait WorkspaceRepository: Send + Sync {
     async fn create_resource(
         &self,
         workspace_id: &str,
-        resource_type: &str,
+        resource_type: ResourceType,
         name: &str,
         description: Option<&str>,
         file_path: &str,
@@ -72,7 +72,7 @@ pub trait WorkspaceRepository: Send + Sync {
         &self,
         workspace_id: &str,
         query: &str,
-        resource_type: Option<&str>,
+        resource_type: Option<ResourceType>,
         limit: i64,
     ) -> Result<Vec<ResourceSearchResult>>;
 }
@@ -117,9 +117,12 @@ struct WorkspaceResourceRow {
     resource_type: String,
     name: String,
     description: Option<String>,
+    content: Option<String>,
     file_path: String,
+    file_size: Option<i64>,
     tags: String,
     metadata: Option<String>,
+    parse_status: Option<String>,
     created_at: String,
     updated_at: String,
 }
@@ -130,12 +133,15 @@ impl From<WorkspaceResourceRow> for WorkspaceResource {
         Self {
             id: row.id,
             workspace_id: row.workspace_id,
-            resource_type: row.resource_type,
+            resource_type: ResourceType::from_str(&row.resource_type).unwrap_or(ResourceType::File),
             name: row.name,
             description: row.description,
+            content: row.content,
             file_path: row.file_path,
+            file_size: row.file_size,
             tags,
             metadata: row.metadata,
+            parse_status: row.parse_status,
             created_at: row.created_at,
             updated_at: row.updated_at,
         }
@@ -149,9 +155,12 @@ struct ResourceSearchResultRow {
     resource_type: String,
     name: String,
     description: Option<String>,
+    content: Option<String>,
     file_path: String,
+    file_size: Option<i64>,
     tags: String,
     metadata: Option<String>,
+    parse_status: Option<String>,
     created_at: String,
     updated_at: String,
     relevance: i64,
@@ -163,12 +172,15 @@ impl From<ResourceSearchResultRow> for ResourceSearchResult {
         Self {
             id: row.id,
             workspace_id: row.workspace_id,
-            resource_type: row.resource_type,
+            resource_type: ResourceType::from_str(&row.resource_type).unwrap_or(ResourceType::File),
             name: row.name,
             description: row.description,
+            content: row.content,
             file_path: row.file_path,
+            file_size: row.file_size,
             tags,
             metadata: row.metadata,
+            parse_status: row.parse_status,
             created_at: row.created_at,
             updated_at: row.updated_at,
             relevance: row.relevance,
@@ -185,6 +197,7 @@ impl SqliteWorkspaceRepository {
     pub fn new(database: Database) -> Self {
         Self { database }
     }
+
 }
 
 #[async_trait]
@@ -393,7 +406,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
     async fn list_resources(
         &self,
         workspace_id: &str,
-        resource_type: Option<&str>,
+        resource_type: Option<ResourceType>,
         page: Option<u32>,
         page_size: Option<u32>,
     ) -> Result<Vec<WorkspaceResource>> {
@@ -404,15 +417,15 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         let rows = if let Some(rt) = resource_type {
             sqlx::query_as::<_, WorkspaceResourceRow>(
                 r#"
-                SELECT id, workspace_id, resource_type, name, description, file_path, tags, metadata, created_at, updated_at
-                FROM workspace_resources
+                SELECT id, workspace_id, resource_type, name, description, content, file_path, file_size, tags, metadata, parse_status, created_at, updated_at
+                FROM resources
                 WHERE workspace_id = ? AND resource_type = ?
                 ORDER BY created_at DESC
                 LIMIT ? OFFSET ?
                 "#,
             )
             .bind(workspace_id)
-            .bind(rt)
+            .bind(rt.as_str())
             .bind(page_size as i64)
             .bind(offset as i64)
             .fetch_all(self.database.pool())
@@ -420,8 +433,8 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         } else {
             sqlx::query_as::<_, WorkspaceResourceRow>(
                 r#"
-                SELECT id, workspace_id, resource_type, name, description, file_path, tags, metadata, created_at, updated_at
-                FROM workspace_resources
+                SELECT id, workspace_id, resource_type, name, description, content, file_path, file_size, tags, metadata, parse_status, created_at, updated_at
+                FROM resources
                 WHERE workspace_id = ?
                 ORDER BY created_at DESC
                 LIMIT ? OFFSET ?
@@ -444,8 +457,8 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
     ) -> Result<Option<WorkspaceResource>> {
         let row = sqlx::query_as::<_, WorkspaceResourceRow>(
             r#"
-            SELECT id, workspace_id, resource_type, name, description, file_path, tags, metadata, created_at, updated_at
-            FROM workspace_resources
+            SELECT id, workspace_id, resource_type, name, description, content, file_path, file_size, tags, metadata, parse_status, created_at, updated_at
+            FROM resources
             WHERE workspace_id = ? AND id = ?
             "#,
         )
@@ -460,7 +473,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
     async fn create_resource(
         &self,
         workspace_id: &str,
-        resource_type: &str,
+        resource_type: ResourceType,
         name: &str,
         description: Option<&str>,
         file_path: &str,
@@ -473,13 +486,13 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
 
         sqlx::query(
             r#"
-            INSERT INTO workspace_resources (id, workspace_id, resource_type, name, description, file_path, tags, metadata, created_at, updated_at)
+            INSERT INTO resources (id, workspace_id, resource_type, name, description, file_path, tags, metadata, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&id)
         .bind(workspace_id)
-        .bind(resource_type)
+        .bind(resource_type.as_str())
         .bind(name)
         .bind(description)
         .bind(file_path)
@@ -493,12 +506,15 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         Ok(WorkspaceResource {
             id,
             workspace_id: workspace_id.to_string(),
-            resource_type: resource_type.to_string(),
+            resource_type,
             name: name.to_string(),
             description: description.map(String::from),
+            content: None,
             file_path: file_path.to_string(),
+            file_size: None,
             tags: tags.to_vec(),
             metadata: metadata.map(String::from),
+            parse_status: None,
             created_at: now.clone(),
             updated_at: now,
         })
@@ -513,7 +529,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         tags: Option<&[String]>,
         metadata: Option<&str>,
     ) -> Result<Option<WorkspaceResource>> {
-        let mut builder = QueryBuilder::new("UPDATE workspace_resources SET ");
+        let mut builder = QueryBuilder::new("UPDATE resources SET ");
         let mut has_updates = false;
         let now = chrono::Utc::now().to_rfc3339();
 
@@ -567,7 +583,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
     }
 
     async fn delete_resource(&self, workspace_id: &str, resource_id: &str) -> Result<()> {
-        sqlx::query("DELETE FROM workspace_resources WHERE workspace_id = ? AND id = ?")
+        sqlx::query("DELETE FROM resources WHERE workspace_id = ? AND id = ?")
             .bind(workspace_id)
             .bind(resource_id)
             .execute(self.database.pool())
@@ -579,7 +595,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         &self,
         workspace_id: &str,
         query: &str,
-        resource_type: Option<&str>,
+        resource_type: Option<ResourceType>,
         limit: i64,
     ) -> Result<Vec<ResourceSearchResult>> {
         let keywords: Vec<&str> = query.split_whitespace().collect();
@@ -587,49 +603,56 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
             return Ok(Vec::new());
         }
 
+        // Single-table search on unified resources table.
+        // Relevance: name match = 3, description match = 2, tag match = 2, content match = 1
         let mut builder = QueryBuilder::new(
-            "SELECT id, workspace_id, resource_type, name, description, file_path, tags, metadata, created_at, updated_at, SUM(relevance) as relevance FROM (",
+            "SELECT id, workspace_id, resource_type, name, description, \
+             content, file_path, file_size, tags, metadata, parse_status, \
+             created_at, updated_at, SUM(relevance) as relevance FROM (",
         );
 
         for (i, keyword) in keywords.iter().enumerate() {
             if i > 0 {
                 builder.push(" UNION ALL ");
             }
-            builder.push(
-                "SELECT *, (
-                    (CASE WHEN name LIKE ",
-            );
-            builder.push_bind(format!("%{}%", keyword));
-            builder.push(
-                " THEN 3 ELSE 0 END) +
-                    (CASE WHEN description LIKE ",
-            );
-            builder.push_bind(format!("%{}%", keyword));
-            builder.push(
-                " THEN 2 ELSE 0 END) +
-                    (CASE WHEN EXISTS (SELECT 1 FROM json_each(tags) WHERE value LIKE ",
-            );
-            builder.push_bind(format!("%{}%", keyword));
-            builder.push(
-                ") THEN 2 ELSE 0 END)
-                ) as relevance
-                FROM workspace_resources
-                WHERE workspace_id = ",
-            );
+
+            let like = format!("%{}%", keyword);
+
+            builder.push("SELECT *, (");
+            // Name match
+            builder.push("CASE WHEN name LIKE ");
+            builder.push_bind(&like);
+            builder.push(" THEN 3 ELSE 0 END + ");
+            // Description match
+            builder.push("CASE WHEN description LIKE ");
+            builder.push_bind(&like);
+            builder.push(" THEN 2 ELSE 0 END + ");
+            // Tag match
+            builder.push("CASE WHEN EXISTS (SELECT 1 FROM json_each(tags) WHERE value LIKE ");
+            builder.push_bind(&like);
+            builder.push(") THEN 2 ELSE 0 END + ");
+            // Content match (for documents)
+            builder.push("CASE WHEN content LIKE ");
+            builder.push_bind(&like);
+            builder.push(" THEN 1 ELSE 0 END");
+
+            builder.push(") as relevance FROM resources WHERE workspace_id = ");
             builder.push_bind(workspace_id);
+
             if let Some(rt) = resource_type {
                 builder.push(" AND resource_type = ");
-                builder.push_bind(rt);
+                builder.push_bind(rt.as_str());
             }
+
+            // WHERE match conditions
             builder.push(" AND (name LIKE ");
-            builder.push_bind(format!("%{}%", keyword));
+            builder.push_bind(&like);
             builder.push(" OR description LIKE ");
-            builder.push_bind(format!("%{}%", keyword));
-            builder.push(
-                " OR EXISTS (
-                    SELECT 1 FROM json_each(tags) WHERE value LIKE ",
-            );
-            builder.push_bind(format!("%{}%", keyword));
+            builder.push_bind(&like);
+            builder.push(" OR content LIKE ");
+            builder.push_bind(&like);
+            builder.push(" OR EXISTS (SELECT 1 FROM json_each(tags) WHERE value LIKE ");
+            builder.push_bind(&like);
             builder.push("))");
         }
 

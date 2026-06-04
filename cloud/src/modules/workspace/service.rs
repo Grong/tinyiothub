@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use super::{
     repo::WorkspaceRepository,
-    types::{ResourceSearchResult, Workspace, WorkspaceResource, WorkspaceWithDeviceCount},
+    types::{ResourceSearchResult, ResourceType, Workspace, WorkspaceResource, WorkspaceWithDeviceCount},
 };
 use crate::shared::error::Result;
 
@@ -63,7 +63,7 @@ impl WorkspaceService {
     pub async fn list_resources(
         &self,
         workspace_id: &str,
-        resource_type: Option<&str>,
+        resource_type: Option<ResourceType>,
         page: Option<u32>,
         page_size: Option<u32>,
     ) -> Result<Vec<WorkspaceResource>> {
@@ -81,7 +81,7 @@ impl WorkspaceService {
     pub async fn create_resource(
         &self,
         workspace_id: &str,
-        resource_type: &str,
+        resource_type: ResourceType,
         name: &str,
         description: Option<&str>,
         file_path: &str,
@@ -132,7 +132,7 @@ impl WorkspaceService {
         &self,
         workspace_id: &str,
         query: &str,
-        resource_type: Option<&str>,
+        resource_type: Option<ResourceType>,
         limit: i64,
     ) -> Result<Vec<ResourceSearchResult>> {
         self.repository.search_resources(workspace_id, query, resource_type, limit).await

@@ -1,3 +1,5 @@
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
 pub mod knowledge;
@@ -58,18 +60,65 @@ pub struct AssignDeviceRequest {
     pub device_id: String,
 }
 
-/// Workspace resource entity
+/// Resource type: File (uploaded binaries) or Document (markdown knowledge).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceType {
+    File,
+    Document,
+}
+
+impl ResourceType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::File => "file",
+            Self::Document => "document",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::File => "文件",
+            Self::Document => "文档",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "file" => Some(Self::File),
+            "document" => Some(Self::Document),
+            _ => None,
+        }
+    }
+
+    pub fn all() -> [Self; 2] {
+        [Self::File, Self::Document]
+    }
+}
+
+impl fmt::Display for ResourceType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Unified workspace resource (replaces workspace_resources + knowledge_documents)
+/// - type="document": content + parse_status fields are used
+/// - type="file": file_path is used (uploaded binaries)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct WorkspaceResource {
     pub id: String,
     pub workspace_id: String,
-    pub resource_type: String,
+    pub resource_type: ResourceType,
     pub name: String,
     pub description: Option<String>,
+    pub content: Option<String>,
     pub file_path: String,
+    pub file_size: Option<i64>,
     pub tags: Vec<String>,
     pub metadata: Option<String>,
+    pub parse_status: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -80,12 +129,15 @@ pub struct WorkspaceResource {
 pub struct ResourceSearchResult {
     pub id: String,
     pub workspace_id: String,
-    pub resource_type: String,
+    pub resource_type: ResourceType,
     pub name: String,
     pub description: Option<String>,
+    pub content: Option<String>,
     pub file_path: String,
+    pub file_size: Option<i64>,
     pub tags: Vec<String>,
     pub metadata: Option<String>,
+    pub parse_status: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub relevance: i64,
@@ -97,7 +149,8 @@ pub struct ResourceSearchResult {
 pub struct CreateResourceRequest {
     pub name: String,
     pub description: Option<String>,
-    pub resource_type: String,
+    pub resource_type: ResourceType,
+    pub content: Option<String>,
     pub tags: Vec<String>,
     pub metadata: Option<String>,
     pub file_path: Option<String>,
@@ -109,8 +162,10 @@ pub struct CreateResourceRequest {
 pub struct UpdateResourceRequest {
     pub name: Option<String>,
     pub description: Option<String>,
+    pub content: Option<String>,
     pub tags: Option<Vec<String>>,
     pub metadata: Option<String>,
+    pub parse_status: Option<String>,
 }
 
 /// Suggest tags request
@@ -118,7 +173,7 @@ pub struct UpdateResourceRequest {
 #[serde(rename_all = "snake_case")]
 pub struct SuggestTagsRequest {
     pub name: String,
-    pub resource_type: String,
+    pub resource_type: ResourceType,
     pub description: Option<String>,
 }
 
@@ -128,7 +183,7 @@ pub struct SuggestTagsRequest {
 pub struct ResourceQueryParams {
     pub page: Option<u32>,
     pub page_size: Option<u32>,
-    pub resource_type: Option<String>,
+    pub resource_type: Option<ResourceType>,
 }
 
 /// Workspace query params
