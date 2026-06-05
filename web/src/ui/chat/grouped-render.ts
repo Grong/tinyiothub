@@ -162,9 +162,11 @@ export function renderReadingIndicatorGroup(): TemplateResult {
 // ============================================================================
 
 function renderAssistantMessage(msg: ChatMessage, a2uiRenderer?: A2uiRendererEngine): TemplateResult {
+  const surfaceId = (msg as any).a2uiSurfaceId as string | undefined;
+  const surfaceKind = surfaceId ? a2uiRenderer?.getSurfaceKind(surfaceId) : undefined;
   const surfaceContent =
-    a2uiRenderer && (msg as any).a2uiSurfaceId
-      ? a2uiRenderer.renderSurface((msg as any).a2uiSurfaceId)
+    a2uiRenderer && surfaceId && (surfaceKind === "inline" || surfaceKind === "overlay")
+      ? a2uiRenderer.renderSurface(surfaceId)
       : nothing;
 
   // Extract thinking (<think> tags in text)

@@ -11,13 +11,16 @@ use zeroclaw::tools::{Tool, ToolResult};
 
 use super::canvas::CanvasTool;
 use crate::{
-    modules::mcp::{
-        handlers::{McpAuthContext, McpContextGuard},
-        tool_metadata::{
-            IoTToolMetadata, PermissionLevel, name_infers_concurrency_safe,
-            name_infers_destructive, name_infers_read_only,
+    modules::{
+        mcp::{
+            handlers::{McpAuthContext, McpContextGuard},
+            tool_metadata::{
+                IoTToolMetadata, PermissionLevel, name_infers_concurrency_safe,
+                name_infers_destructive, name_infers_read_only,
+            },
+            tool_registry::ToolHandler,
         },
-        tool_registry::ToolHandler,
+        workspace::{KnowledgeService, WorkspaceService},
     },
     shared::agent::config::AgentRuntimeConfig,
 };
@@ -120,13 +123,27 @@ impl IoTToolMetadata for IoTToolAdapter {
 // Tool loading
 // ============================================================================
 
-/// Load all tools: CanvasTool + MCP-registered handlers.
+/// Load all tools: CanvasTool + Knowledge search + Workspace search + MCP-registered handlers.
 ///
-/// CanvasTool is always included first. MCP tools are loaded from the
-/// global handler registry if available.
-pub async fn load_all_tools(workspace_id: &str) -> Vec<Box<dyn Tool>> {
+/// CanvasTool is always included first. Knowledge search and workspace search
+/// tools are added when their respective services are available. MCP tools are
+/// loaded from the global handler registry if available.
+pub async fn load_all_tools(
+    workspace_id: &str,
+    workspace_service: Option<Arc<WorkspaceService>>,
+    knowledge_service: Option<Arc<KnowledgeService>>,
+) -> Vec<Box<dyn Tool>> {
     let mut tool_boxed: Vec<Box<dyn Tool>> = Vec::new();
     tool_boxed.push(Box::new(CanvasTool));
+
+    if let Some(ks_svc) = knowledge_service {
+        tool_boxed.push(Box::new(super::knowledge::SearchKnowledgeTool::new(ks_svc)));
+    }
+
+    if let Some(ws_svc) = workspace_service {
+        tool_boxed
+            .push(Box::new(super::search_resources::SearchWorkspaceResourcesTool::new(ws_svc)));
+    }
 
     if let Some(registry) = crate::modules::mcp::get_mcp_registry() {
         let reg = registry.read().await;
@@ -181,8 +198,10 @@ pub fn filter_by_denylist(tools: Vec<Box<dyn Tool>>, denylist: &[String]) -> Vec
 pub async fn resolve_tools_for_agent(
     config: &AgentRuntimeConfig,
     workspace_id: &str,
+    workspace_service: Option<Arc<WorkspaceService>>,
+    knowledge_service: Option<Arc<KnowledgeService>>,
 ) -> Vec<Box<dyn Tool>> {
-    let all_tools = load_all_tools(workspace_id).await;
+    let all_tools = load_all_tools(workspace_id, workspace_service, knowledge_service).await;
     filter_by_denylist(all_tools, &config.tool_denylist)
 }
 
@@ -205,6 +224,10 @@ fn tool_label(name: &str) -> &str {
         "alarm_list" => "查询告警列表",
         "alarm_acknowledge" => "确认告警",
         "alarm_rule_add" => "添加告警规则",
+        // Knowledge tools
+        "search_knowledge" => "搜索知识图谱",
+        // Workspace tools
+        "search_workspace_resources" => "搜索工作空间资源",
         // Driver tools
         "list_drivers" => "查询驱动列表",
         "test_driver" => "测试驱动",
@@ -219,7 +242,11 @@ fn tool_label(name: &str) -> &str {
 
 /// Infer group (id, label) from tool name.
 fn tool_group(name: &str) -> (&str, &str) {
-    if name.starts_with("search_")
+    if name == "search_knowledge" {
+        ("knowledge", "知识图谱")
+    } else if name == "search_workspace_resources" {
+        ("workspace", "工作空间")
+    } else if name.starts_with("search_")
         || matches!(
             name,
             "get_device"
@@ -282,6 +309,7 @@ pub async fn build_catalog() -> serde_json::Value {
         ("alarm", "告警管理"),
         ("monitoring", "系统监控"),
         ("driver", "驱动管理"),
+        ("knowledge", "知识图谱"),
         ("workspace", "工作空间"),
         ("job", "任务管理"),
         ("other", "其他"),
@@ -335,6 +363,7 @@ mod tests {
         assert_eq!(tool_label("alarm_list"), "查询告警列表");
         assert_eq!(tool_label("list_drivers"), "查询驱动列表");
         assert_eq!(tool_label("list_schedules"), "查询任务列表");
+        assert_eq!(tool_label("search_knowledge"), "搜索知识图谱");
         // Unknown tool returns its name as label
         assert_eq!(tool_label("unknown_tool"), "unknown_tool");
     }
@@ -357,6 +386,8 @@ mod tests {
 
         assert_eq!(tool_group("list_schedules"), ("job", "任务管理"));
         assert_eq!(tool_group("delete_schedule"), ("job", "任务管理"));
+
+        assert_eq!(tool_group("search_knowledge"), ("knowledge", "知识图谱"));
 
         assert_eq!(tool_group("unknown_tool"), ("other", "其他"));
     }

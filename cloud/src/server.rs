@@ -2,7 +2,7 @@
 //!
 //! Extracted from `main.rs` to separate server wiring from runtime initialization.
 
-use axum::Router;
+use axum::{Router, extract::DefaultBodyLimit};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 use crate::shared::app_state::AppState;
@@ -70,10 +70,19 @@ pub async fn create_app_router(app_state: AppState) -> Router {
     tracing::info!("Building main router...");
     tracing::info!("Serving static files from wwwroot/ (SPA mode)");
 
-    let mut router = Router::new().nest("/api", api_router).fallback(spa_handler);
+    let agents_dir = crate::shared::paths::agents_base_dir();
+    tokio::fs::create_dir_all(&agents_dir).await.unwrap_or_default();
+
+    let mut router = Router::new()
+        .nest("/api", api_router)
+        .nest_service("/uploads", tower_http::services::ServeDir::new(&agents_dir))
+        .fallback(spa_handler);
 
     tracing::info!("Adding middleware layers...");
-    router = router.layer(cors).layer(TraceLayer::new_for_http());
+    router = router
+        .layer(DefaultBodyLimit::max(50 * 1024 * 1024)) // 50 MB for file uploads
+        .layer(cors)
+        .layer(TraceLayer::new_for_http());
 
     tracing::info!("Adding application state...");
     router.with_state(app_state)

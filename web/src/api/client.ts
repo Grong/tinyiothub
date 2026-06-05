@@ -219,6 +219,52 @@ export class ApiClient {
       result: response.result ? keysToCamelCase(response.result) : response.result,
     } as ApiResponse<KeysToCamelCase<T>>;
   }
+
+  static async upload<T>(
+    endpoint: string,
+    formData: FormData,
+    onProgress?: (pct: number) => void,
+  ): Promise<ApiResponse<KeysToCamelCase<T>>> {
+    const url = buildUrl(endpoint);
+    const token = getAuthToken();
+    const wsId = getWorkspaceId();
+
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', url);
+      xhr.withCredentials = true;
+
+      if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      if (wsId) xhr.setRequestHeader('X-Workspace-Id', wsId);
+
+      if (onProgress) {
+        xhr.upload.addEventListener('progress', (e) => {
+          if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+        });
+      }
+
+      xhr.addEventListener('load', () => {
+        try {
+          const response = JSON.parse(xhr.responseText) as ApiResponse<T>;
+          if (response.code !== 0) {
+            reject(new ApiError(response.code, response.msg || '上传失败', response));
+            return;
+          }
+          resolve({
+            ...response,
+            result: response.result ? keysToCamelCase(response.result) : response.result,
+          } as ApiResponse<KeysToCamelCase<T>>);
+        } catch {
+          reject(new ApiError(xhr.status, `HTTP ${xhr.status}`));
+        }
+      });
+
+      xhr.addEventListener('error', () => reject(new ApiError(0, '网络错误')));
+      xhr.addEventListener('abort', () => reject(new ApiError(0, '上传已取消')));
+
+      xhr.send(formData);
+    });
+  }
 }
 
 // 便捷导出
@@ -228,6 +274,7 @@ export const {
   put: apiPut,
   delete: apiDelete,
   patch: apiPatch,
+  upload: apiUpload,
 } = ApiClient;
 
 // File-based Skill (matches SkillInfoDto from backend)

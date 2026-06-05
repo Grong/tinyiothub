@@ -1,4 +1,4 @@
-import { LitElement, html, css } from "lit";
+import { LitElement, html, css, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 
 export interface Toast {
@@ -6,6 +6,7 @@ export interface Toast {
   type: "success" | "error" | "warn" | "info";
   message: string;
   duration?: number;
+  action?: { label: string; onClick: () => void };
 }
 
 @customElement("toast-container")
@@ -53,6 +54,23 @@ export class ToastContainer extends LitElement {
     .toast.warn .toast-icon { color: #f59e0b; }
     .toast.info .toast-icon { color: #3b82f6; }
     
+    .toast-action {
+      background: none;
+      border: 1px solid currentColor;
+      color: inherit;
+      cursor: pointer;
+      padding: 4px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      white-space: nowrap;
+      transition: background 0.15s;
+    }
+
+    .toast-action:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
     .toast-close {
       background: none;
       border: none;
@@ -63,7 +81,7 @@ export class ToastContainer extends LitElement {
       font-size: 18px;
       line-height: 1;
     }
-    
+
     .toast-close:hover {
       color: #e4e4e7;
     }
@@ -117,12 +135,12 @@ export class ToastContainer extends LitElement {
     info: "ℹ",
   };
 
-  show(type: Toast["type"], message: string, duration = 4000) {
+  show(type: Toast["type"], message: string, duration = 4000, action?: { label: string; onClick: () => void }) {
     const id = ++this.idCounter;
-    const toast: Toast = { id, type, message, duration };
-    
+    const toast: Toast = { id, type, message, duration, action };
+
     this.toasts = [...this.toasts, toast];
-    
+
     if (duration > 0) {
       setTimeout(() => this.removeToast(id), duration);
     }
@@ -145,10 +163,10 @@ export class ToastContainer extends LitElement {
   }
 
   // 静态方法，便于从外部调用
-  static show(type: Toast["type"], message: string, duration?: number) {
+  static show(type: Toast["type"], message: string, duration?: number, action?: { label: string; onClick: () => void }) {
     const container = document.querySelector("toast-container") as any;
     if (container) {
-      container.show(type, message, duration);
+      container.show(type, message, duration, action);
     }
   }
 
@@ -162,6 +180,13 @@ export class ToastContainer extends LitElement {
         >
           <span class="toast-icon">${this.icons[toast.type]}</span>
           <span>${toast.message}</span>
+          ${toast.action ? html`
+            <button class="toast-action" @click=${(e: Event) => {
+              e.stopPropagation();
+              toast.action!.onClick();
+              this.removeToast(toast.id);
+            }}>${toast.action.label}</button>
+          ` : nothing}
           <button class="toast-close" @click=${(e: Event) => {
             e.stopPropagation();
             this.removeToast(toast.id);
@@ -173,17 +198,17 @@ export class ToastContainer extends LitElement {
 }
 
 // 全局 toast 函数
-export function showToast(type: Toast["type"], message: string, duration?: number) {
+export function showToast(type: Toast["type"], message: string, duration?: number, action?: { label: string; onClick: () => void }) {
   const container = document.querySelector("toast-container") as any;
   if (container?.show) {
-    container.show(type, message, duration);
+    container.show(type, message, duration, action);
   } else {
     // 如果没有容器，直接用 alert
     console.log(`[${type}] ${message}`);
   }
 }
 
-export function success(message: string) { showToast("success", message); }
+export function success(message: string, action?: { label: string; onClick: () => void }) { showToast("success", message, action ? 8000 : undefined, action); }
 export function error(message: string) { showToast("error", message); }
 export function warn(message: string) { showToast("warn", message); }
 export function info(message: string) { showToast("info", message); }

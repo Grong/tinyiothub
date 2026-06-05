@@ -88,12 +88,24 @@ impl DeviceRepository for SqliteDeviceRepository {
             builder.push(" AND product_id = ").push_bind(product_id);
         }
         if let Some(search_text) = &criteria.search_text {
-            let pattern = format!("%{}%", search_text);
-            builder.push(" AND (name LIKE ").push_bind(&pattern);
-            builder.push(" OR display_name LIKE ").push_bind(&pattern);
-            builder.push(" OR address LIKE ").push_bind(&pattern);
-            builder.push(" OR description LIKE ").push_bind(pattern);
-            builder.push(")");
+            let keywords: Vec<&str> = search_text.split_whitespace().collect();
+            if !keywords.is_empty() {
+                builder.push(" AND (");
+                for (i, kw) in keywords.iter().enumerate() {
+                    let pattern = format!("%{}%", kw);
+                    if i > 0 {
+                        builder.push(" OR ");
+                    }
+                    builder.push("(name LIKE ").push_bind(&pattern);
+                    builder.push(" OR display_name LIKE ").push_bind(&pattern);
+                    builder.push(" OR address LIKE ").push_bind(&pattern);
+                    builder.push(" OR description LIKE ").push_bind(&pattern);
+                    builder.push(" OR EXISTS (SELECT 1 FROM tag_bindings tb JOIN tags t ON tb.tag_id = t.id WHERE tb.target_id = devices.id AND tb.target_type = 'device' AND t.name LIKE ");
+                    builder.push_bind(&pattern);
+                    builder.push("))");
+                }
+                builder.push(")");
+            }
         }
         if let Some(tag_name) = &criteria.tag_name {
             let pattern = format!("%{}%", tag_name);
@@ -163,12 +175,24 @@ impl DeviceRepository for SqliteDeviceRepository {
             builder.push(" AND product_id = ").push_bind(product_id);
         }
         if let Some(search_text) = &criteria.search_text {
-            let pattern = format!("%{}%", search_text);
-            builder.push(" AND (name LIKE ").push_bind(&pattern);
-            builder.push(" OR display_name LIKE ").push_bind(&pattern);
-            builder.push(" OR address LIKE ").push_bind(&pattern);
-            builder.push(" OR description LIKE ").push_bind(pattern);
-            builder.push(")");
+            let keywords: Vec<&str> = search_text.split_whitespace().collect();
+            if !keywords.is_empty() {
+                builder.push(" AND (");
+                for (i, kw) in keywords.iter().enumerate() {
+                    let pattern = format!("%{}%", kw);
+                    if i > 0 {
+                        builder.push(" OR ");
+                    }
+                    builder.push("(name LIKE ").push_bind(&pattern);
+                    builder.push(" OR display_name LIKE ").push_bind(&pattern);
+                    builder.push(" OR address LIKE ").push_bind(&pattern);
+                    builder.push(" OR description LIKE ").push_bind(&pattern);
+                    builder.push(" OR EXISTS (SELECT 1 FROM tag_bindings tb JOIN tags t ON tb.tag_id = t.id WHERE tb.target_id = devices.id AND tb.target_type = 'device' AND t.name LIKE ");
+                    builder.push_bind(&pattern);
+                    builder.push("))");
+                }
+                builder.push(")");
+            }
         }
         if let Some(tag_name) = &criteria.tag_name {
             let pattern = format!("%{}%", tag_name);

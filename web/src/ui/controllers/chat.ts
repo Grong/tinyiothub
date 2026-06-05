@@ -51,8 +51,10 @@ export type ChatState = {
   toolStreamById: Map<string, ToolStreamEntry>;
   toolStreamOrder: string[];
   lastError: string | null;
+  onChange?: () => void;
   onA2ui?: (jsonl: string) => void;
   lastA2uiSurfaceId?: string;
+  a2uiChunks: string[];  // accumulated A2UI JSONL for current response
   abortController?: AbortController;
 };
 
@@ -74,6 +76,7 @@ export function createChatState(sessionKey: string, agentId: string): ChatState 
     toolStreamById: new Map(),
     toolStreamOrder: [],
     lastError: null,
+    a2uiChunks: [],
   };
 }
 
@@ -142,6 +145,8 @@ export function sendChatMessage(
   state.chatStreamSegments = [];
   state.toolStreamById = new Map();
   state.toolStreamOrder = [];
+  state.a2uiChunks = [];
+  state.onChange?.();
 
   const controller = new AbortController();
   state.abortController = controller;
@@ -205,10 +210,12 @@ export function sendChatMessage(
         state.lastError = String(err);
         state.chatRunId = null;
         state.chatStream = null;
+        state.onChange?.();
       }
     })
     .finally(() => {
       state.chatSending = false;
+      state.onChange?.();
     });
 
   return { runId };
@@ -241,11 +248,20 @@ export function handleChatEvent(state: ChatState, payload: ChatEventPayload): vo
     case "final": {
       flushStreamingToSegments(state);
       const toolMsgs = buildToolMessages(state);
-      // Capture lastA2uiSurfaceId before resetting
+      // Capture A2UI state before resetting
       const a2uiSurfaceId = state.lastA2uiSurfaceId;
+      const a2uiJsonl = state.a2uiChunks.length > 0
+        ? state.a2uiChunks.join("\n")
+        : undefined;
+
+      // Build extra fields for the message
+      const a2uiFields: Record<string, unknown> = {};
+      if (a2uiSurfaceId) a2uiFields.a2uiSurfaceId = a2uiSurfaceId;
+      if (a2uiJsonl) a2uiFields.a2ui = a2uiJsonl;
+
       if (payload.message && !isSilentReply(payload.message)) {
-        const msgWithA2ui = a2uiSurfaceId
-          ? { ...payload.message, a2uiSurfaceId } as ChatMessage
+        const msgWithA2ui = Object.keys(a2uiFields).length > 0
+          ? { ...payload.message, ...a2uiFields } as ChatMessage
           : payload.message;
         state.chatMessages = [...state.chatMessages, ...toolMsgs, msgWithA2ui];
       } else if (state.chatStreamSegments.length > 0 || state.chatStream?.trim()) {
@@ -258,7 +274,7 @@ export function handleChatEvent(state: ChatState, payload: ChatEventPayload): vo
             role: "assistant",
             content: [{ type: "text", text: allText }],
             timestamp: Date.now(),
-            ...(a2uiSurfaceId ? { a2uiSurfaceId } : {}),
+            ...a2uiFields,
           };
           state.chatMessages = [
             ...state.chatMessages,
@@ -273,6 +289,7 @@ export function handleChatEvent(state: ChatState, payload: ChatEventPayload): vo
       }
       // Clear a2ui state after attaching to message
       state.lastA2uiSurfaceId = undefined;
+      state.a2uiChunks = [];
       state.chatStream = null;
       state.chatStreamSegments = [];
       state.toolStreamById = new Map();
@@ -331,15 +348,7 @@ export function handleChatEvent(state: ChatState, payload: ChatEventPayload): vo
         return tc ? `${tc.toolName}::${tc.toolArgs}` : "";
       }));
       const key = `${toolName}::${toolArgs}`;
-      if (seen.has(key)) {
-        // Duplicate — skip adding to stream state, but still process A2UI
-        if (payload.a2ui && state.onA2ui) {
-          const surfaceId = extractA2uiSurfaceId(payload.a2ui);
-          if (surfaceId) state.lastA2uiSurfaceId = surfaceId;
-          state.onA2ui(payload.a2ui);
-        }
-        break;
-      }
+      if (seen.has(key)) break; // Duplicate — skip entirely, A2UI already processed
       const toolCallId = `tc_${Date.now()}_${state.toolStreamOrder.length}`;
       state.toolStreamById.set(toolCallId, {
         toolCallId,
@@ -355,6 +364,7 @@ export function handleChatEvent(state: ChatState, payload: ChatEventPayload): vo
         const surfaceId = extractA2uiSurfaceId(payload.a2ui);
         if (surfaceId) state.lastA2uiSurfaceId = surfaceId;
         console.log("[A2UI] Received a2ui in tool_call_start, surfaceId:", surfaceId, "payload.a2ui:", payload.a2ui);
+        state.a2uiChunks.push(payload.a2ui);
         state.onA2ui(payload.a2ui);
       }
       break;
@@ -386,6 +396,7 @@ export function handleChatEvent(state: ChatState, payload: ChatEventPayload): vo
       break;
     }
   }
+  state.onChange?.();
 }
 
 // ============================================================================
@@ -469,7 +480,7 @@ function buildToolMessages(state: ChatState): ChatMessage[] {
 }
 
 function extractA2uiSurfaceId(jsonl: string): string | null {
-  const lines = jsonl.split("\n").filter((l) => l.trim());
+  const lines = jsonl.split(/\\n|\n/).filter((l) => l.trim());
   for (const line of lines) {
     try {
       const msg = JSON.parse(line);

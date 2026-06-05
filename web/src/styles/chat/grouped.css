@@ -23,6 +23,8 @@
   flex-direction: column;
   gap: 2px;
   max-width: min(900px, calc(100% - 60px));
+  min-width: 0;
+  overflow: hidden;
 }
 
 /* User messages align content right */
@@ -126,7 +128,8 @@ img.chat-avatar {
 /* Minimal Bubble Design - dynamic width based on content */
 .chat-bubble {
   position: relative;
-  display: inline-block;
+  display: block;
+  width: fit-content;
   border: 1px solid transparent;
   background: var(--card);
   border-radius: var(--radius-lg);
@@ -137,6 +140,7 @@ img.chat-avatar {
     border-color 150ms ease-out;
   max-width: 100%;
   word-wrap: break-word;
+  overflow: hidden;
 }
 
 .chat-bubble.has-copy {

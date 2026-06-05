@@ -64,3 +64,4 @@ license
 /vendor/*.zip
 /target
 deploy/docker/data/
+.gstack/

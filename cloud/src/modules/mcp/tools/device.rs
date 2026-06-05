@@ -16,7 +16,7 @@ use crate::{
     },
     shared::persistence::repositories::{
         find_device_by_id, find_device_by_id_with_tags, find_device_command_by_device_and_name,
-        find_device_properties_by_device_id,
+        find_device_properties_by_device_id, load_tags_for_devices,
     },
 };
 
@@ -752,6 +752,7 @@ struct SearchDeviceResult {
     driver_name: Option<String>,
     address: Option<String>,
     last_heartbeat: Option<String>,
+    tags: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -807,10 +808,6 @@ impl ToolHandler for SearchDevicesHandler {
         let input: SearchDevicesInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
-        if input.keyword.trim().is_empty() {
-            return Err(ToolError::InvalidParams("keyword cannot be empty".to_string()));
-        }
-
         let limit = input.limit.unwrap_or(20).min(50);
 
         let state = crate::modules::mcp::get_app_state()
@@ -837,12 +834,21 @@ impl ToolHandler for SearchDevicesHandler {
             .await
             .map_err(|e| ToolError::Internal(format!("Search failed: {}", e)))?;
 
+        load_tags_for_devices(state.database(), &mut devices, "")
+            .await
+            .map_err(|e| ToolError::Internal(format!("Failed to load tags: {}", e)))?;
+
         let mut results = Vec::with_capacity(devices.len());
         for device in &mut devices {
             if let Some(cached) = state.device_cache.get(&device.id) {
                 device.status = cached.status.clone();
                 device.last_heartbeat = cached.last_heartbeat.clone();
             }
+            let tags = device.tags.as_ref().map(|ts| {
+                ts.iter()
+                    .filter_map(|v| v.get("name").and_then(|n| n.as_str()).map(String::from))
+                    .collect()
+            });
             results.push(SearchDeviceResult {
                 id: device.id.clone(),
                 name: device.name.clone(),
@@ -852,6 +858,7 @@ impl ToolHandler for SearchDevicesHandler {
                 driver_name: device.driver_name.clone(),
                 address: device.address.clone(),
                 last_heartbeat: device.last_heartbeat.clone(),
+                tags,
             });
         }
 

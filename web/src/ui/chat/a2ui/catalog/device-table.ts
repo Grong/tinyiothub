@@ -13,7 +13,22 @@ export function renderDeviceTable(
 ): TemplateResult {
   const title = String(data.title || "");
   const columns = (data.columns as string[]) || ["设备名称", "状态", "最新数据", "操作"];
-  const devices = (data.devices as Array<Record<string, unknown>>) || [];
+  const rawDevices = data.devices as Array<Record<string, unknown>> | undefined;
+  const rawRows = data.rows as Array<unknown> | undefined;
+  const devices: Array<Record<string, unknown>> = rawDevices
+    ? rawDevices
+    : rawRows
+      ? rawRows.map((r) => {
+          const arr = Array.isArray(r) ? r : [];
+          return {
+            name: arr[0],
+            deviceType: arr[1],
+            status: arr[2],
+            address: arr[3],
+            id: arr[4],
+          };
+        })
+      : [];
 
   return html`
     <div class="a2ui-device-table">

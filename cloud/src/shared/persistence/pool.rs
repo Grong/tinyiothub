@@ -8,7 +8,8 @@ pub async fn create_pool(config: &DatabaseConfig) -> Result<SqlitePool, sqlx::Er
     tracing::info!("Creating database connection pool with config: {:?}", config);
 
     // Parse connection options
-    let connect_options = SqliteConnectOptions::from_str(&config.url)?.create_if_missing(true);
+    let connect_options =
+        SqliteConnectOptions::from_str(&config.url)?.create_if_missing(true).foreign_keys(true);
 
     // For HarmonyOS: Use conservative settings to prevent issues
     #[cfg(target_os = "linux")]
@@ -22,6 +23,7 @@ pub async fn create_pool(config: &DatabaseConfig) -> Result<SqlitePool, sqlx::Er
                 .pragma("synchronous", "FULL") // Use FULL for safety
                 .pragma("cache_size", "-8000") // Smaller cache
                 .pragma("temp_store", "MEMORY")
+                .pragma("foreign_keys", "ON")
                 .shared_cache(false); // Disable shared cache
 
             let pool = SqlitePoolOptions::new()

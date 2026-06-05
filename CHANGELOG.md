@@ -1,5 +1,53 @@
 # Changelog
 
+## [0.4.0] - 2026-05-28
+
+### Added — Workspace Resource Management
+
+- **Workspace resources CRUD**: SQLite-backed storage with `workspace_resources` table, composite indexes, and full-text search
+- **Resource types**: scene, device_model, image, document — with metadata, tags, and file path tracking
+- **REST API**: `POST/GET/PUT/DELETE /workspaces/{id}/resources` with tenant isolation, plus `GET /workspaces/{id}/resources/search` with relevance-scored keyword search
+- **Semantic search**: multi-keyword search across name, description, and JSON tags with `UNION ALL` + `SUM(relevance)` deduplication
+
+### Added — Scene3D A2UI Component
+
+- **Scene3D LitElement**: Three.js-powered 3D building visualization with GLTF/GLB model loading, OrbitControls, and auto-fit camera
+- **Device markers**: overlay markers with status colors (online/offline/warning/error), click-to-select, and floor-based filtering
+- **Floor management**: configurable floor buttons with clipping-plane-based floor cut visualization
+- **A2UI catalog registration**: Scene3D registered as `scene3d` component kind with full canvas tool description
+
+### Added — A2UI Catalog Expansion
+
+- **10 new catalog components**: CheckBox, ChoicePicker, DateTimeInput, Icon, Image, List, Modal, Slider, Tabs, TextField
+- **DeviceCard enhancements**: device type-to-icon mapping, signal strength bars, relative time formatting ("刚刚", "N 分钟前")
+- **ProgressIndicator**: improved styling and animation
+
+### Added — Agent Tooling
+
+- **`search_workspace_resources` tool**: natural language search for workspace multimedia resources, registered with dependency injection via `Arc<WorkspaceService>`
+- **Canvas tool catalog**: expanded to 27 component kinds with complete Scene3D parameter schema
+
+### Fixed
+
+- **Search relevance**: fixed `UNION ALL` duplicate rows by wrapping with `GROUP BY id` and `SUM(relevance)`
+- **Database indexing**: added composite `idx_resources_workspace_type` index for efficient type-filtered queries
+- **ResizeObserver leak**: cleared observer reference on Scene3D dispose to prevent stale references on retry
+
+### Changed — Workspace UI Redesign
+
+- **Process log panel**: collapsible sections with message-card layout — user bubbles vs AI cards, visually distinct roles
+- **Collapsible thinking**: thinking/reasoning content folded by default with expand/collapse toggle and chevron animation
+- **Collapsible tool execution**: tool calls show name + status indicator (spinner for in-progress, checkmark for done), expandable to reveal args/results
+- **Event-driven updates**: replaced 100ms polling with `onChange` callback on ChatState, reducing CPU usage
+- **Glass panel refinement**: `color-mix()` backgrounds with `backdrop-filter`, highlight border, depth shadows for floating panels
+- **Empty state redesign**: SVG icons with title, hint text, and clickable example prompt chips for both stage and insight panels
+- **Title redesign**: uppercase 13px with accent dot glow and letter-spacing
+- **Responsive insight panel**: width uses `clamp(320px, 28vw, 420px)` for viewport-aware sizing
+- **Compose bar**: centered single-line glass input with send/abort buttons
+- **Scene3D color alignment**: status marker colors now read from CSS variables (`--ok`, `--muted`, `--warn`, `--danger`)
+
+---
+
 ## [0.3.0] - 2026-05-21
 
 ### Added — AI Agent v0.3
