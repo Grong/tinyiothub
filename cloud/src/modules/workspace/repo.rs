@@ -1,12 +1,14 @@
 mod knowledge;
-pub use knowledge::{KnowledgeRepository, SqliteKnowledgeRepository};
-
 use async_trait::async_trait;
+pub use knowledge::{KnowledgeRepository, SqliteKnowledgeRepository};
 use sqlx::{FromRow, QueryBuilder};
 use tinyiothub_core::error::{Error, Result};
 use tinyiothub_storage::sqlite::Database;
 
-use super::types::{extract_file_path_from_content, ResourceSearchResult, ResourceType, Workspace, WorkspaceResource, WorkspaceWithDeviceCount};
+use super::types::{
+    ResourceSearchResult, ResourceType, Workspace, WorkspaceResource, WorkspaceWithDeviceCount,
+    extract_file_path_from_content,
+};
 
 /// Repository interface for workspace persistence
 #[async_trait]
@@ -207,7 +209,6 @@ impl SqliteWorkspaceRepository {
     pub fn new(database: Database) -> Self {
         Self { database }
     }
-
 }
 
 #[async_trait]

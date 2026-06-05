@@ -106,7 +106,11 @@ pub async fn build_full_system_prompt(
 
     let full_prompt =
         format!("{}{}{}{}", workspace_prompt, memory_layer, skills_layer, context_layer);
-    tracing::info!("[SYSTEM_PROMPT] {} ... (truncated, total {} chars)", &full_prompt[..full_prompt.len().min(2000)], full_prompt.len());
+    tracing::info!(
+        "[SYSTEM_PROMPT] {} ... (truncated, total {} chars)",
+        &full_prompt[..full_prompt.len().min(2000)],
+        full_prompt.len()
+    );
     full_prompt
 }
 

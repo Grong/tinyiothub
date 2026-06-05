@@ -1,13 +1,12 @@
-use std::sync::Arc;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use tinyiothub_core::error::Error;
 
+use super::super::{
+    repo::KnowledgeRepository,
+    types::{ResourceType, WorkspaceResource, extract_file_path_from_content, knowledge::*},
+};
 use crate::shared::error::Result;
-
-use super::super::repo::KnowledgeRepository;
-use super::super::types::knowledge::*;
-use super::super::types::{extract_file_path_from_content, ResourceType, WorkspaceResource};
 
 /// Service for workspace knowledge graph operations.
 ///
@@ -34,9 +33,7 @@ impl KnowledgeService {
         page: i64,
         page_size: i64,
     ) -> Result<(Vec<WorkspaceResource>, i64)> {
-        self.repo
-            .list_documents(workspace_id, q, tags, status, page, page_size)
-            .await
+        self.repo.list_documents(workspace_id, q, tags, status, page, page_size).await
     }
 
     /// Get a single document by ID.
@@ -155,10 +152,7 @@ impl KnowledgeService {
     // ── Relation Operations ──
 
     /// List all relations for a workspace.
-    pub async fn list_relations(
-        &self,
-        workspace_id: &str,
-    ) -> Result<Vec<KnowledgeRelation>> {
+    pub async fn list_relations(&self, workspace_id: &str) -> Result<Vec<KnowledgeRelation>> {
         self.repo.list_relations(workspace_id).await
     }
 
@@ -173,9 +167,7 @@ impl KnowledgeService {
         tags: Option<&str>,
         limit: i64,
     ) -> Result<Vec<KnowledgeSearchResult>> {
-        self.repo
-            .search_knowledge(workspace_id, query, entity_type, tags, limit)
-            .await
+        self.repo.search_knowledge(workspace_id, query, entity_type, tags, limit).await
     }
 
     // ── Parse Pipeline ──
@@ -183,20 +175,14 @@ impl KnowledgeService {
     /// Trigger an async parse job for a document. Returns the parse job ID immediately.
     ///
     /// The actual parsing runs in the background via `tokio::spawn`.
-    pub async fn trigger_parse(
-        &self,
-        document_id: &str,
-        workspace_id: &str,
-    ) -> Result<String> {
+    pub async fn trigger_parse(&self, document_id: &str, workspace_id: &str) -> Result<String> {
         let now = chrono::Utc::now().to_rfc3339();
         let parse_id = format!("job-{}", uuid::Uuid::new_v4());
 
         // Validate document exists
-        let doc = self
-            .repo
-            .get_document(document_id)
-            .await?
-            .ok_or_else(|| Error::InvalidArgument(format!("document not found: {}", document_id)))?;
+        let doc = self.repo.get_document(document_id).await?.ok_or_else(|| {
+            Error::InvalidArgument(format!("document not found: {}", document_id))
+        })?;
 
         let job = KnowledgeParseJob {
             id: parse_id.clone(),
@@ -211,9 +197,7 @@ impl KnowledgeService {
         self.repo.create_parse_job(&job).await?;
 
         // Update document status to "parsing"
-        self.repo
-            .update_document(document_id, None, None, None, None, Some("parsing"))
-            .await?;
+        self.repo.update_document(document_id, None, None, None, None, Some("parsing")).await?;
 
         // Spawn background task
         let repo = Arc::clone(&self.repo);
@@ -291,15 +275,8 @@ async fn run_parse(
     content: &str,
 ) {
     // 1. Set job to "running"
-    if let Err(e) = repo
-        .update_parse_job(parse_id, "running", None, None)
-        .await
-    {
-        tracing::error!(
-            "Failed to update parse job {} to running: {}",
-            parse_id,
-            e
-        );
+    if let Err(e) = repo.update_parse_job(parse_id, "running", None, None).await {
+        tracing::error!("Failed to update parse job {} to running: {}", parse_id, e);
         return;
     }
 
@@ -312,25 +289,15 @@ async fn run_parse(
             // 8. On failure: update job and document
             let error_msg = e.to_string();
             tracing::error!("Parse failed for document {}: {}", document_id, error_msg);
-            let _ = repo
-                .update_parse_job(parse_id, "failed", Some(&error_msg), None)
-                .await;
-            let _ = repo
-                .update_document(document_id, None, None, None, None, Some("failed"))
-                .await;
+            let _ = repo.update_parse_job(parse_id, "failed", Some(&error_msg), None).await;
+            let _ = repo.update_document(document_id, None, None, None, None, Some("failed")).await;
             return;
         }
     };
 
     // 4. Get previous entities/relations for diff
-    let old_entities = repo
-        .get_entities_by_document(document_id)
-        .await
-        .unwrap_or_default();
-    let old_relations = repo
-        .get_relations_by_document(document_id)
-        .await
-        .unwrap_or_default();
+    let old_entities = repo.get_entities_by_document(document_id).await.unwrap_or_default();
+    let old_relations = repo.get_relations_by_document(document_id).await.unwrap_or_default();
 
     // 5. Delete old entities+relations, upsert new ones
     let _ = repo.delete_relations_by_document(document_id).await;
@@ -338,23 +305,15 @@ async fn run_parse(
 
     if let Err(e) = repo.upsert_entities(&entities).await {
         tracing::error!("Failed to upsert entities for document {}: {}", document_id, e);
-        let _ = repo
-            .update_parse_job(parse_id, "failed", Some(&e.to_string()), None)
-            .await;
-        let _ = repo
-            .update_document(document_id, None, None, None, None, Some("failed"))
-            .await;
+        let _ = repo.update_parse_job(parse_id, "failed", Some(&e.to_string()), None).await;
+        let _ = repo.update_document(document_id, None, None, None, None, Some("failed")).await;
         return;
     }
 
     if let Err(e) = repo.upsert_relations(&relations).await {
         tracing::error!("Failed to upsert relations for document {}: {}", document_id, e);
-        let _ = repo
-            .update_parse_job(parse_id, "failed", Some(&e.to_string()), None)
-            .await;
-        let _ = repo
-            .update_document(document_id, None, None, None, None, Some("failed"))
-            .await;
+        let _ = repo.update_parse_job(parse_id, "failed", Some(&e.to_string()), None).await;
+        let _ = repo.update_document(document_id, None, None, None, None, Some("failed")).await;
         return;
     }
 
@@ -376,26 +335,13 @@ async fn run_parse(
     };
 
     // 7. Update job to "completed" and doc to "parsed"
-    if let Err(e) = repo
-        .update_parse_job(parse_id, "completed", None, Some(&summary_json))
-        .await
-    {
-        tracing::error!(
-            "Failed to update parse job {} to completed: {}",
-            parse_id,
-            e
-        );
+    if let Err(e) = repo.update_parse_job(parse_id, "completed", None, Some(&summary_json)).await {
+        tracing::error!("Failed to update parse job {} to completed: {}", parse_id, e);
     }
 
-    if let Err(e) = repo
-        .update_document(document_id, None, None, None, None, Some("parsed"))
-        .await
+    if let Err(e) = repo.update_document(document_id, None, None, None, None, Some("parsed")).await
     {
-        tracing::error!(
-            "Failed to update document {} status to parsed: {}",
-            document_id,
-            e
-        );
+        tracing::error!("Failed to update document {} status to parsed: {}", document_id, e);
     }
 
     // 9. After success: generate tags for the document
@@ -403,9 +349,8 @@ async fn run_parse(
         Ok(tags) => {
             if !tags.is_empty() {
                 let tags_str = tags.join(",");
-                if let Err(e) = repo
-                    .update_document(document_id, None, None, None, Some(&tags_str), None)
-                    .await
+                if let Err(e) =
+                    repo.update_document(document_id, None, None, None, Some(&tags_str), None).await
                 {
                     tracing::error!(
                         "Failed to update document {} tags after parse: {}",
@@ -417,11 +362,7 @@ async fn run_parse(
         }
         Err(e) => {
             // Tag generation failure is non-fatal
-            tracing::warn!(
-                "Tag generation failed for document {}: {}",
-                document_id,
-                e
-            );
+            tracing::warn!("Tag generation failed for document {}: {}", document_id, e);
         }
     }
 }
@@ -451,8 +392,8 @@ async fn call_llm_preview(
     let system_prompt = build_preview_system_prompt();
     let user_message = format!("<user_document>\n{}\n</user_document>", content);
 
-    let response = llm_call_with_timeout(&system_prompt, &user_message, 0.1, Duration::from_secs(5))
-        .await?;
+    let response =
+        llm_call_with_timeout(&system_prompt, &user_message, 0.1, Duration::from_secs(5)).await?;
     let parsed = parse_llm_json_response(&response, workspace_id, "")?;
 
     Ok(parsed)
@@ -478,12 +419,7 @@ async fn retry_llm_call(
     for attempt in 0..max_attempts {
         if attempt > 0 {
             let delay = backoffs[attempt as usize];
-            tracing::info!(
-                "LLM call retry {}/{} after {:?}",
-                attempt + 1,
-                max_attempts,
-                delay
-            );
+            tracing::info!("LLM call retry {}/{} after {:?}", attempt + 1, max_attempts, delay);
             tokio::time::sleep(delay).await;
         }
 
@@ -541,12 +477,8 @@ async fn llm_call_with_timeout(
     let provider = zeroclaw::providers::create_provider("minimaxi", Some(&auth_token))
         .map_err(|e| Error::Internal(format!("failed to create LLM provider: {}", e)))?;
 
-    let chat_future = provider.chat_with_system(
-        Some(system_prompt),
-        user_message,
-        &model,
-        Some(temperature),
-    );
+    let chat_future =
+        provider.chat_with_system(Some(system_prompt), user_message, &model, Some(temperature));
 
     match tokio::time::timeout(timeout, chat_future).await {
         Ok(Ok(response)) => Ok(response),
@@ -694,10 +626,9 @@ fn parse_llm_json_response(
 ) -> Result<(Vec<KnowledgeEntity>, Vec<KnowledgeRelation>)> {
     let json_str = extract_json_from_response(response);
 
-    let value: serde_json::Value =
-        serde_json::from_str(&json_str).map_err(|e| {
-            Error::SerializationError(format!("failed to parse LLM JSON response: {}", e))
-        })?;
+    let value: serde_json::Value = serde_json::from_str(&json_str).map_err(|e| {
+        Error::SerializationError(format!("failed to parse LLM JSON response: {}", e))
+    })?;
 
     let now = chrono::Utc::now().to_rfc3339();
 
@@ -712,11 +643,8 @@ fn parse_llm_json_response(
                 Ok(e) => e,
                 Err(_) => {
                     // Try to extract what we can with low confidence
-                    let name = item
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown")
-                        .to_string();
+                    let name =
+                        item.get("name").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
                     let entity_type = item
                         .get("entity_type")
                         .and_then(|v| v.as_str())
@@ -801,18 +729,16 @@ fn parse_llm_json_response(
 
             let target_id = match name_to_id.get(&llm_relation.target_name) {
                 Some(id) => id.clone(),
-                None => {
-                    match entities.iter().find(|e| e.name == llm_relation.target_name) {
-                        Some(e) => e.id.clone(),
-                        None => {
-                            tracing::warn!(
-                                "Relation references unknown target entity: {}",
-                                llm_relation.target_name
-                            );
-                            continue;
-                        }
+                None => match entities.iter().find(|e| e.name == llm_relation.target_name) {
+                    Some(e) => e.id.clone(),
+                    None => {
+                        tracing::warn!(
+                            "Relation references unknown target entity: {}",
+                            llm_relation.target_name
+                        );
+                        continue;
                     }
-                }
+                },
             };
 
             relations.push(KnowledgeRelation {
@@ -915,11 +841,7 @@ fn compute_parse_diff(
         // Not purely additive for entities since relations might not have names
     }
 
-    ParseDiff {
-        added,
-        removed,
-        modified,
-    }
+    ParseDiff { added, removed, modified }
 }
 
 // ── Tree Building ──
@@ -937,10 +859,8 @@ fn build_tree(entities: &[KnowledgeEntity], relations: &[KnowledgeRelation]) -> 
         .collect();
 
     // Find root entities (not contained by anything)
-    let roots: Vec<&KnowledgeEntity> = entities
-        .iter()
-        .filter(|e| !contained_ids.contains(e.id.as_str()))
-        .collect();
+    let roots: Vec<&KnowledgeEntity> =
+        entities.iter().filter(|e| !contained_ids.contains(e.id.as_str())).collect();
 
     if roots.is_empty() {
         // Fallback: if no contains relations, list all entities flat
@@ -955,14 +875,7 @@ fn build_tree(entities: &[KnowledgeEntity], relations: &[KnowledgeRelation]) -> 
 
     for (i, root) in roots.iter().enumerate() {
         let is_last_root = i == roots.len() - 1;
-        render_tree_node(
-            &mut output,
-            entities,
-            relations,
-            root,
-            "",
-            is_last_root,
-        );
+        render_tree_node(&mut output, entities, relations, root, "", is_last_root);
     }
 
     output
@@ -994,19 +907,12 @@ fn render_tree_node(
         _ => "",
     };
 
-    output.push_str(&format!(
-        "{}{}{} {}\n",
-        prefix, connector, entity.name, type_label
-    ));
+    output.push_str(&format!("{}{}{} {}\n", prefix, connector, entity.name, type_label));
 
     if let Some(ref desc) = entity.description
         && !desc.is_empty()
     {
-        let desc_prefix = if prefix.is_empty() || is_last {
-            "    "
-        } else {
-            "│   "
-        };
+        let desc_prefix = if prefix.is_empty() || is_last { "    " } else { "│   " };
         let short_desc = if desc.len() > 80 {
             let end = desc.floor_char_boundary(80);
             format!("{}...", &desc[..end])
@@ -1019,28 +925,16 @@ fn render_tree_node(
     // Find children (entities contained by this entity)
     let children: Vec<&KnowledgeEntity> = relations
         .iter()
-        .filter(|r| {
-            r.relation_type == "contains" && r.source_entity_id == entity.id
-        })
+        .filter(|r| r.relation_type == "contains" && r.source_entity_id == entity.id)
         .filter_map(|r| entities.iter().find(|e| e.id == r.target_entity_id))
         .collect();
 
-    let child_prefix = if is_last {
-        format!("{}    ", prefix)
-    } else {
-        format!("{}│   ", prefix)
-    };
+    let child_prefix =
+        if is_last { format!("{}    ", prefix) } else { format!("{}│   ", prefix) };
 
     for (i, child) in children.iter().enumerate() {
         let is_last_child = i == children.len() - 1;
-        render_tree_node(
-            output,
-            entities,
-            relations,
-            child,
-            &child_prefix,
-            is_last_child,
-        );
+        render_tree_node(output, entities, relations, child, &child_prefix, is_last_child);
     }
 }
 

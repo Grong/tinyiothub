@@ -4,10 +4,8 @@ pub mod service;
 pub mod types;
 
 pub use handler::create_router;
-pub use repo::*;
-pub use service::WorkspaceService;
-pub use types::*;
-
 // Knowledge graph submodules
 pub use repo::KnowledgeRepository;
-pub use service::knowledge::KnowledgeService;
+pub use repo::*;
+pub use service::{WorkspaceService, knowledge::KnowledgeService};
+pub use types::*;

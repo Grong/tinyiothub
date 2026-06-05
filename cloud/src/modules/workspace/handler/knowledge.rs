@@ -8,10 +8,11 @@ use axum::{
 };
 use tinyiothub_web::response::{ApiResponseBuilder, PaginatedResponse, PaginationInfo};
 
-use super::super::types::knowledge::*;
-use super::super::types::WorkspaceResource;
-use crate::shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims};
-use crate::verify_workspace_access;
+use super::super::types::{WorkspaceResource, knowledge::*};
+use crate::{
+    shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims},
+    verify_workspace_access,
+};
 
 // ── Document CRUD ──
 
@@ -41,8 +42,7 @@ pub async fn list_documents(
         .await
     {
         Ok((docs, total)) => {
-            let total_pages =
-                ((total as f64) / (page_size as f64)).ceil() as u32;
+            let total_pages = ((total as f64) / (page_size as f64)).ceil() as u32;
             ApiResponseBuilder::success(PaginatedResponse {
                 data: docs,
                 pagination: PaginationInfo {
@@ -72,12 +72,7 @@ pub async fn create_document(
 
     match state
         .knowledge_service
-        .create_document(
-            &id,
-            payload.title,
-            payload.content,
-            payload.tags.unwrap_or_default(),
-        )
+        .create_document(&id, payload.title, payload.content, payload.tags.unwrap_or_default())
         .await
     {
         Ok(doc) => ApiResponseBuilder::success(doc),
@@ -124,12 +119,7 @@ pub async fn update_document(
 
     match state
         .knowledge_service
-        .update_document(
-            &did,
-            payload.title,
-            payload.content,
-            payload.tags,
-        )
+        .update_document(&did, payload.title, payload.content, payload.tags)
         .await
     {
         Ok(Some(doc)) => {
@@ -204,9 +194,7 @@ pub async fn trigger_parse(
     }
 
     match state.knowledge_service.trigger_parse(&did, &id).await {
-        Ok(job_id) => {
-            ApiResponseBuilder::success(serde_json::json!({"job_id": job_id}))
-        }
+        Ok(job_id) => ApiResponseBuilder::success(serde_json::json!({"job_id": job_id})),
         Err(e) => {
             tracing::error!("Failed to trigger parse: {}", e);
             ApiResponseBuilder::error("启动解析失败")
@@ -288,7 +276,12 @@ pub async fn list_entities(
 
     match state
         .knowledge_service
-        .list_entities(&id, params.entity_type.as_deref(), params.tags.as_deref(), params.document_id.as_deref())
+        .list_entities(
+            &id,
+            params.entity_type.as_deref(),
+            params.tags.as_deref(),
+            params.document_id.as_deref(),
+        )
         .await
     {
         Ok(entities) => ApiResponseBuilder::success(entities),
@@ -324,10 +317,8 @@ pub async fn update_entity(
     }
 
     // Serialize optional fields to strings for the service layer
-    let properties_str = payload
-        .properties
-        .as_ref()
-        .map(|p| serde_json::to_string(p).unwrap_or_default());
+    let properties_str =
+        payload.properties.as_ref().map(|p| serde_json::to_string(p).unwrap_or_default());
     let tags_str = payload.tags.as_ref().map(|t| t.join(","));
 
     // device_id: Option<String> where None means "don't update" and Some(None) means "clear"
@@ -457,11 +448,7 @@ pub async fn get_context(
     }
 
     match state.knowledge_service.build_context(&id).await {
-        Ok(text) => (
-            StatusCode::OK,
-            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
-            text,
-        )
+        Ok(text) => (StatusCode::OK, [(header::CONTENT_TYPE, "text/plain; charset=utf-8")], text)
             .into_response(),
         Err(e) => {
             tracing::error!("Failed to build knowledge context: {}", e);

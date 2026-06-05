@@ -309,11 +309,10 @@ impl AppState {
             Arc::new(crate::modules::workspace::WorkspaceService::new(workspace_repository));
 
         // 知识图谱服务
-        let knowledge_repo = Arc::new(
-            crate::modules::workspace::repo::SqliteKnowledgeRepository::new(
+        let knowledge_repo =
+            Arc::new(crate::modules::workspace::repo::SqliteKnowledgeRepository::new(
                 database.as_ref().clone(),
-            ),
-        );
+            ));
         let knowledge_service =
             Arc::new(crate::modules::workspace::KnowledgeService::new(knowledge_repo));
 

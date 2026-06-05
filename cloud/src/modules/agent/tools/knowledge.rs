@@ -65,10 +65,7 @@ impl Tool for SearchKnowledgeTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        let workspace_id = args
-            .get("workspace_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let workspace_id = args.get("workspace_id").and_then(|v| v.as_str()).unwrap_or("");
 
         if workspace_id.is_empty() {
             return Ok(ToolResult {
@@ -90,28 +87,16 @@ impl Tool for SearchKnowledgeTool {
 
         let entity_type = args.get("entity_type").and_then(|v| v.as_str());
 
-        let tags: Option<String> = args.get("tags").and_then(|v| v.as_array()).map(|arr| {
-            arr.iter()
-                .filter_map(|t| t.as_str())
-                .collect::<Vec<_>>()
-                .join(",")
-        });
+        let tags: Option<String> = args
+            .get("tags")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|t| t.as_str()).collect::<Vec<_>>().join(","));
 
-        let limit = args
-            .get("limit")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(10)
-            .clamp(1, 50);
+        let limit = args.get("limit").and_then(|v| v.as_i64()).unwrap_or(10).clamp(1, 50);
 
         match self
             .knowledge_service
-            .search_knowledge(
-                workspace_id,
-                query,
-                entity_type,
-                tags.as_deref(),
-                limit,
-            )
+            .search_knowledge(workspace_id, query, entity_type, tags.as_deref(), limit)
             .await
         {
             Ok(results) => {
@@ -134,7 +119,10 @@ impl Tool for SearchKnowledgeTool {
                             .relations
                             .iter()
                             .map(|rel| {
-                                format!("{} -> {} ({})", rel.relation_type, rel.target_entity_id, rel.confidence)
+                                format!(
+                                    "{} -> {} ({})",
+                                    rel.relation_type, rel.target_entity_id, rel.confidence
+                                )
                             })
                             .collect();
                         relations_summary.truncate(5);

@@ -34,7 +34,8 @@ impl From<ResourceRow> for WorkspaceResource {
         Self {
             id: row.id,
             workspace_id: row.workspace_id,
-            resource_type: ResourceType::from_str(&row.resource_type).unwrap_or(ResourceType::Document),
+            resource_type: ResourceType::from_str(&row.resource_type)
+                .unwrap_or(ResourceType::Document),
             name: row.name,
             description: row.description,
             content: row.content,
@@ -130,9 +131,8 @@ pub(crate) struct KnowledgeParseJobRow {
 
 impl From<KnowledgeParseJobRow> for KnowledgeParseJob {
     fn from(row: KnowledgeParseJobRow) -> Self {
-        let result_summary: Option<ParseResultSummary> = row
-            .result_summary
-            .and_then(|s| serde_json::from_str(&s).ok());
+        let result_summary: Option<ParseResultSummary> =
+            row.result_summary.and_then(|s| serde_json::from_str(&s).ok());
         Self {
             id: row.id,
             document_id: row.document_id,
@@ -181,10 +181,7 @@ pub trait KnowledgeRepository: Send + Sync {
         document_id: Option<&str>,
     ) -> Result<Vec<KnowledgeEntity>>;
     async fn get_entity(&self, id: &str) -> Result<Option<KnowledgeEntity>>;
-    async fn get_entities_by_document(
-        &self,
-        document_id: &str,
-    ) -> Result<Vec<KnowledgeEntity>>;
+    async fn get_entities_by_document(&self, document_id: &str) -> Result<Vec<KnowledgeEntity>>;
     async fn upsert_entities(&self, entities: &[KnowledgeEntity]) -> Result<()>;
     async fn delete_entities_by_document(&self, document_id: &str) -> Result<()>;
     async fn update_entity(
@@ -199,14 +196,8 @@ pub trait KnowledgeRepository: Send + Sync {
     ) -> Result<Option<KnowledgeEntity>>;
 
     // Relations
-    async fn list_relations(
-        &self,
-        workspace_id: &str,
-    ) -> Result<Vec<KnowledgeRelation>>;
-    async fn get_relations_by_document(
-        &self,
-        document_id: &str,
-    ) -> Result<Vec<KnowledgeRelation>>;
+    async fn list_relations(&self, workspace_id: &str) -> Result<Vec<KnowledgeRelation>>;
+    async fn get_relations_by_document(&self, document_id: &str) -> Result<Vec<KnowledgeRelation>>;
     async fn upsert_relations(&self, relations: &[KnowledgeRelation]) -> Result<()>;
     async fn delete_relations_by_document(&self, document_id: &str) -> Result<()>;
 
@@ -253,13 +244,8 @@ impl SqliteKnowledgeRepository {
 
 /// Helper: split comma-separated tags string into trimmed non-empty Vec
 fn split_tags(tags: Option<&str>) -> Vec<&str> {
-    tags.map(|t| {
-        t.split(',')
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .collect()
-    })
-    .unwrap_or_default()
+    tags.map(|t| t.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect())
+        .unwrap_or_default()
 }
 
 /// Helper: append optional filters to a QueryBuilder for document queries
@@ -312,52 +298,32 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
         let offset = (page - 1) * page_size;
 
         // Count query
-        let mut count_builder =
-            QueryBuilder::new("SELECT COUNT(*) as cnt FROM resources WHERE ");
-        append_document_filters(
-            &mut count_builder,
-            workspace_id,
-            q,
-            tags,
-            status,
-        );
-        let count_row: (i64,) = count_builder
-            .build_query_as()
-            .fetch_one(self.database.pool())
-            .await?;
+        let mut count_builder = QueryBuilder::new("SELECT COUNT(*) as cnt FROM resources WHERE ");
+        append_document_filters(&mut count_builder, workspace_id, q, tags, status);
+        let count_row: (i64,) =
+            count_builder.build_query_as().fetch_one(self.database.pool()).await?;
         let total = count_row.0;
 
         // Data query
-        let mut data_builder =
-            QueryBuilder::new("SELECT * FROM resources WHERE ");
-        append_document_filters(
-            &mut data_builder,
-            workspace_id,
-            q,
-            tags,
-            status,
-        );
+        let mut data_builder = QueryBuilder::new("SELECT * FROM resources WHERE ");
+        append_document_filters(&mut data_builder, workspace_id, q, tags, status);
         data_builder.push(" ORDER BY created_at DESC LIMIT ");
         data_builder.push_bind(page_size);
         data_builder.push(" OFFSET ");
         data_builder.push_bind(offset);
 
-        let rows = data_builder
-            .build_query_as::<ResourceRow>()
-            .fetch_all(self.database.pool())
-            .await?;
+        let rows =
+            data_builder.build_query_as::<ResourceRow>().fetch_all(self.database.pool()).await?;
 
         let docs: Vec<WorkspaceResource> = rows.into_iter().map(Into::into).collect();
         Ok((docs, total))
     }
 
     async fn get_document(&self, id: &str) -> Result<Option<WorkspaceResource>> {
-        let row = sqlx::query_as::<_, ResourceRow>(
-            "SELECT * FROM resources WHERE id = ?",
-        )
-        .bind(id)
-        .fetch_optional(self.database.pool())
-        .await?;
+        let row = sqlx::query_as::<_, ResourceRow>("SELECT * FROM resources WHERE id = ?")
+            .bind(id)
+            .fetch_optional(self.database.pool())
+            .await?;
 
         Ok(row.map(Into::into))
     }
@@ -424,13 +390,9 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
             if has_updates {
                 builder.push(", ");
             }
-            let tags_list: Vec<&str> = tag_str
-                .split(',')
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-                .collect();
-            let tags_json =
-                serde_json::to_string(&tags_list).unwrap_or_else(|_| "[]".to_string());
+            let tags_list: Vec<&str> =
+                tag_str.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+            let tags_json = serde_json::to_string(&tags_list).unwrap_or_else(|_| "[]".to_string());
             builder.push("tags = ").push_bind(tags_json);
             has_updates = true;
         }
@@ -514,18 +476,15 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
 
         let tag_list = split_tags(tags);
         for tag in &tag_list {
-            builder
-                .push(" AND EXISTS (SELECT 1 FROM json_each(tags) WHERE value = ");
+            builder.push(" AND EXISTS (SELECT 1 FROM json_each(tags) WHERE value = ");
             builder.push_bind(*tag);
             builder.push(")");
         }
 
         builder.push(" ORDER BY created_at DESC");
 
-        let rows = builder
-            .build_query_as::<KnowledgeEntityRow>()
-            .fetch_all(self.database.pool())
-            .await?;
+        let rows =
+            builder.build_query_as::<KnowledgeEntityRow>().fetch_all(self.database.pool()).await?;
 
         Ok(rows.into_iter().map(Into::into).collect())
     }
@@ -541,10 +500,7 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
         Ok(row.map(Into::into))
     }
 
-    async fn get_entities_by_document(
-        &self,
-        document_id: &str,
-    ) -> Result<Vec<KnowledgeEntity>> {
+    async fn get_entities_by_document(&self, document_id: &str) -> Result<Vec<KnowledgeEntity>> {
         let rows = sqlx::query_as::<_, KnowledgeEntityRow>(
             "SELECT * FROM knowledge_entities WHERE source_document_id = ? ORDER BY created_at DESC",
         )
@@ -557,12 +513,12 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
 
     async fn upsert_entities(&self, entities: &[KnowledgeEntity]) -> Result<()> {
         for entity in entities {
-            let properties_json = serde_json::to_string(&entity.properties)
-                .unwrap_or_else(|_| "{}".to_string());
-            let tags_json = serde_json::to_string(&entity.tags)
-                .unwrap_or_else(|_| "[]".to_string());
-            let file_ids_json = serde_json::to_string(&entity.file_ids)
-                .unwrap_or_else(|_| "[]".to_string());
+            let properties_json =
+                serde_json::to_string(&entity.properties).unwrap_or_else(|_| "{}".to_string());
+            let tags_json =
+                serde_json::to_string(&entity.tags).unwrap_or_else(|_| "[]".to_string());
+            let file_ids_json =
+                serde_json::to_string(&entity.file_ids).unwrap_or_else(|_| "[]".to_string());
             let now = chrono::Utc::now().to_rfc3339();
 
             sqlx::query(
@@ -647,13 +603,9 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
             if has_updates {
                 builder.push(", ");
             }
-            let tags_list: Vec<&str> = tags_str
-                .split(',')
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-                .collect();
-            let tags_json =
-                serde_json::to_string(&tags_list).unwrap_or_else(|_| "[]".to_string());
+            let tags_list: Vec<&str> =
+                tags_str.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+            let tags_json = serde_json::to_string(&tags_list).unwrap_or_else(|_| "[]".to_string());
             builder.push("tags = ").push_bind(tags_json);
             has_updates = true;
         }
@@ -688,10 +640,7 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
 
     // ── Relations ──
 
-    async fn list_relations(
-        &self,
-        workspace_id: &str,
-    ) -> Result<Vec<KnowledgeRelation>> {
+    async fn list_relations(&self, workspace_id: &str) -> Result<Vec<KnowledgeRelation>> {
         let rows = sqlx::query_as::<_, KnowledgeRelationRow>(
             "SELECT * FROM knowledge_relations WHERE workspace_id = ?",
         )
@@ -702,10 +651,7 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
-    async fn get_relations_by_document(
-        &self,
-        document_id: &str,
-    ) -> Result<Vec<KnowledgeRelation>> {
+    async fn get_relations_by_document(&self, document_id: &str) -> Result<Vec<KnowledgeRelation>> {
         let rows = sqlx::query_as::<_, KnowledgeRelationRow>(
             "SELECT r.* FROM knowledge_relations r INNER JOIN knowledge_entities e ON r.source_entity_id = e.id OR r.target_entity_id = e.id WHERE e.source_document_id = ?",
         )
@@ -718,8 +664,8 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
 
     async fn upsert_relations(&self, relations: &[KnowledgeRelation]) -> Result<()> {
         for relation in relations {
-            let properties_json = serde_json::to_string(&relation.properties)
-                .unwrap_or_else(|_| "{}".to_string());
+            let properties_json =
+                serde_json::to_string(&relation.properties).unwrap_or_else(|_| "{}".to_string());
 
             sqlx::query(
                 "INSERT OR REPLACE INTO knowledge_relations (id, workspace_id, source_entity_id, target_entity_id, relation_type, properties, confidence) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -763,9 +709,7 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
         let like_pattern = format!("%{}%", query);
 
         // Build entity search with relevance scoring and source snippet
-        let mut builder = QueryBuilder::new(
-            "SELECT e.*, (CASE WHEN e.name LIKE ",
-        );
+        let mut builder = QueryBuilder::new("SELECT e.*, (CASE WHEN e.name LIKE ");
         builder.push_bind(like_pattern.clone());
         builder.push(" THEN 3 ELSE 0 END) + (CASE WHEN e.description LIKE ");
         builder.push_bind(like_pattern.clone());
@@ -785,9 +729,7 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
 
         let tag_list = split_tags(tags);
         for tag in &tag_list {
-            builder.push(
-                " AND EXISTS (SELECT 1 FROM json_each(e.tags) WHERE value = ",
-            );
+            builder.push(" AND EXISTS (SELECT 1 FROM json_each(e.tags) WHERE value = ");
             builder.push_bind(*tag);
             builder.push(")");
         }
@@ -830,13 +772,9 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
         }
 
         // Fetch relations for all matched entities
-        let entity_ids: Vec<&str> = entity_results
-            .iter()
-            .map(|(e, _, _)| e.id.as_str())
-            .collect();
+        let entity_ids: Vec<&str> = entity_results.iter().map(|(e, _, _)| e.id.as_str()).collect();
 
-        let mut rel_builder =
-            QueryBuilder::new("SELECT * FROM knowledge_relations WHERE ");
+        let mut rel_builder = QueryBuilder::new("SELECT * FROM knowledge_relations WHERE ");
         rel_builder.push("source_entity_id IN (");
         let mut first = true;
         for id in &entity_ids {
@@ -862,17 +800,14 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
             .fetch_all(self.database.pool())
             .await?;
 
-        let all_relations: Vec<KnowledgeRelation> =
-            rel_rows.into_iter().map(Into::into).collect();
+        let all_relations: Vec<KnowledgeRelation> = rel_rows.into_iter().map(Into::into).collect();
 
         // Build results with relations grouped by entity
         let mut results: Vec<KnowledgeSearchResult> = Vec::new();
         for (entity, relevance, source_snippet) in entity_results {
             let entity_relations: Vec<KnowledgeRelation> = all_relations
                 .iter()
-                .filter(|r| {
-                    r.source_entity_id == entity.id || r.target_entity_id == entity.id
-                })
+                .filter(|r| r.source_entity_id == entity.id || r.target_entity_id == entity.id)
                 .cloned()
                 .collect();
 
@@ -916,10 +851,8 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
     // ── Parse Jobs ──
 
     async fn create_parse_job(&self, job: &KnowledgeParseJob) -> Result<()> {
-        let result_summary_json = job
-            .result_summary
-            .as_ref()
-            .and_then(|s| serde_json::to_string(s).ok());
+        let result_summary_json =
+            job.result_summary.as_ref().and_then(|s| serde_json::to_string(s).ok());
 
         sqlx::query(
             "INSERT INTO knowledge_parse_jobs (id, document_id, status, error_message, result_summary, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",

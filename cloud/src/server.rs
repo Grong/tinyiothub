@@ -2,7 +2,7 @@
 //!
 //! Extracted from `main.rs` to separate server wiring from runtime initialization.
 
-use axum::{extract::DefaultBodyLimit, Router};
+use axum::{Router, extract::DefaultBodyLimit};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 use crate::shared::app_state::AppState;

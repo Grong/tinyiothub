@@ -499,8 +499,7 @@ impl AgentPool {
         let config = config_service::get_config(&self.db_pool, agent_id).await?;
         let ws_svc = self.workspace_service.read().await.clone();
         let ks_svc = self.knowledge_service.read().await.clone();
-        let all_tools =
-            tool_service::load_all_tools(workspace_id, ws_svc, ks_svc).await;
+        let all_tools = tool_service::load_all_tools(workspace_id, ws_svc, ks_svc).await;
         let effective = tool_service::filter_by_denylist(all_tools, &config.tool_denylist);
         let names: Vec<&str> = effective.iter().map(|t| t.name()).collect();
         Ok(serde_json::json!({ "tools": names }))

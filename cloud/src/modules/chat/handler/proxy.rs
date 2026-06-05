@@ -54,10 +54,7 @@ pub async fn chat_stream(
     // Inject workspace knowledge graph context into the system prompt
     match state.knowledge_service.build_context(&workspace_id).await {
         Ok(knowledge_ctx) if !knowledge_ctx.is_empty() => {
-            full_prompt = format!(
-                "{}\n\n## 工作区知识上下文\n{}",
-                full_prompt, knowledge_ctx
-            );
+            full_prompt = format!("{}\n\n## 工作区知识上下文\n{}", full_prompt, knowledge_ctx);
         }
         Err(e) => {
             tracing::warn!(

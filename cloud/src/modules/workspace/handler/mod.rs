@@ -545,14 +545,11 @@ async fn suggest_tags(
         }
     }
 
-    let auth_token = match crate::shared::config::get()
-        .minimax
-        .as_ref()
-        .map(|m| m.auth_token.clone())
-    {
-        Some(t) => t,
-        None => return ApiResponseBuilder::error("AI 服务未配置"),
-    };
+    let auth_token =
+        match crate::shared::config::get().minimax.as_ref().map(|m| m.auth_token.clone()) {
+            Some(t) => t,
+            None => return ApiResponseBuilder::error("AI 服务未配置"),
+        };
 
     let model = crate::shared::config::get()
         .minimax
@@ -569,10 +566,7 @@ async fn suggest_tags(
          资源信息：\n- 文件名：{}\n- 资源类型：{}{}",
         payload.name,
         type_label,
-        payload
-            .description
-            .as_deref()
-            .map_or(String::new(), |d| format!("\n- 描述：{}", d)),
+        payload.description.as_deref().map_or(String::new(), |d| format!("\n- 描述：{}", d)),
     );
 
     let provider = match zeroclaw::providers::create_provider("minimaxi", Some(&auth_token)) {

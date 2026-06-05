@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use super::{
     repo::WorkspaceRepository,
-    types::{ResourceSearchResult, ResourceType, Workspace, WorkspaceResource, WorkspaceWithDeviceCount},
+    types::{
+        ResourceSearchResult, ResourceType, Workspace, WorkspaceResource, WorkspaceWithDeviceCount,
+    },
 };
 use crate::shared::error::Result;
 

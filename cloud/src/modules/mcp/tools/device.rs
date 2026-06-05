@@ -844,11 +844,11 @@ impl ToolHandler for SearchDevicesHandler {
                 device.status = cached.status.clone();
                 device.last_heartbeat = cached.last_heartbeat.clone();
             }
-            let tags = device.tags.as_ref().map(|ts|
+            let tags = device.tags.as_ref().map(|ts| {
                 ts.iter()
                     .filter_map(|v| v.get("name").and_then(|n| n.as_str()).map(String::from))
                     .collect()
-            );
+            });
             results.push(SearchDeviceResult {
                 id: device.id.clone(),
                 name: device.name.clone(),
