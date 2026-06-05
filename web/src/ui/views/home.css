@@ -729,6 +729,116 @@ view-home .feature-card p {
 }
 
 /* ================================
+   AI-Native Advantages
+   ================================ */
+
+view-home .ai-native-section {
+  padding-top: 0;
+}
+
+view-home .ai-native-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+}
+
+view-home .ai-native-card {
+  padding: 36px 28px;
+  border-radius: 20px;
+  background: var(--home-surface-dark);
+  border: 1px solid rgba(0, 212, 255, 0.08);
+  box-shadow:
+    var(--home-shadow-1),
+    var(--home-shadow-2),
+    var(--home-shadow-3),
+    var(--home-shadow-inset);
+  transition: all 0.35s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+view-home .ai-native-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 20px;
+  right: 20px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--home-accent-cyan), var(--home-accent-violet), transparent);
+  opacity: 0.5;
+  transition: opacity 0.35s ease;
+}
+
+view-home .ai-native-card:hover {
+  transform: translateY(-6px);
+  border-color: rgba(0, 212, 255, 0.22);
+  box-shadow:
+    0 8px 30px rgba(0, 0, 0, 0.45),
+    0 20px 60px rgba(0, 212, 255, 0.08),
+    var(--home-shadow-hover-inset);
+}
+
+view-home .ai-native-card:hover::before {
+  opacity: 1;
+}
+
+view-home .ai-native-card__icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 24px;
+  background: linear-gradient(135deg, rgba(0, 212, 255, 0.12), rgba(123, 97, 255, 0.08));
+  border: 1px solid rgba(0, 212, 255, 0.15);
+  box-shadow: 0 0 24px rgba(0, 212, 255, 0.06);
+}
+
+view-home .ai-native-card__icon svg {
+  width: 28px;
+  height: 28px;
+}
+
+view-home .ai-native-card h3 {
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--home-text-primary);
+  margin: 0 0 12px;
+  letter-spacing: 0;
+}
+
+view-home .ai-native-card p {
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--home-text-secondary);
+  margin: 0;
+}
+
+view-home .ai-native-card__tags {
+  margin-top: 20px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+view-home .ai-native-card__tag {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  background: rgba(0, 212, 255, 0.06);
+  color: var(--home-accent-cyan);
+  border: 1px solid rgba(0, 212, 255, 0.12);
+  transition: all 0.2s ease;
+}
+
+view-home .ai-native-card:hover .ai-native-card__tag {
+  background: rgba(0, 212, 255, 0.1);
+  border-color: rgba(0, 212, 255, 0.25);
+}
+
+/* ================================
    Showcase
    ================================ */
 
@@ -1102,15 +1212,16 @@ view-home .reveal-delay-3 { transition-delay: 0.3s; }
   border-color: rgba(0, 0, 0, 0.22);
 }
 
-/* Keep violet in light theme primary buttons */
 :root[data-theme="light"] view-home .btn--primary {
   background: linear-gradient(135deg, #0099cc 0%, #7b61ff 100%);
   color: #fff;
-  box-shadow: 0 2px 20px rgba(0, 150, 180, 0.4);
+  box-shadow: 0 2px 12px rgba(0, 150, 180, 0.25);
 }
 
 :root[data-theme="light"] view-home .btn--primary:hover {
-  box-shadow: 0 6px 32px rgba(123, 97, 255, 0.45);
+  transform: translateY(-2px);
+  background: linear-gradient(135deg, #00b3e6 0%, #8b75ff 100%);
+  box-shadow: 0 8px 28px rgba(0, 130, 160, 0.3), 0 2px 8px rgba(0, 0, 0, 0.12);
 }
 
 :root[data-theme="light"] view-home .hero-badge {
@@ -1299,6 +1410,43 @@ view-home .reveal-delay-3 { transition-delay: 0.3s; }
 
 :root[data-theme="light"] view-home .feature-card p {
   color: rgba(31, 41, 55, 0.55);
+}
+
+:root[data-theme="light"] view-home .ai-native-card {
+  background: var(--home-surface-light);
+  border: 1px solid rgba(0, 140, 180, 0.1);
+  box-shadow:
+    var(--home-shadow-light-1),
+    var(--home-shadow-light-2),
+    var(--home-shadow-light-3),
+    var(--home-shadow-light-inset);
+}
+
+:root[data-theme="light"] view-home .ai-native-card:hover {
+  border-color: rgba(0, 140, 180, 0.3);
+  box-shadow:
+    0 8px 30px rgba(0, 0, 0, 0.1),
+    0 20px 60px rgba(0, 150, 180, 0.1),
+    var(--home-shadow-light-hover-inset);
+}
+
+:root[data-theme="light"] view-home .ai-native-card__icon {
+  background: linear-gradient(135deg, rgba(0, 160, 200, 0.15), rgba(123, 97, 255, 0.1));
+  border: 1px solid rgba(0, 140, 180, 0.25);
+}
+
+:root[data-theme="light"] view-home .ai-native-card h3 {
+  color: #111827;
+}
+
+:root[data-theme="light"] view-home .ai-native-card p {
+  color: rgba(31, 41, 55, 0.55);
+}
+
+:root[data-theme="light"] view-home .ai-native-card__tag {
+  background: rgba(0, 150, 180, 0.08);
+  border-color: rgba(0, 140, 180, 0.2);
+  color: #005f73;
 }
 
 :root[data-theme="light"] view-home .showcase-visual {
@@ -1540,6 +1688,9 @@ view-home .reveal-delay-3 { transition-delay: 0.3s; }
     display: none;
   }
   view-home .feature-grid {
+    grid-template-columns: 1fr;
+  }
+  view-home .ai-native-grid {
     grid-template-columns: 1fr;
   }
   view-home .showcase-list {

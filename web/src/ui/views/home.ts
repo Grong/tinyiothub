@@ -177,11 +177,11 @@ export class HomeView extends LitElement {
                 AI 原生 · 边缘智能
               </div>
               <h1>
-                设备接入到自愈运维<br />
+                AIoT 智能运维平台<br />
                 <span class="gradient">一句话的事</span>
               </h1>
               <p class="hero-desc">
-                轻量级工业边缘 IoT 平台。支持 Modbus/ONVIF/SNMP/MQTT 多协议设备接入，内置 L0-L3 分级自愈引擎。沉浸式 3D 工作空间，用自然语言即可完成设备配置、数据洞察和故障排查。
+                AI 原生 AIoT 平台。融合知识图谱推理、3D 数字孪生与大模型智能运维，支持 Modbus/ONVIF/SNMP/MQTT 多协议接入，内置 L0-L3 自愈引擎。用自然语言完成设备配置、故障排查与数据洞察，内嵌 MCP Server——Claude、Cursor 即连即用。
               </p>
               <div class="hero-cta">
                 <button class="btn btn--primary btn--lg" @click=${() => this.navigate('/login')}>
@@ -214,7 +214,7 @@ export class HomeView extends LitElement {
             <div class="stats-header">
               <div class="section-label">平台数据</div>
               <h2 class="stats-title">开源 <span>轻量部署</span></h2>
-              <p class="stats-desc">TinyIoTHub 专为工业边缘场景设计，单进程 ~80MB 内存即可运行，覆盖工厂、楼宇、能源、农业等典型 IoT 场景。</p>
+              <p class="stats-desc">TinyIoTHub 专为 AIoT 场景设计，单进程 ~80MB 内存即可运行，覆盖工厂、楼宇、能源、农业等典型 IoT 场景。</p>
             </div>
             <div class="stats-grid">
               <div class="stats-item reveal reveal-delay-1">
@@ -250,9 +250,9 @@ export class HomeView extends LitElement {
           <div class="section-inner">
             <div class="section-header">
               <div class="section-label">核心能力</div>
-              <h2 class="section-title">四大核心能力</h2>
+              <h2 class="section-title">六大核心能力</h2>
               <p class="section-desc">
-                从设备接入到智能运维，覆盖工业边缘全生命周期
+                从设备接入到 AI 智能运维，覆盖 AIoT 全生命周期
               </p>
             </div>
             <div class="feature-grid">
@@ -279,10 +279,10 @@ export class HomeView extends LitElement {
               </div>
               <div class="feature-card reveal reveal-delay-1">
                 <div class="feature-icon">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="url(#icon-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="url(#icon-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="12" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><line x1="8" y1="7.2" x2="10.3" y2="10.8"/><line x1="16" y1="7.2" x2="13.7" y2="10.8"/><line x1="8" y1="16.8" x2="10.3" y2="13.2"/><line x1="16" y1="16.8" x2="13.7" y2="13.2"/></svg>
                 </div>
-                <h3>规则引擎</h3>
-                <p>阈值、范围、变化、持续时间、组合五种条件，灵活配置告警与自动化</p>
+                <h3>知识图谱</h3>
+                <p>设备关系拓扑建模，故障影响范围推理，实体与关系灵活定义</p>
               </div>
               <div class="feature-card reveal reveal-delay-2">
                 <div class="feature-icon">
@@ -293,10 +293,61 @@ export class HomeView extends LitElement {
               </div>
               <div class="feature-card reveal reveal-delay-3">
                 <div class="feature-icon">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="url(#icon-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="url(#icon-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
                 </div>
-                <h3>轻量部署</h3>
-                <p>~80MB 内存占用，SQLite 零依赖，MIT 开源协议</p>
+                <h3>规则引擎</h3>
+                <p>阈值、范围、变化、持续时间、组合五种条件类型，灵活配置告警与自动化规则</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- AI-Native Advantages -->
+        <section class="section ai-native-section reveal">
+          <div class="section-inner">
+            <div class="section-header">
+              <div class="section-label">AI 原生优势</div>
+              <h2 class="section-title">大模型驱动的智能运维</h2>
+              <p class="section-desc">
+                深度融合 AI 能力，从设备管理到故障排查，用对话替代复杂操作
+              </p>
+            </div>
+            <div class="ai-native-grid">
+              <div class="ai-native-card reveal reveal-delay-1">
+                <div class="ai-native-card__icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="url(#icon-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="5" r="2.5"/><circle cx="19" cy="5" r="2.5"/><circle cx="12" cy="12" r="2.5"/><circle cx="5" cy="19" r="2.5"/><circle cx="19" cy="19" r="2.5"/><line x1="7.2" y1="6.2" x2="10.5" y2="10.5"/><line x1="16.8" y1="6.2" x2="13.5" y2="10.5"/><line x1="7.2" y1="17.8" x2="10.5" y2="13.5"/><line x1="16.8" y1="17.8" x2="13.5" y2="13.5"/></svg>
+                </div>
+                <h3>知识图谱 · 智能推理</h3>
+                <p>自动构建设备关系拓扑，支持实体、属性、关系的灵活建模。故障发生时沿知识图谱推理影响范围，快速定位根因。</p>
+                <div class="ai-native-card__tags">
+                  <span class="ai-native-card__tag">实体关系建模</span>
+                  <span class="ai-native-card__tag">故障影响推理</span>
+                  <span class="ai-native-card__tag">可视化图谱</span>
+                </div>
+              </div>
+              <div class="ai-native-card reveal reveal-delay-2">
+                <div class="ai-native-card__icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="url(#icon-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+                </div>
+                <h3>沉浸式工作空间 · A2UI 驱动</h3>
+                <p>3D 数字孪生场景 + 27 种 A2UI 组件，可折叠思考过程与工具执行。自然语言描述需求，AI 自动生成 UI 并执行操作。</p>
+                <div class="ai-native-card__tags">
+                  <span class="ai-native-card__tag">3D 数字孪生</span>
+                  <span class="ai-native-card__tag">A2UI 协议</span>
+                  <span class="ai-native-card__tag">过程透明可见</span>
+                </div>
+              </div>
+              <div class="ai-native-card reveal reveal-delay-3">
+                <div class="ai-native-card__icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="url(#icon-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v1a4 4 0 0 0-4 4v1.5a2.5 2.5 0 0 0 0 5V18a4 4 0 0 0 4 4h2.5"/><circle cx="19" cy="19" r="3"/><path d="M19 16v2.5M19 22h.01"/></svg>
+                </div>
+                <h3>MCP 原生 · 开放 AI 生态</h3>
+                <p>内嵌 MCP Server，Claude Desktop、Cursor 等 AI 工具可直接连接。Agent 自进化记忆系统，运维经验持续积累，越用越智能。</p>
+                <div class="ai-native-card__tags">
+                  <span class="ai-native-card__tag">MCP 协议</span>
+                  <span class="ai-native-card__tag">Claude 集成</span>
+                  <span class="ai-native-card__tag">自进化记忆</span>
+                </div>
               </div>
             </div>
           </div>

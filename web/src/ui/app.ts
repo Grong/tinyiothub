@@ -53,9 +53,9 @@ const NAV_GROUPS: NavGroup[] = [
   {
     items: [
       {
-        route: 'chat',
-        label: 'AI 助手',
-        icon: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
+        route: 'workspace',
+        label: '工作空间',
+        icon: 'M3 3h18v18H3V3zm4 4v10h5V7H7zm7 0v6h4V7h-4z',
       },
       {
         route: 'dashboard',
@@ -125,9 +125,9 @@ const NAV_GROUPS: NavGroup[] = [
         icon: 'M5 3a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M19 3a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M12 17a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M7 7l5 8 M17 7l-5 8',
       },
       {
-        route: 'workspace',
-        label: '工作空间',
-        icon: 'M3 3h18v18H3V3zm4 4v10h5V7H7zm7 0v6h4V7h-4z',
+        route: 'chat',
+        label: 'AI 助手',
+        icon: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
       },
     ],
   },
@@ -467,7 +467,7 @@ export class TinyIoTHubApp extends LitElement {
           class="brand"
           @click=${(e: Event) => {
             e.preventDefault();
-            this.navigate('chat');
+            this.navigate('home');
           }}
           style="cursor: pointer; text-decoration: none;"
         >

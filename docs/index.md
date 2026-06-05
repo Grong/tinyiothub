@@ -3,7 +3,7 @@ layout: home
 
 hero:
   name: "TinyIoTHub"
-  text: "轻量级工业边缘 IoT 平台"
+  text: "轻量级 AIoT 平台"
   tagline: 多协议设备接入、L0-L3 自愈引擎、自然语言运维 — 让边缘网络管理像聊天一样简单
   actions:
     - theme: brand
