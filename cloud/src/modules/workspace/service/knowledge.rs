@@ -296,8 +296,24 @@ async fn run_parse(
     };
 
     // 4. Get previous entities/relations for diff
-    let old_entities = repo.get_entities_by_document(document_id).await.unwrap_or_default();
-    let old_relations = repo.get_relations_by_document(document_id).await.unwrap_or_default();
+    let old_entities = match repo.get_entities_by_document(document_id).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!("Failed to get old entities for document {}: {}", document_id, e);
+            let _ = repo.update_parse_job(parse_id, "failed", Some(&e.to_string()), None).await;
+            let _ = repo.update_document(document_id, None, None, None, None, Some("failed")).await;
+            return;
+        }
+    };
+    let old_relations = match repo.get_relations_by_document(document_id).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!("Failed to get old relations for document {}: {}", document_id, e);
+            let _ = repo.update_parse_job(parse_id, "failed", Some(&e.to_string()), None).await;
+            let _ = repo.update_document(document_id, None, None, None, None, Some("failed")).await;
+            return;
+        }
+    };
 
     // 5. Delete old entities+relations, upsert new ones
     let _ = repo.delete_relations_by_document(document_id).await;

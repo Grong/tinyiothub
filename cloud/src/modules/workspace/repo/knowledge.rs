@@ -7,6 +7,7 @@ use super::super::types::{
     KnowledgeEntity, KnowledgeParseJob, KnowledgeRelation, KnowledgeSearchResult,
     ParseResultSummary, ResourceType, WorkspaceResource,
 };
+use crate::shared::utils::sql_security::escape_like_pattern;
 
 // --- Row types ---
 
@@ -260,11 +261,12 @@ fn append_document_filters(
     builder.push(" AND resource_type = ").push_bind(ResourceType::Document.as_str());
 
     if let Some(q) = q {
+        let q_escaped = format!("%{}%", escape_like_pattern(q));
         builder.push(" AND (name LIKE ");
-        builder.push_bind(format!("%{}%", q));
-        builder.push(" OR content LIKE ");
-        builder.push_bind(format!("%{}%", q));
-        builder.push(")");
+        builder.push_bind(&q_escaped);
+        builder.push(" ESCAPE '\\' OR content LIKE ");
+        builder.push_bind(&q_escaped);
+        builder.push(" ESCAPE '\\'))");
     }
 
     let tag_list = split_tags(tags);
@@ -653,7 +655,7 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
 
     async fn get_relations_by_document(&self, document_id: &str) -> Result<Vec<KnowledgeRelation>> {
         let rows = sqlx::query_as::<_, KnowledgeRelationRow>(
-            "SELECT r.* FROM knowledge_relations r INNER JOIN knowledge_entities e ON r.source_entity_id = e.id OR r.target_entity_id = e.id WHERE e.source_document_id = ?",
+            "SELECT DISTINCT r.* FROM knowledge_relations r INNER JOIN knowledge_entities e ON r.source_entity_id = e.id OR r.target_entity_id = e.id WHERE e.source_document_id = ?",
         )
         .bind(document_id)
         .fetch_all(self.database.pool())
@@ -706,21 +708,21 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
         tags: Option<&str>,
         limit: i64,
     ) -> Result<Vec<KnowledgeSearchResult>> {
-        let like_pattern = format!("%{}%", query);
+        let like_pattern = format!("%{}%", escape_like_pattern(query));
 
         // Build entity search with relevance scoring and source snippet
         let mut builder = QueryBuilder::new("SELECT e.*, (CASE WHEN e.name LIKE ");
         builder.push_bind(like_pattern.clone());
-        builder.push(" THEN 3 ELSE 0 END) + (CASE WHEN e.description LIKE ");
+        builder.push(" ESCAPE '\\' THEN 3 ELSE 0 END) + (CASE WHEN e.description LIKE ");
         builder.push_bind(like_pattern.clone());
-        builder.push(" THEN 2 ELSE 0 END) as relevance, COALESCE(substr(d.content, 1, 500), '') as source_snippet FROM knowledge_entities e LEFT JOIN resources d ON d.id = e.source_document_id WHERE e.workspace_id = ");
+        builder.push(" ESCAPE '\\' THEN 2 ELSE 0 END) as relevance, COALESCE(substr(d.content, 1, 500), '') as source_snippet FROM knowledge_entities e LEFT JOIN resources d ON d.id = e.source_document_id WHERE e.workspace_id = ");
         builder.push_bind(workspace_id);
 
         builder.push(" AND (e.name LIKE ");
         builder.push_bind(like_pattern.clone());
-        builder.push(" OR e.description LIKE ");
+        builder.push(" ESCAPE '\\' OR e.description LIKE ");
         builder.push_bind(like_pattern);
-        builder.push(")");
+        builder.push(" ESCAPE '\\'))");
 
         if let Some(et) = entity_type {
             builder.push(" AND e.entity_type = ");

@@ -159,5 +159,23 @@ Source: `/plan-eng-review` on `feat/ai-agent-v0.3` (2026-05-19)
   - **Effort:** S (human: ~30min / CC: ~5min)
   - **Depends on:** T6 (工作区设定 Tab)
 
+## Scene3D + Workspace Resources Ship (v0.3)
+
+Source: `/plan-eng-review` on `feat/scene3d-workspace-resources-ship` (2026-06-05)
+
+### P3 — LOW
+
+- **修正 unify_resources.sql 注释 (F7)**
+  - 迁移注释声称 knowledge_parse_jobs.document_id 已指向 resources.id，但实际未实现 ALTER TABLE
+  - **Why:** 误导性注释会让后续读者误解 schema 的完整性状态
+  - **Action:** 更新注释反映实际状态
+  - **Effort:** S (human: 5min / CC: 2min)
+
+- **重命名 knowledge_entities.source_document_id 为 source_resource_id (F8)**
+  - 删除 knowledge_documents 后，该列实际存储的是 resources.id，列名已误导
+  - **Why:** 新加入的开发者会困惑「source_document_id」指向哪个表
+  - **Action:** 新 migration 中重命名列 + 更新所有引用
+  - **Effort:** S (human: 30min / CC: 5min)
+
 ## Completed
 

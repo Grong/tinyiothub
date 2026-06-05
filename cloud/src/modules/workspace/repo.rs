@@ -9,6 +9,7 @@ use super::types::{
     ResourceSearchResult, ResourceType, Workspace, WorkspaceResource, WorkspaceWithDeviceCount,
     extract_file_path_from_content,
 };
+use crate::shared::utils::sql_security::escape_like_pattern;
 
 /// Repository interface for workspace persistence
 #[async_trait]
@@ -629,25 +630,25 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
                 builder.push(" UNION ALL ");
             }
 
-            let like = format!("%{}%", keyword);
+            let like = format!("%{}%", escape_like_pattern(keyword));
 
             builder.push("SELECT *, (");
             // Name match
             builder.push("CASE WHEN name LIKE ");
             builder.push_bind(&like);
-            builder.push(" THEN 3 ELSE 0 END + ");
+            builder.push(" ESCAPE '\\' THEN 3 ELSE 0 END + ");
             // Description match
             builder.push("CASE WHEN description LIKE ");
             builder.push_bind(&like);
-            builder.push(" THEN 2 ELSE 0 END + ");
+            builder.push(" ESCAPE '\\' THEN 2 ELSE 0 END + ");
             // Tag match
             builder.push("CASE WHEN EXISTS (SELECT 1 FROM json_each(tags) WHERE value LIKE ");
             builder.push_bind(&like);
-            builder.push(") THEN 2 ELSE 0 END + ");
+            builder.push(" ESCAPE '\\') THEN 2 ELSE 0 END + ");
             // Content match (for documents)
             builder.push("CASE WHEN content LIKE ");
             builder.push_bind(&like);
-            builder.push(" THEN 1 ELSE 0 END");
+            builder.push(" ESCAPE '\\' THEN 1 ELSE 0 END");
 
             builder.push(") as relevance FROM resources WHERE workspace_id = ");
             builder.push_bind(workspace_id);
@@ -660,13 +661,13 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
             // WHERE match conditions
             builder.push(" AND (name LIKE ");
             builder.push_bind(&like);
-            builder.push(" OR description LIKE ");
+            builder.push(" ESCAPE '\\' OR description LIKE ");
             builder.push_bind(&like);
-            builder.push(" OR content LIKE ");
+            builder.push(" ESCAPE '\\' OR content LIKE ");
             builder.push_bind(&like);
-            builder.push(" OR EXISTS (SELECT 1 FROM json_each(tags) WHERE value LIKE ");
+            builder.push(" ESCAPE '\\' OR EXISTS (SELECT 1 FROM json_each(tags) WHERE value LIKE ");
             builder.push_bind(&like);
-            builder.push("))");
+            builder.push(" ESCAPE '\\'))");
         }
 
         builder.push(") GROUP BY id HAVING relevance > 0 ORDER BY relevance DESC LIMIT ");
