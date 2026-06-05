@@ -361,7 +361,7 @@ async fn search_resources(
         _ => return ApiResponseBuilder::error_with_code(400, "搜索关键词不能为空"),
     };
 
-    let resource_type = params.get("type").and_then(|s| ResourceType::from_str(s));
+    let resource_type = params.get("type").and_then(|s| ResourceType::from_string(s));
 
     let limit: i64 = params.get("limit").and_then(|s| s.parse().ok()).unwrap_or(10).clamp(1, 50);
 

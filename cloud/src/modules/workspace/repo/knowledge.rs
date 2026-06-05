@@ -34,7 +34,7 @@ impl From<ResourceRow> for WorkspaceResource {
         Self {
             id: row.id,
             workspace_id: row.workspace_id,
-            resource_type: ResourceType::from_str(&row.resource_type)
+            resource_type: ResourceType::from_string(&row.resource_type)
                 .unwrap_or(ResourceType::Document),
             name: row.name,
             description: row.description,

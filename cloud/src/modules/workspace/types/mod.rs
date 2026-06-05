@@ -83,7 +83,7 @@ impl ResourceType {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_string(s: &str) -> Option<Self> {
         match s {
             "file" => Some(Self::File),
             "document" => Some(Self::Document),

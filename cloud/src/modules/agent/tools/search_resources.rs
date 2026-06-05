@@ -72,7 +72,7 @@ impl Tool for SearchWorkspaceResourcesTool {
         let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
 
         let resource_type =
-            args.get("resource_type").and_then(|v| v.as_str()).and_then(ResourceType::from_str);
+            args.get("resource_type").and_then(|v| v.as_str()).and_then(ResourceType::from_string);
 
         let limit = args.get("limit").and_then(|v| v.as_i64()).unwrap_or(10).clamp(1, 50);
 

@@ -140,7 +140,7 @@ impl From<WorkspaceResourceRow> for WorkspaceResource {
         Self {
             id: row.id,
             workspace_id: row.workspace_id,
-            resource_type: ResourceType::from_str(&row.resource_type).unwrap_or(ResourceType::File),
+            resource_type: ResourceType::from_string(&row.resource_type).unwrap_or(ResourceType::File),
             name: row.name,
             description: row.description,
             content: row.content,
@@ -184,7 +184,7 @@ impl From<ResourceSearchResultRow> for ResourceSearchResult {
         Self {
             id: row.id,
             workspace_id: row.workspace_id,
-            resource_type: ResourceType::from_str(&row.resource_type).unwrap_or(ResourceType::File),
+            resource_type: ResourceType::from_string(&row.resource_type).unwrap_or(ResourceType::File),
             name: row.name,
             description: row.description,
             content: row.content,
