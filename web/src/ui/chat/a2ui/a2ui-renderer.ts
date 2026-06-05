@@ -3,7 +3,7 @@ import { a2uiCatalog, type A2uiRenderer } from "./catalog/index.js";
 
 export type A2uiSurface = {
   id: string;
-  surfaceKind: "inline" | "overlay";
+  surfaceKind: "inline" | "overlay" | "stage" | "insight";
   components: A2uiComponent[];
 };
 
@@ -23,18 +23,73 @@ export class A2uiRendererEngine {
 
   handleA2uiMessage(jsonl: string): void {
     console.log("[A2UI] handleA2uiMessage called, jsonl:", jsonl.substring(0, 300));
-    const lines = jsonl.split(/\\n|\n/).filter((l) => l.trim());
-    console.log("[A2UI] Parsing", lines.length, "lines");
-    for (const line of lines) {
-      try {
-        const msg = JSON.parse(line);
-        console.log("[A2UI] Parsed message:", JSON.stringify(msg).substring(0, 200));
-        this.handleSingleMessage(msg);
-      } catch (e) {
-        console.error("[A2UI] Failed to parse line:", line.substring(0, 100), e);
-      }
+    const messages = this._parseJsonl(jsonl);
+    console.log("[A2UI] Parsing", messages.length, "messages");
+    for (const msg of messages) {
+      console.log("[A2UI] Parsed message:", JSON.stringify(msg).substring(0, 200));
+      this.handleSingleMessage(msg);
     }
     console.log("[A2UI] Current surfaces:", Array.from(this.surfaces.keys()));
+  }
+
+  /** Parse JSONL by tracking JSON nesting depth — handles any separator. */
+  private _parseJsonl(jsonl: string): Array<Record<string, unknown>> {
+    const results: Array<Record<string, unknown>> = [];
+    let i = 0;
+    while (i < jsonl.length) {
+      // Skip whitespace and separator chars
+      while (i < jsonl.length && /[\s⏎]/.test(jsonl[i])) i++;
+      if (i >= jsonl.length) break;
+
+      // Skip garbage characters that are not JSON object/array starts
+      if (jsonl[i] !== "{" && jsonl[i] !== "[") {
+        i++;
+        continue;
+      }
+
+      let depth = 0;
+      let inString = false;
+      let escape = false;
+      let j = i;
+
+      for (; j < jsonl.length; j++) {
+        const c = jsonl[j];
+        if (escape) {
+          escape = false;
+          continue;
+        }
+        if (c === "\\") {
+          escape = true;
+          continue;
+        }
+        if (c === '"' && !inString) {
+          inString = true;
+          continue;
+        }
+        if (c === '"' && inString) {
+          inString = false;
+          continue;
+        }
+        if (!inString) {
+          if (c === "{" || c === "[") depth++;
+          if (c === "}" || c === "]") depth--;
+          if (depth === 0 && (c === "}" || c === "]")) {
+            j++; // Include the closing brace
+            break;
+          }
+        }
+      }
+
+      try {
+        const obj = JSON.parse(jsonl.slice(i, j));
+        results.push(obj);
+      } catch (e) {
+        console.error("[A2UI] Failed to parse JSON object:", jsonl.slice(i, Math.min(j, i + 100)), e);
+      }
+
+      i = j;
+    }
+    return results;
   }
 
   private handleSingleMessage(msg: Record<string, unknown>): void {
@@ -45,10 +100,11 @@ export class A2uiRendererEngine {
       const existing = this.surfaces.get(surfaceId);
       this.surfaces.set(surfaceId, {
         id: surfaceId,
-        surfaceKind: ((s.surfaceKind as string) || "inline") as "inline" | "overlay",
+        surfaceKind: ((s.surfaceKind as string) || "inline") as A2uiSurface["surfaceKind"],
         components: existing?.components || [],
       });
-    } else if (msg.updateComponents) {
+    }
+    if (msg.updateComponents) {
       const u = msg.updateComponents as Record<string, unknown>;
       const targetSurfaceId = u.surfaceId as string | undefined;
       const components = u.components as Array<Record<string, unknown>>;
@@ -71,7 +127,8 @@ export class A2uiRendererEngine {
           }
         }
       }
-    } else if (msg.updateDataModel) {
+    }
+    if (msg.updateDataModel) {
       const u = msg.updateDataModel as Record<string, unknown>;
       const componentId = u.componentId as string;
       const dataModel = u.dataModel as Record<string, unknown>;
@@ -81,7 +138,8 @@ export class A2uiRendererEngine {
           comp.dataModel = { ...comp.dataModel, ...dataModel };
         }
       }
-    } else if (msg.deleteSurface) {
+    }
+    if (msg.deleteSurface) {
       const d = msg.deleteSurface as Record<string, unknown>;
       this.surfaces.delete(d.id as string);
     }
@@ -92,9 +150,39 @@ export class A2uiRendererEngine {
     console.log("[A2UI] renderSurface called for:", surfaceId, "found:", !!surface, "all surfaces:", Array.from(this.surfaces.keys()));
     if (!surface) return nothing;
 
+    // Auto-group consecutive StatCards into a row
+    const parts: TemplateResult[] = [];
+    let statBatch: A2uiComponent[] = [];
+    for (const comp of surface.components) {
+      if (comp.componentKind === "StatCard") {
+        statBatch.push(comp);
+      } else {
+        if (statBatch.length > 1) {
+          parts.push(html`
+            <div class="a2ui-stat-row a2ui-stat-row--auto">
+              ${statBatch.map((c) => this.renderComponent(c))}
+            </div>
+          `);
+        } else if (statBatch.length === 1) {
+          parts.push(this.renderComponent(statBatch[0]));
+        }
+        statBatch = [];
+        parts.push(this.renderComponent(comp));
+      }
+    }
+    if (statBatch.length > 1) {
+      parts.push(html`
+        <div class="a2ui-stat-row a2ui-stat-row--auto">
+          ${statBatch.map((c) => this.renderComponent(c))}
+        </div>
+      `);
+    } else if (statBatch.length === 1) {
+      parts.push(this.renderComponent(statBatch[0]));
+    }
+
     return html`
       <div class="a2ui-surface a2ui-surface--${surface.surfaceKind}">
-        ${surface.components.map((comp) => this.renderComponent(comp))}
+        ${parts}
       </div>
     `;
   }
@@ -129,5 +217,50 @@ export class A2uiRendererEngine {
 
   getSurfaceIds(): string[] {
     return Array.from(this.surfaces.keys());
+  }
+
+  getSurfaceKind(surfaceId: string): A2uiSurface["surfaceKind"] | undefined {
+    return this.surfaces.get(surfaceId)?.surfaceKind;
+  }
+
+  getStageSurfaceIds(): string[] {
+    return Array.from(this.surfaces.values())
+      .filter((s) => s.surfaceKind === "stage")
+      .map((s) => s.id);
+  }
+
+  getInsightSurfaceIds(): string[] {
+    return Array.from(this.surfaces.values())
+      .filter((s) => s.surfaceKind === "insight")
+      .map((s) => s.id);
+  }
+
+  getInlineSurfaceIds(): string[] {
+    return Array.from(this.surfaces.values())
+      .filter((s) => s.surfaceKind === "inline")
+      .map((s) => s.id);
+  }
+
+  getCanvasSurfaceIds(): string[] {
+    return Array.from(this.surfaces.values())
+      .filter((s) => s.surfaceKind === "stage" || s.surfaceKind === "insight" || s.surfaceKind === "inline")
+      .map((s) => s.id);
+  }
+
+  getSurfaceComponentKinds(surfaceId: string): string[] {
+    const surface = this.surfaces.get(surfaceId);
+    return surface?.components.map((c) => c.componentKind) || [];
+  }
+
+  renderSurfacesByKind(kind: A2uiSurface["surfaceKind"]): TemplateResult[] {
+    const results: TemplateResult[] = [];
+    for (const surface of this.surfaces.values()) {
+      if (surface.surfaceKind !== kind) continue;
+      const rendered = this.renderSurface(surface.id);
+      if (rendered !== nothing) {
+        results.push(rendered as TemplateResult);
+      }
+    }
+    return results;
   }
 }

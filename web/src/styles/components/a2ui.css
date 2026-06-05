@@ -6,14 +6,11 @@
   margin: var(--space-2) 0;
   padding: var(--space-3);
   border-radius: var(--radius-md);
-  background: var(--bg-muted);
   overflow: hidden;
   min-width: 0;
 }
 
 .a2ui-surface--overlay {
-  background: var(--card);
-  border: 1px solid var(--accent);
   box-shadow: var(--shadow-sm);
 }
 
@@ -1007,7 +1004,6 @@
 /* ═══════════════════════════════════════════
    A2UI Image — standard image component
    States: loading → loaded | errored | broken(no src)
-   Lightbox always-on via <dialog>
    ═══════════════════════════════════════════ */
 
 .a2ui-image {
@@ -1017,27 +1013,14 @@
   position: relative;
   border-radius: var(--radius-md);
   overflow: hidden;
-  background: var(--bg-muted);
   max-width: 100%;
+  min-height: 80px;
 }
 
-/* ── Trigger button (lightbox launcher) ── */
-.a2ui-image__trigger {
+/* ── Image wrap ── */
+.a2ui-image__wrap {
   display: block;
   max-width: 100%;
-  border: none;
-  padding: 0;
-  background: none;
-  cursor: zoom-in;
-  transition: transform var(--duration-fast) var(--ease-out);
-}
-
-.a2ui-image__trigger:hover { transform: scale(1.01); }
-
-.a2ui-image__trigger:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  border-radius: var(--radius-md);
 }
 
 /* ── Image element ── */
@@ -1085,10 +1068,6 @@
   color: var(--muted);
 }
 
-.a2ui-image--errored .a2ui-image__expand {
-  display: none;
-}
-
 .a2ui-image__error-text {
   font-size: 11px;
   opacity: 0.5;
@@ -1115,104 +1094,6 @@
 .a2ui-image__placeholder svg {
   width: 100%;
   height: 100%;
-}
-
-/* ── Expand icon (top-right, visible on hover or touch) ── */
-.a2ui-image__expand {
-  position: absolute;
-  top: var(--space-2);
-  right: var(--space-2);
-  width: 28px;
-  height: 28px;
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(4px);
-  border-radius: var(--radius-sm);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: white;
-  opacity: 0;
-  transition: opacity var(--duration-fast);
-  z-index: 1;
-}
-
-.a2ui-image__expand svg {
-  width: 16px;
-  height: 16px;
-}
-
-.a2ui-image__trigger:hover .a2ui-image__expand { opacity: 1; }
-
-/* Always show expand on touch devices */
-@media (hover: none) {
-  .a2ui-image__expand { opacity: 1; }
-}
-
-/* ═══════════════════════════════════════════
-   Image Lightbox — windowed overlay (not fullscreen)
-   Click backdrop or × to close
-   ═══════════════════════════════════════════ */
-
-.a2ui-image-lightbox {
-  position: fixed;
-  inset: 0;
-  z-index: 10000;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-3);
-  background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(2px);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.2s var(--ease-out);
-}
-
-.a2ui-image-lightbox--open {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.a2ui-image-lightbox__close {
-  position: absolute;
-  top: var(--space-3);
-  right: var(--space-3);
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  border: none;
-  background: rgba(0, 0, 0, 0.5);
-  color: rgba(255, 255, 255, 0.8);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1;
-  transition: background var(--duration-fast), color var(--duration-fast);
-}
-
-.a2ui-image-lightbox__close:hover {
-  background: rgba(0, 0, 0, 0.7);
-  color: #fff;
-}
-
-.a2ui-image-lightbox__img {
-  display: block;
-  max-width: 80vw;
-  max-height: 80vh;
-  object-fit: contain;
-  border-radius: var(--radius-md);
-  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.35);
-}
-
-.a2ui-image-lightbox__caption {
-  color: rgba(255, 255, 255, 0.7);
-  font-size: 13px;
-  text-align: center;
-  max-width: 80vw;
-  padding: 0 var(--space-2);
-  margin: 0;
 }
 
 /* ── Icon (SVG-first) ── */

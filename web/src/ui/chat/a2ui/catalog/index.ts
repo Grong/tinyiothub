@@ -24,6 +24,7 @@ import { renderConfirmationDialog } from "./confirmation-dialog.js";
 import { renderAlarmCard } from "./alarm-card.js";
 import { renderAlarmTable } from "./alarm-table.js";
 import { renderStatCard } from "./stat-card.js";
+import { renderStatRow } from "./stat-row.js";
 import { renderScene3D } from "./scene-3d.js";
 
 export type A2uiRenderer = (data: Record<string, unknown>, onAction?: (fn: string, args: Record<string, unknown>) => void) => TemplateResult;
@@ -56,5 +57,6 @@ export const a2uiCatalog: Record<string, A2uiRenderer> = {
   AlarmCard: renderAlarmCard,
   AlarmTable: renderAlarmTable,
   StatCard: renderStatCard,
+  StatRow: renderStatRow,
   Scene3D: renderScene3D,
 };

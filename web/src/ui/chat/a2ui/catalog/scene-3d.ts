@@ -52,7 +52,7 @@ export class A2uiScene3D extends LitElement {
       height: 400px;
       border-radius: 8px;
       overflow: hidden;
-      background: #0a0e16;
+      background: var(--bg);
     }
     .scene3d-canvas {
       width: 100%;
@@ -199,11 +199,11 @@ export class A2uiScene3D extends LitElement {
     const rect = this.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return;
 
-    // Renderer
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+    // Renderer — alpha so CSS background shows through
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
     this.renderer.setSize(rect.width, rect.height);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.setClearColor(0x1a1e2e);
+    this.renderer.setClearColor(0x000000, 0);
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.5;
     this.renderer.localClippingEnabled = true;

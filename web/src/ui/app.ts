@@ -34,6 +34,7 @@ const lazyViews: Record<string, () => Promise<void>> = {
   'driver-health': () => import('./views/driver-health.js').then(() => {}),
   'memory-dashboard': () => import('./views/memory-dashboard.js').then(() => {}),
   knowledge: () => import('./views/knowledge.js').then(() => {}),
+  workspace: () => import('./views/workspace.js').then(() => {}),
 };
 
 interface NavItem {
@@ -122,6 +123,11 @@ const NAV_GROUPS: NavGroup[] = [
         route: 'knowledge',
         label: '知识图谱',
         icon: 'M5 3a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M19 3a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M12 17a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M7 7l5 8 M17 7l-5 8',
+      },
+      {
+        route: 'workspace',
+        label: '工作空间',
+        icon: 'M3 3h18v18H3V3zm4 4v10h5V7H7zm7 0v6h4V7h-4z',
       },
     ],
   },
@@ -366,6 +372,7 @@ export class TinyIoTHubApp extends LitElement {
       agents: 'Agent 管理',
       cron: '定时任务',
       'memory-dashboard': '记忆面板',
+      workspace: '工作空间',
     };
     // Handle /devices/:id
     if (this.currentRoute.startsWith('devices/')) return '设备详情';
@@ -389,6 +396,7 @@ export class TinyIoTHubApp extends LitElement {
       agents: '管理和配置 Agent',
       cron: '管理定时执行的任务和作业',
       'memory-dashboard': '查看和管理 Agent 记忆与反思队列',
+      workspace: 'AI 驱动的可视化分析与 3D 场景画布',
     };
     if (this.currentRoute.startsWith('devices/')) return '查看设备属性、命令和事件';
     return subs[this.currentRoute] || '';
@@ -433,8 +441,8 @@ export class TinyIoTHubApp extends LitElement {
         >
           ${this.renderNav()}
         </nav>
-        <div class="content" role="main" id="main-content">
-          ${this.currentRoute.startsWith('devices/') || this.currentRoute === 'chat'
+        <div class="content ${this.currentRoute === 'workspace' ? 'content--workspace' : ''}" role="main" id="main-content">
+          ${this.currentRoute.startsWith('devices/') || this.currentRoute === 'chat' || this.currentRoute === 'workspace'
             ? nothing
             : html`
                 <section class="content-header">
@@ -603,6 +611,7 @@ export class TinyIoTHubApp extends LitElement {
     if (base === 'driver-health') return html`<view-driver-health></view-driver-health>`;
     if (base === 'memory-dashboard') return html`<view-memory-dashboard></view-memory-dashboard>`;
     if (base === 'knowledge') return html`<view-knowledge></view-knowledge>`;
+    if (base === 'workspace') return html`<view-workspace></view-workspace>`;
     return html`<div style="padding: 40px; text-align: center; color: var(--muted);">
       页面不存在
     </div>`;

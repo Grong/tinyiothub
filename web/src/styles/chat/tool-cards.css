@@ -201,12 +201,9 @@
   margin-top: var(--space-3);
   border-radius: var(--radius-md);
   overflow: hidden;
-  border: 1px solid var(--border);
-  background: var(--bg-muted);
 }
 
 .a2ui-surface--overlay {
-  border-color: var(--accent);
   box-shadow: var(--shadow-sm);
 }
 

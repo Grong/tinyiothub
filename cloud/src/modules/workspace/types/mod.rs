@@ -194,6 +194,41 @@ pub struct WorkspaceQueryParams {
     pub page_size: Option<u32>,
 }
 
+/// Extract a file path from document content when file_path is empty.
+/// Handles markdown image syntax `![alt](path)` and code blocks `\`\`\`3d\npath\n\`\`\``.
+pub fn extract_file_path_from_content(content: &str) -> String {
+    // Try markdown 3d code block first
+    if let Some(start) = content.find("```3d") {
+        let after = &content[start + 5..];
+        if let Some(nl) = after.find('\n') {
+            let rest = &after[nl + 1..];
+            if let Some(end) = rest.find("```") {
+                return rest[..end].trim().to_string();
+            }
+        }
+    }
+
+    // Try markdown image: ![alt](path)
+    if let Some(start) = content.find("![") {
+        let after = &content[start + 2..];
+        if let Some(close_bracket) = after.find("](") {
+            let after_path = &after[close_bracket + 2..];
+            if let Some(close_paren) = after_path.find(')') {
+                return after_path[..close_paren].trim().to_string();
+            }
+        }
+    }
+
+    // Fallback: raw /uploads/ path
+    if let Some(start) = content.find("/uploads/") {
+        let rest = &content[start..];
+        let end = rest.find(|c: char| c.is_whitespace() || c == ')').unwrap_or(rest.len());
+        return rest[..end].trim().to_string();
+    }
+
+    String::new()
+}
+
 impl Workspace {
     pub fn new(id: String, name: String, description: Option<String>, tenant_id: String) -> Self {
         let now = chrono::Utc::now().to_rfc3339();

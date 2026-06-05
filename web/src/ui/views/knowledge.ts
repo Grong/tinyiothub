@@ -224,6 +224,12 @@ export class KnowledgeView extends LitElement {
 
   private async handleSave() {
     if (!this.editorTitle.trim()) { toastError('请输入文档标题'); return; }
+    // Flush any pending tag from the input
+    const tagInput = this.querySelector('.kg-editor-tag-input') as HTMLInputElement | null;
+    if (tagInput?.value.trim()) {
+      this.addTag(tagInput.value.trim());
+      tagInput.value = '';
+    }
     this.saving = true;
     try {
       if (this.editingDoc) {

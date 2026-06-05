@@ -7,7 +7,7 @@ use crate::shared::error::Result;
 
 use super::super::repo::KnowledgeRepository;
 use super::super::types::knowledge::*;
-use super::super::types::{ResourceType, WorkspaceResource};
+use super::super::types::{extract_file_path_from_content, ResourceType, WorkspaceResource};
 
 /// Service for workspace knowledge graph operations.
 ///
@@ -55,6 +55,8 @@ impl KnowledgeService {
         let now = chrono::Utc::now().to_rfc3339();
         let id = format!("doc-{}", uuid::Uuid::new_v4());
 
+        let file_path = extract_file_path_from_content(&content);
+
         let doc = WorkspaceResource {
             id,
             workspace_id: workspace_id.to_string(),
@@ -62,7 +64,7 @@ impl KnowledgeService {
             name: title,
             description: None,
             content: Some(content),
-            file_path: String::new(),
+            file_path,
             file_size: None,
             tags,
             metadata: None,
@@ -93,6 +95,9 @@ impl KnowledgeService {
             parse_status = Some("pending");
         }
 
+        // Extract file_path from content when content is provided
+        let file_path = content.as_ref().map(|c| extract_file_path_from_content(c));
+
         // Convert tags Vec to comma-separated string for the repo
         let tags_str: Option<String> = tags.map(|t| t.join(","));
 
@@ -101,6 +106,7 @@ impl KnowledgeService {
                 id,
                 title.as_deref(),
                 content.as_deref(),
+                file_path.as_deref(),
                 tags_str.as_deref(),
                 parse_status,
             )
@@ -206,7 +212,7 @@ impl KnowledgeService {
 
         // Update document status to "parsing"
         self.repo
-            .update_document(document_id, None, None, None, Some("parsing"))
+            .update_document(document_id, None, None, None, None, Some("parsing"))
             .await?;
 
         // Spawn background task
@@ -310,7 +316,7 @@ async fn run_parse(
                 .update_parse_job(parse_id, "failed", Some(&error_msg), None)
                 .await;
             let _ = repo
-                .update_document(document_id, None, None, None, Some("failed"))
+                .update_document(document_id, None, None, None, None, Some("failed"))
                 .await;
             return;
         }
@@ -336,7 +342,7 @@ async fn run_parse(
             .update_parse_job(parse_id, "failed", Some(&e.to_string()), None)
             .await;
         let _ = repo
-            .update_document(document_id, None, None, None, Some("failed"))
+            .update_document(document_id, None, None, None, None, Some("failed"))
             .await;
         return;
     }
@@ -347,7 +353,7 @@ async fn run_parse(
             .update_parse_job(parse_id, "failed", Some(&e.to_string()), None)
             .await;
         let _ = repo
-            .update_document(document_id, None, None, None, Some("failed"))
+            .update_document(document_id, None, None, None, None, Some("failed"))
             .await;
         return;
     }
@@ -382,7 +388,7 @@ async fn run_parse(
     }
 
     if let Err(e) = repo
-        .update_document(document_id, None, None, None, Some("parsed"))
+        .update_document(document_id, None, None, None, None, Some("parsed"))
         .await
     {
         tracing::error!(
@@ -398,7 +404,7 @@ async fn run_parse(
             if !tags.is_empty() {
                 let tags_str = tags.join(",");
                 if let Err(e) = repo
-                    .update_document(document_id, None, None, Some(&tags_str), None)
+                    .update_document(document_id, None, None, None, Some(&tags_str), None)
                     .await
                 {
                     tracing::error!(

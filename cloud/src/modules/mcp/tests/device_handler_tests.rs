@@ -87,12 +87,18 @@ async fn test_search_devices_with_params() {
         }
     }
 
+    // Empty keyword is now allowed — returns all devices (same behavior as non-empty)
     let result = handler.execute(json!({"keyword": ""})).await;
-    assert!(
-        matches!(result, Err(crate::modules::mcp::ToolError::InvalidParams(_))),
-        "Expected InvalidParams for empty keyword, got {:?}",
-        result
-    );
+    match result {
+        Ok(_) => {}
+        Err(e) => {
+            assert!(
+                matches!(e, crate::modules::mcp::ToolError::Internal(_)),
+                "Expected Internal error for uninitialized state, got {:?}",
+                e
+            );
+        }
+    }
 }
 
 /// Test search_devices with tag filter

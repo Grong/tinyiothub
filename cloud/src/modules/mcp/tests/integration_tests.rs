@@ -31,18 +31,19 @@ async fn test_all_tools_registered() {
     );
 }
 
-/// Test that search_devices rejects empty keyword
+/// Test that search_devices accepts empty keyword (returns all devices)
 #[tokio::test]
-async fn test_search_devices_rejects_empty_keyword() {
+async fn test_search_devices_accepts_empty_keyword() {
     crate::modules::mcp::register_tools().await;
     let registry = crate::modules::mcp::get_mcp_registry().unwrap();
     let guard = registry.read().await;
     let handler = guard.get("search_devices").unwrap();
 
     let result = handler.execute(json!({"keyword": ""})).await;
+    // Without AppState initialized, it returns Internal error — same as non-empty keyword
     assert!(
-        matches!(result, Err(crate::modules::mcp::ToolError::InvalidParams(_))),
-        "Expected InvalidParams for empty keyword, got {:?}",
+        matches!(result, Err(crate::modules::mcp::ToolError::Internal(_))),
+        "Expected Internal error for uninitialized state, got {:?}",
         result
     );
 }

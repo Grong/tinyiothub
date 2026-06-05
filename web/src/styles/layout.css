@@ -470,6 +470,17 @@
   margin-top: 0;
 }
 
+.content--workspace {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: 0;
+}
+
+.content--workspace > * + * {
+  margin-top: 0;
+}
+
 /* Content header */
 .content-header {
   display: flex;

@@ -19,6 +19,13 @@
 ## 任务管理
 - 查询、创建、更新、删除调度任务
 
+## 工作空间资源查询
+
+- `search_workspace_resources` — 搜索工作空间的多媒体资源（3D 场景、平面图、图片）
+  - 参数：`workspace_id`（必填）、`query`（自然语言查询，必填）、`resource_type`（可选过滤）、`limit`（默认 10）
+  - 使用时机：当用户请求查看场景、楼层、设备位置时，必须先调用此工具查询可用的 3D 模型和平面图资源
+  - 示例：`search_workspace_resources({"workspace_id": "ws-001", "query": "大楼 3D 模型", "limit": 5})`
+
 ## A2UI 组件
 
 Agent 可以通过 `canvas` 工具推送以下 UI 组件到前端：
@@ -47,10 +54,14 @@ Agent 可以通过 `canvas` 工具推送以下 UI 组件到前端：
 |------|------|------|
 | DeviceCard | 设备卡片 | deviceId, name, status, properties[] |
 | DeviceTable | 设备表格 | devices[], columns? |
+| AlarmCard | 告警卡片 | alarmId, severity, title, message, deviceName, timestamp |
+| AlarmTable | 告警表格 | alarms[] |
 | DataChart | 数据图表 | type, data[], labels? |
-| Scene3D | 3D 建筑场景展示 | resourceId, activeFloorId?, selectedDeviceId?, deviceFilter?, interactions? |
+| Scene3D | 3D 建筑场景展示 | modelUrl, resourceId?, activeFloorId?, selectedDeviceId?, deviceFilter?, interactions? |
 | ControlPanel | 控制面板 | controls[], layout? |
 | ProgressIndicator | 进度指示 | value, max, label? |
+| StatCard | 统计数值卡片 | label, value, unit?, description?, icon?, color?, trend? |
+| StatRow | 横向统计条（多个 StatCard 并排） | items[]（每个包含 label, value, unit?, description?）, columns? |
 
 工具权限可由管理员在「工具权限」Tab 中单独开启或关闭。
 
@@ -86,8 +97,9 @@ Agent 可以通过 `canvas` 工具推送以下 UI 组件到前端：
 | DeviceCard | 单设备详情卡片 | deviceId, name, status, icon?, deviceType?, primaryMetric?{key,value,unit}, properties?[{name,value,unit}], telemetry?[{name,value,unit}], signalStrength?, lastSeen?, sparkline?, tags?[], actions?[{label,functionId}] |
 | DeviceTable | 设备列表表格 | columns[], rows[][] |
 | AlarmCard | 告警卡片 | alarmId, severity, title, message, deviceName, timestamp |
-| AlarmTable | 告警列表表格 | columns[], rows[][] |
-| StatCard | 统计数值卡片 | title, value, unit, icon, trend |
+| AlarmTable | 告警列表表格 | alarms[] |
+| StatCard | 统计数值卡片 | label, value, unit?, description?, icon?, color?, trend? |
+| StatRow | 横向统计条 | items[]（label, value, unit?, description?）, columns? |
 | ProgressIndicator | 进度/百分比 | label, value, max, variant(linear/circular), color |
 | ConfirmationDialog | 确认对话框 | title, message, confirmLabel, cancelLabel |
 | ControlPanel | 设备控制面板 | deviceId, controls[] |

@@ -6,7 +6,7 @@ use sqlx::{FromRow, QueryBuilder};
 use tinyiothub_core::error::{Error, Result};
 use tinyiothub_storage::sqlite::Database;
 
-use super::types::{ResourceSearchResult, ResourceType, Workspace, WorkspaceResource, WorkspaceWithDeviceCount};
+use super::types::{extract_file_path_from_content, ResourceSearchResult, ResourceType, Workspace, WorkspaceResource, WorkspaceWithDeviceCount};
 
 /// Repository interface for workspace persistence
 #[async_trait]
@@ -130,6 +130,11 @@ struct WorkspaceResourceRow {
 impl From<WorkspaceResourceRow> for WorkspaceResource {
     fn from(row: WorkspaceResourceRow) -> Self {
         let tags: Vec<String> = serde_json::from_str(&row.tags).unwrap_or_default();
+        let file_path = if row.file_path.is_empty() {
+            extract_file_path_from_content(row.content.as_deref().unwrap_or(""))
+        } else {
+            row.file_path
+        };
         Self {
             id: row.id,
             workspace_id: row.workspace_id,
@@ -137,7 +142,7 @@ impl From<WorkspaceResourceRow> for WorkspaceResource {
             name: row.name,
             description: row.description,
             content: row.content,
-            file_path: row.file_path,
+            file_path,
             file_size: row.file_size,
             tags,
             metadata: row.metadata,
@@ -169,6 +174,11 @@ struct ResourceSearchResultRow {
 impl From<ResourceSearchResultRow> for ResourceSearchResult {
     fn from(row: ResourceSearchResultRow) -> Self {
         let tags: Vec<String> = serde_json::from_str(&row.tags).unwrap_or_default();
+        let file_path = if row.file_path.is_empty() {
+            extract_file_path_from_content(row.content.as_deref().unwrap_or(""))
+        } else {
+            row.file_path
+        };
         Self {
             id: row.id,
             workspace_id: row.workspace_id,
@@ -176,7 +186,7 @@ impl From<ResourceSearchResultRow> for ResourceSearchResult {
             name: row.name,
             description: row.description,
             content: row.content,
-            file_path: row.file_path,
+            file_path,
             file_size: row.file_size,
             tags,
             metadata: row.metadata,
@@ -664,5 +674,40 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
             .fetch_all(self.database.pool())
             .await?;
         Ok(rows.into_iter().map(Into::into).collect())
+    }
+}
+
+#[cfg(test)]
+mod extract_tests {
+    use super::extract_file_path_from_content;
+
+    #[test]
+    fn test_extract_from_3d_code_block() {
+        let content = "```3d\n/uploads/ws-001/uploads/factory.glb\n```\n这是描述";
+        assert_eq!(extract_file_path_from_content(content), "/uploads/ws-001/uploads/factory.glb");
+    }
+
+    #[test]
+    fn test_extract_from_markdown_image() {
+        let content = "![平面图.png](/uploads/ws-001/uploads/floor.png)\n这是平面图";
+        assert_eq!(extract_file_path_from_content(content), "/uploads/ws-001/uploads/floor.png");
+    }
+
+    #[test]
+    fn test_extract_fallback_raw_path() {
+        let content = "请查看 /uploads/ws-001/uploads/data.bin 文件";
+        assert_eq!(extract_file_path_from_content(content), "/uploads/ws-001/uploads/data.bin");
+    }
+
+    #[test]
+    fn test_extract_no_path() {
+        let content = "纯文本内容，没有文件路径";
+        assert_eq!(extract_file_path_from_content(content), "");
+    }
+
+    #[test]
+    fn test_extract_priority_code_block_over_image() {
+        let content = "```3d\n/uploads/model.glb\n```\n![img](/uploads/image.png)";
+        assert_eq!(extract_file_path_from_content(content), "/uploads/model.glb");
     }
 }

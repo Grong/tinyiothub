@@ -166,6 +166,7 @@ pub trait KnowledgeRepository: Send + Sync {
         id: &str,
         name: Option<&str>,
         content: Option<&str>,
+        file_path: Option<&str>,
         tags: Option<&str>,
         parse_status: Option<&str>,
     ) -> Result<Option<WorkspaceResource>>;
@@ -387,6 +388,7 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
         id: &str,
         name: Option<&str>,
         content: Option<&str>,
+        file_path: Option<&str>,
         tags: Option<&str>,
         parse_status: Option<&str>,
     ) -> Result<Option<WorkspaceResource>> {
@@ -407,6 +409,14 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
                 builder.push(", ");
             }
             builder.push("content = ").push_bind(c);
+            has_updates = true;
+        }
+
+        if let Some(fp) = file_path {
+            if has_updates {
+                builder.push(", ");
+            }
+            builder.push("file_path = ").push_bind(fp);
             has_updates = true;
         }
 
@@ -637,7 +647,14 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
             if has_updates {
                 builder.push(", ");
             }
-            builder.push("tags = ").push_bind(tags_str);
+            let tags_list: Vec<&str> = tags_str
+                .split(',')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect();
+            let tags_json =
+                serde_json::to_string(&tags_list).unwrap_or_else(|_| "[]".to_string());
+            builder.push("tags = ").push_bind(tags_json);
             has_updates = true;
         }
 
