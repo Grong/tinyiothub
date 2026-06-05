@@ -51,6 +51,7 @@ export type ChatState = {
   toolStreamById: Map<string, ToolStreamEntry>;
   toolStreamOrder: string[];
   lastError: string | null;
+  onChange?: () => void;
   onA2ui?: (jsonl: string) => void;
   lastA2uiSurfaceId?: string;
   a2uiChunks: string[];  // accumulated A2UI JSONL for current response
@@ -145,6 +146,7 @@ export function sendChatMessage(
   state.toolStreamById = new Map();
   state.toolStreamOrder = [];
   state.a2uiChunks = [];
+  state.onChange?.();
 
   const controller = new AbortController();
   state.abortController = controller;
@@ -208,10 +210,12 @@ export function sendChatMessage(
         state.lastError = String(err);
         state.chatRunId = null;
         state.chatStream = null;
+        state.onChange?.();
       }
     })
     .finally(() => {
       state.chatSending = false;
+      state.onChange?.();
     });
 
   return { runId };
@@ -392,6 +396,7 @@ export function handleChatEvent(state: ChatState, payload: ChatEventPayload): vo
       break;
     }
   }
+  state.onChange?.();
 }
 
 // ============================================================================

@@ -4,13 +4,22 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader, type GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 
-// ── Status colors (match device-card.ts) ──
-const STATUS_COLORS: Record<string, string> = {
-  online: "#00d4aa",
-  offline: "#6b7280",
-  warning: "#f59e0b",
-  error: "#ef4444",
-};
+// ── Status colors (from CSS variables, fallback for SSR) ──
+function getStatusColors(): Record<string, string> {
+  if (typeof document === "undefined") return {
+    online: "#22c55e",
+    offline: "#71717a",
+    warning: "#f59e0b",
+    error: "#ef4444",
+  };
+  const styles = getComputedStyle(document.documentElement);
+  return {
+    online: styles.getPropertyValue("--ok").trim() || "#22c55e",
+    offline: styles.getPropertyValue("--muted").trim() || "#71717a",
+    warning: styles.getPropertyValue("--warn").trim() || "#f59e0b",
+    error: styles.getPropertyValue("--danger").trim() || "#ef4444",
+  };
+}
 
 // ── Device instance from scene metadata ──
 type DeviceInstance = {
@@ -156,6 +165,7 @@ export class A2uiScene3D extends LitElement {
   private camera?: THREE.PerspectiveCamera;
   private controls?: OrbitControls;
   private modelGroup?: THREE.Group;
+  private groundGrid?: THREE.Group;
   private rafId?: number;
   private resizeObserver?: ResizeObserver;
   private markers: Array<{ element: HTMLElement; worldPos: THREE.Vector3; floorId?: string; deviceId: string }> = [];
@@ -359,7 +369,8 @@ export class A2uiScene3D extends LitElement {
       const el = document.createElement("div");
       el.className = "scene3d-marker";
       const status = deviceStatusMap.get(inst.deviceId) || "offline";
-      const color = STATUS_COLORS[status] || STATUS_COLORS.offline;
+      const statusColors = getStatusColors();
+      const color = statusColors[status] || statusColors.offline;
 
       const dot = document.createElement("div");
       dot.className = "scene3d-marker__dot";
