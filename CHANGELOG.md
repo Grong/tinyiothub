@@ -33,6 +33,19 @@
 - **Database indexing**: added composite `idx_resources_workspace_type` index for efficient type-filtered queries
 - **ResizeObserver leak**: cleared observer reference on Scene3D dispose to prevent stale references on retry
 
+### Changed — Workspace UI Redesign
+
+- **Process log panel**: collapsible sections with message-card layout — user bubbles vs AI cards, visually distinct roles
+- **Collapsible thinking**: thinking/reasoning content folded by default with expand/collapse toggle and chevron animation
+- **Collapsible tool execution**: tool calls show name + status indicator (spinner for in-progress, checkmark for done), expandable to reveal args/results
+- **Event-driven updates**: replaced 100ms polling with `onChange` callback on ChatState, reducing CPU usage
+- **Glass panel refinement**: `color-mix()` backgrounds with `backdrop-filter`, highlight border, depth shadows for floating panels
+- **Empty state redesign**: SVG icons with title, hint text, and clickable example prompt chips for both stage and insight panels
+- **Title redesign**: uppercase 13px with accent dot glow and letter-spacing
+- **Responsive insight panel**: width uses `clamp(320px, 28vw, 420px)` for viewport-aware sizing
+- **Compose bar**: centered single-line glass input with send/abort buttons
+- **Scene3D color alignment**: status marker colors now read from CSS variables (`--ok`, `--muted`, `--warn`, `--danger`)
+
 ---
 
 ## [0.3.0] - 2026-05-21

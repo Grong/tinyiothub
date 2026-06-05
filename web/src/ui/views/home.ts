@@ -181,7 +181,7 @@ export class HomeView extends LitElement {
                 <span class="gradient">一句话的事</span>
               </h1>
               <p class="hero-desc">
-                轻量级工业边缘 IoT 平台。支持 Modbus/ONVIF/SNMP/MQTT 多协议设备接入，内置 L0-L3 分级自愈引擎，用自然语言即可完成设备配置、状态查询和故障排查。
+                轻量级工业边缘 IoT 平台。支持 Modbus/ONVIF/SNMP/MQTT 多协议设备接入，内置 L0-L3 分级自愈引擎。沉浸式 3D 工作空间，用自然语言即可完成设备配置、数据洞察和故障排查。
               </p>
               <div class="hero-cta">
                 <button class="btn btn--primary btn--lg" @click=${() => this.navigate('/login')}>
@@ -265,10 +265,10 @@ export class HomeView extends LitElement {
               </div>
               <div class="feature-card reveal reveal-delay-2">
                 <div class="feature-icon">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="url(#icon-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3L14.5 8.5L20 11L14.5 13.5L12 19L9.5 13.5L4 11L9.5 8.5L12 3Z"/></svg>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="url(#icon-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
                 </div>
-                <h3>AI 驱动匹配</h3>
-                <p>描述设备类型，自动匹配或生成驱动代码</p>
+                <h3>沉浸式工作空间</h3>
+                <p>3D 数字孪生场景 + AI 数据洞察，可折叠执行过程，自然语言交互</p>
               </div>
               <div class="feature-card reveal reveal-delay-3">
                 <div class="feature-icon">
