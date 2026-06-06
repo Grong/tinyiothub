@@ -494,50 +494,81 @@ export class KnowledgeView extends LitElement {
 
   // ── File upload ──
 
+  private fileToMarkdown(filePath: string, fileName: string): string {
+    const ext = fileName.split('.').pop()?.toLowerCase() || '';
+    if (['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'].includes(ext)) {
+      return `![${fileName}](${filePath})`;
+    } else if (['mp4', 'webm', 'mov'].includes(ext)) {
+      return `<video src="${filePath}" controls></video>`;
+    } else if (['glb', 'gltf'].includes(ext)) {
+      return `\`\`\`3d\n${filePath}\n\`\`\``;
+    } else {
+      return `[${fileName}](${filePath})`;
+    }
+  }
+
   private async onFileUpload(e: Event) {
     const input = e.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file) return;
+    const files = input.files;
+    if (!files || files.length === 0) return;
+
+    const textarea = this.querySelector('.kg-editor-textarea') as HTMLTextAreaElement;
+    const editorOpen = !!textarea;
+
+    if (!editorOpen) {
+      // Editor not open: auto-open with first file's name as title
+      const firstName = files[0].name.replace(/\.[^.]+$/, '');
+      this.editorTitle = firstName;
+      this.editorContent = `# ${firstName}\n\n`;
+      this.editorTags = [];
+      this.editingDoc = null;
+      this.previewData = null;
+      this.showEditor = true;
+      this.requestUpdate();
+    }
 
     this.uploading = true;
+    let uploadedCount = 0;
+    let failedCount = 0;
+    const mdBlocks: string[] = [];
+
     try {
-      const result = await knowledgeApi.uploadFile(file);
-      const filePath = (result.result as any).filePath || '';
-      const ext = file.name.split('.').pop()?.toLowerCase() || '';
-
-      let md = '';
-      if (['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'].includes(ext)) {
-        md = `![${file.name}](${filePath})`;
-      } else if (['mp4', 'webm', 'mov'].includes(ext)) {
-        md = `<video src="${filePath}" controls></video>`;
-      } else if (['glb', 'gltf'].includes(ext)) {
-        md = `\`\`\`3d\n${filePath}\n\`\`\``;
-      } else {
-        md = `[${file.name}](${filePath})`;
+      for (const file of Array.from(files)) {
+        try {
+          const result = await knowledgeApi.uploadFile(file);
+          const filePath = (result.result as any).filePath || '';
+          mdBlocks.push(this.fileToMarkdown(filePath, file.name));
+          uploadedCount++;
+        } catch {
+          failedCount++;
+        }
       }
 
-      const textarea = this.querySelector('.kg-editor-textarea') as HTMLTextAreaElement;
-      if (textarea) {
-        const start = textarea.selectionStart;
-        const end = textarea.selectionEnd;
-        this.editorContent =
-          this.editorContent.slice(0, start) + '\n' + md + '\n' + this.editorContent.slice(end);
-        requestAnimationFrame(() => {
-          textarea.focus();
-          textarea.selectionStart = textarea.selectionEnd = start + md.length + 2;
-        });
-      } else {
-        // Editor not open: auto-open with file pre-populated
-        const nameWithoutExt = file.name.replace(/\.[^.]+$/, '');
-        this.editorTitle = nameWithoutExt;
-        this.editorContent = `# ${nameWithoutExt}\n\n${md}`;
-        this.editorTags = [];
-        this.editingDoc = null;
-        this.previewData = null;
-        this.showEditor = true;
-        this.requestUpdate();
+      if (mdBlocks.length > 0) {
+        const md = mdBlocks.join('\n');
+        const ta = this.querySelector('.kg-editor-textarea') as HTMLTextAreaElement;
+        if (ta) {
+          const start = ta.selectionStart;
+          const end = ta.selectionEnd;
+          this.editorContent =
+            this.editorContent.slice(0, start) + '\n' + md + '\n' + this.editorContent.slice(end);
+          const cursorPos = start + md.length + 2;
+          requestAnimationFrame(() => {
+            ta.focus();
+            ta.selectionStart = ta.selectionEnd = cursorPos;
+          });
+        } else {
+          // Editor was just auto-opened — append to content
+          this.editorContent += md + '\n';
+          this.requestUpdate();
+        }
       }
-      success(`已上传 ${file.name}`);
+
+      if (failedCount > 0) {
+        toastError(`已上传 ${uploadedCount} 个文件, ${failedCount} 个失败`);
+      } else if (uploadedCount > 0) {
+        success(`已上传 ${uploadedCount} 个文件`);
+      }
     } catch (e: any) {
       toastError(e.message || '上传失败');
     } finally {
@@ -548,12 +579,13 @@ export class KnowledgeView extends LitElement {
 
   private onEditorDrop(e: DragEvent) {
     e.preventDefault();
-    const file = e.dataTransfer?.files?.[0];
-    if (!file) return;
+    const files = e.dataTransfer?.files;
+    if (!files || files.length === 0) return;
     const dt = new DataTransfer();
-    dt.items.add(file);
+    Array.from(files).forEach(f => dt.items.add(f));
     const input = document.createElement('input');
     input.type = 'file';
+    input.multiple = true;
     input.files = dt.files;
     input.onchange = (ev) => this.onFileUpload(ev);
     input.dispatchEvent(new Event('change'));
@@ -601,15 +633,6 @@ export class KnowledgeView extends LitElement {
               @click=${() => this.toggleStatusFilter(o.value)}>${o.label}</button>
           `)}
         </div>
-        <label class="btn btn-secondary" style="cursor:pointer">
-          <input type="file" hidden @change=${this.onFileUpload}
-            accept="image/*,.glb,.gltf,.mp4,.webm,.pdf,.zip" />
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-            <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
-          </svg>
-          ${this.uploading ? '上传中...' : '上传文件'}
-        </label>
         <button class="btn btn-primary" @click=${() => this.openEditor()}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
             <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
@@ -766,15 +789,6 @@ export class KnowledgeView extends LitElement {
             </svg>
             新建文档
           </button>
-          <label class="btn btn-secondary" style="cursor:pointer">
-            <input type="file" hidden @change=${this.onFileUpload}
-              accept="image/*,.glb,.gltf,.mp4,.webm,.pdf,.zip" />
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
-            </svg>
-            上传文件
-          </label>
         </div>
       </div>
     `;
@@ -819,9 +833,13 @@ export class KnowledgeView extends LitElement {
             </div>
             <div style="display:flex;gap:8px;align-items:center;">
               <label class="btn btn-secondary" style="cursor:pointer;font-size:13px;">
-                <input type="file" hidden @change=${this.onFileUpload}
+                <input type="file" hidden multiple @change=${this.onFileUpload}
                   accept="image/*,.glb,.gltf,.mp4,.webm,.pdf,.zip" />
-                ${this.uploading ? '上传中...' : '附件'}
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                ${this.uploading ? '上传中...' : '上传文件'}
               </label>
               <button class="btn btn-secondary" @click=${this.closeEditor}>取消</button>
               <button class="btn btn-primary" ?disabled=${this.saving || !this.editorTitle.trim()}

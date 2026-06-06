@@ -458,6 +458,37 @@
   border: 1px solid var(--border);
 }
 
+.tag-btn--create {
+  background: var(--accent-subtle);
+  border: 1px dashed var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+.btn.tag-btn--create:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--text-inverse);
+  border-style: solid;
+}
+.tag-btn--create:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.tag-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: tag-spin 0.6s linear infinite;
+  vertical-align: middle;
+}
+
+@keyframes tag-spin {
+  to { transform: rotate(360deg); }
+}
+
 /* Empty hints */
 .empty-hint {
   padding: var(--space-8);
