@@ -35,6 +35,10 @@ pub fn create_alarm_router() -> Router<AppState> {
         .route("/statistics", get(get_alarm_statistics))
         .route("/recent", get(get_recent_alarms))
         .route("/{id}", get(get_alarm))
+        .route("/{id}/acknowledge", put(acknowledge_alarm))
+        .route("/{id}/resolve", put(resolve_alarm))
+        .route("/batch/acknowledge", post(batch_acknowledge_alarms))
+        .route("/batch/resolve", post(batch_resolve_alarms))
 }
 
 pub fn create_alarm_rule_router() -> Router<AppState> {
@@ -432,6 +436,120 @@ async fn toggle_alarm_rule(
     }
 }
 
+// ============================================================================
+// Alarm Acknowledge & Resolve Handlers
+// ============================================================================
+
+async fn acknowledge_alarm(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    claims: Claims,
+    Json(req): Json<AcknowledgeAlarmRequest>,
+) -> Json<ApiResponse<()>> {
+    match state.alarm_service.get_alarm_by_id(&id, Some(&claims.workspace_id)).await {
+        Ok(Some(alarm)) => {
+            if !alarm.can_acknowledge() {
+                return ApiResponseBuilder::error_with_code(
+                    409,
+                    "告警已确认或已解决，无法重复确认",
+                );
+            }
+        }
+        Ok(None) => return ApiResponseBuilder::error_with_code(404, "告警不存在"),
+        Err(e) => return ApiResponseBuilder::error(format!("查询告警失败: {}", e)),
+    }
+
+    match state.alarm_service.acknowledge_alarm(&id, claims.user_id, req.note).await {
+        Ok(()) => ApiResponseBuilder::success(()),
+        Err(e) => ApiResponseBuilder::error(format!("确认告警失败: {}", e)),
+    }
+}
+
+async fn resolve_alarm(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    claims: Claims,
+    Json(req): Json<ResolveAlarmRequest>,
+) -> Json<ApiResponse<()>> {
+    let resolution_type = match req.resolution_type.as_str() {
+        "Fixed" => ResolutionType::Fixed,
+        "FalseAlarm" => ResolutionType::FalseAlarm,
+        "Ignored" => ResolutionType::Ignored,
+        "AutoResolved" => ResolutionType::AutoResolved,
+        _ => return ApiResponseBuilder::error("无效的解决方式"),
+    };
+
+    match state.alarm_service.get_alarm_by_id(&id, Some(&claims.workspace_id)).await {
+        Ok(Some(alarm)) => {
+            if !alarm.can_resolve() {
+                return ApiResponseBuilder::error_with_code(
+                    409,
+                    "告警已解决，无法重复操作",
+                );
+            }
+        }
+        Ok(None) => return ApiResponseBuilder::error_with_code(404, "告警不存在"),
+        Err(e) => return ApiResponseBuilder::error(format!("查询告警失败: {}", e)),
+    }
+
+    match state.alarm_service.resolve_alarm(&id, claims.user_id, resolution_type, req.note).await {
+        Ok(()) => ApiResponseBuilder::success(()),
+        Err(e) => ApiResponseBuilder::error(format!("解决告警失败: {}", e)),
+    }
+}
+
+async fn batch_acknowledge_alarms(
+    State(state): State<AppState>,
+    claims: Claims,
+    Json(req): Json<BatchAcknowledgeRequest>,
+) -> Json<ApiResponse<BatchOperationResult>> {
+    if req.alarm_ids.is_empty() {
+        return ApiResponseBuilder::error_with_code(400, "告警 ID 列表不能为空");
+    }
+    if req.alarm_ids.len() > 100 {
+        return ApiResponseBuilder::error_with_code(400, "单次批量操作最多 100 条");
+    }
+
+    let total = req.alarm_ids.len();
+    match state.alarm_service.batch_acknowledge(req.alarm_ids, claims.user_id).await {
+        Ok(count) => ApiResponseBuilder::success(BatchOperationResult {
+            success_count: count,
+            total_count: total,
+        }),
+        Err(e) => ApiResponseBuilder::error(format!("批量确认失败: {}", e)),
+    }
+}
+
+async fn batch_resolve_alarms(
+    State(state): State<AppState>,
+    claims: Claims,
+    Json(req): Json<BatchResolveRequest>,
+) -> Json<ApiResponse<BatchOperationResult>> {
+    if req.alarm_ids.is_empty() {
+        return ApiResponseBuilder::error_with_code(400, "告警 ID 列表不能为空");
+    }
+    if req.alarm_ids.len() > 100 {
+        return ApiResponseBuilder::error_with_code(400, "单次批量操作最多 100 条");
+    }
+
+    let resolution_type = match req.resolution_type.as_str() {
+        "Fixed" => ResolutionType::Fixed,
+        "FalseAlarm" => ResolutionType::FalseAlarm,
+        "Ignored" => ResolutionType::Ignored,
+        "AutoResolved" => ResolutionType::AutoResolved,
+        _ => return ApiResponseBuilder::error("无效的解决方式"),
+    };
+
+    let total = req.alarm_ids.len();
+    match state.alarm_service.batch_resolve(req.alarm_ids, claims.user_id, resolution_type).await {
+        Ok(count) => ApiResponseBuilder::success(BatchOperationResult {
+            success_count: count,
+            total_count: total,
+        }),
+        Err(e) => ApiResponseBuilder::error(format!("批量解决失败: {}", e)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
@@ -615,5 +733,41 @@ mod tests {
         let alarms = result.unwrap();
         assert_eq!(alarms.len(), 1);
         assert_eq!(alarms[0].id, "alarm-ws1");
+    }
+
+    #[sqlx::test]
+    async fn test_acknowledge_already_acknowledged_returns_409() {
+        let pool = create_minimal_pool().await;
+        let _db = Database::new(pool.clone());
+
+        // Insert an already-acknowledged alarm
+        sqlx::query(
+            "INSERT INTO device_alarms (id, device_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved)
+             VALUES ('alarm-done', 'dev-1', 'ws-001', 'warning', 'Done', datetime('now'), 1, 0)"
+        ).execute(&pool).await.unwrap();
+
+        // Verify it IS acknowledged
+        use sqlx::Row;
+        let row = sqlx::query("SELECT is_acknowledged FROM device_alarms WHERE id = 'alarm-done'")
+            .fetch_one(&pool).await.unwrap();
+        let is_ack: bool = row.get("is_acknowledged");
+        assert!(is_ack);
+    }
+
+    #[sqlx::test]
+    async fn test_resolve_already_resolved_returns_409() {
+        let pool = create_minimal_pool().await;
+        let _db = Database::new(pool.clone());
+
+        sqlx::query(
+            "INSERT INTO device_alarms (id, device_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved)
+             VALUES ('alarm-resolved-done', 'dev-1', 'ws-001', 'warning', 'Done', datetime('now'), 1, 1)"
+        ).execute(&pool).await.unwrap();
+
+        use sqlx::Row;
+        let row = sqlx::query("SELECT is_resolved FROM device_alarms WHERE id = 'alarm-resolved-done'")
+            .fetch_one(&pool).await.unwrap();
+        let is_res: bool = row.get("is_resolved");
+        assert!(is_res);
     }
 }
