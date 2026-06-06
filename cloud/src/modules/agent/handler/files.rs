@@ -82,24 +82,27 @@ async fn resolve_file(workspace_id: &str, filename: &str) -> Result<(String, Str
     let ws_path = ws_dir.join(filename);
     if ws_path.exists()
         && let Ok(content) = tokio::fs::read_to_string(&ws_path).await
-            && !content.trim().is_empty() {
-                return Ok((content, "workspace".to_string()));
-            }
+        && !content.trim().is_empty()
+    {
+        return Ok((content, "workspace".to_string()));
+    }
 
     // 2. Shared base
     let shared_path = shared_dir.join(filename);
     if shared_path.exists()
         && let Ok(content) = tokio::fs::read_to_string(&shared_path).await
-            && !content.trim().is_empty() {
-                return Ok((content, "shared".to_string()));
-            }
+        && !content.trim().is_empty()
+    {
+        return Ok((content, "shared".to_string()));
+    }
 
     // 3. Embedded template
     let embedded = get_embedded_template(filename);
     if let Some(content) = embedded
-        && !content.trim().is_empty() {
-            return Ok((content.to_string(), "embedded".to_string()));
-        }
+        && !content.trim().is_empty()
+    {
+        return Ok((content.to_string(), "embedded".to_string()));
+    }
 
     Ok((String::new(), "embedded".to_string()))
 }
@@ -236,10 +239,11 @@ pub async fn put_workspace_file(
     let ws_dir = crate::shared::paths::workspace_dir(workspace_id);
     // Ensure workspace directory exists
     if !ws_dir.exists()
-        && let Err(e) = tokio::fs::create_dir_all(&ws_dir).await {
-            tracing::error!("Failed to create workspace dir: {}", e);
-            return ApiResponseBuilder::error("Failed to create workspace directory");
-        }
+        && let Err(e) = tokio::fs::create_dir_all(&ws_dir).await
+    {
+        tracing::error!("Failed to create workspace dir: {}", e);
+        return ApiResponseBuilder::error("Failed to create workspace directory");
+    }
 
     let file_path = ws_dir.join(&filename);
     match tokio::fs::write(&file_path, &req.content).await {
@@ -284,10 +288,11 @@ pub async fn delete_workspace_file(
     let file_path = ws_dir.join(&filename);
 
     if file_path.exists()
-        && let Err(e) = tokio::fs::remove_file(&file_path).await {
-            tracing::error!("Failed to delete file {}: {}", filename, e);
-            return ApiResponseBuilder::error("Failed to delete file");
-        }
+        && let Err(e) = tokio::fs::remove_file(&file_path).await
+    {
+        tracing::error!("Failed to delete file {}: {}", filename, e);
+        return ApiResponseBuilder::error("Failed to delete file");
+    }
 
     // Return the fallback content
     match resolve_file(workspace_id, &filename).await {
