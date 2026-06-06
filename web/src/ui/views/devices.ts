@@ -178,7 +178,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
   @state() formDriverConfigOptions: DriverConfigOption[] = [];
   @state() formDriverConfigLoading = false;
   @state() formProperties: { name: string; value: any; dataType: string; unit?: string; isReadOnly?: boolean }[] = [];
-  @state() formModalTab: 'basic' | 'driver' | 'properties' = 'basic';
+  @state() formModalTab: 'basic' | 'driver' | 'properties' | 'commands' = 'basic';
+  @state() formCommands: { name: string; description?: string }[] = [];
+  @state() formProfileLoading = false;
 
   // Wizard (2-step template-based)
   @state() showWizard = false;
@@ -777,6 +779,8 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.formDriverConfig = {};
     this.formDriverConfigOptions = [];
     this.formProperties = [];
+    this.formCommands = [];
+    this.formProfileLoading = false;
     this.formModalTab = 'basic';
     this.showModal = true;
     requestAnimationFrame(() => {
@@ -785,7 +789,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     });
   }
 
-  openEdit(d: Device) {
+  async openEdit(d: Device) {
     this.modalLastFocus = document.activeElement ?? undefined;
     this.editingDevice = d;
     this.formName = d.name;
@@ -800,13 +804,36 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.formDriver = d.driverName || "";
     this.formDriverConfig = {};
     this.formDriverConfigOptions = [];
-    this.formProperties = (d.properties || []).map(p => ({
-      name: p.name, value: p.currentValue ?? p.value ?? '', dataType: p.dataType, unit: p.unit, isReadOnly: p.isReadOnly,
-    }));
+    this.formProperties = [];
+    this.formCommands = [];
+    this.formProfileLoading = false;
     this.formModalTab = 'basic';
     // Load driver config if driver is set
     if (d.driverName) this.loadFormDriverConfig(d.driverName);
     this.showModal = true;
+
+    // Load full profile data (properties + commands) if available
+    this.formProfileLoading = true;
+    try {
+      const profileRes = await deviceApi.getDeviceProfile(d.id);
+      const profile = profileRes.result;
+      if (profile?.properties?.length) {
+        this.formProperties = profile.properties.map(p => ({
+          name: p.name, value: p.currentValue ?? p.value ?? '', dataType: p.dataType, unit: p.unit, isReadOnly: p.isReadOnly,
+        }));
+      }
+      if (profile?.commands?.length) {
+        this.formCommands = profile.commands.map(c => ({ name: c.name, description: c.description }));
+      }
+    } catch {
+      // Fallback: use properties from device list if profile unavailable
+      this.formProperties = (d.properties || []).map(p => ({
+        name: p.name, value: p.currentValue ?? p.value ?? '', dataType: p.dataType, unit: p.unit, isReadOnly: p.isReadOnly,
+      }));
+    } finally {
+      this.formProfileLoading = false;
+      this.requestUpdate();
+    }
     requestAnimationFrame(() => {
       const overlay = this.querySelector(".modal-overlay[role='dialog']");
       if (overlay) this.focusFirst(overlay as HTMLElement, 50);
@@ -866,6 +893,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
           ? JSON.stringify(this.formDriverConfig) : undefined,
         properties: this.formProperties.length > 0
           ? this.formProperties.map(p => ({ name: p.name, value: p.value, dataType: p.dataType, unit: p.unit, isReadOnly: p.isReadOnly }))
+          : undefined,
+        commands: this.formCommands.length > 0
+          ? this.formCommands.map(c => ({ name: c.name, description: c.description }))
           : undefined,
       };
       if (this.editingDevice) {
@@ -1719,10 +1749,11 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   renderModal() {
     const isEdit = !!this.editingDevice;
-    const tabs: { key: 'basic' | 'driver' | 'properties'; label: string }[] = [
+    const tabs: { key: 'basic' | 'driver' | 'properties' | 'commands'; label: string }[] = [
       { key: 'basic', label: '基本信息' },
       { key: 'driver', label: '驱动配置' },
       { key: 'properties', label: `属性${this.formProperties.length ? ` (${this.formProperties.length})` : ''}` },
+      { key: 'commands', label: `命令${this.formCommands.length ? ` (${this.formCommands.length})` : ''}` },
     ];
 
     return html`
@@ -1763,6 +1794,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
             ${this.formModalTab === 'basic' ? this.renderBasicInfoTab() : nothing}
             ${this.formModalTab === 'driver' ? this.renderDriverTab() : nothing}
             ${this.formModalTab === 'properties' ? this.renderPropertiesTab() : nothing}
+            ${this.formModalTab === 'commands' ? this.renderCommandsTab() : nothing}
           </div>
 
           <!-- Footer -->
@@ -1976,6 +2008,60 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   private addFormProperty() {
     this.formProperties = [...this.formProperties, { name: '', value: '', dataType: 'number', unit: '', isReadOnly: false }];
+    this.requestUpdate();
+  }
+
+  private renderCommandsTab() {
+    return html`
+      <div class="edit-section">
+        <div class="edit-section__header">
+          <span class="edit-section__title">设备命令</span>
+          <button class="edit-property-add-btn" @click=${this.addFormCommand}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            添加命令
+          </button>
+        </div>
+        ${this.formCommands.length === 0 ? html`
+          <div class="edit-properties-empty">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="32" height="32" opacity="0.3">
+              <polygon points="5 3 19 12 5 21 5 3"/>
+            </svg>
+            <span>暂无命令定义</span>
+            <span class="edit-properties-empty__hint">添加命令以支持远程控制设备</span>
+          </div>
+        ` : html`
+          <div class="edit-properties-list">
+            <div class="edit-properties-header">
+              <span class="edit-properties-header__col edit-properties-header__col--name">命令名</span>
+              <span class="edit-properties-header__col" style="grid-column:span 3">描述</span>
+              <span class="edit-properties-header__col edit-properties-header__col--actions"></span>
+            </div>
+            ${this.formCommands.map((cmd, i) => html`
+              <div class="edit-property-row" style="grid-template-columns:1fr 3fr 26px">
+                <input type="text" class="edit-property-row__input edit-property-row__input--name"
+                  placeholder="命令名" .value=${cmd.name}
+                  @input=${(e: any) => { this.formCommands[i] = { ...cmd, name: e.target.value }; this.requestUpdate(); }} />
+                <input type="text" class="edit-property-row__input"
+                  placeholder="可选描述" .value=${cmd.description || ''}
+                  @input=${(e: any) => { this.formCommands[i] = { ...cmd, description: e.target.value }; this.requestUpdate(); }} />
+                <button class="edit-property-row__remove" title="删除"
+                  @click=${() => { this.formCommands = this.formCommands.filter((_, j) => j !== i); }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                  </svg>
+                </button>
+              </div>
+            `)}
+          </div>
+        `}
+      </div>
+    `;
+  }
+
+  private addFormCommand() {
+    this.formCommands = [...this.formCommands, { name: '', description: '' }];
     this.requestUpdate();
   }
 
