@@ -22,13 +22,13 @@ export class ToastContainer extends LitElement {
       gap: 8px;
       pointer-events: none;
     }
-    
+
     .toast {
       padding: 14px 20px;
       border-radius: 10px;
-      background: #1a1d25;
-      border: 1px solid #27272a;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+      background: var(--card, #1a1d25);
+      border: 1px solid var(--border, #27272a);
+      box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.4));
       animation: slideIn 0.3s ease-out;
       display: flex;
       align-items: center;
@@ -37,27 +37,28 @@ export class ToastContainer extends LitElement {
       pointer-events: auto;
       font-size: 14px;
       line-height: 1.5;
+      color: var(--text);
     }
-    
-    .toast.success { border-left: 4px solid #22c55e; }
-    .toast.error { border-left: 4px solid #ef4444; }
-    .toast.warn { border-left: 4px solid #f59e0b; }
-    .toast.info { border-left: 4px solid #3b82f6; }
-    
+
+    .toast.success { border-left: 4px solid var(--ok, #22c55e); }
+    .toast.error   { border-left: 4px solid var(--danger, #ef4444); }
+    .toast.warn    { border-left: 4px solid var(--warn, #f59e0b); }
+    .toast.info    { border-left: 4px solid var(--info, #3b82f6); }
+
     .toast-icon {
       font-size: 18px;
       flex-shrink: 0;
     }
-    
-    .toast.success .toast-icon { color: #22c55e; }
-    .toast.error .toast-icon { color: #ef4444; }
-    .toast.warn .toast-icon { color: #f59e0b; }
-    .toast.info .toast-icon { color: #3b82f6; }
-    
+
+    .toast.success .toast-icon { color: var(--ok, #22c55e); }
+    .toast.error   .toast-icon { color: var(--danger, #ef4444); }
+    .toast.warn    .toast-icon { color: var(--warn, #f59e0b); }
+    .toast.info    .toast-icon { color: var(--info, #3b82f6); }
+
     .toast-action {
       background: none;
-      border: 1px solid currentColor;
-      color: inherit;
+      border: 1px solid var(--border);
+      color: var(--text);
       cursor: pointer;
       padding: 4px 12px;
       border-radius: 6px;
@@ -68,24 +69,25 @@ export class ToastContainer extends LitElement {
     }
 
     .toast-action:hover {
-      background: rgba(255, 255, 255, 0.1);
+      background: var(--bg-hover);
     }
 
     .toast-close {
       background: none;
       border: none;
-      color: #71717a;
+      color: var(--muted);
       cursor: pointer;
       padding: 4px;
       margin-left: auto;
       font-size: 18px;
       line-height: 1;
+      transition: color 0.15s;
     }
 
     .toast-close:hover {
-      color: #e4e4e7;
+      color: var(--text);
     }
-    
+
     @keyframes slideIn {
       from {
         opacity: 0;
@@ -96,7 +98,7 @@ export class ToastContainer extends LitElement {
         transform: translateX(0);
       }
     }
-    
+
     @keyframes slideOut {
       from {
         opacity: 1;
@@ -107,11 +109,11 @@ export class ToastContainer extends LitElement {
         transform: translateX(100%);
       }
     }
-    
+
     .toast.removing {
       animation: slideOut 0.3s ease-out forwards;
     }
-    
+
     @media (max-width: 768px) {
       :host {
         left: 16px;
@@ -173,8 +175,8 @@ export class ToastContainer extends LitElement {
   render() {
     return html`
       ${this.toasts.map(toast => html`
-        <div 
-          class="toast ${toast.type}" 
+        <div
+          class="toast ${toast.type}"
           data-id="${toast.id}"
           @click=${() => this.removeToast(toast.id)}
         >
