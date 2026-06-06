@@ -30,6 +30,12 @@ pub fn agents_base_dir() -> PathBuf {
     api_data_dir().join("agents")
 }
 
+/// Shared agent base directory: <agents_base>/_default/
+/// Contains default prompt files shared across all workspaces.
+pub fn shared_agent_base_dir() -> PathBuf {
+    agents_base_dir().join("_default")
+}
+
 /// Single workspace directory: <agents_base>/{workspace_id}/
 pub fn workspace_dir(workspace_id: &str) -> PathBuf {
     agents_base_dir().join(workspace_id)
@@ -93,6 +99,12 @@ pub fn agent_templates_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_shared_agent_base_dir() {
+        let dir = shared_agent_base_dir();
+        assert!(dir.to_str().unwrap().ends_with("agents/_default"));
+    }
 
     #[test]
     fn test_workspace_dir_construction() {

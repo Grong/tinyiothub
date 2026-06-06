@@ -260,6 +260,16 @@ async fn ensure_user_workspace(state: &AppState, user_id: &str) -> Result<()> {
     .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
     tracing::info!("[init] Created workspace {} for user {}", ws_id, user_id);
 
+    // Scaffold shared base directory (once for all workspaces)
+    match crate::modules::agent::scaffold::scaffold_shared_base().await {
+        Ok(result) => {
+            tracing::info!("[init] Scaffolded shared agent base (_default): {}", result);
+        }
+        Err(e) => {
+            tracing::warn!("[init] Shared base scaffolding failed (non-fatal): {}", e);
+        }
+    }
+
     // Scaffold workspace directory
     let ws_dir = crate::shared::paths::workspace_dir(&ws_id);
     match crate::modules::agent::scaffold::scaffold_workspace(&ws_dir).await {
@@ -355,6 +365,16 @@ async fn ensure_default_workspace_and_agent(
         .await
         .map_err(|e| crate::shared::error::Error::DatabaseError(e.to_string()))?;
         tracing::info!("[init] Created default workspace");
+
+        // Scaffold shared base directory (once for all workspaces)
+        match crate::modules::agent::scaffold::scaffold_shared_base().await {
+            Ok(result) => {
+                tracing::info!("[init] Scaffolded shared agent base (_default): {}", result);
+            }
+            Err(e) => {
+                tracing::warn!("[init] Shared base scaffolding failed (non-fatal): {}", e);
+            }
+        }
 
         // Scaffold workspace directory with prompt templates and subdirectories
         let workspace_dir = crate::shared::paths::default_workspace_dir();
