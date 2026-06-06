@@ -153,17 +153,29 @@ impl SqliteAlarmRepository {
             None
         };
 
+        let resolution_type_str: Option<String> = row.get("resolution_type");
+
         let resolution = if is_resolved {
             let resolved_at = resolved_at_str
                 .as_ref()
                 .and_then(|s| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").ok())
                 .map(|dt| dt.and_utc());
 
+            let resolution_type = resolution_type_str
+                .and_then(|s| match s.as_str() {
+                    "fixed" => Some(ResolutionType::Fixed),
+                    "false_alarm" => Some(ResolutionType::FalseAlarm),
+                    "ignored" => Some(ResolutionType::Ignored),
+                    "auto_resolved" => Some(ResolutionType::AutoResolved),
+                    _ => None,
+                })
+                .unwrap_or(ResolutionType::Fixed);
+
             Some(Resolution {
                 resolved_by: resolved_by.unwrap_or_default(),
                 resolved_at: resolved_at.unwrap_or_else(Utc::now),
                 note: resolved_note,
-                resolution_type: ResolutionType::Fixed,
+                resolution_type,
             })
         } else {
             None
@@ -241,8 +253,8 @@ impl AlarmRepository for SqliteAlarmRepository {
                 id, device_id, property_id, rule_id, alarm_level,
                 alarm_message, alarm_value, threshold_value, alarm_time,
                 is_acknowledged, acknowledged_by, acknowledged_at, acknowledged_note,
-                is_resolved, resolved_by, resolved_at, resolved_note, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                is_resolved, resolved_by, resolved_at, resolved_note, resolution_type, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#;
 
         sqlx::query(query)
@@ -263,6 +275,7 @@ impl AlarmRepository for SqliteAlarmRepository {
             .bind(alarm.resolution.as_ref().map(|r| &r.resolved_by))
             .bind(alarm.resolution.as_ref().map(|r| r.resolved_at.to_rfc3339()))
             .bind(alarm.resolution.as_ref().and_then(|r| r.note.as_ref()))
+            .bind(alarm.resolution.as_ref().map(|r| r.resolution_type.as_str()))
             .bind(alarm.created_at.to_rfc3339())
             .execute(self.database.pool())
             .await?;
@@ -280,7 +293,8 @@ impl AlarmRepository for SqliteAlarmRepository {
                 is_resolved = ?,
                 resolved_by = ?,
                 resolved_at = ?,
-                resolved_note = ?
+                resolved_note = ?,
+                resolution_type = ?
             WHERE id = ?
         "#;
 
@@ -293,6 +307,7 @@ impl AlarmRepository for SqliteAlarmRepository {
             .bind(alarm.resolution.as_ref().map(|r| &r.resolved_by))
             .bind(alarm.resolution.as_ref().map(|r| r.resolved_at.to_rfc3339()))
             .bind(alarm.resolution.as_ref().and_then(|r| r.note.as_ref()))
+            .bind(alarm.resolution.as_ref().map(|r| r.resolution_type.as_str()))
             .bind(&alarm.id)
             .execute(self.database.pool())
             .await?;

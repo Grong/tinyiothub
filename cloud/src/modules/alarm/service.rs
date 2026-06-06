@@ -280,6 +280,8 @@ impl RuleEngine {
             let throttle_key = (device_id.to_string(), rule.id.clone());
             {
                 let mut throttle = self.throttle.lock().unwrap();
+                // Clean stale entries (older than 5 minutes)
+                throttle.retain(|_, instant| instant.elapsed() < std::time::Duration::from_secs(300));
                 if let Some(last) = throttle.get(&throttle_key) {
                     if last.elapsed() < std::time::Duration::from_secs(60) {
                         continue;
@@ -648,7 +650,7 @@ impl crate::shared::event::EventHandler for AlarmEventHandler {
 
             // Dispatch notifications for this alarm
             if let Ok(Some(rule)) = self.rule_engine.get_rule(&trigger.rule_id).await {
-                self.notification_dispatcher.dispatch(&alarm, &rule).await;
+                self.notification_dispatcher.dispatch(&alarm, &rule, rule.workspace_id.as_deref()).await;
             }
         }
 

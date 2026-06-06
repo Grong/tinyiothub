@@ -19,7 +19,7 @@ impl NotificationDispatcher {
     /// Dispatch notifications for a newly created alarm.
     /// Called after alarm is persisted. Never fails the caller —
     /// per-channel errors are logged individually.
-    pub async fn dispatch(&self, alarm: &Alarm, rule: &AlarmRule) {
+    pub async fn dispatch(&self, alarm: &Alarm, rule: &AlarmRule, workspace_id: Option<&str>) {
         let config = &rule.notification_config;
         if !config.enabled {
             return;
@@ -49,8 +49,9 @@ impl NotificationDispatcher {
                 let body = body.clone();
                 let recipients = config.recipients.clone();
                 let db = self.db.clone();
+                let ws_id = workspace_id.map(|s| s.to_string());
                 tokio::spawn(async move {
-                    Self::send_to_channel(&db, &channel_type, &recipients, &title, &body).await;
+                    Self::send_to_channel(&db, &channel_type, &recipients, &title, &body, ws_id.as_deref()).await;
                 })
             })
             .collect();
@@ -66,6 +67,7 @@ impl NotificationDispatcher {
         recipients: &[String],
         title: &str,
         body: &str,
+        workspace_id: Option<&str>,
     ) {
         let channel_type_str = match channel_type {
             crate::modules::event::aggregates::NotificationChannelType::Email => "email",
@@ -74,12 +76,22 @@ impl NotificationDispatcher {
             crate::modules::event::aggregates::NotificationChannelType::Webhook => "webhook",
         };
 
-        let rows = sqlx::query(
-            "SELECT id, name, config FROM notification_channels WHERE channel_type = ? AND is_enabled = 1",
-        )
-        .bind(channel_type_str)
-        .fetch_all(db.pool())
-        .await;
+        let rows = if let Some(ws) = workspace_id {
+            sqlx::query(
+                "SELECT id, name, config FROM notification_channels WHERE channel_type = ? AND is_enabled = 1 AND workspace_id = ?",
+            )
+            .bind(channel_type_str)
+            .bind(ws)
+            .fetch_all(db.pool())
+            .await
+        } else {
+            sqlx::query(
+                "SELECT id, name, config FROM notification_channels WHERE channel_type = ? AND is_enabled = 1",
+            )
+            .bind(channel_type_str)
+            .fetch_all(db.pool())
+            .await
+        };
 
         let rows = match rows {
             Ok(r) => r,
