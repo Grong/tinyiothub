@@ -29,7 +29,23 @@ fn turn_event_to_chat_event(evt: &TurnEvent, run_id: &str, session_key: &str) ->
         TurnEvent::ToolCall { name, args, .. } => {
             let args_str = serde_json::to_string(args).unwrap_or_default();
             let a2ui_jsonl = if name == "canvas" {
-                args.get("jsonl").and_then(|v| v.as_str()).unwrap_or("").to_string()
+                let raw = args.get("jsonl").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                // Validate each JSONL line — LLM-generated JSON may have
+                // mismatched braces. Log warnings for debugging but pass
+                // through; the frontend has its own error recovery.
+                for line in raw.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    if serde_json::from_str::<serde_json::Value>(trimmed).is_err() {
+                        tracing::warn!(
+                            line = %trimmed.chars().take(80).collect::<String>(),
+                            "a2ui: invalid JSONL line from LLM"
+                        );
+                    }
+                }
+                raw
             } else {
                 String::new()
             };
