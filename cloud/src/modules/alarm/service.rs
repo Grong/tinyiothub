@@ -8,6 +8,8 @@ use super::{
     repo::{AlarmQueryCriteria, AlarmRepository, AlarmRuleRepository, TimeRange},
     types::*,
 };
+use super::notification::NotificationDispatcher;
+
 use crate::modules::event::{
     aggregates::NotificationChannelType, entities::Event, value_objects::EventType,
 };
@@ -578,12 +580,13 @@ impl AlarmSpecifications {
 pub struct AlarmEventHandler {
     alarm_service: Arc<AlarmService>,
     rule_engine: Arc<RuleEngine>,
+    notification_dispatcher: Arc<NotificationDispatcher>,
 }
 
 impl AlarmEventHandler {
-    pub fn new(alarm_service: Arc<AlarmService>) -> Self {
+    pub fn new(alarm_service: Arc<AlarmService>, notification_dispatcher: Arc<NotificationDispatcher>) -> Self {
         let rule_engine = alarm_service.rule_engine();
-        Self { alarm_service, rule_engine }
+        Self { alarm_service, rule_engine, notification_dispatcher }
     }
 }
 
@@ -623,11 +626,17 @@ impl crate::shared::event::EventHandler for AlarmEventHandler {
             }
 
             tracing::info!(
-                "Alarm created: device={}, level={:?}, message={}",
-                alarm.device_id,
-                alarm.alarm_level,
-                alarm.message
+                alarm_id = %alarm.id,
+                device_id = %alarm.device_id,
+                level = %alarm.alarm_level,
+                message = %alarm.message,
+                "alarm_created"
             );
+
+            // Dispatch notifications for this alarm
+            if let Ok(Some(rule)) = self.rule_engine.get_rule(&trigger.rule_id).await {
+                self.notification_dispatcher.dispatch(&alarm, &rule).await;
+            }
         }
 
         Ok(())
