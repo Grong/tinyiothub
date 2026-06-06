@@ -199,6 +199,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
   @state() editingTagsDeviceId: string | null = null;
   @state() tagSearchKeyword = "";
   @state() tagSaving = false;
+  @state() tagCreating = false;
   private _boundCloseTagEditor = () => { this.editingTagsDeviceId = null; };
   private _unsubI18n?: () => void;
 
@@ -428,6 +429,31 @@ export class DevicesView extends SignalWatcher(LitElement) {
       toastError(err.message || "标签操作失败");
     } finally {
       this.tagSaving = false;
+    }
+  }
+
+  async createAndBindTag(device: Device, name: string) {
+    if (this.tagCreating || !name.trim()) return;
+    this.tagCreating = true;
+    try {
+      // Pick a color for the new tag
+      const colors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'];
+      const color = colors[Math.floor(Math.random() * colors.length)];
+
+      const res = await tagApi.createTag({ name: name.trim(), type: 'device', color });
+      const newTag = res.result as Tag;
+      if (newTag?.id) {
+        // Bind to device
+        await tagApi.createBinding({ tagId: newTag.id, targetId: device.id, targetType: 'device' });
+        // Refresh tag list and devices
+        await Promise.all([this.loadAllTags(), this.loadDevices()]);
+        this.tagSearchKeyword = '';
+        success(`已创建并绑定标签「${name.trim()}」`);
+      }
+    } catch (err: any) {
+      toastError(err.message || '创建标签失败');
+    } finally {
+      this.tagCreating = false;
     }
   }
 
@@ -1281,19 +1307,40 @@ export class DevicesView extends SignalWatcher(LitElement) {
   }
 
   renderTagPopover(d: Device, deviceTags: Tag[]) {
+    const keyword = this.tagSearchKeyword.trim();
+    const filtered = this.allTags.filter(t => !keyword || t.name.toLowerCase().includes(keyword.toLowerCase()));
+    const exactMatch = keyword && this.allTags.some(t => t.name.toLowerCase() === keyword.toLowerCase());
+    const showCreate = keyword && !exactMatch;
+
     return html`
       <div class="tag-popover" @click=${(e: Event) => e.stopPropagation()}>
         <input
           type="text"
           class="tag-popover__search"
-          placeholder="搜索标签..."
+          placeholder="搜索或输入新标签名..."
           .value=${this.tagSearchKeyword}
           @input=${(e: Event) => { this.tagSearchKeyword = (e.target as HTMLInputElement).value; }}
+          @keydown=${(e: KeyboardEvent) => {
+            if (e.key === 'Enter' && showCreate) {
+              e.preventDefault();
+              this.createAndBindTag(d, keyword);
+            }
+          }}
         />
         <div class="tag-popover__list">
-          ${this.allTags
-            .filter(t => !this.tagSearchKeyword || t.name.toLowerCase().includes(this.tagSearchKeyword.toLowerCase()))
-            .map(t => {
+          ${showCreate ? html`
+            <button
+              class="btn btn--sm tag-btn tag-btn--create"
+              ?disabled=${this.tagCreating}
+              @click=${() => this.createAndBindTag(d, keyword)}
+            >
+              <span class="flex-mid gap-1">
+                ${this.tagCreating ? html`<span class="tag-spinner"></span>` : icons.plus}
+                创建标签「${keyword}」
+              </span>
+            </button>
+          ` : nothing}
+          ${filtered.map(t => {
               const bound = deviceTags.some(dt => dt.id === t.id);
               return html`
                 <button
@@ -1308,8 +1355,8 @@ export class DevicesView extends SignalWatcher(LitElement) {
                 </button>
               `;
             })}
-          ${this.allTags.filter(t => !this.tagSearchKeyword || t.name.toLowerCase().includes(this.tagSearchKeyword.toLowerCase())).length === 0
-            ? html`<span class="tag-no-match">无匹配标签</span>`
+          ${filtered.length === 0 && !showCreate
+            ? html`<span class="tag-no-match">无匹配标签，输入关键字创建新标签</span>`
             : nothing}
         </div>
       </div>
