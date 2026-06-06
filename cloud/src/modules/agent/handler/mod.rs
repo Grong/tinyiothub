@@ -33,7 +33,9 @@ pub fn create_router() -> Router<AppState> {
         .route("/{id}/files", get(files::list_workspace_files))
         .route(
             "/{id}/files/{filename}",
-            get(files::get_workspace_file).put(files::put_workspace_file),
+            get(files::get_workspace_file)
+                .put(files::put_workspace_file)
+                .delete(files::delete_workspace_file),
         )
 }
 
