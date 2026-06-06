@@ -1,4 +1,4 @@
-import { LitElement, html, css, type TemplateResult } from "lit";
+import { LitElement, html, css, nothing, type TemplateResult } from "lit";
 import { property } from "lit/decorators/property.js";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
@@ -127,10 +127,81 @@ export class A2uiScene3D extends LitElement {
       position: absolute;
       inset: 0;
       display: flex;
+      flex-direction: column;
       align-items: center;
       justify-content: center;
+      gap: 10px;
       color: var(--muted, #888);
-      font-size: 14px;
+      background: rgba(0,0,0,0.45);
+      backdrop-filter: blur(4px);
+    }
+    .scene3d-loading__spinner {
+      width: 36px;
+      height: 36px;
+      border: 3px solid color-mix(in srgb, var(--muted, #888) 25%, transparent);
+      border-top-color: var(--accent, #0098FF);
+      border-radius: 50%;
+      animation: scene3d-spin 0.8s linear infinite;
+    }
+    .scene3d-loading__title {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text, #e4e4e7);
+    }
+    .scene3d-loading__progress-bar {
+      width: 260px;
+      height: 4px;
+      background: color-mix(in srgb, var(--muted, #888) 20%, transparent);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .scene3d-loading__progress-bar--indeterminate {
+      /* subtle pulse */
+    }
+    .scene3d-loading__progress-fill {
+      height: 100%;
+      background: var(--accent-gradient, linear-gradient(90deg, #00d4ff, #0098FF));
+      border-radius: 2px;
+      transition: width 0.3s ease-out;
+    }
+    .scene3d-loading__progress-fill--indeterminate {
+      width: 30% !important;
+      animation: scene3d-indeterminate 1.5s ease-in-out infinite;
+      border-radius: 2px;
+    }
+    .scene3d-loading__progress-text {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text, #e4e4e7);
+    }
+    .scene3d-loading__bytes {
+      font-size: 12px;
+      opacity: 0.6;
+    }
+    .scene3d-loading__hint {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 4px;
+      padding: 8px 16px;
+      background: var(--warn-subtle, rgba(245,158,11,0.12));
+      border-radius: 8px;
+      font-size: 12px;
+      color: var(--warn, #f59e0b);
+      max-width: 320px;
+      text-align: center;
+      animation: scene3d-fade-in 0.3s ease-out;
+    }
+    @keyframes scene3d-spin {
+      to { transform: rotate(360deg); }
+    }
+    @keyframes scene3d-indeterminate {
+      0%   { transform: translateX(-100%); }
+      100% { transform: translateX(400%); }
+    }
+    @keyframes scene3d-fade-in {
+      from { opacity: 0; transform: translateY(4px); }
+      to   { opacity: 1; transform: translateY(0); }
     }
     .scene3d-error {
       position: absolute;
@@ -174,6 +245,11 @@ export class A2uiScene3D extends LitElement {
   private activeFloorId?: string;
   private loadState: "idle" | "loading" | "error" | "loaded" = "idle";
   private errorMsg = "";
+  private loadProgress = 0;       // 0-100
+  private loadedBytes = 0;
+  private totalBytes = 0;
+  private loadSlow = false;        // true after 3s of loading
+  private _slowTimer: ReturnType<typeof setTimeout> | null = null;
 
   // ── Lit lifecycle ──
 
@@ -285,14 +361,40 @@ export class A2uiScene3D extends LitElement {
     }
 
     this.loadState = "loading";
+    this.loadProgress = 0;
+    this.loadedBytes = 0;
+    this.totalBytes = 0;
+    this.loadSlow = false;
     this.requestUpdate();
+
+    // Show "slow connection" hint after 3 seconds
+    this._slowTimer = setTimeout(() => {
+      this.loadSlow = true;
+      this.requestUpdate();
+    }, 3000);
 
     const glbUrl = modelUrl;
 
     const loader = new GLTFLoader();
     try {
       const gltf = await new Promise<GLTF>((resolve, reject) => {
-        loader.load(glbUrl, resolve, undefined, reject);
+        loader.load(
+          glbUrl,
+          resolve,
+          (xhr) => {
+            if (xhr.total > 0) {
+              this.loadProgress = Math.round((xhr.loaded / xhr.total) * 100);
+              this.loadedBytes = xhr.loaded;
+              this.totalBytes = xhr.total;
+            } else if (xhr.loaded > 0) {
+              // No Content-Length header — show indeterminate progress
+              this.loadedBytes = xhr.loaded;
+              this.loadProgress = Math.min(99, Math.round((xhr.loaded / (xhr.loaded + 5000000)) * 100));
+            }
+            this.requestUpdate();
+          },
+          reject,
+        );
       });
 
       // Guard: element may have been disconnected while async loading
@@ -320,14 +422,27 @@ export class A2uiScene3D extends LitElement {
       // Create markers
       this.createMarkers();
 
+      this._clearSlowTimer();
+      this.loadProgress = 100;
       this.loadState = "loaded";
       this.requestUpdate();
     } catch (e) {
       console.error("[Scene3D] Failed to load GLB:", e);
+      this._clearSlowTimer();
       this.loadState = "error";
       this.errorMsg = "3D 场景加载失败";
       this.requestUpdate();
     }
+  }
+
+  private _clearSlowTimer() {
+    if (this._slowTimer) { clearTimeout(this._slowTimer); this._slowTimer = null; }
+  }
+
+  private _formatBytes(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / 1048576).toFixed(1)} MB`;
   }
 
   private async resolveResourceUrl(resourceId: string): Promise<string> {
@@ -530,7 +645,37 @@ export class A2uiScene3D extends LitElement {
       <div class="scene3d-overlay"></div>
 
       ${this.loadState === "loading"
-        ? html`<div class="scene3d-loading">加载 3D 场景中...</div>`
+        ? html`<div class="scene3d-loading">
+            <div class="scene3d-loading__spinner"></div>
+            <div class="scene3d-loading__title">正在加载 3D 场景</div>
+            ${this.totalBytes > 0 ? html`
+              <div class="scene3d-loading__progress-bar">
+                <div class="scene3d-loading__progress-fill" style="width:${this.loadProgress}%"></div>
+              </div>
+              <div class="scene3d-loading__progress-text">${this.loadProgress}%</div>
+              <div class="scene3d-loading__bytes">
+                ${this._formatBytes(this.loadedBytes)} / ${this._formatBytes(this.totalBytes)}
+              </div>
+            ` : this.loadedBytes > 0 ? html`
+              <div class="scene3d-loading__progress-bar scene3d-loading__progress-bar--indeterminate">
+                <div class="scene3d-loading__progress-fill" style="width:${this.loadProgress}%"></div>
+              </div>
+              <div class="scene3d-loading__bytes">已下载 ${this._formatBytes(this.loadedBytes)}</div>
+            ` : html`
+              <div class="scene3d-loading__progress-bar scene3d-loading__progress-bar--indeterminate">
+                <div class="scene3d-loading__progress-fill scene3d-loading__progress-fill--indeterminate"></div>
+              </div>
+              <div class="scene3d-loading__progress-text">连接中...</div>
+            `}
+            ${this.loadSlow ? html`
+              <div class="scene3d-loading__hint">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                  <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                </svg>
+                模型文件较大，请耐心等待...加载完成后会自动重试
+              </div>
+            ` : nothing}
+          </div>`
         : ""}
       ${this.loadState === "error"
         ? html`
