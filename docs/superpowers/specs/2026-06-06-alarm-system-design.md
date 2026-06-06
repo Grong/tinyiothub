@@ -346,3 +346,71 @@ enabled == false？ → 跳过
 | `tinyiothub-web/src/handlers/` | `mod.rs` | 修改 (+2 mod) |
 
 **前端无需改动**，API 契约与已有前端代码完全匹配。
+
+---
+
+## 审查补充（来自 /plan-ceo-review，2026-06-06）
+
+以下设计决策在 HOLD SCOPE 审查中确认，需纳入实现：
+
+### D3: tokio::spawn panic 保护
+规则评估的 `tokio::spawn` 需包裹 `std::panic::catch_unwind` + `AssertUnwindSafe`。Panic 时记录完整 backtrace + device_id/property_id 上下文。
+
+### D4: 振荡传感器告警风暴防护
+`AlarmRuleEngine` 增加内存限流器：`HashMap<(device_id, rule_id), Instant>`。同规则触发后 min(suppress_duration_secs, 60) 秒内不再评估。防止传感器在阈值附近振荡导致告警/恢复循环。
+
+### D5: acknowledge/resolve 前置校验
+acknowledge 和 resolve 端点先 SELECT 检查告警存在性 + 当前状态：
+- 不存在 → 404 "告警不存在"
+- 已确认 → 409 "告警已确认，无需重复操作"
+- 已解决 → 409 "已解决的告警无法确认"
+
+### D6: 批量操作大小限制
+`batch_acknowledge` / `batch_resolve` 限制 `alarmIds` 最多 100 条。空数组返回 400。超过上限返回 400 "单次批量操作最多 100 条"。
+
+### D7: 结构化日志
+关键路径增加 `tracing::info!` 结构化字段：`alarm_evaluation`（rule_id, device_id, result）、`alarm_created`（alarm_id, device_id, level）、`notification_sent`（channel, success）。
+
+### 安全补充
+acknowledge/resolve 的存储函数需传入 `workspace_id` 参数，WHERE 子句包含 workspace 过滤，防止跨工作空间操作。
+
+### 错误与救援注册表
+
+| 方法 | 失败模式 | 异常类型 | 已救援？ | 用户看到 |
+|---|---|---|---|---|
+| find_enabled_rules_for_device | DB 连接池耗尽 | PoolExhausted | N → 需加 | 500 + 日志 |
+| evaluate_rule | condition JSON 解析失败 | serde_json::Error | Y (跳过) | N/A |
+| evaluate_rule | 非数值比较 | String error | Y (跳过) | N/A |
+| create_alarm | DB 主键冲突 | ConstraintViolation | N → 需加 | 500 + 日志 |
+| acknowledge_alarm | 告警不存在 | RowNotFound | Y (前置检查) | 404 |
+| acknowledge_alarm | 告警已确认 | AlreadyAcknowledged | Y (前置检查) | 409 |
+| resolve_alarm | 告警不存在 | RowNotFound | Y (前置检查) | 404 |
+| resolve_alarm | 告警已解决 | AlreadyResolved | Y (前置检查) | 409 |
+| batch_acknowledge | 部分 ID 无效 | PartialFailure | Y (计数) | successCount/totalCount |
+| dispatch (webhook) | HTTP 超时 | TimeoutError | Y (per-channel) | 该渠道记录失败 |
+| dispatch (email) | SMTP 认证失败 | AuthError | Y (per-channel) | 该渠道记录失败 |
+| dispatch (sse) | 连接断开 | ConnectionError | Y (per-channel) | 该渠道记录失败 |
+
+### 故障模式注册表
+
+| 代码路径 | 故障模式 | 已救援？ | 已测试？ | 用户感知？ | 已记录？ |
+|---|---|---|---|---|---|
+| RuleEngine::evaluate | Panic in evaluation | Y (catch_unwind) | 待测 | N (日志) | Y |
+| RuleEngine::evaluate | Oscillation storm | Y (throttle) | 待测 | N (抑制) | Y |
+| API: acknowledge | 重复确认 | Y (409) | 待测 | Y (错误消息) | N/A |
+| API: batch | 空 ID 列表 | Y (400) | 待测 | Y (错误消息) | N/A |
+| API: batch | 超过 100 条 | Y (400) | 待测 | Y (错误消息) | N/A |
+| Notification: dispatch | 部分渠道失败 | Y (per-channel) | 待测 | N (日志) | Y |
+| Storage: create_alarm | DB 锁竞争 | N (SQLite 内部) | 待测 | N (静默) | N — GAP |
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 1 | CLEAR | 7 issues found, 6 fixed, 1 accepted risk |
+| Codex Review | — | — | 0 | — | — |
+| Eng Review | — | — | 0 | — | — |
+| Design Review | — | — | 0 | — | — |
+| DX Review | — | — | 0 | — | — |
+
+**VERDICT: HOLD SCOPE — 7 findings surfaced, 6 accepted (design updated), 1 accepted risk (no Acknowledged→Active revert). Ready for `/plan-eng-review` (required gate).**
