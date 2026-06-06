@@ -177,9 +177,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
   @state() formDriverConfig: Record<string, string> = {};
   @state() formDriverConfigOptions: DriverConfigOption[] = [];
   @state() formDriverConfigLoading = false;
-  @state() formProperties: { name: string; value: any; dataType: string; unit?: string; isReadOnly?: boolean }[] = [];
+  @state() formProperties: { name: string; displayName?: string; value: any; dataType: string; unit?: string; isReadOnly?: boolean; minValue?: number; maxValue?: number; description?: string }[] = [];
   @state() formModalTab: 'basic' | 'driver' | 'properties' | 'commands' = 'basic';
-  @state() formCommands: { name: string; description?: string }[] = [];
+  @state() formCommands: { name: string; description?: string; parameters?: string }[] = [];
   @state() formProfileLoading = false;
 
   // Wizard (2-step template-based)
@@ -209,6 +209,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
   @state() editingTagsDeviceId: string | null = null;
   @state() tagSearchKeyword = "";
   @state() tagSaving = false;
+  @state() tagCreating = false;
   private _boundCloseTagEditor = () => { this.editingTagsDeviceId = null; };
   private _unsubI18n?: () => void;
 
@@ -438,6 +439,27 @@ export class DevicesView extends SignalWatcher(LitElement) {
       toastError(err.message || "标签操作失败");
     } finally {
       this.tagSaving = false;
+    }
+  }
+
+  async createAndBindTag(device: Device, name: string) {
+    if (this.tagCreating || !name.trim()) return;
+    this.tagCreating = true;
+    try {
+      const colors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'];
+      const color = colors[Math.floor(Math.random() * colors.length)];
+      const res = await tagApi.createTag({ name: name.trim(), type: 'device', color });
+      const newTag = res.result as Tag;
+      if (newTag?.id) {
+        await tagApi.createBinding({ tagId: newTag.id, targetId: device.id, targetType: 'device' });
+        await Promise.all([this.loadAllTags(), this.loadDevices()]);
+        this.tagSearchKeyword = '';
+        success(`已创建并绑定标签「${name.trim()}」`);
+      }
+    } catch (err: any) {
+      toastError(err.message || '创建标签失败');
+    } finally {
+      this.tagCreating = false;
     }
   }
 
@@ -819,16 +841,21 @@ export class DevicesView extends SignalWatcher(LitElement) {
       const profile = profileRes.result;
       if (profile?.properties?.length) {
         this.formProperties = profile.properties.map(p => ({
-          name: p.name, value: p.currentValue ?? p.value ?? '', dataType: p.dataType, unit: p.unit, isReadOnly: p.isReadOnly,
+          name: p.name, displayName: p.displayName, value: p.currentValue ?? p.value ?? '', dataType: p.dataType,
+          unit: p.unit, isReadOnly: p.isReadOnly, minValue: p.minValue, maxValue: p.maxValue, description: p.description,
         }));
       }
       if (profile?.commands?.length) {
-        this.formCommands = profile.commands.map(c => ({ name: c.name, description: c.description }));
+        this.formCommands = profile.commands.map(c => ({
+          name: c.name, description: c.description,
+          parameters: c.parameters && Object.keys(c.parameters).length > 0 ? JSON.stringify(c.parameters) : '',
+        }));
       }
     } catch {
       // Fallback: use properties from device list if profile unavailable
       this.formProperties = (d.properties || []).map(p => ({
-        name: p.name, value: p.currentValue ?? p.value ?? '', dataType: p.dataType, unit: p.unit, isReadOnly: p.isReadOnly,
+        name: p.name, displayName: p.displayName, value: p.currentValue ?? p.value ?? '', dataType: p.dataType,
+        unit: p.unit, isReadOnly: p.isReadOnly, minValue: p.minValue, maxValue: p.maxValue, description: p.description,
       }));
     } finally {
       this.formProfileLoading = false;
@@ -892,10 +919,16 @@ export class DevicesView extends SignalWatcher(LitElement) {
         driverOptions: Object.keys(this.formDriverConfig).length > 0
           ? JSON.stringify(this.formDriverConfig) : undefined,
         properties: this.formProperties.length > 0
-          ? this.formProperties.map(p => ({ name: p.name, value: p.value, dataType: p.dataType, unit: p.unit, isReadOnly: p.isReadOnly }))
+          ? this.formProperties.map(p => ({
+              name: p.name, displayName: p.displayName, value: p.value, dataType: p.dataType,
+              unit: p.unit, isReadOnly: p.isReadOnly, minValue: p.minValue, maxValue: p.maxValue, description: p.description,
+            }))
           : undefined,
         commands: this.formCommands.length > 0
-          ? this.formCommands.map(c => ({ name: c.name, description: c.description }))
+          ? this.formCommands.map(c => ({
+              name: c.name, description: c.description,
+              parameters: c.parameters ? (() => { try { return JSON.parse(c.parameters); } catch { return {}; } })() : {},
+            }))
           : undefined,
       };
       if (this.editingDevice) {
@@ -1772,8 +1805,10 @@ export class DevicesView extends SignalWatcher(LitElement) {
                 </svg>
               </span>
               <div>
-                <h2 class="device-edit-header__title">${isEdit ? '编辑设备' : '新建设备'}</h2>
-                ${isEdit ? html`<span class="device-edit-header__sub">${this.editingDevice!.name}</span>` : nothing}
+                <h2 class="device-edit-header__title">
+                  ${isEdit ? html`编辑设备 — <strong>${this.editingDevice!.name}</strong>` : '新建设备'}
+                </h2>
+                ${isEdit && this.editingDevice!.displayName ? html`<span class="device-edit-header__sub">${this.editingDevice!.displayName}</span>` : nothing}
               </div>
             </div>
             <button class="device-edit-close" @click=${this.closeModal} aria-label="关闭">&times;</button>
@@ -1872,6 +1907,60 @@ export class DevicesView extends SignalWatcher(LitElement) {
             placeholder="可选的设备描述信息" .value=${this.formDescription}
             @input=${(e: any) => { this.formDescription = e.target.value; }} rows="2"></textarea>
         </div>
+        <!-- Tags -->
+        <div class="edit-field edit-field--full" style="margin-top:8px">
+          <label class="edit-field__label">标签</label>
+          <div class="edit-tags-bar">
+            ${this.editingDevice?.tags?.map((t: Tag) => html`
+              <span class="edit-tag-pill">
+                ${t.name}
+                <button class="edit-tag-pill__remove" @click=${() => this.toggleTag(this.editingDevice!, t)} title="移除绑定">&times;</button>
+              </span>
+            `)}
+            ${(!this.editingDevice?.tags || this.editingDevice.tags.length === 0) ? html`<span class="edit-hint" style="padding:0">暂无标签</span>` : nothing}
+            <button class="edit-tag-add-btn" @click=${() => { this.editingTagsDeviceId = this.editingTagsDeviceId ? null : this.editingDevice?.id || null; }}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+              添加标签
+            </button>
+            ${this.editingTagsDeviceId ? html`
+              <div class="edit-inline-tag-popover">
+                <input type="text" class="tag-popover__search" style="margin:0"
+                  placeholder="搜索或输入新标签..."
+                  .value=${this.tagSearchKeyword}
+                  @input=${(e: Event) => { this.tagSearchKeyword = (e.target as HTMLInputElement).value; }}
+                  @keydown=${(e: KeyboardEvent) => {
+                    if (e.key === 'Enter') {
+                      const kw = this.tagSearchKeyword.trim();
+                      if (kw && this.editingDevice && !this.allTags.some(t => t.name.toLowerCase() === kw.toLowerCase())) {
+                        this.createAndBindTag(this.editingDevice, kw);
+                      }
+                    }
+                  }} />
+                <div style="max-height:120px;overflow-y:auto;display:flex;flex-wrap:wrap;gap:4px;padding:4px 0">
+                  ${this.tagSearchKeyword.trim() && !this.allTags.some(t => t.name.toLowerCase() === this.tagSearchKeyword.trim().toLowerCase()) ? html`
+                    <button class="btn btn--sm tag-btn tag-btn--create"
+                      ?disabled=${this.tagCreating}
+                      @click=${() => this.createAndBindTag(this.editingDevice!, this.tagSearchKeyword.trim())}>
+                      + 创建「${this.tagSearchKeyword.trim()}」
+                    </button>
+                  ` : nothing}
+                  ${this.allTags.filter(t => !this.tagSearchKeyword || t.name.toLowerCase().includes(this.tagSearchKeyword.toLowerCase())).map(t => {
+                    const bound = (this.editingDevice?.tags || []).some(dt => dt.id === t.id);
+                    return html`
+                      <button class="btn btn--sm tag-btn ${bound ? 'tag-btn--bound' : 'tag-btn--unbound'}"
+                        ?disabled=${this.tagSaving}
+                        @click=${() => this.toggleTag(this.editingDevice!, t)}>
+                        ${bound ? icons.check : icons.plus} ${t.name}
+                      </button>
+                    `;
+                  })}
+                </div>
+              </div>
+            ` : nothing}
+          </div>
+        </div>
       </div>
     `;
   }
@@ -1950,12 +2039,15 @@ export class DevicesView extends SignalWatcher(LitElement) {
             <span class="edit-properties-empty__hint">点击「添加属性」来定义设备的数据点</span>
           </div>
         ` : html`
-          <div class="edit-properties-list">
+          <div class="edit-properties-list" style="overflow-x:auto">
             <div class="edit-properties-header">
               <span class="edit-properties-header__col edit-properties-header__col--name">属性名</span>
+              <span class="edit-properties-header__col edit-properties-header__col--display">显示名</span>
               <span class="edit-properties-header__col edit-properties-header__col--type">类型</span>
               <span class="edit-properties-header__col edit-properties-header__col--value">值</span>
               <span class="edit-properties-header__col edit-properties-header__col--unit">单位</span>
+              <span class="edit-properties-header__col edit-properties-header__col--min">最小</span>
+              <span class="edit-properties-header__col edit-properties-header__col--max">最大</span>
               <span class="edit-properties-header__col edit-properties-header__col--ro">只读</span>
               <span class="edit-properties-header__col edit-properties-header__col--actions"></span>
             </div>
@@ -1964,6 +2056,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
                 <input type="text" class="edit-property-row__input edit-property-row__input--name"
                   placeholder="属性名" .value=${prop.name}
                   @input=${(e: any) => { this.formProperties[i] = { ...prop, name: e.target.value }; this.requestUpdate(); }} />
+                <input type="text" class="edit-property-row__input edit-property-row__input--display"
+                  placeholder="显示名" .value=${prop.displayName || ''}
+                  @input=${(e: any) => { this.formProperties[i] = { ...prop, displayName: e.target.value }; this.requestUpdate(); }} />
                 <select class="edit-property-row__select"
                   .value=${prop.dataType}
                   @change=${(e: any) => { this.formProperties[i] = { ...prop, dataType: e.target.value }; this.requestUpdate(); }}>
@@ -1988,6 +2083,12 @@ export class DevicesView extends SignalWatcher(LitElement) {
                 <input type="text" class="edit-property-row__input edit-property-row__input--unit"
                   placeholder="-" .value=${prop.unit || ''}
                   @input=${(e: any) => { this.formProperties[i] = { ...prop, unit: e.target.value }; this.requestUpdate(); }} />
+                <input type="number" class="edit-property-row__input edit-property-row__input--minmax"
+                  placeholder="-" .value=${prop.minValue ?? ''}
+                  @input=${(e: any) => { this.formProperties[i] = { ...prop, minValue: e.target.value ? Number(e.target.value) : undefined }; this.requestUpdate(); }} />
+                <input type="number" class="edit-property-row__input edit-property-row__input--minmax"
+                  placeholder="-" .value=${prop.maxValue ?? ''}
+                  @input=${(e: any) => { this.formProperties[i] = { ...prop, maxValue: e.target.value ? Number(e.target.value) : undefined }; this.requestUpdate(); }} />
                 <label class="edit-property-row__checkbox">
                   <input type="checkbox" ?checked=${prop.isReadOnly}
                     @change=${(e: any) => { this.formProperties[i] = { ...prop, isReadOnly: e.target.checked }; this.requestUpdate(); }} />
@@ -1999,6 +2100,13 @@ export class DevicesView extends SignalWatcher(LitElement) {
                   </svg>
                 </button>
               </div>
+              ${prop.description !== undefined ? html`
+                <div class="edit-property-desc-row">
+                  <input type="text" class="edit-property-row__input" style="grid-column:1/-1"
+                    placeholder="属性描述（可选）" .value=${prop.description || ''}
+                    @input=${(e: any) => { this.formProperties[i] = { ...prop, description: e.target.value }; this.requestUpdate(); }} />
+                </div>
+              ` : nothing}
             `)}
           </div>
         `}
@@ -2007,7 +2115,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
   }
 
   private addFormProperty() {
-    this.formProperties = [...this.formProperties, { name: '', value: '', dataType: 'number', unit: '', isReadOnly: false }];
+    this.formProperties = [...this.formProperties, { name: '', displayName: '', value: '', dataType: 'number', unit: '', isReadOnly: false, description: '' }];
     this.requestUpdate();
   }
 
@@ -2032,20 +2140,24 @@ export class DevicesView extends SignalWatcher(LitElement) {
             <span class="edit-properties-empty__hint">添加命令以支持远程控制设备</span>
           </div>
         ` : html`
-          <div class="edit-properties-list">
+          <div class="edit-properties-list" style="overflow-x:auto">
             <div class="edit-properties-header">
               <span class="edit-properties-header__col edit-properties-header__col--name">命令名</span>
-              <span class="edit-properties-header__col" style="grid-column:span 3">描述</span>
+              <span class="edit-properties-header__col" style="grid-column:span 2">描述</span>
+              <span class="edit-properties-header__col">参数 (JSON)</span>
               <span class="edit-properties-header__col edit-properties-header__col--actions"></span>
             </div>
             ${this.formCommands.map((cmd, i) => html`
-              <div class="edit-property-row" style="grid-template-columns:1fr 3fr 26px">
+              <div class="edit-property-row" style="grid-template-columns:1fr 1fr 1fr 1fr 26px">
                 <input type="text" class="edit-property-row__input edit-property-row__input--name"
                   placeholder="命令名" .value=${cmd.name}
                   @input=${(e: any) => { this.formCommands[i] = { ...cmd, name: e.target.value }; this.requestUpdate(); }} />
-                <input type="text" class="edit-property-row__input"
+                <input type="text" class="edit-property-row__input" style="grid-column:span 2"
                   placeholder="可选描述" .value=${cmd.description || ''}
                   @input=${(e: any) => { this.formCommands[i] = { ...cmd, description: e.target.value }; this.requestUpdate(); }} />
+                <input type="text" class="edit-property-row__input"
+                  placeholder='{}' .value=${cmd.parameters || ''}
+                  @input=${(e: any) => { this.formCommands[i] = { ...cmd, parameters: e.target.value }; this.requestUpdate(); }} />
                 <button class="edit-property-row__remove" title="删除"
                   @click=${() => { this.formCommands = this.formCommands.filter((_, j) => j !== i); }}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
@@ -2061,7 +2173,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
   }
 
   private addFormCommand() {
-    this.formCommands = [...this.formCommands, { name: '', description: '' }];
+    this.formCommands = [...this.formCommands, { name: '', description: '', parameters: '' }];
     this.requestUpdate();
   }
 

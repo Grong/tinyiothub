@@ -634,10 +634,11 @@
 
 .edit-properties-header {
   display: grid;
-  grid-template-columns: 2fr 1fr 1.2fr 0.8fr 50px 32px;
-  gap: 6px;
+  grid-template-columns: 1.2fr 0.9fr 0.8fr 1fr 0.5fr 0.5fr 0.5fr 42px 28px;
+  gap: 5px;
   padding: 0 0 6px;
   border-bottom: 1px solid var(--border);
+  min-width: 700px;
 }
 
 .edit-properties-header__col {
@@ -650,19 +651,25 @@
 
 .edit-property-row {
   display: grid;
-  grid-template-columns: 2fr 1fr 1.2fr 0.8fr 50px 32px;
-  gap: 6px;
+  grid-template-columns: 1.2fr 0.9fr 0.8fr 1fr 0.5fr 0.5fr 0.5fr 42px 28px;
+  gap: 5px;
   align-items: center;
+  min-width: 700px;
+}
+
+.edit-property-desc-row {
+  display: flex;
+  padding: 0 0 4px 0;
 }
 
 .edit-property-row__input,
 .edit-property-row__select {
-  padding: 7px 8px;
+  padding: 6px 7px;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text);
-  font-size: 12px;
+  font-size: 11px;
   font-family: inherit;
   outline: none;
   transition: border-color 0.12s;
@@ -679,8 +686,13 @@
   appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: right 6px center;
-  padding-right: 22px;
+  background-position: right 5px center;
+  padding-right: 20px;
+}
+
+.edit-property-row__input--minmax {
+  text-align: center;
+  padding: 6px 4px;
 }
 
 .edit-property-row__checkbox {
@@ -690,8 +702,8 @@
 }
 
 .edit-property-row__checkbox input[type="checkbox"] {
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
   accent-color: var(--accent);
   cursor: pointer;
 }
@@ -700,8 +712,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   border: none;
   border-radius: var(--radius-sm);
   background: none;
@@ -713,6 +725,84 @@
 .edit-property-row__remove:hover {
   color: var(--danger);
   background: var(--danger-subtle);
+}
+
+/* Inline Tags in Edit Modal */
+.edit-tags-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  position: relative;
+}
+
+.edit-tag-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px 3px 10px;
+  background: var(--accent-subtle);
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+}
+
+.edit-tag-pill__remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.6;
+  transition: opacity 0.12s, background 0.12s;
+}
+
+.edit-tag-pill__remove:hover {
+  opacity: 1;
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+
+.edit-tag-add-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 10px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-full);
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s;
+}
+
+.edit-tag-add-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.edit-inline-tag-popover {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 10;
+  margin-top: 6px;
+  min-width: 240px;
+  padding: 8px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
 }
 
 /* Responsive */
@@ -737,12 +827,18 @@
   .edit-property-row {
     grid-template-columns: 1fr 80px 60px;
     gap: 4px;
+    min-width: auto;
   }
 
+  .edit-properties-header__col--display,
+  .edit-property-row__input--display,
   .edit-properties-header__col--value,
   .edit-property-row__input--value,
   .edit-properties-header__col--unit,
   .edit-property-row__input--unit,
+  .edit-properties-header__col--min,
+  .edit-property-row__input--minmax,
+  .edit-properties-header__col--max,
   .edit-properties-header__col--ro,
   .edit-property-row__checkbox {
     display: none;
