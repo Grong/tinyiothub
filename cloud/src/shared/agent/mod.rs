@@ -131,7 +131,10 @@ fn get_workspace_dir(
     }
 }
 
-/// Load workspace prompt files and concatenate them into a single prompt
+/// Load workspace prompt files with two-tier fallback:
+///   1. Workspace dir (user overrides)
+///   2. Shared base dir (_default/) — updated on deploy
+///   3. Embedded compile-time templates
 ///
 /// Files loaded (in order):
 /// - IDENTITY.md  → [Identity] section
@@ -143,6 +146,8 @@ fn get_workspace_dir(
 /// Each file is wrapped with a markdown header indicating its section.
 async fn load_workspace_prompt(workspace_dir: &std::path::Path) -> String {
     use tokio::fs;
+
+    let shared_base = crate::shared::paths::shared_agent_base_dir();
 
     let mut sections = Vec::new();
 
@@ -156,46 +161,28 @@ async fn load_workspace_prompt(workspace_dir: &std::path::Path) -> String {
     ];
 
     for (filename, section_name) in files {
-        let file_path = workspace_dir.join(filename);
-        if file_path.exists()
-            && let Ok(content) = fs::read_to_string(&file_path).await
+        // 1. Workspace override
+        let ws_path = workspace_dir.join(filename);
+        // 2. Shared base
+        let shared_path = shared_base.join(filename);
+
+        let content = if ws_path.exists()
+            && let Ok(c) = fs::read_to_string(&ws_path).await
+            && !c.trim().is_empty()
         {
-            let trimmed = content.trim();
-            if !trimmed.is_empty() {
-                sections.push(format!("## {}\n{}\n", section_name, trimmed));
-            }
-        }
-    }
+            c
+        } else if shared_path.exists()
+            && let Ok(c) = fs::read_to_string(&shared_path).await
+            && !c.trim().is_empty()
+        {
+            c
+        } else if let Some(c) = get_embedded_template(filename) {
+            c.to_string()
+        } else {
+            continue;
+        };
 
-    if sections.is_empty() {
-        // Fallback to template files if workspace is empty
-        return load_template_fallback();
-    }
-
-    sections.join("\n")
-}
-
-/// Fallback: load from embedded template files when workspace directory has no files
-fn load_template_fallback() -> String {
-    let mut sections = Vec::new();
-
-    let files = [
-        ("IDENTITY.md", "Identity"),
-        ("SOUL.md", "Principles"),
-        ("TOOLS.md", "Capabilities"),
-        ("USER.md", "User Context"),
-        ("MEMORY.md", "Memory"),
-    ];
-
-    for (filename, section_name) in files {
-        // Templates are embedded at compile time via include_str!
-        let content = get_embedded_template(filename);
-        if let Some(c) = content {
-            let trimmed = c.trim();
-            if !trimmed.is_empty() {
-                sections.push(format!("## {}\n{}\n", section_name, trimmed));
-            }
-        }
+        sections.push(format!("## {}\n{}\n", section_name, content.trim()));
     }
 
     sections.join("\n")

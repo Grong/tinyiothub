@@ -42,17 +42,22 @@ fn test_path_validation_rejects_traversal() {
 fn test_workspace_file_info_serde() {
     use crate::modules::agent::handler::files::{WorkspaceFileInfo, WorkspaceFileResponse};
 
-    let info = WorkspaceFileInfo { name: "IDENTITY.md".to_string() };
+    let info = WorkspaceFileInfo { name: "IDENTITY.md".to_string(), is_override: false };
 
     let json = serde_json::to_string(&info).unwrap();
     assert!(json.contains("IDENTITY.md"));
+    assert!(json.contains("isOverride"));
 
-    let response =
-        WorkspaceFileResponse { name: "SOUL.md".to_string(), content: "# Soul".to_string() };
+    let response = WorkspaceFileResponse {
+        name: "SOUL.md".to_string(),
+        content: "# Soul".to_string(),
+        source: "shared".to_string(),
+    };
 
     let json = serde_json::to_string(&response).unwrap();
     assert!(json.contains("SOUL.md"));
     assert!(json.contains("# Soul"));
+    assert!(json.contains("shared"));
 }
 
 /// Test update request deserialization
