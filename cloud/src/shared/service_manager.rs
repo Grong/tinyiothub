@@ -76,6 +76,19 @@ impl ServiceManager {
         app_state.event_bus.register_handler(sse_handler);
         info!("✅ SseEventHandler registered");
 
+        // 注册报警事件处理器 - 评估报警规则并创建报警
+        let notification_dispatcher = Arc::new(
+            crate::modules::alarm::notification::NotificationDispatcher::new(
+                app_state.database.clone(),
+            ),
+        );
+        let alarm_handler = Arc::new(crate::modules::alarm::AlarmEventHandler::new(
+            app_state.alarm_service.clone(),
+            notification_dispatcher,
+        ));
+        app_state.event_bus.register_handler(alarm_handler);
+        info!("✅ AlarmEventHandler registered");
+
         // 保存到 AppState
         app_state.set_data_server(data_server.clone());
 
