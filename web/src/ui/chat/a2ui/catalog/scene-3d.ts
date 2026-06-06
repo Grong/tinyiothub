@@ -296,8 +296,14 @@ export class A2uiScene3D extends LitElement {
         loader.load(glbUrl, resolve, undefined, reject);
       });
 
+      // Guard: element may have been disconnected while async loading
+      if (!this.scene) {
+        this.loadState = "idle";
+        return;
+      }
+
       this.modelGroup = gltf.scene;
-      this.scene!.add(this.modelGroup!);
+      this.scene.add(this.modelGroup);
 
       // Auto-fit camera
       const box = new THREE.Box3().setFromObject(this.modelGroup!);
