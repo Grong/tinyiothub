@@ -2048,6 +2048,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
               <span class="edit-properties-header__col edit-properties-header__col--unit">单位</span>
               <span class="edit-properties-header__col edit-properties-header__col--min">最小</span>
               <span class="edit-properties-header__col edit-properties-header__col--max">最大</span>
+              <span class="edit-properties-header__col edit-properties-header__col--desc">描述</span>
               <span class="edit-properties-header__col edit-properties-header__col--ro">只读</span>
               <span class="edit-properties-header__col edit-properties-header__col--actions"></span>
             </div>
@@ -2089,6 +2090,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
                 <input type="number" class="edit-property-row__input edit-property-row__input--minmax"
                   placeholder="-" .value=${prop.maxValue ?? ''}
                   @input=${(e: any) => { this.formProperties[i] = { ...prop, maxValue: e.target.value ? Number(e.target.value) : undefined }; this.requestUpdate(); }} />
+                <input type="text" class="edit-property-row__input edit-property-row__input--desc"
+                  placeholder="-" .value=${prop.description || ''}
+                  @input=${(e: any) => { this.formProperties[i] = { ...prop, description: e.target.value }; this.requestUpdate(); }} />
                 <label class="edit-property-row__checkbox">
                   <input type="checkbox" ?checked=${prop.isReadOnly}
                     @change=${(e: any) => { this.formProperties[i] = { ...prop, isReadOnly: e.target.checked }; this.requestUpdate(); }} />
@@ -2100,13 +2104,6 @@ export class DevicesView extends SignalWatcher(LitElement) {
                   </svg>
                 </button>
               </div>
-              ${prop.description !== undefined ? html`
-                <div class="edit-property-desc-row">
-                  <input type="text" class="edit-property-row__input" style="grid-column:1/-1"
-                    placeholder="属性描述（可选）" .value=${prop.description || ''}
-                    @input=${(e: any) => { this.formProperties[i] = { ...prop, description: e.target.value }; this.requestUpdate(); }} />
-                </div>
-              ` : nothing}
             `)}
           </div>
         `}
