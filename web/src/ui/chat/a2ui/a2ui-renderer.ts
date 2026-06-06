@@ -80,11 +80,19 @@ export class A2uiRendererEngine {
         }
       }
 
+      const slice = jsonl.slice(i, j);
       try {
-        const obj = JSON.parse(jsonl.slice(i, j));
-        results.push(obj);
-      } catch (e) {
-        console.error("[A2UI] Failed to parse JSON object:", jsonl.slice(i, Math.min(j, i + 100)), e);
+        const obj = JSON.parse(slice);
+        results.push(obj as Record<string, unknown>);
+      } catch (_e) {
+        // JSON was malformed (e.g. LLM miscounted closing braces).
+        // Skip to the next JSONL line and continue.
+        console.error("[A2UI] Failed to parse JSON:", slice.substring(0, 100), String(_e));
+        const nl = jsonl.indexOf("\n", i + 1);
+        if (nl !== -1) {
+          i = nl;
+          continue;
+        }
       }
 
       i = j;
