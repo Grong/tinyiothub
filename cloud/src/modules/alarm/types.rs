@@ -773,12 +773,14 @@ impl From<crate::modules::alarm::AlarmStatistics> for AlarmStatisticsDto {
 
 /// 确认报警请求
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AcknowledgeAlarmRequest {
     pub note: Option<String>,
 }
 
 /// 解决报警请求
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ResolveAlarmRequest {
     pub resolution_type: String,
     pub note: Option<String>,
@@ -786,12 +788,14 @@ pub struct ResolveAlarmRequest {
 
 /// 批量确认请求
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BatchAcknowledgeRequest {
     pub alarm_ids: Vec<String>,
 }
 
 /// 批量解决请求
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BatchResolveRequest {
     pub alarm_ids: Vec<String>,
     pub resolution_type: String,
