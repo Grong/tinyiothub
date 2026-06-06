@@ -165,7 +165,6 @@ export class A2uiScene3D extends LitElement {
   private camera?: THREE.PerspectiveCamera;
   private controls?: OrbitControls;
   private modelGroup?: THREE.Group;
-  private groundGrid?: THREE.Group;
   private rafId?: number;
   private resizeObserver?: ResizeObserver;
   private markers: Array<{ element: HTMLElement; worldPos: THREE.Vector3; floorId?: string; deviceId: string }> = [];

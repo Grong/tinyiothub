@@ -171,6 +171,14 @@ export class DevicesView extends SignalWatcher(LitElement) {
   @state() formManufacturer = "";
   @state() formModel = "";
   @state() formProtocol = "";
+  @state() formPosition = "";
+  @state() formPort = "";
+  @state() formDriver = "";
+  @state() formDriverConfig: Record<string, string> = {};
+  @state() formDriverConfigOptions: DriverConfigOption[] = [];
+  @state() formDriverConfigLoading = false;
+  @state() formProperties: { name: string; value: any; dataType: string; unit?: string; isReadOnly?: boolean }[] = [];
+  @state() formModalTab: 'basic' | 'driver' | 'properties' = 'basic';
 
   // Wizard (2-step template-based)
   @state() showWizard = false;
@@ -763,6 +771,13 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.formManufacturer = "";
     this.formModel = "";
     this.formProtocol = "";
+    this.formPosition = "";
+    this.formPort = "";
+    this.formDriver = "";
+    this.formDriverConfig = {};
+    this.formDriverConfigOptions = [];
+    this.formProperties = [];
+    this.formModalTab = 'basic';
     this.showModal = true;
     requestAnimationFrame(() => {
       const overlay = this.querySelector(".modal-overlay[role='dialog']");
@@ -780,6 +795,17 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.formManufacturer = d.factoryName || "";
     this.formModel = d.deviceModel || "";
     this.formProtocol = d.protocolType || "";
+    this.formPosition = d.position || "";
+    this.formPort = "";
+    this.formDriver = d.driverName || "";
+    this.formDriverConfig = {};
+    this.formDriverConfigOptions = [];
+    this.formProperties = (d.properties || []).map(p => ({
+      name: p.name, value: p.currentValue ?? p.value ?? '', dataType: p.dataType, unit: p.unit, isReadOnly: p.isReadOnly,
+    }));
+    this.formModalTab = 'basic';
+    // Load driver config if driver is set
+    if (d.driverName) this.loadFormDriverConfig(d.driverName);
     this.showModal = true;
     requestAnimationFrame(() => {
       const overlay = this.querySelector(".modal-overlay[role='dialog']");
@@ -797,24 +823,56 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.modalLastFocus = undefined;
   }
 
+  async loadFormDriverConfig(driverName: string) {
+    if (!driverName) { this.formDriverConfigOptions = []; return; }
+    this.formDriverConfigLoading = true;
+    try {
+      const res = await driverApi.getDriverConfig(driverName);
+      this.formDriverConfigOptions = (res.result as any)?.configOptions || [];
+      // Init config with defaults
+      const config: Record<string, string> = {};
+      for (const opt of this.formDriverConfigOptions) {
+        config[opt.name] = this.formDriverConfig[opt.name] || opt.defaultValue || '';
+      }
+      this.formDriverConfig = config;
+    } catch { /* driver may not have config */ } finally {
+      this.formDriverConfigLoading = false;
+    }
+  }
+
+  onFormDriverChange(e: Event) {
+    const driverName = (e.target as HTMLSelectElement).value;
+    this.formDriver = driverName;
+    this.formDriverConfig = {};
+    this.loadFormDriverConfig(driverName);
+  }
+
   async saveForm() {
     if (!this.formName.trim()) return;
     this.saving = true;
     try {
-      const payload: CreateDeviceRequest = {
-        name: this.formName,
+      const payload: Record<string, any> = {
+        name: this.formName.trim(),
         type: this.formType || undefined,
         ipAddress: this.formAddress || undefined,
+        port: this.formPort ? Number(this.formPort) : undefined,
         description: this.formDescription || undefined,
         manufacturer: this.formManufacturer || undefined,
         model: this.formModel || undefined,
         protocol: this.formProtocol || undefined,
+        position: this.formPosition || undefined,
+        driverName: this.formDriver || undefined,
+        driverOptions: Object.keys(this.formDriverConfig).length > 0
+          ? JSON.stringify(this.formDriverConfig) : undefined,
+        properties: this.formProperties.length > 0
+          ? this.formProperties.map(p => ({ name: p.name, value: p.value, dataType: p.dataType, unit: p.unit, isReadOnly: p.isReadOnly }))
+          : undefined,
       };
       if (this.editingDevice) {
-        await deviceApi.updateDevice(this.editingDevice.id, payload as any);
+        await deviceApi.updateDevice(this.editingDevice.id, payload);
         success("设备已更新");
       } else {
-        await deviceApi.createDevice(payload);
+        await deviceApi.createDevice(payload as CreateDeviceRequest);
         success("设备已创建");
       }
       this.closeModal();
@@ -1660,49 +1718,265 @@ export class DevicesView extends SignalWatcher(LitElement) {
   }
 
   renderModal() {
+    const isEdit = !!this.editingDevice;
+    const tabs: { key: 'basic' | 'driver' | 'properties'; label: string }[] = [
+      { key: 'basic', label: '基本信息' },
+      { key: 'driver', label: '驱动配置' },
+      { key: 'properties', label: `属性${this.formProperties.length ? ` (${this.formProperties.length})` : ''}` },
+    ];
+
     return html`
-      <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="${this.editingDevice ? '编辑设备' : '新建设备'}" @click=${this.closeModal} @keydown=${(e: KeyboardEvent) => this.handleModalKeydown(e, this.closeModal)}>
-        <div class="modal" @click=${(e: Event) => e.stopPropagation()}>
-          <div class="modal-header">${this.editingDevice ? "编辑设备" : "新建设备"}</div>
-          <div class="modal-body modal-fields">
-            <div class="field">
-              <span>设备名称</span>
-              <input type="text" placeholder="设备名称" .value=${this.formName} @input=${(e: any) => { this.formName = e.target.value; }} />
+      <div class="modal-overlay device-edit-overlay" role="dialog" aria-modal="true"
+        aria-label="${isEdit ? '编辑设备' : '新建设备'}"
+        @click=${this.closeModal}
+        @keydown=${(e: KeyboardEvent) => this.handleModalKeydown(e, this.closeModal)}>
+        <div class="device-edit-dialog" @click=${(e: Event) => e.stopPropagation()}>
+          <!-- Header -->
+          <div class="device-edit-header">
+            <div class="device-edit-header__left">
+              <span class="device-edit-header__icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                  <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                  <line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
+                </svg>
+              </span>
+              <div>
+                <h2 class="device-edit-header__title">${isEdit ? '编辑设备' : '新建设备'}</h2>
+                ${isEdit ? html`<span class="device-edit-header__sub">${this.editingDevice!.name}</span>` : nothing}
+              </div>
             </div>
-            <div class="field">
-              <span>设备类型</span>
-              <input type="text" placeholder="如 sensor, gateway" .value=${this.formType} @input=${(e: any) => { this.formType = e.target.value; }} />
-            </div>
-            <div class="field">
-              <span>地址</span>
-              <input type="text" placeholder="如 192.168.1.100" .value=${this.formAddress} @input=${(e: any) => { this.formAddress = e.target.value; }} />
-            </div>
-            <div class="field">
-              <span>协议</span>
-              <input type="text" placeholder="如 modbus-tcp, mqtt" .value=${this.formProtocol} @input=${(e: any) => { this.formProtocol = e.target.value; }} />
-            </div>
-            <div class="field">
-              <span>厂商</span>
-              <input type="text" placeholder="可选" .value=${this.formManufacturer} @input=${(e: any) => { this.formManufacturer = e.target.value; }} />
-            </div>
-            <div class="field">
-              <span>型号</span>
-              <input type="text" placeholder="可选" .value=${this.formModel} @input=${(e: any) => { this.formModel = e.target.value; }} />
-            </div>
-            <div class="field">
-              <span>描述</span>
-              <input type="text" placeholder="可选描述" .value=${this.formDescription} @input=${(e: any) => { this.formDescription = e.target.value; }} />
-            </div>
+            <button class="device-edit-close" @click=${this.closeModal} aria-label="关闭">&times;</button>
           </div>
-          <div class="modal-footer">
+
+          <!-- Tabs -->
+          <div class="device-edit-tabs">
+            ${tabs.map(t => html`
+              <button class="device-edit-tab ${this.formModalTab === t.key ? 'active' : ''}"
+                @click=${() => { this.formModalTab = t.key; }}>
+                ${t.label}
+              </button>
+            `)}
+          </div>
+
+          <!-- Body -->
+          <div class="device-edit-body">
+            ${this.formModalTab === 'basic' ? this.renderBasicInfoTab() : nothing}
+            ${this.formModalTab === 'driver' ? this.renderDriverTab() : nothing}
+            ${this.formModalTab === 'properties' ? this.renderPropertiesTab() : nothing}
+          </div>
+
+          <!-- Footer -->
+          <div class="device-edit-footer">
             <button class="btn btn--ghost" @click=${this.closeModal}>取消</button>
             <button class="btn btn--primary" ?disabled=${this.saving || !this.formName.trim()} @click=${this.saveForm}>
-              ${this.saving ? "保存中..." : "保存"}
+              ${this.saving ? '保存中...' : '保存'}
             </button>
           </div>
         </div>
       </div>
     `;
+  }
+
+  private renderBasicInfoTab() {
+    return html`
+      <div class="edit-section">
+        <div class="edit-section__header">
+          <span class="edit-section__title">基本信息</span>
+          <span class="edit-section__hint">必填字段标记 *</span>
+        </div>
+        <div class="edit-grid edit-grid--2col">
+          <div class="edit-field edit-field--required">
+            <label class="edit-field__label">设备名称</label>
+            <input type="text" class="edit-field__input"
+              placeholder="输入设备名称" .value=${this.formName}
+              @input=${(e: any) => { this.formName = e.target.value; }} />
+          </div>
+          <div class="edit-field">
+            <label class="edit-field__label">设备类型</label>
+            <input type="text" class="edit-field__input"
+              placeholder="如 sensor, gateway" .value=${this.formType}
+              @input=${(e: any) => { this.formType = e.target.value; }} />
+          </div>
+          <div class="edit-field">
+            <label class="edit-field__label">地址</label>
+            <input type="text" class="edit-field__input"
+              placeholder="如 192.168.1.100" .value=${this.formAddress}
+              @input=${(e: any) => { this.formAddress = e.target.value; }} />
+          </div>
+          <div class="edit-field">
+            <label class="edit-field__label">端口</label>
+            <input type="number" class="edit-field__input"
+              placeholder="如 502" .value=${this.formPort}
+              @input=${(e: any) => { this.formPort = e.target.value; }} />
+          </div>
+          <div class="edit-field">
+            <label class="edit-field__label">协议</label>
+            <input type="text" class="edit-field__input"
+              placeholder="如 modbus-tcp, mqtt" .value=${this.formProtocol}
+              @input=${(e: any) => { this.formProtocol = e.target.value; }} />
+          </div>
+          <div class="edit-field">
+            <label class="edit-field__label">位置</label>
+            <input type="text" class="edit-field__input"
+              placeholder="如 机房A-3F" .value=${this.formPosition}
+              @input=${(e: any) => { this.formPosition = e.target.value; }} />
+          </div>
+          <div class="edit-field">
+            <label class="edit-field__label">厂商</label>
+            <input type="text" class="edit-field__input"
+              placeholder="可选" .value=${this.formManufacturer}
+              @input=${(e: any) => { this.formManufacturer = e.target.value; }} />
+          </div>
+          <div class="edit-field">
+            <label class="edit-field__label">型号</label>
+            <input type="text" class="edit-field__input"
+              placeholder="可选" .value=${this.formModel}
+              @input=${(e: any) => { this.formModel = e.target.value; }} />
+          </div>
+        </div>
+        <div class="edit-field edit-field--full" style="margin-top:4px">
+          <label class="edit-field__label">描述</label>
+          <textarea class="edit-field__textarea"
+            placeholder="可选的设备描述信息" .value=${this.formDescription}
+            @input=${(e: any) => { this.formDescription = e.target.value; }} rows="2"></textarea>
+        </div>
+      </div>
+    `;
+  }
+
+  private renderDriverTab() {
+    return html`
+      <div class="edit-section">
+        <div class="edit-section__header">
+          <span class="edit-section__title">驱动配置</span>
+          <span class="edit-section__hint">选择驱动后自动加载配置项</span>
+        </div>
+        <div class="edit-field">
+          <label class="edit-field__label">驱动</label>
+          <select class="edit-field__select" .value=${this.formDriver} @change=${this.onFormDriverChange}>
+            <option value="">不使用驱动</option>
+            ${this.driverNames.map(name => html`
+              <option value=${name} ?selected=${name === this.formDriver}>${name}</option>
+            `)}
+          </select>
+        </div>
+        ${this.formDriverConfigLoading ? html`
+          <div class="edit-driver-loading">
+            <span class="tag-spinner"></span> 加载驱动配置...
+          </div>
+        ` : this.formDriverConfigOptions.length > 0 ? html`
+          <div class="edit-grid edit-grid--2col" style="margin-top:12px">
+            ${this.formDriverConfigOptions.map(opt => html`
+              <div class="edit-field ${opt.required ? 'edit-field--required' : ''}">
+                <label class="edit-field__label" title=${opt.description || ''}>${opt.label || opt.name}</label>
+                ${opt.optionType === 'boolean' ? html`
+                  <select class="edit-field__select"
+                    .value=${this.formDriverConfig[opt.name] || ''}
+                    @change=${(e: any) => { this.formDriverConfig = { ...this.formDriverConfig, [opt.name]: e.target.value }; }}>
+                    <option value="true">启用</option>
+                    <option value="false">禁用</option>
+                  </select>
+                ` : html`
+                  <input type=${opt.optionType === 'number' ? 'number' : 'text'}
+                    class="edit-field__input"
+                    placeholder=${opt.defaultValue || ''}
+                    .value=${this.formDriverConfig[opt.name] || ''}
+                    @input=${(e: any) => { this.formDriverConfig = { ...this.formDriverConfig, [opt.name]: e.target.value }; }} />
+                `}
+              </div>
+            `)}
+          </div>
+        ` : this.formDriver ? html`
+          <div class="edit-hint">该驱动无需额外配置</div>
+        ` : html`
+          <div class="edit-hint">选择驱动后可配置驱动参数</div>
+        `}
+      </div>
+    `;
+  }
+
+  private renderPropertiesTab() {
+    return html`
+      <div class="edit-section">
+        <div class="edit-section__header">
+          <span class="edit-section__title">设备属性</span>
+          <button class="edit-property-add-btn" @click=${this.addFormProperty}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            添加属性
+          </button>
+        </div>
+        ${this.formProperties.length === 0 ? html`
+          <div class="edit-properties-empty">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="32" height="32" opacity="0.3">
+              <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/>
+              <rect x="9" y="3" width="6" height="4" rx="1"/>
+              <path d="M9 14l2 2 4-4"/>
+            </svg>
+            <span>暂无自定义属性</span>
+            <span class="edit-properties-empty__hint">点击「添加属性」来定义设备的数据点</span>
+          </div>
+        ` : html`
+          <div class="edit-properties-list">
+            <div class="edit-properties-header">
+              <span class="edit-properties-header__col edit-properties-header__col--name">属性名</span>
+              <span class="edit-properties-header__col edit-properties-header__col--type">类型</span>
+              <span class="edit-properties-header__col edit-properties-header__col--value">值</span>
+              <span class="edit-properties-header__col edit-properties-header__col--unit">单位</span>
+              <span class="edit-properties-header__col edit-properties-header__col--ro">只读</span>
+              <span class="edit-properties-header__col edit-properties-header__col--actions"></span>
+            </div>
+            ${this.formProperties.map((prop, i) => html`
+              <div class="edit-property-row">
+                <input type="text" class="edit-property-row__input edit-property-row__input--name"
+                  placeholder="属性名" .value=${prop.name}
+                  @input=${(e: any) => { this.formProperties[i] = { ...prop, name: e.target.value }; this.requestUpdate(); }} />
+                <select class="edit-property-row__select"
+                  .value=${prop.dataType}
+                  @change=${(e: any) => { this.formProperties[i] = { ...prop, dataType: e.target.value }; this.requestUpdate(); }}>
+                  <option value="number">number</option>
+                  <option value="string">string</option>
+                  <option value="boolean">boolean</option>
+                  <option value="json">json</option>
+                </select>
+                ${prop.dataType === 'boolean' ? html`
+                  <select class="edit-property-row__select"
+                    .value=${String(prop.value)}
+                    @change=${(e: any) => { this.formProperties[i] = { ...prop, value: e.target.value === 'true' }; this.requestUpdate(); }}>
+                    <option value="true">true</option>
+                    <option value="false">false</option>
+                  </select>
+                ` : html`
+                  <input type=${prop.dataType === 'number' ? 'number' : 'text'}
+                    class="edit-property-row__input edit-property-row__input--value"
+                    placeholder="值" .value=${prop.value ?? ''}
+                    @input=${(e: any) => { this.formProperties[i] = { ...prop, value: prop.dataType === 'number' ? Number(e.target.value) : e.target.value }; this.requestUpdate(); }} />
+                `}
+                <input type="text" class="edit-property-row__input edit-property-row__input--unit"
+                  placeholder="-" .value=${prop.unit || ''}
+                  @input=${(e: any) => { this.formProperties[i] = { ...prop, unit: e.target.value }; this.requestUpdate(); }} />
+                <label class="edit-property-row__checkbox">
+                  <input type="checkbox" ?checked=${prop.isReadOnly}
+                    @change=${(e: any) => { this.formProperties[i] = { ...prop, isReadOnly: e.target.checked }; this.requestUpdate(); }} />
+                </label>
+                <button class="edit-property-row__remove" title="删除"
+                  @click=${() => { this.formProperties = this.formProperties.filter((_, j) => j !== i); }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                  </svg>
+                </button>
+              </div>
+            `)}
+          </div>
+        `}
+      </div>
+    `;
+  }
+
+  private addFormProperty() {
+    this.formProperties = [...this.formProperties, { name: '', value: '', dataType: 'number', unit: '', isReadOnly: false }];
+    this.requestUpdate();
   }
 
   renderWizard() {
