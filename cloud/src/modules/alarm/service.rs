@@ -1,6 +1,6 @@
 // Alarm service — AlarmService, RuleEngine, AlarmSpecifications, AlarmEventHandler
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use chrono::{DateTime, Duration, Utc};
 
@@ -251,11 +251,12 @@ pub struct AlarmStatistics {
 /// 规则引擎
 pub struct RuleEngine {
     rule_repository: Arc<dyn AlarmRuleRepository>,
+    throttle: std::sync::Mutex<HashMap<(String, String), Instant>>,
 }
 
 impl RuleEngine {
     pub fn new(rule_repository: Arc<dyn AlarmRuleRepository>) -> Self {
-        Self { rule_repository }
+        Self { rule_repository, throttle: std::sync::Mutex::new(HashMap::new()) }
     }
 
     pub async fn evaluate_event(&self, event: &Event) -> AlarmResult<Vec<AlarmTrigger>> {
@@ -273,6 +274,18 @@ impl RuleEngine {
         for rule in rules {
             if !rule.is_enabled {
                 continue;
+            }
+
+            // Throttle: prevent oscillation storms (min 60s between same device+rule evaluation)
+            let throttle_key = (device_id.to_string(), rule.id.clone());
+            {
+                let mut throttle = self.throttle.lock().unwrap();
+                if let Some(last) = throttle.get(&throttle_key) {
+                    if last.elapsed() < std::time::Duration::from_secs(60) {
+                        continue;
+                    }
+                }
+                throttle.insert(throttle_key, Instant::now());
             }
 
             if let Some(trigger) = self.evaluate_rule(&rule, event).await? {
