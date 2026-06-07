@@ -282,10 +282,10 @@ impl RuleEngine {
                 // Clean stale entries (older than 5 minutes)
                 throttle
                     .retain(|_, instant| instant.elapsed() < std::time::Duration::from_secs(300));
-                if let Some(last) = throttle.get(&throttle_key) {
-                    if last.elapsed() < std::time::Duration::from_secs(60) {
-                        continue;
-                    }
+                if let Some(last) = throttle.get(&throttle_key)
+                    && last.elapsed() < std::time::Duration::from_secs(60)
+                {
+                    continue;
                 }
                 throttle.insert(throttle_key, Instant::now());
             }
