@@ -51,7 +51,15 @@ impl NotificationDispatcher {
                 let db = self.db.clone();
                 let ws_id = workspace_id.map(|s| s.to_string());
                 tokio::spawn(async move {
-                    Self::send_to_channel(&db, &channel_type, &recipients, &title, &body, ws_id.as_deref()).await;
+                    Self::send_to_channel(
+                        &db,
+                        &channel_type,
+                        &recipients,
+                        &title,
+                        &body,
+                        ws_id.as_deref(),
+                    )
+                    .await;
                 })
             })
             .collect();
@@ -189,10 +197,7 @@ impl NotificationDispatcher {
     async fn send_webhook(config: &str, title: &str, body: &str) -> Result<(), String> {
         let config: serde_json::Value = serde_json::from_str(config)
             .map_err(|e| format!("webhook config parse failed: {}", e))?;
-        let url = config
-            .get("url")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let url = config.get("url").and_then(|v| v.as_str()).unwrap_or("");
         if url.is_empty() {
             return Err("webhook URL not configured".to_string());
         }

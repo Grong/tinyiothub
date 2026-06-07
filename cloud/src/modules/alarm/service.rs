@@ -5,11 +5,10 @@ use std::{collections::HashMap, sync::Arc, time::Instant};
 use chrono::{DateTime, Duration, Utc};
 
 use super::{
+    notification::NotificationDispatcher,
     repo::{AlarmQueryCriteria, AlarmRepository, AlarmRuleRepository, TimeRange},
     types::*,
 };
-use super::notification::NotificationDispatcher;
-
 use crate::modules::event::{
     aggregates::NotificationChannelType, entities::Event, value_objects::EventType,
 };
@@ -281,7 +280,8 @@ impl RuleEngine {
             {
                 let mut throttle = self.throttle.lock().unwrap();
                 // Clean stale entries (older than 5 minutes)
-                throttle.retain(|_, instant| instant.elapsed() < std::time::Duration::from_secs(300));
+                throttle
+                    .retain(|_, instant| instant.elapsed() < std::time::Duration::from_secs(300));
                 if let Some(last) = throttle.get(&throttle_key) {
                     if last.elapsed() < std::time::Duration::from_secs(60) {
                         continue;
@@ -599,7 +599,10 @@ pub struct AlarmEventHandler {
 }
 
 impl AlarmEventHandler {
-    pub fn new(alarm_service: Arc<AlarmService>, notification_dispatcher: Arc<NotificationDispatcher>) -> Self {
+    pub fn new(
+        alarm_service: Arc<AlarmService>,
+        notification_dispatcher: Arc<NotificationDispatcher>,
+    ) -> Self {
         let rule_engine = alarm_service.rule_engine();
         Self { alarm_service, rule_engine, notification_dispatcher }
     }
@@ -650,7 +653,9 @@ impl crate::shared::event::EventHandler for AlarmEventHandler {
 
             // Dispatch notifications for this alarm
             if let Ok(Some(rule)) = self.rule_engine.get_rule(&trigger.rule_id).await {
-                self.notification_dispatcher.dispatch(&alarm, &rule, rule.workspace_id.as_deref()).await;
+                self.notification_dispatcher
+                    .dispatch(&alarm, &rule, rule.workspace_id.as_deref())
+                    .await;
             }
         }
 

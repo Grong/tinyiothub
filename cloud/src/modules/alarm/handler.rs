@@ -482,10 +482,7 @@ async fn resolve_alarm(
     match state.alarm_service.get_alarm_by_id(&id, Some(&claims.workspace_id)).await {
         Ok(Some(alarm)) => {
             if !alarm.can_resolve() {
-                return ApiResponseBuilder::error_with_code(
-                    409,
-                    "告警已解决，无法重复操作",
-                );
+                return ApiResponseBuilder::error_with_code(409, "告警已解决，无法重复操作");
             }
         }
         Ok(None) => return ApiResponseBuilder::error_with_code(404, "告警不存在"),
@@ -749,7 +746,9 @@ mod tests {
         // Verify it IS acknowledged
         use sqlx::Row;
         let row = sqlx::query("SELECT is_acknowledged FROM device_alarms WHERE id = 'alarm-done'")
-            .fetch_one(&pool).await.unwrap();
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         let is_ack: bool = row.get("is_acknowledged");
         assert!(is_ack);
     }
@@ -765,8 +764,11 @@ mod tests {
         ).execute(&pool).await.unwrap();
 
         use sqlx::Row;
-        let row = sqlx::query("SELECT is_resolved FROM device_alarms WHERE id = 'alarm-resolved-done'")
-            .fetch_one(&pool).await.unwrap();
+        let row =
+            sqlx::query("SELECT is_resolved FROM device_alarms WHERE id = 'alarm-resolved-done'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         let is_res: bool = row.get("is_resolved");
         assert!(is_res);
     }
