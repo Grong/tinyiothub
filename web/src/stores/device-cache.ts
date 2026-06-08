@@ -209,14 +209,6 @@ class DeviceCache {
       this.eventSource = null;
       this.sseConnecting = false;
 
-      // SSE 认证失败
-      if (this.reconnectAttempt === 0) {
-        window.dispatchEvent(
-          new CustomEvent('auth-error', { detail: { message: 'SSE 认证失败' } }),
-        );
-        return;
-      }
-
       this.scheduleReconnect();
     };
   }
