@@ -84,7 +84,7 @@ impl DataServer {
         device_cache: Arc<DeviceCache>,
         command_queue: CommandQueue,
     ) {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(5000));
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(100));
         loop {
             interval.tick().await;
 

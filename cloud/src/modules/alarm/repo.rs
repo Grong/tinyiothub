@@ -86,6 +86,30 @@ pub enum SortOrder {
     Desc,
 }
 
+/// Parse legacy condition format: {"operator": "gt", "value": 85} → AlarmCondition::Threshold
+fn parse_legacy_condition(json: &str) -> Result<AlarmCondition, String> {
+    let v: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("legacy parse: {}", e))?;
+    let op_str = v
+        .get("operator")
+        .and_then(|o| o.as_str())
+        .ok_or_else(|| "legacy: missing operator".to_string())?;
+    let val = v
+        .get("value")
+        .and_then(|n| n.as_f64())
+        .ok_or_else(|| "legacy: missing value".to_string())?;
+    let op = match op_str {
+        "gt" => ComparisonOperator::GreaterThan,
+        "lt" => ComparisonOperator::LessThan,
+        "gte" => ComparisonOperator::GreaterThanOrEqual,
+        "lte" => ComparisonOperator::LessThanOrEqual,
+        "eq" => ComparisonOperator::Equal,
+        "neq" => ComparisonOperator::NotEqual,
+        _ => return Err(format!("legacy: unknown operator '{}'", op_str)),
+    };
+    Ok(AlarmCondition::Threshold { operator: op, value: val })
+}
+
 /// Parse a datetime string from the database, handling both RFC3339 and SQLite formats.
 fn parse_db_datetime(s: &str) -> Result<DateTime<Utc>, String> {
     // Try RFC3339 first (format used by new code)
@@ -643,15 +667,17 @@ impl SqliteAlarmRuleRepository {
             }
         };
 
-        let condition: AlarmCondition = serde_json::from_str(&condition_json).unwrap_or_else(|e| {
-            tracing::warn!(
-                rule_id = %id,
-                condition_json = %condition_json,
-                error = %e,
-                "Failed to parse stored condition, falling back to default"
-            );
-            AlarmCondition::Threshold { operator: ComparisonOperator::GreaterThan, value: 0.0 }
-        });
+        let condition: AlarmCondition = serde_json::from_str(&condition_json)
+            .or_else(|_| parse_legacy_condition(&condition_json))
+            .unwrap_or_else(|e| {
+                tracing::warn!(
+                    rule_id = %id,
+                    condition_json = %condition_json,
+                    error = %e,
+                    "Failed to parse stored condition, falling back to default"
+                );
+                AlarmCondition::Threshold { operator: ComparisonOperator::GreaterThan, value: 0.0 }
+            });
 
         let alarm_level = AlarmLevel::parse_str(&alarm_level_str).ok_or_else(|| {
             AlarmError::InvalidRuleConfig(format!("未知的告警级别: {}", alarm_level_str))
