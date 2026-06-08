@@ -654,6 +654,7 @@ impl RuleType {
 
 /// 报警 DTO
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AlarmDto {
     pub id: String,
     pub device_id: String,
@@ -712,6 +713,7 @@ impl From<crate::modules::alarm::Alarm> for AlarmDto {
 
 /// 报警规则 DTO
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AlarmRuleDto {
     pub id: String,
     pub name: String,
@@ -753,6 +755,7 @@ impl From<crate::modules::alarm::AlarmRule> for AlarmRuleDto {
 
 /// 报警统计 DTO
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AlarmStatisticsDto {
     pub total_count: u64,
     pub active_count: u64,
