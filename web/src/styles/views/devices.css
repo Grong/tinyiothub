@@ -1104,29 +1104,33 @@
 }
 
 .level-chip {
-  padding: 6px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  padding: 8px 16px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-md);
   background: var(--bg-subtle);
-  color: var(--chip-color, var(--muted));
+  color: var(--muted);
   font-size: 13px;
   cursor: pointer;
   transition: all 0.2s var(--ease-out);
   font-weight: 500;
-  position: relative;
-  overflow: hidden;
 }
 
 .level-chip:hover {
   border-color: var(--chip-color, var(--accent));
+  color: var(--chip-color, var(--text));
   transform: translateY(-1px);
 }
 
 .level-chip--active {
-  background: color-mix(in srgb, var(--chip-color) 12%, transparent);
+  background: color-mix(in srgb, var(--chip-color) 25%, var(--bg-subtle));
   border-color: var(--chip-color);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--chip-color) 20%, transparent);
+  color: #fff;
+  font-weight: 700;
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--chip-color) 30%, transparent),
+    0 0 12px color-mix(in srgb, var(--chip-color) 15%, transparent);
   transform: scale(1.04);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.3);
 }
 
 .level-chip:active {
