@@ -674,3 +674,136 @@ impl crate::shared::event::EventHandler for AlarmEventHandler {
         50
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use sqlx::sqlite::SqlitePoolOptions;
+    use tinyiothub_core::models::event::{
+        ContentElement, DeviceEventType, EventLevel, EventSource, RichContent, TextFormat,
+    };
+    use tinyiothub_storage::sqlite::Database;
+
+    use super::*;
+    use crate::modules::alarm::repo::SqliteAlarmRuleRepository;
+
+    async fn setup_test_db(pool: &sqlx::SqlitePool) {
+        sqlx::query("PRAGMA foreign_keys = OFF").execute(pool).await.unwrap();
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS devices (
+                id TEXT PRIMARY KEY, name TEXT, workspace_id TEXT
+            )",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS device_alarm_rules (
+                id TEXT PRIMARY KEY, device_id TEXT, property_id TEXT,
+                rule_name TEXT NOT NULL, rule_type TEXT NOT NULL,
+                condition_config TEXT NOT NULL,
+                alarm_level TEXT NOT NULL,
+                is_enabled BOOLEAN NOT NULL DEFAULT true,
+                description TEXT, workspace_id TEXT, created_by TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )"#,
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    fn make_property_change_event(device_id: &str, property_name: &str, value: f64) -> Event {
+        let metadata: std::collections::HashMap<String, serde_json::Value> = [
+            ("property_id".to_string(), serde_json::Value::String(property_name.to_string())),
+            ("property_name".to_string(), serde_json::Value::String(property_name.to_string())),
+            ("value".to_string(), serde_json::Value::String(value.to_string())),
+        ]
+        .into();
+
+        let mut content = RichContent::new(
+            format!("Property Changed: {}", property_name),
+            vec![ContentElement::Text {
+                content: format!("Current value: {}", value),
+                format: TextFormat::Plain,
+            }],
+        );
+
+        for (k, v) in metadata {
+            content = content.with_metadata(k, v);
+        }
+
+        Event::new_device_event(
+            DeviceEventType::PropertyChange,
+            EventLevel::Info,
+            EventSource::device_property(
+                device_id.to_string(),
+                property_name.to_string(),
+                "test".to_string(),
+            ),
+            content,
+        )
+        .expect("failed to create test event")
+    }
+
+    #[sqlx::test]
+    async fn test_evaluate_event_triggers_alarm(pool: sqlx::SqlitePool) {
+        setup_test_db(&pool).await;
+        let db = Arc::new(Database::new(pool.clone()));
+
+        // Insert a device
+        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Insert an alarm rule: temperature > 80 → Warning
+        sqlx::query(
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+             VALUES ('rule-1', 'dev-1', 'prop-1', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, datetime('now'), datetime('now'))",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let engine = RuleEngine::new(repo);
+
+        // Simulate property change event: temperature = 85 (> 80)
+        let event = make_property_change_event("dev-1", "temperature", 85.0);
+
+        let triggers = engine.evaluate_event(&event).await.unwrap();
+
+        assert!(!triggers.is_empty(), "Should trigger alarm when value exceeds threshold");
+        assert_eq!(triggers[0].rule_id, "rule-1");
+        assert_eq!(triggers[0].alarm_level, AlarmLevel::Warning);
+        assert_eq!(triggers[0].triggered_value.as_deref(), Some("85"));
+    }
+
+    #[sqlx::test]
+    async fn test_evaluate_event_no_trigger_below_threshold(pool: sqlx::SqlitePool) {
+        setup_test_db(&pool).await;
+        let db = Arc::new(Database::new(pool.clone()));
+
+        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+             VALUES ('rule-1', 'dev-1', 'prop-1', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, datetime('now'), datetime('now'))",
+        )
+        .execute(&pool).await.unwrap();
+
+        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let engine = RuleEngine::new(repo);
+
+        // temperature = 25 (below threshold)
+        let event = make_property_change_event("dev-1", "temperature", 25.0);
+        let triggers = engine.evaluate_event(&event).await.unwrap();
+        assert!(triggers.is_empty(), "Should NOT trigger when value is below threshold");
+    }
+}
