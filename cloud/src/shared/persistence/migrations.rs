@@ -11,6 +11,7 @@ const SKIP_MIGRATIONS: &[i64] = &[
     20260107000001, // deleted: test data properties/commands for non-existent devices
     20260114000001, // deleted: test data events referencing non-existent devices
     20260418000001, // deleted: storage tenant_id for tags (already in cloud base schema)
+    20260608000001, // replaced by 20260608000002 (bug: didn't handle failed-rerun case)
 ];
 
 /// Load migrations embedded at compile time, filtering out deleted versions.
