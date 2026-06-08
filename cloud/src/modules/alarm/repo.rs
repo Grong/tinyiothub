@@ -626,19 +626,15 @@ impl SqliteAlarmRuleRepository {
             }
         };
 
-        let condition: AlarmCondition = serde_json::from_str(&condition_json)
-            .unwrap_or_else(|e| {
-                tracing::warn!(
-                    rule_id = %id,
-                    condition_json = %condition_json,
-                    error = %e,
-                    "Failed to parse stored condition, falling back to default"
-                );
-                AlarmCondition::Threshold {
-                    operator: ComparisonOperator::GreaterThan,
-                    value: 0.0,
-                }
-            });
+        let condition: AlarmCondition = serde_json::from_str(&condition_json).unwrap_or_else(|e| {
+            tracing::warn!(
+                rule_id = %id,
+                condition_json = %condition_json,
+                error = %e,
+                "Failed to parse stored condition, falling back to default"
+            );
+            AlarmCondition::Threshold { operator: ComparisonOperator::GreaterThan, value: 0.0 }
+        });
 
         let alarm_level = AlarmLevel::parse_str(&alarm_level_str).ok_or_else(|| {
             AlarmError::InvalidRuleConfig(format!("未知的告警级别: {}", alarm_level_str))
