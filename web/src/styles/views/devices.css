@@ -858,3 +858,220 @@
   }
 }
 
+/* ===== Alarm Rules Management ===== */
+
+.alarm-rules-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.alarm-rule-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 12px 14px;
+  background: var(--bg-subtle);
+  transition: background var(--duration-fast);
+}
+
+.alarm-rule-item:hover {
+  background: var(--bg);
+}
+
+.alarm-rule-item--disabled {
+  opacity: 0.55;
+}
+
+.alarm-rule-item__main {
+  min-width: 0;
+  flex: 1;
+}
+
+.alarm-rule-item__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.alarm-rule-item__name {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.alarm-rule-item__meta {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+
+.alarm-rule-item__notify-on {
+  color: var(--warning, #f59e0b);
+  font-weight: 500;
+}
+
+.alarm-rule-item__actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+/* Rule badges */
+.alarm-rule-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.alarm-rule-badge--info {
+  background: rgba(52,152,219,0.1);
+  color: var(--info, #3498db);
+}
+
+.alarm-rule-badge--warning {
+  background: rgba(245,158,11,0.1);
+  color: var(--warning, #f39c12);
+}
+
+.alarm-rule-badge--error {
+  background: rgba(231,76,60,0.1);
+  color: var(--danger, #e74c3c);
+}
+
+.alarm-rule-badge--critical {
+  background: rgba(155,89,182,0.1);
+  color: var(--critical, #9b59b6);
+}
+
+.alarm-rule-badge--enabled {
+  background: rgba(46,204,113,0.1);
+  color: var(--success, #2ecc71);
+}
+
+.alarm-rule-badge--disabled {
+  background: var(--muted-fill-10, rgba(128,128,128,0.1));
+  color: var(--muted);
+}
+
+/* Rule type tabs */
+.rule-type-tabs {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.rule-type-tab {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all var(--duration-fast);
+}
+
+.rule-type-tab:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.rule-type-tab--active {
+  background: var(--accent-subtle);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* Condition builder */
+.condition-builder {
+  margin-top: var(--space-3);
+  padding: 12px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.condition-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Level selector chips */
+.level-selector {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.level-chip {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  color: var(--chip-color, var(--muted));
+  font-size: 13px;
+  cursor: pointer;
+  transition: all var(--duration-fast);
+  font-weight: 500;
+}
+
+.level-chip:hover {
+  border-color: var(--chip-color, var(--accent));
+}
+
+.level-chip--active {
+  background: color-mix(in srgb, var(--chip-color) 12%, transparent);
+  border-color: var(--chip-color);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--chip-color) 20%, transparent);
+}
+
+/* Channel chips */
+.channel-chip {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all var(--duration-fast);
+}
+
+.channel-chip:hover {
+  border-color: var(--accent);
+}
+
+.channel-chip--active {
+  background: var(--accent-subtle);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* Notification config section */
+.notification-config {
+  margin-top: var(--space-2);
+  padding: 12px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
