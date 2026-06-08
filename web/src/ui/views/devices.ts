@@ -529,11 +529,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
     if (!deviceId) return;
     this.rulesLoading = true;
     try {
-      const res = await alarmApi.getRules({ page: 1, pageSize: 50 });
-      const allRules = (res.result as any)?.data || res.result || [];
-      this.alarmRules = (Array.isArray(allRules) ? allRules : []).filter(
-        (r: AlarmRule) => r.deviceId === deviceId
-      );
+      const res = await alarmApi.getRules({ deviceId });
+      const data = res.result;
+      this.alarmRules = Array.isArray(data) ? data as AlarmRule[] : [];
     } catch {
       this.alarmRules = [];
     } finally {
