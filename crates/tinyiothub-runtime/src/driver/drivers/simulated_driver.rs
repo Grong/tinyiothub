@@ -89,10 +89,8 @@ impl DeviceDriver for SimulatedDriver {
         // Respect the configured interval — skip regeneration if not enough time has passed
         let interval_ms = self.get_config_number("interval", 1000.0) as u64;
         let elapsed = self.last_read.elapsed().as_millis() as u64;
-        if elapsed < interval_ms {
-            if let Some(ref cached) = self.cached_values {
-                return Ok(cached.clone());
-            }
+        if elapsed < interval_ms && self.cached_values.is_some() {
+            return Ok(self.cached_values.as_ref().unwrap().clone());
         }
 
         self.tick_counter = self.tick_counter.wrapping_add(1);
