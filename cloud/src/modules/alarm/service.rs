@@ -263,7 +263,7 @@ impl RuleEngine {
             return Ok(vec![]);
         }
 
-        let device_id = event.source().source_id();
+        let device_id = event.source().device_id().unwrap_or_else(|| event.source().source_id());
         let property_id = event.content().metadata().get("property_id").and_then(|v| v.as_str());
 
         let rules = self.load_relevant_rules(device_id, property_id).await?;
