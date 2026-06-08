@@ -2060,30 +2060,26 @@ export class DevicesView extends SignalWatcher(LitElement) {
                   const condSummary = this.formatCondition(rule.condition);
                   const propName = properties.find(p => p.name === rule.propertyId)?.displayName || rule.propertyId || "—";
                   return html`
-                    <div class="alarm-rule-item ${rule.isEnabled ? '' : 'alarm-rule-item--disabled'}">
+                    <div class="alarm-rule-item ${rule.isEnabled ? '' : 'alarm-rule-item--disabled'}" style="animation: ruleFadeIn 0.35s var(--ease-out) both; animation-delay: ${Math.min(this.alarmRules.indexOf(rule) * 50, 300)}ms;">
                       <div class="alarm-rule-item__main">
                         <div class="alarm-rule-item__header">
                           <span class="alarm-rule-item__name">${rule.name}</span>
                           <span class="alarm-rule-badge alarm-rule-badge--${rule.alarmLevel.toLowerCase()}">${this.levelLabel2(rule.alarmLevel)}</span>
-                          ${rule.isEnabled
-                            ? html`<span class="alarm-rule-badge alarm-rule-badge--enabled">已启用</span>`
-                            : html`<span class="alarm-rule-badge alarm-rule-badge--disabled">已禁用</span>`
+                          ${rule.notificationConfig?.enabled
+                            ? html`<span class="alarm-rule-item__notify-icon" title="通知已开启">🔔</span>`
+                            : nothing
                           }
                         </div>
                         <div class="alarm-rule-item__meta">
                           <span>属性: ${propName}</span>
                           <span>条件: ${condSummary}</span>
-                          ${rule.notificationConfig?.enabled
-                            ? html`<span class="alarm-rule-item__notify-on">🔔 通知已开启</span>`
-                            : nothing
-                          }
                         </div>
                       </div>
                       <div class="alarm-rule-item__actions">
-                        <button class="btn btn--ghost btn--xs" @click=${() => this.toggleRule(rule)}
-                          title=${rule.isEnabled ? "禁用" : "启用"}>
-                          ${rule.isEnabled ? "禁用" : "启用"}
-                        </button>
+                        <label class="toggle-switch" title=${rule.isEnabled ? "已启用" : "已禁用"}>
+                          <input type="checkbox" .checked=${rule.isEnabled} @change=${() => this.toggleRule(rule)} />
+                          <span class="toggle-switch__slider"></span>
+                        </label>
                         <button class="btn btn--ghost btn--xs" @click=${() => this.openEditRule(rule)}>编辑</button>
                         <button class="btn btn--ghost btn--xs btn--danger-text" @click=${() => this.deleteRule(rule)}>删除</button>
                       </div>

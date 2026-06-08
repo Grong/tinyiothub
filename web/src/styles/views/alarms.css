@@ -116,6 +116,7 @@
   text-align: center;
   color: var(--success);
   font-size: 14px;
+  animation: alarmFadeIn 0.4s var(--ease-out);
 }
 .alarm-summary__warn {
   padding: var(--space-3);
@@ -124,6 +125,17 @@
   border: 1px solid var(--danger-line-15);
   font-size: 13px;
   color: var(--danger);
+  animation: alarmPulseWarn 2s var(--ease-out) infinite;
+}
+
+@keyframes alarmFadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes alarmPulseWarn {
+  0%, 100% { border-color: var(--danger-line-15); }
+  50% { border-color: var(--danger); }
 }
 
 
