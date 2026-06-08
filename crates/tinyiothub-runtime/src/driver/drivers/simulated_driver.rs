@@ -85,6 +85,7 @@ impl DeviceDriver for SimulatedDriver {
         }
     }
 
+    #[allow(clippy::collapsible_if)]
     fn read_data(&mut self) -> Result<Vec<ResultValue>, Error> {
         // Respect the configured interval — skip regeneration if not enough time has passed
         let interval_ms = self.get_config_number("interval", 1000.0) as u64;
