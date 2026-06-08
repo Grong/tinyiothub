@@ -2027,14 +2027,14 @@ export class DevicesView extends SignalWatcher(LitElement) {
       </div>
 
       <!-- Alarm rules section -->
-      <div class="card" style="overflow: visible;">
-        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-3);">
+      <div class="card alarm-rules-card">
+        <div class="alarm-rules-card__header">
           <div>
-            <div style="font-weight: 600; font-size: 14px;">告警规则</div>
-            <div style="font-size: 12px; color: var(--muted); margin-top: 2px;">管理设备的自动告警规则</div>
+            <div class="alarm-rules-card__title">告警规则</div>
+            <div class="alarm-rules-card__sub">管理设备的自动告警规则</div>
           </div>
           <button class="btn btn--primary btn--sm" @click=${this.openNewRule}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="margin-right: 4px; vertical-align: -2px;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" class="btn__icon-left">
               <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
             </svg>
             添加规则
@@ -2042,16 +2042,16 @@ export class DevicesView extends SignalWatcher(LitElement) {
         </div>
 
         ${this.rulesLoading
-          ? html`<div class="empty-center" style="padding: 24px;"><span class="loading-spinner"></span> 加载中...</div>`
+          ? html`<div class="empty-center alarm-rules-card__loading"><span class="loading-spinner"></span> 加载中...</div>`
           : this.alarmRules.length === 0
             ? html`
-              <div class="empty-center" style="padding: 32px; display: flex; flex-direction: column; align-items: center; gap: 12px;">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="40" height="40" style="color: var(--muted); opacity: 0.5;">
+              <div class="alarm-rules-empty">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="40" height="40" class="alarm-rules-empty__icon">
                   <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
                   <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
                 </svg>
-                <div style="color: var(--muted); font-size: 13px;">暂无告警规则</div>
-                <div style="color: var(--muted); font-size: 12px; opacity: 0.7;">添加规则后，设备数据变化将自动触发告警</div>
+                <div class="alarm-rules-empty__text">暂无告警规则</div>
+                <div class="alarm-rules-empty__hint">添加规则后，设备数据变化将自动触发告警</div>
               </div>
             `
             : html`
@@ -2174,7 +2174,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
           </div>
 
           <!-- Body -->
-          <div class="device-edit-body" style="padding: 20px 24px;">
+          <div class="device-edit-body rule-modal-body">
             <!-- Basic info -->
             <div class="field-group">
               <div class="field">
@@ -2201,7 +2201,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
             </div>
 
             <!-- Rule type -->
-            <div class="field">
+            <div class="field rule-modal-section">
               <label class="label">规则类型</label>
               <div class="rule-type-tabs">
                 ${ruleTypeOptions.map(opt => html`
@@ -2221,59 +2221,63 @@ export class DevicesView extends SignalWatcher(LitElement) {
                     @change=${(e: any) => { this.ruleFormOperator = e.target.value; }}>
                     ${opOptions.map(o => html`<option value=${o.value}>${o.label}</option>`)}
                   </select>
-                  <input class="input" type="number" .value=${String(this.ruleFormValue)}
+                  <input class="input condition-input--value" type="number"
+                    .value=${String(this.ruleFormValue)}
                     @input=${(e: any) => { this.ruleFormValue = parseFloat(e.target.value) || 0; }}
-                    style="width: 120px;" placeholder="阈值" />
+                    placeholder="阈值" />
                 </div>
               ` : nothing}
 
               ${this.ruleFormType === "range" ? html`
                 <div class="condition-row">
-                  <input class="input" type="number" .value=${String(this.ruleFormMin)}
+                  <input class="input condition-input--value" type="number"
+                    .value=${String(this.ruleFormMin)}
                     @input=${(e: any) => { this.ruleFormMin = parseFloat(e.target.value) || 0; }}
-                    style="width: 120px;" placeholder="最小值" />
-                  <span style="color: var(--muted);">~</span>
-                  <input class="input" type="number" .value=${String(this.ruleFormMax)}
+                    placeholder="最小值" />
+                  <span class="condition-separator">~</span>
+                  <input class="input condition-input--value" type="number"
+                    .value=${String(this.ruleFormMax)}
                     @input=${(e: any) => { this.ruleFormMax = parseFloat(e.target.value) || 0; }}
-                    style="width: 120px;" placeholder="最大值" />
+                    placeholder="最大值" />
                 </div>
               ` : nothing}
 
               ${this.ruleFormType === "change" ? html`
-                <div class="condition-row" style="flex-wrap: wrap; gap: 8px;">
+                <div class="condition-row condition-row--wrap">
                   <select class="select" .value=${this.ruleFormChangeType}
                     @change=${(e: any) => { this.ruleFormChangeType = e.target.value; }}>
                     <option value="any">任意变化</option>
                     <option value="increase">上升</option>
                     <option value="decrease">下降</option>
                   </select>
-                  <span style="color: var(--muted); font-size: 13px;">超过</span>
-                  <input class="input" type="number" .value=${String(this.ruleFormChangeThreshold)}
+                  <span class="condition-label">超过</span>
+                  <input class="input condition-input--sm" type="number"
+                    .value=${String(this.ruleFormChangeThreshold)}
                     @input=${(e: any) => { this.ruleFormChangeThreshold = parseFloat(e.target.value) || 0; }}
-                    style="width: 100px;" placeholder="阈值" />
-                  <span style="color: var(--muted); font-size: 13px;">在</span>
-                  <input class="input" type="number" .value=${String(this.ruleFormChangeWindow)}
+                    placeholder="阈值" />
+                  <span class="condition-label">在</span>
+                  <input class="input condition-input--xs" type="number"
+                    .value=${String(this.ruleFormChangeWindow)}
                     @input=${(e: any) => { this.ruleFormChangeWindow = parseInt(e.target.value) || 0; }}
-                    style="width: 80px;" placeholder="秒" />
-                  <span style="color: var(--muted); font-size: 13px;">秒内</span>
+                    placeholder="秒" />
+                  <span class="condition-label">秒内</span>
                 </div>
               ` : nothing}
 
               ${this.ruleFormType === "composite" ? html`
-                <div style="margin-bottom: 8px;">
+                <div class="composite-header">
                   <select class="select" .value=${this.ruleFormLogicOp}
                     @change=${(e: any) => { this.ruleFormLogicOp = e.target.value; }}>
                     <option value="and">AND (全部满足)</option>
                     <option value="or">OR (任一满足)</option>
                     <option value="not">NOT (取反)</option>
                   </select>
-                  <button class="btn btn--ghost btn--xs" @click=${this.addCompositeCondition}
-                    style="margin-left: 8px;">+ 添加子条件</button>
+                  <button class="btn btn--ghost btn--xs" @click=${this.addCompositeCondition}>+ 添加子条件</button>
                 </div>
                 ${this.ruleCompositeConditions.map((cond, i) => html`
-                  <div class="condition-row" style="margin-bottom: 6px; gap: 6px;">
-                    <span style="font-size: 12px; color: var(--muted); min-width: 20px;">#${i + 1}</span>
-                    <select class="select" style="flex: 1;"
+                  <div class="condition-row condition-sub-row">
+                    <span class="condition-sub-row__index">#${i + 1}</span>
+                    <select class="select condition-sub-row__op"
                       .value=${cond.type === "threshold" ? cond.operator : "greater_than"}
                       @change=${(e: any) => {
                         const c = this.ruleCompositeConditions[i];
@@ -2283,7 +2287,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
                       }}>
                       ${opOptions.map(o => html`<option value=${o.value}>${o.label}</option>`)}
                     </select>
-                    <input class="input" type="number" style="width: 80px;"
+                    <input class="input condition-input--xs" type="number"
                       .value=${String(cond.type === "threshold" ? cond.value : 0)}
                       @input=${(e: any) => {
                         const c = this.ruleCompositeConditions[i];
@@ -2299,7 +2303,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
             </div>
 
             <!-- Alarm level -->
-            <div class="field" style="margin-top: var(--space-3);">
+            <div class="field rule-modal-section">
               <label class="label">告警级别</label>
               <div class="level-selector">
                 ${levelOptions.map(lvl => {
@@ -2319,11 +2323,11 @@ export class DevicesView extends SignalWatcher(LitElement) {
             </div>
 
             <!-- Notification config -->
-            <div class="field" style="margin-top: var(--space-3);">
-              <label class="label" style="display: flex; align-items: center; gap: 8px;">
-                <input type="checkbox" .checked=${this.ruleFormNotifyEnabled}
-                  @change=${(e: any) => { this.ruleFormNotifyEnabled = e.target.checked; }}
-                  style="width: 16px; height: 16px;" />
+            <div class="field rule-modal-section">
+              <label class="label checkbox-label">
+                <input type="checkbox" class="checkbox-label__input"
+                  .checked=${this.ruleFormNotifyEnabled}
+                  @change=${(e: any) => { this.ruleFormNotifyEnabled = e.target.checked; }} />
                 启用通知
               </label>
             </div>
@@ -2331,8 +2335,8 @@ export class DevicesView extends SignalWatcher(LitElement) {
             ${this.ruleFormNotifyEnabled ? html`
               <div class="notification-config">
                 <div class="field">
-                  <label class="label" style="font-size: 12px;">通知渠道</label>
-                  <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                  <label class="label field__label-sm">通知渠道</label>
+                  <div class="channel-chips">
                     ${channelOptions.map(ch => html`
                       <button class="channel-chip ${this.ruleFormNotifyChannels.includes(ch.value) ? 'channel-chip--active' : ''}"
                         @click=${() => this.toggleChannel(ch.value)}>
@@ -2342,7 +2346,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
                   </div>
                 </div>
                 <div class="field">
-                  <label class="label" style="font-size: 12px;">接收人</label>
+                  <label class="label field__label-sm">接收人</label>
                   <input class="input" type="text" placeholder="邮箱或手机号，逗号分隔"
                     .value=${this.ruleFormNotifyRecipients}
                     @input=${(e: any) => { this.ruleFormNotifyRecipients = e.target.value; }} />
@@ -2352,7 +2356,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
           </div>
 
           <!-- Footer -->
-          <div class="modal-footer" style="padding: 16px 24px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px;">
+          <div class="rule-modal-footer">
             <button class="btn btn--ghost" @click=${this.closeRuleModal}>取消</button>
             <button class="btn btn--primary" ?disabled=${this.ruleSaving} @click=${this.saveRule}>
               ${this.ruleSaving ? "保存中..." : isEdit ? "保存修改" : "创建规则"}
