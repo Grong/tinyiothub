@@ -86,6 +86,23 @@ pub enum SortOrder {
     Desc,
 }
 
+/// Parse a datetime string from the database, handling both RFC3339 and SQLite formats.
+fn parse_db_datetime(s: &str) -> Result<DateTime<Utc>, String> {
+    // Try RFC3339 first (format used by new code)
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        return Ok(dt.with_timezone(&Utc));
+    }
+    // Try SQLite datetime format: "YYYY-MM-DD HH:MM:SS"
+    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
+        return Ok(dt.and_utc());
+    }
+    // Try ISO 8601 with 'T' separator but no timezone
+    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
+        return Ok(dt.and_utc());
+    }
+    Err(format!("unrecognized datetime format: {}", s))
+}
+
 // ============================================================================
 // SQLite Implementations
 // ============================================================================
@@ -640,12 +657,16 @@ impl SqliteAlarmRuleRepository {
             AlarmError::InvalidRuleConfig(format!("未知的告警级别: {}", alarm_level_str))
         })?;
 
-        let created_at = DateTime::parse_from_rfc3339(&created_at_str)
-            .map_err(|e| AlarmError::InternalError(format!("解析创建时间失败: {}", e)))?
-            .with_timezone(&Utc);
-        let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
-            .map_err(|e| AlarmError::InternalError(format!("解析更新时间失败: {}", e)))?
-            .with_timezone(&Utc);
+        let created_at = parse_db_datetime(&created_at_str)
+            .unwrap_or_else(|e| {
+                tracing::warn!(rule_id = %id, created_at = %created_at_str, error = %e, "Failed to parse created_at, using now");
+                Utc::now()
+            });
+        let updated_at = parse_db_datetime(&updated_at_str)
+            .unwrap_or_else(|e| {
+                tracing::warn!(rule_id = %id, updated_at = %updated_at_str, error = %e, "Failed to parse updated_at, using now");
+                Utc::now()
+            });
 
         let notification_config = NotificationConfig::default();
         let workspace_id: Option<String> = row.get("workspace_id");
