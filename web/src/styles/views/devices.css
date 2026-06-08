@@ -1083,6 +1083,13 @@
   padding: 4px 0;
 }
 
+/* Normalize select/input heights in condition builder */
+.condition-row select,
+.condition-row input {
+  height: 38px;
+  box-sizing: border-box;
+}
+
 .condition-row + .condition-row {
   border-top: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
   padding-top: 8px;
