@@ -2194,7 +2194,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
                 <select class="select" .value=${this.ruleFormPropertyId} @change=${(e: any) => { this.ruleFormPropertyId = e.target.value; }}>
                   <option value="">— 全部属性 —</option>
                   ${properties.map((p: any) => html`
-                    <option value=${p.name}>${p.displayName || p.name} (${p.dataType || "string"})</option>
+                    <option value=${p.id}>${p.displayName || p.name} (${p.dataType || "string"})</option>
                   `)}
                 </select>
               </div>
