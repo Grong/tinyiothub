@@ -100,7 +100,7 @@ impl DeviceDriver for SimulatedDriver {
         self.last_read = Instant::now();
 
         let simulation_mode = self.get_config_string("mode", "random");
-        let _temp_range = self.get_config_number("temp_range", 10.0);
+        let temp_range = self.get_config_number("temp_range", 80.0);
         let enable_noise = self.get_config_boolean("enable_noise", true);
 
         let mut results = Vec::new();
@@ -112,14 +112,17 @@ impl DeviceDriver for SimulatedDriver {
                         let temp = if simulation_mode == "fixed" {
                             25.0
                         } else {
-                            let base = 25.0;
-                            let variation = (self.tick_counter % 10) as f64;
+                            // Oscillate between ~30 and ~110 to cross alarm thresholds
+                            let mid = 70.0;
+                            let amplitude = temp_range / 2.0;
+                            let cycle = (self.tick_counter % 20) as f64 * 0.314;
+                            let variation = (cycle.sin() + 1.0) * amplitude;
                             let noise = if enable_noise {
                                 (self.rng.r#gen::<f64>() - 0.5) * 2.0
                             } else {
                                 0.0
                             };
-                            base + variation + noise
+                            mid + variation + noise
                         };
                         ResultValue::float_with_precision(property.name.clone(), temp, 2)
                     }
