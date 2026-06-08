@@ -235,14 +235,28 @@ impl DataServer {
             format: TextFormat::Plain,
         });
 
+        let mut content = RichContent::new(
+            format!("Property Changed: {} - {}", device_name, property.name),
+            elements,
+        )
+        .with_metadata(
+            "property_id".to_string(),
+            serde_json::Value::String(property.name.clone()),
+        )
+        .with_metadata(
+            "property_name".to_string(),
+            serde_json::Value::String(property.display_name.clone().unwrap_or_else(|| property.name.clone())),
+        )
+        .with_metadata("value".to_string(), serde_json::Value::String(new_value.to_string()));
+        if let Some(ref old) = old_value {
+            content = content.with_metadata("old_value".to_string(), serde_json::Value::String(old.clone()));
+        }
+
         DomainEvent::new_device_event(
             DeviceEventType::PropertyChange,
             EventLevel::Info,
             EventSource::device_property(device_id.to_string(), property.id.clone(), "data_collector".to_string()),
-            RichContent::new(
-                format!("Property Changed: {} - {}", device_name, property.name),
-                elements,
-            ),
+            content,
         )
         .ok()
     }
