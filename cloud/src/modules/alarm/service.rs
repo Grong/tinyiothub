@@ -679,7 +679,6 @@ impl crate::shared::event::EventHandler for AlarmEventHandler {
 mod tests {
     use std::sync::Arc;
 
-    use sqlx::sqlite::SqlitePoolOptions;
     use tinyiothub_core::models::event::{
         ContentElement, DeviceEventType, EventLevel, EventSource, RichContent, TextFormat,
     };
