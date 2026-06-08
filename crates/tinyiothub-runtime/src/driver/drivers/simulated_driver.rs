@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Instant;
 use tinyiothub_core::models::{device::Device, device_command::DeviceCommand};
 
 use rand::{Rng, SeedableRng, rngs::StdRng};
@@ -44,6 +45,8 @@ pub struct SimulatedDriver {
     pub retry_count: i32,
     tick_counter: u64,
     rng: StdRng,
+    last_read: Instant,
+    cached_values: Option<Vec<ResultValue>>,
 }
 
 impl SimulatedDriver {
@@ -53,6 +56,8 @@ impl SimulatedDriver {
             retry_count: 0,
             tick_counter: 0,
             rng: StdRng::from_entropy(),
+            last_read: Instant::now(),
+            cached_values: None,
         }
     }
 }
@@ -81,7 +86,17 @@ impl DeviceDriver for SimulatedDriver {
     }
 
     fn read_data(&mut self) -> Result<Vec<ResultValue>, Error> {
+        // Respect the configured interval — skip regeneration if not enough time has passed
+        let interval_ms = self.get_config_number("interval", 1000.0) as u64;
+        let elapsed = self.last_read.elapsed().as_millis() as u64;
+        if elapsed < interval_ms {
+            if let Some(ref cached) = self.cached_values {
+                return Ok(cached.clone());
+            }
+        }
+
         self.tick_counter = self.tick_counter.wrapping_add(1);
+        self.last_read = Instant::now();
 
         let simulation_mode = self.get_config_string("mode", "random");
         let _temp_range = self.get_config_number("temp_range", 10.0);
@@ -167,6 +182,7 @@ impl DeviceDriver for SimulatedDriver {
             results.push(ResultValue::string("mode".to_string(), simulation_mode));
         }
 
+        self.cached_values = Some(results.clone());
         Ok(results)
     }
 
