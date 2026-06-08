@@ -85,7 +85,7 @@ async fn test_create_alarm_rule() {
     if status == StatusCode::OK && json["code"] == 0 {
         assert!(json["result"].is_object(), "Expected alarm rule object");
         assert_eq!(json["result"]["name"], "test-high-temp-rule");
-        assert_eq!(json["result"]["alarm_level"], "warning");
+        assert_eq!(json["result"]["alarmLevel"], "warning");
     }
     // Accept error responses if DB/config isn't fully initialized
 }
@@ -180,7 +180,7 @@ async fn test_get_alarm_statistics() {
     assert_eq!(json["code"], 0, "Expected success code");
     assert!(json["result"].is_object(), "Expected statistics object");
     // Should have count fields
-    assert!(json["result"]["total_count"].is_number(), "Expected total_count field");
+    assert!(json["result"]["totalCount"].is_number(), "Expected totalCount field");
 }
 
 // ============================================================================
