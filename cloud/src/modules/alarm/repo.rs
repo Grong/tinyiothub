@@ -169,21 +169,21 @@ impl SqliteAlarmRepository {
 
         let alarm_type = AlarmType::PropertyThreshold;
 
-        let alarm_time =
-            chrono::NaiveDateTime::parse_from_str(&alarm_time_str, "%Y-%m-%d %H:%M:%S")
-                .map_err(|e| AlarmError::InternalError(format!("Parse alarm_time failed: {}", e)))?
-                .and_utc();
+        let alarm_time = parse_db_datetime(&alarm_time_str)
+            .unwrap_or_else(|e| {
+                tracing::warn!(alarm_id = %id, alarm_time = %alarm_time_str, error = %e, "Parse alarm_time failed, using now");
+                Utc::now()
+            });
 
-        let created_at =
-            chrono::NaiveDateTime::parse_from_str(&created_at_str, "%Y-%m-%d %H:%M:%S")
-                .map_err(|e| AlarmError::InternalError(format!("Parse created_at failed: {}", e)))?
-                .and_utc();
+        let created_at = parse_db_datetime(&created_at_str)
+            .unwrap_or_else(|e| {
+                tracing::warn!(alarm_id = %id, created_at = %created_at_str, error = %e, "Parse created_at failed, using now");
+                Utc::now()
+            });
 
         let acknowledgement = if is_acknowledged {
-            let acknowledged_at = acknowledged_at_str
-                .as_ref()
-                .and_then(|s| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").ok())
-                .map(|dt| dt.and_utc());
+            let acknowledged_at =
+                acknowledged_at_str.as_ref().and_then(|s| parse_db_datetime(s).ok());
 
             Some(Acknowledgement {
                 acknowledged_by: acknowledged_by.unwrap_or_default(),
@@ -197,10 +197,7 @@ impl SqliteAlarmRepository {
         let resolution_type_str: Option<String> = row.get("resolution_type");
 
         let resolution = if is_resolved {
-            let resolved_at = resolved_at_str
-                .as_ref()
-                .and_then(|s| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").ok())
-                .map(|dt| dt.and_utc());
+            let resolved_at = resolved_at_str.as_ref().and_then(|s| parse_db_datetime(s).ok());
 
             let resolution_type = resolution_type_str
                 .and_then(|s| match s.as_str() {
