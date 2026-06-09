@@ -687,6 +687,14 @@ impl crate::shared::event::EventHandler for AlarmEventHandler {
         for trigger in triggers {
             let device_id =
                 event.source().device_id().unwrap_or_else(|| event.source().source_id());
+
+            // Suppress duplicate: don't create alarm if one is already active for this device+rule
+            if let Ok(active) = self.alarm_service.get_active_alarms(Some(device_id)).await {
+                if active.iter().any(|a| a.rule_id.as_deref() == Some(&trigger.rule_id)) {
+                    continue; // already triggered, skip
+                }
+            }
+
             let alarm = Alarm::new(
                 device_id.to_string(),
                 event
