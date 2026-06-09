@@ -241,7 +241,7 @@ impl DataServer {
         )
         .with_metadata(
             "property_id".to_string(),
-            serde_json::Value::String(property.name.clone()),
+            serde_json::Value::String(property.id.clone()),
         )
         .with_metadata(
             "property_name".to_string(),
