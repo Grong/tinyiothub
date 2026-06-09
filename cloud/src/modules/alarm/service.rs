@@ -157,6 +157,17 @@ impl AlarmService {
         Ok(AlarmStatistics { total_count, active_count, acknowledged_count, resolved_count })
     }
 
+    pub async fn auto_resolve_alarm(&self, alarm_id: &str) -> AlarmResult<()> {
+        let count = self
+            .alarm_repository
+            .batch_update_status(&[alarm_id.to_string()], AlarmStatus::Resolved)
+            .await?;
+        if count > 0 {
+            tracing::info!(alarm_id = %alarm_id, "alarm_auto_resolved");
+        }
+        Ok(())
+    }
+
     pub async fn check_auto_resolution(&self) -> AlarmResult<usize> {
         let active_alarms = self.alarm_repository.find_active(None).await?;
         let mut auto_resolve_ids: Vec<String> = Vec::new();
@@ -635,23 +646,14 @@ impl AlarmEventHandler {
                         match self.rule_engine.evaluate_rule(&rule, event).await {
                             Ok(Some(_)) => continue, // still triggering
                             Ok(None) => {
-                                if let Err(e) = self
-                                    .alarm_service
-                                    .resolve_alarm(
-                                        &alarm.id,
-                                        "system".to_string(),
-                                        ResolutionType::AutoResolved,
-                                        Some("属性值恢复正常".to_string()),
-                                    )
-                                    .await
+                                if let Err(e) =
+                                    self.alarm_service.auto_resolve_alarm(&alarm.id).await
                                 {
                                     tracing::error!(
                                         "Failed to auto-resolve alarm {}: {}",
                                         alarm.id,
                                         e
                                     );
-                                } else {
-                                    tracing::info!(alarm_id = %alarm.id, device_id = %alarm.device_id, "alarm_auto_resolved");
                                 }
                             }
                             Err(e) => tracing::warn!(
