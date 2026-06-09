@@ -352,9 +352,9 @@ impl RuleEngine {
         threshold: f64,
         context: &EvaluationContext,
     ) -> AlarmResult<bool> {
-        let value = context
-            .get_numeric_value()
-            .ok_or_else(|| AlarmError::EvaluationError("无法获取数值".to_string()))?;
+        let Some(value) = context.get_numeric_value() else {
+            return Ok(false); // non-numeric property — skip, condition not met
+        };
         Ok(operator.evaluate(value, threshold))
     }
 
@@ -365,9 +365,9 @@ impl RuleEngine {
         inclusive: bool,
         context: &EvaluationContext,
     ) -> AlarmResult<bool> {
-        let value = context
-            .get_numeric_value()
-            .ok_or_else(|| AlarmError::EvaluationError("无法获取数值".to_string()))?;
+        let Some(value) = context.get_numeric_value() else {
+            return Ok(false);
+        };
 
         let below_min = if let Some(min_val) = min {
             if inclusive { value < min_val } else { value <= min_val }
@@ -390,15 +390,14 @@ impl RuleEngine {
         threshold: f64,
         context: &EvaluationContext,
     ) -> AlarmResult<bool> {
-        let current = context
-            .get_numeric_value()
-            .ok_or_else(|| AlarmError::EvaluationError("无法获取当前值".to_string()))?;
+        let Some(current) = context.get_numeric_value() else {
+            return Ok(false);
+        };
 
-        let previous = context
-            .previous_value
-            .as_ref()
-            .and_then(|v| v.parse::<f64>().ok())
-            .ok_or_else(|| AlarmError::EvaluationError("无法获取历史值".to_string()))?;
+        let Some(previous) = context.previous_value.as_ref().and_then(|v| v.parse::<f64>().ok())
+        else {
+            return Ok(false);
+        };
 
         let change = current - previous;
         let abs_change = change.abs();
