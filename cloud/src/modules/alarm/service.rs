@@ -975,6 +975,15 @@ mod integration_tests {
         let is_res: bool = row.get("is_resolved");
         assert!(!is_ack, "new alarm should not be acknowledged");
         assert!(!is_res, "new alarm should not be resolved");
+
+        // Round-trip test: read back via repo (exercises row_to_alarm datetime parsing)
+        let alarm_opt =
+            alarm_repo.find_by_id(row.get::<String, _>("id").as_str(), None).await.unwrap();
+        assert!(alarm_opt.is_some(), "Should be able to read alarm back via repo");
+        let alarm = alarm_opt.unwrap();
+        assert_eq!(alarm.device_id, "dev-1");
+        assert_eq!(alarm.alarm_level, AlarmLevel::Warning);
+        assert_eq!(alarm.alarm_value.as_deref(), Some("85"));
     }
 
     #[sqlx::test]
