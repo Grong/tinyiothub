@@ -670,6 +670,7 @@ impl AlarmEventHandler {
 
 #[async_trait::async_trait]
 impl crate::shared::event::EventHandler for AlarmEventHandler {
+    #[allow(clippy::collapsible_if)]
     async fn handle(&self, event: &Event) -> tinyiothub_core::error::Result<()> {
         let triggers = self
             .rule_engine
