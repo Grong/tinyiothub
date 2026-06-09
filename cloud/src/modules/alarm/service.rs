@@ -269,9 +269,9 @@ impl RuleEngine {
         Self { rule_repository, throttle: std::sync::Mutex::new(HashMap::new()) }
     }
 
-    pub async fn evaluate_event(&self, event: &Event) -> AlarmResult<Vec<AlarmTrigger>> {
+    pub async fn evaluate_event(&self, event: &Event) -> AlarmResult<EvaluationResult> {
         if !matches!(event.event_type(), EventType::Device(_)) {
-            return Ok(vec![]);
+            return Ok(EvaluationResult::default());
         }
 
         let device_id = event.source().device_id().unwrap_or_else(|| event.source().source_id());
@@ -280,6 +280,7 @@ impl RuleEngine {
         let rules = self.load_relevant_rules(device_id, property_id).await?;
 
         let mut triggers = Vec::new();
+        let mut non_triggered_rule_ids = Vec::new();
 
         for rule in rules {
             if !rule.is_enabled {
@@ -303,10 +304,12 @@ impl RuleEngine {
 
             if let Some(trigger) = self.evaluate_rule(&rule, event).await? {
                 triggers.push(trigger);
+            } else {
+                non_triggered_rule_ids.push(rule.id.clone());
             }
         }
 
-        Ok(triggers)
+        Ok(EvaluationResult { triggers, non_triggered_rule_ids })
     }
 
     pub async fn evaluate_rule(
@@ -502,6 +505,13 @@ impl RuleEngine {
     }
 }
 
+/// Result of evaluating all rules for one event.
+#[derive(Debug, Clone, Default)]
+pub struct EvaluationResult {
+    pub triggers: Vec<AlarmTrigger>,
+    pub non_triggered_rule_ids: Vec<String>,
+}
+
 /// 报警触发信息
 #[derive(Debug, Clone)]
 pub struct AlarmTrigger {
@@ -619,9 +629,12 @@ impl AlarmEventHandler {
 
     #[allow(clippy::collapsible_if)]
     /// Auto-resolve active alarms when property values return to normal.
-    async fn auto_resolve_recovered_alarms(&self, event: &Event) {
+    async fn auto_resolve_recovered_alarms(
+        &self,
+        event: &Event,
+        non_triggered_rule_ids: &[String],
+    ) {
         let device_id = event.source().device_id().unwrap_or_else(|| event.source().source_id());
-        let property_id = event.content().metadata().get("property_id").and_then(|v| v.as_str());
 
         let active_alarms = match self.alarm_service.get_active_alarms(Some(device_id)).await {
             Ok(alarms) => alarms,
@@ -632,37 +645,14 @@ impl AlarmEventHandler {
         };
 
         for alarm in active_alarms {
-            let matches_property = alarm.property_id.is_none()
-                || property_id.is_none()
-                || alarm.property_id.as_deref() == property_id;
-
-            if !matches_property {
-                continue;
+            // Only resolve alarms whose rule was just evaluated and did NOT trigger
+            match alarm.rule_id {
+                Some(ref rule_id) if non_triggered_rule_ids.contains(rule_id) => {}
+                _ => continue,
             }
 
-            if let Some(ref rule_id) = alarm.rule_id {
-                if let Ok(Some(rule)) = self.rule_engine.get_rule(rule_id).await {
-                    if rule.is_enabled {
-                        match self.rule_engine.evaluate_rule(&rule, event).await {
-                            Ok(Some(_)) => continue, // still triggering
-                            Ok(None) => {
-                                if let Err(e) =
-                                    self.alarm_service.auto_resolve_alarm(&alarm.id).await
-                                {
-                                    tracing::error!(
-                                        "Failed to auto-resolve alarm {}: {}",
-                                        alarm.id,
-                                        e
-                                    );
-                                }
-                            }
-                            Err(e) => tracing::warn!(
-                                "Rule re-evaluation failed during auto-resolve: {}",
-                                e
-                            ),
-                        }
-                    }
-                }
+            if let Err(e) = self.alarm_service.auto_resolve_alarm(&alarm.id).await {
+                tracing::error!("Failed to auto-resolve alarm {}: {}", alarm.id, e);
             }
         }
     }
@@ -672,20 +662,22 @@ impl AlarmEventHandler {
 impl crate::shared::event::EventHandler for AlarmEventHandler {
     #[allow(clippy::collapsible_if)]
     async fn handle(&self, event: &Event) -> tinyiothub_core::error::Result<()> {
-        let triggers = self
+        let result = self
             .rule_engine
             .evaluate_event(event)
             .await
             .map_err(|e| tinyiothub_core::error::Error::Internal(e.to_string()))?;
 
-        // Auto-resolve: when value returns to normal, resolve active alarms for rules
-        // that are attached to this device but did NOT trigger
-        if triggers.is_empty() {
-            self.auto_resolve_recovered_alarms(event).await;
+        // Auto-resolve alarms for rules that were evaluated but did NOT trigger
+        if !result.non_triggered_rule_ids.is_empty() {
+            self.auto_resolve_recovered_alarms(event, &result.non_triggered_rule_ids).await;
+        }
+
+        if result.triggers.is_empty() {
             return Ok(());
         }
 
-        for trigger in triggers {
+        for trigger in result.triggers {
             let device_id =
                 event.source().device_id().unwrap_or_else(|| event.source().source_id());
 
@@ -848,7 +840,7 @@ mod tests {
         // Simulate property change event: temperature = 85 (> 80)
         let event = make_property_change_event("dev-1", "temperature", 85.0);
 
-        let triggers = engine.evaluate_event(&event).await.unwrap();
+        let triggers = engine.evaluate_event(&event).await.unwrap().triggers;
 
         assert!(!triggers.is_empty(), "Should trigger alarm when value exceeds threshold");
         assert_eq!(triggers[0].rule_id, "rule-1");
@@ -876,7 +868,7 @@ mod tests {
 
         // temperature = 25 (below threshold)
         let event = make_property_change_event("dev-1", "temperature", 25.0);
-        let triggers = engine.evaluate_event(&event).await.unwrap();
+        let triggers = engine.evaluate_event(&event).await.unwrap().triggers;
         assert!(triggers.is_empty(), "Should NOT trigger when value is below threshold");
     }
 }
