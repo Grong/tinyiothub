@@ -14,7 +14,7 @@ export class AlarmsView extends LitElement {
   @state() pageSize = 20;
   @state() totalPages = 0;
   @state() totalCount = 0;
-  @state() filterStatus = "";
+  @state() filterStatus = "active";
   @state() filterLevel = "";
 
   @state() showAckModal = false;
@@ -182,7 +182,7 @@ export class AlarmsView extends LitElement {
           <option value="">全部状态</option>
           <option value="active">活跃</option>
           <option value="acknowledged">已确认</option>
-          <option value="Resolved">已解决</option>
+          <option value="resolved">已解决</option>
         </select>
         <select class="select filter-bar__select" .value=${this.filterLevel} @change=${(e: Event) => { this.filterLevel = (e.target as HTMLSelectElement).value; this.page = 1; this.loadData(); }}>
           <option value="">全部级别</option>
