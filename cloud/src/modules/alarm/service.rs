@@ -832,27 +832,46 @@ mod integration_tests {
         sqlx::query("DROP TABLE IF EXISTS device_properties").execute(pool).await.unwrap();
         sqlx::query("DROP TABLE IF EXISTS devices").execute(pool).await.unwrap();
 
-        sqlx::query("CREATE TABLE devices (id TEXT PRIMARY KEY, name TEXT, workspace_id TEXT)")
-            .execute(pool)
-            .await
-            .unwrap();
-        sqlx::query("CREATE TABLE device_properties (id TEXT PRIMARY KEY, device_id TEXT, name TEXT, data_type TEXT NOT NULL DEFAULT 'float')")
-            .execute(pool).await.unwrap();
+        // Match production schema with FK constraints
         sqlx::query(
-            r#"CREATE TABLE device_alarm_rules (
-            id TEXT PRIMARY KEY, device_id TEXT, property_id TEXT,
-            rule_name TEXT NOT NULL, rule_type TEXT NOT NULL,
-            condition_config TEXT NOT NULL, alarm_level TEXT NOT NULL,
-            is_enabled BOOLEAN NOT NULL DEFAULT true, description TEXT,
-            workspace_id TEXT, created_by TEXT,
-            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-        )"#,
+            "CREATE TABLE devices (
+            id TEXT PRIMARY KEY, name TEXT, display_name TEXT, workspace_id TEXT,
+            driver_name TEXT, device_type TEXT, protocol_type TEXT, status TEXT DEFAULT 'online',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
         )
         .execute(pool)
         .await
         .unwrap();
         sqlx::query(
-            r#"CREATE TABLE device_alarms (
+            "CREATE TABLE device_properties (
+            id TEXT PRIMARY KEY, device_id TEXT NOT NULL, name TEXT NOT NULL,
+            data_type TEXT NOT NULL DEFAULT 'float',
+            FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+        )",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE device_alarm_rules (
+            id TEXT PRIMARY KEY, device_id TEXT, property_id TEXT,
+            rule_name TEXT NOT NULL, rule_type TEXT NOT NULL,
+            condition_config TEXT NOT NULL, alarm_level TEXT NOT NULL,
+            is_enabled BOOLEAN NOT NULL DEFAULT true, description TEXT,
+            workspace_id TEXT, created_by TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE,
+            FOREIGN KEY (property_id) REFERENCES device_properties(id) ON DELETE CASCADE
+        )",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE device_alarms (
             id TEXT PRIMARY KEY, device_id TEXT NOT NULL, property_id TEXT, rule_id TEXT,
             alarm_level TEXT NOT NULL, alarm_message TEXT NOT NULL,
             alarm_value TEXT, threshold_value TEXT, alarm_time TEXT NOT NULL,
@@ -860,12 +879,18 @@ mod integration_tests {
             acknowledged_by TEXT, acknowledged_at TEXT, acknowledged_note TEXT,
             is_resolved BOOLEAN NOT NULL DEFAULT false,
             resolved_by TEXT, resolved_at TEXT, resolved_note TEXT,
-            resolution_type TEXT, created_at TEXT NOT NULL
-        )"#,
+            resolution_type TEXT, workspace_id TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE,
+            FOREIGN KEY (property_id) REFERENCES device_properties(id) ON DELETE SET NULL,
+            FOREIGN KEY (rule_id) REFERENCES device_alarm_rules(id) ON DELETE SET NULL
+        )",
         )
         .execute(pool)
         .await
         .unwrap();
+
+        sqlx::query("PRAGMA foreign_keys = ON").execute(pool).await.unwrap();
     }
 
     fn make_test_event(
