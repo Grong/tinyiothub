@@ -606,6 +606,7 @@ impl AlarmEventHandler {
         Self { alarm_service, rule_engine, notification_dispatcher }
     }
 
+    #[allow(clippy::collapsible_if)]
     /// Auto-resolve active alarms when property values return to normal.
     async fn auto_resolve_recovered_alarms(&self, event: &Event) {
         let device_id = event.source().device_id().unwrap_or_else(|| event.source().source_id());
