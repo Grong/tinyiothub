@@ -74,11 +74,11 @@ export class AlarmsView extends LitElement {
   }
 
   statusLabel(status: string): string {
-    switch (status) {
-      case "Active": return "活跃";
-      case "Acknowledged": return "已确认";
-      case "Resolved": return "已解决";
-      case "Suppressed": return "已抑制";
+    switch (status?.toLowerCase()) {
+      case "active": return "活跃";
+      case "acknowledged": return "已确认";
+      case "resolved": return "已解决";
+      case "suppressed": return "已抑制";
       default: return status;
     }
   }
@@ -180,8 +180,8 @@ export class AlarmsView extends LitElement {
       <div class="filter-bar">
         <select class="select filter-bar__select" .value=${this.filterStatus} @change=${(e: Event) => { this.filterStatus = (e.target as HTMLSelectElement).value; this.page = 1; this.loadData(); }}>
           <option value="">全部状态</option>
-          <option value="Active">活跃</option>
-          <option value="Acknowledged">已确认</option>
+          <option value="active">活跃</option>
+          <option value="acknowledged">已确认</option>
           <option value="Resolved">已解决</option>
         </select>
         <select class="select filter-bar__select" .value=${this.filterLevel} @change=${(e: Event) => { this.filterLevel = (e.target as HTMLSelectElement).value; this.page = 1; this.loadData(); }}>
@@ -219,20 +219,20 @@ export class AlarmsView extends LitElement {
                   <td class="cell-truncate data-table__cell-sm">${a.message}</td>
                   <td>
                     <span class="status-badge">
-                      <span class="status-dot" style="background: ${a.status === 'Active' ? 'var(--danger)' : a.status === 'Acknowledged' ? 'var(--warning)' : 'var(--success)'};"></span>
+                      <span class="status-dot" style="background: ${a.status?.toLowerCase() === 'active' ? 'var(--danger)' : a.status?.toLowerCase() === 'acknowledged' ? 'var(--warning)' : 'var(--success)'};"></span>
                       <span class="status-badge__label">${this.statusLabel(a.status)}</span>
                     </span>
                   </td>
                   <td class="cell-muted">${a.alarmTime?.slice(0, 16) || a.createdAt?.slice(0, 16)}</td>
                   <td class="cell-actions">
-                    ${a.status === "Active" ? html`
+                    ${a.status?.toLowerCase() === "active" ? html`
                       <button class="btn btn--ghost btn--sm" @click=${() => this.openAck(a)}>确认</button>
                       <button class="btn btn--ghost btn--sm btn--success-text" @click=${() => this.openResolve(a)}>解决</button>
                     ` : nothing}
-                    ${a.status === "Acknowledged" ? html`
+                    ${a.status?.toLowerCase() === "acknowledged" ? html`
                       <button class="btn btn--ghost btn--sm btn--success-text" @click=${() => this.openResolve(a)}>解决</button>
                     ` : nothing}
-                    ${a.status === "Resolved" ? html`
+                    ${a.status?.toLowerCase() === "resolved" ? html`
                       <span class="inline-muted">-</span>
                     ` : nothing}
                   </td>
