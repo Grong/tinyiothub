@@ -113,7 +113,16 @@ async fn list_alarms(
             let total = state.alarm_service.count_alarms(criteria).await.unwrap_or(0);
             let total_pages = ((total as f64) / (page_size as f64)).ceil() as u32;
 
-            let data: Vec<AlarmDto> = alarms.into_iter().map(AlarmDto::from).collect();
+            let pool = state.db_pool();
+            let device_names = load_device_names_map(&pool, &alarms).await;
+            let data: Vec<AlarmDto> = alarms
+                .into_iter()
+                .map(|a| {
+                    let mut dto = AlarmDto::from(a);
+                    dto.device_name = device_names.get(&dto.device_id).cloned();
+                    dto
+                })
+                .collect();
 
             ApiResponseBuilder::success(PaginatedResponse {
                 data,
@@ -187,6 +196,31 @@ async fn get_recent_alarms(
             ApiResponseBuilder::error("获取最新告警列表失败".to_string())
         }
     }
+}
+
+/// Batch load device names for a list of alarms.
+async fn load_device_names_map(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    alarms: &[crate::modules::alarm::Alarm],
+) -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    if alarms.is_empty() {
+        return map;
+    }
+    let placeholders = vec!["?"; alarms.len()].join(",");
+    let query = format!("SELECT id, name FROM devices WHERE id IN ({})", placeholders);
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(query));
+    for a in alarms {
+        q = q.bind(&a.device_id);
+    }
+    let rows = q.fetch_all(pool).await.unwrap_or_default();
+    for row in rows {
+        use sqlx::Row;
+        let id: String = row.get("id");
+        let name: String = row.get("name");
+        map.insert(id, name);
+    }
+    map
 }
 
 async fn get_recent_alarms_list(
