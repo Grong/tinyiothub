@@ -532,7 +532,10 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.alarmsLoading = true;
     try {
       const res = await alarmApi.getAlarms({ deviceIds: [deviceId], page: 1, pageSize: 10 });
-      this.deviceAlarms = (res.result as any)?.data || [];
+      const alarmData = res.result as any;
+      if (alarmData) {
+        this.deviceAlarms = alarmData.data || [];
+      }
     } catch {
       this.deviceAlarms = [];
     } finally {
