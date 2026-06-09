@@ -622,8 +622,10 @@ impl crate::shared::event::EventHandler for AlarmEventHandler {
         }
 
         for trigger in triggers {
+            let device_id =
+                event.source().device_id().unwrap_or_else(|| event.source().source_id());
             let alarm = Alarm::new(
-                event.source().source_id().to_string(),
+                device_id.to_string(),
                 event
                     .content()
                     .metadata()
