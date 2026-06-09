@@ -605,6 +605,64 @@ impl AlarmEventHandler {
         let rule_engine = alarm_service.rule_engine();
         Self { alarm_service, rule_engine, notification_dispatcher }
     }
+
+    /// Auto-resolve active alarms when property values return to normal.
+    async fn auto_resolve_recovered_alarms(&self, event: &Event) {
+        let device_id = event.source().device_id().unwrap_or_else(|| event.source().source_id());
+        let property_id = event.content().metadata().get("property_id").and_then(|v| v.as_str());
+
+        let active_alarms = match self.alarm_service.get_active_alarms(Some(device_id)).await {
+            Ok(alarms) => alarms,
+            Err(e) => {
+                tracing::error!("Failed to get active alarms for auto-resolve: {}", e);
+                return;
+            }
+        };
+
+        for alarm in active_alarms {
+            let matches_property = alarm.property_id.is_none()
+                || property_id.is_none()
+                || alarm.property_id.as_deref() == property_id;
+
+            if !matches_property {
+                continue;
+            }
+
+            if let Some(ref rule_id) = alarm.rule_id {
+                if let Ok(Some(rule)) = self.rule_engine.get_rule(rule_id).await {
+                    if rule.is_enabled {
+                        match self.rule_engine.evaluate_rule(&rule, event).await {
+                            Ok(Some(_)) => continue, // still triggering
+                            Ok(None) => {
+                                if let Err(e) = self
+                                    .alarm_service
+                                    .resolve_alarm(
+                                        &alarm.id,
+                                        "system".to_string(),
+                                        ResolutionType::AutoResolved,
+                                        Some("属性值恢复正常".to_string()),
+                                    )
+                                    .await
+                                {
+                                    tracing::error!(
+                                        "Failed to auto-resolve alarm {}: {}",
+                                        alarm.id,
+                                        e
+                                    );
+                                } else {
+                                    tracing::info!(alarm_id = %alarm.id, device_id = %alarm.device_id, "alarm_auto_resolved");
+                                }
+                            }
+                            Err(e) => tracing::warn!(
+                                "Rule re-evaluation failed during auto-resolve: {}",
+                                e
+                            ),
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -616,7 +674,10 @@ impl crate::shared::event::EventHandler for AlarmEventHandler {
             .await
             .map_err(|e| tinyiothub_core::error::Error::Internal(e.to_string()))?;
 
+        // Auto-resolve: when value returns to normal, resolve active alarms for rules
+        // that are attached to this device but did NOT trigger
         if triggers.is_empty() {
+            self.auto_resolve_recovered_alarms(event).await;
             return Ok(());
         }
 

@@ -531,10 +531,10 @@ export class DevicesView extends SignalWatcher(LitElement) {
     if (!deviceId) return;
     this.alarmsLoading = true;
     try {
-      const res = await alarmApi.getAlarms({ page: 1, pageSize: 50 });
+      const res = await alarmApi.getAlarms({ statuses: ["active"], page: 1, pageSize: 50 });
       const alarmData = res.result as any;
       const allAlarms = alarmData?.data || [];
-      this.deviceAlarms = allAlarms.filter((a: any) => a.deviceId === deviceId).slice(0, 10);
+      this.deviceAlarms = allAlarms.filter((a: any) => a.deviceId === deviceId);
     } catch {
       this.deviceAlarms = [];
     } finally {
@@ -2026,36 +2026,42 @@ export class DevicesView extends SignalWatcher(LitElement) {
     const properties = profile.properties || [];
 
     return html`
-      <!-- Device alarm list -->
+      <!-- Active alarms — real-time display -->
       <div class="card" style="margin-top: var(--space-4);">
-        <div class="alarm-rules-card__header">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-3);">
           <div>
-            <div class="alarm-rules-card__title">告警记录</div>
-            <div class="alarm-rules-card__sub">该设备最近的告警</div>
+            <div class="alarm-rules-card__title">实时告警</div>
+            <div class="alarm-rules-card__sub">当前活跃的告警，恢复正常后自动消失</div>
           </div>
+          <button class="btn btn--ghost btn--xs" @click=${this.loadDeviceAlarms} ?disabled=${this.alarmsLoading}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="vertical-align: -2px;">
+              <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+            </svg>
+          </button>
         </div>
         ${this.alarmsLoading
           ? html`<div class="alarm-rules-card__loading"><span class="loading-spinner"></span> 加载中...</div>`
           : this.deviceAlarms.length === 0
-            ? html`<div class="alarm-rules-empty"><div class="alarm-rules-empty__text">暂无告警记录</div></div>`
+            ? html`<div class="alarm-rules-empty">
+                <div class="alarm-rules-empty__text" style="color: var(--success);">🎉 无活跃告警</div>
+                <div class="alarm-rules-empty__hint">一切正常</div>
+              </div>`
             : html`
-              <table class="data-table" style="margin: 0;">
-                <thead>
-                  <tr>
-                    <th>级别</th><th>消息</th><th>状态</th><th>时间</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${this.deviceAlarms.map((a: any) => html`
-                    <tr>
-                      <td><span class="alarm-rule-badge alarm-rule-badge--${(a.alarmLevel || '').toLowerCase()}">${this.levelLabel2(a.alarmLevel || '')}</span></td>
-                      <td class="data-table__cell-sm">${a.message}</td>
-                      <td>${this.statusLabel2(a.status || '')}</td>
-                      <td class="cell-muted">${(a.alarmTime || a.createdAt || '').slice(0, 16)}</td>
-                    </tr>
-                  `)}
-                </tbody>
-              </table>
+              <div class="alarm-rules-list">
+                ${this.deviceAlarms.map((a: any) => html`
+                  <div class="alarm-rule-item" style="animation: ruleFadeIn 0.35s var(--ease-out) both;">
+                    <div class="alarm-rule-item__main">
+                      <div class="alarm-rule-item__header">
+                        <span class="alarm-rule-badge alarm-rule-badge--${(a.alarmLevel || '').toLowerCase()}">${this.levelLabel2(a.alarmLevel || '')}</span>
+                        <span class="alarm-rule-item__name">${a.message}</span>
+                      </div>
+                      <div class="alarm-rule-item__meta">
+                        <span>${(a.alarmTime || a.createdAt || '').slice(0, 16)}</span>
+                      </div>
+                    </div>
+                  </div>
+                `)}
+              </div>
             `
         }
       </div>
