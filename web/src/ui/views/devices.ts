@@ -190,6 +190,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
   @state() showRuleModal = false;
   @state() editingRule: AlarmRule | null = null;
   @state() ruleSaving = false;
+  // Device alarm list
+  @state() deviceAlarms: import("../../types/index.js").Alarm[] = [];
+  @state() alarmsLoading = false;
   // Rule form
   @state() ruleFormName = "";
   @state() ruleFormDesc = "";
@@ -519,6 +522,21 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.detailTab = key;
     if (key === "alarms") {
       this.loadAlarmRules();
+      this.loadDeviceAlarms();
+    }
+  }
+
+  async loadDeviceAlarms() {
+    const deviceId = this.selectedDevice?.device?.id;
+    if (!deviceId) return;
+    this.alarmsLoading = true;
+    try {
+      const res = await alarmApi.getAlarms({ deviceIds: [deviceId], page: 1, pageSize: 10 });
+      this.deviceAlarms = (res.result as any)?.data || [];
+    } catch {
+      this.deviceAlarms = [];
+    } finally {
+      this.alarmsLoading = false;
     }
   }
 
@@ -2024,6 +2042,40 @@ export class DevicesView extends SignalWatcher(LitElement) {
         }
       </div>
 
+      <!-- Device alarm list -->
+      <div class="card" style="margin-top: var(--space-4);">
+        <div class="alarm-rules-card__header">
+          <div>
+            <div class="alarm-rules-card__title">告警记录</div>
+            <div class="alarm-rules-card__sub">该设备最近的告警</div>
+          </div>
+        </div>
+        ${this.alarmsLoading
+          ? html`<div class="alarm-rules-card__loading"><span class="loading-spinner"></span> 加载中...</div>`
+          : this.deviceAlarms.length === 0
+            ? html`<div class="alarm-rules-empty"><div class="alarm-rules-empty__text">暂无告警记录</div></div>`
+            : html`
+              <table class="data-table" style="margin: 0;">
+                <thead>
+                  <tr>
+                    <th>级别</th><th>消息</th><th>状态</th><th>时间</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${this.deviceAlarms.map((a: any) => html`
+                    <tr>
+                      <td><span class="alarm-rule-badge alarm-rule-badge--${(a.alarmLevel || '').toLowerCase()}">${this.levelLabel2(a.alarmLevel || '')}</span></td>
+                      <td class="data-table__cell-sm">${a.message}</td>
+                      <td>${this.statusLabel2(a.status || '')}</td>
+                      <td class="cell-muted">${(a.alarmTime || a.createdAt || '').slice(0, 16)}</td>
+                    </tr>
+                  `)}
+                </tbody>
+              </table>
+            `
+        }
+      </div>
+
       <!-- Alarm rules section -->
       <div class="card alarm-rules-card">
         <div class="alarm-rules-card__header">
@@ -2120,8 +2172,14 @@ export class DevicesView extends SignalWatcher(LitElement) {
   }
 
   levelLabel2(level: string): string {
-    const m: Record<string, string> = { Info: "信息", Warning: "警告", Error: "错误", Critical: "严重" };
+    const m: Record<string, string> = { Info: "信息", Warning: "警告", Error: "错误", Critical: "严重", info: "信息", warning: "警告", error: "错误", critical: "严重" };
     return m[level] || level;
+  }
+
+  statusLabel2(status: string): string {
+    const s = status?.toLowerCase();
+    const m: Record<string, string> = { active: "活跃", acknowledged: "已确认", resolved: "已解决", suppressed: "已抑制" };
+    return m[s] || status;
   }
 
   renderRuleModal(_deviceId: string, properties: any[]) {
