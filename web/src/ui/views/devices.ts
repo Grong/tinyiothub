@@ -2023,27 +2023,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
   renderDetailAlarms() {
     const profile = this.selectedDevice;
     if (!profile) return nothing;
-    const ov = profile.overview;
     const properties = profile.properties || [];
 
     return html`
-      <!-- Active alarm summary -->
-      <div class="card alarm-card-wrap">
-        <div class="alarm-summary">
-          <div class="alarm-summary__count" style="color: ${ov.activeAlarms > 0 ? 'var(--danger)' : 'var(--success)'};">
-            ${ov.activeAlarms}
-          </div>
-          <div>
-            <div class="alarm-summary__label">活跃告警</div>
-            <div class="alarm-summary__hint">规则触发后将自动生成告警</div>
-          </div>
-        </div>
-        ${ov.activeAlarms === 0
-          ? html`<div class="alarm-summary__success">暂无活跃告警</div>`
-          : html`<div class="alarm-summary__warn">存在 ${ov.activeAlarms} 个活跃告警需要处理</div>`
-        }
-      </div>
-
       <!-- Device alarm list -->
       <div class="card" style="margin-top: var(--space-4);">
         <div class="alarm-rules-card__header">
