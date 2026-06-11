@@ -14,7 +14,7 @@ export class AlarmsView extends LitElement {
   @state() pageSize = 20;
   @state() totalPages = 0;
   @state() totalCount = 0;
-  @state() filterStatus = "active";
+  @state() filterStatus = "";
   @state() filterLevel = "";
 
   @state() showAckModal = false;
