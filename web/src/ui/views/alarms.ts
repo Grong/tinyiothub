@@ -164,34 +164,51 @@ export class AlarmsView extends LitElement {
 
   renderTable() {
     return html`
-      <div class="alarm-table-wrap">
-        <div class="alarm-table-scroll">
-          ${this.alarms.map((a, i) => html`
-            <div class="alarm-row ${a.status?.toLowerCase() === 'resolved' ? 'alarm-row--resolved' : ''}"
-              style="--row-color: ${this.levelColor(a.alarmLevel)}; animation: alarmRowIn 0.35s var(--ease-out) both; animation-delay: ${Math.min(i * 40, 200)}ms">
-              <div class="alarm-row__bar" style="background: ${this.levelColor(a.alarmLevel)}"></div>
-              <div class="alarm-row__body">
-                <div class="alarm-row__top">
-                  <span class="alarm-row__level" style="color: ${this.levelColor(a.alarmLevel)}">${this.levelLabel(a.alarmLevel)}</span>
-                  <span class="alarm-row__device">${a.deviceName || a.deviceId?.slice(0, 12) || "—"}</span>
-                  <span class="alarm-row__status" style="color: ${this.statusColor(a.status)}; background: ${this.statusColor(a.status)}18">
-                    ${this.statusLabel(a.status)}
+      <div class="card table-container">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>级别</th>
+              <th>设备</th>
+              <th>告警信息</th>
+              <th>状态</th>
+              <th>时间</th>
+              <th class="cell-actions">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${this.alarms.map((a, i) => html`
+              <tr class="${a.status?.toLowerCase() === 'resolved' ? 'row--resolved' : ''}"
+                style="animation: alarmRowIn 0.3s var(--ease-out) both; animation-delay: ${Math.min(i * 30, 150)}ms">
+                <td>
+                  <span class="status-badge">
+                    <span class="status-dot" style="background: ${this.levelColor(a.alarmLevel)}"></span>
+                    <span class="status-badge__label">${this.levelLabel(a.alarmLevel)}</span>
                   </span>
-                  <span class="alarm-row__time">${(a.alarmTime || a.createdAt || "").slice(0, 16)}</span>
-                </div>
-                <div class="alarm-row__msg">${a.message}</div>
-                ${a.status?.toLowerCase() !== "resolved" ? html`
-                  <div class="alarm-row__actions">
-                    ${a.status?.toLowerCase() === "active" ? html`
-                      <button class="alarm-action-btn" @click=${() => this.openAck(a)}>确认</button>
-                    ` : nothing}
-                    <button class="alarm-action-btn alarm-action-btn--resolve" @click=${() => this.openResolve(a)}>解决</button>
-                  </div>
-                ` : nothing}
-              </div>
-            </div>
-          `)}
-        </div>
+                </td>
+                <td class="data-table__cell-sm">${a.deviceName || a.deviceId?.slice(0, 12) || "—"}</td>
+                <td class="cell-truncate data-table__cell-sm">${a.message}</td>
+                <td>
+                  <span class="status-badge">
+                    <span class="status-dot" style="background: ${this.statusColor(a.status)}"></span>
+                    <span class="status-badge__label">${this.statusLabel(a.status)}</span>
+                  </span>
+                </td>
+                <td class="cell-muted">${(a.alarmTime || a.createdAt || "").slice(0, 16)}</td>
+                <td class="cell-actions">
+                  ${a.status?.toLowerCase() === "active" ? html`
+                    <button class="btn btn--ghost btn--sm" @click=${() => this.openAck(a)}>确认</button>
+                    <button class="btn btn--ghost btn--sm btn--success-text" @click=${() => this.openResolve(a)}>解决</button>
+                  ` : nothing}
+                  ${a.status?.toLowerCase() === "acknowledged" ? html`
+                    <button class="btn btn--ghost btn--sm btn--success-text" @click=${() => this.openResolve(a)}>解决</button>
+                  ` : nothing}
+                  ${a.status?.toLowerCase() === "resolved" ? html`<span class="inline-muted">—</span>` : nothing}
+                </td>
+              </tr>
+            `)}
+          </tbody>
+        </table>
       </div>
     `;
   }

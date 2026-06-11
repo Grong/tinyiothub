@@ -1,12 +1,6 @@
 /* ============================================
-   Alarm Center — Industrial Control Room
+   Alarm Center
    ============================================ */
-
-.alarm-page {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
 
 /* ---- Toolbar: status tabs + level chips ---- */
 
@@ -99,150 +93,24 @@
   font-weight: 600;
 }
 
-/* ---- Table — card-style rows ---- */
-
-.alarm-table-wrap {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
-  background: var(--card);
-}
-
-.alarm-table-scroll {
-  max-height: calc(100vh - 260px);
-  overflow-y: auto;
-}
-
-.alarm-row {
-  display: flex;
-  border-bottom: 1px solid var(--border);
-  transition: background 0.15s;
-  position: relative;
-}
-
-.alarm-row:last-child { border-bottom: none; }
-
-.alarm-row:hover { background: var(--bg-subtle); }
-
-.alarm-row--resolved { opacity: 0.55; }
-
-.alarm-row__bar {
-  width: 3px;
-  flex-shrink: 0;
-  background: var(--row-color, var(--muted));
-  border-radius: 0;
-  transition: background 0.3s;
-}
-
-.alarm-row__body {
-  flex: 1;
-  min-width: 0;
-  padding: 14px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.alarm-row__top {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.alarm-row__level {
-  font-size: 12px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.alarm-row__device {
-  font-size: 13px;
-  color: var(--text);
-  font-weight: 500;
-}
-
-.alarm-row__status {
-  font-size: 11px;
-  font-weight: 600;
-  padding: 2px 8px;
-  border-radius: 4px;
-}
-
-.alarm-row__time {
-  font-size: 11px;
-  color: var(--muted);
-  margin-left: auto;
-  font-family: var(--mono, monospace);
-}
-
-.alarm-row__msg {
-  font-size: 13px;
-  color: var(--text);
-  line-height: 1.4;
-}
-
-.alarm-row__actions {
-  display: flex;
-  gap: 8px;
-  padding-top: 4px;
-}
-
-.alarm-action-btn {
-  padding: 4px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-subtle);
-  color: var(--text);
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.15s var(--ease-out);
-}
-
-.alarm-action-btn:hover {
-  background: var(--accent-subtle);
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.alarm-action-btn--resolve:hover {
-  background: color-mix(in srgb, #22c55e 12%, transparent);
-  border-color: #22c55e;
-  color: #22c55e;
-}
-
 /* ---- Skeleton ---- */
 
 .alarm-skeleton {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   overflow: hidden;
+  background: var(--card);
 }
 
 .alarm-skeleton__row {
   display: flex;
   border-bottom: 1px solid var(--border);
-  padding: 16px;
+  padding: 14px 16px;
   gap: 12px;
   animation: skPulse 1.5s var(--ease-out) infinite;
 }
 
 .alarm-skeleton__row:last-child { border-bottom: none; }
-
-.alarm-skeleton__bar {
-  width: 3px;
-  border-radius: 2px;
-  background: var(--border);
-  flex-shrink: 0;
-}
-
-.alarm-skeleton__body {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
 
 .skeleton-line {
   height: 12px;
@@ -292,20 +160,9 @@
 .alarm-empty__text { font-size: 15px; color: var(--text); font-weight: 500; }
 .alarm-empty__sub { font-size: 13px; color: var(--muted); }
 
-/* ---- Pagination ---- */
+/* ---- Resolved row ---- */
 
-.alarm-pagination {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-3);
-}
-
-.alarm-pagination__info {
-  font-size: 12px;
-  color: var(--muted);
-  font-family: var(--mono, monospace);
-}
+.row--resolved { opacity: 0.5; }
 
 /* ---- Modal message ---- */
 
@@ -323,8 +180,8 @@
 /* ---- Row entry animation ---- */
 
 @keyframes alarmRowIn {
-  from { opacity: 0; transform: translateX(-12px); }
-  to { opacity: 1; transform: translateX(0); }
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 /* ---- Responsive ---- */
@@ -334,6 +191,4 @@
   .alarm-tabs { overflow-x: auto; }
   .alarm-tab { padding: 6px 12px; font-size: 12px; }
   .alarm-tab__count { min-width: 16px; height: 16px; font-size: 10px; }
-  .alarm-row__time { margin-left: 0; }
-  .alarm-row__top { gap: 8px; }
 }
