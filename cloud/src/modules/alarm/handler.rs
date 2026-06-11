@@ -16,7 +16,7 @@ use super::{
 use crate::{
     modules::{
         alarm::types::{
-            AlarmDto, AlarmQueryParams, AlarmRuleDto, AlarmStatisticsDto, CreateAlarmRuleRequest,
+            AlarmDto, AlarmRuleDto, AlarmStatisticsDto, CreateAlarmRuleRequest,
             StatisticsQueryParams, ToggleRuleRequest, UpdateAlarmRuleRequest,
         },
         monitoring::types::RecentAlarm,
