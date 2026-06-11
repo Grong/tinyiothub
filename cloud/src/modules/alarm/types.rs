@@ -805,11 +805,14 @@ pub struct BatchResolveRequest {
 }
 
 /// 报警查询参数
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct AlarmQueryParams {
-    pub device_ids: Option<Vec<String>>,
-    pub levels: Option<Vec<String>>,
-    pub statuses: Option<Vec<String>>,
+    #[serde(default)]
+    pub device_ids: Option<String>,
+    #[serde(default)]
+    pub levels: Option<String>,
+    #[serde(default)]
+    pub statuses: Option<String>,
     pub start_time: Option<String>,
     pub end_time: Option<String>,
     pub page: Option<u32>,

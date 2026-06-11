@@ -78,15 +78,19 @@ async fn list_alarms(
         None
     };
 
+    fn split_csv(s: &str) -> Vec<String> {
+        s.split(',').map(|v| v.trim().to_string()).filter(|v| !v.is_empty()).collect()
+    }
+
     let alarm_levels = params.levels.as_ref().and_then(|levels| {
         let parsed: Vec<AlarmLevel> =
-            levels.iter().filter_map(|l| AlarmLevel::parse_str(l)).collect();
+            split_csv(levels).iter().filter_map(|l| AlarmLevel::parse_str(l)).collect();
         if parsed.is_empty() { None } else { Some(parsed) }
     });
 
     let statuses = params.statuses.as_ref().and_then(|statuses| {
         let parsed: Vec<AlarmStatus> =
-            statuses.iter().filter_map(|s| AlarmStatus::parse_str(s)).collect();
+            split_csv(statuses).iter().filter_map(|s| AlarmStatus::parse_str(s)).collect();
         if parsed.is_empty() { None } else { Some(parsed) }
     });
 
@@ -96,7 +100,7 @@ async fn list_alarms(
 
     let criteria = AlarmQueryCriteria {
         workspace_id: Some(claims.workspace_id.clone()),
-        device_ids: params.device_ids,
+        device_ids: params.device_ids.as_ref().map(|s| split_csv(s)),
         property_ids: None,
         alarm_levels,
         alarm_types: None,
