@@ -56,51 +56,50 @@ pub fn create_alarm_rule_router() -> Router<AppState> {
 // ============================================================================
 
 async fn list_alarms(
-    Query(params): Query<AlarmQueryParams>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
     State(state): State<AppState>,
     claims: Claims,
 ) -> Json<ApiResponse<PaginatedResponse<AlarmDto>>> {
-    let time_range = if params.start_time.is_some() || params.end_time.is_some() {
+    let get_csv = |key: &str| -> Option<Vec<String>> {
+        params
+            .get(key)
+            .map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+            .filter(|v: &Vec<String>| !v.is_empty())
+    };
+
+    let page: u32 = params.get("page").and_then(|v| v.parse().ok()).unwrap_or(1);
+    let page_size: u32 = params.get("page_size").and_then(|v| v.parse().ok()).unwrap_or(20);
+    let offset = (page - 1) * page_size;
+
+    let time_range = if params.contains_key("start_time") || params.contains_key("end_time") {
         let start = params
-            .start_time
-            .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+            .get("start_time")
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|| Utc::now() - chrono::Duration::days(30));
-
         let end = params
-            .end_time
-            .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+            .get("end_time")
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(Utc::now);
-
         Some(TimeRange { start, end })
     } else {
         None
     };
 
-    fn split_csv(s: &str) -> Vec<String> {
-        s.split(',').map(|v| v.trim().to_string()).filter(|v| !v.is_empty()).collect()
-    }
-
-    let alarm_levels = params.levels.as_ref().and_then(|levels| {
-        let parsed: Vec<AlarmLevel> =
-            split_csv(levels).iter().filter_map(|l| AlarmLevel::parse_str(l)).collect();
+    let alarm_levels = get_csv("levels").and_then(|v| {
+        let parsed: Vec<AlarmLevel> = v.iter().filter_map(|l| AlarmLevel::parse_str(l)).collect();
         if parsed.is_empty() { None } else { Some(parsed) }
     });
 
-    let statuses = params.statuses.as_ref().and_then(|statuses| {
-        let parsed: Vec<AlarmStatus> =
-            split_csv(statuses).iter().filter_map(|s| AlarmStatus::parse_str(s)).collect();
+    let statuses = get_csv("statuses").and_then(|v| {
+        let parsed: Vec<AlarmStatus> = v.iter().filter_map(|s| AlarmStatus::parse_str(s)).collect();
         if parsed.is_empty() { None } else { Some(parsed) }
     });
-
-    let page = params.page.unwrap_or(1);
-    let page_size = params.page_size.unwrap_or(20);
-    let offset = (page - 1) * page_size;
 
     let criteria = AlarmQueryCriteria {
         workspace_id: Some(claims.workspace_id.clone()),
-        device_ids: params.device_ids.as_ref().map(|s| split_csv(s)),
+        device_ids: get_csv("device_ids"),
         property_ids: None,
         alarm_levels,
         alarm_types: None,

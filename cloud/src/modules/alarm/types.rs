@@ -804,15 +804,23 @@ pub struct BatchResolveRequest {
     pub resolution_type: String,
 }
 
+fn deser_opt_csv<'de, D>(d: D) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: Option<String> = Option::deserialize(d)?;
+    Ok(raw.map(|s| s.split(',').map(|v| v.trim().to_string()).filter(|v| !v.is_empty()).collect()))
+}
+
 /// 报警查询参数
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct AlarmQueryParams {
-    #[serde(default)]
-    pub device_ids: Option<String>,
-    #[serde(default)]
-    pub levels: Option<String>,
-    #[serde(default)]
-    pub statuses: Option<String>,
+    #[serde(default, deserialize_with = "deser_opt_csv")]
+    pub device_ids: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "deser_opt_csv")]
+    pub levels: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "deser_opt_csv")]
+    pub statuses: Option<Vec<String>>,
     pub start_time: Option<String>,
     pub end_time: Option<String>,
     pub page: Option<u32>,

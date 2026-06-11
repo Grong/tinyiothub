@@ -254,6 +254,83 @@ async fn test_list_alarms() {
 }
 
 // ============================================================================
+// List Alarms — status filter
+// ============================================================================
+
+#[tokio::test]
+async fn test_list_alarms_filter_by_status() {
+    let app = setup_test_app().await;
+    let token = create_test_token("user-1", "tenant-1");
+
+    // Get current count (setup data is all active)
+    let response = app
+        .clone()
+        .oneshot(auth_request("GET", "/api/v1/alarms?page=1&page_size=20", &token, None))
+        .await
+        .unwrap();
+    let (_, json) = response_parts(response).await;
+    let total = json["result"]["data"].as_array().unwrap().len();
+    assert!(total > 0, "Need at least 1 alarm from setup");
+
+    // Filter: only active → should return all (all setup alarms are active)
+    let response = app
+        .clone()
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/alarms?page=1&page_size=20&statuses=active",
+            &token,
+            None,
+        ))
+        .await
+        .unwrap();
+    let (status, json) = response_parts(response).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["code"], 0);
+    assert_eq!(
+        json["result"]["data"].as_array().unwrap().len(),
+        total,
+        "active filter should return all {} alarms (all are active)",
+        total
+    );
+
+    // Filter: only acknowledged → should return 0
+    let response = app
+        .clone()
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/alarms?page=1&page_size=20&statuses=acknowledged",
+            &token,
+            None,
+        ))
+        .await
+        .unwrap();
+    let (_, json) = response_parts(response).await;
+    assert_eq!(
+        json["result"]["data"].as_array().unwrap().len(),
+        0,
+        "acknowledged filter should return 0 (no acknowledged alarms)"
+    );
+
+    // Filter: only resolved → should return 0
+    let response = app
+        .clone()
+        .oneshot(auth_request(
+            "GET",
+            "/api/v1/alarms?page=1&page_size=20&statuses=resolved",
+            &token,
+            None,
+        ))
+        .await
+        .unwrap();
+    let (_, json) = response_parts(response).await;
+    assert_eq!(
+        json["result"]["data"].as_array().unwrap().len(),
+        0,
+        "resolved filter should return 0 (no resolved alarms)"
+    );
+}
+
+// ============================================================================
 // Get Alarm — not found
 // ============================================================================
 
