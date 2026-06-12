@@ -347,6 +347,19 @@ impl ResolutionType {
     }
 }
 
+impl std::str::FromStr for ResolutionType {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Fixed" => Ok(ResolutionType::Fixed),
+            "FalseAlarm" => Ok(ResolutionType::FalseAlarm),
+            "Ignored" => Ok(ResolutionType::Ignored),
+            "AutoResolved" => Ok(ResolutionType::AutoResolved),
+            _ => Err(format!("invalid resolution type: {}", s)),
+        }
+    }
+}
+
 /// 通知配置
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NotificationConfig {
@@ -425,10 +438,12 @@ pub struct Alarm {
     pub status: AlarmStatus,
     pub acknowledgement: Option<Acknowledgement>,
     pub resolution: Option<Resolution>,
+    pub workspace_id: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
 impl Alarm {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         device_id: String,
         property_id: Option<String>,
@@ -438,6 +453,7 @@ impl Alarm {
         message: String,
         alarm_value: Option<String>,
         threshold_value: Option<String>,
+        workspace_id: Option<String>,
     ) -> Self {
         let now = Utc::now();
         Self {
@@ -454,6 +470,7 @@ impl Alarm {
             status: AlarmStatus::Active,
             acknowledgement: None,
             resolution: None,
+            workspace_id,
             created_at: now,
         }
     }
@@ -1016,6 +1033,7 @@ mod tests {
             "Device went offline".to_string(),
             None,
             None,
+            None,
         );
         assert!(!alarm.id.is_empty());
         assert_eq!(alarm.device_id, "device-1");
@@ -1035,6 +1053,7 @@ mod tests {
             "msg".to_string(),
             None,
             None,
+            None,
         );
         assert!(alarm.acknowledge("user-1".to_string(), Some("ack note".to_string())).is_ok());
         assert_eq!(alarm.status, AlarmStatus::Acknowledged);
@@ -1050,6 +1069,7 @@ mod tests {
             AlarmType::DeviceOffline,
             AlarmLevel::Warning,
             "msg".to_string(),
+            None,
             None,
             None,
         );
@@ -1069,6 +1089,7 @@ mod tests {
             "msg".to_string(),
             None,
             None,
+            None,
         );
         assert!(alarm.resolve("user-1".to_string(), ResolutionType::Fixed, None).is_ok());
         assert_eq!(alarm.status, AlarmStatus::Resolved);
@@ -1085,6 +1106,7 @@ mod tests {
             "msg".to_string(),
             None,
             None,
+            None,
         );
         alarm.acknowledge("user-1".to_string(), None).unwrap();
         assert!(alarm.resolve("user-1".to_string(), ResolutionType::Fixed, None).is_ok());
@@ -1099,6 +1121,7 @@ mod tests {
             AlarmType::DeviceOffline,
             AlarmLevel::Warning,
             "msg".to_string(),
+            None,
             None,
             None,
         );
@@ -1118,6 +1141,7 @@ mod tests {
             "msg".to_string(),
             None,
             None,
+            None,
         );
         assert!(alarm.suppress().is_ok());
         assert_eq!(alarm.status, AlarmStatus::Suppressed);
@@ -1134,6 +1158,7 @@ mod tests {
             "msg".to_string(),
             None,
             None,
+            None,
         );
         alarm.acknowledge("user-1".to_string(), None).unwrap();
         assert!(alarm.suppress().is_err());
@@ -1148,6 +1173,7 @@ mod tests {
             AlarmType::DeviceOffline,
             AlarmLevel::Warning,
             "msg".to_string(),
+            None,
             None,
             None,
         );
@@ -1167,6 +1193,7 @@ mod tests {
             "msg".to_string(),
             None,
             None,
+            None,
         );
         assert!(alarm.can_resolve());
         alarm.acknowledge("user-1".to_string(), None).unwrap();
@@ -1184,6 +1211,7 @@ mod tests {
             AlarmType::DeviceOffline,
             AlarmLevel::Warning,
             "msg".to_string(),
+            None,
             None,
             None,
         );
@@ -1352,6 +1380,7 @@ mod tests {
             "offline".to_string(),
             Some("0".to_string()),
             Some("1".to_string()),
+            None,
         );
         let dto = AlarmDto::from(alarm.clone());
         assert_eq!(dto.device_id, "device-1");

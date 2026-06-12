@@ -113,7 +113,13 @@ async fn list_alarms(
 
     match state.alarm_service.get_alarm_history(criteria.clone()).await {
         Ok(alarms) => {
-            let total = state.alarm_service.count_alarms(criteria).await.unwrap_or(0);
+            let total = match state.alarm_service.count_alarms(criteria).await {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!("Failed to count alarms: {}", e);
+                    return ApiResponseBuilder::error(format!("查询报警总数失败: {}", e));
+                }
+            };
             let total_pages = ((total as f64) / (page_size as f64)).ceil() as u32;
 
             let pool = state.db_pool();
@@ -496,7 +502,11 @@ async fn acknowledge_alarm(
         Err(e) => return ApiResponseBuilder::error(format!("查询告警失败: {}", e)),
     }
 
-    match state.alarm_service.acknowledge_alarm(&id, claims.user_id, req.note).await {
+    match state
+        .alarm_service
+        .acknowledge_alarm(&id, claims.user_id, &claims.workspace_id, req.note)
+        .await
+    {
         Ok(()) => ApiResponseBuilder::success(()),
         Err(e) => ApiResponseBuilder::error(format!("确认告警失败: {}", e)),
     }
@@ -508,12 +518,9 @@ async fn resolve_alarm(
     claims: Claims,
     Json(req): Json<ResolveAlarmRequest>,
 ) -> Json<ApiResponse<()>> {
-    let resolution_type = match req.resolution_type.as_str() {
-        "Fixed" => ResolutionType::Fixed,
-        "FalseAlarm" => ResolutionType::FalseAlarm,
-        "Ignored" => ResolutionType::Ignored,
-        "AutoResolved" => ResolutionType::AutoResolved,
-        _ => return ApiResponseBuilder::error("无效的解决方式"),
+    let resolution_type = match req.resolution_type.parse() {
+        Ok(rt) => rt,
+        Err(_) => return ApiResponseBuilder::error("无效的解决方式"),
     };
 
     match state.alarm_service.get_alarm_by_id(&id, Some(&claims.workspace_id)).await {
@@ -526,7 +533,11 @@ async fn resolve_alarm(
         Err(e) => return ApiResponseBuilder::error(format!("查询告警失败: {}", e)),
     }
 
-    match state.alarm_service.resolve_alarm(&id, claims.user_id, resolution_type, req.note).await {
+    match state
+        .alarm_service
+        .resolve_alarm(&id, claims.user_id, &claims.workspace_id, resolution_type, req.note)
+        .await
+    {
         Ok(()) => ApiResponseBuilder::success(()),
         Err(e) => ApiResponseBuilder::error(format!("解决告警失败: {}", e)),
     }
@@ -545,7 +556,11 @@ async fn batch_acknowledge_alarms(
     }
 
     let total = req.alarm_ids.len();
-    match state.alarm_service.batch_acknowledge(req.alarm_ids, claims.user_id).await {
+    match state
+        .alarm_service
+        .batch_acknowledge(req.alarm_ids, claims.user_id, &claims.workspace_id)
+        .await
+    {
         Ok(count) => ApiResponseBuilder::success(BatchOperationResult {
             success_count: count,
             total_count: total,
@@ -566,16 +581,17 @@ async fn batch_resolve_alarms(
         return ApiResponseBuilder::error_with_code(400, "单次批量操作最多 100 条");
     }
 
-    let resolution_type = match req.resolution_type.as_str() {
-        "Fixed" => ResolutionType::Fixed,
-        "FalseAlarm" => ResolutionType::FalseAlarm,
-        "Ignored" => ResolutionType::Ignored,
-        "AutoResolved" => ResolutionType::AutoResolved,
-        _ => return ApiResponseBuilder::error("无效的解决方式"),
+    let resolution_type = match req.resolution_type.parse() {
+        Ok(rt) => rt,
+        Err(_) => return ApiResponseBuilder::error("无效的解决方式"),
     };
 
     let total = req.alarm_ids.len();
-    match state.alarm_service.batch_resolve(req.alarm_ids, claims.user_id, resolution_type).await {
+    match state
+        .alarm_service
+        .batch_resolve(req.alarm_ids, claims.user_id, &claims.workspace_id, resolution_type)
+        .await
+    {
         Ok(count) => ApiResponseBuilder::success(BatchOperationResult {
             success_count: count,
             total_count: total,

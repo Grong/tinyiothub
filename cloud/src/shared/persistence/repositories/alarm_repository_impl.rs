@@ -323,6 +323,7 @@ impl AlarmRepository for AlarmRepositoryImpl {
         &self,
         alarm_ids: &[String],
         status: AlarmStatus,
+        workspace_id: &str,
     ) -> AlarmResult<usize> {
         if alarm_ids.is_empty() {
             return Ok(0);
@@ -337,7 +338,7 @@ impl AlarmRepository for AlarmRepositoryImpl {
 
         let placeholders = vec!["?"; alarm_ids.len()].join(",");
         let query = format!(
-            "UPDATE device_alarms SET is_resolved = ?, is_acknowledged = ? WHERE id IN ({})",
+            "UPDATE device_alarms SET is_resolved = ?, is_acknowledged = ? WHERE id IN ({}) AND device_id IN (SELECT id FROM devices WHERE workspace_id = ?)",
             placeholders
         );
 
@@ -346,6 +347,7 @@ impl AlarmRepository for AlarmRepositoryImpl {
         for id in alarm_ids {
             sqlx_query = sqlx_query.bind(id);
         }
+        sqlx_query = sqlx_query.bind(workspace_id);
 
         let result = sqlx_query
             .execute(self.database.pool())
@@ -389,6 +391,7 @@ impl AlarmRepositoryImpl {
         let resolved_at_str: Option<String> = row.get("resolved_at");
         let resolved_note: Option<String> = row.get("resolved_note");
         let created_at_str: String = row.get("created_at");
+        let workspace_id: Option<String> = row.get("workspace_id");
 
         // Parse alarm_level
         let alarm_level = AlarmLevel::parse_str(&alarm_level_str).ok_or_else(|| {
@@ -466,6 +469,7 @@ impl AlarmRepositoryImpl {
             status,
             acknowledgement,
             resolution,
+            workspace_id,
             created_at,
         })
     }
@@ -523,7 +527,7 @@ impl AlarmRuleRepositoryImpl {
     fn row_to_alarm_rule(&self, row: sqlx::sqlite::SqliteRow) -> AlarmResult<AlarmRule> {
         use sqlx::Row;
 
-        use crate::modules::alarm::{AlarmCondition, AlarmLevel, NotificationConfig, RuleType};
+        use crate::modules::alarm::{AlarmCondition, AlarmLevel, RuleType};
 
         let id: String = row.get("id");
         let name: String = row.get("rule_name");
@@ -569,9 +573,10 @@ impl AlarmRuleRepositoryImpl {
             .map_err(|e| AlarmError::InternalError(format!("解析更新时间失败: {}", e)))?
             .with_timezone(&Utc);
 
-        // 从数据库读取通知配置（如果有单独的表）
-        // 这里暂时使用默认配置，实际应该从关联表读取
-        let notification_config = NotificationConfig::default();
+        let notification_config_json: Option<String> = row.get("notification_config");
+        let notification_config = notification_config_json
+            .and_then(|j| serde_json::from_str(&j).ok())
+            .unwrap_or_default();
 
         let workspace_id: Option<String> = row.get("workspace_id");
 
@@ -602,13 +607,14 @@ impl AlarmRuleRepository for AlarmRuleRepositoryImpl {
         // 将空字符串转换为 None，避免外键约束失败
         let device_id = rule.device_id.as_ref().filter(|s| !s.is_empty());
         let property_id = rule.property_id.as_ref().filter(|s| !s.is_empty());
+        let notification_config_json = serde_json::to_string(&rule.notification_config).ok();
 
         let query = r#"
             INSERT INTO device_alarm_rules (
-                id, device_id, property_id, rule_name, rule_type, 
+                id, device_id, property_id, rule_name, rule_type,
                 condition_config, alarm_level, is_enabled, description,
-                created_by, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                notification_config, workspace_id, created_by, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
         "#;
 
         sqlx::query(query)
@@ -621,6 +627,8 @@ impl AlarmRuleRepository for AlarmRuleRepositoryImpl {
             .bind(rule.alarm_level.as_str())
             .bind(rule.is_enabled)
             .bind(&rule.description)
+            .bind(&notification_config_json)
+            .bind(&rule.workspace_id)
             .bind(rule.created_at.to_rfc3339())
             .bind(rule.updated_at.to_rfc3339())
             .execute(self.database.pool())
@@ -633,6 +641,7 @@ impl AlarmRuleRepository for AlarmRuleRepositoryImpl {
     async fn update(&self, rule: &AlarmRule, workspace_id: Option<&str>) -> AlarmResult<()> {
         let condition_json = serde_json::to_string(&rule.condition)
             .map_err(|e| AlarmError::InternalError(format!("序列化条件配置失败: {}", e)))?;
+        let notification_config_json = serde_json::to_string(&rule.notification_config).ok();
 
         let query = if workspace_id.is_some() {
             r#"
@@ -643,6 +652,7 @@ impl AlarmRuleRepository for AlarmRuleRepositoryImpl {
                 alarm_level = ?,
                 is_enabled = ?,
                 description = ?,
+                notification_config = ?,
                 updated_at = ?
             WHERE id = ? AND workspace_id = ?
             "#
@@ -655,6 +665,7 @@ impl AlarmRuleRepository for AlarmRuleRepositoryImpl {
                 alarm_level = ?,
                 is_enabled = ?,
                 description = ?,
+                notification_config = ?,
                 updated_at = ?
             WHERE id = ?
             "#
@@ -667,6 +678,7 @@ impl AlarmRuleRepository for AlarmRuleRepositoryImpl {
             .bind(rule.alarm_level.as_str())
             .bind(rule.is_enabled)
             .bind(&rule.description)
+            .bind(&notification_config_json)
             .bind(rule.updated_at.to_rfc3339())
             .bind(&rule.id);
         if let Some(ws) = workspace_id {

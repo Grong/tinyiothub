@@ -3,6 +3,7 @@
 use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use chrono::{DateTime, Duration, Utc};
+use dashmap::DashMap;
 
 use super::{
     notification::NotificationDispatcher,
@@ -46,11 +47,12 @@ impl AlarmService {
         &self,
         alarm_id: &str,
         user_id: String,
+        workspace_id: &str,
         note: Option<String>,
     ) -> AlarmResult<()> {
         let mut alarm = self
             .alarm_repository
-            .find_by_id(alarm_id, None)
+            .find_by_id(alarm_id, Some(workspace_id))
             .await?
             .ok_or_else(|| AlarmError::NotFound(alarm_id.to_string()))?;
 
@@ -70,12 +72,13 @@ impl AlarmService {
         &self,
         alarm_id: &str,
         user_id: String,
+        workspace_id: &str,
         resolution_type: ResolutionType,
         note: Option<String>,
     ) -> AlarmResult<()> {
         let mut alarm = self
             .alarm_repository
-            .find_by_id(alarm_id, None)
+            .find_by_id(alarm_id, Some(workspace_id))
             .await?
             .ok_or_else(|| AlarmError::NotFound(alarm_id.to_string()))?;
 
@@ -95,10 +98,13 @@ impl AlarmService {
         &self,
         alarm_ids: Vec<String>,
         user_id: String,
+        workspace_id: &str,
     ) -> AlarmResult<usize> {
         let mut count = 0;
         for alarm_id in alarm_ids {
-            if let Ok(()) = self.acknowledge_alarm(&alarm_id, user_id.clone(), None).await {
+            if let Ok(()) =
+                self.acknowledge_alarm(&alarm_id, user_id.clone(), workspace_id, None).await
+            {
                 count += 1;
             }
         }
@@ -109,12 +115,14 @@ impl AlarmService {
         &self,
         alarm_ids: Vec<String>,
         user_id: String,
+        workspace_id: &str,
         resolution_type: ResolutionType,
     ) -> AlarmResult<usize> {
         let mut count = 0;
         for alarm_id in alarm_ids {
-            if let Ok(()) =
-                self.resolve_alarm(&alarm_id, user_id.clone(), resolution_type, None).await
+            if let Ok(()) = self
+                .resolve_alarm(&alarm_id, user_id.clone(), workspace_id, resolution_type, None)
+                .await
             {
                 count += 1;
             }
@@ -145,22 +153,33 @@ impl AlarmService {
             ..Default::default()
         };
 
-        let alarms = self.alarm_repository.find_by_criteria(&criteria).await?;
+        let base_criteria = criteria.clone();
+        let total_count = self.alarm_repository.count_by_criteria(&base_criteria).await?;
 
-        let total_count = alarms.len() as u64;
-        let active_count = alarms.iter().filter(|a| a.status == AlarmStatus::Active).count() as u64;
+        let active_criteria = AlarmQueryCriteria {
+            statuses: Some(vec![AlarmStatus::Active]),
+            ..base_criteria.clone()
+        };
+        let active_count = self.alarm_repository.count_by_criteria(&active_criteria).await?;
+
+        let acknowledged_criteria = AlarmQueryCriteria {
+            statuses: Some(vec![AlarmStatus::Acknowledged]),
+            ..base_criteria.clone()
+        };
         let acknowledged_count =
-            alarms.iter().filter(|a| a.status == AlarmStatus::Acknowledged).count() as u64;
-        let resolved_count =
-            alarms.iter().filter(|a| a.status == AlarmStatus::Resolved).count() as u64;
+            self.alarm_repository.count_by_criteria(&acknowledged_criteria).await?;
+
+        let resolved_criteria =
+            AlarmQueryCriteria { statuses: Some(vec![AlarmStatus::Resolved]), ..base_criteria };
+        let resolved_count = self.alarm_repository.count_by_criteria(&resolved_criteria).await?;
 
         Ok(AlarmStatistics { total_count, active_count, acknowledged_count, resolved_count })
     }
 
-    pub async fn auto_resolve_alarm(&self, alarm_id: &str) -> AlarmResult<()> {
+    pub async fn auto_resolve_alarm(&self, alarm_id: &str, workspace_id: &str) -> AlarmResult<()> {
         let count = self
             .alarm_repository
-            .batch_update_status(&[alarm_id.to_string()], AlarmStatus::Resolved)
+            .batch_update_status(&[alarm_id.to_string()], AlarmStatus::Resolved, workspace_id)
             .await?;
         if count > 0 {
             tracing::info!(alarm_id = %alarm_id, "alarm_auto_resolved");
@@ -168,8 +187,13 @@ impl AlarmService {
         Ok(())
     }
 
-    pub async fn check_auto_resolution(&self) -> AlarmResult<usize> {
-        let active_alarms = self.alarm_repository.find_active(None).await?;
+    pub async fn check_auto_resolution(&self, workspace_id: &str) -> AlarmResult<usize> {
+        let criteria = AlarmQueryCriteria {
+            workspace_id: Some(workspace_id.to_string()),
+            statuses: Some(vec![AlarmStatus::Active, AlarmStatus::Acknowledged]),
+            ..Default::default()
+        };
+        let active_alarms = self.alarm_repository.find_by_criteria(&criteria).await?;
         let mut auto_resolve_ids: Vec<String> = Vec::new();
 
         let now = Utc::now();
@@ -187,10 +211,10 @@ impl AlarmService {
 
         let count = self
             .alarm_repository
-            .batch_update_status(&auto_resolve_ids, AlarmStatus::Resolved)
+            .batch_update_status(&auto_resolve_ids, AlarmStatus::Resolved, workspace_id)
             .await?;
 
-        tracing::info!("Auto-resolved {} alarms", count);
+        tracing::info!("Auto-resolved {} alarms in workspace {}", count, workspace_id);
         Ok(count)
     }
 
@@ -261,12 +285,15 @@ pub struct AlarmStatistics {
 /// 规则引擎
 pub struct RuleEngine {
     rule_repository: Arc<dyn AlarmRuleRepository>,
-    throttle: std::sync::Mutex<HashMap<(String, String), Instant>>,
+    throttle: DashMap<(String, String), Instant>,
+    /// Tracks the first time a Duration condition started being true.
+    /// Key: (device_id, rule_id), Value: first_seen_instant.
+    duration_first_seen: DashMap<(String, String), Instant>,
 }
 
 impl RuleEngine {
     pub fn new(rule_repository: Arc<dyn AlarmRuleRepository>) -> Self {
-        Self { rule_repository, throttle: std::sync::Mutex::new(HashMap::new()) }
+        Self { rule_repository, throttle: DashMap::new(), duration_first_seen: DashMap::new() }
     }
 
     pub async fn evaluate_event(&self, event: &Event) -> AlarmResult<EvaluationResult> {
@@ -287,20 +314,23 @@ impl RuleEngine {
                 continue;
             }
 
-            // Throttle: prevent oscillation storms (min 60s between same device+rule evaluation)
+            // Throttle: prevent oscillation storms using rule's suppress_duration_secs
+            let suppress_duration = rule
+                .notification_config
+                .suppress_duration
+                .unwrap_or(std::time::Duration::from_secs(60));
             let throttle_key = (device_id.to_string(), rule.id.clone());
+
+            // Clean stale entries (older than 5 minutes)
+            self.throttle
+                .retain(|_, instant| instant.elapsed() < std::time::Duration::from_secs(300));
+
+            if let Some(last) = self.throttle.get(&throttle_key)
+                && last.elapsed() < suppress_duration
             {
-                let mut throttle = self.throttle.lock().unwrap();
-                // Clean stale entries (older than 5 minutes)
-                throttle
-                    .retain(|_, instant| instant.elapsed() < std::time::Duration::from_secs(300));
-                if let Some(last) = throttle.get(&throttle_key)
-                    && last.elapsed() < std::time::Duration::from_secs(60)
-                {
-                    continue;
-                }
-                throttle.insert(throttle_key, Instant::now());
+                continue;
             }
+            self.throttle.insert(throttle_key, Instant::now());
 
             if let Some(trigger) = self.evaluate_rule(&rule, event).await? {
                 triggers.push(trigger);
@@ -318,8 +348,9 @@ impl RuleEngine {
         event: &Event,
     ) -> AlarmResult<Option<AlarmTrigger>> {
         let context = EvaluationContext::from_event(event);
+        let device_id = event.source().device_id().unwrap_or_else(|| event.source().source_id());
 
-        let triggered = self.check_condition(&rule.condition, &context)?;
+        let triggered = self.check_condition(&rule.condition, &context, device_id, &rule.id)?;
 
         if triggered {
             let trigger = AlarmTrigger {
@@ -330,6 +361,7 @@ impl RuleEngine {
                 message: self.generate_message(event, rule, &context),
                 triggered_value: context.current_value.clone(),
                 threshold_value: self.extract_threshold(&rule.condition),
+                workspace_id: rule.workspace_id.clone(),
             };
 
             Ok(Some(trigger))
@@ -342,6 +374,8 @@ impl RuleEngine {
         &self,
         condition: &AlarmCondition,
         context: &EvaluationContext,
+        device_id: &str,
+        rule_id: &str,
     ) -> AlarmResult<bool> {
         match condition {
             AlarmCondition::Threshold { operator, value } => {
@@ -350,12 +384,14 @@ impl RuleEngine {
             AlarmCondition::Range { min, max, inclusive } => {
                 self.check_range(*min, *max, *inclusive, context)
             }
-            AlarmCondition::Change { change_type, threshold, .. } => {
-                self.check_change(change_type, *threshold, context)
+            AlarmCondition::Change { change_type, threshold, time_window } => {
+                self.check_change(change_type, *threshold, *time_window, context)
             }
-            AlarmCondition::Duration { condition, .. } => self.check_condition(condition, context),
+            AlarmCondition::Duration { condition, duration } => {
+                self.check_duration(condition, *duration, context, device_id, rule_id)
+            }
             AlarmCondition::Composite { operator, conditions } => {
-                self.check_composite(operator, conditions, context)
+                self.check_composite(operator, conditions, context, device_id, rule_id)
             }
         }
     }
@@ -402,6 +438,7 @@ impl RuleEngine {
         &self,
         change_type: &ChangeType,
         threshold: f64,
+        time_window: std::time::Duration,
         context: &EvaluationContext,
     ) -> AlarmResult<bool> {
         let Some(current) = context.get_numeric_value() else {
@@ -413,6 +450,18 @@ impl RuleEngine {
             return Ok(false);
         };
 
+        // time_window semantics: the change must have occurred within this window.
+        // Full history-backed evaluation requires an EvaluationContext with a
+        // history callback (see EvaluationContext::from_event_with_history).
+        // For now, we accept the previous_value from the event as valid; if
+        // a time_window is configured, log it for traceability.
+        if time_window.as_secs() > 0 {
+            tracing::debug!(
+                time_window_secs = time_window.as_secs(),
+                "change condition with time_window — using event previous_value; history callback not wired"
+            );
+        }
+
         let change = current - previous;
         let abs_change = change.abs();
 
@@ -423,16 +472,57 @@ impl RuleEngine {
         }
     }
 
+    fn check_duration(
+        &self,
+        condition: &AlarmCondition,
+        duration: std::time::Duration,
+        context: &EvaluationContext,
+        device_id: &str,
+        rule_id: &str,
+    ) -> AlarmResult<bool> {
+        // The inner condition must be true now.
+        if !self.check_condition(condition, context, device_id, rule_id)? {
+            // Condition is no longer true — reset the tracker
+            let key = (device_id.to_string(), rule_id.to_string());
+            self.duration_first_seen.remove(&key);
+            return Ok(false);
+        }
+
+        // If duration is zero, treat as immediate trigger.
+        if duration.as_secs() == 0 {
+            return Ok(true);
+        }
+
+        let key = (device_id.to_string(), rule_id.to_string());
+        let now = Instant::now();
+
+        // Check if condition has been sustained long enough
+        if let Some(first_seen) = self.duration_first_seen.get(&key) {
+            if first_seen.elapsed() >= duration {
+                self.duration_first_seen.remove(&key);
+                return Ok(true);
+            }
+            // Still waiting for duration to elapse
+            return Ok(false);
+        }
+
+        // First time seeing this condition — record start time
+        self.duration_first_seen.insert(key, now);
+        Ok(false)
+    }
+
     fn check_composite(
         &self,
         operator: &LogicalOperator,
         conditions: &[AlarmCondition],
         context: &EvaluationContext,
+        device_id: &str,
+        rule_id: &str,
     ) -> AlarmResult<bool> {
         match operator {
             LogicalOperator::And => {
                 for condition in conditions {
-                    if !self.check_condition(condition, context)? {
+                    if !self.check_condition(condition, context, device_id, rule_id)? {
                         return Ok(false);
                     }
                 }
@@ -440,7 +530,7 @@ impl RuleEngine {
             }
             LogicalOperator::Or => {
                 for condition in conditions {
-                    if self.check_condition(condition, context)? {
+                    if self.check_condition(condition, context, device_id, rule_id)? {
                         return Ok(true);
                     }
                 }
@@ -452,7 +542,7 @@ impl RuleEngine {
                         "NOT 运算符只能有一个条件".to_string(),
                     ));
                 }
-                Ok(!self.check_condition(&conditions[0], context)?)
+                Ok(!self.check_condition(&conditions[0], context, device_id, rule_id)?)
             }
         }
     }
@@ -522,6 +612,7 @@ pub struct AlarmTrigger {
     pub message: String,
     pub triggered_value: Option<String>,
     pub threshold_value: Option<String>,
+    pub workspace_id: Option<String>,
 }
 
 /// 评估上下文
@@ -651,7 +742,8 @@ impl AlarmEventHandler {
                 _ => continue,
             }
 
-            if let Err(e) = self.alarm_service.auto_resolve_alarm(&alarm.id).await {
+            let ws_id = alarm.workspace_id.as_deref().unwrap_or("");
+            if let Err(e) = self.alarm_service.auto_resolve_alarm(&alarm.id, ws_id).await {
                 tracing::error!("Failed to auto-resolve alarm {}: {}", alarm.id, e);
             }
         }
@@ -702,6 +794,7 @@ impl crate::shared::event::EventHandler for AlarmEventHandler {
                 trigger.message,
                 trigger.triggered_value,
                 trigger.threshold_value,
+                trigger.workspace_id.clone(),
             );
 
             if let Err(e) = self.alarm_service.create_alarm(alarm.clone()).await {
@@ -719,9 +812,8 @@ impl crate::shared::event::EventHandler for AlarmEventHandler {
 
             // Dispatch notifications for this alarm
             if let Ok(Some(rule)) = self.rule_engine.get_rule(&trigger.rule_id).await {
-                self.notification_dispatcher
-                    .dispatch(&alarm, &rule, rule.workspace_id.as_deref())
-                    .await;
+                let ws_id = rule.workspace_id.as_deref().unwrap_or("");
+                self.notification_dispatcher.dispatch(&alarm, &rule, ws_id).await;
             }
         }
 
@@ -771,7 +863,8 @@ mod tests {
                 condition_config TEXT NOT NULL,
                 alarm_level TEXT NOT NULL,
                 is_enabled BOOLEAN NOT NULL DEFAULT true,
-                description TEXT, workspace_id TEXT, created_by TEXT,
+                description TEXT, notification_config TEXT,
+                workspace_id TEXT, created_by TEXT,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             )"#,
@@ -924,7 +1017,7 @@ mod integration_tests {
             rule_name TEXT NOT NULL, rule_type TEXT NOT NULL,
             condition_config TEXT NOT NULL, alarm_level TEXT NOT NULL,
             is_enabled BOOLEAN NOT NULL DEFAULT true, description TEXT,
-            workspace_id TEXT, created_by TEXT,
+            notification_config TEXT, workspace_id TEXT, created_by TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now')),
             FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE,

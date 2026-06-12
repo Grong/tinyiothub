@@ -22,6 +22,7 @@ pub trait AlarmRepository: Send + Sync {
         &self,
         alarm_ids: &[String],
         status: AlarmStatus,
+        workspace_id: &str,
     ) -> AlarmResult<usize>;
     async fn delete_old_alarms(&self, before: DateTime<Utc>) -> AlarmResult<usize>;
 }
@@ -162,6 +163,7 @@ impl SqliteAlarmRepository {
         let resolved_at_str: Option<String> = row.get("resolved_at");
         let resolved_note: Option<String> = row.get("resolved_note");
         let created_at_str: String = row.get("created_at");
+        let workspace_id: Option<String> = row.get("workspace_id");
 
         let alarm_level = AlarmLevel::parse_str(&alarm_level_str).ok_or_else(|| {
             AlarmError::InvalidRuleConfig(format!("Unknown alarm level: {}", alarm_level_str))
@@ -241,6 +243,7 @@ impl SqliteAlarmRepository {
             status,
             acknowledgement,
             resolution,
+            workspace_id,
             created_at,
         })
     }
@@ -291,8 +294,9 @@ impl AlarmRepository for SqliteAlarmRepository {
                 id, device_id, property_id, rule_id, alarm_level,
                 alarm_message, alarm_value, threshold_value, alarm_time,
                 is_acknowledged, acknowledged_by, acknowledged_at, acknowledged_note,
-                is_resolved, resolved_by, resolved_at, resolved_note, resolution_type, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                is_resolved, resolved_by, resolved_at, resolved_note, resolution_type,
+                workspace_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#;
 
         sqlx::query(query)
@@ -314,6 +318,7 @@ impl AlarmRepository for SqliteAlarmRepository {
             .bind(alarm.resolution.as_ref().map(|r| r.resolved_at.to_rfc3339()))
             .bind(alarm.resolution.as_ref().and_then(|r| r.note.as_ref()))
             .bind(alarm.resolution.as_ref().map(|r| r.resolution_type.as_str()))
+            .bind(&alarm.workspace_id)
             .bind(alarm.created_at.to_rfc3339())
             .execute(self.database.pool())
             .await?;
@@ -581,6 +586,7 @@ impl AlarmRepository for SqliteAlarmRepository {
         &self,
         alarm_ids: &[String],
         status: AlarmStatus,
+        workspace_id: &str,
     ) -> AlarmResult<usize> {
         if alarm_ids.is_empty() {
             return Ok(0);
@@ -595,7 +601,7 @@ impl AlarmRepository for SqliteAlarmRepository {
 
         let placeholders = vec!["?"; alarm_ids.len()].join(",");
         let query = format!(
-            "UPDATE device_alarms SET is_resolved = ?, is_acknowledged = ? WHERE id IN ({})",
+            "UPDATE device_alarms SET is_resolved = ?, is_acknowledged = ? WHERE id IN ({}) AND device_id IN (SELECT id FROM devices WHERE workspace_id = ?)",
             placeholders
         );
 
@@ -604,6 +610,7 @@ impl AlarmRepository for SqliteAlarmRepository {
         for id in alarm_ids {
             sqlx_query = sqlx_query.bind(id);
         }
+        sqlx_query = sqlx_query.bind(workspace_id);
 
         let result = sqlx_query
             .execute(self.database.pool())
@@ -691,7 +698,10 @@ impl SqliteAlarmRuleRepository {
                 Utc::now()
             });
 
-        let notification_config = NotificationConfig::default();
+        let notification_config_json: Option<String> = row.get("notification_config");
+        let notification_config = notification_config_json
+            .and_then(|j| serde_json::from_str(&j).ok())
+            .unwrap_or_default();
         let workspace_id: Option<String> = row.get("workspace_id");
 
         Ok(AlarmRule {
@@ -721,12 +731,14 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
         let device_id = rule.device_id.as_ref().filter(|s| !s.is_empty());
         let property_id = rule.property_id.as_ref().filter(|s| !s.is_empty());
 
+        let notification_config_json = serde_json::to_string(&rule.notification_config).ok();
+
         let query = r#"
             INSERT INTO device_alarm_rules (
                 id, device_id, property_id, rule_name, rule_type,
                 condition_config, alarm_level, is_enabled, description,
-                workspace_id, created_by, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                notification_config, workspace_id, created_by, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
         "#;
 
         sqlx::query(query)
@@ -739,6 +751,7 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
             .bind(rule.alarm_level.as_str())
             .bind(rule.is_enabled)
             .bind(&rule.description)
+            .bind(&notification_config_json)
             .bind(&rule.workspace_id)
             .bind(rule.created_at.to_rfc3339())
             .bind(rule.updated_at.to_rfc3339())
@@ -752,6 +765,7 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
     async fn update(&self, rule: &AlarmRule, workspace_id: Option<&str>) -> AlarmResult<()> {
         let condition_json = serde_json::to_string(&rule.condition)
             .map_err(|e| AlarmError::InternalError(format!("序列化条件配置失败: {}", e)))?;
+        let notification_config_json = serde_json::to_string(&rule.notification_config).ok();
 
         let query = if workspace_id.is_some() {
             r#"
@@ -762,6 +776,7 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
                 alarm_level = ?,
                 is_enabled = ?,
                 description = ?,
+                notification_config = ?,
                 updated_at = ?
             WHERE id = ? AND workspace_id = ?
             "#
@@ -774,6 +789,7 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
                 alarm_level = ?,
                 is_enabled = ?,
                 description = ?,
+                notification_config = ?,
                 updated_at = ?
             WHERE id = ?
             "#
@@ -786,6 +802,7 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
             .bind(rule.alarm_level.as_str())
             .bind(rule.is_enabled)
             .bind(&rule.description)
+            .bind(&notification_config_json)
             .bind(rule.updated_at.to_rfc3339())
             .bind(&rule.id);
         if let Some(ws) = workspace_id {
