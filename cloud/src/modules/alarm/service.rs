@@ -1739,9 +1739,12 @@ mod integration_tests {
 
         let row = sqlx::query("SELECT resolved_by, resolved_at, resolution_type FROM device_alarms WHERE device_id = 'dev-arm' AND is_resolved = 1")
             .fetch_one(&pool).await.unwrap();
-        let resolved_by: String = row.get("resolved_by");
+        let resolved_by: Option<String> = row.get("resolved_by");
         let resolution_type: String = row.get("resolution_type");
-        assert_eq!(resolved_by, "system", "Auto-resolve should set resolved_by to 'system'");
+        assert!(
+            resolved_by.is_none(),
+            "Auto-resolve should leave resolved_by NULL (no human actor)"
+        );
         assert_eq!(resolution_type, "auto_resolved", "Auto-resolve should set resolution_type");
     }
 

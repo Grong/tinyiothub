@@ -565,10 +565,12 @@ impl AlarmRepository for SqliteAlarmRepository {
             AlarmStatus::Suppressed => return Ok(0),
         };
 
-        // When auto-resolving, also set resolution metadata
+        // When auto-resolving, also set resolution metadata.
+        // resolved_by is NULL because auto-resolve has no human actor;
+        // resolution_type = 'auto_resolved' marks it as system-resolved.
         let (resolved_by, resolved_at, resolution_type) = if is_resolved {
             (
-                Some("system"),
+                None::<&str>,
                 Some(Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),
                 Some("auto_resolved"),
             )
