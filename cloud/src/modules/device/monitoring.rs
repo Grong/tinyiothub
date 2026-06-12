@@ -4,19 +4,20 @@ use std::sync::Arc;
 
 use tinyiothub_storage::cache::DeviceCache;
 
-use crate::shared::persistence::{Database, repositories::AlarmRepositoryImpl};
+use super::super::alarm::repo::AlarmRepository;
+use crate::shared::persistence::Database;
 
 pub struct DeviceMonitoringService {
     database: Arc<Database>,
     device_cache: Arc<DeviceCache>,
-    alarm_repository: Arc<AlarmRepositoryImpl>,
+    alarm_repository: Arc<dyn AlarmRepository>,
 }
 
 impl DeviceMonitoringService {
     pub fn new(
         database: Arc<Database>,
         device_cache: Arc<DeviceCache>,
-        alarm_repository: Arc<AlarmRepositoryImpl>,
+        alarm_repository: Arc<dyn AlarmRepository>,
     ) -> Self {
         Self { database, device_cache, alarm_repository }
     }

@@ -25,6 +25,9 @@ pub trait AlarmRepository: Send + Sync {
         workspace_id: &str,
     ) -> AlarmResult<usize>;
     async fn delete_old_alarms(&self, before: DateTime<Utc>) -> AlarmResult<usize>;
+    async fn count_active_alarms_by_device(&self, device_id: &str) -> AlarmResult<u32>;
+    async fn count_all_active_alarms(&self) -> AlarmResult<u32>;
+    async fn count_offline_alarms(&self, device_id: &str, days: u32) -> AlarmResult<u32>;
 }
 
 /// 报警规则仓储接口
@@ -246,43 +249,6 @@ impl SqliteAlarmRepository {
             workspace_id,
             created_at,
         })
-    }
-
-    /// 统计设备的活跃告警数量
-    pub async fn count_active_alarms_by_device(&self, device_id: &str) -> Result<u32, sqlx::Error> {
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM device_alarms WHERE device_id = ? AND is_resolved = 0",
-        )
-        .bind(device_id)
-        .fetch_one(self.database.pool())
-        .await?;
-        Ok(count as u32)
-    }
-
-    /// 统计所有活跃告警数量
-    pub async fn count_all_active_alarms(&self) -> Result<u32, sqlx::Error> {
-        let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE is_resolved = 0")
-                .fetch_one(self.database.pool())
-                .await?;
-        Ok(count as u32)
-    }
-
-    /// 统计设备离线告警数量（最近N天）
-    pub async fn count_offline_alarms(
-        &self,
-        device_id: &str,
-        days: u32,
-    ) -> Result<u32, sqlx::Error> {
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM device_alarms WHERE device_id = ? AND alarm_message LIKE '%离线%' AND alarm_time > datetime('now', ?)",
-        )
-        .bind(device_id)
-        .bind(format!("-{} days", days))
-        .fetch_optional(self.database.pool())
-        .await?
-        .unwrap_or(0);
-        Ok(count as u32)
     }
 }
 
@@ -599,14 +565,29 @@ impl AlarmRepository for SqliteAlarmRepository {
             AlarmStatus::Suppressed => return Ok(0),
         };
 
+        // When auto-resolving, also set resolution metadata
+        let (resolved_by, resolved_at, resolution_type) = if is_resolved {
+            (
+                Some("system"),
+                Some(Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),
+                Some("auto_resolved"),
+            )
+        } else {
+            (None, None, None)
+        };
+
         let placeholders = vec!["?"; alarm_ids.len()].join(",");
         let query = format!(
-            "UPDATE device_alarms SET is_resolved = ?, is_acknowledged = ? WHERE id IN ({}) AND device_id IN (SELECT id FROM devices WHERE workspace_id = ?)",
+            "UPDATE device_alarms SET is_resolved = ?, is_acknowledged = ?, resolved_by = ?, resolved_at = ?, resolution_type = ? WHERE id IN ({}) AND device_id IN (SELECT id FROM devices WHERE workspace_id = ?)",
             placeholders
         );
 
-        let mut sqlx_query =
-            sqlx::query(sqlx::AssertSqlSafe(query.clone())).bind(is_resolved).bind(is_acknowledged);
+        let mut sqlx_query = sqlx::query(sqlx::AssertSqlSafe(query.clone()))
+            .bind(is_resolved)
+            .bind(is_acknowledged)
+            .bind(resolved_by)
+            .bind(resolved_at)
+            .bind(resolution_type);
         for id in alarm_ids {
             sqlx_query = sqlx_query.bind(id);
         }
@@ -625,6 +606,36 @@ impl AlarmRepository for SqliteAlarmRepository {
         let result =
             sqlx::query(query).bind(before.to_rfc3339()).execute(self.database.pool()).await?;
         Ok(result.rows_affected() as usize)
+    }
+
+    async fn count_active_alarms_by_device(&self, device_id: &str) -> AlarmResult<u32> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM device_alarms WHERE device_id = ? AND is_resolved = 0",
+        )
+        .bind(device_id)
+        .fetch_one(self.database.pool())
+        .await?;
+        Ok(count as u32)
+    }
+
+    async fn count_all_active_alarms(&self) -> AlarmResult<u32> {
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE is_resolved = 0")
+                .fetch_one(self.database.pool())
+                .await?;
+        Ok(count as u32)
+    }
+
+    async fn count_offline_alarms(&self, device_id: &str, days: u32) -> AlarmResult<u32> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM device_alarms WHERE device_id = ? AND alarm_message LIKE '%离线%' AND alarm_time > datetime('now', ?)",
+        )
+        .bind(device_id)
+        .bind(format!("-{} days", days))
+        .fetch_optional(self.database.pool())
+        .await?
+        .unwrap_or(0);
+        Ok(count as u32)
     }
 }
 

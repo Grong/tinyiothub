@@ -196,11 +196,6 @@ impl AppState {
             alarm_rule_repository,
         ));
 
-        // 旧的 AlarmRepositoryImpl（device 监控/性能服务需要特定方法）
-        let legacy_alarm_repository = Arc::new(
-            crate::shared::persistence::repositories::AlarmRepositoryImpl::new(database.clone()),
-        );
-
         // 创建SSE管理器（带 DeviceCache 用于设备 workspace 查找）
         let sse_manager = Arc::new(SseConnectionManager::new());
 
@@ -232,14 +227,14 @@ impl AppState {
         let monitoring_service = Arc::new(DeviceMonitoringService::new(
             database.clone(),
             device_cache.clone(),
-            legacy_alarm_repository.clone(),
+            alarm_repository.clone(),
         ));
 
         // 性能服务 - 依赖数据库、缓存和告警仓库
         let performance_service = Arc::new(DevicePerformanceService::new(
             database.clone(),
             device_cache.clone(),
-            legacy_alarm_repository.clone(),
+            alarm_repository.clone(),
         ));
 
         // 追踪服务 - 依赖追踪仓库

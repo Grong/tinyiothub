@@ -187,37 +187,6 @@ impl AlarmService {
         Ok(())
     }
 
-    pub async fn check_auto_resolution(&self, workspace_id: &str) -> AlarmResult<usize> {
-        let criteria = AlarmQueryCriteria {
-            workspace_id: Some(workspace_id.to_string()),
-            statuses: Some(vec![AlarmStatus::Active, AlarmStatus::Acknowledged]),
-            ..Default::default()
-        };
-        let active_alarms = self.alarm_repository.find_by_criteria(&criteria).await?;
-        let mut auto_resolve_ids: Vec<String> = Vec::new();
-
-        let now = Utc::now();
-        for alarm in active_alarms {
-            // Auto-resolve alarms older than 24 hours
-            let age = now.signed_duration_since(alarm.created_at);
-            if age.num_hours() >= 24 {
-                auto_resolve_ids.push(alarm.id);
-            }
-        }
-
-        if auto_resolve_ids.is_empty() {
-            return Ok(0);
-        }
-
-        let count = self
-            .alarm_repository
-            .batch_update_status(&auto_resolve_ids, AlarmStatus::Resolved, workspace_id)
-            .await?;
-
-        tracing::info!("Auto-resolved {} alarms in workspace {}", count, workspace_id);
-        Ok(count)
-    }
-
     // 规则管理方法
 
     pub async fn create_rule(&self, rule: AlarmRule) -> AlarmResult<AlarmRule> {
@@ -301,6 +270,11 @@ impl RuleEngine {
             return Ok(EvaluationResult::default());
         }
 
+        // Prevent unbounded growth: remove duration tracking entries older than 24h.
+        // Entries are normally cleaned when the condition clears or the alarm fires,
+        // but we guard against devices that go permanently silent.
+        self.duration_first_seen.retain(|_, v| v.elapsed() < std::time::Duration::from_secs(86400));
+
         let device_id = event.source().device_id().unwrap_or_else(|| event.source().source_id());
         let property_id = event.content().metadata().get("property_id").and_then(|v| v.as_str());
 
@@ -328,6 +302,9 @@ impl RuleEngine {
             if let Some(last) = self.throttle.get(&throttle_key)
                 && last.elapsed() < suppress_duration
             {
+                // Still throttled, but include in non_triggered so auto-resolve
+                // can clear any active alarms for this rule (property is normal now).
+                non_triggered_rule_ids.push(rule.id.clone());
                 continue;
             }
             self.throttle.insert(throttle_key, Instant::now());
@@ -847,6 +824,8 @@ mod tests {
 
     async fn setup_test_db(pool: &sqlx::SqlitePool) {
         sqlx::query("PRAGMA foreign_keys = OFF").execute(pool).await.unwrap();
+        sqlx::query("DROP TABLE IF EXISTS device_alarm_rules").execute(pool).await.unwrap();
+        sqlx::query("DROP TABLE IF EXISTS devices").execute(pool).await.unwrap();
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS devices (
                 id TEXT PRIMARY KEY, name TEXT, workspace_id TEXT
@@ -879,6 +858,45 @@ mod tests {
             ("property_id".to_string(), serde_json::Value::String(property_name.to_string())),
             ("property_name".to_string(), serde_json::Value::String(property_name.to_string())),
             ("value".to_string(), serde_json::Value::String(value.to_string())),
+        ]
+        .into();
+
+        let mut content = RichContent::new(
+            format!("Property Changed: {}", property_name),
+            vec![ContentElement::Text {
+                content: format!("Current value: {}", value),
+                format: TextFormat::Plain,
+            }],
+        );
+
+        for (k, v) in metadata {
+            content = content.with_metadata(k, v);
+        }
+
+        Event::new_device_event(
+            DeviceEventType::PropertyChange,
+            EventLevel::Info,
+            EventSource::device_property(
+                device_id.to_string(),
+                property_name.to_string(),
+                "test".to_string(),
+            ),
+            content,
+        )
+        .expect("failed to create test event")
+    }
+
+    fn make_property_change_event_with_old(
+        device_id: &str,
+        property_name: &str,
+        value: f64,
+        old_value: f64,
+    ) -> Event {
+        let metadata: std::collections::HashMap<String, serde_json::Value> = [
+            ("property_id".to_string(), serde_json::Value::String(property_name.to_string())),
+            ("property_name".to_string(), serde_json::Value::String(property_name.to_string())),
+            ("value".to_string(), serde_json::Value::String(value.to_string())),
+            ("old_value".to_string(), serde_json::Value::String(old_value.to_string())),
         ]
         .into();
 
@@ -963,6 +981,464 @@ mod tests {
         let event = make_property_change_event("dev-1", "temperature", 25.0);
         let triggers = engine.evaluate_event(&event).await.unwrap().triggers;
         assert!(triggers.is_empty(), "Should NOT trigger when value is below threshold");
+    }
+
+    /// --- Duration condition tests ---
+
+    #[sqlx::test]
+    async fn test_duration_zero_triggers_immediately(pool: sqlx::SqlitePool) {
+        setup_test_db(&pool).await;
+        let db = Arc::new(Database::new(pool.clone()));
+        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Duration with 0s = fires immediately when inner condition is true
+        sqlx::query(
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+             VALUES ('rule-d0', 'dev-1', 'prop-1', 'Duration Zero', 'duration', '{\"type\":\"duration\",\"condition\":{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0},\"duration\":0}', 'warning', 1, datetime('now'), datetime('now'))",
+        )
+        .execute(&pool).await.unwrap();
+
+        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let engine = RuleEngine::new(repo);
+
+        // temperature = 85 > 80 → should trigger immediately (0s duration)
+        let event = make_property_change_event("dev-1", "temperature", 85.0);
+        let result = engine.evaluate_event(&event).await.unwrap();
+        assert!(!result.triggers.is_empty(), "Duration with 0s should trigger immediately");
+    }
+
+    #[sqlx::test]
+    async fn test_duration_sustained_triggers(pool: sqlx::SqlitePool) {
+        setup_test_db(&pool).await;
+        let db = Arc::new(Database::new(pool.clone()));
+        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Duration with 0s so we can test trigger immediately (real sustained test would require time travel)
+        sqlx::query(
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+             VALUES ('rule-d1', 'dev-1', 'prop-1', 'Duration Sustained', 'duration', '{\"type\":\"duration\",\"condition\":{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0},\"duration\":3600}', 'warning', 1, datetime('now'), datetime('now'))",
+        )
+        .execute(&pool).await.unwrap();
+
+        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let engine = RuleEngine::new(repo);
+
+        // First call: condition is true but not yet sustained
+        let event = make_property_change_event("dev-1", "temperature", 85.0);
+        let result = engine.evaluate_event(&event).await.unwrap();
+        // With 50ms, we can check that it doesn't trigger on first call
+        assert!(
+            !result.triggers.iter().any(|t| t.rule_id == "rule-d1"),
+            "Duration should not trigger on first evaluation"
+        );
+    }
+
+    #[sqlx::test]
+    async fn test_duration_clears_on_recovery(pool: sqlx::SqlitePool) {
+        setup_test_db(&pool).await;
+        let db = Arc::new(Database::new(pool.clone()));
+        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+             VALUES ('rule-d2', 'dev-1', 'prop-1', 'Duration Clear', 'duration', '{\"type\":\"duration\",\"condition\":{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0},\"duration\":3600}', 'warning', 1, datetime('now'), datetime('now'))",
+        )
+        .execute(&pool).await.unwrap();
+
+        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let engine = RuleEngine::new(repo);
+
+        // Trigger → condition true
+        engine
+            .evaluate_event(&make_property_change_event("dev-1", "temperature", 85.0))
+            .await
+            .unwrap();
+        // Recovery → value drops below threshold → should clear duration tracker
+        let result = engine
+            .evaluate_event(&make_property_change_event("dev-1", "temperature", 25.0))
+            .await
+            .unwrap();
+        // Should not trigger (condition is false)
+        assert!(
+            result.triggers.is_empty(),
+            "Should not trigger when condition clears before duration"
+        );
+
+        // Now trigger again → should need to restart the duration timer
+        let result2 = engine
+            .evaluate_event(&make_property_change_event("dev-1", "temperature", 85.0))
+            .await
+            .unwrap();
+        assert!(
+            !result2.triggers.iter().any(|t| t.rule_id == "rule-d2"),
+            "Duration tracker should have been reset, not trigger immediately"
+        );
+    }
+
+    /// --- Range condition tests ---
+
+    #[sqlx::test]
+    async fn test_range_in_range_no_trigger(pool: sqlx::SqlitePool) {
+        setup_test_db(&pool).await;
+        let db = Arc::new(Database::new(pool.clone()));
+        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Range 20-80, alarm if OUTSIDE range
+        sqlx::query(
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+             VALUES ('rule-r1', 'dev-1', 'prop-1', 'Temp Range', 'range', '{\"type\":\"range\",\"min\":20.0,\"max\":80.0,\"inclusive\":true}', 'warning', 1, datetime('now'), datetime('now'))",
+        )
+        .execute(&pool).await.unwrap();
+
+        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let engine = RuleEngine::new(repo);
+
+        // Value 50 is within [20, 80] → no alarm
+        let event = make_property_change_event("dev-1", "temperature", 50.0);
+        let triggers = engine.evaluate_event(&event).await.unwrap().triggers;
+        assert!(triggers.is_empty(), "Value in valid range should not trigger");
+    }
+
+    #[sqlx::test]
+    async fn test_range_out_of_range_triggers(pool: sqlx::SqlitePool) {
+        setup_test_db(&pool).await;
+        let db = Arc::new(Database::new(pool.clone()));
+        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+             VALUES ('rule-r2', 'dev-1', 'prop-1', 'Temp Range', 'range', '{\"type\":\"range\",\"min\":20.0,\"max\":80.0,\"inclusive\":true}', 'critical', 1, datetime('now'), datetime('now'))",
+        )
+        .execute(&pool).await.unwrap();
+
+        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let engine = RuleEngine::new(repo);
+
+        // Value 85 is above max 80 → should trigger
+        let event = make_property_change_event("dev-1", "temperature", 85.0);
+        let triggers = engine.evaluate_event(&event).await.unwrap().triggers;
+        assert!(!triggers.is_empty(), "Value above range should trigger");
+        assert_eq!(triggers[0].alarm_level, AlarmLevel::Critical);
+    }
+
+    #[sqlx::test]
+    async fn test_range_boundary_inclusive_triggers(pool: sqlx::SqlitePool) {
+        setup_test_db(&pool).await;
+        let db = Arc::new(Database::new(pool.clone()));
+        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+             VALUES ('rule-r3', 'dev-1', 'prop-1', 'Temp Range', 'range', '{\"type\":\"range\",\"min\":20.0,\"max\":80.0,\"inclusive\":true}', 'warning', 1, datetime('now'), datetime('now'))",
+        )
+        .execute(&pool).await.unwrap();
+
+        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let engine = RuleEngine::new(repo);
+
+        // Value exactly at boundary (inclusive) → no alarm
+        let event = make_property_change_event("dev-1", "temperature", 80.0);
+        let triggers = engine.evaluate_event(&event).await.unwrap().triggers;
+        assert!(triggers.is_empty(), "Value at inclusive boundary should not trigger");
+    }
+
+    /// --- Change condition tests ---
+
+    #[sqlx::test]
+    async fn test_change_increase_triggers(pool: sqlx::SqlitePool) {
+        setup_test_db(&pool).await;
+        let db = Arc::new(Database::new(pool.clone()));
+        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Increase by > 10.0 triggers
+        sqlx::query(
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+             VALUES ('rule-c1', 'dev-1', 'prop-1', 'Rapid Increase', 'change', '{\"type\":\"change\",\"change_type\":\"increase\",\"threshold\":10.0,\"time_window\":0}', 'warning', 1, datetime('now'), datetime('now'))",
+        )
+        .execute(&pool).await.unwrap();
+
+        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let engine = RuleEngine::new(repo);
+
+        // With time_window=0s, we compare previous_value (old) with current_value
+        let event = make_property_change_event_with_old("dev-1", "temperature", 95.0, 80.0);
+        let triggers = engine.evaluate_event(&event).await.unwrap().triggers;
+        assert!(!triggers.is_empty(), "Increase of 15 > threshold 10 should trigger");
+    }
+
+    #[sqlx::test]
+    async fn test_change_below_threshold_no_trigger(pool: sqlx::SqlitePool) {
+        setup_test_db(&pool).await;
+        let db = Arc::new(Database::new(pool.clone()));
+        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+             VALUES ('rule-c2', 'dev-1', 'prop-1', 'Rapid Increase', 'change', '{\"type\":\"change\",\"change_type\":\"increase\",\"threshold\":10.0,\"time_window\":0}', 'warning', 1, datetime('now'), datetime('now'))",
+        )
+        .execute(&pool).await.unwrap();
+
+        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let engine = RuleEngine::new(repo);
+
+        let event = make_property_change_event_with_old("dev-1", "temperature", 85.0, 80.0);
+        let triggers = engine.evaluate_event(&event).await.unwrap().triggers;
+        assert!(triggers.is_empty(), "Increase of 5 < threshold 10 should not trigger");
+    }
+
+    #[sqlx::test]
+    async fn test_change_decrease_triggers(pool: sqlx::SqlitePool) {
+        setup_test_db(&pool).await;
+        let db = Arc::new(Database::new(pool.clone()));
+        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+             VALUES ('rule-c3', 'dev-1', 'prop-1', 'Rapid Drop', 'change', '{\"type\":\"change\",\"change_type\":\"decrease\",\"threshold\":10.0,\"time_window\":0}', 'critical', 1, datetime('now'), datetime('now'))",
+        )
+        .execute(&pool).await.unwrap();
+
+        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let engine = RuleEngine::new(repo);
+
+        let event = make_property_change_event_with_old("dev-1", "temperature", 65.0, 80.0);
+        let triggers = engine.evaluate_event(&event).await.unwrap().triggers;
+        assert!(!triggers.is_empty(), "Decrease of 15 > threshold 10 should trigger");
+    }
+
+    /// --- Composite condition tests ---
+
+    #[sqlx::test]
+    async fn test_composite_and_all_triggers(pool: sqlx::SqlitePool) {
+        setup_test_db(&pool).await;
+        let db = Arc::new(Database::new(pool.clone()));
+        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // AND: (temp > 80) AND (humidity > 60) → both must be true
+        sqlx::query(
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+             VALUES ('rule-and1', 'dev-1', 'prop-1', 'High T&H', 'composite', '{\"type\":\"composite\",\"operator\":\"and\",\"conditions\":[{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0},{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":60.0}]}', 'critical', 1, datetime('now'), datetime('now'))",
+        )
+        .execute(&pool).await.unwrap();
+
+        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let engine = RuleEngine::new(repo);
+
+        // Value 85 > 80 (first condition true) BUT we can only test one value per event.
+        // Composite checks all conditions against the same context value,
+        // so 85 > 80 AND 85 > 60 → both true → triggers
+        let event = make_property_change_event("dev-1", "temperature", 85.0);
+        let triggers = engine.evaluate_event(&event).await.unwrap().triggers;
+        assert!(!triggers.is_empty(), "AND composite with both conditions true should trigger");
+    }
+
+    #[sqlx::test]
+    async fn test_composite_and_partial_no_trigger(pool: sqlx::SqlitePool) {
+        setup_test_db(&pool).await;
+        let db = Arc::new(Database::new(pool.clone()));
+        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+             VALUES ('rule-and2', 'dev-1', 'prop-1', 'High T&H', 'composite', '{\"type\":\"composite\",\"operator\":\"and\",\"conditions\":[{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0},{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":90.0}]}', 'critical', 1, datetime('now'), datetime('now'))",
+        )
+        .execute(&pool).await.unwrap();
+
+        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let engine = RuleEngine::new(repo);
+
+        // 85 > 80 is true, but 85 is NOT > 90 → AND fails
+        let event = make_property_change_event("dev-1", "temperature", 85.0);
+        let triggers = engine.evaluate_event(&event).await.unwrap().triggers;
+        assert!(triggers.is_empty(), "AND composite with partial condition should not trigger");
+    }
+
+    #[sqlx::test]
+    async fn test_composite_or_any_triggers(pool: sqlx::SqlitePool) {
+        setup_test_db(&pool).await;
+        let db = Arc::new(Database::new(pool.clone()));
+        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // OR: (temp > 80) OR (temp > 90) — first condition true → triggers
+        sqlx::query(
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+             VALUES ('rule-or1', 'dev-1', 'prop-1', 'High T OR', 'composite', '{\"type\":\"composite\",\"operator\":\"or\",\"conditions\":[{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0},{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":90.0}]}', 'warning', 1, datetime('now'), datetime('now'))",
+        )
+        .execute(&pool).await.unwrap();
+
+        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let engine = RuleEngine::new(repo);
+
+        // 85 > 80 (true) OR 85 > 90 (false) → OR succeeds
+        let event = make_property_change_event("dev-1", "temperature", 85.0);
+        let triggers = engine.evaluate_event(&event).await.unwrap().triggers;
+        assert!(!triggers.is_empty(), "OR composite with one true condition should trigger");
+    }
+
+    /// --- Throttle tests ---
+
+    #[sqlx::test]
+    async fn test_throttle_suppresses_repeated(pool: sqlx::SqlitePool) {
+        setup_test_db(&pool).await;
+        let db = Arc::new(Database::new(pool.clone()));
+        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // suppress_duration 300s (5 minutes)
+        sqlx::query(
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
+             VALUES ('rule-t1', 'dev-1', 'prop-1', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"suppress_duration\":300}', datetime('now'), datetime('now'))",
+        )
+        .execute(&pool).await.unwrap();
+
+        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let engine = RuleEngine::new(repo);
+
+        // First call → triggers
+        let result1 = engine
+            .evaluate_event(&make_property_change_event("dev-1", "temperature", 85.0))
+            .await
+            .unwrap();
+        assert!(!result1.triggers.is_empty(), "First call should trigger");
+
+        // Second call within suppression window → throttled
+        let result2 = engine
+            .evaluate_event(&make_property_change_event("dev-1", "temperature", 90.0))
+            .await
+            .unwrap();
+        assert!(
+            result2.triggers.is_empty(),
+            "Second call within suppression window should be throttled"
+        );
+    }
+
+    /// --- Disabled rule — no trigger ---
+
+    #[sqlx::test]
+    async fn test_disabled_rule_skipped(pool: sqlx::SqlitePool) {
+        setup_test_db(&pool).await;
+        let db = Arc::new(Database::new(pool.clone()));
+        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+             VALUES ('rule-dis', 'dev-1', 'prop-1', 'Disabled Rule', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 0, datetime('now'), datetime('now'))",
+        )
+        .execute(&pool).await.unwrap();
+
+        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let engine = RuleEngine::new(repo);
+
+        let event = make_property_change_event("dev-1", "temperature", 85.0);
+        let triggers = engine.evaluate_event(&event).await.unwrap().triggers;
+        assert!(triggers.is_empty(), "Disabled rule should not trigger");
+    }
+
+    /// --- Threshold comparison operator tests ---
+
+    #[sqlx::test]
+    async fn test_threshold_less_than_triggers(pool: sqlx::SqlitePool) {
+        setup_test_db(&pool).await;
+        let db = Arc::new(Database::new(pool.clone()));
+        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+             VALUES ('rule-lt', 'dev-1', 'prop-1', 'Low Battery', 'threshold', '{\"type\":\"threshold\",\"operator\":\"less_than\",\"value\":20.0}', 'critical', 1, datetime('now'), datetime('now'))",
+        )
+        .execute(&pool).await.unwrap();
+
+        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let engine = RuleEngine::new(repo);
+
+        let event = make_property_change_event("dev-1", "battery", 15.0);
+        let triggers = engine.evaluate_event(&event).await.unwrap().triggers;
+        assert!(!triggers.is_empty(), "Value below less_than threshold should trigger");
+    }
+
+    #[sqlx::test]
+    async fn test_threshold_equal_triggers(pool: sqlx::SqlitePool) {
+        setup_test_db(&pool).await;
+        let db = Arc::new(Database::new(pool.clone()));
+        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+             VALUES ('rule-eq', 'dev-1', 'prop-1', 'Exact Value', 'threshold', '{\"type\":\"threshold\",\"operator\":\"equal\",\"value\":42.0}', 'info', 1, datetime('now'), datetime('now'))",
+        )
+        .execute(&pool).await.unwrap();
+
+        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let engine = RuleEngine::new(repo);
+
+        let event = make_property_change_event("dev-1", "answer", 42.0);
+        let triggers = engine.evaluate_event(&event).await.unwrap().triggers;
+        assert!(!triggers.is_empty(), "Equal value should trigger");
+    }
+
+    /// --- Non-triggered rule IDs populated ---
+
+    #[sqlx::test]
+    async fn test_non_triggered_rule_ids_populated(pool: sqlx::SqlitePool) {
+        setup_test_db(&pool).await;
+        let db = Arc::new(Database::new(pool.clone()));
+        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-1', 'Test Device')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // One rule that triggers (value > 80) and one that doesn't (value > 90)
+        sqlx::query(
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+             VALUES ('rule-nt1', 'dev-1', 'prop-1', 'Triggers', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, datetime('now'), datetime('now'))",
+        )
+        .execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+             VALUES ('rule-nt2', 'dev-1', 'prop-1', 'No Trigger', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":90.0}', 'critical', 1, datetime('now'), datetime('now'))",
+        )
+        .execute(&pool).await.unwrap();
+
+        let repo: Arc<dyn AlarmRuleRepository> = Arc::new(SqliteAlarmRuleRepository::new(db));
+        let engine = RuleEngine::new(repo);
+
+        let event = make_property_change_event("dev-1", "temperature", 85.0);
+        let result = engine.evaluate_event(&event).await.unwrap();
+        assert_eq!(result.triggers.len(), 1, "Only one rule should trigger");
+        assert!(
+            result.non_triggered_rule_ids.contains(&"rule-nt2".to_string()),
+            "Non-triggered rule should be in non_triggered_rule_ids"
+        );
     }
 }
 
@@ -1176,5 +1652,140 @@ mod integration_tests {
                 .await
                 .unwrap();
         assert_eq!(count, 0, "Should not create alarm when value is below threshold");
+    }
+
+    /// --- Auto-resolve tests ---
+
+    #[sqlx::test]
+    async fn test_auto_resolve_clears_alarm_when_rule_no_longer_triggers(pool: sqlx::SqlitePool) {
+        setup_full_schema(&pool).await;
+        let db = Arc::new(Database::new(pool.clone()));
+
+        sqlx::query("INSERT INTO devices (id, name, workspace_id) VALUES ('dev-ar', 'AutoResolve Device', 'ws-ar')")
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO device_properties (id, device_id, name) VALUES ('prop-ar', 'dev-ar', 'temperature')")
+            .execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, workspace_id, created_at, updated_at)
+             VALUES ('rule-ar1', 'dev-ar', 'prop-ar', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, 'ws-ar', datetime('now'), datetime('now'))",
+        ).execute(&pool).await.unwrap();
+
+        let alarm_repo: Arc<dyn AlarmRepository> = Arc::new(SqliteAlarmRepository::new(db.clone()));
+        let rule_repo: Arc<dyn AlarmRuleRepository> =
+            Arc::new(SqliteAlarmRuleRepository::new(db.clone()));
+        let alarm_service = Arc::new(AlarmService::new(alarm_repo.clone(), rule_repo));
+        let notification_dispatcher = Arc::new(NotificationDispatcher::new(db.clone()));
+        let handler = AlarmEventHandler::new(alarm_service.clone(), notification_dispatcher);
+
+        // Step 1: Trigger alarm (value 85 > 80)
+        handler
+            .handle(&make_test_event("dev-ar", "prop-ar", "temperature", 85.0, None))
+            .await
+            .unwrap();
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM device_alarms WHERE device_id = 'dev-ar' AND is_resolved = 0",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 1, "Should have one active alarm");
+
+        // Step 2: Value drops below threshold → auto-resolve
+        handler
+            .handle(&make_test_event("dev-ar", "prop-ar", "temperature", 25.0, None))
+            .await
+            .unwrap();
+
+        let active_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM device_alarms WHERE device_id = 'dev-ar' AND is_resolved = 0",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(active_count, 0, "Alarm should be auto-resolved when value returns to normal");
+    }
+
+    #[sqlx::test]
+    async fn test_auto_resolve_sets_resolution_metadata(pool: sqlx::SqlitePool) {
+        setup_full_schema(&pool).await;
+        let db = Arc::new(Database::new(pool.clone()));
+
+        sqlx::query("INSERT INTO devices (id, name, workspace_id) VALUES ('dev-arm', 'Meta Device', 'ws-arm')")
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO device_properties (id, device_id, name) VALUES ('prop-arm', 'dev-arm', 'humidity')")
+            .execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, workspace_id, created_at, updated_at)
+             VALUES ('rule-arm', 'dev-arm', 'prop-arm', 'High Humidity', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":70.0}', 'warning', 1, 'ws-arm', datetime('now'), datetime('now'))",
+        ).execute(&pool).await.unwrap();
+
+        let alarm_repo: Arc<dyn AlarmRepository> = Arc::new(SqliteAlarmRepository::new(db.clone()));
+        let rule_repo: Arc<dyn AlarmRuleRepository> =
+            Arc::new(SqliteAlarmRuleRepository::new(db.clone()));
+        let alarm_service = Arc::new(AlarmService::new(alarm_repo.clone(), rule_repo));
+        let notification_dispatcher = Arc::new(NotificationDispatcher::new(db.clone()));
+        let handler = AlarmEventHandler::new(alarm_service.clone(), notification_dispatcher);
+
+        // Trigger
+        handler
+            .handle(&make_test_event("dev-arm", "prop-arm", "humidity", 85.0, None))
+            .await
+            .unwrap();
+        // Auto-resolve
+        handler
+            .handle(&make_test_event("dev-arm", "prop-arm", "humidity", 50.0, None))
+            .await
+            .unwrap();
+
+        let row = sqlx::query("SELECT resolved_by, resolved_at, resolution_type FROM device_alarms WHERE device_id = 'dev-arm' AND is_resolved = 1")
+            .fetch_one(&pool).await.unwrap();
+        let resolved_by: String = row.get("resolved_by");
+        let resolution_type: String = row.get("resolution_type");
+        assert_eq!(resolved_by, "system", "Auto-resolve should set resolved_by to 'system'");
+        assert_eq!(resolution_type, "auto_resolved", "Auto-resolve should set resolution_type");
+    }
+
+    /// --- Suppress duplicate test ---
+
+    #[sqlx::test]
+    async fn test_suppress_duplicate_no_duplicate_alarm(pool: sqlx::SqlitePool) {
+        setup_full_schema(&pool).await;
+        let db = Arc::new(Database::new(pool.clone()));
+
+        sqlx::query("INSERT INTO devices (id, name) VALUES ('dev-sd', 'Suppress Dev')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO device_properties (id, device_id, name) VALUES ('prop-sd', 'dev-sd', 'temperature')")
+            .execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+             VALUES ('rule-sd', 'dev-sd', 'prop-sd', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, datetime('now'), datetime('now'))",
+        ).execute(&pool).await.unwrap();
+
+        let alarm_repo: Arc<dyn AlarmRepository> = Arc::new(SqliteAlarmRepository::new(db.clone()));
+        let rule_repo: Arc<dyn AlarmRuleRepository> =
+            Arc::new(SqliteAlarmRuleRepository::new(db.clone()));
+        let alarm_service = Arc::new(AlarmService::new(alarm_repo.clone(), rule_repo));
+        let notification_dispatcher = Arc::new(NotificationDispatcher::new(db.clone()));
+        let handler = AlarmEventHandler::new(alarm_service.clone(), notification_dispatcher);
+
+        // First trigger
+        handler
+            .handle(&make_test_event("dev-sd", "prop-sd", "temperature", 85.0, None))
+            .await
+            .unwrap();
+        // Second identical trigger should suppress duplicate (same device+rule+level)
+        handler
+            .handle(&make_test_event("dev-sd", "prop-sd", "temperature", 90.0, None))
+            .await
+            .unwrap();
+
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE device_id = 'dev-sd'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 1, "Should not create duplicate alarm for same device+rule");
     }
 }
