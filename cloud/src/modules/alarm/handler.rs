@@ -217,7 +217,8 @@ async fn load_device_names_map(
         return map;
     }
     let placeholders = vec!["?"; alarms.len()].join(",");
-    let query = format!("SELECT id, name FROM devices WHERE id IN ({})", placeholders);
+    let query =
+        format!("SELECT id, display_name, name FROM devices WHERE id IN ({})", placeholders);
     let mut q = sqlx::query(sqlx::AssertSqlSafe(query));
     for a in alarms {
         q = q.bind(&a.device_id);
@@ -226,8 +227,9 @@ async fn load_device_names_map(
     for row in rows {
         use sqlx::Row;
         let id: String = row.get("id");
+        let display: Option<String> = row.get("display_name");
         let name: String = row.get("name");
-        map.insert(id, name);
+        map.insert(id, display.unwrap_or(name));
     }
     map
 }
