@@ -577,12 +577,19 @@ impl AlarmRepository for SqliteAlarmRepository {
         };
 
         let placeholders = vec!["?"; alarm_ids.len()].join(",");
-        let query = format!(
-            "UPDATE device_alarms SET is_resolved = ?, is_acknowledged = ?, resolved_by = ?, resolved_at = ?, resolution_type = ? WHERE id IN ({}) AND device_id IN (SELECT id FROM devices WHERE workspace_id = ?)",
-            placeholders
-        );
+        let query = if workspace_id.is_empty() {
+            format!(
+                "UPDATE device_alarms SET is_resolved = ?, is_acknowledged = ?, resolved_by = ?, resolved_at = ?, resolution_type = ? WHERE id IN ({})",
+                placeholders
+            )
+        } else {
+            format!(
+                "UPDATE device_alarms SET is_resolved = ?, is_acknowledged = ?, resolved_by = ?, resolved_at = ?, resolution_type = ? WHERE id IN ({}) AND device_id IN (SELECT id FROM devices WHERE workspace_id = ?)",
+                placeholders
+            )
+        };
 
-        let mut sqlx_query = sqlx::query(sqlx::AssertSqlSafe(query.clone()))
+        let mut sqlx_query = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(is_resolved)
             .bind(is_acknowledged)
             .bind(resolved_by)
@@ -591,7 +598,9 @@ impl AlarmRepository for SqliteAlarmRepository {
         for id in alarm_ids {
             sqlx_query = sqlx_query.bind(id);
         }
-        sqlx_query = sqlx_query.bind(workspace_id);
+        if !workspace_id.is_empty() {
+            sqlx_query = sqlx_query.bind(workspace_id);
+        }
 
         let result = sqlx_query
             .execute(self.database.pool())
