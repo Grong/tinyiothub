@@ -223,7 +223,10 @@ async fn load_device_names_map(
     for a in alarms {
         q = q.bind(&a.device_id);
     }
-    let rows = q.fetch_all(pool).await.unwrap_or_default();
+    let rows = q.fetch_all(pool).await.unwrap_or_else(|e| {
+        tracing::error!("Failed to load device names for alarm list: {}", e);
+        Vec::new()
+    });
     for row in rows {
         use sqlx::Row;
         let id: String = row.get("id");
