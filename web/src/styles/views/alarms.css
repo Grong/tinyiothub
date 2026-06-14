@@ -1,138 +1,194 @@
+/* ============================================
+   Alarm Center
+   ============================================ */
 
-@keyframes skeleton-shimmer {
+/* ---- Toolbar: status tabs + level chips ---- */
+
+.alarm-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.alarm-tabs {
+  display: flex;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 3px;
+  gap: 2px;
+}
+
+.alarm-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border: none;
+  border-radius: calc(var(--radius-md) - 2px);
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s var(--ease-out);
+  white-space: nowrap;
+}
+
+.alarm-tab:hover { color: var(--text); }
+
+.alarm-tab--active {
+  background: var(--card);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+}
+
+.alarm-tab__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--muted-fill-10);
+  color: var(--muted);
+}
+
+.alarm-tab--active .alarm-tab__count {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+/* ---- Level chips ---- */
+
+.alarm-level-chips {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.level-chip2 {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s var(--ease-out);
+}
+
+.level-chip2:hover { border-color: var(--lc-color, var(--accent)); }
+
+.level-chip2--active {
+  background: color-mix(in srgb, var(--lc-color) 15%, var(--bg-subtle));
+  border-color: var(--lc-color);
+  color: var(--lc-color);
+  font-weight: 600;
+}
+
+/* ---- Skeleton ---- */
+
+.alarm-skeleton {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--card);
+}
+
+.alarm-skeleton__row {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  padding: 14px 16px;
+  gap: 12px;
+  animation: skPulse 1.5s var(--ease-out) infinite;
+}
+
+.alarm-skeleton__row:last-child { border-bottom: none; }
+
+.skeleton-line {
+  height: 12px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--border) 0%, var(--bg-subtle) 50%, var(--border) 100%);
+  background-size: 200% 100%;
+  animation: skShimmer 1.5s ease-in-out infinite;
+}
+
+.w-30 { width: 30%; }
+.w-60 { width: 60%; }
+
+@keyframes skPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes skShimmer {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
 
-/* Alarm Card */
-.a2ui-alarm-card {
-  background: var(--bg-subtle);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: var(--space-3);
-  margin: 4px 0;
-}
-.a2ui-alarm-card__header {
+/* ---- Empty / Error ---- */
+
+.alarm-empty {
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
   align-items: center;
-  margin-bottom: 6px;
-}
-.a2ui-alarm-card__message {
-  font-size: 13px;
-  color: var(--text);
-  margin-bottom: 6px;
-}
-.a2ui-alarm-card__meta {
-  display: flex;
-  justify-content: space-between;
-  font-size: 11px;
-  color: var(--muted);
-}
-.a2ui-alarm-card__actions {
-  margin-top: var(--space-2);
-  display: flex;
-  gap: 6px;
-}
-
-/* Alarm Table */
-.a2ui-alarm-table {
-  background: var(--bg-subtle);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  overflow-x: auto;
-  margin: 4px 0;
-}
-.a2ui-alarm-table__title {
-  font-size: 13px;
-  font-weight: 500;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border);
-}
-.a2ui-alarm-table__table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-}
-.a2ui-alarm-table__table th {
-  text-align: left;
-  padding: 8px 10px;
-  background: var(--bg);
-  color: var(--muted);
-  font-weight: 500;
-  border-bottom: 1px solid var(--border);
-}
-.a2ui-alarm-table__table td {
-  padding: 7px 10px;
-  border-bottom: 1px solid var(--border);
-  color: var(--text);
-}
-.a2ui-alarm-table__table tr:last-child td {
-  border-bottom: none;
-}
-/* Alarm summary card */
-.alarm-summary {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-bottom: var(--space-4);
-  padding: var(--space-4);
-  background: var(--card);
-  border-radius: var(--radius-lg);
-}
-
-.alarm-summary::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 1px;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.03));
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  pointer-events: none;
-}
-
-.alarm-summary__count {
-  font-size: 36px;
-  font-weight: 700;
-  background: var(--accent-gradient);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-.alarm-summary__label {
-  font-size: 14px;
-  font-weight: 500;
-}
-.alarm-summary__hint {
-  font-size: 12px;
-  color: var(--muted);
-}
-.alarm-summary__success {
-  padding: var(--space-5);
+  gap: 12px;
+  padding: 64px 24px;
   text-align: center;
-  color: var(--success);
-  font-size: 14px;
-}
-.alarm-summary__warn {
-  padding: var(--space-3);
-  background: var(--danger-fill-5);
-  border-radius: 8px;
-  border: 1px solid var(--danger-line-15);
-  font-size: 13px;
-  color: var(--danger);
 }
 
+.alarm-empty__icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  font-weight: 700;
+  background: var(--bg-subtle);
+  color: var(--muted);
+}
+
+.alarm-empty__text { font-size: 15px; color: var(--text); font-weight: 500; }
+.alarm-empty__sub { font-size: 13px; color: var(--muted); }
+
+/* ---- Resolved row ---- */
+
+.row--resolved { opacity: 0.5; }
+
+/* ---- Modal message ---- */
+
+.alarm-modal-msg {
+  padding: 12px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.5;
+  margin-bottom: 4px;
+}
+
+/* ---- Row entry animation ---- */
+
+@keyframes alarmRowIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ---- Responsive ---- */
 
 @media (max-width: 768px) {
-  .alarm-summary {
-    flex-wrap: wrap;
-  }
-  .a2ui-alarm-card__header {
-    flex-wrap: wrap;
-    gap: 4px;
-  }
+  .alarm-toolbar { flex-direction: column; align-items: stretch; }
+  .alarm-tabs { overflow-x: auto; }
+  .alarm-tab { padding: 6px 12px; font-size: 12px; }
+  .alarm-tab__count { min-width: 16px; height: 16px; font-size: 10px; }
 }

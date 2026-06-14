@@ -2,7 +2,7 @@
  * 告警 API
  */
 
-import { apiGet, apiPost, apiPut } from './client.js';
+import { apiGet, apiPost, apiPut, apiDelete } from './client.js';
 import type {
   Alarm,
   AlarmRule,
@@ -48,7 +48,7 @@ export const alarmApi = {
   },
 
   // Alarm Rules
-  async getRules(params?: { page?: number; pageSize?: number }) {
+  async getRules(params?: { page?: number; pageSize?: number; deviceId?: string }) {
     return apiGet<PaginatedResponse<AlarmRule>>('/alarm-rules', params as Record<string, any>);
   },
 
@@ -65,7 +65,7 @@ export const alarmApi = {
   },
 
   async deleteRule(id: string) {
-    return apiGet<void>(`/alarm-rules/${id}/delete`);
+    return apiDelete<void>(`/alarm-rules/${id}`);
   },
 
   async toggleRule(id: string, isEnabled: boolean) {

@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.4.2] - 2026-06-12
+
+### Added — Alarm System
+
+- **Alarm center page**: industrial control room design with real-time status filter (Active/Acknowledged/Resolved), alarm level indicators, and batch operations
+- **Alarm rules engine**: 5 condition types — Threshold, Range, Change (increase/decrease/any), Duration (sustained condition), Composite (AND/OR/NOT)
+- **Alarm rules management UI**: create/edit/delete rules per device with condition builder, notification config, and enable/disable toggle
+- **Auto-resolve**: alarms auto-resolve when property values return to normal range, with `resolution_type='auto_resolved'` metadata
+- **Rule engine**: evaluates property change events against enabled rules, respects workspace scoping and device-level rules
+- **Notification dispatch**: Email/SMS/Webhook channel support with per-rule notification config and suppress duration
+
+### Added — Alarm Operations
+
+- **Acknowledge & resolve**: single and batch operations with user attribution and resolution type tracking (Fixed/FalseAlarm/Ignored/AutoResolved)
+- **Suppress duplicates**: prevents repeated alarms for the same device+rule while one is still active
+- **Oscillation throttle**: DashMap-based per-rule throttle with configurable suppress duration to prevent alarm storms
+- **Duration tracking**: sustained-condition evaluation with auto-cleanup of stale tracking entries
+
+### Fixed
+
+- **FK constraint on `resolved_by`**: set to NULL for auto-resolve to avoid `FOREIGN KEY (resolved_by) REFERENCES users(id)` violation — no "system" user exists
+- **Workspace filter in batch update**: skip workspace subquery when `workspace_id` is empty to prevent FK errors on unassigned devices
+- **Memory leak**: `duration_first_seen` DashMap now cleaned with `retain()` to remove entries older than 24 hours
+- **Duplicate AlarmRepository eliminated**: all callers now use shared `Arc<dyn AlarmRepository>` trait object, `AlarmRepositoryImpl` removed
+
+### Changed
+
+- **Device detail alarm tab**: shows device-level alarms with client-side filtering
+- **Alarm list**: populated `device_name` via batch device lookup, uses `display_name` over `name`
+- **Datetime parsing**: robust multi-format parser (RFC3339, SQLite, ISO 8601 without timezone)
+- **Legacy condition support**: backward-compatible parsing of `{"operator":"gt","value":85}` format
+
+### Internal
+
+- 66 alarm-related tests (rule engine unit tests + integration tests)
+- FK constraints added to integration test schema matching production
+- Database migrations: `resolution_type` column, relaxed FK constraints on alarm rules, `notification_config` column
+
 ## [0.4.0] - 2026-05-28
 
 ### Added — Workspace Resource Management

@@ -6,9 +6,11 @@ import { driverApi } from "../../api/drivers.js";
 import { templateApi } from "../../api/templates.js";
 import { tagApi } from "../../api/tags.js";
 import { eventApi } from "../../api/events.js";
+import { alarmApi } from "../../api/alarms.js";
 import { deviceCache } from "../../stores/device-cache.js";
 import { i18n, t } from "../../i18n/index.js";
 import type { Device, DeviceProfile, DeviceProperty, CreateDeviceRequest, DriverConfigOption, Tag, DeviceEvent } from "../../types/index.js";
+import type { AlarmRule, AlarmLevel, RuleType, AlarmCondition, ComparisonOperator, ChangeType, LogicalOperator, NotificationChannelType, CreateAlarmRuleRequest, UpdateAlarmRuleRequest } from "../../types/index.js";
 import { success, error as toastError } from "../components/toast.js";
 import { icons } from "../icons.js";
 import "./gateway-pairing.js";
@@ -181,6 +183,39 @@ export class DevicesView extends SignalWatcher(LitElement) {
   @state() formModalTab: 'basic' | 'driver' | 'properties' | 'commands' = 'basic';
   @state() formCommands: { name: string; description?: string; parameters?: string }[] = [];
   @state() formProfileLoading = false;
+
+  // Alarm rule management
+  @state() alarmRules: AlarmRule[] = [];
+  @state() rulesLoading = false;
+  @state() showRuleModal = false;
+  @state() editingRule: AlarmRule | null = null;
+  @state() ruleSaving = false;
+  // Device alarm list
+  @state() deviceAlarms: import("../../types/index.js").Alarm[] = [];
+  @state() alarmsLoading = false;
+  // Rule form
+  @state() ruleFormName = "";
+  @state() ruleFormDesc = "";
+  @state() ruleFormPropertyId = "";
+  @state() ruleFormType: RuleType = "threshold";
+  @state() ruleFormLevel: AlarmLevel = "Warning";
+  @state() ruleFormCondition: AlarmCondition = { type: "threshold", operator: "greater_than", value: 0 };
+  // Threshold/range
+  @state() ruleFormOperator: ComparisonOperator = "greater_than";
+  @state() ruleFormValue = 0;
+  @state() ruleFormMin = 0;
+  @state() ruleFormMax = 100;
+  // Change
+  @state() ruleFormChangeType: ChangeType = "any";
+  @state() ruleFormChangeThreshold = 10;
+  @state() ruleFormChangeWindow = 300;
+  // Composite
+  @state() ruleFormLogicOp: LogicalOperator = "and";
+  @state() ruleCompositeConditions: AlarmCondition[] = [];
+  // Notification
+  @state() ruleFormNotifyEnabled = false;
+  @state() ruleFormNotifyChannels: NotificationChannelType[] = [];
+  @state() ruleFormNotifyRecipients = "";
 
   // Wizard (2-step template-based)
   @state() showWizard = false;
@@ -485,6 +520,214 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   switchDetailTab(key: string) {
     this.detailTab = key;
+    if (key === "alarms") {
+      this.loadAlarmRules();
+      this.loadDeviceAlarms();
+    }
+  }
+
+  async loadDeviceAlarms() {
+    const deviceId = this.selectedDevice?.device?.id;
+    if (!deviceId) return;
+    this.alarmsLoading = true;
+    try {
+      const res = await alarmApi.getAlarms({ statuses: ["active"], page: 1, pageSize: 50 });
+      const alarmData = res.result as any;
+      const allAlarms = alarmData?.data || [];
+      this.deviceAlarms = allAlarms.filter((a: any) => a.deviceId === deviceId);
+    } catch {
+      this.deviceAlarms = [];
+    } finally {
+      this.alarmsLoading = false;
+    }
+  }
+
+  // ===== Alarm Rule Management =====
+
+  async loadAlarmRules() {
+    const deviceId = this.selectedDevice?.device?.id;
+    if (!deviceId) return;
+    this.rulesLoading = true;
+    try {
+      const res = await alarmApi.getRules({ deviceId });
+      const data = res.result;
+      this.alarmRules = Array.isArray(data) ? data as AlarmRule[] : [];
+    } catch {
+      this.alarmRules = [];
+    } finally {
+      this.rulesLoading = false;
+    }
+  }
+
+  openNewRule() {
+    this.editingRule = null;
+    this.resetRuleForm();
+    this.showRuleModal = true;
+  }
+
+  openEditRule(rule: AlarmRule) {
+    this.editingRule = rule;
+    this.ruleFormName = rule.name;
+    this.ruleFormDesc = rule.description || "";
+    this.ruleFormPropertyId = rule.propertyId || "";
+    this.ruleFormType = rule.ruleType as RuleType;
+    this.ruleFormLevel = rule.alarmLevel as AlarmLevel;
+    this.ruleFormCondition = rule.condition;
+    const cond = rule.condition;
+    if (cond.type === "threshold") {
+      this.ruleFormOperator = cond.operator;
+      this.ruleFormValue = cond.value;
+    } else if (cond.type === "range") {
+      this.ruleFormMin = cond.min ?? 0;
+      this.ruleFormMax = cond.max ?? 100;
+    } else if (cond.type === "change") {
+      this.ruleFormChangeType = cond.changeType;
+      this.ruleFormChangeThreshold = cond.threshold;
+      this.ruleFormChangeWindow = cond.timeWindow;
+    } else if (cond.type === "composite") {
+      this.ruleFormLogicOp = cond.operator;
+      this.ruleCompositeConditions = [...cond.conditions];
+    }
+    this.ruleFormNotifyEnabled = rule.notificationConfig?.enabled ?? false;
+    this.ruleFormNotifyChannels = [...(rule.notificationConfig?.channels ?? [])];
+    this.ruleFormNotifyRecipients = (rule.notificationConfig?.recipients ?? []).join(", ");
+    this.showRuleModal = true;
+  }
+
+  resetRuleForm() {
+    this.ruleFormName = "";
+    this.ruleFormDesc = "";
+    this.ruleFormPropertyId = "";
+    this.ruleFormType = "threshold";
+    this.ruleFormLevel = "Warning";
+    this.ruleFormOperator = "greater_than";
+    this.ruleFormValue = 0;
+    this.ruleFormMin = 0;
+    this.ruleFormMax = 100;
+    this.ruleFormChangeType = "any";
+    this.ruleFormChangeThreshold = 10;
+    this.ruleFormChangeWindow = 300;
+    this.ruleFormLogicOp = "and";
+    this.ruleCompositeConditions = [];
+    this.ruleFormNotifyEnabled = false;
+    this.ruleFormNotifyChannels = [];
+    this.ruleFormNotifyRecipients = "";
+  }
+
+  closeRuleModal() {
+    this.showRuleModal = false;
+    this.editingRule = null;
+  }
+
+  buildCondition(): AlarmCondition {
+    switch (this.ruleFormType) {
+      case "threshold":
+        return { type: "threshold", operator: this.ruleFormOperator, value: this.ruleFormValue };
+      case "range":
+        return { type: "range", min: this.ruleFormMin, max: this.ruleFormMax, inclusive: true };
+      case "change":
+        return { type: "change", changeType: this.ruleFormChangeType, threshold: this.ruleFormChangeThreshold, timeWindow: this.ruleFormChangeWindow };
+      case "composite":
+        return { type: "composite", operator: this.ruleFormLogicOp, conditions: this.ruleCompositeConditions };
+      default:
+        return { type: "threshold", operator: "greater_than", value: 0 };
+    }
+  }
+
+  async saveRule() {
+    if (!this.ruleFormName.trim()) {
+      toastError("请输入规则名称");
+      return;
+    }
+    const deviceId = this.selectedDevice?.device?.id;
+    if (!deviceId) return;
+
+    this.ruleSaving = true;
+    try {
+      const condition = this.buildCondition();
+      const notificationConfig = {
+        enabled: this.ruleFormNotifyEnabled,
+        channels: this.ruleFormNotifyChannels,
+        recipients: this.ruleFormNotifyRecipients.split(",").map(s => s.trim()).filter(Boolean),
+      };
+
+      if (this.editingRule) {
+        const updateReq: UpdateAlarmRuleRequest = {
+          name: this.ruleFormName,
+          description: this.ruleFormDesc || undefined,
+          condition,
+          alarmLevel: this.ruleFormLevel,
+          notificationConfig,
+        };
+        await alarmApi.updateRule(this.editingRule.id, updateReq);
+        success("规则已更新");
+      } else {
+        const createReq: CreateAlarmRuleRequest = {
+          name: this.ruleFormName,
+          description: this.ruleFormDesc || undefined,
+          deviceId,
+          propertyId: this.ruleFormPropertyId || undefined,
+          ruleType: this.ruleFormType,
+          condition,
+          alarmLevel: this.ruleFormLevel,
+          notificationConfig,
+        };
+        await alarmApi.createRule(createReq);
+        success("规则已创建");
+      }
+      this.closeRuleModal();
+      await this.loadAlarmRules();
+    } catch (err: any) {
+      toastError(err.message || "保存规则失败");
+    } finally {
+      this.ruleSaving = false;
+    }
+  }
+
+  async deleteRule(rule: AlarmRule) {
+    if (!confirm(`确定删除规则「${rule.name}」吗？`)) return;
+    try {
+      await alarmApi.deleteRule(rule.id);
+      success("规则已删除");
+      await this.loadAlarmRules();
+    } catch (err: any) {
+      toastError(err.message || "删除失败");
+    }
+  }
+
+  async toggleRule(rule: AlarmRule) {
+    try {
+      await alarmApi.toggleRule(rule.id, !rule.isEnabled);
+      success(rule.isEnabled ? "规则已禁用" : "规则已启用");
+      await this.loadAlarmRules();
+    } catch (err: any) {
+      toastError(err.message || "操作失败");
+    }
+  }
+
+  addCompositeCondition() {
+    this.ruleCompositeConditions = [
+      ...this.ruleCompositeConditions,
+      { type: "threshold" as const, operator: "greater_than" as ComparisonOperator, value: 0 },
+    ];
+  }
+
+  removeCompositeCondition(index: number) {
+    this.ruleCompositeConditions = this.ruleCompositeConditions.filter((_, i) => i !== index);
+  }
+
+  updateCompositeCondition(index: number, cond: AlarmCondition) {
+    this.ruleCompositeConditions = this.ruleCompositeConditions.map((c, i) =>
+      i === index ? cond : c
+    );
+  }
+
+  toggleChannel(channel: NotificationChannelType) {
+    if (this.ruleFormNotifyChannels.includes(channel)) {
+      this.ruleFormNotifyChannels = this.ruleFormNotifyChannels.filter(c => c !== channel);
+    } else {
+      this.ruleFormNotifyChannels = [...this.ruleFormNotifyChannels, channel];
+    }
   }
 
   isNumericType(dataType: string): boolean {
@@ -1780,27 +2023,392 @@ export class DevicesView extends SignalWatcher(LitElement) {
   renderDetailAlarms() {
     const profile = this.selectedDevice;
     if (!profile) return nothing;
-    const ov = profile.overview;
+    const properties = profile.properties || [];
 
     return html`
-      <div class="card alarm-card-wrap">
-        <div class="alarm-summary">
-          <div class="alarm-summary__count" style="color: ${ov.activeAlarms > 0 ? 'var(--danger)' : 'var(--success)'};">
-            ${ov.activeAlarms}
-          </div>
+      <!-- Active alarms — real-time display -->
+      <div class="card" style="margin-top: var(--space-4);">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-3);">
           <div>
-            <div class="alarm-summary__label">活跃告警</div>
-            <div class="alarm-summary__hint">需要处理的告警数量</div>
+            <div class="alarm-rules-card__title">实时告警</div>
+            <div class="alarm-rules-card__sub">当前活跃的告警，恢复正常后自动消失</div>
+          </div>
+          <button class="btn btn--ghost btn--xs" @click=${this.loadDeviceAlarms} ?disabled=${this.alarmsLoading}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="vertical-align: -2px;">
+              <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+            </svg>
+          </button>
+        </div>
+        ${this.alarmsLoading
+          ? html`<div class="alarm-rules-card__loading"><span class="loading-spinner"></span> 加载中...</div>`
+          : this.deviceAlarms.length === 0
+            ? html`<div class="alarm-rules-empty">
+                <div class="alarm-rules-empty__text" style="color: var(--success);">🎉 无活跃告警</div>
+                <div class="alarm-rules-empty__hint">一切正常</div>
+              </div>`
+            : html`
+              <div class="alarm-rules-list">
+                ${this.deviceAlarms.map((a: any) => html`
+                  <div class="alarm-rule-item" style="animation: ruleFadeIn 0.35s var(--ease-out) both;">
+                    <div class="alarm-rule-item__main">
+                      <div class="alarm-rule-item__header">
+                        <span class="alarm-rule-badge alarm-rule-badge--${(a.alarmLevel || '').toLowerCase()}">${this.levelLabel2(a.alarmLevel || '')}</span>
+                        <span class="alarm-rule-item__name">${a.message}</span>
+                      </div>
+                      <div class="alarm-rule-item__meta">
+                        <span>${(a.alarmTime || a.createdAt || '').slice(0, 16)}</span>
+                      </div>
+                    </div>
+                  </div>
+                `)}
+              </div>
+            `
+        }
+      </div>
+
+      <!-- Alarm rules section -->
+      <div class="card alarm-rules-card">
+        <div class="alarm-rules-card__header">
+          <div>
+            <div class="alarm-rules-card__title">告警规则</div>
+            <div class="alarm-rules-card__sub">管理设备的自动告警规则</div>
+          </div>
+          <button class="btn btn--primary btn--sm" @click=${this.openNewRule}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" class="btn__icon-left">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            添加规则
+          </button>
+        </div>
+
+        ${this.rulesLoading
+          ? html`<div class="empty-center alarm-rules-card__loading"><span class="loading-spinner"></span> 加载中...</div>`
+          : this.alarmRules.length === 0
+            ? html`
+              <div class="alarm-rules-empty">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="40" height="40" class="alarm-rules-empty__icon">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                  <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+                <div class="alarm-rules-empty__text">暂无告警规则</div>
+                <div class="alarm-rules-empty__hint">添加规则后，设备数据变化将自动触发告警</div>
+              </div>
+            `
+            : html`
+              <div class="alarm-rules-list">
+                ${this.alarmRules.map(rule => {
+                  const condSummary = this.formatCondition(rule.condition);
+                  const propName = properties.find(p => p.name === rule.propertyId)?.displayName || rule.propertyId || "—";
+                  return html`
+                    <div class="alarm-rule-item ${rule.isEnabled ? '' : 'alarm-rule-item--disabled'}" style="animation: ruleFadeIn 0.35s var(--ease-out) both; animation-delay: ${Math.min(this.alarmRules.indexOf(rule) * 50, 300)}ms;">
+                      <div class="alarm-rule-item__main">
+                        <div class="alarm-rule-item__header">
+                          <span class="alarm-rule-item__name">${rule.name}</span>
+                          <span class="alarm-rule-badge alarm-rule-badge--${rule.alarmLevel.toLowerCase()}">${this.levelLabel2(rule.alarmLevel)}</span>
+                          ${rule.notificationConfig?.enabled
+                            ? html`<span class="alarm-rule-item__notify-icon" title="通知已开启">🔔</span>`
+                            : nothing
+                          }
+                        </div>
+                        <div class="alarm-rule-item__meta">
+                          <span>属性: ${propName}</span>
+                          <span>条件: ${condSummary}</span>
+                        </div>
+                      </div>
+                      <div class="alarm-rule-item__actions">
+                        <label class="toggle-switch" title=${rule.isEnabled ? "已启用" : "已禁用"}>
+                          <input type="checkbox" .checked=${rule.isEnabled} @change=${() => this.toggleRule(rule)} />
+                          <span class="toggle-switch__slider"></span>
+                        </label>
+                        <button class="btn btn--ghost btn--xs" @click=${() => this.openEditRule(rule)}>编辑</button>
+                        <button class="btn btn--ghost btn--xs btn--danger-text" @click=${() => this.deleteRule(rule)}>删除</button>
+                      </div>
+                    </div>
+                  `;
+                })}
+              </div>
+            `
+        }
+      </div>
+
+      <!-- Rule editor modal -->
+      ${this.showRuleModal ? this.renderRuleModal(profile.device.id, properties) : nothing}
+    `;
+  }
+
+  formatCondition(cond: AlarmCondition): string {
+    switch (cond.type) {
+      case "threshold": {
+        const opLabels: Record<string, string> = {
+          greater_than: ">", less_than: "<", greater_than_or_equal: "≥",
+          less_than_or_equal: "≤", equal: "=", not_equal: "≠",
+        };
+        return `${opLabels[cond.operator] || cond.operator} ${cond.value}`;
+      }
+      case "range": {
+        const lo = cond.min != null ? cond.min : "-∞";
+        const hi = cond.max != null ? cond.max : "+∞";
+        return `${lo} ~ ${hi}`;
+      }
+      case "change": {
+        const dir = cond.changeType === "increase" ? "上升" : cond.changeType === "decrease" ? "下降" : "变化";
+        return `${dir} > ${cond.threshold}`;
+      }
+      case "composite": {
+        return `${cond.conditions.length} 个条件 (${cond.operator})`;
+      }
+      default: return "—";
+    }
+  }
+
+  levelLabel2(level: string): string {
+    const m: Record<string, string> = { Info: "信息", Warning: "警告", Error: "错误", Critical: "严重", info: "信息", warning: "警告", error: "错误", critical: "严重" };
+    return m[level] || level;
+  }
+
+  statusLabel2(status: string): string {
+    const s = status?.toLowerCase();
+    const m: Record<string, string> = { active: "活跃", acknowledged: "已确认", resolved: "已解决", suppressed: "已抑制" };
+    return m[s] || status;
+  }
+
+  renderRuleModal(_deviceId: string, properties: any[]) {
+    const isEdit = !!this.editingRule;
+    const ruleTypeOptions: { value: RuleType; label: string }[] = [
+      { value: "threshold", label: "阈值比较" },
+      { value: "range", label: "范围判断" },
+      { value: "change", label: "变化检测" },
+      { value: "composite", label: "组合条件" },
+    ];
+    const levelOptions: AlarmLevel[] = ["Info", "Warning", "Error", "Critical"];
+    const opOptions: { value: ComparisonOperator; label: string }[] = [
+      { value: "greater_than", label: "大于 ( > )" },
+      { value: "less_than", label: "小于 ( < )" },
+      { value: "greater_than_or_equal", label: "大于等于 ( ≥ )" },
+      { value: "less_than_or_equal", label: "小于等于 ( ≤ )" },
+      { value: "equal", label: "等于 ( = )" },
+      { value: "not_equal", label: "不等于 ( ≠ )" },
+    ];
+    const channelOptions: { value: NotificationChannelType; label: string }[] = [
+      { value: "Email", label: "邮件" },
+      { value: "Sms", label: "短信" },
+      { value: "Webhook", label: "Webhook" },
+      { value: "Sse", label: "SSE" },
+    ];
+
+    return html`
+      <div class="modal-overlay device-edit-overlay" role="dialog" aria-modal="true"
+        aria-label=${isEdit ? "编辑告警规则" : "添加告警规则"}
+        @click=${this.closeRuleModal}
+        @keydown=${(e: KeyboardEvent) => { if (e.key === "Escape") this.closeRuleModal(); }}>
+        <div class="device-edit-dialog" style="max-width: 600px;" @click=${(e: Event) => e.stopPropagation()}>
+          <!-- Header -->
+          <div class="device-edit-header">
+            <div class="device-edit-header__left">
+              <span class="device-edit-header__icon" style="background: var(--warning-subtle, rgba(245,158,11,0.1)); color: var(--warning, #f59e0b);">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                  <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+              </span>
+              <div>
+                <h2 class="device-edit-header__title">${isEdit ? '编辑告警规则' : '添加告警规则'}</h2>
+                <span class="device-edit-header__sub">设备: ${this.selectedDevice?.device?.displayName || this.selectedDevice?.device?.name}</span>
+              </div>
+            </div>
+            <button class="device-edit-close" @click=${this.closeRuleModal} aria-label="关闭">&times;</button>
+          </div>
+
+          <!-- Body -->
+          <div class="device-edit-body rule-modal-body">
+            <!-- Basic info -->
+            <div class="field-group">
+              <div class="field">
+                <label class="label">规则名称 <span style="color: var(--danger);">*</span></label>
+                <input class="input" type="text" placeholder="例如: 温度过高告警"
+                  .value=${this.ruleFormName}
+                  @input=${(e: any) => { this.ruleFormName = e.target.value; }} />
+              </div>
+              <div class="field">
+                <label class="label">描述</label>
+                <input class="input" type="text" placeholder="可选描述"
+                  .value=${this.ruleFormDesc}
+                  @input=${(e: any) => { this.ruleFormDesc = e.target.value; }} />
+              </div>
+              <div class="field">
+                <label class="label">关联属性</label>
+                <select class="select" .value=${this.ruleFormPropertyId} @change=${(e: any) => { this.ruleFormPropertyId = e.target.value; }}>
+                  <option value="">— 全部属性 —</option>
+                  ${properties.map((p: any) => html`
+                    <option value=${p.id}>${p.displayName || p.name} (${p.dataType || "string"})</option>
+                  `)}
+                </select>
+              </div>
+            </div>
+
+            <!-- Rule type -->
+            <div class="field rule-modal-section">
+              <label class="label">规则类型</label>
+              <div class="rule-type-tabs">
+                ${ruleTypeOptions.map(opt => html`
+                  <button class="rule-type-tab ${this.ruleFormType === opt.value ? 'rule-type-tab--active' : ''}"
+                    @click=${() => { this.ruleFormType = opt.value; }}>
+                    ${opt.label}
+                  </button>
+                `)}
+              </div>
+            </div>
+
+            <!-- Condition builder -->
+            <div class="condition-builder">
+              ${this.ruleFormType === "threshold" ? html`
+                <div class="condition-row">
+                  <select class="select" .value=${this.ruleFormOperator}
+                    @change=${(e: any) => { this.ruleFormOperator = e.target.value; }}>
+                    ${opOptions.map(o => html`<option value=${o.value}>${o.label}</option>`)}
+                  </select>
+                  <input class="input condition-input--value" type="number"
+                    .value=${String(this.ruleFormValue)}
+                    @input=${(e: any) => { this.ruleFormValue = parseFloat(e.target.value) || 0; }}
+                    placeholder="阈值" />
+                </div>
+              ` : nothing}
+
+              ${this.ruleFormType === "range" ? html`
+                <div class="condition-row">
+                  <input class="input condition-input--value" type="number"
+                    .value=${String(this.ruleFormMin)}
+                    @input=${(e: any) => { this.ruleFormMin = parseFloat(e.target.value) || 0; }}
+                    placeholder="最小值" />
+                  <span class="condition-separator">~</span>
+                  <input class="input condition-input--value" type="number"
+                    .value=${String(this.ruleFormMax)}
+                    @input=${(e: any) => { this.ruleFormMax = parseFloat(e.target.value) || 0; }}
+                    placeholder="最大值" />
+                </div>
+              ` : nothing}
+
+              ${this.ruleFormType === "change" ? html`
+                <div class="condition-row condition-row--wrap">
+                  <select class="select" .value=${this.ruleFormChangeType}
+                    @change=${(e: any) => { this.ruleFormChangeType = e.target.value; }}>
+                    <option value="any">任意变化</option>
+                    <option value="increase">上升</option>
+                    <option value="decrease">下降</option>
+                  </select>
+                  <span class="condition-label">超过</span>
+                  <input class="input condition-input--sm" type="number"
+                    .value=${String(this.ruleFormChangeThreshold)}
+                    @input=${(e: any) => { this.ruleFormChangeThreshold = parseFloat(e.target.value) || 0; }}
+                    placeholder="阈值" />
+                  <span class="condition-label">在</span>
+                  <input class="input condition-input--xs" type="number"
+                    .value=${String(this.ruleFormChangeWindow)}
+                    @input=${(e: any) => { this.ruleFormChangeWindow = parseInt(e.target.value) || 0; }}
+                    placeholder="秒" />
+                  <span class="condition-label">秒内</span>
+                </div>
+              ` : nothing}
+
+              ${this.ruleFormType === "composite" ? html`
+                <div class="composite-header">
+                  <select class="select" .value=${this.ruleFormLogicOp}
+                    @change=${(e: any) => { this.ruleFormLogicOp = e.target.value; }}>
+                    <option value="and">AND (全部满足)</option>
+                    <option value="or">OR (任一满足)</option>
+                    <option value="not">NOT (取反)</option>
+                  </select>
+                  <button class="btn btn--ghost btn--xs" @click=${this.addCompositeCondition}>+ 添加子条件</button>
+                </div>
+                ${this.ruleCompositeConditions.map((cond, i) => html`
+                  <div class="condition-row condition-sub-row">
+                    <span class="condition-sub-row__index">#${i + 1}</span>
+                    <select class="select condition-sub-row__op"
+                      .value=${cond.type === "threshold" ? cond.operator : "greater_than"}
+                      @change=${(e: any) => {
+                        const c = this.ruleCompositeConditions[i];
+                        if (c.type === "threshold") {
+                          this.updateCompositeCondition(i, { ...c, operator: e.target.value });
+                        }
+                      }}>
+                      ${opOptions.map(o => html`<option value=${o.value}>${o.label}</option>`)}
+                    </select>
+                    <input class="input condition-input--xs" type="number"
+                      .value=${String(cond.type === "threshold" ? cond.value : 0)}
+                      @input=${(e: any) => {
+                        const c = this.ruleCompositeConditions[i];
+                        if (c.type === "threshold") {
+                          this.updateCompositeCondition(i, { ...c, value: parseFloat(e.target.value) || 0 });
+                        }
+                      }} />
+                    <button class="btn btn--ghost btn--xs btn--danger-text"
+                      @click=${() => this.removeCompositeCondition(i)}>✕</button>
+                  </div>
+                `)}
+              ` : nothing}
+            </div>
+
+            <!-- Alarm level -->
+            <div class="field rule-modal-section">
+              <label class="label">告警级别</label>
+              <div class="level-selector">
+                ${levelOptions.map(lvl => {
+                  const colors: Record<string, string> = {
+                    Info: "var(--info, #3498db)", Warning: "var(--warning, #f39c12)",
+                    Error: "var(--danger, #e74c3c)", Critical: "var(--critical, #9b59b6)",
+                  };
+                  return html`
+                    <button class="level-chip ${this.ruleFormLevel === lvl ? 'level-chip--active' : ''}"
+                      style="--chip-color: ${colors[lvl] || 'var(--muted)'};"
+                      @click=${() => { this.ruleFormLevel = lvl; }}>
+                      ${this.levelLabel2(lvl)}
+                    </button>
+                  `;
+                })}
+              </div>
+            </div>
+
+            <!-- Notification config -->
+            <div class="field rule-modal-section">
+              <label class="label checkbox-label">
+                <input type="checkbox" class="checkbox-label__input"
+                  .checked=${this.ruleFormNotifyEnabled}
+                  @change=${(e: any) => { this.ruleFormNotifyEnabled = e.target.checked; }} />
+                启用通知
+              </label>
+            </div>
+
+            ${this.ruleFormNotifyEnabled ? html`
+              <div class="notification-config">
+                <div class="field">
+                  <label class="label field__label-sm">通知渠道</label>
+                  <div class="channel-chips">
+                    ${channelOptions.map(ch => html`
+                      <button class="channel-chip ${this.ruleFormNotifyChannels.includes(ch.value) ? 'channel-chip--active' : ''}"
+                        @click=${() => this.toggleChannel(ch.value)}>
+                        ${ch.label}
+                      </button>
+                    `)}
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="label field__label-sm">接收人</label>
+                  <input class="input" type="text" placeholder="邮箱或手机号，逗号分隔"
+                    .value=${this.ruleFormNotifyRecipients}
+                    @input=${(e: any) => { this.ruleFormNotifyRecipients = e.target.value; }} />
+                </div>
+              </div>
+            ` : nothing}
+          </div>
+
+          <!-- Footer -->
+          <div class="rule-modal-footer">
+            <button class="btn btn--ghost" @click=${this.closeRuleModal}>取消</button>
+            <button class="btn btn--primary" ?disabled=${this.ruleSaving} @click=${this.saveRule}>
+              ${this.ruleSaving ? "保存中..." : isEdit ? "保存修改" : "创建规则"}
+            </button>
           </div>
         </div>
-        ${ov.activeAlarms === 0
-          ? html`<div class="alarm-summary__success">暂无活跃告警</div>`
-          : html`
-            <div class="alarm-summary__warn">
-              <div>存在 ${ov.activeAlarms} 个活跃告警需要处理</div>
-            </div>
-          `
-        }
       </div>
     `;
   }

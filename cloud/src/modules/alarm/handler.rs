@@ -16,7 +16,7 @@ use super::{
 use crate::{
     modules::{
         alarm::types::{
-            AlarmDto, AlarmQueryParams, AlarmRuleDto, AlarmStatisticsDto, CreateAlarmRuleRequest,
+            AlarmDto, AlarmRuleDto, AlarmStatisticsDto, CreateAlarmRuleRequest,
             StatisticsQueryParams, ToggleRuleRequest, UpdateAlarmRuleRequest,
         },
         monitoring::types::RecentAlarm,
@@ -35,6 +35,10 @@ pub fn create_alarm_router() -> Router<AppState> {
         .route("/statistics", get(get_alarm_statistics))
         .route("/recent", get(get_recent_alarms))
         .route("/{id}", get(get_alarm))
+        .route("/{id}/acknowledge", put(acknowledge_alarm))
+        .route("/{id}/resolve", put(resolve_alarm))
+        .route("/batch/acknowledge", post(batch_acknowledge_alarms))
+        .route("/batch/resolve", post(batch_resolve_alarms))
 }
 
 pub fn create_alarm_rule_router() -> Router<AppState> {
@@ -52,47 +56,50 @@ pub fn create_alarm_rule_router() -> Router<AppState> {
 // ============================================================================
 
 async fn list_alarms(
-    Query(params): Query<AlarmQueryParams>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
     State(state): State<AppState>,
     claims: Claims,
 ) -> Json<ApiResponse<PaginatedResponse<AlarmDto>>> {
-    let time_range = if params.start_time.is_some() || params.end_time.is_some() {
+    let get_csv = |key: &str| -> Option<Vec<String>> {
+        params
+            .get(key)
+            .map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+            .filter(|v: &Vec<String>| !v.is_empty())
+    };
+
+    let page: u32 = params.get("page").and_then(|v| v.parse().ok()).unwrap_or(1);
+    let page_size: u32 = params.get("page_size").and_then(|v| v.parse().ok()).unwrap_or(20);
+    let offset = (page - 1) * page_size;
+
+    let time_range = if params.contains_key("start_time") || params.contains_key("end_time") {
         let start = params
-            .start_time
-            .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+            .get("start_time")
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|| Utc::now() - chrono::Duration::days(30));
-
         let end = params
-            .end_time
-            .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+            .get("end_time")
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(Utc::now);
-
         Some(TimeRange { start, end })
     } else {
         None
     };
 
-    let alarm_levels = params.levels.as_ref().and_then(|levels| {
-        let parsed: Vec<AlarmLevel> =
-            levels.iter().filter_map(|l| AlarmLevel::parse_str(l)).collect();
+    let alarm_levels = get_csv("levels").and_then(|v| {
+        let parsed: Vec<AlarmLevel> = v.iter().filter_map(|l| AlarmLevel::parse_str(l)).collect();
         if parsed.is_empty() { None } else { Some(parsed) }
     });
 
-    let statuses = params.statuses.as_ref().and_then(|statuses| {
-        let parsed: Vec<AlarmStatus> =
-            statuses.iter().filter_map(|s| AlarmStatus::parse_str(s)).collect();
+    let statuses = get_csv("statuses").and_then(|v| {
+        let parsed: Vec<AlarmStatus> = v.iter().filter_map(|s| AlarmStatus::parse_str(s)).collect();
         if parsed.is_empty() { None } else { Some(parsed) }
     });
-
-    let page = params.page.unwrap_or(1);
-    let page_size = params.page_size.unwrap_or(20);
-    let offset = (page - 1) * page_size;
 
     let criteria = AlarmQueryCriteria {
         workspace_id: Some(claims.workspace_id.clone()),
-        device_ids: params.device_ids,
+        device_ids: get_csv("device_ids"),
         property_ids: None,
         alarm_levels,
         alarm_types: None,
@@ -106,10 +113,25 @@ async fn list_alarms(
 
     match state.alarm_service.get_alarm_history(criteria.clone()).await {
         Ok(alarms) => {
-            let total = state.alarm_service.count_alarms(criteria).await.unwrap_or(0);
+            let total = match state.alarm_service.count_alarms(criteria).await {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!("Failed to count alarms: {}", e);
+                    return ApiResponseBuilder::error(format!("查询报警总数失败: {}", e));
+                }
+            };
             let total_pages = ((total as f64) / (page_size as f64)).ceil() as u32;
 
-            let data: Vec<AlarmDto> = alarms.into_iter().map(AlarmDto::from).collect();
+            let pool = state.db_pool();
+            let device_names = load_device_names_map(&pool, &alarms).await;
+            let data: Vec<AlarmDto> = alarms
+                .into_iter()
+                .map(|a| {
+                    let mut dto = AlarmDto::from(a);
+                    dto.device_name = device_names.get(&dto.device_id).cloned();
+                    dto
+                })
+                .collect();
 
             ApiResponseBuilder::success(PaginatedResponse {
                 data,
@@ -183,6 +205,36 @@ async fn get_recent_alarms(
             ApiResponseBuilder::error("获取最新告警列表失败".to_string())
         }
     }
+}
+
+/// Batch load device names for a list of alarms.
+async fn load_device_names_map(
+    pool: &sqlx::Pool<sqlx::Sqlite>,
+    alarms: &[crate::modules::alarm::Alarm],
+) -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    if alarms.is_empty() {
+        return map;
+    }
+    let placeholders = vec!["?"; alarms.len()].join(",");
+    let query =
+        format!("SELECT id, display_name, name FROM devices WHERE id IN ({})", placeholders);
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(query));
+    for a in alarms {
+        q = q.bind(&a.device_id);
+    }
+    let rows = q.fetch_all(pool).await.unwrap_or_else(|e| {
+        tracing::error!("Failed to load device names for alarm list: {}", e);
+        Vec::new()
+    });
+    for row in rows {
+        use sqlx::Row;
+        let id: String = row.get("id");
+        let display: Option<String> = row.get("display_name");
+        let name: String = row.get("name");
+        map.insert(id, display.unwrap_or(name));
+    }
+    map
 }
 
 async fn get_recent_alarms_list(
@@ -432,6 +484,127 @@ async fn toggle_alarm_rule(
     }
 }
 
+// ============================================================================
+// Alarm Acknowledge & Resolve Handlers
+// ============================================================================
+
+async fn acknowledge_alarm(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    claims: Claims,
+    Json(req): Json<AcknowledgeAlarmRequest>,
+) -> Json<ApiResponse<()>> {
+    match state.alarm_service.get_alarm_by_id(&id, Some(&claims.workspace_id)).await {
+        Ok(Some(alarm)) => {
+            if !alarm.can_acknowledge() {
+                return ApiResponseBuilder::error_with_code(
+                    409,
+                    "告警已确认或已解决，无法重复确认",
+                );
+            }
+        }
+        Ok(None) => return ApiResponseBuilder::error_with_code(404, "告警不存在"),
+        Err(e) => return ApiResponseBuilder::error(format!("查询告警失败: {}", e)),
+    }
+
+    match state
+        .alarm_service
+        .acknowledge_alarm(&id, claims.user_id, &claims.workspace_id, req.note)
+        .await
+    {
+        Ok(()) => ApiResponseBuilder::success(()),
+        Err(e) => ApiResponseBuilder::error(format!("确认告警失败: {}", e)),
+    }
+}
+
+async fn resolve_alarm(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    claims: Claims,
+    Json(req): Json<ResolveAlarmRequest>,
+) -> Json<ApiResponse<()>> {
+    let resolution_type = match req.resolution_type.parse() {
+        Ok(rt) => rt,
+        Err(_) => return ApiResponseBuilder::error("无效的解决方式"),
+    };
+
+    match state.alarm_service.get_alarm_by_id(&id, Some(&claims.workspace_id)).await {
+        Ok(Some(alarm)) => {
+            if !alarm.can_resolve() {
+                return ApiResponseBuilder::error_with_code(409, "告警已解决，无法重复操作");
+            }
+        }
+        Ok(None) => return ApiResponseBuilder::error_with_code(404, "告警不存在"),
+        Err(e) => return ApiResponseBuilder::error(format!("查询告警失败: {}", e)),
+    }
+
+    match state
+        .alarm_service
+        .resolve_alarm(&id, claims.user_id, &claims.workspace_id, resolution_type, req.note)
+        .await
+    {
+        Ok(()) => ApiResponseBuilder::success(()),
+        Err(e) => ApiResponseBuilder::error(format!("解决告警失败: {}", e)),
+    }
+}
+
+async fn batch_acknowledge_alarms(
+    State(state): State<AppState>,
+    claims: Claims,
+    Json(req): Json<BatchAcknowledgeRequest>,
+) -> Json<ApiResponse<BatchOperationResult>> {
+    if req.alarm_ids.is_empty() {
+        return ApiResponseBuilder::error_with_code(400, "告警 ID 列表不能为空");
+    }
+    if req.alarm_ids.len() > 100 {
+        return ApiResponseBuilder::error_with_code(400, "单次批量操作最多 100 条");
+    }
+
+    let total = req.alarm_ids.len();
+    match state
+        .alarm_service
+        .batch_acknowledge(req.alarm_ids, claims.user_id, &claims.workspace_id)
+        .await
+    {
+        Ok(count) => ApiResponseBuilder::success(BatchOperationResult {
+            success_count: count,
+            total_count: total,
+        }),
+        Err(e) => ApiResponseBuilder::error(format!("批量确认失败: {}", e)),
+    }
+}
+
+async fn batch_resolve_alarms(
+    State(state): State<AppState>,
+    claims: Claims,
+    Json(req): Json<BatchResolveRequest>,
+) -> Json<ApiResponse<BatchOperationResult>> {
+    if req.alarm_ids.is_empty() {
+        return ApiResponseBuilder::error_with_code(400, "告警 ID 列表不能为空");
+    }
+    if req.alarm_ids.len() > 100 {
+        return ApiResponseBuilder::error_with_code(400, "单次批量操作最多 100 条");
+    }
+
+    let resolution_type = match req.resolution_type.parse() {
+        Ok(rt) => rt,
+        Err(_) => return ApiResponseBuilder::error("无效的解决方式"),
+    };
+
+    let total = req.alarm_ids.len();
+    match state
+        .alarm_service
+        .batch_resolve(req.alarm_ids, claims.user_id, &claims.workspace_id, resolution_type)
+        .await
+    {
+        Ok(count) => ApiResponseBuilder::success(BatchOperationResult {
+            success_count: count,
+            total_count: total,
+        }),
+        Err(e) => ApiResponseBuilder::error(format!("批量解决失败: {}", e)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
@@ -615,5 +788,46 @@ mod tests {
         let alarms = result.unwrap();
         assert_eq!(alarms.len(), 1);
         assert_eq!(alarms[0].id, "alarm-ws1");
+    }
+
+    #[sqlx::test]
+    async fn test_acknowledge_already_acknowledged_returns_409() {
+        let pool = create_minimal_pool().await;
+        let _db = Database::new(pool.clone());
+
+        // Insert an already-acknowledged alarm
+        sqlx::query(
+            "INSERT INTO device_alarms (id, device_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved)
+             VALUES ('alarm-done', 'dev-1', 'ws-001', 'warning', 'Done', datetime('now'), 1, 0)"
+        ).execute(&pool).await.unwrap();
+
+        // Verify it IS acknowledged
+        use sqlx::Row;
+        let row = sqlx::query("SELECT is_acknowledged FROM device_alarms WHERE id = 'alarm-done'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let is_ack: bool = row.get("is_acknowledged");
+        assert!(is_ack);
+    }
+
+    #[sqlx::test]
+    async fn test_resolve_already_resolved_returns_409() {
+        let pool = create_minimal_pool().await;
+        let _db = Database::new(pool.clone());
+
+        sqlx::query(
+            "INSERT INTO device_alarms (id, device_id, workspace_id, alarm_level, alarm_message, alarm_time, is_acknowledged, is_resolved)
+             VALUES ('alarm-resolved-done', 'dev-1', 'ws-001', 'warning', 'Done', datetime('now'), 1, 1)"
+        ).execute(&pool).await.unwrap();
+
+        use sqlx::Row;
+        let row =
+            sqlx::query("SELECT is_resolved FROM device_alarms WHERE id = 'alarm-resolved-done'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let is_res: bool = row.get("is_resolved");
+        assert!(is_res);
     }
 }

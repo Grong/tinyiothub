@@ -291,6 +291,10 @@ export class TinyIoTHubApp extends LitElement {
 
     // Handle /devices/:id
     if (path.startsWith('devices/')) {
+      if (!this.isAuthenticated) {
+        this.navigate('login');
+        return;
+      }
       this.currentRoute = path;
       this._ensureViewLoaded('devices');
       return;

@@ -107,7 +107,7 @@ impl PlatformMqttClient {
                             }
                             Ok(_) => {}
                             Err(e) => {
-                                tracing::error!(?e, "Platform MQTT event loop error, reconnecting...");
+                                tracing::debug!(?e, "Platform MQTT event loop error, reconnecting...");
                                 tokio::time::sleep(Duration::from_secs(3)).await;
                             }
                         }

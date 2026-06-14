@@ -347,6 +347,19 @@ impl ResolutionType {
     }
 }
 
+impl std::str::FromStr for ResolutionType {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Fixed" => Ok(ResolutionType::Fixed),
+            "FalseAlarm" => Ok(ResolutionType::FalseAlarm),
+            "Ignored" => Ok(ResolutionType::Ignored),
+            "AutoResolved" => Ok(ResolutionType::AutoResolved),
+            _ => Err(format!("invalid resolution type: {}", s)),
+        }
+    }
+}
+
 /// 通知配置
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NotificationConfig {
@@ -425,10 +438,12 @@ pub struct Alarm {
     pub status: AlarmStatus,
     pub acknowledgement: Option<Acknowledgement>,
     pub resolution: Option<Resolution>,
+    pub workspace_id: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
 impl Alarm {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         device_id: String,
         property_id: Option<String>,
@@ -438,6 +453,7 @@ impl Alarm {
         message: String,
         alarm_value: Option<String>,
         threshold_value: Option<String>,
+        workspace_id: Option<String>,
     ) -> Self {
         let now = Utc::now();
         Self {
@@ -454,6 +470,7 @@ impl Alarm {
             status: AlarmStatus::Active,
             acknowledgement: None,
             resolution: None,
+            workspace_id,
             created_at: now,
         }
     }
@@ -654,6 +671,7 @@ impl RuleType {
 
 /// 报警 DTO
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AlarmDto {
     pub id: String,
     pub device_id: String,
@@ -712,6 +730,7 @@ impl From<crate::modules::alarm::Alarm> for AlarmDto {
 
 /// 报警规则 DTO
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AlarmRuleDto {
     pub id: String,
     pub name: String,
@@ -753,6 +772,7 @@ impl From<crate::modules::alarm::AlarmRule> for AlarmRuleDto {
 
 /// 报警统计 DTO
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AlarmStatisticsDto {
     pub total_count: u64,
     pub active_count: u64,
@@ -773,12 +793,14 @@ impl From<crate::modules::alarm::AlarmStatistics> for AlarmStatisticsDto {
 
 /// 确认报警请求
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AcknowledgeAlarmRequest {
     pub note: Option<String>,
 }
 
 /// 解决报警请求
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ResolveAlarmRequest {
     pub resolution_type: String,
     pub note: Option<String>,
@@ -786,22 +808,35 @@ pub struct ResolveAlarmRequest {
 
 /// 批量确认请求
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BatchAcknowledgeRequest {
     pub alarm_ids: Vec<String>,
 }
 
 /// 批量解决请求
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BatchResolveRequest {
     pub alarm_ids: Vec<String>,
     pub resolution_type: String,
 }
 
+fn deser_opt_csv<'de, D>(d: D) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: Option<String> = Option::deserialize(d)?;
+    Ok(raw.map(|s| s.split(',').map(|v| v.trim().to_string()).filter(|v| !v.is_empty()).collect()))
+}
+
 /// 报警查询参数
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct AlarmQueryParams {
+    #[serde(default, deserialize_with = "deser_opt_csv")]
     pub device_ids: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "deser_opt_csv")]
     pub levels: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "deser_opt_csv")]
     pub statuses: Option<Vec<String>>,
     pub start_time: Option<String>,
     pub end_time: Option<String>,
@@ -998,6 +1033,7 @@ mod tests {
             "Device went offline".to_string(),
             None,
             None,
+            None,
         );
         assert!(!alarm.id.is_empty());
         assert_eq!(alarm.device_id, "device-1");
@@ -1017,6 +1053,7 @@ mod tests {
             "msg".to_string(),
             None,
             None,
+            None,
         );
         assert!(alarm.acknowledge("user-1".to_string(), Some("ack note".to_string())).is_ok());
         assert_eq!(alarm.status, AlarmStatus::Acknowledged);
@@ -1032,6 +1069,7 @@ mod tests {
             AlarmType::DeviceOffline,
             AlarmLevel::Warning,
             "msg".to_string(),
+            None,
             None,
             None,
         );
@@ -1051,6 +1089,7 @@ mod tests {
             "msg".to_string(),
             None,
             None,
+            None,
         );
         assert!(alarm.resolve("user-1".to_string(), ResolutionType::Fixed, None).is_ok());
         assert_eq!(alarm.status, AlarmStatus::Resolved);
@@ -1067,6 +1106,7 @@ mod tests {
             "msg".to_string(),
             None,
             None,
+            None,
         );
         alarm.acknowledge("user-1".to_string(), None).unwrap();
         assert!(alarm.resolve("user-1".to_string(), ResolutionType::Fixed, None).is_ok());
@@ -1081,6 +1121,7 @@ mod tests {
             AlarmType::DeviceOffline,
             AlarmLevel::Warning,
             "msg".to_string(),
+            None,
             None,
             None,
         );
@@ -1100,6 +1141,7 @@ mod tests {
             "msg".to_string(),
             None,
             None,
+            None,
         );
         assert!(alarm.suppress().is_ok());
         assert_eq!(alarm.status, AlarmStatus::Suppressed);
@@ -1116,6 +1158,7 @@ mod tests {
             "msg".to_string(),
             None,
             None,
+            None,
         );
         alarm.acknowledge("user-1".to_string(), None).unwrap();
         assert!(alarm.suppress().is_err());
@@ -1130,6 +1173,7 @@ mod tests {
             AlarmType::DeviceOffline,
             AlarmLevel::Warning,
             "msg".to_string(),
+            None,
             None,
             None,
         );
@@ -1149,6 +1193,7 @@ mod tests {
             "msg".to_string(),
             None,
             None,
+            None,
         );
         assert!(alarm.can_resolve());
         alarm.acknowledge("user-1".to_string(), None).unwrap();
@@ -1166,6 +1211,7 @@ mod tests {
             AlarmType::DeviceOffline,
             AlarmLevel::Warning,
             "msg".to_string(),
+            None,
             None,
             None,
         );
@@ -1334,6 +1380,7 @@ mod tests {
             "offline".to_string(),
             Some("0".to_string()),
             Some("1".to_string()),
+            None,
         );
         let dto = AlarmDto::from(alarm.clone());
         assert_eq!(dto.device_id, "device-1");

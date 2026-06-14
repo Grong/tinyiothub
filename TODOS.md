@@ -177,5 +177,18 @@ Source: `/plan-eng-review` on `feat/scene3d-workspace-resources-ship` (2026-06-0
   - **Action:** 新 migration 中重命名列 + 更新所有引用
   - **Effort:** S (human: 30min / CC: 5min)
 
+## Alarm System (v0.1)
+
+Source: `/plan-eng-review` on `feature/alarm` (2026-06-06)
+
+### P2 — MEDIUM
+
+- **告警保留策略 (Alarm Retention Policy)**
+  - `alarms` 表无清理机制，随 IoT 设备持续上报数据会无限增长。需添加定期清理 cron 任务：`DELETE FROM alarms WHERE status = 'Resolved' AND created_at < datetime('now', '-90 days')`。
+  - **Why:** 防止 alarms 表无限增长影响查询性能
+  - **Action:** 在 cron 框架中注册周期任务，默认 90 天保留期可配置
+  - **Effort:** S (human: 30min / CC: 10min)
+  - **Owner:** TBD
+
 ## Completed
 

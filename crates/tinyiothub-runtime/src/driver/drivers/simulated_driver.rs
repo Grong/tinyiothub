@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Instant;
 use tinyiothub_core::models::{device::Device, device_command::DeviceCommand};
 
 use rand::{Rng, SeedableRng, rngs::StdRng};
@@ -44,6 +45,8 @@ pub struct SimulatedDriver {
     pub retry_count: i32,
     tick_counter: u64,
     rng: StdRng,
+    last_read: Instant,
+    cached_values: Option<Vec<ResultValue>>,
 }
 
 impl SimulatedDriver {
@@ -53,6 +56,8 @@ impl SimulatedDriver {
             retry_count: 0,
             tick_counter: 0,
             rng: StdRng::from_entropy(),
+            last_read: Instant::now(),
+            cached_values: None,
         }
     }
 }
@@ -80,11 +85,22 @@ impl DeviceDriver for SimulatedDriver {
         }
     }
 
+    #[allow(clippy::collapsible_if)]
     fn read_data(&mut self) -> Result<Vec<ResultValue>, Error> {
+        // Respect the configured interval — skip regeneration if not enough time has passed
+        let interval_ms = self.get_config_number("interval", 1000.0) as u64;
+        let elapsed = self.last_read.elapsed().as_millis() as u64;
+        if elapsed < interval_ms {
+            if let Some(ref cached) = self.cached_values {
+                return Ok(cached.clone());
+            }
+        }
+
         self.tick_counter = self.tick_counter.wrapping_add(1);
+        self.last_read = Instant::now();
 
         let simulation_mode = self.get_config_string("mode", "random");
-        let _temp_range = self.get_config_number("temp_range", 10.0);
+        let temp_range = self.get_config_number("temp_range", 80.0);
         let enable_noise = self.get_config_boolean("enable_noise", true);
 
         let mut results = Vec::new();
@@ -96,14 +112,17 @@ impl DeviceDriver for SimulatedDriver {
                         let temp = if simulation_mode == "fixed" {
                             25.0
                         } else {
-                            let base = 25.0;
-                            let variation = (self.tick_counter % 10) as f64;
+                            // Oscillate between ~30 and ~110 to cross alarm thresholds
+                            let mid = 70.0;
+                            let amplitude = temp_range / 2.0;
+                            let cycle = (self.tick_counter % 20) as f64 * 0.314;
+                            let variation = (cycle.sin() + 1.0) * amplitude;
                             let noise = if enable_noise {
                                 (self.rng.r#gen::<f64>() - 0.5) * 2.0
                             } else {
                                 0.0
                             };
-                            base + variation + noise
+                            mid + variation + noise
                         };
                         ResultValue::float_with_precision(property.name.clone(), temp, 2)
                     }
@@ -167,6 +186,7 @@ impl DeviceDriver for SimulatedDriver {
             results.push(ResultValue::string("mode".to_string(), simulation_mode));
         }
 
+        self.cached_values = Some(results.clone());
         Ok(results)
     }
 

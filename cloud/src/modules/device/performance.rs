@@ -4,25 +4,22 @@ use std::sync::Arc;
 
 use tinyiothub_storage::cache::DeviceCache;
 
-use super::monitoring::DeviceMonitoringService;
-use crate::shared::{
-    error::Error,
-    persistence::{Database, repositories::AlarmRepositoryImpl},
-};
+use super::{super::alarm::repo::AlarmRepository, monitoring::DeviceMonitoringService};
+use crate::shared::{error::Error, persistence::Database};
 
 pub struct DevicePerformanceService {
     #[allow(dead_code)]
     database: Arc<Database>,
     device_cache: Arc<DeviceCache>,
     monitoring_service: DeviceMonitoringService,
-    alarm_repository: Arc<AlarmRepositoryImpl>,
+    alarm_repository: Arc<dyn AlarmRepository>,
 }
 
 impl DevicePerformanceService {
     pub fn new(
         database: Arc<Database>,
         device_cache: Arc<DeviceCache>,
-        alarm_repository: Arc<AlarmRepositoryImpl>,
+        alarm_repository: Arc<dyn AlarmRepository>,
     ) -> Self {
         let monitoring_service = DeviceMonitoringService::new(
             database.clone(),

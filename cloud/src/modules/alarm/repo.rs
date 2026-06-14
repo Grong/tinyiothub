@@ -22,8 +22,12 @@ pub trait AlarmRepository: Send + Sync {
         &self,
         alarm_ids: &[String],
         status: AlarmStatus,
+        workspace_id: &str,
     ) -> AlarmResult<usize>;
     async fn delete_old_alarms(&self, before: DateTime<Utc>) -> AlarmResult<usize>;
+    async fn count_active_alarms_by_device(&self, device_id: &str) -> AlarmResult<u32>;
+    async fn count_all_active_alarms(&self) -> AlarmResult<u32>;
+    async fn count_offline_alarms(&self, device_id: &str, days: u32) -> AlarmResult<u32>;
 }
 
 /// 报警规则仓储接口
@@ -86,6 +90,47 @@ pub enum SortOrder {
     Desc,
 }
 
+/// Parse legacy condition format: {"operator": "gt", "value": 85} → AlarmCondition::Threshold
+fn parse_legacy_condition(json: &str) -> Result<AlarmCondition, String> {
+    let v: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("legacy parse: {}", e))?;
+    let op_str = v
+        .get("operator")
+        .and_then(|o| o.as_str())
+        .ok_or_else(|| "legacy: missing operator".to_string())?;
+    let val = v
+        .get("value")
+        .and_then(|n| n.as_f64())
+        .ok_or_else(|| "legacy: missing value".to_string())?;
+    let op = match op_str {
+        "gt" => ComparisonOperator::GreaterThan,
+        "lt" => ComparisonOperator::LessThan,
+        "gte" => ComparisonOperator::GreaterThanOrEqual,
+        "lte" => ComparisonOperator::LessThanOrEqual,
+        "eq" => ComparisonOperator::Equal,
+        "neq" => ComparisonOperator::NotEqual,
+        _ => return Err(format!("legacy: unknown operator '{}'", op_str)),
+    };
+    Ok(AlarmCondition::Threshold { operator: op, value: val })
+}
+
+/// Parse a datetime string from the database, handling both RFC3339 and SQLite formats.
+fn parse_db_datetime(s: &str) -> Result<DateTime<Utc>, String> {
+    // Try RFC3339 first (format used by new code)
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        return Ok(dt.with_timezone(&Utc));
+    }
+    // Try SQLite datetime format: "YYYY-MM-DD HH:MM:SS"
+    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
+        return Ok(dt.and_utc());
+    }
+    // Try ISO 8601 with 'T' separator but no timezone
+    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
+        return Ok(dt.and_utc());
+    }
+    Err(format!("unrecognized datetime format: {}", s))
+}
+
 // ============================================================================
 // SQLite Implementations
 // ============================================================================
@@ -121,6 +166,7 @@ impl SqliteAlarmRepository {
         let resolved_at_str: Option<String> = row.get("resolved_at");
         let resolved_note: Option<String> = row.get("resolved_note");
         let created_at_str: String = row.get("created_at");
+        let workspace_id: Option<String> = row.get("workspace_id");
 
         let alarm_level = AlarmLevel::parse_str(&alarm_level_str).ok_or_else(|| {
             AlarmError::InvalidRuleConfig(format!("Unknown alarm level: {}", alarm_level_str))
@@ -128,21 +174,21 @@ impl SqliteAlarmRepository {
 
         let alarm_type = AlarmType::PropertyThreshold;
 
-        let alarm_time =
-            chrono::NaiveDateTime::parse_from_str(&alarm_time_str, "%Y-%m-%d %H:%M:%S")
-                .map_err(|e| AlarmError::InternalError(format!("Parse alarm_time failed: {}", e)))?
-                .and_utc();
+        let alarm_time = parse_db_datetime(&alarm_time_str)
+            .unwrap_or_else(|e| {
+                tracing::warn!(alarm_id = %id, alarm_time = %alarm_time_str, error = %e, "Parse alarm_time failed, using now");
+                Utc::now()
+            });
 
-        let created_at =
-            chrono::NaiveDateTime::parse_from_str(&created_at_str, "%Y-%m-%d %H:%M:%S")
-                .map_err(|e| AlarmError::InternalError(format!("Parse created_at failed: {}", e)))?
-                .and_utc();
+        let created_at = parse_db_datetime(&created_at_str)
+            .unwrap_or_else(|e| {
+                tracing::warn!(alarm_id = %id, created_at = %created_at_str, error = %e, "Parse created_at failed, using now");
+                Utc::now()
+            });
 
         let acknowledgement = if is_acknowledged {
-            let acknowledged_at = acknowledged_at_str
-                .as_ref()
-                .and_then(|s| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").ok())
-                .map(|dt| dt.and_utc());
+            let acknowledged_at =
+                acknowledged_at_str.as_ref().and_then(|s| parse_db_datetime(s).ok());
 
             Some(Acknowledgement {
                 acknowledged_by: acknowledged_by.unwrap_or_default(),
@@ -153,17 +199,26 @@ impl SqliteAlarmRepository {
             None
         };
 
+        let resolution_type_str: Option<String> = row.get("resolution_type");
+
         let resolution = if is_resolved {
-            let resolved_at = resolved_at_str
-                .as_ref()
-                .and_then(|s| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").ok())
-                .map(|dt| dt.and_utc());
+            let resolved_at = resolved_at_str.as_ref().and_then(|s| parse_db_datetime(s).ok());
+
+            let resolution_type = resolution_type_str
+                .and_then(|s| match s.as_str() {
+                    "fixed" => Some(ResolutionType::Fixed),
+                    "false_alarm" => Some(ResolutionType::FalseAlarm),
+                    "ignored" => Some(ResolutionType::Ignored),
+                    "auto_resolved" => Some(ResolutionType::AutoResolved),
+                    _ => None,
+                })
+                .unwrap_or(ResolutionType::Fixed);
 
             Some(Resolution {
                 resolved_by: resolved_by.unwrap_or_default(),
                 resolved_at: resolved_at.unwrap_or_else(Utc::now),
                 note: resolved_note,
-                resolution_type: ResolutionType::Fixed,
+                resolution_type,
             })
         } else {
             None
@@ -191,45 +246,9 @@ impl SqliteAlarmRepository {
             status,
             acknowledgement,
             resolution,
+            workspace_id,
             created_at,
         })
-    }
-
-    /// 统计设备的活跃告警数量
-    pub async fn count_active_alarms_by_device(&self, device_id: &str) -> Result<u32, sqlx::Error> {
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM device_alarms WHERE device_id = ? AND is_resolved = 0",
-        )
-        .bind(device_id)
-        .fetch_one(self.database.pool())
-        .await?;
-        Ok(count as u32)
-    }
-
-    /// 统计所有活跃告警数量
-    pub async fn count_all_active_alarms(&self) -> Result<u32, sqlx::Error> {
-        let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE is_resolved = 0")
-                .fetch_one(self.database.pool())
-                .await?;
-        Ok(count as u32)
-    }
-
-    /// 统计设备离线告警数量（最近N天）
-    pub async fn count_offline_alarms(
-        &self,
-        device_id: &str,
-        days: u32,
-    ) -> Result<u32, sqlx::Error> {
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM device_alarms WHERE device_id = ? AND alarm_message LIKE '%离线%' AND alarm_time > datetime('now', ?)",
-        )
-        .bind(device_id)
-        .bind(format!("-{} days", days))
-        .fetch_optional(self.database.pool())
-        .await?
-        .unwrap_or(0);
-        Ok(count as u32)
     }
 }
 
@@ -241,8 +260,9 @@ impl AlarmRepository for SqliteAlarmRepository {
                 id, device_id, property_id, rule_id, alarm_level,
                 alarm_message, alarm_value, threshold_value, alarm_time,
                 is_acknowledged, acknowledged_by, acknowledged_at, acknowledged_note,
-                is_resolved, resolved_by, resolved_at, resolved_note, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                is_resolved, resolved_by, resolved_at, resolved_note, resolution_type,
+                workspace_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#;
 
         sqlx::query(query)
@@ -263,6 +283,8 @@ impl AlarmRepository for SqliteAlarmRepository {
             .bind(alarm.resolution.as_ref().map(|r| &r.resolved_by))
             .bind(alarm.resolution.as_ref().map(|r| r.resolved_at.to_rfc3339()))
             .bind(alarm.resolution.as_ref().and_then(|r| r.note.as_ref()))
+            .bind(alarm.resolution.as_ref().map(|r| r.resolution_type.as_str()))
+            .bind(&alarm.workspace_id)
             .bind(alarm.created_at.to_rfc3339())
             .execute(self.database.pool())
             .await?;
@@ -280,7 +302,8 @@ impl AlarmRepository for SqliteAlarmRepository {
                 is_resolved = ?,
                 resolved_by = ?,
                 resolved_at = ?,
-                resolved_note = ?
+                resolved_note = ?,
+                resolution_type = ?
             WHERE id = ?
         "#;
 
@@ -293,6 +316,7 @@ impl AlarmRepository for SqliteAlarmRepository {
             .bind(alarm.resolution.as_ref().map(|r| &r.resolved_by))
             .bind(alarm.resolution.as_ref().map(|r| r.resolved_at.to_rfc3339()))
             .bind(alarm.resolution.as_ref().and_then(|r| r.note.as_ref()))
+            .bind(alarm.resolution.as_ref().map(|r| r.resolution_type.as_str()))
             .bind(&alarm.id)
             .execute(self.database.pool())
             .await?;
@@ -528,6 +552,7 @@ impl AlarmRepository for SqliteAlarmRepository {
         &self,
         alarm_ids: &[String],
         status: AlarmStatus,
+        workspace_id: &str,
     ) -> AlarmResult<usize> {
         if alarm_ids.is_empty() {
             return Ok(0);
@@ -540,16 +565,43 @@ impl AlarmRepository for SqliteAlarmRepository {
             AlarmStatus::Suppressed => return Ok(0),
         };
 
-        let placeholders = vec!["?"; alarm_ids.len()].join(",");
-        let query = format!(
-            "UPDATE device_alarms SET is_resolved = ?, is_acknowledged = ? WHERE id IN ({})",
-            placeholders
-        );
+        // When auto-resolving, also set resolution metadata.
+        // resolved_by is NULL because auto-resolve has no human actor;
+        // resolution_type = 'auto_resolved' marks it as system-resolved.
+        let (resolved_by, resolved_at, resolution_type) = if is_resolved {
+            (
+                None::<&str>,
+                Some(Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),
+                Some("auto_resolved"),
+            )
+        } else {
+            (None, None, None)
+        };
 
-        let mut sqlx_query =
-            sqlx::query(sqlx::AssertSqlSafe(query.clone())).bind(is_resolved).bind(is_acknowledged);
+        let placeholders = vec!["?"; alarm_ids.len()].join(",");
+        let query = if workspace_id.is_empty() {
+            format!(
+                "UPDATE device_alarms SET is_resolved = ?, is_acknowledged = ?, resolved_by = ?, resolved_at = ?, resolution_type = ? WHERE id IN ({})",
+                placeholders
+            )
+        } else {
+            format!(
+                "UPDATE device_alarms SET is_resolved = ?, is_acknowledged = ?, resolved_by = ?, resolved_at = ?, resolution_type = ? WHERE id IN ({}) AND device_id IN (SELECT id FROM devices WHERE workspace_id = ?)",
+                placeholders
+            )
+        };
+
+        let mut sqlx_query = sqlx::query(sqlx::AssertSqlSafe(query))
+            .bind(is_resolved)
+            .bind(is_acknowledged)
+            .bind(resolved_by)
+            .bind(resolved_at)
+            .bind(resolution_type);
         for id in alarm_ids {
             sqlx_query = sqlx_query.bind(id);
+        }
+        if !workspace_id.is_empty() {
+            sqlx_query = sqlx_query.bind(workspace_id);
         }
 
         let result = sqlx_query
@@ -565,6 +617,36 @@ impl AlarmRepository for SqliteAlarmRepository {
         let result =
             sqlx::query(query).bind(before.to_rfc3339()).execute(self.database.pool()).await?;
         Ok(result.rows_affected() as usize)
+    }
+
+    async fn count_active_alarms_by_device(&self, device_id: &str) -> AlarmResult<u32> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM device_alarms WHERE device_id = ? AND is_resolved = 0",
+        )
+        .bind(device_id)
+        .fetch_one(self.database.pool())
+        .await?;
+        Ok(count as u32)
+    }
+
+    async fn count_all_active_alarms(&self) -> AlarmResult<u32> {
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM device_alarms WHERE is_resolved = 0")
+                .fetch_one(self.database.pool())
+                .await?;
+        Ok(count as u32)
+    }
+
+    async fn count_offline_alarms(&self, device_id: &str, days: u32) -> AlarmResult<u32> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM device_alarms WHERE device_id = ? AND alarm_message LIKE '%离线%' AND alarm_time > datetime('now', ?)",
+        )
+        .bind(device_id)
+        .bind(format!("-{} days", days))
+        .fetch_optional(self.database.pool())
+        .await?
+        .unwrap_or(0);
+        Ok(count as u32)
     }
 }
 
@@ -612,20 +694,36 @@ impl SqliteAlarmRuleRepository {
         };
 
         let condition: AlarmCondition = serde_json::from_str(&condition_json)
-            .map_err(|e| AlarmError::InvalidCondition(format!("解析条件配置失败: {}", e)))?;
+            .or_else(|_| parse_legacy_condition(&condition_json))
+            .unwrap_or_else(|e| {
+                tracing::warn!(
+                    rule_id = %id,
+                    condition_json = %condition_json,
+                    error = %e,
+                    "Failed to parse stored condition, falling back to default"
+                );
+                AlarmCondition::Threshold { operator: ComparisonOperator::GreaterThan, value: 0.0 }
+            });
 
         let alarm_level = AlarmLevel::parse_str(&alarm_level_str).ok_or_else(|| {
             AlarmError::InvalidRuleConfig(format!("未知的告警级别: {}", alarm_level_str))
         })?;
 
-        let created_at = DateTime::parse_from_rfc3339(&created_at_str)
-            .map_err(|e| AlarmError::InternalError(format!("解析创建时间失败: {}", e)))?
-            .with_timezone(&Utc);
-        let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
-            .map_err(|e| AlarmError::InternalError(format!("解析更新时间失败: {}", e)))?
-            .with_timezone(&Utc);
+        let created_at = parse_db_datetime(&created_at_str)
+            .unwrap_or_else(|e| {
+                tracing::warn!(rule_id = %id, created_at = %created_at_str, error = %e, "Failed to parse created_at, using now");
+                Utc::now()
+            });
+        let updated_at = parse_db_datetime(&updated_at_str)
+            .unwrap_or_else(|e| {
+                tracing::warn!(rule_id = %id, updated_at = %updated_at_str, error = %e, "Failed to parse updated_at, using now");
+                Utc::now()
+            });
 
-        let notification_config = NotificationConfig::default();
+        let notification_config_json: Option<String> = row.get("notification_config");
+        let notification_config = notification_config_json
+            .and_then(|j| serde_json::from_str(&j).ok())
+            .unwrap_or_default();
         let workspace_id: Option<String> = row.get("workspace_id");
 
         Ok(AlarmRule {
@@ -655,12 +753,14 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
         let device_id = rule.device_id.as_ref().filter(|s| !s.is_empty());
         let property_id = rule.property_id.as_ref().filter(|s| !s.is_empty());
 
+        let notification_config_json = serde_json::to_string(&rule.notification_config).ok();
+
         let query = r#"
             INSERT INTO device_alarm_rules (
                 id, device_id, property_id, rule_name, rule_type,
                 condition_config, alarm_level, is_enabled, description,
-                workspace_id, created_by, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                notification_config, workspace_id, created_by, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
         "#;
 
         sqlx::query(query)
@@ -673,6 +773,7 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
             .bind(rule.alarm_level.as_str())
             .bind(rule.is_enabled)
             .bind(&rule.description)
+            .bind(&notification_config_json)
             .bind(&rule.workspace_id)
             .bind(rule.created_at.to_rfc3339())
             .bind(rule.updated_at.to_rfc3339())
@@ -686,6 +787,7 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
     async fn update(&self, rule: &AlarmRule, workspace_id: Option<&str>) -> AlarmResult<()> {
         let condition_json = serde_json::to_string(&rule.condition)
             .map_err(|e| AlarmError::InternalError(format!("序列化条件配置失败: {}", e)))?;
+        let notification_config_json = serde_json::to_string(&rule.notification_config).ok();
 
         let query = if workspace_id.is_some() {
             r#"
@@ -696,6 +798,7 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
                 alarm_level = ?,
                 is_enabled = ?,
                 description = ?,
+                notification_config = ?,
                 updated_at = ?
             WHERE id = ? AND workspace_id = ?
             "#
@@ -708,6 +811,7 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
                 alarm_level = ?,
                 is_enabled = ?,
                 description = ?,
+                notification_config = ?,
                 updated_at = ?
             WHERE id = ?
             "#
@@ -720,6 +824,7 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
             .bind(rule.alarm_level.as_str())
             .bind(rule.is_enabled)
             .bind(&rule.description)
+            .bind(&notification_config_json)
             .bind(rule.updated_at.to_rfc3339())
             .bind(&rule.id);
         if let Some(ws) = workspace_id {

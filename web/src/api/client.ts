@@ -77,7 +77,11 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
   if (params) {
     Object.entries(params).forEach(([key, value]) => {
       if (value !== undefined && value !== null) {
-        url.searchParams.append(key, String(value));
+        if (Array.isArray(value)) {
+          value.forEach(v => url.searchParams.append(key, String(v)));
+        } else {
+          url.searchParams.append(key, String(value));
+        }
       }
     });
   }

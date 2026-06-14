@@ -291,6 +291,7 @@ impl ToolHandler for AlarmAcknowledgeHandler {
             .acknowledge_alarm(
                 &input.id,
                 claims.actor_identifier().to_string(),
+                &claims.workspace_id,
                 input.note.map(|s| s.to_string()),
             )
             .await

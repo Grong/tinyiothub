@@ -4,6 +4,21 @@ import { alarmApi } from "../../api/alarms.js";
 import type { Alarm, AlarmStatistics, ResolutionType } from "../../types/index.js";
 import { success, error as toastError } from "../components/toast.js";
 
+const STATUS_TABS = [
+  { key: "", label: "全部" },
+  { key: "active", label: "活跃" },
+  { key: "acknowledged", label: "已确认" },
+  { key: "resolved", label: "已解决" },
+] as const;
+
+const LEVEL_CHIPS = [
+  { key: "", label: "全部级别", color: "var(--muted)" },
+  { key: "Critical", label: "严重", color: "#ef4444" },
+  { key: "Error", label: "错误", color: "#f97316" },
+  { key: "Warning", label: "警告", color: "#eab308" },
+  { key: "Info", label: "信息", color: "#3b82f6" },
+] as const;
+
 @customElement("view-alarms")
 export class AlarmsView extends LitElement {
   @state() loading = true;
@@ -28,14 +43,9 @@ export class AlarmsView extends LitElement {
   @state() resolveNote = "";
   @state() resolveSaving = false;
 
-  createRenderRoot() {
-    return this;
-  }
+  createRenderRoot() { return this; }
 
-  connectedCallback() {
-    super.connectedCallback();
-    this.loadData();
-  }
+  connectedCallback() { super.connectedCallback(); this.loadData(); }
 
   async loadData() {
     this.loading = true;
@@ -43,18 +53,17 @@ export class AlarmsView extends LitElement {
     try {
       const [alarmsRes, statsRes] = await Promise.all([
         alarmApi.getAlarms({
-          page: this.page,
-          pageSize: this.pageSize,
+          page: this.page, pageSize: this.pageSize,
           statuses: this.filterStatus ? [this.filterStatus] : undefined,
           levels: this.filterLevel ? [this.filterLevel] : undefined,
         }),
         alarmApi.getStatistics(),
       ]);
-      const alarmData = alarmsRes.result;
-      if (alarmData) {
-        this.alarms = alarmData.data || [];
-        this.totalPages = alarmData.pagination?.totalPages || 0;
-        this.totalCount = alarmData.pagination?.totalCount || 0;
+      const d = alarmsRes.result as any;
+      if (d) {
+        this.alarms = d.data || [];
+        this.totalPages = d.pagination?.totalPages || 0;
+        this.totalCount = d.pagination?.totalCount || 0;
       }
       this.stats = statsRes.result || undefined;
     } catch (err: any) {
@@ -64,134 +73,97 @@ export class AlarmsView extends LitElement {
     }
   }
 
-  levelColor(level: string): string {
-    switch (level?.toLowerCase()) {
-      case "critical": return "var(--danger)";
-      case "error": return "var(--danger)";
-      case "warning": return "var(--warning)";
-      default: return "var(--muted)";
-    }
+  setStatus(s: string) { this.filterStatus = s; this.page = 1; this.loadData(); }
+  setLevel(l: string) { this.filterLevel = l; this.page = 1; this.loadData(); }
+  goToPage(p: number) { this.page = p; this.loadData(); }
+
+  statusLabel(s: string): string {
+    const m: Record<string, string> = { active: "活跃", acknowledged: "已确认", resolved: "已解决", suppressed: "已抑制" };
+    return m[s?.toLowerCase()] || s || "—";
+  }
+  levelLabel(l: string): string {
+    const m: Record<string, string> = { Critical: "严重", Error: "错误", Warning: "警告", Info: "信息", critical: "严重", error: "错误", warning: "警告", info: "信息" };
+    return m[l] || l || "—";
+  }
+  levelColor(l: string): string {
+    const m: Record<string, string> = { critical: "#ef4444", error: "#f97316", warning: "#eab308", info: "#3b82f6" };
+    return m[l?.toLowerCase()] || "var(--muted)";
+  }
+  statusColor(s: string): string {
+    const m: Record<string, string> = { active: "#ef4444", acknowledged: "#eab308", resolved: "#22c55e", suppressed: "#6b7280" };
+    return m[s?.toLowerCase()] || "var(--muted)";
   }
 
-  statusLabel(status: string): string {
-    switch (status) {
-      case "Active": return "活跃";
-      case "Acknowledged": return "已确认";
-      case "Resolved": return "已解决";
-      case "Suppressed": return "已抑制";
-      default: return status;
-    }
-  }
-
-  levelLabel(level: string): string {
-    switch (level) {
-      case "Critical": return "严重";
-      case "Error": return "错误";
-      case "Warning": return "警告";
-      case "Info": return "信息";
-      default: return level;
-    }
-  }
-
-  openAck(alarm: Alarm) {
-    this.ackAlarm = alarm;
-    this.ackNote = "";
-    this.showAckModal = true;
-  }
-
-  closeAckModal() {
-    this.showAckModal = false;
-    this.ackAlarm = null;
-  }
-
+  openAck(a: Alarm) { this.ackAlarm = a; this.ackNote = ""; this.showAckModal = true; }
+  closeAckModal() { this.showAckModal = false; this.ackAlarm = null; }
   async confirmAck() {
     if (!this.ackAlarm) return;
     this.ackSaving = true;
     try {
-      await alarmApi.acknowledgeAlarm(this.ackAlarm.id, {
-        note: this.ackNote || undefined,
-      });
-      success("告警已确认");
-      this.closeAckModal();
-      await this.loadData();
-    } catch (err: any) {
-      toastError(err.message || "确认失败");
-    } finally {
-      this.ackSaving = false;
-    }
+      await alarmApi.acknowledgeAlarm(this.ackAlarm.id, { note: this.ackNote || undefined });
+      success("告警已确认"); this.closeAckModal(); await this.loadData();
+    } catch (err: any) { toastError(err.message || "确认失败"); }
+    finally { this.ackSaving = false; }
   }
 
-  openResolve(alarm: Alarm) {
-    this.resolveAlarm = alarm;
-    this.resolveType = "Fixed";
-    this.resolveNote = "";
-    this.showResolveModal = true;
-  }
-
-  closeResolveModal() {
-    this.showResolveModal = false;
-    this.resolveAlarm = null;
-  }
-
+  openResolve(a: Alarm) { this.resolveAlarm = a; this.resolveType = "Fixed"; this.resolveNote = ""; this.showResolveModal = true; }
+  closeResolveModal() { this.showResolveModal = false; this.resolveAlarm = null; }
   async confirmResolve() {
     if (!this.resolveAlarm) return;
     this.resolveSaving = true;
     try {
-      await alarmApi.resolveAlarm(this.resolveAlarm.id, {
-        resolutionType: this.resolveType,
-        note: this.resolveNote || undefined,
-      });
-      success("告警已解决");
-      this.closeResolveModal();
-      await this.loadData();
-    } catch (err: any) {
-      toastError(err.message || "解决失败");
-    } finally {
-      this.resolveSaving = false;
-    }
-  }
-
-  goToPage(p: number) {
-    this.page = p;
-    this.loadData();
+      await alarmApi.resolveAlarm(this.resolveAlarm.id, { resolutionType: this.resolveType, note: this.resolveNote || undefined });
+      success("告警已解决"); this.closeResolveModal(); await this.loadData();
+    } catch (err: any) { toastError(err.message || "解决失败"); }
+    finally { this.resolveSaving = false; }
   }
 
   render() {
-    if (this.loading) {
-      return html`
-        <div class="page-loading">
-          <span class="loading-spinner"></span>
-          <span>加载中...</span>
-        </div>
-      `;
-    }
-
-    if (this.error) {
-      return html`
-        <div class="page-error">
-          <div class="page-error__message">${this.error}</div>
-          <button class="btn btn--primary" @click=${this.loadData}>重试</button>
-        </div>
-      `;
-    }
-
     return html`
-      ${this.renderStats()}
-      <div class="filter-bar">
-        <select class="select filter-bar__select" .value=${this.filterStatus} @change=${(e: Event) => { this.filterStatus = (e.target as HTMLSelectElement).value; this.page = 1; this.loadData(); }}>
-          <option value="">全部状态</option>
-          <option value="Active">活跃</option>
-          <option value="Acknowledged">已确认</option>
-          <option value="Resolved">已解决</option>
-        </select>
-        <select class="select filter-bar__select" .value=${this.filterLevel} @change=${(e: Event) => { this.filterLevel = (e.target as HTMLSelectElement).value; this.page = 1; this.loadData(); }}>
-          <option value="">全部级别</option>
-          <option value="Critical">严重</option>
-          <option value="Error">错误</option>
-          <option value="Warning">警告</option>
-          <option value="Info">信息</option>
-        </select>
+      <div class="alarm-page">
+        ${this.renderToolbar()}
+        ${this.loading ? this.renderSkeleton()
+          : this.error ? this.renderError()
+          : this.alarms.length === 0 ? this.renderEmpty()
+          : html`${this.renderTable()}${this.renderPagination()}`}
       </div>
+      ${this.showAckModal ? this.renderAckModal() : nothing}
+      ${this.showResolveModal ? this.renderResolveModal() : nothing}
+    `;
+  }
+
+  renderToolbar() {
+    const s = this.stats;
+    return html`
+      <div class="alarm-toolbar">
+        <div class="alarm-tabs">
+          ${STATUS_TABS.map(t => {
+            const count = !t.key ? (s?.totalCount ?? 0)
+              : t.key === "active" ? (s?.activeCount ?? 0)
+              : t.key === "acknowledged" ? (s?.acknowledgedCount ?? 0)
+              : (s?.resolvedCount ?? 0);
+            return html`
+              <button class="alarm-tab ${this.filterStatus === t.key ? 'alarm-tab--active' : ''}"
+                @click=${() => this.setStatus(t.key)}>
+                <span class="alarm-tab__label">${t.label}</span>
+                <span class="alarm-tab__count">${count}</span>
+              </button>
+            `;
+          })}
+        </div>
+        <div class="alarm-level-chips">
+          ${LEVEL_CHIPS.map(l => html`
+            <button class="level-chip2 ${this.filterLevel === l.key ? 'level-chip2--active' : ''}"
+              style="--lc-color: ${l.color}"
+              @click=${() => this.setLevel(l.key)}>${l.label}</button>
+          `)}
+        </div>
+      </div>
+    `;
+  }
+
+  renderTable() {
+    return html`
       <div class="card table-container">
         <table class="data-table">
           <thead>
@@ -205,75 +177,81 @@ export class AlarmsView extends LitElement {
             </tr>
           </thead>
           <tbody>
-            ${this.alarms.length === 0
-              ? html`<tr><td colspan="6" class="empty-hint">暂无告警</td></tr>`
-              : this.alarms.map(a => html`
-                <tr>
-                  <td>
-                    <span class="status-badge">
-                      <span class="status-dot" style="background: ${this.levelColor(a.alarmLevel)};"></span>
-                      <span class="status-badge__label">${this.levelLabel(a.alarmLevel)}</span>
-                    </span>
-                  </td>
-                  <td class="data-table__cell-sm">${a.deviceName || "-"}</td>
-                  <td class="cell-truncate data-table__cell-sm">${a.message}</td>
-                  <td>
-                    <span class="status-badge">
-                      <span class="status-dot" style="background: ${a.status === 'Active' ? 'var(--danger)' : a.status === 'Acknowledged' ? 'var(--warning)' : 'var(--success)'};"></span>
-                      <span class="status-badge__label">${this.statusLabel(a.status)}</span>
-                    </span>
-                  </td>
-                  <td class="cell-muted">${a.alarmTime?.slice(0, 16) || a.createdAt?.slice(0, 16)}</td>
-                  <td class="cell-actions">
-                    ${a.status === "Active" ? html`
-                      <button class="btn btn--ghost btn--sm" @click=${() => this.openAck(a)}>确认</button>
-                      <button class="btn btn--ghost btn--sm btn--success-text" @click=${() => this.openResolve(a)}>解决</button>
-                    ` : nothing}
-                    ${a.status === "Acknowledged" ? html`
-                      <button class="btn btn--ghost btn--sm btn--success-text" @click=${() => this.openResolve(a)}>解决</button>
-                    ` : nothing}
-                    ${a.status === "Resolved" ? html`
-                      <span class="inline-muted">-</span>
-                    ` : nothing}
-                  </td>
-                </tr>
-              `)}
+            ${this.alarms.map((a, i) => html`
+              <tr class="${a.status?.toLowerCase() === 'resolved' ? 'row--resolved' : ''}"
+                style="animation: alarmRowIn 0.3s var(--ease-out) both; animation-delay: ${Math.min(i * 30, 150)}ms">
+                <td>
+                  <span class="status-badge">
+                    <span class="status-dot" style="background: ${this.levelColor(a.alarmLevel)}"></span>
+                    <span class="status-badge__label">${this.levelLabel(a.alarmLevel)}</span>
+                  </span>
+                </td>
+                <td class="data-table__cell-sm">${a.deviceName || a.deviceId?.slice(0, 12) || "—"}</td>
+                <td class="cell-truncate data-table__cell-sm">${a.message}</td>
+                <td>
+                  <span class="status-badge">
+                    <span class="status-dot" style="background: ${this.statusColor(a.status)}"></span>
+                    <span class="status-badge__label">${this.statusLabel(a.status)}</span>
+                  </span>
+                </td>
+                <td class="cell-muted">${(a.alarmTime || a.createdAt || "").slice(0, 16)}</td>
+                <td class="cell-actions">
+                  ${a.status?.toLowerCase() === "active" ? html`
+                    <button class="btn btn--ghost btn--sm" @click=${() => this.openAck(a)}>确认</button>
+                    <button class="btn btn--ghost btn--sm btn--success-text" @click=${() => this.openResolve(a)}>解决</button>
+                  ` : nothing}
+                  ${a.status?.toLowerCase() === "acknowledged" ? html`
+                    <button class="btn btn--ghost btn--sm btn--success-text" @click=${() => this.openResolve(a)}>解决</button>
+                  ` : nothing}
+                  ${a.status?.toLowerCase() === "resolved" ? html`<span class="inline-muted">—</span>` : nothing}
+                </td>
+              </tr>
+            `)}
           </tbody>
         </table>
       </div>
-      ${this.totalPages > 1 ? html`
-        <div class="pagination">
-          <button class="btn btn--ghost btn--sm" ?disabled=${this.page <= 1} @click=${() => this.goToPage(this.page - 1)}>上一页</button>
-          <span class="pagination-info">第 ${this.page} / ${this.totalPages} 页，共 ${this.totalCount} 条</span>
-          <button class="btn btn--ghost btn--sm" ?disabled=${this.page >= this.totalPages} @click=${() => this.goToPage(this.page + 1)}>下一页</button>
-        </div>
-      ` : ""}
-      ${this.showAckModal ? this.renderAckModal() : nothing}
-      ${this.showResolveModal ? this.renderResolveModal() : nothing}
     `;
   }
 
-  renderStats() {
-    const s = this.stats;
-    if (!s) return nothing;
+  renderPagination() {
+    if (this.totalPages <= 1) return nothing;
     return html`
-      <div class="stats-grid">
-        <div class="card stat-card">
-          <div class="stat-card__label">总告警数</div>
-          <div class="stat-card__value">${s.totalCount}</div>
+      <div class="alarm-pagination">
+        <button class="btn btn--ghost btn--sm" ?disabled=${this.page <= 1} @click=${() => this.goToPage(this.page - 1)}>上一页</button>
+        <span class="alarm-pagination__info">${this.page} / ${this.totalPages}</span>
+        <button class="btn btn--ghost btn--sm" ?disabled=${this.page >= this.totalPages} @click=${() => this.goToPage(this.page + 1)}>下一页</button>
+      </div>
+    `;
+  }
+
+  renderSkeleton() {
+    return html`<div class="alarm-skeleton">
+      ${[1,2,3,4,5].map((_, i) => html`
+        <div class="alarm-skeleton__row" style="animation-delay: ${i * 60}ms">
+          <div class="alarm-skeleton__bar"></div>
+          <div class="alarm-skeleton__body"><div class="skeleton-line w-30"></div><div class="skeleton-line w-60"></div></div>
         </div>
-        <div class="card stat-card">
-          <div class="stat-card__label">活跃告警</div>
-          <div class="stat-card__value" style="color: var(--danger);">${s.activeCount}</div>
-        </div>
-        <div class="card stat-card">
-          <div class="stat-card__label">已确认</div>
-          <div class="stat-card__value" style="color: var(--warning);">${s.acknowledgedCount}</div>
-        </div>
-        <div class="card stat-card">
-          <div class="stat-card__label">已解决</div>
-          <div class="stat-card__value" style="color: var(--success);">${s.resolvedCount}</div>
-        </div>
+      `)}
+    </div>`;
+  }
+
+  renderError() {
+    return html`
+      <div class="alarm-empty">
+        <div class="alarm-empty__icon">!</div>
+        <div class="alarm-empty__text">${this.error}</div>
+        <button class="btn btn--primary btn--sm" @click=${this.loadData}>重试</button>
+      </div>
+    `;
+  }
+
+  renderEmpty() {
+    const label = STATUS_TABS.find(t => t.key === this.filterStatus)?.label || "告警";
+    return html`
+      <div class="alarm-empty">
+        <div class="alarm-empty__icon">✓</div>
+        <div class="alarm-empty__text">暂无${label}告警</div>
+        <div class="alarm-empty__sub">一切正常，继续保持</div>
       </div>
     `;
   }
@@ -284,7 +262,7 @@ export class AlarmsView extends LitElement {
         <div class="modal" @click=${(e: Event) => e.stopPropagation()}>
           <div class="modal-header">确认告警</div>
           <div class="modal-body modal-fields">
-            <div class="form-hint form-hint--block">${this.ackAlarm?.message}</div>
+            <div class="alarm-modal-msg">${this.ackAlarm?.message}</div>
             <div class="field">
               <span>备注（可选）</span>
               <input type="text" placeholder="确认备注" .value=${this.ackNote} @input=${(e: any) => { this.ackNote = e.target.value; }} />
@@ -292,9 +270,7 @@ export class AlarmsView extends LitElement {
           </div>
           <div class="modal-footer">
             <button class="btn btn--ghost" @click=${this.closeAckModal}>取消</button>
-            <button class="btn btn--primary" ?disabled=${this.ackSaving} @click=${this.confirmAck}>
-              ${this.ackSaving ? "确认中..." : "确认告警"}
-            </button>
+            <button class="btn btn--primary" ?disabled=${this.ackSaving} @click=${this.confirmAck}>${this.ackSaving ? "确认中..." : "确认告警"}</button>
           </div>
         </div>
       </div>
@@ -307,7 +283,7 @@ export class AlarmsView extends LitElement {
         <div class="modal" @click=${(e: Event) => e.stopPropagation()}>
           <div class="modal-header">解决告警</div>
           <div class="modal-body modal-fields">
-            <div class="form-hint form-hint--block">${this.resolveAlarm?.message}</div>
+            <div class="alarm-modal-msg">${this.resolveAlarm?.message}</div>
             <div class="field">
               <span>解决方式</span>
               <select .value=${this.resolveType} @change=${(e: Event) => { this.resolveType = (e.target as HTMLSelectElement).value as ResolutionType; }}>
@@ -324,9 +300,7 @@ export class AlarmsView extends LitElement {
           </div>
           <div class="modal-footer">
             <button class="btn btn--ghost" @click=${this.closeResolveModal}>取消</button>
-            <button class="btn btn--primary" ?disabled=${this.resolveSaving} @click=${this.confirmResolve}>
-              ${this.resolveSaving ? "解决中..." : "解决告警"}
-            </button>
+            <button class="btn btn--primary" ?disabled=${this.resolveSaving} @click=${this.confirmResolve}>${this.resolveSaving ? "解决中..." : "解决告警"}</button>
           </div>
         </div>
       </div>
