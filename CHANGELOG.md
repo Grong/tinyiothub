@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.1] - 2026-06-15
+
+### Added
+
+- **AI event integration design spec**: architecture for autonomous AI alarm processing channel, using AlarmService Hook + AutonomousAgentRunner + agent_actions audit log
+
 ## [0.4.2] - 2026-06-12
 
 ### Added — Alarm System
