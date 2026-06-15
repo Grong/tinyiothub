@@ -190,5 +190,18 @@ Source: `/plan-eng-review` on `feature/alarm` (2026-06-06)
   - **Effort:** S (human: 30min / CC: 10min)
   - **Owner:** TBD
 
+## AI Event Integration (v0.1)
+
+Source: `/plan-eng-review` on `main` (2026-06-15)
+
+### P2 — MEDIUM
+
+- **agent_actions 保留策略 (Agent Actions Retention Policy)**
+  - `agent_actions` 表无清理机制，随告警触发 AI 处理会持续增长。需添加定期清理 cron 任务：`DELETE FROM agent_actions WHERE created_at < datetime('now', '-90 days')`。
+  - **Why:** 防止 agent_actions 表无限增长影响查询性能
+  - **Action:** 在 cron 框架中注册周期任务，和 alarm retention 使用相同模式
+  - **Effort:** S (human: 20min / CC: 5min)
+  - **Owner:** TBD
+
 ## Completed
 
