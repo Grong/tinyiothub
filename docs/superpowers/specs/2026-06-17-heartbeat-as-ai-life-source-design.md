@@ -68,18 +68,21 @@ pub struct WakeSignal {
 pub enum WakePriority { Critical, High, Normal }
 
 pub struct HeartbeatManager {
-    wake_txs: DashMap<String, mpsc::Sender<WakeSignal>>,
+    // (wake_tx, shutdown_tx) pair per workspace
+    channels: DashMap<String, (mpsc::Sender<WakeSignal>, tokio::sync::oneshot::Sender<()>)>,
     handles: DashMap<String, JoinHandle<()>>,
     agent_pool: Arc<AgentPool>,
     action_repo: Arc<dyn AgentActionRepository>,
-    workspace_dir_base: PathBuf,
+    workspace_dir_base: PathBuf,    // HEARTBEAT.md 路径: {base}/{ws_id}/HEARTBEAT.md
     config: HeartbeatConfig,
 }
 
 impl HeartbeatManager {
     pub async fn start(&self, workspace_id: &str);
+    /// 通过 oneshot 发送关闭信号，只停止单个 workspace
     pub async fn stop(&self, workspace_id: &str);
-    pub fn wake(&self, workspace_id: &str, signal: WakeSignal); // try_send, 非阻塞
+    /// try_send，非阻塞。channel 满或 workspace 不存在时静默丢弃
+    pub fn wake(&self, workspace_id: &str, signal: WakeSignal);
     pub fn list_active(&self) -> Vec<String>;
     pub async fn shutdown(&self);
 }
@@ -94,12 +97,14 @@ impl HeartbeatManager {
 **配置（来自 AgentSettings）：**
 ```rust
 pub struct HeartbeatConfig {
-    pub enabled: bool,                // 全局开关
-    pub interval_minutes: u32,       // 默认 15 分钟
-    pub max_recent_actions: usize,   // 入 prompt 的最近 action 数，默认 10
-    pub channel_size: usize,         // wake channel 容量，默认 64
+    pub enabled: bool,                // AgentSettings.heartbeat_enabled，默认 true
+    pub interval_minutes: u32,       // AgentSettings.heartbeat_interval_minutes，默认 15
+    pub max_recent_actions: usize,   // 硬编码默认 10（暂不加到 AgentSettings）
+    pub channel_size: usize,         // 硬编码默认 64（暂不加到 AgentSettings）
 }
 ```
+
+`max_recent_actions` 和 `channel_size` 使用硬编码默认值，不需要修改 AgentSettings 结构体。后续 per-workspace 配置 UI（扩展 5）再做可配置化。
 
 ## 心跳循环核心
 
@@ -113,24 +118,36 @@ async fn heartbeat_loop(
     action_repo: Arc<dyn AgentActionRepository>,
     workspace_dir: PathBuf,
     mut wake_rx: mpsc::Receiver<WakeSignal>,
-    mut shutdown_rx: broadcast::Receiver<()>,
+    mut shutdown_rx: tokio::sync::oneshot::Receiver<()>,
 ) {
-    let interval = tokio::time::interval(
+    let mut interval = tokio::time::interval(
         Duration::from_secs(config.interval_minutes as u64 * 60)
     );
 
     loop {
-        // tokio::select! 同时等待 interval tick 和 wake signal。
-        // tick 到达或收到第一个 wake 后，用 try_recv() 排空剩余信号。
-        let wake_signals = drain_wake_signals(&mut wake_rx, &mut interval).await;
+        let wake_signals = tokio::select! {
+            _ = interval.tick() => {
+                // 定时触发：排空期间积压的 wake 信号
+                drain_channel(&mut wake_rx)
+            }
+            sig = wake_rx.recv() => {
+                match sig {
+                    Some(first) => {
+                        let mut signals = vec![first];
+                        signals.append(&mut drain_channel(&mut wake_rx));
+                        signals
+                    }
+                    None => break, // channel 关闭 → workspace 被删除
+                }
+            }
+            _ = &mut shutdown_rx => break, // stop() 发送关闭信号
+        };
 
-        // 构建 prompt
         let prompt = build_prompt(
             &workspace_dir, &action_repo, &workspace_id,
             &wake_signals, config.max_recent_actions,
         ).await;
 
-        // AI 自主执行
         match agent_pool.run_single(&workspace_id, &prompt).await {
             Ok(response) => {
                 record_action(&action_repo, &workspace_id, "summary", &response).await;
@@ -139,16 +156,42 @@ async fn heartbeat_loop(
                 record_action(&action_repo, &workspace_id, "error", &e.to_string()).await;
             }
         }
-
-        if shutdown_rx.try_recv().is_ok() { break; }
     }
+}
+
+fn drain_channel<T>(rx: &mut mpsc::Receiver<T>) -> Vec<T> {
+    let mut items = Vec::new();
+    while let Ok(item) = rx.try_recv() {
+        items.push(item);
+    }
+    items
 }
 ```
 
-**Wake 信号收集逻辑（drain_wake_signals）：**
-- `tokio::select!` 同时等待 `interval.tick()` 和 `wake_rx.recv()`
-- 任一触发后进行 try_recv() 排空 channel 中剩余信号
-- 结果：一次 tick 可以处理多个积压的 wake 信号，但不会无限等待
+**唤醒信号收集逻辑：**
+- `tokio::select!` 三路：定时 tick / wake 信号 / 关闭信号
+- wake_rx.recv() 返回 None 时 break（channel 关闭 = workspace 被删除）
+- drain_channel() 在一次 tick 内排空所有积压信号，不会无限等待
+
+**record_action() 定义：**
+```rust
+async fn record_action(
+    repo: &dyn AgentActionRepository,
+    workspace_id: &str,
+    action_type: &str,  // "summary" | "error"
+    content: &str,
+) {
+    let action = AgentAction::new(
+        workspace_id.to_string(),
+        "default".to_string(),  // agent_id
+        None, None,             // alarm_id, device_id
+        "heartbeat".to_string(), // event_type
+        action_type.to_string(),
+        content.to_string(),
+    );
+    let _ = repo.insert(&action).await;
+}
+```
 
 **Prompt 模板：**
 ```
@@ -176,7 +219,7 @@ async fn heartbeat_loop(
 
 Prompt 由三部分组成：
 1. **静态任务** — per-workspace HEARTBEAT.md 中未暂停的任务
-2. **执行记忆** — 最近 10 条 agent_actions（event_type="heartbeat"），让 AI 知道上次做了什么、什么未完成
+2. **执行记忆** — 最近 10 条 agent_actions（event_type 为 "heartbeat" 或 "alarm"），让 AI 知道上次做了什么、什么未完成。同时查询两种类型确保从旧 AutonomousAgentRunner 产生的 alarm action 也能作为上下文。
 3. **唤醒上下文** — 如有告警触发，包含完整告警信息（设备、属性、当前值、时间）
 
 ## AlarmService 变更
@@ -234,8 +277,10 @@ agent_actions Schema 不变，`event_type` 增加 `"heartbeat"` 值。
 | 心跳循环 panic | JoinHandle 自动清理，支持 restart(ws_id) |
 | HEARTBEAT.md 不存在 | 自动创建默认模板 |
 | agent_actions 写入失败 | 打印 error 日志，不影响循环 |
-| workspace 被删除 | stop() 优雅退出，清理 handles 和 wake_txs |
-| skip_enabled=false | HeartbeatManager 不创建任何循环 |
+| workspace 被删除 | stop() 通过 oneshot 发送关闭信号 → 循环优雅退出 → 清理 channels 和 handles |
+| HEARTBEAT.md 并发写入 | 接受低风险：文件读写可能 TOCTOU，但 IoT 巡检场景下并发编辑极罕见 |
+| DashMap 残留条目 | start() 前清理已有条目（幂等）；定期检查数据库 workspace 列表并移除僵尸条目 |
+| enabled=false (全局开关) | HeartbeatManager 不创建任何循环 |
 
 **设计原则：** 心跳 crash 不影响其他 workspace、AI 失败不影响系统正常运行、所有错误路径有日志。
 
@@ -283,7 +328,7 @@ agent_actions Schema 不变，`event_type` 增加 `"heartbeat"` 值。
 |----------|-----------------|
 | `AgentPool::run_single(ws_id, prompt)` | 心跳循环直接调用 |
 | `AgentActionRepository` + `agent_actions` 表 | 统一审计日志，新增 event_type="heartbeat" |
-| 16 MCP tools（device, alarm, knowledge, driver 等） | 心跳循环 AI 可全部访问 |
+| 16 MCP tools（device, alarm, knowledge, driver 等） | 通过 AgentPool::get_or_create() 创建的 Agent 已自动注册所有 MCP 工具，心跳循环无需额外配置 |
 | `DeviceCache` (ArcSwap-based) | 心跳 AI 通过 MCP tool 间接访问 |
 | `AlarmService::create_alarm()` | Hook 点 — 替换为 wake() 调用 |
 | HEARTBEAT.md 解析/构建函数 | 保留并改为 per-workspace |
