@@ -73,7 +73,7 @@ pub struct HeartbeatManager {
     handles: DashMap<String, JoinHandle<()>>,
     agent_pool: Arc<AgentPool>,
     action_repo: Arc<dyn AgentActionRepository>,
-    workspace_dir_base: PathBuf,    // HEARTBEAT.md 路径: {base}/{ws_id}/HEARTBEAT.md
+    device_cache: Arc<DeviceCache>,  // format_context 需要设备名
     config: HeartbeatConfig,
 }
 
@@ -90,9 +90,13 @@ impl HeartbeatManager {
 
 **生命周期：**
 - `WorkspaceService::create_workspace()` → `HeartbeatManager::start(ws_id)` → 创建 HEARTBEAT.md 默认模板 + tokio::spawn
-- `WorkspaceService::delete_workspace()` → `HeartbeatManager::stop(ws_id)` → 发送关闭信号 + 清理
+- `WorkspaceService::delete_workspace()` → `HeartbeatManager::stop(ws_id)` → 通过 oneshot 发送关闭信号 + 清理 channels 和 handles
 - `ServiceManager::start_all()` → 创建 HeartbeatManager → 加载已有 workspace → 逐个 start()
 - `AppState::shutdown()` → `HeartbeatManager::shutdown()` → 依次关闭
+
+**HEARTBEAT.md 路径：** 使用现有 `paths::heartbeat_file(&workspace_id)` 而不是单独维护 workspace_dir_base。路径约定：`{agents_base}/{workspace_id}/HEARTBEAT.md`（由 paths 模块集中管理）。
+
+**DashMap 僵尸清理：** start() 调用前先清理已有条目（幂等）。定期清理逻辑为 best-effort（zombie entries 数量极少，且下次 start() 会覆盖）。
 
 **配置（来自 AgentSettings）：**
 ```rust
@@ -274,15 +278,70 @@ agent_actions Schema 不变，`event_type` 增加 `"heartbeat"` 值。
 | LLM 超时（>60s） | 记录 error action，下次 tick 继续，不重试 |
 | LLM 调用失败（网络/配额） | 记录 error action，打印 error 日志 |
 | wake channel 满（>64） | try_send 丢弃，打印 warning |
-| 心跳循环 panic | JoinHandle 自动清理，支持 restart(ws_id) |
+| 心跳循环 panic | JoinHandle 自动清理，restart = stop() + start()（start 幂等） |
 | HEARTBEAT.md 不存在 | 自动创建默认模板 |
 | agent_actions 写入失败 | 打印 error 日志，不影响循环 |
+| build_prompt 失败（DB 错误/文件不可读） | 跳过本次 tick，记录 error 日志。下次 tick 重试 |
 | workspace 被删除 | stop() 通过 oneshot 发送关闭信号 → 循环优雅退出 → 清理 channels 和 handles |
 | HEARTBEAT.md 并发写入 | 接受低风险：文件读写可能 TOCTOU，但 IoT 巡检场景下并发编辑极罕见 |
 | DashMap 残留条目 | start() 前清理已有条目（幂等）；定期检查数据库 workspace 列表并移除僵尸条目 |
 | enabled=false (全局开关) | HeartbeatManager 不创建任何循环 |
 
 **设计原则：** 心跳 crash 不影响其他 workspace、AI 失败不影响系统正常运行、所有错误路径有日志。
+
+## AgentActionRepository 扩展
+
+`build_prompt()` 需要按 event_type 过滤最近 actions，但当前 `AgentActionQuery`（action_repo.rs:50-58）不支持 event_type 过滤。需要新增方法：
+
+```rust
+// action_repo.rs — AgentActionRepository trait 新增
+async fn find_recent_by_workspace(
+    &self,
+    workspace_id: &str,
+    event_types: &[&str],  // "heartbeat" | "alarm"
+    limit: u32,
+) -> Result<Vec<AgentAction>, AgentError>;
+```
+
+SQLite 实现：`SELECT ... FROM agent_actions WHERE workspace_id = ? AND event_type IN (?, ?) ORDER BY created_at DESC LIMIT ?`
+
+## 告警风暴保护
+
+旧 AutonomousAgentRunner 的 5s dedup 被删除后，告警风暴（同时 100 个设备报警）可导致：
+- WakeSignal channel 填满（64 条被丢弃 — 可接受）
+- build_prompt 拼接 64 条告警上下文 → 超过 LLM token 限制
+
+**保护策略：**
+1. `format_context()` 中每条告警上下文压缩在 ~200 字符内
+2. `build_prompt()` 中 wake signals 上限 5 条（超过的标记 `(+N 条省略)`）
+3. HeartbeatManager::wake() 保留 per-alarm-id 去重（同一告警不重复入队）
+
+即在 `drain_channel` 后添加 alarm_id 去重 + cap：
+```rust
+fn dedup_and_cap(signals: &mut Vec<WakeSignal>, cap: usize) {
+    // 1. per alarm_id 去重（保留优先级最高的）
+    // 2. 按 priority 排序后截断到 cap
+}
+```
+
+## format_context 设计
+
+`format_context()` 将告警格式化为 AI 可读的简短文本（~200 字符内）。需要 DeviceCache 来获取设备名称。HeartbeatManager 新增 `device_cache: Arc<DeviceCache>` 字段：
+
+```rust
+fn format_context(alarm: &Alarm, event: &Event, cache: &DeviceCache) -> String {
+    let device_name = cache.get(device_id)
+        .map(|d| d.display_name.unwrap_or(d.name))
+        .unwrap_or(device_id);
+    format!(
+        "设备 {name} 触发 {level} 告警: {msg} (当前值: {val})",
+        name = device_name,
+        level = alarm.alarm_level.as_str(),
+        msg = alarm.message,
+        val = value,
+    )
+}
+```
 
 ## 文件变更清单
 
@@ -298,7 +357,9 @@ agent_actions Schema 不变，`event_type` 增加 `"heartbeat"` 值。
 | `cloud/src/modules/alarm/service.rs` | 替换 autonomous_runner 为 heartbeat_manager，新增 format_context() |
 | `cloud/src/shared/service_manager.rs` | 创建 HeartbeatManager，移除 zeroclaw imports |
 | `cloud/src/shared/app_state.rs` | 移除 AutonomousAgentRunner 连线，新增 HeartbeatManager 字段 |
+| `cloud/src/modules/agent/action_repo.rs` | 新增 `find_recent_by_workspace()` 方法，支持 event_type 过滤 |
 | `cloud/src/modules/agent/mod.rs` | 移除 autonomous_runner 模块，导出 heartbeat_manager |
+| `cloud/src/shared/paths.rs` | 确认 `heartbeat_file()` 存在（已有），heartbeat_loop 直接使用 |
 
 ### 删除
 | 文件 | 原因 |
