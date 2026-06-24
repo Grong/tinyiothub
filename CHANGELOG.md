@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.4.3] - 2026-06-24
+
+### Added — AI Event Integration
+
+- **HeartbeatManager**: per-workspace AI autonomous patrol loops with configurable intervals, DashMap-based channel management, and graceful shutdown
+- **heartbeat_loop**: reads HEARTBEAT.md tasks → collects wake signals → queries agent_actions → builds LLM prompt → calls AgentPool → records audit actions, with exponential backoff on failures
+- **Alarm→AI wake**: Error/Critical alarms inject urgent context into the next heartbeat tick via mpsc channel, with WakePriority-based dedup and cap (max 5 signals)
+- **Post-chat reflection**: simplified single-LLM-call memory extraction from conversation turns, parsing FACT|zone|confidence|fact format with high-confidence auto-accept
+- **agent_actions audit table**: SQLite log of all AI decisions with composite index (workspace_id, event_type, created_at)
+
+### Fixed
+
+- **dedup_and_cap sort key**: now sorts by WakePriority (Critical > High > Normal) instead of reason string, ensuring high-priority signals survive truncation
+- **heartbeat context query**: includes both "heartbeat" and "alarm" event_types so the AI sees alarm responses in its recent actions
+- **stop() orphaned tasks**: AbortHandle aborts stuck heartbeat loops on 5s timeout instead of leaking them
+- **interval_minutes=0 rejection**: config validation clamps or rejects zero-interval to prevent infinite LLM-hot-loop
+- **Minimax fallback**: create_minimax_provider() uses try_get() to degrade gracefully when [minimax] config is missing instead of panicking
+
 ## [0.4.1] - 2026-06-15
 
 ### Added
