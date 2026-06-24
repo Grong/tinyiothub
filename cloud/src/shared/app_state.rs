@@ -28,8 +28,8 @@ use crate::{
             factory::DeviceRepositoryFactory,
             repositories::{
                 DeviceTraceRepository, NotificationHistoryRepositoryImpl,
-                NotificationRuleRepositoryImpl, SqliteDeviceMemoryRepository,
-                SqliteEventRepository, SqliteRealTimeEventRepository,
+                NotificationRuleRepositoryImpl, SqliteEventRepository,
+                SqliteRealTimeEventRepository,
             },
         },
         redis::RedisClient,
@@ -106,6 +106,9 @@ pub struct AppState {
     /// Agent Pool — central agent lifecycle manager
     pub agent_pool: Arc<AgentPool>,
 
+    /// Heartbeat Manager — per-workspace heartbeat loop lifecycle
+    pub heartbeat_manager: Arc<crate::modules::agent::heartbeat_manager::HeartbeatManager>,
+
     /// 用户服务 - CRUD 操作
     pub user_service: Arc<crate::modules::user::UserService>,
 
@@ -138,9 +141,6 @@ pub struct AppState {
 
     /// 会话服务 - Agent 聊天会话管理
     pub session_service: Arc<crate::modules::agent::SessionService>,
-
-    /// Agent 记忆服务 - 构建设备快照等上下文
-    pub agent_memory_service: Arc<crate::modules::agent::AgentMemoryService>,
 
     /// 缓存的系统信息对象，避免每次请求重新扫描
     pub sysinfo_system: Arc<std::sync::Mutex<sysinfo::System>>,
@@ -278,10 +278,26 @@ impl AppState {
                 .expect("failed to build AgentPool"),
         );
 
-        // Agent Memory Service
-        let memory_repo = Arc::new(SqliteDeviceMemoryRepository::new(database.pool().clone()));
-        let agent_memory_service =
-            Arc::new(crate::modules::agent::AgentMemoryService::new(memory_repo));
+        // Wire HeartbeatManager for per-workspace AI heartbeat loops
+        let action_repo: Arc<dyn crate::modules::agent::action_repo::AgentActionRepository> = Arc::new(
+            crate::modules::agent::action_repo::SqliteAgentActionRepository::new(database.clone()),
+        );
+        let heartbeat_config = crate::modules::agent::heartbeat_manager::HeartbeatConfig {
+            enabled: agent_settings.heartbeat_enabled,
+            interval_minutes: agent_settings.heartbeat_interval_minutes,
+            max_recent_actions: 10,
+            channel_size: 64,
+        };
+        let heartbeat_manager = Arc::new(
+            crate::modules::agent::heartbeat_manager::HeartbeatManager::new(
+                agent_pool.clone(),
+                action_repo,
+                device_cache.clone(),
+                heartbeat_config,
+            ),
+        );
+        alarm_service.set_heartbeat_manager(heartbeat_manager.clone());
+        alarm_service.set_device_cache(device_cache.clone());
 
         // 用户服务
         let user_repository: Arc<dyn crate::modules::user::UserRepository> =
@@ -300,8 +316,10 @@ impl AppState {
             Arc::new(crate::modules::workspace::SqliteWorkspaceRepository::new(
                 database.as_ref().clone(),
             ));
-        let workspace_service =
-            Arc::new(crate::modules::workspace::WorkspaceService::new(workspace_repository));
+        let mut workspace_service =
+            crate::modules::workspace::WorkspaceService::new(workspace_repository);
+        workspace_service.set_heartbeat_manager(heartbeat_manager.clone());
+        let workspace_service = Arc::new(workspace_service);
 
         // 知识图谱服务
         let knowledge_repo =
@@ -424,6 +442,7 @@ impl AppState {
             secure_event_service,
             alarm_service,
             agent_pool,
+            heartbeat_manager,
             user_service,
             tenant_service,
             workspace_service,
@@ -435,7 +454,6 @@ impl AppState {
             cron_job_repo,
             cron_run_repo,
             session_service,
-            agent_memory_service,
             sysinfo_system: Arc::new(std::sync::Mutex::new(sysinfo::System::new_all())),
             gateway_service,
             mqtt_client: Some(mqtt_client),

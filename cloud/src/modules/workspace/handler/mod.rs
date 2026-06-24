@@ -1,5 +1,6 @@
 // Workspaces API handlers
 
+pub mod heartbeat;
 pub mod knowledge;
 
 use axum::{
@@ -70,6 +71,12 @@ pub fn create_router() -> Router<AppState> {
         .route("/{id}/knowledge/relations", get(knowledge::list_relations))
         .route("/{id}/knowledge/search", get(knowledge::search_knowledge))
         .route("/{id}/knowledge/context", get(knowledge::get_context))
+        // Heartbeat routes (per-workspace AI autonomous inspection)
+        .route("/{id}/heartbeat/config", get(heartbeat::get_config))
+        .route("/{id}/heartbeat/config", put(heartbeat::update_config))
+        .route("/{id}/heartbeat/logs", get(heartbeat::get_logs))
+        .route("/{id}/heartbeat/tasks", get(heartbeat::get_tasks))
+        .route("/{id}/heartbeat/tasks", put(heartbeat::update_tasks))
 }
 
 /// List workspaces for current tenant
@@ -545,11 +552,10 @@ async fn suggest_tags(
         }
     }
 
-    let auth_token =
-        match crate::shared::config::get().minimax.as_ref().map(|m| m.auth_token.clone()) {
-            Some(t) => t,
-            None => return ApiResponseBuilder::error("AI 服务未配置"),
-        };
+    // Verify minimax config exists
+    if crate::shared::config::get().minimax.is_none() {
+        return ApiResponseBuilder::error("AI 服务未配置");
+    }
 
     let model = crate::shared::config::get()
         .minimax
@@ -569,7 +575,7 @@ async fn suggest_tags(
         payload.description.as_deref().map_or(String::new(), |d| format!("\n- 描述：{}", d)),
     );
 
-    let provider = match zeroclaw::providers::create_provider("minimaxi", Some(&auth_token)) {
+    let provider = match crate::shared::config::create_minimax_provider() {
         Ok(p) => p,
         Err(e) => {
             tracing::error!("Failed to create AI provider: {}", e);

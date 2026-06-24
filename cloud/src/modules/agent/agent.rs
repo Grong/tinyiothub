@@ -4,7 +4,7 @@
 // Key design decisions:
 //   - Lazy creation: agents built on first access, config read from DB
 //   - Tool denylist: resolved at build time from AgentRuntimeConfig
-//   - NamespacedMemory: workspace-level isolation via zeroclaw NamespacedMemory
+//   - WorkspaceScopedMemory: workspace-level isolation via namespace wrapper
 //   - Invalidation: remove from pool on config change, rebuild on next access
 
 use std::{sync::Arc, time::Instant};
@@ -17,7 +17,7 @@ use zeroclaw::{
         dispatcher::NativeToolDispatcher,
         prompt::{PromptContext, PromptSection, SystemPromptBuilder},
     },
-    memory::{Memory, NamespacedMemory},
+    memory::Memory,
     observability::Observer,
     security::AutonomyLevel,
     tools::Tool,
@@ -26,10 +26,10 @@ use zeroclaw::{
 use super::{
     chat::service as chat_service,
     config::service as config_service,
-    reflection::{notifications::NotificationService, service::ReflectionService},
     tools::service as tool_service,
 };
 use crate::shared::agent::config::{AgentConfig, AgentError, AgentInfo, AgentRuntimeConfig};
+use crate::shared::workspace_memory::WorkspaceScopedMemory;
 
 // ============================================================================
 // Skills Section (zeroclaw SystemPromptBuilder integration)
@@ -146,8 +146,6 @@ pub struct AgentPool {
     pub chat_handles:
         Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
     pub memory_store: Arc<dyn tinyiothub_core::memory::MemoryStore>,
-    pub reflection_service: Option<Arc<ReflectionService>>,
-    pub notification_service: Arc<NotificationService>,
     pub workspace_service:
         tokio::sync::RwLock<Option<Arc<crate::modules::workspace::WorkspaceService>>>,
     pub knowledge_service:
@@ -185,25 +183,19 @@ impl AgentPool {
         let response_cache =
             zeroclaw::memory::create_response_cache(&memory_config, &workspace_dir).map(Arc::new);
 
+        let observer_backend = match agent_settings.observer_backend.as_str() {
+            "none" | "noop" => zeroclaw::config::schema::ObservabilityBackend::None,
+            "verbose" => zeroclaw::config::schema::ObservabilityBackend::Verbose,
+            "prometheus" => zeroclaw::config::schema::ObservabilityBackend::Prometheus,
+            "otel" | "opentelemetry" | "otlp" => zeroclaw::config::schema::ObservabilityBackend::Otel,
+            _ => zeroclaw::config::schema::ObservabilityBackend::Log,
+        };
         let observer_config = zeroclaw::config::schema::ObservabilityConfig {
-            backend: agent_settings.observer_backend.clone(),
+            backend: observer_backend,
             ..Default::default()
         };
         let observer = zeroclaw::observability::create_observer(&observer_config);
         let observer: Arc<dyn Observer> = Arc::from(observer);
-
-        let minimax_auth_token = crate::shared::config::get()
-            .minimax
-            .as_ref()
-            .map(|m| m.auth_token.clone())
-            .unwrap_or_default();
-        let notification_service = Arc::new(NotificationService::new());
-        let reflection_service = Some(Arc::new(ReflectionService::new(
-            Arc::clone(&memory_store),
-            db_pool.clone(),
-            Arc::clone(&notification_service),
-            minimax_auth_token,
-        )));
 
         Ok(Self {
             db_pool,
@@ -214,8 +206,6 @@ impl AgentPool {
             agent_settings: agent_settings.clone(),
             chat_handles: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             memory_store,
-            reflection_service,
-            notification_service,
             workspace_service: tokio::sync::RwLock::new(None),
             knowledge_service: tokio::sync::RwLock::new(None),
         })
@@ -260,21 +250,13 @@ impl AgentPool {
             Entry::Vacant(vacant) => {
                 let config = config_service::get_config(&self.db_pool, agent_id).await?;
 
-                let namespaced: Arc<dyn Memory> = Arc::new(NamespacedMemory::new(
+                let namespaced: Arc<dyn Memory> = Arc::new(WorkspaceScopedMemory::new(
                     Arc::clone(&self.shared_memory),
                     workspace_id.to_string(),
                 ));
 
-                let minimax_config = crate::shared::config::get()
-                    .minimax
-                    .clone()
-                    .ok_or_else(|| AgentError::BuildError("minimax config required".to_string()))?;
-
-                let provider = zeroclaw::providers::create_provider(
-                    "minimaxi",
-                    Some(&minimax_config.auth_token),
-                )
-                .map_err(|e| AgentError::BuildError(format!("Failed to create provider: {}", e)))?;
+                let provider = crate::shared::config::create_minimax_provider()
+                    .map_err(|e| AgentError::BuildError(format!("Failed to create provider: {}", e)))?;
 
                 let ws_dir = crate::shared::paths::workspace_dir(workspace_id);
 
@@ -347,7 +329,7 @@ impl AgentPool {
         observer: &Arc<dyn Observer>,
         config: &AgentRuntimeConfig,
         response_cache: Option<Arc<zeroclaw::memory::ResponseCache>>,
-        provider: Box<dyn zeroclaw::providers::traits::Provider>,
+        provider: Box<dyn zeroclaw::providers::traits::ModelProvider>,
         workspace_dir: &std::path::Path,
         tools: Vec<Box<dyn Tool>>,
     ) -> anyhow::Result<zeroclaw::agent::Agent> {
@@ -357,7 +339,7 @@ impl AgentPool {
             SystemPromptBuilder::with_defaults().add_section(Box::new(TinyIoTHubSkillsSection));
 
         zeroclaw::agent::Agent::builder()
-            .provider(provider)
+            .model_provider(provider)
             .tools(tools)
             .memory(Arc::clone(memory))
             .observer(Arc::clone(observer))
@@ -447,7 +429,7 @@ impl AgentPool {
         let items: Vec<serde_json::Value> = rows
             .into_iter()
             .map(|(id, _ws, name, status)| {
-                serde_json::json!({"id": id, "name": name, "status": status})
+                serde_json::json!({"id": id, "name": name, "status": status, "workspaceId": _ws})
             })
             .collect();
 
@@ -551,7 +533,8 @@ impl AgentPool {
             session_key,
             system_prompt,
             &self.chat_handles,
-            self.reflection_service.clone(),
+            Arc::clone(&self.memory_store),
+            self.db_pool.clone(),
             enable_reflection,
             &model,
             &parsed.workspace_id,
@@ -660,7 +643,11 @@ impl AgentPool {
         workspace_id: &str,
         message: &str,
     ) -> Result<String, AgentError> {
-        let agent = self.get_or_create("default", workspace_id).await?;
+        // Use a dedicated key so heartbeat/cron jobs don't share the chat agent's
+        // config — the DB-stored model may be invalid (e.g. typos) and break
+        // background tasks. "__heartbeat__" has no DB row, so it always falls
+        // back to AgentRuntimeConfig::default() → server-level [minimax] model.
+        let agent = self.get_or_create("__heartbeat__", workspace_id).await?;
         let mut ag = agent.lock().await;
         ag.run_single(message).await.map_err(|e| AgentError::RequestFailed(e.to_string()))
     }

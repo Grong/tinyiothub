@@ -478,7 +478,7 @@ async fn llm_call_with_timeout(
     temperature: f64,
     timeout: Duration,
 ) -> Result<String> {
-    let auth_token = crate::shared::config::get()
+    let _auth_token = crate::shared::config::get()
         .minimax
         .as_ref()
         .map(|m| m.auth_token.clone())
@@ -490,7 +490,7 @@ async fn llm_call_with_timeout(
         .map(|m| m.model.clone())
         .unwrap_or_else(|| "MiniMax-M2.7-highspeed".to_string());
 
-    let provider = zeroclaw::providers::create_provider("minimaxi", Some(&auth_token))
+    let provider = crate::shared::config::create_minimax_provider()
         .map_err(|e| Error::Internal(format!("failed to create LLM provider: {}", e)))?;
 
     let chat_future =
@@ -969,17 +969,8 @@ async fn generate_tags_inner(content: &str) -> Result<Vec<String>> {
         }
     );
 
-    let provider = zeroclaw::providers::create_provider(
-        "minimaxi",
-        Some(
-            &crate::shared::config::get()
-                .minimax
-                .as_ref()
-                .map(|m| m.auth_token.clone())
-                .unwrap_or_default(),
-        ),
-    )
-    .map_err(|e| Error::Internal(format!("failed to create LLM provider: {}", e)))?;
+    let provider = crate::shared::config::create_minimax_provider()
+        .map_err(|e| Error::Internal(format!("failed to create LLM provider: {}", e)))?;
 
     let model = crate::shared::config::get()
         .minimax

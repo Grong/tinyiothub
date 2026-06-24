@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use zeroclaw::tools::{Tool, ToolResult};
+use zeroclaw_api::attribution::{Attributable, Role, ToolKind};
 
 use crate::modules::workspace::KnowledgeService;
 
@@ -14,6 +15,15 @@ pub struct SearchKnowledgeTool {
 impl SearchKnowledgeTool {
     pub fn new(knowledge_service: Arc<KnowledgeService>) -> Self {
         Self { knowledge_service }
+    }
+}
+
+impl Attributable for SearchKnowledgeTool {
+    fn role(&self) -> Role {
+        Role::Tool(ToolKind::Search)
+    }
+    fn alias(&self) -> &str {
+        self.name()
     }
 }
 

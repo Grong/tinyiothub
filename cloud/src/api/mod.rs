@@ -90,10 +90,6 @@ pub fn create_router() -> Router<AppState> {
             "/events/sse/public",
             get(crate::modules::event::handler::sse::handle_sse_connection_public),
         )
-        .route(
-            "/workspaces/notifications/stream",
-            get(crate::modules::agent::reflection::notifications::handle_notification_sse),
-        )
         .merge(protected_routes);
 
     // 合并所有路由

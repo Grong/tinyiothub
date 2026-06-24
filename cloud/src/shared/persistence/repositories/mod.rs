@@ -26,7 +26,6 @@ pub use tinyiothub_storage::sqlite::{
 };
 
 // Still in cloud (not migrated — depend on cloud-internal types)
-pub mod device_memory_repository_impl;
 pub mod device_query_service_impl;
 pub mod device_trace_repository_impl;
 pub mod driver_installation;
@@ -37,7 +36,6 @@ pub mod real_time_event_repository_impl;
 pub mod session_repository_impl;
 
 // Re-export cloud-local implementations
-pub use device_memory_repository_impl::SqliteDeviceMemoryRepository;
 pub use device_query_service_impl::SqliteDeviceQueryService;
 pub use device_trace_repository_impl::DeviceTraceRepository;
 pub use event_repository_impl::SqliteEventRepository;

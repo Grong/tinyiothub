@@ -431,3 +431,230 @@ async fn test_alarm_rule_workspace_isolation() {
         );
     }
 }
+
+// ============================================================================
+// Alarm → AI Heartbeat Wake Integration Tests
+// ============================================================================
+
+#[cfg(test)]
+mod heartbeat_wake_tests {
+    use axum::{
+        body::Body,
+        http::Request,
+    };
+    use serde_json::json;
+    use tower::ServiceExt;
+
+    use crate::{
+        modules::agent::heartbeat_manager::{WakePriority, WakeSignal},
+        test_utils::{
+            auth_header, create_test_token_with_workspace,
+            seed_test_workspace, setup_test_app_with_pool,
+        },
+    };
+
+    fn auth_request(method: &str, uri: &str, token: &str, body: Option<serde_json::Value>) -> Request<Body> {
+        let builder = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("Authorization", auth_header(token))
+            .header("Content-Type", "application/json");
+        let body_str = body.map(|v| v.to_string()).unwrap_or_default();
+        builder.body(Body::from(body_str)).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_heartbeat_manager_start_stop_lifecycle() {
+        let (app_state, _pool) = setup_test_app_with_pool().await;
+        let ws_id = "ws-heartbeat-test";
+
+        // Initially no active loops
+        assert!(
+            !app_state.heartbeat_manager.list_active().contains(&ws_id.to_string()),
+            "No loop should be active before start"
+        );
+
+        // Start a loop
+        app_state.heartbeat_manager.start(ws_id).await;
+        assert!(
+            app_state.heartbeat_manager.list_active().contains(&ws_id.to_string()),
+            "Loop should be active after start"
+        );
+
+        // Stop the loop
+        app_state.heartbeat_manager.stop(ws_id).await;
+        // Give the async task a moment to fully terminate
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(
+            !app_state.heartbeat_manager.list_active().contains(&ws_id.to_string()),
+            "Loop should be removed after stop"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_heartbeat_manager_wake_delivers_signal() {
+        let (app_state, _pool) = setup_test_app_with_pool().await;
+        let ws_id = "ws-wake-test";
+
+        // Start a loop
+        app_state.heartbeat_manager.start(ws_id).await;
+
+        // Send a wake signal — should not panic or error
+        let signal = WakeSignal {
+            workspace_id: ws_id.to_string(),
+            reason: "alarm:test-001".into(),
+            context: "Test alarm context".into(),
+            priority: WakePriority::Critical,
+        };
+        app_state.heartbeat_manager.wake(ws_id, signal);
+
+        // Cleanup
+        app_state.heartbeat_manager.stop(ws_id).await;
+    }
+
+    #[tokio::test]
+    async fn test_wake_signal_priority_ordering() {
+        // Verify Critical > High > Normal ordering
+        assert!(WakePriority::Critical as i32 > WakePriority::High as i32);
+        assert!(WakePriority::High as i32 > WakePriority::Normal as i32);
+    }
+
+    #[tokio::test]
+    async fn test_config_rejects_zero_interval() {
+        let (app_state, _pool) = setup_test_app_with_pool().await;
+
+        let original = app_state.heartbeat_manager.config().await;
+        let original_interval = original.interval_minutes;
+
+        // Try to set interval_minutes=0 — should be rejected
+        let updated = app_state
+            .heartbeat_manager
+            .update_config(None, Some(0))
+            .await;
+
+        // Config should NOT have changed to 0
+        assert_ne!(
+            updated.interval_minutes, 0,
+            "interval_minutes=0 should be rejected"
+        );
+        assert_eq!(
+            updated.interval_minutes, original_interval,
+            "interval_minutes should remain unchanged when 0 is passed"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_config_accepts_valid_interval() {
+        let (app_state, _pool) = setup_test_app_with_pool().await;
+
+        let updated = app_state
+            .heartbeat_manager
+            .update_config(None, Some(30))
+            .await;
+
+        assert_eq!(updated.interval_minutes, 30);
+    }
+
+    #[tokio::test]
+    async fn test_idempotent_start() {
+        let (app_state, _pool) = setup_test_app_with_pool().await;
+        let ws_id = "ws-idempotent-test";
+
+        // Starting twice should not panic or create duplicates
+        app_state.heartbeat_manager.start(ws_id).await;
+        app_state.heartbeat_manager.start(ws_id).await;
+
+        let active = app_state.heartbeat_manager.list_active();
+        let count = active.iter().filter(|id| id.as_str() == ws_id).count();
+        assert_eq!(count, 1, "Should have exactly one active entry after idempotent start");
+
+        app_state.heartbeat_manager.stop(ws_id).await;
+    }
+
+    #[tokio::test]
+    async fn test_alarm_creation_with_heartbeat_integration() {
+        let (app_state, pool) = setup_test_app_with_pool().await;
+        let ws_id = "ws-alarm-ai-test";
+
+        // Seed tenant and workspace (uses proper schema with all required columns)
+        seed_test_workspace(&pool, "tenant-1", ws_id).await;
+
+        sqlx::query(
+            "INSERT INTO agents (agent_id, workspace_id, name, status, created_at, updated_at)
+             VALUES (?, ?, 'Test Agent', 'active', datetime('now'), datetime('now'))",
+        )
+        .bind("agent-ai-1")
+        .bind(ws_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Start heartbeat loop for this workspace
+        app_state.heartbeat_manager.start(ws_id).await;
+        assert!(
+            app_state.heartbeat_manager.list_active().contains(&ws_id.to_string()),
+            "Heartbeat loop should be active for workspace"
+        );
+
+        // Create alarm rules of different levels via the API
+        let api_router = crate::api::create_router();
+        let app = axum::Router::new().nest("/api", api_router).with_state(app_state.clone());
+        let token = create_test_token_with_workspace("user-1", "tenant-1", ws_id);
+
+        // Create a Critical alarm rule
+        let critical_rule = json!({
+            "deviceId": "dev-ai-1",
+            "ruleName": "Critical Temp",
+            "ruleType": "threshold",
+            "conditionConfig": {
+                "type": "threshold",
+                "operator": "greater_than",
+                "value": 100.0
+            },
+            "alarmLevel": "critical",
+            "isEnabled": true
+        });
+
+        let response = app
+            .clone()
+            .oneshot(auth_request(
+                "POST",
+                "/api/v1/alarm-rules",
+                &token,
+                Some(critical_rule),
+            ))
+            .await
+            .unwrap();
+
+        // Accept any non-5xx status (rule creation may fail due to missing device)
+        assert!(!response.status().is_server_error());
+
+        // Create an Info alarm rule
+        let info_rule = json!({
+            "deviceId": "dev-ai-2",
+            "ruleName": "Info Rule",
+            "ruleType": "threshold",
+            "conditionConfig": {
+                "type": "threshold",
+                "operator": "greater_than",
+                "value": 50.0
+            },
+            "alarmLevel": "info",
+            "isEnabled": true
+        });
+
+        let response = app
+            .oneshot(auth_request(
+                "POST",
+                "/api/v1/alarm-rules",
+                &token,
+                Some(info_rule),
+            ))
+            .await
+            .unwrap();
+        assert!(!response.status().is_server_error());
+
+        // Cleanup
+        app_state.heartbeat_manager.stop(ws_id).await;
+    }
+}

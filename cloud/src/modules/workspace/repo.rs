@@ -78,6 +78,7 @@ pub trait WorkspaceRepository: Send + Sync {
         resource_type: Option<ResourceType>,
         limit: i64,
     ) -> Result<Vec<ResourceSearchResult>>;
+    async fn find_all_ids(&self) -> Result<Vec<String>>;
 }
 
 // --- SQLite implementation ---
@@ -678,6 +679,13 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
             .fetch_all(self.database.pool())
             .await?;
         Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    async fn find_all_ids(&self) -> Result<Vec<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as("SELECT id FROM workspaces")
+            .fetch_all(self.database.pool())
+            .await?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 }
 

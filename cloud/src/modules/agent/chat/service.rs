@@ -96,9 +96,8 @@ pub async fn send_message(
     chat_handles: &Arc<
         tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>,
     >,
-    reflection_service: Option<
-        std::sync::Arc<super::super::reflection::service::ReflectionService>,
-    >,
+    memory_store: std::sync::Arc<dyn tinyiothub_core::memory::MemoryStore>,
+    db: sqlx::SqlitePool,
     enable_reflection: bool,
     model: &str,
     workspace_id: &str,
@@ -165,7 +164,7 @@ pub async fn send_message(
         drop(ag);
 
         let final_text = match result {
-            Ok(Ok(text)) => {
+            Ok(Ok((text, _conversation))) => {
                 let _ = tx
                     .send(ChatEvent::Final {
                         run_id: run_id.clone(),
@@ -200,22 +199,24 @@ pub async fn send_message(
             }
         };
 
-        // Spawn micro_reflect after the turn completes (fire-and-forget)
+        // Spawn reflection after the turn completes (fire-and-forget)
         if enable_reflection
-            && let (Some(svc), Some(assistant_text)) = (reflection_service, final_text)
+            && let Some(assistant_text) = final_text
         {
             let turn_messages = vec![
-                super::super::reflection::pipeline::ChatMessage {
+                super::super::reflect::ChatTurnMessage {
                     role: "user".into(),
                     content: message.clone(),
                 },
-                super::super::reflection::pipeline::ChatMessage {
+                super::super::reflect::ChatTurnMessage {
                     role: "assistant".into(),
                     content: assistant_text,
                 },
             ];
             tokio::spawn(async move {
-                svc.micro_reflect(
+                super::super::reflect::reflect_conversation_turn(
+                    &*memory_store,
+                    &db,
                     &workspace_id,
                     &agent_id,
                     &session_key,

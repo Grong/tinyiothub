@@ -112,10 +112,9 @@ impl ServiceManager {
         #[cfg(not(feature = "harmonyos"))]
         self.start_health_monitor(data_server.clone(), app_state.database.clone()).await?;
 
-        // 4. 启动 Heartbeat 服务
+        // 4. 启动 Heartbeat 服务（per-workspace）
         #[cfg(not(feature = "harmonyos"))]
         {
-            let agent_settings = crate::shared::config::get().agent.clone();
             let workspace_dir = crate::shared::paths::default_workspace_dir();
 
             // Initialize workspace with template files
@@ -132,45 +131,18 @@ impl ServiceManager {
                 }
             }
 
-            let heartbeat_config = zeroclaw::config::schema::HeartbeatConfig {
-                enabled: agent_settings.heartbeat_enabled,
-                interval_minutes: agent_settings.heartbeat_interval_minutes,
-                two_phase: true,
-                message: None,
-                target: None,
-                to: None,
-                adaptive: true,
-                min_interval_minutes: 5,
-                max_interval_minutes: 120,
-                deadman_timeout_minutes: 0,
-                deadman_channel: None,
-                deadman_to: None,
-                max_run_history: 100,
-                load_session_context: false,
-                task_timeout_secs: 600,
-            };
-            let observer_config = zeroclaw::config::schema::ObservabilityConfig {
-                backend: agent_settings.observer_backend.clone(),
-                ..Default::default()
-            };
-            let heartbeat_observer: std::sync::Arc<dyn zeroclaw::observability::Observer> =
-                std::sync::Arc::from(zeroclaw::observability::create_observer(&observer_config));
-            let heartbeat_service = crate::modules::agent::heartbeat::HeartbeatService::new(
-                workspace_dir.clone(),
-                heartbeat_config,
-                heartbeat_observer,
-                app_state.agent_pool.clone(),
-                crate::shared::paths::DEFAULT_WORKSPACE_ID.to_string(),
-                "default".to_string(),
-                agent_settings.system_prompts.heartbeat.clone(),
-            );
-            let heartbeat_shutdown_rx = self.shutdown_tx.subscribe();
-            let handle: tokio::task::JoinHandle<Result<(), Error>> = tokio::spawn(async move {
-                heartbeat_service.run(heartbeat_shutdown_rx).await;
-                Ok(())
-            });
-            self.service_handles.write().await.push(handle);
-            info!("✅ HeartbeatService started");
+            // Start heartbeat loops for all existing workspaces
+            match app_state.workspace_service.list_all_ids().await {
+                Ok(ws_ids) => {
+                    for ws_id in &ws_ids {
+                        app_state.heartbeat_manager.start(ws_id).await;
+                    }
+                    info!("✅ HeartbeatManager started ({} workspaces)", ws_ids.len());
+                }
+                Err(e) => {
+                    warn!("⚠️ Failed to list workspace IDs for heartbeat startup: {}", e);
+                }
+            }
         }
 
         // 更新状态为运行中

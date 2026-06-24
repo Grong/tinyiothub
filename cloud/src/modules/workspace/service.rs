@@ -8,15 +8,24 @@ use super::{
         ResourceSearchResult, ResourceType, Workspace, WorkspaceResource, WorkspaceWithDeviceCount,
     },
 };
-use crate::shared::error::Result;
+use crate::{modules::agent::heartbeat_manager::HeartbeatManager, shared::error::Result};
 
 pub struct WorkspaceService {
     repository: Arc<dyn WorkspaceRepository>,
+    heartbeat_manager: Option<Arc<HeartbeatManager>>,
 }
 
 impl WorkspaceService {
     pub fn new(repository: Arc<dyn WorkspaceRepository>) -> Self {
-        Self { repository }
+        Self { repository, heartbeat_manager: None }
+    }
+
+    pub fn set_heartbeat_manager(&mut self, hm: Arc<HeartbeatManager>) {
+        self.heartbeat_manager = Some(hm);
+    }
+
+    pub async fn list_all_ids(&self) -> Result<Vec<String>> {
+        self.repository.find_all_ids().await
     }
 
     pub async fn find_by_id(&self, id: &str) -> Result<Option<WorkspaceWithDeviceCount>> {
@@ -40,7 +49,11 @@ impl WorkspaceService {
         agent_id: Option<&str>,
         agent_config: Option<&str>,
     ) -> Result<Workspace> {
-        self.repository.create(tenant_id, name, description, agent_id, agent_config).await
+        let workspace = self.repository.create(tenant_id, name, description, agent_id, agent_config).await?;
+        if let Some(ref hm) = self.heartbeat_manager {
+            hm.start(&workspace.id).await;
+        }
+        Ok(workspace)
     }
 
     pub async fn update(
@@ -55,6 +68,9 @@ impl WorkspaceService {
     }
 
     pub async fn delete(&self, id: &str) -> Result<()> {
+        if let Some(ref hm) = self.heartbeat_manager {
+            hm.stop(id).await;
+        }
         self.repository.delete(id).await
     }
 

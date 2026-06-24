@@ -10,15 +10,23 @@ use super::{
     repo::{AlarmQueryCriteria, AlarmRepository, AlarmRuleRepository, TimeRange},
     types::*,
 };
-use crate::modules::event::{
-    aggregates::NotificationChannelType, entities::Event, value_objects::EventType,
+use crate::{
+    modules::{
+        agent::heartbeat_manager::{HeartbeatManager, WakePriority, WakeSignal},
+        event::{
+            aggregates::NotificationChannelType, entities::Event, value_objects::EventType,
+        },
+    },
 };
+use tinyiothub_storage::cache::DeviceCache;
 
 /// 报警业务服务
 pub struct AlarmService {
     alarm_repository: Arc<dyn AlarmRepository>,
     rule_repository: Arc<dyn AlarmRuleRepository>,
     rule_engine: Arc<RuleEngine>,
+    heartbeat_manager: std::sync::Mutex<Option<Arc<HeartbeatManager>>>,
+    device_cache: std::sync::Mutex<Option<Arc<DeviceCache>>>,
 }
 
 impl AlarmService {
@@ -27,11 +35,51 @@ impl AlarmService {
         rule_repository: Arc<dyn AlarmRuleRepository>,
     ) -> Self {
         let rule_engine = Arc::new(RuleEngine::new(rule_repository.clone()));
-        Self { alarm_repository, rule_repository, rule_engine }
+        Self {
+            alarm_repository,
+            rule_repository,
+            rule_engine,
+            heartbeat_manager: std::sync::Mutex::new(None),
+            device_cache: std::sync::Mutex::new(None),
+        }
+    }
+
+    pub fn set_heartbeat_manager(&self, hm: Arc<HeartbeatManager>) {
+        *self.heartbeat_manager.lock().unwrap() = Some(hm);
+    }
+
+    pub fn set_device_cache(&self, dc: Arc<DeviceCache>) {
+        *self.device_cache.lock().unwrap() = Some(dc);
+    }
+
+    /// Wake the heartbeat loop for a workspace when a significant alarm occurs
+    fn wake_heartbeat(&self, alarm: &Alarm) {
+        let ws_id = match alarm.workspace_id.as_deref() {
+            Some(id) => id,
+            None => return,
+        };
+        if let Some(ref hm) = *self.heartbeat_manager.lock().unwrap() {
+            let priority = match alarm.alarm_level {
+                AlarmLevel::Critical => WakePriority::Critical,
+                AlarmLevel::Error => WakePriority::High,
+                _ => return,
+            };
+            let context = format!(
+                "Alarm: {} | Device: {} | {}",
+                alarm.alarm_type, alarm.device_id, alarm.message,
+            );
+            hm.wake(ws_id, WakeSignal {
+                workspace_id: ws_id.to_string(),
+                reason: format!("alarm:{}", alarm.id),
+                context,
+                priority,
+            });
+        }
     }
 
     pub async fn create_alarm(&self, alarm: Alarm) -> AlarmResult<Alarm> {
         self.alarm_repository.create(&alarm).await?;
+        self.wake_heartbeat(&alarm);
         Ok(alarm)
     }
 

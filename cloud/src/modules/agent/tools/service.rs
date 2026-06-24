@@ -8,6 +8,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 use zeroclaw::tools::{Tool, ToolResult};
+use zeroclaw_api::attribution::{Attributable, Role, ToolKind};
 
 use super::canvas::CanvasTool;
 use crate::{
@@ -46,6 +47,15 @@ impl IoTToolAdapter {
         workspace_id: String,
     ) -> Self {
         Self { name, description, input_schema, handler, workspace_id }
+    }
+}
+
+impl Attributable for IoTToolAdapter {
+    fn role(&self) -> Role {
+        Role::Tool(ToolKind::Plugin)
+    }
+    fn alias(&self) -> &str {
+        <Self as Tool>::name(self)
     }
 }
 

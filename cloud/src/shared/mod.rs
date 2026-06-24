@@ -30,3 +30,4 @@ pub mod hardware;
 pub mod mqtt_client;
 pub mod persistence;
 pub mod redis;
+pub mod workspace_memory;

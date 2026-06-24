@@ -1,60 +1,13 @@
-// Heartbeat Service - IoT periodic inspection tasks wrapper around zeroclaw HeartbeatEngine
+// Heartbeat module — per-workspace AI autonomous inspection
 //
-// The zeroclaw HeartbeatEngine collects tasks from HEARTBEAT.md but does not execute them.
-// This service adds execution logic: high-priority tasks are sent to the AgentPool
-// as agent prompts, with results logged and (optionally) stored in memory.
+// Contains:
+//   - HEARTBEAT.md task parsing (read/write/build/parse)
+//   - heartbeat_loop — per-workspace async loop driving periodic AI inspection
+//   - build_prompt — assembles prompt from tasks + recent actions + wake signals
 
 use std::sync::Arc;
 
-use zeroclaw::heartbeat::engine::{HeartbeatEngine, TaskPriority};
-
 use super::agent::AgentPool;
-
-/// Execution record for a single heartbeat run
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HeartbeatExecutionRecord {
-    pub timestamp: chrono::DateTime<chrono::Utc>,
-    pub task_count: usize,
-    pub status: String,
-    pub error_message: Option<String>,
-}
-
-/// Global heartbeat state for API access
-#[derive(Debug, Clone)]
-pub struct HeartbeatState {
-    pub enabled: bool,
-    pub interval_minutes: u32,
-    pub workspace_id: String,
-    pub agent_id: String,
-    pub execution_history: Vec<HeartbeatExecutionRecord>,
-    pub workspace_dir: std::path::PathBuf,
-}
-
-impl HeartbeatState {
-    pub fn new(
-        workspace_id: String,
-        agent_id: String,
-        interval_minutes: u32,
-        workspace_dir: std::path::PathBuf,
-    ) -> Self {
-        Self {
-            enabled: true,
-            interval_minutes,
-            workspace_id,
-            agent_id,
-            execution_history: Vec::new(),
-            workspace_dir,
-        }
-    }
-
-    pub fn add_execution_record(&mut self, record: HeartbeatExecutionRecord) {
-        self.execution_history.insert(0, record);
-        if self.execution_history.len() > 100 {
-            self.execution_history.truncate(100);
-        }
-    }
-}
 
 /// A single heartbeat task
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -87,7 +40,7 @@ pub async fn write_heartbeat_tasks(
     Ok(())
 }
 
-fn get_default_tasks() -> Vec<HeartbeatTask> {
+pub(crate) fn get_default_tasks() -> Vec<HeartbeatTask> {
     vec![
         HeartbeatTask {
             priority: "high".into(),
@@ -146,7 +99,7 @@ fn parse_heartbeat_md(content: &str) -> Vec<HeartbeatTask> {
     tasks
 }
 
-fn build_heartbeat_md(tasks: &[HeartbeatTask]) -> String {
+pub(crate) fn build_heartbeat_md(tasks: &[HeartbeatTask]) -> String {
     let mut s = "# Periodic Tasks\n".to_string();
     for task in tasks {
         let flag =
@@ -156,186 +109,408 @@ fn build_heartbeat_md(tasks: &[HeartbeatTask]) -> String {
     s
 }
 
-// Global heartbeat state - initialized when HeartbeatService is created
-static HEARTBEAT_STATE: std::sync::OnceLock<Arc<tokio::sync::RwLock<HeartbeatState>>> =
-    std::sync::OnceLock::new();
+// ── Per-workspace heartbeat loop (v0.5) ──
 
-fn init_heartbeat_state(state: HeartbeatState) {
-    let _ = HEARTBEAT_STATE.set(Arc::new(tokio::sync::RwLock::new(state)));
-}
+use super::action_repo::{AgentAction, AgentActionRepository};
+use super::heartbeat_manager::{HeartbeatConfig, WakeSignal};
 
-/// Get a reference to the global heartbeat state
-pub fn get_heartbeat_state() -> Option<&'static Arc<tokio::sync::RwLock<HeartbeatState>>> {
-    HEARTBEAT_STATE.get()
-}
-
-/// IoT Heartbeat Service
-pub struct HeartbeatService {
-    engine: HeartbeatEngine,
-    agent_pool: Arc<AgentPool>,
-    workspace_dir: std::path::PathBuf,
+/// Per-workspace heartbeat loop — drives periodic AI inspection for a single workspace
+pub(crate) async fn heartbeat_loop(
     workspace_id: String,
-    agent_id: String,
-    interval_minutes: u32,
-    heartbeat_prompt: String,
-}
+    config: HeartbeatConfig,
+    agent_pool: Arc<AgentPool>,
+    action_repo: Arc<dyn AgentActionRepository>,
+    heartbeat_file: std::path::PathBuf,
+    mut wake_rx: tokio::sync::mpsc::Receiver<WakeSignal>,
+    shutdown_rx: tokio::sync::oneshot::Receiver<()>,
+) {
+    let interval_secs = (config.interval_minutes as u64).saturating_mul(60);
+    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(interval_secs));
+    let mut shutdown_rx = shutdown_rx;
+    let mut consecutive_failures: u32 = 0;
+    let mut skip_remaining: u32 = 0;
 
-impl HeartbeatService {
-    pub fn new(
-        workspace_dir: std::path::PathBuf,
-        config: zeroclaw::config::schema::HeartbeatConfig,
-        observer: Arc<dyn zeroclaw::observability::Observer>,
-        agent_pool: Arc<AgentPool>,
-        workspace_id: String,
-        agent_id: String,
-        heartbeat_prompt: String,
-    ) -> Self {
-        let interval_minutes = config.interval_minutes;
+    tracing::info!(%workspace_id, interval_minutes=config.interval_minutes, "Heartbeat loop started");
 
-        let state = HeartbeatState::new(
-            workspace_id.clone(),
-            agent_id.clone(),
-            interval_minutes,
-            workspace_dir.clone(),
-        );
-        init_heartbeat_state(state);
-
-        let engine = HeartbeatEngine::new(config, workspace_dir.clone(), observer);
-        Self {
-            engine,
-            agent_pool,
-            workspace_dir,
-            workspace_id,
-            agent_id,
-            interval_minutes,
-            heartbeat_prompt,
-        }
-    }
-
-    /// Ensure HEARTBEAT.md exists with default IoT tasks
-    pub async fn ensure_heartbeat_file(&self) -> anyhow::Result<()> {
-        let path = self.workspace_dir.join("HEARTBEAT.md");
-        if !path.exists() {
-            let content = "# Periodic Tasks\n\
-                - [high] 检查离线设备并尝试自动重连\n\
-                - [medium] 扫描未处理的高优先级告警\n\
-                - [medium] 生成设备状态日报摘要\n\
-                - [low|paused] 检查系统磁盘和内存使用率\n";
-            tokio::fs::create_dir_all(&self.workspace_dir).await.ok();
-            tokio::fs::write(&path, content).await?;
-            tracing::info!("Created default HEARTBEAT.md at {:?}", path);
-        }
-        Ok(())
-    }
-
-    /// Run the heartbeat loop
-    pub async fn run(&self, mut shutdown_rx: tokio::sync::broadcast::Receiver<()>) {
-        if let Err(e) = self.ensure_heartbeat_file().await {
-            tracing::warn!("Failed to ensure heartbeat file: {}", e);
-        }
-
-        let interval_mins = self.interval_minutes as u64;
-        let mut interval =
-            tokio::time::interval(tokio::time::Duration::from_secs(interval_mins * 60));
-
-        tracing::info!(
-            "💓 HeartbeatService started for workspace={} agent={} (interval={}min)",
-            self.workspace_id,
-            self.agent_id,
-            self.interval_minutes
-        );
-
-        loop {
-            tokio::select! {
-                _ = interval.tick() => {}
-                _ = shutdown_rx.recv() => {
-                    tracing::info!("💓 HeartbeatService received shutdown signal");
-                    break;
-                }
+    loop {
+        let wake_signals: Vec<WakeSignal> = tokio::select! {
+            _ = interval.tick() => {
+                drain_channel(&mut wake_rx)
             }
-
-            let timestamp = chrono::Utc::now();
-            let mut task_count = 0usize;
-            let mut status = "success".to_string();
-            let mut error_message = None;
-
-            match self.engine.collect_runnable_tasks().await {
-                Ok(tasks) => {
-                    task_count = tasks.len();
-                    if !tasks.is_empty() {
-                        tracing::info!("💓 Heartbeat collected {} tasks", tasks.len());
-                    }
-                    for task in tasks {
-                        if task.priority == TaskPriority::High
-                            && let Err(e) = self.execute_task(&task.text).await
-                        {
-                            status = "error".to_string();
-                            error_message = Some(e);
-                            break;
-                        }
-                    }
+            signal = wake_rx.recv() => {
+                let mut signals = vec![];
+                if let Some(s) = signal {
+                    signals.push(s);
                 }
-                Err(e) => {
-                    status = "error".to_string();
-                    error_message = Some(e.to_string());
-                    tracing::warn!("💓 Heartbeat task collection failed: {}", e);
-                }
+                signals.append(&mut drain_channel(&mut wake_rx));
+                signals
             }
-
-            if let Some(state) = get_heartbeat_state() {
-                let record = HeartbeatExecutionRecord {
-                    timestamp,
-                    task_count,
-                    status: status.clone(),
-                    error_message,
-                };
-                let mut state_guard = state.write().await;
-                state_guard.add_execution_record(record);
+            _ = &mut shutdown_rx => {
+                tracing::info!(%workspace_id, "Heartbeat loop received shutdown signal");
+                break;
             }
+        };
 
-            tracing::debug!("💓 Heartbeat tick completed: {} tasks, status={}", task_count, status);
+        let wake_signals = dedup_and_cap(wake_signals, 5);
+
+        // Exponential backoff: after N failures, skip 2^(N-1) ticks (capped at 1hr).
+        // Wake signals always bypass the backoff.
+        if skip_remaining > 0 && wake_signals.is_empty() {
+            skip_remaining -= 1;
+            tracing::info!(%workspace_id, skip_remaining, "Heartbeat backoff — skipping tick");
+            continue;
         }
-    }
 
-    /// Execute a single heartbeat task via AgentPool
-    async fn execute_task(&self, task_text: &str) -> Result<(), String> {
-        let session_key = format!("agent:{}:{}/heartbeat", self.workspace_id, self.agent_id);
-        let run_id = format!("heartbeat-{}", chrono::Utc::now().timestamp_millis());
-        let prompt = format!(
-            "{}\n\n## 本次巡检任务\n\n{}\n\n请执行后给出简洁的结构化结果。",
-            self.heartbeat_prompt, task_text
-        );
+        let workspace_dir = heartbeat_file.parent().unwrap_or(std::path::Path::new("."));
+        let tasks = read_heartbeat_tasks(workspace_dir).await.unwrap_or_else(|e| {
+            tracing::warn!(%workspace_id, "Failed to read HEARTBEAT.md: {}", e);
+            get_default_tasks()
+        });
 
-        match self
-            .agent_pool
-            .chat_send(&self.agent_id, &session_key, &prompt, &run_id, &prompt)
+        let recent_actions = action_repo
+            .find_recent_by_workspace(&workspace_id, &["heartbeat", "alarm"], config.max_recent_actions as u32)
             .await
-        {
-            Ok(mut rx) => {
-                use super::types::ChatEvent;
-                while let Some(event) = rx.recv().await {
-                    match event {
-                        ChatEvent::Final { message, .. } => {
-                            tracing::info!(
-                                "💓 Heartbeat task result: {}",
-                                serde_json::to_string(&message).unwrap_or_default()
-                            );
-                        }
-                        ChatEvent::Error { error, .. } => {
-                            tracing::warn!("💓 Heartbeat task error: {}", error);
-                            return Err(error);
-                        }
-                        _ => {}
-                    }
+            .unwrap_or_else(|e| {
+                tracing::warn!(%workspace_id, "Failed to query recent actions: {}", e);
+                vec![]
+            });
+
+        let prompt = build_prompt(&workspace_id, &tasks, &recent_actions, &wake_signals);
+
+        let task_count = tasks.len();
+        tracing::info!(
+            %workspace_id,
+            task_count,
+            backoff = consecutive_failures,
+            "Heartbeat tick — {} tasks to inspect",
+            task_count,
+        );
+
+        match agent_pool.run_single(&workspace_id, &prompt).await {
+            Ok(response) => {
+                consecutive_failures = 0;
+                skip_remaining = 0;
+                let content = serde_json::json!({
+                    "taskCount": task_count,
+                    "result": truncate(&response, 5000),
+                })
+                .to_string();
+                let action = AgentAction::new(
+                    workspace_id.clone(),
+                    "default".to_string(),
+                    None,
+                    None,
+                    "heartbeat".to_string(),
+                    "summary".to_string(),
+                    content,
+                );
+                if let Err(e) = action_repo.insert(&action).await {
+                    tracing::error!(%workspace_id, "Failed to record heartbeat action: {}", e);
                 }
-                tracing::info!("💓 Heartbeat task executed: {}", task_text);
-                Ok(())
+                tracing::debug!(%workspace_id, "Heartbeat tick completed");
             }
             Err(e) => {
-                let msg = format!("AgentPool error: {}", e);
-                tracing::warn!("💓 Heartbeat task execution failed: {}", msg);
-                Err(msg)
+                consecutive_failures = (consecutive_failures + 1).min(10);
+                skip_remaining = (1u32 << (consecutive_failures - 1))
+                    .min(60 / config.interval_minutes.max(1));
+                let content = serde_json::json!({
+                    "taskCount": task_count,
+                    "error": truncate(&e.to_string(), 5000),
+                })
+                .to_string();
+                let action = AgentAction::new(
+                    workspace_id.clone(),
+                    "default".to_string(),
+                    None,
+                    None,
+                    "heartbeat".to_string(),
+                    "error".to_string(),
+                    content,
+                );
+                if let Err(e2) = action_repo.insert(&action).await {
+                    tracing::error!(%workspace_id, "Failed to record heartbeat error: {}", e2);
+                }
+                tracing::warn!(%workspace_id, failures=consecutive_failures, "Heartbeat LLM error: {}", e);
             }
         }
+    }
+
+    tracing::info!(%workspace_id, "Heartbeat loop exited");
+}
+
+fn drain_channel(rx: &mut tokio::sync::mpsc::Receiver<WakeSignal>) -> Vec<WakeSignal> {
+    let mut signals = vec![];
+    while let Ok(s) = rx.try_recv() {
+        signals.push(s);
+    }
+    signals
+}
+
+fn dedup_and_cap(mut signals: Vec<WakeSignal>, cap: usize) -> Vec<WakeSignal> {
+    // Sort by priority (Critical > High > Normal) so high-priority signals survive truncation
+    signals.sort_by_key(|s| std::cmp::Reverse(s.priority));
+    signals.dedup_by_key(|s| s.reason.clone());
+    signals.truncate(cap);
+    signals
+}
+
+fn build_prompt(
+    workspace_id: &str,
+    tasks: &[HeartbeatTask],
+    recent_actions: &[AgentAction],
+    wake_signals: &[WakeSignal],
+) -> String {
+    let mut p = format!(
+        "你是一个 IoT 平台的 AI 运维助手，负责工作空间 `{}` 的自动巡检。\n\n",
+        workspace_id
+    );
+
+    let active_tasks: Vec<&HeartbeatTask> = tasks.iter().filter(|t| !t.paused).collect();
+    if !active_tasks.is_empty() {
+        p.push_str("## 巡检任务\n\n");
+        for task in &active_tasks {
+            p.push_str(&format!("- [{}] {}\n", task.priority, task.text));
+        }
+        p.push('\n');
+    }
+
+    if !wake_signals.is_empty() {
+        p.push_str("## 实时事件\n\n");
+        for sig in wake_signals {
+            p.push_str(&format!(
+                "- [{}] {}: {}\n",
+                sig.priority_label(),
+                sig.reason,
+                truncate(&sig.context, 500),
+            ));
+        }
+        p.push('\n');
+    }
+
+    if !recent_actions.is_empty() {
+        p.push_str("## 最近AI操作记录\n\n");
+        for action in recent_actions.iter().take(5) {
+            p.push_str(&format!(
+                "- [{}] {}: {}\n",
+                &action.created_at,
+                action.action_type,
+                truncate(&action.content, 200),
+            ));
+        }
+        p.push('\n');
+    }
+
+    p.push_str("请执行以上巡检任务，以简洁的结构化格式输出结果。");
+    p
+}
+
+fn truncate(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        let end = s.floor_char_boundary(max_len);
+        format!("{}…(+{} 字省略)", &s[..end], s.len() - end)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::heartbeat_manager::WakePriority;
+
+    fn make_signal(reason: &str, priority: WakePriority) -> WakeSignal {
+        WakeSignal {
+            workspace_id: "ws-1".into(),
+            reason: reason.into(),
+            context: "test".into(),
+            priority,
+        }
+    }
+
+    fn make_action(workspace_id: &str, action_type: &str, content: &str) -> AgentAction {
+        AgentAction::new(
+            workspace_id.into(),
+            "default".into(),
+            None,
+            None,
+            "heartbeat".into(),
+            action_type.into(),
+            content.into(),
+        )
+    }
+
+    #[test]
+    fn test_dedup_and_cap_priority_sort() {
+        // Critical (2) should survive truncation over High (1) and Normal (0)
+        let signals = vec![
+            make_signal("normal", WakePriority::Normal),
+            make_signal("critical", WakePriority::Critical),
+            make_signal("high", WakePriority::High),
+        ];
+        let result = dedup_and_cap(signals, 2);
+        assert_eq!(result.len(), 2);
+        // First should be Critical (highest priority due to Reverse sort)
+        assert!(matches!(result[0].priority, WakePriority::Critical));
+        assert!(matches!(result[1].priority, WakePriority::High));
+    }
+
+    #[test]
+    fn test_dedup_and_cap_dedup_by_reason() {
+        let signals = vec![
+            make_signal("alarm:1", WakePriority::Critical),
+            make_signal("alarm:1", WakePriority::High),
+        ];
+        let result = dedup_and_cap(signals, 5);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].reason, "alarm:1");
+    }
+
+    #[test]
+    fn test_dedup_and_cap_truncate() {
+        let signals: Vec<WakeSignal> = (0..10)
+            .map(|i| make_signal(&format!("sig-{}", i), WakePriority::Normal))
+            .collect();
+        let result = dedup_and_cap(signals, 3);
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn test_dedup_and_cap_empty() {
+        let result = dedup_and_cap(vec![], 5);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_heartbeat_md_basic() {
+        let content = "- [high] 检查离线设备\n- [medium] 扫描告警";
+        let tasks = parse_heartbeat_md(content);
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[0].priority, "high");
+        assert_eq!(tasks[0].text, "检查离线设备");
+        assert!(!tasks[0].paused);
+        assert_eq!(tasks[1].priority, "medium");
+        assert_eq!(tasks[1].text, "扫描告警");
+    }
+
+    #[test]
+    fn test_parse_heartbeat_md_paused() {
+        let content = "- [high|paused] 检查离线设备";
+        let tasks = parse_heartbeat_md(content);
+        assert_eq!(tasks.len(), 1);
+        assert!(tasks[0].paused);
+        assert_eq!(tasks[0].priority, "high");
+    }
+
+    #[test]
+    fn test_parse_heartbeat_md_simple() {
+        let content = "- 做一个简单的任务";
+        let tasks = parse_heartbeat_md(content);
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].priority, "low");
+        assert!(!tasks[0].paused);
+    }
+
+    #[test]
+    fn test_parse_heartbeat_md_skips_headers() {
+        let content = "# 标题\n- [high] 一个任务";
+        let tasks = parse_heartbeat_md(content);
+        assert_eq!(tasks.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_heartbeat_md_empty() {
+        let tasks = parse_heartbeat_md("");
+        assert!(tasks.is_empty());
+    }
+
+    #[test]
+    fn test_get_default_tasks() {
+        let tasks = get_default_tasks();
+        assert!(!tasks.is_empty());
+        assert!(tasks.iter().any(|t| !t.paused));
+        assert!(tasks.iter().any(|t| t.paused));
+    }
+
+    #[test]
+    fn test_build_heartbeat_md_roundtrip() {
+        let tasks = vec![
+            HeartbeatTask {
+                priority: "high".into(),
+                text: "检查离线设备".into(),
+                paused: false,
+            },
+            HeartbeatTask {
+                priority: "low".into(),
+                text: "生成报表".into(),
+                paused: true,
+            },
+        ];
+        let md = build_heartbeat_md(&tasks);
+        let parsed = parse_heartbeat_md(&md);
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].priority, "high");
+        assert_eq!(parsed[0].text, "检查离线设备");
+        assert_eq!(parsed[1].paused, true);
+    }
+
+    #[test]
+    fn test_build_prompt_includes_tasks() {
+        let tasks = vec![HeartbeatTask {
+            priority: "high".into(),
+            text: "检查离线设备".into(),
+            paused: false,
+        }];
+        let prompt = build_prompt("ws-1", &tasks, &[], &[]);
+        assert!(prompt.contains("巡检任务"));
+        assert!(prompt.contains("检查离线设备"));
+        assert!(prompt.contains("ws-1"));
+    }
+
+    #[test]
+    fn test_build_prompt_includes_wake_signals() {
+        let signals = vec![make_signal("alarm:test", WakePriority::Critical)];
+        let prompt = build_prompt("ws-1", &[], &[], &signals);
+        assert!(prompt.contains("实时事件"));
+        assert!(prompt.contains("CRITICAL"));
+        assert!(prompt.contains("alarm:test"));
+    }
+
+    #[test]
+    fn test_build_prompt_includes_recent_actions() {
+        let actions = vec![make_action("ws-1", "summary", "一切正常")];
+        let prompt = build_prompt("ws-1", &[], &actions, &[]);
+        assert!(prompt.contains("最近AI操作记录"));
+    }
+
+    #[test]
+    fn test_build_prompt_skips_paused_tasks() {
+        let tasks = vec![
+            HeartbeatTask {
+                priority: "high".into(),
+                text: "活跃任务".into(),
+                paused: false,
+            },
+            HeartbeatTask {
+                priority: "low".into(),
+                text: "暂停任务".into(),
+                paused: true,
+            },
+        ];
+        let prompt = build_prompt("ws-1", &tasks, &[], &[]);
+        assert!(prompt.contains("活跃任务"));
+        assert!(!prompt.contains("暂停任务"));
+    }
+
+    #[test]
+    fn test_truncate_short() {
+        assert_eq!(truncate("hello", 10), "hello");
+    }
+
+    #[test]
+    fn test_truncate_long() {
+        let input = "这是一个很长的字符串需要截断测试这是额外内容";
+        let result = truncate(input, 15);
+        assert!(result.contains("…"));
+        assert!(result.len() < input.len(), "truncated result should be shorter than input");
     }
 }
