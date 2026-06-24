@@ -200,9 +200,7 @@ pub async fn send_message(
         };
 
         // Spawn reflection after the turn completes (fire-and-forget)
-        if enable_reflection
-            && let Some(assistant_text) = final_text
-        {
+        if enable_reflection && let Some(assistant_text) = final_text {
             let turn_messages = vec![
                 super::super::reflect::ChatTurnMessage {
                     role: "user".into(),

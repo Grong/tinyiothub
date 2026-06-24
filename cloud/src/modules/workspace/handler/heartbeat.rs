@@ -15,7 +15,9 @@ use serde::{Deserialize, Serialize};
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
-    modules::agent::heartbeat::{HeartbeatTask, get_default_tasks, read_heartbeat_tasks, write_heartbeat_tasks},
+    modules::agent::heartbeat::{
+        HeartbeatTask, get_default_tasks, read_heartbeat_tasks, write_heartbeat_tasks,
+    },
     shared::{api_response::ApiResponse, app_state::AppState, paths, security::jwt::Claims},
     verify_workspace_access,
 };
@@ -96,10 +98,7 @@ pub async fn update_config(
 ) -> Json<ApiResponse<serde_json::Value>> {
     verify_workspace_access!(state, claims, workspace_id);
 
-    let config = state
-        .heartbeat_manager
-        .update_config(req.enabled, req.interval_minutes)
-        .await;
+    let config = state.heartbeat_manager.update_config(req.enabled, req.interval_minutes).await;
 
     // Restart the heartbeat loop to apply config changes
     state.heartbeat_manager.restart(&workspace_id).await;
@@ -203,11 +202,8 @@ pub async fn update_tasks(
 fn parse_action_content(content: &str) -> (u32, Option<String>) {
     // New format: {"taskCount": N, "result": "..."} or {"taskCount": N, "error": "..."}
     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(content) {
-        let task_count = parsed
-            .get("taskCount")
-            .and_then(|v| v.as_u64())
-            .map(|n| n as u32)
-            .unwrap_or(0);
+        let task_count =
+            parsed.get("taskCount").and_then(|v| v.as_u64()).map(|n| n as u32).unwrap_or(0);
         let message = parsed
             .get("result")
             .or_else(|| parsed.get("error"))

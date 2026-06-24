@@ -438,22 +438,24 @@ async fn test_alarm_rule_workspace_isolation() {
 
 #[cfg(test)]
 mod heartbeat_wake_tests {
-    use axum::{
-        body::Body,
-        http::Request,
-    };
+    use axum::{body::Body, http::Request};
     use serde_json::json;
     use tower::ServiceExt;
 
     use crate::{
         modules::agent::heartbeat_manager::{WakePriority, WakeSignal},
         test_utils::{
-            auth_header, create_test_token_with_workspace,
-            seed_test_workspace, setup_test_app_with_pool,
+            auth_header, create_test_token_with_workspace, seed_test_workspace,
+            setup_test_app_with_pool,
         },
     };
 
-    fn auth_request(method: &str, uri: &str, token: &str, body: Option<serde_json::Value>) -> Request<Body> {
+    fn auth_request(
+        method: &str,
+        uri: &str,
+        token: &str,
+        body: Option<serde_json::Value>,
+    ) -> Request<Body> {
         let builder = Request::builder()
             .method(method)
             .uri(uri)
@@ -527,16 +529,10 @@ mod heartbeat_wake_tests {
         let original_interval = original.interval_minutes;
 
         // Try to set interval_minutes=0 — should be rejected
-        let updated = app_state
-            .heartbeat_manager
-            .update_config(None, Some(0))
-            .await;
+        let updated = app_state.heartbeat_manager.update_config(None, Some(0)).await;
 
         // Config should NOT have changed to 0
-        assert_ne!(
-            updated.interval_minutes, 0,
-            "interval_minutes=0 should be rejected"
-        );
+        assert_ne!(updated.interval_minutes, 0, "interval_minutes=0 should be rejected");
         assert_eq!(
             updated.interval_minutes, original_interval,
             "interval_minutes should remain unchanged when 0 is passed"
@@ -547,10 +543,7 @@ mod heartbeat_wake_tests {
     async fn test_config_accepts_valid_interval() {
         let (app_state, _pool) = setup_test_app_with_pool().await;
 
-        let updated = app_state
-            .heartbeat_manager
-            .update_config(None, Some(30))
-            .await;
+        let updated = app_state.heartbeat_manager.update_config(None, Some(30)).await;
 
         assert_eq!(updated.interval_minutes, 30);
     }
@@ -617,12 +610,7 @@ mod heartbeat_wake_tests {
 
         let response = app
             .clone()
-            .oneshot(auth_request(
-                "POST",
-                "/api/v1/alarm-rules",
-                &token,
-                Some(critical_rule),
-            ))
+            .oneshot(auth_request("POST", "/api/v1/alarm-rules", &token, Some(critical_rule)))
             .await
             .unwrap();
 
@@ -644,12 +632,7 @@ mod heartbeat_wake_tests {
         });
 
         let response = app
-            .oneshot(auth_request(
-                "POST",
-                "/api/v1/alarm-rules",
-                &token,
-                Some(info_rule),
-            ))
+            .oneshot(auth_request("POST", "/api/v1/alarm-rules", &token, Some(info_rule)))
             .await
             .unwrap();
         assert!(!response.status().is_server_error());

@@ -486,11 +486,22 @@ impl MemoryContext {
     pub fn add_item(&mut self, item: AgentMemoryItem) {
         match item.item_type.as_str() {
             "device_snapshot" => {
-                let snapshot_data = item.value.get("snapshot").cloned().unwrap_or(item.value.clone());
+                let snapshot_data =
+                    item.value.get("snapshot").cloned().unwrap_or(item.value.clone());
                 self.device_snapshots.push(DeviceSnapshot {
                     device_id: item.key.clone(),
-                    workspace_id: item.value.get("workspace_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    agent_id: item.value.get("agent_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    workspace_id: item
+                        .value
+                        .get("workspace_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    agent_id: item
+                        .value
+                        .get("agent_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                     snapshot_data,
                     snapshot_time: item.timestamp,
                     timestamp_formatted: String::new(),

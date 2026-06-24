@@ -478,11 +478,12 @@ async fn llm_call_with_timeout(
     temperature: f64,
     timeout: Duration,
 ) -> Result<String> {
-    let _auth_token = crate::shared::config::get()
-        .minimax
-        .as_ref()
-        .map(|m| m.auth_token.clone())
-        .ok_or_else(|| Error::ConfigError("minimax.auth_token not configured".to_string()))?;
+    let _auth_token =
+        crate::shared::config::get()
+            .minimax
+            .as_ref()
+            .map(|m| m.auth_token.clone())
+            .ok_or_else(|| Error::ConfigError("minimax.auth_token not configured".to_string()))?;
 
     let model = crate::shared::config::get()
         .minimax

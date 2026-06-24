@@ -87,21 +87,10 @@ pub struct SqliteAgentActionRepository {
     db: Arc<Database>,
 }
 
-type ActionRow = (
-    String,
-    String,
-    String,
-    Option<String>,
-    Option<String>,
-    String,
-    String,
-    String,
-    String,
-);
+type ActionRow =
+    (String, String, String, Option<String>, Option<String>, String, String, String, String);
 
-fn row_to_action(
-    (id, ws, ag, al, dev, et, at, c, ca): ActionRow,
-) -> AgentAction {
+fn row_to_action((id, ws, ag, al, dev, et, at, c, ca): ActionRow) -> AgentAction {
     AgentAction {
         id,
         workspace_id: ws,
@@ -330,14 +319,12 @@ impl AgentActionRepository for SqliteAgentActionRepository {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tinyiothub_storage::sqlite::Database;
 
+    use super::*;
+
     async fn setup_db(pool: &sqlx::SqlitePool) {
-        sqlx::query("DROP TABLE IF EXISTS agent_actions")
-            .execute(pool)
-            .await
-            .unwrap();
+        sqlx::query("DROP TABLE IF EXISTS agent_actions").execute(pool).await.unwrap();
         sqlx::query(
             "CREATE TABLE agent_actions (
                 id TEXT PRIMARY KEY,
@@ -412,7 +399,8 @@ mod tests {
         repo.insert(&make_action("ws1", "heartbeat", "error", "hb_err")).await.unwrap();
 
         // Query both event types
-        let result = repo.find_recent_by_workspace("ws1", &["heartbeat", "alarm"], 10).await.unwrap();
+        let result =
+            repo.find_recent_by_workspace("ws1", &["heartbeat", "alarm"], 10).await.unwrap();
         assert_eq!(result.len(), 3);
     }
 

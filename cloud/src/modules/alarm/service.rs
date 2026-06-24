@@ -4,21 +4,17 @@ use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use chrono::{DateTime, Duration, Utc};
 use dashmap::DashMap;
+use tinyiothub_storage::cache::DeviceCache;
 
 use super::{
     notification::NotificationDispatcher,
     repo::{AlarmQueryCriteria, AlarmRepository, AlarmRuleRepository, TimeRange},
     types::*,
 };
-use crate::{
-    modules::{
-        agent::heartbeat_manager::{HeartbeatManager, WakePriority, WakeSignal},
-        event::{
-            aggregates::NotificationChannelType, entities::Event, value_objects::EventType,
-        },
-    },
+use crate::modules::{
+    agent::heartbeat_manager::{HeartbeatManager, WakePriority, WakeSignal},
+    event::{aggregates::NotificationChannelType, entities::Event, value_objects::EventType},
 };
-use tinyiothub_storage::cache::DeviceCache;
 
 /// 报警业务服务
 pub struct AlarmService {
@@ -68,12 +64,15 @@ impl AlarmService {
                 "Alarm: {} | Device: {} | {}",
                 alarm.alarm_type, alarm.device_id, alarm.message,
             );
-            hm.wake(ws_id, WakeSignal {
-                workspace_id: ws_id.to_string(),
-                reason: format!("alarm:{}", alarm.id),
-                context,
-                priority,
-            });
+            hm.wake(
+                ws_id,
+                WakeSignal {
+                    workspace_id: ws_id.to_string(),
+                    reason: format!("alarm:{}", alarm.id),
+                    context,
+                    priority,
+                },
+            );
         }
     }
 

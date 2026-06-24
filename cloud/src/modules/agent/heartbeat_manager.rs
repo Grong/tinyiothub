@@ -9,8 +9,7 @@ use dashmap::DashMap;
 use tinyiothub_storage::cache::DeviceCache;
 use tokio::sync::{mpsc, oneshot};
 
-use super::action_repo::AgentActionRepository;
-use super::agent::AgentPool;
+use super::{action_repo::AgentActionRepository, agent::AgentPool};
 
 /// Priority level for a WakeSignal
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -50,12 +49,7 @@ pub struct HeartbeatConfig {
 
 impl Default for HeartbeatConfig {
     fn default() -> Self {
-        Self {
-            enabled: true,
-            interval_minutes: 15,
-            max_recent_actions: 10,
-            channel_size: 64,
-        }
+        Self { enabled: true, interval_minutes: 15, max_recent_actions: 10, channel_size: 64 }
     }
 }
 
@@ -119,20 +113,15 @@ impl HeartbeatManager {
         let (wake_tx, wake_rx) = mpsc::channel::<WakeSignal>(channel_size);
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
-        self.channels
-            .insert(workspace_id.to_string(), (wake_tx, shutdown_tx));
+        self.channels.insert(workspace_id.to_string(), (wake_tx, shutdown_tx));
 
         let ws_id = workspace_id.to_string();
         let agent_pool = Arc::clone(&self.agent_pool);
         let action_repo = Arc::clone(&self.action_repo);
         let heartbeat_file = crate::shared::paths::heartbeat_file(&ws_id);
 
-        let config = HeartbeatConfig {
-            enabled,
-            interval_minutes,
-            max_recent_actions,
-            channel_size,
-        };
+        let config =
+            HeartbeatConfig { enabled, interval_minutes, max_recent_actions, channel_size };
 
         // Ensure HEARTBEAT.md exists
         if let Err(e) = ensure_heartbeat_file(&heartbeat_file).await {
@@ -141,8 +130,13 @@ impl HeartbeatManager {
 
         let handle = tokio::spawn(async move {
             super::heartbeat::heartbeat_loop(
-                ws_id, config, agent_pool, action_repo,
-                heartbeat_file, wake_rx, shutdown_rx,
+                ws_id,
+                config,
+                agent_pool,
+                action_repo,
+                heartbeat_file,
+                wake_rx,
+                shutdown_rx,
             )
             .await;
         });

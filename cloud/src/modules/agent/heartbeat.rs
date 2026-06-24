@@ -111,8 +111,10 @@ pub(crate) fn build_heartbeat_md(tasks: &[HeartbeatTask]) -> String {
 
 // ── Per-workspace heartbeat loop (v0.5) ──
 
-use super::action_repo::{AgentAction, AgentActionRepository};
-use super::heartbeat_manager::{HeartbeatConfig, WakeSignal};
+use super::{
+    action_repo::{AgentAction, AgentActionRepository},
+    heartbeat_manager::{HeartbeatConfig, WakeSignal},
+};
 
 /// Per-workspace heartbeat loop — drives periodic AI inspection for a single workspace
 pub(crate) async fn heartbeat_loop(
@@ -168,7 +170,11 @@ pub(crate) async fn heartbeat_loop(
         });
 
         let recent_actions = action_repo
-            .find_recent_by_workspace(&workspace_id, &["heartbeat", "alarm"], config.max_recent_actions as u32)
+            .find_recent_by_workspace(
+                &workspace_id,
+                &["heartbeat", "alarm"],
+                config.max_recent_actions as u32,
+            )
             .await
             .unwrap_or_else(|e| {
                 tracing::warn!(%workspace_id, "Failed to query recent actions: {}", e);
@@ -211,8 +217,8 @@ pub(crate) async fn heartbeat_loop(
             }
             Err(e) => {
                 consecutive_failures = (consecutive_failures + 1).min(10);
-                skip_remaining = (1u32 << (consecutive_failures - 1))
-                    .min(60 / config.interval_minutes.max(1));
+                skip_remaining =
+                    (1u32 << (consecutive_failures - 1)).min(60 / config.interval_minutes.max(1));
                 let content = serde_json::json!({
                     "taskCount": task_count,
                     "error": truncate(&e.to_string(), 5000),
@@ -315,8 +321,7 @@ fn truncate(s: &str, max_len: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::super::heartbeat_manager::WakePriority;
+    use super::{super::heartbeat_manager::WakePriority, *};
 
     fn make_signal(reason: &str, priority: WakePriority) -> WakeSignal {
         WakeSignal {
@@ -367,9 +372,8 @@ mod tests {
 
     #[test]
     fn test_dedup_and_cap_truncate() {
-        let signals: Vec<WakeSignal> = (0..10)
-            .map(|i| make_signal(&format!("sig-{}", i), WakePriority::Normal))
-            .collect();
+        let signals: Vec<WakeSignal> =
+            (0..10).map(|i| make_signal(&format!("sig-{}", i), WakePriority::Normal)).collect();
         let result = dedup_and_cap(signals, 3);
         assert_eq!(result.len(), 3);
     }
@@ -435,15 +439,9 @@ mod tests {
     fn test_build_heartbeat_md_roundtrip() {
         let tasks = vec![
             HeartbeatTask {
-                priority: "high".into(),
-                text: "检查离线设备".into(),
-                paused: false,
+                priority: "high".into(), text: "检查离线设备".into(), paused: false
             },
-            HeartbeatTask {
-                priority: "low".into(),
-                text: "生成报表".into(),
-                paused: true,
-            },
+            HeartbeatTask { priority: "low".into(), text: "生成报表".into(), paused: true },
         ];
         let md = build_heartbeat_md(&tasks);
         let parsed = parse_heartbeat_md(&md);
@@ -485,16 +483,8 @@ mod tests {
     #[test]
     fn test_build_prompt_skips_paused_tasks() {
         let tasks = vec![
-            HeartbeatTask {
-                priority: "high".into(),
-                text: "活跃任务".into(),
-                paused: false,
-            },
-            HeartbeatTask {
-                priority: "low".into(),
-                text: "暂停任务".into(),
-                paused: true,
-            },
+            HeartbeatTask { priority: "high".into(), text: "活跃任务".into(), paused: false },
+            HeartbeatTask { priority: "low".into(), text: "暂停任务".into(), paused: true },
         ];
         let prompt = build_prompt("ws-1", &tasks, &[], &[]);
         assert!(prompt.contains("活跃任务"));

@@ -49,7 +49,8 @@ impl WorkspaceService {
         agent_id: Option<&str>,
         agent_config: Option<&str>,
     ) -> Result<Workspace> {
-        let workspace = self.repository.create(tenant_id, name, description, agent_id, agent_config).await?;
+        let workspace =
+            self.repository.create(tenant_id, name, description, agent_id, agent_config).await?;
         if let Some(ref hm) = self.heartbeat_manager {
             hm.start(&workspace.id).await;
         }

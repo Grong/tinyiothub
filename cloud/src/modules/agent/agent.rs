@@ -24,12 +24,13 @@ use zeroclaw::{
 };
 
 use super::{
-    chat::service as chat_service,
-    config::service as config_service,
+    chat::service as chat_service, config::service as config_service,
     tools::service as tool_service,
 };
-use crate::shared::agent::config::{AgentConfig, AgentError, AgentInfo, AgentRuntimeConfig};
-use crate::shared::workspace_memory::WorkspaceScopedMemory;
+use crate::shared::{
+    agent::config::{AgentConfig, AgentError, AgentInfo, AgentRuntimeConfig},
+    workspace_memory::WorkspaceScopedMemory,
+};
 
 // ============================================================================
 // Skills Section (zeroclaw SystemPromptBuilder integration)
@@ -187,7 +188,9 @@ impl AgentPool {
             "none" | "noop" => zeroclaw::config::schema::ObservabilityBackend::None,
             "verbose" => zeroclaw::config::schema::ObservabilityBackend::Verbose,
             "prometheus" => zeroclaw::config::schema::ObservabilityBackend::Prometheus,
-            "otel" | "opentelemetry" | "otlp" => zeroclaw::config::schema::ObservabilityBackend::Otel,
+            "otel" | "opentelemetry" | "otlp" => {
+                zeroclaw::config::schema::ObservabilityBackend::Otel
+            }
             _ => zeroclaw::config::schema::ObservabilityBackend::Log,
         };
         let observer_config = zeroclaw::config::schema::ObservabilityConfig {
@@ -255,8 +258,9 @@ impl AgentPool {
                     workspace_id.to_string(),
                 ));
 
-                let provider = crate::shared::config::create_minimax_provider()
-                    .map_err(|e| AgentError::BuildError(format!("Failed to create provider: {}", e)))?;
+                let provider = crate::shared::config::create_minimax_provider().map_err(|e| {
+                    AgentError::BuildError(format!("Failed to create provider: {}", e))
+                })?;
 
                 let ws_dir = crate::shared::paths::workspace_dir(workspace_id);
 

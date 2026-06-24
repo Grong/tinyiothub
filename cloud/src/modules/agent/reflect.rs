@@ -49,15 +49,13 @@ async fn do_reflect(
         .map(|m| format!("- [{}] {}\n", m.zone.as_str(), m.content))
         .collect();
 
-    let turn_text: String = turn_messages
-        .iter()
-        .map(|m| format!("{}: {}\n", m.role, m.content))
-        .collect();
+    let turn_text: String =
+        turn_messages.iter().map(|m| format!("{}: {}\n", m.role, m.content)).collect();
 
     let prompt = build_reflection_prompt(&active_text, &turn_text);
 
-    let provider = crate::shared::config::create_minimax_provider()
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let provider =
+        crate::shared::config::create_minimax_provider().map_err(|e| anyhow::anyhow!("{}", e))?;
     let response = provider
         .chat_with_system(None, &prompt, model, Some(0.3))
         .await
@@ -130,8 +128,8 @@ pub async fn compile_profile(
     let prompt = include_str!("../../../templates/agent/COMPILE_PROMPT.md")
         .replace("{memories_text}", &memories_text);
 
-    let provider = crate::shared::config::create_minimax_provider()
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let provider =
+        crate::shared::config::create_minimax_provider().map_err(|e| anyhow::anyhow!("{}", e))?;
     provider
         .chat_with_system(None, &prompt, model, Some(0.3))
         .await
@@ -146,9 +144,8 @@ pub async fn generate_weekly_digest(
     agent_id: &str,
     model: &str,
 ) -> anyhow::Result<String> {
-    let since = (chrono::Utc::now() - chrono::Duration::days(7))
-        .format("%Y-%m-%dT%H:%M:%S")
-        .to_string();
+    let since =
+        (chrono::Utc::now() - chrono::Duration::days(7)).format("%Y-%m-%dT%H:%M:%S").to_string();
     let new_memories = memory_store.get_since(workspace_id, agent_id, &since).await?;
 
     let prompt = format!(
@@ -157,15 +154,11 @@ pub async fn generate_weekly_digest(
          Write in the user's preferred language, friendly tone.\n\n\
          Recent memories:\n{}",
         new_memories.len(),
-        new_memories
-            .iter()
-            .map(|m| format!("- {}", m.content))
-            .collect::<Vec<_>>()
-            .join("\n"),
+        new_memories.iter().map(|m| format!("- {}", m.content)).collect::<Vec<_>>().join("\n"),
     );
 
-    let provider = crate::shared::config::create_minimax_provider()
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let provider =
+        crate::shared::config::create_minimax_provider().map_err(|e| anyhow::anyhow!("{}", e))?;
     provider
         .chat_with_system(None, &prompt, model, Some(0.5))
         .await

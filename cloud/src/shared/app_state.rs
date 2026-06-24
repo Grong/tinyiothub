@@ -279,23 +279,23 @@ impl AppState {
         );
 
         // Wire HeartbeatManager for per-workspace AI heartbeat loops
-        let action_repo: Arc<dyn crate::modules::agent::action_repo::AgentActionRepository> = Arc::new(
-            crate::modules::agent::action_repo::SqliteAgentActionRepository::new(database.clone()),
-        );
+        let action_repo: Arc<dyn crate::modules::agent::action_repo::AgentActionRepository> =
+            Arc::new(crate::modules::agent::action_repo::SqliteAgentActionRepository::new(
+                database.clone(),
+            ));
         let heartbeat_config = crate::modules::agent::heartbeat_manager::HeartbeatConfig {
             enabled: agent_settings.heartbeat_enabled,
             interval_minutes: agent_settings.heartbeat_interval_minutes,
             max_recent_actions: 10,
             channel_size: 64,
         };
-        let heartbeat_manager = Arc::new(
-            crate::modules::agent::heartbeat_manager::HeartbeatManager::new(
+        let heartbeat_manager =
+            Arc::new(crate::modules::agent::heartbeat_manager::HeartbeatManager::new(
                 agent_pool.clone(),
                 action_repo,
                 device_cache.clone(),
                 heartbeat_config,
-            ),
-        );
+            ));
         alarm_service.set_heartbeat_manager(heartbeat_manager.clone());
         alarm_service.set_device_cache(device_cache.clone());
 

@@ -682,9 +682,8 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
     }
 
     async fn find_all_ids(&self) -> Result<Vec<String>> {
-        let rows: Vec<(String,)> = sqlx::query_as("SELECT id FROM workspaces")
-            .fetch_all(self.database.pool())
-            .await?;
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT id FROM workspaces").fetch_all(self.database.pool()).await?;
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 }

@@ -9,8 +9,9 @@
 //   - get() and list() post-filter by namespace
 //   - Other methods delegate to inner
 
-use async_trait::async_trait;
 use std::sync::Arc;
+
+use async_trait::async_trait;
 use zeroclaw::memory::{Memory, MemoryCategory, MemoryEntry};
 use zeroclaw_api::attribution::{Attributable, Role};
 
@@ -23,10 +24,7 @@ pub struct WorkspaceScopedMemory {
 impl WorkspaceScopedMemory {
     /// Create a new WorkspaceScopedMemory wrapping an existing memory backend.
     pub fn new(inner: Arc<dyn Memory>, workspace_id: String) -> Self {
-        Self {
-            inner,
-            namespace: workspace_id,
-        }
+        Self { inner, namespace: workspace_id }
     }
 }
 
@@ -56,9 +54,7 @@ impl Memory for WorkspaceScopedMemory {
         since: Option<&str>,
         until: Option<&str>,
     ) -> anyhow::Result<Vec<MemoryEntry>> {
-        self.inner
-            .recall_namespaced(&self.namespace, query, limit, session_id, since, until)
-            .await
+        self.inner.recall_namespaced(&self.namespace, query, limit, session_id, since, until).await
     }
 
     async fn get(&self, key: &str) -> anyhow::Result<Option<MemoryEntry>> {
@@ -72,10 +68,7 @@ impl Memory for WorkspaceScopedMemory {
         session_id: Option<&str>,
     ) -> anyhow::Result<Vec<MemoryEntry>> {
         let entries = self.inner.list(category, session_id).await?;
-        Ok(entries
-            .into_iter()
-            .filter(|e| e.namespace == self.namespace)
-            .collect())
+        Ok(entries.into_iter().filter(|e| e.namespace == self.namespace).collect())
     }
 
     async fn forget(&self, key: &str) -> anyhow::Result<bool> {
@@ -99,7 +92,15 @@ impl Memory for WorkspaceScopedMemory {
         // Always use our workspace namespace, merging with caller's if provided
         let ns = Some(&*self.namespace);
         self.inner
-            .store_with_agent(key, content, category, session_id, namespace.or(ns), importance, agent_id)
+            .store_with_agent(
+                key,
+                content,
+                category,
+                session_id,
+                namespace.or(ns),
+                importance,
+                agent_id,
+            )
             .await
     }
 
