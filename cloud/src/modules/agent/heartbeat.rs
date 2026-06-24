@@ -448,7 +448,7 @@ mod tests {
         assert_eq!(parsed.len(), 2);
         assert_eq!(parsed[0].priority, "high");
         assert_eq!(parsed[0].text, "检查离线设备");
-        assert_eq!(parsed[1].paused, true);
+        assert!(parsed[1].paused);
     }
 
     #[test]

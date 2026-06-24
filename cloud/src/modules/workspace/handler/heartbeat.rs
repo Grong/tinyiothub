@@ -182,11 +182,11 @@ pub async fn update_tasks(
     let workspace_dir = paths::workspace_dir(&workspace_id);
 
     // Ensure workspace dir exists
-    if !workspace_dir.exists() {
-        if let Err(e) = tokio::fs::create_dir_all(&workspace_dir).await {
-            tracing::error!(%workspace_id, "Failed to create workspace dir: {}", e);
-            return ApiResponseBuilder::error("创建工作空间目录失败");
-        }
+    if !workspace_dir.exists()
+        && let Err(e) = tokio::fs::create_dir_all(&workspace_dir).await
+    {
+        tracing::error!(%workspace_id, "Failed to create workspace dir: {}", e);
+        return ApiResponseBuilder::error("创建工作空间目录失败");
     }
 
     if let Err(e) = write_heartbeat_tasks(&workspace_dir, &req.tasks).await {
