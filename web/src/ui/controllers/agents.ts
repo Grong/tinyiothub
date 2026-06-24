@@ -187,11 +187,11 @@ export async function updateSkillApi(state: AgentsState, name: string, data: Upd
   }
 }
 
-export async function loadHeartbeatConfig(state: AgentsState, agentId: string): Promise<void> {
+export async function loadHeartbeatConfig(state: AgentsState, workspaceId: string): Promise<void> {
   state.heartbeatLoading = true;
   state.heartbeatError = null;
   try {
-    const res = await apiGet<HeartbeatConfig>(`/agents/${agentId}/heartbeat/config`);
+    const res = await apiGet<HeartbeatConfig>(`/workspaces/${workspaceId}/heartbeat/config`);
     if (res.result) {
       // Parse tasks if it's a JSON string (same as templates/devices pattern)
       if (typeof res.result.tasks === "string") {
@@ -206,9 +206,9 @@ export async function loadHeartbeatConfig(state: AgentsState, agentId: string): 
   }
 }
 
-export async function loadHeartbeatLogs(state: AgentsState, agentId: string): Promise<void> {
+export async function loadHeartbeatLogs(state: AgentsState, workspaceId: string): Promise<void> {
   try {
-    const res = await apiGet<HeartbeatLogsResponse>(`/agents/${agentId}/heartbeat/logs`);
+    const res = await apiGet<HeartbeatLogsResponse>(`/workspaces/${workspaceId}/heartbeat/logs`);
     state.heartbeatLogs = res.result?.logs ?? undefined;
   } catch (err) {
     state.heartbeatError = String(err);
@@ -217,17 +217,17 @@ export async function loadHeartbeatLogs(state: AgentsState, agentId: string): Pr
 
 export async function updateHeartbeatConfig(
   state: AgentsState,
-  agentId: string,
+  workspaceId: string,
   enabled?: boolean,
   intervalMinutes?: number
 ): Promise<boolean> {
   try {
-    await apiPut(`/agents/${agentId}/heartbeat/config`, {
+    await apiPut(`/workspaces/${workspaceId}/heartbeat/config`, {
       enabled,
       intervalMinutes,
     });
     // Reload config to get the latest state
-    await loadHeartbeatConfig(state, agentId);
+    await loadHeartbeatConfig(state, workspaceId);
     return true;
   } catch (err) {
     state.heartbeatError = String(err);
@@ -237,13 +237,13 @@ export async function updateHeartbeatConfig(
 
 export async function updateHeartbeatTasks(
   state: AgentsState,
-  agentId: string,
+  workspaceId: string,
   tasks: HeartbeatTask[]
 ): Promise<boolean> {
   try {
-    await apiPut(`/agents/${agentId}/heartbeat/tasks`, { tasks });
+    await apiPut(`/workspaces/${workspaceId}/heartbeat/tasks`, { tasks });
     // Reload config to get the updated tasks list
-    await loadHeartbeatConfig(state, agentId);
+    await loadHeartbeatConfig(state, workspaceId);
     return true;
   } catch (err) {
     state.heartbeatError = String(err);

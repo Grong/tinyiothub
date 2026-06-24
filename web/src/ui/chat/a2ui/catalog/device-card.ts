@@ -1,5 +1,6 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { renderSparkline } from "./sparkline.js";
+import { safeStr } from "./utils.js";
 
 // ── Status config ──
 const STATUS_CONFIG: Record<string, { color: string; glow: string; label: string; pulse: boolean }> = {
@@ -73,7 +74,7 @@ function normalizeProperties(data: Record<string, unknown>): PropItem[] {
       "actions", "componentKind", "dataModel", "lastSeen", "updatedAt", "signalStrength", "tags"]);
     return Object.entries(data)
       .filter(([k, v]) => !reserved.has(k) && v != null)
-      .map(([key, val]) => ({ key, value: String(val) }));
+      .map(([key, val]) => ({ key, value: safeStr(val) }));
   }
   if (arr.length === 0) return [];
   const first = arr[0];
@@ -82,7 +83,7 @@ function normalizeProperties(data: Record<string, unknown>): PropItem[] {
       .filter((p: any) => p && (p.displayName || p.name))
       .map((p: any) => ({
         key: String(p.displayName || p.name || ""),
-        value: String(p.value ?? ""),
+        value: safeStr(p.value, ""),
         unit: p.unit ? String(p.unit) : undefined,
       }));
   }
@@ -114,7 +115,7 @@ function normalizePrimaryMetric(data: Record<string, unknown>, properties: PropI
   if (pm && pm.value != null) {
     return {
       key: String(pm.key || pm.name || ""),
-      value: String(pm.value),
+      value: safeStr(pm.value),
       unit: pm.unit ? String(pm.unit) : undefined,
     };
   }

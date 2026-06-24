@@ -1,4 +1,5 @@
 import { html, nothing, type TemplateResult } from "lit";
+import { safeStr } from "./utils.js";
 
 const LEVEL_COLORS: Record<string, string> = {
   info: "#3498db",
@@ -24,11 +25,11 @@ export function renderAlarmCard(
   data: Record<string, unknown>,
   _onAction?: (fn: string, args: Record<string, unknown>) => void,
 ): TemplateResult {
-  const alarmId = String(data.id || "");
-  const deviceName = String(data.deviceName || data.device_id || "未知设备");
-  const level = String(data.level || "info").toLowerCase();
-  const message = String(data.message || "");
-  const status = String(data.status || "active");
+  const alarmId = safeStr(data.id, "");
+  const deviceName = safeStr(data.deviceName || data.device_id, "未知设备");
+  const level = safeStr(data.level, "info").toLowerCase();
+  const message = safeStr(data.message, "");
+  const status = safeStr(data.status, "active");
   const createdAt = data.created_at as string | undefined;
 
   const levelColor = LEVEL_COLORS[level] || "#95a5a6";

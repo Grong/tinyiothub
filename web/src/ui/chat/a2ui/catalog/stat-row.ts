@@ -1,4 +1,5 @@
 import { html, nothing, type TemplateResult } from "lit";
+import { safeStr } from "./utils.js";
 
 type StatItem = {
   label?: string;
@@ -32,7 +33,7 @@ export function renderStatRow(
               ? html`<div class="a2ui-stat-row__label">${item.label}</div>`
               : nothing}
             <div class="a2ui-stat-row__value-wrap">
-              <span class="a2ui-stat-row__value">${item.value ?? "—"}</span>
+              <span class="a2ui-stat-row__value">${safeStr(item.value, "—")}</span>
               ${item.unit
                 ? html`<span class="a2ui-stat-row__unit">${item.unit}</span>`
                 : nothing}

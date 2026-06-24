@@ -117,9 +117,22 @@ export class A2uiRendererEngine {
       const targetSurfaceId = u.surfaceId as string | undefined;
       const components = u.components as Array<Record<string, unknown>>;
       for (const comp of components) {
-        const surfaces = targetSurfaceId
-          ? [this.surfaces.get(targetSurfaceId)].filter(Boolean) as A2uiSurface[]
-          : Array.from(this.surfaces.values());
+        let surfaces: A2uiSurface[];
+        if (targetSurfaceId) {
+          // Auto-create surface if it doesn't exist yet (defensive: updateComponents may arrive before createSurface)
+          let surface = this.surfaces.get(targetSurfaceId);
+          if (!surface) {
+            surface = {
+              id: targetSurfaceId,
+              surfaceKind: (u.surfaceKind as A2uiSurface["surfaceKind"]) || "inline",
+              components: [],
+            };
+            this.surfaces.set(targetSurfaceId, surface);
+          }
+          surfaces = [surface];
+        } else {
+          surfaces = Array.from(this.surfaces.values());
+        }
         for (const surface of surfaces) {
           const idx = surface.components.findIndex((c) => c.id === comp.id);
           const { id, componentKind, dataModel, ...rest } = comp;
@@ -139,12 +152,19 @@ export class A2uiRendererEngine {
     if (msg.updateDataModel) {
       const u = msg.updateDataModel as Record<string, unknown>;
       const componentId = u.componentId as string;
-      const dataModel = u.dataModel as Record<string, unknown>;
+      const incomingData = u.dataModel as Record<string, unknown>;
+      let found = false;
       for (const surface of this.surfaces.values()) {
         const comp = surface.components.find((c) => c.id === componentId);
         if (comp) {
-          comp.dataModel = { ...comp.dataModel, ...dataModel };
+          comp.dataModel = { ...comp.dataModel, ...incomingData };
+          found = true;
         }
+      }
+      // Defensive: if component not found in any surface, it may not have been created yet.
+      // Log a warning but don't crash — the data will arrive via updateComponents later.
+      if (!found) {
+        console.warn("[A2UI] updateDataModel for unknown component:", componentId, "data:", incomingData);
       }
     }
     if (msg.deleteSurface) {

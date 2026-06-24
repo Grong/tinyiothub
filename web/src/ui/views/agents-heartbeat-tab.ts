@@ -1,6 +1,19 @@
 import { html, nothing } from "lit";
+import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { repeat } from "lit/directives/repeat.js";
+import { marked } from "marked";
+import DOMPurify from "dompurify";
 import type { AgentsState } from "../controllers/agents.js";
+
+marked.setOptions({ async: false, gfm: true });
+
+function md(text: string): string {
+  try {
+    return DOMPurify.sanitize(marked.parse(text) as string);
+  } catch {
+    return DOMPurify.sanitize(text);
+  }
+}
 
 export interface HeartbeatConfig {
   enabled: boolean;
@@ -21,6 +34,7 @@ export interface HeartbeatExecutionRecord {
   taskCount: number;
   status: string;
   errorMessage?: string;
+  result?: string;
 }
 
 export interface HeartbeatLogsResponse {
@@ -235,41 +249,85 @@ export function renderHeartbeatTab(
           : html`
               <div class="heartbeat-timeline">
                 ${logs.map(
-                  (log, index) => html`
-                    <div class="heartbeat-timeline-item ${log.status}" style="--delay: ${index * 50}ms">
+                  (log, index) => {
+                    const statusClass = log.status === "success" ? "success" : "failed";
+                    return html`
+                    <div class="heartbeat-timeline-item ${statusClass}" style="--delay: ${index * 50}ms">
                       <div class="timeline-indicator">
-                        <div class="timeline-dot ${log.status}"></div>
+                        <div class="timeline-dot ${statusClass}"></div>
                         ${index < logs.length - 1 ? html`<div class="timeline-line"></div>` : nothing}
                       </div>
-                      <div class="timeline-content">
-                        <div class="timeline-header">
-                          <span class="timeline-time">
-                            ${new Date(log.timestamp).toLocaleString("zh-CN", {
-                              month: "2-digit",
-                              day: "2-digit",
-                              hour: "2-digit",
-                              minute: "2-digit",
-                              second: "2-digit",
-                            })}
-                          </span>
-                          <span class="timeline-badge ${log.status}">
-                            ${log.status === "success" ? '成功' : '失败'}
-                          </span>
-                        </div>
-                        <div class="timeline-meta">
-                          <span class="timeline-tasks">
-                            <svg viewBox="0 0 16 16" fill="currentColor" width="11" height="11">
-                              <path d="M3 3.5a.5.5 0 01.5-.5H5a.5.5 0 010 1H3.5a.5.5 0 01-.5-.5zm0 2a.5.5 0 01.5-.5H7a.5.5 0 010 1H3.5a.5.5 0 01-.5-.5zm0 2a.5.5 0 01.5-.5H9a.5.5 0 010 1H3.5a.5.5 0 01-.5-.5zm0 2a.5.5 0 01.5-.5h1a.5.5 0 010 1H3.5a.5.5 0 01-.5-.5z"/>
+                      <details class="timeline-details">
+                        <summary class="timeline-summary">
+                          <div class="timeline-content">
+                            <div class="timeline-header">
+                              <span class="timeline-time">
+                                ${new Date(log.timestamp).toLocaleString("zh-CN", {
+                                  month: "2-digit",
+                                  day: "2-digit",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                  second: "2-digit",
+                                })}
+                              </span>
+                              <span class="timeline-badge ${statusClass}">
+                                ${log.status === "success" ? '成功' : '失败'}
+                              </span>
+                            </div>
+                            <div class="timeline-meta">
+                              <span class="timeline-tasks">
+                                <svg viewBox="0 0 16 16" fill="currentColor" width="11" height="11">
+                                  <path d="M3 3.5a.5.5 0 01.5-.5H5a.5.5 0 010 1H3.5a.5.5 0 01-.5-.5zm0 2a.5.5 0 01.5-.5H7a.5.5 0 010 1H3.5a.5.5 0 01-.5-.5zm0 2a.5.5 0 01.5-.5H9a.5.5 0 010 1H3.5a.5.5 0 01-.5-.5zm0 2a.5.5 0 01.5-.5h1a.5.5 0 010 1H3.5a.5.5 0 01-.5-.5z"/>
+                                </svg>
+                                ${log.taskCount} 个任务
+                              </span>
+                              ${log.errorMessage
+                                ? html`<span class="timeline-error" title="${log.errorMessage}">${log.errorMessage}</span>`
+                                : nothing}
+                            </div>
+                          </div>
+                          <div class="timeline-chevron">
+                            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+                              <path d="M4 6l4 4 4-4" stroke-linecap="round" stroke-linejoin="round"/>
                             </svg>
-                            ${log.taskCount} 个任务
-                          </span>
-                          ${log.errorMessage
-                            ? html`<span class="timeline-error" title="${log.errorMessage}">${log.errorMessage}</span>`
-                            : nothing}
+                          </div>
+                        </summary>
+                        <div class="timeline-expanded">
+                          <div class="timeline-expanded__section">
+                            <span class="timeline-expanded__label">时间</span>
+                            <span class="timeline-expanded__value">
+                              ${new Date(log.timestamp).toLocaleString("zh-CN", {
+                                year: "numeric",
+                                month: "2-digit",
+                                day: "2-digit",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                                second: "2-digit",
+                              })}
+                            </span>
+                          </div>
+                          <div class="timeline-expanded__section">
+                            <span class="timeline-expanded__label">任务数</span>
+                            <span class="timeline-expanded__value">${log.taskCount}</span>
+                          </div>
+                          ${log.result
+                            ? html`
+                              <div class="timeline-expanded__section timeline-expanded__section--report">
+                                <span class="timeline-expanded__label">巡检报告</span>
+                                <div class="timeline-report markdown-body">${unsafeHTML(md(log.result))}</div>
+                              </div>`
+                            : log.errorMessage
+                              ? html`
+                                <div class="timeline-expanded__section">
+                                  <span class="timeline-expanded__label">错误详情</span>
+                                  <pre class="timeline-report timeline-report--error">${log.errorMessage}</pre>
+                                </div>`
+                              : nothing}
                         </div>
-                      </div>
+                      </details>
                     </div>
-                  `
+                  `;
+                  }
                 )}
               </div>
             `}

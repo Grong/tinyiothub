@@ -36,14 +36,21 @@ export class ViewAgents extends LitElement {
     });
   }
 
+  private findWorkspaceId(agentId: string): string {
+    const agents = this.state.agentsList?.agents || [];
+    const agent = agents.find(a => a.id === agentId);
+    return agent?.workspaceId || agentId;
+  }
+
   private onAgentSelected(agentId: string): void {
     this.state = { ...this.state, selectedAgentId: agentId, activePanel: "overview" };
+    const wsId = this.findWorkspaceId(agentId);
     Promise.all([
       loadAgentConfig(this.state, agentId),
       loadToolsCatalog(this.state, agentId),
       loadSkills(this.state),
-      loadHeartbeatConfig(this.state, agentId),
-      loadHeartbeatLogs(this.state, agentId),
+      loadHeartbeatConfig(this.state, wsId),
+      loadHeartbeatLogs(this.state, wsId),
     ]).then(() => this.requestUpdate());
   }
 
@@ -54,53 +61,67 @@ export class ViewAgents extends LitElement {
     this.requestUpdate();
   }
 
+  private getHeartbeatWorkspaceId(): string {
+    // Use the heartbeat config's workspaceId if available
+    if (this.state.heartbeatConfig?.workspaceId) return this.state.heartbeatConfig.workspaceId;
+    // Fall back to looking up from the agents list
+    if (this.state.selectedAgentId) return this.findWorkspaceId(this.state.selectedAgentId);
+    return "";
+  }
+
   private async onToggleHeartbeat(enabled: boolean): Promise<void> {
-    if (!this.state.selectedAgentId) return;
-    await updateHeartbeatConfig(this.state, this.state.selectedAgentId, enabled, undefined);
-    await loadHeartbeatLogs(this.state, this.state.selectedAgentId);
+    const wsId = this.getHeartbeatWorkspaceId();
+    if (!wsId) return;
+    await updateHeartbeatConfig(this.state, wsId, enabled, undefined);
+    await loadHeartbeatLogs(this.state, wsId);
     this.requestUpdate();
   }
 
   private async onChangeHeartbeatInterval(intervalMinutes: number): Promise<void> {
-    if (!this.state.selectedAgentId) return;
-    await updateHeartbeatConfig(this.state, this.state.selectedAgentId, undefined, intervalMinutes);
-    await loadHeartbeatLogs(this.state, this.state.selectedAgentId);
+    const wsId = this.getHeartbeatWorkspaceId();
+    if (!wsId) return;
+    await updateHeartbeatConfig(this.state, wsId, undefined, intervalMinutes);
+    await loadHeartbeatLogs(this.state, wsId);
     this.requestUpdate();
   }
 
   private async onToggleHeartbeatTask(index: number, paused: boolean): Promise<void> {
-    if (!this.state.selectedAgentId || !this.state.heartbeatConfig) return;
+    const wsId = this.getHeartbeatWorkspaceId();
+    if (!wsId || !this.state.heartbeatConfig) return;
     const tasks = [...(this.state.heartbeatConfig.tasks || [])];
     tasks[index] = { ...tasks[index], paused };
-    await updateHeartbeatTasks(this.state, this.state.selectedAgentId, tasks);
-    await loadHeartbeatLogs(this.state, this.state.selectedAgentId);
+    await updateHeartbeatTasks(this.state, wsId, tasks);
+    await loadHeartbeatLogs(this.state, wsId);
     this.requestUpdate();
   }
 
   private async onAddHeartbeatTask(task: { priority: string; text: string; paused: boolean }): Promise<void> {
-    if (!this.state.selectedAgentId || !this.state.heartbeatConfig) return;
+    const wsId = this.getHeartbeatWorkspaceId();
+    if (!wsId || !this.state.heartbeatConfig) return;
     const tasks = [...(this.state.heartbeatConfig.tasks || []), task];
-    await updateHeartbeatTasks(this.state, this.state.selectedAgentId, tasks);
-    await loadHeartbeatLogs(this.state, this.state.selectedAgentId);
+    await updateHeartbeatTasks(this.state, wsId, tasks);
+    await loadHeartbeatLogs(this.state, wsId);
     this.requestUpdate();
   }
 
   private async onRemoveHeartbeatTask(index: number): Promise<void> {
-    if (!this.state.selectedAgentId || !this.state.heartbeatConfig) return;
+    const wsId = this.getHeartbeatWorkspaceId();
+    if (!wsId || !this.state.heartbeatConfig) return;
     const task = this.state.heartbeatConfig.tasks?.[index];
     if (!confirm(`确定要删除任务"${task?.text || ''}"吗？`)) return;
     const tasks = (this.state.heartbeatConfig.tasks || []).filter((_, i) => i !== index);
-    await updateHeartbeatTasks(this.state, this.state.selectedAgentId, tasks);
-    await loadHeartbeatLogs(this.state, this.state.selectedAgentId);
+    await updateHeartbeatTasks(this.state, wsId, tasks);
+    await loadHeartbeatLogs(this.state, wsId);
     this.requestUpdate();
   }
 
   private async onUpdateHeartbeatTask(index: number, patch: Partial<HeartbeatTask>): Promise<void> {
-    if (!this.state.selectedAgentId || !this.state.heartbeatConfig) return;
+    const wsId = this.getHeartbeatWorkspaceId();
+    if (!wsId || !this.state.heartbeatConfig) return;
     const tasks = [...(this.state.heartbeatConfig.tasks || [])];
     tasks[index] = { ...tasks[index], ...patch };
-    await updateHeartbeatTasks(this.state, this.state.selectedAgentId, tasks);
-    await loadHeartbeatLogs(this.state, this.state.selectedAgentId);
+    await updateHeartbeatTasks(this.state, wsId, tasks);
+    await loadHeartbeatLogs(this.state, wsId);
     this.requestUpdate();
   }
 
@@ -187,7 +208,7 @@ export class ViewAgents extends LitElement {
             this.onToggleHeartbeatTask.bind(this),
             this.onAddHeartbeatTask.bind(this),
             this.onRemoveHeartbeatTask.bind(this),
-            this.onUpdateHeartbeatTask.bind(this)
+            this.onUpdateHeartbeatTask.bind(this),
           ) : nothing}
         </div>
       </div>
