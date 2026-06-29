@@ -25,7 +25,7 @@ pub struct PatrolManager {
     wake_senders: DashMap<String, mpsc::UnboundedSender<WakeSignal>>,
     trust_configs: DashMap<String, TrustConfig>,
     task_repo: Arc<dyn HeartbeatTaskRepository>,
-    _event_publisher: Arc<AiEventPublisher>,
+    event_publisher: Arc<AiEventPublisher>,
     agent_pool: RwLock<Option<Arc<dyn AgentPoolLike>>>,
     config: HeartbeatConfig,
 }
@@ -33,7 +33,7 @@ pub struct PatrolManager {
 impl PatrolManager {
     pub fn new(
         task_repo: Arc<dyn HeartbeatTaskRepository>,
-        _event_publisher: Arc<AiEventPublisher>,
+        event_publisher: Arc<AiEventPublisher>,
         config: HeartbeatConfig,
     ) -> Self {
         Self {
@@ -41,7 +41,7 @@ impl PatrolManager {
             wake_senders: DashMap::new(),
             trust_configs: DashMap::new(),
             task_repo,
-            _event_publisher,
+            event_publisher,
             agent_pool: RwLock::new(None),
             config,
         }
@@ -92,24 +92,22 @@ impl PatrolManager {
         let ws_id = workspace_id.to_string();
         let pool = self.agent_pool.read().await.clone();
         let task_repo = self.task_repo.clone();
-        let _event_publisher = self._event_publisher.clone();
+        let event_publisher = self.event_publisher.clone();
         let config = self.config.clone();
 
         let join_handle = tokio::spawn(async move {
-            // NOTE: super::loop_::patrol_loop doesn't exist yet (Task 5).
-            // For now, log and exit. Task 5 will wire the real loop.
-            let _ = (
+            super::loop_::patrol_loop(
                 ws_id,
                 tasks,
                 trust_config,
                 pool,
                 task_repo,
-                _event_publisher,
+                event_publisher,
                 config,
                 wake_rx,
                 cancel_rx,
-            );
-            tracing::debug!("Patrol loop task spawned (stub — real logic in Task 5)");
+            )
+            .await;
         });
 
         self.wake_senders
