@@ -228,6 +228,11 @@ impl EventSpecification for EventLevelMatchesTypeSpec {
                 | (EventType::Device(DeviceEventType::CommandStarted), EventLevel::Info)
                 | (EventType::Device(DeviceEventType::CommandCompleted), EventLevel::Info)
                 | (EventType::Device(DeviceEventType::CommandFailed), EventLevel::Error)
+                | (EventType::Ai(_), EventLevel::Debug)
+                | (EventType::Ai(_), EventLevel::Info)
+                | (EventType::Ai(_), EventLevel::Warning)
+                | (EventType::Ai(_), EventLevel::Error)
+                | (EventType::Ai(_), EventLevel::Critical)
         )
     }
     fn error_message(&self) -> String {
