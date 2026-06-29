@@ -18,6 +18,7 @@ const MAX_CONSECUTIVE_FAILURES: u32 = 5;
 /// Sleeps for the configured interval, then iterates through heartbeat tasks,
 /// calling the LLM for each. Publishes `PatrolCompleted` events instead of
 /// directly calling `ActionRepo::insert()` — an ActionRepo subscriber handles persistence.
+#[allow(clippy::too_many_arguments)]
 pub async fn patrol_loop(
     workspace_id: String,
     tasks: Vec<HeartbeatTask>,

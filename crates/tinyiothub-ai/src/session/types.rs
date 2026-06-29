@@ -29,8 +29,11 @@ impl SessionKey {
         })
     }
 
-    pub fn to_string(&self) -> String {
-        format!("agent:{}:{}", self.agent_id, self.main_key)
+}
+
+impl std::fmt::Display for SessionKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "agent:{}:{}", self.agent_id, self.main_key)
     }
 }
 

@@ -39,10 +39,10 @@ fn extract_json(raw: &str) -> String {
         return captures[1].to_string();
     }
     // Fallback: find first { ... } block
-    if let Some(start) = raw.find('{') {
-        if let Some(end) = raw.rfind('}') {
-            return raw[start..=end].to_string();
-        }
+    if let Some(start) = raw.find('{')
+        && let Some(end) = raw.rfind('}')
+    {
+        return raw[start..=end].to_string();
     }
     raw.to_string()
 }
