@@ -231,6 +231,10 @@ pub enum AlarmCondition {
     Threshold {
         operator: ComparisonOperator,
         value: f64,
+        /// 恢复阈值（迟滞）。当设置了该值时，恢复条件使用此阈值而非原始阈值。
+        /// 例如：触发条件 `> 80`，恢复阈值 `75`，恢复需要值 `< 75`。
+        #[serde(default)]
+        recovery_threshold: Option<f64>,
     },
     Range {
         min: Option<f64>,
@@ -370,6 +374,14 @@ pub struct NotificationConfig {
     pub suppress_duration: Option<Duration>,
     #[serde(skip_serializing_if = "Option::is_none", with = "optional_duration_serde", default)]
     pub repeat_interval: Option<Duration>,
+    /// 触发去抖动时长：条件必须持续满足该时长后才触发告警。
+    /// None = 立即触发（保持现有行为）。
+    #[serde(skip_serializing_if = "Option::is_none", with = "optional_duration_serde", default)]
+    pub trigger_duration_secs: Option<Duration>,
+    /// 恢复去抖动时长：恢复条件必须持续满足该时长后才自动恢复告警。
+    /// None = 立即恢复（保持现有行为）。
+    #[serde(skip_serializing_if = "Option::is_none", with = "optional_duration_serde", default)]
+    pub recovery_duration_secs: Option<Duration>,
 }
 
 // Duration 序列化辅助模块
@@ -1229,6 +1241,8 @@ mod tests {
             channels: vec![],
             recipients: vec![],
             suppress_duration: None,
+            trigger_duration_secs: None,
+            recovery_duration_secs: None,
             repeat_interval: None,
         };
         let rule = AlarmRule::new(
@@ -1237,7 +1251,11 @@ mod tests {
             Some("device-1".to_string()),
             None,
             RuleType::Threshold,
-            AlarmCondition::Threshold { operator: ComparisonOperator::GreaterThan, value: 50.0 },
+            AlarmCondition::Threshold {
+                operator: ComparisonOperator::GreaterThan,
+                value: 50.0,
+                recovery_threshold: None,
+            },
             AlarmLevel::Warning,
             config,
             "ws-1".to_string(),
@@ -1257,7 +1275,11 @@ mod tests {
             None,
             None,
             RuleType::Threshold,
-            AlarmCondition::Threshold { operator: ComparisonOperator::GreaterThan, value: 50.0 },
+            AlarmCondition::Threshold {
+                operator: ComparisonOperator::GreaterThan,
+                value: 50.0,
+                recovery_threshold: None,
+            },
             AlarmLevel::Warning,
             config,
             "ws-1".to_string(),
@@ -1272,6 +1294,8 @@ mod tests {
             channels: vec![],
             recipients: vec![],
             suppress_duration: None,
+            trigger_duration_secs: None,
+            recovery_duration_secs: None,
             repeat_interval: None,
         };
         let rule = AlarmRule::new(
@@ -1280,7 +1304,11 @@ mod tests {
             None,
             None,
             RuleType::Threshold,
-            AlarmCondition::Threshold { operator: ComparisonOperator::GreaterThan, value: 50.0 },
+            AlarmCondition::Threshold {
+                operator: ComparisonOperator::GreaterThan,
+                value: 50.0,
+                recovery_threshold: None,
+            },
             AlarmLevel::Warning,
             config,
             "ws-1".to_string(),
@@ -1295,6 +1323,8 @@ mod tests {
             channels: vec![],
             recipients: vec![],
             suppress_duration: None,
+            trigger_duration_secs: None,
+            recovery_duration_secs: None,
             repeat_interval: None,
         };
         let mut rule = AlarmRule::new(
@@ -1303,7 +1333,11 @@ mod tests {
             None,
             None,
             RuleType::Threshold,
-            AlarmCondition::Threshold { operator: ComparisonOperator::GreaterThan, value: 50.0 },
+            AlarmCondition::Threshold {
+                operator: ComparisonOperator::GreaterThan,
+                value: 50.0,
+                recovery_threshold: None,
+            },
             AlarmLevel::Warning,
             config,
             "ws-1".to_string(),
@@ -1322,6 +1356,8 @@ mod tests {
             channels: vec![],
             recipients: vec![],
             suppress_duration: None,
+            trigger_duration_secs: None,
+            recovery_duration_secs: None,
             repeat_interval: None,
         };
         let mut rule = AlarmRule::new(
@@ -1330,7 +1366,11 @@ mod tests {
             None,
             None,
             RuleType::Threshold,
-            AlarmCondition::Threshold { operator: ComparisonOperator::GreaterThan, value: 50.0 },
+            AlarmCondition::Threshold {
+                operator: ComparisonOperator::GreaterThan,
+                value: 50.0,
+                recovery_threshold: None,
+            },
             AlarmLevel::Warning,
             config,
             "ws-1".to_string(),
@@ -1348,6 +1388,8 @@ mod tests {
             channels: vec![],
             recipients: vec![],
             suppress_duration: None,
+            trigger_duration_secs: None,
+            recovery_duration_secs: None,
             repeat_interval: None,
         };
         let mut rule = AlarmRule::new(
@@ -1356,7 +1398,11 @@ mod tests {
             None,
             None,
             RuleType::Threshold,
-            AlarmCondition::Threshold { operator: ComparisonOperator::GreaterThan, value: 50.0 },
+            AlarmCondition::Threshold {
+                operator: ComparisonOperator::GreaterThan,
+                value: 50.0,
+                recovery_threshold: None,
+            },
             AlarmLevel::Warning,
             config,
             "ws-1".to_string(),
@@ -1405,5 +1451,56 @@ mod tests {
         assert_eq!(dto.active_count, 3);
         assert_eq!(dto.acknowledged_count, 2);
         assert_eq!(dto.resolved_count, 5);
+    }
+
+    #[test]
+    fn test_threshold_condition_deser_recovery_threshold() {
+        let json = r#"{"type":"threshold","operator":"greater_than","value":80.0,"recovery_threshold":75.0}"#;
+        let condition: AlarmCondition = serde_json::from_str(json).unwrap();
+        match condition {
+            AlarmCondition::Threshold { operator, value, recovery_threshold } => {
+                assert_eq!(operator, ComparisonOperator::GreaterThan);
+                assert!((value - 80.0).abs() < f64::EPSILON);
+                assert_eq!(recovery_threshold, Some(75.0));
+            }
+            _ => panic!("Expected Threshold condition"),
+        }
+    }
+
+    #[test]
+    fn test_threshold_condition_deser_no_recovery_threshold() {
+        // Backward compat: old JSON without recovery_threshold should deserialize
+        let json = r#"{"type":"threshold","operator":"greater_than","value":80.0}"#;
+        let condition: AlarmCondition = serde_json::from_str(json).unwrap();
+        match condition {
+            AlarmCondition::Threshold { recovery_threshold, .. } => {
+                assert_eq!(recovery_threshold, None);
+            }
+            _ => panic!("Expected Threshold condition"),
+        }
+    }
+
+    #[test]
+    fn test_notification_config_deser_new_duration_fields() {
+        let json = r#"{"enabled":false,"channels":[],"recipients":[],"trigger_duration_secs":30,"recovery_duration_secs":60}"#;
+        let config: NotificationConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.trigger_duration_secs, Some(Duration::from_secs(30)));
+        assert_eq!(config.recovery_duration_secs, Some(Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn test_notification_config_deser_no_new_duration_fields() {
+        // Backward compat: old JSON without new fields should deserialize
+        let json = r#"{"enabled":false,"channels":[],"recipients":[]}"#;
+        let config: NotificationConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.trigger_duration_secs, None);
+        assert_eq!(config.recovery_duration_secs, None);
+    }
+
+    #[test]
+    fn test_notification_config_default_has_none_duration_fields() {
+        let config = NotificationConfig::default();
+        assert_eq!(config.trigger_duration_secs, None);
+        assert_eq!(config.recovery_duration_secs, None);
     }
 }

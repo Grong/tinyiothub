@@ -6,6 +6,19 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 use tinyiothub_core::driver::{BackoffStrategy, DeviceDriver, ResultValue, RetryConfig};
 use tinyiothub_core::error::Error;
 
+/// Per-property state for stateful random walk simulation.
+#[derive(Debug, Clone)]
+struct PropertyState {
+    /// Current simulated value.
+    current_value: f64,
+    /// Drift direction (-1.0 to 1.0), slowly changes over time.
+    drift_direction: f64,
+    /// Whether anomaly injection is currently active for this property.
+    anomaly_active: bool,
+    /// Remaining ticks for the current anomaly.
+    anomaly_remaining: u32,
+}
+
 #[derive(Debug, Clone, tinyiothub_macros::DeviceDriver)]
 #[driver(
     name = "simulator",
@@ -40,6 +53,20 @@ use tinyiothub_core::error::Error;
     option_type = "boolean",
     required = false
 )]
+#[driver_option(
+    label = "Drift Speed",
+    name = "drift_speed",
+    default = "0.3",
+    option_type = "number",
+    required = false
+)]
+#[driver_option(
+    label = "Anomaly Probability",
+    name = "anomaly_probability",
+    default = "0.02",
+    option_type = "number",
+    required = false
+)]
 pub struct SimulatedDriver {
     pub device: Device,
     pub retry_count: i32,
@@ -47,6 +74,8 @@ pub struct SimulatedDriver {
     rng: StdRng,
     last_read: Instant,
     cached_values: Option<Vec<ResultValue>>,
+    /// Stateful property values for random walk simulation.
+    property_states: HashMap<String, PropertyState>,
 }
 
 impl SimulatedDriver {
@@ -58,7 +87,85 @@ impl SimulatedDriver {
             rng: StdRng::from_entropy(),
             last_read: Instant::now(),
             cached_values: None,
+            property_states: HashMap::new(),
         }
+    }
+
+    /// Generate a value using stateful random walk with anomaly injection.
+    ///
+    /// Each property maintains its own state: current value, drift direction, and
+    /// anomaly status. Values change gradually each tick, staying near thresholds
+    /// long enough to test alarm debounce/hysteresis.
+    #[allow(clippy::too_many_arguments)]
+    fn generate_random_walk_value(
+        &mut self,
+        property_name: &str,
+        drift_speed: f64,
+        anomaly_probability: f64,
+        enable_noise: bool,
+        min_val: f64,
+        max_val: f64,
+        initial_val: f64,
+    ) -> f64 {
+        let state = self
+            .property_states
+            .entry(property_name.to_string())
+            .or_insert_with(|| {
+                // Initialize with a random starting point near initial_val
+                let start = initial_val + (self.rng.r#gen::<f64>() - 0.5) * (max_val - min_val) * 0.2;
+                PropertyState {
+                    current_value: start.clamp(min_val, max_val),
+                    drift_direction: (self.rng.r#gen::<f64>() - 0.5) * 2.0,
+                    anomaly_active: false,
+                    anomaly_remaining: 0,
+                }
+            });
+
+        // Handle ongoing anomaly
+        if state.anomaly_active && state.anomaly_remaining > 0 {
+            state.anomaly_remaining -= 1;
+            if state.anomaly_remaining == 0 {
+                state.anomaly_active = false;
+            }
+            // No noise during anomaly — keep the value sticky to properly test alarm persistence
+            return state.current_value.clamp(min_val, max_val);
+        }
+
+        // Possibly inject a new anomaly
+        if anomaly_probability > 0.0 && self.rng.r#gen::<f64>() < anomaly_probability {
+            state.anomaly_active = true;
+            state.anomaly_remaining = self.rng.gen_range(5..=15);
+            // Jump to an anomalous value (1.5-2.5x the normal range above/below)
+            let anomaly_magnitude = self.rng.gen_range(1.5..2.5);
+            let anomaly_direction = if self.rng.r#gen::<bool>() { 1.0 } else { -1.0 };
+            let anomaly_value = state.current_value
+                + anomaly_direction * anomaly_magnitude * (max_val - min_val) * 0.2;
+            state.current_value = anomaly_value.clamp(min_val, max_val);
+            // Align drift direction with anomaly — so after anomaly ends,
+            // momentum continues trending in the same direction, not reversing immediately
+            state.drift_direction = anomaly_direction;
+            return state.current_value;
+        }
+
+        // Normal random walk with momentum
+        // Drift direction has inertia: keeps trending in same direction, slowly evolves
+        state.drift_direction = state.drift_direction * 0.92 + (self.rng.r#gen::<f64>() - 0.5) * 0.16;
+        state.drift_direction = state.drift_direction.clamp(-1.0, 1.0);
+
+        // Apply drift with some randomness in magnitude
+        let delta = state.drift_direction * drift_speed * self.rng.gen_range(0.5..1.5);
+
+        state.current_value += delta;
+
+        // Add noise if enabled
+        if enable_noise {
+            state.current_value += (self.rng.r#gen::<f64>() - 0.5) * drift_speed * 0.5;
+        }
+
+        // Clamp to range
+        state.current_value = state.current_value.clamp(min_val, max_val);
+
+        state.current_value
     }
 }
 
@@ -102,44 +209,56 @@ impl DeviceDriver for SimulatedDriver {
         let simulation_mode = self.get_config_string("mode", "random");
         let temp_range = self.get_config_number("temp_range", 80.0);
         let enable_noise = self.get_config_boolean("enable_noise", true);
+        let drift_speed = self.get_config_number("drift_speed", 0.3);
+        let anomaly_probability = self.get_config_number("anomaly_probability", 0.02);
 
         let mut results = Vec::new();
 
-        if let Some(ref properties) = self.device.properties {
-            for property in properties.iter() {
-                let result_value = match property.name.as_str() {
+        // Collect property info first to avoid borrow conflicts between
+        // self.device.properties (immutable) and self.generate_random_walk_value (mutable).
+        let property_infos: Vec<(String, Option<String>)> = self
+            .device
+            .properties
+            .as_ref()
+            .map(|props| props.iter().map(|p| (p.name.clone(), p.data_type.clone())).collect())
+            .unwrap_or_default();
+
+        if !property_infos.is_empty() {
+            for (prop_name, prop_data_type) in property_infos.iter() {
+                let result_value = match prop_name.as_str() {
                     "current_temp" | "temperature" => {
                         let temp = if simulation_mode == "fixed" {
                             25.0
                         } else {
-                            // Oscillate between ~30 and ~110 to cross alarm thresholds
-                            let mid = 70.0;
-                            let amplitude = temp_range / 2.0;
-                            let cycle = (self.tick_counter % 20) as f64 * 0.314;
-                            let variation = (cycle.sin() + 1.0) * amplitude;
-                            let noise = if enable_noise {
-                                (self.rng.r#gen::<f64>() - 0.5) * 2.0
-                            } else {
-                                0.0
-                            };
-                            mid + variation + noise
+                            // Default temperature range: 30-110 °C (based on temp_range)
+                            let range_max = 30.0 + temp_range;
+                            self.generate_random_walk_value(
+                                prop_name,
+                                drift_speed,
+                                anomaly_probability,
+                                enable_noise,
+                                30.0,
+                                range_max,
+                                70.0,
+                            )
                         };
-                        ResultValue::float_with_precision(property.name.clone(), temp, 2)
+                        ResultValue::float_with_precision(prop_name.clone(), temp, 2)
                     }
                     "current_humidity" | "humidity" => {
                         let humidity = if simulation_mode == "fixed" {
                             60.0
                         } else {
-                            let base = 60.0;
-                            let variation = (self.tick_counter % 20) as f64;
-                            let noise = if enable_noise {
-                                (self.rng.r#gen::<f64>() - 0.5) * 2.0
-                            } else {
-                                0.0
-                            };
-                            base + variation + noise
+                            self.generate_random_walk_value(
+                                prop_name,
+                                drift_speed * 0.5,
+                                anomaly_probability,
+                                enable_noise,
+                                20.0,
+                                100.0,
+                                60.0,
+                            )
                         };
-                        ResultValue::float_with_precision(property.name.clone(), humidity, 1)
+                        ResultValue::float_with_precision(prop_name.clone(), humidity, 1)
                     }
                     "power_status" => {
                         let power_on = if simulation_mode == "fixed" {
@@ -147,24 +266,40 @@ impl DeviceDriver for SimulatedDriver {
                         } else {
                             !self.tick_counter.is_multiple_of(5)
                         };
-                        ResultValue::boolean(property.name.clone(), power_on)
+                        ResultValue::boolean(prop_name.clone(), power_on)
                     }
-                    _ => match property.data_type.as_deref() {
+                    _ => match prop_data_type.as_deref() {
                         Some("number") | Some("float") => {
                             let value = if simulation_mode == "fixed" {
                                 50.0
                             } else {
-                                self.rng.r#gen::<f64>() * 100.0
+                                self.generate_random_walk_value(
+                                    prop_name,
+                                    drift_speed,
+                                    anomaly_probability,
+                                    enable_noise,
+                                    0.0,
+                                    100.0,
+                                    50.0,
+                                )
                             };
-                            ResultValue::float_with_precision(property.name.clone(), value, 2)
+                            ResultValue::float_with_precision(prop_name.clone(), value, 2)
                         }
                         Some("integer") | Some("int") => {
                             let value = if simulation_mode == "fixed" {
                                 50
                             } else {
-                                self.rng.gen_range(0..100)
+                                self.generate_random_walk_value(
+                                    prop_name,
+                                    drift_speed,
+                                    anomaly_probability,
+                                    enable_noise,
+                                    0.0,
+                                    100.0,
+                                    50.0,
+                                ) as i64
                             };
-                            ResultValue::integer(property.name.clone(), value)
+                            ResultValue::integer(prop_name.clone(), value)
                         }
                         Some("boolean") | Some("bool") => {
                             let value = if simulation_mode == "fixed" {
@@ -172,9 +307,9 @@ impl DeviceDriver for SimulatedDriver {
                             } else {
                                 self.rng.r#gen::<bool>()
                             };
-                            ResultValue::boolean(property.name.clone(), value)
+                            ResultValue::boolean(prop_name.clone(), value)
                         }
-                        _ => ResultValue::string(property.name.clone(), format!("模拟值_{}", simulation_mode)),
+                        _ => ResultValue::string(prop_name.clone(), format!("模拟值_{}", simulation_mode)),
                     },
                 };
                 results.push(result_value);
@@ -220,6 +355,39 @@ mod tests {
         }
     }
 
+    fn create_device_with_temp_property() -> Device {
+        use tinyiothub_core::models::device_property::DeviceProperty;
+        Device {
+            id: "test-device-temp".to_string(),
+            name: "Temp Device".to_string(),
+            display_name: None,
+            driver_name: Some("SimulatedDriver".to_string()),
+            driver_options: None,
+            protocol_type: Some("simulation".to_string()),
+            properties: Some(vec![DeviceProperty {
+                id: "prop-temp".to_string(),
+                device_id: "test-device-temp".to_string(),
+                name: "temperature".to_string(),
+                display_name: None,
+                description: None,
+                data_type: Some("float".to_string()),
+                unit: None,
+                min_value: None,
+                max_value: None,
+                default_value: None,
+                is_read_only: 1,
+                created_at: None,
+                updated_at: None,
+                current_value: None,
+                alarm_status: None,
+            }]),
+            commands: None,
+            created_at: Some(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),
+            updated_at: Some(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn test_macro_generated_default_config() {
         let default_config = SimulatedDriver::get_default_config();
@@ -227,7 +395,9 @@ mod tests {
         assert_eq!(default_config.get("mode"), Some(&"random".to_string()));
         assert_eq!(default_config.get("temp_range"), Some(&"10.0".to_string()));
         assert_eq!(default_config.get("enable_noise"), Some(&"true".to_string()));
-        assert_eq!(default_config.len(), 4);
+        assert_eq!(default_config.get("drift_speed"), Some(&"0.3".to_string()));
+        assert_eq!(default_config.get("anomaly_probability"), Some(&"0.02".to_string()));
+        assert_eq!(default_config.len(), 6);
     }
 
     #[test]
@@ -238,5 +408,111 @@ mod tests {
         assert!(result.is_ok());
         let values = result.unwrap();
         assert!(!values.is_empty());
+    }
+
+    #[test]
+    fn test_random_walk_consecutive_values_close() {
+        let device = create_device_with_temp_property();
+        let mut driver = SimulatedDriver::new(device);
+
+        let mut prev_temp: Option<f64> = None;
+        for _ in 0..20 {
+            let values = driver.read_data().unwrap();
+            let temp = values
+                .iter()
+                .find(|v| v.name == "temperature")
+                .and_then(|v| v.value.as_ref().and_then(|s| s.parse::<f64>().ok()))
+                .unwrap();
+
+            if let Some(prev) = prev_temp {
+                let change = (temp - prev).abs();
+                assert!(
+                    change < 5.0,
+                    "Consecutive random-walk values should change gradually, got change {}",
+                    change
+                );
+            }
+            prev_temp = Some(temp);
+        }
+    }
+
+    #[test]
+    fn test_drift_direction_changes_over_time() {
+        let device = create_device_with_temp_property();
+        let mut driver = SimulatedDriver::new(device);
+
+        // Read enough times to see drift direction evolve
+        for _ in 0..30 {
+            let _ = driver.read_data().unwrap();
+        }
+
+        // The internal state should have been created
+        let state = driver
+            .property_states
+            .get("temperature")
+            .expect("temperature state should exist");
+        assert!(
+            state.drift_direction.abs() <= 1.0,
+            "Drift direction should stay clamped to [-1, 1]"
+        );
+    }
+
+    #[test]
+    fn test_fixed_mode_unchanged() {
+        // Force fixed mode by overriding the config value via driver_options
+        let mut fixed_device = create_device_with_temp_property();
+        fixed_device.driver_options = Some(r#"{"mode": "fixed"}"#.to_string());
+        let mut fixed_driver = SimulatedDriver::new(fixed_device);
+
+        let values1 = fixed_driver.read_data().unwrap();
+        let values2 = fixed_driver.read_data().unwrap();
+
+        let temp1 = values1
+            .iter()
+            .find(|v| v.name == "temperature")
+            .and_then(|v| v.value.as_ref().and_then(|s| s.parse::<f64>().ok()))
+            .unwrap();
+        let temp2 = values2
+            .iter()
+            .find(|v| v.name == "temperature")
+            .and_then(|v| v.value.as_ref().and_then(|s| s.parse::<f64>().ok()))
+            .unwrap();
+
+        assert!(
+            (temp1 - temp2).abs() < f64::EPSILON,
+            "Fixed mode should return identical temperature values"
+        );
+        assert!(
+            (temp1 - 25.0).abs() < f64::EPSILON,
+            "Fixed mode temperature should be 25.0"
+        );
+    }
+
+    #[test]
+    fn test_anomaly_probability_zero_no_anomalies() {
+        let mut device = create_device_with_temp_property();
+        device.driver_options = Some(r#"{"anomaly_probability": 0.0, "drift_speed": 0.1}"#.to_string());
+        let mut driver = SimulatedDriver::new(device);
+
+        let mut max_change: f64 = 0.0;
+        let mut prev: Option<f64> = None;
+        for _ in 0..50 {
+            let values = driver.read_data().unwrap();
+            let temp = values
+                .iter()
+                .find(|v| v.name == "temperature")
+                .and_then(|v| v.value.as_ref().and_then(|s| s.parse::<f64>().ok()))
+                .unwrap();
+            if let Some(p) = prev {
+                max_change = max_change.max((temp - p).abs());
+            }
+            prev = Some(temp);
+        }
+
+        assert!(
+            max_change < 5.0,
+            "With anomaly_probability=0, changes should stay gradual, max change was {}",
+            max_change
+        );
     }
 }
