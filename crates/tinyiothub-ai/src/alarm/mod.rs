@@ -1,4 +1,4 @@
-//! AI alarm module — handles AI-generated alarms.
-//! Will be populated in a later task.
+//! Alarm module — types, repository traits, and SQLite implementations.
 
 pub mod types;
+pub mod repo;
