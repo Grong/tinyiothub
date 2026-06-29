@@ -1,3 +1,5 @@
+pub mod ai_adapter;
+
 pub mod command;
 
 pub mod error;

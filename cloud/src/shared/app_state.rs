@@ -124,6 +124,12 @@ pub struct AppState {
     /// 标签服务 - CRUD 操作
     pub tag_service: Arc<crate::modules::tag::TagService>,
 
+    /// AI subsystem orchestrator (set during async startup)
+    pub orchestrator: Option<Arc<tinyiothub_ai::orchestrator::Orchestrator>>,
+
+    /// AI subsystem patrol manager (set during async startup)
+    pub patrol_manager: Option<Arc<tinyiothub_ai::patrol::manager::PatrolManager>>,
+
     /// 标签仓库 - 用于设备服务的标签关联
     pub tag_repository: Arc<dyn crate::modules::tag::TagRepository>,
 
@@ -443,6 +449,8 @@ impl AppState {
             alarm_service,
             agent_pool,
             heartbeat_manager,
+            orchestrator: None,
+            patrol_manager: None,
             user_service,
             tenant_service,
             workspace_service,

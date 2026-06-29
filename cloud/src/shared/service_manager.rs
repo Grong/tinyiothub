@@ -32,6 +32,12 @@ pub struct ServiceManager {
 
     /// Cron 调度器（可选，用于优雅关闭）
     cron_scheduler: Arc<RwLock<Option<crate::shared::cron_scheduler::CronSchedulerService>>>,
+
+    /// AI orchestrator (set during start_all)
+    orchestrator: Option<Arc<tinyiothub_ai::orchestrator::Orchestrator>>,
+
+    /// AI patrol manager (set during start_all)
+    patrol_manager: Option<Arc<tinyiothub_ai::patrol::manager::PatrolManager>>,
 }
 
 impl ServiceManager {
@@ -45,6 +51,8 @@ impl ServiceManager {
             shutdown_tx,
             service_handles: Arc::new(RwLock::new(Vec::new())),
             cron_scheduler: Arc::new(RwLock::new(None)),
+            orchestrator: None,
+            patrol_manager: None,
         }
     }
 
@@ -149,6 +157,73 @@ impl ServiceManager {
             info!("✅ Agent actions retention task started");
         }
 
+        // 5. Build and start AI subsystem (tinyiothub-ai Orchestrator)
+        #[cfg(not(feature = "harmonyos"))]
+        {
+            let ai_action_repo = Arc::new(
+                tinyiothub_ai::patrol::repo::SqliteActionRepository::new(
+                    app_state.database.pool().clone(),
+                ),
+            );
+            let heartbeat_task_repo = Arc::new(
+                tinyiothub_ai::patrol::repo::SqliteHeartbeatTaskRepository::new(
+                    app_state.database.pool().clone(),
+                ),
+            );
+
+            let patrol_config = tinyiothub_ai::patrol::types::HeartbeatConfig {
+                enabled: true,
+                interval_minutes: 15,
+            };
+            let event_publisher = Arc::new(
+                tinyiothub_ai::event::bus::AiEventPublisher::new(app_state.event_bus.clone()),
+            );
+            let patrol_manager = Arc::new(
+                tinyiothub_ai::patrol::manager::PatrolManager::new(
+                    heartbeat_task_repo,
+                    event_publisher.clone(),
+                    patrol_config,
+                ),
+            );
+
+            // Wire agent pool via adapter
+            let ai_adapter = Arc::new(crate::shared::ai_adapter::CloudAgentPoolAdapter::new(
+                app_state.agent_pool.clone(),
+            ));
+            patrol_manager.set_agent_pool(ai_adapter);
+
+            let memory_service = Arc::new(tinyiothub_ai::memory::service::MemoryService::new());
+
+            let orchestrator = Arc::new(tinyiothub_ai::orchestrator::Orchestrator::new(
+                app_state.event_bus.clone(),
+                patrol_manager.clone(),
+                ai_action_repo,
+                memory_service,
+            ));
+            orchestrator.start();
+
+            // Start patrol loops for existing workspaces
+            match app_state.workspace_service.list_all_ids().await {
+                Ok(ws_ids) => {
+                    for ws_id in &ws_ids {
+                        patrol_manager.start(ws_id).await;
+                    }
+                    info!("✅ AI Orchestrator started ({} workspaces)", ws_ids.len());
+                }
+                Err(e) => {
+                    warn!("⚠️ Failed to list workspaces for AI subsystem: {}", e);
+                }
+            }
+
+            // Store in ServiceManager for shutdown
+            self.orchestrator = Some(orchestrator);
+            self.patrol_manager = Some(patrol_manager);
+
+            // Also store in AppState for potential access by other subsystems
+            app_state.orchestrator = self.orchestrator.clone();
+            app_state.patrol_manager = self.patrol_manager.clone();
+        }
+
         // 更新状态为运行中
         *self.status.write().await = ServiceStatus::Running;
 
@@ -222,6 +297,16 @@ impl ServiceManager {
         if let Some(cron_scheduler) = self.cron_scheduler.write().await.take() {
             cron_scheduler.shutdown();
             info!("CronSchedulerService shutdown signal sent");
+        }
+
+        // 关闭 AI subsystem (Orchestrator / PatrolManager)
+        if let Some(ref patrol_manager) = self.patrol_manager {
+            patrol_manager.shutdown().await;
+            info!("PatrolManager shut down");
+        }
+        if let Some(ref orchestrator) = self.orchestrator {
+            orchestrator.shutdown().await;
+            info!("Orchestrator shut down");
         }
 
         // 发送关闭信号
