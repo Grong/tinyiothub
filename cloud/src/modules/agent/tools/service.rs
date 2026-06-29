@@ -13,6 +13,7 @@ use zeroclaw_api::attribution::{Attributable, Role, ToolKind};
 use super::canvas::CanvasTool;
 use crate::{
     modules::{
+        agent::heartbeat_manager::{TrustConfig, TrustLevel, resolve_trust},
         mcp::{
             handlers::{McpAuthContext, McpContextGuard},
             tool_metadata::{
@@ -130,6 +131,125 @@ impl IoTToolMetadata for IoTToolAdapter {
 }
 
 // ============================================================================
+// TrustAwareTool — wraps a Tool with trust-level enforcement
+// ============================================================================
+
+/// Proxies a `Box<dyn Tool>`, checking trust config before delegating `execute()`.
+///
+/// Trust resolution: device-specific > tool wildcard "*" > default `ApprovalRequired`.
+/// Blocked calls return a structured error so the LLM can generate a proposal instead.
+pub struct TrustAwareTool {
+    inner: Box<dyn Tool>,
+    trust_config: Arc<TrustConfig>,
+}
+
+impl TrustAwareTool {
+    pub fn new(inner: Box<dyn Tool>, trust_config: Arc<TrustConfig>) -> Self {
+        Self { inner, trust_config }
+    }
+
+    /// Extract device_id from tool args JSON, if present
+    fn extract_device_id(args: &serde_json::Value) -> Option<&str> {
+        args.get("device_id").or_else(|| args.get("deviceId")).and_then(|v| v.as_str())
+    }
+}
+
+impl Attributable for TrustAwareTool {
+    fn role(&self) -> Role {
+        self.inner.role()
+    }
+    fn alias(&self) -> &str {
+        self.inner.alias()
+    }
+}
+
+#[async_trait]
+impl Tool for TrustAwareTool {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn description(&self) -> &str {
+        self.inner.description()
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        self.inner.parameters_schema()
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        let tool_name = <Self as Tool>::name(self);
+        let device_id = Self::extract_device_id(&args).unwrap_or("unknown");
+
+        let level = resolve_trust(&self.trust_config, tool_name, device_id);
+
+        match level {
+            TrustLevel::Disabled => Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!(
+                    "Tool '{}' is disabled for device '{}'. Do not retry. \
+                     If you believe this action is necessary, mention it in \
+                     your pending_proposals.",
+                    tool_name, device_id,
+                )),
+            }),
+            TrustLevel::ApprovalRequired => Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(format!(
+                    "Tool '{}' requires human approval for device '{}'. \
+                     Instead of executing, propose this action in your \
+                     pending_proposals with level, tool_name, device_id, \
+                     summary, reason, and risk.",
+                    tool_name, device_id,
+                )),
+            }),
+            TrustLevel::AutoWithLog | TrustLevel::FullAuto => {
+                // Execute normally — tool is trusted at the required level
+                self.inner.execute(args).await
+            }
+        }
+    }
+}
+
+impl IoTToolMetadata for TrustAwareTool {
+    fn name(&self) -> &str {
+        <Self as Tool>::name(self)
+    }
+
+    fn description(&self) -> &str {
+        <Self as Tool>::description(self)
+    }
+
+    fn input_schema(&self) -> serde_json::Value {
+        <Self as Tool>::parameters_schema(self)
+    }
+
+    fn is_concurrency_safe(&self, _input: &serde_json::Value) -> bool {
+        name_infers_concurrency_safe(<Self as Tool>::name(self))
+    }
+
+    fn is_read_only(&self, _input: &serde_json::Value) -> bool {
+        name_infers_read_only(<Self as Tool>::name(self))
+    }
+
+    fn is_destructive(&self, _input: &serde_json::Value) -> bool {
+        name_infers_destructive(<Self as Tool>::name(self))
+    }
+
+    fn permission_level(&self, input: &serde_json::Value) -> PermissionLevel {
+        if self.is_destructive(input) {
+            PermissionLevel::Ask
+        } else if self.is_read_only(input) {
+            PermissionLevel::Allow
+        } else {
+            PermissionLevel::Ask
+        }
+    }
+}
+
+// ============================================================================
 // Tool loading
 // ============================================================================
 
@@ -205,14 +325,28 @@ pub fn filter_by_denylist(tools: Vec<Box<dyn Tool>>, denylist: &[String]) -> Vec
 }
 
 /// Load and filter tools for an agent based on its runtime config.
+/// If `trust_config` is provided, wraps every tool with `TrustAwareTool`
+/// for trust-level enforcement at execution time.
 pub async fn resolve_tools_for_agent(
     config: &AgentRuntimeConfig,
     workspace_id: &str,
     workspace_service: Option<Arc<WorkspaceService>>,
     knowledge_service: Option<Arc<KnowledgeService>>,
+    trust_config: Option<Arc<TrustConfig>>,
 ) -> Vec<Box<dyn Tool>> {
     let all_tools = load_all_tools(workspace_id, workspace_service, knowledge_service).await;
-    filter_by_denylist(all_tools, &config.tool_denylist)
+    let filtered = filter_by_denylist(all_tools, &config.tool_denylist);
+
+    match trust_config {
+        Some(tc) => filtered
+            .into_iter()
+            .map(|tool| {
+                let wrapped: Box<dyn Tool> = Box::new(TrustAwareTool::new(tool, Arc::clone(&tc)));
+                wrapped
+            })
+            .collect(),
+        None => filtered,
+    }
 }
 
 // ============================================================================

@@ -133,6 +133,25 @@ pub struct Agent {
 }
 
 // ============================================================================
+// Streaming run result types
+// ============================================================================
+
+/// Result of a streaming heartbeat run
+pub struct StreamingRunResult {
+    pub final_text: String,
+    pub tool_calls: Vec<StreamingToolCall>,
+}
+
+/// Tool call captured during streaming execution
+#[derive(Debug, Clone)]
+pub struct StreamingToolCall {
+    pub name: String,
+    pub args: serde_json::Value,
+    pub result: Option<String>,
+    pub success: bool,
+}
+
+// ============================================================================
 // AgentPool
 // ============================================================================
 
@@ -151,6 +170,7 @@ pub struct AgentPool {
         tokio::sync::RwLock<Option<Arc<crate::modules::workspace::WorkspaceService>>>,
     pub knowledge_service:
         tokio::sync::RwLock<Option<Arc<crate::modules::workspace::KnowledgeService>>>,
+    pub trust_configs: DashMap<String, crate::modules::agent::heartbeat_manager::TrustConfig>,
 }
 
 impl AgentPool {
@@ -211,6 +231,7 @@ impl AgentPool {
             memory_store,
             workspace_service: tokio::sync::RwLock::new(None),
             knowledge_service: tokio::sync::RwLock::new(None),
+            trust_configs: DashMap::new(),
         })
     }
 
@@ -228,6 +249,14 @@ impl AgentPool {
     ) {
         let mut guard = self.knowledge_service.write().await;
         *guard = Some(service);
+    }
+
+    pub fn set_trust_config(
+        &self,
+        workspace_id: &str,
+        config: crate::modules::agent::heartbeat_manager::TrustConfig,
+    ) {
+        self.trust_configs.insert(workspace_id.to_string(), config);
     }
 
     // ========================================================================
@@ -266,8 +295,11 @@ impl AgentPool {
 
                 let ws_svc = self.workspace_service.read().await.clone();
                 let ks_svc = self.knowledge_service.read().await.clone();
+                let trust_config = self.trust_configs.get(workspace_id).map(|e| {
+                    std::sync::Arc::new(e.value().clone())
+                });
                 let tools =
-                    tool_service::resolve_tools_for_agent(&config, workspace_id, ws_svc, ks_svc)
+                    tool_service::resolve_tools_for_agent(&config, workspace_id, ws_svc, ks_svc, trust_config)
                         .await;
 
                 let agent = Self::build_agent(
@@ -647,13 +679,82 @@ impl AgentPool {
         workspace_id: &str,
         message: &str,
     ) -> Result<String, AgentError> {
-        // Use a dedicated key so heartbeat/cron jobs don't share the chat agent's
-        // config — the DB-stored model may be invalid (e.g. typos) and break
-        // background tasks. "__heartbeat__" has no DB row, so it always falls
-        // back to AgentRuntimeConfig::default() → server-level [minimax] model.
-        let agent = self.get_or_create("__heartbeat__", workspace_id).await?;
+        // Per-workspace agent key prevents cross-workspace tool context leak.
+        // "__heartbeat__" has no DB row, so it always falls back to
+        // AgentRuntimeConfig::default() → server-level [minimax] model.
+        let agent_id = format!("__heartbeat__:{}", workspace_id);
+        let agent = self.get_or_create(&agent_id, workspace_id).await?;
         let mut ag = agent.lock().await;
         ag.run_single(message).await.map_err(|e| AgentError::RequestFailed(e.to_string()))
+    }
+
+    // ========================================================================
+    // Run streaming (for heartbeat with TurnEvent interception)
+    // ========================================================================
+
+    /// Run the heartbeat agent with streaming TurnEvents, enabling per-tool-call
+    /// interception (trust gate, action recording).
+    pub async fn run_streaming(
+        &self,
+        workspace_id: &str,
+        message: &str,
+    ) -> Result<StreamingRunResult, AgentError> {
+        let agent_id = format!("__heartbeat__:{}", workspace_id);
+        let agent = self.get_or_create(&agent_id, workspace_id).await?;
+
+        // Set up TurnEvent channel for real-time event interception
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<zeroclaw::agent::TurnEvent>(64);
+
+        // Spawn tool call collector
+        let tool_calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let tool_calls_clone = std::sync::Arc::clone(&tool_calls);
+        let collector = tokio::spawn(async move {
+            while let Some(evt) = event_rx.recv().await {
+                match evt {
+                    zeroclaw::agent::TurnEvent::ToolCall { name, args, .. } => {
+                        let mut calls = tool_calls_clone.lock().unwrap();
+                        calls.push(StreamingToolCall { name, args, result: None, success: true });
+                    }
+                    zeroclaw::agent::TurnEvent::ToolResult { name, output, .. } => {
+                        let mut calls = tool_calls_clone.lock().unwrap();
+                        if let Some(last) = calls.iter_mut().rev().find(|c| c.name == name) {
+                            last.result = Some(output.clone());
+                            // NOTE: TurnEvent::ToolResult doesn't carry ToolResult.success.
+                            // Trust enforcement is handled by TrustAwareTool wrapping;
+                            // the LLM's response text handles error reporting via healing report.
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        // Execute with timeout
+        let mut ag = agent.lock().await;
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(120),
+            ag.turn_streamed(message, event_tx, None),
+        )
+        .await;
+        drop(ag);
+
+        // Wait for collector to finish processing remaining events
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), collector).await;
+
+        let tool_calls = match std::sync::Arc::try_unwrap(tool_calls) {
+            Ok(mutex) => mutex.into_inner().unwrap_or_default(),
+            Err(arc) => arc.lock().unwrap().clone(),
+        };
+
+        match result {
+            Ok(Ok((final_text, _conversation))) => {
+                Ok(StreamingRunResult { final_text, tool_calls })
+            }
+            Ok(Err(e)) => Err(AgentError::RequestFailed(e.to_string())),
+            Err(_elapsed) => {
+                Err(AgentError::RequestFailed("Heartbeat LLM call timed out after 120s".into()))
+            }
+        }
     }
 
     // ========================================================================

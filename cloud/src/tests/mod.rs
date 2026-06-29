@@ -21,7 +21,6 @@ mod notification_handler_tests;
 mod open_handler_tests;
 mod permission_handler_tests;
 mod role_handler_tests;
-mod self_healing_handler_tests;
 mod system_handler_tests;
 mod tag_handler_tests;
 mod template_handler_tests;

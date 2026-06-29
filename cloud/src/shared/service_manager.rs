@@ -143,6 +143,10 @@ impl ServiceManager {
                     warn!("⚠️ Failed to list workspace IDs for heartbeat startup: {}", e);
                 }
             }
+
+            // Start agent_actions retention task (deletes records >90 days, every 6h)
+            app_state.heartbeat_manager.start_retention_task();
+            info!("✅ Agent actions retention task started");
         }
 
         // 更新状态为运行中

@@ -77,6 +77,9 @@ pub fn create_router() -> Router<AppState> {
         .route("/{id}/heartbeat/logs", get(heartbeat::get_logs))
         .route("/{id}/heartbeat/tasks", get(heartbeat::get_tasks))
         .route("/{id}/heartbeat/tasks", put(heartbeat::update_tasks))
+        .route("/{id}/heartbeat/approvals", get(heartbeat::get_approvals))
+        .route("/{id}/heartbeat/approvals/{proposal_id}/approve", post(heartbeat::approve_proposal))
+        .route("/{id}/heartbeat/approvals/{proposal_id}/reject", post(heartbeat::reject_proposal))
 }
 
 /// List workspaces for current tenant

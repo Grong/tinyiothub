@@ -507,6 +507,9 @@ mod heartbeat_wake_tests {
             reason: "alarm:test-001".into(),
             context: "Test alarm context".into(),
             priority: WakePriority::Critical,
+            device_id: None,
+            alarm_type: None,
+            rule_id: None,
         };
         app_state.heartbeat_manager.wake(ws_id, signal);
 
@@ -639,5 +642,110 @@ mod heartbeat_wake_tests {
 
         // Cleanup
         app_state.heartbeat_manager.stop(ws_id).await;
+    }
+
+    #[tokio::test]
+    async fn test_alarm_wake_signal_dedup_fields() {
+        let (app_state, _pool) = setup_test_app_with_pool().await;
+        let ws_id = "ws-dedup-test";
+
+        app_state.heartbeat_manager.start(ws_id).await;
+
+        // Simulate two alarms from the same device + same type
+        // The dedup logic should keep only the highest priority one
+        let signal1 = WakeSignal {
+            workspace_id: ws_id.to_string(),
+            reason: "alarm:1".into(),
+            context: "High temp on dev-01".into(),
+            priority: WakePriority::High,
+            device_id: Some("dev-01".into()),
+            alarm_type: Some("DeviceOffline".into()),
+            rule_id: Some("rule-1".into()),
+        };
+        let signal2 = WakeSignal {
+            workspace_id: ws_id.to_string(),
+            reason: "alarm:2".into(),
+            context: "Critical temp on dev-01".into(),
+            priority: WakePriority::Critical,
+            device_id: Some("dev-01".into()),
+            alarm_type: Some("DeviceOffline".into()),
+            rule_id: Some("rule-1".into()),
+        };
+
+        app_state.heartbeat_manager.wake(ws_id, signal1);
+        app_state.heartbeat_manager.wake(ws_id, signal2);
+
+        // Verify trust config integration: per-workspace trust configs are empty by default
+        let trust = app_state.heartbeat_manager.get_trust_config(ws_id);
+        assert!(trust.is_empty(), "New workspace should have empty trust config");
+
+        // Update trust config and verify persistence
+        let mut config = std::collections::HashMap::new();
+        let mut devices = std::collections::HashMap::new();
+        devices.insert(
+            "*".to_string(),
+            crate::modules::agent::heartbeat_manager::TrustLevel::FullAuto,
+        );
+        config.insert("send_command".to_string(), devices);
+        app_state.heartbeat_manager.update_trust_config(ws_id, config.clone());
+
+        let loaded = app_state.heartbeat_manager.get_trust_config(ws_id);
+        assert!(!loaded.is_empty(), "Trust config should be persisted");
+        assert!(loaded.contains_key("send_command"));
+
+        // Resolve trust: device-specific > wildcard > default
+        let level = crate::modules::agent::heartbeat_manager::resolve_trust(
+            &loaded,
+            "send_command",
+            "dev-01",
+        );
+        assert_eq!(level, crate::modules::agent::heartbeat_manager::TrustLevel::FullAuto);
+
+        // Unconfigured tool defaults to ApprovalRequired
+        let default_level = crate::modules::agent::heartbeat_manager::resolve_trust(
+            &loaded,
+            "write_properties",
+            "dev-01",
+        );
+        assert_eq!(
+            default_level,
+            crate::modules::agent::heartbeat_manager::TrustLevel::ApprovalRequired
+        );
+
+        // Cleanup
+        app_state.heartbeat_manager.stop(ws_id).await;
+    }
+
+    #[tokio::test]
+    async fn test_channel_overflow_drops_gracefully() {
+        let (app_state, _pool) = setup_test_app_with_pool().await;
+        let ws_id = "ws-overflow-test";
+
+        // Start with default channel_size=64
+        app_state.heartbeat_manager.start(ws_id).await;
+
+        // Send 128 signals — first 64 fill the channel, rest should drop without panic
+        for i in 0..128 {
+            let signal = WakeSignal {
+                workspace_id: ws_id.to_string(),
+                reason: format!("alarm:{}", i),
+                context: format!("Test alarm {}", i),
+                priority: if i % 3 == 0 {
+                    WakePriority::Critical
+                } else if i % 3 == 1 {
+                    WakePriority::High
+                } else {
+                    WakePriority::Normal
+                },
+                device_id: Some(format!("dev-{:02}", i % 5)),
+                alarm_type: Some("DeviceOffline".into()),
+                rule_id: Some("rule-1".into()),
+            };
+            app_state.heartbeat_manager.wake(ws_id, signal);
+        }
+
+        // After overflow: should not have panicked, cleanup should work
+        app_state.heartbeat_manager.stop(ws_id).await;
+        // If we got here without panic, the test passes
     }
 }

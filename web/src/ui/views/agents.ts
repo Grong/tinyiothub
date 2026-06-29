@@ -2,7 +2,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import type { AgentsState, AgentsPanel } from "../controllers/agents.js";
 import type { AgentItem } from "../types.js";
-import { createAgentsState, loadAgents, loadAgentConfig, loadToolsCatalog, toggleTool, loadSkills, loadHeartbeatConfig, loadHeartbeatLogs, updateHeartbeatConfig, updateHeartbeatTasks, saveAgentConfig } from "../controllers/agents.js";
+import { createAgentsState, loadAgents, loadAgentConfig, loadToolsCatalog, toggleTool, loadSkills, loadHeartbeatConfig, loadHeartbeatLogs, loadApprovals, approveProposal, rejectProposal, updateHeartbeatConfig, updateHeartbeatTasks, saveAgentConfig } from "../controllers/agents.js";
 import { renderWorkspaceTab } from "./agents-workspace-tab.js";
 import { renderToolsTab } from "./agents-tools-tab.js";
 import { renderSkillsTab } from "./agents-skills-tab.js";
@@ -51,6 +51,7 @@ export class ViewAgents extends LitElement {
       loadSkills(this.state),
       loadHeartbeatConfig(this.state, wsId),
       loadHeartbeatLogs(this.state, wsId),
+      loadApprovals(this.state, wsId),
     ]).then(() => this.requestUpdate());
   }
 
@@ -74,6 +75,7 @@ export class ViewAgents extends LitElement {
     if (!wsId) return;
     await updateHeartbeatConfig(this.state, wsId, enabled, undefined);
     await loadHeartbeatLogs(this.state, wsId);
+    await loadApprovals(this.state, wsId);
     this.requestUpdate();
   }
 
@@ -82,6 +84,7 @@ export class ViewAgents extends LitElement {
     if (!wsId) return;
     await updateHeartbeatConfig(this.state, wsId, undefined, intervalMinutes);
     await loadHeartbeatLogs(this.state, wsId);
+    await loadApprovals(this.state, wsId);
     this.requestUpdate();
   }
 
@@ -92,6 +95,7 @@ export class ViewAgents extends LitElement {
     tasks[index] = { ...tasks[index], paused };
     await updateHeartbeatTasks(this.state, wsId, tasks);
     await loadHeartbeatLogs(this.state, wsId);
+    await loadApprovals(this.state, wsId);
     this.requestUpdate();
   }
 
@@ -101,6 +105,7 @@ export class ViewAgents extends LitElement {
     const tasks = [...(this.state.heartbeatConfig.tasks || []), task];
     await updateHeartbeatTasks(this.state, wsId, tasks);
     await loadHeartbeatLogs(this.state, wsId);
+    await loadApprovals(this.state, wsId);
     this.requestUpdate();
   }
 
@@ -112,6 +117,7 @@ export class ViewAgents extends LitElement {
     const tasks = (this.state.heartbeatConfig.tasks || []).filter((_, i) => i !== index);
     await updateHeartbeatTasks(this.state, wsId, tasks);
     await loadHeartbeatLogs(this.state, wsId);
+    await loadApprovals(this.state, wsId);
     this.requestUpdate();
   }
 
@@ -122,6 +128,24 @@ export class ViewAgents extends LitElement {
     tasks[index] = { ...tasks[index], ...patch };
     await updateHeartbeatTasks(this.state, wsId, tasks);
     await loadHeartbeatLogs(this.state, wsId);
+    await loadApprovals(this.state, wsId);
+    this.requestUpdate();
+  }
+
+  private async onApproveProposal(proposalId: string): Promise<void> {
+    const wsId = this.getHeartbeatWorkspaceId();
+    if (!wsId) return;
+    await approveProposal(this.state, wsId, proposalId);
+    await loadHeartbeatLogs(this.state, wsId);
+    await loadApprovals(this.state, wsId);
+    this.requestUpdate();
+  }
+
+  private async onRejectProposal(proposalId: string): Promise<void> {
+    const wsId = this.getHeartbeatWorkspaceId();
+    if (!wsId) return;
+    await rejectProposal(this.state, wsId, proposalId);
+    await loadApprovals(this.state, wsId);
     this.requestUpdate();
   }
 
@@ -209,6 +233,8 @@ export class ViewAgents extends LitElement {
             this.onAddHeartbeatTask.bind(this),
             this.onRemoveHeartbeatTask.bind(this),
             this.onUpdateHeartbeatTask.bind(this),
+            this.onApproveProposal.bind(this),
+            this.onRejectProposal.bind(this),
           ) : nothing}
         </div>
       </div>

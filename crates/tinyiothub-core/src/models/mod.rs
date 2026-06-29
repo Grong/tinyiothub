@@ -9,5 +9,4 @@ pub mod event;
 pub mod heartbeat;
 pub mod job;
 pub mod notification_channel;
-pub mod self_healing;
 pub mod template_error;

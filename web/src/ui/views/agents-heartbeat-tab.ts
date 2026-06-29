@@ -41,6 +41,19 @@ export interface HeartbeatLogsResponse {
   logs: HeartbeatExecutionRecord[];
 }
 
+export interface PendingProposal {
+  proposalId: string;
+  status: string;
+  level: string;
+  toolName: string;
+  deviceId: string;
+  deviceName: string;
+  summary: string;
+  reason: string;
+  risk: string;
+  createdAt: string;
+}
+
 export function renderHeartbeatTab(
   state: AgentsState,
   onToggleHeartbeat: (enabled: boolean) => void,
@@ -49,9 +62,12 @@ export function renderHeartbeatTab(
   onAddTask: (task: HeartbeatTask) => void,
   onRemoveTask: (index: number) => void,
   onUpdateTask: (index: number, patch: Partial<HeartbeatTask>) => void,
+  onApproveProposal?: (proposalId: string) => void,
+  onRejectProposal?: (proposalId: string) => void,
 ) {
   const config = (state as any).heartbeatConfig as HeartbeatConfig | null;
   const logs = (state as any).heartbeatLogs as HeartbeatExecutionRecord[] | null;
+  const approvals = (state as any).heartbeatApprovals as PendingProposal[] | null;
   const loading = (state as any).heartbeatLoading as boolean | null;
   const error = (state as any).heartbeatError as string | null;
 
@@ -224,6 +240,63 @@ export function renderHeartbeatTab(
               : nothing}
           </ul>
         </div>
+      </div>
+
+      <!-- Pending approval proposals -->
+      <div class="heartbeat-section heartbeat-approval-section">
+        <div class="heartbeat-header-row">
+          <div class="heartbeat-pulse-dot active" style="background: var(--color-warning)"></div>
+          <h3>待审批操作</h3>
+          ${approvals && approvals.length > 0
+            ? html`<span class="heartbeat-count" style="background: var(--color-warning)">${approvals.length}</span>`
+            : nothing}
+        </div>
+
+        ${!approvals || approvals.length === 0
+          ? html`
+              <div class="heartbeat-empty-state">
+                <svg class="heartbeat-empty-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M9 12l3 3 6-6" stroke-linecap="round" stroke-linejoin="round"/>
+                  <circle cx="24" cy="24" r="20"/>
+                </svg>
+                <span>暂无待审批操作</span>
+                <span class="heartbeat-empty-sub">AI 巡检时提出的高风险操作会在这里等待审批</span>
+              </div>
+            `
+          : html`
+              <div class="approval-list">
+                ${approvals.map(
+                  (p) => html`
+                    <div class="approval-item">
+                      <div class="approval-header">
+                        <span class="approval-level level-${p.level.toLowerCase()}">${p.level}</span>
+                        <span class="approval-tool">${p.toolName}</span>
+                        <span class="approval-device">${p.deviceName || p.deviceId}</span>
+                      </div>
+                      <div class="approval-body">
+                        <p class="approval-summary">${p.summary}</p>
+                        <p class="approval-reason">原因: ${p.reason}</p>
+                        <p class="approval-risk">风险: ${p.risk}</p>
+                      </div>
+                      <div class="approval-actions">
+                        <button
+                          class="approval-btn approve"
+                          @click=${() => onApproveProposal?.(p.proposalId)}
+                        >
+                          批准执行
+                        </button>
+                        <button
+                          class="approval-btn reject"
+                          @click=${() => onRejectProposal?.(p.proposalId)}
+                        >
+                          拒绝
+                        </button>
+                      </div>
+                    </div>
+                  `,
+                )}
+              </div>
+            `}
       </div>
 
       <div class="heartbeat-section">

@@ -2,7 +2,7 @@ import { apiGet, apiPost, apiPut } from "../../api/client.js";
 import type { AgentsListResult, ToolCatalogGroup } from "../types.js";
 import type { Skill, CreateSkillRequest, UpdateSkillRequest } from "../../api/client.js";
 import { listSkills, createSkill, updateSkill, deleteSkill } from "../../api/client.js";
-import type { HeartbeatConfig, HeartbeatLogsResponse, HeartbeatTask } from "../views/agents-heartbeat-tab.js";
+import type { HeartbeatConfig, HeartbeatLogsResponse, HeartbeatTask, PendingProposal } from "../views/agents-heartbeat-tab.js";
 
 export type AgentsPanel = "overview" | "tools" | "skills" | "heartbeat";
 
@@ -45,6 +45,7 @@ export type AgentsState = {
   pendingDelete?: string | null;
   heartbeatConfig?: HeartbeatConfig | null;
   heartbeatLogs?: HeartbeatLogsResponse["logs"];
+  heartbeatApprovals?: PendingProposal[];
   heartbeatLoading?: boolean;
   heartbeatError?: string | null;
 };
@@ -244,6 +245,49 @@ export async function updateHeartbeatTasks(
     await apiPut(`/workspaces/${workspaceId}/heartbeat/tasks`, { tasks });
     // Reload config to get the updated tasks list
     await loadHeartbeatConfig(state, workspaceId);
+    return true;
+  } catch (err) {
+    state.heartbeatError = String(err);
+    return false;
+  }
+}
+
+export interface ApprovalsResponse {
+  proposals: PendingProposal[];
+}
+
+export async function loadApprovals(state: AgentsState, workspaceId: string): Promise<void> {
+  try {
+    const res = await apiGet<ApprovalsResponse>(`/workspaces/${workspaceId}/heartbeat/approvals`);
+    state.heartbeatApprovals = res.result?.proposals ?? [];
+  } catch (err) {
+    console.warn("Failed to load heartbeat approvals:", err);
+  }
+}
+
+export async function approveProposal(
+  state: AgentsState,
+  workspaceId: string,
+  proposalId: string,
+): Promise<boolean> {
+  try {
+    await apiPost(`/workspaces/${workspaceId}/heartbeat/approvals/${proposalId}/approve`);
+    await loadApprovals(state, workspaceId);
+    return true;
+  } catch (err) {
+    state.heartbeatError = String(err);
+    return false;
+  }
+}
+
+export async function rejectProposal(
+  state: AgentsState,
+  workspaceId: string,
+  proposalId: string,
+): Promise<boolean> {
+  try {
+    await apiPost(`/workspaces/${workspaceId}/heartbeat/approvals/${proposalId}/reject`);
+    await loadApprovals(state, workspaceId);
     return true;
   } catch (err) {
     state.heartbeatError = String(err);

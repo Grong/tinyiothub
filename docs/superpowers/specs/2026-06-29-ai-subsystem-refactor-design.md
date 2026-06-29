@@ -241,13 +241,102 @@ pub struct PatrolReport {
 
 当前 `cloud/src/modules/mcp/` 作为设备操作工具的实现层保持不变，由 `ai/tool/registry.rs` 通过 trait 接口引用。`tinyiothub-ai` crate 不重新实现 MCP 协议。
 
+## AiEventType 定义（加入 EventType 枚举）
+
+`tinyiothub_core::models::event::EventType` 新增第三变体：
+
+```rust
+pub enum EventType {
+    System(SystemEventType),
+    Device(DeviceEventType),
+    Ai(AiEventType),  // 新增
+}
+
+pub enum AiEventType {
+    AlarmCreated,
+    AlarmResolved,
+    PatrolCompleted,
+    ChatCompleted,
+    WorkspaceCreated,
+    WorkspaceDeleted,
+}
+```
+
+### EventType 迁移检查清单
+
+添加 `Ai` 变体后，以下 ~23 个 match 站点需增加 `Ai(_)` arm（编译器会强制检查，此清单确保不遗漏行为决策）：
+
+| 文件 | 行 | 需增加的 arm 行为 |
+|------|-----|------|
+| `event_type.rs` | 65-66 | `type_string()` → `"ai"` |
+| `event_type.rs` | 73,79 | `subtype_string()` → AiEventType 映射 |
+| `event_type.rs` | 99,107,115,123 | `is_property_event/is_command_event/is_alarm/is_normal` → `false` |
+| `event_type.rs` | 130-155 | `from_strings()` → 新增 `"ai"` 分支 + AiEventType 解析 |
+| `event.rs` | 119-127 | `should_update_real_time_status()` → `false`（Ai 事件不触发实时状态更新） |
+| `event.rs` | 133-156 | `validate()` → Ai 事件无额外校验（pass-through） |
+| `event.rs` | 159-169 | source validation → Ai 事件 source 不强制 device_id |
+| `event_repository_impl.rs` | 40-41,237-238 | DB type_string → `"ai"` |
+| `access_control.rs` | 94,120,147,173 | 权限门控 → Ai 事件仅管理员可见 |
+| `event/service.rs` | 187,200,214-230,404,420-421 | 分类/过滤/验证 → Ai 事件归类为 `EVENT_CATEGORY_AI` |
+| `event/handler/real_time.rs` | 286-291,332-337 | 序列化 → Ai EventType 映射 |
+| `event/handler/query.rs` | 189-190 | 查询展示 → AiEventType display_name |
+| `device/handler/profile.rs` | 215-216 | display_name → `"AI"` |
+| `alarm/service.rs` | 331,1052 | matches! 检查 → Ai 事件不匹配 Device |
+| `persistence_handler.rs` | 80 | handler 分发 → Ai 事件跳过持久化 handler |
+| `data_server.rs` | 425,477 | 设备事件处理 → Ai 事件跳过 DataServer |
+
+## HEARTBEAT.md → DB 迁移
+
+修复当前 `heartbeat.rs:65-68` 文档化的 TOCTOU 竞态条件：
+
+```sql
+CREATE TABLE IF NOT EXISTS heartbeat_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id TEXT NOT NULL,
+    priority TEXT NOT NULL DEFAULT 'low',
+    text TEXT NOT NULL,
+    paused INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(workspace_id, id)
+);
+```
+
+- `version` 列实现乐观锁：更新时 `WHERE version = ?` 并 `SET version = version + 1`
+- `PatrolManager::start()` 时从 DB 加载任务，不再依赖文件系统 HEARTBEAT.md
+- 写入/更新通过 Repo trait，Service 层不碰 SQL
+
+## 领域错误类型
+
+每个领域定义 `thiserror` 枚举（内部 helper 可保留 `anyhow::Result`）：
+
+```rust
+// patrol/types.rs
+#[derive(Debug, thiserror::Error)]
+pub enum PatrolError {
+    #[error("Agent pool error: {0}")]
+    Agent(String),
+    #[error("LLM call failed after {retries} retries: {source}")]
+    LlmFailure { retries: u32, source: String },
+    #[error("Action persistence failed: {0}")]
+    ActionPersistence(String),
+    #[error("TrustConfig load failed for workspace {workspace_id}: {source}")]
+    TrustConfig { workspace_id: String, source: String },
+}
+
+// alarm/types.rs, agent/types.rs, session/types.rs … 同理，各 4-8 个变体
+```
+
+EventBus 错误传播规则：handler 失败只记录 `error!` 日志 + 递增 `events_errored` 计数器，**绝不**向事件发布者反向传播错误（fire-and-forget 语义）。
+
 ## Shutdown 顺序
 
 `Orchestrator::shutdown()` 保证事件不丢失：
 
 1. 设置 `shutting_down` 标志，拒绝新的 patrol loop 启动
 2. 向所有活跃 patrol loop 发送 cancel token，等待最多 30 秒
-3. 所有 loop 排空后，drop broadcast sender
+3. 所有 loop 排空后，`Arc<EventBus>` 随 Orchestrator drop 自然释放（不手动 drop broadcast sender — EventBus 被 SseEventHandler/AlarmEventHandler/DataServer 共享）
 4. Repo 最后释放（Arc 引用计数，顺序由 Rust 自动管理）
 
 ## Dead-Letter Queue（事件持久化失败兜底）
@@ -302,6 +391,64 @@ patrol_loop 中 LLM 调用失败时保存部分结果：
 - **Patrol loop:** LLM 调用延迟 histogram，成功/失败率
 - **Critical alert:** `events_dropped > 0` 在 5 分钟窗口 → 触发告警
 
+## Performance
+
+- **SQLite WAL 模式:** sqlx 默认启用 WAL，允许并发读 + 单写者。多个 patrol loop 同时写入 `agent_actions` 时竞争写锁——每个 patrol tick 使用单个写事务批量插入（`INSERT INTO agent_actions (...) VALUES (...), (...), ...`），将锁获取次数从 N 次降为 1 次。
+- **broadcast channel capacity:** 1000，与现有 EventBus 共享。AiEvent 发布失败时记录 `warn!` + 递增 `events_dropped` 计数器。5 分钟窗口内 `events_dropped > 0` 触发 Critical alert。
+- **DashMap 分片:** HeartbeatManager/AgentPool 的 per-workspace 查找使用 DashMap（sharded lock-free reads），workspace 数量 < 1000 时无明显性能瓶颈。
+
+## NOT in scope
+
+- **Cron retry worker for lost_events:** 表结构和 3x 内联重试逻辑在 scope 内；定时 cron 任务（每小时扫描 `lost_events` 表）推迟到 follow-up PR。
+- **HEARTBEAT.md → DB 管理 UI:** DB 表迁移在 scope 内；管理后台 UI 继续使用文件系统 HEARTBEAT.md 编辑，推迟到后续 PR。
+- **A2UI bidirectional binding:** 前次 CEO Review 中接受的扩展，不在本次重构范围内。tool/catalog.rs 基础设施预留支持。
+
+## What already exists
+
+| 组件 | 现有位置 | 重构后如何复用 |
+|------|----------|---------------|
+| EventBus | `tinyiothub_runtime::event_bus.rs` (170 行) — broadcast channel + ArcSwap handler 分发 | 扩展 AiEvent 变体，不替换 |
+| Event 模型 | `tinyiothub_core::models::event/` — Event struct + EventType enum | AiEventType 作为第三变体加入 |
+| AgentPool | `cloud/src/modules/agent/agent.rs` (796 行) | 拆分为 agent/pool.rs + builder.rs + service.rs |
+| HeartbeatManager | `cloud/src/modules/agent/heartbeat_manager.rs` (383 行) | 移至 patrol/manager.rs，增加 DB 加载 TrustConfig |
+| heartbeat_loop | `cloud/src/modules/agent/heartbeat.rs` (447 行) | 移至 patrol/loop.rs，从直接 insert 改为发布 PatrolCompleted 事件 |
+| Tool service | `cloud/src/modules/agent/tools/service.rs` (554 行) | 移至 tool/registry.rs + trust.rs，增加 ToolDependencyProvider trait |
+| Memory/reflect | `cloud/src/modules/agent/reflect.rs` (392 行) | 移至 memory/reflect.rs，由 ChatCompleted 事件触发而非 inline spawn |
+| Alarm service | `cloud/src/modules/alarm/service.rs` | 保留在 alarm/，移除 OnceLock<HeartbeatManager>，发布 AlarmCreated 事件 |
+| Workspace service | `cloud/src/modules/workspace/` | 移除 OnceLock<HeartbeatManager>，发布 WorkspaceCreated/Deleted 事件 |
+| lost_events 表 | `cloud/migrations/20260625000003_create_lost_events.sql` | 已创建——原样复用 |
+
+## Failure modes
+
+| 故障 | 测试? | 错误处理? | 用户可见? |
+|------|-------|-----------|----------|
+| PatrolCompleted → ActionRepo insert 失败（DB 锁定） | GAP | Dead-letter queue: 3x 重试 → lost_events 表 | 静默（cron 1h 内恢复） |
+| LLM 调用超时（mid-patrol） | GAP | 保存部分 HealingReport，错误记录为 EventType::Error | 错误计数在 action history 中可见 |
+| EventBus channel 满（capacity 1000） | GAP | `warn!` 日志 + `events_dropped` 计数器递增 | 5 分钟窗口内 >0 时触发 Critical alert |
+| PatrolManager::start 时 TrustConfig DB 加载失败 | GAP | 回退到 ApprovalRequired 默认值（所有工具安全默认） | 无自动执行——安全默认 |
+| ChatCompleted 事件丢失（channel 满） | GAP | 该轮 Memory reflection 跳过 | 静默——记忆稍不完整 |
+| 同一 workspace 重复 patrol loop（意外重复启动） | PARTIAL | HeartbeatManager::start() 先调用 stop()（幂等） | 无重复 loop |
+
+## Worktree parallelization
+
+重构按依赖顺序执行，但 3 个 lane 可在 foundation 完成后并行：
+
+| Lane | 步骤 | 涉及模块 |
+|------|------|---------|
+| A | event/types foundation → patrol → alarm | tinyiothub-core (EventType), tinyiothub-ai (patrol/, alarm/) |
+| B | tool → agent | tinyiothub-ai (tool/, agent/) |
+| C | session → memory → orchestrator | tinyiothub-ai (session/, memory/, orchestrator/) |
+
+执行顺序: Lane A 先完成（foundation）。然后 B + C 并行。最后集成修改 cloud/ 路由挂载。
+
+Lane B 和 C 无共享模块——可安全并行 worktree。Lane A 必须在 B 或 C 启动前完成。
+
+## Integration test scenarios
+
+1. **Alarm → Patrol wake 完整链路:** 创建告警 → EventBus 发布 AlarmCreated → Orchestrator 回调唤醒 patrol → patrol loop tick 执行 → PatrolCompleted 事件发布 → ActionRepo 写入。验证真实 broadcast channel。
+2. **Dead-letter queue 重试 + 回退:** Mock 一个始终失败的 ActionRepo → 验证 3x 指数退避重试 → 验证写入 `lost_events` 表（status='pending'）。
+3. **ChatCompleted → Memory reflection:** 发送 chat 消息 → 验证 ChatCompleted 事件发布（含 model 字段）→ 验证 MemoryService.reflect_conversation_turn() 被调用。
+
 ## Deployment
 
 1. **Pre-deploy:** 确保以下 migration 已应用：
@@ -325,9 +472,13 @@ patrol_loop 中 LLM 调用失败时保存部分结果：
 
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
-| CEO Review | `/plan-ceo-review` | Scope & strategy (refactor) | 1 | CLEAN | 12 findings, all resolved — event bus sizing, shutdown ordering, dead-letter queue, TrustConfig isolation, prompt injection, shared types, test strategy, observability, deployment, partial HealingReport, model field fix, TrustConfig single source of truth |
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 1 | CLEAN | 12 findings, all resolved — event bus sizing, shutdown ordering, dead-letter queue, TrustConfig isolation, prompt injection, shared types, test strategy, observability, deployment, partial HealingReport, model field fix, TrustConfig single source of truth |
 | Outside Voice | auto (Claude subagent) | Independent 2nd opinion | 1 | CLEAN | 2 CRITICAL (duplicate EventBus, missing model field), 6 MAJOR — all resolved; switched to extending existing EventBus |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | CLEAN | 7 findings, all resolved — AiEvent → EventType::Ai with ~23-site migration checklist, HEARTBEAT.md TOCTOU → DB migration, shutdown sender drop fixed, error type sketches per domain, integration test scenarios (3), SQLite WAL + batch insert note, EventType match-site checklist |
+| Outside Voice | auto (Claude subagent) | Independent 2nd opinion (eng) | 1 | ISSUES_FOUND | 3 CRITICAL, 2 MAJOR — all resolved; kept separate crate per user decision, added EventType migration checklist per outside voice recommendation, verified circle dependency is broken by EventBus in proposed architecture |
 
-**VERDICT:** CEO + OUTSIDE VOICE CLEARED. Spec is complete with architecture, error handling, security, testing, observability, deployment, and migration strategy. Ready for `/writing-plans`.
+**CROSS-MODEL:** Outside voice flagged EventType blast radius (~50+ sites claimed, ~23 actual) and crate circular dependency (based on current code, not proposed EventBus-broken architecture). Both resolved — checklist added to spec, crate extraction kept with user confirmation.
+
+**VERDICT:** CEO + ENG + OUTSIDE VOICE CLEARED. Spec hardened with architecture fixes, error type definitions, integration test scenarios, EventType migration checklist, HEARTBEAT.md DB migration, performance notes, NOT in scope, failure modes, and worktree parallelization. Ready for `/writing-plans`.
 
 NO UNRESOLVED DECISIONS

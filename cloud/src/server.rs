@@ -25,10 +25,6 @@ pub async fn create_app_router(app_state: AppState) -> Router {
         tracing::error!("Failed to refresh agent tools: {}", e);
     }
 
-    // Initialize self-healing state
-    let db = app_state.database.clone();
-    let _self_healing_state = crate::modules::self_healing::handler::init_self_healing_state(db);
-
     // CORS layer
     let config = crate::shared::config::get();
     let cors_origins = &config.server.cors_origins;
