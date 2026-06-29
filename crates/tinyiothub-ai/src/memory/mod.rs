@@ -1,2 +1,3 @@
-//! AI memory module — long-term memory for agents.
-//! Will be populated in a later task.
+pub mod types;
+pub mod service;
+pub mod reflect;
