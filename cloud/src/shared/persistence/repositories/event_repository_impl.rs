@@ -39,6 +39,7 @@ impl EventRepository for SqliteEventRepository {
         let event_type_str = match event.event_type() {
             EventType::System(_) => "system",
             EventType::Device(_) => "device",
+            EventType::Ai(_) => "ai",
         };
         let event_subtype_str = serde_json::to_string(event.event_type())?;
         let event_level = event.level().to_numeric();
@@ -236,6 +237,7 @@ impl EventRepository for SqliteEventRepository {
             let event_type_str = match event.event_type() {
                 EventType::System(_) => "system",
                 EventType::Device(_) => "device",
+                EventType::Ai(_) => "ai",
             };
             let event_subtype_str = serde_json::to_string(event.event_type())?;
             let event_level = event.level().to_numeric();

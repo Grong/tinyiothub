@@ -285,10 +285,12 @@ fn convert_real_time_event_to_response(event: RealTimeEvent) -> RealTimeEventRes
         event_type: match &event.event_type {
             EventType::System(_) => "system".to_string(),
             EventType::Device(_) => "device".to_string(),
+            EventType::Ai(_) => "ai".to_string(),
         },
         event_subtype: match &event.event_type {
             EventType::System(subtype) => format!("{:?}", subtype).to_lowercase(),
             EventType::Device(subtype) => format!("{:?}", subtype).to_lowercase(),
+            EventType::Ai(subtype) => format!("{:?}", subtype).to_lowercase(),
         },
         level: event.level as i32,
         level_name: format!("{:?}", event.level).to_lowercase(),
@@ -331,10 +333,12 @@ fn convert_status_summary_to_response(summary: StatusSummary) -> StatusSummaryRe
                 event_type: match &type_summary.event_type {
                     EventType::System(_) => "system".to_string(),
                     EventType::Device(_) => "device".to_string(),
+                    EventType::Ai(_) => "ai".to_string(),
                 },
                 event_subtype: match &type_summary.event_type {
                     EventType::System(subtype) => format!("{:?}", subtype).to_lowercase(),
                     EventType::Device(subtype) => format!("{:?}", subtype).to_lowercase(),
+                    EventType::Ai(subtype) => format!("{:?}", subtype).to_lowercase(),
                 },
                 active_count: type_summary.active_count,
                 highest_level: type_summary.highest_level as i32,

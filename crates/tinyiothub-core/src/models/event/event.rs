@@ -124,6 +124,7 @@ impl Event {
                 )
             }
             EventType::System(_) => matches!(self.level, EventLevel::Critical | EventLevel::Error),
+            EventType::Ai(_) => false,
         }
     }
 
@@ -153,6 +154,9 @@ impl Event {
                     _ => {}
                 }
             }
+            EventType::Ai(_) => {
+                // AI events have no type/level consistency rules
+            }
         }
 
         // Validate source consistency
@@ -166,6 +170,9 @@ impl Event {
             }
             EventType::System(_) => {
                 // System events may or may not have user_id
+            }
+            EventType::Ai(_) => {
+                // AI events may or may not have device_id/user_id
             }
         }
 

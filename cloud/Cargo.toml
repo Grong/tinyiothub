@@ -104,6 +104,7 @@ tinyiothub-storage = { workspace = true }
 tinyiothub-runtime = { workspace = true }
 tinyiothub-memory = { workspace = true }
 tinyiothub-web = { workspace = true }
+tinyiothub-ai = { workspace = true }
 tinyiothub-marketplace = { path = "../marketplace" }
 
 # Dynamic loading

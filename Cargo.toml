@@ -163,6 +163,7 @@ tinyiothub-plugin-sdk = { path = "sdks/plugin-sdk" }
 tinyiothub-runtime = { path = "crates/tinyiothub-runtime" }
 tinyiothub-memory = { path = "crates/tinyiothub-memory" }
 tinyiothub-web = { path = "crates/tinyiothub-web" }
+tinyiothub-ai = { path = "crates/tinyiothub-ai" }
 
 [profile.release]
 opt-level = 2

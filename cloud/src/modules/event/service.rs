@@ -419,6 +419,7 @@ impl EventService {
             let category = match event.event_type() {
                 EventType::System(_) => EVENT_CATEGORY_SYSTEM,
                 EventType::Device(_) => EVENT_CATEGORY_DEVICE,
+                EventType::Ai(_) => "ai",
             };
             groups.entry(category.to_string()).or_insert_with(Vec::new).push(event);
         }

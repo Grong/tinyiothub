@@ -1,0 +1,60 @@
+[package]
+name = "tinyiothub-ai"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "AI subsystem for TinyIoTHub — agents, patrol, alarms, memory, tools"
+
+[dependencies]
+# Workspace crates
+tinyiothub-core = { workspace = true, features = ["sqlx"] }
+tinyiothub-runtime = { workspace = true }
+tinyiothub-storage = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Async trait
+async-trait = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Collections
+dashmap = { workspace = true }
+
+# Sync primitives
+parking_lot = { workspace = true }
+
+# Database
+sqlx = { workspace = true, features = ["sqlite", "chrono", "uuid"] }
+
+# HTTP client
+reqwest = { workspace = true }
+
+# Utilities
+uuid = { workspace = true }
+chrono = { workspace = true }
+regex = { workspace = true }
+
+# ZeroClaw Agent runtime
+zeroclaw = { git = "https://github.com/Grong/zeroclaw.git", tag = "v0.8.1-patched", package = "zeroclawlabs", features = ["agent-runtime"] }
+zeroclaw-api = { git = "https://github.com/Grong/zeroclaw.git", tag = "v0.8.1-patched" }
+
+# Retry
+backoff = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+mockall = { workspace = true }
+tempfile = { workspace = true }
