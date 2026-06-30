@@ -64,10 +64,14 @@ pub enum DeviceEventType {
 pub enum AiEventType {
     AlarmCreated,
     AlarmResolved,
-    PatrolCompleted,
+    HeartbeatCompleted,
     ChatCompleted,
     WorkspaceCreated,
     WorkspaceDeleted,
+    HeartbeatPersistFailed,
+    ReflectionFailed,
+    ProposalCreated,
+    ProposalResolved,
 }
 
 impl AiEventType {
@@ -75,10 +79,14 @@ impl AiEventType {
         match self {
             AiEventType::AlarmCreated => "Alarm Created",
             AiEventType::AlarmResolved => "Alarm Resolved",
-            AiEventType::PatrolCompleted => "Patrol Completed",
+            AiEventType::HeartbeatCompleted => "Heartbeat Completed",
             AiEventType::ChatCompleted => "Chat Completed",
             AiEventType::WorkspaceCreated => "Workspace Created",
             AiEventType::WorkspaceDeleted => "Workspace Deleted",
+            AiEventType::HeartbeatPersistFailed => "Heartbeat Persist Failed",
+            AiEventType::ReflectionFailed => "Reflection Failed",
+            AiEventType::ProposalCreated => "Proposal Created",
+            AiEventType::ProposalResolved => "Proposal Resolved",
         }
     }
 
@@ -86,10 +94,14 @@ impl AiEventType {
         match self {
             AiEventType::AlarmCreated => "alarm_created",
             AiEventType::AlarmResolved => "alarm_resolved",
-            AiEventType::PatrolCompleted => "patrol_completed",
+            AiEventType::HeartbeatCompleted => "heartbeat_completed",
             AiEventType::ChatCompleted => "chat_completed",
             AiEventType::WorkspaceCreated => "workspace_created",
             AiEventType::WorkspaceDeleted => "workspace_deleted",
+            AiEventType::HeartbeatPersistFailed => "heartbeat_persist_failed",
+            AiEventType::ReflectionFailed => "reflection_failed",
+            AiEventType::ProposalCreated => "proposal_created",
+            AiEventType::ProposalResolved => "proposal_resolved",
         }
     }
 }
@@ -194,10 +206,14 @@ impl EventType {
             "ai" => match subtype_str {
                 "alarm_created" => Ok(EventType::Ai(AiEventType::AlarmCreated)),
                 "alarm_resolved" => Ok(EventType::Ai(AiEventType::AlarmResolved)),
-                "patrol_completed" => Ok(EventType::Ai(AiEventType::PatrolCompleted)),
+                "heartbeat_completed" => Ok(EventType::Ai(AiEventType::HeartbeatCompleted)),
                 "chat_completed" => Ok(EventType::Ai(AiEventType::ChatCompleted)),
                 "workspace_created" => Ok(EventType::Ai(AiEventType::WorkspaceCreated)),
                 "workspace_deleted" => Ok(EventType::Ai(AiEventType::WorkspaceDeleted)),
+                "heartbeat_persist_failed" => Ok(EventType::Ai(AiEventType::HeartbeatPersistFailed)),
+                "reflection_failed" => Ok(EventType::Ai(AiEventType::ReflectionFailed)),
+                "proposal_created" => Ok(EventType::Ai(AiEventType::ProposalCreated)),
+                "proposal_resolved" => Ok(EventType::Ai(AiEventType::ProposalResolved)),
                 _ => Err(format!("Unknown ai event subtype: {}", subtype_str)),
             },
             _ => Err(format!("Unknown event type: {}", type_str)),
@@ -399,8 +415,8 @@ mod tests {
 
     #[test]
     fn test_ai_event_type_parsing() {
-        let parsed = EventType::from_strings("ai", "patrol_completed").unwrap();
-        assert_eq!(parsed, EventType::Ai(AiEventType::PatrolCompleted));
+        let parsed = EventType::from_strings("ai", "heartbeat_completed").unwrap();
+        assert_eq!(parsed, EventType::Ai(AiEventType::HeartbeatCompleted));
 
         let invalid = EventType::from_strings("ai", "nonexistent");
         assert!(invalid.is_err());

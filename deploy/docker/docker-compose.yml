@@ -118,8 +118,10 @@ services:
     container_name: tinyiothub-certbot
     volumes:
       - ./data/certbot:/var/www/certbot
-      - ./nginx/ssl:/etc/nginx/ssl
-    entrypoint: "/bin/sh -c 'mkdir -p /var/www/certbot/.well-known/acme-challenge; trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+      # /etc/letsencrypt 是 certbot 默认配置目录（续期配置、证书归档、live 目录）
+      # 必须持久化，否则容器重启后 certbot 找不到续期配置，导致无法自动续期
+      - ./nginx/ssl:/etc/letsencrypt
+    entrypoint: "/bin/sh -c 'mkdir -p /var/www/certbot/.well-known/acme-challenge; trap exit TERM; while :; do certbot renew --quiet; sleep 12h & wait $${!}; done'"
 
   # ============================================
   # Marketplace 市场服务

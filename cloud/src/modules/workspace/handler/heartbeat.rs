@@ -101,10 +101,12 @@ pub async fn get_config(
         get_default_tasks()
     });
 
-    let config = state.heartbeat_manager.config().await;
+    let enabled = state.heartbeat_runner.as_ref()
+        .map(|pm| pm.active_workspaces().contains(&workspace_id))
+        .unwrap_or(false);
     ApiResponseBuilder::success(HeartbeatConfigResponse {
-        enabled: config.enabled,
-        interval_minutes: config.interval_minutes,
+        enabled,
+        interval_minutes: 15,
         workspace_id: workspace_id.clone(),
         agent_id: "default".to_string(),
         tasks,
@@ -121,14 +123,21 @@ pub async fn update_config(
 ) -> Json<ApiResponse<serde_json::Value>> {
     verify_workspace_access!(state, claims, workspace_id);
 
-    let config = state.heartbeat_manager.update_config(req.enabled, req.interval_minutes).await;
+    // Apply config changes via heartbeat_runner stop/start
+    if let Some(ref pm) = state.heartbeat_runner {
+        let should_be_active = req.enabled.unwrap_or(true);
+        let is_active = pm.active_workspaces().contains(&workspace_id);
 
-    // Restart the heartbeat loop to apply config changes
-    state.heartbeat_manager.restart(&workspace_id).await;
+        if should_be_active && !is_active {
+            pm.start(&workspace_id).await;
+        } else if !should_be_active && is_active {
+            pm.stop(&workspace_id).await;
+        }
+    }
 
     ApiResponseBuilder::success(serde_json::json!({
-        "enabled": config.enabled,
-        "intervalMinutes": config.interval_minutes,
+        "enabled": req.enabled.unwrap_or(true),
+        "intervalMinutes": req.interval_minutes.unwrap_or(15),
     }))
 }
 

@@ -13,7 +13,6 @@ use zeroclaw_api::attribution::{Attributable, Role, ToolKind};
 use super::canvas::CanvasTool;
 use crate::{
     modules::{
-        agent::heartbeat_manager::{TrustConfig, TrustLevel, resolve_trust},
         mcp::{
             handlers::{McpAuthContext, McpContextGuard},
             tool_metadata::{
@@ -26,6 +25,7 @@ use crate::{
     },
     shared::agent::config::AgentRuntimeConfig,
 };
+use tinyiothub_ai::types::{TrustConfig, TrustDecision};
 
 // ============================================================================
 // IoTToolAdapter — wraps MCP ToolHandler as zeroclaw Tool
@@ -134,10 +134,11 @@ impl IoTToolMetadata for IoTToolAdapter {
 // TrustAwareTool — wraps a Tool with trust-level enforcement
 // ============================================================================
 
-/// Proxies a `Box<dyn Tool>`, checking trust config before delegating `execute()`.
+/// Proxies a `Box<dyn Tool>`, delegating trust evaluation to
+/// `tinyiothub_ai::evaluate_tool_trust`.
 ///
-/// Trust resolution: device-specific > tool wildcard "*" > default `ApprovalRequired`.
-/// Blocked calls return a structured error so the LLM can generate a proposal instead.
+/// Trust decision comes from the AI crate — tool metadata (read/destructive)
+/// is authoritative; the TrustConfig only provides overrides.
 pub struct TrustAwareTool {
     inner: Box<dyn Tool>,
     trust_config: Arc<TrustConfig>,
@@ -146,11 +147,6 @@ pub struct TrustAwareTool {
 impl TrustAwareTool {
     pub fn new(inner: Box<dyn Tool>, trust_config: Arc<TrustConfig>) -> Self {
         Self { inner, trust_config }
-    }
-
-    /// Extract device_id from tool args JSON, if present
-    fn extract_device_id(args: &serde_json::Value) -> Option<&str> {
-        args.get("device_id").or_else(|| args.get("deviceId")).and_then(|v| v.as_str())
     }
 }
 
@@ -179,36 +175,19 @@ impl Tool for TrustAwareTool {
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let tool_name = <Self as Tool>::name(self);
-        let device_id = Self::extract_device_id(&args).unwrap_or("unknown");
 
-        let level = resolve_trust(&self.trust_config, tool_name, device_id);
-
-        match level {
-            TrustLevel::Disabled => Ok(ToolResult {
+        match tinyiothub_ai::types::evaluate_tool_trust(&self.trust_config, tool_name) {
+            TrustDecision::Allow => self.inner.execute(args).await,
+            TrustDecision::Block { reason } => Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some(format!(
-                    "Tool '{}' is disabled for device '{}'. Do not retry. \
-                     If you believe this action is necessary, mention it in \
-                     your pending_proposals.",
-                    tool_name, device_id,
-                )),
+                error: Some(reason),
             }),
-            TrustLevel::ApprovalRequired => Ok(ToolResult {
+            TrustDecision::Propose { reason } => Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some(format!(
-                    "Tool '{}' requires human approval for device '{}'. \
-                     Instead of executing, propose this action in your \
-                     pending_proposals with level, tool_name, device_id, \
-                     summary, reason, and risk.",
-                    tool_name, device_id,
-                )),
+                error: Some(reason),
             }),
-            TrustLevel::AutoWithLog | TrustLevel::FullAuto => {
-                // Execute normally — tool is trusted at the required level
-                self.inner.execute(args).await
-            }
         }
     }
 }

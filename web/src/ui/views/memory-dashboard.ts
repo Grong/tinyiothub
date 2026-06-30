@@ -2,7 +2,7 @@ import { LitElement, html } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { listActiveMemories, getPendingQueue, resolveQueueItem, pinMemory, compileProfile, generateWeeklyDigest } from "../../api/memory";
 import type { AgentMemory, ReflectionQueueItem } from "../../api/memory";
-import { getAuthToken } from "../../api/client";
+import { connectSse, type SseConnection } from "../../api/sse-client.js";
 
 const ZONE_LABELS: Record<string, string> = {
   core: "核心",
@@ -34,7 +34,7 @@ export class ViewMemoryDashboard extends LitElement {
   @state() private loading = false;
   @state() private error: string | null = null;
   @state() private notifications: string[] = [];
-  private _sseSource: EventSource | null = null;
+  private _sseConn: SseConnection | null = null;
 
   createRenderRoot() {
     return this;
@@ -50,36 +50,35 @@ export class ViewMemoryDashboard extends LitElement {
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
-    if (this._sseSource) {
-      this._sseSource.close();
-      this._sseSource = null;
+    if (this._sseConn) {
+      this._sseConn.close();
+      this._sseConn = null;
     }
   }
 
   private _connectSSE() {
-    if (this._sseSource) this._sseSource.close();
-    const token = getAuthToken();
-    this._sseSource = new EventSource(`/api/v1/workspaces/notifications/stream?token=${encodeURIComponent(token || "")}`);
-    this._sseSource.addEventListener("skill_notification", (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        this.notifications = [...this.notifications, data.message];
-        this.requestUpdate();
-        setTimeout(() => {
-          this.notifications = this.notifications.filter((n) => n !== data.message);
-          this.requestUpdate();
-        }, 8000);
-      } catch {
-        // ignore malformed events
-      }
-    });
-    this._sseSource.onerror = () => {
-      setTimeout(() => {
-        if (this._sseSource?.readyState === EventSource.CLOSED) {
-          this._connectSSE();
+    if (this._sseConn) this._sseConn.close();
+    this._sseConn = connectSse(
+      "/api/v1/workspaces/notifications/stream",
+      (eventType: string, data: string) => {
+        if (eventType === "skill_notification") {
+          try {
+            const parsed = JSON.parse(data);
+            this.notifications = [...this.notifications, parsed.message as string];
+            this.requestUpdate();
+            setTimeout(() => {
+              this.notifications = this.notifications.filter((n) => n !== parsed.message);
+              this.requestUpdate();
+            }, 8000);
+          } catch {
+            // ignore malformed events
+          }
         }
-      }, 3000);
-    };
+      },
+      (_err) => {
+        // Auto-reconnect is built into connectSse (retries after 3s)
+      },
+    );
   }
 
   private async loadData() {

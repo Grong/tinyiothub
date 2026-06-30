@@ -1,11 +1,15 @@
-//! Alarm types for the AI subsystem.
+//! Cross-domain alarm event types — NOT the full alarm domain model.
+//!
+//! The full alarm model (AlarmService, RuleEngine, AlarmSpecifications) lives
+//! in cloud::modules::alarm. This module only contains the lightweight event
+//! payload used by `AiEvent::AlarmCreated(AlarmEvent)`.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// Alarm entity — subset used cross-domain by AiEvent::AlarmCreated.
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct Alarm {
+/// Lightweight alarm event payload for cross-domain event dispatch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlarmEvent {
     pub id: String,
     pub workspace_id: String,
     pub device_id: String,
@@ -15,25 +19,4 @@ pub struct Alarm {
     pub rule_id: Option<String>,
     pub resolved: bool,
     pub created_at: DateTime<Utc>,
-}
-
-/// Alarm rule definition (skeleton — full type in cloud/ migration phase).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AlarmRule {
-    pub id: String,
-    pub workspace_id: String,
-    pub name: String,
-    pub condition_json: String,
-    pub enabled: bool,
-}
-
-/// Domain errors for alarm module.
-#[derive(Debug, thiserror::Error)]
-pub enum AlarmError {
-    #[error("Alarm not found: {id}")]
-    NotFound { id: String },
-    #[error("Rule evaluation failed: {0}")]
-    RuleEvaluation(String),
-    #[error("Repository error: {0}")]
-    Repository(String),
 }

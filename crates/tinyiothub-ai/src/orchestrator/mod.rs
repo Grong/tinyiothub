@@ -1,11 +1,11 @@
 //! AI subsystem orchestrator -- top-level coordinator.
 //!
-//! All cross-domain communication flows through the Orchestrator:
-//! AlarmCreated       --> EventBus --> Orchestrator --> PatrolManager.wake()
+//! Cross-domain communication flows through the Orchestrator:
+//! AlarmCreated       --> EventBus --> Orchestrator --> HeartbeatRunner.signal()
 //! ChatCompleted      --> EventBus --> Orchestrator --> MemoryService.reflect()
-//! PatrolCompleted    --> EventBus --> Orchestrator --> ActionRepo.insert()
-//! WorkspaceCreated   --> EventBus --> Orchestrator --> PatrolManager.start()
-//! WorkspaceDeleted   --> EventBus --> Orchestrator --> PatrolManager.stop()
+//! HeartbeatCompleted --> EventBus --> Orchestrator --> HeartbeatTaskRepository.insert_result()
+//! WorkspaceCreated    --> EventBus --> Orchestrator --> HeartbeatRunner.start()
+//! WorkspaceDeleted    --> EventBus --> Orchestrator --> HeartbeatRunner.stop()
 
 pub mod callbacks;
 
@@ -15,10 +15,11 @@ use std::sync::Arc;
 use tinyiothub_runtime::EventBus;
 use tracing::info;
 
-use crate::event::bus::AiEventPublisher;
+use crate::event::bus::{AiEventPublisher, DropNotifier};
+use crate::event::dlq::DeadLetterQueue;
+use crate::heartbeat::repo::HeartbeatTaskRepository;
+use crate::heartbeat::runner::HeartbeatRunner;
 use crate::memory::service::MemoryService;
-use crate::patrol::manager::PatrolManager;
-use crate::patrol::repo::ActionRepository;
 
 use callbacks::AiEventHandler;
 
@@ -32,17 +33,24 @@ pub struct Orchestrator {
 impl Orchestrator {
     pub fn new(
         event_bus: Arc<EventBus>,
-        patrol_manager: Arc<PatrolManager>,
-        action_repo: Arc<dyn ActionRepository>,
+        heartbeat_runner: Arc<HeartbeatRunner>,
+        task_repo: Arc<dyn HeartbeatTaskRepository>,
         memory_service: Arc<MemoryService>,
+        drop_notifier: Option<Arc<dyn DropNotifier>>,
+        dlq: Option<Arc<dyn DeadLetterQueue>>,
     ) -> Self {
-        let event_publisher = Arc::new(AiEventPublisher::new(event_bus.clone()));
+        let mut publisher = AiEventPublisher::new(event_bus.clone());
+        if let Some(n) = drop_notifier {
+            publisher = publisher.with_drop_notifier(n);
+        }
+        let event_publisher = Arc::new(publisher);
 
         let handler = Arc::new(AiEventHandler::new(
-            patrol_manager,
-            action_repo,
+            heartbeat_runner,
+            task_repo,
             memory_service,
             event_publisher.clone(),
+            dlq,
         ));
 
         Self {
@@ -53,14 +61,12 @@ impl Orchestrator {
         }
     }
 
-    /// Register all cross-domain callbacks on the event bus.
     pub fn start(&self) {
         info!("Orchestrator starting -- registering AI event handler");
         self.event_bus.register_handler(self.handler.clone());
         info!("Orchestrator started");
     }
 
-    /// Graceful shutdown.
     pub async fn shutdown(&self) {
         info!("Orchestrator shutting down...");
         self.shutting_down.store(true, Ordering::SeqCst);
@@ -73,5 +79,13 @@ impl Orchestrator {
 
     pub fn event_publisher(&self) -> &Arc<AiEventPublisher> {
         &self.event_publisher
+    }
+
+    pub fn memory_service(&self) -> &Arc<MemoryService> {
+        self.handler.memory_service()
+    }
+
+    pub fn heartbeat_runner(&self) -> &Arc<HeartbeatRunner> {
+        self.handler.heartbeat_runner()
     }
 }

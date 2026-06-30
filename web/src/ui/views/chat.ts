@@ -7,7 +7,6 @@ import {
   sendChatMessage,
   abortChatRun,
 } from "../controllers/chat.js";
-import { apiGet } from "../../api/client.js";
 import {
   groupMessages,
   renderMessageGroup,
@@ -16,6 +15,7 @@ import {
   setChipToggleCallback,
 } from "../chat/grouped-render.js";
 import { A2uiRendererEngine } from "../chat/a2ui/a2ui-renderer.js";
+import { resolveSessionKey } from "../shared/session-key.js";
 
 @customElement("view-chat")
 export class ChatView extends LitElement {
@@ -23,7 +23,6 @@ export class ChatView extends LitElement {
   @state() draft: string = "";
   @state() agentId: string = "";
 
-  private _pollTimer: ReturnType<typeof setInterval> | null = null;
   private a2uiRenderer = new A2uiRendererEngine((functionId: string, data: Record<string, unknown>) => {
     this._handleA2uiAction(functionId, data);
   });
@@ -37,31 +36,15 @@ export class ChatView extends LitElement {
     this.agentId = "default"; // TODO: get from URL params or store
     // Register chip toggle callback for Lit re-render
     setChipToggleCallback(() => this.requestUpdate());
-    // Persist session key so chat history loads correctly across page reloads
-    // Format: agent:<workspace_id>:<agent_id>/<session_uuid>
-    let workspaceId = localStorage.getItem("workspace-id");
-    if (!workspaceId) {
-      // Fallback: fetch from API if not in localStorage (e.g. first visit)
-      try {
-        const wsRes = await apiGet<{ id: string; name: string }[]>('/workspaces');
-        if (wsRes.result && wsRes.result.length > 0) {
-          workspaceId = wsRes.result[0].id;
-          localStorage.setItem("workspace-id", workspaceId);
-        }
-      } catch {
-        // API failed — session key will use empty workspace, backend may reject
-      }
-    }
-    const storedKey = localStorage.getItem("tinyiothub_chat_session_key");
-    let sessionKey = storedKey;
-    // Regenerate if: missing, malformed, or workspace_id mismatch
-    const storedWorkspace = storedKey?.split(':')[1];
-    if (!storedKey || !storedKey.includes('/') || storedWorkspace !== workspaceId) {
-      const ws = workspaceId || "";
-      sessionKey = `agent:${ws}:${this.agentId}/${crypto.randomUUID()}`;
-      localStorage.setItem("tinyiothub_chat_session_key", sessionKey);
-    }
-    this.chatState = createChatState(sessionKey || "", this.agentId);
+
+    const sessionKey = await resolveSessionKey(this.agentId);
+
+    this.chatState = createChatState(sessionKey, this.agentId);
+    // Event-driven re-render — no polling
+    this.chatState.onChange = () => {
+      this.requestUpdate();
+      this.scrollToBottom();
+    };
     this._bindA2uiCallback();
     await loadChatHistory(this.chatState);
     // Re-hydrate A2UI surfaces from history
@@ -74,18 +57,12 @@ export class ChatView extends LitElement {
     this.requestUpdate();
   }
 
-  disconnectedCallback(): void {
-    super.disconnectedCallback();
-    this._stopStreamPolling();
-  }
-
   private handleSend(): void {
     const msg = this.draft.trim();
     if (!msg) return;
     this.draft = "";
     sendChatMessage(this.chatState, msg);
     this.requestUpdate();
-    this._startStreamPolling();
   }
 
   private handleAbort(): void {
@@ -93,11 +70,8 @@ export class ChatView extends LitElement {
   }
 
   private _bindA2uiCallback(): void {
-    console.log("[A2UI] _bindA2uiCallback called");
     this.chatState.onA2ui = (jsonl: string) => {
-      console.log("[A2UI] onA2ui callback triggered, jsonl length:", jsonl.length, "first 200:", jsonl.substring(0, 200));
       this.a2uiRenderer.handleA2uiMessage(jsonl);
-      // Note: surfaceId will be attached to message in "final" state handler
       this.requestUpdate();
     };
   }
@@ -135,25 +109,7 @@ export class ChatView extends LitElement {
     // Other A2UI actions — send as chat message for the agent to handle
     const actionMsg = `[操作] ${functionId}: ${JSON.stringify(data)}`;
     sendChatMessage(this.chatState, actionMsg);
-    this._startStreamPolling();
-  }
-
-  private _startStreamPolling(): void {
-    this._stopStreamPolling();
-    this._pollTimer = setInterval(() => {
-      this.requestUpdate();
-      this.scrollToBottom();
-      if (!this.chatState.chatSending) {
-        this._stopStreamPolling();
-      }
-    }, 100);
-  }
-
-  private _stopStreamPolling(): void {
-    if (this._pollTimer) {
-      clearInterval(this._pollTimer);
-      this._pollTimer = null;
-    }
+    this.requestUpdate();
   }
 
   private scrollToBottom(): void {

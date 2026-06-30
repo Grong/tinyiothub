@@ -1,9 +1,12 @@
 // Alarm service — AlarmService, RuleEngine, AlarmSpecifications, AlarmEventHandler
 
-use std::{collections::HashMap, sync::Arc, time::Instant};
+use std::{collections::HashMap, sync::{Arc, Mutex}, time::Instant};
 
 use chrono::{DateTime, Duration, Utc};
 use dashmap::DashMap;
+use tinyiothub_ai::event::bus::AiEventPublisher;
+use tinyiothub_ai::event::types::AiEvent;
+use tinyiothub_ai::alarm::types::AlarmEvent;
 use tinyiothub_storage::cache::DeviceCache;
 
 use super::{
@@ -12,7 +15,6 @@ use super::{
     types::*,
 };
 use crate::modules::{
-    agent::heartbeat_manager::{HeartbeatManager, WakePriority, WakeSignal},
     event::{aggregates::NotificationChannelType, entities::Event, value_objects::EventType},
 };
 
@@ -21,7 +23,7 @@ pub struct AlarmService {
     alarm_repository: Arc<dyn AlarmRepository>,
     rule_repository: Arc<dyn AlarmRuleRepository>,
     rule_engine: Arc<RuleEngine>,
-    heartbeat_manager: std::sync::OnceLock<Arc<HeartbeatManager>>,
+    event_publisher: Mutex<Option<Arc<AiEventPublisher>>>,
     device_cache: std::sync::OnceLock<Arc<DeviceCache>>,
 }
 
@@ -35,47 +37,40 @@ impl AlarmService {
             alarm_repository,
             rule_repository,
             rule_engine,
-            heartbeat_manager: std::sync::OnceLock::new(),
+            event_publisher: Mutex::new(None),
             device_cache: std::sync::OnceLock::new(),
         }
     }
 
-    pub fn set_heartbeat_manager(&self, hm: Arc<HeartbeatManager>) {
-        let _ = self.heartbeat_manager.set(hm);
+    pub fn set_event_publisher(&self, publisher: Arc<AiEventPublisher>) {
+        *self.event_publisher.lock().unwrap() = Some(publisher);
     }
 
     pub fn set_device_cache(&self, dc: Arc<DeviceCache>) {
         let _ = self.device_cache.set(dc);
     }
 
-    /// Wake the heartbeat loop for a workspace when a significant alarm occurs
+    /// Publish an AiEvent when a significant alarm occurs
     fn wake_heartbeat(&self, alarm: &Alarm) {
-        let ws_id = match alarm.workspace_id.as_deref() {
-            Some(id) => id,
-            None => return,
+        let severity = match alarm.alarm_level {
+            AlarmLevel::Critical => "critical",
+            AlarmLevel::Error => "error",
+            AlarmLevel::Warning => "warning",
+            AlarmLevel::Info => "info",
         };
-        if let Some(hm) = self.heartbeat_manager.get() {
-            let priority = match alarm.alarm_level {
-                AlarmLevel::Critical => WakePriority::Critical,
-                AlarmLevel::Error => WakePriority::High,
-                _ => return,
-            };
-            let context = format!(
-                "Alarm: {} | Device: {} | {}",
-                alarm.alarm_type, alarm.device_id, alarm.message,
-            );
-            hm.wake(
-                ws_id,
-                WakeSignal {
-                    workspace_id: ws_id.to_string(),
-                    reason: format!("alarm:{}", alarm.id),
-                    context,
-                    priority,
-                    device_id: Some(alarm.device_id.clone()),
-                    alarm_type: Some(format!("{}", alarm.alarm_type)),
-                    rule_id: alarm.rule_id.clone(),
-                },
-            );
+        let ai_alarm = AlarmEvent {
+            id: alarm.id.clone(),
+            workspace_id: alarm.workspace_id.clone().unwrap_or_else(|| alarm.device_id.clone()),
+            device_id: alarm.device_id.clone(),
+            alarm_type: format!("{}", alarm.alarm_type),
+            severity: severity.to_string(),
+            message: alarm.message.clone(),
+            rule_id: alarm.rule_id.clone(),
+            resolved: matches!(alarm.status, AlarmStatus::Resolved),
+            created_at: alarm.alarm_time,
+        };
+        if let Some(ref publisher) = *self.event_publisher.lock().unwrap() {
+            publisher.publish(AiEvent::AlarmCreated(ai_alarm));
         }
     }
 

@@ -113,16 +113,14 @@ async fn compile_profile(
             .map(|c| c.model)
             .unwrap_or_else(|_| default_model());
 
-    match crate::modules::agent::reflect::compile_profile(
-        &*state.memory_store,
-        &ws,
-        &query.agent_id,
-        &model,
-    )
-    .await
-    {
-        Ok(profile) => ApiResponseBuilder::success(serde_json::json!({"profile": profile})),
-        Err(e) => ApiResponseBuilder::error(format!("Failed to compile profile: {}", e)),
+    match state.orchestrator.as_ref() {
+        Some(orchestrator) => {
+            match orchestrator.memory_service().compile_profile(&ws, &query.agent_id, &model).await {
+                Ok(profile) => ApiResponseBuilder::success(serde_json::json!({"profile": profile})),
+                Err(e) => ApiResponseBuilder::error(format!("Failed to compile profile: {}", e)),
+            }
+        }
+        None => ApiResponseBuilder::error("AI subsystem not initialized"),
     }
 }
 
@@ -140,15 +138,13 @@ async fn generate_weekly_digest(
             .map(|c| c.model)
             .unwrap_or_else(|_| default_model());
 
-    match crate::modules::agent::reflect::generate_weekly_digest(
-        &*state.memory_store,
-        &ws,
-        &query.agent_id,
-        &model,
-    )
-    .await
-    {
-        Ok(digest) => ApiResponseBuilder::success(serde_json::json!({"digest": digest})),
-        Err(e) => ApiResponseBuilder::error(format!("Failed to generate digest: {}", e)),
+    match state.orchestrator.as_ref() {
+        Some(orchestrator) => {
+            match orchestrator.memory_service().generate_weekly_digest(&ws, &query.agent_id, &model).await {
+                Ok(digest) => ApiResponseBuilder::success(serde_json::json!({"digest": digest})),
+                Err(e) => ApiResponseBuilder::error(format!("Failed to generate digest: {}", e)),
+            }
+        }
+        None => ApiResponseBuilder::error("AI subsystem not initialized"),
     }
 }

@@ -15,9 +15,8 @@ pub mod memory;
 pub mod reflect;
 pub mod tools;
 
-pub mod action_repo;
 pub mod heartbeat;
-pub mod heartbeat_manager;
+pub mod heartbeat_repo;
 pub mod scaffold;
 pub mod session;
 

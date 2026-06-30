@@ -1,6 +1,6 @@
 pub mod knowledge;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use super::{
     repo::WorkspaceRepository,
@@ -8,20 +8,23 @@ use super::{
         ResourceSearchResult, ResourceType, Workspace, WorkspaceResource, WorkspaceWithDeviceCount,
     },
 };
-use crate::{modules::agent::heartbeat_manager::HeartbeatManager, shared::error::Result};
+use tinyiothub_ai::event::bus::AiEventPublisher;
+use tinyiothub_ai::event::types::AiEvent;
+
+use crate::shared::error::Result;
 
 pub struct WorkspaceService {
     repository: Arc<dyn WorkspaceRepository>,
-    heartbeat_manager: Option<Arc<HeartbeatManager>>,
+    event_publisher: Mutex<Option<Arc<AiEventPublisher>>>,
 }
 
 impl WorkspaceService {
     pub fn new(repository: Arc<dyn WorkspaceRepository>) -> Self {
-        Self { repository, heartbeat_manager: None }
+        Self { repository, event_publisher: Mutex::new(None) }
     }
 
-    pub fn set_heartbeat_manager(&mut self, hm: Arc<HeartbeatManager>) {
-        self.heartbeat_manager = Some(hm);
+    pub fn set_event_publisher(&self, publisher: Arc<AiEventPublisher>) {
+        *self.event_publisher.lock().unwrap() = Some(publisher);
     }
 
     pub async fn list_all_ids(&self) -> Result<Vec<String>> {
@@ -51,8 +54,10 @@ impl WorkspaceService {
     ) -> Result<Workspace> {
         let workspace =
             self.repository.create(tenant_id, name, description, agent_id, agent_config).await?;
-        if let Some(ref hm) = self.heartbeat_manager {
-            hm.start(&workspace.id).await;
+        if let Some(ref publisher) = *self.event_publisher.lock().unwrap() {
+            publisher.publish(AiEvent::WorkspaceCreated {
+                workspace_id: workspace.id.clone(),
+            });
         }
         Ok(workspace)
     }
@@ -69,8 +74,10 @@ impl WorkspaceService {
     }
 
     pub async fn delete(&self, id: &str) -> Result<()> {
-        if let Some(ref hm) = self.heartbeat_manager {
-            hm.stop(id).await;
+        if let Some(ref publisher) = *self.event_publisher.lock().unwrap() {
+            publisher.publish(AiEvent::WorkspaceDeleted {
+                workspace_id: id.to_string(),
+            });
         }
         self.repository.delete(id).await
     }

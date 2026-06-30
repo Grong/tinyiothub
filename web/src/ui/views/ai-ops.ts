@@ -6,19 +6,8 @@
 import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
-import { marked } from "marked";
-import DOMPurify from "dompurify";
 import { apiGet, apiPost, apiPut } from "../../api/client.js";
-
-marked.setOptions({ async: false, gfm: true });
-
-function md(text: string): string {
-  try {
-    return DOMPurify.sanitize(marked.parse(text) as string);
-  } catch {
-    return DOMPurify.sanitize(text);
-  }
-}
+import { md } from "../shared/markdown.js";
 
 // ── Types ──
 

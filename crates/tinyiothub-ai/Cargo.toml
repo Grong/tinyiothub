@@ -9,9 +9,8 @@ description = "AI subsystem for TinyIoTHub — agents, patrol, alarms, memory, t
 
 [dependencies]
 # Workspace crates
-tinyiothub-core = { workspace = true, features = ["sqlx"] }
+tinyiothub-core = { workspace = true }
 tinyiothub-runtime = { workspace = true }
-tinyiothub-storage = { workspace = true }
 
 # Async runtime
 tokio = { workspace = true }
@@ -36,23 +35,10 @@ dashmap = { workspace = true }
 # Sync primitives
 parking_lot = { workspace = true }
 
-# Database
-sqlx = { workspace = true, features = ["sqlite", "chrono", "uuid", "derive"] }
-
-# HTTP client
-reqwest = { workspace = true }
-
 # Utilities
 uuid = { workspace = true }
 chrono = { workspace = true }
 regex = { workspace = true }
-
-# ZeroClaw Agent runtime
-zeroclaw = { git = "https://github.com/Grong/zeroclaw.git", tag = "v0.8.1-patched", package = "zeroclawlabs", features = ["agent-runtime"] }
-zeroclaw-api = { git = "https://github.com/Grong/zeroclaw.git", tag = "v0.8.1-patched" }
-
-# Retry
-backoff = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

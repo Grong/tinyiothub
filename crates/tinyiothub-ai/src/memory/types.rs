@@ -1,14 +1,25 @@
 //! Memory types — facts, safety limits, and errors.
+//!
+//! MemoryFact: parsed representation of a fact extracted from conversation.
+//! Used by the reflection engine to auto-accept or enqueue for review.
 
 use serde::{Deserialize, Serialize};
 
-/// A fact extracted from conversation for long-term memory.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// A fact extracted from conversation by the reflection engine.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MemoryFact {
-    pub key: String,
-    pub value: String,
-    pub confidence: f32,
-    pub source_turn_index: usize,
+    /// The fact statement itself.
+    pub fact: String,
+    /// Memory zone: "general", "work", "episode", "core".
+    pub zone: String,
+    /// Confidence level: "high", "medium", "low".
+    pub confidence: String,
+    /// Optional tags for categorization.
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// If present, this fact supersedes a prior one.
+    #[serde(default)]
+    pub supersedes: Option<String>,
 }
 
 /// Maximum input length for reflection (prompt injection defense).

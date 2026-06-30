@@ -170,7 +170,8 @@ pub struct AgentPool {
         tokio::sync::RwLock<Option<Arc<crate::modules::workspace::WorkspaceService>>>,
     pub knowledge_service:
         tokio::sync::RwLock<Option<Arc<crate::modules::workspace::KnowledgeService>>>,
-    pub trust_configs: DashMap<String, crate::modules::agent::heartbeat_manager::TrustConfig>,
+    pub trust_configs: DashMap<String, tinyiothub_ai::types::TrustConfig>,
+    pub memory_service: tokio::sync::RwLock<Option<Arc<tinyiothub_ai::memory::service::MemoryService>>>,
 }
 
 impl AgentPool {
@@ -232,7 +233,16 @@ impl AgentPool {
             workspace_service: tokio::sync::RwLock::new(None),
             knowledge_service: tokio::sync::RwLock::new(None),
             trust_configs: DashMap::new(),
+            memory_service: tokio::sync::RwLock::new(None),
         })
+    }
+
+    pub async fn set_memory_service(
+        &self,
+        service: Arc<tinyiothub_ai::memory::service::MemoryService>,
+    ) {
+        let mut guard = self.memory_service.write().await;
+        *guard = Some(service);
     }
 
     pub async fn set_workspace_service(
@@ -254,7 +264,7 @@ impl AgentPool {
     pub fn set_trust_config(
         &self,
         workspace_id: &str,
-        config: crate::modules::agent::heartbeat_manager::TrustConfig,
+        config: tinyiothub_ai::types::TrustConfig,
     ) {
         self.trust_configs.insert(workspace_id.to_string(), config);
     }
@@ -562,6 +572,7 @@ impl AgentPool {
         let config = config_service::get_config(&self.db_pool, agent_id).await?;
         let enable_reflection = config.enable_reflection;
         let model = config.model.clone();
+        let memory_service = self.memory_service.read().await.clone();
         chat_service::send_message(
             &agent,
             message,
@@ -569,8 +580,7 @@ impl AgentPool {
             session_key,
             system_prompt,
             &self.chat_handles,
-            Arc::clone(&self.memory_store),
-            self.db_pool.clone(),
+            memory_service,
             enable_reflection,
             &model,
             &parsed.workspace_id,

@@ -1,3 +1,4 @@
-pub mod types;
-pub mod service;
+pub mod provider;
 pub mod reflect;
+pub mod service;
+pub mod types;

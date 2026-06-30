@@ -22,14 +22,10 @@ export class A2uiRendererEngine {
   }
 
   handleA2uiMessage(jsonl: string): void {
-    console.log("[A2UI] handleA2uiMessage called, jsonl:", jsonl.substring(0, 300));
     const messages = this._parseJsonl(jsonl);
-    console.log("[A2UI] Parsing", messages.length, "messages");
     for (const msg of messages) {
-      console.log("[A2UI] Parsed message:", JSON.stringify(msg).substring(0, 200));
       this.handleSingleMessage(msg);
     }
-    console.log("[A2UI] Current surfaces:", Array.from(this.surfaces.keys()));
   }
 
   /** Parse JSONL by tracking JSON nesting depth — handles any separator. */
@@ -175,7 +171,6 @@ export class A2uiRendererEngine {
 
   renderSurface(surfaceId: string): TemplateResult | typeof nothing {
     const surface = this.surfaces.get(surfaceId);
-    console.log("[A2UI] renderSurface called for:", surfaceId, "found:", !!surface, "all surfaces:", Array.from(this.surfaces.keys()));
     if (!surface) return nothing;
 
     // Auto-group consecutive StatCards into a row
@@ -231,7 +226,6 @@ export class A2uiRendererEngine {
     if (!renderer) {
       return html`<div class="a2ui-unknown">Unknown component: ${comp.componentKind}</div>`;
     }
-    console.log("[A2UI] renderComponent:", comp.componentKind, "dataModel keys:", Object.keys(comp.dataModel));
     return renderer(comp.dataModel, this.onAction);
   }
 

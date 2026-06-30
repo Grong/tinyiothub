@@ -187,9 +187,6 @@ export function renderDeviceCard(
   const cfg = STATUS_CONFIG[status] || STATUS_CONFIG.offline;
   const showCollapse = displayProperties.length > PROP_COLLAPSE_THRESHOLD;
 
-  console.log("[DeviceCard] Normalized — name:", deviceName, "status:", status,
-    "primary:", primaryMetric, "props:", displayProperties.length, "telemetry:", telemetry.length);
-
   return html`
     <div class="a2ui-device-card a2ui-device-card--${status}"
          style="--status-color: ${cfg.color}; --status-glow: ${cfg.glow};">

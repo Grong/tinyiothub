@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use tinyiothub_ai::agent::pool::AgentPoolLike;
-use tinyiothub_ai::patrol::types::TrustConfig;
+use tinyiothub_ai::tool::trust::TrustConfig;
 
 /// Wraps cloud's AgentPool to implement tinyiothub_ai's AgentPoolLike trait.
 pub struct CloudAgentPoolAdapter {
@@ -48,24 +48,10 @@ impl AgentPoolLike for CloudAgentPoolAdapter {
     }
 
     fn set_trust_config(&self, workspace_id: &str, config: TrustConfig) {
-        // Convert tinyiothub-ai TrustConfig to cloud's HashMap-based TrustConfig
-        use crate::modules::agent::heartbeat_manager::TrustLevel as CloudTrustLevel;
-
-        let mut hm = std::collections::HashMap::new();
-        let trust_level = match config.trust_level {
-            tinyiothub_ai::patrol::types::TrustLevel::FullAuto => CloudTrustLevel::FullAuto,
-            tinyiothub_ai::patrol::types::TrustLevel::ReadOnlyAuto => CloudTrustLevel::AutoWithLog,
-            tinyiothub_ai::patrol::types::TrustLevel::ApprovalRequired => {
-                CloudTrustLevel::ApprovalRequired
-            }
-        };
-        // Map allowed tool categories to wildcard device trust
-        let mut all_devices = std::collections::HashMap::new();
-        all_devices.insert("*".to_string(), trust_level);
-        for cat in &config.allowed_tool_categories {
-            hm.insert(cat.clone(), all_devices.clone());
-        }
-        self.pool.set_trust_config(workspace_id, hm);
+        // Pass AI crate's TrustConfig straight through.
+        // Trust evaluation (evaluate_tool_trust) classifies tools by name pattern —
+        // no per-tool name lists needed here.
+        self.pool.set_trust_config(workspace_id, config);
     }
 
     fn cleanup_idle(&self) -> usize {

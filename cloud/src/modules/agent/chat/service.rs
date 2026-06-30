@@ -96,8 +96,7 @@ pub async fn send_message(
     chat_handles: &Arc<
         tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>,
     >,
-    memory_store: std::sync::Arc<dyn tinyiothub_core::memory::MemoryStore>,
-    db: sqlx::SqlitePool,
+    memory_service: Option<std::sync::Arc<tinyiothub_ai::memory::service::MemoryService>>,
     enable_reflection: bool,
     model: &str,
     workspace_id: &str,
@@ -201,28 +200,32 @@ pub async fn send_message(
 
         // Spawn reflection after the turn completes (fire-and-forget)
         if enable_reflection && let Some(assistant_text) = final_text {
-            let turn_messages = vec![
-                super::super::reflect::ChatTurnMessage {
-                    role: "user".into(),
-                    content: message.clone(),
-                },
-                super::super::reflect::ChatTurnMessage {
-                    role: "assistant".into(),
-                    content: assistant_text,
-                },
-            ];
-            tokio::spawn(async move {
-                super::super::reflect::reflect_conversation_turn(
-                    &*memory_store,
-                    &db,
-                    &workspace_id,
-                    &agent_id,
-                    &session_key,
-                    &reflection_model,
-                    &turn_messages,
-                )
-                .await;
-            });
+            if let Some(ms) = memory_service {
+                let turn_messages = vec![
+                    tinyiothub_ai::session::types::ChatTurnMessage {
+                        role: "user".into(),
+                        content: message.clone(),
+                        ..Default::default()
+                    },
+                    tinyiothub_ai::session::types::ChatTurnMessage {
+                        role: "assistant".into(),
+                        content: assistant_text,
+                        ..Default::default()
+                    },
+                ];
+                tokio::spawn(async move {
+                    let _ = ms
+                        .reflect_conversation_turn(
+                            &workspace_id,
+                            &agent_id,
+                            &session_key,
+                            &reflection_model,
+                            &turn_messages,
+                        )
+                        .await
+                        .inspect_err(|e| tracing::warn!(%workspace_id, %agent_id, "Reflection failed: {}", e));
+                });
+            }
         }
 
         chat_handles_inner.lock().await.remove(&run_id_for_remove);

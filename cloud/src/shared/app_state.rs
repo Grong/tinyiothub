@@ -106,9 +106,6 @@ pub struct AppState {
     /// Agent Pool — central agent lifecycle manager
     pub agent_pool: Arc<AgentPool>,
 
-    /// Heartbeat Manager — per-workspace heartbeat loop lifecycle
-    pub heartbeat_manager: Arc<crate::modules::agent::heartbeat_manager::HeartbeatManager>,
-
     /// 用户服务 - CRUD 操作
     pub user_service: Arc<crate::modules::user::UserService>,
 
@@ -127,8 +124,8 @@ pub struct AppState {
     /// AI subsystem orchestrator (set during async startup)
     pub orchestrator: Option<Arc<tinyiothub_ai::orchestrator::Orchestrator>>,
 
-    /// AI subsystem patrol manager (set during async startup)
-    pub patrol_manager: Option<Arc<tinyiothub_ai::patrol::manager::PatrolManager>>,
+    /// AI subsystem heartbeat runner (set during async startup)
+    pub heartbeat_runner: Option<Arc<tinyiothub_ai::heartbeat::runner::HeartbeatRunner>>,
 
     /// 标签仓库 - 用于设备服务的标签关联
     pub tag_repository: Arc<dyn crate::modules::tag::TagRepository>,
@@ -284,25 +281,6 @@ impl AppState {
                 .expect("failed to build AgentPool"),
         );
 
-        // Wire HeartbeatManager for per-workspace AI heartbeat loops
-        let action_repo: Arc<dyn crate::modules::agent::action_repo::AgentActionRepository> =
-            Arc::new(crate::modules::agent::action_repo::SqliteAgentActionRepository::new(
-                database.clone(),
-            ));
-        let heartbeat_config = crate::modules::agent::heartbeat_manager::HeartbeatConfig {
-            enabled: agent_settings.heartbeat_enabled,
-            interval_minutes: agent_settings.heartbeat_interval_minutes,
-            max_recent_actions: 10,
-            channel_size: 64,
-        };
-        let heartbeat_manager =
-            Arc::new(crate::modules::agent::heartbeat_manager::HeartbeatManager::new(
-                agent_pool.clone(),
-                action_repo,
-                device_cache.clone(),
-                heartbeat_config,
-            ));
-        alarm_service.set_heartbeat_manager(heartbeat_manager.clone());
         alarm_service.set_device_cache(device_cache.clone());
 
         // 用户服务
@@ -322,10 +300,9 @@ impl AppState {
             Arc::new(crate::modules::workspace::SqliteWorkspaceRepository::new(
                 database.as_ref().clone(),
             ));
-        let mut workspace_service =
-            crate::modules::workspace::WorkspaceService::new(workspace_repository);
-        workspace_service.set_heartbeat_manager(heartbeat_manager.clone());
-        let workspace_service = Arc::new(workspace_service);
+        let workspace_service = Arc::new(
+            crate::modules::workspace::WorkspaceService::new(workspace_repository),
+        );
 
         // 知识图谱服务
         let knowledge_repo =
@@ -448,9 +425,8 @@ impl AppState {
             secure_event_service,
             alarm_service,
             agent_pool,
-            heartbeat_manager,
             orchestrator: None,
-            patrol_manager: None,
+            heartbeat_runner: None,
             user_service,
             tenant_service,
             workspace_service,

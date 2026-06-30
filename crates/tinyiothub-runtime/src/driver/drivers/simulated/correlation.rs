@@ -101,6 +101,14 @@ impl CorrelationManager {
             Some(re) => re.is_match(tag_name),
         }
     }
+
+    /// Clear all cached contexts and reset pattern. Used in tests to ensure isolation.
+    #[doc(hidden)]
+    pub fn reset() {
+        let mut manager = CORRELATION_MANAGER.lock();
+        manager.contexts.clear();
+        manager.tag_pattern = None;
+    }
 }
 
 /// Given a device's tags (as JSON Values), extract the environment contexts
@@ -152,27 +160,34 @@ pub fn merge_contexts(contexts: &[EnvironmentContext]) -> EnvironmentContext {
 
 #[cfg(test)]
 mod tests {
+    use parking_lot::Mutex;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
+    use std::sync::LazyLock;
 
     use super::*;
 
+    /// Serialize correlation tests to prevent races on the global CORRELATION_MANAGER.
+    static TEST_SERIALIZER: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
     #[test]
     fn test_same_tag_same_context() {
+        let _serial = TEST_SERIALIZER.lock();
+        CorrelationManager::reset();
         let mut rng = StdRng::seed_from_u64(42);
-        let ctx1 = CorrelationManager::get_or_create("workshop_A", &mut rng);
-        let ctx2 = CorrelationManager::get_or_create("workshop_A", &mut rng);
+        let ctx1 = CorrelationManager::get_or_create("_corr_test_same_tag", &mut rng);
+        let ctx2 = CorrelationManager::get_or_create("_corr_test_same_tag", &mut rng);
         assert!((ctx1.temperature_offset - ctx2.temperature_offset).abs() < f64::EPSILON);
         assert!((ctx1.phase_base - ctx2.phase_base).abs() < f64::EPSILON);
     }
 
     #[test]
     fn test_different_tag_different_context() {
+        let _serial = TEST_SERIALIZER.lock();
+        CorrelationManager::reset();
         let mut rng = StdRng::seed_from_u64(42);
-        let ctx1 = CorrelationManager::get_or_create("workshop_A", &mut rng);
-        // Use the same (now advanced) RNG so the second context gets different random values.
-        let ctx2 = CorrelationManager::get_or_create("workshop_B", &mut rng);
-        // Different tags should yield different random draws from the same RNG stream.
+        let ctx1 = CorrelationManager::get_or_create("_corr_test_diff_tag_a", &mut rng);
+        let ctx2 = CorrelationManager::get_or_create("_corr_test_diff_tag_b", &mut rng);
         assert!(
             (ctx1.temperature_offset - ctx2.temperature_offset).abs() > f64::EPSILON
                 || (ctx1.phase_base - ctx2.phase_base).abs() > f64::EPSILON,
@@ -182,6 +197,8 @@ mod tests {
 
     #[test]
     fn test_empty_pattern_disables() {
+        let _serial = TEST_SERIALIZER.lock();
+        CorrelationManager::reset();
         CorrelationManager::set_pattern("");
         let manager = CORRELATION_MANAGER.lock();
         assert!(manager.tag_pattern.is_none());
@@ -189,10 +206,11 @@ mod tests {
 
     #[test]
     fn test_glob_pattern_matches() {
+        let _serial = TEST_SERIALIZER.lock();
+        CorrelationManager::reset();
         CorrelationManager::set_pattern("area_*");
         assert!(CorrelationManager::tag_matches("area_workshop"));
         assert!(CorrelationManager::tag_matches("area_lab"));
-        // Reset
         CorrelationManager::set_pattern("*");
     }
 
