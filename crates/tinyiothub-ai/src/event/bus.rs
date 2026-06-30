@@ -141,6 +141,25 @@ impl AiEvent {
     }
 }
 
+impl From<&AiEvent> for tinyiothub_core::models::event::AiEventType {
+    fn from(event: &AiEvent) -> Self {
+        match event {
+            AiEvent::AlarmCreated(_) => tinyiothub_core::models::event::AiEventType::AlarmCreated,
+            AiEvent::AlarmResolved { .. } => tinyiothub_core::models::event::AiEventType::AlarmResolved,
+            AiEvent::HeartbeatCompleted { .. } => tinyiothub_core::models::event::AiEventType::HeartbeatCompleted,
+            AiEvent::ChatCompleted { .. } => tinyiothub_core::models::event::AiEventType::ChatCompleted,
+            AiEvent::WorkspaceCreated { .. } => tinyiothub_core::models::event::AiEventType::WorkspaceCreated,
+            AiEvent::WorkspaceDeleted { .. } => tinyiothub_core::models::event::AiEventType::WorkspaceDeleted,
+            AiEvent::HeartbeatPersistFailed { .. } => {
+                tinyiothub_core::models::event::AiEventType::HeartbeatPersistFailed
+            }
+            AiEvent::ReflectionFailed { .. } => tinyiothub_core::models::event::AiEventType::ReflectionFailed,
+            AiEvent::ProposalCreated { .. } => tinyiothub_core::models::event::AiEventType::ProposalCreated,
+            AiEvent::ProposalResolved { .. } => tinyiothub_core::models::event::AiEventType::ProposalResolved,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,11 +198,9 @@ mod tests {
         let publisher = AiEventPublisher::new(bus).with_drop_notifier(notifier);
         assert_eq!(publisher.events_dropped(), 0);
 
-        // Publish a WorkspaceCreated event (should succeed with active EventBus)
         publisher.publish(AiEvent::WorkspaceCreated {
             workspace_id: "ws_1".into(),
         });
-        // Give the spawned task time to complete
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         assert_eq!(publisher.events_published(), 1);
         assert_eq!(calls.load(Ordering::SeqCst), 0);
@@ -205,7 +222,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_variant_names() {
-        // Verify variant_name() returns expected values
         let alarm = AiEvent::AlarmCreated(crate::alarm::types::AlarmEvent {
             id: "a1".into(),
             workspace_id: "ws".into(),
@@ -260,24 +276,5 @@ mod tests {
             rule_id: None,
         };
         assert_eq!(alarm_resolved.workspace_id(), None);
-    }
-}
-
-impl From<&AiEvent> for tinyiothub_core::models::event::AiEventType {
-    fn from(event: &AiEvent) -> Self {
-        match event {
-            AiEvent::AlarmCreated(_) => tinyiothub_core::models::event::AiEventType::AlarmCreated,
-            AiEvent::AlarmResolved { .. } => tinyiothub_core::models::event::AiEventType::AlarmResolved,
-            AiEvent::HeartbeatCompleted { .. } => tinyiothub_core::models::event::AiEventType::HeartbeatCompleted,
-            AiEvent::ChatCompleted { .. } => tinyiothub_core::models::event::AiEventType::ChatCompleted,
-            AiEvent::WorkspaceCreated { .. } => tinyiothub_core::models::event::AiEventType::WorkspaceCreated,
-            AiEvent::WorkspaceDeleted { .. } => tinyiothub_core::models::event::AiEventType::WorkspaceDeleted,
-            AiEvent::HeartbeatPersistFailed { .. } => {
-                tinyiothub_core::models::event::AiEventType::HeartbeatPersistFailed
-            }
-            AiEvent::ReflectionFailed { .. } => tinyiothub_core::models::event::AiEventType::ReflectionFailed,
-            AiEvent::ProposalCreated { .. } => tinyiothub_core::models::event::AiEventType::ProposalCreated,
-            AiEvent::ProposalResolved { .. } => tinyiothub_core::models::event::AiEventType::ProposalResolved,
-        }
     }
 }
