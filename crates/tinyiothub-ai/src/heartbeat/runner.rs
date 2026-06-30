@@ -4,6 +4,7 @@
 //! TrustConfig is loaded from DB on start and cached in memory.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use dashmap::DashMap;
 use tokio::sync::{RwLock, mpsc, oneshot};
@@ -11,7 +12,7 @@ use tracing::{debug, error, info, warn};
 
 use super::metrics::Metrics;
 use super::repo::HeartbeatTaskRepository;
-use super::types::{HeartbeatConfig, HeartbeatSignal};
+use super::types::{HeartbeatConfig, HeartbeatSignal, LoopSignal};
 use crate::agent::pool::AgentPoolLike;
 use crate::event::bus::AiEventPublisher;
 use crate::tool::trust::TrustConfig;
@@ -24,7 +25,7 @@ struct LoopHandle {
 /// Manages per-workspace heartbeat loop lifecycle.
 pub struct HeartbeatRunner {
     loops: DashMap<String, LoopHandle>,
-    signal_senders: DashMap<String, mpsc::UnboundedSender<HeartbeatSignal>>,
+    signal_senders: DashMap<String, mpsc::UnboundedSender<LoopSignal>>,
     trust_configs: DashMap<String, TrustConfig>,
     task_repo: Arc<dyn HeartbeatTaskRepository>,
     event_publisher: Arc<AiEventPublisher>,
@@ -34,6 +35,8 @@ pub struct HeartbeatRunner {
     pending_starts: RwLock<Vec<String>>,
     /// Operational metrics.
     pub metrics: Arc<Metrics>,
+    /// Set to true during shutdown to reject new starts and signals.
+    shutting_down: Arc<AtomicBool>,
 }
 
 impl HeartbeatRunner {
@@ -52,6 +55,7 @@ impl HeartbeatRunner {
             config,
             pending_starts: RwLock::new(Vec::new()),
             metrics: Arc::new(Metrics::new()),
+            shutting_down: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -72,6 +76,11 @@ impl HeartbeatRunner {
 
     /// Start a heartbeat loop for a workspace. Idempotent.
     pub async fn start(&self, workspace_id: &str) {
+        if self.shutting_down.load(Ordering::SeqCst) {
+            debug!(workspace_id, "HeartbeatRunner is shutting down, rejecting start");
+            return;
+        }
+
         if !self.config.enabled {
             info!(workspace_id, "Heartbeat disabled, skipping start");
             return;
@@ -79,23 +88,29 @@ impl HeartbeatRunner {
 
         self.stop(workspace_id).await;
 
-        let trust_config = self.load_trust_config(workspace_id).await;
+        let trust_config = Arc::new(RwLock::new(
+            self.load_trust_config(workspace_id).await,
+        ));
+        let trust_config_for_cache = trust_config.clone();
+
         self.trust_configs
-            .insert(workspace_id.to_string(), trust_config.clone());
+            .insert(workspace_id.to_string(), trust_config_for_cache.read().await.clone());
 
         if let Some(pool) = self.agent_pool.read().await.as_ref() {
-            pool.set_trust_config(workspace_id, trust_config.clone());
+            pool.set_trust_config(workspace_id, trust_config_for_cache.read().await.clone());
         }
 
-        let tasks = match self.task_repo.list_by_workspace(workspace_id).await {
-            Ok(t) => t,
-            Err(e) => {
-                error!(workspace_id, error = %e, "Failed to load heartbeat tasks");
-                return;
-            }
-        };
+        let tasks = Arc::new(RwLock::new(
+            match self.task_repo.list_by_workspace(workspace_id).await {
+                Ok(t) => t,
+                Err(e) => {
+                    error!(workspace_id, error = %e, "Failed to load heartbeat tasks");
+                    return;
+                }
+            },
+        ));
 
-        if tasks.is_empty() {
+        if tasks.read().await.is_empty() {
             info!(workspace_id, "No heartbeat tasks, skipping loop start");
             return;
         }
@@ -107,7 +122,7 @@ impl HeartbeatRunner {
             return;
         }
 
-        let (signal_tx, signal_rx) = mpsc::unbounded_channel();
+        let (signal_tx, signal_rx) = mpsc::unbounded_channel::<LoopSignal>();
         let (cancel_tx, cancel_rx) = oneshot::channel();
 
         let ws_id = workspace_id.to_string();
@@ -162,10 +177,15 @@ impl HeartbeatRunner {
 
     /// Send a signal to a workspace's heartbeat loop. Non-blocking.
     pub fn signal(&self, signal: HeartbeatSignal) {
+        if self.shutting_down.load(Ordering::SeqCst) {
+            debug!("HeartbeatRunner is shutting down, ignoring signal");
+            return;
+        }
+
         let ws_id = signal.workspace_id.clone();
         match self.signal_senders.get(&ws_id) {
             Some(sender) => {
-                if let Err(e) = sender.send(signal) {
+                if let Err(e) = sender.send(LoopSignal::External(signal)) {
                     warn!(workspace_id = %ws_id, error = %e, "Failed to send heartbeat signal");
                 }
             }
@@ -175,11 +195,27 @@ impl HeartbeatRunner {
         }
     }
 
+    /// Notify a running loop to reload tasks from the repository.
+    pub fn notify_tasks_changed(&self, workspace_id: &str) {
+        if let Some(sender) = self.signal_senders.get(workspace_id) {
+            let _ = sender.send(LoopSignal::ReloadTasks);
+            info!(workspace_id, "Heartbeat loop notified: tasks changed");
+        }
+    }
+
+    /// Notify a running loop to re-read TrustConfig.
+    fn notify_config_changed(&self, workspace_id: &str) {
+        if let Some(sender) = self.signal_senders.get(workspace_id) {
+            let _ = sender.send(LoopSignal::ReloadConfig);
+        }
+    }
+
     pub async fn update_trust_config(&self, workspace_id: &str, config: TrustConfig) {
         if let Some(pool) = self.agent_pool.read().await.as_ref() {
             pool.set_trust_config(workspace_id, config.clone());
         }
         self.trust_configs.insert(workspace_id.to_string(), config);
+        self.notify_config_changed(workspace_id);
         info!(workspace_id, "TrustConfig updated");
     }
 
@@ -196,6 +232,7 @@ impl HeartbeatRunner {
     }
 
     pub async fn shutdown(&self) {
+        self.shutting_down.store(true, Ordering::SeqCst);
         let ws_ids: Vec<String> = self.active_workspaces();
         for ws_id in &ws_ids {
             self.stop(ws_id).await;

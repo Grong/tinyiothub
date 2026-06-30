@@ -2,7 +2,7 @@
 //!
 //! Cross-domain communication flows through the Orchestrator:
 //! AlarmCreated       --> EventBus --> Orchestrator --> HeartbeatRunner.signal()
-//! ChatCompleted      --> EventBus --> Orchestrator --> MemoryService.reflect()
+//! (Chat reflection is handled directly in chat/service.rs)
 //! HeartbeatCompleted --> EventBus --> Orchestrator --> HeartbeatTaskRepository.insert_result()
 //! WorkspaceCreated    --> EventBus --> Orchestrator --> HeartbeatRunner.start()
 //! WorkspaceDeleted    --> EventBus --> Orchestrator --> HeartbeatRunner.stop()
@@ -45,19 +45,22 @@ impl Orchestrator {
         }
         let event_publisher = Arc::new(publisher);
 
+        let shutting_down = Arc::new(AtomicBool::new(false));
+
         let handler = Arc::new(AiEventHandler::new(
             heartbeat_runner,
             task_repo,
             memory_service,
             event_publisher.clone(),
             dlq,
+            shutting_down.clone(),
         ));
 
         Self {
             event_bus,
             handler,
             event_publisher,
-            shutting_down: Arc::new(AtomicBool::new(false)),
+            shutting_down,
         }
     }
 

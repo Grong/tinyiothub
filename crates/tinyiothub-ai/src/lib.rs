@@ -16,7 +16,7 @@ pub mod tool;
 
 /// Shared types re-exported at crate root for cross-domain use.
 pub mod types {
-    pub use crate::event::bus::DropNotifier;
+    pub use crate::event::bus::{DropNotifier, LoggingDropNotifier};
     pub use crate::event::dlq::{DeadLetterEntry, DeadLetterQueue};
     pub use crate::event::types::AiEvent;
     pub use crate::heartbeat::metrics::{Metrics, MetricsSnapshot};

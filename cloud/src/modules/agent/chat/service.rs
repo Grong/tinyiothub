@@ -97,6 +97,7 @@ pub async fn send_message(
         tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>,
     >,
     memory_service: Option<std::sync::Arc<tinyiothub_ai::memory::service::MemoryService>>,
+    event_publisher: Option<std::sync::Arc<tinyiothub_ai::event::bus::AiEventPublisher>>,
     enable_reflection: bool,
     model: &str,
     workspace_id: &str,
@@ -112,6 +113,7 @@ pub async fn send_message(
     let workspace_id = workspace_id.to_string();
     let agent_id = agent_id.to_string();
     let reflection_model = model.to_string();
+    let event_publisher = event_publisher.clone();
 
     let (tx, rx) = mpsc::channel::<ChatEvent>(100);
 
@@ -215,19 +217,31 @@ pub async fn send_message(
                     ..Default::default()
                 },
             ];
+            let ep = event_publisher.clone();
+            let ws_id = workspace_id.clone();
+            let aid = agent_id.clone();
+            let sk = session_key.clone();
             tokio::spawn(async move {
-                let _ = ms
+                if let Err(e) = ms
                     .reflect_conversation_turn(
-                        &workspace_id,
-                        &agent_id,
-                        &session_key,
+                        &ws_id,
+                        &aid,
+                        &sk,
                         &reflection_model,
                         &turn_messages,
                     )
                     .await
-                    .inspect_err(
-                        |e| tracing::warn!(%workspace_id, %agent_id, "Reflection failed: {}", e),
-                    );
+                {
+                    tracing::warn!(%ws_id, %aid, "Reflection failed: {}", e);
+                    if let Some(ref ep) = ep {
+                        ep.publish(tinyiothub_ai::event::types::AiEvent::ReflectionFailed {
+                            workspace_id: ws_id.clone(),
+                            agent_id: aid.clone(),
+                            session_key: sk.clone(),
+                            reason: e.to_string(),
+                        });
+                    }
+                }
             });
         }
 

@@ -1,10 +1,14 @@
 //! Heartbeat report parsing — extract structured HeartbeatResult from LLM text output.
 
 use regex::Regex;
+use std::sync::LazyLock;
 use tracing::warn;
 
 use super::types::{ExecutedAction, HeartbeatResult, HeartbeatStatus};
 use crate::proposal::{Proposal, ProposalStatus};
+
+static JSON_FENCE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"```json\s*\n([\s\S]*?)\n```").expect("JSON fence regex should compile"));
 
 /// Parse an LLM-generated heartbeat report (JSON inside ```json fence or raw JSON).
 pub fn parse_healing_report(raw: &str, workspace_id: &str) -> HeartbeatResult {
@@ -34,8 +38,7 @@ pub fn parse_healing_report(raw: &str, workspace_id: &str) -> HeartbeatResult {
 }
 
 fn extract_json(raw: &str) -> String {
-    let fence_re = Regex::new(r"```json\s*\n([\s\S]*?)\n```").unwrap();
-    if let Some(captures) = fence_re.captures(raw) {
+    if let Some(captures) = JSON_FENCE_RE.captures(raw) {
         return captures[1].to_string();
     }
     if let Some(start) = raw.find('{')

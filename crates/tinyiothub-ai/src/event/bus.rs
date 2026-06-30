@@ -14,6 +14,19 @@ pub trait DropNotifier: Send + Sync {
     fn on_event_dropped(&self, event_type: &str, workspace_id: Option<&str>);
 }
 
+/// Logs dropped events via `tracing::warn!`. Minimal production default.
+pub struct LoggingDropNotifier;
+
+impl DropNotifier for LoggingDropNotifier {
+    fn on_event_dropped(&self, event_type: &str, workspace_id: Option<&str>) {
+        tracing::warn!(
+            event_type,
+            workspace_id = workspace_id.unwrap_or("unknown"),
+            "AiEvent dropped — EventBus channel may be full or publish failed"
+        );
+    }
+}
+
 /// Wraps the shared EventBus for AI-specific publish semantics.
 ///
 /// All publishes are fire-and-forget (spawned onto tokio).
@@ -125,6 +138,128 @@ impl AiEvent {
             AiEvent::ProposalCreated { .. } => "ProposalCreated".into(),
             AiEvent::ProposalResolved { .. } => "ProposalResolved".into(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    struct CountingDropNotifier {
+        calls: Arc<AtomicU64>,
+    }
+
+    impl CountingDropNotifier {
+        fn new(calls: Arc<AtomicU64>) -> Self {
+            Self { calls }
+        }
+    }
+
+    impl DropNotifier for CountingDropNotifier {
+        fn on_event_dropped(&self, _event_type: &str, _workspace_id: Option<&str>) {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_publisher_creation() {
+        let bus = Arc::new(EventBus::new());
+        let publisher = AiEventPublisher::new(bus);
+        assert_eq!(publisher.events_published(), 0);
+        assert_eq!(publisher.events_dropped(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_publisher_with_drop_notifier() {
+        let bus = Arc::new(EventBus::new());
+        let calls = Arc::new(AtomicU64::new(0));
+        let notifier = Arc::new(CountingDropNotifier::new(Arc::clone(&calls)));
+        let publisher = AiEventPublisher::new(bus).with_drop_notifier(notifier);
+        assert_eq!(publisher.events_dropped(), 0);
+
+        // Publish a WorkspaceCreated event (should succeed with active EventBus)
+        publisher.publish(AiEvent::WorkspaceCreated {
+            workspace_id: "ws_1".into(),
+        });
+        // Give the spawned task time to complete
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(publisher.events_published(), 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn test_multiple_publishes() {
+        let bus = Arc::new(EventBus::new());
+        let publisher = AiEventPublisher::new(bus);
+
+        for i in 0..3 {
+            publisher.publish(AiEvent::WorkspaceCreated {
+                workspace_id: format!("ws_{}", i),
+            });
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(publisher.events_published(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_variant_names() {
+        // Verify variant_name() returns expected values
+        let alarm = AiEvent::AlarmCreated(crate::alarm::types::AlarmEvent {
+            id: "a1".into(),
+            workspace_id: "ws".into(),
+            device_id: "d1".into(),
+            alarm_type: "high_temp".into(),
+            severity: "critical".into(),
+            message: "test".into(),
+            rule_id: None,
+            resolved: false,
+            created_at: chrono::Utc::now(),
+        });
+        assert_eq!(alarm.variant_name(), "AlarmCreated");
+
+        let hc = AiEvent::HeartbeatCompleted {
+            workspace_id: "ws".into(),
+            result: crate::heartbeat::types::HeartbeatResult {
+                workspace_id: "ws".into(),
+                status: crate::heartbeat::types::HeartbeatStatus::Complete,
+                summary: "ok".into(),
+                executed_actions: vec![],
+                proposals: vec![],
+                error: None,
+            },
+        };
+        assert_eq!(hc.variant_name(), "HeartbeatCompleted");
+
+        let cc = AiEvent::ChatCompleted {
+            workspace_id: "ws".into(),
+            agent_id: "a1".into(),
+            session_key: "sk".into(),
+            model: "gpt-4".into(),
+            messages: vec![],
+        };
+        assert_eq!(cc.variant_name(), "ChatCompleted");
+    }
+
+    #[tokio::test]
+    async fn test_workspace_id_extraction() {
+        let ws_created = AiEvent::WorkspaceCreated {
+            workspace_id: "ws_1".into(),
+        };
+        assert_eq!(ws_created.workspace_id(), Some("ws_1"));
+
+        let ws_deleted = AiEvent::WorkspaceDeleted {
+            workspace_id: "ws_2".into(),
+        };
+        assert_eq!(ws_deleted.workspace_id(), Some("ws_2"));
+
+        let alarm_resolved = AiEvent::AlarmResolved {
+            alarm_id: "a1".into(),
+            device_id: "d1".into(),
+            rule_id: None,
+        };
+        assert_eq!(alarm_resolved.workspace_id(), None);
     }
 }
 

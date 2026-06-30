@@ -3,6 +3,32 @@
 > **最新完整 TODO 清单已迁移至:** `docs/superpowers/plans/2026-04-14-todo-audit-and-cleanup-plan.md`
 > 本文档保留 Edge Intelligence Agent 历史记录，新项目 TODO 请查阅上方计划。
 
+## AI Subsystem (from /plan-ceo-review 2026-06-30, SCOPE REDUCTION)
+
+### P1 — Wire DropNotifier + DeadLetterQueue
+- **What:** 实现 DropNotifier（至少 logging 级别）和 DeadLetterQueue（SQLite 存储），在 ServiceManager 中注入。
+- **Why:** 当前 AiEventPublisher 发布失败时事件静默丢失。retry_with_backoff 中的 DLQ 逻辑是死代码（dlq 始终为 None）。
+- **Files:** `cloud/src/shared/service_manager.rs:169-170`, `crates/tinyiothub-ai/src/event/bus.rs`, `crates/tinyiothub-ai/src/event/dlq.rs`
+- **Effort:** S (human: ~4h / CC: ~30min)
+
+### P2 — Wire TrustConfig DB loading
+- **What:** 从 `heartbeat_trust_config` 表加载 TrustConfig，替换 `HeartbeatRunner::load_trust_config()` 中的 `TrustConfig::default()` 硬编码。
+- **Why:** 当前所有工作空间使用默认信任配置，DB 中的配置永远不生效。
+- **Files:** `crates/tinyiothub-ai/src/heartbeat/runner.rs:206-208`, `cloud/src/modules/agent/heartbeat_repo.rs`
+- **Effort:** S (human: ~3h / CC: ~20min)
+
+### P2 — Add dynamic task/config refresh to heartbeat loop (Outside Voice)
+- **What:** 运行中的心跳循环无法获取最新的任务列表或 TrustConfig。任务增删需完整 stop/restart。TrustConfig 更新对运行中的循环不生效。
+- **Why:** Outside Voice 发现的设计限制。当前 stop/restart 模式可工作但不够优雅。
+- **Files:** `crates/tinyiothub-ai/src/heartbeat/loop_.rs`, `runner.rs`
+- **Effort:** M (human: ~1d / CC: ~1h)
+
+### P3 — Cache regex in extract_json
+- **What:** `report.rs:37` 的 `Regex::new` 每次调用重新编译，改为 `std::sync::LazyLock` 缓存。
+- **Why:** 微优化，心跳每 15min tick 一次，对性能无明显影响。纯粹代码质量改进。
+- **Files:** `crates/tinyiothub-ai/src/heartbeat/report.rs:37`
+- **Effort:** S (human: ~5min / CC: ~1min)
+
 ---
 
 > Organized by skill/component, then priority (P0 at top through P4, then Completed at bottom)

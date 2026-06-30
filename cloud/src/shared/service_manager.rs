@@ -160,14 +160,19 @@ impl ServiceManager {
 
             // Wire MemoryService into AgentPool for reflection from chat path
             app_state.agent_pool.set_memory_service(memory_service.clone()).await;
+            app_state.agent_pool.set_event_publisher(event_publisher.clone()).await;
 
             let orchestrator = Arc::new(tinyiothub_ai::orchestrator::Orchestrator::new(
                 app_state.event_bus.clone(),
                 heartbeat_runner.clone(),
                 heartbeat_task_repo,
                 memory_service,
-                None, // DropNotifier — wired later when alerting is configured
-                None, // DeadLetterQueue — wired later with SQLite/file impl
+                Some(Arc::new(tinyiothub_ai::event::bus::LoggingDropNotifier)),
+                Some(Arc::new(
+                    crate::modules::agent::dlq_repo::SqliteDeadLetterQueue::new(
+                        app_state.database.pool().clone(),
+                    ),
+                )),
             ));
             orchestrator.start();
 
@@ -268,14 +273,15 @@ impl ServiceManager {
             info!("CronSchedulerService shutdown signal sent");
         }
 
-        // 关闭 AI subsystem (Orchestrator / HeartbeatRunner)
-        if let Some(ref heartbeat_runner) = self.heartbeat_runner {
-            heartbeat_runner.shutdown().await;
-            info!("HeartbeatRunner shut down");
-        }
+        // 关闭 AI subsystem — Orchestrator 先关闭停止接收事件，
+        // 再关闭 HeartbeatRunner 停止循环，避免中间窗口事件丢失。
         if let Some(ref orchestrator) = self.orchestrator {
             orchestrator.shutdown().await;
             info!("Orchestrator shut down");
+        }
+        if let Some(ref heartbeat_runner) = self.heartbeat_runner {
+            heartbeat_runner.shutdown().await;
+            info!("HeartbeatRunner shut down");
         }
 
         // 发送关闭信号

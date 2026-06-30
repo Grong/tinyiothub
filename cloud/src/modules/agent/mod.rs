@@ -15,6 +15,7 @@ pub mod memory;
 pub mod reflect;
 pub mod tools;
 
+pub mod dlq_repo;
 pub mod heartbeat;
 pub mod heartbeat_repo;
 pub mod scaffold;

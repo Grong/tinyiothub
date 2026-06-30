@@ -3,10 +3,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, RwLock};
 use tracing::{debug, error, info, warn};
 
-use super::types::{HeartbeatConfig, HeartbeatSignal, HeartbeatStatus, HeartbeatTask};
+use super::types::{HeartbeatConfig, HeartbeatStatus, HeartbeatTask, LoopSignal};
 use crate::event::bus::AiEventPublisher;
 use crate::event::types::AiEvent;
 use crate::tool::trust::TrustConfig;
@@ -17,13 +17,13 @@ const MAX_CONSECUTIVE_FAILURES: u32 = 5;
 #[allow(clippy::too_many_arguments)]
 pub async fn heartbeat_loop(
     workspace_id: String,
-    tasks: Vec<HeartbeatTask>,
-    trust_config: TrustConfig,
+    tasks: Arc<RwLock<Vec<HeartbeatTask>>>,
+    trust_config: Arc<RwLock<TrustConfig>>,
     agent_pool: Option<Arc<dyn crate::agent::pool::AgentPoolLike>>,
-    _task_repo: Arc<dyn crate::heartbeat::repo::HeartbeatTaskRepository>,
+    task_repo: Arc<dyn crate::heartbeat::repo::HeartbeatTaskRepository>,
     event_publisher: Arc<AiEventPublisher>,
     config: HeartbeatConfig,
-    mut signal_rx: mpsc::UnboundedReceiver<HeartbeatSignal>,
+    mut signal_rx: mpsc::UnboundedReceiver<LoopSignal>,
     cancel_rx: oneshot::Receiver<()>,
 ) {
     let agent_pool = match agent_pool {
@@ -44,12 +44,21 @@ pub async fn heartbeat_loop(
 
     loop {
         if !paused {
-            let active_tasks: Vec<&HeartbeatTask> = tasks.iter().filter(|t| !t.paused).collect();
+            let active_tasks: Vec<HeartbeatTask> = tasks
+                .read()
+                .await
+                .iter()
+                .filter(|t| !t.paused)
+                .cloned()
+                .collect();
+            let trust = trust_config.read().await.clone();
+
             if !active_tasks.is_empty() {
+                let task_refs: Vec<&HeartbeatTask> = active_tasks.iter().collect();
                 match run_heartbeat_tick(
                     &workspace_id,
-                    &active_tasks,
-                    &trust_config,
+                    &task_refs,
+                    &trust,
                     &agent_pool,
                     &event_publisher,
                 )
@@ -91,17 +100,41 @@ pub async fn heartbeat_loop(
                 return;
             }
             signal = signal_rx.recv() => {
-                if let Some(s) = signal {
-                    debug!(
-                        workspace_id,
-                        priority = %s.priority.label(),
-                        reason = %s.reason,
-                        "Heartbeat loop woken by signal"
-                    );
-                    if paused {
-                        info!(workspace_id, "Heartbeat loop resumed after pause");
-                        paused = false;
-                        consecutive_failures = 0;
+                match signal {
+                    Some(LoopSignal::External(s)) => {
+                        debug!(
+                            workspace_id,
+                            priority = %s.priority.label(),
+                            reason = %s.reason,
+                            "Heartbeat loop woken by external signal"
+                        );
+                        if paused {
+                            info!(workspace_id, "Heartbeat loop resumed after pause");
+                            paused = false;
+                            consecutive_failures = 0;
+                        }
+                    }
+                    Some(LoopSignal::ReloadTasks) => {
+                        info!(workspace_id, "Heartbeat loop reloading tasks");
+                        match task_repo.list_by_workspace(&workspace_id).await {
+                            Ok(new_tasks) => {
+                                let count = new_tasks.len();
+                                *tasks.write().await = new_tasks;
+                                info!(workspace_id, count, "Heartbeat tasks reloaded");
+                            }
+                            Err(e) => {
+                                warn!(workspace_id, error = %e, "Failed to reload heartbeat tasks");
+                            }
+                        }
+                    }
+                    Some(LoopSignal::ReloadConfig) => {
+                        // Config is read from the shared Arc<RwLock<TrustConfig>>
+                        // on each tick, so this signal just forces an immediate tick.
+                        info!(workspace_id, "Heartbeat loop config refresh acknowledged");
+                    }
+                    None => {
+                        debug!(workspace_id, "Signal channel closed, exiting heartbeat loop");
+                        return;
                     }
                 }
             }

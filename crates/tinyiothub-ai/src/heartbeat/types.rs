@@ -99,3 +99,15 @@ impl Default for HeartbeatConfig {
         }
     }
 }
+
+/// Internal signal sent to a heartbeat loop.
+#[derive(Debug, Clone)]
+pub enum LoopSignal {
+    /// External trigger (alarm, workspace event).
+    External(HeartbeatSignal),
+    /// Reload task list from repository.
+    ReloadTasks,
+    /// Re-read TrustConfig from shared state.
+    ReloadConfig,
+}
+

@@ -214,6 +214,8 @@ pub struct AgentPool {
     pub trust_configs: DashMap<String, tinyiothub_ai::types::TrustConfig>,
     pub memory_service:
         tokio::sync::RwLock<Option<Arc<tinyiothub_ai::memory::service::MemoryService>>>,
+    pub event_publisher:
+        tokio::sync::RwLock<Option<Arc<tinyiothub_ai::event::bus::AiEventPublisher>>>,
 }
 
 impl AgentPool {
@@ -276,7 +278,16 @@ impl AgentPool {
             knowledge_service: tokio::sync::RwLock::new(None),
             trust_configs: DashMap::new(),
             memory_service: tokio::sync::RwLock::new(None),
+            event_publisher: tokio::sync::RwLock::new(None),
         })
+    }
+
+    pub async fn set_event_publisher(
+        &self,
+        publisher: Arc<tinyiothub_ai::event::bus::AiEventPublisher>,
+    ) {
+        let mut guard = self.event_publisher.write().await;
+        *guard = Some(publisher);
     }
 
     pub async fn set_memory_service(
@@ -617,6 +628,7 @@ impl AgentPool {
         let enable_reflection = config.enable_reflection;
         let model = config.model.clone();
         let memory_service = self.memory_service.read().await.clone();
+        let event_publisher = self.event_publisher.read().await.clone();
         chat_service::send_message(
             &agent,
             message,
@@ -625,6 +637,7 @@ impl AgentPool {
             system_prompt,
             &self.chat_handles,
             memory_service,
+            event_publisher,
             enable_reflection,
             &model,
             &parsed.workspace_id,
