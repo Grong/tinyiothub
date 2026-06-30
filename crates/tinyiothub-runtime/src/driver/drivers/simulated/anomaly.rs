@@ -45,6 +45,14 @@ pub struct AnomalyEngine {
     jitter_probability: f64,
     /// Per-tick probability of starting a stuck-value anomaly.
     stuck_probability: f64,
+    /// Min-max ticks for drift duration.
+    drift_duration: (u32, u32),
+    /// Min-max ticks for spike duration.
+    spike_duration: (u32, u32),
+    /// Drift rate range (units per tick).
+    drift_rate_range: (f64, f64),
+    /// Spike magnitude range (multiplier of a base 10.0 offset).
+    spike_magnitude: (f64, f64),
     /// Master enable/disable for all anomaly injection.
     pub enabled: bool,
     /// Global probability scale (multiplied into each type's probability).
@@ -64,6 +72,10 @@ impl AnomalyEngine {
             spike_probability,
             jitter_probability,
             stuck_probability,
+            drift_duration: (30, 120),
+            spike_duration: (1, 3),
+            drift_rate_range: (0.1, 0.5),
+            spike_magnitude: (1.5, 3.0),
             enabled: true,
             probability_scale: 1.0,
         }
@@ -72,6 +84,75 @@ impl AnomalyEngine {
     /// Create an engine with default probabilities (sum ≈ 5%).
     pub fn with_defaults() -> Self {
         Self::new(0.01, 0.02, 0.01, 0.01)
+    }
+
+    /// Create an engine tuned for a specific property category.
+    ///
+    /// Thermal/level properties (slow-changing): no spikes, more drift,
+    /// longer durations. Electrical/mechanical: keep aggressive defaults.
+    pub fn for_property(prop_name: &str, _unit: &str) -> Self {
+        let name_lower = prop_name.to_lowercase();
+
+        // Slow-changing properties: temperature, humidity, pressure, level
+        if name_lower.contains("temp")
+            || name_lower.contains("humid")
+            || name_lower.contains("pressure")
+            || name_lower.contains("level")
+        {
+            return Self {
+                state: AnomalyState::Inactive,
+                drift_probability: 0.03,    // higher — slow drift is realistic
+                spike_probability: 0.0,     // no spikes — unrealistic for thermal
+                jitter_probability: 0.0,    // no jitter
+                stuck_probability: 0.01,    // sensor freeze is realistic
+                drift_duration: (120, 600), // 2-10 min at 1s interval
+                spike_duration: (1, 3),
+                drift_rate_range: (0.02, 0.1), // slower drift rate for thermal
+                spike_magnitude: (1.5, 3.0),
+                enabled: true,
+                probability_scale: 1.0,
+            };
+        }
+
+        // Energy/cumulative: only drift (always-increasing counters don't spike)
+        if name_lower.contains("energy") || name_lower.contains("kwh") {
+            return Self {
+                state: AnomalyState::Inactive,
+                drift_probability: 0.02,
+                spike_probability: 0.0,
+                jitter_probability: 0.0,
+                stuck_probability: 0.01,
+                drift_duration: (60, 300),
+                spike_duration: (1, 3),
+                drift_rate_range: (0.05, 0.2),
+                spike_magnitude: (1.5, 3.0),
+                enabled: true,
+                probability_scale: 1.0,
+            };
+        }
+
+        // Status/switch: no continuous anomalies, only stuck
+        if name_lower.contains("status") || name_lower.contains("state")
+            || name_lower.contains("switch") || name_lower.contains("relay")
+        {
+            return Self {
+                state: AnomalyState::Inactive,
+                drift_probability: 0.0,
+                spike_probability: 0.0,
+                jitter_probability: 0.0,
+                stuck_probability: 0.02,
+                drift_duration: (30, 120),
+                spike_duration: (1, 3),
+                drift_rate_range: (0.1, 0.5),
+                spike_magnitude: (1.5, 3.0),
+                enabled: true,
+                probability_scale: 1.0,
+            };
+        }
+
+        // Electrical/mechanical (voltage, current, power, vibration, speed, flow):
+        // keep aggressive defaults — spikes and jitter are realistic
+        Self::with_defaults()
     }
 
     /// Advance one tick. Returns the anomaly offset to add to the normal value
@@ -149,8 +230,8 @@ impl AnomalyEngine {
         cumulative += self.drift_probability * scale;
         if roll < cumulative {
             let direction = if rng.r#gen::<bool>() { 1.0 } else { -1.0 };
-            let rate = rng.gen_range(0.1..0.5);
-            let remaining = rng.gen_range(30..=120);
+            let rate = rng.gen_range(self.drift_rate_range.0..self.drift_rate_range.1);
+            let remaining = rng.gen_range(self.drift_duration.0..=self.drift_duration.1);
             self.state = AnomalyState::Drift {
                 direction,
                 rate,
@@ -161,11 +242,11 @@ impl AnomalyEngine {
 
         cumulative += self.spike_probability * scale;
         if roll < cumulative {
-            let magnitude = rng.gen_range(1.5..3.0);
+            let magnitude = rng.gen_range(self.spike_magnitude.0..self.spike_magnitude.1);
             let direction = if rng.r#gen::<bool>() { 1.0 } else { -1.0 };
             let offset = direction * magnitude * 10.0; // generic amplitude
             let spike_value = normal_value + offset;
-            let remaining = rng.gen_range(1..=3);
+            let remaining = rng.gen_range(self.spike_duration.0..=self.spike_duration.1);
             self.state = AnomalyState::Spike {
                 normal_value,
                 spike_value,

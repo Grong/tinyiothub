@@ -253,7 +253,7 @@ impl DeviceDriver for SimulatedDriver {
                         let engine = self
                             .anomaly_engines
                             .entry(prop_name.clone())
-                            .or_insert_with(AnomalyEngine::with_defaults);
+                            .or_insert_with(|| AnomalyEngine::for_property(prop_name, &behavior.unit));
                         let anomaly_offset = engine.tick(value, &mut self.rng);
                         value += anomaly_offset;
                         if let Some(frozen_val) = engine.frozen_value() {
