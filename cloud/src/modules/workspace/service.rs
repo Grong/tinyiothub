@@ -2,15 +2,14 @@ pub mod knowledge;
 
 use std::sync::{Arc, Mutex};
 
+use tinyiothub_ai::event::{bus::AiEventPublisher, types::AiEvent};
+
 use super::{
     repo::WorkspaceRepository,
     types::{
         ResourceSearchResult, ResourceType, Workspace, WorkspaceResource, WorkspaceWithDeviceCount,
     },
 };
-use tinyiothub_ai::event::bus::AiEventPublisher;
-use tinyiothub_ai::event::types::AiEvent;
-
 use crate::shared::error::Result;
 
 pub struct WorkspaceService {
@@ -55,9 +54,7 @@ impl WorkspaceService {
         let workspace =
             self.repository.create(tenant_id, name, description, agent_id, agent_config).await?;
         if let Some(ref publisher) = *self.event_publisher.lock().unwrap() {
-            publisher.publish(AiEvent::WorkspaceCreated {
-                workspace_id: workspace.id.clone(),
-            });
+            publisher.publish(AiEvent::WorkspaceCreated { workspace_id: workspace.id.clone() });
         }
         Ok(workspace)
     }
@@ -75,9 +72,7 @@ impl WorkspaceService {
 
     pub async fn delete(&self, id: &str) -> Result<()> {
         if let Some(ref publisher) = *self.event_publisher.lock().unwrap() {
-            publisher.publish(AiEvent::WorkspaceDeleted {
-                workspace_id: id.to_string(),
-            });
+            publisher.publish(AiEvent::WorkspaceDeleted { workspace_id: id.to_string() });
         }
         self.repository.delete(id).await
     }

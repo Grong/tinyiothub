@@ -8,9 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
-use tinyiothub_core::memory::{
-    Confidence, MemoryInput, MemorySource, MemoryStore, MemoryZone, QueueCandidateInput,
-};
+use tinyiothub_core::memory::{Confidence, MemoryInput, MemorySource, MemoryStore, MemoryZone, QueueCandidateInput};
 use tracing::{debug, info, warn};
 
 use super::provider::LlmProvider;
@@ -64,7 +62,9 @@ impl MemoryService {
 
         // In-memory dedup (10-second window)
         if self.should_skip(session_key) {
-            self.metrics.reflection_skips.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.metrics
+                .reflection_skips
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return Ok(());
         }
 
@@ -87,13 +87,10 @@ impl MemoryService {
         let instruction = include_str!("../../templates/REFLECTION_PROMPT.md");
         let prompt = build_reflection_prompt(instruction, &active_text, &turn_text);
 
-        let llm_response = tokio::time::timeout(
-            Duration::from_secs(120),
-            self.llm.chat(None, &prompt, model, 0.3),
-        )
-        .await
-        .map_err(|_| MemoryError::Reflection("LLM call timed out after 120s".into()))?
-        .map_err(|e| MemoryError::Reflection(format!("LLM call failed: {}", e)))?;
+        let llm_response = tokio::time::timeout(Duration::from_secs(120), self.llm.chat(None, &prompt, model, 0.3))
+            .await
+            .map_err(|_| MemoryError::Reflection("LLM call timed out after 120s".into()))?
+            .map_err(|e| MemoryError::Reflection(format!("LLM call failed: {}", e)))?;
 
         self.metrics
             .record_llm_call(llm_response.metadata.total_latency_ms, true);
@@ -151,8 +148,7 @@ impl MemoryService {
                         MemoryError::Reflection(e.to_string())
                     })?;
             } else {
-                let data = serde_json::to_string(c)
-                    .map_err(|e| MemoryError::Reflection(e.to_string()))?;
+                let data = serde_json::to_string(c).map_err(|e| MemoryError::Reflection(e.to_string()))?;
                 self.memory_store
                     .enqueue_candidate(QueueCandidateInput {
                         workspace_id: workspace_id.into(),
@@ -202,17 +198,13 @@ impl MemoryService {
             .map(|m| format!("[{}] {}\n", m.zone.as_str(), m.content))
             .collect();
 
-        let prompt = include_str!("../../templates/COMPILE_PROMPT.md")
-            .replace("{memories_text}", &memories_text);
+        let prompt = include_str!("../../templates/COMPILE_PROMPT.md").replace("{memories_text}", &memories_text);
 
-        tokio::time::timeout(
-            Duration::from_secs(120),
-            self.llm.chat(None, &prompt, model, 0.3),
-        )
-        .await
-        .map_err(|_| MemoryError::Reflection("Profile compilation timed out after 120s".into()))?
-        .map_err(|e| MemoryError::Reflection(format!("Profile compilation LLM call failed: {}", e)))
-        .map(|r| r.content)
+        tokio::time::timeout(Duration::from_secs(120), self.llm.chat(None, &prompt, model, 0.3))
+            .await
+            .map_err(|_| MemoryError::Reflection("Profile compilation timed out after 120s".into()))?
+            .map_err(|e| MemoryError::Reflection(format!("Profile compilation LLM call failed: {}", e)))
+            .map(|r| r.content)
     }
 
     /// Generate a weekly digest from recent memories.
@@ -244,14 +236,11 @@ impl MemoryService {
                 .join("\n"),
         );
 
-        tokio::time::timeout(
-            Duration::from_secs(120),
-            self.llm.chat(None, &prompt, model, 0.5),
-        )
-        .await
-        .map_err(|_| MemoryError::Reflection("Weekly digest timed out after 120s".into()))?
-        .map_err(|e| MemoryError::Reflection(format!("Weekly digest LLM call failed: {}", e)))
-        .map(|r| r.content)
+        tokio::time::timeout(Duration::from_secs(120), self.llm.chat(None, &prompt, model, 0.5))
+            .await
+            .map_err(|_| MemoryError::Reflection("Weekly digest timed out after 120s".into()))?
+            .map_err(|e| MemoryError::Reflection(format!("Weekly digest LLM call failed: {}", e)))
+            .map(|r| r.content)
     }
 
     /// Access the underlying MemoryStore.
@@ -264,9 +253,8 @@ impl MemoryService {
         let mut skip = false;
         // Periodic cleanup: sweep entries older than 1 hour
         if self.last_reflection.len() > 1000 {
-            self.last_reflection.retain(|_, v| {
-                now.duration_since(*v).as_secs() < 3600
-            });
+            self.last_reflection
+                .retain(|_, v| now.duration_since(*v).as_secs() < 3600);
         }
         self.last_reflection
             .entry(session_key.to_string())
@@ -329,10 +317,7 @@ mod tests {
         ) -> tinyiothub_core::error::Result<tinyiothub_core::memory::AgentMemory> {
             Err(tinyiothub_core::error::Error::Internal("mock".into()))
         }
-        async fn get(
-            &self,
-            _id: &str,
-        ) -> tinyiothub_core::error::Result<Option<tinyiothub_core::memory::AgentMemory>> {
+        async fn get(&self, _id: &str) -> tinyiothub_core::error::Result<Option<tinyiothub_core::memory::AgentMemory>> {
             Ok(None)
         }
         async fn get_all(
@@ -357,11 +342,7 @@ mod tests {
         ) -> tinyiothub_core::error::Result<Vec<tinyiothub_core::memory::AgentMemory>> {
             Ok(vec![])
         }
-        async fn set_pinned(
-            &self,
-            _id: &str,
-            _pinned: bool,
-        ) -> tinyiothub_core::error::Result<()> {
+        async fn set_pinned(&self, _id: &str, _pinned: bool) -> tinyiothub_core::error::Result<()> {
             Ok(())
         }
         async fn record_load(&self, _id: &str) -> tinyiothub_core::error::Result<()> {
@@ -407,9 +388,7 @@ mod tests {
         let llm = Arc::new(MockLlmProvider::new(vec![]));
         let store = Arc::new(MockMemoryStore);
         let svc = MemoryService::new(llm, store);
-        let result = svc
-            .reflect_conversation_turn("ws", "agent", "sess", "model", &[])
-            .await;
+        let result = svc.reflect_conversation_turn("ws", "agent", "sess", "model", &[]).await;
         assert!(result.is_ok(), "Empty messages should return Ok immediately");
     }
 

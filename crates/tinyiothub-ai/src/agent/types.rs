@@ -6,10 +6,7 @@ use std::pin::Pin;
 /// Lightweight handle to a chat-capable agent.
 /// Wraps a zeroclaw agent reference for the heartbeat loop consumer.
 pub trait AgentHandle: Send + Sync {
-    fn send_message(
-        &self,
-        prompt: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + '_>>;
+    fn send_message(&self, prompt: &str) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + '_>>;
 }
 
 #[derive(Debug, thiserror::Error)]

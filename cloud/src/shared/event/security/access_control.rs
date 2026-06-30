@@ -131,9 +131,7 @@ impl EventAccessControl for RoleBasedAccessControl {
                     }
                 }
             }
-            crate::modules::event::value_objects::EventType::Ai(_) => {
-                "ai_event"
-            }
+            crate::modules::event::value_objects::EventType::Ai(_) => "ai_event",
         };
 
         self.has_permission(user_id, event_type_str, "read").await
@@ -187,9 +185,7 @@ impl EventAccessControl for RoleBasedAccessControl {
                     }
                 }
             }
-            crate::modules::event::value_objects::EventType::Ai(_) => {
-                "ai_event"
-            }
+            crate::modules::event::value_objects::EventType::Ai(_) => "ai_event",
         };
 
         self.has_permission(user_id, event_type_str, "create").await

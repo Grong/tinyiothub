@@ -101,7 +101,9 @@ pub async fn get_config(
         get_default_tasks()
     });
 
-    let enabled = state.heartbeat_runner.as_ref()
+    let enabled = state
+        .heartbeat_runner
+        .as_ref()
         .map(|pm| pm.active_workspaces().contains(&workspace_id))
         .unwrap_or(false);
     ApiResponseBuilder::success(HeartbeatConfigResponse {

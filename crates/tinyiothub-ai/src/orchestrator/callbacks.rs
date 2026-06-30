@@ -85,10 +85,7 @@ impl AiEventHandler {
                     self.heartbeat_runner.signal(crate::heartbeat::types::HeartbeatSignal {
                         workspace_id: alarm.workspace_id.clone(),
                         reason: format!("Alarm: {}", alarm.message),
-                        context: format!(
-                            "device_id={}, alarm_type={}",
-                            alarm.device_id, alarm.alarm_type
-                        ),
+                        context: format!("device_id={}, alarm_type={}", alarm.device_id, alarm.alarm_type),
                         priority: if severity == "critical" {
                             SignalPriority::Critical
                         } else {
@@ -100,15 +97,8 @@ impl AiEventHandler {
                     });
                 }
             }
-            AiEvent::HeartbeatCompleted {
-                workspace_id,
-                result,
-            } => {
-                match self
-                    .task_repo
-                    .insert_result(workspace_id, result)
-                    .await
-                {
+            AiEvent::HeartbeatCompleted { workspace_id, result } => {
+                match self.task_repo.insert_result(workspace_id, result).await {
                     Ok(_) => debug!(workspace_id, "Heartbeat result persisted"),
                     Err(e) => {
                         error!(workspace_id, error = %e, "Failed to persist heartbeat result");
@@ -127,13 +117,7 @@ impl AiEventHandler {
             } => {
                 if let Err(e) = self
                     .memory_service
-                    .reflect_conversation_turn(
-                        workspace_id,
-                        agent_id,
-                        session_key,
-                        model,
-                        messages,
-                    )
+                    .reflect_conversation_turn(workspace_id, agent_id, session_key, model, messages)
                     .await
                 {
                     warn!(
@@ -166,9 +150,7 @@ impl AiEventHandler {
             } => {
                 info!(
                     workspace_id,
-                    proposal_id,
-                    tool_name,
-                    "HITL proposal created — awaiting human approval"
+                    proposal_id, tool_name, "HITL proposal created — awaiting human approval"
                 );
             }
             AiEvent::ProposalResolved {
@@ -176,22 +158,13 @@ impl AiEventHandler {
                 proposal_id,
                 approved,
             } => {
-                info!(
-                    workspace_id,
-                    proposal_id,
-                    approved,
-                    "HITL proposal resolved"
-                );
+                info!(workspace_id, proposal_id, approved, "HITL proposal resolved");
             }
         }
     }
 
     /// Retry heartbeat result persistence with exponential backoff.
-    async fn retry_with_backoff(
-        &self,
-        workspace_id: &str,
-        result: &crate::heartbeat::types::HeartbeatResult,
-    ) {
+    async fn retry_with_backoff(&self, workspace_id: &str, result: &crate::heartbeat::types::HeartbeatResult) {
         let result = result.clone();
         let ws_id = workspace_id.to_string();
         let task_repo = self.task_repo.clone();

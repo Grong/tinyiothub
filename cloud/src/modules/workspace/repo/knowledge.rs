@@ -740,20 +740,16 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
         builder.push_bind(limit);
 
         let sql = builder.sql().as_ref().to_string();
-        let rows = builder
-            .build()
-            .fetch_all(self.database.pool())
-            .await
-            .map_err(|e| {
-                tracing::error!(
-                    %workspace_id,
-                    %query,
-                    %sql,
-                    error = %e,
-                    "search_knowledge SQL error"
-                );
-                Error::DatabaseError(format!("search_knowledge query failed: {} | SQL: {}", e, sql))
-            })?;
+        let rows = builder.build().fetch_all(self.database.pool()).await.map_err(|e| {
+            tracing::error!(
+                %workspace_id,
+                %query,
+                %sql,
+                error = %e,
+                "search_knowledge SQL error"
+            );
+            Error::DatabaseError(format!("search_knowledge query failed: {} | SQL: {}", e, sql))
+        })?;
 
         // Parse results manually (entity fields + relevance + snippet)
         let mut entity_results: Vec<(KnowledgeEntity, f64, String)> = Vec::new();

@@ -115,7 +115,8 @@ async fn compile_profile(
 
     match state.orchestrator.as_ref() {
         Some(orchestrator) => {
-            match orchestrator.memory_service().compile_profile(&ws, &query.agent_id, &model).await {
+            match orchestrator.memory_service().compile_profile(&ws, &query.agent_id, &model).await
+            {
                 Ok(profile) => ApiResponseBuilder::success(serde_json::json!({"profile": profile})),
                 Err(e) => ApiResponseBuilder::error(format!("Failed to compile profile: {}", e)),
             }
@@ -140,7 +141,11 @@ async fn generate_weekly_digest(
 
     match state.orchestrator.as_ref() {
         Some(orchestrator) => {
-            match orchestrator.memory_service().generate_weekly_digest(&ws, &query.agent_id, &model).await {
+            match orchestrator
+                .memory_service()
+                .generate_weekly_digest(&ws, &query.agent_id, &model)
+                .await
+            {
                 Ok(digest) => ApiResponseBuilder::success(serde_json::json!({"digest": digest})),
                 Err(e) => ApiResponseBuilder::error(format!("Failed to generate digest: {}", e)),
             }

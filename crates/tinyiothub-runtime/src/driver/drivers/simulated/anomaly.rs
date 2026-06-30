@@ -6,11 +6,7 @@ enum AnomalyState {
     /// No anomaly active.
     Inactive,
     /// Value slowly drifts in one direction.
-    Drift {
-        direction: f64,
-        rate: f64,
-        remaining: u32,
-    },
+    Drift { direction: f64, rate: f64, remaining: u32 },
     /// Sudden spike above/below normal, recovers quickly.
     Spike {
         normal_value: f64,
@@ -24,10 +20,7 @@ enum AnomalyState {
         remaining: u32,
     },
     /// Value freezes at current reading.
-    Stuck {
-        frozen_value: f64,
-        remaining: u32,
-    },
+    Stuck { frozen_value: f64, remaining: u32 },
 }
 
 /// Drives anomaly injection for a single property.
@@ -132,8 +125,10 @@ impl AnomalyEngine {
         }
 
         // Status/switch: no continuous anomalies, only stuck
-        if name_lower.contains("status") || name_lower.contains("state")
-            || name_lower.contains("switch") || name_lower.contains("relay")
+        if name_lower.contains("status")
+            || name_lower.contains("state")
+            || name_lower.contains("switch")
+            || name_lower.contains("relay")
         {
             return Self {
                 state: AnomalyState::Inactive,
@@ -294,8 +289,8 @@ impl AnomalyEngine {
 
 #[cfg(test)]
 mod tests {
-    use rand::rngs::StdRng;
     use rand::SeedableRng;
+    use rand::rngs::StdRng;
 
     use super::*;
 
@@ -351,7 +346,10 @@ mod tests {
         let mut engine = AnomalyEngine::new(0.0, 0.0, 0.0, 1.0);
         let mut rng = StdRng::seed_from_u64(42);
         let offset = engine.tick(25.0, &mut rng);
-        assert!((offset - 0.0).abs() < f64::EPSILON, "stuck offset should be 0, got {offset}");
+        assert!(
+            (offset - 0.0).abs() < f64::EPSILON,
+            "stuck offset should be 0, got {offset}"
+        );
         assert!(engine.frozen_value().is_some(), "should have frozen value");
     }
 }

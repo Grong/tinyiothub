@@ -7,6 +7,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
+use tinyiothub_ai::types::{TrustConfig, TrustDecision};
 use zeroclaw::tools::{Tool, ToolResult};
 use zeroclaw_api::attribution::{Attributable, Role, ToolKind};
 
@@ -25,7 +26,6 @@ use crate::{
     },
     shared::agent::config::AgentRuntimeConfig,
 };
-use tinyiothub_ai::types::{TrustConfig, TrustDecision};
 
 // ============================================================================
 // IoTToolAdapter — wraps MCP ToolHandler as zeroclaw Tool
@@ -178,16 +178,12 @@ impl Tool for TrustAwareTool {
 
         match tinyiothub_ai::types::evaluate_tool_trust(&self.trust_config, tool_name) {
             TrustDecision::Allow => self.inner.execute(args).await,
-            TrustDecision::Block { reason } => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(reason),
-            }),
-            TrustDecision::Propose { reason } => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(reason),
-            }),
+            TrustDecision::Block { reason } => {
+                Ok(ToolResult { success: false, output: String::new(), error: Some(reason) })
+            }
+            TrustDecision::Propose { reason } => {
+                Ok(ToolResult { success: false, output: String::new(), error: Some(reason) })
+            }
         }
     }
 }
@@ -244,6 +240,7 @@ pub async fn load_all_tools(
 ) -> Vec<Box<dyn Tool>> {
     let mut tool_boxed: Vec<Box<dyn Tool>> = Vec::new();
     tool_boxed.push(Box::new(CanvasTool));
+    tool_boxed.push(Box::new(super::GetSkillTool));
 
     if let Some(ks_svc) = knowledge_service {
         tool_boxed.push(Box::new(super::knowledge::SearchKnowledgeTool::new(ks_svc)));

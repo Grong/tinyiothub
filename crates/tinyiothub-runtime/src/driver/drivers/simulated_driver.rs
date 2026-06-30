@@ -6,10 +6,10 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 use tinyiothub_core::driver::{BackoffStrategy, DeviceDriver, ResultValue, RetryConfig};
 use tinyiothub_core::error::Error;
 
-use super::simulated::patterns::match_property;
-use super::simulated::signal::SignalComposer;
 use super::simulated::anomaly::AnomalyEngine;
 use super::simulated::correlation::{self, CorrelationManager, EnvironmentContext};
+use super::simulated::patterns::match_property;
+use super::simulated::signal::SignalComposer;
 
 #[derive(Debug, Clone, tinyiothub_macros::DeviceDriver)]
 #[driver(
@@ -225,11 +225,7 @@ impl DeviceDriver for SimulatedDriver {
                     if behavior.discrete {
                         ResultValue::boolean(prop_name.clone(), true)
                     } else {
-                        ResultValue::float_with_precision(
-                            prop_name.clone(),
-                            behavior.baseline,
-                            2,
-                        )
+                        ResultValue::float_with_precision(prop_name.clone(), behavior.baseline, 2)
                     }
                 } else if behavior.discrete {
                     // Boolean/status: toggle to "off" (false) ~1/7 of the time
@@ -352,8 +348,7 @@ mod tests {
             display_name: None,
             driver_name: Some("SimulatedDriver".to_string()),
             driver_options: Some(
-                r#"{"enable_anomaly": false, "enable_periodic": false, "enable_noise": false}"#
-                    .to_string(),
+                r#"{"enable_anomaly": false, "enable_periodic": false, "enable_noise": false}"#.to_string(),
             ),
             protocol_type: Some("simulation".to_string()),
             properties: Some(vec![
@@ -421,46 +416,16 @@ mod tests {
         let default_config = SimulatedDriver::get_default_config();
         assert_eq!(default_config.get("interval"), Some(&"1000".to_string()));
         assert_eq!(default_config.get("mode"), Some(&"random".to_string()));
-        assert_eq!(
-            default_config.get("temp_range"),
-            Some(&"10.0".to_string())
-        );
-        assert_eq!(
-            default_config.get("enable_noise"),
-            Some(&"true".to_string())
-        );
-        assert_eq!(
-            default_config.get("drift_speed"),
-            Some(&"0.3".to_string())
-        );
-        assert_eq!(
-            default_config.get("anomaly_probability"),
-            Some(&"0.02".to_string())
-        );
-        assert_eq!(
-            default_config.get("enable_periodic"),
-            Some(&"true".to_string())
-        );
-        assert_eq!(
-            default_config.get("enable_anomaly"),
-            Some(&"true".to_string())
-        );
-        assert_eq!(
-            default_config.get("daily_amplitude_scale"),
-            Some(&"1.0".to_string())
-        );
-        assert_eq!(
-            default_config.get("noise_level"),
-            Some(&"1.0".to_string())
-        );
-        assert_eq!(
-            default_config.get("drift_rate"),
-            Some(&"0.0".to_string())
-        );
-        assert_eq!(
-            default_config.get("correlation_tags"),
-            Some(&"*".to_string())
-        );
+        assert_eq!(default_config.get("temp_range"), Some(&"10.0".to_string()));
+        assert_eq!(default_config.get("enable_noise"), Some(&"true".to_string()));
+        assert_eq!(default_config.get("drift_speed"), Some(&"0.3".to_string()));
+        assert_eq!(default_config.get("anomaly_probability"), Some(&"0.02".to_string()));
+        assert_eq!(default_config.get("enable_periodic"), Some(&"true".to_string()));
+        assert_eq!(default_config.get("enable_anomaly"), Some(&"true".to_string()));
+        assert_eq!(default_config.get("daily_amplitude_scale"), Some(&"1.0".to_string()));
+        assert_eq!(default_config.get("noise_level"), Some(&"1.0".to_string()));
+        assert_eq!(default_config.get("drift_rate"), Some(&"0.0".to_string()));
+        assert_eq!(default_config.get("correlation_tags"), Some(&"*".to_string()));
         assert_eq!(default_config.len(), 12);
     }
 
@@ -535,10 +500,8 @@ mod tests {
     fn test_anomaly_disabled_no_spikes() {
         // With all variation off, values should be nearly constant (just baseline)
         let mut device = create_device_with_temp_property();
-        device.driver_options = Some(
-            r#"{"enable_anomaly": false, "enable_periodic": false, "enable_noise": false}"#
-                .to_string(),
-        );
+        device.driver_options =
+            Some(r#"{"enable_anomaly": false, "enable_periodic": false, "enable_noise": false}"#.to_string());
         let mut driver = SimulatedDriver::new(device);
 
         let mut max_change: f64 = 0.0;
@@ -581,7 +544,10 @@ mod tests {
 
         // Temperature should be ~25.0 (baseline for temp behavior)
         let temp_val: f64 = temp.value.as_ref().unwrap().parse().unwrap();
-        assert!((temp_val - 25.0).abs() < 5.0, "temp should be near 25.0, got {temp_val}");
+        assert!(
+            (temp_val - 25.0).abs() < 5.0,
+            "temp should be near 25.0, got {temp_val}"
+        );
 
         // Current should be ~10.0 (baseline for current behavior)
         let current_val: f64 = current.value.as_ref().unwrap().parse().unwrap();
@@ -633,10 +599,8 @@ mod tests {
         // anomaly engine uses its own probabilities. This test verifies that with
         // enable_anomaly=false, no spikes occur.
         let mut device = create_device_with_temp_property();
-        device.driver_options = Some(
-            r#"{"enable_anomaly": false, "enable_noise": false, "enable_periodic": false}"#
-                .to_string(),
-        );
+        device.driver_options =
+            Some(r#"{"enable_anomaly": false, "enable_noise": false, "enable_periodic": false}"#.to_string());
         let mut driver = SimulatedDriver::new(device);
 
         let mut max_change: f64 = 0.0;

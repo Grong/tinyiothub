@@ -56,14 +56,14 @@ impl PromptSection for TinyIoTHubSkillsSection {
 fn load_skills_sync(workspace_dir: &std::path::Path) -> String {
     let ws_skills = workspace_dir.join("skills");
     if ws_skills.exists()
-        && let Some(content) = read_skills_dir_sync(&ws_skills)
+        && let Some(content) = build_skills_prompt(&ws_skills)
         && !content.is_empty()
     {
         return content;
     }
     let global_skills = std::path::PathBuf::from("data/skills");
     if global_skills.exists()
-        && let Some(content) = read_skills_dir_sync(&global_skills)
+        && let Some(content) = build_skills_prompt(&global_skills)
         && !content.is_empty()
     {
         return content;
@@ -71,7 +71,12 @@ fn load_skills_sync(workspace_dir: &std::path::Path) -> String {
     String::new()
 }
 
-fn read_skills_dir_sync(dir: &std::path::Path) -> Option<String> {
+/// Build the skills prompt: platform-overview in full + compact skill index.
+///
+/// Only `platform-overview.md` is injected in full (~2KB). The other 6 skill
+/// files contribute a single-line index entry each. The LLM uses `get_skill`
+/// to load full workflow details on demand, saving ~8KB tokens per request.
+fn build_skills_prompt(dir: &std::path::Path) -> Option<String> {
     use std::fs;
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
@@ -84,21 +89,57 @@ fn read_skills_dir_sync(dir: &std::path::Path) -> Option<String> {
         .collect();
     skill_files.sort();
 
-    let mut all_skills = String::new();
-    for path in skill_files {
-        let content = match fs::read_to_string(&path) {
+    let mut overview = String::new();
+    let mut index_entries: Vec<String> = Vec::new();
+
+    for path in &skill_files {
+        let content = match fs::read_to_string(path) {
             Ok(c) => c,
             Err(_) => continue,
         };
-        let file_name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
         let body = content.trim();
         if body.is_empty() {
             continue;
         }
-        all_skills.push_str(&format!("### {}\n{}\n", file_name, body));
+        let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+
+        if file_stem == "platform-overview" {
+            overview = body.to_string();
+        } else {
+            // Extract title from first `# ` heading
+            let title = body
+                .lines()
+                .find(|l| l.starts_with("# "))
+                .map(|l| l.trim_start_matches("# ").trim().to_string())
+                .unwrap_or_else(|| file_stem.to_string());
+
+            // Extract one-line description: first non-empty, non-heading line
+            let desc = body
+                .lines()
+                .skip_while(|l| l.starts_with('#') || l.trim().is_empty())
+                .find(|l| !l.trim().is_empty())
+                .map(|l| l.trim().to_string())
+                .unwrap_or_default();
+
+            index_entries.push(format!("- **{}** (`{}`) — {}", title, file_stem, desc));
+        }
     }
 
-    if all_skills.is_empty() { None } else { Some(all_skills) }
+    if overview.is_empty() {
+        return None;
+    }
+
+    let mut prompt = overview;
+    if !index_entries.is_empty() {
+        prompt.push_str("\n\n## 技能索引 (Skill Index)\n");
+        prompt.push_str("使用 `get_skill` 工具按需加载详细技能内容：\n\n");
+        for entry in &index_entries {
+            prompt.push_str(entry);
+            prompt.push('\n');
+        }
+    }
+
+    if prompt.is_empty() { None } else { Some(prompt) }
 }
 
 // ============================================================================
@@ -171,7 +212,8 @@ pub struct AgentPool {
     pub knowledge_service:
         tokio::sync::RwLock<Option<Arc<crate::modules::workspace::KnowledgeService>>>,
     pub trust_configs: DashMap<String, tinyiothub_ai::types::TrustConfig>,
-    pub memory_service: tokio::sync::RwLock<Option<Arc<tinyiothub_ai::memory::service::MemoryService>>>,
+    pub memory_service:
+        tokio::sync::RwLock<Option<Arc<tinyiothub_ai::memory::service::MemoryService>>>,
 }
 
 impl AgentPool {
@@ -261,11 +303,7 @@ impl AgentPool {
         *guard = Some(service);
     }
 
-    pub fn set_trust_config(
-        &self,
-        workspace_id: &str,
-        config: tinyiothub_ai::types::TrustConfig,
-    ) {
+    pub fn set_trust_config(&self, workspace_id: &str, config: tinyiothub_ai::types::TrustConfig) {
         self.trust_configs.insert(workspace_id.to_string(), config);
     }
 
@@ -305,12 +343,18 @@ impl AgentPool {
 
                 let ws_svc = self.workspace_service.read().await.clone();
                 let ks_svc = self.knowledge_service.read().await.clone();
-                let trust_config = self.trust_configs.get(workspace_id).map(|e| {
-                    std::sync::Arc::new(e.value().clone())
-                });
-                let tools =
-                    tool_service::resolve_tools_for_agent(&config, workspace_id, ws_svc, ks_svc, trust_config)
-                        .await;
+                let trust_config = self
+                    .trust_configs
+                    .get(workspace_id)
+                    .map(|e| std::sync::Arc::new(e.value().clone()));
+                let tools = tool_service::resolve_tools_for_agent(
+                    &config,
+                    workspace_id,
+                    ws_svc,
+                    ks_svc,
+                    trust_config,
+                )
+                .await;
 
                 let agent = Self::build_agent(
                     &namespaced,

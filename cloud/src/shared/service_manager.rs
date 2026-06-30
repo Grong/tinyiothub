@@ -133,16 +133,15 @@ impl ServiceManager {
                 enabled: true,
                 interval_minutes: 15,
             };
-            let event_publisher = Arc::new(
-                tinyiothub_ai::event::bus::AiEventPublisher::new(app_state.event_bus.clone()),
-            );
-            let heartbeat_runner = Arc::new(
-                tinyiothub_ai::heartbeat::runner::HeartbeatRunner::new(
+            let event_publisher = Arc::new(tinyiothub_ai::event::bus::AiEventPublisher::new(
+                app_state.event_bus.clone(),
+            ));
+            let heartbeat_runner =
+                Arc::new(tinyiothub_ai::heartbeat::runner::HeartbeatRunner::new(
                     heartbeat_task_repo.clone(),
                     event_publisher.clone(),
                     heartbeat_config,
-                ),
-            );
+                ));
 
             // Wire event publisher to services that need cross-domain dispatching
             app_state.alarm_service.set_event_publisher(event_publisher.clone());

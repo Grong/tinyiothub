@@ -4,7 +4,6 @@
 //   SkillType, SkillDefinition, parse_frontmatter, execute, glob_match
 
 use serde::{Deserialize, Serialize};
-
 // Re-export AI crate types for backward compatibility.
 pub use tinyiothub_ai::skills::{SkillType, glob_match};
 

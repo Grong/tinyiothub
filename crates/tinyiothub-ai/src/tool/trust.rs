@@ -46,8 +46,7 @@ impl Default for TrustConfig {
 impl TrustConfig {
     /// Load from DB JSON column, falling back to safe default.
     pub fn from_db_json(json: Option<&str>) -> Self {
-        json.and_then(|j| serde_json::from_str(j).ok())
-            .unwrap_or_default()
+        json.and_then(|j| serde_json::from_str(j).ok()).unwrap_or_default()
     }
 
     /// Serialize to JSON for DB storage.
@@ -150,8 +149,7 @@ pub fn evaluate_tool_trust(config: &TrustConfig, tool_name: &str) -> TrustDecisi
 
     // 3. Destructive tools require explicit allowlisting even under FullAuto
     if matches!(safety, ToolSafety::Destructive) {
-        if config.trust_level == TrustLevel::FullAuto
-            && config.allowed_destructive_tools.iter().any(|t| t == tool_name)
+        if config.trust_level == TrustLevel::FullAuto && config.allowed_destructive_tools.iter().any(|t| t == tool_name)
         {
             return TrustDecision::Allow;
         }
@@ -173,8 +171,7 @@ pub fn evaluate_tool_trust(config: &TrustConfig, tool_name: &str) -> TrustDecisi
                 "Tool '{}' requires human approval under current trust level ({:?}). \
                  Propose this action in pending_proposals with tool_name, device_id, \
                  summary, reason, and risk.",
-                tool_name,
-                config.trust_level,
+                tool_name, config.trust_level,
             ),
         },
     }
@@ -295,14 +292,8 @@ mod tests {
             ..default_config()
         };
         // Even with strictest config, read tools auto-execute
-        assert_eq!(
-            evaluate_tool_trust(&config, "get_device"),
-            TrustDecision::Allow
-        );
-        assert_eq!(
-            evaluate_tool_trust(&config, "search_devices"),
-            TrustDecision::Allow
-        );
+        assert_eq!(evaluate_tool_trust(&config, "get_device"), TrustDecision::Allow);
+        assert_eq!(evaluate_tool_trust(&config, "search_devices"), TrustDecision::Allow);
     }
 
     #[test]
@@ -323,10 +314,7 @@ mod tests {
             trust_level: TrustLevel::FullAuto,
             ..default_config()
         };
-        assert_eq!(
-            evaluate_tool_trust(&config, "write_properties"),
-            TrustDecision::Allow
-        );
+        assert_eq!(evaluate_tool_trust(&config, "write_properties"), TrustDecision::Allow);
     }
 
     #[test]
@@ -348,10 +336,7 @@ mod tests {
             allowed_destructive_tools: vec!["delete_device".into()],
             ..default_config()
         };
-        assert_eq!(
-            evaluate_tool_trust(&config, "delete_device"),
-            TrustDecision::Allow
-        );
+        assert_eq!(evaluate_tool_trust(&config, "delete_device"), TrustDecision::Allow);
     }
 
     #[test]
@@ -392,4 +377,3 @@ mod tests {
         ));
     }
 }
-

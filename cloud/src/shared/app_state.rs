@@ -300,9 +300,8 @@ impl AppState {
             Arc::new(crate::modules::workspace::SqliteWorkspaceRepository::new(
                 database.as_ref().clone(),
             ));
-        let workspace_service = Arc::new(
-            crate::modules::workspace::WorkspaceService::new(workspace_repository),
-        );
+        let workspace_service =
+            Arc::new(crate::modules::workspace::WorkspaceService::new(workspace_repository));
 
         // 知识图谱服务
         let knowledge_repo =

@@ -9,8 +9,8 @@
 
 pub mod callbacks;
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tinyiothub_runtime::EventBus;
 use tracing::info;

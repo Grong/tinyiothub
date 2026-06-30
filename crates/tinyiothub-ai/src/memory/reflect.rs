@@ -5,7 +5,7 @@
 
 use crate::session::types::ChatTurnMessage;
 
-use super::types::{MemoryError, MemoryFact, MAX_REFLECTION_INPUT_CHARS, INJECTION_PATTERNS};
+use super::types::{INJECTION_PATTERNS, MAX_REFLECTION_INPUT_CHARS, MemoryError, MemoryFact};
 
 /// Build a reflection prompt from active memories and a conversation turn.
 /// `instruction` is the reflection instructions/template (e.g., from REFLECTION_PROMPT.md).
@@ -33,9 +33,7 @@ pub fn sanitize_input(input: &str) -> String {
         .lines()
         .filter(|line| {
             let trimmed = line.trim();
-            !INJECTION_PATTERNS
-                .iter()
-                .any(|pattern| trimmed.starts_with(pattern))
+            !INJECTION_PATTERNS.iter().any(|pattern| trimmed.starts_with(pattern))
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -118,7 +116,11 @@ fn try_parse_json(raw: &str) -> Option<Vec<MemoryFact>> {
         .filter_map(|item| {
             Some(MemoryFact {
                 fact: item.get("fact")?.as_str()?.to_string(),
-                zone: item.get("zone").and_then(|v| v.as_str()).unwrap_or("general").to_string(),
+                zone: item
+                    .get("zone")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("general")
+                    .to_string(),
                 confidence: item
                     .get("confidence")
                     .and_then(|v| v.as_str())
@@ -171,7 +173,7 @@ mod tests {
 
     #[test]
     fn test_truncation() {
-        let long: String = std::iter::repeat('a').take(MAX_REFLECTION_INPUT_CHARS + 100).collect();
+        let long: String = "a".repeat(MAX_REFLECTION_INPUT_CHARS + 100);
         let result = sanitize_input(&long);
         assert!(result.chars().count() <= MAX_REFLECTION_INPUT_CHARS);
     }

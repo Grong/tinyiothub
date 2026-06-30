@@ -16,21 +16,26 @@ pub mod tool;
 
 /// Shared types re-exported at crate root for cross-domain use.
 pub mod types {
+    pub use crate::event::bus::DropNotifier;
+    pub use crate::event::dlq::{DeadLetterEntry, DeadLetterQueue};
     pub use crate::event::types::AiEvent;
+    pub use crate::heartbeat::metrics::{Metrics, MetricsSnapshot};
+    pub use crate::heartbeat::types::{HeartbeatSignal, SignalPriority};
+    pub use crate::knowledge::{KnowledgeEntity, KnowledgeGraph, KnowledgeRelation, NoopKnowledgeGraph};
     pub use crate::memory::provider::{LlmCallMetadata, LlmProvider, LlmResponse};
     pub use crate::memory::reflect::{build_reflection_input, build_reflection_prompt, parse_facts, sanitize_input};
     pub use crate::memory::types::MemoryFact;
-    pub use crate::heartbeat::metrics::{Metrics, MetricsSnapshot};
-    pub use crate::heartbeat::types::{HeartbeatSignal, SignalPriority};
-    pub use crate::event::bus::DropNotifier;
-    pub use crate::event::dlq::{DeadLetterEntry, DeadLetterQueue};
-    pub use crate::prompt::types::PromptTemplate;
+    pub use crate::policy::{
+        NoopPolicyEngine, PolicyAction, PolicyCategory, PolicyDecision, PolicyEngine, PolicyRule, sanitize_llm_input,
+        validate_llm_output,
+    };
     pub use crate::prompt::PromptRegistry;
-    pub use crate::knowledge::{KnowledgeEntity, KnowledgeGraph, KnowledgeRelation, NoopKnowledgeGraph};
-    pub use crate::policy::{sanitize_llm_input, validate_llm_output, NoopPolicyEngine, PolicyAction, PolicyCategory, PolicyDecision, PolicyEngine, PolicyRule};
+    pub use crate::prompt::types::PromptTemplate;
     pub use crate::proposal::{Proposal, ProposalStatus};
     pub use crate::tool::registry::{OutputSchema, ToolDescriptor, ToolParameter, ToolRegistry};
-    pub use crate::tool::trust::{classify_tool_safety, evaluate_tool_trust, ToolSafety, TrustConfig, TrustDecision, TrustLevel};
+    pub use crate::tool::trust::{
+        ToolSafety, TrustConfig, TrustDecision, TrustLevel, classify_tool_safety, evaluate_tool_trust,
+    };
 }
 
 /// Build the full AI subsystem and return the orchestrator handle.

@@ -1,4 +1,5 @@
 pub mod canvas;
+pub mod get_skill;
 pub mod handler;
 pub mod knowledge;
 pub mod search_resources;
@@ -6,6 +7,7 @@ pub mod service;
 pub mod types;
 
 pub use canvas::CanvasTool;
+pub use get_skill::GetSkillTool;
 pub use knowledge::SearchKnowledgeTool;
 pub use search_resources::SearchWorkspaceResourcesTool;
 pub use service::{

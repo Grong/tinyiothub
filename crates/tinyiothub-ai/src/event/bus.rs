@@ -1,7 +1,7 @@
 //! AiEventPublisher — fire-and-forget wrapper around the shared EventBus.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tinyiothub_runtime::EventBus;
 use tracing::{error, warn};
@@ -66,9 +66,7 @@ impl AiEventPublisher {
                 }
             };
 
-            use tinyiothub_core::models::event::{
-                Event, EventLevel, EventSource, RichContent,
-            };
+            use tinyiothub_core::models::event::{Event, EventLevel, EventSource, RichContent};
             let evt = match Event::new(
                 event_type_obj,
                 EventLevel::Info,
@@ -139,7 +137,9 @@ impl From<&AiEvent> for tinyiothub_core::models::event::AiEventType {
             AiEvent::ChatCompleted { .. } => tinyiothub_core::models::event::AiEventType::ChatCompleted,
             AiEvent::WorkspaceCreated { .. } => tinyiothub_core::models::event::AiEventType::WorkspaceCreated,
             AiEvent::WorkspaceDeleted { .. } => tinyiothub_core::models::event::AiEventType::WorkspaceDeleted,
-            AiEvent::HeartbeatPersistFailed { .. } => tinyiothub_core::models::event::AiEventType::HeartbeatPersistFailed,
+            AiEvent::HeartbeatPersistFailed { .. } => {
+                tinyiothub_core::models::event::AiEventType::HeartbeatPersistFailed
+            }
             AiEvent::ReflectionFailed { .. } => tinyiothub_core::models::event::AiEventType::ReflectionFailed,
             AiEvent::ProposalCreated { .. } => tinyiothub_core::models::event::AiEventType::ProposalCreated,
             AiEvent::ProposalResolved { .. } => tinyiothub_core::models::event::AiEventType::ProposalResolved,

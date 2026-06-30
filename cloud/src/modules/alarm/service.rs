@@ -1,12 +1,17 @@
 // Alarm service — AlarmService, RuleEngine, AlarmSpecifications, AlarmEventHandler
 
-use std::{collections::HashMap, sync::{Arc, Mutex}, time::Instant};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 
 use chrono::{DateTime, Duration, Utc};
 use dashmap::DashMap;
-use tinyiothub_ai::event::bus::AiEventPublisher;
-use tinyiothub_ai::event::types::AiEvent;
-use tinyiothub_ai::alarm::types::AlarmEvent;
+use tinyiothub_ai::{
+    alarm::types::AlarmEvent,
+    event::{bus::AiEventPublisher, types::AiEvent},
+};
 use tinyiothub_storage::cache::DeviceCache;
 
 use super::{
@@ -14,8 +19,8 @@ use super::{
     repo::{AlarmQueryCriteria, AlarmRepository, AlarmRuleRepository, TimeRange},
     types::*,
 };
-use crate::modules::{
-    event::{aggregates::NotificationChannelType, entities::Event, value_objects::EventType},
+use crate::modules::event::{
+    aggregates::NotificationChannelType, entities::Event, value_objects::EventType,
 };
 
 /// 报警业务服务
@@ -350,12 +355,11 @@ impl RuleEngine {
             // Skip rules that target a specific property when the event is for a
             // different property. Rules with property_id = None are device-level
             // catch-all rules that apply to all properties.
-            if let Some(ref rule_prop_id) = rule.property_id {
-                if let Some(event_prop_id) = property_id {
-                    if rule_prop_id != event_prop_id {
-                        continue;
-                    }
-                }
+            if let Some(ref rule_prop_id) = rule.property_id
+                && let Some(event_prop_id) = property_id
+                && rule_prop_id != event_prop_id
+            {
+                continue;
             }
 
             let debounce_key = (device_id.to_string(), rule.id.clone());

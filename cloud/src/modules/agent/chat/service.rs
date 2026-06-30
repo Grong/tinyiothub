@@ -199,33 +199,36 @@ pub async fn send_message(
         };
 
         // Spawn reflection after the turn completes (fire-and-forget)
-        if enable_reflection && let Some(assistant_text) = final_text {
-            if let Some(ms) = memory_service {
-                let turn_messages = vec![
-                    tinyiothub_ai::session::types::ChatTurnMessage {
-                        role: "user".into(),
-                        content: message.clone(),
-                        ..Default::default()
-                    },
-                    tinyiothub_ai::session::types::ChatTurnMessage {
-                        role: "assistant".into(),
-                        content: assistant_text,
-                        ..Default::default()
-                    },
-                ];
-                tokio::spawn(async move {
-                    let _ = ms
-                        .reflect_conversation_turn(
-                            &workspace_id,
-                            &agent_id,
-                            &session_key,
-                            &reflection_model,
-                            &turn_messages,
-                        )
-                        .await
-                        .inspect_err(|e| tracing::warn!(%workspace_id, %agent_id, "Reflection failed: {}", e));
-                });
-            }
+        if enable_reflection
+            && let Some(assistant_text) = final_text
+            && let Some(ms) = memory_service
+        {
+            let turn_messages = vec![
+                tinyiothub_ai::session::types::ChatTurnMessage {
+                    role: "user".into(),
+                    content: message.clone(),
+                    ..Default::default()
+                },
+                tinyiothub_ai::session::types::ChatTurnMessage {
+                    role: "assistant".into(),
+                    content: assistant_text,
+                    ..Default::default()
+                },
+            ];
+            tokio::spawn(async move {
+                let _ = ms
+                    .reflect_conversation_turn(
+                        &workspace_id,
+                        &agent_id,
+                        &session_key,
+                        &reflection_model,
+                        &turn_messages,
+                    )
+                    .await
+                    .inspect_err(
+                        |e| tracing::warn!(%workspace_id, %agent_id, "Reflection failed: {}", e),
+                    );
+            });
         }
 
         chat_handles_inner.lock().await.remove(&run_id_for_remove);

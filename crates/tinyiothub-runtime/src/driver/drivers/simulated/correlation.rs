@@ -57,11 +57,7 @@ impl CorrelationManager {
         manager.get_or_create_inner(tag_name, rng)
     }
 
-    fn get_or_create_inner(
-        &mut self,
-        tag_name: &str,
-        rng: &mut impl Rng,
-    ) -> EnvironmentContext {
+    fn get_or_create_inner(&mut self, tag_name: &str, rng: &mut impl Rng) -> EnvironmentContext {
         if let Some(ctx) = self.contexts.get(tag_name) {
             return ctx.clone();
         }
@@ -97,7 +93,7 @@ impl CorrelationManager {
     pub fn tag_matches(tag_name: &str) -> bool {
         let manager = CORRELATION_MANAGER.lock();
         match &manager.tag_pattern {
-            None => true,  // No pattern set → match all
+            None => true, // No pattern set → match all
             Some(re) => re.is_match(tag_name),
         }
     }
@@ -116,10 +112,7 @@ impl CorrelationManager {
 ///
 /// Returns a list of EnvironmentContext references (one per matching tag).
 /// The caller (signal composer) averages or sums their contributions.
-pub fn get_contexts_for_device(
-    tags: &[serde_json::Value],
-    rng: &mut impl Rng,
-) -> Vec<EnvironmentContext> {
+pub fn get_contexts_for_device(tags: &[serde_json::Value], rng: &mut impl Rng) -> Vec<EnvironmentContext> {
     tags.iter()
         .filter_map(|tag_json| {
             let tag_name = tag_json.get("name")?.as_str()?;
@@ -161,8 +154,8 @@ pub fn merge_contexts(contexts: &[EnvironmentContext]) -> EnvironmentContext {
 #[cfg(test)]
 mod tests {
     use parking_lot::Mutex;
-    use rand::rngs::StdRng;
     use rand::SeedableRng;
+    use rand::rngs::StdRng;
     use std::sync::LazyLock;
 
     use super::*;

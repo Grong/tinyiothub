@@ -6,8 +6,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tinyiothub_ai::agent::pool::AgentPoolLike;
-use tinyiothub_ai::tool::trust::TrustConfig;
+use tinyiothub_ai::{agent::pool::AgentPoolLike, tool::trust::TrustConfig};
 
 /// Wraps cloud's AgentPool to implement tinyiothub_ai's AgentPoolLike trait.
 pub struct CloudAgentPoolAdapter {
