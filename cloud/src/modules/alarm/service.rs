@@ -347,6 +347,17 @@ impl RuleEngine {
                 continue;
             }
 
+            // Skip rules that target a specific property when the event is for a
+            // different property. Rules with property_id = None are device-level
+            // catch-all rules that apply to all properties.
+            if let Some(ref rule_prop_id) = rule.property_id {
+                if let Some(event_prop_id) = property_id {
+                    if rule_prop_id != event_prop_id {
+                        continue;
+                    }
+                }
+            }
+
             let debounce_key = (device_id.to_string(), rule.id.clone());
             let context = EvaluationContext::from_event(event);
 
@@ -1181,7 +1192,7 @@ mod tests {
         // Insert an alarm rule: temperature > 80 → Warning
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
-             VALUES ('rule-1', 'dev-1', 'prop-1', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, datetime('now'), datetime('now'))",
+             VALUES ('rule-1', 'dev-1', NULL, 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool)
         .await
@@ -1212,7 +1223,7 @@ mod tests {
             .unwrap();
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
-             VALUES ('rule-1', 'dev-1', 'prop-1', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, datetime('now'), datetime('now'))",
+             VALUES ('rule-1', 'dev-1', NULL, 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
 
@@ -1238,7 +1249,7 @@ mod tests {
         // Duration with 0s = fires immediately when inner condition is true
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
-             VALUES ('rule-d0', 'dev-1', 'prop-1', 'Duration Zero', 'duration', '{\"type\":\"duration\",\"condition\":{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0},\"duration\":0}', 'warning', 1, datetime('now'), datetime('now'))",
+             VALUES ('rule-d0', 'dev-1', NULL, 'Duration Zero', 'duration', '{\"type\":\"duration\",\"condition\":{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0},\"duration\":0}', 'warning', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
 
@@ -1262,7 +1273,7 @@ mod tests {
         // Duration with 0s so we can test trigger immediately (real sustained test would require time travel)
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
-             VALUES ('rule-d1', 'dev-1', 'prop-1', 'Duration Sustained', 'duration', '{\"type\":\"duration\",\"condition\":{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0},\"duration\":3600}', 'warning', 1, datetime('now'), datetime('now'))",
+             VALUES ('rule-d1', 'dev-1', NULL, 'Duration Sustained', 'duration', '{\"type\":\"duration\",\"condition\":{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0},\"duration\":3600}', 'warning', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
 
@@ -1289,7 +1300,7 @@ mod tests {
             .unwrap();
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
-             VALUES ('rule-d2', 'dev-1', 'prop-1', 'Duration Clear', 'duration', '{\"type\":\"duration\",\"condition\":{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0},\"duration\":3600}', 'warning', 1, datetime('now'), datetime('now'))",
+             VALUES ('rule-d2', 'dev-1', NULL, 'Duration Clear', 'duration', '{\"type\":\"duration\",\"condition\":{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0},\"duration\":3600}', 'warning', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
 
@@ -1336,7 +1347,7 @@ mod tests {
         // Range 20-80, alarm if OUTSIDE range
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
-             VALUES ('rule-r1', 'dev-1', 'prop-1', 'Temp Range', 'range', '{\"type\":\"range\",\"min\":20.0,\"max\":80.0,\"inclusive\":true}', 'warning', 1, datetime('now'), datetime('now'))",
+             VALUES ('rule-r1', 'dev-1', NULL, 'Temp Range', 'range', '{\"type\":\"range\",\"min\":20.0,\"max\":80.0,\"inclusive\":true}', 'warning', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
 
@@ -1359,7 +1370,7 @@ mod tests {
             .unwrap();
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
-             VALUES ('rule-r2', 'dev-1', 'prop-1', 'Temp Range', 'range', '{\"type\":\"range\",\"min\":20.0,\"max\":80.0,\"inclusive\":true}', 'critical', 1, datetime('now'), datetime('now'))",
+             VALUES ('rule-r2', 'dev-1', NULL, 'Temp Range', 'range', '{\"type\":\"range\",\"min\":20.0,\"max\":80.0,\"inclusive\":true}', 'critical', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
 
@@ -1383,7 +1394,7 @@ mod tests {
             .unwrap();
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
-             VALUES ('rule-r3', 'dev-1', 'prop-1', 'Temp Range', 'range', '{\"type\":\"range\",\"min\":20.0,\"max\":80.0,\"inclusive\":true}', 'warning', 1, datetime('now'), datetime('now'))",
+             VALUES ('rule-r3', 'dev-1', NULL, 'Temp Range', 'range', '{\"type\":\"range\",\"min\":20.0,\"max\":80.0,\"inclusive\":true}', 'warning', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
 
@@ -1409,7 +1420,7 @@ mod tests {
         // Increase by > 10.0 triggers
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
-             VALUES ('rule-c1', 'dev-1', 'prop-1', 'Rapid Increase', 'change', '{\"type\":\"change\",\"change_type\":\"increase\",\"threshold\":10.0,\"time_window\":0}', 'warning', 1, datetime('now'), datetime('now'))",
+             VALUES ('rule-c1', 'dev-1', NULL, 'Rapid Increase', 'change', '{\"type\":\"change\",\"change_type\":\"increase\",\"threshold\":10.0,\"time_window\":0}', 'warning', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
 
@@ -1432,7 +1443,7 @@ mod tests {
             .unwrap();
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
-             VALUES ('rule-c2', 'dev-1', 'prop-1', 'Rapid Increase', 'change', '{\"type\":\"change\",\"change_type\":\"increase\",\"threshold\":10.0,\"time_window\":0}', 'warning', 1, datetime('now'), datetime('now'))",
+             VALUES ('rule-c2', 'dev-1', NULL, 'Rapid Increase', 'change', '{\"type\":\"change\",\"change_type\":\"increase\",\"threshold\":10.0,\"time_window\":0}', 'warning', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
 
@@ -1454,7 +1465,7 @@ mod tests {
             .unwrap();
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
-             VALUES ('rule-c3', 'dev-1', 'prop-1', 'Rapid Drop', 'change', '{\"type\":\"change\",\"change_type\":\"decrease\",\"threshold\":10.0,\"time_window\":0}', 'critical', 1, datetime('now'), datetime('now'))",
+             VALUES ('rule-c3', 'dev-1', NULL, 'Rapid Drop', 'change', '{\"type\":\"change\",\"change_type\":\"decrease\",\"threshold\":10.0,\"time_window\":0}', 'critical', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
 
@@ -1479,7 +1490,7 @@ mod tests {
         // AND: (temp > 80) AND (humidity > 60) → both must be true
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
-             VALUES ('rule-and1', 'dev-1', 'prop-1', 'High T&H', 'composite', '{\"type\":\"composite\",\"operator\":\"and\",\"conditions\":[{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0},{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":60.0}]}', 'critical', 1, datetime('now'), datetime('now'))",
+             VALUES ('rule-and1', 'dev-1', NULL, 'High T&H', 'composite', '{\"type\":\"composite\",\"operator\":\"and\",\"conditions\":[{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0},{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":60.0}]}', 'critical', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
 
@@ -1504,7 +1515,7 @@ mod tests {
             .unwrap();
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
-             VALUES ('rule-and2', 'dev-1', 'prop-1', 'High T&H', 'composite', '{\"type\":\"composite\",\"operator\":\"and\",\"conditions\":[{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0},{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":90.0}]}', 'critical', 1, datetime('now'), datetime('now'))",
+             VALUES ('rule-and2', 'dev-1', NULL, 'High T&H', 'composite', '{\"type\":\"composite\",\"operator\":\"and\",\"conditions\":[{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0},{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":90.0}]}', 'critical', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
 
@@ -1528,7 +1539,7 @@ mod tests {
         // OR: (temp > 80) OR (temp > 90) — first condition true → triggers
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
-             VALUES ('rule-or1', 'dev-1', 'prop-1', 'High T OR', 'composite', '{\"type\":\"composite\",\"operator\":\"or\",\"conditions\":[{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0},{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":90.0}]}', 'warning', 1, datetime('now'), datetime('now'))",
+             VALUES ('rule-or1', 'dev-1', NULL, 'High T OR', 'composite', '{\"type\":\"composite\",\"operator\":\"or\",\"conditions\":[{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0},{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":90.0}]}', 'warning', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
 
@@ -1554,7 +1565,7 @@ mod tests {
         // trigger_duration_secs=3600: condition must be sustained for 1 hour before triggering
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
-             VALUES ('rule-tdb1', 'dev-1', 'prop-1', 'High Temp Debounce', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"trigger_duration_secs\":3600}', datetime('now'), datetime('now'))",
+             VALUES ('rule-tdb1', 'dev-1', NULL, 'High Temp Debounce', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"trigger_duration_secs\":3600}', datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
 
@@ -1587,7 +1598,7 @@ mod tests {
         // trigger_duration_secs=0: immediate trigger (same as backward compat)
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
-             VALUES ('rule-tdb0', 'dev-1', 'prop-1', 'High Temp No Debounce', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"trigger_duration_secs\":0}', datetime('now'), datetime('now'))",
+             VALUES ('rule-tdb0', 'dev-1', NULL, 'High Temp No Debounce', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"trigger_duration_secs\":0}', datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
 
@@ -1611,7 +1622,7 @@ mod tests {
             .unwrap();
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
-             VALUES ('rule-tdb2', 'dev-1', 'prop-1', 'High Temp Debounce Reset', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"trigger_duration_secs\":3600}', datetime('now'), datetime('now'))",
+             VALUES ('rule-tdb2', 'dev-1', NULL, 'High Temp Debounce Reset', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"trigger_duration_secs\":3600}', datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
 
@@ -1658,7 +1669,7 @@ mod tests {
         // Trigger > 80, recover < 75
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
-             VALUES ('rule-hys', 'dev-1', 'prop-1', 'High Temp Hysteresis', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0,\"recovery_threshold\":75.0}', 'warning', 1, datetime('now'), datetime('now'))",
+             VALUES ('rule-hys', 'dev-1', NULL, 'High Temp Hysteresis', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0,\"recovery_threshold\":75.0}', 'warning', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
 
@@ -1708,7 +1719,7 @@ mod tests {
             .unwrap();
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
-             VALUES ('rule-rdb', 'dev-1', 'prop-1', 'High Temp Recovery Debounce', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"recovery_duration_secs\":0}', datetime('now'), datetime('now'))",
+             VALUES ('rule-rdb', 'dev-1', NULL, 'High Temp Recovery Debounce', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"recovery_duration_secs\":0}', datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
 
@@ -1746,7 +1757,7 @@ mod tests {
         // suppress_duration 300s (5 minutes)
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
-             VALUES ('rule-t1', 'dev-1', 'prop-1', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"suppress_duration\":300}', datetime('now'), datetime('now'))",
+             VALUES ('rule-t1', 'dev-1', NULL, 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"suppress_duration\":300}', datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
 
@@ -1783,7 +1794,7 @@ mod tests {
             .unwrap();
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
-             VALUES ('rule-dis', 'dev-1', 'prop-1', 'Disabled Rule', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 0, datetime('now'), datetime('now'))",
+             VALUES ('rule-dis', 'dev-1', NULL, 'Disabled Rule', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 0, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
 
@@ -1807,7 +1818,7 @@ mod tests {
             .unwrap();
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
-             VALUES ('rule-lt', 'dev-1', 'prop-1', 'Low Battery', 'threshold', '{\"type\":\"threshold\",\"operator\":\"less_than\",\"value\":20.0}', 'critical', 1, datetime('now'), datetime('now'))",
+             VALUES ('rule-lt', 'dev-1', NULL, 'Low Battery', 'threshold', '{\"type\":\"threshold\",\"operator\":\"less_than\",\"value\":20.0}', 'critical', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
 
@@ -1829,7 +1840,7 @@ mod tests {
             .unwrap();
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
-             VALUES ('rule-eq', 'dev-1', 'prop-1', 'Exact Value', 'threshold', '{\"type\":\"threshold\",\"operator\":\"equal\",\"value\":42.0}', 'info', 1, datetime('now'), datetime('now'))",
+             VALUES ('rule-eq', 'dev-1', NULL, 'Exact Value', 'threshold', '{\"type\":\"threshold\",\"operator\":\"equal\",\"value\":42.0}', 'info', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
 
@@ -1854,12 +1865,12 @@ mod tests {
         // One rule that triggers (value > 80) and one that doesn't (value > 90)
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
-             VALUES ('rule-nt1', 'dev-1', 'prop-1', 'Triggers', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, datetime('now'), datetime('now'))",
+             VALUES ('rule-nt1', 'dev-1', NULL, 'Triggers', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
-             VALUES ('rule-nt2', 'dev-1', 'prop-1', 'No Trigger', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":90.0}', 'critical', 1, datetime('now'), datetime('now'))",
+             VALUES ('rule-nt2', 'dev-1', NULL, 'No Trigger', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":90.0}', 'critical', 1, datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
 
@@ -2011,7 +2022,7 @@ mod integration_tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO device_properties (id, device_id, name) VALUES ('prop-1', 'dev-1', 'temperature')")
+        sqlx::query("INSERT INTO device_properties (id, device_id, name) VALUES (NULL, 'dev-1', 'temperature')")
             .execute(&pool).await.unwrap();
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
@@ -2062,7 +2073,7 @@ mod integration_tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO device_properties (id, device_id, name) VALUES ('prop-1', 'dev-1', 'temperature')")
+        sqlx::query("INSERT INTO device_properties (id, device_id, name) VALUES (NULL, 'dev-1', 'temperature')")
             .execute(&pool).await.unwrap();
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
