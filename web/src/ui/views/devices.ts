@@ -2099,7 +2099,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
               <div class="alarm-rules-list">
                 ${this.alarmRules.map(rule => {
                   const condSummary = this.formatCondition(rule.condition);
-                  const propName = properties.find(p => p.name === rule.propertyId)?.displayName || rule.propertyId || "—";
+                  const propName = properties.find(p => p.id === rule.propertyId)?.displayName || properties.find(p => p.name === rule.propertyId)?.displayName || rule.propertyId || "—";
                   return html`
                     <div class="alarm-rule-item ${rule.isEnabled ? '' : 'alarm-rule-item--disabled'}" style="animation: ruleFadeIn 0.35s var(--ease-out) both; animation-delay: ${Math.min(this.alarmRules.indexOf(rule) * 50, 300)}ms;">
                       <div class="alarm-rule-item__main">
