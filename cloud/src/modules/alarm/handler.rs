@@ -448,7 +448,7 @@ async fn update_alarm_rule(
         req.notification_config.and_then(|nc| serde_json::from_value(nc).ok());
 
     if let Err(e) =
-        rule.update(req.name, req.description, condition, alarm_level, notification_config)
+        rule.update(req.name, req.description, req.property_id, condition, alarm_level, notification_config)
     {
         return ApiResponseBuilder::error(format!("更新规则失败: {}", e));
     }

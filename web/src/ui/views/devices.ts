@@ -655,6 +655,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
         const updateReq: UpdateAlarmRuleRequest = {
           name: this.ruleFormName,
           description: this.ruleFormDesc || undefined,
+          propertyId: this.ruleFormPropertyId || undefined,
           condition,
           alarmLevel: this.ruleFormLevel,
           notificationConfig,
@@ -2238,7 +2239,6 @@ export class DevicesView extends SignalWatcher(LitElement) {
               <div class="field">
                 <label class="label">关联属性</label>
                 <select class="select" .value=${this.ruleFormPropertyId} @change=${(e: any) => { this.ruleFormPropertyId = e.target.value; }}>
-                  <option value="">— 全部属性 —</option>
                   ${properties.map((p: any) => html`
                     <option value=${p.id}>${p.displayName || p.name} (${p.dataType || "string"})</option>
                   `)}

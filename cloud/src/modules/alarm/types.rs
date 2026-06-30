@@ -595,6 +595,7 @@ impl AlarmRule {
         &mut self,
         name: Option<String>,
         description: Option<String>,
+        property_id: Option<String>,
         condition: Option<AlarmCondition>,
         alarm_level: Option<AlarmLevel>,
         notification_config: Option<NotificationConfig>,
@@ -607,6 +608,9 @@ impl AlarmRule {
         }
         if let Some(d) = description {
             self.description = Some(d);
+        }
+        if property_id.is_some() {
+            self.property_id = property_id;
         }
         if let Some(c) = condition {
             self.condition = c;
@@ -874,6 +878,7 @@ pub struct CreateAlarmRuleRequest {
 pub struct UpdateAlarmRuleRequest {
     pub name: Option<String>,
     pub description: Option<String>,
+    pub property_id: Option<String>,
     pub condition: Option<serde_json::Value>,
     pub alarm_level: Option<String>,
     pub notification_config: Option<serde_json::Value>,
@@ -1344,7 +1349,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = rule.update(Some("New Name".to_string()), None, None, None, None);
+        let result = rule.update(Some("New Name".to_string()), None, None, None, None, None);
         assert!(result.is_ok());
         assert_eq!(rule.name, "New Name");
     }
@@ -1377,7 +1382,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = rule.update(Some("".to_string()), None, None, None, None);
+        let result = rule.update(Some("".to_string()), None, None, None, None, None);
         assert!(result.is_err());
     }
 

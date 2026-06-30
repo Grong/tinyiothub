@@ -356,6 +356,7 @@ export interface CreateAlarmRuleRequest {
 export interface UpdateAlarmRuleRequest {
   name?: string;
   description?: string;
+  propertyId?: string;
   condition?: AlarmCondition;
   alarmLevel?: AlarmLevel;
   notificationConfig?: NotificationConfig;
