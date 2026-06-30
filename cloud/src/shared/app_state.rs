@@ -28,8 +28,8 @@ use crate::{
             factory::DeviceRepositoryFactory,
             repositories::{
                 DeviceTraceRepository, NotificationHistoryRepositoryImpl,
-                NotificationRuleRepositoryImpl, SqliteDeviceMemoryRepository,
-                SqliteEventRepository, SqliteRealTimeEventRepository,
+                NotificationRuleRepositoryImpl, SqliteEventRepository,
+                SqliteRealTimeEventRepository,
             },
         },
         redis::RedisClient,
@@ -121,6 +121,12 @@ pub struct AppState {
     /// 标签服务 - CRUD 操作
     pub tag_service: Arc<crate::modules::tag::TagService>,
 
+    /// AI subsystem orchestrator (set during async startup)
+    pub orchestrator: Option<Arc<tinyiothub_ai::orchestrator::Orchestrator>>,
+
+    /// AI subsystem heartbeat runner (set during async startup)
+    pub heartbeat_runner: Option<Arc<tinyiothub_ai::heartbeat::runner::HeartbeatRunner>>,
+
     /// 标签仓库 - 用于设备服务的标签关联
     pub tag_repository: Arc<dyn crate::modules::tag::TagRepository>,
 
@@ -138,9 +144,6 @@ pub struct AppState {
 
     /// 会话服务 - Agent 聊天会话管理
     pub session_service: Arc<crate::modules::agent::SessionService>,
-
-    /// Agent 记忆服务 - 构建设备快照等上下文
-    pub agent_memory_service: Arc<crate::modules::agent::AgentMemoryService>,
 
     /// 缓存的系统信息对象，避免每次请求重新扫描
     pub sysinfo_system: Arc<std::sync::Mutex<sysinfo::System>>,
@@ -278,10 +281,7 @@ impl AppState {
                 .expect("failed to build AgentPool"),
         );
 
-        // Agent Memory Service
-        let memory_repo = Arc::new(SqliteDeviceMemoryRepository::new(database.pool().clone()));
-        let agent_memory_service =
-            Arc::new(crate::modules::agent::AgentMemoryService::new(memory_repo));
+        alarm_service.set_device_cache(device_cache.clone());
 
         // 用户服务
         let user_repository: Arc<dyn crate::modules::user::UserRepository> =
@@ -424,6 +424,8 @@ impl AppState {
             secure_event_service,
             alarm_service,
             agent_pool,
+            orchestrator: None,
+            heartbeat_runner: None,
             user_service,
             tenant_service,
             workspace_service,
@@ -435,7 +437,6 @@ impl AppState {
             cron_job_repo,
             cron_run_repo,
             session_service,
-            agent_memory_service,
             sysinfo_system: Arc::new(std::sync::Mutex::new(sysinfo::System::new_all())),
             gateway_service,
             mqtt_client: Some(mqtt_client),

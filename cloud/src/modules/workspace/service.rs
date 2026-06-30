@@ -1,6 +1,8 @@
 pub mod knowledge;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
+use tinyiothub_ai::event::{bus::AiEventPublisher, types::AiEvent};
 
 use super::{
     repo::WorkspaceRepository,
@@ -12,11 +14,20 @@ use crate::shared::error::Result;
 
 pub struct WorkspaceService {
     repository: Arc<dyn WorkspaceRepository>,
+    event_publisher: Mutex<Option<Arc<AiEventPublisher>>>,
 }
 
 impl WorkspaceService {
     pub fn new(repository: Arc<dyn WorkspaceRepository>) -> Self {
-        Self { repository }
+        Self { repository, event_publisher: Mutex::new(None) }
+    }
+
+    pub fn set_event_publisher(&self, publisher: Arc<AiEventPublisher>) {
+        *self.event_publisher.lock().unwrap() = Some(publisher);
+    }
+
+    pub async fn list_all_ids(&self) -> Result<Vec<String>> {
+        self.repository.find_all_ids().await
     }
 
     pub async fn find_by_id(&self, id: &str) -> Result<Option<WorkspaceWithDeviceCount>> {
@@ -40,7 +51,12 @@ impl WorkspaceService {
         agent_id: Option<&str>,
         agent_config: Option<&str>,
     ) -> Result<Workspace> {
-        self.repository.create(tenant_id, name, description, agent_id, agent_config).await
+        let workspace =
+            self.repository.create(tenant_id, name, description, agent_id, agent_config).await?;
+        if let Some(ref publisher) = *self.event_publisher.lock().unwrap() {
+            publisher.publish(AiEvent::WorkspaceCreated { workspace_id: workspace.id.clone() });
+        }
+        Ok(workspace)
     }
 
     pub async fn update(
@@ -55,6 +71,9 @@ impl WorkspaceService {
     }
 
     pub async fn delete(&self, id: &str) -> Result<()> {
+        if let Some(ref publisher) = *self.event_publisher.lock().unwrap() {
+            publisher.publish(AiEvent::WorkspaceDeleted { workspace_id: id.to_string() });
+        }
         self.repository.delete(id).await
     }
 

@@ -1,7 +1,8 @@
 import { html, type TemplateResult } from "lit";
+import { safeStr } from "./utils.js";
 
 export function renderA2uiText(data: Record<string, unknown>): TemplateResult {
-  const text = String(data.text || "");
+  const text = safeStr(data.text, "");
   const style = data.style as string | undefined;
   if (style === "heading") return html`<h3 class="a2ui-heading">${text}</h3>`;
   if (style === "subtitle") return html`<p class="a2ui-subtitle">${text}</p>`;

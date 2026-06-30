@@ -214,6 +214,7 @@ async fn fetch_recent_device_events(state: &AppState, device_id: &str) -> Vec<De
                     let event_type_str = match event.event_type() {
                         EventType::Device(device_type) => device_type.display_name(),
                         EventType::System(_) => "System",
+                        EventType::Ai(ai_type) => ai_type.display_name(),
                     };
 
                     // 提取事件级别字符串

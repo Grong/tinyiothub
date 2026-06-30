@@ -4,7 +4,7 @@
 // Key design decisions:
 //   - Lazy creation: agents built on first access, config read from DB
 //   - Tool denylist: resolved at build time from AgentRuntimeConfig
-//   - NamespacedMemory: workspace-level isolation via zeroclaw NamespacedMemory
+//   - WorkspaceScopedMemory: workspace-level isolation via namespace wrapper
 //   - Invalidation: remove from pool on config change, rebuild on next access
 
 use std::{sync::Arc, time::Instant};
@@ -17,19 +17,20 @@ use zeroclaw::{
         dispatcher::NativeToolDispatcher,
         prompt::{PromptContext, PromptSection, SystemPromptBuilder},
     },
-    memory::{Memory, NamespacedMemory},
+    memory::Memory,
     observability::Observer,
     security::AutonomyLevel,
     tools::Tool,
 };
 
 use super::{
-    chat::service as chat_service,
-    config::service as config_service,
-    reflection::{notifications::NotificationService, service::ReflectionService},
+    chat::service as chat_service, config::service as config_service,
     tools::service as tool_service,
 };
-use crate::shared::agent::config::{AgentConfig, AgentError, AgentInfo, AgentRuntimeConfig};
+use crate::shared::{
+    agent::config::{AgentConfig, AgentError, AgentInfo, AgentRuntimeConfig},
+    workspace_memory::WorkspaceScopedMemory,
+};
 
 // ============================================================================
 // Skills Section (zeroclaw SystemPromptBuilder integration)
@@ -55,14 +56,14 @@ impl PromptSection for TinyIoTHubSkillsSection {
 fn load_skills_sync(workspace_dir: &std::path::Path) -> String {
     let ws_skills = workspace_dir.join("skills");
     if ws_skills.exists()
-        && let Some(content) = read_skills_dir_sync(&ws_skills)
+        && let Some(content) = build_skills_prompt(&ws_skills)
         && !content.is_empty()
     {
         return content;
     }
     let global_skills = std::path::PathBuf::from("data/skills");
     if global_skills.exists()
-        && let Some(content) = read_skills_dir_sync(&global_skills)
+        && let Some(content) = build_skills_prompt(&global_skills)
         && !content.is_empty()
     {
         return content;
@@ -70,7 +71,12 @@ fn load_skills_sync(workspace_dir: &std::path::Path) -> String {
     String::new()
 }
 
-fn read_skills_dir_sync(dir: &std::path::Path) -> Option<String> {
+/// Build the skills prompt: platform-overview in full + compact skill index.
+///
+/// Only `platform-overview.md` is injected in full (~2KB). The other 6 skill
+/// files contribute a single-line index entry each. The LLM uses `get_skill`
+/// to load full workflow details on demand, saving ~8KB tokens per request.
+fn build_skills_prompt(dir: &std::path::Path) -> Option<String> {
     use std::fs;
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
@@ -83,21 +89,57 @@ fn read_skills_dir_sync(dir: &std::path::Path) -> Option<String> {
         .collect();
     skill_files.sort();
 
-    let mut all_skills = String::new();
-    for path in skill_files {
-        let content = match fs::read_to_string(&path) {
+    let mut overview = String::new();
+    let mut index_entries: Vec<String> = Vec::new();
+
+    for path in &skill_files {
+        let content = match fs::read_to_string(path) {
             Ok(c) => c,
             Err(_) => continue,
         };
-        let file_name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
         let body = content.trim();
         if body.is_empty() {
             continue;
         }
-        all_skills.push_str(&format!("### {}\n{}\n", file_name, body));
+        let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+
+        if file_stem == "platform-overview" {
+            overview = body.to_string();
+        } else {
+            // Extract title from first `# ` heading
+            let title = body
+                .lines()
+                .find(|l| l.starts_with("# "))
+                .map(|l| l.trim_start_matches("# ").trim().to_string())
+                .unwrap_or_else(|| file_stem.to_string());
+
+            // Extract one-line description: first non-empty, non-heading line
+            let desc = body
+                .lines()
+                .skip_while(|l| l.starts_with('#') || l.trim().is_empty())
+                .find(|l| !l.trim().is_empty())
+                .map(|l| l.trim().to_string())
+                .unwrap_or_default();
+
+            index_entries.push(format!("- **{}** (`{}`) — {}", title, file_stem, desc));
+        }
     }
 
-    if all_skills.is_empty() { None } else { Some(all_skills) }
+    if overview.is_empty() {
+        return None;
+    }
+
+    let mut prompt = overview;
+    if !index_entries.is_empty() {
+        prompt.push_str("\n\n## 技能索引 (Skill Index)\n");
+        prompt.push_str("使用 `get_skill` 工具按需加载详细技能内容：\n\n");
+        for entry in &index_entries {
+            prompt.push_str(entry);
+            prompt.push('\n');
+        }
+    }
+
+    if prompt.is_empty() { None } else { Some(prompt) }
 }
 
 // ============================================================================
@@ -132,6 +174,25 @@ pub struct Agent {
 }
 
 // ============================================================================
+// Streaming run result types
+// ============================================================================
+
+/// Result of a streaming heartbeat run
+pub struct StreamingRunResult {
+    pub final_text: String,
+    pub tool_calls: Vec<StreamingToolCall>,
+}
+
+/// Tool call captured during streaming execution
+#[derive(Debug, Clone)]
+pub struct StreamingToolCall {
+    pub name: String,
+    pub args: serde_json::Value,
+    pub result: Option<String>,
+    pub success: bool,
+}
+
+// ============================================================================
 // AgentPool
 // ============================================================================
 
@@ -146,12 +207,15 @@ pub struct AgentPool {
     pub chat_handles:
         Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
     pub memory_store: Arc<dyn tinyiothub_core::memory::MemoryStore>,
-    pub reflection_service: Option<Arc<ReflectionService>>,
-    pub notification_service: Arc<NotificationService>,
     pub workspace_service:
         tokio::sync::RwLock<Option<Arc<crate::modules::workspace::WorkspaceService>>>,
     pub knowledge_service:
         tokio::sync::RwLock<Option<Arc<crate::modules::workspace::KnowledgeService>>>,
+    pub trust_configs: DashMap<String, tinyiothub_ai::types::TrustConfig>,
+    pub memory_service:
+        tokio::sync::RwLock<Option<Arc<tinyiothub_ai::memory::service::MemoryService>>>,
+    pub event_publisher:
+        tokio::sync::RwLock<Option<Arc<tinyiothub_ai::event::bus::AiEventPublisher>>>,
 }
 
 impl AgentPool {
@@ -185,25 +249,21 @@ impl AgentPool {
         let response_cache =
             zeroclaw::memory::create_response_cache(&memory_config, &workspace_dir).map(Arc::new);
 
+        let observer_backend = match agent_settings.observer_backend.as_str() {
+            "none" | "noop" => zeroclaw::config::schema::ObservabilityBackend::None,
+            "verbose" => zeroclaw::config::schema::ObservabilityBackend::Verbose,
+            "prometheus" => zeroclaw::config::schema::ObservabilityBackend::Prometheus,
+            "otel" | "opentelemetry" | "otlp" => {
+                zeroclaw::config::schema::ObservabilityBackend::Otel
+            }
+            _ => zeroclaw::config::schema::ObservabilityBackend::Log,
+        };
         let observer_config = zeroclaw::config::schema::ObservabilityConfig {
-            backend: agent_settings.observer_backend.clone(),
+            backend: observer_backend,
             ..Default::default()
         };
         let observer = zeroclaw::observability::create_observer(&observer_config);
         let observer: Arc<dyn Observer> = Arc::from(observer);
-
-        let minimax_auth_token = crate::shared::config::get()
-            .minimax
-            .as_ref()
-            .map(|m| m.auth_token.clone())
-            .unwrap_or_default();
-        let notification_service = Arc::new(NotificationService::new());
-        let reflection_service = Some(Arc::new(ReflectionService::new(
-            Arc::clone(&memory_store),
-            db_pool.clone(),
-            Arc::clone(&notification_service),
-            minimax_auth_token,
-        )));
 
         Ok(Self {
             db_pool,
@@ -214,11 +274,28 @@ impl AgentPool {
             agent_settings: agent_settings.clone(),
             chat_handles: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             memory_store,
-            reflection_service,
-            notification_service,
             workspace_service: tokio::sync::RwLock::new(None),
             knowledge_service: tokio::sync::RwLock::new(None),
+            trust_configs: DashMap::new(),
+            memory_service: tokio::sync::RwLock::new(None),
+            event_publisher: tokio::sync::RwLock::new(None),
         })
+    }
+
+    pub async fn set_event_publisher(
+        &self,
+        publisher: Arc<tinyiothub_ai::event::bus::AiEventPublisher>,
+    ) {
+        let mut guard = self.event_publisher.write().await;
+        *guard = Some(publisher);
+    }
+
+    pub async fn set_memory_service(
+        &self,
+        service: Arc<tinyiothub_ai::memory::service::MemoryService>,
+    ) {
+        let mut guard = self.memory_service.write().await;
+        *guard = Some(service);
     }
 
     pub async fn set_workspace_service(
@@ -235,6 +312,10 @@ impl AgentPool {
     ) {
         let mut guard = self.knowledge_service.write().await;
         *guard = Some(service);
+    }
+
+    pub fn set_trust_config(&self, workspace_id: &str, config: tinyiothub_ai::types::TrustConfig) {
+        self.trust_configs.insert(workspace_id.to_string(), config);
     }
 
     // ========================================================================
@@ -260,29 +341,31 @@ impl AgentPool {
             Entry::Vacant(vacant) => {
                 let config = config_service::get_config(&self.db_pool, agent_id).await?;
 
-                let namespaced: Arc<dyn Memory> = Arc::new(NamespacedMemory::new(
+                let namespaced: Arc<dyn Memory> = Arc::new(WorkspaceScopedMemory::new(
                     Arc::clone(&self.shared_memory),
                     workspace_id.to_string(),
                 ));
 
-                let minimax_config = crate::shared::config::get()
-                    .minimax
-                    .clone()
-                    .ok_or_else(|| AgentError::BuildError("minimax config required".to_string()))?;
-
-                let provider = zeroclaw::providers::create_provider(
-                    "minimaxi",
-                    Some(&minimax_config.auth_token),
-                )
-                .map_err(|e| AgentError::BuildError(format!("Failed to create provider: {}", e)))?;
+                let provider = crate::shared::config::create_minimax_provider().map_err(|e| {
+                    AgentError::BuildError(format!("Failed to create provider: {}", e))
+                })?;
 
                 let ws_dir = crate::shared::paths::workspace_dir(workspace_id);
 
                 let ws_svc = self.workspace_service.read().await.clone();
                 let ks_svc = self.knowledge_service.read().await.clone();
-                let tools =
-                    tool_service::resolve_tools_for_agent(&config, workspace_id, ws_svc, ks_svc)
-                        .await;
+                let trust_config = self
+                    .trust_configs
+                    .get(workspace_id)
+                    .map(|e| std::sync::Arc::new(e.value().clone()));
+                let tools = tool_service::resolve_tools_for_agent(
+                    &config,
+                    workspace_id,
+                    ws_svc,
+                    ks_svc,
+                    trust_config,
+                )
+                .await;
 
                 let agent = Self::build_agent(
                     &namespaced,
@@ -347,7 +430,7 @@ impl AgentPool {
         observer: &Arc<dyn Observer>,
         config: &AgentRuntimeConfig,
         response_cache: Option<Arc<zeroclaw::memory::ResponseCache>>,
-        provider: Box<dyn zeroclaw::providers::traits::Provider>,
+        provider: Box<dyn zeroclaw::providers::traits::ModelProvider>,
         workspace_dir: &std::path::Path,
         tools: Vec<Box<dyn Tool>>,
     ) -> anyhow::Result<zeroclaw::agent::Agent> {
@@ -357,7 +440,7 @@ impl AgentPool {
             SystemPromptBuilder::with_defaults().add_section(Box::new(TinyIoTHubSkillsSection));
 
         zeroclaw::agent::Agent::builder()
-            .provider(provider)
+            .model_provider(provider)
             .tools(tools)
             .memory(Arc::clone(memory))
             .observer(Arc::clone(observer))
@@ -447,7 +530,7 @@ impl AgentPool {
         let items: Vec<serde_json::Value> = rows
             .into_iter()
             .map(|(id, _ws, name, status)| {
-                serde_json::json!({"id": id, "name": name, "status": status})
+                serde_json::json!({"id": id, "name": name, "status": status, "workspaceId": _ws})
             })
             .collect();
 
@@ -544,6 +627,8 @@ impl AgentPool {
         let config = config_service::get_config(&self.db_pool, agent_id).await?;
         let enable_reflection = config.enable_reflection;
         let model = config.model.clone();
+        let memory_service = self.memory_service.read().await.clone();
+        let event_publisher = self.event_publisher.read().await.clone();
         chat_service::send_message(
             &agent,
             message,
@@ -551,7 +636,8 @@ impl AgentPool {
             session_key,
             system_prompt,
             &self.chat_handles,
-            self.reflection_service.clone(),
+            memory_service,
+            event_publisher,
             enable_reflection,
             &model,
             &parsed.workspace_id,
@@ -660,9 +746,82 @@ impl AgentPool {
         workspace_id: &str,
         message: &str,
     ) -> Result<String, AgentError> {
-        let agent = self.get_or_create("default", workspace_id).await?;
+        // Per-workspace agent key prevents cross-workspace tool context leak.
+        // "__heartbeat__" has no DB row, so it always falls back to
+        // AgentRuntimeConfig::default() → server-level [minimax] model.
+        let agent_id = format!("__heartbeat__:{}", workspace_id);
+        let agent = self.get_or_create(&agent_id, workspace_id).await?;
         let mut ag = agent.lock().await;
         ag.run_single(message).await.map_err(|e| AgentError::RequestFailed(e.to_string()))
+    }
+
+    // ========================================================================
+    // Run streaming (for heartbeat with TurnEvent interception)
+    // ========================================================================
+
+    /// Run the heartbeat agent with streaming TurnEvents, enabling per-tool-call
+    /// interception (trust gate, action recording).
+    pub async fn run_streaming(
+        &self,
+        workspace_id: &str,
+        message: &str,
+    ) -> Result<StreamingRunResult, AgentError> {
+        let agent_id = format!("__heartbeat__:{}", workspace_id);
+        let agent = self.get_or_create(&agent_id, workspace_id).await?;
+
+        // Set up TurnEvent channel for real-time event interception
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<zeroclaw::agent::TurnEvent>(64);
+
+        // Spawn tool call collector
+        let tool_calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let tool_calls_clone = std::sync::Arc::clone(&tool_calls);
+        let collector = tokio::spawn(async move {
+            while let Some(evt) = event_rx.recv().await {
+                match evt {
+                    zeroclaw::agent::TurnEvent::ToolCall { name, args, .. } => {
+                        let mut calls = tool_calls_clone.lock().unwrap();
+                        calls.push(StreamingToolCall { name, args, result: None, success: true });
+                    }
+                    zeroclaw::agent::TurnEvent::ToolResult { name, output, .. } => {
+                        let mut calls = tool_calls_clone.lock().unwrap();
+                        if let Some(last) = calls.iter_mut().rev().find(|c| c.name == name) {
+                            last.result = Some(output.clone());
+                            // NOTE: TurnEvent::ToolResult doesn't carry ToolResult.success.
+                            // Trust enforcement is handled by TrustAwareTool wrapping;
+                            // the LLM's response text handles error reporting via healing report.
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        // Execute with timeout
+        let mut ag = agent.lock().await;
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(120),
+            ag.turn_streamed(message, event_tx, None),
+        )
+        .await;
+        drop(ag);
+
+        // Wait for collector to finish processing remaining events
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), collector).await;
+
+        let tool_calls = match std::sync::Arc::try_unwrap(tool_calls) {
+            Ok(mutex) => mutex.into_inner().unwrap_or_default(),
+            Err(arc) => arc.lock().unwrap().clone(),
+        };
+
+        match result {
+            Ok(Ok((final_text, _conversation))) => {
+                Ok(StreamingRunResult { final_text, tool_calls })
+            }
+            Ok(Err(e)) => Err(AgentError::RequestFailed(e.to_string())),
+            Err(_elapsed) => {
+                Err(AgentError::RequestFailed("Heartbeat LLM call timed out after 120s".into()))
+            }
+        }
     }
 
     // ========================================================================

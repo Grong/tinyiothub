@@ -132,16 +132,20 @@ export class A2uiScene3D extends LitElement {
       justify-content: center;
       gap: 10px;
       color: var(--muted, #888);
-      background: rgba(0,0,0,0.45);
-      backdrop-filter: blur(4px);
+      background: rgba(0, 0, 0, 0.55);
+      backdrop-filter: blur(8px);
+      animation: scene3d-fade-in 0.3s ease-out;
+      z-index: 5;
     }
     .scene3d-loading__spinner {
-      width: 36px;
-      height: 36px;
-      border: 3px solid color-mix(in srgb, var(--muted, #888) 25%, transparent);
+      width: 40px;
+      height: 40px;
+      border: 3px solid color-mix(in srgb, var(--muted, #888) 20%, transparent);
       border-top-color: var(--accent, #0098FF);
+      border-right-color: var(--accent-gradient-end, #0098FF);
       border-radius: 50%;
-      animation: scene3d-spin 0.8s linear infinite;
+      animation: scene3d-spin 0.7s linear infinite;
+      box-shadow: 0 0 16px color-mix(in srgb, var(--accent, #0098FF) 20%, transparent);
     }
     .scene3d-loading__title {
       font-size: 15px;
@@ -160,9 +164,11 @@ export class A2uiScene3D extends LitElement {
     }
     .scene3d-loading__progress-fill {
       height: 100%;
-      background: var(--accent-gradient, linear-gradient(90deg, #00d4ff, #0098FF));
+      background: linear-gradient(90deg, #00d4ff, #0098ff, #7b61ff);
+      background-size: 200% 100%;
       border-radius: 2px;
       transition: width 0.3s ease-out;
+      animation: scene3d-shimmer 2s ease-in-out infinite;
     }
     .scene3d-loading__progress-fill--indeterminate {
       width: 30% !important;
@@ -202,6 +208,10 @@ export class A2uiScene3D extends LitElement {
     @keyframes scene3d-fade-in {
       from { opacity: 0; transform: translateY(4px); }
       to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes scene3d-shimmer {
+      0%   { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
     }
     .scene3d-error {
       position: absolute;
@@ -255,7 +265,10 @@ export class A2uiScene3D extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
-    // Delay init until first render completes
+    // Immediately show loading state so users see feedback right away
+    this.loadState = "loading";
+    this.requestUpdate();
+    // Delay Three.js init until first render completes
     requestAnimationFrame(() => this.initScene());
   }
 
@@ -519,10 +532,19 @@ export class A2uiScene3D extends LitElement {
   }
 
   private onDataModelChanged() {
-    // If modelUrl changed, reload
     const newModelUrl = String(this.dataModel.modelUrl || "");
-    if (this.modelGroup && newModelUrl) {
-      // For now, just update markers; full reload on resourceId change
+
+    // If modelUrl changed, trigger a full reload
+    if (newModelUrl && this.loadState !== "loading") {
+      this.dispose();
+      this.loadState = "idle";
+      this.initScene();
+      return;
+    }
+
+    // When model is loaded, refresh markers and floor cut on any data change
+    // This handles cases where device/alarm data arrives AFTER the model loads
+    if (this.modelGroup && this.loadState === "loaded") {
       this.parseMetadata();
       this.createMarkers();
       this.updateFloorCut();
@@ -647,7 +669,11 @@ export class A2uiScene3D extends LitElement {
       ${this.loadState === "loading"
         ? html`<div class="scene3d-loading">
             <div class="scene3d-loading__spinner"></div>
-            <div class="scene3d-loading__title">正在加载 3D 场景</div>
+            <div class="scene3d-loading__title">
+              ${this.loadedBytes > 0
+                ? "正在加载 3D 场景"
+                : "正在初始化场景..."}
+            </div>
             ${this.totalBytes > 0 ? html`
               <div class="scene3d-loading__progress-bar">
                 <div class="scene3d-loading__progress-fill" style="width:${this.loadProgress}%"></div>
@@ -658,21 +684,21 @@ export class A2uiScene3D extends LitElement {
               </div>
             ` : this.loadedBytes > 0 ? html`
               <div class="scene3d-loading__progress-bar scene3d-loading__progress-bar--indeterminate">
-                <div class="scene3d-loading__progress-fill" style="width:${this.loadProgress}%"></div>
+                <div class="scene3d-loading__progress-fill scene3d-loading__progress-fill--indeterminate"></div>
               </div>
               <div class="scene3d-loading__bytes">已下载 ${this._formatBytes(this.loadedBytes)}</div>
             ` : html`
               <div class="scene3d-loading__progress-bar scene3d-loading__progress-bar--indeterminate">
                 <div class="scene3d-loading__progress-fill scene3d-loading__progress-fill--indeterminate"></div>
               </div>
-              <div class="scene3d-loading__progress-text">连接中...</div>
+              <div class="scene3d-loading__progress-text">准备加载资源...</div>
             `}
             ${this.loadSlow ? html`
               <div class="scene3d-loading__hint">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                   <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
                 </svg>
-                模型文件较大，请耐心等待...加载完成后会自动重试
+                模型文件较大，请耐心等待...
               </div>
             ` : nothing}
           </div>`

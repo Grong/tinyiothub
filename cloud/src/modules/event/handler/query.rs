@@ -188,6 +188,7 @@ pub async fn get_events(
                     event_subtype: match event.event_type() {
                         EventType::System(subtype) => format!("{:?}", subtype).to_lowercase(),
                         EventType::Device(subtype) => format!("{:?}", subtype).to_lowercase(),
+                        EventType::Ai(subtype) => format!("{:?}", subtype).to_lowercase(),
                     },
                     level: event.level() as i32,
                     level_name: format!("{:?}", event.level()).to_lowercase(),

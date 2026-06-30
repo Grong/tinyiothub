@@ -481,6 +481,17 @@
   margin-top: 0;
 }
 
+.content--heartbeat {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: 0;
+}
+
+.content--heartbeat > * + * {
+  margin-top: 0;
+}
+
 /* Content header */
 .content-header {
   display: flex;

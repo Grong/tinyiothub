@@ -104,6 +104,7 @@ tinyiothub-storage = { workspace = true }
 tinyiothub-runtime = { workspace = true }
 tinyiothub-memory = { workspace = true }
 tinyiothub-web = { workspace = true }
+tinyiothub-ai = { workspace = true }
 tinyiothub-marketplace = { path = "../marketplace" }
 
 # Dynamic loading
@@ -145,8 +146,9 @@ validator = { workspace = true }
 # Performance
 smallvec = { workspace = true }
 
-# ZeroClaw Agent runtime (forked with pub security + pub heartbeat, v0.7.5)
-zeroclaw = { git = "https://github.com/Grong/zeroclaw.git", tag = "v0.7.5-patched", package = "zeroclawlabs", features = ["agent-runtime"] }
+# ZeroClaw Agent runtime (forked with pub security + pub heartbeat, v0.8.1)
+zeroclaw = { git = "https://github.com/Grong/zeroclaw.git", tag = "v0.8.1-patched", package = "zeroclawlabs", features = ["agent-runtime"] }
+zeroclaw-api = { git = "https://github.com/Grong/zeroclaw.git", tag = "v0.8.1-patched" }
 
 [features]
 default = []

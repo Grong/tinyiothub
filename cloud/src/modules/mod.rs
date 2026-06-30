@@ -22,7 +22,6 @@ pub mod open;
 pub mod permission;
 pub mod plugin;
 pub mod role;
-pub mod self_healing;
 pub mod system;
 pub mod tag;
 pub mod template;

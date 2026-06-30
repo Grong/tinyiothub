@@ -127,7 +127,7 @@ view-workspace {
 
 .workspace-process {
   position: absolute;
-  top: 12px;
+  top: 52px;
   left: 12px;
   bottom: 76px;
   width: clamp(300px, 24vw, 380px);
@@ -507,7 +507,7 @@ view-workspace {
 
 .workspace-insight {
   position: absolute;
-  top: 12px;
+  top: 52px;
   right: 12px;
   bottom: 76px;
   width: clamp(320px, 28vw, 420px);
@@ -516,7 +516,6 @@ view-workspace {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  overflow-y: auto;
 
   background: color-mix(in srgb, var(--bg-elevated) 55%, transparent);
   backdrop-filter: blur(16px) saturate(1.3);
@@ -532,20 +531,6 @@ view-workspace {
 /* Entrance animation — reuses existing keyframe from animations.css */
 .workspace-insight--enter {
   animation: slideIn var(--duration-slow) var(--ease-out);
-}
-
-/* Scrollbar */
-.workspace-insight::-webkit-scrollbar {
-  width: 3px;
-}
-
-.workspace-insight::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.workspace-insight::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--muted) 25%, transparent);
-  border-radius: var(--radius-full);
 }
 
 /* ===========================================
@@ -581,8 +566,22 @@ view-workspace {
   flex: 1;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-y: auto;
   min-height: 0;
+  padding: 0 0 16px;
+}
+
+.workspace-insight__body::-webkit-scrollbar {
+  width: 3px;
+}
+
+.workspace-insight__body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.workspace-insight__body::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted) 25%, transparent);
+  border-radius: var(--radius-full);
 }
 
 /* ===========================================
@@ -590,12 +589,14 @@ view-workspace {
    =========================================== */
 
 .workspace-insight .a2ui-surface {
+  height: auto;
+  overflow: visible;
   background: transparent;
   border: none;
   box-shadow: none;
   border-radius: 0;
   margin: 0;
-  padding: 16px 20px;
+  padding: 10px 20px;
 }
 
 .workspace-insight .a2ui-surface + .a2ui-surface,
@@ -1123,7 +1124,7 @@ view-workspace {
 
 @media (max-width: 640px) {
   .workspace-process {
-    top: 8px;
+    top: 44px;
     left: 8px;
     bottom: 72px;
     width: calc(100% - 16px);
@@ -1139,7 +1140,7 @@ view-workspace {
   }
 
   .workspace-insight {
-    top: 8px;
+    top: 44px;
     right: 8px;
     bottom: 72px;
     width: calc(100% - 16px);

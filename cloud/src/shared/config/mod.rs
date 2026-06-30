@@ -62,6 +62,22 @@ pub fn try_get() -> Option<&'static ApplicationSettings> {
     CONFIG.get()
 }
 
+/// Create a MiniMax model provider using the configured base_url and auth_token.
+///
+/// Reads `[minimax]` section from app_settings.toml. Returns an error if the
+/// section is missing or if provider construction fails.
+pub fn create_minimax_provider()
+-> anyhow::Result<Box<dyn zeroclaw::providers::traits::ModelProvider>> {
+    let cfg = try_get()
+        .and_then(|s| s.minimax.as_ref())
+        .ok_or_else(|| anyhow::anyhow!("[minimax] config section is required but not found"))?;
+    zeroclaw::providers::create_model_provider_with_url(
+        "minimaxi",
+        Some(&cfg.auth_token),
+        Some(&cfg.base_url),
+    )
+}
+
 /// Get environment name
 pub fn environment() -> &'static str {
     get().environment()

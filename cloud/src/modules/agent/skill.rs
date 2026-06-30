@@ -1,25 +1,15 @@
-// Agent Skill — migrated from domain/agent/skill.rs
+// Agent Skill — DB-persisted skill wrapper.
+//
+// Core domain types and logic live in tinyiothub_ai::skills:
+//   SkillType, SkillDefinition, parse_frontmatter, execute, glob_match
 
 use serde::{Deserialize, Serialize};
+// Re-export AI crate types for backward compatibility.
+pub use tinyiothub_ai::skills::{SkillType, glob_match};
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
-pub enum SkillType {
-    #[default]
-    File,
-    Bundled,
-    Mcp,
-}
-
-impl std::fmt::Display for SkillType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SkillType::File => write!(f, "file"),
-            SkillType::Bundled => write!(f, "bundled"),
-            SkillType::Mcp => write!(f, "mcp"),
-        }
-    }
-}
-
+/// DB-persisted skill with workspace/agent identity.
+///
+/// Core logic delegates to `SkillDefinition`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentSkill {
     pub id: Option<i64>,
@@ -61,109 +51,31 @@ impl AgentSkill {
         }
     }
 
+    /// Delegate to AI crate SkillDefinition::parse_frontmatter.
     pub fn parse_frontmatter(content: &str) -> (Option<serde_json::Value>, &str) {
-        if !content.starts_with("---") {
-            return (None, content);
-        }
-        if let Some(end_pos) = content[3..].find("---") {
-            let frontmatter_str = &content[3..end_pos + 3];
-            let remaining = &content[end_pos + 6..];
-            let mut fm = serde_json::Map::new();
-            for line in frontmatter_str.lines() {
-                if let Some(colon_pos) = line.find(':') {
-                    let key = line[..colon_pos].trim();
-                    let value = line[colon_pos + 1..].trim();
-                    if !key.is_empty() {
-                        fm.insert(key.to_string(), serde_json::json!(value));
-                    }
-                }
-            }
-            return (Some(serde_json::Value::Object(fm)), remaining.trim());
-        }
-        (None, content)
+        tinyiothub_ai::skills::SkillDefinition::parse_frontmatter(content)
     }
 
+    /// Delegate to AI crate SkillDefinition::execute.
     pub fn execute(&self, params: &serde_json::Value) -> String {
-        let mut content = self.skill_content.clone();
-        if let Some(obj) = params.as_object() {
-            for (key, value) in obj {
-                let placeholder = format!("${{{}}}", key);
-                let replacement = match value {
-                    serde_json::Value::String(s) => s.replace("${", "${'${'}"),
-                    _ => value.to_string(),
-                };
-                content = content.replace(&placeholder, &replacement);
-            }
-        }
-        content
+        let def = self.to_definition();
+        def.execute(params)
     }
 
+    /// Delegate to AI crate SkillDefinition::matches_path.
     pub fn matches_path(&self, file_path: &str) -> bool {
-        let paths = match &self.paths {
-            Some(p) => p,
-            None => return false,
-        };
-        for pattern in paths {
-            if glob_match(pattern, file_path) {
-                return true;
-            }
-        }
-        false
+        let def = self.to_definition();
+        def.matches_path(file_path)
     }
-}
 
-fn glob_match(pattern: &str, path: &str) -> bool {
-    let p: Vec<char> = pattern.chars().collect();
-    let s: Vec<char> = path.chars().collect();
-    glob_match_vec(&p, &s, 0, 0)
-}
-
-fn glob_match_vec(p: &[char], s: &[char], pi: usize, si: usize) -> bool {
-    if pi < p.len() && pi + 1 < p.len() && p[pi] == '*' && p[pi + 1] == '*' {
-        if pi + 2 >= p.len() {
-            return true;
+    fn to_definition(&self) -> tinyiothub_ai::skills::SkillDefinition {
+        tinyiothub_ai::skills::SkillDefinition {
+            skill_name: self.skill_name.clone(),
+            skill_content: self.skill_content.clone(),
+            skill_type: self.skill_type,
+            paths: self.paths.clone(),
+            is_hidden: self.is_hidden,
         }
-        if pi + 2 < p.len() && p[pi + 2] == '/' {
-            let rest_pattern = &p[pi + 3..];
-            let path_string: String = s.iter().collect();
-            let path_segments: Vec<&str> = path_string.split('/').collect();
-            for i in 0..=path_segments.len() {
-                let rest_path: String = path_segments[i..].join("/");
-                let rest_path_chars: Vec<char> = rest_path.chars().collect();
-                if glob_match_vec(rest_pattern, &rest_path_chars, 0, 0) {
-                    return true;
-                }
-            }
-            return false;
-        }
-        return glob_match_vec(p, s, pi + 1, si);
-    }
-    if pi >= p.len() && si >= s.len() {
-        return true;
-    }
-    if pi >= p.len() {
-        return false;
-    }
-    if si >= s.len() {
-        return if p[pi] == '*' { glob_match_vec(p, s, pi + 1, si) } else { false };
-    }
-    match p[pi] {
-        '*' => {
-            if pi + 1 < p.len() && p[pi + 1] == '/' {
-                glob_match_vec(p, s, pi + 1, si)
-            } else {
-                if glob_match_vec(p, s, pi + 1, si) {
-                    return true;
-                }
-                if s[si] != '/' && glob_match_vec(p, s, pi, si + 1) {
-                    return true;
-                }
-                false
-            }
-        }
-        '?' => glob_match_vec(p, s, pi + 1, si + 1),
-        c if c == s[si] => glob_match_vec(p, s, pi + 1, si + 1),
-        _ => false,
     }
 }
 

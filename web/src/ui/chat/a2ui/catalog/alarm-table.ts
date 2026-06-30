@@ -1,4 +1,5 @@
 import { html, nothing, type TemplateResult } from "lit";
+import { safeStr, normalizeColumns } from "./utils.js";
 
 const LEVEL_COLORS: Record<string, string> = {
   info: "#3498db",
@@ -17,8 +18,8 @@ export function renderAlarmTable(
   data: Record<string, unknown>,
   _onAction?: (fn: string, args: Record<string, unknown>) => void,
 ): TemplateResult {
-  const title = String(data.title || "");
-  const columns = (data.columns as string[]) || ["设备", "级别", "消息", "状态", "时间"];
+  const title = safeStr(data.title, "");
+  const columns = normalizeColumns(data.columns, ["设备", "级别", "消息", "状态", "时间"]);
   const alarms = (data.alarms as Array<Record<string, unknown>>) || [];
 
   return html`
@@ -39,9 +40,9 @@ export function renderAlarmTable(
               : "";
             return html`
               <tr>
-                <td>${String(a.deviceName || a.device_id || "—")}</td>
+                <td>${safeStr(a.deviceName || a.device_id, "—")}</td>
                 <td><span style="color: ${levelColor}; font-weight: 500;">${level}</span></td>
-                <td>${String(a.message || "—")}</td>
+                <td>${safeStr(a.message, "—")}</td>
                 <td><span style="color: ${statusColor};">● ${status}</span></td>
                 <td>${timeStr}</td>
               </tr>

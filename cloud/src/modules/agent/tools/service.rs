@@ -7,7 +7,9 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
+use tinyiothub_ai::types::{TrustConfig, TrustDecision};
 use zeroclaw::tools::{Tool, ToolResult};
+use zeroclaw_api::attribution::{Attributable, Role, ToolKind};
 
 use super::canvas::CanvasTool;
 use crate::{
@@ -46,6 +48,15 @@ impl IoTToolAdapter {
         workspace_id: String,
     ) -> Self {
         Self { name, description, input_schema, handler, workspace_id }
+    }
+}
+
+impl Attributable for IoTToolAdapter {
+    fn role(&self) -> Role {
+        Role::Tool(ToolKind::Plugin)
+    }
+    fn alias(&self) -> &str {
+        <Self as Tool>::name(self)
     }
 }
 
@@ -120,6 +131,100 @@ impl IoTToolMetadata for IoTToolAdapter {
 }
 
 // ============================================================================
+// TrustAwareTool — wraps a Tool with trust-level enforcement
+// ============================================================================
+
+/// Proxies a `Box<dyn Tool>`, delegating trust evaluation to
+/// `tinyiothub_ai::evaluate_tool_trust`.
+///
+/// Trust decision comes from the AI crate — tool metadata (read/destructive)
+/// is authoritative; the TrustConfig only provides overrides.
+pub struct TrustAwareTool {
+    inner: Box<dyn Tool>,
+    trust_config: Arc<TrustConfig>,
+}
+
+impl TrustAwareTool {
+    pub fn new(inner: Box<dyn Tool>, trust_config: Arc<TrustConfig>) -> Self {
+        Self { inner, trust_config }
+    }
+}
+
+impl Attributable for TrustAwareTool {
+    fn role(&self) -> Role {
+        self.inner.role()
+    }
+    fn alias(&self) -> &str {
+        self.inner.alias()
+    }
+}
+
+#[async_trait]
+impl Tool for TrustAwareTool {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn description(&self) -> &str {
+        self.inner.description()
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        self.inner.parameters_schema()
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        let tool_name = <Self as Tool>::name(self);
+
+        match tinyiothub_ai::types::evaluate_tool_trust(&self.trust_config, tool_name) {
+            TrustDecision::Allow => self.inner.execute(args).await,
+            TrustDecision::Block { reason } => {
+                Ok(ToolResult { success: false, output: String::new(), error: Some(reason) })
+            }
+            TrustDecision::Propose { reason } => {
+                Ok(ToolResult { success: false, output: String::new(), error: Some(reason) })
+            }
+        }
+    }
+}
+
+impl IoTToolMetadata for TrustAwareTool {
+    fn name(&self) -> &str {
+        <Self as Tool>::name(self)
+    }
+
+    fn description(&self) -> &str {
+        <Self as Tool>::description(self)
+    }
+
+    fn input_schema(&self) -> serde_json::Value {
+        <Self as Tool>::parameters_schema(self)
+    }
+
+    fn is_concurrency_safe(&self, _input: &serde_json::Value) -> bool {
+        name_infers_concurrency_safe(<Self as Tool>::name(self))
+    }
+
+    fn is_read_only(&self, _input: &serde_json::Value) -> bool {
+        name_infers_read_only(<Self as Tool>::name(self))
+    }
+
+    fn is_destructive(&self, _input: &serde_json::Value) -> bool {
+        name_infers_destructive(<Self as Tool>::name(self))
+    }
+
+    fn permission_level(&self, input: &serde_json::Value) -> PermissionLevel {
+        if self.is_destructive(input) {
+            PermissionLevel::Ask
+        } else if self.is_read_only(input) {
+            PermissionLevel::Allow
+        } else {
+            PermissionLevel::Ask
+        }
+    }
+}
+
+// ============================================================================
 // Tool loading
 // ============================================================================
 
@@ -135,6 +240,7 @@ pub async fn load_all_tools(
 ) -> Vec<Box<dyn Tool>> {
     let mut tool_boxed: Vec<Box<dyn Tool>> = Vec::new();
     tool_boxed.push(Box::new(CanvasTool));
+    tool_boxed.push(Box::new(super::GetSkillTool));
 
     if let Some(ks_svc) = knowledge_service {
         tool_boxed.push(Box::new(super::knowledge::SearchKnowledgeTool::new(ks_svc)));
@@ -195,14 +301,28 @@ pub fn filter_by_denylist(tools: Vec<Box<dyn Tool>>, denylist: &[String]) -> Vec
 }
 
 /// Load and filter tools for an agent based on its runtime config.
+/// If `trust_config` is provided, wraps every tool with `TrustAwareTool`
+/// for trust-level enforcement at execution time.
 pub async fn resolve_tools_for_agent(
     config: &AgentRuntimeConfig,
     workspace_id: &str,
     workspace_service: Option<Arc<WorkspaceService>>,
     knowledge_service: Option<Arc<KnowledgeService>>,
+    trust_config: Option<Arc<TrustConfig>>,
 ) -> Vec<Box<dyn Tool>> {
     let all_tools = load_all_tools(workspace_id, workspace_service, knowledge_service).await;
-    filter_by_denylist(all_tools, &config.tool_denylist)
+    let filtered = filter_by_denylist(all_tools, &config.tool_denylist);
+
+    match trust_config {
+        Some(tc) => filtered
+            .into_iter()
+            .map(|tool| {
+                let wrapped: Box<dyn Tool> = Box::new(TrustAwareTool::new(tool, Arc::clone(&tc)));
+                wrapped
+            })
+            .collect(),
+        None => filtered,
+    }
 }
 
 // ============================================================================

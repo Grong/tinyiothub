@@ -1,6 +1,19 @@
 import { html, nothing } from "lit";
+import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { repeat } from "lit/directives/repeat.js";
+import { marked } from "marked";
+import DOMPurify from "dompurify";
 import type { AgentsState } from "../controllers/agents.js";
+
+marked.setOptions({ async: false, gfm: true });
+
+function md(text: string): string {
+  try {
+    return DOMPurify.sanitize(marked.parse(text) as string);
+  } catch {
+    return DOMPurify.sanitize(text);
+  }
+}
 
 export interface HeartbeatConfig {
   enabled: boolean;
@@ -21,10 +34,24 @@ export interface HeartbeatExecutionRecord {
   taskCount: number;
   status: string;
   errorMessage?: string;
+  result?: string;
 }
 
 export interface HeartbeatLogsResponse {
   logs: HeartbeatExecutionRecord[];
+}
+
+export interface PendingProposal {
+  proposalId: string;
+  status: string;
+  level: string;
+  toolName: string;
+  deviceId: string;
+  deviceName: string;
+  summary: string;
+  reason: string;
+  risk: string;
+  createdAt: string;
 }
 
 export function renderHeartbeatTab(
@@ -35,9 +62,12 @@ export function renderHeartbeatTab(
   onAddTask: (task: HeartbeatTask) => void,
   onRemoveTask: (index: number) => void,
   onUpdateTask: (index: number, patch: Partial<HeartbeatTask>) => void,
+  onApproveProposal?: (proposalId: string) => void,
+  onRejectProposal?: (proposalId: string) => void,
 ) {
   const config = (state as any).heartbeatConfig as HeartbeatConfig | null;
   const logs = (state as any).heartbeatLogs as HeartbeatExecutionRecord[] | null;
+  const approvals = (state as any).heartbeatApprovals as PendingProposal[] | null;
   const loading = (state as any).heartbeatLoading as boolean | null;
   const error = (state as any).heartbeatError as string | null;
 
@@ -212,6 +242,63 @@ export function renderHeartbeatTab(
         </div>
       </div>
 
+      <!-- Pending approval proposals -->
+      <div class="heartbeat-section heartbeat-approval-section">
+        <div class="heartbeat-header-row">
+          <div class="heartbeat-pulse-dot active" style="background: var(--color-warning)"></div>
+          <h3>待审批操作</h3>
+          ${approvals && approvals.length > 0
+            ? html`<span class="heartbeat-count" style="background: var(--color-warning)">${approvals.length}</span>`
+            : nothing}
+        </div>
+
+        ${!approvals || approvals.length === 0
+          ? html`
+              <div class="heartbeat-empty-state">
+                <svg class="heartbeat-empty-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M9 12l3 3 6-6" stroke-linecap="round" stroke-linejoin="round"/>
+                  <circle cx="24" cy="24" r="20"/>
+                </svg>
+                <span>暂无待审批操作</span>
+                <span class="heartbeat-empty-sub">AI 巡检时提出的高风险操作会在这里等待审批</span>
+              </div>
+            `
+          : html`
+              <div class="approval-list">
+                ${approvals.map(
+                  (p) => html`
+                    <div class="approval-item">
+                      <div class="approval-header">
+                        <span class="approval-level level-${p.level.toLowerCase()}">${p.level}</span>
+                        <span class="approval-tool">${p.toolName}</span>
+                        <span class="approval-device">${p.deviceName || p.deviceId}</span>
+                      </div>
+                      <div class="approval-body">
+                        <p class="approval-summary">${p.summary}</p>
+                        <p class="approval-reason">原因: ${p.reason}</p>
+                        <p class="approval-risk">风险: ${p.risk}</p>
+                      </div>
+                      <div class="approval-actions">
+                        <button
+                          class="approval-btn approve"
+                          @click=${() => onApproveProposal?.(p.proposalId)}
+                        >
+                          批准执行
+                        </button>
+                        <button
+                          class="approval-btn reject"
+                          @click=${() => onRejectProposal?.(p.proposalId)}
+                        >
+                          拒绝
+                        </button>
+                      </div>
+                    </div>
+                  `,
+                )}
+              </div>
+            `}
+      </div>
+
       <div class="heartbeat-section">
         <div class="heartbeat-header-row">
           <div class="heartbeat-pulse-dot ${config?.enabled ? 'active' : ''}"></div>
@@ -235,41 +322,85 @@ export function renderHeartbeatTab(
           : html`
               <div class="heartbeat-timeline">
                 ${logs.map(
-                  (log, index) => html`
-                    <div class="heartbeat-timeline-item ${log.status}" style="--delay: ${index * 50}ms">
+                  (log, index) => {
+                    const statusClass = log.status === "success" ? "success" : "failed";
+                    return html`
+                    <div class="heartbeat-timeline-item ${statusClass}" style="--delay: ${index * 50}ms">
                       <div class="timeline-indicator">
-                        <div class="timeline-dot ${log.status}"></div>
+                        <div class="timeline-dot ${statusClass}"></div>
                         ${index < logs.length - 1 ? html`<div class="timeline-line"></div>` : nothing}
                       </div>
-                      <div class="timeline-content">
-                        <div class="timeline-header">
-                          <span class="timeline-time">
-                            ${new Date(log.timestamp).toLocaleString("zh-CN", {
-                              month: "2-digit",
-                              day: "2-digit",
-                              hour: "2-digit",
-                              minute: "2-digit",
-                              second: "2-digit",
-                            })}
-                          </span>
-                          <span class="timeline-badge ${log.status}">
-                            ${log.status === "success" ? '成功' : '失败'}
-                          </span>
-                        </div>
-                        <div class="timeline-meta">
-                          <span class="timeline-tasks">
-                            <svg viewBox="0 0 16 16" fill="currentColor" width="11" height="11">
-                              <path d="M3 3.5a.5.5 0 01.5-.5H5a.5.5 0 010 1H3.5a.5.5 0 01-.5-.5zm0 2a.5.5 0 01.5-.5H7a.5.5 0 010 1H3.5a.5.5 0 01-.5-.5zm0 2a.5.5 0 01.5-.5H9a.5.5 0 010 1H3.5a.5.5 0 01-.5-.5zm0 2a.5.5 0 01.5-.5h1a.5.5 0 010 1H3.5a.5.5 0 01-.5-.5z"/>
+                      <details class="timeline-details">
+                        <summary class="timeline-summary">
+                          <div class="timeline-content">
+                            <div class="timeline-header">
+                              <span class="timeline-time">
+                                ${new Date(log.timestamp).toLocaleString("zh-CN", {
+                                  month: "2-digit",
+                                  day: "2-digit",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                  second: "2-digit",
+                                })}
+                              </span>
+                              <span class="timeline-badge ${statusClass}">
+                                ${log.status === "success" ? '成功' : '失败'}
+                              </span>
+                            </div>
+                            <div class="timeline-meta">
+                              <span class="timeline-tasks">
+                                <svg viewBox="0 0 16 16" fill="currentColor" width="11" height="11">
+                                  <path d="M3 3.5a.5.5 0 01.5-.5H5a.5.5 0 010 1H3.5a.5.5 0 01-.5-.5zm0 2a.5.5 0 01.5-.5H7a.5.5 0 010 1H3.5a.5.5 0 01-.5-.5zm0 2a.5.5 0 01.5-.5H9a.5.5 0 010 1H3.5a.5.5 0 01-.5-.5zm0 2a.5.5 0 01.5-.5h1a.5.5 0 010 1H3.5a.5.5 0 01-.5-.5z"/>
+                                </svg>
+                                ${log.taskCount} 个任务
+                              </span>
+                              ${log.errorMessage
+                                ? html`<span class="timeline-error" title="${log.errorMessage}">${log.errorMessage}</span>`
+                                : nothing}
+                            </div>
+                          </div>
+                          <div class="timeline-chevron">
+                            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+                              <path d="M4 6l4 4 4-4" stroke-linecap="round" stroke-linejoin="round"/>
                             </svg>
-                            ${log.taskCount} 个任务
-                          </span>
-                          ${log.errorMessage
-                            ? html`<span class="timeline-error" title="${log.errorMessage}">${log.errorMessage}</span>`
-                            : nothing}
+                          </div>
+                        </summary>
+                        <div class="timeline-expanded">
+                          <div class="timeline-expanded__section">
+                            <span class="timeline-expanded__label">时间</span>
+                            <span class="timeline-expanded__value">
+                              ${new Date(log.timestamp).toLocaleString("zh-CN", {
+                                year: "numeric",
+                                month: "2-digit",
+                                day: "2-digit",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                                second: "2-digit",
+                              })}
+                            </span>
+                          </div>
+                          <div class="timeline-expanded__section">
+                            <span class="timeline-expanded__label">任务数</span>
+                            <span class="timeline-expanded__value">${log.taskCount}</span>
+                          </div>
+                          ${log.result
+                            ? html`
+                              <div class="timeline-expanded__section timeline-expanded__section--report">
+                                <span class="timeline-expanded__label">巡检报告</span>
+                                <div class="timeline-report markdown-body">${unsafeHTML(md(log.result))}</div>
+                              </div>`
+                            : log.errorMessage
+                              ? html`
+                                <div class="timeline-expanded__section">
+                                  <span class="timeline-expanded__label">错误详情</span>
+                                  <pre class="timeline-report timeline-report--error">${log.errorMessage}</pre>
+                                </div>`
+                              : nothing}
                         </div>
-                      </div>
+                      </details>
                     </div>
-                  `
+                  `;
+                  }
                 )}
               </div>
             `}

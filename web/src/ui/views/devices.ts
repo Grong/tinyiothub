@@ -655,6 +655,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
         const updateReq: UpdateAlarmRuleRequest = {
           name: this.ruleFormName,
           description: this.ruleFormDesc || undefined,
+          propertyId: this.ruleFormPropertyId || undefined,
           condition,
           alarmLevel: this.ruleFormLevel,
           notificationConfig,
@@ -2098,7 +2099,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
               <div class="alarm-rules-list">
                 ${this.alarmRules.map(rule => {
                   const condSummary = this.formatCondition(rule.condition);
-                  const propName = properties.find(p => p.name === rule.propertyId)?.displayName || rule.propertyId || "—";
+                  const propName = properties.find(p => p.id === rule.propertyId)?.displayName || properties.find(p => p.name === rule.propertyId)?.displayName || rule.propertyId || "—";
                   return html`
                     <div class="alarm-rule-item ${rule.isEnabled ? '' : 'alarm-rule-item--disabled'}" style="animation: ruleFadeIn 0.35s var(--ease-out) both; animation-delay: ${Math.min(this.alarmRules.indexOf(rule) * 50, 300)}ms;">
                       <div class="alarm-rule-item__main">
@@ -2237,10 +2238,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
               </div>
               <div class="field">
                 <label class="label">关联属性</label>
-                <select class="select" .value=${this.ruleFormPropertyId} @change=${(e: any) => { this.ruleFormPropertyId = e.target.value; }}>
-                  <option value="">— 全部属性 —</option>
+                <select class="select" @change=${(e: any) => { this.ruleFormPropertyId = e.target.value; }}>
                   ${properties.map((p: any) => html`
-                    <option value=${p.id}>${p.displayName || p.name} (${p.dataType || "string"})</option>
+                    <option value=${p.id} ?selected=${p.id === this.ruleFormPropertyId || p.name === this.ruleFormPropertyId}>${p.displayName || p.name} (${p.dataType || "string"})</option>
                   `)}
                 </select>
               </div>

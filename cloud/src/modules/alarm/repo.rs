@@ -111,7 +111,7 @@ fn parse_legacy_condition(json: &str) -> Result<AlarmCondition, String> {
         "neq" => ComparisonOperator::NotEqual,
         _ => return Err(format!("legacy: unknown operator '{}'", op_str)),
     };
-    Ok(AlarmCondition::Threshold { operator: op, value: val })
+    Ok(AlarmCondition::Threshold { operator: op, value: val, recovery_threshold: None })
 }
 
 /// Parse a datetime string from the database, handling both RFC3339 and SQLite formats.
@@ -579,14 +579,15 @@ impl AlarmRepository for SqliteAlarmRepository {
         };
 
         let placeholders = vec!["?"; alarm_ids.len()].join(",");
+        // Filter by is_resolved = 0 to avoid re-resolving already-resolved alarms
         let query = if workspace_id.is_empty() {
             format!(
-                "UPDATE device_alarms SET is_resolved = ?, is_acknowledged = ?, resolved_by = ?, resolved_at = ?, resolution_type = ? WHERE id IN ({})",
+                "UPDATE device_alarms SET is_resolved = ?, is_acknowledged = ?, resolved_by = ?, resolved_at = ?, resolution_type = ? WHERE is_resolved = 0 AND id IN ({})",
                 placeholders
             )
         } else {
             format!(
-                "UPDATE device_alarms SET is_resolved = ?, is_acknowledged = ?, resolved_by = ?, resolved_at = ?, resolution_type = ? WHERE id IN ({}) AND device_id IN (SELECT id FROM devices WHERE workspace_id = ?)",
+                "UPDATE device_alarms SET is_resolved = ?, is_acknowledged = ?, resolved_by = ?, resolved_at = ?, resolution_type = ? WHERE is_resolved = 0 AND id IN ({}) AND device_id IN (SELECT id FROM devices WHERE workspace_id = ?)",
                 placeholders
             )
         };
@@ -702,7 +703,11 @@ impl SqliteAlarmRuleRepository {
                     error = %e,
                     "Failed to parse stored condition, falling back to default"
                 );
-                AlarmCondition::Threshold { operator: ComparisonOperator::GreaterThan, value: 0.0 }
+                AlarmCondition::Threshold {
+                    operator: ComparisonOperator::GreaterThan,
+                    value: 0.0,
+                    recovery_threshold: None,
+                }
             });
 
         let alarm_level = AlarmLevel::parse_str(&alarm_level_str).ok_or_else(|| {

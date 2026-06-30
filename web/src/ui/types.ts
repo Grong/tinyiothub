@@ -20,6 +20,7 @@ export interface ToolCatalogGroup {
 export interface AgentItem {
   id: string;
   name?: string;
+  workspaceId?: string;
 }
 
 export interface AgentsListResult {

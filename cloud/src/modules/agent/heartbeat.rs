@@ -1,63 +1,12 @@
-// Heartbeat Service - IoT periodic inspection tasks wrapper around zeroclaw HeartbeatEngine
+// Heartbeat module — per-workspace HEARTBEAT.md task parsing utilities.
 //
-// The zeroclaw HeartbeatEngine collects tasks from HEARTBEAT.md but does not execute them.
-// This service adds execution logic: high-priority tasks are sent to the AgentPool
-// as agent prompts, with results logged and (optionally) stored in memory.
+// The heartbeat_loop and HeartbeatManager have been replaced by
+// tinyiothub_ai::heartbeat (HeartbeatRunner + heartbeat_loop).
 
-use std::sync::Arc;
-
-use zeroclaw::heartbeat::engine::{HeartbeatEngine, TaskPriority};
-
-use super::agent::AgentPool;
-
-/// Execution record for a single heartbeat run
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HeartbeatExecutionRecord {
-    pub timestamp: chrono::DateTime<chrono::Utc>,
-    pub task_count: usize,
-    pub status: String,
-    pub error_message: Option<String>,
-}
-
-/// Global heartbeat state for API access
-#[derive(Debug, Clone)]
-pub struct HeartbeatState {
-    pub enabled: bool,
-    pub interval_minutes: u32,
-    pub workspace_id: String,
-    pub agent_id: String,
-    pub execution_history: Vec<HeartbeatExecutionRecord>,
-    pub workspace_dir: std::path::PathBuf,
-}
-
-impl HeartbeatState {
-    pub fn new(
-        workspace_id: String,
-        agent_id: String,
-        interval_minutes: u32,
-        workspace_dir: std::path::PathBuf,
-    ) -> Self {
-        Self {
-            enabled: true,
-            interval_minutes,
-            workspace_id,
-            agent_id,
-            execution_history: Vec::new(),
-            workspace_dir,
-        }
-    }
-
-    pub fn add_execution_record(&mut self, record: HeartbeatExecutionRecord) {
-        self.execution_history.insert(0, record);
-        if self.execution_history.len() > 100 {
-            self.execution_history.truncate(100);
-        }
-    }
-}
+use serde::{Deserialize, Serialize};
 
 /// A single heartbeat task
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HeartbeatTask {
     pub priority: String,
@@ -78,6 +27,10 @@ pub async fn read_heartbeat_tasks(
 }
 
 /// Write tasks to HEARTBEAT.md
+///
+/// NOTE: File-based writes have a known TOCTOU race — concurrent edits from
+/// multiple admins may overwrite each other. Long-term fix (P2): migrate
+/// tasks to a DB table with optimistic locking.
 pub async fn write_heartbeat_tasks(
     workspace_dir: &std::path::Path,
     tasks: &[HeartbeatTask],
@@ -87,7 +40,7 @@ pub async fn write_heartbeat_tasks(
     Ok(())
 }
 
-fn get_default_tasks() -> Vec<HeartbeatTask> {
+pub(crate) fn get_default_tasks() -> Vec<HeartbeatTask> {
     vec![
         HeartbeatTask {
             priority: "high".into(),
@@ -146,7 +99,7 @@ fn parse_heartbeat_md(content: &str) -> Vec<HeartbeatTask> {
     tasks
 }
 
-fn build_heartbeat_md(tasks: &[HeartbeatTask]) -> String {
+pub(crate) fn build_heartbeat_md(tasks: &[HeartbeatTask]) -> String {
     let mut s = "# Periodic Tasks\n".to_string();
     for task in tasks {
         let flag =
@@ -156,186 +109,74 @@ fn build_heartbeat_md(tasks: &[HeartbeatTask]) -> String {
     s
 }
 
-// Global heartbeat state - initialized when HeartbeatService is created
-static HEARTBEAT_STATE: std::sync::OnceLock<Arc<tokio::sync::RwLock<HeartbeatState>>> =
-    std::sync::OnceLock::new();
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-fn init_heartbeat_state(state: HeartbeatState) {
-    let _ = HEARTBEAT_STATE.set(Arc::new(tokio::sync::RwLock::new(state)));
-}
-
-/// Get a reference to the global heartbeat state
-pub fn get_heartbeat_state() -> Option<&'static Arc<tokio::sync::RwLock<HeartbeatState>>> {
-    HEARTBEAT_STATE.get()
-}
-
-/// IoT Heartbeat Service
-pub struct HeartbeatService {
-    engine: HeartbeatEngine,
-    agent_pool: Arc<AgentPool>,
-    workspace_dir: std::path::PathBuf,
-    workspace_id: String,
-    agent_id: String,
-    interval_minutes: u32,
-    heartbeat_prompt: String,
-}
-
-impl HeartbeatService {
-    pub fn new(
-        workspace_dir: std::path::PathBuf,
-        config: zeroclaw::config::schema::HeartbeatConfig,
-        observer: Arc<dyn zeroclaw::observability::Observer>,
-        agent_pool: Arc<AgentPool>,
-        workspace_id: String,
-        agent_id: String,
-        heartbeat_prompt: String,
-    ) -> Self {
-        let interval_minutes = config.interval_minutes;
-
-        let state = HeartbeatState::new(
-            workspace_id.clone(),
-            agent_id.clone(),
-            interval_minutes,
-            workspace_dir.clone(),
-        );
-        init_heartbeat_state(state);
-
-        let engine = HeartbeatEngine::new(config, workspace_dir.clone(), observer);
-        Self {
-            engine,
-            agent_pool,
-            workspace_dir,
-            workspace_id,
-            agent_id,
-            interval_minutes,
-            heartbeat_prompt,
-        }
+    #[test]
+    fn test_parse_heartbeat_md_basic() {
+        let content = "- [high] 检查离线设备\n- [medium] 扫描告警";
+        let tasks = parse_heartbeat_md(content);
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[0].priority, "high");
+        assert_eq!(tasks[0].text, "检查离线设备");
+        assert!(!tasks[0].paused);
+        assert_eq!(tasks[1].priority, "medium");
+        assert_eq!(tasks[1].text, "扫描告警");
     }
 
-    /// Ensure HEARTBEAT.md exists with default IoT tasks
-    pub async fn ensure_heartbeat_file(&self) -> anyhow::Result<()> {
-        let path = self.workspace_dir.join("HEARTBEAT.md");
-        if !path.exists() {
-            let content = "# Periodic Tasks\n\
-                - [high] 检查离线设备并尝试自动重连\n\
-                - [medium] 扫描未处理的高优先级告警\n\
-                - [medium] 生成设备状态日报摘要\n\
-                - [low|paused] 检查系统磁盘和内存使用率\n";
-            tokio::fs::create_dir_all(&self.workspace_dir).await.ok();
-            tokio::fs::write(&path, content).await?;
-            tracing::info!("Created default HEARTBEAT.md at {:?}", path);
-        }
-        Ok(())
+    #[test]
+    fn test_parse_heartbeat_md_paused() {
+        let content = "- [high|paused] 检查离线设备";
+        let tasks = parse_heartbeat_md(content);
+        assert_eq!(tasks.len(), 1);
+        assert!(tasks[0].paused);
+        assert_eq!(tasks[0].priority, "high");
     }
 
-    /// Run the heartbeat loop
-    pub async fn run(&self, mut shutdown_rx: tokio::sync::broadcast::Receiver<()>) {
-        if let Err(e) = self.ensure_heartbeat_file().await {
-            tracing::warn!("Failed to ensure heartbeat file: {}", e);
-        }
-
-        let interval_mins = self.interval_minutes as u64;
-        let mut interval =
-            tokio::time::interval(tokio::time::Duration::from_secs(interval_mins * 60));
-
-        tracing::info!(
-            "💓 HeartbeatService started for workspace={} agent={} (interval={}min)",
-            self.workspace_id,
-            self.agent_id,
-            self.interval_minutes
-        );
-
-        loop {
-            tokio::select! {
-                _ = interval.tick() => {}
-                _ = shutdown_rx.recv() => {
-                    tracing::info!("💓 HeartbeatService received shutdown signal");
-                    break;
-                }
-            }
-
-            let timestamp = chrono::Utc::now();
-            let mut task_count = 0usize;
-            let mut status = "success".to_string();
-            let mut error_message = None;
-
-            match self.engine.collect_runnable_tasks().await {
-                Ok(tasks) => {
-                    task_count = tasks.len();
-                    if !tasks.is_empty() {
-                        tracing::info!("💓 Heartbeat collected {} tasks", tasks.len());
-                    }
-                    for task in tasks {
-                        if task.priority == TaskPriority::High
-                            && let Err(e) = self.execute_task(&task.text).await
-                        {
-                            status = "error".to_string();
-                            error_message = Some(e);
-                            break;
-                        }
-                    }
-                }
-                Err(e) => {
-                    status = "error".to_string();
-                    error_message = Some(e.to_string());
-                    tracing::warn!("💓 Heartbeat task collection failed: {}", e);
-                }
-            }
-
-            if let Some(state) = get_heartbeat_state() {
-                let record = HeartbeatExecutionRecord {
-                    timestamp,
-                    task_count,
-                    status: status.clone(),
-                    error_message,
-                };
-                let mut state_guard = state.write().await;
-                state_guard.add_execution_record(record);
-            }
-
-            tracing::debug!("💓 Heartbeat tick completed: {} tasks, status={}", task_count, status);
-        }
+    #[test]
+    fn test_parse_heartbeat_md_simple() {
+        let content = "- 做一个简单的任务";
+        let tasks = parse_heartbeat_md(content);
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].priority, "low");
+        assert!(!tasks[0].paused);
     }
 
-    /// Execute a single heartbeat task via AgentPool
-    async fn execute_task(&self, task_text: &str) -> Result<(), String> {
-        let session_key = format!("agent:{}:{}/heartbeat", self.workspace_id, self.agent_id);
-        let run_id = format!("heartbeat-{}", chrono::Utc::now().timestamp_millis());
-        let prompt = format!(
-            "{}\n\n## 本次巡检任务\n\n{}\n\n请执行后给出简洁的结构化结果。",
-            self.heartbeat_prompt, task_text
-        );
+    #[test]
+    fn test_parse_heartbeat_md_skips_headers() {
+        let content = "# 标题\n- [high] 一个任务";
+        let tasks = parse_heartbeat_md(content);
+        assert_eq!(tasks.len(), 1);
+    }
 
-        match self
-            .agent_pool
-            .chat_send(&self.agent_id, &session_key, &prompt, &run_id, &prompt)
-            .await
-        {
-            Ok(mut rx) => {
-                use super::types::ChatEvent;
-                while let Some(event) = rx.recv().await {
-                    match event {
-                        ChatEvent::Final { message, .. } => {
-                            tracing::info!(
-                                "💓 Heartbeat task result: {}",
-                                serde_json::to_string(&message).unwrap_or_default()
-                            );
-                        }
-                        ChatEvent::Error { error, .. } => {
-                            tracing::warn!("💓 Heartbeat task error: {}", error);
-                            return Err(error);
-                        }
-                        _ => {}
-                    }
-                }
-                tracing::info!("💓 Heartbeat task executed: {}", task_text);
-                Ok(())
-            }
-            Err(e) => {
-                let msg = format!("AgentPool error: {}", e);
-                tracing::warn!("💓 Heartbeat task execution failed: {}", msg);
-                Err(msg)
-            }
-        }
+    #[test]
+    fn test_parse_heartbeat_md_empty() {
+        let tasks = parse_heartbeat_md("");
+        assert!(tasks.is_empty());
+    }
+
+    #[test]
+    fn test_get_default_tasks() {
+        let tasks = get_default_tasks();
+        assert!(!tasks.is_empty());
+        assert!(tasks.iter().any(|t| !t.paused));
+        assert!(tasks.iter().any(|t| t.paused));
+    }
+
+    #[test]
+    fn test_build_heartbeat_md_roundtrip() {
+        let tasks = vec![
+            HeartbeatTask {
+                priority: "high".into(), text: "检查离线设备".into(), paused: false
+            },
+            HeartbeatTask { priority: "low".into(), text: "生成报表".into(), paused: true },
+        ];
+        let md = build_heartbeat_md(&tasks);
+        let parsed = parse_heartbeat_md(&md);
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].priority, "high");
+        assert_eq!(parsed[0].text, "检查离线设备");
+        assert!(parsed[1].paused);
     }
 }

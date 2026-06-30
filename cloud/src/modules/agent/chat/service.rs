@@ -96,9 +96,8 @@ pub async fn send_message(
     chat_handles: &Arc<
         tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>,
     >,
-    reflection_service: Option<
-        std::sync::Arc<super::super::reflection::service::ReflectionService>,
-    >,
+    memory_service: Option<std::sync::Arc<tinyiothub_ai::memory::service::MemoryService>>,
+    event_publisher: Option<std::sync::Arc<tinyiothub_ai::event::bus::AiEventPublisher>>,
     enable_reflection: bool,
     model: &str,
     workspace_id: &str,
@@ -114,6 +113,7 @@ pub async fn send_message(
     let workspace_id = workspace_id.to_string();
     let agent_id = agent_id.to_string();
     let reflection_model = model.to_string();
+    let event_publisher = event_publisher.clone();
 
     let (tx, rx) = mpsc::channel::<ChatEvent>(100);
 
@@ -165,7 +165,7 @@ pub async fn send_message(
         drop(ag);
 
         let final_text = match result {
-            Ok(Ok(text)) => {
+            Ok(Ok((text, _conversation))) => {
                 let _ = tx
                     .send(ChatEvent::Final {
                         run_id: run_id.clone(),
@@ -200,29 +200,42 @@ pub async fn send_message(
             }
         };
 
-        // Spawn micro_reflect after the turn completes (fire-and-forget)
+        // Spawn reflection after the turn completes (fire-and-forget)
         if enable_reflection
-            && let (Some(svc), Some(assistant_text)) = (reflection_service, final_text)
+            && let Some(assistant_text) = final_text
+            && let Some(ms) = memory_service
         {
             let turn_messages = vec![
-                super::super::reflection::pipeline::ChatMessage {
+                tinyiothub_ai::session::types::ChatTurnMessage {
                     role: "user".into(),
                     content: message.clone(),
+                    ..Default::default()
                 },
-                super::super::reflection::pipeline::ChatMessage {
+                tinyiothub_ai::session::types::ChatTurnMessage {
                     role: "assistant".into(),
                     content: assistant_text,
+                    ..Default::default()
                 },
             ];
+            let ep = event_publisher.clone();
+            let ws_id = workspace_id.clone();
+            let aid = agent_id.clone();
+            let sk = session_key.clone();
             tokio::spawn(async move {
-                svc.micro_reflect(
-                    &workspace_id,
-                    &agent_id,
-                    &session_key,
-                    &reflection_model,
-                    &turn_messages,
-                )
-                .await;
+                if let Err(e) = ms
+                    .reflect_conversation_turn(&ws_id, &aid, &sk, &reflection_model, &turn_messages)
+                    .await
+                {
+                    tracing::warn!(%ws_id, %aid, "Reflection failed: {}", e);
+                    if let Some(ref ep) = ep {
+                        ep.publish(tinyiothub_ai::event::types::AiEvent::ReflectionFailed {
+                            workspace_id: ws_id.clone(),
+                            agent_id: aid.clone(),
+                            session_key: sk.clone(),
+                            reason: e.to_string(),
+                        });
+                    }
+                }
             });
         }
 

@@ -1,12 +1,13 @@
 import { html, nothing, type TemplateResult } from "lit";
+import { safeStr } from "./utils.js";
 
 export function renderDataChart(
   data: Record<string, unknown>,
   _onAction?: (fn: string, args: Record<string, unknown>) => void,
 ): TemplateResult {
-  const title = String(data.title || "图表");
-  const unit = String(data.unit || "");
-  const timeRange = String(data.timeRange || "1h");
+  const title = safeStr(data.title, "图表");
+  const unit = safeStr(data.unit, "");
+  const timeRange = safeStr(data.timeRange, "1h");
   const series = (data.series as Array<{
     name: string;
     color: string;

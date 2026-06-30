@@ -6,8 +6,18 @@
 
 use async_trait::async_trait;
 use zeroclaw::tools::{Tool, ToolResult};
+use zeroclaw_api::attribution::{Attributable, Role, ToolKind};
 
 pub struct CanvasTool;
+
+impl Attributable for CanvasTool {
+    fn role(&self) -> Role {
+        Role::Tool(ToolKind::Plugin)
+    }
+    fn alias(&self) -> &str {
+        self.name()
+    }
+}
 
 #[async_trait]
 impl Tool for CanvasTool {

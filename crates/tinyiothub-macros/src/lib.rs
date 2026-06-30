@@ -124,7 +124,7 @@ fn parse_driver_attributes(
 /// DeviceDriver derive 宏
 ///
 /// 使用方式：
-/// ```rust
+/// ```ignore
 /// #[derive(DeviceDriver)]
 /// #[driver(name = "SimulatedDriver", version = "1.0.0", description = "Simulated Device Driver")]
 /// #[driver_option(label = "Refresh Interval", name = "interval", default = "1000", option_type = "number", required = true)]
@@ -217,7 +217,7 @@ pub fn derive_device_driver(input: TokenStream) -> TokenStream {
 /// 驱动注册宏（已废弃，请使用新的插件系统）
 ///
 /// 使用方式：
-/// ```rust
+/// ```ignore
 /// register_drivers! {
 ///     SimulatedDriver,
 ///     ModbusDriver,

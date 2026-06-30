@@ -13,5 +13,5 @@ pub use event::Event;
 pub use event_id::EventId;
 pub use event_level::EventLevel;
 pub use event_source::EventSource;
-pub use event_type::{DeviceEventType, EventType, SystemEventType};
+pub use event_type::{AiEventType, DeviceEventType, EventType, SystemEventType};
 pub use rich_content::{ContentElement, LinkTarget, RichContent, TextFormat};

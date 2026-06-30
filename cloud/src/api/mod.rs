@@ -26,7 +26,6 @@ pub mod middleware;
 // notification_channels — 已迁移至 modules/notification/handler.rs
 // notifications — 已迁移至 modules/notification/handler.rs
 // open — 已迁移至 modules/open/
-// self_healing — 已迁移至 modules/self_healing/handler.rs
 // system — 已迁移至 modules/system/handler/
 // tags — 已迁移至 modules/tag/handler.rs
 // templates — 已迁移至 modules/template/handler.rs
@@ -58,7 +57,6 @@ pub fn create_router() -> Router<AppState> {
         .nest("/jobs", crate::modules::jobs::handler::create_router())
         .nest("/batch", crate::modules::batch::handler::create_router())
         .nest("/heartbeat", crate::modules::heartbeat::handler::create_router())
-        .nest("/self-healing", crate::modules::self_healing::handler::create_router())
         .nest("/workspaces", crate::modules::workspace::create_router()) // 工作空间端点
         .nest("/workspaces", crate::modules::agent::memory::handler::create_router()) // Agent 记忆
         .nest("/mcp", crate::modules::mcp::create_router())
@@ -89,10 +87,6 @@ pub fn create_router() -> Router<AppState> {
         .route(
             "/events/sse/public",
             get(crate::modules::event::handler::sse::handle_sse_connection_public),
-        )
-        .route(
-            "/workspaces/notifications/stream",
-            get(crate::modules::agent::reflection::notifications::handle_notification_sse),
         )
         .merge(protected_routes);
 

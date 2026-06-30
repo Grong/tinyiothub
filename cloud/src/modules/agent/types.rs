@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 // Re-export sub-domain types
-pub use super::device_memory::DeviceMemory;
 pub use super::skill::{AgentSkill, SkillType};
 
 // --- Session types ---
@@ -396,29 +395,6 @@ pub struct DeviceSnapshot {
 }
 
 impl DeviceSnapshot {
-    /// Create a new device snapshot from domain DeviceMemory
-    pub fn from_domain(memory: &DeviceMemory) -> Result<Self, MemoryError> {
-        let snapshot_data = memory.parse_snapshot().ok_or_else(|| {
-            MemoryError::SerializationError(format!(
-                "Failed to parse snapshot for device {}",
-                memory.device_id
-            ))
-        })?;
-
-        let timestamp_formatted = chrono::DateTime::from_timestamp_millis(memory.snapshot_time)
-            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
-            .unwrap_or_default();
-
-        Ok(Self {
-            device_id: memory.device_id.clone(),
-            workspace_id: memory.workspace_id.clone(),
-            agent_id: memory.agent_id.clone(),
-            snapshot_data,
-            snapshot_time: memory.snapshot_time,
-            timestamp_formatted,
-        })
-    }
-
     /// Format the snapshot for inclusion in a prompt
     pub fn to_prompt_fragment(&self) -> String {
         format!(
@@ -509,9 +485,11 @@ impl MemoryContext {
 
     pub fn add_item(&mut self, item: AgentMemoryItem) {
         match item.item_type.as_str() {
-            "device_snapshot" => self.device_snapshots.push(
-                DeviceSnapshot::from_domain(&DeviceMemory {
-                    id: None,
+            "device_snapshot" => {
+                let snapshot_data =
+                    item.value.get("snapshot").cloned().unwrap_or(item.value.clone());
+                self.device_snapshots.push(DeviceSnapshot {
+                    device_id: item.key.clone(),
                     workspace_id: item
                         .value
                         .get("workspace_id")
@@ -524,24 +502,11 @@ impl MemoryContext {
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string(),
-                    device_id: item.key.clone(),
-                    snapshot_data: item
-                        .value
-                        .get("snapshot")
-                        .map(|v| v.to_string())
-                        .unwrap_or_default(),
-                    snapshot_time: item.timestamp,
-                    created_at: None,
-                })
-                .unwrap_or_else(|_| DeviceSnapshot {
-                    device_id: item.key.clone(),
-                    workspace_id: String::new(),
-                    agent_id: String::new(),
-                    snapshot_data: item.value.clone(),
+                    snapshot_data,
                     snapshot_time: item.timestamp,
                     timestamp_formatted: String::new(),
-                }),
-            ),
+                });
+            }
             "user_preference" => self.user_preferences.push(item),
             "conversation_summary" => self.conversation_summaries.push(item),
             _ => self.other_items.push(item),
@@ -797,20 +762,6 @@ mod tests {
             ChatError::RuntimeError(msg) => assert!(msg.contains("test error")),
             _ => panic!("Expected RuntimeError variant"),
         }
-    }
-
-    #[test]
-    fn test_device_snapshot_from_domain() {
-        let memory = DeviceMemory::new(
-            "ws-123".to_string(),
-            "agent-456".to_string(),
-            "device-789".to_string(),
-            serde_json::json!({"temperature": 25.5, "status": "online"}),
-        );
-        let snapshot = DeviceSnapshot::from_domain(&memory).unwrap();
-        assert_eq!(snapshot.device_id, "device-789");
-        assert_eq!(snapshot.workspace_id, "ws-123");
-        assert_eq!(snapshot.snapshot_data.get("temperature").unwrap().as_f64().unwrap(), 25.5);
     }
 
     #[test]

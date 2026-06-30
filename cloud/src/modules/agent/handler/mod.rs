@@ -3,11 +3,10 @@
 // Provides agent management endpoints:
 // - /agents - list agents
 // - /agents/{id}/config - agent configuration
-// - /agents/{id}/heartbeat/* - heartbeat configuration
+// - /workspaces/{id}/heartbeat/* — heartbeat configuration (in workspace handler)
 // - /agents/{id}/files/* - workspace files
 
 pub mod files;
-pub mod heartbeat;
 pub mod skills;
 pub mod types;
 
@@ -27,8 +26,6 @@ pub fn create_router() -> Router<AppState> {
         .route("/", get(list_agents))
         // /agents/{id}/config
         .route("/{id}/config", get(get_agent_config).put(set_agent_config))
-        // /agents/{id}/heartbeat/*
-        .nest("/{id}/heartbeat", heartbeat::create_router())
         // /agents/{id}/files/*
         .route("/{id}/files", get(files::list_workspace_files))
         .route(

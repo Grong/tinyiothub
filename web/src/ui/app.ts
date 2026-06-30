@@ -35,6 +35,8 @@ const lazyViews: Record<string, () => Promise<void>> = {
   'memory-dashboard': () => import('./views/memory-dashboard.js').then(() => {}),
   knowledge: () => import('./views/knowledge.js').then(() => {}),
   workspace: () => import('./views/workspace.js').then(() => {}),
+  heartbeat: () => import('./views/heartbeat.js').then(() => {}),
+  'ai-ops': () => import('./views/ai-ops.js').then(() => {}),
 };
 
 interface NavItem {
@@ -128,6 +130,11 @@ const NAV_GROUPS: NavGroup[] = [
         route: 'chat',
         label: 'AI 助手',
         icon: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
+      },
+      {
+        route: 'ai-ops',
+        label: 'AI 运维',
+        icon: 'M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm1-13v5.59l4.29 4.3-1.42 1.42-5-5V7h2z',
       },
     ],
   },
@@ -377,6 +384,8 @@ export class TinyIoTHubApp extends LitElement {
       cron: '定时任务',
       'memory-dashboard': '记忆面板',
       workspace: '工作空间',
+      heartbeat: 'AI 巡检',
+      'ai-ops': 'AI 运维',
     };
     // Handle /devices/:id
     if (this.currentRoute.startsWith('devices/')) return '设备详情';
@@ -401,6 +410,8 @@ export class TinyIoTHubApp extends LitElement {
       cron: '管理定时执行的任务和作业',
       'memory-dashboard': '查看和管理 Agent 记忆与反思队列',
       workspace: 'AI 驱动的可视化分析与 3D 场景画布',
+      heartbeat: 'AI 自主巡检 — 自动发现设备异常，智能分析并执行恢复操作',
+      'ai-ops': 'AI 自主运维 — 审批、历史、信任配置与知识管理',
     };
     if (this.currentRoute.startsWith('devices/')) return '查看设备属性、命令和事件';
     return subs[this.currentRoute] || '';
@@ -445,8 +456,8 @@ export class TinyIoTHubApp extends LitElement {
         >
           ${this.renderNav()}
         </nav>
-        <div class="content ${this.currentRoute === 'workspace' ? 'content--workspace' : ''}" role="main" id="main-content">
-          ${this.currentRoute.startsWith('devices/') || this.currentRoute === 'chat' || this.currentRoute === 'workspace'
+        <div class="content ${this.currentRoute === 'workspace' ? 'content--workspace' : this.currentRoute === 'ai-ops' ? 'content--heartbeat' : ''}" role="main" id="main-content">
+          ${this.currentRoute.startsWith('devices/') || this.currentRoute === 'chat' || this.currentRoute === 'workspace' || this.currentRoute === 'ai-ops'
             ? nothing
             : html`
                 <section class="content-header">
@@ -616,6 +627,7 @@ export class TinyIoTHubApp extends LitElement {
     if (base === 'memory-dashboard') return html`<view-memory-dashboard></view-memory-dashboard>`;
     if (base === 'knowledge') return html`<view-knowledge></view-knowledge>`;
     if (base === 'workspace') return html`<view-workspace></view-workspace>`;
+    if (base === 'ai-ops') return html`<view-ai-ops></view-ai-ops>`;
     return html`<div style="padding: 40px; text-align: center; color: var(--muted);">
       页面不存在
     </div>`;

@@ -1,8 +1,6 @@
 import { LitElement, html, nothing } from "lit";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { customElement, state } from "lit/decorators.js";
-import { marked } from "marked";
-import DOMPurify from "dompurify";
 import type { ChatState } from "../controllers/chat.js";
 import {
   createChatState,
@@ -10,19 +8,10 @@ import {
   sendChatMessage,
   abortChatRun,
 } from "../controllers/chat.js";
-import { apiGet } from "../../api/client.js";
 import { A2uiRendererEngine } from "../chat/a2ui/a2ui-renderer.js";
+import { md } from "../shared/markdown.js";
+import { resolveSessionKey } from "../shared/session-key.js";
 import "../../styles/views/workspace.css";
-
-marked.setOptions({ async: false, gfm: true });
-
-function md(text: string): string {
-  try {
-    return DOMPurify.sanitize(marked.parse(text) as string);
-  } catch {
-    return DOMPurify.sanitize(text);
-  }
-}
 
 @customElement("view-workspace")
 export class WorkspaceView extends LitElement {
@@ -59,29 +48,9 @@ export class WorkspaceView extends LitElement {
     super.connectedCallback();
     this.agentId = "default";
 
-    let workspaceId = localStorage.getItem("workspace-id");
-    if (!workspaceId) {
-      try {
-        const wsRes = await apiGet<{ id: string; name: string }[]>("/workspaces");
-        if (wsRes.result && wsRes.result.length > 0) {
-          workspaceId = wsRes.result[0].id;
-          localStorage.setItem("workspace-id", workspaceId);
-        }
-      } catch {
-        // ignore
-      }
-    }
+    const sessionKey = await resolveSessionKey(this.agentId);
 
-    const storedKey = localStorage.getItem("tinyiothub_chat_session_key");
-    let sessionKey = storedKey;
-    const storedWorkspace = storedKey?.split(":")[1];
-    if (!storedKey || !storedKey.includes("/") || storedWorkspace !== workspaceId) {
-      const ws = workspaceId || "";
-      sessionKey = `agent:${ws}:${this.agentId}/${crypto.randomUUID()}`;
-      localStorage.setItem("tinyiothub_chat_session_key", sessionKey);
-    }
-
-    this.chatState = createChatState(sessionKey || "", this.agentId);
+    this.chatState = createChatState(sessionKey, this.agentId);
     this.chatState.onChange = () => this.requestUpdate();
     this._bindA2uiCallback();
     await loadChatHistory(this.chatState);

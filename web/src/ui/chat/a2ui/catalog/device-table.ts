@@ -1,4 +1,5 @@
 import { html, nothing, type TemplateResult } from "lit";
+import { safeStr, normalizeColumns } from "./utils.js";
 
 const STATUS_COLORS: Record<string, string> = {
   online: "#2ecc71",
@@ -11,8 +12,8 @@ export function renderDeviceTable(
   data: Record<string, unknown>,
   onAction?: (fn: string, args: Record<string, unknown>) => void,
 ): TemplateResult {
-  const title = String(data.title || "");
-  const columns = (data.columns as string[]) || ["设备名称", "状态", "最新数据", "操作"];
+  const title = safeStr(data.title, "");
+  const columns = normalizeColumns(data.columns, ["设备名称", "状态", "最新数据", "操作"]);
   const rawDevices = data.devices as Array<Record<string, unknown>> | undefined;
   const rawRows = data.rows as Array<unknown> | undefined;
   const devices: Array<Record<string, unknown>> = rawDevices
@@ -45,13 +46,13 @@ export function renderDeviceTable(
 
             return html`
               <tr>
-                <td>${String(d.name || d.id || "")}</td>
+                <td>${safeStr(d.name || d.id, "")}</td>
                 <td>
                   <span class="a2ui-device-table__status" style="color: ${statusColor}">
                     ● ${status}
                   </span>
                 </td>
-                <td>${String(d.latestData || d.id || "")}</td>
+                <td>${safeStr(d.latestData, safeStr(d.id, ""))}</td>
                 <td>
                   <div class="a2ui-device-table__actions">
                     ${actions.map((a) => html`

@@ -1,10 +1,11 @@
 import { html, type TemplateResult } from "lit";
+import { safeStr } from "./utils.js";
 
 export function renderControlPanel(
   data: Record<string, unknown>,
   onAction?: (fn: string, args: Record<string, unknown>) => void,
 ): TemplateResult {
-  const deviceName = String(data.deviceName || data.deviceId || "");
+  const deviceName = safeStr(data.deviceName || data.deviceId, "");
   const controls = (data.controls as Array<Record<string, unknown>>) || [];
 
   return html`
@@ -12,16 +13,16 @@ export function renderControlPanel(
       <div class="a2ui-control-panel__header">控制面板: ${deviceName}</div>
 
       ${controls.map((ctrl) => {
-        const type = String(ctrl.type || "button");
-        const label = String(ctrl.label || ctrl.id || "");
-        const id = String(ctrl.id || "");
+        const type = safeStr(ctrl.type, "button");
+        const label = safeStr(ctrl.label || ctrl.id, "");
+        const id = safeStr(ctrl.id, "");
 
         if (type === "slider") {
           const min = Number(ctrl.min ?? 0);
           const max = Number(ctrl.max ?? 100);
           const step = Number(ctrl.step ?? 1);
           const value = Number(ctrl.value ?? min);
-          const unit = String(ctrl.unit || "");
+          const unit = safeStr(ctrl.unit, "");
 
           return html`
             <div class="a2ui-control-panel__field">
@@ -59,7 +60,7 @@ export function renderControlPanel(
 
         if (type === "choice") {
           const options = (ctrl.options as Array<{ label: string; value: string }>) || [];
-          const selected = String(ctrl.selected || "");
+          const selected = safeStr(ctrl.selected, "");
 
           return html`
             <div class="a2ui-control-panel__field">
@@ -79,8 +80,8 @@ export function renderControlPanel(
         }
 
         // Default: button
-        const variant = String(ctrl.variant || "primary");
-        const confirmMsg = String(ctrl.confirmMessage || "");
+        const variant = safeStr(ctrl.variant, "primary");
+        const confirmMsg = safeStr(ctrl.confirmMessage, "");
 
         return html`
           <div class="a2ui-control-panel__field">

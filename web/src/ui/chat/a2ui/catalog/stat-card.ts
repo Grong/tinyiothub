@@ -1,15 +1,16 @@
 import { html, nothing, type TemplateResult } from "lit";
+import { safeStr } from "./utils.js";
 
 export function renderStatCard(
   data: Record<string, unknown>,
   onAction?: (fn: string, args: Record<string, unknown>) => void,
 ): TemplateResult {
-  const label = String(data.label || "指标");
-  const value = String(data.value ?? "0");
-  const unit = String(data.unit || "");
+  const label = safeStr(data.label, "指标");
+  const value = safeStr(data.value, "0");
+  const unit = safeStr(data.unit, "");
   const trend = data.trend as number | undefined;
   const trendLabel = data.trendLabel as string | undefined;
-  const color = String(data.color || "accent");
+  const color = safeStr(data.color, "accent");
   const icon = data.icon as string | undefined;
   const description = data.description as string | undefined;
   const actions = (data.actions as Array<{ label: string; functionId: string }>) || [];

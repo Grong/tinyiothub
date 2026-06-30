@@ -431,3 +431,11 @@ async fn test_alarm_rule_workspace_isolation() {
         );
     }
 }
+
+// ============================================================================
+// Alarm → AI Heartbeat Wake Integration Tests (module removed)
+//
+// The old HeartbeatManager has been replaced by event-driven cross-domain
+// dispatch via the AI subsystem. New integration tests for the event-driven
+// approach will be added in a follow-up task (see Task 15: Integration tests).
+// ============================================================================

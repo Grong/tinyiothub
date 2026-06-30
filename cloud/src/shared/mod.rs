@@ -1,3 +1,6 @@
+pub mod ai_adapter;
+pub mod llm_provider;
+
 pub mod command;
 
 pub mod error;
@@ -30,3 +33,4 @@ pub mod hardware;
 pub mod mqtt_client;
 pub mod persistence;
 pub mod redis;
+pub mod workspace_memory;

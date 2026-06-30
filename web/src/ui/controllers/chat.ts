@@ -363,7 +363,6 @@ export function handleChatEvent(state: ChatState, payload: ChatEventPayload): vo
       if (payload.a2ui && state.onA2ui) {
         const surfaceId = extractA2uiSurfaceId(payload.a2ui);
         if (surfaceId) state.lastA2uiSurfaceId = surfaceId;
-        console.log("[A2UI] Received a2ui in tool_call_start, surfaceId:", surfaceId, "payload.a2ui:", payload.a2ui);
         state.a2uiChunks.push(payload.a2ui);
         state.onA2ui(payload.a2ui);
       }
@@ -466,12 +465,21 @@ function buildToolMessages(state: ChatState): ChatMessage[] {
     if (!tc) {
       return { role: "assistant", content: [{ type: "text", text: "" }], timestamp: Date.now() };
     }
+    let parsedArgs: unknown = {};
+    if (tc.toolArgs) {
+      try {
+        parsedArgs = JSON.parse(tc.toolArgs);
+      } catch {
+        // Malformed JSON — use raw string as fallback
+        parsedArgs = { _raw: tc.toolArgs };
+      }
+    }
     return {
       role: "assistant",
       toolCallId: tc.toolCallId,
       toolName: tc.toolName,
       content: [
-        { type: "toolcall", name: tc.toolName, args: tc.toolArgs ? JSON.parse(tc.toolArgs) : {} },
+        { type: "toolcall", name: tc.toolName, args: parsedArgs },
         ...(tc.toolResult ? [{ type: "toolresult", name: tc.toolName, result: tc.toolResult }] : []),
       ],
       timestamp: tc.startedAt,

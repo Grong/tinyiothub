@@ -32,6 +32,12 @@ pub struct ServiceManager {
 
     /// Cron 调度器（可选，用于优雅关闭）
     cron_scheduler: Arc<RwLock<Option<crate::shared::cron_scheduler::CronSchedulerService>>>,
+
+    /// AI orchestrator (set during start_all)
+    orchestrator: Option<Arc<tinyiothub_ai::orchestrator::Orchestrator>>,
+
+    /// AI heartbeat runner (set during start_all)
+    heartbeat_runner: Option<Arc<tinyiothub_ai::heartbeat::runner::HeartbeatRunner>>,
 }
 
 impl ServiceManager {
@@ -45,6 +51,8 @@ impl ServiceManager {
             shutdown_tx,
             service_handles: Arc::new(RwLock::new(Vec::new())),
             cron_scheduler: Arc::new(RwLock::new(None)),
+            orchestrator: None,
+            heartbeat_runner: None,
         }
     }
 
@@ -112,65 +120,80 @@ impl ServiceManager {
         #[cfg(not(feature = "harmonyos"))]
         self.start_health_monitor(data_server.clone(), app_state.database.clone()).await?;
 
-        // 4. 启动 Heartbeat 服务
+        // 4. Build and start AI subsystem (tinyiothub-ai Orchestrator)
         #[cfg(not(feature = "harmonyos"))]
         {
-            let agent_settings = crate::shared::config::get().agent.clone();
-            let workspace_dir = crate::shared::paths::default_workspace_dir();
+            let heartbeat_task_repo = Arc::new(
+                crate::modules::agent::heartbeat_repo::SqliteHeartbeatTaskRepository::new(
+                    app_state.database.pool().clone(),
+                ),
+            );
 
-            // Initialize workspace with template files
-            let scaffold_result =
-                crate::modules::agent::scaffold::scaffold_workspace(&workspace_dir).await;
-            match scaffold_result {
-                Ok(result) => {
-                    if result.created_files > 0 || result.created_dirs > 0 {
-                        info!("✅ Workspace scaffolded: {}", result);
+            let heartbeat_config = tinyiothub_ai::heartbeat::types::HeartbeatConfig {
+                enabled: true,
+                interval_minutes: 15,
+            };
+            let event_publisher = Arc::new(tinyiothub_ai::event::bus::AiEventPublisher::new(
+                app_state.event_bus.clone(),
+            ));
+            let heartbeat_runner =
+                Arc::new(tinyiothub_ai::heartbeat::runner::HeartbeatRunner::new(
+                    heartbeat_task_repo.clone(),
+                    event_publisher.clone(),
+                    heartbeat_config,
+                ));
+
+            // Wire event publisher to services that need cross-domain dispatching
+            app_state.alarm_service.set_event_publisher(event_publisher.clone());
+            app_state.workspace_service.set_event_publisher(event_publisher.clone());
+
+            // Wire agent pool via adapter
+            let ai_adapter = Arc::new(crate::shared::ai_adapter::CloudAgentPoolAdapter::new(
+                app_state.agent_pool.clone(),
+            ));
+            heartbeat_runner.set_agent_pool(ai_adapter).await;
+
+            let memory_service = Arc::new(tinyiothub_ai::memory::service::MemoryService::new(
+                Arc::new(crate::shared::llm_provider::MinimaxLlmProvider::new()),
+                app_state.memory_store.clone(),
+            ));
+
+            // Wire MemoryService into AgentPool for reflection from chat path
+            app_state.agent_pool.set_memory_service(memory_service.clone()).await;
+            app_state.agent_pool.set_event_publisher(event_publisher.clone()).await;
+
+            let orchestrator = Arc::new(tinyiothub_ai::orchestrator::Orchestrator::new(
+                app_state.event_bus.clone(),
+                heartbeat_runner.clone(),
+                heartbeat_task_repo,
+                memory_service,
+                Some(Arc::new(tinyiothub_ai::event::bus::LoggingDropNotifier)),
+                Some(Arc::new(crate::modules::agent::dlq_repo::SqliteDeadLetterQueue::new(
+                    app_state.database.pool().clone(),
+                ))),
+            ));
+            orchestrator.start();
+
+            // Start heartbeat loops for existing workspaces
+            match app_state.workspace_service.list_all_ids().await {
+                Ok(ws_ids) => {
+                    for ws_id in &ws_ids {
+                        heartbeat_runner.start(ws_id).await;
                     }
+                    info!("✅ AI Orchestrator started ({} workspaces)", ws_ids.len());
                 }
                 Err(e) => {
-                    warn!("⚠️ Workspace scaffolding failed: {}", e);
+                    warn!("⚠️ Failed to list workspaces for AI subsystem: {}", e);
                 }
             }
 
-            let heartbeat_config = zeroclaw::config::schema::HeartbeatConfig {
-                enabled: agent_settings.heartbeat_enabled,
-                interval_minutes: agent_settings.heartbeat_interval_minutes,
-                two_phase: true,
-                message: None,
-                target: None,
-                to: None,
-                adaptive: true,
-                min_interval_minutes: 5,
-                max_interval_minutes: 120,
-                deadman_timeout_minutes: 0,
-                deadman_channel: None,
-                deadman_to: None,
-                max_run_history: 100,
-                load_session_context: false,
-                task_timeout_secs: 600,
-            };
-            let observer_config = zeroclaw::config::schema::ObservabilityConfig {
-                backend: agent_settings.observer_backend.clone(),
-                ..Default::default()
-            };
-            let heartbeat_observer: std::sync::Arc<dyn zeroclaw::observability::Observer> =
-                std::sync::Arc::from(zeroclaw::observability::create_observer(&observer_config));
-            let heartbeat_service = crate::modules::agent::heartbeat::HeartbeatService::new(
-                workspace_dir.clone(),
-                heartbeat_config,
-                heartbeat_observer,
-                app_state.agent_pool.clone(),
-                crate::shared::paths::DEFAULT_WORKSPACE_ID.to_string(),
-                "default".to_string(),
-                agent_settings.system_prompts.heartbeat.clone(),
-            );
-            let heartbeat_shutdown_rx = self.shutdown_tx.subscribe();
-            let handle: tokio::task::JoinHandle<Result<(), Error>> = tokio::spawn(async move {
-                heartbeat_service.run(heartbeat_shutdown_rx).await;
-                Ok(())
-            });
-            self.service_handles.write().await.push(handle);
-            info!("✅ HeartbeatService started");
+            // Store in ServiceManager for shutdown
+            self.orchestrator = Some(orchestrator);
+            self.heartbeat_runner = Some(heartbeat_runner);
+
+            // Also store in AppState for potential access by other subsystems
+            app_state.orchestrator = self.orchestrator.clone();
+            app_state.heartbeat_runner = self.heartbeat_runner.clone();
         }
 
         // 更新状态为运行中
@@ -246,6 +269,17 @@ impl ServiceManager {
         if let Some(cron_scheduler) = self.cron_scheduler.write().await.take() {
             cron_scheduler.shutdown();
             info!("CronSchedulerService shutdown signal sent");
+        }
+
+        // 关闭 AI subsystem — Orchestrator 先关闭停止接收事件，
+        // 再关闭 HeartbeatRunner 停止循环，避免中间窗口事件丢失。
+        if let Some(ref orchestrator) = self.orchestrator {
+            orchestrator.shutdown().await;
+            info!("Orchestrator shut down");
+        }
+        if let Some(ref heartbeat_runner) = self.heartbeat_runner {
+            heartbeat_runner.shutdown().await;
+            info!("HeartbeatRunner shut down");
         }
 
         // 发送关闭信号

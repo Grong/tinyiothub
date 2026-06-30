@@ -1,5 +1,58 @@
 # Changelog
 
+## [0.4.3] - 2026-06-30
+
+### Added — AI Subsystem (tinyiothub-ai crate)
+
+- **Orchestrator**: cross-domain AI event dispatch via EventBus — AlarmCreated→signal, HeartbeatCompleted→persist, WorkspaceCreated→start/stop — with dead-letter queue for failed events
+- **HeartbeatRunner**: per-workspace async loops with dynamic task/config refresh, LoopSignal channels (External/ReloadTasks/ReloadConfig), and graceful shutdown
+- **Heartbeat loop**: reads shared `Arc<RwLock<Vec<HeartbeatTask>>>` + `Arc<RwLock<TrustConfig>>` on each tick, processes External signals from alarms, reloads tasks on demand
+- **PatrolManager**: per-workspace lifecycle management with DB-backed TrustConfig and event-driven action persistence
+- **MemoryService**: full reflection pipeline — LLM → parse facts → write MemoryStore — with in-memory dedup, prompt sanitization, and prompt injection defense
+- **AiEventPublisher**: fire-and-forget EventBus wrapper with published/dropped counters and DropNotifier alerting
+- **AiEvent types**: 10 variants (AlarmCreated, HeartbeatCompleted, ChatCompleted, WorkspaceCreated/Deleted, HeartbeatPersistFailed, ReflectionFailed, ProposalCreated/Resolved)
+- **Policy engine**: TrustLevel-based tool gating (read-only/auto/manual) with allow/block lists and destructive tool classification
+- **Tool trust system**: classify_tool_safety, evaluate_tool_trust, TrustConfig per workspace
+- **A2UI catalog**: 12+ IoT-specific components — DeviceCard, DataChart, ControlPanel, AlarmCard, StatCard, Scene3D, and more
+- **AI Ops dashboard**: real-time heartbeat monitor, memory dashboard, agent health view
+- **Dead Letter Queue**: SQLite-backed DLQ for AiEvents that exhaust retries, with admin API for inspect/discard
+- **LoggingDropNotifier**: production-default DropNotifier using tracing::warn! for dropped AiEvents
+
+### Added — Simulated Driver Upgrade
+
+- **Anomaly engine**: drift, spike, jitter, stuck anomaly types with property-aware category-tuned behavior
+- **Signal composition**: periodic, trend, Gaussian noise generators with configurable parameters
+- **Pattern matching**: property name pattern matching for 12+ device types (temperature, humidity, pressure, etc.)
+- **Tag-based correlation**: device correlation via EnvironmentContext tag matching
+- **Simulated device module**: scaffolding for anomaly, correlation, patterns, and signal sub-modules
+
+### Added — Skills & Tools
+
+- **GetSkillTool**: on-demand skill loading from compact skill index
+- **SearchResourcesTool**: resource search across workspace
+- **KnowledgeTool**: knowledge graph query capability
+- **Skill index**: frontmatter-parsed skill catalog with glob-based capability matching
+
+### Fixed
+
+- **Dynamic refresh**: heartbeat loop now re-reads tasks and TrustConfig on each tick instead of snapshotting at startup
+- **Shutdown coordination**: retry_with_backoff tasks check AtomicBool, preventing orphaned tasks after shutdown
+- **Regex cache**: JSON fence regex uses std::sync::LazyLock, avoiding per-call Regex::new allocation
+- **ChatCompleted dead code**: self-referential events now documented with explanatory comments; ChatCompleted reflection handled directly in chat/service.rs
+- **ReflectionFailed**: now published to EventBus for observability (previously silently dropped)
+
+### Internal
+
+- **56 unit tests** in tinyiothub-ai (Orchestrator callbacks, EventBus publisher, tool trust, memory reflection, skills parsing)
+- Removed `self_healing` module (replaced by AI heartbeat subsystem)
+- Removed `reflection/` analyzers (simplified to single MemoryService pipeline)
+
+## [0.4.1] - 2026-06-15
+
+### Added
+
+- **AI event integration design spec**: architecture for autonomous AI alarm processing channel, using AlarmService Hook + AutonomousAgentRunner + agent_actions audit log
+
 ## [0.4.2] - 2026-06-12
 
 ### Added — Alarm System

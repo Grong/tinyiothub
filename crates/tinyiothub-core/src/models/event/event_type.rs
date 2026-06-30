@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub enum EventType {
     System(SystemEventType),
     Device(DeviceEventType),
+    Ai(AiEventType),
 }
 
 /// System event subtypes
@@ -58,12 +59,60 @@ pub enum DeviceEventType {
     DeviceDeleted,
 }
 
+/// AI subsystem event subtypes
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum AiEventType {
+    AlarmCreated,
+    AlarmResolved,
+    HeartbeatCompleted,
+    ChatCompleted,
+    WorkspaceCreated,
+    WorkspaceDeleted,
+    HeartbeatPersistFailed,
+    ReflectionFailed,
+    ProposalCreated,
+    ProposalResolved,
+}
+
+impl AiEventType {
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            AiEventType::AlarmCreated => "Alarm Created",
+            AiEventType::AlarmResolved => "Alarm Resolved",
+            AiEventType::HeartbeatCompleted => "Heartbeat Completed",
+            AiEventType::ChatCompleted => "Chat Completed",
+            AiEventType::WorkspaceCreated => "Workspace Created",
+            AiEventType::WorkspaceDeleted => "Workspace Deleted",
+            AiEventType::HeartbeatPersistFailed => "Heartbeat Persist Failed",
+            AiEventType::ReflectionFailed => "Reflection Failed",
+            AiEventType::ProposalCreated => "Proposal Created",
+            AiEventType::ProposalResolved => "Proposal Resolved",
+        }
+    }
+
+    pub fn subtype_string(&self) -> &'static str {
+        match self {
+            AiEventType::AlarmCreated => "alarm_created",
+            AiEventType::AlarmResolved => "alarm_resolved",
+            AiEventType::HeartbeatCompleted => "heartbeat_completed",
+            AiEventType::ChatCompleted => "chat_completed",
+            AiEventType::WorkspaceCreated => "workspace_created",
+            AiEventType::WorkspaceDeleted => "workspace_deleted",
+            AiEventType::HeartbeatPersistFailed => "heartbeat_persist_failed",
+            AiEventType::ReflectionFailed => "reflection_failed",
+            AiEventType::ProposalCreated => "proposal_created",
+            AiEventType::ProposalResolved => "proposal_resolved",
+        }
+    }
+}
+
 impl EventType {
     /// Get string representation for database storage
     pub fn type_string(&self) -> String {
         match self {
             EventType::System(_) => "system".to_string(),
             EventType::Device(_) => "device".to_string(),
+            EventType::Ai(_) => "ai".to_string(),
         }
     }
 
@@ -90,6 +139,7 @@ impl EventType {
                 DeviceEventType::DeviceUpdated => "device_updated".to_string(),
                 DeviceEventType::DeviceDeleted => "device_deleted".to_string(),
             },
+            EventType::Ai(subtype) => subtype.subtype_string().to_string(),
         }
     }
 
@@ -152,6 +202,19 @@ impl EventType {
                 "property" => Ok(EventType::Device(DeviceEventType::PropertyChange)),
                 "command" => Ok(EventType::Device(DeviceEventType::CommandStarted)),
                 _ => Err(format!("Unknown device event subtype: {}", subtype_str)),
+            },
+            "ai" => match subtype_str {
+                "alarm_created" => Ok(EventType::Ai(AiEventType::AlarmCreated)),
+                "alarm_resolved" => Ok(EventType::Ai(AiEventType::AlarmResolved)),
+                "heartbeat_completed" => Ok(EventType::Ai(AiEventType::HeartbeatCompleted)),
+                "chat_completed" => Ok(EventType::Ai(AiEventType::ChatCompleted)),
+                "workspace_created" => Ok(EventType::Ai(AiEventType::WorkspaceCreated)),
+                "workspace_deleted" => Ok(EventType::Ai(AiEventType::WorkspaceDeleted)),
+                "heartbeat_persist_failed" => Ok(EventType::Ai(AiEventType::HeartbeatPersistFailed)),
+                "reflection_failed" => Ok(EventType::Ai(AiEventType::ReflectionFailed)),
+                "proposal_created" => Ok(EventType::Ai(AiEventType::ProposalCreated)),
+                "proposal_resolved" => Ok(EventType::Ai(AiEventType::ProposalResolved)),
+                _ => Err(format!("Unknown ai event subtype: {}", subtype_str)),
             },
             _ => Err(format!("Unknown event type: {}", type_str)),
         }
@@ -341,5 +404,30 @@ mod tests {
         // Old "command" should map to CommandStarted
         let parsed = EventType::from_strings("device", "command").unwrap();
         assert_eq!(parsed, EventType::Device(DeviceEventType::CommandStarted));
+    }
+
+    #[test]
+    fn test_ai_event_type_strings() {
+        let ai_type = EventType::Ai(AiEventType::AlarmCreated);
+        assert_eq!(ai_type.type_string(), "ai");
+        assert_eq!(ai_type.subtype_string(), "alarm_created");
+    }
+
+    #[test]
+    fn test_ai_event_type_parsing() {
+        let parsed = EventType::from_strings("ai", "heartbeat_completed").unwrap();
+        assert_eq!(parsed, EventType::Ai(AiEventType::HeartbeatCompleted));
+
+        let invalid = EventType::from_strings("ai", "nonexistent");
+        assert!(invalid.is_err());
+    }
+
+    #[test]
+    fn test_ai_event_type_helpers() {
+        let ai_type = EventType::Ai(AiEventType::ChatCompleted);
+        assert!(!ai_type.is_alarm());
+        assert!(!ai_type.is_command_event());
+        assert!(!ai_type.is_property_event());
+        assert!(!ai_type.is_normal());
     }
 }

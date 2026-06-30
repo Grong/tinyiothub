@@ -1,27 +1,14 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
-import { marked } from "marked";
-import DOMPurify from "dompurify";
 import type { ChatMessage } from "../controllers/chat.js";
 import type { A2uiRendererEngine } from "./a2ui/a2ui-renderer.js";
+import { md } from "../shared/markdown.js";
 
 export type MessageGroup = {
   role: string;
   messages: ChatMessage[];
   firstTimestamp: number;
 };
-
-// Configure marked
-marked.setOptions({ async: false, gfm: true });
-
-function toMarkdownHtml(text: string): string {
-  try {
-    const raw = marked.parse(text) as string;
-    return DOMPurify.sanitize(raw);
-  } catch {
-    return DOMPurify.sanitize(text);
-  }
-}
 
 // ============================================================================
 // Grouping
@@ -108,7 +95,7 @@ export function renderStreamingGroup(
   for (const seg of segments) {
     if (seg.text.trim()) {
       allSegments.push(html`
-        <div class="chat-text streaming-text">${unsafeHTML(toMarkdownHtml(seg.text))}</div>
+        <div class="chat-text streaming-text">${unsafeHTML(md(seg.text))}</div>
       `);
     }
   }
@@ -122,7 +109,7 @@ export function renderStreamingGroup(
 
   if (currentStream.trim()) {
     allSegments.push(html`
-      <div class="chat-text streaming-text">${unsafeHTML(toMarkdownHtml(currentStream))}</div>
+      <div class="chat-text streaming-text">${unsafeHTML(md(currentStream))}</div>
     `);
   }
 
@@ -200,16 +187,16 @@ function renderAssistantMessage(msg: ChatMessage, a2uiRenderer?: A2uiRendererEng
     <div class="chat-bubble chat-bubble--assistant">
       ${thinking && hasInlineThinking
         ? html`<div class="chat-thinking">
-            ${unsafeHTML(toMarkdownHtml(thinking))}
+            ${unsafeHTML(md(thinking))}
           </div>`
         : nothing}
       ${text
-        ? html`<div class="chat-text">${unsafeHTML(toMarkdownHtml(text))}</div>`
+        ? html`<div class="chat-text">${unsafeHTML(md(text))}</div>`
         : nothing}
       ${thinking && !hasInlineThinking
         ? html`<div class="chat-thinking">
             <div class="chat-thinking-label">思考中...</div>
-            ${unsafeHTML(toMarkdownHtml(thinking))}
+            ${unsafeHTML(md(thinking))}
           </div>`
         : nothing}
       ${surfaceContent}
@@ -394,7 +381,7 @@ function renderToolCallChip(name: string, args: string, result?: string): Templa
           ${result ? html`
             <div class="chat-tool-chip__section">
               <span class="chat-tool-chip__section-label">结果</span>
-              <div class="chat-tool-chip__result">${unsafeHTML(toMarkdownHtml(truncateResult(result)))}</div>
+              <div class="chat-tool-chip__result">${unsafeHTML(md(truncateResult(result)))}</div>
             </div>
           ` : html`
             <div class="chat-tool-chip__section chat-tool-chip__section--pending">
