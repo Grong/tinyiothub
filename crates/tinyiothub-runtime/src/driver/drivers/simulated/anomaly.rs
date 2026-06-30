@@ -34,6 +34,7 @@ enum AnomalyState {
 ///
 /// Each tick: if no anomaly is active, rolls for a new one. If active,
 /// decrements the counter and returns the anomaly offset.
+#[derive(Debug, Clone)]
 pub struct AnomalyEngine {
     state: AnomalyState,
     /// Per-tick probability of starting a slow drift.

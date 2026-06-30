@@ -48,6 +48,30 @@ pub fn match_property(name: &str, data_type: &str) -> PropertyBehavior {
         };
     }
 
+    // Status / state — discrete (checked before sensor types so "power_status" is discrete)
+    if name_lower.contains("status") || name_lower.contains("state") {
+        return PropertyBehavior {
+            baseline: 0.0,
+            daily_amplitude: 0.0,
+            noise_sigma: 0.0,
+            unit: String::new(),
+            cumulative: false,
+            discrete: true,
+        };
+    }
+
+    // Switch / relay — boolean that holds state (checked before sensor types)
+    if name_lower.contains("switch") || name_lower.contains("relay") {
+        return PropertyBehavior {
+            baseline: 0.0,
+            daily_amplitude: 0.0,
+            noise_sigma: 0.0,
+            unit: String::new(),
+            cumulative: false,
+            discrete: true,
+        };
+    }
+
     // Vibration sensors
     if name_lower.contains("vibration") || name_lower.contains("vib") {
         return PropertyBehavior {
@@ -153,30 +177,6 @@ pub fn match_property(name: &str, data_type: &str) -> PropertyBehavior {
             unit: "kWh".to_string(),
             cumulative: true,
             discrete: false,
-        };
-    }
-
-    // Status / state — discrete enum values
-    if name_lower.contains("status") || name_lower.contains("state") {
-        return PropertyBehavior {
-            baseline: 0.0,
-            daily_amplitude: 0.0,
-            noise_sigma: 0.0,
-            unit: String::new(),
-            cumulative: false,
-            discrete: true,
-        };
-    }
-
-    // Switch / relay — boolean that holds state
-    if name_lower.contains("switch") || name_lower.contains("relay") {
-        return PropertyBehavior {
-            baseline: 0.0,
-            daily_amplitude: 0.0,
-            noise_sigma: 0.0,
-            unit: String::new(),
-            cumulative: false,
-            discrete: true,
         };
     }
 

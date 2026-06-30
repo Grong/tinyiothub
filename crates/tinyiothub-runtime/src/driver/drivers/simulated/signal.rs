@@ -1,18 +1,8 @@
 use rand::Rng;
 use std::f64::consts::PI;
 
+use super::correlation::EnvironmentContext;
 use super::patterns::PropertyBehavior;
-
-/// Shared environmental state for a group of devices (keyed by tag name).
-/// Full implementation will be in correlation.rs (Task 5).
-#[derive(Debug, Clone)]
-pub struct EnvironmentContext {
-    pub tag_name: String,
-    pub temperature_offset: f64,
-    pub load_factor: f64,
-    pub voltage_offset: f64,
-    pub phase_base: f64,
-}
 
 /// Composes a sensor value from multiple signal components:
 /// baseline + periodic (daily cycle) + trend (slow drift) + noise (Gaussian).
