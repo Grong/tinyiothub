@@ -168,11 +168,9 @@ impl ServiceManager {
                 heartbeat_task_repo,
                 memory_service,
                 Some(Arc::new(tinyiothub_ai::event::bus::LoggingDropNotifier)),
-                Some(Arc::new(
-                    crate::modules::agent::dlq_repo::SqliteDeadLetterQueue::new(
-                        app_state.database.pool().clone(),
-                    ),
-                )),
+                Some(Arc::new(crate::modules::agent::dlq_repo::SqliteDeadLetterQueue::new(
+                    app_state.database.pool().clone(),
+                ))),
             ));
             orchestrator.start();
 

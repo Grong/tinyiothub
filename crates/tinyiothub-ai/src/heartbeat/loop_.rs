@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::{mpsc, oneshot, RwLock};
+use tokio::sync::{RwLock, mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
 use super::types::{HeartbeatConfig, HeartbeatStatus, HeartbeatTask, LoopSignal};
@@ -44,26 +44,12 @@ pub async fn heartbeat_loop(
 
     loop {
         if !paused {
-            let active_tasks: Vec<HeartbeatTask> = tasks
-                .read()
-                .await
-                .iter()
-                .filter(|t| !t.paused)
-                .cloned()
-                .collect();
+            let active_tasks: Vec<HeartbeatTask> = tasks.read().await.iter().filter(|t| !t.paused).cloned().collect();
             let trust = trust_config.read().await.clone();
 
             if !active_tasks.is_empty() {
                 let task_refs: Vec<&HeartbeatTask> = active_tasks.iter().collect();
-                match run_heartbeat_tick(
-                    &workspace_id,
-                    &task_refs,
-                    &trust,
-                    &agent_pool,
-                    &event_publisher,
-                )
-                .await
-                {
+                match run_heartbeat_tick(&workspace_id, &task_refs, &trust, &agent_pool, &event_publisher).await {
                     Ok(_) => consecutive_failures = 0,
                     Err(e) => {
                         consecutive_failures += 1;

@@ -88,9 +88,7 @@ impl HeartbeatRunner {
 
         self.stop(workspace_id).await;
 
-        let trust_config = Arc::new(RwLock::new(
-            self.load_trust_config(workspace_id).await,
-        ));
+        let trust_config = Arc::new(RwLock::new(self.load_trust_config(workspace_id).await));
         let trust_config_for_cache = trust_config.clone();
 
         self.trust_configs

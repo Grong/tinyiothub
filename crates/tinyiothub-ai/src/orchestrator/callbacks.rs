@@ -237,8 +237,8 @@ fn extract_payload(content: &RichContent) -> Option<String> {
 mod tests {
     use super::*;
     use std::sync::Arc;
-    use std::sync::atomic::AtomicBool;
     use std::sync::Mutex;
+    use std::sync::atomic::AtomicBool;
     use tinyiothub_core::models::event::{Event, EventLevel, EventSource, EventType, RichContent};
     use tinyiothub_runtime::EventBus;
 
@@ -280,21 +280,11 @@ mod tests {
             Ok(true)
         }
 
-        async fn insert(
-            &self,
-            _workspace_id: &str,
-            _priority: &str,
-            _text: &str,
-        ) -> Result<HeartbeatTask, RepoError> {
+        async fn insert(&self, _workspace_id: &str, _priority: &str, _text: &str) -> Result<HeartbeatTask, RepoError> {
             Err(RepoError::Database("mock".into()))
         }
 
-        async fn set_paused(
-            &self,
-            _workspace_id: &str,
-            _task_id: i64,
-            _paused: bool,
-        ) -> Result<(), RepoError> {
+        async fn set_paused(&self, _workspace_id: &str, _task_id: i64, _paused: bool) -> Result<(), RepoError> {
             Ok(())
         }
 
@@ -302,11 +292,7 @@ mod tests {
             Ok(())
         }
 
-        async fn insert_result(
-            &self,
-            workspace_id: &str,
-            result: &HeartbeatResult,
-        ) -> Result<(), RepoError> {
+        async fn insert_result(&self, workspace_id: &str, result: &HeartbeatResult) -> Result<(), RepoError> {
             self.insert_result_calls
                 .lock()
                 .unwrap()
@@ -341,10 +327,7 @@ mod tests {
             unimplemented!()
         }
 
-        async fn get(
-            &self,
-            _id: &str,
-        ) -> tinyiothub_core::error::Result<Option<tinyiothub_core::memory::AgentMemory>> {
+        async fn get(&self, _id: &str) -> tinyiothub_core::error::Result<Option<tinyiothub_core::memory::AgentMemory>> {
             Ok(None)
         }
 
@@ -421,10 +404,7 @@ mod tests {
     }
 
     fn make_memory_service() -> Arc<MemoryService> {
-        Arc::new(MemoryService::new(
-            Arc::new(MockLlmProvider),
-            Arc::new(MockMemoryStore),
-        ))
+        Arc::new(MemoryService::new(Arc::new(MockLlmProvider), Arc::new(MockMemoryStore)))
     }
 
     fn make_publisher() -> Arc<AiEventPublisher> {
@@ -456,39 +436,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_handler_construction() {
-        let repo: Arc<dyn crate::heartbeat::repo::HeartbeatTaskRepository> =
-            Arc::new(MockTaskRepo::new());
+        let repo: Arc<dyn crate::heartbeat::repo::HeartbeatTaskRepository> = Arc::new(MockTaskRepo::new());
         let runner = make_heartbeat_runner(Arc::clone(&repo));
         let publisher = make_publisher();
         let memory = make_memory_service();
 
-        let handler = AiEventHandler::new(
-            runner,
-            repo,
-            memory,
-            publisher,
-            None,
-            Arc::new(AtomicBool::new(false)),
-        );
+        let handler = AiEventHandler::new(runner, repo, memory, publisher, None, Arc::new(AtomicBool::new(false)));
         assert_eq!(handler.name(), "AiEventHandler");
     }
 
     #[tokio::test]
     async fn test_should_handle_filters_ai_events() {
-        let repo: Arc<dyn crate::heartbeat::repo::HeartbeatTaskRepository> =
-            Arc::new(MockTaskRepo::new());
+        let repo: Arc<dyn crate::heartbeat::repo::HeartbeatTaskRepository> = Arc::new(MockTaskRepo::new());
         let runner = make_heartbeat_runner(Arc::clone(&repo));
         let publisher = make_publisher();
         let memory = make_memory_service();
 
-        let handler = AiEventHandler::new(
-            runner,
-            repo,
-            memory,
-            publisher,
-            None,
-            Arc::new(AtomicBool::new(false)),
-        );
+        let handler = AiEventHandler::new(runner, repo, memory, publisher, None, Arc::new(AtomicBool::new(false)));
 
         let ai_event = wrap_ai_event(&AiEvent::WorkspaceCreated {
             workspace_id: "ws_1".into(),
@@ -550,20 +514,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_alarm_created_non_critical_no_signal() {
-        let repo: Arc<dyn crate::heartbeat::repo::HeartbeatTaskRepository> =
-            Arc::new(MockTaskRepo::new());
+        let repo: Arc<dyn crate::heartbeat::repo::HeartbeatTaskRepository> = Arc::new(MockTaskRepo::new());
         let runner = make_heartbeat_runner(Arc::clone(&repo));
         let publisher = make_publisher();
         let memory = make_memory_service();
 
-        let handler = AiEventHandler::new(
-            runner,
-            repo,
-            memory,
-            publisher,
-            None,
-            Arc::new(AtomicBool::new(false)),
-        );
+        let handler = AiEventHandler::new(runner, repo, memory, publisher, None, Arc::new(AtomicBool::new(false)));
 
         // Non-critical alarm should not trigger heartbeat signal
         let alarm = AiEvent::AlarmCreated(crate::alarm::types::AlarmEvent {
@@ -585,20 +541,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_workspace_created_and_deleted_no_panic() {
-        let repo: Arc<dyn crate::heartbeat::repo::HeartbeatTaskRepository> =
-            Arc::new(MockTaskRepo::new());
+        let repo: Arc<dyn crate::heartbeat::repo::HeartbeatTaskRepository> = Arc::new(MockTaskRepo::new());
         let runner = make_heartbeat_runner(Arc::clone(&repo));
         let publisher = make_publisher();
         let memory = make_memory_service();
 
-        let handler = AiEventHandler::new(
-            runner,
-            repo,
-            memory,
-            publisher,
-            None,
-            Arc::new(AtomicBool::new(false)),
-        );
+        let handler = AiEventHandler::new(runner, repo, memory, publisher, None, Arc::new(AtomicBool::new(false)));
 
         // WorkspaceCreated (no tasks loaded → loop won't start, but no panic)
         let event = wrap_ai_event(&AiEvent::WorkspaceCreated {
@@ -615,20 +563,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_self_referential_events_are_noop() {
-        let repo: Arc<dyn crate::heartbeat::repo::HeartbeatTaskRepository> =
-            Arc::new(MockTaskRepo::new());
+        let repo: Arc<dyn crate::heartbeat::repo::HeartbeatTaskRepository> = Arc::new(MockTaskRepo::new());
         let runner = make_heartbeat_runner(Arc::clone(&repo));
         let publisher = make_publisher();
         let memory = make_memory_service();
 
-        let handler = AiEventHandler::new(
-            runner,
-            repo,
-            memory,
-            publisher,
-            None,
-            Arc::new(AtomicBool::new(false)),
-        );
+        let handler = AiEventHandler::new(runner, repo, memory, publisher, None, Arc::new(AtomicBool::new(false)));
 
         // Self-referential events should not panic
         for event_variant in [

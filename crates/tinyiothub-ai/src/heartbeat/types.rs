@@ -110,4 +110,3 @@ pub enum LoopSignal {
     /// Re-read TrustConfig from shared state.
     ReloadConfig,
 }
-

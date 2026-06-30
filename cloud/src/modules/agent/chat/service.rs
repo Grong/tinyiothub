@@ -223,13 +223,7 @@ pub async fn send_message(
             let sk = session_key.clone();
             tokio::spawn(async move {
                 if let Err(e) = ms
-                    .reflect_conversation_turn(
-                        &ws_id,
-                        &aid,
-                        &sk,
-                        &reflection_model,
-                        &turn_messages,
-                    )
+                    .reflect_conversation_turn(&ws_id, &aid, &sk, &reflection_model, &turn_messages)
                     .await
                 {
                     tracing::warn!(%ws_id, %aid, "Reflection failed: {}", e);
