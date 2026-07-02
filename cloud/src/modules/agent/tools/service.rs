@@ -244,10 +244,7 @@ pub async fn load_all_tools(
 
     if let Some(ks_svc) = knowledge_service {
         let ws_svc = workspace_service.clone();
-        tool_boxed.push(Box::new(super::knowledge::SearchKnowledgeTool::new(
-            ks_svc,
-            ws_svc,
-        )));
+        tool_boxed.push(Box::new(super::knowledge::SearchKnowledgeTool::new(ks_svc, ws_svc)));
     }
 
     if let Some(ws_svc) = workspace_service {

@@ -258,4 +258,3 @@ async fn test_get_event_audit_logs_not_found() {
     let (_s, json) = response_parts(response).await;
     assert!(json["code"].is_number());
 }
-
