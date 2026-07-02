@@ -3,7 +3,6 @@
 
 pub mod channels;
 pub mod handlers;
-pub mod performance;
 pub mod security;
 pub mod sse_manager;
 
