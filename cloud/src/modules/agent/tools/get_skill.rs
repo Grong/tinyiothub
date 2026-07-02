@@ -27,11 +27,13 @@ impl Tool for GetSkillTool {
     }
 
     fn description(&self) -> &str {
-        "Load detailed skill/guide content on demand. \
-         Use this when you need step-by-step instructions for a specific workflow \
-         (alarm diagnosis, device troubleshooting, heartbeat patrol, driver testing, \
-         job scheduling). The system prompt only carries a skill index — call this \
-         to get the full workflow details for a given skill."
+        "Load a skill's full instructions on demand. \
+         When a skill matches the current task, calling this is a BLOCKING REQUIREMENT — \
+         you MUST invoke it BEFORE taking any other action. \
+         The system prompt carries a skill index (name + one-line description); \
+         call this to get the complete step-by-step workflow. \
+         Available skills: workspace, alarm-management, device-management, \
+         driver-management, heartbeat-monitor, job-management, troubleshooting."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

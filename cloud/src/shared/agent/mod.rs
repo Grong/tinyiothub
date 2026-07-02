@@ -156,6 +156,7 @@ async fn load_workspace_prompt(workspace_dir: &std::path::Path) -> String {
         ("IDENTITY.md", "Identity"),
         ("SOUL.md", "Principles"),
         ("TOOLS.md", "Capabilities"),
+        ("AGENTS.md", "Agent Rules"),
         ("USER.md", "User Context"),
         ("MEMORY.md", "Memory"),
     ];
@@ -193,6 +194,7 @@ fn get_embedded_template(filename: &str) -> Option<&'static str> {
     match filename {
         "IDENTITY.md" => Some(include_str!("../../../templates/agent/IDENTITY.md")),
         "SOUL.md" => Some(include_str!("../../../templates/agent/SOUL.md")),
+        "AGENTS.md" => Some(include_str!("../../../templates/agent/AGENTS.md")),
         "TOOLS.md" => Some(include_str!("../../../templates/agent/TOOLS.md")),
         "USER.md" => Some(include_str!("../../../templates/agent/USER.md")),
         "MEMORY.md" => Some(include_str!("../../../templates/agent/MEMORY.md")),
@@ -299,18 +301,27 @@ async fn read_skill_dir(dir: &std::path::Path) -> String {
             fm.as_ref().and_then(|f| f.get("version")).and_then(|v| v.as_str()).unwrap_or("");
 
         all_skills.push_str(&format!(
-            "### {}{}\n{}\n{}\n",
-            skill_name,
-            if version.is_empty() { String::new() } else { format!(" (v{})", version) },
-            description,
-            body
+            "- **{name}**{ver}: {desc}\n",
+            name = skill_name,
+            ver = if version.is_empty() { String::new() } else { format!(" (v{})", version) },
+            desc = description,
         ));
     }
 
     if all_skills.is_empty() {
         String::new()
     } else {
-        format!("\n\n## 技能（Skills）\n你可以使用以下技能来完成任务：\n\n{}\n", all_skills)
+        format!(
+            "\n\n## Slash Commands\n\
+             Messages starting with `/skill-name` invoke a skill. When you see this prefix, \
+             calling `get_skill(skill_name=\"<name>\")` is a **BLOCKING REQUIREMENT** — \
+             you MUST load the skill BEFORE responding. Never mention a skill's content \
+             without loading it first.\n\n\
+             ## Available Skills\n\
+             {}\n\
+             To load a skill: `get_skill(skill_name=\"<name>\")`\n",
+            all_skills
+        )
     }
 }
 

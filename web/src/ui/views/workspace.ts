@@ -83,7 +83,7 @@ export class WorkspaceView extends LitElement {
     this.a2uiRenderer.clear();
     this.requestUpdate();
 
-    const contextualMsg = `[当前页面：Workspace 工作空间]\n${raw}`;
+    const contextualMsg = `/workspace ${raw}`;
 
     sendChatMessage(this.chatState, contextualMsg);
   }

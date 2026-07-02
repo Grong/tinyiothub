@@ -266,7 +266,7 @@ fn append_document_filters(
         builder.push_bind(&q_escaped);
         builder.push(" ESCAPE '\\' OR content LIKE ");
         builder.push_bind(&q_escaped);
-        builder.push(" ESCAPE '\\'))");
+        builder.push(" ESCAPE '\\')");
     }
 
     let tag_list = split_tags(tags);
@@ -722,7 +722,7 @@ impl KnowledgeRepository for SqliteKnowledgeRepository {
         builder.push_bind(like_pattern.clone());
         builder.push(" ESCAPE '\\' OR e.description LIKE ");
         builder.push_bind(like_pattern);
-        builder.push(" ESCAPE '\\'))");
+        builder.push(" ESCAPE '\\')");
 
         if let Some(et) = entity_type {
             builder.push(" AND e.entity_type = ");

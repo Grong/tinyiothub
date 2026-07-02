@@ -287,20 +287,26 @@ impl TagRepository for SqliteTagRepository {
     }
 
     async fn find_by_target_id(&self, target_id: &str, tenant_id: &str) -> Result<Vec<Tag>> {
-        let rows = sqlx::query_as::<_, TagRow>(
-            r#"
-            SELECT t.id, t.type, t.name, t.tenant_id, t.created_by, t.created_at
-            FROM tags t
-            INNER JOIN tag_bindings tb ON t.id = tb.tag_id
-            WHERE tb.target_id = ? AND t.tenant_id = ? AND tb.tenant_id = ?
-            ORDER BY t.created_at DESC
-            "#,
-        )
-        .bind(target_id)
-        .bind(tenant_id)
-        .bind(tenant_id)
-        .fetch_all(self.database.pool())
-        .await?;
+        let skip_tenant = tenant_id.is_empty();
+        let sql = if skip_tenant {
+            "SELECT t.id, t.type, t.name, t.tenant_id, t.created_by, t.created_at \
+             FROM tags t \
+             INNER JOIN tag_bindings tb ON t.id = tb.tag_id \
+             WHERE tb.target_id = ? \
+             ORDER BY t.created_at DESC"
+        } else {
+            "SELECT t.id, t.type, t.name, t.tenant_id, t.created_by, t.created_at \
+             FROM tags t \
+             INNER JOIN tag_bindings tb ON t.id = tb.tag_id \
+             WHERE tb.target_id = ? AND t.tenant_id = ? AND tb.tenant_id = ? \
+             ORDER BY t.created_at DESC"
+        };
+
+        let mut query = sqlx::query_as::<_, TagRow>(sql).bind(target_id);
+        if !skip_tenant {
+            query = query.bind(tenant_id).bind(tenant_id);
+        }
+        let rows = query.fetch_all(self.database.pool()).await?;
 
         Ok(rows.into_iter().map(Into::into).collect())
     }

@@ -751,6 +751,7 @@ struct SearchDeviceResult {
     status: String,
     driver_name: Option<String>,
     address: Option<String>,
+    description: Option<String>,
     last_heartbeat: Option<String>,
     tags: Option<Vec<String>>,
 }
@@ -857,6 +858,7 @@ impl ToolHandler for SearchDevicesHandler {
                 status: device.status.to_string(),
                 driver_name: device.driver_name.clone(),
                 address: device.address.clone(),
+                description: device.description.clone(),
                 last_heartbeat: device.last_heartbeat.clone(),
                 tags,
             });

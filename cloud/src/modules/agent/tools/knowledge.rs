@@ -6,15 +6,19 @@ use async_trait::async_trait;
 use zeroclaw::tools::{Tool, ToolResult};
 use zeroclaw_api::attribution::{Attributable, Role, ToolKind};
 
-use crate::modules::workspace::KnowledgeService;
+use crate::modules::workspace::{KnowledgeService, WorkspaceService};
 
 pub struct SearchKnowledgeTool {
     knowledge_service: Arc<KnowledgeService>,
+    workspace_service: Option<Arc<WorkspaceService>>,
 }
 
 impl SearchKnowledgeTool {
-    pub fn new(knowledge_service: Arc<KnowledgeService>) -> Self {
-        Self { knowledge_service }
+    pub fn new(
+        knowledge_service: Arc<KnowledgeService>,
+        workspace_service: Option<Arc<WorkspaceService>>,
+    ) -> Self {
+        Self { knowledge_service, workspace_service }
     }
 }
 
@@ -109,18 +113,7 @@ impl Tool for SearchKnowledgeTool {
             .search_knowledge(workspace_id, query, entity_type, tags.as_deref(), limit)
             .await
         {
-            Ok(results) => {
-                if results.is_empty() {
-                    return Ok(ToolResult {
-                        success: true,
-                        output: format!(
-                            "No knowledge graph results found for query: \"{}\"",
-                            query
-                        ),
-                        error: None,
-                    });
-                }
-
+            Ok(results) if !results.is_empty() => {
                 let formatted: Vec<serde_json::Value> = results
                     .iter()
                     .map(|r| {
@@ -159,6 +152,50 @@ impl Tool for SearchKnowledgeTool {
                 Ok(ToolResult {
                     success: true,
                     output: serde_json::to_string(&output).unwrap_or_default(),
+                    error: None,
+                })
+            }
+            Ok(_) => {
+                // Fall back to resource search when knowledge graph has no indexed entities
+                if let Some(ref ws_svc) = self.workspace_service {
+                    match ws_svc.search_resources(workspace_id, query, None, limit).await {
+                        Ok(resources) if !resources.is_empty() => {
+                            let formatted: Vec<serde_json::Value> = resources
+                                .iter()
+                                .map(|r| {
+                                    serde_json::json!({
+                                        "name": r.name,
+                                        "entity_type": r.resource_type.as_str(),
+                                        "description": r.description,
+                                        "file_path": r.file_path,
+                                        "tags": r.tags,
+                                        "file_size": r.file_size,
+                                        "relevance": r.relevance,
+                                        "source": "resource_fallback",
+                                    })
+                                })
+                                .collect();
+
+                            let output = serde_json::json!({
+                                "results": formatted,
+                                "count": resources.len(),
+                                "query": query,
+                                "note": "Results from workspace resources (knowledge graph not yet indexed)",
+                            });
+
+                            return Ok(ToolResult {
+                                success: true,
+                                output: serde_json::to_string(&output).unwrap_or_default(),
+                                error: None,
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+
+                Ok(ToolResult {
+                    success: true,
+                    output: format!("No knowledge graph results found for query: \"{}\"", query),
                     error: None,
                 })
             }
