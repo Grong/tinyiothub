@@ -1,10 +1,17 @@
 // API Layer - SSE Endpoints
 // Handles HTTP requests for Server-Sent Events (SSE) connections
+//
+// 认证方式（按优先级）：
+// 1. 短期 SSE token（?sse_token=xxx）— 推荐，不暴露 JWT 到 URL
+// 2. JWT Authorization header + WorkspaceScope middleware
+//    用于向后兼容
+// 3. JWT 在 URL 中（?token=xxx）— 仅用于不支持 header 的场景
 
 use axum::{
     Json,
     extract::{Query, State},
-    response::Response,
+    http::StatusCode,
+    response::{IntoResponse, Json as JsonResponse, Response},
 };
 use serde::Deserialize;
 use tinyiothub_web::response::ApiResponseBuilder;
@@ -36,12 +43,16 @@ pub struct SseConnectionQuery {
     /// Comma-separated list of event levels to filter
     /// Example: "critical,error,warning"
     pub event_levels: Option<String>,
+
+    /// 短期 SSE token（替代 ?token=xxx 中的 JWT 暴露）
+    /// 通过 POST /api/v1/auth/sse-token 获取，有效期 5 分钟
+    pub sse_token: Option<String>,
 }
 
-/// Handle authenticated SSE connection for real-time event notifications
+/// 旧的 SSE 端点（受 JWT middleware 保护）— 保留向后兼容
 ///
-/// This endpoint requires JWT authentication and creates a persistent
-/// SSE connection for streaming events to the client.
+/// 这个端点在受保护的路由组中，由 JWT middleware 认证。
+/// 前端的 DeviceCache 使用它。
 #[axum::debug_handler]
 pub async fn handle_sse_connection(
     Query(query): Query<SseConnectionQuery>,
@@ -49,21 +60,73 @@ pub async fn handle_sse_connection(
     workspace_scope: WorkspaceScope,
     claims: Claims,
 ) -> Response {
-    // Use user_id from query or fall back to JWT claims
-    let user_id = query.user_id.clone().unwrap_or_else(|| claims.user_id.clone());
-
-    // Workspace: query param > X-Workspace-Id header > "default"
-    // Frontend must pass workspace_id in the SSE URL so events are correctly filtered.
+    // Workspace: query param > X-Workspace-Id header > claims.workspace_id
+    let user_id = claims.user_id.clone();
     let workspace_id =
-        query.workspace_id.clone().or(workspace_scope.0).unwrap_or_else(|| "default".to_string());
+        query.workspace_id.clone().or_else(|| workspace_scope.0.clone()).unwrap_or_else(|| {
+            if claims.workspace_id.is_empty() {
+                "default".to_string()
+            } else {
+                claims.workspace_id.clone()
+            }
+        });
 
-    info!("New authenticated SSE connection from user: {} workspace: {}", user_id, workspace_id);
+    info!(
+        "New JWT-authenticated SSE connection from user: {} workspace: {}",
+        user_id, workspace_id
+    );
 
-    // Parse event filters
     let event_types = parse_event_types(&query.event_types);
     let event_levels = parse_event_levels(&query.event_levels);
 
-    // Create SSE connection through the manager
+    let sse_manager = state.get_sse_manager();
+    sse_manager.create_connection(user_id, workspace_id, event_types, event_levels).await
+}
+
+/// Handle SSE connection via SSE token（无需 JWT middleware）
+///
+/// 这个端点在公共路由组中，不支持 JWT header。
+/// 客户端先通过 POST /api/v1/auth/sse-token 获取 token，
+/// 然后使用 ?sse_token=xxx 连接此端点。
+#[axum::debug_handler]
+pub async fn handle_sse_connection_token(
+    Query(query): Query<SseConnectionQuery>,
+    State(state): State<AppState>,
+) -> Response {
+    let sse_token = match query.sse_token.as_ref() {
+        Some(t) => t,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                JsonResponse(serde_json::json!({
+                    "error": "Missing sse_token — use POST /api/v1/auth/sse-token first"
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    let (user_id, workspace_id) =
+        match state.get_sse_token_manager().validate_and_consume(sse_token) {
+            Some(v) => v,
+            None => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    JsonResponse(serde_json::json!({
+                        "error": "Invalid or expired SSE token"
+                    })),
+                )
+                    .into_response();
+            }
+        };
+
+    let workspace_id = query.workspace_id.clone().unwrap_or(workspace_id);
+
+    info!("New SSE token connection from user: {} workspace: {}", user_id, workspace_id);
+
+    let event_types = parse_event_types(&query.event_types);
+    let event_levels = parse_event_levels(&query.event_levels);
+
     let sse_manager = state.get_sse_manager();
     sse_manager.create_connection(user_id, workspace_id, event_types, event_levels).await
 }
@@ -87,7 +150,7 @@ pub async fn handle_sse_connection_public(
 
     // Parse event filters
     let event_types = parse_event_types(&query.event_types);
-    let event_levels = parse_event_levels(&query.event_levels);
+    let event_levels = parse_event_types(&query.event_levels);
 
     // Create public SSE connection
     let sse_manager = state.get_sse_manager();
