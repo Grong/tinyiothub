@@ -61,6 +61,12 @@ export class WorkspaceView extends LitElement {
         this.a2uiRenderer.handleA2uiMessage(a2ui);
       }
     }
+
+    // Auto-trigger /workspace skill on first load (empty history = fresh session).
+    if (this.chatState.chatMessages.length === 0) {
+      sendChatMessage(this.chatState, "[当前页面：Workspace 工作空间]\n/workspace");
+    }
+
     this.requestUpdate();
   }
 
