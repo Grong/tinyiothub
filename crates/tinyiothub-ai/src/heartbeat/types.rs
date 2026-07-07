@@ -69,6 +69,18 @@ pub struct HeartbeatResult {
     pub executed_actions: Vec<ExecutedAction>,
     pub proposals: Vec<super::super::proposal::Proposal>,
     pub error: Option<String>,
+    /// Harness pipeline verdict: "Pass" | "Partial" | "Fail"
+    #[serde(default)]
+    pub pipeline_verdict: String,
+    /// Whether lie detection triggered this tick
+    #[serde(default)]
+    pub lie_detected: bool,
+    /// Total tool calls across all pipeline steps
+    #[serde(default)]
+    pub tool_call_count: u32,
+    /// Total pipeline duration in milliseconds
+    #[serde(default)]
+    pub duration_ms: u64,
 }
 
 /// A periodic heartbeat check task.

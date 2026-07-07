@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tinyiothub_ai::{agent::pool::AgentPoolLike, tool::trust::TrustConfig};
+use tinyiothub_ai::{agent::pool::AgentPoolLike, harness::StreamEvent, tool::trust::TrustConfig};
 
 /// Wraps cloud's AgentPool to implement tinyiothub_ai's AgentPoolLike trait.
 pub struct CloudAgentPoolAdapter {
@@ -40,6 +40,17 @@ impl AgentPoolLike for CloudAgentPoolAdapter {
             .await
             .map_err(|e| anyhow::anyhow!("LLM error: {}", e))?;
         Ok(result.final_text)
+    }
+
+    async fn send_message_streamed(
+        &self,
+        workspace_id: &str,
+        prompt: &str,
+    ) -> anyhow::Result<tokio::sync::mpsc::Receiver<StreamEvent>> {
+        self.pool
+            .run_streaming_harness(workspace_id, prompt)
+            .await
+            .map_err(|e| anyhow::anyhow!("LLM error: {}", e))
     }
 
     async fn shutdown(&self) {

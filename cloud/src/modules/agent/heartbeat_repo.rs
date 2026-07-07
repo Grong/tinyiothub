@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use sqlx::SqlitePool;
 use tinyiothub_ai::heartbeat::{
     repo::{HeartbeatTaskRepository, RepoError},
-    types::{HeartbeatResult, HeartbeatTask},
+    types::{HeartbeatResult, HeartbeatStatus, HeartbeatTask},
 };
 
 /// DB row struct with sqlx::FromRow — maps to domain HeartbeatTask.
@@ -142,24 +142,89 @@ impl HeartbeatTaskRepository for SqliteHeartbeatTaskRepository {
         workspace_id: &str,
         result: &HeartbeatResult,
     ) -> Result<(), RepoError> {
-        let actions_json = serde_json::to_string(&result.executed_actions)
-            .map_err(|e| RepoError::Serialization(e.to_string()))?;
-        let proposals_json = serde_json::to_string(&result.proposals)
-            .map_err(|e| RepoError::Serialization(e.to_string()))?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().to_rfc3339();
+
+        // Summary row — main timeline entry
+        let action_type = if result.status == HeartbeatStatus::Error {
+            "error"
+        } else {
+            "summary"
+        };
+
+        let content = serde_json::json!({
+            "taskCount": result.executed_actions.len() + result.proposals.len(),
+            "result": result.summary,
+            "verdict": result.pipeline_verdict,
+            "lieDetected": result.lie_detected,
+            "toolCallCount": result.tool_call_count,
+            "durationMs": result.duration_ms,
+        });
 
         sqlx::query(
-            "INSERT INTO agent_actions (workspace_id, status, summary, actions_json, proposals_json, error)
-             VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, created_at)
+             VALUES (?, ?, ?, 'heartbeat', ?, ?, ?)",
         )
+        .bind(&id)
         .bind(workspace_id)
-        .bind(format!("{:?}", result.status))
-        .bind(&result.summary)
-        .bind(&actions_json)
-        .bind(&proposals_json)
-        .bind(&result.error)
+        .bind("harness")
+        .bind(action_type)
+        .bind(content.to_string())
+        .bind(&now)
         .execute(&self.pool)
         .await
         .map_err(|e| RepoError::Database(e.to_string()))?;
+
+        // Auto-executed action rows
+        for action in &result.executed_actions {
+            let action_content = serde_json::json!({
+                "tool": action.tool_name,
+                "deviceId": action.device_id,
+                "summary": action.details,
+                "success": action.success,
+            });
+            let action_id = uuid::Uuid::new_v4().to_string();
+            sqlx::query(
+                "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, created_at)
+                 VALUES (?, ?, ?, 'heartbeat', 'auto_executed', ?, ?)",
+            )
+            .bind(&action_id)
+            .bind(workspace_id)
+            .bind("harness")
+            .bind(action_content.to_string())
+            .bind(&now)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| RepoError::Database(e.to_string()))?;
+        }
+
+        // Proposal rows
+        for proposal in &result.proposals {
+            let proposal_content = serde_json::json!({
+                "proposalId": proposal.id,
+                "status": "pending",
+                "level": proposal.risk,
+                "tool_name": proposal.tool_name,
+                "device_id": proposal.device_id,
+                "device_name": "",
+                "summary": proposal.summary,
+                "reason": proposal.reason,
+                "risk": proposal.risk,
+            });
+            let proposal_id_str = uuid::Uuid::new_v4().to_string();
+            sqlx::query(
+                "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, created_at)
+                 VALUES (?, ?, ?, 'heartbeat', 'proposal', ?, ?)",
+            )
+            .bind(&proposal_id_str)
+            .bind(workspace_id)
+            .bind("harness")
+            .bind(proposal_content.to_string())
+            .bind(&now)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| RepoError::Database(e.to_string()))?;
+        }
 
         Ok(())
     }

@@ -8,6 +8,7 @@ import { customElement, state } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { apiGet, apiPost, apiPut } from "../../api/client.js";
 import { md } from "../shared/markdown.js";
+import { listActiveMemories, type AgentMemory } from "../../api/memory.js";
 
 // ── Types ──
 
@@ -50,6 +51,10 @@ interface ExecutionRecord {
   result?: string;
   autoExecuted: ActionDetail[];
   pendingProposals: ProposalDetail[];
+  verdict?: string;
+  lieDetected?: boolean;
+  toolCallCount?: number;
+  durationMs?: number;
 }
 
 interface PendingProposal {
@@ -87,6 +92,7 @@ export class ViewAiOps extends LitElement {
 
   @state() private approvingId: string | null = null;
   @state() private saving = false;
+  @state() private memories: AgentMemory[] = [];
   private pollTimer: ReturnType<typeof setInterval> | null = null;
 
   createRenderRoot() {
@@ -141,10 +147,11 @@ export class ViewAiOps extends LitElement {
     }
     this.error = null;
     try {
-      const [cfgRes, logsRes, apprRes] = await Promise.all([
+      const [cfgRes, logsRes, apprRes, memRes] = await Promise.all([
         apiGet<HeartbeatConfig>(`/workspaces/${this.selectedWsId}/heartbeat/config`),
         apiGet<{ logs: ExecutionRecord[] }>(`/workspaces/${this.selectedWsId}/heartbeat/logs`),
         apiGet<{ proposals: PendingProposal[] }>(`/workspaces/${this.selectedWsId}/heartbeat/approvals`),
+        listActiveMemories("default").catch(() => ({ result: [] as AgentMemory[] })),
       ]);
       if (cfgRes.result && typeof cfgRes.result.tasks === "string") {
         cfgRes.result.tasks = JSON.parse(cfgRes.result.tasks);
@@ -152,6 +159,7 @@ export class ViewAiOps extends LitElement {
       this.config = cfgRes.result || null;
       this.logs = logsRes.result?.logs ?? [];
       this.approvals = apprRes.result?.proposals ?? [];
+      this.memories = memRes.result || [];
       this.initialLoadDone = true;
     } catch (err) {
       this.error = String(err);
@@ -221,10 +229,17 @@ export class ViewAiOps extends LitElement {
     return { autoCount, pendingCount, errorCount };
   }
 
+  private isDegraded(): boolean {
+    // Agent is degraded if the last 3+ successful ticks all have lieDetected
+    const recent = this.logs.filter(l => l.status === "success").slice(0, 5);
+    return recent.length >= 3 && recent.every(l => l.lieDetected === true);
+  }
+
   // ── Render helpers ──
 
   private renderSummaryCard() {
     const s = this.computeSummary();
+    const degraded = this.isDegraded();
     if (this.loading) {
       return html`<div class="ao-summary"><div class="ao-skeleton ao-skeleton--row"></div></div>`;
     }
@@ -241,6 +256,23 @@ export class ViewAiOps extends LitElement {
         <div class="ao-stat">
           <span class="ao-stat__num ao-stat__num--err">${s.errorCount}</span>
           <span class="ao-stat__label">异常</span>
+        </div>
+        <div class="ao-stat ${degraded ? 'ao-stat--degraded' : ''}">
+          <span class="ao-stat__num ${degraded ? 'ao-stat__num--degraded' : 'ao-stat__num--ok'}">${degraded ? '!' : '✓'}</span>
+          <span class="ao-stat__label">${degraded ? '已降级' : '正常'}</span>
+        </div>
+      </div>
+    `;
+  }
+
+  private renderDegradationAlert() {
+    if (!this.isDegraded()) return nothing;
+    return html`
+      <div class="ao-degraded-banner">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <div class="ao-degraded-banner__text">
+          <strong>Agent 已降级为只读模式</strong>
+          <span>连续多次检测到虚构输出 (hallucination)，已暂停自主操作。请检查巡检任务和信任配置。</span>
         </div>
       </div>
     `;
@@ -338,11 +370,13 @@ export class ViewAiOps extends LitElement {
                     <div class="ao-timeline__row">
                       <span class="ao-timeline__time">${log.timestamp}</span>
                       <span class="ao-timeline__badge ${log.status === "error" ? "ao-timeline__badge--err" : "ao-timeline__badge--ok"}">${log.status === "error" ? "异常" : "完成"}</span>
+                      ${log.verdict ? html`<span class="ao-verdict-badge ao-verdict-badge--${log.verdict.toLowerCase()}">${log.verdict}</span>` : nothing}
                     </div>
                     <div class="ao-timeline__meta">
                       <span>${log.taskCount} 项任务</span>
                       ${log.autoExecuted.length > 0 ? html`<span class="ao-timeline__tag">${log.autoExecuted.length} 个动作</span>` : nothing}
                       ${log.pendingProposals.length > 0 ? html`<span class="ao-timeline__tag ao-timeline__tag--warn">${log.pendingProposals.length} 个提案</span>` : nothing}
+                      ${log.lieDetected ? html`<span class="ao-timeline__tag ao-timeline__tag--lie">谎报</span>` : nothing}
                       ${log.errorMessage ? html`<span class="ao-timeline__err">${log.errorMessage.slice(0, 60)}</span>` : nothing}
                     </div>
                   </div>
@@ -376,9 +410,39 @@ export class ViewAiOps extends LitElement {
                       `)}
                     </div>
                   ` : nothing}
+                  ${(log.verdict || log.toolCallCount !== undefined || log.durationMs !== undefined) ? html`
+                    <div class="ao-pipeline">
+                      <div class="ao-pipeline__title">Pipeline</div>
+                      <div class="ao-pipeline__stages">
+                        <div class="ao-pipeline__stage ao-pipeline__stage--done">
+                          <span class="ao-pipeline__dot"></span>
+                          <span class="ao-pipeline__label">Plan</span>
+                        </div>
+                        <div class="ao-pipeline__connector"></div>
+                        <div class="ao-pipeline__stage ${log.status === 'success' ? 'ao-pipeline__stage--done' : 'ao-pipeline__stage--fail'}">
+                          <span class="ao-pipeline__dot"></span>
+                          <span class="ao-pipeline__label">Execute</span>
+                        </div>
+                        <div class="ao-pipeline__connector"></div>
+                        <div class="ao-pipeline__stage ${log.verdict === 'Fail' ? 'ao-pipeline__stage--fail' : log.verdict === 'Partial' ? 'ao-pipeline__stage--warn' : 'ao-pipeline__stage--done'}">
+                          <span class="ao-pipeline__dot"></span>
+                          <span class="ao-pipeline__label">Verify</span>
+                        </div>
+                        <div class="ao-pipeline__connector"></div>
+                        <div class="ao-pipeline__stage ao-pipeline__stage--done">
+                          <span class="ao-pipeline__dot"></span>
+                          <span class="ao-pipeline__label">Report</span>
+                        </div>
+                      </div>
+                      <div class="ao-pipeline__meta">
+                        ${log.toolCallCount !== undefined ? html`<span>${log.toolCallCount} 次工具调用</span>` : nothing}
+                        ${log.durationMs !== undefined ? html`<span>${log.durationMs}ms</span>` : nothing}
+                      </div>
+                    </div>
+                  ` : nothing}
                   ${log.result ? html`<div class="ao-ai-response">${unsafeHTML(md(log.result))}</div>` : nothing}
                   ${!log.result && log.errorMessage ? html`<div class="ao-ai-response">${unsafeHTML(md(log.errorMessage))}</div>` : nothing}
-                  ${!log.result && !log.errorMessage && log.autoExecuted.length === 0 && log.pendingProposals.length === 0 ? html`<span class="ao-hint">无详情</span>` : nothing}
+                  ${!log.result && !log.errorMessage && log.autoExecuted.length === 0 && log.pendingProposals.length === 0 && !log.verdict ? html`<span class="ao-hint">无详情</span>` : nothing}
                 </div>
               </details>
             </div>
@@ -443,14 +507,52 @@ export class ViewAiOps extends LitElement {
   }
 
   private renderKnowledge() {
+    const items = this.memories;
+    if (this.loading && items.length === 0) {
+      return html`<div class="ao-card"><div class="ao-card__title">知识 / 记忆</div><div class="ao-skeleton ao-skeleton--card"></div></div>`;
+    }
+    if (items.length === 0) {
+      return html`
+        <div class="ao-card">
+          <div class="ao-card__title">知识 / 记忆</div>
+          <div class="ao-empty">
+            <p>AI 尚未记录任何知识</p>
+            <p class="ao-hint">开始与 AI 对话或等待首次巡检后自动积累</p>
+          </div>
+        </div>
+      `;
+    }
     return html`
       <div class="ao-card">
-        <div class="ao-card__title">知识 / 记忆</div>
-        <div class="ao-empty">
-          <p>AI 尚未记录任何知识 — 开始与 AI 对话或等待首次巡检</p>
+        <div class="ao-card__title">知识 / 记忆 (${items.length})</div>
+        <div class="ao-memory-list">
+          ${items.slice(0, 8).map(m => html`
+            <div class="ao-memory-item">
+              <div class="ao-memory-item__head">
+                <span class="ao-memory-zone ao-memory-zone--${m.zone}">${this.zoneLabel(m.zone)}</span>
+                <span class="ao-memory-confidence ao-memory-confidence--${m.confidence}">${m.confidence === 'high' ? '高' : m.confidence === 'medium' ? '中' : '低'}</span>
+                ${m.pinned ? html`<span class="ao-memory-pin">📌</span>` : nothing}
+              </div>
+              <p class="ao-memory-item__content">${m.content.slice(0, 120)}${m.content.length > 120 ? '…' : ''}</p>
+              <div class="ao-memory-item__meta">
+                <span>${this.sourceLabel(m.source)}</span>
+                ${m.effectiveness > 0 ? html`<span>效用 ${Math.round(m.effectiveness * 100)}%</span>` : nothing}
+              </div>
+            </div>
+          `)}
         </div>
       </div>
     `;
+  }
+
+  private zoneLabel(zone: string): string {
+    const map: Record<string, string> = { core: '核心', work: '工作', episode: '情景', general: '通用' };
+    return map[zone] || zone;
+  }
+
+  private sourceLabel(source: string): string {
+    const map: Record<string, string> = { user: '用户', reflection: '反思', import: '导入', system: '系统', deviceSnapshot: '设备快照' };
+    return map[source] || source;
   }
 
   // ── Main render ──
@@ -469,6 +571,8 @@ export class ViewAiOps extends LitElement {
         <div class="ao-top-row">
           ${this.renderSummaryCard()}
         </div>
+
+        ${this.renderDegradationAlert()}
 
         <!-- Main grid: left (approvals+history) / right (trust+knowledge) -->
         <div class="ao-grid">

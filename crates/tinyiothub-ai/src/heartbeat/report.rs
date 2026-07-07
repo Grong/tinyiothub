@@ -1,10 +1,16 @@
 //! Heartbeat report parsing — extract structured HeartbeatResult from LLM text output.
+//!
+//! When the harness pipeline is active, prefer `build_loop_report()` and
+//! `build_heartbeat_result_from_report()` over `parse_healing_report()`.
+//! The latter is retained for backward compat with non-harness paths.
 
 use regex::Regex;
+use std::collections::HashMap;
 use std::sync::LazyLock;
 use tracing::warn;
 
 use super::types::{ExecutedAction, HeartbeatResult, HeartbeatStatus};
+use crate::harness::{LoopReport, SignalSource, StepResult, StepStatus, StepVerdict, TickVerdict};
 use crate::proposal::{Proposal, ProposalStatus};
 
 static JSON_FENCE_RE: LazyLock<Regex> =
@@ -22,6 +28,10 @@ pub fn parse_healing_report(raw: &str, workspace_id: &str) -> HeartbeatResult {
             executed_actions: parse_executed_actions(&value),
             proposals: parse_proposals(&value, workspace_id),
             error: value["error"].as_str().map(|s| s.to_string()),
+            pipeline_verdict: String::new(),
+            lie_detected: false,
+            tool_call_count: 0,
+            duration_ms: 0,
         },
         Err(e) => {
             warn!(workspace_id, error = %e, "Failed to parse heartbeat report JSON");
@@ -32,6 +42,10 @@ pub fn parse_healing_report(raw: &str, workspace_id: &str) -> HeartbeatResult {
                 executed_actions: vec![],
                 proposals: vec![],
                 error: Some(format!("JSON parse error: {}", e)),
+                pipeline_verdict: String::new(),
+                lie_detected: false,
+                tool_call_count: 0,
+                duration_ms: 0,
             }
         }
     }
@@ -97,6 +111,147 @@ fn parse_proposals(value: &serde_json::Value, workspace_id: &str) -> Vec<Proposa
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Build a LoopReport from structured step results (harness path).
+///
+/// This replaces the old LLM text parsing approach.
+/// StepVerdict aggregation determines the TickVerdict.
+pub fn build_loop_report(
+    workspace_id: &str,
+    trigger_source: SignalSource,
+    steps: Vec<StepResult>,
+    duration_ms: u64,
+    stage_durations: HashMap<String, u64>,
+) -> LoopReport {
+    let mut tool_call_count: u32 = 0;
+    let mut executed_actions: Vec<ExecutedAction> = Vec::new();
+    let proposals: Vec<Proposal> = Vec::new();
+
+    for step in &steps {
+        for tc in &step.tool_calls {
+            tool_call_count += 1;
+            executed_actions.push(ExecutedAction {
+                tool_name: tc.name.clone(),
+                device_id: None,
+                success: tc.success,
+                details: if tc.success {
+                    tc.output.clone()
+                } else {
+                    format!("BLOCKED: {}", tc.output)
+                },
+            });
+        }
+    }
+
+    // Collect step verdicts for quality gate
+    let step_verdicts: Vec<StepVerdict> = steps
+        .iter()
+        .map(|s| {
+            if s.status == StepStatus::Done
+                && !s.tool_calls.is_empty()
+                && s.tool_calls.iter().all(|tc| !tc.success)
+            {
+                StepVerdict::Lying {
+                    reason: format!(
+                        "Step '{}' reported Done but all {} tool calls failed",
+                        s.step_id,
+                        s.tool_calls.len()
+                    ),
+                }
+            } else if matches!(s.status, StepStatus::Failed { .. }) {
+                StepVerdict::Incomplete {
+                    reason: format!("Step '{}' failed", s.step_id),
+                }
+            } else if s.status == StepStatus::Done && s.tool_calls.is_empty() && s.output.is_empty()
+            {
+                StepVerdict::Incomplete {
+                    reason: format!("Step '{}' completed with no output or tool calls", s.step_id),
+                }
+            } else {
+                StepVerdict::Consistent
+            }
+        })
+        .collect();
+
+    let lie_detected = step_verdicts
+        .iter()
+        .any(|v| matches!(v, StepVerdict::Lying { .. }));
+
+    let has_lies = lie_detected;
+    let has_failures = step_verdicts
+        .iter()
+        .any(|v| matches!(v, StepVerdict::Incomplete { .. }));
+
+    let verdict = if has_lies {
+        TickVerdict::Fail {
+            reason: "Lie detected in step verification".into(),
+        }
+    } else if has_failures {
+        let escalated: Vec<String> = steps
+            .iter()
+            .filter(|s| {
+                matches!(s.status, StepStatus::Failed { .. }) || s.status == StepStatus::Skipped
+            })
+            .map(|s| s.step_id.clone())
+            .collect();
+        TickVerdict::Partial { escalated }
+    } else {
+        TickVerdict::Pass
+    };
+
+    LoopReport {
+        workspace_id: workspace_id.to_string(),
+        trigger_source,
+        verdict,
+        steps,
+        executed_actions,
+        proposals,
+        duration_ms,
+        tool_call_count,
+        lie_detected,
+        stage_durations,
+    }
+}
+
+/// Convert a LoopReport into the existing HeartbeatResult type for backward compat
+/// with repository persistence and event publishing.
+pub fn build_heartbeat_result_from_report(report: &LoopReport) -> HeartbeatResult {
+    let status = match report.verdict {
+        TickVerdict::Pass => HeartbeatStatus::Complete,
+        TickVerdict::Partial { .. } => HeartbeatStatus::Partial,
+        TickVerdict::Fail { .. } => HeartbeatStatus::Error,
+    };
+
+    let summary = report
+        .steps
+        .iter()
+        .map(|s| format!("[{}] {}", s.step_id, s.output))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let pipeline_verdict = match report.verdict {
+        TickVerdict::Pass => "Pass".to_string(),
+        TickVerdict::Partial { .. } => "Partial".to_string(),
+        TickVerdict::Fail { .. } => "Fail".to_string(),
+    };
+
+    HeartbeatResult {
+        workspace_id: report.workspace_id.clone(),
+        status,
+        summary,
+        executed_actions: report.executed_actions.clone(),
+        proposals: report.proposals.clone(),
+        error: if matches!(report.verdict, TickVerdict::Fail { .. }) {
+            Some("Harness tick verification failed".into())
+        } else {
+            None
+        },
+        pipeline_verdict,
+        lie_detected: report.lie_detected,
+        tool_call_count: report.tool_call_count,
+        duration_ms: report.duration_ms,
+    }
 }
 
 #[cfg(test)]

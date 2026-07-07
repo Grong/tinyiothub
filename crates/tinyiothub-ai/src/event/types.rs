@@ -42,15 +42,39 @@ pub enum AiEvent {
         session_key: String,
         reason: String,
     },
+    /// A proposal was created during harness execution (HITL approval needed).
     ProposalCreated {
         workspace_id: String,
         proposal_id: String,
         tool_name: String,
     },
+    /// A proposal was resolved (approved or rejected) by a human operator.
     ProposalResolved {
         workspace_id: String,
         proposal_id: String,
         approved: bool,
+    },
+    /// A single harness step completed.
+    HarnessStepCompleted {
+        workspace_id: String,
+        step_id: String,
+        status: String,
+        lie_detected: bool,
+    },
+    /// A full harness tick completed (emits LoopReport fields for routing).
+    HarnessTickCompleted {
+        workspace_id: String,
+        verdict: String,
+        lie_detected: bool,
+        tool_call_count: u32,
+        duration_ms: u64,
+        steps_completed: u32,
+        proposals_count: u32,
+    },
+    /// Agent was degraded to read-only after consecutive lie detections.
+    AgentDegraded {
+        workspace_id: String,
+        reason: String,
     },
 }
 
@@ -67,6 +91,9 @@ impl AiEvent {
             AiEvent::ReflectionFailed { workspace_id, .. } => Some(workspace_id),
             AiEvent::ProposalCreated { workspace_id, .. } => Some(workspace_id),
             AiEvent::ProposalResolved { workspace_id, .. } => Some(workspace_id),
+            AiEvent::HarnessStepCompleted { workspace_id, .. } => Some(workspace_id),
+            AiEvent::HarnessTickCompleted { workspace_id, .. } => Some(workspace_id),
+            AiEvent::AgentDegraded { workspace_id, .. } => Some(workspace_id),
         }
     }
 }

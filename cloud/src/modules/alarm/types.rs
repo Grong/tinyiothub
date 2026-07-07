@@ -365,7 +365,7 @@ impl std::str::FromStr for ResolutionType {
 }
 
 /// 通知配置
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationConfig {
     pub enabled: bool,
     pub channels: Vec<NotificationChannelType>,
@@ -379,9 +379,29 @@ pub struct NotificationConfig {
     #[serde(skip_serializing_if = "Option::is_none", with = "optional_duration_serde", default)]
     pub trigger_duration_secs: Option<Duration>,
     /// 恢复去抖动时长：恢复条件必须持续满足该时长后才自动恢复告警。
-    /// None = 立即恢复（保持现有行为）。
-    #[serde(skip_serializing_if = "Option::is_none", with = "optional_duration_serde", default)]
+    /// 默认 30 秒，防止边界振荡导致的瞬间报警恢复。
+    #[serde(skip_serializing_if = "Option::is_none", with = "optional_duration_serde", default = "default_recovery_duration")]
     pub recovery_duration_secs: Option<Duration>,
+}
+
+fn default_recovery_duration() -> Option<Duration> {
+    Some(Duration::from_secs(30))
+}
+
+impl Default for NotificationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            channels: Vec::new(),
+            recipients: Vec::new(),
+            suppress_duration: None,
+            repeat_interval: None,
+            trigger_duration_secs: None,
+            // Default 30s recovery debounce to prevent single-tick
+            // boundary oscillation from immediately auto-resolving.
+            recovery_duration_secs: Some(std::time::Duration::from_secs(30)),
+        }
+    }
 }
 
 // Duration 序列化辅助模块

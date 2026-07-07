@@ -106,6 +106,121 @@ impl PolicyEngine for NoopPolicyEngine {
     }
 }
 
+/// In-memory rate-limiting policy engine with block-list support.
+///
+/// Tracks tool calls per tick per workspace and enforces a call limit.
+/// For Phase 1 this is in-memory; Phase 2 adds DB-backed rule persistence.
+pub struct RateLimitingPolicyEngine {
+    /// Per-workspace tick call counter. Key: workspace_id → count.
+    tick_counts: std::sync::RwLock<std::collections::HashMap<String, u32>>,
+    /// Blocked tools per workspace. Key: workspace_id → tool names.
+    blocked_tools: std::sync::RwLock<std::collections::HashMap<String, Vec<String>>>,
+    /// Max calls per tick fallback (overridden by TrustConfig when available).
+    default_max_per_tick: u32,
+}
+
+impl RateLimitingPolicyEngine {
+    pub fn new(default_max_per_tick: u32) -> Self {
+        Self {
+            tick_counts: std::sync::RwLock::new(std::collections::HashMap::new()),
+            blocked_tools: std::sync::RwLock::new(std::collections::HashMap::new()),
+            default_max_per_tick,
+        }
+    }
+
+    /// Reset tick counters at the start of a new tick.
+    pub fn reset_tick(&self, workspace_id: &str) {
+        self.tick_counts.write().unwrap().insert(workspace_id.to_string(), 0);
+    }
+
+    /// Record a tool call for the current tick. Returns false if limit exceeded.
+    pub fn record_call(&self, workspace_id: &str, max_per_tick: u32) -> bool {
+        let max = if max_per_tick > 0 { max_per_tick } else { self.default_max_per_tick };
+        let mut counts = self.tick_counts.write().unwrap();
+        let count = counts.entry(workspace_id.to_string()).or_insert(0);
+        if *count >= max {
+            return false;
+        }
+        *count += 1;
+        true
+    }
+
+    /// Current tick count for a workspace.
+    pub fn tick_count(&self, workspace_id: &str) -> u32 {
+        self.tick_counts
+            .read()
+            .unwrap()
+            .get(workspace_id)
+            .copied()
+            .unwrap_or(0)
+    }
+}
+
+#[async_trait]
+impl PolicyEngine for RateLimitingPolicyEngine {
+    async fn evaluate(
+        &self,
+        workspace_id: &str,
+        category: PolicyCategory,
+        target: &str,
+    ) -> PolicyDecision {
+        if category != PolicyCategory::ToolExecution {
+            return PolicyDecision::Allow;
+        }
+
+        // Check explicit block list
+        let blocked = self.blocked_tools.read().unwrap();
+        if let Some(tools) = blocked.get(workspace_id)
+            && tools.iter().any(|t| t == target)
+        {
+            return PolicyDecision::Block {
+                reason: format!("Tool '{}' is blocked by workspace policy", target),
+            };
+        }
+
+        PolicyDecision::Allow
+    }
+
+    async fn add_rule(&self, rule: PolicyRule) -> anyhow::Result<()> {
+        if rule.category == PolicyCategory::ToolExecution && rule.action == PolicyAction::Block {
+            let mut blocked = self.blocked_tools.write().unwrap();
+            blocked
+                .entry(rule.workspace_id)
+                .or_default()
+                .push(rule.target);
+        }
+        Ok(())
+    }
+
+    async fn remove_rule(&self, rule_id: &str) -> anyhow::Result<()> {
+        // Phase 2: implement rule ID tracking and removal
+        let _ = rule_id;
+        Ok(())
+    }
+
+    async fn list_rules(&self, workspace_id: &str) -> Vec<PolicyRule> {
+        let blocked = self.blocked_tools.read().unwrap();
+        blocked
+            .get(workspace_id)
+            .map(|tools| {
+                tools
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| PolicyRule {
+                        id: format!("block-{}", i),
+                        workspace_id: workspace_id.to_string(),
+                        category: PolicyCategory::ToolExecution,
+                        action: PolicyAction::Block,
+                        target: t.clone(),
+                        priority: 100,
+                        reason: String::new(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
+
 /// Input guardrail — validates/sanitizes LLM input before sending.
 pub fn sanitize_llm_input(input: &str) -> String {
     // Strip null bytes which can confuse some models

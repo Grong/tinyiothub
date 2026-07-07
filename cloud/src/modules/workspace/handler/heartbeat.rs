@@ -52,6 +52,18 @@ pub struct HeartbeatLogEntry {
     result: Option<String>,
     auto_executed: Vec<ActionDetail>,
     pending_proposals: Vec<ProposalDetail>,
+    /// Harness pipeline verdict: "Pass" | "Partial" | "Fail"
+    #[serde(default)]
+    verdict: String,
+    /// Whether lie detection triggered this tick
+    #[serde(default)]
+    lie_detected: bool,
+    /// Total tool calls across all pipeline steps
+    #[serde(default)]
+    tool_call_count: u32,
+    /// Total pipeline duration in milliseconds
+    #[serde(default)]
+    duration_ms: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -188,7 +200,7 @@ pub async fn get_logs(
                 .into_iter()
                 .map(|(action_type, content, created_at)| {
                     let status = if action_type == "error" { "error" } else { "success" };
-                    let (task_count, message) = parse_action_content(&content);
+                    let meta = parse_action_content(&content);
 
                     let related = details.remove(&created_at).unwrap_or_default();
                     let mut auto_executed = Vec::new();
@@ -273,12 +285,16 @@ pub async fn get_logs(
 
                     HeartbeatLogEntry {
                         timestamp: created_at,
-                        task_count,
+                        task_count: meta.task_count,
                         status: status.to_string(),
-                        error_message: if status == "error" { message.clone() } else { None },
-                        result: if status == "success" { message } else { None },
+                        error_message: if status == "error" { meta.message.clone() } else { None },
+                        result: if status == "success" { meta.message } else { None },
                         auto_executed,
                         pending_proposals,
+                        verdict: meta.verdict,
+                        lie_detected: meta.lie_detected,
+                        tool_call_count: meta.tool_call_count,
+                        duration_ms: meta.duration_ms,
                     }
                 })
                 .collect()
@@ -438,10 +454,57 @@ pub async fn approve_proposal(
 ) -> Json<ApiResponse<serde_json::Value>> {
     verify_workspace_access!(state, claims, workspace_id);
 
-    match update_proposal_status(&state, &workspace_id, &proposal_id, "approved").await {
-        Ok(()) => ApiResponseBuilder::success(serde_json::json!({"status": "approved"})),
-        Err(e) => ApiResponseBuilder::error(&e),
+    let parsed = match update_proposal_status(&state, &workspace_id, &proposal_id, "approved").await
+    {
+        Ok(p) => p,
+        Err(e) => return ApiResponseBuilder::error(&e),
+    };
+
+    // Execute the approved tool via the agent so the approval actually takes effect.
+    let tool_name = parsed
+        .get("tool_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let device_id = parsed
+        .get("device_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let summary = parsed
+        .get("summary")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    if !tool_name.is_empty() {
+        let prompt = format!(
+            "执行已批准的操作: 使用 {} 工具操作设备 {}。操作说明: {}。请立即执行并报告结果。",
+            tool_name, device_id, summary
+        );
+
+        match state.agent_pool.run_single(&workspace_id, &prompt).await {
+            Ok(result) => {
+                tracing::info!(
+                    %workspace_id,
+                    %proposal_id,
+                    %tool_name,
+                    "Approved proposal executed via agent"
+                );
+                return ApiResponseBuilder::success(serde_json::json!({
+                    "status": "approved",
+                    "result": result,
+                }));
+            }
+            Err(e) => {
+                tracing::error!(
+                    %workspace_id,
+                    %proposal_id,
+                    error = %e,
+                    "Approved proposal status updated but execution failed"
+                );
+            }
+        }
     }
+
+    ApiResponseBuilder::success(serde_json::json!({"status": "approved"}))
 }
 
 // ── POST /{id}/heartbeat/approvals/{proposal_id}/reject ──
@@ -454,19 +517,18 @@ pub async fn reject_proposal(
     verify_workspace_access!(state, claims, workspace_id);
 
     match update_proposal_status(&state, &workspace_id, &proposal_id, "rejected").await {
-        Ok(()) => ApiResponseBuilder::success(serde_json::json!({"status": "rejected"})),
+        Ok(_) => ApiResponseBuilder::success(serde_json::json!({"status": "rejected"})),
         Err(e) => ApiResponseBuilder::error(&e),
     }
 }
 
+/// Update proposal status in DB. Returns the parsed proposal JSON on success.
 async fn update_proposal_status(
     state: &AppState,
     workspace_id: &str,
     proposal_id: &str,
     new_status: &str,
-) -> Result<(), String> {
-    // Push proposal_id filtering to SQL via json_extract instead of
-    // fetching up to 100 rows and scanning in Rust.
+) -> Result<serde_json::Value, String> {
     let row: Option<(String, String)> = sqlx::query_as(
         "SELECT id, content FROM agent_actions \
          WHERE workspace_id = ? AND action_type = 'proposal' \
@@ -491,7 +553,7 @@ async fn update_proposal_status(
                 .execute(state.database.pool())
                 .await
                 .map_err(|e| format!("更新失败: {}", e))?;
-            Ok(())
+            Ok(parsed)
         }
         None => Err("提案不存在".to_string()),
     }
@@ -499,8 +561,16 @@ async fn update_proposal_status(
 
 // ── Helpers ──
 
-fn parse_action_content(content: &str) -> (u32, Option<String>) {
-    // New format: {"taskCount": N, "result": "..."} or {"taskCount": N, "error": "..."}
+struct HarnessMeta {
+    task_count: u32,
+    message: Option<String>,
+    verdict: String,
+    lie_detected: bool,
+    tool_call_count: u32,
+    duration_ms: u64,
+}
+
+fn parse_action_content(content: &str) -> HarnessMeta {
     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(content) {
         let task_count =
             parsed.get("taskCount").and_then(|v| v.as_u64()).map(|n| n as u32).unwrap_or(0);
@@ -509,8 +579,29 @@ fn parse_action_content(content: &str) -> (u32, Option<String>) {
             .or_else(|| parsed.get("error"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        return (task_count, message);
+        let verdict = parsed
+            .get("verdict")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let lie_detected = parsed.get("lieDetected").and_then(|v| v.as_bool()).unwrap_or(false);
+        let tool_call_count = parsed.get("toolCallCount").and_then(|v| v.as_u64()).map(|n| n as u32).unwrap_or(0);
+        let duration_ms = parsed.get("durationMs").and_then(|v| v.as_u64()).unwrap_or(0);
+        return HarnessMeta {
+            task_count,
+            message,
+            verdict,
+            lie_detected,
+            tool_call_count,
+            duration_ms,
+        };
     }
-    // Legacy format: plain text content
-    (0, Some(content.to_string()))
+    HarnessMeta {
+        task_count: 0,
+        message: Some(content.to_string()),
+        verdict: String::new(),
+        lie_detected: false,
+        tool_call_count: 0,
+        duration_ms: 0,
+    }
 }
