@@ -62,10 +62,8 @@ export class WorkspaceView extends LitElement {
       }
     }
 
-    // Auto-trigger /workspace skill on first load (empty history = fresh session).
-    if (this.chatState.chatMessages.length === 0) {
-      sendChatMessage(this.chatState, "[当前页面：Workspace 工作空间]\n/workspace");
-    }
+    // Auto-trigger /workspace skill on every page visit.
+    sendChatMessage(this.chatState, "/workspace");
 
     this.requestUpdate();
   }
@@ -89,9 +87,7 @@ export class WorkspaceView extends LitElement {
     this.a2uiRenderer.clear();
     this.requestUpdate();
 
-    const contextualMsg = `[当前页面：Workspace 工作空间]\n${raw}`;
-
-    sendChatMessage(this.chatState, contextualMsg);
+    sendChatMessage(this.chatState, raw);
   }
 
   private _handleAbort(): void {
