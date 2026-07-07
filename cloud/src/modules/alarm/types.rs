@@ -1515,17 +1515,19 @@ mod tests {
 
     #[test]
     fn test_notification_config_deser_no_new_duration_fields() {
-        // Backward compat: old JSON without new fields should deserialize
+        // Backward compat: old JSON without recovery_duration_secs
+        // deserializes with the default 30s recovery debounce.
         let json = r#"{"enabled":false,"channels":[],"recipients":[]}"#;
         let config: NotificationConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.trigger_duration_secs, None);
-        assert_eq!(config.recovery_duration_secs, None);
+        assert_eq!(config.recovery_duration_secs, Some(std::time::Duration::from_secs(30)));
     }
 
     #[test]
     fn test_notification_config_default_has_none_duration_fields() {
         let config = NotificationConfig::default();
         assert_eq!(config.trigger_duration_secs, None);
-        assert_eq!(config.recovery_duration_secs, None);
+        // recovery_duration_secs defaults to 30s to prevent single-tick auto-resolve
+        assert_eq!(config.recovery_duration_secs, Some(std::time::Duration::from_secs(30)));
     }
 }

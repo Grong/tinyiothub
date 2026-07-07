@@ -1626,7 +1626,7 @@ mod tests {
             .unwrap();
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
-             VALUES ('rule-tdb2', 'dev-1', NULL, 'High Temp Debounce Reset', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"trigger_duration_secs\":3600}', datetime('now'), datetime('now'))",
+             VALUES ('rule-tdb2', 'dev-1', NULL, 'High Temp Debounce Reset', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"trigger_duration_secs\":3600,\"recovery_duration_secs\":0}', datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
 
@@ -1672,8 +1672,8 @@ mod tests {
             .unwrap();
         // Trigger > 80, recover < 75
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
-             VALUES ('rule-hys', 'dev-1', NULL, 'High Temp Hysteresis', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0,\"recovery_threshold\":75.0}', 'warning', 1, datetime('now'), datetime('now'))",
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
+             VALUES ('rule-hys', 'dev-1', NULL, 'High Temp Hysteresis', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0,\"recovery_threshold\":75.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"recovery_duration_secs\":0}', datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
 
@@ -1868,13 +1868,13 @@ mod tests {
             .unwrap();
         // One rule that triggers (value > 80) and one that doesn't (value > 90)
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
-             VALUES ('rule-nt1', 'dev-1', NULL, 'Triggers', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, datetime('now'), datetime('now'))",
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
+             VALUES ('rule-nt1', 'dev-1', NULL, 'Triggers', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"recovery_duration_secs\":0}', datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
-             VALUES ('rule-nt2', 'dev-1', NULL, 'No Trigger', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":90.0}', 'critical', 1, datetime('now'), datetime('now'))",
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
+             VALUES ('rule-nt2', 'dev-1', NULL, 'No Trigger', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":90.0}', 'critical', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"recovery_duration_secs\":0}', datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
 
@@ -2115,8 +2115,8 @@ mod integration_tests {
         sqlx::query("INSERT INTO device_properties (id, device_id, name) VALUES ('prop-ar', 'dev-ar', 'temperature')")
             .execute(&pool).await.unwrap();
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, workspace_id, created_at, updated_at)
-             VALUES ('rule-ar1', 'dev-ar', 'prop-ar', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, 'ws-ar', datetime('now'), datetime('now'))",
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, workspace_id, created_at, updated_at)
+             VALUES ('rule-ar1', 'dev-ar', 'prop-ar', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"recovery_duration_secs\":0}', 'ws-ar', datetime('now'), datetime('now'))",
         ).execute(&pool).await.unwrap();
 
         let alarm_repo: Arc<dyn AlarmRepository> = Arc::new(SqliteAlarmRepository::new(db.clone()));
@@ -2164,8 +2164,8 @@ mod integration_tests {
         sqlx::query("INSERT INTO device_properties (id, device_id, name) VALUES ('prop-arm', 'dev-arm', 'humidity')")
             .execute(&pool).await.unwrap();
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, workspace_id, created_at, updated_at)
-             VALUES ('rule-arm', 'dev-arm', 'prop-arm', 'High Humidity', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":70.0}', 'warning', 1, 'ws-arm', datetime('now'), datetime('now'))",
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, workspace_id, created_at, updated_at)
+             VALUES ('rule-arm', 'dev-arm', 'prop-arm', 'High Humidity', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":70.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"recovery_duration_secs\":0}', 'ws-arm', datetime('now'), datetime('now'))",
         ).execute(&pool).await.unwrap();
 
         let alarm_repo: Arc<dyn AlarmRepository> = Arc::new(SqliteAlarmRepository::new(db.clone()));
