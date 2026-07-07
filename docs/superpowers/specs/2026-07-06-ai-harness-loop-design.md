@@ -349,8 +349,20 @@ chat/service.rs — Chat 路径通过 harness 发送消息（而非直接调 zer
 ```
 tool/trust.rs      — TrustEngine 保持不变，成为 PreToolUse 的检查项之一
 policy/mod.rs      — PolicyEngine trait 保持不变，PreToolUse 调用它
-event/types.rs     — AiEvent 类型不变
 orchestrator/      — Orchestrator 接口不变，消费 LoopReport
+```
+
+### 新增 AiEvent 变体
+
+Harness 输出需要新事件类型让 Orchestrator 路由：
+
+```
+event/types.rs 新增:
+  HarnessStepCompleted { workspace_id, step_id, verdict }
+  HarnessTickCompleted { workspace_id, report: LoopReport }
+  AgentDegraded { workspace_id, reason }
+  ProposalCreated { workspace_id, proposal }     // 填补现有 no-op
+  ProposalResolved { workspace_id, proposal_id } // 填补现有 no-op
 ```
 
 ---
@@ -360,3 +372,134 @@ orchestrator/      — Orchestrator 接口不变，消费 LoopReport
 - 不引入 DSL 或形式化执行引擎 — Skill 文件保持 Markdown，Plan 阶段负责解析和约束注入
 - 不改变 AgentPool 接口 — Harness 在 AgentPool 之上，不在其内部
 - 不重写现有工具 — 工具的签名和执行逻辑不变，控制层外挂
+- 不引入 feature flag — Harness 直接上线，不保留旧路径
+
+---
+
+## CEO Review 修订 (2026-07-06)
+
+审查模式: HOLD SCOPE
+
+### 架构决策
+
+1. **完全统一**: Chat/Heartbeat/Workspace 全部走 6 阶段 Loop，无快速通道
+2. **Plan 智能短路**: 简单查询跳过 Skill 匹配，直接生成单步 Plan
+3. **Heartbeat 流式化**: 改用 zeroclaw streaming/turn API 以获得工具级拦截能力
+4. **PostToolUse 分类处理**: 回读超时/设备离线 → VerificationUnavailable（不重试）；回读值不匹配 → WriteFailed（触发重试）
+5. **工具级 Proposal 恢复**: 批准后只重新执行被批准的单个工具，不重做整个 Step
+6. **完整指标集**: 阶段耗时分布、lie_detected 率、Propose 率、tick 成功率、degraded agent 数量
+
+### zeroclaw PreToolUse 集成（已验证并修订）
+
+**集成策略（2026-07-07 修订）**：
+
+zeroclaw 的 `ApprovalManager` 是内部审批机制，设计用于 CLI 交互式提示和 Channel 消息平台（Telegram/Slack 等）。TrustEngine 不走 zeroclaw 审批管线——而是在 harness 的 `execute.rs` 中，**工具调用之前**运行。
+
+```
+LLM 想调 write_properties(device_id="d1", temp=25)
+  ↓
+Harness execute.rs 拦截
+  ↓
+PreToolUse: TrustEngine.evaluate("write_properties", args)
+  ├─ Allow    → 正常调用工具
+  ├─ Block    → 不调用工具，记录拒绝
+  └─ Propose  → 创建 Proposal，不调用工具
+  ↓
+（仅 Allow）调用工具执行
+  ↓
+PostToolUse: 验证返回值 + write 类工具回读
+```
+
+**zeroclaw 配置**：
+- Agent 使用 `AutonomyLevel::Full`（不禁用任何工具，所有控制权在 harness）
+- 不使用 `ApprovalManager.always_ask` 机制
+- `AgentPoolLike::send_message_streamed()` 返回 `Receiver<TurnEvent>` 用于**观察**工具调用的实际执行情况（步骤追踪、撒谎检测），而非用于拦截
+- 不需要修改 zeroclaw 源码，不需要实现 `Channel` trait
+
+### Outside Voice 发现的有效问题
+
+1. **Skill 工作流提取** 是独立大功能 → Phase 1 用硬编码步骤列表，Phase 2 加 Skill 解析
+2. **撒谎检测** 改为 per-tool 对比（而非 all-or-nothing），覆盖部分撒谎场景
+3. **IoT 读回竞态**: write 后设备可能尚未处理 → 回读时增加短暂延迟或检查设备 ACK
+
+### 新增指标要求
+
+`LoopReport` 需额外包含: stage_durations (p50/p99 per stage)、tick_success_rate、agent_degraded_count
+
+---
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 1 | CLEAR | 3 architectural decisions, 0 critical gaps |
+| Eng Review | `/plan-eng-review` | Architecture & implementation | 1 | ISSUES | 4 arch findings, 2 code quality, 2 perf, 0 critical gaps |
+| Outside Voice | auto | Independent 2nd opinion | 2 | ISSUES | 4 valid (integration, events, skills, lifecycle), 4 invalid (channel adapter, calibration) |
+
+### Engineering Review — Architecture Findings
+
+**AF1 — AgentPoolLike 缺少流式 API** (RESOLVED)
+- 当前 trait 只有 `send_message() → String`，harness 需要 `send_message_streamed() → Receiver<TurnEvent>` 获取工具级可见性
+- 决策：添加 `send_message_streamed()` 方法到 `AgentPoolLike` trait
+- 注意：TurnEvent 用于**观察**（步骤追踪、撒谎检测），工具**拦截**在 harness execute.rs 中独立完成
+
+**AF2 — Chat ApproveRequest 绕过 TrustEngine** (RESOLVED)
+- `chat/service.rs:66-74` 将 `TurnEvent::ApprovalRequest` 直接转为 `ChatEvent::ToolCallStart`，未经 TrustEngine
+- 决策：Chat 路径走 harness execute.rs，由 PreToolUse 阶段的 TrustEngine 统一处理
+
+**AF3 — TrustConfig 硬编码 default()** (RESOLVED)
+- `runner.rs:241-243` 的 `load_trust_config()` 忽略 workspace_id 返回 `TrustConfig::default()`
+- 决策：从 DB 加载，`SELECT config_json FROM workspace_ai_config WHERE workspace_id = $1`
+
+**AF4 — PolicyEngine 无实际实现** (RESOLVED)
+- `policy/mod.rs` 只有 `NoopPolicyEngine`（永远 Allow）
+- 决策：构建 DB-backed PolicyEngine，支持速率限制和内容过滤
+
+### Engineering Review — Code Quality
+
+**CQ1 — JSON fence regex 重复** (RESOLVED)
+- `report.rs` 和 `reflect.rs` 各自有 JSON 提取逻辑
+- 决策：harness 重构自然消除重复（report.rs 被替换为结构化 LoopReport）
+
+**CQ2 — 无统一错误类型** (RESOLVED)
+- 心跳模块用 `Result<T, String>` 无上下文
+- 决策：定义 `HarnessError` enum，含 stage/workspace_id/reason 字段
+
+### Engineering Review — Performance
+
+**PF1 — 每次 tick 双层 LLM 调用** (RESOLVED)
+- Skill 匹配 + Plan + 执行 = 2次 LLM 调用 per tick
+- 决策：Phase 1 硬编码步骤列表（无额外 LLM 调用），Phase 2 加 Skill 解析
+
+**PF2 — 上下文无限增长** (RESOLVED)
+- `history: Vec<PreviousTickResult>` 无上限
+- 决策：滑动窗口 cap，保留最近 N 个 tick（默认 20）
+
+### Outside Voice — 有效发现
+
+**OV1 — TurnEvent 是只读流** (FIXED)
+- 原方案暗示 TurnEvent 可用于拦截工具调用。实际上 TurnEvent 只能观察
+- 修订：zeroclaw 配置 `AutonomyLevel::Full`，所有拦截在 harness execute.rs 完成。spec 已更新集成策略章节
+
+**OV2 — 缺少 Harness AiEvent 变体** (FIXED)
+- spec 说「AiEvent 类型不变」但 harness 输出 StepVerdict/TickVerdict/LoopReport
+- spec 已添加 5 个新 AiEvent 变体
+
+**OV3 — 现有 Skills 系统被忽略** (NOTED)
+- 代码库已有 `build_skills_prompt()` 和 `get_skill` tool
+- Phase 2 改为：扩展现有 Skills 系统（而非新建解析器）。Phase 1 不受影响（硬编码步骤）
+
+**OV4 — 心跳信号生命周期未处理** (NOTED)
+- 现有 heartbeat loop 支持 External/Pause/Resume/ReloadTasks/ReloadConfig 信号
+- 实现时在 harness.rs 保留这些信号处理
+
+### Outside Voice — 无效发现
+
+- **「Channel trait 是集成点」** — Channel trait 用于消息平台，非 TrustEngine 集成点。正确方案是 harness 层拦截
+- **「send_message_streamed() 设计有根本缺陷」** — 该方法用于观察，非拦截。两者职责不同
+- **「Workspace AI execution 不存在」** — spec 指的是 Workspace 场景的**未来** AI 执行路径，非当前代码
+- **「这是错误抽象层级」** — 架构一致性是设计目标，不是 bug
+
+**VERDICT:** ENG REVIEW COMPLETE — 6 个架构/代码/性能问题已解决。Outside Voice 发现 4 个有效 gap 已修正入 spec。
+
+**UNRESOLVED DECISIONS:** 无
