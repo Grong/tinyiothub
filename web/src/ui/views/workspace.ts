@@ -90,7 +90,7 @@ export class WorkspaceView extends LitElement {
     this.a2uiRenderer.clear();
     this.requestUpdate();
 
-    sendChatMessage(this.chatState, raw);
+    sendChatMessage(this.chatState, "/workspace\n" + raw);
   }
 
   private _handleAbort(): void {
