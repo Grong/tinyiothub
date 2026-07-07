@@ -62,8 +62,11 @@ export class WorkspaceView extends LitElement {
       }
     }
 
-    // Auto-trigger /workspace skill on every page visit.
-    sendChatMessage(this.chatState, "/workspace");
+    // Auto-trigger /workspace skill once per browser session.
+    if (!sessionStorage.getItem("ws:skill-triggered")) {
+      sessionStorage.setItem("ws:skill-triggered", "1");
+      sendChatMessage(this.chatState, "/workspace");
+    }
 
     this.requestUpdate();
   }
