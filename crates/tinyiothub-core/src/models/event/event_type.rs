@@ -72,9 +72,6 @@ pub enum AiEventType {
     ReflectionFailed,
     ProposalCreated,
     ProposalResolved,
-    HarnessStepCompleted,
-    HarnessTickCompleted,
-    AgentDegraded,
 }
 
 impl AiEventType {
@@ -90,9 +87,6 @@ impl AiEventType {
             AiEventType::ReflectionFailed => "Reflection Failed",
             AiEventType::ProposalCreated => "Proposal Created",
             AiEventType::ProposalResolved => "Proposal Resolved",
-            AiEventType::HarnessStepCompleted => "Harness Step Completed",
-            AiEventType::HarnessTickCompleted => "Harness Tick Completed",
-            AiEventType::AgentDegraded => "Agent Degraded",
         }
     }
 
@@ -108,9 +102,6 @@ impl AiEventType {
             AiEventType::ReflectionFailed => "reflection_failed",
             AiEventType::ProposalCreated => "proposal_created",
             AiEventType::ProposalResolved => "proposal_resolved",
-            AiEventType::HarnessStepCompleted => "harness_step_completed",
-            AiEventType::HarnessTickCompleted => "harness_tick_completed",
-            AiEventType::AgentDegraded => "agent_degraded",
         }
     }
 }

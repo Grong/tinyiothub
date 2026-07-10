@@ -238,13 +238,7 @@ impl HeartbeatRunner {
         info!(count = ws_ids.len(), "HeartbeatRunner shut down");
     }
 
-    /// Load TrustConfig for a workspace. Checks pre-loaded configs first
-    /// (set by cloud layer via `update_trust_config` before `start`),
-    /// falls back to safe default.
-    async fn load_trust_config(&self, workspace_id: &str) -> TrustConfig {
-        if let Some(cfg) = self.trust_configs.get(workspace_id) {
-            return cfg.value().clone();
-        }
+    async fn load_trust_config(&self, _workspace_id: &str) -> TrustConfig {
         TrustConfig::default()
     }
 }

@@ -449,7 +449,7 @@ impl AgentPool {
             .security_summary(Some(
                 "IoT device operations: destructive actions (delete, write) require user approval. Read-only operations are auto-approved.".into(),
             ))
-            .autonomy_level(AutonomyLevel::Full)
+            .autonomy_level(AutonomyLevel::Supervised)
             .response_cache(response_cache)
             .prompt_builder(prompt_builder)
             .workspace_dir(workspace_dir.to_path_buf())
@@ -624,111 +624,27 @@ impl AgentPool {
         let parsed = super::session::SessionKey::parse(session_key)?;
         parsed.verify_workspace(&parsed.workspace_id)?;
         let agent = self.get_or_create(agent_id, &parsed.workspace_id).await?;
-
-        // Seed system prompt on first message
-        {
-            let mut ag = agent.lock().await;
-            if ag.history().is_empty() && !system_prompt.is_empty() {
-                ag.seed_history(&[zeroclaw::providers::traits::ChatMessage {
-                    role: "system".into(),
-                    content: system_prompt.to_string(),
-                }]);
-            }
-        }
         let config = config_service::get_config(&self.db_pool, agent_id).await?;
         let enable_reflection = config.enable_reflection;
         let model = config.model.clone();
         let memory_service = self.memory_service.read().await.clone();
         let event_publisher = self.event_publisher.read().await.clone();
-
-        // Route through harness streaming path (StreamEvent instead of raw TurnEvent)
-        // for trust observation and PreToolUse/PostToolUse visibility.
-        let mut stream_rx = self
-            .run_streaming_harness_with_agent(
-                &parsed.workspace_id,
-                message,
-                Some(agent.clone()),
-            )
-            .await
-            .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
-
-        // Set up ChatEvent channel and spawn forwarder
-        let (tx, rx) = tokio::sync::mpsc::channel::<super::types::ChatEvent>(100);
-        let message_owned = message.to_string();
-        let run_id_owned = run_id.to_string();
-        let session_key_owned = session_key.to_string();
-        let workspace_id = parsed.workspace_id.clone();
-        let agent_id_owned = agent_id.to_string();
-        let chat_handles = self.chat_handles.clone();
-
-        let run_id_for_handle = run_id_owned.clone();
-        let run_id_for_remove = run_id_owned.clone();
-
-        let handle = tokio::spawn(async move {
-            let mut final_text = String::new();
-
-            while let Some(evt) = stream_rx.recv().await {
-                // Capture final text for reflection
-                if let tinyiothub_ai::harness::StreamEvent::Chunk { ref delta } = evt {
-                    final_text.push_str(delta);
-                }
-
-                let chat_event = chat_service::stream_event_to_chat_event(
-                    &evt,
-                    &run_id_owned,
-                    &session_key_owned,
-                );
-
-                if tx.send(chat_event).await.is_err() {
-                    break;
-                }
-            }
-
-            // Spawn reflection after turn completes
-            if enable_reflection
-                && !final_text.is_empty()
-                && let Some(ms) = memory_service
-            {
-                let turn_messages = vec![
-                    tinyiothub_ai::session::types::ChatTurnMessage {
-                        role: "user".into(),
-                        content: message_owned.clone(),
-                        ..Default::default()
-                    },
-                    tinyiothub_ai::session::types::ChatTurnMessage {
-                        role: "assistant".into(),
-                        content: final_text,
-                        ..Default::default()
-                    },
-                ];
-                let ep = event_publisher.clone();
-                let ws_id = workspace_id.clone();
-                let aid = agent_id_owned.clone();
-                let sk = session_key_owned.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = ms
-                        .reflect_conversation_turn(&ws_id, &aid, &sk, &model, &turn_messages)
-                        .await
-                    {
-                        tracing::warn!(%ws_id, %aid, "Reflection failed: {}", e);
-                        if let Some(ref ep) = ep {
-                            ep.publish(tinyiothub_ai::event::types::AiEvent::ReflectionFailed {
-                                workspace_id: ws_id.clone(),
-                                agent_id: aid.clone(),
-                                session_key: sk.clone(),
-                                reason: e.to_string(),
-                            });
-                        }
-                    }
-                });
-            }
-
-            chat_handles.lock().await.remove(&run_id_for_remove);
-        });
-
-        self.chat_handles.lock().await.insert(run_id_for_handle, handle);
-
-        Ok(rx)
+        chat_service::send_message(
+            &agent,
+            message,
+            run_id,
+            session_key,
+            system_prompt,
+            &self.chat_handles,
+            memory_service,
+            event_publisher,
+            enable_reflection,
+            &model,
+            &parsed.workspace_id,
+            agent_id,
+        )
+        .await
+        .map_err(|e| AgentError::RequestFailed(e.to_string()))
     }
 
     pub async fn chat_history(
@@ -901,104 +817,6 @@ impl AgentPool {
             Ok(Ok((final_text, _conversation))) => {
                 Ok(StreamingRunResult { final_text, tool_calls })
             }
-            Ok(Err(e)) => Err(AgentError::RequestFailed(e.to_string())),
-            Err(_elapsed) => {
-                Err(AgentError::RequestFailed("Heartbeat LLM call timed out after 120s".into()))
-            }
-        }
-    }
-
-    /// Run the agent with streaming events mapped to AI-crate StreamEvent for harness observation.
-    /// Returns a Receiver that yields StreamEvents as the LLM generates them.
-    pub async fn run_streaming_harness(
-        &self,
-        workspace_id: &str,
-        message: &str,
-    ) -> Result<tokio::sync::mpsc::Receiver<tinyiothub_ai::harness::StreamEvent>, AgentError> {
-        self.run_streaming_harness_with_agent(workspace_id, message, None).await
-    }
-
-    /// Run the agent with streaming events mapped to AI-crate StreamEvent for harness observation.
-    /// Returns a Receiver that yields StreamEvents as the LLM generates them.
-    ///
-    /// When `agent` is provided, uses that agent directly (chat path).
-    /// Otherwise creates a heartbeat agent via get_or_create (heartbeat path).
-    pub async fn run_streaming_harness_with_agent(
-        &self,
-        workspace_id: &str,
-        message: &str,
-        agent: Option<Arc<tokio::sync::Mutex<zeroclaw::agent::Agent>>>,
-    ) -> Result<tokio::sync::mpsc::Receiver<tinyiothub_ai::harness::StreamEvent>, AgentError> {
-        let agent = match agent {
-            Some(a) => a,
-            None => {
-                let agent_id = format!("__heartbeat__:{}", workspace_id);
-                self.get_or_create(&agent_id, workspace_id).await?
-            }
-        };
-
-        // Set up TurnEvent channel for real-time event interception
-        let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<zeroclaw::agent::TurnEvent>(64);
-
-        // Channel for harness StreamEvents
-        let (stream_tx, stream_rx) = tokio::sync::mpsc::channel::<tinyiothub_ai::harness::StreamEvent>(64);
-
-        // Spawn forwarder: TurnEvent → StreamEvent
-        tokio::spawn(async move {
-            let mut final_text = String::new();
-            while let Some(evt) = event_rx.recv().await {
-                let stream_evt = match evt {
-                    zeroclaw::agent::TurnEvent::Chunk { delta } => {
-                        final_text.push_str(&delta);
-                        Some(tinyiothub_ai::harness::StreamEvent::Chunk { delta })
-                    }
-                    zeroclaw::agent::TurnEvent::Thinking { delta } => {
-                        Some(tinyiothub_ai::harness::StreamEvent::Thinking { delta })
-                    }
-                    zeroclaw::agent::TurnEvent::ToolCall { id, name, args, .. } => {
-                        Some(tinyiothub_ai::harness::StreamEvent::ToolCall { id, name, args })
-                    }
-                    zeroclaw::agent::TurnEvent::ToolResult { id, name, output, .. } => {
-                        // Determine success from output — TrustAwareTool returns success:false for blocks
-                        let success = !output.starts_with("BLOCKED:") && !output.starts_with("PROPOSAL:");
-                        Some(tinyiothub_ai::harness::StreamEvent::ToolResult {
-                            id,
-                            name,
-                            output,
-                            success,
-                        })
-                    }
-                    zeroclaw::agent::TurnEvent::ApprovalRequest { .. } => {
-                        // With AutonomyLevel::Full, approval requests should not occur.
-                        // If they do, log and skip.
-                        tracing::warn!("Unexpected ApprovalRequest in harness mode — skipped");
-                        None
-                    }
-                    zeroclaw::agent::TurnEvent::Usage { .. } => None,
-                };
-                if let Some(evt) = stream_evt
-                    && stream_tx.send(evt).await.is_err()
-                {
-                    break; // receiver dropped
-                }
-            }
-            // Send final event
-            let _ = stream_tx
-                .send(tinyiothub_ai::harness::StreamEvent::Final { text: final_text })
-                .await;
-        });
-
-        // Execute with timeout
-        let mut ag = agent.lock().await;
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(120),
-            ag.turn_streamed(message, event_tx, None),
-        )
-        .await;
-        drop(ag);
-
-        match result {
-            Ok(Ok(_)) => Ok(stream_rx),
             Ok(Err(e)) => Err(AgentError::RequestFailed(e.to_string())),
             Err(_elapsed) => {
                 Err(AgentError::RequestFailed("Heartbeat LLM call timed out after 120s".into()))

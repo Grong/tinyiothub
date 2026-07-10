@@ -149,47 +149,6 @@ impl AiEventHandler {
             } => {
                 info!(workspace_id, proposal_id, approved, "HITL proposal resolved");
             }
-            AiEvent::HarnessStepCompleted {
-                workspace_id,
-                step_id,
-                status,
-                lie_detected,
-            } => {
-                debug!(
-                    workspace_id,
-                    step_id, status, lie_detected, "Harness step completed"
-                );
-            }
-            AiEvent::HarnessTickCompleted {
-                workspace_id,
-                verdict,
-                lie_detected,
-                tool_call_count,
-                duration_ms,
-                steps_completed,
-                proposals_count,
-            } => {
-                info!(
-                    workspace_id,
-                    verdict,
-                    lie_detected,
-                    tool_call_count,
-                    duration_ms,
-                    steps_completed,
-                    proposals_count,
-                    "Harness tick completed"
-                );
-            }
-            AiEvent::AgentDegraded {
-                workspace_id,
-                reason,
-            } => {
-                warn!(
-                    workspace_id,
-                    reason,
-                    "Agent degraded to read-only after consecutive lie detections"
-                );
-            }
         }
     }
 
@@ -536,10 +495,6 @@ mod tests {
             executed_actions: vec![],
             proposals: vec![],
             error: None,
-            pipeline_verdict: String::new(),
-            lie_detected: false,
-            tool_call_count: 0,
-            duration_ms: 0,
         };
 
         let ai_event = AiEvent::HeartbeatCompleted {
@@ -670,10 +625,6 @@ mod tests {
             executed_actions: vec![],
             proposals: vec![],
             error: None,
-            pipeline_verdict: String::new(),
-            lie_detected: false,
-            tool_call_count: 0,
-            duration_ms: 0,
         };
 
         let event = wrap_ai_event(&AiEvent::HeartbeatCompleted {

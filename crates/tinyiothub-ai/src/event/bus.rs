@@ -137,9 +137,6 @@ impl AiEvent {
             AiEvent::ReflectionFailed { .. } => "ReflectionFailed".into(),
             AiEvent::ProposalCreated { .. } => "ProposalCreated".into(),
             AiEvent::ProposalResolved { .. } => "ProposalResolved".into(),
-            AiEvent::HarnessStepCompleted { .. } => "HarnessStepCompleted".into(),
-            AiEvent::HarnessTickCompleted { .. } => "HarnessTickCompleted".into(),
-            AiEvent::AgentDegraded { .. } => "AgentDegraded".into(),
         }
     }
 }
@@ -159,13 +156,6 @@ impl From<&AiEvent> for tinyiothub_core::models::event::AiEventType {
             AiEvent::ReflectionFailed { .. } => tinyiothub_core::models::event::AiEventType::ReflectionFailed,
             AiEvent::ProposalCreated { .. } => tinyiothub_core::models::event::AiEventType::ProposalCreated,
             AiEvent::ProposalResolved { .. } => tinyiothub_core::models::event::AiEventType::ProposalResolved,
-            AiEvent::HarnessStepCompleted { .. } => {
-                tinyiothub_core::models::event::AiEventType::HarnessStepCompleted
-            }
-            AiEvent::HarnessTickCompleted { .. } => {
-                tinyiothub_core::models::event::AiEventType::HarnessTickCompleted
-            }
-            AiEvent::AgentDegraded { .. } => tinyiothub_core::models::event::AiEventType::AgentDegraded,
         }
     }
 }
@@ -254,10 +244,6 @@ mod tests {
                 executed_actions: vec![],
                 proposals: vec![],
                 error: None,
-                pipeline_verdict: String::new(),
-                lie_detected: false,
-                tool_call_count: 0,
-                duration_ms: 0,
             },
         };
         assert_eq!(hc.variant_name(), "HeartbeatCompleted");

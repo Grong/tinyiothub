@@ -1,27 +1,14 @@
 //! Heartbeat loop — per-workspace async loop driving periodic AI-powered checks.
-//!
-//! Now routes through the 6-stage harness pipeline instead of raw LLM calls.
-//! The harness provides PreToolUse checks, PostToolUse verification, lie detection,
-//! and structured reporting.
 
-use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::{RwLock, mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
-use super::types::{HeartbeatConfig, HeartbeatTask, LoopSignal};
-use crate::agent::pool::AgentPoolLike;
+use super::types::{HeartbeatConfig, HeartbeatStatus, HeartbeatTask, LoopSignal};
 use crate::event::bus::AiEventPublisher;
 use crate::event::types::AiEvent;
-use crate::harness::{
-    HarnessSignal, LieCounter, LoopContext, LoopReport, SignalPayload, SignalSource, MAX_HISTORY_TICKS,
-};
-use crate::harness::orchestrator::run_harness_tick;
-use crate::heartbeat::report::build_heartbeat_result_from_report;
-use crate::heartbeat::types::SignalPriority;
-use crate::policy::PolicyEngine;
 use crate::tool::trust::TrustConfig;
 
 const MAX_CONSECUTIVE_FAILURES: u32 = 5;
@@ -32,7 +19,7 @@ pub async fn heartbeat_loop(
     workspace_id: String,
     tasks: Arc<RwLock<Vec<HeartbeatTask>>>,
     trust_config: Arc<RwLock<TrustConfig>>,
-    agent_pool: Option<Arc<dyn AgentPoolLike>>,
+    agent_pool: Option<Arc<dyn crate::agent::pool::AgentPoolLike>>,
     task_repo: Arc<dyn crate::heartbeat::repo::HeartbeatTaskRepository>,
     event_publisher: Arc<AiEventPublisher>,
     config: HeartbeatConfig,
@@ -47,13 +34,8 @@ pub async fn heartbeat_loop(
         }
     };
 
-    let policy_engine: Arc<dyn PolicyEngine> =
-        Arc::new(crate::policy::RateLimitingPolicyEngine::new(10));
-
     let interval = Duration::from_secs((config.interval_minutes as u64) * 60);
     let mut consecutive_failures: u32 = 0;
-    let mut lie_counter = LieCounter::new(3);
-    let mut history: VecDeque<LoopReport> = VecDeque::new();
     let mut paused = false;
 
     tokio::pin! {
@@ -61,24 +43,13 @@ pub async fn heartbeat_loop(
     }
 
     loop {
-        if !paused && !lie_counter.is_degraded() {
-            let active_tasks: Vec<HeartbeatTask> =
-                tasks.read().await.iter().filter(|t| !t.paused).cloned().collect();
+        if !paused {
+            let active_tasks: Vec<HeartbeatTask> = tasks.read().await.iter().filter(|t| !t.paused).cloned().collect();
             let trust = trust_config.read().await.clone();
 
             if !active_tasks.is_empty() {
-                match run_harness_heartbeat_tick(
-                    &workspace_id,
-                    &active_tasks,
-                    &trust,
-                    &agent_pool,
-                    &policy_engine,
-                    &event_publisher,
-                    &mut lie_counter,
-                    &mut history,
-                )
-                .await
-                {
+                let task_refs: Vec<&HeartbeatTask> = active_tasks.iter().collect();
+                match run_heartbeat_tick(&workspace_id, &task_refs, &trust, &agent_pool, &event_publisher).await {
                     Ok(_) => consecutive_failures = 0,
                     Err(e) => {
                         consecutive_failures += 1;
@@ -86,38 +57,27 @@ pub async fn heartbeat_loop(
                         if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
                             warn!(
                                 workspace_id,
-                                consecutive_failures,
-                                "Too many consecutive failures, pausing heartbeat loop"
+                                consecutive_failures, "Too many consecutive failures, pausing heartbeat loop"
                             );
                             paused = true;
                             event_publisher.publish(AiEvent::HeartbeatCompleted {
                                 workspace_id: workspace_id.clone(),
                                 result: crate::heartbeat::types::HeartbeatResult {
                                     workspace_id: workspace_id.clone(),
-                                    status: crate::heartbeat::types::HeartbeatStatus::Error,
+                                    status: HeartbeatStatus::Error,
                                     summary: format!(
                                         "Heartbeat loop paused after {} consecutive failures",
                                         consecutive_failures
                                     ),
                                     executed_actions: vec![],
                                     proposals: vec![],
-                                    error: Some(e),
-                                    pipeline_verdict: String::new(),
-                                    lie_detected: false,
-                                    tool_call_count: 0,
-                                    duration_ms: 0,
+                                    error: Some(e.to_string()),
                                 },
                             });
                         }
                     }
                 }
             }
-        } else if lie_counter.is_degraded() {
-            debug!(
-                workspace_id,
-                consecutive = lie_counter.consecutive_ticks,
-                "Agent is degraded, skipping tick"
-            );
         }
 
         tokio::select! {
@@ -139,47 +99,6 @@ pub async fn heartbeat_loop(
                             paused = false;
                             consecutive_failures = 0;
                         }
-                        // Handle external signal immediately
-                        let active_tasks: Vec<HeartbeatTask> =
-                            tasks.read().await.iter().filter(|t| !t.paused).cloned().collect();
-                        let trust = trust_config.read().await.clone();
-
-                        if !active_tasks.is_empty() && !lie_counter.is_degraded() {
-                            let signal = HarnessSignal {
-                                workspace_id: workspace_id.clone(),
-                                source: SignalSource::Event,
-                                payload: SignalPayload::Alarm(s),
-                                priority: SignalPriority::Critical,
-                            };
-
-                            let context = LoopContext {
-                                workspace_id: workspace_id.clone(),
-                                agent_id: format!("agent:{}", workspace_id),
-                                trust_config: trust,
-                                tasks: active_tasks,
-                                history: history.clone(),
-                                system_prompt: String::new(),
-                            };
-
-                            let report = run_harness_tick(
-                                &signal,
-                                &context,
-                                &agent_pool,
-                                &policy_engine,
-                                &event_publisher,
-                                &mut lie_counter,
-                            ).await;
-
-                            // Cap history
-                            history.push_back(report.clone());
-                            if history.len() > MAX_HISTORY_TICKS {
-                                history.pop_front();
-                            }
-
-                            // Backward compat: publish HeartbeatCompleted
-                            let hb_result = build_heartbeat_result_from_report(&report);
-                            let _ = task_repo.insert_result(&workspace_id, &hb_result).await;
-                        }
                     }
                     Some(LoopSignal::ReloadTasks) => {
                         info!(workspace_id, "Heartbeat loop reloading tasks");
@@ -195,6 +114,8 @@ pub async fn heartbeat_loop(
                         }
                     }
                     Some(LoopSignal::ReloadConfig) => {
+                        // Config is read from the shared Arc<RwLock<TrustConfig>>
+                        // on each tick, so this signal just forces an immediate tick.
                         info!(workspace_id, "Heartbeat loop config refresh acknowledged");
                     }
                     None => {
@@ -208,55 +129,52 @@ pub async fn heartbeat_loop(
     }
 }
 
-/// Run a single heartbeat tick through the harness pipeline.
-async fn run_harness_heartbeat_tick(
+async fn run_heartbeat_tick(
     workspace_id: &str,
-    tasks: &[HeartbeatTask],
+    tasks: &[&HeartbeatTask],
     trust_config: &TrustConfig,
-    agent_pool: &Arc<dyn AgentPoolLike>,
-    policy_engine: &Arc<dyn PolicyEngine>,
+    agent_pool: &Arc<dyn crate::agent::pool::AgentPoolLike>,
     event_publisher: &AiEventPublisher,
-    lie_counter: &mut LieCounter,
-    history: &mut VecDeque<LoopReport>,
 ) -> Result<(), String> {
-    let signal = HarnessSignal {
-        workspace_id: workspace_id.to_string(),
-        source: SignalSource::Timer,
-        payload: SignalPayload::Timer,
-        priority: SignalPriority::Normal,
-    };
+    let prompt = build_heartbeat_prompt(workspace_id, tasks, trust_config);
 
-    let context = LoopContext {
-        workspace_id: workspace_id.to_string(),
-        agent_id: format!("agent:{}", workspace_id),
-        trust_config: trust_config.clone(),
-        tasks: tasks.to_vec(),
-        history: history.clone(),
-        system_prompt: String::new(),
-    };
+    let raw_response = tokio::time::timeout(Duration::from_secs(180), agent_pool.send_message(workspace_id, &prompt))
+        .await
+        .map_err(|_| "LLM call timed out after 180s".to_string())?
+        .map_err(|e| format!("LLM call failed: {}", e))?;
 
-    let report = run_harness_tick(
-        &signal,
-        &context,
-        agent_pool,
-        policy_engine,
-        event_publisher,
-        lie_counter,
-    )
-    .await;
+    let result = super::report::parse_healing_report(&raw_response, workspace_id);
 
-    // Cap history window
-    history.push_back(report.clone());
-    if history.len() > MAX_HISTORY_TICKS {
-        history.pop_front();
-    }
-
-    // Backward compat: also publish HeartbeatCompleted for DB persistence
-    let heartbeat_result = build_heartbeat_result_from_report(&report);
     event_publisher.publish(AiEvent::HeartbeatCompleted {
         workspace_id: workspace_id.to_string(),
-        result: heartbeat_result,
+        result,
     });
 
     Ok(())
+}
+
+fn build_heartbeat_prompt(workspace_id: &str, tasks: &[&HeartbeatTask], trust_config: &TrustConfig) -> String {
+    let tasks_text: String = tasks
+        .iter()
+        .map(|t| format!("- [{}] {}", t.priority, crate::memory::reflect::sanitize_input(&t.text)))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        "You are an IoT heartbeat agent for workspace {ws_id}.\n\
+         Trust level: {trust:?}\n\
+         Max auto-actions per tick: {max}\n\n\
+         ## Tasks:\n{tasks}\n\n\
+         Execute each task. Output a JSON report:\n\
+         ```json\n\
+         {{\n  \"status\": \"complete|partial|error\",\n  \
+         \"summary\": \"...\",\n  \
+         \"executed_actions\": [{{\"tool_name\": \"...\", \"device_id\": \"...\", \"success\": true, \"details\": \"...\"}}],\n  \
+         \"proposals\": [{{\"id\": \"...\", \"tool_name\": \"...\", \"device_id\": \"...\", \"summary\": \"...\", \"reason\": \"...\", \"risk\": \"low|medium|high\"}}],\n  \
+         \"error\": null\n}}\n```",
+        ws_id = workspace_id,
+        trust = trust_config.trust_level,
+        max = trust_config.max_auto_actions_per_tick,
+        tasks = tasks_text
+    )
 }
