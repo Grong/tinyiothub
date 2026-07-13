@@ -44,102 +44,17 @@ impl PromptSection for TinyIoTHubSkillsSection {
     }
 
     fn build(&self, ctx: &PromptContext<'_>) -> anyhow::Result<String> {
-        let skills_content = load_skills_sync(ctx.workspace_dir);
-        if skills_content.is_empty() {
-            Ok(String::new())
-        } else {
-            Ok(format!("## 技能（Skills）\n你可以使用以下技能来完成任务：\n\n{}", skills_content))
-        }
+        let skills = load_workspace_skills(ctx.workspace_dir);
+        Ok(tinyiothub_ai::skills::build_skill_index_prompt(&skills))
     }
 }
 
-fn load_skills_sync(workspace_dir: &std::path::Path) -> String {
-    let ws_skills = workspace_dir.join("skills");
-    if ws_skills.exists()
-        && let Some(content) = build_skills_prompt(&ws_skills)
-        && !content.is_empty()
-    {
-        return content;
-    }
-    let global_skills = std::path::PathBuf::from("data/skills");
-    if global_skills.exists()
-        && let Some(content) = build_skills_prompt(&global_skills)
-        && !content.is_empty()
-    {
-        return content;
-    }
-    String::new()
-}
-
-/// Build the skills prompt: platform-overview in full + compact skill index.
-///
-/// Only `platform-overview.md` is injected in full (~2KB). The other 6 skill
-/// files contribute a single-line index entry each. The LLM uses `get_skill`
-/// to load full workflow details on demand, saving ~8KB tokens per request.
-fn build_skills_prompt(dir: &std::path::Path) -> Option<String> {
-    use std::fs;
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return None,
-    };
-    let mut skill_files: Vec<std::path::PathBuf> = entries
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|ext| ext == "md"))
-        .collect();
-    skill_files.sort();
-
-    let mut overview = String::new();
-    let mut index_entries: Vec<String> = Vec::new();
-
-    for path in &skill_files {
-        let content = match fs::read_to_string(path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        let body = content.trim();
-        if body.is_empty() {
-            continue;
-        }
-        let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-
-        if file_stem == "platform-overview" {
-            overview = body.to_string();
-        } else {
-            // Extract title from first `# ` heading
-            let title = body
-                .lines()
-                .find(|l| l.starts_with("# "))
-                .map(|l| l.trim_start_matches("# ").trim().to_string())
-                .unwrap_or_else(|| file_stem.to_string());
-
-            // Extract one-line description: first non-empty, non-heading line
-            let desc = body
-                .lines()
-                .skip_while(|l| l.starts_with('#') || l.trim().is_empty())
-                .find(|l| !l.trim().is_empty())
-                .map(|l| l.trim().to_string())
-                .unwrap_or_default();
-
-            index_entries.push(format!("- **{}** (`{}`) — {}", title, file_stem, desc));
-        }
-    }
-
-    if overview.is_empty() {
-        return None;
-    }
-
-    let mut prompt = overview;
-    if !index_entries.is_empty() {
-        prompt.push_str("\n\n## 技能索引 (Skill Index)\n");
-        prompt.push_str("使用 `get_skill` 工具按需加载详细技能内容：\n\n");
-        for entry in &index_entries {
-            prompt.push_str(entry);
-            prompt.push('\n');
-        }
-    }
-
-    if prompt.is_empty() { None } else { Some(prompt) }
+/// Load skills for a workspace, workspace-specific dir overriding the global one.
+pub(crate) fn load_workspace_skills(
+    workspace_dir: &std::path::Path,
+) -> Vec<tinyiothub_ai::skills::LoadedSkill> {
+    let dirs = vec![workspace_dir.join("skills"), std::path::PathBuf::from("data/skills")];
+    tinyiothub_ai::skills::load_skills_from_dirs(&dirs)
 }
 
 // ============================================================================
@@ -708,6 +623,14 @@ impl AgentPool {
 /// Frontend expects: `[{ "type": "text", "text": "..." }]`
 /// zeroclaw stores:   `"plain string"`
 fn normalize_content(data: &mut serde_json::Value) {
+    // Strip a per-turn injected skill block from user messages so the history
+    // bubble shows only the user's text, not the prepended skill body.
+    if data.get("role").and_then(|r| r.as_str()) == Some("user")
+        && let Some(text) = data.get("content").and_then(|c| c.as_str())
+    {
+        let stripped = tinyiothub_ai::skills::strip_injected_skill(text);
+        data["content"] = serde_json::json!(stripped);
+    }
     if let Some(content) = data.get("content") {
         if content.is_string() {
             let text = content.as_str().unwrap_or("");
