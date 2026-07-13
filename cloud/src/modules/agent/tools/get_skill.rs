@@ -53,7 +53,10 @@ impl Tool for GetSkillTool {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some(format!("skill_name is required. Available skills: {}", available_skills())),
+                error: Some(format!(
+                    "skill_name is required. Available skills: {}",
+                    available_skills()
+                )),
             });
         }
 
@@ -120,9 +123,5 @@ fn available_skills() -> String {
         })
         .collect();
     names.sort();
-    if names.is_empty() {
-        "(none)".to_string()
-    } else {
-        names.join(", ")
-    }
+    if names.is_empty() { "(none)".to_string() } else { names.join(", ") }
 }

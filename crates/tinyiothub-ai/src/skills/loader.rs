@@ -7,8 +7,8 @@
 //! Injection is driven by the skill's frontmatter `inject` field:
 //! - `always`  — full body always rendered into the system-prompt skill section
 //! - `index`   — one-line index entry only; the LLM loads full body via `get_skill`
-//! - `trigger` — not in the base prompt; full body prepended to the turn when the
-//!   message starts with the skill's `trigger` token
+//! - `trigger` — not in the base prompt; full body prepended to the turn when the message starts
+//!   with the skill's `trigger` token
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -122,9 +122,7 @@ pub fn parse_skill(file_stem: &str, content: &str) -> Option<LoadedSkill> {
     let version = fm_str("version").unwrap_or_default();
     let inject = fm_str("inject").map(|s| InjectMode::parse(&s)).unwrap_or_default();
 
-    let trigger = fm_str("trigger").map(|t| {
-        if t.starts_with('/') { t } else { format!("/{}", t) }
-    });
+    let trigger = fm_str("trigger").map(|t| if t.starts_with('/') { t } else { format!("/{}", t) });
 
     let title = body
         .lines()
@@ -172,10 +170,7 @@ pub fn build_skill_index_prompt(skills: &[LoadedSkill]) -> String {
                     (Some(t), InjectMode::Trigger) => format!(" — 发送 `{}` 触发", t),
                     _ => String::new(),
                 };
-                index.push(format!(
-                    "- **{}** (`{}`) — {}{}",
-                    s.title, s.name, s.description, hint
-                ));
+                index.push(format!("- **{}** (`{}`) — {}{}", s.title, s.name, s.description, hint));
             }
         }
     }
@@ -202,18 +197,14 @@ pub fn build_skill_index_prompt(skills: &[LoadedSkill]) -> String {
 /// inherently safe against path traversal / arbitrary file access.
 pub fn resolve_trigger(message: &str, skills: &[LoadedSkill]) -> Option<TriggerHit> {
     let trimmed = message.trim_start();
-    let first_token: &str = trimmed
-        .split(|c: char| c.is_whitespace())
-        .next()
-        .unwrap_or("");
+    let first_token: &str = trimmed.split(|c: char| c.is_whitespace()).next().unwrap_or("");
     if !first_token.starts_with('/') {
         return None;
     }
 
-    let skill = skills.iter().find(|s| {
-        s.inject == InjectMode::Trigger
-            && s.trigger.as_deref() == Some(first_token)
-    })?;
+    let skill = skills
+        .iter()
+        .find(|s| s.inject == InjectMode::Trigger && s.trigger.as_deref() == Some(first_token))?;
 
     let cleaned = trimmed[first_token.len()..].trim().to_string();
     Some(TriggerHit {
