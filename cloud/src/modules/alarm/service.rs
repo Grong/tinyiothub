@@ -382,19 +382,29 @@ impl RuleEngine {
                         self.trigger_debounce_start.remove(&debounce_key);
                     } else {
                         let now = Instant::now();
-                        if let Some(first_seen) = self.trigger_debounce_start.get(&debounce_key) {
-                            if first_seen.elapsed() < dur {
-                                // Still within debounce window — pending
+                        // Read the guard into an owned value and drop it BEFORE any
+                        // mutation of the same DashMap — holding a `.get()` shard
+                        // guard across `remove`/`insert` on the same map deadlocks.
+                        let existing_elapsed = self
+                            .trigger_debounce_start
+                            .get(&debounce_key)
+                            .map(|first_seen| first_seen.elapsed());
+                        match existing_elapsed {
+                            Some(elapsed) => {
+                                if elapsed < dur {
+                                    // Still within debounce window — pending
+                                    pending_trigger_rule_ids.push(rule.id.clone());
+                                    continue;
+                                }
+                                // Debounce duration elapsed — trigger now
+                                self.trigger_debounce_start.remove(&debounce_key);
+                            }
+                            None => {
+                                // First time seeing this trigger — start debounce timer
+                                self.trigger_debounce_start.insert(debounce_key.clone(), now);
                                 pending_trigger_rule_ids.push(rule.id.clone());
                                 continue;
                             }
-                            // Debounce duration elapsed — trigger now
-                            self.trigger_debounce_start.remove(&debounce_key);
-                        } else {
-                            // First time seeing this trigger — start debounce timer
-                            self.trigger_debounce_start.insert(debounce_key.clone(), now);
-                            pending_trigger_rule_ids.push(rule.id.clone());
-                            continue;
                         }
                     }
                 }
@@ -409,9 +419,14 @@ impl RuleEngine {
                 self.throttle
                     .retain(|_, instant| instant.elapsed() < std::time::Duration::from_secs(300));
 
-                if let Some(last) = self.throttle.get(&throttle_key)
-                    && last.elapsed() < suppress_duration
-                {
+                // Read the guard into an owned bool and drop it before `insert`
+                // on the same DashMap to avoid a same-shard read+write deadlock.
+                let throttled = self
+                    .throttle
+                    .get(&throttle_key)
+                    .map(|last| last.elapsed() < suppress_duration)
+                    .unwrap_or(false);
+                if throttled {
                     non_triggered_rule_ids.push(rule.id.clone());
                     continue;
                 }
@@ -437,21 +452,28 @@ impl RuleEngine {
                             self.recovery_debounce_start.remove(&debounce_key);
                         } else {
                             let now = Instant::now();
-                            if let Some(first_seen) =
-                                self.recovery_debounce_start.get(&debounce_key)
-                            {
-                                if first_seen.elapsed() < dur {
-                                    // Still within recovery debounce — pending
+                            // Drop the `.get()` guard before mutating the same
+                            // DashMap to avoid a same-shard read+write deadlock.
+                            let existing_elapsed = self
+                                .recovery_debounce_start
+                                .get(&debounce_key)
+                                .map(|first_seen| first_seen.elapsed());
+                            match existing_elapsed {
+                                Some(elapsed) => {
+                                    if elapsed < dur {
+                                        // Still within recovery debounce — pending
+                                        pending_trigger_rule_ids.push(rule.id.clone());
+                                        continue;
+                                    }
+                                    // Recovery debounce elapsed — ready to resolve
+                                    self.recovery_debounce_start.remove(&debounce_key);
+                                }
+                                None => {
+                                    // First time seeing recovery — start debounce timer
+                                    self.recovery_debounce_start.insert(debounce_key.clone(), now);
                                     pending_trigger_rule_ids.push(rule.id.clone());
                                     continue;
                                 }
-                                // Recovery debounce elapsed — ready to resolve
-                                self.recovery_debounce_start.remove(&debounce_key);
-                            } else {
-                                // First time seeing recovery — start debounce timer
-                                self.recovery_debounce_start.insert(debounce_key.clone(), now);
-                                pending_trigger_rule_ids.push(rule.id.clone());
-                                continue;
                             }
                         }
                     }
@@ -624,19 +646,26 @@ impl RuleEngine {
         let key = (device_id.to_string(), rule_id.to_string());
         let now = Instant::now();
 
-        // Check if condition has been sustained long enough
-        if let Some(first_seen) = self.duration_first_seen.get(&key) {
-            if first_seen.elapsed() >= duration {
-                self.duration_first_seen.remove(&key);
-                return Ok(true);
+        // Check if condition has been sustained long enough.
+        // Read the guard into an owned value and drop it before mutating the
+        // same DashMap — a `.get()` shard guard held across `remove` deadlocks.
+        let first_seen_elapsed =
+            self.duration_first_seen.get(&key).map(|first_seen| first_seen.elapsed());
+        match first_seen_elapsed {
+            Some(elapsed) => {
+                if elapsed >= duration {
+                    self.duration_first_seen.remove(&key);
+                    return Ok(true);
+                }
+                // Still waiting for duration to elapse
+                Ok(false)
             }
-            // Still waiting for duration to elapse
-            return Ok(false);
+            None => {
+                // First time seeing this condition — record start time
+                self.duration_first_seen.insert(key, now);
+                Ok(false)
+            }
         }
-
-        // First time seeing this condition — record start time
-        self.duration_first_seen.insert(key, now);
-        Ok(false)
     }
 
     fn check_composite(
