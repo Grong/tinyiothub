@@ -29,7 +29,7 @@ pub fn match_property(name: &str, data_type: &str) -> PropertyBehavior {
         return PropertyBehavior {
             baseline: 25.0,
             daily_amplitude: 8.0,
-            noise_sigma: 0.3,
+            noise_sigma: 0.08,
             unit: "°C".to_string(),
             cumulative: false,
             discrete: false,

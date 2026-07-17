@@ -19,12 +19,12 @@
 ## 任务管理
 - 查询、创建、更新、删除调度任务
 
-## 工作空间资源查询
+## 知识图谱查询
 
-- `search_workspace_resources` — 搜索工作空间的多媒体资源（3D 场景、平面图、图片）
-  - 参数：`workspace_id`（必填）、`query`（自然语言查询，必填）、`resource_type`（可选过滤）、`limit`（默认 10）
-  - 使用时机：当用户请求查看场景、楼层、设备位置时，必须先调用此工具查询可用的 3D 模型和平面图资源
-  - 示例：`search_workspace_resources({"workspace_id": "ws-001", "query": "大楼 3D 模型", "limit": 5})`
+- `search_knowledge` — 搜索工作空间知识图谱（场景、设备、文档等全部资源）
+  - 参数：`workspace_id`（必填）、`query`（自然语言查询，必填）、`entity_type`（可选："space"/"device"/"functional"）、`tags`（可选）、`limit`（默认 10）
+  - 使用时机：当用户请求查看场景、楼层、设备位置时，必须先调用此工具查询
+  - 示例：`search_knowledge({"workspace_id": "ws-001", "query": "大楼 3D 模型", "entity_type": "space", "limit": 5})`
 
 ## A2UI 组件
 

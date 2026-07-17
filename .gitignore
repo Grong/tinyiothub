@@ -65,3 +65,4 @@ license
 /target
 deploy/docker/data/
 .gstack/
+.omx/

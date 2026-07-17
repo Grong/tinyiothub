@@ -106,6 +106,12 @@ pub fn classify_tool_safety(tool_name: &str) -> ToolSafety {
         return ToolSafety::ReadOnly;
     }
 
+    // known read-only tools that don't follow verb_noun convention
+    // canvas: A2UI rendering — pushes UI components, does not modify data
+    if tool_name == "canvas" {
+        return ToolSafety::ReadOnly;
+    }
+
     ToolSafety::Write
 }
 
@@ -267,6 +273,8 @@ mod tests {
         assert_eq!(classify_tool_safety("list_schedules"), ToolSafety::ReadOnly);
         assert_eq!(classify_tool_safety("alarm_list"), ToolSafety::ReadOnly);
         assert_eq!(classify_tool_safety("config_get"), ToolSafety::ReadOnly);
+        // known read-only tools that don't follow verb_noun convention
+        assert_eq!(classify_tool_safety("canvas"), ToolSafety::ReadOnly);
     }
 
     #[test]

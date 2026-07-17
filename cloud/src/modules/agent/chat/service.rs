@@ -104,7 +104,27 @@ pub async fn send_message(
     agent_id: &str,
 ) -> Result<mpsc::Receiver<ChatEvent>, ChatError> {
     let agent = Arc::clone(agent);
-    let message = message.to_string();
+    // Resolve a leading `/trigger` skill token: prepend the full skill body to
+    // this turn (so the model reliably has it) and keep a clean message for
+    // display/reflection. A bare trigger (e.g. auto-`/workspace`) falls back to
+    // a neutral default request.
+    let (turn_message, reflect_message) = {
+        let ws_dir = crate::shared::paths::workspace_dir(workspace_id);
+        let skills = crate::modules::agent::agent::load_workspace_skills(&ws_dir);
+        match tinyiothub_ai::skills::resolve_trigger(message, &skills) {
+            Some(hit) => {
+                let user_text = if hit.cleaned_message.is_empty() {
+                    "综合情况".to_string()
+                } else {
+                    hit.cleaned_message
+                };
+                let turn =
+                    tinyiothub_ai::skills::wrap_injected_skill(&hit.name, &hit.body, &user_text);
+                (turn, user_text)
+            }
+            None => (message.to_string(), message.to_string()),
+        }
+    };
     let run_id = run_id.to_string();
     let session_key = session_key.to_string();
     let system_prompt = system_prompt.to_string();
@@ -159,7 +179,7 @@ pub async fn send_message(
         let mut ag = agent.lock().await;
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(120),
-            ag.turn_streamed(&message, event_tx, None),
+            ag.turn_streamed(&turn_message, event_tx, None),
         )
         .await;
         drop(ag);
@@ -208,7 +228,7 @@ pub async fn send_message(
             let turn_messages = vec![
                 tinyiothub_ai::session::types::ChatTurnMessage {
                     role: "user".into(),
-                    content: message.clone(),
+                    content: reflect_message.clone(),
                     ..Default::default()
                 },
                 tinyiothub_ai::session::types::ChatTurnMessage {

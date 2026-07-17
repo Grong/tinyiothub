@@ -61,6 +61,13 @@ export class WorkspaceView extends LitElement {
         this.a2uiRenderer.handleA2uiMessage(a2ui);
       }
     }
+
+    // Auto-trigger /workspace skill once per browser session.
+    if (!sessionStorage.getItem("ws:skill-triggered")) {
+      sessionStorage.setItem("ws:skill-triggered", "1");
+      sendChatMessage(this.chatState, "/workspace");
+    }
+
     this.requestUpdate();
   }
 
@@ -83,9 +90,7 @@ export class WorkspaceView extends LitElement {
     this.a2uiRenderer.clear();
     this.requestUpdate();
 
-    const contextualMsg = `[当前页面：Workspace 工作空间]\n${raw}`;
-
-    sendChatMessage(this.chatState, contextualMsg);
+    sendChatMessage(this.chatState, "/workspace\n" + raw);
   }
 
   private _handleAbort(): void {

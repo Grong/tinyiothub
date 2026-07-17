@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.4.4.0] - 2026-07-02
+
+### Added
+
+- SSE Token authentication: short-lived tokens for SSE connections via `POST /api/v1/auth/sse-token`, keeping JWT out of URL query strings and server logs
+- Knowledge resource fallback: when the knowledge graph has no indexed entities, `search_knowledge` now falls back to workspace resource search
+- AGENTS.md template loaded into agent system prompt as "Agent Rules" section
+- Slash-command skill loading: `/skill-name` prefix detection and `get_skill` blocking requirement in system prompt
+- Device description field exposed in MCP device search results
+
+### Changed
+
+- Lint rules tightened from `warn` to `deny` (dead_code, unused_imports, unused_variables, unused_mut, non_snake_case)
+- Token blacklist check is now async (`is_token_blacklisted`) to avoid blocking tokio worker threads in middleware
+- Tag queries now support empty tenant_id (skip tenant filter for cross-tenant lookups)
+- Workspace ID injected into chat system prompt for agent context
+- A2UI canvas tool description simplified with clearer surface kind guidance
+
+### Removed
+
+- Performance monitoring module (load balancer, metrics, monitor, optimizer) — unused legacy code
+
 ## [0.4.3] - 2026-06-30
 
 ### Added — AI Subsystem (tinyiothub-ai crate)

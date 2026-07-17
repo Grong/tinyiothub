@@ -9,7 +9,7 @@ use headers::{Authorization, HeaderMapExt, authorization::Bearer};
 
 use crate::shared::{
     api_response::{ReqCtx, UserInfo},
-    security::jwt::{is_token_blacklisted_sync, validate_jwt},
+    security::jwt::{is_token_blacklisted, validate_jwt},
 };
 
 /// Context middleware for request processing with Axum
@@ -25,6 +25,7 @@ pub async fn context_middleware(
 
     // Try to extract and validate JWT token
     let user_info = extract_user_from_jwt(request.headers(), request.uri(), Some(&state.database))
+        .await
         .unwrap_or_default();
 
     // Create context with user information
@@ -63,16 +64,16 @@ fn extract_bearer_token<'a>(headers: &'a HeaderMap, uri: &'a axum::http::Uri) ->
 }
 
 /// Extract user information from JWT token in headers or query string
-fn extract_user_from_jwt(
+async fn extract_user_from_jwt(
     headers: &HeaderMap,
     uri: &axum::http::Uri,
     db: Option<&crate::shared::persistence::Database>,
 ) -> Option<UserInfo> {
     let token = extract_bearer_token(headers, uri)?;
 
-    // Check token blacklist if DB is available
+    // Check token blacklist if DB is available（异步查询，不阻塞线程）
     if let Some(database) = db
-        && is_token_blacklisted_sync(database, &token)
+        && is_token_blacklisted(database, &token).await
     {
         tracing::warn!("Rejected blacklisted token");
         return None;

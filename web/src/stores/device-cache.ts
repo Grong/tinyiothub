@@ -4,12 +4,17 @@
  * 单例模式，持有唯一 SSE 连接，所有组件从信号读数据。
  * 缓存从空开始，通过 SSE 推送和设备详情加载逐步填充。
  * 不做全量 fetch，适合大量设备场景。
+ *
+ * 认证方式（推荐）：
+ * 1. 先通过 POST /api/v1/auth/sse-token（JWT header）获取短期 SSE token
+ * 2. 使用 ?sse_token=xxx 连接 SSE（token 仅存活 5 分钟）
+ * 3. 回退：?token=xxx（JWT 在 URL 中，向后兼容）
  */
 
 import { signal, computed } from '@lit-labs/signals';
 import { deviceApi } from '../api/devices.js';
 import { API_BASE } from '../api/config.js';
-import { getAuthToken } from '../api/client.js';
+import { getAuthToken, apiPost } from '../api/client.js';
 import type { Device, DeviceProperty } from '../types/index.js';
 
 type SseStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
@@ -28,7 +33,6 @@ class DeviceCache {
   private reconnectAttempt = 0;
   private pendingSseEvents: any[] = [];
   private sseConnecting = false;
-
   /**
    * 获取当前缓存的设备列表。
    * 同时确保 SSE 连接已建立（静默，不 fetch）。
@@ -149,24 +153,60 @@ class DeviceCache {
     this.sseConnecting = false;
   }
 
-  private ensureConnected(): void {
+  /** 获取短期 SSE token */
+  private async fetchSseToken(): Promise<string | null> {
+    try {
+      const res = await apiPost<{ token: string; expiresInSeconds: number }>('/auth/sse-token');
+      return res.result?.token ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async ensureConnected(): Promise<void> {
     if (this.eventSource != null || this.sseConnecting) return;
     this.sseConnecting = true;
 
     this.$sseStatus.set('connecting');
 
-    const token = getAuthToken();
     const workspaceId = localStorage.getItem("workspace-id")
       ?? sessionStorage.getItem("workspace-id")
       ?? "default";
+
+    // 方式 1: 使用短期 SSE token（不暴露 JWT 到 URL）
+    if (getAuthToken()) {
+      const sseToken = await this.fetchSseToken();
+      if (sseToken) {
+        this.connectWithSseToken(sseToken, workspaceId);
+        return;
+      }
+    }
+
+    // 方式 2: 回退到 JWT header（由 EventSource 无法设置的 header 弥补，使用 ?token= 回退）
+    this.connectWithJwtFallback(workspaceId);
+  }
+
+  private connectWithSseToken(sseToken: string, workspaceId: string): void {
+    const url = `${API_BASE}/events/sse/token?sse_token=${encodeURIComponent(sseToken)}&workspace_id=${encodeURIComponent(workspaceId)}&event_types=device.status_change,device.connection,device.property_change`;
+
+    this.doConnect(url);
+  }
+
+  private connectWithJwtFallback(workspaceId: string): void {
+    const token = getAuthToken();
     if (!token) {
       this.$sseStatus.set('disconnected');
       this.sseConnecting = false;
       return;
     }
 
+    // 向后兼容：JWT 在 URL 中（?token=xxx）
     const url = `${API_BASE}/events/sse?token=${encodeURIComponent(token)}&workspace_id=${encodeURIComponent(workspaceId)}&event_types=device.status_change,device.connection,device.property_change`;
 
+    this.doConnect(url);
+  }
+
+  private doConnect(url: string): void {
     try {
       this.eventSource = new EventSource(url);
     } catch {
@@ -208,7 +248,6 @@ class DeviceCache {
       this.eventSource?.close();
       this.eventSource = null;
       this.sseConnecting = false;
-
       this.scheduleReconnect();
     };
   }
