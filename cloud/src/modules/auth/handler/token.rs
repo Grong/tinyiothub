@@ -1,5 +1,5 @@
 // Token 刷新模块
-// 支持 Token 刷新和黑名单
+// 支持 Token 刷新、登出和 SSE token 生成
 
 use axum::{Router, extract::State, response::Json, routing::post};
 use serde::{Deserialize, Serialize};
@@ -9,11 +9,17 @@ use tinyiothub_web::response::ApiResponseBuilder;
 use crate::shared::{
     api_response::ApiResponse,
     app_state::AppState,
-    security::jwt::{generate_token, validate_jwt},
+    security::jwt::{Claims, validate_jwt},
 };
 
+/// 创建不受 JWT middleware 保护的路由（login, logout, refresh）
 pub fn create_router() -> Router<AppState> {
     Router::new().route("/refresh", post(refresh_token)).route("/logout", post(logout))
+}
+
+/// 创建受 JWT middleware 保护的路由（需要已验证的 Claims）
+pub fn create_protected_router() -> Router<AppState> {
+    Router::new().route("/sse-token", post(generate_sse_token))
 }
 
 /// 刷新 Token 请求
@@ -39,6 +45,14 @@ pub struct RefreshTokenResponse {
     pub expires_in: u64,
 }
 
+/// SSE token 响应
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SseTokenResponse {
+    pub token: String,
+    pub expires_in_seconds: u64,
+}
+
 /// 刷新 Token
 async fn refresh_token(
     State(_state): State<AppState>,
@@ -54,8 +68,12 @@ async fn refresh_token(
     };
 
     // 生成新的 token
-    match generate_token(&claims.user_id, &claims.username, &claims.tenant_id, &claims.workspace_id)
-    {
+    match crate::shared::security::jwt::generate_token(
+        &claims.user_id,
+        &claims.username,
+        &claims.tenant_id,
+        &claims.workspace_id,
+    ) {
         Ok(new_token) => {
             tracing::info!("Token refreshed for user: {}", claims.user_id);
             ApiResponseBuilder::success(RefreshTokenResponse {
@@ -69,6 +87,29 @@ async fn refresh_token(
             ApiResponseBuilder::error("Failed to refresh token".to_string())
         }
     }
+}
+
+/// 生成用于 SSE 连接的短期 token（受 JWT middleware 保护）
+///
+/// SSE 使用 EventSource API 无法设置自定义 HTTP headers，因此 JWT
+/// 通过 URL 查询参数传递会导致 token 泄露到日志中。这个端点返回
+/// 一个短期（5分钟）、一次性使用的 token，在 SSE 连接中使用。
+async fn generate_sse_token(
+    State(state): State<AppState>,
+    claims: Claims,
+) -> Json<ApiResponse<SseTokenResponse>> {
+    let user_id = claims.user_id;
+    let workspace_id = claims.workspace_id;
+
+    // 生成短期 SSE token
+    let token = state.get_sse_token_manager().generate_token(&user_id, &workspace_id);
+
+    tracing::debug!("SSE token generated for user: {} workspace: {}", user_id, workspace_id);
+
+    ApiResponseBuilder::success(SseTokenResponse {
+        token,
+        expires_in_seconds: 300, // 5分钟
+    })
 }
 
 /// 登出（将 token 加入黑名单）

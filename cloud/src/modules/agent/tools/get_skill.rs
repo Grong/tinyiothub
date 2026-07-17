@@ -27,10 +27,11 @@ impl Tool for GetSkillTool {
     }
 
     fn description(&self) -> &str {
-        "Load detailed skill/guide content on demand. Use this when you need \
-         step-by-step instructions for a specific workflow. The system prompt \
-         carries a skill index (names + descriptions) — call this with a skill \
-         name to get its full workflow details."
+        "Load a skill's full instructions on demand. \
+         When a skill matches the current task, calling this is a BLOCKING REQUIREMENT — \
+         you MUST invoke it BEFORE taking any other action. \
+         The system prompt carries a skill index (name + one-line description); \
+         call this with a skill name to get the complete step-by-step workflow."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

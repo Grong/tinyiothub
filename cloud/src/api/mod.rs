@@ -57,13 +57,12 @@ pub fn create_router() -> Router<AppState> {
         .nest("/jobs", crate::modules::jobs::handler::create_router())
         .nest("/batch", crate::modules::batch::handler::create_router())
         .nest("/heartbeat", crate::modules::heartbeat::handler::create_router())
-        .nest("/workspaces", crate::modules::workspace::create_router()) // 工作空间端点
-        .nest("/workspaces", crate::modules::agent::memory::handler::create_router()) // Agent 记忆
+        .nest("/workspaces", crate::modules::workspace::create_router())
+        .nest("/workspaces", crate::modules::agent::memory::handler::create_router())
         .nest("/mcp", crate::modules::mcp::create_router())
         .nest("/chat", crate::modules::chat::handler::create_router())
         .nest("/agents/skills", crate::modules::agent::handler::skills::create_router())
-        .nest("/tags", crate::modules::tag::create_router()) // 标签端点
-        // API Keys — 直接在 /v1/api-keys/ 下，不嵌套在 /tenants 下
+        .nest("/tags", crate::modules::tag::create_router())
         .nest("/api-keys", crate::modules::tenant::create_api_key_router())
         .nest("/agents", crate::modules::agent::handler::create_router())
         .nest("/driver-health", crate::modules::driver_health::handler::create_router())
@@ -71,6 +70,7 @@ pub fn create_router() -> Router<AppState> {
         .route("/tools/effective", get(crate::modules::chat::handler::proxy::tools_effective))
         .route("/tools/toggle", post(crate::modules::chat::handler::proxy::tools_toggle))
         .nest("/auth", crate::modules::auth::handler::session::create_router())
+        .nest("/auth/sse-token", crate::modules::auth::handler::token::create_protected_router())
         .route("/test-auth", get(test_auth_endpoint))
         .layer(axum_middleware::from_fn(crate::api::middleware::context::jwt_auth_middleware));
 
@@ -80,13 +80,18 @@ pub fn create_router() -> Router<AppState> {
         .nest("/auth/token", crate::modules::auth::handler::token::create_router())
         .nest("/auth/sms", crate::modules::auth::handler::sms::create_router())
         .nest("/auth/social", crate::modules::auth::handler::social::create_router())
-        .nest("/tenants", crate::modules::tenant::create_auth_router()) // 租户注册登录
+        .nest("/tenants", crate::modules::tenant::create_auth_router())
         .nest("/system", crate::modules::system::handler::create_router())
         .route("/gateway/pair", post(crate::modules::gateway::handler::pairing::pair_device))
-        // 公开的SSE端点（不需要认证，通过 query param token 鉴权）
+        // 公开的SSE端点（不需要JWT header, 通过?token=鉴权）
         .route(
             "/events/sse/public",
             get(crate::modules::event::handler::sse::handle_sse_connection_public),
+        )
+        // SSE token 认证端点（不需要 JWT header，通过 ?sse_token= 鉴权）
+        .route(
+            "/events/sse/token",
+            get(crate::modules::event::handler::sse::handle_sse_connection_token),
         )
         .merge(protected_routes);
 

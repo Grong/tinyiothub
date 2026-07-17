@@ -51,6 +51,14 @@ pub async fn chat_stream(
     )
     .await;
 
+    if !workspace_id.is_empty() {
+        full_prompt = format!(
+            "# Current Workspace\nworkspace_id: {ws}\n\n{prompt}",
+            ws = workspace_id,
+            prompt = full_prompt,
+        );
+    }
+
     // Inject workspace knowledge graph context into the system prompt
     match state.knowledge_service.build_context(&workspace_id).await {
         Ok(knowledge_ctx) if !knowledge_ctx.is_empty() => {

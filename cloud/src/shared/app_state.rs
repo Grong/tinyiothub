@@ -86,6 +86,9 @@ pub struct AppState {
     /// SSE连接管理器 - 实时事件推送
     pub sse_manager: Arc<SseConnectionManager>,
 
+    /// SSE Token管理器 - 生成和验证短期SSE连接token
+    pub sse_token_manager: Arc<crate::shared::sse_token::SseTokenManager>,
+
     /// 安全事件服务 - 带权限控制和加密的事件服务（懒加载）
     pub secure_event_service: OnceCell<Arc<SecureEventService>>,
 
@@ -201,6 +204,9 @@ impl AppState {
 
         // 创建SSE管理器（带 DeviceCache 用于设备 workspace 查找）
         let sse_manager = Arc::new(SseConnectionManager::new());
+
+        // SSE Token 管理器 — 生成短期令牌用于 SSE 连接认证（替代 URL 中的 JWT）
+        let sse_token_manager = Arc::new(crate::shared::sse_token::SseTokenManager::default());
 
         // 注册事件处理器将在异步初始化中完成
         // 这里只创建事件总线，处理器注册推迟到 register_event_handlers() 方法
@@ -421,6 +427,7 @@ impl AppState {
             event_repository,
             real_time_event_repository,
             sse_manager,
+            sse_token_manager,
             secure_event_service,
             alarm_service,
             agent_pool,
@@ -637,12 +644,16 @@ impl AppState {
         self.redis.as_ref()
     }
 
-    /// 获取SSE连接管理器
+    /// 获取 SSE 连接管理器
     pub fn get_sse_manager(&self) -> &SseConnectionManager {
         &self.sse_manager
     }
 
-    /// 获取事件总线
+    /// 获取 SSE Token 管理器
+    pub fn get_sse_token_manager(&self) -> &crate::shared::sse_token::SseTokenManager {
+        &self.sse_token_manager
+    }
+
     pub fn event_bus(&self) -> &Arc<EventBus> {
         &self.event_bus
     }
@@ -731,30 +742,3 @@ impl AppState {
         Self::new(device_cache, pool)
     }
 }
-
-// === 为什么选择这种设计？===
-//
-// 1. **Axum 最佳实践**
-//    - Axum 官方推荐使用单一状态类型
-//    - with_state 只接受一个参数，这是框架设计
-//    - 避免使用 Extension，因为它是运行时检查
-//
-// 2. **依赖注入模式**
-//    - 在应用启动时解析所有依赖
-//    - 避免服务定位器反模式
-//    - 便于测试和模拟
-//
-// 3. **性能考虑**
-//    - 服务实例在启动时创建一次
-//    - Arc 提供高效的多线程共享
-//    - 避免每次请求的分配开销
-//
-// 4. **类型安全**
-//    - 编译时检查所有依赖
-//    - 避免运行时的类型转换错误
-//    - IDE 友好的代码补全
-//
-// 5. **可维护性**
-//    - 清晰的服务边界
-//    - 统一的依赖管理
-//    - 便于添加新服务

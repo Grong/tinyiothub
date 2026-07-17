@@ -163,8 +163,8 @@ mockall = { workspace = true }
 http-body-util = { workspace = true }
 
 [lints.rust]
-dead_code = "warn"
-unused_imports = "warn"
-unused_variables = "warn"
-unused_mut = "warn"
-non_snake_case = "warn"
+dead_code = "deny"
+unused_imports = "deny"
+unused_variables = "deny"
+unused_mut = "deny"
+non_snake_case = "deny"

@@ -276,6 +276,26 @@ pub fn validate_jwt(token: &str) -> Result<Claims, String> {
 }
 
 // 检查 token 是否在黑名单中（使用阻塞 DB 调用）
+/// 异步检查 token 是否在黑名单中（推荐使用）
+/// 用于 async middleware 和其他异步上下文
+pub async fn is_token_blacklisted(
+    db: &crate::shared::persistence::database::Database,
+    token: &str,
+) -> bool {
+    let token_hash = format!("{:x}", sha2::Sha256::digest(token.as_bytes()));
+
+    sqlx::query("SELECT 1 FROM token_blacklist WHERE token_hash = ? LIMIT 1")
+        .bind(&token_hash)
+        .fetch_optional(db.pool())
+        .await
+        .map(|r| r.is_some())
+        .unwrap_or(false)
+}
+
+/// 同步检查 token 是否在黑名单中（已弃用，使用 is_token_blacklisted async 版本）
+///
+/// 这个函数使用 block_on 休眠当前线程，可能导致
+/// tokio 运行时线程池饥饿。新代码应使用 is_token_blacklisted()。
 pub fn is_token_blacklisted_sync(
     db: &crate::shared::persistence::database::Database,
     token: &str,

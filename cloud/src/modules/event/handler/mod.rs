@@ -9,7 +9,6 @@ use axum::{
 use crate::shared::app_state::AppState;
 
 pub mod overview;
-pub mod performance;
 pub mod query;
 pub mod real_time;
 pub mod security;
@@ -32,7 +31,6 @@ pub fn create_router() -> Router<AppState> {
         .route("/security/audit-logs", get(security::get_user_audit_logs))
         .route("/security/audit-logs/all", get(security::get_all_audit_logs))
         .route("/security/cleanup", post(security::cleanup_audit_logs))
-        .nest("/performance", performance::create_router())
         // SSE endpoints for real-time event streaming
         .route("/sse", get(sse::handle_sse_connection))
         .route("/sse/overview", get(sse::get_sse_overview))

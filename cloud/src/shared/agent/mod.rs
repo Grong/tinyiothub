@@ -157,6 +157,7 @@ async fn load_workspace_prompt(workspace_dir: &std::path::Path) -> String {
         ("IDENTITY.md", "Identity"),
         ("SOUL.md", "Principles"),
         ("TOOLS.md", "Capabilities"),
+        ("AGENTS.md", "Agent Rules"),
         ("USER.md", "User Context"),
         ("MEMORY.md", "Memory"),
     ];
@@ -194,6 +195,7 @@ fn get_embedded_template(filename: &str) -> Option<&'static str> {
     match filename {
         "IDENTITY.md" => Some(include_str!("../../../templates/agent/IDENTITY.md")),
         "SOUL.md" => Some(include_str!("../../../templates/agent/SOUL.md")),
+        "AGENTS.md" => Some(include_str!("../../../templates/agent/AGENTS.md")),
         "TOOLS.md" => Some(include_str!("../../../templates/agent/TOOLS.md")),
         "USER.md" => Some(include_str!("../../../templates/agent/USER.md")),
         "MEMORY.md" => Some(include_str!("../../../templates/agent/MEMORY.md")),
