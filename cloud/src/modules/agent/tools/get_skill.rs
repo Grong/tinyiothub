@@ -81,7 +81,7 @@ impl Tool for GetSkillTool {
             });
         }
 
-        let path = std::path::PathBuf::from("data/skills").join(format!("{}.md", skill_name));
+        let path = skill_dir().join(format!("{}.md", skill_name));
 
         match std::fs::read_to_string(&path) {
             Ok(content) => {
@@ -109,7 +109,7 @@ impl Tool for GetSkillTool {
 
 /// List skill file stems present in `data/skills/`, comma-separated.
 fn available_skills() -> String {
-    let mut names: Vec<String> = std::fs::read_dir("data/skills")
+    let mut names: Vec<String> = std::fs::read_dir(skill_dir())
         .into_iter()
         .flatten()
         .flatten()
@@ -124,4 +124,24 @@ fn available_skills() -> String {
         .collect();
     names.sort();
     if names.is_empty() { "(none)".to_string() } else { names.join(", ") }
+}
+
+/// Resolve the `data/skills` directory robustly across dev/test/production layouts.
+///
+/// Tries, in order:
+/// 1. `./data/skills` relative to the current working directory (dev default).
+/// 2. The project-root `data/skills` derived from this crate's compile-time manifest dir.
+/// 3. `../../data/skills` relative to the running executable (release binaries under `target/`).
+fn skill_dir() -> std::path::PathBuf {
+    let candidates: Vec<std::path::PathBuf> = vec![
+        std::path::PathBuf::from("data/skills"),
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/skills"),
+        std::env::current_exe()
+            .map(|exe| exe.parent().map(|p| p.join("../../data/skills")).unwrap_or_default())
+            .unwrap_or_default(),
+    ];
+    candidates
+        .into_iter()
+        .find(|p| p.is_dir())
+        .unwrap_or_else(|| std::path::PathBuf::from("data/skills"))
 }

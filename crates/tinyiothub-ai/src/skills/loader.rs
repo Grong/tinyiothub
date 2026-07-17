@@ -214,9 +214,6 @@ pub fn resolve_trigger(message: &str, skills: &[LoadedSkill]) -> Option<TriggerH
     })
 }
 
-const SKILL_OPEN: &str = "<skill";
-const SKILL_CLOSE: &str = "</skill>";
-
 /// Wrap an injected skill body + user message for a single turn.
 pub fn wrap_injected_skill(name: &str, body: &str, user_message: &str) -> String {
     if user_message.is_empty() {
@@ -230,13 +227,20 @@ pub fn wrap_injected_skill(name: &str, body: &str, user_message: &str) -> String
 /// [`wrap_injected_skill`]) so chat history shows only the user's text.
 pub fn strip_injected_skill(content: &str) -> String {
     let trimmed = content.trim_start();
-    if !trimmed.starts_with(SKILL_OPEN) {
+    // Verify it looks like our injected block: starts with `<skill name="...">`.
+    if !trimmed.starts_with("<skill name=\"") {
         return content.to_string();
     }
-    match trimmed.find(SKILL_CLOSE) {
-        Some(idx) => trimmed[idx + SKILL_CLOSE.len()..].trim_start().to_string(),
-        None => content.to_string(),
+    // Find the matching close tag. Prefer the "</skill>\n\n" delimiter used
+    // when a user message follows; fall back to a trailing `</skill>` so a
+    // bare trigger still strips cleanly. This avoids mis-splitting if the skill
+    // body happens to contain the literal string "</skill>".
+    for marker in ["</skill>\n\n", "\n</skill>"] {
+        if let Some(idx) = trimmed.find(marker) {
+            return trimmed[idx + marker.len()..].trim_start().to_string();
+        }
     }
+    content.to_string()
 }
 
 #[cfg(test)]
