@@ -150,7 +150,7 @@ pub async fn handle_sse_connection_public(
 
     // Parse event filters
     let event_types = parse_event_types(&query.event_types);
-    let event_levels = parse_event_types(&query.event_levels);
+    let event_levels = parse_event_levels(&query.event_levels);
 
     // Create public SSE connection
     let sse_manager = state.get_sse_manager();

@@ -196,6 +196,9 @@ impl ServiceManager {
             app_state.heartbeat_runner = self.heartbeat_runner.clone();
         }
 
+        // 5. Start SSE token cleanup to prevent expired tokens from accumulating in memory.
+        self.start_sse_token_cleanup(app_state.sse_token_manager.clone()).await?;
+
         // 更新状态为运行中
         *self.status.write().await = ServiceStatus::Running;
 
@@ -254,6 +257,44 @@ impl ServiceManager {
         }
 
         tracing::debug!("Cache stats: {} devices cached", data_server.get_devices().len());
+
+        Ok(())
+    }
+
+    /// Start a background task that periodically removes expired SSE tokens.
+    /// Tokens expire after 5 minutes but are only consumed on successful use;
+    /// without cleanup the DashMap would grow unbounded.
+    async fn start_sse_token_cleanup(
+        &self,
+        manager: Arc<crate::shared::sse_token::SseTokenManager>,
+    ) -> Result<(), Error> {
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
+
+        let handle = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(300));
+
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        let before = manager.token_count();
+                        manager.cleanup_expired();
+                        let after = manager.token_count();
+                        if before != after {
+                            tracing::debug!("Cleaned up {} expired SSE tokens", before - after);
+                        }
+                    }
+                    _ = shutdown_rx.recv() => {
+                        info!("SSE token cleanup received shutdown signal");
+                        break;
+                    }
+                }
+            }
+
+            Ok(())
+        });
+
+        self.service_handles.write().await.push(handle);
+        info!("✅ SSE token cleanup started");
 
         Ok(())
     }
