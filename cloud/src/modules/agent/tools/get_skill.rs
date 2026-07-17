@@ -27,11 +27,10 @@ impl Tool for GetSkillTool {
     }
 
     fn description(&self) -> &str {
-        "Load detailed skill/guide content on demand. \
-         Use this when you need step-by-step instructions for a specific workflow \
-         (alarm diagnosis, device troubleshooting, heartbeat patrol, driver testing, \
-         job scheduling). The system prompt only carries a skill index — call this \
-         to get the full workflow details for a given skill."
+        "Load detailed skill/guide content on demand. Use this when you need \
+         step-by-step instructions for a specific workflow. The system prompt \
+         carries a skill index (names + descriptions) — call this with a skill \
+         name to get its full workflow details."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -40,7 +39,7 @@ impl Tool for GetSkillTool {
             "properties": {
                 "skill_name": {
                     "type": "string",
-                    "description": "Skill file name without extension, e.g. 'alarm-management', 'troubleshooting', 'heartbeat-monitor', 'device-management', 'driver-management', 'job-management'"
+                    "description": "Skill file name without extension, as listed in the system prompt skill index (e.g. 'workspace')."
                 }
             },
             "required": ["skill_name"],
@@ -54,7 +53,10 @@ impl Tool for GetSkillTool {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some("skill_name is required. Use one of: alarm-management, device-management, driver-management, heartbeat-monitor, job-management, troubleshooting".into()),
+                error: Some(format!(
+                    "skill_name is required. Available skills: {}",
+                    available_skills()
+                )),
             });
         }
 
@@ -79,7 +81,7 @@ impl Tool for GetSkillTool {
             });
         }
 
-        let path = std::path::PathBuf::from("data/skills").join(format!("{}.md", skill_name));
+        let path = skill_dir().join(format!("{}.md", skill_name));
 
         match std::fs::read_to_string(&path) {
             Ok(content) => {
@@ -92,11 +94,54 @@ impl Tool for GetSkillTool {
                 }
                 Ok(ToolResult { success: true, output: content, error: None })
             }
-            Err(e) => Ok(ToolResult {
+            Err(_) => Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some(format!("Skill '{}' not found: {}", skill_name, e)),
+                error: Some(format!(
+                    "Skill '{}' not found. Available skills: {}",
+                    skill_name,
+                    available_skills()
+                )),
             }),
         }
     }
+}
+
+/// List skill file stems present in `data/skills/`, comma-separated.
+fn available_skills() -> String {
+    let mut names: Vec<String> = std::fs::read_dir(skill_dir())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let p = e.path();
+            if p.extension().is_some_and(|ext| ext == "md") {
+                p.file_stem().and_then(|s| s.to_str()).map(|s| s.to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+    names.sort();
+    if names.is_empty() { "(none)".to_string() } else { names.join(", ") }
+}
+
+/// Resolve the `data/skills` directory robustly across dev/test/production layouts.
+///
+/// Tries, in order:
+/// 1. `./data/skills` relative to the current working directory (dev default).
+/// 2. The project-root `data/skills` derived from this crate's compile-time manifest dir.
+/// 3. `../../data/skills` relative to the running executable (release binaries under `target/`).
+fn skill_dir() -> std::path::PathBuf {
+    let candidates: Vec<std::path::PathBuf> = vec![
+        std::path::PathBuf::from("data/skills"),
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/skills"),
+        std::env::current_exe()
+            .map(|exe| exe.parent().map(|p| p.join("../../data/skills")).unwrap_or_default())
+            .unwrap_or_default(),
+    ];
+    candidates
+        .into_iter()
+        .find(|p| p.is_dir())
+        .unwrap_or_else(|| std::path::PathBuf::from("data/skills"))
 }

@@ -382,19 +382,29 @@ impl RuleEngine {
                         self.trigger_debounce_start.remove(&debounce_key);
                     } else {
                         let now = Instant::now();
-                        if let Some(first_seen) = self.trigger_debounce_start.get(&debounce_key) {
-                            if first_seen.elapsed() < dur {
-                                // Still within debounce window — pending
+                        // Read the guard into an owned value and drop it BEFORE any
+                        // mutation of the same DashMap — holding a `.get()` shard
+                        // guard across `remove`/`insert` on the same map deadlocks.
+                        let existing_elapsed = self
+                            .trigger_debounce_start
+                            .get(&debounce_key)
+                            .map(|first_seen| first_seen.elapsed());
+                        match existing_elapsed {
+                            Some(elapsed) => {
+                                if elapsed < dur {
+                                    // Still within debounce window — pending
+                                    pending_trigger_rule_ids.push(rule.id.clone());
+                                    continue;
+                                }
+                                // Debounce duration elapsed — trigger now
+                                self.trigger_debounce_start.remove(&debounce_key);
+                            }
+                            None => {
+                                // First time seeing this trigger — start debounce timer
+                                self.trigger_debounce_start.insert(debounce_key.clone(), now);
                                 pending_trigger_rule_ids.push(rule.id.clone());
                                 continue;
                             }
-                            // Debounce duration elapsed — trigger now
-                            self.trigger_debounce_start.remove(&debounce_key);
-                        } else {
-                            // First time seeing this trigger — start debounce timer
-                            self.trigger_debounce_start.insert(debounce_key.clone(), now);
-                            pending_trigger_rule_ids.push(rule.id.clone());
-                            continue;
                         }
                     }
                 }
@@ -409,9 +419,14 @@ impl RuleEngine {
                 self.throttle
                     .retain(|_, instant| instant.elapsed() < std::time::Duration::from_secs(300));
 
-                if let Some(last) = self.throttle.get(&throttle_key)
-                    && last.elapsed() < suppress_duration
-                {
+                // Read the guard into an owned bool and drop it before `insert`
+                // on the same DashMap to avoid a same-shard read+write deadlock.
+                let throttled = self
+                    .throttle
+                    .get(&throttle_key)
+                    .map(|last| last.elapsed() < suppress_duration)
+                    .unwrap_or(false);
+                if throttled {
                     non_triggered_rule_ids.push(rule.id.clone());
                     continue;
                 }
@@ -437,21 +452,28 @@ impl RuleEngine {
                             self.recovery_debounce_start.remove(&debounce_key);
                         } else {
                             let now = Instant::now();
-                            if let Some(first_seen) =
-                                self.recovery_debounce_start.get(&debounce_key)
-                            {
-                                if first_seen.elapsed() < dur {
-                                    // Still within recovery debounce — pending
+                            // Drop the `.get()` guard before mutating the same
+                            // DashMap to avoid a same-shard read+write deadlock.
+                            let existing_elapsed = self
+                                .recovery_debounce_start
+                                .get(&debounce_key)
+                                .map(|first_seen| first_seen.elapsed());
+                            match existing_elapsed {
+                                Some(elapsed) => {
+                                    if elapsed < dur {
+                                        // Still within recovery debounce — pending
+                                        pending_trigger_rule_ids.push(rule.id.clone());
+                                        continue;
+                                    }
+                                    // Recovery debounce elapsed — ready to resolve
+                                    self.recovery_debounce_start.remove(&debounce_key);
+                                }
+                                None => {
+                                    // First time seeing recovery — start debounce timer
+                                    self.recovery_debounce_start.insert(debounce_key.clone(), now);
                                     pending_trigger_rule_ids.push(rule.id.clone());
                                     continue;
                                 }
-                                // Recovery debounce elapsed — ready to resolve
-                                self.recovery_debounce_start.remove(&debounce_key);
-                            } else {
-                                // First time seeing recovery — start debounce timer
-                                self.recovery_debounce_start.insert(debounce_key.clone(), now);
-                                pending_trigger_rule_ids.push(rule.id.clone());
-                                continue;
                             }
                         }
                     }
@@ -624,19 +646,26 @@ impl RuleEngine {
         let key = (device_id.to_string(), rule_id.to_string());
         let now = Instant::now();
 
-        // Check if condition has been sustained long enough
-        if let Some(first_seen) = self.duration_first_seen.get(&key) {
-            if first_seen.elapsed() >= duration {
-                self.duration_first_seen.remove(&key);
-                return Ok(true);
+        // Check if condition has been sustained long enough.
+        // Read the guard into an owned value and drop it before mutating the
+        // same DashMap — a `.get()` shard guard held across `remove` deadlocks.
+        let first_seen_elapsed =
+            self.duration_first_seen.get(&key).map(|first_seen| first_seen.elapsed());
+        match first_seen_elapsed {
+            Some(elapsed) => {
+                if elapsed >= duration {
+                    self.duration_first_seen.remove(&key);
+                    return Ok(true);
+                }
+                // Still waiting for duration to elapse
+                Ok(false)
             }
-            // Still waiting for duration to elapse
-            return Ok(false);
+            None => {
+                // First time seeing this condition — record start time
+                self.duration_first_seen.insert(key, now);
+                Ok(false)
+            }
         }
-
-        // First time seeing this condition — record start time
-        self.duration_first_seen.insert(key, now);
-        Ok(false)
     }
 
     fn check_composite(
@@ -1626,7 +1655,7 @@ mod tests {
             .unwrap();
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
-             VALUES ('rule-tdb2', 'dev-1', NULL, 'High Temp Debounce Reset', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"trigger_duration_secs\":3600}', datetime('now'), datetime('now'))",
+             VALUES ('rule-tdb2', 'dev-1', NULL, 'High Temp Debounce Reset', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"trigger_duration_secs\":3600,\"recovery_duration_secs\":0}', datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
 
@@ -1672,8 +1701,8 @@ mod tests {
             .unwrap();
         // Trigger > 80, recover < 75
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
-             VALUES ('rule-hys', 'dev-1', NULL, 'High Temp Hysteresis', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0,\"recovery_threshold\":75.0}', 'warning', 1, datetime('now'), datetime('now'))",
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
+             VALUES ('rule-hys', 'dev-1', NULL, 'High Temp Hysteresis', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0,\"recovery_threshold\":75.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"recovery_duration_secs\":0}', datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
 
@@ -1868,13 +1897,13 @@ mod tests {
             .unwrap();
         // One rule that triggers (value > 80) and one that doesn't (value > 90)
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
-             VALUES ('rule-nt1', 'dev-1', NULL, 'Triggers', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, datetime('now'), datetime('now'))",
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
+             VALUES ('rule-nt1', 'dev-1', NULL, 'Triggers', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"recovery_duration_secs\":0}', datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
-             VALUES ('rule-nt2', 'dev-1', NULL, 'No Trigger', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":90.0}', 'critical', 1, datetime('now'), datetime('now'))",
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, created_at, updated_at)
+             VALUES ('rule-nt2', 'dev-1', NULL, 'No Trigger', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":90.0}', 'critical', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"recovery_duration_secs\":0}', datetime('now'), datetime('now'))",
         )
         .execute(&pool).await.unwrap();
 
@@ -2115,8 +2144,8 @@ mod integration_tests {
         sqlx::query("INSERT INTO device_properties (id, device_id, name) VALUES ('prop-ar', 'dev-ar', 'temperature')")
             .execute(&pool).await.unwrap();
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, workspace_id, created_at, updated_at)
-             VALUES ('rule-ar1', 'dev-ar', 'prop-ar', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, 'ws-ar', datetime('now'), datetime('now'))",
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, workspace_id, created_at, updated_at)
+             VALUES ('rule-ar1', 'dev-ar', 'prop-ar', 'High Temp', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":80.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"recovery_duration_secs\":0}', 'ws-ar', datetime('now'), datetime('now'))",
         ).execute(&pool).await.unwrap();
 
         let alarm_repo: Arc<dyn AlarmRepository> = Arc::new(SqliteAlarmRepository::new(db.clone()));
@@ -2164,8 +2193,8 @@ mod integration_tests {
         sqlx::query("INSERT INTO device_properties (id, device_id, name) VALUES ('prop-arm', 'dev-arm', 'humidity')")
             .execute(&pool).await.unwrap();
         sqlx::query(
-            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, workspace_id, created_at, updated_at)
-             VALUES ('rule-arm', 'dev-arm', 'prop-arm', 'High Humidity', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":70.0}', 'warning', 1, 'ws-arm', datetime('now'), datetime('now'))",
+            "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, workspace_id, created_at, updated_at)
+             VALUES ('rule-arm', 'dev-arm', 'prop-arm', 'High Humidity', 'threshold', '{\"type\":\"threshold\",\"operator\":\"greater_than\",\"value\":70.0}', 'warning', 1, '{\"enabled\":false,\"channels\":[],\"recipients\":[],\"recovery_duration_secs\":0}', 'ws-arm', datetime('now'), datetime('now'))",
         ).execute(&pool).await.unwrap();
 
         let alarm_repo: Arc<dyn AlarmRepository> = Arc::new(SqliteAlarmRepository::new(db.clone()));

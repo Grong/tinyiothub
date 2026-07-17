@@ -94,8 +94,10 @@ pub async fn build_full_system_prompt(
         String::new()
     };
 
-    // Skills from skills/ directory (existing behavior)
-    let skills_layer = load_skills_prompt(workspace_id, agent_id).await;
+    // Skills are injected per-turn by the zeroclaw prompt builder
+    // (TinyIoTHubSkillsSection) and the chat-layer trigger resolver, so the
+    // seeded system prompt intentionally omits them to avoid duplication and
+    // the unreliable `history().is_empty()` seeding gate.
 
     // Layer 9: Additional context from config (device snapshots injected at runtime)
     let context_layer = if !system_prompts.context.is_empty() {
@@ -104,8 +106,7 @@ pub async fn build_full_system_prompt(
         String::new()
     };
 
-    let full_prompt =
-        format!("{}{}{}{}", workspace_prompt, memory_layer, skills_layer, context_layer);
+    let full_prompt = format!("{}{}{}", workspace_prompt, memory_layer, context_layer);
     tracing::info!(
         "[SYSTEM_PROMPT] {} ... (truncated, total {} chars)",
         &full_prompt[..full_prompt.len().min(2000)],
@@ -197,120 +198,6 @@ fn get_embedded_template(filename: &str) -> Option<&'static str> {
         "USER.md" => Some(include_str!("../../../templates/agent/USER.md")),
         "MEMORY.md" => Some(include_str!("../../../templates/agent/MEMORY.md")),
         _ => None,
-    }
-}
-
-/// Load skill files and format as Layer 3 prompt.
-///
-/// Skills directory structure:
-/// - Workspace-specific: ./data/agents/{workspace_id}/skills/  (priority)
-/// - Global fallback:    ./data/skills/                         (all workspaces share)
-///
-/// For workspace-specific skills, also checks agent subdirectory:
-/// - ./data/agents/{workspace_id}/{agent_id}/skills/
-/// - ./data/agents/{workspace_id}/skills/
-async fn load_skills_prompt(workspace_id: Option<&str>, agent_id: Option<&str>) -> String {
-    use crate::shared::paths::{
-        DEFAULT_WORKSPACE_ID, agent_skills_dir, global_skills_dir, workspace_skills_dir,
-    };
-
-    let _ws = workspace_id.unwrap_or(DEFAULT_WORKSPACE_ID);
-
-    // Build candidate paths: workspace-specific first, then global
-    let candidates: Vec<std::path::PathBuf> = match (workspace_id, agent_id) {
-        (Some(w), Some(a)) => vec![
-            // Workspace + agent specific skills
-            agent_skills_dir(w, a),
-            workspace_skills_dir(w),
-            // Global skills
-            global_skills_dir(),
-        ],
-        (Some(w), None) => vec![
-            // Workspace-specific skills (no agent)
-            workspace_skills_dir(w),
-            // Global skills
-            global_skills_dir(),
-        ],
-        _ => vec![
-            // No workspace: just global skills
-            global_skills_dir(),
-        ],
-    };
-
-    for dir in candidates {
-        if dir.exists() {
-            let result = read_skill_dir(&dir).await;
-            if !result.is_empty() {
-                return result;
-            }
-        }
-    }
-
-    String::new()
-}
-
-async fn read_skill_dir(dir: &std::path::Path) -> String {
-    use tokio::fs;
-
-    use crate::modules::agent::skill::AgentSkill;
-
-    let mut entries = match fs::read_dir(dir).await {
-        Ok(e) => e,
-        Err(e) => {
-            tracing::warn!("Failed to read skills directory {:?}: {}", dir, e);
-            return String::new();
-        }
-    };
-
-    let mut skill_files: Vec<_> = Vec::new();
-    while let Some(entry) = entries.next_entry().await.unwrap_or(None) {
-        if entry.path().extension().is_some_and(|ext| ext == "md") {
-            skill_files.push(entry);
-        }
-    }
-
-    skill_files.sort_by_key(|e| e.file_name().to_string_lossy().to_string());
-
-    let mut all_skills = String::new();
-
-    for entry in skill_files {
-        let content = match fs::read_to_string(entry.path()).await {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        let file_name = entry.file_name().to_string_lossy().into_owned();
-        let skill_name = file_name.trim_end_matches(".md");
-
-        let (fm, body) = AgentSkill::parse_frontmatter(&content);
-        let body = body.trim();
-
-        if body.is_empty() {
-            continue;
-        }
-
-        let description = fm
-            .as_ref()
-            .and_then(|f| f.get("description"))
-            .and_then(|v| v.as_str())
-            .unwrap_or(skill_name);
-
-        let version =
-            fm.as_ref().and_then(|f| f.get("version")).and_then(|v| v.as_str()).unwrap_or("");
-
-        all_skills.push_str(&format!(
-            "### {}{}\n{}\n{}\n",
-            skill_name,
-            if version.is_empty() { String::new() } else { format!(" (v{})", version) },
-            description,
-            body
-        ));
-    }
-
-    if all_skills.is_empty() {
-        String::new()
-    } else {
-        format!("\n\n## 技能（Skills）\n你可以使用以下技能来完成任务：\n\n{}\n", all_skills)
     }
 }
 
