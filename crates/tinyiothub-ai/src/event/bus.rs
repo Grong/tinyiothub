@@ -241,6 +241,7 @@ mod tests {
                 workspace_id: "ws".into(),
                 status: crate::heartbeat::types::HeartbeatStatus::Complete,
                 summary: "ok".into(),
+                task_count: 0,
                 executed_actions: vec![],
                 proposals: vec![],
                 error: None,

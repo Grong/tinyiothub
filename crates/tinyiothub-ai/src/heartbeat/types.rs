@@ -66,6 +66,9 @@ pub struct HeartbeatResult {
     pub workspace_id: String,
     pub status: HeartbeatStatus,
     pub summary: String,
+    /// Number of tasks executed this tick (set by the loop, not the LLM).
+    #[serde(default)]
+    pub task_count: u32,
     pub executed_actions: Vec<ExecutedAction>,
     pub proposals: Vec<super::super::proposal::Proposal>,
     pub error: Option<String>,

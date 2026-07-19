@@ -395,17 +395,17 @@ pub async fn get_approvals(
                     status: status.to_string(),
                     level: parsed.get("level").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                     tool_name: parsed
-                        .get("tool_name")
+                        .get("toolName")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string(),
                     device_id: parsed
-                        .get("device_id")
+                        .get("deviceId")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string(),
                     device_name: parsed
-                        .get("device_name")
+                        .get("deviceName")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string(),

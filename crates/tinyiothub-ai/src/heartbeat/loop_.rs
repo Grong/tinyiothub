@@ -69,6 +69,7 @@ pub async fn heartbeat_loop(
                                         "Heartbeat loop paused after {} consecutive failures",
                                         consecutive_failures
                                     ),
+                                    task_count: 0,
                                     executed_actions: vec![],
                                     proposals: vec![],
                                     error: Some(e.to_string()),
@@ -143,7 +144,8 @@ async fn run_heartbeat_tick(
         .map_err(|_| "LLM call timed out after 180s".to_string())?
         .map_err(|e| format!("LLM call failed: {}", e))?;
 
-    let result = super::report::parse_healing_report(&raw_response, workspace_id);
+    let mut result = super::report::parse_healing_report(&raw_response, workspace_id);
+    result.task_count = tasks.len() as u32;
 
     event_publisher.publish(AiEvent::HeartbeatCompleted {
         workspace_id: workspace_id.to_string(),
