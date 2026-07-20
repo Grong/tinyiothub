@@ -38,6 +38,9 @@ pub struct ServiceManager {
 
     /// AI heartbeat runner (set during start_all)
     heartbeat_runner: Option<Arc<tinyiothub_ai::heartbeat::runner::HeartbeatRunner>>,
+
+    /// Shared AI event publisher (set during start_all, drained on shutdown)
+    event_publisher: Option<Arc<tinyiothub_ai::event::bus::AiEventPublisher>>,
 }
 
 impl ServiceManager {
@@ -53,6 +56,7 @@ impl ServiceManager {
             cron_scheduler: Arc::new(RwLock::new(None)),
             orchestrator: None,
             heartbeat_runner: None,
+            event_publisher: None,
         }
     }
 
@@ -133,9 +137,12 @@ impl ServiceManager {
                 enabled: true,
                 interval_minutes: 15,
             };
-            let event_publisher = Arc::new(tinyiothub_ai::event::bus::AiEventPublisher::new(
-                app_state.event_bus.clone(),
-            ));
+            let event_publisher = Arc::new(
+                tinyiothub_ai::event::bus::AiEventPublisher::new(app_state.event_bus.clone())
+                    .with_drop_notifier(Arc::new(
+                        tinyiothub_ai::event::bus::LoggingDropNotifier,
+                    )),
+            );
             let heartbeat_runner =
                 Arc::new(tinyiothub_ai::heartbeat::runner::HeartbeatRunner::new(
                     heartbeat_task_repo.clone(),
@@ -202,6 +209,7 @@ impl ServiceManager {
             // Store in ServiceManager for shutdown
             self.orchestrator = Some(orchestrator);
             self.heartbeat_runner = Some(heartbeat_runner);
+            self.event_publisher = Some(event_publisher);
 
             // Also store in AppState for potential access by other subsystems
             app_state.orchestrator = self.orchestrator.clone();
@@ -333,6 +341,11 @@ impl ServiceManager {
         if let Some(ref heartbeat_runner) = self.heartbeat_runner {
             heartbeat_runner.shutdown().await;
             info!("HeartbeatRunner shut down");
+        }
+        // Drain queued events after all producers have stopped.
+        if let Some(ref event_publisher) = self.event_publisher {
+            event_publisher.shutdown().await;
+            info!("AiEventPublisher drained");
         }
 
         // 发送关闭信号

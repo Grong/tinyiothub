@@ -73,6 +73,7 @@ impl Orchestrator {
     pub async fn shutdown(&self) {
         info!("Orchestrator shutting down...");
         self.shutting_down.store(true, Ordering::SeqCst);
+        self.event_publisher.shutdown().await;
         info!("Orchestrator shutdown complete");
     }
 
