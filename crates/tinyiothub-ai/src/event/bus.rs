@@ -112,10 +112,11 @@ impl AiEventPublisher {
         // Dropping the sender closes the channel; the worker drains the
         // remaining queue and then exits.
         self.tx.lock().unwrap().take();
-        if let Some(handle) = self.worker.lock().unwrap().take() {
-            if let Err(e) = handle.await {
-                error!("AiEventPublisher worker join failed: {}", e);
-            }
+        let handle = self.worker.lock().unwrap().take();
+        if let Some(handle) = handle
+            && let Err(e) = handle.await
+        {
+            error!("AiEventPublisher worker join failed: {}", e);
         }
     }
 
@@ -377,16 +378,6 @@ mod tests {
         fn should_handle(&self, _event: &tinyiothub_core::models::event::Event) -> bool {
             true
         }
-    }
-
-    async fn wait_for(cond: impl Fn() -> bool) {
-        for _ in 0..200 {
-            if cond() {
-                return;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-        panic!("condition not met within timeout");
     }
 
     #[tokio::test]

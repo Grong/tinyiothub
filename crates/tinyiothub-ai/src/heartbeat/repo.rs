@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 
 use super::types::{HeartbeatResult, HeartbeatTask, NewHeartbeatTask};
+use crate::tool::trust::TrustConfig;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RepoError {
@@ -46,4 +47,10 @@ pub trait HeartbeatTaskRepository: Send + Sync {
 
     /// Persist heartbeat execution results (replaces old ActionRepository).
     async fn insert_result(&self, workspace_id: &str, result: &HeartbeatResult) -> Result<(), RepoError>;
+
+    /// Load the workspace's persisted TrustConfig, if any. Default: none —
+    /// callers fall back to `TrustConfig::default()`.
+    async fn load_trust_config(&self, _workspace_id: &str) -> Result<Option<TrustConfig>, RepoError> {
+        Ok(None)
+    }
 }

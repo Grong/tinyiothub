@@ -80,21 +80,24 @@ fn parse_proposals(value: &serde_json::Value, workspace_id: &str) -> Vec<Proposa
         .as_array()
         .map(|arr| {
             arr.iter()
-                .map(|p| Proposal {
-                    id: p["id"]
-                        .as_str()
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
-                    workspace_id: workspace_id.to_string(),
-                    agent_id: String::new(),
-                    tool_name: p["tool_name"].as_str().unwrap_or("").to_string(),
-                    device_id: p["device_id"].as_str().map(|s| s.to_string()),
-                    summary: p["summary"].as_str().unwrap_or("").to_string(),
-                    reason: p["reason"].as_str().unwrap_or("").to_string(),
-                    risk: p["risk"].as_str().unwrap_or("low").to_string(),
-                    parameters: None,
-                    created_at: chrono::Utc::now().to_rfc3339(),
-                    status: ProposalStatus::Pending,
+                .map(|p| {
+                    let tool_name = p["tool_name"].as_str().unwrap_or("").to_string();
+                    Proposal {
+                        id: p["id"]
+                            .as_str()
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                        workspace_id: workspace_id.to_string(),
+                        agent_id: String::new(),
+                        risk: crate::tool::trust::risk_for_tool(&tool_name).to_string(),
+                        tool_name,
+                        device_id: p["device_id"].as_str().map(|s| s.to_string()),
+                        summary: p["summary"].as_str().unwrap_or("").to_string(),
+                        reason: p["reason"].as_str().unwrap_or("").to_string(),
+                        parameters: None,
+                        created_at: chrono::Utc::now().to_rfc3339(),
+                        status: ProposalStatus::Pending,
+                    }
                 })
                 .collect()
         })
@@ -145,5 +148,20 @@ mod tests {
         let result = parse_healing_report(raw, "ws1");
         assert_eq!(result.status, HeartbeatStatus::Error);
         assert!(result.error.is_some());
+    }
+
+    #[test]
+    fn test_proposal_risk_is_computed_not_llm_reported() {
+        // LLM claims the firmware update is "low" risk — the parser must
+        // override with the locally computed risk from tool safety.
+        let raw = r#"{"status": "partial", "summary": "s", "executed_actions": [],
+          "proposals": [
+            {"tool_name": "firmware_update", "device_id": "d1", "summary": "update", "reason": "patch", "risk": "low"},
+            {"tool_name": "write_properties", "device_id": "d2", "summary": "set", "reason": "tune", "risk": "high"}
+          ]}"#;
+        let result = parse_healing_report(raw, "ws1");
+        assert_eq!(result.proposals.len(), 2);
+        assert_eq!(result.proposals[0].risk, "high");
+        assert_eq!(result.proposals[1].risk, "medium");
     }
 }

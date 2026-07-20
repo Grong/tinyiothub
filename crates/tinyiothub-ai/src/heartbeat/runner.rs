@@ -243,8 +243,15 @@ impl HeartbeatRunner {
         info!(count = ws_ids.len(), "HeartbeatRunner shut down");
     }
 
-    async fn load_trust_config(&self, _workspace_id: &str) -> TrustConfig {
-        TrustConfig::default()
+    async fn load_trust_config(&self, workspace_id: &str) -> TrustConfig {
+        match self.task_repo.load_trust_config(workspace_id).await {
+            Ok(Some(config)) => config,
+            Ok(None) => TrustConfig::default(),
+            Err(e) => {
+                warn!(workspace_id, error = %e, "Failed to load TrustConfig, using default");
+                TrustConfig::default()
+            }
+        }
     }
 }
 
@@ -257,12 +264,19 @@ mod tests {
 
     struct MockTaskRepo {
         tasks: Vec<HeartbeatTask>,
+        trust: Option<crate::tool::trust::TrustConfig>,
     }
 
     #[async_trait::async_trait]
     impl HeartbeatTaskRepository for MockTaskRepo {
         async fn list_by_workspace(&self, _workspace_id: &str) -> Result<Vec<HeartbeatTask>, RepoError> {
             Ok(self.tasks.clone())
+        }
+        async fn load_trust_config(
+            &self,
+            _workspace_id: &str,
+        ) -> Result<Option<crate::tool::trust::TrustConfig>, RepoError> {
+            Ok(self.trust.clone())
         }
         async fn upsert(
             &self,
@@ -296,7 +310,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_runner_construction() {
-        let repo = Arc::new(MockTaskRepo { tasks: vec![] });
+        let repo = Arc::new(MockTaskRepo { tasks: vec![], trust: None });
         let publisher = make_publisher();
         let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
         assert_eq!(runner.active_loop_count(), 0);
@@ -305,7 +319,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_start_with_no_tasks_exits_early() {
-        let repo = Arc::new(MockTaskRepo { tasks: vec![] });
+        let repo = Arc::new(MockTaskRepo { tasks: vec![], trust: None });
         let publisher = make_publisher();
         let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
         runner.start("ws_1").await;
@@ -314,7 +328,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stop_nonexistent_is_noop() {
-        let repo = Arc::new(MockTaskRepo { tasks: vec![] });
+        let repo = Arc::new(MockTaskRepo { tasks: vec![], trust: None });
         let publisher = make_publisher();
         let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
         runner.stop("nonexistent").await;
@@ -334,6 +348,7 @@ mod tests {
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
             }],
+            trust: None,
         });
         let publisher = make_publisher();
         let config = HeartbeatConfig {
@@ -358,10 +373,39 @@ mod tests {
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
             }],
+            trust: None,
         });
         let publisher = make_publisher();
         let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
         runner.start("ws_1").await;
         assert_eq!(runner.active_loop_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_start_loads_trust_config_from_repo() {
+        let repo = Arc::new(MockTaskRepo {
+            tasks: vec![],
+            trust: Some(crate::tool::trust::TrustConfig {
+                trust_level: crate::tool::trust::TrustLevel::FullAuto,
+                ..Default::default()
+            }),
+        });
+        let publisher = make_publisher();
+        let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
+        runner.start("ws_1").await;
+
+        let loaded = runner.get_trust_config("ws_1").expect("trust config cached on start");
+        assert_eq!(loaded.trust_level, crate::tool::trust::TrustLevel::FullAuto);
+    }
+
+    #[tokio::test]
+    async fn test_start_falls_back_to_default_trust_config() {
+        let repo = Arc::new(MockTaskRepo { tasks: vec![], trust: None });
+        let publisher = make_publisher();
+        let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
+        runner.start("ws_1").await;
+
+        let loaded = runner.get_trust_config("ws_1").expect("trust config cached on start");
+        assert_eq!(loaded.trust_level, crate::tool::trust::TrustLevel::ReadOnlyAuto);
     }
 }

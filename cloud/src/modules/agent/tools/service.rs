@@ -37,6 +37,7 @@ pub struct IoTToolAdapter {
     input_schema: serde_json::Value,
     handler: Arc<dyn ToolHandler>,
     workspace_id: String,
+    safety: tinyiothub_ai::types::ToolSafety,
 }
 
 impl IoTToolAdapter {
@@ -47,7 +48,13 @@ impl IoTToolAdapter {
         handler: Arc<dyn ToolHandler>,
         workspace_id: String,
     ) -> Self {
-        Self { name, description, input_schema, handler, workspace_id }
+        let safety = handler.safety();
+        Self { name, description, input_schema, handler, workspace_id, safety }
+    }
+
+    /// Handler-declared safety — authoritative for trust evaluation.
+    pub fn safety(&self) -> tinyiothub_ai::types::ToolSafety {
+        self.safety
     }
 }
 
@@ -142,11 +149,16 @@ impl IoTToolMetadata for IoTToolAdapter {
 pub struct TrustAwareTool {
     inner: Box<dyn Tool>,
     trust_config: Arc<TrustConfig>,
+    safety: tinyiothub_ai::types::ToolSafety,
 }
 
 impl TrustAwareTool {
-    pub fn new(inner: Box<dyn Tool>, trust_config: Arc<TrustConfig>) -> Self {
-        Self { inner, trust_config }
+    pub fn new(
+        inner: Box<dyn Tool>,
+        trust_config: Arc<TrustConfig>,
+        safety: tinyiothub_ai::types::ToolSafety,
+    ) -> Self {
+        Self { inner, trust_config, safety }
     }
 }
 
@@ -176,7 +188,11 @@ impl Tool for TrustAwareTool {
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let tool_name = <Self as Tool>::name(self);
 
-        match tinyiothub_ai::types::evaluate_tool_trust(&self.trust_config, tool_name) {
+        match tinyiothub_ai::types::evaluate_tool_trust_with_safety(
+            &self.trust_config,
+            tool_name,
+            self.safety,
+        ) {
             TrustDecision::Allow => self.inner.execute(args).await,
             TrustDecision::Block { reason } => {
                 Ok(ToolResult { success: false, output: String::new(), error: Some(reason) })
@@ -202,15 +218,15 @@ impl IoTToolMetadata for TrustAwareTool {
     }
 
     fn is_concurrency_safe(&self, _input: &serde_json::Value) -> bool {
-        name_infers_concurrency_safe(<Self as Tool>::name(self))
+        matches!(self.safety, tinyiothub_ai::types::ToolSafety::ReadOnly)
     }
 
     fn is_read_only(&self, _input: &serde_json::Value) -> bool {
-        name_infers_read_only(<Self as Tool>::name(self))
+        matches!(self.safety, tinyiothub_ai::types::ToolSafety::ReadOnly)
     }
 
     fn is_destructive(&self, _input: &serde_json::Value) -> bool {
-        name_infers_destructive(<Self as Tool>::name(self))
+        matches!(self.safety, tinyiothub_ai::types::ToolSafety::Destructive)
     }
 
     fn permission_level(&self, input: &serde_json::Value) -> PermissionLevel {
@@ -238,18 +254,38 @@ pub async fn load_all_tools(
     workspace_service: Option<Arc<WorkspaceService>>,
     knowledge_service: Option<Arc<KnowledgeService>>,
 ) -> Vec<Box<dyn Tool>> {
-    let mut tool_boxed: Vec<Box<dyn Tool>> = Vec::new();
-    tool_boxed.push(Box::new(CanvasTool));
-    tool_boxed.push(Box::new(super::GetSkillTool));
+    load_all_tools_with_safety(workspace_id, workspace_service, knowledge_service)
+        .await
+        .into_iter()
+        .map(|(tool, _)| tool)
+        .collect()
+}
+
+/// Load all tools together with their (declared or name-inferred) safety.
+/// MCP adapters carry the handler's declared safety; built-in tools are
+/// classified by name.
+async fn load_all_tools_with_safety(
+    workspace_id: &str,
+    workspace_service: Option<Arc<WorkspaceService>>,
+    knowledge_service: Option<Arc<KnowledgeService>>,
+) -> Vec<(Box<dyn Tool>, tinyiothub_ai::types::ToolSafety)> {
+    use tinyiothub_ai::types::{ToolSafety, classify_tool_safety};
+
+    let mut tools: Vec<(Box<dyn Tool>, ToolSafety)> = Vec::new();
+    tools.push((Box::new(CanvasTool), classify_tool_safety("canvas")));
+    tools.push((Box::new(super::GetSkillTool), classify_tool_safety("get_skill")));
 
     if let Some(ks_svc) = knowledge_service {
         let ws_svc = workspace_service.clone();
-        tool_boxed.push(Box::new(super::knowledge::SearchKnowledgeTool::new(ks_svc, ws_svc)));
+        let tool = super::knowledge::SearchKnowledgeTool::new(ks_svc, ws_svc);
+        let safety = classify_tool_safety(tool.name());
+        tools.push((Box::new(tool), safety));
     }
 
     if let Some(ws_svc) = workspace_service {
-        tool_boxed
-            .push(Box::new(super::search_resources::SearchWorkspaceResourcesTool::new(ws_svc)));
+        let tool = super::search_resources::SearchWorkspaceResourcesTool::new(ws_svc);
+        let safety = classify_tool_safety(tool.name());
+        tools.push((Box::new(tool), safety));
     }
 
     if let Some(registry) = crate::modules::mcp::get_mcp_registry() {
@@ -262,18 +298,20 @@ pub async fn load_all_tools(
             let description = meta.description.clone();
             let input_schema = meta.input_schema.clone();
             if let Some(handler) = reg.get_owned(&name) {
-                tool_boxed.push(Box::new(IoTToolAdapter::new(
+                let adapter = IoTToolAdapter::new(
                     name,
                     description,
                     input_schema,
                     handler,
                     workspace_id.to_string(),
-                )));
+                );
+                let safety = adapter.safety();
+                tools.push((Box::new(adapter), safety));
             }
         }
     }
 
-    tool_boxed
+    tools
 }
 
 // ============================================================================
@@ -311,18 +349,25 @@ pub async fn resolve_tools_for_agent(
     knowledge_service: Option<Arc<KnowledgeService>>,
     trust_config: Option<Arc<TrustConfig>>,
 ) -> Vec<Box<dyn Tool>> {
-    let all_tools = load_all_tools(workspace_id, workspace_service, knowledge_service).await;
-    let filtered = filter_by_denylist(all_tools, &config.tool_denylist);
+    let all_tools = load_all_tools_with_safety(workspace_id, workspace_service, knowledge_service).await;
+    let filtered: Vec<(Box<dyn Tool>, tinyiothub_ai::types::ToolSafety)> = all_tools
+        .into_iter()
+        .filter(|(tool, _)| {
+            let name = tool.name();
+            name == "canvas" || !config.tool_denylist.contains(&name.to_string())
+        })
+        .collect();
 
     match trust_config {
         Some(tc) => filtered
             .into_iter()
-            .map(|tool| {
-                let wrapped: Box<dyn Tool> = Box::new(TrustAwareTool::new(tool, Arc::clone(&tc)));
+            .map(|(tool, safety)| {
+                let wrapped: Box<dyn Tool> =
+                    Box::new(TrustAwareTool::new(tool, Arc::clone(&tc), safety));
                 wrapped
             })
             .collect(),
-        None => filtered,
+        None => filtered.into_iter().map(|(tool, _)| tool).collect(),
     }
 }
 
@@ -526,5 +571,120 @@ mod tests {
         let group_ids: Vec<&str> = groups.iter().filter_map(|g| g["id"].as_str()).collect();
         assert!(group_ids.contains(&"device"));
         assert!(group_ids.contains(&"alarm"));
+    }
+
+    // ========================================================================
+    // Declared-safety trust enforcement tests
+    // ========================================================================
+
+    struct StubTool {
+        name: &'static str,
+    }
+
+    impl Attributable for StubTool {
+        fn role(&self) -> Role {
+            Role::Tool(ToolKind::Plugin)
+        }
+        fn alias(&self) -> &str {
+            self.name
+        }
+    }
+
+    #[async_trait]
+    impl Tool for StubTool {
+        fn name(&self) -> &str {
+            self.name
+        }
+        fn description(&self) -> &str {
+            "stub"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+        async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
+            Ok(ToolResult { success: true, output: "ran".into(), error: None })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_trust_aware_tool_declared_read_only_wins_over_name() {
+        // Name looks destructive ("delete_"), but declared safety is read-only.
+        let wrapped = TrustAwareTool::new(
+            Box::new(StubTool { name: "delete_stub" }),
+            Arc::new(TrustConfig::default()),
+            tinyiothub_ai::types::ToolSafety::ReadOnly,
+        );
+        let result =
+            <TrustAwareTool as Tool>::execute(&wrapped, serde_json::json!({})).await.unwrap();
+        assert!(result.success, "declared read-only must auto-execute: {:?}", result.error);
+    }
+
+    #[tokio::test]
+    async fn test_trust_aware_tool_declared_destructive_requires_approval() {
+        // Innocent name, declared destructive → must not execute under default config.
+        let wrapped = TrustAwareTool::new(
+            Box::new(StubTool { name: "get_stub" }),
+            Arc::new(TrustConfig::default()),
+            tinyiothub_ai::types::ToolSafety::Destructive,
+        );
+        let result =
+            <TrustAwareTool as Tool>::execute(&wrapped, serde_json::json!({})).await.unwrap();
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("destructive"));
+    }
+
+    struct SafetyDeclaringHandler {
+        tool_name: &'static str,
+        safety: Option<tinyiothub_ai::types::ToolSafety>,
+    }
+
+    #[async_trait]
+    impl ToolHandler for SafetyDeclaringHandler {
+        fn name(&self) -> &str {
+            self.tool_name
+        }
+        fn description(&self) -> &str {
+            "stub handler"
+        }
+        fn input_schema(&self) -> crate::modules::mcp::tool_registry::InputSchema {
+            crate::modules::mcp::tool_registry::InputSchema::object(vec![], Default::default())
+        }
+        async fn execute(
+            &self,
+            _args: serde_json::Value,
+        ) -> Result<serde_json::Value, crate::modules::mcp::tool_registry::ToolError> {
+            Ok(serde_json::json!({}))
+        }
+        fn safety(&self) -> tinyiothub_ai::types::ToolSafety {
+            self.safety.unwrap_or_else(|| tinyiothub_ai::types::classify_tool_safety(self.name()))
+        }
+    }
+
+    #[test]
+    fn test_iot_tool_adapter_carries_handler_declared_safety() {
+        let declared = SafetyDeclaringHandler {
+            tool_name: "get_thing",
+            safety: Some(tinyiothub_ai::types::ToolSafety::Destructive),
+        };
+        let adapter = IoTToolAdapter::new(
+            declared.name().to_string(),
+            declared.description().to_string(),
+            declared.input_schema().to_json(),
+            Arc::new(declared),
+            "ws".to_string(),
+        );
+        assert_eq!(adapter.safety(), tinyiothub_ai::types::ToolSafety::Destructive);
+
+        let defaulted =
+            SafetyDeclaringHandler { tool_name: "get_thing", safety: None };
+        let adapter = IoTToolAdapter::new(
+            defaulted.name().to_string(),
+            defaulted.description().to_string(),
+            defaulted.input_schema().to_json(),
+            Arc::new(defaulted),
+            "ws".to_string(),
+        );
+        // No declaration → name-pattern classification applies.
+        assert_eq!(adapter.safety(), tinyiothub_ai::types::ToolSafety::ReadOnly);
     }
 }
