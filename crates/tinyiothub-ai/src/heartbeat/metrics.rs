@@ -2,7 +2,8 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-const LATENCY_BUCKETS_MS: [u64; 7] = [500, 1000, 2000, 5000, 10000, 30000, 120000];
+// u64::MAX is the +Inf catch-all: latencies beyond 120s still get counted.
+const LATENCY_BUCKETS_MS: [u64; 8] = [500, 1000, 2000, 5000, 10000, 30000, 120000, u64::MAX];
 
 /// Heartbeat and LLM operational metrics.
 pub struct Metrics {
@@ -11,7 +12,7 @@ pub struct Metrics {
     pub failed_loops: AtomicU64,
     pub loops_completed: AtomicU64,
 
-    llm_latency_buckets: [AtomicU64; 7],
+    llm_latency_buckets: [AtomicU64; 8],
     llm_calls_total: AtomicU64,
     llm_calls_failed: AtomicU64,
     llm_total_latency_ms: AtomicU64,
@@ -29,6 +30,7 @@ impl Metrics {
             failed_loops: AtomicU64::new(0),
             loops_completed: AtomicU64::new(0),
             llm_latency_buckets: [
+                AtomicU64::new(0),
                 AtomicU64::new(0),
                 AtomicU64::new(0),
                 AtomicU64::new(0),
@@ -171,5 +173,17 @@ mod tests {
         assert_eq!(snap.active_loops, 3);
         assert_eq!(snap.paused_loops, 1);
         assert_eq!(snap.failed_loops, 2);
+    }
+
+    #[test]
+    fn latencies_above_largest_bucket_land_in_inf_bucket() {
+        // A 200s LLM call exceeds the 120s top bucket; without a +Inf bucket
+        // it silently vanishes from the histogram.
+        let m = Metrics::new();
+        m.record_llm_call(200_000, true);
+        let hist = m.latency_histogram();
+        let counted: u64 = hist.iter().map(|(_, c)| c).sum();
+        assert_eq!(counted, 1, "out-of-range latency must be counted");
+        assert_eq!(hist.last().unwrap().0, u64::MAX, "last bucket must be +Inf");
     }
 }

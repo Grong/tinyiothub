@@ -161,10 +161,14 @@ impl ServiceManager {
             ));
             heartbeat_runner.set_agent_pool(ai_adapter).await;
 
-            let memory_service = Arc::new(tinyiothub_ai::memory::service::MemoryService::new(
-                Arc::new(crate::shared::llm_provider::MinimaxLlmProvider::new()),
-                app_state.memory_store.clone(),
-            ));
+            let memory_service = Arc::new(
+                tinyiothub_ai::memory::service::MemoryService::new(
+                    Arc::new(crate::shared::llm_provider::MinimaxLlmProvider::new()),
+                    app_state.memory_store.clone(),
+                )
+                // Share the runner's Metrics so reflection stats land in the same snapshot.
+                .with_metrics(heartbeat_runner.metrics.clone()),
+            );
 
             // Wire MemoryService into AgentPool for reflection from chat path
             app_state.agent_pool.set_memory_service(memory_service.clone()).await;

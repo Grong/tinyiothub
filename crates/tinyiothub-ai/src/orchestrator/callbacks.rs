@@ -186,20 +186,16 @@ impl AiEventHandler {
                                 error = %e,
                                 "Heartbeat persist exhausted retries, enqueuing to DLQ"
                             );
-                            if let Some(ref dlq) = dlq {
-                                let _ = dlq
-                                    .enqueue(
-                                        &ws_id,
-                                        "HeartbeatCompleted",
-                                        &serde_json::to_string(&result).unwrap_or_default(),
-                                        &e.to_string(),
-                                    )
-                                    .await;
+                            if let Err(dlq_err) =
+                                dead_letter_heartbeat_result(dlq.as_ref(), &event_publisher, &ws_id, &result, &e.to_string(), max_attempts)
+                                    .await
+                            {
+                                error!(
+                                    workspace_id = %ws_id,
+                                    error = %dlq_err,
+                                    "DLQ enqueue failed — heartbeat result lost"
+                                );
                             }
-                            event_publisher.publish(AiEvent::HeartbeatPersistFailed {
-                                workspace_id: ws_id,
-                                reason: format!("Failed after {} attempts: {}", max_attempts, e),
-                            });
                             return;
                         }
                         warn!(ws_id, attempt, error = %e, "Heartbeat persist retry");
@@ -226,6 +222,43 @@ impl tinyiothub_core::event::EventHandler for AiEventHandler {
     }
 }
 
+/// Dead-letter a heartbeat result after persist retries are exhausted.
+///
+/// Always publishes HeartbeatPersistFailed — even when the DLQ itself rejects
+/// the entry, operators need the failure signal. Returns Err when the DLQ
+/// enqueue failed so the caller can log it; swallowing it would lose the
+/// result silently.
+async fn dead_letter_heartbeat_result(
+    dlq: Option<&Arc<dyn DeadLetterQueue>>,
+    event_publisher: &AiEventPublisher,
+    ws_id: &str,
+    result: &crate::heartbeat::types::HeartbeatResult,
+    last_error: &str,
+    max_attempts: u32,
+) -> Result<(), String> {
+    let mut enqueue_result = Ok(());
+    if let Some(dlq) = dlq {
+        enqueue_result = dlq.enqueue(ws_id, "HeartbeatCompleted", &dlq_payload(result), last_error).await;
+    }
+    event_publisher.publish(AiEvent::HeartbeatPersistFailed {
+        workspace_id: ws_id.to_string(),
+        reason: format!("Failed after {} attempts: {}", max_attempts, last_error),
+    });
+    enqueue_result
+}
+
+/// HeartbeatResult serialization cannot fail in practice, but an empty
+/// payload would make the DLQ entry useless — fall back to a placeholder
+/// that at least preserves the workspace and error context.
+fn dlq_payload(result: &crate::heartbeat::types::HeartbeatResult) -> String {
+    serde_json::to_string(result).unwrap_or_else(|e| {
+        format!(
+            r#"{{"unserializable":true,"workspace_id":"{}","serialize_error":"{}"}}"#,
+            result.workspace_id, e
+        )
+    })
+}
+
 fn extract_payload(content: &RichContent) -> Option<String> {
     content.elements().iter().find_map(|el| match el {
         ContentElement::Text { content, .. } => Some(content.clone()),
@@ -244,6 +277,7 @@ mod tests {
 
     use tinyiothub_core::event::EventHandler;
 
+    use crate::event::dlq::{DeadLetterEntry, DeadLetterQueue};
     use crate::heartbeat::repo::RepoError;
     use crate::heartbeat::types::{HeartbeatConfig, HeartbeatResult, HeartbeatStatus, HeartbeatTask};
     use crate::memory::provider::{LlmProvider, LlmResponse};
@@ -652,5 +686,125 @@ mod tests {
         let content = RichContent::new_text("Test".to_string(), String::new());
         let extracted = extract_payload(&content);
         assert_eq!(extracted, Some(String::new()));
+    }
+
+    #[derive(Default)]
+    struct MockDlq {
+        fail: bool,
+        entries: Mutex<Vec<(String, String, String, String)>>,
+    }
+
+    #[async_trait::async_trait]
+    impl DeadLetterQueue for MockDlq {
+        async fn enqueue(
+            &self,
+            workspace_id: &str,
+            event_type: &str,
+            payload_json: &str,
+            failure_reason: &str,
+        ) -> Result<(), String> {
+            if self.fail {
+                return Err("dlq unavailable".into());
+            }
+            self.entries.lock().unwrap().push((
+                workspace_id.to_string(),
+                event_type.to_string(),
+                payload_json.to_string(),
+                failure_reason.to_string(),
+            ));
+            Ok(())
+        }
+
+        async fn list(&self, _workspace_id: &str) -> Result<Vec<DeadLetterEntry>, String> {
+            Ok(vec![])
+        }
+
+        async fn discard(&self, _entry_id: &str) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingHandler {
+        seen: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl EventHandler for RecordingHandler {
+        async fn handle(&self, event: &Event) -> tinyiothub_core::error::Result<()> {
+            self.seen.lock().unwrap().push(event.content().to_plain_text());
+            Ok(())
+        }
+        fn name(&self) -> &str {
+            "recording"
+        }
+        fn should_handle(&self, _event: &Event) -> bool {
+            true
+        }
+    }
+
+    fn recording_publisher() -> (Arc<AiEventPublisher>, Arc<RecordingHandler>) {
+        let bus = Arc::new(EventBus::new());
+        let seen = Arc::new(RecordingHandler::default());
+        bus.register_handler(seen.clone());
+        (Arc::new(AiEventPublisher::new(bus)), seen)
+    }
+
+    fn sample_result() -> HeartbeatResult {
+        HeartbeatResult {
+            workspace_id: "ws_1".to_string(),
+            status: HeartbeatStatus::Complete,
+            summary: "done".to_string(),
+            task_count: 1,
+            executed_actions: vec![],
+            proposals: vec![],
+            error: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn dead_letter_enqueue_failure_is_returned_not_swallowed() {
+        let (publisher, seen) = recording_publisher();
+        let dlq: Arc<dyn DeadLetterQueue> = Arc::new(MockDlq { fail: true, entries: Mutex::new(vec![]) });
+
+        let r = dead_letter_heartbeat_result(Some(&dlq), &publisher, "ws_1", &sample_result(), "db down", 5).await;
+        publisher.shutdown().await;
+
+        assert!(r.is_err(), "DLQ enqueue failure must surface so the caller can log it");
+        let seen = seen.seen.lock().unwrap();
+        assert_eq!(seen.len(), 1, "HeartbeatPersistFailed must still be published");
+        assert!(seen[0].contains("ws_1"));
+    }
+
+    #[tokio::test]
+    async fn dead_letter_records_entry_with_full_payload() {
+        let (publisher, _seen) = recording_publisher();
+        let mock = Arc::new(MockDlq::default());
+        let dlq: Arc<dyn DeadLetterQueue> = mock.clone();
+
+        let r = dead_letter_heartbeat_result(Some(&dlq), &publisher, "ws_1", &sample_result(), "db down", 5).await;
+        publisher.shutdown().await;
+
+        assert!(r.is_ok());
+        let entries = mock.entries.lock().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "ws_1");
+        assert_eq!(entries[0].1, "HeartbeatCompleted");
+        assert!(entries[0].2.contains("ws_1"), "payload must carry the result JSON, not an empty string");
+        assert!(entries[0].2.contains("done"));
+        assert_eq!(entries[0].3, "db down");
+    }
+
+    #[tokio::test]
+    async fn dead_letter_without_dlq_still_publishes_failure_event() {
+        let (publisher, seen) = recording_publisher();
+
+        let r = dead_letter_heartbeat_result(None, &publisher, "ws_1", &sample_result(), "db down", 5).await;
+        publisher.shutdown().await;
+
+        assert!(r.is_ok());
+        let seen = seen.seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert!(seen[0].contains("ws_1"));
     }
 }

@@ -174,6 +174,7 @@ impl HeartbeatRunner {
         let event_publisher = self.event_publisher.clone();
         let mut config = self.config.clone();
         config.interval_minutes = self.effective_interval_minutes(workspace_id).await;
+        let metrics = self.metrics.clone();
 
         let join_handle = tokio::spawn(async move {
             super::loop_::heartbeat_loop(
@@ -186,6 +187,7 @@ impl HeartbeatRunner {
                 config,
                 signal_rx,
                 cancel_rx,
+                metrics,
             )
             .await;
         });
@@ -197,6 +199,7 @@ impl HeartbeatRunner {
         let (exit_tx, exit_rx) = oneshot::channel();
         let loops = Arc::clone(&self.loops);
         let senders = Arc::clone(&self.signal_senders);
+        let metrics = self.metrics.clone();
         let ws_supervised = workspace_id.to_string();
         tokio::spawn(async move {
             let result = join_handle.await;
@@ -207,6 +210,8 @@ impl HeartbeatRunner {
                 }
                 loops.remove(&ws_supervised);
                 senders.remove(&ws_supervised);
+                metrics.failed_loops.fetch_add(1, Ordering::Relaxed);
+                metrics.active_loops.fetch_sub(1, Ordering::Relaxed);
             }
             let _ = exit_tx.send(());
         });
@@ -216,6 +221,7 @@ impl HeartbeatRunner {
             workspace_id.to_string(),
             LoopHandle { cancel_tx, abort_handle, exit_rx },
         );
+        self.metrics.active_loops.fetch_add(1, Ordering::Relaxed);
 
         info!(workspace_id, "Heartbeat loop started");
     }
@@ -228,6 +234,8 @@ impl HeartbeatRunner {
                 warn!(workspace_id, "Heartbeat loop did not exit in 5s, aborting");
                 handle.abort_handle.abort();
             }
+            self.metrics.active_loops.fetch_sub(1, Ordering::Relaxed);
+            self.metrics.loops_completed.fetch_add(1, Ordering::Relaxed);
         }
         self.signal_senders.remove(workspace_id);
         self.trust_configs.remove(workspace_id);
@@ -635,5 +643,84 @@ mod tests {
 
         assert_eq!(runner.effective_interval_minutes("ws_1").await, 30);
         assert_eq!(runner.effective_interval_minutes("ws_other").await, 15);
+    }
+
+    fn sample_task() -> HeartbeatTask {
+        HeartbeatTask {
+            id: 1,
+            workspace_id: "ws_1".into(),
+            priority: "high".into(),
+            text: "test".into(),
+            paused: false,
+            version: 1,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
+    }
+
+    struct OkPool;
+
+    #[async_trait::async_trait]
+    impl AgentPoolLike for OkPool {
+        async fn get_or_create_agent(&self, _workspace_id: &str) -> anyhow::Result<String> {
+            Ok("agent".into())
+        }
+        async fn send_message(&self, _workspace_id: &str, _prompt: &str) -> anyhow::Result<crate::agent::pool::AgentRunOutput> {
+            Ok(crate::agent::pool::AgentRunOutput {
+                text: r#"{"status":"complete","summary":"ok","proposals":[]}"#.into(),
+                tool_calls: vec![],
+            })
+        }
+        async fn shutdown(&self) {}
+        fn set_trust_config(&self, _workspace_id: &str, _config: TrustConfig) {}
+        fn cleanup_idle(&self) -> usize {
+            0
+        }
+    }
+
+    #[tokio::test]
+    async fn metrics_track_loop_lifecycle() {
+        let repo = Arc::new(MockTaskRepo::new(vec![sample_task()]));
+        let publisher = make_publisher();
+        let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
+        runner.set_agent_pool(Arc::new(OkPool)).await;
+
+        runner.start("ws_1").await;
+        assert_eq!(
+            runner.metrics.active_loops.load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "start must count the new active loop"
+        );
+
+        runner.stop("ws_1").await;
+        assert_eq!(runner.metrics.active_loops.load(std::sync::atomic::Ordering::Relaxed), 0);
+        assert_eq!(
+            runner.metrics.loops_completed.load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "clean stop must count a completed loop"
+        );
+    }
+
+    #[tokio::test]
+    async fn crashed_loop_counts_as_failed_in_metrics() {
+        let repo = Arc::new(MockTaskRepo::new(vec![sample_task()]));
+        let publisher = make_publisher();
+        let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
+        runner.set_agent_pool(Arc::new(PanicPool)).await;
+        runner.start("ws_1").await;
+
+        for _ in 0..100 {
+            if runner.active_loop_count() == 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert_eq!(runner.active_loop_count(), 0, "panicked loop must be reaped");
+        assert_eq!(
+            runner.metrics.failed_loops.load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "crashed loop must be counted as failed"
+        );
+        assert_eq!(runner.metrics.active_loops.load(std::sync::atomic::Ordering::Relaxed), 0);
     }
 }

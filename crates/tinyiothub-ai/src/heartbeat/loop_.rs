@@ -1,11 +1,13 @@
 //! Heartbeat loop — per-workspace async loop driving periodic AI-powered checks.
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use tokio::sync::{RwLock, mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
+use super::metrics::Metrics;
 use super::types::{HeartbeatConfig, HeartbeatStatus, HeartbeatTask, LoopSignal};
 use crate::event::bus::AiEventPublisher;
 use crate::event::types::AiEvent;
@@ -25,6 +27,7 @@ pub async fn heartbeat_loop(
     config: HeartbeatConfig,
     mut signal_rx: mpsc::Receiver<LoopSignal>,
     cancel_rx: oneshot::Receiver<()>,
+    metrics: Arc<Metrics>,
 ) {
     let agent_pool = match agent_pool {
         Some(p) => p,
@@ -49,7 +52,7 @@ pub async fn heartbeat_loop(
 
             if !active_tasks.is_empty() {
                 let task_refs: Vec<&HeartbeatTask> = active_tasks.iter().collect();
-                match run_heartbeat_tick(&workspace_id, &task_refs, &trust, &agent_pool, &event_publisher).await {
+                match run_heartbeat_tick(&workspace_id, &task_refs, &trust, &agent_pool, &event_publisher, &metrics).await {
                     Ok(_) => consecutive_failures = 0,
                     Err(e) => {
                         consecutive_failures += 1;
@@ -60,6 +63,7 @@ pub async fn heartbeat_loop(
                                 consecutive_failures, "Too many consecutive failures, pausing heartbeat loop"
                             );
                             paused = true;
+                            metrics.paused_loops.fetch_add(1, Ordering::Relaxed);
                             event_publisher.publish(AiEvent::HeartbeatCompleted {
                                 workspace_id: workspace_id.clone(),
                                 result: crate::heartbeat::types::HeartbeatResult {
@@ -84,6 +88,9 @@ pub async fn heartbeat_loop(
         tokio::select! {
             _ = &mut cancel => {
                 info!(workspace_id, "Heartbeat loop cancelled");
+                if paused {
+                    metrics.paused_loops.fetch_sub(1, Ordering::Relaxed);
+                }
                 return;
             }
             signal = signal_rx.recv() => {
@@ -98,6 +105,7 @@ pub async fn heartbeat_loop(
                         if paused {
                             info!(workspace_id, "Heartbeat loop resumed after pause");
                             paused = false;
+                            metrics.paused_loops.fetch_sub(1, Ordering::Relaxed);
                             consecutive_failures = 0;
                         }
                     }
@@ -121,6 +129,9 @@ pub async fn heartbeat_loop(
                     }
                     None => {
                         debug!(workspace_id, "Signal channel closed, exiting heartbeat loop");
+                        if paused {
+                            metrics.paused_loops.fetch_sub(1, Ordering::Relaxed);
+                        }
                         return;
                     }
                 }
@@ -136,13 +147,26 @@ async fn run_heartbeat_tick(
     trust_config: &TrustConfig,
     agent_pool: &Arc<dyn crate::agent::pool::AgentPoolLike>,
     event_publisher: &AiEventPublisher,
+    metrics: &Metrics,
 ) -> Result<(), String> {
     let prompt = build_heartbeat_prompt(workspace_id, tasks, trust_config);
 
-    let output = tokio::time::timeout(Duration::from_secs(180), agent_pool.send_message(workspace_id, &prompt))
-        .await
-        .map_err(|_| "LLM call timed out after 180s".to_string())?
-        .map_err(|e| format!("LLM call failed: {}", e))?;
+    let started = std::time::Instant::now();
+    let output = match tokio::time::timeout(Duration::from_secs(180), agent_pool.send_message(workspace_id, &prompt)).await
+    {
+        Ok(Ok(output)) => {
+            metrics.record_llm_call(started.elapsed().as_millis() as u64, true);
+            output
+        }
+        Ok(Err(e)) => {
+            metrics.record_llm_call(started.elapsed().as_millis() as u64, false);
+            return Err(format!("LLM call failed: {}", e));
+        }
+        Err(_) => {
+            metrics.record_llm_call(started.elapsed().as_millis() as u64, false);
+            return Err("LLM call timed out after 180s".to_string());
+        }
+    };
 
     let mut result = super::report::parse_healing_report(&output.text, workspace_id);
     result.task_count = tasks.len() as u32;
@@ -273,6 +297,7 @@ mod tests {
         });
         bus.register_handler(seen.clone());
         let publisher = AiEventPublisher::new(bus);
+        let metrics = crate::heartbeat::metrics::Metrics::new();
 
         // The LLM claims it ran "fake_tool"; the framework only recorded "real_tool".
         let pool: Arc<dyn AgentPoolLike> = Arc::new(MockPool {
@@ -288,7 +313,7 @@ mod tests {
         });
 
         let task = sample_task();
-        run_heartbeat_tick("ws", &[&task], &TrustConfig::default(), &pool, &publisher)
+        run_heartbeat_tick("ws", &[&task], &TrustConfig::default(), &pool, &publisher, &metrics)
             .await
             .unwrap();
         publisher.shutdown().await;
@@ -301,5 +326,180 @@ mod tests {
             !seen[0].contains("fake_tool"),
             "LLM self-reported action must be discarded"
         );
+    }
+
+    struct FailPool;
+
+    #[async_trait::async_trait]
+    impl AgentPoolLike for FailPool {
+        async fn get_or_create_agent(&self, _workspace_id: &str) -> anyhow::Result<String> {
+            Ok("agent".into())
+        }
+        async fn send_message(&self, _workspace_id: &str, _prompt: &str) -> anyhow::Result<AgentRunOutput> {
+            anyhow::bail!("llm down")
+        }
+        async fn shutdown(&self) {}
+        fn set_trust_config(&self, _workspace_id: &str, _config: TrustConfig) {}
+        fn cleanup_idle(&self) -> usize {
+            0
+        }
+    }
+
+    struct NoopRepo;
+
+    #[async_trait::async_trait]
+    impl crate::heartbeat::repo::HeartbeatTaskRepository for NoopRepo {
+        async fn list_by_workspace(
+            &self,
+            _workspace_id: &str,
+        ) -> Result<Vec<HeartbeatTask>, crate::heartbeat::repo::RepoError> {
+            Ok(vec![])
+        }
+        async fn upsert(
+            &self,
+            _workspace_id: &str,
+            _task: &HeartbeatTask,
+            _expected_version: i64,
+        ) -> Result<bool, crate::heartbeat::repo::RepoError> {
+            Ok(true)
+        }
+        async fn insert(
+            &self,
+            _workspace_id: &str,
+            _priority: &str,
+            _text: &str,
+        ) -> Result<HeartbeatTask, crate::heartbeat::repo::RepoError> {
+            Err(crate::heartbeat::repo::RepoError::Database("noop".into()))
+        }
+        async fn set_paused(
+            &self,
+            _workspace_id: &str,
+            _task_id: i64,
+            _paused: bool,
+        ) -> Result<(), crate::heartbeat::repo::RepoError> {
+            Ok(())
+        }
+        async fn delete(&self, _workspace_id: &str, _task_id: i64) -> Result<(), crate::heartbeat::repo::RepoError> {
+            Ok(())
+        }
+        async fn insert_result(
+            &self,
+            _workspace_id: &str,
+            _result: &crate::heartbeat::types::HeartbeatResult,
+        ) -> Result<(), crate::heartbeat::repo::RepoError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn tick_records_successful_llm_call_in_metrics() {
+        let bus = Arc::new(tinyiothub_runtime::EventBus::new());
+        let publisher = AiEventPublisher::new(bus);
+        let metrics = crate::heartbeat::metrics::Metrics::new();
+
+        let pool: Arc<dyn AgentPoolLike> = Arc::new(MockPool {
+            output: AgentRunOutput {
+                text: r#"{"status":"complete","summary":"done","proposals":[]}"#.into(),
+                tool_calls: vec![],
+            },
+        });
+
+        let task = sample_task();
+        run_heartbeat_tick("ws", &[&task], &TrustConfig::default(), &pool, &publisher, &metrics)
+            .await
+            .unwrap();
+        publisher.shutdown().await;
+
+        assert_eq!(metrics.llm_calls_total(), 1, "tick must record the LLM call");
+        assert_eq!(metrics.llm_calls_failed(), 0);
+    }
+
+    #[tokio::test]
+    async fn tick_records_failed_llm_call_in_metrics() {
+        let bus = Arc::new(tinyiothub_runtime::EventBus::new());
+        let publisher = AiEventPublisher::new(bus);
+        let metrics = crate::heartbeat::metrics::Metrics::new();
+        let pool: Arc<dyn AgentPoolLike> = Arc::new(FailPool);
+
+        let task = sample_task();
+        let r = run_heartbeat_tick("ws", &[&task], &TrustConfig::default(), &pool, &publisher, &metrics).await;
+        publisher.shutdown().await;
+
+        assert!(r.is_err());
+        assert_eq!(metrics.llm_calls_total(), 1);
+        assert_eq!(metrics.llm_calls_failed(), 1, "failed LLM call must be counted");
+    }
+
+    fn sample_signal() -> crate::heartbeat::types::HeartbeatSignal {
+        crate::heartbeat::types::HeartbeatSignal {
+            workspace_id: "ws".into(),
+            reason: "test".into(),
+            context: String::new(),
+            priority: crate::heartbeat::types::SignalPriority::High,
+            device_id: None,
+            alarm_type: None,
+            rule_id: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn paused_loop_updates_paused_metric_and_resumes() {
+        use std::sync::atomic::Ordering;
+
+        let metrics = Arc::new(crate::heartbeat::metrics::Metrics::new());
+        let tasks = Arc::new(RwLock::new(vec![sample_task()]));
+        let trust = Arc::new(RwLock::new(TrustConfig::default()));
+        let pool: Arc<dyn AgentPoolLike> = Arc::new(FailPool);
+        let repo: Arc<dyn crate::heartbeat::repo::HeartbeatTaskRepository> = Arc::new(NoopRepo);
+        let publisher = Arc::new(AiEventPublisher::new(Arc::new(tinyiothub_runtime::EventBus::new())));
+        let config = HeartbeatConfig {
+            enabled: true,
+            interval_minutes: 600,
+        };
+        let (signal_tx, signal_rx) = mpsc::channel::<LoopSignal>(16);
+        let (cancel_tx, cancel_rx) = oneshot::channel();
+
+        let m = metrics.clone();
+        let handle = tokio::spawn(heartbeat_loop(
+            "ws".into(),
+            tasks,
+            trust,
+            Some(pool),
+            repo,
+            publisher,
+            config,
+            signal_rx,
+            cancel_rx,
+            m,
+        ));
+
+        // Initial tick fails once; 4 more wakeups reach the pause threshold.
+        for _ in 0..4 {
+            signal_tx.send(LoopSignal::External(sample_signal())).await.unwrap();
+        }
+        let mut paused_observed = false;
+        for _ in 0..100 {
+            if metrics.paused_loops.load(Ordering::Relaxed) == 1 {
+                paused_observed = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(paused_observed, "loop must count itself paused after repeated failures");
+
+        // A wakeup while paused resumes the loop.
+        signal_tx.send(LoopSignal::External(sample_signal())).await.unwrap();
+        let mut resumed = false;
+        for _ in 0..100 {
+            if metrics.paused_loops.load(Ordering::Relaxed) == 0 {
+                resumed = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(resumed, "resume must clear the paused metric");
+
+        let _ = cancel_tx.send(());
+        handle.await.unwrap();
     }
 }
