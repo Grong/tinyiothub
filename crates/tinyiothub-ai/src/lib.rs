@@ -23,7 +23,9 @@ pub mod types {
     pub use crate::heartbeat::types::{HeartbeatSignal, SignalPriority};
     pub use crate::knowledge::{KnowledgeEntity, KnowledgeGraph, KnowledgeRelation, NoopKnowledgeGraph};
     pub use crate::memory::provider::{LlmCallMetadata, LlmProvider, LlmResponse};
-    pub use crate::memory::reflect::{build_reflection_input, build_reflection_prompt, parse_facts, sanitize_input};
+    pub use crate::memory::reflect::{
+        build_reflection_input, build_reflection_prompt, contains_injection, parse_facts, sanitize_input,
+    };
     pub use crate::memory::types::MemoryFact;
     pub use crate::policy::{
         NoopPolicyEngine, PolicyAction, PolicyCategory, PolicyDecision, PolicyEngine, PolicyRule, sanitize_llm_input,

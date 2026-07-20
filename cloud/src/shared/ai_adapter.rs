@@ -32,14 +32,36 @@ impl AgentPoolLike for CloudAgentPoolAdapter {
         Ok(workspace_id.to_string())
     }
 
-    async fn send_message(&self, workspace_id: &str, prompt: &str) -> anyhow::Result<String> {
+    async fn send_message(
+        &self,
+        workspace_id: &str,
+        prompt: &str,
+    ) -> anyhow::Result<tinyiothub_ai::agent::pool::AgentRunOutput> {
         // Delegate to AgentPool's run_streaming method and collect the response
         let result = self
             .pool
             .run_streaming(workspace_id, prompt)
             .await
             .map_err(|e| anyhow::anyhow!("LLM error: {}", e))?;
-        Ok(result.final_text)
+        let tool_calls = result
+            .tool_calls
+            .into_iter()
+            .map(|c| tinyiothub_ai::agent::pool::ToolCallRecord {
+                tool_name: c.name,
+                device_id: c
+                    .args
+                    .get("device_id")
+                    .or_else(|| c.args.get("deviceId"))
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                success: c.success,
+                details: c.result.unwrap_or_default(),
+            })
+            .collect();
+        Ok(tinyiothub_ai::agent::pool::AgentRunOutput {
+            text: result.final_text,
+            tool_calls,
+        })
     }
 
     async fn shutdown(&self) {

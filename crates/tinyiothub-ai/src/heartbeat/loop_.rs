@@ -139,13 +139,26 @@ async fn run_heartbeat_tick(
 ) -> Result<(), String> {
     let prompt = build_heartbeat_prompt(workspace_id, tasks, trust_config);
 
-    let raw_response = tokio::time::timeout(Duration::from_secs(180), agent_pool.send_message(workspace_id, &prompt))
+    let output = tokio::time::timeout(Duration::from_secs(180), agent_pool.send_message(workspace_id, &prompt))
         .await
         .map_err(|_| "LLM call timed out after 180s".to_string())?
         .map_err(|e| format!("LLM call failed: {}", e))?;
 
-    let mut result = super::report::parse_healing_report(&raw_response, workspace_id);
+    let mut result = super::report::parse_healing_report(&output.text, workspace_id);
     result.task_count = tasks.len() as u32;
+    // Audit-trail reconciliation: executed_actions come from the framework's
+    // actual tool-call records, not the LLM's self-report (which can fabricate
+    // actions it never performed).
+    result.executed_actions = output
+        .tool_calls
+        .into_iter()
+        .map(|c| crate::heartbeat::types::ExecutedAction {
+            tool_name: c.tool_name,
+            device_id: c.device_id,
+            success: c.success,
+            details: c.details,
+        })
+        .collect();
 
     event_publisher.publish(AiEvent::HeartbeatCompleted {
         workspace_id: workspace_id.to_string(),
@@ -179,4 +192,103 @@ fn build_heartbeat_prompt(workspace_id: &str, tasks: &[&HeartbeatTask], trust_co
         max = trust_config.max_auto_actions_per_tick,
         tasks = tasks_text
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::pool::{AgentPoolLike, AgentRunOutput, ToolCallRecord};
+    use crate::heartbeat::types::HeartbeatTask;
+    use std::sync::Mutex;
+
+    struct MockPool {
+        output: AgentRunOutput,
+    }
+
+    #[async_trait::async_trait]
+    impl AgentPoolLike for MockPool {
+        async fn get_or_create_agent(&self, _workspace_id: &str) -> anyhow::Result<String> {
+            Ok("agent".into())
+        }
+        async fn send_message(&self, _workspace_id: &str, _prompt: &str) -> anyhow::Result<AgentRunOutput> {
+            Ok(self.output.clone())
+        }
+        async fn shutdown(&self) {}
+        fn set_trust_config(&self, _workspace_id: &str, _config: TrustConfig) {}
+        fn cleanup_idle(&self) -> usize {
+            0
+        }
+    }
+
+    struct RecordingHandler {
+        seen: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl tinyiothub_core::event::EventHandler for RecordingHandler {
+        async fn handle(
+            &self,
+            event: &tinyiothub_core::models::event::Event,
+        ) -> tinyiothub_core::error::Result<()> {
+            self.seen.lock().unwrap().push(event.content().to_plain_text());
+            Ok(())
+        }
+        fn name(&self) -> &str {
+            "recording"
+        }
+        fn should_handle(&self, _event: &tinyiothub_core::models::event::Event) -> bool {
+            true
+        }
+    }
+
+    fn sample_task() -> HeartbeatTask {
+        HeartbeatTask {
+            id: 1,
+            workspace_id: "ws".into(),
+            priority: "high".into(),
+            text: "check devices".into(),
+            paused: false,
+            version: 1,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
+    }
+
+    #[tokio::test]
+    async fn executed_actions_come_from_actual_tool_calls_not_llm_report() {
+        let bus = Arc::new(tinyiothub_runtime::EventBus::new());
+        let seen = Arc::new(RecordingHandler {
+            seen: Mutex::new(Vec::new()),
+        });
+        bus.register_handler(seen.clone());
+        let publisher = AiEventPublisher::new(bus);
+
+        // The LLM claims it ran "fake_tool"; the framework only recorded "real_tool".
+        let pool: Arc<dyn AgentPoolLike> = Arc::new(MockPool {
+            output: AgentRunOutput {
+                text: r#"{"status":"complete","summary":"done","executed_actions":[{"tool_name":"fake_tool","device_id":"d_fake","success":true,"details":"LLM self-report"}],"proposals":[]}"#.into(),
+                tool_calls: vec![ToolCallRecord {
+                    tool_name: "real_tool".into(),
+                    device_id: Some("d_real".into()),
+                    success: true,
+                    details: "actually executed".into(),
+                }],
+            },
+        });
+
+        let task = sample_task();
+        run_heartbeat_tick("ws", &[&task], &TrustConfig::default(), &pool, &publisher)
+            .await
+            .unwrap();
+        publisher.shutdown().await;
+
+        let seen = seen.seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert!(seen[0].contains("real_tool"), "actual tool call must be recorded");
+        assert!(seen[0].contains("d_real"));
+        assert!(
+            !seen[0].contains("fake_tool"),
+            "LLM self-reported action must be discarded"
+        );
+    }
 }
