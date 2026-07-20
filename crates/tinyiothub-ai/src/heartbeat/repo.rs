@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use super::types::{HeartbeatResult, HeartbeatTask};
+use super::types::{HeartbeatResult, HeartbeatTask, NewHeartbeatTask};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RepoError {
@@ -26,6 +26,23 @@ pub trait HeartbeatTaskRepository: Send + Sync {
     async fn set_paused(&self, workspace_id: &str, task_id: i64, paused: bool) -> Result<(), RepoError>;
 
     async fn delete(&self, workspace_id: &str, task_id: i64) -> Result<(), RepoError>;
+
+    /// Atomically replace a workspace's whole task set.
+    ///
+    /// Default impl is delete-then-insert (non-atomic); storage backends
+    /// should override with a transaction.
+    async fn replace_all(&self, workspace_id: &str, tasks: &[NewHeartbeatTask]) -> Result<(), RepoError> {
+        for existing in self.list_by_workspace(workspace_id).await? {
+            self.delete(workspace_id, existing.id).await?;
+        }
+        for task in tasks {
+            let inserted = self.insert(workspace_id, &task.priority, &task.text).await?;
+            if task.paused {
+                self.set_paused(workspace_id, inserted.id, true).await?;
+            }
+        }
+        Ok(())
+    }
 
     /// Persist heartbeat execution results (replaces old ActionRepository).
     async fn insert_result(&self, workspace_id: &str, result: &HeartbeatResult) -> Result<(), RepoError>;

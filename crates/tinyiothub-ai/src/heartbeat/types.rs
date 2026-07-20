@@ -87,6 +87,14 @@ pub struct HeartbeatTask {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Input for creating/replacing heartbeat tasks (no server-assigned fields).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewHeartbeatTask {
+    pub priority: String,
+    pub text: String,
+    pub paused: bool,
+}
+
 /// Configuration for the heartbeat runner.
 #[derive(Debug, Clone)]
 pub struct HeartbeatConfig {

@@ -146,6 +146,7 @@ impl ServiceManager {
             // Wire event publisher to services that need cross-domain dispatching
             app_state.alarm_service.set_event_publisher(event_publisher.clone());
             app_state.workspace_service.set_event_publisher(event_publisher.clone());
+            app_state.workspace_service.set_heartbeat_task_repo(heartbeat_task_repo.clone());
 
             // Wire agent pool via adapter
             let ai_adapter = Arc::new(crate::shared::ai_adapter::CloudAgentPoolAdapter::new(
@@ -178,6 +179,17 @@ impl ServiceManager {
             match app_state.workspace_service.list_all_ids().await {
                 Ok(ws_ids) => {
                     for ws_id in &ws_ids {
+                        let workspace_dir = crate::shared::paths::workspace_dir(ws_id);
+                        if let Err(e) =
+                            crate::modules::agent::heartbeat::migrate_file_tasks_to_db(
+                                heartbeat_runner.task_repo().as_ref(),
+                                ws_id,
+                                &workspace_dir,
+                            )
+                            .await
+                        {
+                            warn!(%ws_id, "⚠️ Heartbeat task migration failed: {}", e);
+                        }
                         heartbeat_runner.start(ws_id).await;
                     }
                     info!("✅ AI Orchestrator started ({} workspaces)", ws_ids.len());

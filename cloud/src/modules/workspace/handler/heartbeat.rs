@@ -4,8 +4,8 @@
 //   GET  /config — read heartbeat config + tasks
 //   PUT  /config — update enabled/intervalMinutes
 //   GET  /logs  — query heartbeat execution history
-//   GET  /tasks — read HEARTBEAT.md tasks
-//   PUT  /tasks — write HEARTBEAT.md tasks
+//   GET  /tasks — read heartbeat tasks (DB)
+//   PUT  /tasks — replace heartbeat tasks (DB)
 
 use axum::{
     Json,
@@ -14,9 +14,11 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tinyiothub_web::response::ApiResponseBuilder;
 
+use tinyiothub_ai::heartbeat::types::NewHeartbeatTask;
+
 use crate::{
     modules::agent::heartbeat::{
-        HeartbeatTask, get_default_tasks, read_heartbeat_tasks, write_heartbeat_tasks,
+        HeartbeatTask, get_default_tasks, migrate_file_tasks_to_db, read_heartbeat_tasks,
     },
     shared::{api_response::ApiResponse, app_state::AppState, paths, security::jwt::Claims},
     verify_workspace_access,
@@ -95,11 +97,7 @@ pub async fn get_config(
 ) -> Json<ApiResponse<HeartbeatConfigResponse>> {
     verify_workspace_access!(state, claims, workspace_id);
 
-    let workspace_dir = paths::workspace_dir(&workspace_id);
-    let tasks = read_heartbeat_tasks(&workspace_dir).await.unwrap_or_else(|e| {
-        tracing::warn!(%workspace_id, "Failed to read HEARTBEAT.md: {}", e);
-        get_default_tasks()
-    });
+    let tasks = load_tasks(&state, &workspace_id).await;
 
     let enabled = state
         .heartbeat_runner
@@ -301,11 +299,7 @@ pub async fn get_tasks(
 ) -> Json<ApiResponse<Vec<HeartbeatTask>>> {
     verify_workspace_access!(state, claims, workspace_id);
 
-    let workspace_dir = paths::workspace_dir(&workspace_id);
-    let tasks = read_heartbeat_tasks(&workspace_dir).await.unwrap_or_else(|e| {
-        tracing::warn!(%workspace_id, "Failed to read HEARTBEAT.md: {}", e);
-        get_default_tasks()
-    });
+    let tasks = load_tasks(&state, &workspace_id).await;
 
     ApiResponseBuilder::success(tasks)
 }
@@ -320,19 +314,28 @@ pub async fn update_tasks(
 ) -> Json<ApiResponse<Vec<HeartbeatTask>>> {
     verify_workspace_access!(state, claims, workspace_id);
 
-    let workspace_dir = paths::workspace_dir(&workspace_id);
+    let Some(ref runner) = state.heartbeat_runner else {
+        return ApiResponseBuilder::error("心跳服务未启用");
+    };
 
-    // Ensure workspace dir exists
-    if !workspace_dir.exists()
-        && let Err(e) = tokio::fs::create_dir_all(&workspace_dir).await
-    {
-        tracing::error!(%workspace_id, "Failed to create workspace dir: {}", e);
-        return ApiResponseBuilder::error("创建工作空间目录失败");
+    let new_tasks: Vec<NewHeartbeatTask> = req
+        .tasks
+        .iter()
+        .map(|t| NewHeartbeatTask {
+            priority: t.priority.clone(),
+            text: t.text.clone(),
+            paused: t.paused,
+        })
+        .collect();
+
+    if let Err(e) = runner.task_repo().replace_all(&workspace_id, &new_tasks).await {
+        tracing::error!(%workspace_id, "Failed to save heartbeat tasks: {}", e);
+        return ApiResponseBuilder::error("保存心跳任务失败");
     }
 
-    if let Err(e) = write_heartbeat_tasks(&workspace_dir, &req.tasks).await {
-        tracing::error!(%workspace_id, "Failed to write HEARTBEAT.md: {}", e);
-        return ApiResponseBuilder::error("保存心跳任务失败");
+    runner.notify_tasks_changed(&workspace_id);
+    if !new_tasks.is_empty() && !runner.active_workspaces().contains(&workspace_id) {
+        runner.start(&workspace_id).await;
     }
 
     ApiResponseBuilder::success(req.tasks)
@@ -498,6 +501,41 @@ async fn update_proposal_status(
 }
 
 // ── Helpers ──
+
+/// DB is the single source of truth for heartbeat tasks. Migrates legacy
+/// HEARTBEAT.md on first access; falls back to file/defaults when the
+/// heartbeat runner (and thus the repo) is unavailable.
+async fn load_tasks(state: &AppState, workspace_id: &str) -> Vec<HeartbeatTask> {
+    if let Some(ref runner) = state.heartbeat_runner {
+        let workspace_dir = paths::workspace_dir(workspace_id);
+        if let Err(e) =
+            migrate_file_tasks_to_db(runner.task_repo().as_ref(), workspace_id, &workspace_dir)
+                .await
+        {
+            tracing::warn!(%workspace_id, "Heartbeat task migration failed: {}", e);
+        }
+        match runner.task_repo().list_by_workspace(workspace_id).await {
+            Ok(tasks) => {
+                return tasks
+                    .into_iter()
+                    .map(|t| HeartbeatTask {
+                        priority: t.priority,
+                        text: t.text,
+                        paused: t.paused,
+                    })
+                    .collect();
+            }
+            Err(e) => {
+                tracing::warn!(%workspace_id, "Failed to list heartbeat tasks: {}", e);
+            }
+        }
+    }
+    let workspace_dir = paths::workspace_dir(workspace_id);
+    read_heartbeat_tasks(&workspace_dir).await.unwrap_or_else(|e| {
+        tracing::warn!(%workspace_id, "Failed to read HEARTBEAT.md: {}", e);
+        get_default_tasks()
+    })
+}
 
 fn parse_action_content(content: &str) -> (u32, Option<String>) {
     // New format: {"taskCount": N, "result": "..."} or {"taskCount": N, "error": "..."}

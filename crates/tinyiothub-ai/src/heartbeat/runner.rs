@@ -229,6 +229,11 @@ impl HeartbeatRunner {
         self.loops.iter().map(|r| r.key().clone()).collect()
     }
 
+    /// Access the task repository (used by API handlers for task CRUD).
+    pub fn task_repo(&self) -> Arc<dyn HeartbeatTaskRepository> {
+        self.task_repo.clone()
+    }
+
     pub async fn shutdown(&self) {
         self.shutting_down.store(true, Ordering::SeqCst);
         let ws_ids: Vec<String> = self.active_workspaces();

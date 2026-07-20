@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use sqlx::SqlitePool;
 use tinyiothub_ai::heartbeat::{
     repo::{HeartbeatTaskRepository, RepoError},
-    types::{HeartbeatResult, HeartbeatStatus, HeartbeatTask},
+    types::{HeartbeatResult, HeartbeatStatus, HeartbeatTask, NewHeartbeatTask},
 };
 
 /// DB row struct with sqlx::FromRow — maps to domain HeartbeatTask.
@@ -137,6 +137,29 @@ impl HeartbeatTaskRepository for SqliteHeartbeatTaskRepository {
         Ok(())
     }
 
+    async fn replace_all(&self, workspace_id: &str, tasks: &[NewHeartbeatTask]) -> Result<(), RepoError> {
+        let mut tx = self.pool.begin().await.map_err(|e| RepoError::Database(e.to_string()))?;
+        sqlx::query("DELETE FROM heartbeat_tasks WHERE workspace_id = ?")
+            .bind(workspace_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| RepoError::Database(e.to_string()))?;
+        for task in tasks {
+            sqlx::query(
+                "INSERT INTO heartbeat_tasks (workspace_id, priority, text, paused) VALUES (?, ?, ?, ?)",
+            )
+            .bind(workspace_id)
+            .bind(&task.priority)
+            .bind(&task.text)
+            .bind(task.paused)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| RepoError::Database(e.to_string()))?;
+        }
+        tx.commit().await.map_err(|e| RepoError::Database(e.to_string()))?;
+        Ok(())
+    }
+
     async fn insert_result(
         &self,
         workspace_id: &str,
@@ -221,7 +244,7 @@ async fn insert_action_row(
 mod tests {
     use super::*;
     use sqlx::sqlite::SqlitePoolOptions;
-    use tinyiothub_ai::heartbeat::types::{ExecutedAction, HeartbeatStatus};
+    use tinyiothub_ai::heartbeat::types::{ExecutedAction, HeartbeatStatus, NewHeartbeatTask};
     use tinyiothub_ai::proposal::{Proposal, ProposalStatus};
 
     async fn test_pool() -> SqlitePool {
@@ -230,13 +253,48 @@ mod tests {
             .connect(":memory:")
             .await
             .expect("create in-memory sqlite");
-        for stmt in include_str!("../../../migrations/20260615120000_agent_actions.sql").split(';') {
-            let stmt = stmt.trim();
-            if !stmt.is_empty() {
-                sqlx::query(stmt).execute(&pool).await.expect("apply migration");
+        for migration in [
+            include_str!("../../../migrations/20260615120000_agent_actions.sql"),
+            include_str!("../../../migrations/20260629000001_create_heartbeat_tasks.sql"),
+        ] {
+            for stmt in migration.split(';') {
+                let stmt = stmt.trim();
+                if !stmt.is_empty() {
+                    sqlx::query(stmt).execute(&pool).await.expect("apply migration");
+                }
             }
         }
         pool
+    }
+
+    #[tokio::test]
+    async fn replace_all_replaces_task_set() {
+        let pool = test_pool().await;
+        let repo = SqliteHeartbeatTaskRepository::new(pool.clone());
+
+        let initial = vec![
+            NewHeartbeatTask { priority: "high".into(), text: "task A".into(), paused: false },
+            NewHeartbeatTask { priority: "low".into(), text: "task B".into(), paused: true },
+        ];
+        repo.replace_all("ws_1", &initial).await.expect("seed tasks");
+
+        let tasks = repo.list_by_workspace("ws_1").await.expect("list");
+        assert_eq!(tasks.len(), 2);
+        assert!(tasks.iter().any(|t| t.text == "task A" && !t.paused));
+        assert!(tasks.iter().any(|t| t.text == "task B" && t.paused));
+
+        let replacement =
+            vec![NewHeartbeatTask { priority: "medium".into(), text: "task C".into(), paused: false }];
+        repo.replace_all("ws_1", &replacement).await.expect("replace");
+
+        let tasks = repo.list_by_workspace("ws_1").await.expect("list after replace");
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].text, "task C");
+        assert_eq!(tasks[0].priority, "medium");
+
+        // Empty replacement is allowed and means "no tasks"
+        repo.replace_all("ws_1", &[]).await.expect("clear");
+        assert!(repo.list_by_workspace("ws_1").await.expect("list empty").is_empty());
     }
 
     fn sample_result() -> HeartbeatResult {
