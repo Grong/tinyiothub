@@ -535,9 +535,13 @@ impl AgentPool {
         message: &str,
         run_id: &str,
         system_prompt: &str,
+        authorized_workspace: &str,
     ) -> Result<tokio::sync::mpsc::Receiver<super::types::ChatEvent>, AgentError> {
         let parsed = super::session::SessionKey::parse(session_key)?;
-        parsed.verify_workspace(&parsed.workspace_id)?;
+        // Empty authorized workspace = unscoped (admin) token; nothing to check against.
+        if !authorized_workspace.is_empty() {
+            parsed.verify_workspace(authorized_workspace)?;
+        }
         let agent = self.get_or_create(agent_id, &parsed.workspace_id).await?;
         let config = config_service::get_config(&self.db_pool, agent_id).await?;
         let enable_reflection = config.enable_reflection;
@@ -557,6 +561,7 @@ impl AgentPool {
             &model,
             &parsed.workspace_id,
             agent_id,
+            &self.db_pool,
         )
         .await
         .map_err(|e| AgentError::RequestFailed(e.to_string()))
@@ -564,80 +569,23 @@ impl AgentPool {
 
     pub async fn chat_history(
         &self,
-        agent_id: &str,
+        _agent_id: &str,
         session_key: &str,
-        _limit: u32,
+        limit: u32,
+        authorized_workspace: &str,
     ) -> Result<serde_json::Value, AgentError> {
         let parsed = super::session::SessionKey::parse(session_key)?;
-        parsed.verify_workspace(&parsed.workspace_id)?;
-
-        let agent = self.get_or_create(agent_id, &parsed.workspace_id).await?;
-        let ag = agent.lock().await;
-        let history = ag.history();
-
-        let messages: Vec<serde_json::Value> = history
-            .iter()
-            .filter_map(|msg| {
-                let value = serde_json::to_value(msg).ok()?;
-                match value.get("type")?.as_str()? {
-                    "Chat" => {
-                        let mut data = value.get("data")?.clone();
-                        // Skip system messages
-                        if data.get("role")?.as_str()? == "system" {
-                            return None;
-                        }
-                        // Frontend expects content as array: [{ type: "text", text: "..." }]
-                        normalize_content(&mut data);
-                        Some(data)
-                    }
-                    "AssistantToolCalls" => {
-                        let data = value.get("data")?;
-                        let text = data.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                        let tool_calls =
-                            data.get("tool_calls").cloned().unwrap_or(serde_json::json!([]));
-                        let content = if text.is_empty() {
-                            serde_json::json!([])
-                        } else {
-                            serde_json::json!([{ "type": "text", "text": text }])
-                        };
-                        Some(serde_json::json!({
-                            "role": "assistant",
-                            "content": content,
-                            "toolCalls": tool_calls,
-                        }))
-                    }
-                    _ => {
-                        // ToolResults and other variants — skip for display
-                        None
-                    }
-                }
-            })
-            .collect();
-
-        Ok(serde_json::json!({ "messages": messages, "sessionKey": session_key }))
-    }
-}
-
-/// Convert content from plain string to frontend-compatible array format.
-///
-/// Frontend expects: `[{ "type": "text", "text": "..." }]`
-/// zeroclaw stores:   `"plain string"`
-fn normalize_content(data: &mut serde_json::Value) {
-    // Strip a per-turn injected skill block from user messages so the history
-    // bubble shows only the user's text, not the prepended skill body.
-    if data.get("role").and_then(|r| r.as_str()) == Some("user")
-        && let Some(text) = data.get("content").and_then(|c| c.as_str())
-    {
-        let stripped = tinyiothub_ai::skills::strip_injected_skill(text);
-        data["content"] = serde_json::json!(stripped);
-    }
-    if let Some(content) = data.get("content") {
-        if content.is_string() {
-            let text = content.as_str().unwrap_or("");
-            data["content"] = serde_json::json!([{ "type": "text", "text": text }]);
-        } else if !content.is_array() {
-            data["content"] = serde_json::json!([]);
+        if !authorized_workspace.is_empty() {
+            parsed.verify_workspace(authorized_workspace)?;
         }
+
+        // DB-backed, session-scoped history. The zeroclaw in-memory agent
+        // history is shared across all sessions of the workspace agent and
+        // cannot isolate them.
+        let messages = super::chat::history::list_messages(&self.db_pool, session_key, limit)
+            .await
+            .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
+        Ok(super::chat::history::messages_to_history_json(messages, session_key))
     }
 }
 
@@ -647,9 +595,12 @@ impl AgentPool {
         agent_id: &str,
         session_key: &str,
         run_id: Option<&str>,
+        authorized_workspace: &str,
     ) -> Result<(), AgentError> {
         let parsed = super::session::SessionKey::parse(session_key)?;
-        parsed.verify_workspace(&parsed.workspace_id)?;
+        if !authorized_workspace.is_empty() {
+            parsed.verify_workspace(authorized_workspace)?;
+        }
         let _ = agent_id;
         if let Some(rid) = run_id {
             let mut handles = self.chat_handles.lock().await;

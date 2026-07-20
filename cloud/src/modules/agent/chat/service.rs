@@ -102,6 +102,7 @@ pub async fn send_message(
     model: &str,
     workspace_id: &str,
     agent_id: &str,
+    db_pool: &sqlx::SqlitePool,
 ) -> Result<mpsc::Receiver<ChatEvent>, ChatError> {
     let agent = Arc::clone(agent);
     // Resolve a leading `/trigger` skill token: prepend the full skill body to
@@ -134,23 +135,13 @@ pub async fn send_message(
     let agent_id = agent_id.to_string();
     let reflection_model = model.to_string();
     let event_publisher = event_publisher.clone();
+    let db_pool = db_pool.clone();
 
     let (tx, rx) = mpsc::channel::<ChatEvent>(100);
 
     let run_id_for_handle = run_id.clone();
     let run_id_for_remove = run_id.clone();
     let handle = tokio::spawn(async move {
-        // Set system prompt on first message
-        {
-            let mut ag = agent.lock().await;
-            if ag.history().is_empty() && !system_prompt.is_empty() {
-                ag.seed_history(&[zeroclaw::providers::traits::ChatMessage {
-                    role: "system".into(),
-                    content: system_prompt,
-                }]);
-            }
-        }
-
         // Create TurnEvent channel
         let (event_tx, event_rx) = tokio::sync::mpsc::channel::<TurnEvent>(32);
         let event_rx = Arc::new(tokio::sync::Mutex::new(event_rx));
@@ -175,8 +166,49 @@ pub async fn send_message(
             }
         });
 
-        // Run turn_streamed with 120s timeout
+        // One lock across reseed + turn: the agent's in-memory history is
+        // shared across sessions, so each turn rebuilds context from THIS
+        // session's persisted messages. Splitting this into two lock
+        // acquisitions would let a concurrent turn on another session swap
+        // the history in between.
         let mut ag = agent.lock().await;
+
+        if let Err(e) =
+            super::history::ensure_session(&db_pool, &session_key, &workspace_id, &agent_id).await
+        {
+            tracing::warn!(error = %e, %session_key, "Failed to ensure chat session row");
+        }
+        let prior = super::history::list_messages(
+            &db_pool,
+            &session_key,
+            super::history::SESSION_CONTEXT_MESSAGE_LIMIT,
+        )
+        .await
+        .unwrap_or_default();
+        ag.clear_history();
+        if !system_prompt.is_empty() || !prior.is_empty() {
+            let mut seed = Vec::with_capacity(prior.len() + 1);
+            if !system_prompt.is_empty() {
+                seed.push(zeroclaw::providers::traits::ChatMessage {
+                    role: "system".into(),
+                    content: system_prompt.clone(),
+                });
+            }
+            seed.extend(
+                prior
+                    .into_iter()
+                    .map(|(role, content)| zeroclaw::providers::traits::ChatMessage { role, content }),
+            );
+            ag.seed_history(&seed);
+        }
+        if let Err(e) =
+            super::history::append_message(&db_pool, &session_key, "user", &reflect_message, &run_id)
+                .await
+        {
+            tracing::warn!(error = %e, %session_key, "Failed to persist user message");
+        }
+
+        // Run turn_streamed with 120s timeout
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(120),
             ag.turn_streamed(&turn_message, event_tx, None),
@@ -219,6 +251,14 @@ pub async fn send_message(
                 None
             }
         };
+
+        if let Some(ref assistant_text) = final_text
+            && let Err(e) =
+                super::history::append_message(&db_pool, &session_key, "assistant", assistant_text, &run_id)
+                    .await
+        {
+            tracing::warn!(error = %e, %session_key, "Failed to persist assistant message");
+        }
 
         // Spawn reflection after the turn completes (fire-and-forget)
         if enable_reflection
