@@ -104,9 +104,15 @@ pub async fn get_config(
         .as_ref()
         .map(|pm| pm.active_workspaces().contains(&workspace_id))
         .unwrap_or(false);
+
+    let mut interval_minutes = 15;
+    if let Some(ref runner) = state.heartbeat_runner {
+        interval_minutes = runner.effective_interval_minutes(&workspace_id).await;
+    }
+
     ApiResponseBuilder::success(HeartbeatConfigResponse {
         enabled,
-        interval_minutes: 15,
+        interval_minutes,
         workspace_id: workspace_id.clone(),
         agent_id: "default".to_string(),
         tasks,
@@ -123,22 +129,86 @@ pub async fn update_config(
 ) -> Json<ApiResponse<serde_json::Value>> {
     verify_workspace_access!(state, claims, workspace_id);
 
-    // Apply config changes via heartbeat_runner stop/start
-    if let Some(ref pm) = state.heartbeat_runner {
-        let should_be_active = req.enabled.unwrap_or(true);
-        let is_active = pm.active_workspaces().contains(&workspace_id);
+    let Some(ref runner) = state.heartbeat_runner else {
+        return ApiResponseBuilder::error("心跳服务未启用");
+    };
 
-        if should_be_active && !is_active {
-            pm.start(&workspace_id).await;
-        } else if !should_be_active && is_active {
-            pm.stop(&workspace_id).await;
-        }
+    // Merge with persisted/current values so a partial update doesn't reset
+    // the other field.
+    let current_interval = runner.effective_interval_minutes(&workspace_id).await;
+    let is_active = runner.active_workspaces().contains(&workspace_id);
+    let enabled = req.enabled.unwrap_or(is_active);
+    let interval = req.interval_minutes.unwrap_or(current_interval);
+
+    let config = match tinyiothub_ai::heartbeat::types::WorkspaceHeartbeatConfig::validated(
+        enabled, interval,
+    ) {
+        Ok(c) => c,
+        Err(e) => return ApiResponseBuilder::error(&e),
+    };
+    if let Err(e) = runner.task_repo().save_heartbeat_config(&workspace_id, &config).await {
+        tracing::error!(%workspace_id, "Failed to persist heartbeat config: {}", e);
+        return ApiResponseBuilder::error("保存心跳配置失败");
+    }
+
+    let interval_changed = interval != current_interval;
+    if enabled && (!is_active || interval_changed) {
+        // (Re)start so a changed interval takes effect immediately.
+        runner.start(&workspace_id).await;
+    } else if !enabled && is_active {
+        runner.stop(&workspace_id).await;
     }
 
     ApiResponseBuilder::success(serde_json::json!({
-        "enabled": req.enabled.unwrap_or(true),
-        "intervalMinutes": req.interval_minutes.unwrap_or(15),
+        "enabled": enabled,
+        "intervalMinutes": interval,
     }))
+}
+
+// ── GET /{id}/heartbeat/trust ──
+
+pub async fn get_trust_config(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(workspace_id): Path<String>,
+) -> Json<ApiResponse<serde_json::Value>> {
+    verify_workspace_access!(state, claims, workspace_id);
+
+    let config = match state.heartbeat_runner {
+        Some(ref runner) => match runner.get_trust_config(&workspace_id) {
+            Some(c) => c,
+            None => runner
+                .task_repo()
+                .load_trust_config(&workspace_id)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_default(),
+        },
+        None => tinyiothub_ai::tool::trust::TrustConfig::default(),
+    };
+
+    ApiResponseBuilder::success(serde_json::to_value(config).unwrap_or_default())
+}
+
+// ── PUT /{id}/heartbeat/trust ──
+
+pub async fn update_trust_config(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(workspace_id): Path<String>,
+    Json(config): Json<tinyiothub_ai::tool::trust::TrustConfig>,
+) -> Json<ApiResponse<serde_json::Value>> {
+    verify_workspace_access!(state, claims, workspace_id);
+
+    let Some(ref runner) = state.heartbeat_runner else {
+        return ApiResponseBuilder::error("心跳服务未启用");
+    };
+
+    // Persists to DB and hot-updates pool + cache + running loop.
+    runner.update_trust_config(&workspace_id, config.clone()).await;
+
+    ApiResponseBuilder::success(serde_json::to_value(config).unwrap_or_default())
 }
 
 // ── GET /{id}/heartbeat/logs ──
@@ -441,10 +511,105 @@ pub async fn approve_proposal(
 ) -> Json<ApiResponse<serde_json::Value>> {
     verify_workspace_access!(state, claims, workspace_id);
 
-    match update_proposal_status(&state, &workspace_id, &proposal_id, "approved").await {
-        Ok(()) => ApiResponseBuilder::success(serde_json::json!({"status": "approved"})),
+    let Some(registry) = crate::modules::mcp::get_mcp_registry() else {
+        return ApiResponseBuilder::error("工具注册表未初始化");
+    };
+    let registry = registry.read().await;
+    match approve_and_execute(state.database.pool(), &workspace_id, &proposal_id, &registry).await {
+        Ok(output) => ApiResponseBuilder::success(serde_json::json!({
+            "status": "approved",
+            "output": output,
+        })),
         Err(e) => ApiResponseBuilder::error(&e),
     }
+}
+
+/// Approve a pending proposal and execute its tool with the stored parameters.
+/// The human approval IS the authorization, so execution bypasses the trust
+/// engine. The status flip is a conditional UPDATE so a concurrent approve
+/// cannot double-execute.
+async fn approve_and_execute(
+    pool: &sqlx::SqlitePool,
+    workspace_id: &str,
+    proposal_id: &str,
+    registry: &crate::modules::mcp::tool_registry::HandlerRegistry,
+) -> Result<serde_json::Value, String> {
+    let row: Option<(String, String)> = sqlx::query_as(
+        "SELECT id, content FROM agent_actions \
+         WHERE workspace_id = ? AND action_type = 'proposal' \
+         AND json_extract(content, '$.proposalId') = ? \
+         ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(workspace_id)
+    .bind(proposal_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("查询失败: {}", e))?;
+
+    let Some((id, content)) = row else {
+        return Err("提案不存在".to_string());
+    };
+    let parsed: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("解析失败: {}", e))?;
+    if parsed["status"].as_str() != Some("pending") {
+        return Err("提案已处理".to_string());
+    }
+    let tool_name = parsed["toolName"].as_str().unwrap_or("").to_string();
+    let device_id = parsed["deviceId"].as_str().map(str::to_string);
+    let params = parsed.get("parameters").cloned().unwrap_or(serde_json::json!({}));
+
+    let handler = registry
+        .get_owned(&tool_name)
+        .ok_or_else(|| format!("工具未注册: {}", tool_name))?;
+
+    // Atomic flip: only a row still pending transitions, so a second approve
+    // affects 0 rows and never re-executes.
+    let flipped = sqlx::query(
+        "UPDATE agent_actions SET content = json_set(content, '$.status', 'approved') \
+         WHERE id = ? AND json_extract(content, '$.status') = 'pending'",
+    )
+    .bind(&id)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("更新失败: {}", e))?;
+    if flipped.rows_affected() == 0 {
+        return Err("提案已处理".to_string());
+    }
+
+    let outcome = handler.execute(params).await;
+    let (success, summary) = match &outcome {
+        Ok(v) => {
+            let s = v.to_string();
+            (true, s.chars().take(500).collect::<String>())
+        }
+        Err(e) => (false, e.to_string()),
+    };
+
+    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let outcome_content = serde_json::json!({
+        "tool": tool_name,
+        "deviceId": device_id,
+        "summary": summary,
+        "success": success,
+        "source": "approved_proposal",
+        "proposalId": proposal_id,
+    });
+    if let Err(e) = sqlx::query(
+        "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, created_at) \
+         VALUES (?, ?, ?, 'heartbeat', 'auto_executed', ?, ?)",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(workspace_id)
+    .bind(format!("__heartbeat__:{workspace_id}"))
+    .bind(outcome_content.to_string())
+    .bind(&now)
+    .execute(pool)
+    .await
+    {
+        tracing::error!(%workspace_id, %proposal_id, "Failed to record proposal execution: {}", e);
+    }
+
+    outcome.map_err(|e| format!("执行失败: {}", e))
 }
 
 // ── POST /{id}/heartbeat/approvals/{proposal_id}/reject ──
@@ -551,4 +716,170 @@ fn parse_action_content(content: &str) -> (u32, Option<String>) {
     }
     // Legacy format: plain text content
     (0, Some(content.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use sqlx::SqlitePool;
+    use std::sync::{Arc, Mutex};
+
+    use crate::modules::mcp::tool_registry::{HandlerRegistry, InputSchema, ToolError, ToolHandler};
+
+    #[derive(Clone)]
+    struct RecordingHandler {
+        calls: Arc<Mutex<Vec<serde_json::Value>>>,
+        fail: bool,
+    }
+
+    #[async_trait]
+    impl ToolHandler for RecordingHandler {
+        fn name(&self) -> &str {
+            "write_properties"
+        }
+        fn description(&self) -> &str {
+            "test"
+        }
+        fn input_schema(&self) -> InputSchema {
+            InputSchema {
+                schema_type: "object".into(),
+                required: vec![],
+                properties: Default::default(),
+            }
+        }
+        async fn execute(&self, args: serde_json::Value) -> Result<serde_json::Value, ToolError> {
+            self.calls.lock().unwrap().push(args);
+            if self.fail {
+                return Err(ToolError::Internal("device offline".into()));
+            }
+            Ok(serde_json::json!({"applied": true}))
+        }
+    }
+
+    fn registry_with(handler: RecordingHandler) -> HandlerRegistry {
+        let mut reg = HandlerRegistry::new();
+        reg.register(handler);
+        reg
+    }
+
+    async fn test_pool() -> SqlitePool {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        crate::shared::persistence::test_helpers::run_all_migrations(&pool).await.unwrap();
+        pool
+    }
+
+    async fn seed_proposal(pool: &SqlitePool, proposal_id: &str, status: &str) {
+        let content = serde_json::json!({
+            "proposalId": proposal_id,
+            "status": status,
+            "toolName": "write_properties",
+            "deviceId": "dev_1",
+            "summary": "set temp",
+            "reason": "tune",
+            "risk": "medium",
+            "parameters": {"device_id": "dev_1", "properties": {"target_temp": 22}},
+        });
+        sqlx::query(
+            "INSERT INTO agent_actions (id, workspace_id, agent_id, event_type, action_type, content, created_at) \
+             VALUES (?, 'ws_1', '__heartbeat__:ws_1', 'heartbeat', 'proposal', ?, '2026-07-20 10:00:00')",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(content.to_string())
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn proposal_status(pool: &SqlitePool, proposal_id: &str) -> String {
+        let (content,): (String,) = sqlx::query_as(
+            "SELECT content FROM agent_actions WHERE action_type = 'proposal' \
+             AND json_extract(content, '$.proposalId') = ?",
+        )
+        .bind(proposal_id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        parsed["status"].as_str().unwrap().to_string()
+    }
+
+    #[tokio::test]
+    async fn approve_executes_tool_with_stored_parameters() {
+        let pool = test_pool().await;
+        seed_proposal(&pool, "p1", "pending").await;
+        let handler = RecordingHandler { calls: Arc::new(Mutex::new(vec![])), fail: false };
+        let calls = handler.calls.clone();
+        let registry = registry_with(handler);
+
+        approve_and_execute(&pool, "ws_1", "p1", &registry).await.expect("approve");
+
+        // Handler ran with the persisted parameters
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["properties"]["target_temp"], 22);
+        drop(calls);
+
+        // Status flipped to approved
+        assert_eq!(proposal_status(&pool, "p1").await, "approved");
+
+        // Outcome recorded as an auto_executed row so the log UI shows it
+        let (content,): (String,) = sqlx::query_as(
+            "SELECT content FROM agent_actions WHERE action_type = 'auto_executed'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("outcome row");
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["tool"], "write_properties");
+        assert_eq!(parsed["deviceId"], "dev_1");
+        assert_eq!(parsed["success"], true);
+    }
+
+    #[tokio::test]
+    async fn approve_twice_does_not_reexecute() {
+        let pool = test_pool().await;
+        seed_proposal(&pool, "p1", "pending").await;
+        let handler = RecordingHandler { calls: Arc::new(Mutex::new(vec![])), fail: false };
+        let calls = handler.calls.clone();
+        let registry = registry_with(handler);
+
+        approve_and_execute(&pool, "ws_1", "p1", &registry).await.unwrap();
+        let second = approve_and_execute(&pool, "ws_1", "p1", &registry).await;
+        assert!(second.is_err(), "second approve must be rejected");
+
+        assert_eq!(calls.lock().unwrap().len(), 1, "tool must run exactly once");
+    }
+
+    #[tokio::test]
+    async fn approve_records_failed_execution() {
+        let pool = test_pool().await;
+        seed_proposal(&pool, "p1", "pending").await;
+        let handler = RecordingHandler { calls: Arc::new(Mutex::new(vec![])), fail: true };
+        let registry = registry_with(handler);
+
+        let result = approve_and_execute(&pool, "ws_1", "p1", &registry).await;
+        assert!(result.is_err(), "execution failure must surface");
+
+        let (content,): (String,) = sqlx::query_as(
+            "SELECT content FROM agent_actions WHERE action_type = 'auto_executed'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("outcome row");
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["success"], false);
+        assert!(parsed["summary"].as_str().unwrap().contains("device offline"));
+    }
+
+    #[tokio::test]
+    async fn approve_unknown_proposal_fails() {
+        let pool = test_pool().await;
+        let handler = RecordingHandler { calls: Arc::new(Mutex::new(vec![])), fail: false };
+        let calls = handler.calls.clone();
+        let registry = registry_with(handler);
+        let result = approve_and_execute(&pool, "ws_1", "nope", &registry).await;
+        assert!(result.is_err());
+        assert!(calls.lock().unwrap().is_empty());
+    }
 }

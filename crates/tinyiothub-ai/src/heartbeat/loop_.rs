@@ -185,7 +185,7 @@ fn build_heartbeat_prompt(workspace_id: &str, tasks: &[&HeartbeatTask], trust_co
          {{\n  \"status\": \"complete|partial|error\",\n  \
          \"summary\": \"...\",\n  \
          \"executed_actions\": [{{\"tool_name\": \"...\", \"device_id\": \"...\", \"success\": true, \"details\": \"...\"}}],\n  \
-         \"proposals\": [{{\"id\": \"...\", \"tool_name\": \"...\", \"device_id\": \"...\", \"summary\": \"...\", \"reason\": \"...\", \"risk\": \"low|medium|high\"}}],\n  \
+         \"proposals\": [{{\"tool_name\": \"...\", \"device_id\": \"...\", \"summary\": \"...\", \"reason\": \"...\", \"risk\": \"low|medium|high\", \"parameters\": {{...}}}}],\n  \
          \"error\": null\n}}\n```",
         ws_id = workspace_id,
         trust = trust_config.trust_level,
@@ -252,6 +252,17 @@ mod tests {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }
+    }
+
+    #[test]
+    fn prompt_asks_proposals_for_parameters() {
+        // Without parameters the approve-and-execute flow has nothing to run.
+        let task = sample_task();
+        let prompt = build_heartbeat_prompt("ws", &[&task], &TrustConfig::default());
+        assert!(
+            prompt.contains("\"parameters\""),
+            "proposal schema in the prompt must request tool parameters"
+        );
     }
 
     #[tokio::test]

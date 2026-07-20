@@ -53,4 +53,26 @@ pub trait HeartbeatTaskRepository: Send + Sync {
     async fn load_trust_config(&self, _workspace_id: &str) -> Result<Option<TrustConfig>, RepoError> {
         Ok(None)
     }
+
+    /// Persist the workspace's TrustConfig. Default: no-op (no storage).
+    async fn save_trust_config(&self, _workspace_id: &str, _config: &TrustConfig) -> Result<(), RepoError> {
+        Ok(())
+    }
+
+    /// Load the workspace's persisted heartbeat config, if any.
+    async fn load_heartbeat_config(
+        &self,
+        _workspace_id: &str,
+    ) -> Result<Option<super::types::WorkspaceHeartbeatConfig>, RepoError> {
+        Ok(None)
+    }
+
+    /// Persist the workspace's heartbeat config. Default: no-op.
+    async fn save_heartbeat_config(
+        &self,
+        _workspace_id: &str,
+        _config: &super::types::WorkspaceHeartbeatConfig,
+    ) -> Result<(), RepoError> {
+        Ok(())
+    }
 }

@@ -179,6 +179,49 @@ impl HeartbeatTaskRepository for SqliteHeartbeatTaskRepository {
         }))
     }
 
+    async fn save_trust_config(
+        &self,
+        workspace_id: &str,
+        config: &tinyiothub_ai::tool::trust::TrustConfig,
+    ) -> Result<(), RepoError> {
+        sqlx::query("UPDATE workspaces SET heartbeat_trust_config = ? WHERE id = ?")
+            .bind(config.to_db_json())
+            .bind(workspace_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| RepoError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn load_heartbeat_config(
+        &self,
+        workspace_id: &str,
+    ) -> Result<Option<tinyiothub_ai::heartbeat::types::WorkspaceHeartbeatConfig>, RepoError> {
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT heartbeat_config FROM workspaces WHERE id = ?")
+                .bind(workspace_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| RepoError::Database(e.to_string()))?;
+        Ok(row.and_then(|(json,)| {
+            tinyiothub_ai::heartbeat::types::WorkspaceHeartbeatConfig::from_db_json(Some(&json))
+        }))
+    }
+
+    async fn save_heartbeat_config(
+        &self,
+        workspace_id: &str,
+        config: &tinyiothub_ai::heartbeat::types::WorkspaceHeartbeatConfig,
+    ) -> Result<(), RepoError> {
+        sqlx::query("UPDATE workspaces SET heartbeat_config = ? WHERE id = ?")
+            .bind(config.to_db_json())
+            .bind(workspace_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| RepoError::Database(e.to_string()))?;
+        Ok(())
+    }
+
     async fn insert_result(
         &self,
         workspace_id: &str,
@@ -225,6 +268,7 @@ impl HeartbeatTaskRepository for SqliteHeartbeatTaskRepository {
                 "summary": proposal.summary,
                 "reason": proposal.reason,
                 "risk": proposal.risk,
+                "parameters": proposal.parameters,
             });
             insert_action_row(&mut tx, workspace_id, &agent_id, "proposal", &content.to_string(), &now)
                 .await?;
@@ -411,6 +455,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn insert_result_persists_proposal_parameters() {
+        // Approve-and-execute needs the tool arguments back out of the DB.
+        let pool = test_pool().await;
+        let repo = SqliteHeartbeatTaskRepository::new(pool.clone());
+
+        let mut result = sample_result();
+        result.proposals[0].parameters =
+            Some(serde_json::json!({"device_id": "dev_2", "version": "1.2.3"}));
+        repo.insert_result("ws_1", &result).await.expect("insert_result");
+
+        let (content,): (String,) = sqlx::query_as(
+            "SELECT content FROM agent_actions WHERE workspace_id = 'ws_1' AND action_type = 'proposal'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("proposal row");
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["parameters"]["version"], "1.2.3");
+    }
+
+    #[tokio::test]
     async fn insert_result_error_status_writes_error_row() {        let pool = test_pool().await;
         let repo = SqliteHeartbeatTaskRepository::new(pool.clone());
 
@@ -440,9 +505,57 @@ mod tests {
         for stmt in [
             "CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, tenant_id TEXT NOT NULL, agent_id TEXT, agent_config TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
             "ALTER TABLE workspaces ADD COLUMN heartbeat_trust_config TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE workspaces ADD COLUMN heartbeat_config TEXT NOT NULL DEFAULT ''",
         ] {
             sqlx::query(stmt).execute(pool).await.expect("create workspaces table");
         }
+    }
+
+    #[tokio::test]
+    async fn heartbeat_config_save_and_load_roundtrip() {
+        let pool = test_pool().await;
+        create_workspaces_table(&pool).await;
+        sqlx::query(
+            "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) \
+             VALUES ('ws_c', 'ws', 't1', 'now', 'now')",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert workspace");
+        let repo = SqliteHeartbeatTaskRepository::new(pool.clone());
+
+        assert!(repo.load_heartbeat_config("ws_c").await.expect("load").is_none());
+
+        let cfg = tinyiothub_ai::heartbeat::types::WorkspaceHeartbeatConfig {
+            enabled: true,
+            interval_minutes: 30,
+        };
+        repo.save_heartbeat_config("ws_c", &cfg).await.expect("save");
+        let loaded = repo.load_heartbeat_config("ws_c").await.expect("load").expect("persisted");
+        assert_eq!(loaded.interval_minutes, 30);
+        assert!(loaded.enabled);
+    }
+
+    #[tokio::test]
+    async fn save_trust_config_persists_to_workspace_column() {
+        let pool = test_pool().await;
+        create_workspaces_table(&pool).await;
+        sqlx::query(
+            "INSERT INTO workspaces (id, name, tenant_id, created_at, updated_at) \
+             VALUES ('ws_t', 'ws', 't1', 'now', 'now')",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert workspace");
+        let repo = SqliteHeartbeatTaskRepository::new(pool.clone());
+
+        let cfg = tinyiothub_ai::tool::trust::TrustConfig {
+            trust_level: tinyiothub_ai::tool::trust::TrustLevel::FullAuto,
+            ..Default::default()
+        };
+        repo.save_trust_config("ws_t", &cfg).await.expect("save");
+        let loaded = repo.load_trust_config("ws_t").await.expect("load").expect("persisted");
+        assert_eq!(loaded.trust_level, tinyiothub_ai::tool::trust::TrustLevel::FullAuto);
     }
 
     #[tokio::test]
