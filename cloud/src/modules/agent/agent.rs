@@ -246,6 +246,62 @@ impl AgentPool {
         agent_id: &str,
         workspace_id: &str,
     ) -> Result<Arc<tokio::sync::Mutex<zeroclaw::agent::Agent>>, AgentError> {
+        // Fast path: clone under a brief shard lock. Never hold a DashMap
+        // entry across .await — creation below does DB and tool-resolution
+        // I/O and would stall every other agent on the same shard.
+        if let Some(mut entry) = self.agents.get_mut(agent_id) {
+            let agent = Arc::clone(&entry.zeroclaw_agent);
+            entry.last_used = Instant::now();
+            return Ok(agent);
+        }
+
+        let config = config_service::get_config(&self.db_pool, agent_id).await?;
+
+        let namespaced: Arc<dyn Memory> = Arc::new(WorkspaceScopedMemory::new(
+            Arc::clone(&self.shared_memory),
+            workspace_id.to_string(),
+        ));
+
+        let provider = crate::shared::config::create_minimax_provider().map_err(|e| {
+            AgentError::BuildError(format!("Failed to create provider: {}", e))
+        })?;
+
+        let ws_dir = crate::shared::paths::workspace_dir(workspace_id);
+
+        let ws_svc = self.workspace_service.read().await.clone();
+        let ks_svc = self.knowledge_service.read().await.clone();
+        let trust_config = self
+            .trust_configs
+            .get(workspace_id)
+            .map(|e| std::sync::Arc::new(e.value().clone()));
+        let tools = tool_service::resolve_tools_for_agent(
+            &config,
+            workspace_id,
+            ws_svc,
+            ks_svc,
+            trust_config,
+        )
+        .await;
+
+        let agent = Self::build_agent(
+            &namespaced,
+            &self.observer,
+            &config,
+            self.response_cache.clone(),
+            provider,
+            &ws_dir,
+            tools,
+        )
+        .map_err(|e| AgentError::BuildError(e.to_string()))?;
+
+        let metadata = Agent {
+            agent_id: agent_id.to_string(),
+            workspace_id: workspace_id.to_string(),
+            config,
+        };
+
+        // Double-checked insert: a concurrent creator may have won the race
+        // while we were building. The loser's agent is dropped unstarted.
         use dashmap::mapref::entry::Entry;
         match self.agents.entry(agent_id.to_string()) {
             Entry::Occupied(mut occupied) => {
@@ -254,51 +310,6 @@ impl AgentPool {
                 Ok(agent)
             }
             Entry::Vacant(vacant) => {
-                let config = config_service::get_config(&self.db_pool, agent_id).await?;
-
-                let namespaced: Arc<dyn Memory> = Arc::new(WorkspaceScopedMemory::new(
-                    Arc::clone(&self.shared_memory),
-                    workspace_id.to_string(),
-                ));
-
-                let provider = crate::shared::config::create_minimax_provider().map_err(|e| {
-                    AgentError::BuildError(format!("Failed to create provider: {}", e))
-                })?;
-
-                let ws_dir = crate::shared::paths::workspace_dir(workspace_id);
-
-                let ws_svc = self.workspace_service.read().await.clone();
-                let ks_svc = self.knowledge_service.read().await.clone();
-                let trust_config = self
-                    .trust_configs
-                    .get(workspace_id)
-                    .map(|e| std::sync::Arc::new(e.value().clone()));
-                let tools = tool_service::resolve_tools_for_agent(
-                    &config,
-                    workspace_id,
-                    ws_svc,
-                    ks_svc,
-                    trust_config,
-                )
-                .await;
-
-                let agent = Self::build_agent(
-                    &namespaced,
-                    &self.observer,
-                    &config,
-                    self.response_cache.clone(),
-                    provider,
-                    &ws_dir,
-                    tools,
-                )
-                .map_err(|e| AgentError::BuildError(e.to_string()))?;
-
-                let metadata = Agent {
-                    agent_id: agent_id.to_string(),
-                    workspace_id: workspace_id.to_string(),
-                    config,
-                };
-
                 let entry = PoolEntry::new(agent, metadata);
                 let agent_arc = Arc::clone(&entry.zeroclaw_agent);
                 vacant.insert(entry);

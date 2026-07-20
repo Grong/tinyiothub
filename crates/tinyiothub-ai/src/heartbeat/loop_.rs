@@ -23,7 +23,7 @@ pub async fn heartbeat_loop(
     task_repo: Arc<dyn crate::heartbeat::repo::HeartbeatTaskRepository>,
     event_publisher: Arc<AiEventPublisher>,
     config: HeartbeatConfig,
-    mut signal_rx: mpsc::UnboundedReceiver<LoopSignal>,
+    mut signal_rx: mpsc::Receiver<LoopSignal>,
     cancel_rx: oneshot::Receiver<()>,
 ) {
     let agent_pool = match agent_pool {

@@ -97,10 +97,14 @@ impl WorkspaceService {
     }
 
     pub async fn delete(&self, id: &str) -> Result<()> {
+        // Delete first: listeners tear down heartbeat loops and agents on
+        // WorkspaceDeleted, so publishing before the row is gone could kill a
+        // workspace whose delete then fails.
+        self.repository.delete(id).await?;
         if let Some(ref publisher) = *self.event_publisher.lock().unwrap() {
             publisher.publish(AiEvent::WorkspaceDeleted { workspace_id: id.to_string() });
         }
-        self.repository.delete(id).await
+        Ok(())
     }
 
 
@@ -193,7 +197,15 @@ mod tests {
     use crate::modules::workspace::types::WorkspaceResource;
     use tinyiothub_ai::heartbeat::repo::HeartbeatTaskRepository;
 
-    struct MockWorkspaceRepository;
+    struct MockWorkspaceRepository {
+        delete_fails: std::sync::atomic::AtomicBool,
+    }
+
+    impl Default for MockWorkspaceRepository {
+        fn default() -> Self {
+            Self { delete_fails: std::sync::atomic::AtomicBool::new(false) }
+        }
+    }
 
     #[async_trait::async_trait]
     impl WorkspaceRepository for MockWorkspaceRepository {
@@ -238,7 +250,10 @@ mod tests {
             unimplemented!()
         }
         async fn delete(&self, _id: &str) -> Result<()> {
-            unimplemented!()
+            if self.delete_fails.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(tinyiothub_core::error::Error::Internal("db down".into()));
+            }
+            Ok(())
         }
         async fn assign_device(&self, _device_id: &str, _workspace_id: &str) -> Result<()> {
             unimplemented!()
@@ -320,7 +335,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_seeds_default_heartbeat_tasks() {
-        let service = WorkspaceService::new(Arc::new(MockWorkspaceRepository));
+        let service = WorkspaceService::new(Arc::new(MockWorkspaceRepository::default()));
         let repo = Arc::new(heartbeat_repo().await);
         service.set_heartbeat_task_repo(repo.clone());
 
@@ -333,7 +348,39 @@ mod tests {
 
     #[tokio::test]
     async fn create_without_task_repo_still_succeeds() {
-        let service = WorkspaceService::new(Arc::new(MockWorkspaceRepository));
+        let service = WorkspaceService::new(Arc::new(MockWorkspaceRepository::default()));
         service.create("tenant_1", "ws", None, None, None).await.expect("create");
+    }
+
+    #[tokio::test]
+    async fn delete_failure_does_not_publish_workspace_deleted() {
+        let repo = Arc::new(MockWorkspaceRepository::default());
+        repo.delete_fails.store(true, std::sync::atomic::Ordering::SeqCst);
+        let service = WorkspaceService::new(repo);
+        let publisher =
+            Arc::new(AiEventPublisher::new(Arc::new(tinyiothub_runtime::EventBus::new())));
+        service.set_event_publisher(publisher.clone());
+
+        let result = service.delete("ws_1").await;
+        assert!(result.is_err());
+        // The publish counter increments in the publisher's worker task.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(
+            publisher.events_published(),
+            0,
+            "failed delete must not publish WorkspaceDeleted — listeners would tear down a live workspace"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_success_publishes_workspace_deleted() {
+        let service = WorkspaceService::new(Arc::new(MockWorkspaceRepository::default()));
+        let publisher =
+            Arc::new(AiEventPublisher::new(Arc::new(tinyiothub_runtime::EventBus::new())));
+        service.set_event_publisher(publisher.clone());
+
+        service.delete("ws_1").await.expect("delete");
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(publisher.events_published(), 1);
     }
 }

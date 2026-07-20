@@ -19,13 +19,56 @@ use crate::tool::trust::TrustConfig;
 
 struct LoopHandle {
     cancel_tx: oneshot::Sender<()>,
-    _join_handle: tokio::task::JoinHandle<()>,
+    abort_handle: tokio::task::AbortHandle,
+    /// Resolves when the supervisor has observed the loop task's exit.
+    exit_rx: oneshot::Receiver<()>,
+}
+
+/// Bounded signal queue per workspace loop. External wakeups flood in from
+/// alarms; an unbounded queue turns an alarm storm into a memory leak.
+const SIGNAL_CHANNEL_CAPACITY: usize = 64;
+
+/// Send a wakeup signal, coalescing duplicates: a full channel already has a
+/// pending wakeup, so dropping the new one changes nothing. Returns false
+/// when dropped.
+fn send_wakeup(sender: &mpsc::Sender<LoopSignal>, signal: LoopSignal, workspace_id: &str) -> bool {
+    match sender.try_send(signal) {
+        Ok(()) => true,
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            debug!(workspace_id, "Heartbeat signal channel full, coalescing wakeup");
+            false
+        }
+        Err(mpsc::error::TrySendError::Closed(_)) => {
+            warn!(workspace_id, "Heartbeat signal channel closed");
+            false
+        }
+    }
+}
+
+/// Send a control signal (reloads). These carry state changes and must not
+/// be dropped; when the channel is momentarily full, deliver asynchronously.
+fn send_control(sender: &mpsc::Sender<LoopSignal>, signal: LoopSignal, workspace_id: &str) {
+    match sender.try_send(signal) {
+        Ok(()) => {}
+        Err(mpsc::error::TrySendError::Full(signal)) => {
+            let sender = sender.clone();
+            let ws = workspace_id.to_string();
+            tokio::spawn(async move {
+                if sender.send(signal).await.is_err() {
+                    warn!(workspace_id = ws, "Heartbeat control signal undeliverable: channel closed");
+                }
+            });
+        }
+        Err(mpsc::error::TrySendError::Closed(_)) => {
+            warn!(workspace_id, "Heartbeat signal channel closed");
+        }
+    }
 }
 
 /// Manages per-workspace heartbeat loop lifecycle.
 pub struct HeartbeatRunner {
-    loops: DashMap<String, LoopHandle>,
-    signal_senders: DashMap<String, mpsc::UnboundedSender<LoopSignal>>,
+    loops: Arc<DashMap<String, LoopHandle>>,
+    signal_senders: Arc<DashMap<String, mpsc::Sender<LoopSignal>>>,
     trust_configs: DashMap<String, TrustConfig>,
     task_repo: Arc<dyn HeartbeatTaskRepository>,
     event_publisher: Arc<AiEventPublisher>,
@@ -46,8 +89,8 @@ impl HeartbeatRunner {
         config: HeartbeatConfig,
     ) -> Self {
         Self {
-            loops: DashMap::new(),
-            signal_senders: DashMap::new(),
+            loops: Arc::new(DashMap::new()),
+            signal_senders: Arc::new(DashMap::new()),
             trust_configs: DashMap::new(),
             task_repo,
             event_publisher,
@@ -116,11 +159,14 @@ impl HeartbeatRunner {
         let pool = self.agent_pool.read().await.clone();
         if pool.is_none() {
             info!(workspace_id, "AgentPool not ready, queuing heartbeat start");
-            self.pending_starts.write().await.push(workspace_id.to_string());
+            let mut pending = self.pending_starts.write().await;
+            if !pending.iter().any(|p| p == workspace_id) {
+                pending.push(workspace_id.to_string());
+            }
             return;
         }
 
-        let (signal_tx, signal_rx) = mpsc::unbounded_channel::<LoopSignal>();
+        let (signal_tx, signal_rx) = mpsc::channel::<LoopSignal>(SIGNAL_CHANNEL_CAPACITY);
         let (cancel_tx, cancel_rx) = oneshot::channel();
 
         let ws_id = workspace_id.to_string();
@@ -144,13 +190,31 @@ impl HeartbeatRunner {
             .await;
         });
 
+        // Supervisor: reap the loop's map entries when its task exits without
+        // stop() being called (panic or unexpected return). stop() removes
+        // the entry first, so a still-present entry means an unexpected exit.
+        let abort_handle = join_handle.abort_handle();
+        let (exit_tx, exit_rx) = oneshot::channel();
+        let loops = Arc::clone(&self.loops);
+        let senders = Arc::clone(&self.signal_senders);
+        let ws_supervised = workspace_id.to_string();
+        tokio::spawn(async move {
+            let result = join_handle.await;
+            if loops.get(&ws_supervised).is_some() {
+                match &result {
+                    Ok(()) => info!(ws_supervised, "Heartbeat loop exited unexpectedly, reaping"),
+                    Err(e) => error!(ws_supervised, error = %e, "Heartbeat loop crashed, reaping"),
+                }
+                loops.remove(&ws_supervised);
+                senders.remove(&ws_supervised);
+            }
+            let _ = exit_tx.send(());
+        });
+
         self.signal_senders.insert(workspace_id.to_string(), signal_tx);
         self.loops.insert(
             workspace_id.to_string(),
-            LoopHandle {
-                cancel_tx,
-                _join_handle: join_handle,
-            },
+            LoopHandle { cancel_tx, abort_handle, exit_rx },
         );
 
         info!(workspace_id, "Heartbeat loop started");
@@ -160,13 +224,9 @@ impl HeartbeatRunner {
     pub async fn stop(&self, workspace_id: &str) {
         if let Some((_, handle)) = self.loops.remove(workspace_id) {
             let _ = handle.cancel_tx.send(());
-            let abort_handle = handle._join_handle.abort_handle();
-            tokio::select! {
-                _ = handle._join_handle => {}
-                _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
-                    warn!(workspace_id, "Heartbeat loop did not exit in 5s, aborting");
-                    abort_handle.abort();
-                }
+            if tokio::time::timeout(std::time::Duration::from_secs(5), handle.exit_rx).await.is_err() {
+                warn!(workspace_id, "Heartbeat loop did not exit in 5s, aborting");
+                handle.abort_handle.abort();
             }
         }
         self.signal_senders.remove(workspace_id);
@@ -184,9 +244,7 @@ impl HeartbeatRunner {
         let ws_id = signal.workspace_id.clone();
         match self.signal_senders.get(&ws_id) {
             Some(sender) => {
-                if let Err(e) = sender.send(LoopSignal::External(signal)) {
-                    warn!(workspace_id = %ws_id, error = %e, "Failed to send heartbeat signal");
-                }
+                send_wakeup(&sender, LoopSignal::External(signal), &ws_id);
             }
             None => {
                 debug!(workspace_id = %ws_id, "No active heartbeat loop, skipping signal");
@@ -197,7 +255,7 @@ impl HeartbeatRunner {
     /// Notify a running loop to reload tasks from the repository.
     pub fn notify_tasks_changed(&self, workspace_id: &str) {
         if let Some(sender) = self.signal_senders.get(workspace_id) {
-            let _ = sender.send(LoopSignal::ReloadTasks);
+            send_control(&sender, LoopSignal::ReloadTasks, workspace_id);
             info!(workspace_id, "Heartbeat loop notified: tasks changed");
         }
     }
@@ -205,7 +263,7 @@ impl HeartbeatRunner {
     /// Notify a running loop to re-read TrustConfig.
     fn notify_config_changed(&self, workspace_id: &str) {
         if let Some(sender) = self.signal_senders.get(workspace_id) {
-            let _ = sender.send(LoopSignal::ReloadConfig);
+            send_control(&sender, LoopSignal::ReloadConfig, workspace_id);
         }
     }
 
@@ -419,6 +477,103 @@ mod tests {
         let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
         runner.start("ws_1").await;
         assert_eq!(runner.active_loop_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_pending_starts_deduped() {
+        // Repeated start() calls while the pool is down must not pile up
+        // duplicate entries — each would trigger a redundant stop+start when
+        // the pool arrives.
+        let repo = Arc::new(MockTaskRepo::new(vec![HeartbeatTask {
+            id: 1,
+            workspace_id: "ws_1".into(),
+            priority: "high".into(),
+            text: "test".into(),
+            paused: false,
+            version: 1,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }]));
+        let publisher = make_publisher();
+        let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
+        runner.start("ws_1").await;
+        runner.start("ws_1").await;
+        runner.start("ws_1").await;
+        assert_eq!(runner.pending_starts.read().await.len(), 1);
+    }
+
+    #[test]
+    fn wakeup_signal_drops_when_channel_full() {
+        // Wakeups are coalescing: a full channel means a wakeup is already
+        // pending, so the new one is redundant. Unbounded growth is not ok.
+        let (tx, _rx) = mpsc::channel::<LoopSignal>(1);
+        assert!(send_wakeup(&tx, LoopSignal::ReloadConfig, "ws"));
+        assert!(
+            !send_wakeup(&tx, LoopSignal::ReloadConfig, "ws"),
+            "full channel must drop the duplicate wakeup"
+        );
+    }
+
+    #[tokio::test]
+    async fn control_signal_is_not_lost_when_channel_full() {
+        // Reload signals carry state (task edits); dropping them loses user
+        // changes. When the channel is momentarily full they must still be
+        // delivered once space frees up.
+        let (tx, mut rx) = mpsc::channel::<LoopSignal>(1);
+        tx.try_send(LoopSignal::ReloadConfig).unwrap();
+        send_control(&tx, LoopSignal::ReloadTasks, "ws");
+
+        assert!(matches!(rx.recv().await, Some(LoopSignal::ReloadConfig)));
+        assert!(
+            matches!(rx.recv().await, Some(LoopSignal::ReloadTasks)),
+            "control signal must be delivered after space frees"
+        );
+    }
+
+    struct PanicPool;
+
+    #[async_trait::async_trait]
+    impl AgentPoolLike for PanicPool {
+        async fn get_or_create_agent(&self, _workspace_id: &str) -> anyhow::Result<String> {
+            Ok("agent".into())
+        }
+        async fn send_message(&self, _workspace_id: &str, _prompt: &str) -> anyhow::Result<crate::agent::pool::AgentRunOutput> {
+            panic!("simulated loop crash");
+        }
+        async fn shutdown(&self) {}
+        fn set_trust_config(&self, _workspace_id: &str, _config: TrustConfig) {}
+        fn cleanup_idle(&self) -> usize {
+            0
+        }
+    }
+
+    #[tokio::test]
+    async fn panicking_loop_is_reaped_by_supervisor() {
+        // A crashed loop must not linger in the maps: its entry and signal
+        // sender are removed so later starts/signals behave correctly.
+        let repo = Arc::new(MockTaskRepo::new(vec![HeartbeatTask {
+            id: 1,
+            workspace_id: "ws_1".into(),
+            priority: "high".into(),
+            text: "test".into(),
+            paused: false,
+            version: 1,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }]));
+        let publisher = make_publisher();
+        let runner = HeartbeatRunner::new(repo, publisher, HeartbeatConfig::default());
+        runner.set_agent_pool(Arc::new(PanicPool)).await;
+        runner.start("ws_1").await;
+
+        for _ in 0..100 {
+            if runner.active_loop_count() == 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert_eq!(runner.active_loop_count(), 0, "panicked loop must be reaped");
+        assert!(runner.signal_senders.get("ws_1").is_none(), "dead loop's sender must be removed");
     }
 
     #[tokio::test]
