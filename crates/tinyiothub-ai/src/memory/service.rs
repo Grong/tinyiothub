@@ -68,6 +68,25 @@ impl MemoryService {
             return Ok(());
         }
 
+        let result = self
+            .reflect_turn_inner(workspace_id, agent_id, session_key, model, messages)
+            .await;
+        if result.is_err() {
+            // A failed attempt must not mark the session as processed —
+            // otherwise a retry inside the dedup window is silently skipped.
+            self.last_reflection.remove(session_key);
+        }
+        result
+    }
+
+    async fn reflect_turn_inner(
+        &self,
+        workspace_id: &str,
+        agent_id: &str,
+        session_key: &str,
+        model: &str,
+        messages: &[ChatTurnMessage],
+    ) -> Result<(), MemoryError> {
         let active_memories = self
             .memory_store
             .list_active(workspace_id, agent_id)
@@ -385,6 +404,56 @@ mod tests {
         ) -> tinyiothub_core::error::Result<u64> {
             Ok(0)
         }
+    }
+
+    struct FlakyLlmProvider {
+        calls: Mutex<usize>,
+        fail_first: usize,
+    }
+
+    #[async_trait]
+    impl LlmProvider for FlakyLlmProvider {
+        async fn chat(
+            &self,
+            _system: Option<&str>,
+            _prompt: &str,
+            _model: &str,
+            _temperature: f32,
+        ) -> anyhow::Result<LlmResponse> {
+            let mut calls = self.calls.lock().unwrap();
+            *calls += 1;
+            if *calls <= self.fail_first {
+                anyhow::bail!("transient llm error");
+            }
+            Ok(LlmResponse {
+                content: "NO_FACTS".into(),
+                metadata: Default::default(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_reflection_does_not_block_retry_within_dedup_window() {
+        // A transient LLM failure must not mark the session as processed —
+        // otherwise a retry inside the dedup window is silently skipped and
+        // the turn's facts are lost.
+        let llm = Arc::new(FlakyLlmProvider {
+            calls: Mutex::new(0),
+            fail_first: 1,
+        });
+        let service = MemoryService::new(llm.clone(), Arc::new(MockMemoryStore));
+        let messages = vec![ChatTurnMessage {
+            role: "user".into(),
+            content: "hi".into(),
+            timestamp: None,
+        }];
+
+        let first = service.reflect_conversation_turn("ws", "ag", "sess", "m", &messages).await;
+        assert!(first.is_err(), "first attempt fails (transient)");
+
+        let second = service.reflect_conversation_turn("ws", "ag", "sess", "m", &messages).await;
+        assert!(second.is_ok(), "retry within the window must not be deduped after a failure");
+        assert_eq!(*llm.calls.lock().unwrap(), 2, "retry must reach the LLM");
     }
 
     #[tokio::test]

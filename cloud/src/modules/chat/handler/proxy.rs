@@ -75,7 +75,9 @@ pub async fn chat_stream(
     }
 
     let message = req.message.clone();
-    let run_id = req.run_id.clone();
+    // Server-minted run_id: the client learns it from the first SSE event
+    // (every ChatEvent carries runId) and uses it for /chat/abort.
+    let run_id = uuid::Uuid::new_v4().to_string();
     let agent_id = req.agent_id.clone();
 
     let mut rx = match state

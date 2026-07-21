@@ -45,6 +45,7 @@ fn extract_json(raw: &str) -> String {
     }
     if let Some(start) = raw.find('{')
         && let Some(end) = raw.rfind('}')
+        && end >= start
     {
         return raw[start..=end].to_string();
     }
@@ -144,6 +145,15 @@ mod tests {
     fn test_parse_malformed_json() {
         let raw = "not json at all";
         let result = parse_healing_report(raw, "ws1");
+        assert_eq!(result.status, HeartbeatStatus::Error);
+        assert!(result.error.is_some());
+    }
+
+    #[test]
+    fn extract_json_does_not_panic_when_brace_precedes_bracket_open() {
+        // "} ... {" — rfind('}') lands before find('{'); slicing [start..=end]
+        // with end < start panics. Garbage LLM output must yield Error, not a crash.
+        let result = parse_healing_report("} trailing junk {", "ws1");
         assert_eq!(result.status, HeartbeatStatus::Error);
         assert!(result.error.is_some());
     }

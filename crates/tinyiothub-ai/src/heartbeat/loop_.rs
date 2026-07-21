@@ -136,7 +136,16 @@ pub async fn heartbeat_loop(
                     }
                 }
             }
-            _ = tokio::time::sleep(interval), if !paused => {}
+            _ = tokio::time::sleep(interval) => {
+                // Cooldown: a paused loop retries after one interval instead of
+                // waiting forever for an external signal that may never come.
+                if paused {
+                    info!(workspace_id, "Heartbeat loop auto-resuming after cooldown");
+                    paused = false;
+                    metrics.paused_loops.fetch_sub(1, Ordering::Relaxed);
+                    consecutive_failures = 0;
+                }
+            }
         }
     }
 }
@@ -498,6 +507,68 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         assert!(resumed, "resume must clear the paused metric");
+
+        let _ = cancel_tx.send(());
+        handle.await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn paused_loop_auto_resumes_after_cooldown() {
+        use std::sync::atomic::Ordering;
+
+        // A paused loop that only resumes on external signals stays dead
+        // forever when no signal comes — it must retry after a cooldown.
+        let metrics = Arc::new(crate::heartbeat::metrics::Metrics::new());
+        let tasks = Arc::new(RwLock::new(vec![sample_task()]));
+        let trust = Arc::new(RwLock::new(TrustConfig::default()));
+        let pool: Arc<dyn AgentPoolLike> = Arc::new(FailPool);
+        let repo: Arc<dyn crate::heartbeat::repo::HeartbeatTaskRepository> = Arc::new(NoopRepo);
+        let publisher = Arc::new(AiEventPublisher::new(Arc::new(tinyiothub_runtime::EventBus::new())));
+        let config = HeartbeatConfig {
+            enabled: true,
+            interval_minutes: 1,
+        };
+        let (signal_tx, signal_rx) = mpsc::channel::<LoopSignal>(16);
+        let (cancel_tx, cancel_rx) = oneshot::channel();
+
+        let m = metrics.clone();
+        let handle = tokio::spawn(heartbeat_loop(
+            "ws".into(),
+            tasks,
+            trust,
+            Some(pool),
+            repo,
+            publisher,
+            config,
+            signal_rx,
+            cancel_rx,
+            m,
+        ));
+
+        for _ in 0..4 {
+            signal_tx.send(LoopSignal::External(sample_signal())).await.unwrap();
+        }
+        for _ in 0..100 {
+            if metrics.paused_loops.load(Ordering::Relaxed) == 1 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(metrics.paused_loops.load(Ordering::Relaxed), 1, "loop must be paused");
+
+        // No signal arrives; the cooldown interval elapses.
+        tokio::time::advance(Duration::from_secs(61)).await;
+        for _ in 0..100 {
+            if metrics.paused_loops.load(Ordering::Relaxed) == 0 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            metrics.paused_loops.load(Ordering::Relaxed),
+            0,
+            "paused loop must auto-resume after the cooldown interval"
+        );
 
         let _ = cancel_tx.send(());
         handle.await.unwrap();

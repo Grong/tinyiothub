@@ -49,7 +49,10 @@ pub fn contains_injection(text: &str) -> bool {
 /// Parse the LLM's raw reflection response into a list of MemoryFacts.
 pub fn parse_facts(raw: &str) -> Vec<MemoryFact> {
     let text = raw.trim();
-    if text.contains("NO_FACTS") || text.contains("FACT: 无") || text.contains("FACT:无") {
+    // Exact match only: substring checks discard legitimate facts that merely
+    // mention the marker. Bare "FACT: 无" lines are handled per-line by
+    // parse_simple_fact (content == "无" → None).
+    if text == "NO_FACTS" {
         return vec![];
     }
 
@@ -253,6 +256,23 @@ mod tests {
         assert!(parse_facts("NO_FACTS").is_empty());
         assert!(parse_facts("FACT: 无").is_empty());
         assert!(parse_facts("FACT:无").is_empty());
+    }
+
+    #[test]
+    fn no_facts_marker_requires_exact_match() {
+        // Substring matching discards legitimate facts that merely mention the
+        // marker — only a bare NO_FACTS response means "no facts".
+        let output = parse_facts("FACT: 系统告警码包含NO_FACTS字样");
+        assert_eq!(output.len(), 1, "fact containing the marker text must survive");
+    }
+
+    #[test]
+    fn fact_starting_with_wu_is_not_dropped() {
+        // "FACT: 无" substring matching nukes "FACT: 无论如何…" — a real fact
+        // that happens to start with 无.
+        let output = parse_facts("FACT: 无论如何都要每天检查设备");
+        assert_eq!(output.len(), 1);
+        assert_eq!(output[0].fact, "无论如何都要每天检查设备");
     }
 
     #[test]

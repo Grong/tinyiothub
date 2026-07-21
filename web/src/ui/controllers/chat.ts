@@ -120,12 +120,11 @@ export function sendChatMessage(
   state: ChatState,
   message: string,
   attachments?: ChatAttachment[],
-): { runId: string } | null {
+): void {
   const msg = message.trim();
-  if (!msg && (!attachments || attachments.length === 0)) return null;
+  if (!msg && (!attachments || attachments.length === 0)) return;
 
   const now = Date.now();
-  const runId = crypto.randomUUID();
 
   // Optimistic: add user message immediately
   const contentBlocks: ChatMessage["content"] = [];
@@ -136,10 +135,11 @@ export function sendChatMessage(
     { role: "user", content: contentBlocks, timestamp: now },
   ];
 
-  // Reset streaming state
+  // Reset streaming state. run_id is minted server-side and adopted from the
+  // first SSE event (see handleChatEvent).
   state.chatSending = true;
   state.lastError = null;
-  state.chatRunId = runId;
+  state.chatRunId = null;
   state.chatStream = "";
   state.chatStreamStartedAt = now;
   state.chatStreamSegments = [];
@@ -161,7 +161,6 @@ export function sendChatMessage(
       agent_id: state.agentId,
       session_key: state.sessionKey,
       message: msg,
-      run_id: runId,
       system_prompt: null,
     }),
     signal: controller.signal,
@@ -217,8 +216,6 @@ export function sendChatMessage(
       state.chatSending = false;
       state.onChange?.();
     });
-
-  return { runId };
 }
 
 // ============================================================================
@@ -227,6 +224,12 @@ export function sendChatMessage(
 
 export function handleChatEvent(state: ChatState, payload: ChatEventPayload): void {
   if (payload.sessionKey !== state.sessionKey) return;
+
+  // The server mints run_id; latch onto the id from the first event of the
+  // run so abort targets the right run.
+  if (payload.runId && !state.chatRunId) {
+    state.chatRunId = payload.runId;
+  }
 
   // Cross-run: final from a different run → append as message
   if (payload.runId && state.chatRunId && payload.runId !== state.chatRunId) {
