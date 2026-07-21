@@ -85,6 +85,7 @@ fn parse_heartbeat_md(content: &str) -> Vec<HeartbeatTask> {
     tasks
 }
 
+#[cfg(test)]
 pub(crate) fn build_heartbeat_md(tasks: &[HeartbeatTask]) -> String {
     let mut s = "# Periodic Tasks\n".to_string();
     for task in tasks {

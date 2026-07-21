@@ -809,10 +809,11 @@ mod tests {
         approve_and_execute(&pool, "ws_1", "p1", &registry).await.expect("approve");
 
         // Handler ran with the persisted parameters
-        let calls = calls.lock().unwrap();
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0]["properties"]["target_temp"], 22);
-        drop(calls);
+        {
+            let calls = calls.lock().unwrap();
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0]["properties"]["target_temp"], 22);
+        }
 
         // Status flipped to approved
         assert_eq!(proposal_status(&pool, "p1").await, "approved");
