@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.4.1] - 2026-07-21
+
+### Fixed
+
+- **Chat session isolation**: chat stream, history, and abort now reject session keys belonging to other workspaces — an unscoped token can no longer read or stream into another tenant's conversation
+- **Approval transparency**: pending proposals now show the exact tool parameters before approval, so operators no longer blind-sign LLM-generated actions; approved proposals execute under the proper MCP authorization context
+- **Abort feedback**: aborting an unknown or already-finished chat run now returns an error instead of silently succeeding
+- **Heartbeat tasks source of truth**: tasks live in the database (legacy `HEARTBEAT.md` auto-migrates once), persistence aligned with the agent_actions schema, and new workspaces are seeded with the default task set
+- **Trust enforcement**: tool trust is evaluated at execution time with declared safety levels and per-workspace DB configuration, closing paths where untrusted tools could run
+- **Event publishing reliability**: AI events publish through a bounded serialized queue with graceful shutdown draining, DLQ failures now surface instead of vanishing, and heartbeat metrics are wired end to end
+- **Memory pipeline hardening**: reflection sanitization bypass and memory-poisoning paths closed; dedup tightened
+- **Heartbeat lifecycle**: workspace delete ordering, loop signal channels, loop supervisor, and agent-pool locking hardened against races and leaks
+- **Run identity**: chat run IDs are server-minted and returned via the first SSE event, so clients can abort the exact run they started
+- **Robustness batch**: malformed LLM JSON guarded, skill loader input limits added, paused-task recovery fixed, timeout hierarchy aligned, dead APIs removed, and orchestrator start/shutdown made idempotent
+
 ## [0.4.4.0] - 2026-07-02
 
 ### Added
