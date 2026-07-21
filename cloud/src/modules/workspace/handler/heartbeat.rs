@@ -12,9 +12,8 @@ use axum::{
     extract::{Extension, Path, State},
 };
 use serde::{Deserialize, Serialize};
-use tinyiothub_web::response::ApiResponseBuilder;
-
 use tinyiothub_ai::heartbeat::types::NewHeartbeatTask;
+use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
     modules::agent::heartbeat::{
@@ -546,9 +545,8 @@ async fn approve_and_execute(
     let device_id = parsed["deviceId"].as_str().map(str::to_string);
     let params = parsed.get("parameters").cloned().unwrap_or(serde_json::json!({}));
 
-    let handler = registry
-        .get_owned(&tool_name)
-        .ok_or_else(|| format!("工具未注册: {}", tool_name))?;
+    let handler =
+        registry.get_owned(&tool_name).ok_or_else(|| format!("工具未注册: {}", tool_name))?;
 
     // Atomic flip: only a row still pending transitions, so a second approve
     // affects 0 rows and never re-executes.
@@ -680,11 +678,7 @@ async fn load_tasks(state: &AppState, workspace_id: &str) -> Vec<HeartbeatTask> 
             Ok(tasks) => {
                 return tasks
                     .into_iter()
-                    .map(|t| HeartbeatTask {
-                        priority: t.priority,
-                        text: t.text,
-                        paused: t.paused,
-                    })
+                    .map(|t| HeartbeatTask { priority: t.priority, text: t.text, paused: t.paused })
                     .collect();
             }
             Err(e) => {
@@ -717,12 +711,15 @@ fn parse_action_content(content: &str) -> (u32, Option<String>) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use async_trait::async_trait;
-    use sqlx::SqlitePool;
     use std::sync::{Arc, Mutex};
 
-    use crate::modules::mcp::tool_registry::{HandlerRegistry, InputSchema, ToolError, ToolHandler};
+    use async_trait::async_trait;
+    use sqlx::SqlitePool;
+
+    use super::*;
+    use crate::modules::mcp::tool_registry::{
+        HandlerRegistry, InputSchema, ToolError, ToolHandler,
+    };
 
     #[derive(Clone)]
     struct RecordingHandler {
@@ -821,12 +818,11 @@ mod tests {
         assert_eq!(proposal_status(&pool, "p1").await, "approved");
 
         // Outcome recorded as an auto_executed row so the log UI shows it
-        let (content,): (String,) = sqlx::query_as(
-            "SELECT content FROM agent_actions WHERE action_type = 'auto_executed'",
-        )
-        .fetch_one(&pool)
-        .await
-        .expect("outcome row");
+        let (content,): (String,) =
+            sqlx::query_as("SELECT content FROM agent_actions WHERE action_type = 'auto_executed'")
+                .fetch_one(&pool)
+                .await
+                .expect("outcome row");
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(parsed["tool"], "write_properties");
         assert_eq!(parsed["deviceId"], "dev_1");
@@ -858,12 +854,11 @@ mod tests {
         let result = approve_and_execute(&pool, "ws_1", "p1", &registry).await;
         assert!(result.is_err(), "execution failure must surface");
 
-        let (content,): (String,) = sqlx::query_as(
-            "SELECT content FROM agent_actions WHERE action_type = 'auto_executed'",
-        )
-        .fetch_one(&pool)
-        .await
-        .expect("outcome row");
+        let (content,): (String,) =
+            sqlx::query_as("SELECT content FROM agent_actions WHERE action_type = 'auto_executed'")
+                .fetch_one(&pool)
+                .await
+                .expect("outcome row");
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(parsed["success"], false);
         assert!(parsed["summary"].as_str().unwrap().contains("device offline"));
@@ -896,7 +891,8 @@ mod tests {
         })
         .to_string();
 
-        let p = proposal_from_row(&content, "2026-07-20 10:00:00".to_string()).expect("pending proposal maps");
+        let p = proposal_from_row(&content, "2026-07-20 10:00:00".to_string())
+            .expect("pending proposal maps");
 
         assert_eq!(p.proposal_id, "p1");
         assert_eq!(p.parameters["properties"]["target_temp"], 22);

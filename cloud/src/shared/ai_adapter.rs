@@ -44,10 +44,7 @@ impl AgentPoolLike for CloudAgentPoolAdapter {
             .await
             .map_err(|e| anyhow::anyhow!("LLM error: {}", e))?;
         let tool_calls = result.tool_calls.into_iter().map(map_tool_call).collect();
-        Ok(tinyiothub_ai::agent::pool::AgentRunOutput {
-            text: result.final_text,
-            tool_calls,
-        })
+        Ok(tinyiothub_ai::agent::pool::AgentRunOutput { text: result.final_text, tool_calls })
     }
 
     async fn shutdown(&self) {

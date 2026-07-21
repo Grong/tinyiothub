@@ -172,9 +172,7 @@ impl SessionRepository for SqliteSessionRepository {
             .execute(&mut *tx)
             .await
             .map_err(|e| SessionError::RepositoryError(e.to_string()))?;
-        tx.commit()
-            .await
-            .map_err(|e| SessionError::RepositoryError(e.to_string()))?;
+        tx.commit().await.map_err(|e| SessionError::RepositoryError(e.to_string()))?;
 
         if result.rows_affected() == 0 {
             return Err(SessionError::NotFound(session_key.to_string()));
@@ -320,13 +318,12 @@ mod tests {
 
         repo.delete(&session.session_key).await.unwrap();
 
-        let remaining: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM chat_messages WHERE session_key = ?",
-        )
-        .bind(&session.session_key)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let remaining: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM chat_messages WHERE session_key = ?")
+                .bind(&session.session_key)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(remaining.0, 0, "messages must be deleted with the session");
     }
 

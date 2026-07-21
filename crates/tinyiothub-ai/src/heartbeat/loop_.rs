@@ -57,7 +57,16 @@ pub async fn heartbeat_loop(
 
             if !active_tasks.is_empty() {
                 let task_refs: Vec<&HeartbeatTask> = active_tasks.iter().collect();
-                match run_heartbeat_tick(&workspace_id, &task_refs, &trust, &agent_pool, &event_publisher, &metrics).await {
+                match run_heartbeat_tick(
+                    &workspace_id,
+                    &task_refs,
+                    &trust,
+                    &agent_pool,
+                    &event_publisher,
+                    &metrics,
+                )
+                .await
+                {
                     Ok(_) => consecutive_failures = 0,
                     Err(e) => {
                         consecutive_failures += 1;
@@ -166,8 +175,7 @@ async fn run_heartbeat_tick(
     let prompt = build_heartbeat_prompt(workspace_id, tasks, trust_config);
 
     let started = std::time::Instant::now();
-    let output = match tokio::time::timeout(TICK_TIMEOUT, agent_pool.send_message(workspace_id, &prompt)).await
-    {
+    let output = match tokio::time::timeout(TICK_TIMEOUT, agent_pool.send_message(workspace_id, &prompt)).await {
         Ok(Ok(output)) => {
             metrics.record_llm_call(started.elapsed().as_millis() as u64, true);
             output
@@ -264,10 +272,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl tinyiothub_core::event::EventHandler for RecordingHandler {
-        async fn handle(
-            &self,
-            event: &tinyiothub_core::models::event::Event,
-        ) -> tinyiothub_core::error::Result<()> {
+        async fn handle(&self, event: &tinyiothub_core::models::event::Event) -> tinyiothub_core::error::Result<()> {
             self.seen.lock().unwrap().push(event.content().to_plain_text());
             Ok(())
         }

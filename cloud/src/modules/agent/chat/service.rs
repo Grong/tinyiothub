@@ -195,15 +195,21 @@ pub async fn send_message(
                 });
             }
             seed.extend(
-                prior
-                    .into_iter()
-                    .map(|(role, content)| zeroclaw::providers::traits::ChatMessage { role, content }),
+                prior.into_iter().map(|(role, content)| zeroclaw::providers::traits::ChatMessage {
+                    role,
+                    content,
+                }),
             );
             ag.seed_history(&seed);
         }
-        if let Err(e) =
-            super::history::append_message(&db_pool, &session_key, "user", &reflect_message, &run_id)
-                .await
+        if let Err(e) = super::history::append_message(
+            &db_pool,
+            &session_key,
+            "user",
+            &reflect_message,
+            &run_id,
+        )
+        .await
         {
             tracing::warn!(error = %e, %session_key, "Failed to persist user message");
         }
@@ -253,9 +259,14 @@ pub async fn send_message(
         };
 
         if let Some(ref assistant_text) = final_text
-            && let Err(e) =
-                super::history::append_message(&db_pool, &session_key, "assistant", assistant_text, &run_id)
-                    .await
+            && let Err(e) = super::history::append_message(
+                &db_pool,
+                &session_key,
+                "assistant",
+                assistant_text,
+                &run_id,
+            )
+            .await
         {
             tracing::warn!(error = %e, %session_key, "Failed to persist assistant message");
         }

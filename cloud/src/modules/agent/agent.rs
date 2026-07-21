@@ -262,18 +262,15 @@ impl AgentPool {
             workspace_id.to_string(),
         ));
 
-        let provider = crate::shared::config::create_minimax_provider().map_err(|e| {
-            AgentError::BuildError(format!("Failed to create provider: {}", e))
-        })?;
+        let provider = crate::shared::config::create_minimax_provider()
+            .map_err(|e| AgentError::BuildError(format!("Failed to create provider: {}", e)))?;
 
         let ws_dir = crate::shared::paths::workspace_dir(workspace_id);
 
         let ws_svc = self.workspace_service.read().await.clone();
         let ks_svc = self.knowledge_service.read().await.clone();
-        let trust_config = self
-            .trust_configs
-            .get(workspace_id)
-            .map(|e| std::sync::Arc::new(e.value().clone()));
+        let trust_config =
+            self.trust_configs.get(workspace_id).map(|e| std::sync::Arc::new(e.value().clone()));
         let tools = tool_service::resolve_tools_for_agent(
             &config,
             workspace_id,
@@ -704,9 +701,7 @@ impl AgentPool {
         };
 
         match result {
-            Ok((final_text, _conversation)) => {
-                Ok(StreamingRunResult { final_text, tool_calls })
-            }
+            Ok((final_text, _conversation)) => Ok(StreamingRunResult { final_text, tool_calls }),
             Err(e) => Err(AgentError::RequestFailed(e.to_string())),
         }
     }
@@ -787,12 +782,23 @@ mod tests {
     async fn chat_history_with_unscoped_token_reads_persisted_messages() {
         let pool = test_agent_pool().await;
         let key = "agent:ws1:agent_main/s1";
-        crate::modules::agent::chat::history::ensure_session(&pool.db_pool, key, "ws1", "agent_main")
-            .await
-            .unwrap();
-        crate::modules::agent::chat::history::append_message(&pool.db_pool, key, "user", "hello", "r1")
-            .await
-            .unwrap();
+        crate::modules::agent::chat::history::ensure_session(
+            &pool.db_pool,
+            key,
+            "ws1",
+            "agent_main",
+        )
+        .await
+        .unwrap();
+        crate::modules::agent::chat::history::append_message(
+            &pool.db_pool,
+            key,
+            "user",
+            "hello",
+            "r1",
+        )
+        .await
+        .unwrap();
 
         // Empty authorized_workspace = unscoped (admin) token: no workspace
         // check, history served straight from the DB.
@@ -821,8 +827,6 @@ mod tests {
             matches!(err, AgentError::NotFound(_)),
             "unknown run_id must not silently succeed: {err:?}"
         );
-        pool.chat_abort("agent_main", "agent:ws1:agent_main/s1", None, "")
-            .await
-            .unwrap();
+        pool.chat_abort("agent_main", "agent:ws1:agent_main/s1", None, "").await.unwrap();
     }
 }

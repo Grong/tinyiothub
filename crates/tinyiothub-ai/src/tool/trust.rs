@@ -145,11 +145,7 @@ pub fn evaluate_tool_trust(config: &TrustConfig, tool_name: &str) -> TrustDecisi
 /// Same as [`evaluate_tool_trust`] but with an explicitly declared safety.
 /// The declared safety is authoritative; the tool name is only used for
 /// block-list matching and messages.
-pub fn evaluate_tool_trust_with_safety(
-    config: &TrustConfig,
-    tool_name: &str,
-    safety: ToolSafety,
-) -> TrustDecision {
+pub fn evaluate_tool_trust_with_safety(config: &TrustConfig, tool_name: &str, safety: ToolSafety) -> TrustDecision {
     // 1. Explicit block list
     if config.blocked_tools.iter().any(|t| t == tool_name) {
         return TrustDecision::Block {
@@ -168,9 +164,10 @@ pub fn evaluate_tool_trust_with_safety(
     let category = safety_category(safety);
     if !matches!(safety, ToolSafety::Destructive)
         && !config.allowed_tool_categories.is_empty()
-        && !config.allowed_tool_categories.iter().any(|c| {
-            c == category || (category == "read" && c == "query")
-        })
+        && !config
+            .allowed_tool_categories
+            .iter()
+            .any(|c| c == category || (category == "read" && c == "query"))
     {
         return TrustDecision::Propose {
             reason: format!(

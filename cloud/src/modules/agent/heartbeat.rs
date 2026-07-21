@@ -208,13 +208,16 @@ mod tests {
         assert!(parsed[1].paused);
     }
 
-    async fn migration_test_repo() -> crate::modules::agent::heartbeat_repo::SqliteHeartbeatTaskRepository {
+    async fn migration_test_repo()
+    -> crate::modules::agent::heartbeat_repo::SqliteHeartbeatTaskRepository {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect(":memory:")
             .await
             .expect("in-memory sqlite");
-        for stmt in include_str!("../../../migrations/20260629000001_create_heartbeat_tasks.sql").split(';') {
+        for stmt in
+            include_str!("../../../migrations/20260629000001_create_heartbeat_tasks.sql").split(';')
+        {
             let stmt = stmt.trim();
             if !stmt.is_empty() {
                 sqlx::query(stmt).execute(&pool).await.expect("apply migration");
@@ -226,7 +229,8 @@ mod tests {
     #[tokio::test]
     async fn test_migrate_file_tasks_to_db_once() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("HEARTBEAT.md"), "- [high] 检查设备\n- [low|paused] 日报").unwrap();
+        std::fs::write(dir.path().join("HEARTBEAT.md"), "- [high] 检查设备\n- [low|paused] 日报")
+            .unwrap();
         let repo = migration_test_repo().await;
 
         let migrated = migrate_file_tasks_to_db(&repo, "ws_1", dir.path()).await.unwrap();

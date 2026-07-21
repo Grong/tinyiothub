@@ -130,7 +130,10 @@ impl WorkspaceHeartbeatConfig {
                 MIN_HEARTBEAT_INTERVAL_MINUTES
             ));
         }
-        Ok(Self { enabled, interval_minutes })
+        Ok(Self {
+            enabled,
+            interval_minutes,
+        })
     }
 
     pub fn from_db_json(json: Option<&str>) -> Option<Self> {
@@ -163,7 +166,10 @@ mod tests {
 
     #[test]
     fn workspace_config_roundtrips_json() {
-        let cfg = WorkspaceHeartbeatConfig { enabled: true, interval_minutes: 30 };
+        let cfg = WorkspaceHeartbeatConfig {
+            enabled: true,
+            interval_minutes: 30,
+        };
         let json = cfg.to_db_json();
         let loaded = WorkspaceHeartbeatConfig::from_db_json(Some(&json)).expect("parse");
         assert_eq!(loaded.interval_minutes, 30);

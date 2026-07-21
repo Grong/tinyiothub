@@ -332,10 +332,7 @@ mod tests {
 
     #[test]
     fn extract_workspace_from_standard_key() {
-        assert_eq!(
-            extract_workspace_from_session_key("agent:ws-1:agent_main/sess_9"),
-            "ws-1"
-        );
+        assert_eq!(extract_workspace_from_session_key("agent:ws-1:agent_main/sess_9"), "ws-1");
     }
 
     #[test]

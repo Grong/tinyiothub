@@ -2,9 +2,10 @@ pub mod knowledge;
 
 use std::sync::{Arc, Mutex};
 
-use tinyiothub_ai::event::{bus::AiEventPublisher, types::AiEvent};
-use tinyiothub_ai::heartbeat::repo::HeartbeatTaskRepository;
-use tinyiothub_ai::heartbeat::types::NewHeartbeatTask;
+use tinyiothub_ai::{
+    event::{bus::AiEventPublisher, types::AiEvent},
+    heartbeat::{repo::HeartbeatTaskRepository, types::NewHeartbeatTask},
+};
 
 use super::{
     repo::WorkspaceRepository,
@@ -107,7 +108,6 @@ impl WorkspaceService {
         Ok(())
     }
 
-
     pub async fn assign_device(&self, device_id: &str, workspace_id: &str) -> Result<()> {
         self.repository.assign_device(device_id, workspace_id).await
     }
@@ -193,9 +193,10 @@ impl WorkspaceService {
 
 #[cfg(test)]
 mod tests {
+    use tinyiothub_ai::heartbeat::repo::HeartbeatTaskRepository;
+
     use super::*;
     use crate::modules::workspace::types::WorkspaceResource;
-    use tinyiothub_ai::heartbeat::repo::HeartbeatTaskRepository;
 
     struct MockWorkspaceRepository {
         delete_fails: std::sync::atomic::AtomicBool,
@@ -314,16 +315,15 @@ mod tests {
         }
     }
 
-    async fn heartbeat_repo(
-    ) -> crate::modules::agent::heartbeat_repo::SqliteHeartbeatTaskRepository {
+    async fn heartbeat_repo() -> crate::modules::agent::heartbeat_repo::SqliteHeartbeatTaskRepository
+    {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect(":memory:")
             .await
             .expect("in-memory sqlite");
         for stmt in
-            include_str!("../../../migrations/20260629000001_create_heartbeat_tasks.sql")
-                .split(';')
+            include_str!("../../../migrations/20260629000001_create_heartbeat_tasks.sql").split(';')
         {
             let stmt = stmt.trim();
             if !stmt.is_empty() {

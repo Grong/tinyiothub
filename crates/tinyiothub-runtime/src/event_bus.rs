@@ -61,10 +61,7 @@ impl EventBus {
             Err(_) => {
                 // broadcast::send only fails when there are no receivers;
                 // slow subscribers drop via Lagged at their recv() side.
-                warn!(
-                    "Event {} broadcast skipped — no active subscribers",
-                    event.id()
-                );
+                warn!("Event {} broadcast skipped — no active subscribers", event.id());
             }
         }
 

@@ -139,9 +139,7 @@ impl ServiceManager {
             };
             let event_publisher = Arc::new(
                 tinyiothub_ai::event::bus::AiEventPublisher::new(app_state.event_bus.clone())
-                    .with_drop_notifier(Arc::new(
-                        tinyiothub_ai::event::bus::LoggingDropNotifier,
-                    )),
+                    .with_drop_notifier(Arc::new(tinyiothub_ai::event::bus::LoggingDropNotifier)),
             );
             let heartbeat_runner =
                 Arc::new(tinyiothub_ai::heartbeat::runner::HeartbeatRunner::new(
@@ -191,13 +189,12 @@ impl ServiceManager {
                 Ok(ws_ids) => {
                     for ws_id in &ws_ids {
                         let workspace_dir = crate::shared::paths::workspace_dir(ws_id);
-                        if let Err(e) =
-                            crate::modules::agent::heartbeat::migrate_file_tasks_to_db(
-                                heartbeat_runner.task_repo().as_ref(),
-                                ws_id,
-                                &workspace_dir,
-                            )
-                            .await
+                        if let Err(e) = crate::modules::agent::heartbeat::migrate_file_tasks_to_db(
+                            heartbeat_runner.task_repo().as_ref(),
+                            ws_id,
+                            &workspace_dir,
+                        )
+                        .await
                         {
                             warn!(%ws_id, "⚠️ Heartbeat task migration failed: {}", e);
                         }

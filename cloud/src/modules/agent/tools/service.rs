@@ -349,7 +349,8 @@ pub async fn resolve_tools_for_agent(
     knowledge_service: Option<Arc<KnowledgeService>>,
     trust_config: Option<Arc<TrustConfig>>,
 ) -> Vec<Box<dyn Tool>> {
-    let all_tools = load_all_tools_with_safety(workspace_id, workspace_service, knowledge_service).await;
+    let all_tools =
+        load_all_tools_with_safety(workspace_id, workspace_service, knowledge_service).await;
     let filtered: Vec<(Box<dyn Tool>, tinyiothub_ai::types::ToolSafety)> = all_tools
         .into_iter()
         .filter(|(tool, _)| {
@@ -675,8 +676,7 @@ mod tests {
         );
         assert_eq!(adapter.safety(), tinyiothub_ai::types::ToolSafety::Destructive);
 
-        let defaulted =
-            SafetyDeclaringHandler { tool_name: "get_thing", safety: None };
+        let defaulted = SafetyDeclaringHandler { tool_name: "get_thing", safety: None };
         let adapter = IoTToolAdapter::new(
             defaulted.name().to_string(),
             defaulted.description().to_string(),

@@ -448,11 +448,18 @@ mod tests {
             timestamp: None,
         }];
 
-        let first = service.reflect_conversation_turn("ws", "ag", "sess", "m", &messages).await;
+        let first = service
+            .reflect_conversation_turn("ws", "ag", "sess", "m", &messages)
+            .await;
         assert!(first.is_err(), "first attempt fails (transient)");
 
-        let second = service.reflect_conversation_turn("ws", "ag", "sess", "m", &messages).await;
-        assert!(second.is_ok(), "retry within the window must not be deduped after a failure");
+        let second = service
+            .reflect_conversation_turn("ws", "ag", "sess", "m", &messages)
+            .await;
+        assert!(
+            second.is_ok(),
+            "retry within the window must not be deduped after a failure"
+        );
         assert_eq!(*llm.calls.lock().unwrap(), 2, "retry must reach the LLM");
     }
 
@@ -628,7 +635,10 @@ mod tests {
             .unwrap();
         let prompts = llm.prompts.lock().unwrap();
         assert_eq!(prompts.len(), 1);
-        assert!(!prompts[0].contains("reveal secrets"), "injection line must be stripped");
+        assert!(
+            !prompts[0].contains("reveal secrets"),
+            "injection line must be stripped"
+        );
         assert!(prompts[0].contains("我的设备温度是多少"), "benign content must survive");
     }
 

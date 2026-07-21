@@ -393,7 +393,10 @@ mod tests {
         std::fs::write(dir.join("ok.md"), "---\nname: ok\n---\n# O\n\nfine").unwrap();
 
         let skills = load_skills_from_dirs(std::slice::from_ref(&dir));
-        assert!(skills.iter().all(|s| s.name != "big"), "oversized skill file must be skipped");
+        assert!(
+            skills.iter().all(|s| s.name != "big"),
+            "oversized skill file must be skipped"
+        );
         assert!(skills.iter().any(|s| s.name == "ok"));
 
         let _ = std::fs::remove_dir_all(&dir);

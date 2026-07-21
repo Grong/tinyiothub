@@ -208,9 +208,15 @@ impl AiEventHandler {
                                 error = %e,
                                 "Heartbeat persist exhausted retries, enqueuing to DLQ"
                             );
-                            if let Err(dlq_err) =
-                                dead_letter_heartbeat_result(dlq.as_ref(), &event_publisher, &ws_id, &result, &e.to_string(), max_attempts)
-                                    .await
+                            if let Err(dlq_err) = dead_letter_heartbeat_result(
+                                dlq.as_ref(),
+                                &event_publisher,
+                                &ws_id,
+                                &result,
+                                &e.to_string(),
+                                max_attempts,
+                            )
+                            .await
                             {
                                 error!(
                                     workspace_id = %ws_id,
@@ -299,7 +305,9 @@ async fn dead_letter_heartbeat_result(
 ) -> Result<(), String> {
     let mut enqueue_result = Ok(());
     if let Some(dlq) = dlq {
-        enqueue_result = dlq.enqueue(ws_id, "HeartbeatCompleted", &dlq_payload(result), last_error).await;
+        enqueue_result = dlq
+            .enqueue(ws_id, "HeartbeatCompleted", &dlq_payload(result), last_error)
+            .await;
     }
     event_publisher.publish(AiEvent::HeartbeatPersistFailed {
         workspace_id: ws_id.to_string(),
@@ -839,7 +847,10 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn dead_letter_enqueue_failure_is_returned_not_swallowed() {
         let (publisher, seen) = recording_publisher();
-        let dlq: Arc<dyn DeadLetterQueue> = Arc::new(MockDlq { fail: true, entries: Mutex::new(vec![]) });
+        let dlq: Arc<dyn DeadLetterQueue> = Arc::new(MockDlq {
+            fail: true,
+            entries: Mutex::new(vec![]),
+        });
 
         let r = dead_letter_heartbeat_result(Some(&dlq), &publisher, "ws_1", &sample_result(), "db down", 5).await;
         publisher.shutdown().await;
@@ -864,7 +875,10 @@ pub(crate) mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].0, "ws_1");
         assert_eq!(entries[0].1, "HeartbeatCompleted");
-        assert!(entries[0].2.contains("ws_1"), "payload must carry the result JSON, not an empty string");
+        assert!(
+            entries[0].2.contains("ws_1"),
+            "payload must carry the result JSON, not an empty string"
+        );
         assert!(entries[0].2.contains("done"));
         assert_eq!(entries[0].3, "db down");
     }

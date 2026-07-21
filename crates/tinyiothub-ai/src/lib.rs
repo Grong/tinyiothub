@@ -36,7 +36,7 @@ pub mod types {
     pub use crate::proposal::{Proposal, ProposalStatus};
     pub use crate::tool::registry::{OutputSchema, ToolDescriptor, ToolParameter, ToolRegistry};
     pub use crate::tool::trust::{
-        ToolSafety, TrustConfig, TrustDecision, TrustLevel, classify_tool_safety,
-        evaluate_tool_trust, evaluate_tool_trust_with_safety, risk_for_tool,
+        ToolSafety, TrustConfig, TrustDecision, TrustLevel, classify_tool_safety, evaluate_tool_trust,
+        evaluate_tool_trust_with_safety, risk_for_tool,
     };
 }

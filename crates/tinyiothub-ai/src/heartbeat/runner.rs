@@ -55,7 +55,10 @@ fn send_control(sender: &mpsc::Sender<LoopSignal>, signal: LoopSignal, workspace
             let ws = workspace_id.to_string();
             tokio::spawn(async move {
                 if sender.send(signal).await.is_err() {
-                    warn!(workspace_id = ws, "Heartbeat control signal undeliverable: channel closed");
+                    warn!(
+                        workspace_id = ws,
+                        "Heartbeat control signal undeliverable: channel closed"
+                    );
                 }
             });
         }
@@ -219,7 +222,11 @@ impl HeartbeatRunner {
         self.signal_senders.insert(workspace_id.to_string(), signal_tx);
         self.loops.insert(
             workspace_id.to_string(),
-            LoopHandle { cancel_tx, abort_handle, exit_rx },
+            LoopHandle {
+                cancel_tx,
+                abort_handle,
+                exit_rx,
+            },
         );
         self.metrics.active_loops.fetch_add(1, Ordering::Relaxed);
 
@@ -230,7 +237,10 @@ impl HeartbeatRunner {
     pub async fn stop(&self, workspace_id: &str) {
         if let Some((_, handle)) = self.loops.remove(workspace_id) {
             let _ = handle.cancel_tx.send(());
-            if tokio::time::timeout(std::time::Duration::from_secs(5), handle.exit_rx).await.is_err() {
+            if tokio::time::timeout(std::time::Duration::from_secs(5), handle.exit_rx)
+                .await
+                .is_err()
+            {
                 warn!(workspace_id, "Heartbeat loop did not exit in 5s, aborting");
                 handle.abort_handle.abort();
             }
@@ -388,7 +398,11 @@ mod tests {
             &self,
             workspace_id: &str,
         ) -> Result<Option<crate::heartbeat::types::WorkspaceHeartbeatConfig>, RepoError> {
-            Ok(if workspace_id == "ws_1" { self.hb_config.clone() } else { None })
+            Ok(if workspace_id == "ws_1" {
+                self.hb_config.clone()
+            } else {
+                None
+            })
         }
         async fn upsert(
             &self,
@@ -545,7 +559,11 @@ mod tests {
         async fn get_or_create_agent(&self, _workspace_id: &str) -> anyhow::Result<String> {
             Ok("agent".into())
         }
-        async fn send_message(&self, _workspace_id: &str, _prompt: &str) -> anyhow::Result<crate::agent::pool::AgentRunOutput> {
+        async fn send_message(
+            &self,
+            _workspace_id: &str,
+            _prompt: &str,
+        ) -> anyhow::Result<crate::agent::pool::AgentRunOutput> {
             panic!("simulated loop crash");
         }
         async fn shutdown(&self) {}
@@ -581,7 +599,10 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
         assert_eq!(runner.active_loop_count(), 0, "panicked loop must be reaped");
-        assert!(runner.signal_senders.get("ws_1").is_none(), "dead loop's sender must be removed");
+        assert!(
+            runner.signal_senders.get("ws_1").is_none(),
+            "dead loop's sender must be removed"
+        );
     }
 
     #[tokio::test]
@@ -665,7 +686,11 @@ mod tests {
         async fn get_or_create_agent(&self, _workspace_id: &str) -> anyhow::Result<String> {
             Ok("agent".into())
         }
-        async fn send_message(&self, _workspace_id: &str, _prompt: &str) -> anyhow::Result<crate::agent::pool::AgentRunOutput> {
+        async fn send_message(
+            &self,
+            _workspace_id: &str,
+            _prompt: &str,
+        ) -> anyhow::Result<crate::agent::pool::AgentRunOutput> {
             Ok(crate::agent::pool::AgentRunOutput {
                 text: r#"{"status":"complete","summary":"ok","proposals":[]}"#.into(),
                 tool_calls: vec![],
@@ -693,9 +718,15 @@ mod tests {
         );
 
         runner.stop("ws_1").await;
-        assert_eq!(runner.metrics.active_loops.load(std::sync::atomic::Ordering::Relaxed), 0);
         assert_eq!(
-            runner.metrics.loops_completed.load(std::sync::atomic::Ordering::Relaxed),
+            runner.metrics.active_loops.load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
+        assert_eq!(
+            runner
+                .metrics
+                .loops_completed
+                .load(std::sync::atomic::Ordering::Relaxed),
             1,
             "clean stop must count a completed loop"
         );
@@ -721,6 +752,9 @@ mod tests {
             1,
             "crashed loop must be counted as failed"
         );
-        assert_eq!(runner.metrics.active_loops.load(std::sync::atomic::Ordering::Relaxed), 0);
+        assert_eq!(
+            runner.metrics.active_loops.load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
     }
 }

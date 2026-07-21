@@ -6,8 +6,8 @@
 //! a real drop: it increments `events_dropped` and fires the `DropNotifier`.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tinyiothub_runtime::EventBus;
 use tokio::sync::mpsc;
@@ -358,10 +358,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl tinyiothub_core::event::EventHandler for RecordingHandler {
-        async fn handle(
-            &self,
-            event: &tinyiothub_core::models::event::Event,
-        ) -> tinyiothub_core::error::Result<()> {
+        async fn handle(&self, event: &tinyiothub_core::models::event::Event) -> tinyiothub_core::error::Result<()> {
             self.seen.lock().unwrap().push(event.content().to_plain_text());
             Ok(())
         }
@@ -376,7 +373,9 @@ mod tests {
     #[tokio::test]
     async fn test_publish_order_preserved() {
         let bus = Arc::new(EventBus::new());
-        let seen = Arc::new(RecordingHandler { seen: std::sync::Mutex::new(Vec::new()) });
+        let seen = Arc::new(RecordingHandler {
+            seen: std::sync::Mutex::new(Vec::new()),
+        });
         bus.register_handler(seen.clone());
         let publisher = AiEventPublisher::new(bus);
 
@@ -468,12 +467,18 @@ mod tests {
         let publisher = AiEventPublisher::with_queue_capacity(bus, 1);
 
         // e1 is picked up by the worker and blocks inside the handler.
-        publisher.publish(AiEvent::WorkspaceCreated { workspace_id: "ws_1".into() });
+        publisher.publish(AiEvent::WorkspaceCreated {
+            workspace_id: "ws_1".into(),
+        });
         started.notified().await;
 
         // e2 fills the queue (capacity 1), e3 overflows and must be counted.
-        publisher.publish(AiEvent::WorkspaceCreated { workspace_id: "ws_2".into() });
-        publisher.publish(AiEvent::WorkspaceCreated { workspace_id: "ws_3".into() });
+        publisher.publish(AiEvent::WorkspaceCreated {
+            workspace_id: "ws_2".into(),
+        });
+        publisher.publish(AiEvent::WorkspaceCreated {
+            workspace_id: "ws_3".into(),
+        });
         assert_eq!(publisher.events_dropped(), 1);
 
         release.notify_waiters();

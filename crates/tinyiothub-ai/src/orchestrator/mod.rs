@@ -191,7 +191,11 @@ mod tests {
         let started = Instant::now();
         orch.shutdown().await;
 
-        assert_eq!(orch.in_flight_retries(), 0, "shutdown must wait for retry tasks to finish");
+        assert_eq!(
+            orch.in_flight_retries(),
+            0,
+            "shutdown must wait for retry tasks to finish"
+        );
         assert!(
             started.elapsed() < Duration::from_secs(2),
             "shutdown must abort retry backoff sleeps, not wait them out"
