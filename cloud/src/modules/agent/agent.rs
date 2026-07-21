@@ -739,4 +739,78 @@ mod tests {
         assert_eq!(config.max_tokens, 4096);
         assert!(config.tool_denylist.contains(&"delete_device".to_string()));
     }
+
+    async fn test_db() -> SqlitePool {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        crate::shared::persistence::test_helpers::run_all_migrations(&pool).await.unwrap();
+        pool
+    }
+
+    async fn test_agent_pool() -> AgentPool {
+        let db = test_db().await;
+        let memory_store: Arc<dyn tinyiothub_core::memory::MemoryStore> =
+            Arc::new(tinyiothub_memory::SqliteAgentMemoryRepository::new(db.clone()));
+        AgentPool::new(db, memory_store, &crate::shared::config::AgentSettings::default())
+            .expect("test AgentPool")
+    }
+
+    #[tokio::test]
+    async fn chat_send_rejects_session_from_other_workspace() {
+        let pool = test_agent_pool().await;
+        let err = pool
+            .chat_send("agent_main", "agent:ws_other:agent_main/s1", "hi", "r1", "", "ws_mine")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AgentError::NotFound(_)));
+        // The workspace check must run before any agent is built.
+        assert_eq!(pool.pool_size(), 0);
+    }
+
+    #[tokio::test]
+    async fn chat_history_rejects_session_from_other_workspace() {
+        let pool = test_agent_pool().await;
+        let err = pool
+            .chat_history("agent_main", "agent:ws_other:agent_main/s1", 50, "ws_mine")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AgentError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn chat_history_with_unscoped_token_reads_persisted_messages() {
+        let pool = test_agent_pool().await;
+        let key = "agent:ws1:agent_main/s1";
+        crate::modules::agent::chat::history::ensure_session(&pool.db_pool, key, "ws1", "agent_main")
+            .await
+            .unwrap();
+        crate::modules::agent::chat::history::append_message(&pool.db_pool, key, "user", "hello", "r1")
+            .await
+            .unwrap();
+
+        // Empty authorized_workspace = unscoped (admin) token: no workspace
+        // check, history served straight from the DB.
+        let out = pool.chat_history("agent_main", key, 50, "").await.unwrap();
+        assert!(out.to_string().contains("hello"));
+    }
+
+    #[tokio::test]
+    async fn chat_abort_rejects_session_from_other_workspace() {
+        let pool = test_agent_pool().await;
+        let err = pool
+            .chat_abort("agent_main", "agent:ws_other:agent_main/s1", Some("r1"), "ws_mine")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AgentError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn chat_abort_with_unscoped_token_and_unknown_run_id_is_noop() {
+        let pool = test_agent_pool().await;
+        pool.chat_abort("agent_main", "agent:ws1:agent_main/s1", Some("nonexistent-run"), "")
+            .await
+            .unwrap();
+        pool.chat_abort("agent_main", "agent:ws1:agent_main/s1", None, "")
+            .await
+            .unwrap();
+    }
 }

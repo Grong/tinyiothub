@@ -43,21 +43,7 @@ impl AgentPoolLike for CloudAgentPoolAdapter {
             .run_streaming(workspace_id, prompt)
             .await
             .map_err(|e| anyhow::anyhow!("LLM error: {}", e))?;
-        let tool_calls = result
-            .tool_calls
-            .into_iter()
-            .map(|c| tinyiothub_ai::agent::pool::ToolCallRecord {
-                tool_name: c.name,
-                device_id: c
-                    .args
-                    .get("device_id")
-                    .or_else(|| c.args.get("deviceId"))
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                success: c.success,
-                details: c.result.unwrap_or_default(),
-            })
-            .collect();
+        let tool_calls = result.tool_calls.into_iter().map(map_tool_call).collect();
         Ok(tinyiothub_ai::agent::pool::AgentRunOutput {
             text: result.final_text,
             tool_calls,
@@ -77,5 +63,65 @@ impl AgentPoolLike for CloudAgentPoolAdapter {
 
     fn cleanup_idle(&self) -> usize {
         self.pool.cleanup_idle()
+    }
+}
+
+/// Map a streaming tool call to the heartbeat audit record. `device_id`
+/// (snake_case) wins over the legacy `deviceId` (camelCase) arg key; a missing
+/// result string becomes empty details rather than a lossy "null".
+fn map_tool_call(
+    c: crate::modules::agent::agent::StreamingToolCall,
+) -> tinyiothub_ai::agent::pool::ToolCallRecord {
+    tinyiothub_ai::agent::pool::ToolCallRecord {
+        tool_name: c.name,
+        device_id: c
+            .args
+            .get("device_id")
+            .or_else(|| c.args.get("deviceId"))
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        success: c.success,
+        details: c.result.unwrap_or_default(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modules::agent::agent::StreamingToolCall;
+
+    fn call(args: serde_json::Value, result: Option<String>) -> StreamingToolCall {
+        StreamingToolCall { name: "set_temperature".into(), args, result, success: true }
+    }
+
+    #[test]
+    fn snake_case_device_id_wins_over_camel_case() {
+        let rec = map_tool_call(call(
+            serde_json::json!({"device_id": "d_snake", "deviceId": "d_camel"}),
+            Some("ok".into()),
+        ));
+        assert_eq!(rec.device_id.as_deref(), Some("d_snake"));
+        assert_eq!(rec.tool_name, "set_temperature");
+        assert!(rec.success);
+        assert_eq!(rec.details, "ok");
+    }
+
+    #[test]
+    fn camel_case_device_id_is_accepted_as_fallback() {
+        let rec = map_tool_call(call(serde_json::json!({"deviceId": "d_camel"}), None));
+        assert_eq!(rec.device_id.as_deref(), Some("d_camel"));
+        assert_eq!(rec.details, "");
+    }
+
+    #[test]
+    fn missing_device_id_maps_to_none() {
+        let rec = map_tool_call(call(serde_json::json!({"value": 42}), None));
+        assert_eq!(rec.device_id, None);
+    }
+
+    #[test]
+    fn non_string_device_id_maps_to_none() {
+        let rec = map_tool_call(call(serde_json::json!({"device_id": 42}), None));
+        assert_eq!(rec.device_id, None);
     }
 }

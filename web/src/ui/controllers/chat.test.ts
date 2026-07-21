@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { handleChatEvent, type ChatState } from "./chat.js";
+import { handleChatEvent, sendChatMessage, type ChatState } from "./chat.js";
 
 function makeState(): ChatState {
   return {
@@ -46,5 +46,34 @@ describe("handleChatEvent runId adoption", () => {
     });
     expect(state.chatRunId).toBe("server-run-1");
     expect(state.chatStream).toBeNull();
+  });
+});
+
+describe("sendChatMessage run state reset", () => {
+  it("clears the stale runId and omits run_id from the request body", () => {
+    // run_id is minted server-side: a new send must drop the previous run's
+    // id (so late events from it get filtered) and must not echo it back.
+    const state = makeState();
+    state.chatRunId = "stale-run";
+    state.chatStream = "old text";
+
+    let capturedBody: string | undefined;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((_url: unknown, init?: RequestInit) => {
+      capturedBody = init?.body as string | undefined;
+      return new Promise<Response>(() => {});
+    }) as typeof fetch;
+    try {
+      sendChatMessage(state, "hello");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(state.chatRunId).toBeNull();
+    expect(state.chatStream).toBe("");
+    expect(state.chatSending).toBe(true);
+    const body = JSON.parse(capturedBody ?? "{}");
+    expect(body).not.toHaveProperty("run_id");
+    expect(body.message).toBe("hello");
   });
 });
