@@ -681,13 +681,11 @@ impl AgentPool {
             }
         });
 
-        // Execute with timeout
+        // No inner timeout here: the heartbeat tick in tinyiothub-ai bounds the
+        // whole run (see heartbeat::loop_ TICK_TIMEOUT). A shorter inner timeout
+        // fires first every time, making the tick-level bound unreachable.
         let mut ag = agent.lock().await;
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(120),
-            ag.turn_streamed(message, event_tx, None),
-        )
-        .await;
+        let result = ag.turn_streamed(message, event_tx, None).await;
         drop(ag);
 
         // Wait for collector to finish processing remaining events
@@ -699,13 +697,10 @@ impl AgentPool {
         };
 
         match result {
-            Ok(Ok((final_text, _conversation))) => {
+            Ok((final_text, _conversation)) => {
                 Ok(StreamingRunResult { final_text, tool_calls })
             }
-            Ok(Err(e)) => Err(AgentError::RequestFailed(e.to_string())),
-            Err(_elapsed) => {
-                Err(AgentError::RequestFailed("Heartbeat LLM call timed out after 120s".into()))
-            }
+            Err(e) => Err(AgentError::RequestFailed(e.to_string())),
         }
     }
 

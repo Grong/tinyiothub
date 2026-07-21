@@ -15,6 +15,11 @@ use crate::tool::trust::TrustConfig;
 
 const MAX_CONSECUTIVE_FAILURES: u32 = 5;
 
+/// Single tick-level bound for one heartbeat run. AgentPoolLike implementations
+/// must not impose a shorter inner timeout on the same call — the inner one
+/// would always fire first and leave this bound unreachable.
+const TICK_TIMEOUT: Duration = Duration::from_secs(180);
+
 /// Main heartbeat loop for a single workspace.
 #[allow(clippy::too_many_arguments)]
 pub async fn heartbeat_loop(
@@ -161,7 +166,7 @@ async fn run_heartbeat_tick(
     let prompt = build_heartbeat_prompt(workspace_id, tasks, trust_config);
 
     let started = std::time::Instant::now();
-    let output = match tokio::time::timeout(Duration::from_secs(180), agent_pool.send_message(workspace_id, &prompt)).await
+    let output = match tokio::time::timeout(TICK_TIMEOUT, agent_pool.send_message(workspace_id, &prompt)).await
     {
         Ok(Ok(output)) => {
             metrics.record_llm_call(started.elapsed().as_millis() as u64, true);

@@ -204,20 +204,13 @@ fn count_drop(
 }
 
 impl AiEvent {
-    /// Human-readable variant name for logging/alerting.
+    /// Human-readable variant name for logging/alerting. Derived from the
+    /// single `From<&AiEvent> for AiEventType` conversion so a new variant
+    /// only needs one mapping, not two parallel matches to keep in sync.
     fn variant_name(&self) -> String {
-        match self {
-            AiEvent::AlarmCreated(_) => "AlarmCreated".into(),
-            AiEvent::AlarmResolved { .. } => "AlarmResolved".into(),
-            AiEvent::HeartbeatCompleted { .. } => "HeartbeatCompleted".into(),
-            AiEvent::ChatCompleted { .. } => "ChatCompleted".into(),
-            AiEvent::WorkspaceCreated { .. } => "WorkspaceCreated".into(),
-            AiEvent::WorkspaceDeleted { .. } => "WorkspaceDeleted".into(),
-            AiEvent::HeartbeatPersistFailed { .. } => "HeartbeatPersistFailed".into(),
-            AiEvent::ReflectionFailed { .. } => "ReflectionFailed".into(),
-            AiEvent::ProposalCreated { .. } => "ProposalCreated".into(),
-            AiEvent::ProposalResolved { .. } => "ProposalResolved".into(),
-        }
+        tinyiothub_core::models::event::AiEventType::from(self)
+            .name()
+            .to_string()
     }
 }
 

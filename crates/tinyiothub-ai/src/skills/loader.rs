@@ -392,7 +392,7 @@ mod tests {
         std::fs::write(dir.join("big.md"), huge).unwrap();
         std::fs::write(dir.join("ok.md"), "---\nname: ok\n---\n# O\n\nfine").unwrap();
 
-        let skills = load_skills_from_dirs(&[dir.clone()]);
+        let skills = load_skills_from_dirs(std::slice::from_ref(&dir));
         assert!(skills.iter().all(|s| s.name != "big"), "oversized skill file must be skipped");
         assert!(skills.iter().any(|s| s.name == "ok"));
 
@@ -409,7 +409,7 @@ mod tests {
         std::fs::write(&outside, "---\nname: secret\n---\n# S\n\nSECRET").unwrap();
         std::os::unix::fs::symlink(&outside, dir.join("leak.md")).unwrap();
 
-        let skills = load_skills_from_dirs(&[dir.clone()]);
+        let skills = load_skills_from_dirs(std::slice::from_ref(&dir));
         assert!(skills.is_empty(), "symlinked skill files must be rejected");
 
         let _ = std::fs::remove_dir_all(&dir);

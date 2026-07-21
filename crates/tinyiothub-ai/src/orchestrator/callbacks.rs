@@ -7,11 +7,12 @@
 //! WorkspaceDeleted    --> HeartbeatRunner.stop()
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use tinyiothub_core::models::event::{ContentElement, Event, EventType, RichContent};
+use tokio::sync::Notify;
 use tracing::{debug, error, info, warn};
 
 use crate::event::bus::AiEventPublisher;
@@ -30,6 +31,9 @@ pub struct AiEventHandler {
     event_publisher: Arc<AiEventPublisher>,
     dlq: Option<Arc<dyn DeadLetterQueue>>,
     shutting_down: Arc<AtomicBool>,
+    retry_in_flight: Arc<AtomicUsize>,
+    retry_idle: Arc<Notify>,
+    shutdown_notify: Arc<Notify>,
 }
 
 impl AiEventHandler {
@@ -48,6 +52,9 @@ impl AiEventHandler {
             event_publisher,
             dlq,
             shutting_down,
+            retry_in_flight: Arc::new(AtomicUsize::new(0)),
+            retry_idle: Arc::new(Notify::new()),
+            shutdown_notify: Arc::new(Notify::new()),
         }
     }
 
@@ -160,14 +167,29 @@ impl AiEventHandler {
         let event_publisher = self.event_publisher.clone();
         let dlq = self.dlq.clone();
         let shutting_down = self.shutting_down.clone();
+        let shutdown_notify = self.shutdown_notify.clone();
+
+        self.retry_in_flight.fetch_add(1, Ordering::SeqCst);
+        let tracker = RetryTracker {
+            count: self.retry_in_flight.clone(),
+            idle: self.retry_idle.clone(),
+        };
 
         tokio::spawn(async move {
+            // Decrements the in-flight count on every exit path, waking drainers.
+            let _tracker = tracker;
             let mut attempt: u32 = 0;
             let max_attempts: u32 = 5;
             let base_delay = Duration::from_secs(2);
 
             loop {
-                tokio::time::sleep(base_delay * 2u32.pow(attempt)).await;
+                tokio::select! {
+                    _ = tokio::time::sleep(base_delay * 2u32.pow(attempt)) => {}
+                    _ = shutdown_notify.notified() => {
+                        debug!(ws_id, "Shutting down, aborting retry");
+                        return;
+                    }
+                }
                 if shutting_down.load(Ordering::SeqCst) {
                     debug!(ws_id, "Shutting down, aborting retry");
                     return;
@@ -203,6 +225,45 @@ impl AiEventHandler {
                 }
             }
         });
+    }
+
+    /// Number of retry tasks currently alive (sleeping or persisting).
+    pub fn in_flight_retries(&self) -> usize {
+        self.retry_in_flight.load(Ordering::SeqCst)
+    }
+
+    /// Abort in-flight retry backoff sleeps and wait for the tasks to exit.
+    pub async fn drain_retries(&self) {
+        self.shutdown_notify.notify_waiters();
+        loop {
+            if self.retry_in_flight.load(Ordering::SeqCst) == 0 {
+                return;
+            }
+            let notified = self.retry_idle.notified();
+            tokio::pin!(notified);
+            // Register the waiter before re-checking the count, otherwise a
+            // task finishing between check and await would be missed.
+            notified.as_mut().enable();
+            if self.retry_in_flight.load(Ordering::SeqCst) == 0 {
+                return;
+            }
+            notified.await;
+        }
+    }
+}
+
+/// Decrements the in-flight retry counter when the task exits, on any path,
+/// and wakes drainers once the last task is gone.
+struct RetryTracker {
+    count: Arc<AtomicUsize>,
+    idle: Arc<Notify>,
+}
+
+impl Drop for RetryTracker {
+    fn drop(&mut self) {
+        if self.count.fetch_sub(1, Ordering::SeqCst) == 1 {
+            self.idle.notify_waiters();
+        }
     }
 }
 
@@ -267,7 +328,7 @@ fn extract_payload(content: &RichContent) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::sync::Arc;
     use std::sync::Mutex;
@@ -283,18 +344,28 @@ mod tests {
     use crate::memory::provider::{LlmProvider, LlmResponse};
     use crate::memory::service::MemoryService;
 
-    struct MockTaskRepo {
+    pub(crate) struct MockTaskRepo {
+        pub(crate) fail_insert: bool,
         insert_result_calls: Arc<Mutex<Vec<(String, HeartbeatResult)>>>,
     }
 
     impl MockTaskRepo {
-        fn new() -> Self {
+        pub(crate) fn new() -> Self {
             Self {
+                fail_insert: false,
                 insert_result_calls: Arc::new(Mutex::new(Vec::new())),
             }
         }
 
-        fn insert_result_calls(&self) -> Arc<Mutex<Vec<(String, HeartbeatResult)>>> {
+        /// Every insert_result fails — drives the retry/backoff path.
+        pub(crate) fn failing() -> Self {
+            Self {
+                fail_insert: true,
+                insert_result_calls: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        pub(crate) fn insert_result_calls(&self) -> Arc<Mutex<Vec<(String, HeartbeatResult)>>> {
             Arc::clone(&self.insert_result_calls)
         }
     }
@@ -331,6 +402,9 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((workspace_id.to_string(), result.clone()));
+            if self.fail_insert {
+                return Err(RepoError::Database("mock insert failure".into()));
+            }
             Ok(())
         }
     }
@@ -437,7 +511,7 @@ mod tests {
         }
     }
 
-    fn make_memory_service() -> Arc<MemoryService> {
+    pub(crate) fn make_memory_service() -> Arc<MemoryService> {
         Arc::new(MemoryService::new(Arc::new(MockLlmProvider), Arc::new(MockMemoryStore)))
     }
 

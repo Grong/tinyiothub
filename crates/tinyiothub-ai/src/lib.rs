@@ -40,15 +40,3 @@ pub mod types {
         evaluate_tool_trust, evaluate_tool_trust_with_safety, risk_for_tool,
     };
 }
-
-/// Build the full AI subsystem and return the orchestrator handle.
-pub struct AiSystem {
-    pub orchestrator: std::sync::Arc<orchestrator::Orchestrator>,
-    pub heartbeat_runner: std::sync::Arc<heartbeat::runner::HeartbeatRunner>,
-}
-
-impl AiSystem {
-    pub async fn shutdown(&self) {
-        self.orchestrator.shutdown().await;
-    }
-}
