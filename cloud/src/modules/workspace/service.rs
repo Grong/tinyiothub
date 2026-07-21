@@ -363,8 +363,8 @@ mod tests {
 
         let result = service.delete("ws_1").await;
         assert!(result.is_err());
-        // The publish counter increments in the publisher's worker task.
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        // shutdown() drains the publisher queue deterministically — no sleep.
+        publisher.shutdown().await;
         assert_eq!(
             publisher.events_published(),
             0,
@@ -380,7 +380,7 @@ mod tests {
         service.set_event_publisher(publisher.clone());
 
         service.delete("ws_1").await.expect("delete");
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        publisher.shutdown().await;
         assert_eq!(publisher.events_published(), 1);
     }
 }

@@ -175,9 +175,18 @@ mod tests {
             workspace_id: "ws_1".into(),
             result: sample_result(),
         });
-        // Let the first persist attempt fail and the retry task spawn.
-        tokio::time::sleep(Duration::from_millis(150)).await;
-        assert!(orch.in_flight_retries() >= 1, "a retry task should be in flight");
+        // Let the first persist attempt fail and the retry task spawn. Poll
+        // instead of a fixed sleep — the publisher→worker→bus→handler chain
+        // can exceed any single sleep under CI load.
+        let mut in_flight = 0;
+        for _ in 0..100 {
+            in_flight = orch.in_flight_retries();
+            if in_flight >= 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(in_flight >= 1, "a retry task should be in flight");
 
         let started = Instant::now();
         orch.shutdown().await;

@@ -137,7 +137,11 @@ impl HeartbeatTaskRepository for SqliteHeartbeatTaskRepository {
         Ok(())
     }
 
-    async fn replace_all(&self, workspace_id: &str, tasks: &[NewHeartbeatTask]) -> Result<(), RepoError> {
+    async fn replace_all(
+        &self,
+        workspace_id: &str,
+        tasks: &[NewHeartbeatTask],
+    ) -> Result<(), RepoError> {
         let mut tx = self.pool.begin().await.map_err(|e| RepoError::Database(e.to_string()))?;
         sqlx::query("DELETE FROM heartbeat_tasks WHERE workspace_id = ?")
             .bind(workspace_id)
@@ -239,9 +243,20 @@ impl HeartbeatTaskRepository for SqliteHeartbeatTaskRepository {
             let message = result.error.as_deref().unwrap_or(&result.summary);
             ("error", serde_json::json!({"taskCount": result.task_count, "error": message}))
         } else {
-            ("summary", serde_json::json!({"taskCount": result.task_count, "result": result.summary}))
+            (
+                "summary",
+                serde_json::json!({"taskCount": result.task_count, "result": result.summary}),
+            )
         };
-        insert_action_row(&mut tx, workspace_id, &agent_id, action_type, &content.to_string(), &now).await?;
+        insert_action_row(
+            &mut tx,
+            workspace_id,
+            &agent_id,
+            action_type,
+            &content.to_string(),
+            &now,
+        )
+        .await?;
 
         for action in &result.executed_actions {
             let content = serde_json::json!({
@@ -249,8 +264,15 @@ impl HeartbeatTaskRepository for SqliteHeartbeatTaskRepository {
                 "deviceId": action.device_id,
                 "summary": action.details,
             });
-            insert_action_row(&mut tx, workspace_id, &agent_id, "auto_executed", &content.to_string(), &now)
-                .await?;
+            insert_action_row(
+                &mut tx,
+                workspace_id,
+                &agent_id,
+                "auto_executed",
+                &content.to_string(),
+                &now,
+            )
+            .await?;
         }
 
         for proposal in &result.proposals {
@@ -270,8 +292,15 @@ impl HeartbeatTaskRepository for SqliteHeartbeatTaskRepository {
                 "risk": proposal.risk,
                 "parameters": proposal.parameters,
             });
-            insert_action_row(&mut tx, workspace_id, &agent_id, "proposal", &content.to_string(), &now)
-                .await?;
+            insert_action_row(
+                &mut tx,
+                workspace_id,
+                &agent_id,
+                "proposal",
+                &content.to_string(),
+                &now,
+            )
+            .await?;
         }
 
         tx.commit().await.map_err(|e| RepoError::Database(e.to_string()))?;
@@ -305,10 +334,13 @@ async fn insert_action_row(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use sqlx::sqlite::SqlitePoolOptions;
-    use tinyiothub_ai::heartbeat::types::{ExecutedAction, HeartbeatStatus, NewHeartbeatTask};
-    use tinyiothub_ai::proposal::{Proposal, ProposalStatus};
+    use tinyiothub_ai::{
+        heartbeat::types::{ExecutedAction, HeartbeatStatus, NewHeartbeatTask},
+        proposal::{Proposal, ProposalStatus},
+    };
+
+    use super::*;
 
     async fn test_pool() -> SqlitePool {
         let pool = SqlitePoolOptions::new()
@@ -346,8 +378,11 @@ mod tests {
         assert!(tasks.iter().any(|t| t.text == "task A" && !t.paused));
         assert!(tasks.iter().any(|t| t.text == "task B" && t.paused));
 
-        let replacement =
-            vec![NewHeartbeatTask { priority: "medium".into(), text: "task C".into(), paused: false }];
+        let replacement = vec![NewHeartbeatTask {
+            priority: "medium".into(),
+            text: "task C".into(),
+            paused: false,
+        }];
         repo.replace_all("ws_1", &replacement).await.expect("replace");
 
         let tasks = repo.list_by_workspace("ws_1").await.expect("list after replace");
@@ -476,7 +511,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn insert_result_error_status_writes_error_row() {        let pool = test_pool().await;
+    async fn insert_result_error_status_writes_error_row() {
+        let pool = test_pool().await;
         let repo = SqliteHeartbeatTaskRepository::new(pool.clone());
 
         let result = HeartbeatResult {

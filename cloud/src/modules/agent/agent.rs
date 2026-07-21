@@ -615,8 +615,15 @@ impl AgentPool {
         let _ = agent_id;
         if let Some(rid) = run_id {
             let mut handles = self.chat_handles.lock().await;
-            if let Some(handle) = handles.remove(rid) {
-                handle.abort();
+            match handles.remove(rid) {
+                Some(handle) => handle.abort(),
+                // An unknown run_id must not look like a successful abort —
+                // the caller's run may still be streaming.
+                None => {
+                    return Err(AgentError::NotFound(format!(
+                        "Unknown or already-finished run_id: {rid}"
+                    )));
+                }
             }
         }
         Ok(())
@@ -804,11 +811,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn chat_abort_with_unscoped_token_and_unknown_run_id_is_noop() {
+    async fn chat_abort_with_unknown_run_id_errors_and_none_run_id_is_noop() {
         let pool = test_agent_pool().await;
-        pool.chat_abort("agent_main", "agent:ws1:agent_main/s1", Some("nonexistent-run"), "")
+        let err = pool
+            .chat_abort("agent_main", "agent:ws1:agent_main/s1", Some("nonexistent-run"), "")
             .await
-            .unwrap();
+            .unwrap_err();
+        assert!(
+            matches!(err, AgentError::NotFound(_)),
+            "unknown run_id must not silently succeed: {err:?}"
+        );
         pool.chat_abort("agent_main", "agent:ws1:agent_main/s1", None, "")
             .await
             .unwrap();

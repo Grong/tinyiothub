@@ -26,20 +26,6 @@ pub async fn read_heartbeat_tasks(
     Ok(parse_heartbeat_md(&content))
 }
 
-/// Write tasks to HEARTBEAT.md
-///
-/// NOTE: File-based writes have a known TOCTOU race — concurrent edits from
-/// multiple admins may overwrite each other. Long-term fix (P2): migrate
-/// tasks to a DB table with optimistic locking.
-pub async fn write_heartbeat_tasks(
-    workspace_dir: &std::path::Path,
-    tasks: &[HeartbeatTask],
-) -> anyhow::Result<()> {
-    let content = build_heartbeat_md(tasks);
-    tokio::fs::write(workspace_dir.join("HEARTBEAT.md"), content).await?;
-    Ok(())
-}
-
 pub(crate) fn get_default_tasks() -> Vec<HeartbeatTask> {
     vec![
         HeartbeatTask {
@@ -128,7 +114,7 @@ pub async fn migrate_file_tasks_to_db(
         return Ok(false);
     }
     let path = workspace_dir.join("HEARTBEAT.md");
-    if !path.exists() {
+    if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
         return Ok(false);
     }
     let tasks = read_heartbeat_tasks(workspace_dir).await?;

@@ -426,6 +426,32 @@ pub struct ProposalResponse {
     reason: String,
     risk: String,
     created_at: String,
+    parameters: serde_json::Value,
+}
+
+/// Map a stored proposal row to its API shape. Returns None for non-pending
+/// proposals and unparseable content. `parameters` is included verbatim so
+/// the approver can see exactly what they are signing off on.
+fn proposal_from_row(content: &str, created_at: String) -> Option<ProposalResponse> {
+    let parsed: serde_json::Value = serde_json::from_str(content).ok()?;
+    let status = parsed.get("status").and_then(|v| v.as_str()).unwrap_or("pending");
+    if status != "pending" {
+        return None;
+    }
+    let str_field = |key: &str| parsed.get(key).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    Some(ProposalResponse {
+        proposal_id: str_field("proposalId"),
+        status: status.to_string(),
+        level: str_field("level"),
+        tool_name: str_field("toolName"),
+        device_id: str_field("deviceId"),
+        device_name: str_field("deviceName"),
+        summary: str_field("summary"),
+        reason: str_field("reason"),
+        risk: str_field("risk"),
+        created_at,
+        parameters: parsed.get("parameters").cloned().unwrap_or(serde_json::json!({})),
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -453,45 +479,7 @@ pub async fn get_approvals(
     let proposals = match rows {
         Ok(rows) => rows
             .into_iter()
-            .filter_map(|(_, content, created_at)| {
-                let parsed: serde_json::Value = serde_json::from_str(&content).ok()?;
-                let status = parsed.get("status").and_then(|v| v.as_str()).unwrap_or("pending");
-                if status != "pending" {
-                    return None;
-                }
-                Some(ProposalResponse {
-                    proposal_id: parsed
-                        .get("proposalId")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    status: status.to_string(),
-                    level: parsed.get("level").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    tool_name: parsed
-                        .get("toolName")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    device_id: parsed
-                        .get("deviceId")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    device_name: parsed
-                        .get("deviceName")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    summary: parsed
-                        .get("summary")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    reason: parsed.get("reason").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    risk: parsed.get("risk").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    created_at,
-                })
-            })
+            .filter_map(|(_, content, created_at)| proposal_from_row(&content, created_at))
             .collect(),
         Err(e) => {
             tracing::error!(%workspace_id, "Failed to query proposals: {}", e);
@@ -576,6 +564,15 @@ async fn approve_and_execute(
         return Err("提案已处理".to_string());
     }
 
+    // Execute under the same MCP auth context as the heartbeat agent path —
+    // handlers scope their queries by get_mcp_context() and fail closed
+    // without it.
+    let _guard = crate::modules::mcp::handlers::McpContextGuard::new(
+        crate::modules::mcp::handlers::McpAuthContext::for_heartbeat(
+            workspace_id.to_string(),
+            format!("__heartbeat__:{workspace_id}"),
+        ),
+    );
     let outcome = handler.execute(params).await;
     let (success, summary) = match &outcome {
         Ok(v) => {
@@ -881,5 +878,48 @@ mod tests {
         let result = approve_and_execute(&pool, "ws_1", "nope", &registry).await;
         assert!(result.is_err());
         assert!(calls.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn proposal_from_row_includes_parameters_for_blind_signing() {
+        let content = serde_json::json!({
+            "proposalId": "p1",
+            "status": "pending",
+            "level": "high",
+            "toolName": "write_properties",
+            "deviceId": "dev_1",
+            "deviceName": "Thermostat",
+            "summary": "set temp",
+            "reason": "tune",
+            "risk": "medium",
+            "parameters": {"device_id": "dev_1", "properties": {"target_temp": 22}},
+        })
+        .to_string();
+
+        let p = proposal_from_row(&content, "2026-07-20 10:00:00".to_string()).expect("pending proposal maps");
+
+        assert_eq!(p.proposal_id, "p1");
+        assert_eq!(p.parameters["properties"]["target_temp"], 22);
+    }
+
+    #[test]
+    fn proposal_from_row_defaults_missing_parameters_to_empty_object() {
+        let content = serde_json::json!({
+            "proposalId": "p2",
+            "status": "pending",
+            "toolName": "reboot",
+        })
+        .to_string();
+
+        let p = proposal_from_row(&content, "t".to_string()).expect("maps");
+
+        assert_eq!(p.parameters, serde_json::json!({}));
+    }
+
+    #[test]
+    fn proposal_from_row_skips_non_pending_and_malformed() {
+        let approved = serde_json::json!({"proposalId": "p", "status": "approved"}).to_string();
+        assert!(proposal_from_row(&approved, "t".to_string()).is_none());
+        assert!(proposal_from_row("not json", "t".to_string()).is_none());
     }
 }

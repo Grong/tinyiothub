@@ -23,6 +23,16 @@ pub async fn chat_stream(
     claims: Claims,
     Json(req): Json<ChatStreamRequest>,
 ) -> Response {
+    // Same fail-closed guard as chat_history/chat_abort: an unscoped token
+    // must not be able to stream into another workspace's session by forging
+    // the session_key.
+    let session_workspace = extract_workspace_from_session_key(&req.session_key);
+    if session_workspace != claims.workspace_id {
+        let err: Json<ApiResponse<()>> =
+            ApiResponseBuilder::error_with_code(404, "Session not found");
+        return err.into_response();
+    }
+
     // session_key format: agent:<workspace_id>:<agent_id>/<sess_uuid>
     let session_key = scope_session_key_to_claims(&claims.workspace_id, &req.session_key);
 
