@@ -79,6 +79,9 @@ pub fn load_skills_from_dirs(dirs: &[std::path::PathBuf]) -> Vec<LoadedSkill> {
     by_name.into_values().collect()
 }
 
+/// Skill files are prompt text; anything larger blows the prompt budget.
+const MAX_SKILL_FILE_BYTES: u64 = 256 * 1024;
+
 fn read_skill_dir(dir: &Path) -> Vec<LoadedSkill> {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
@@ -86,9 +89,18 @@ fn read_skill_dir(dir: &Path) -> Vec<LoadedSkill> {
     };
     let mut out = Vec::new();
     for entry in entries.flatten() {
+        // Symlinks can point outside the skill dir and leak host files into
+        // the prompt — refuse them outright.
+        if entry.file_type().map(|t| t.is_symlink()).unwrap_or(true) {
+            continue;
+        }
         let path = entry.path();
         if path.extension().is_none_or(|ext| ext != "md") {
             continue;
+        }
+        match std::fs::metadata(&path) {
+            Ok(m) if m.len() <= MAX_SKILL_FILE_BYTES => {}
+            _ => continue,
         }
         let content = match std::fs::read_to_string(&path) {
             Ok(c) => c,
@@ -369,5 +381,41 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir_a);
         let _ = std::fs::remove_dir_all(&dir_b);
+    }
+
+    #[test]
+    fn load_skips_files_over_size_limit() {
+        // A multi-MB "skill" would blow the prompt budget; refuse to load it.
+        let dir = std::env::temp_dir().join(format!("skills_big_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let huge = format!("---\nname: big\n---\n# B\n\n{}", "x".repeat(512 * 1024));
+        std::fs::write(dir.join("big.md"), huge).unwrap();
+        std::fs::write(dir.join("ok.md"), "---\nname: ok\n---\n# O\n\nfine").unwrap();
+
+        let skills = load_skills_from_dirs(std::slice::from_ref(&dir));
+        assert!(
+            skills.iter().all(|s| s.name != "big"),
+            "oversized skill file must be skipped"
+        );
+        assert!(skills.iter().any(|s| s.name == "ok"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_skips_symlinked_files() {
+        // A symlinked skill can leak arbitrary host files into the prompt.
+        let dir = std::env::temp_dir().join(format!("skills_link_{}", uuid::Uuid::new_v4()));
+        let outside = std::env::temp_dir().join(format!("skills_outside_{}.md", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&outside, "---\nname: secret\n---\n# S\n\nSECRET").unwrap();
+        std::os::unix::fs::symlink(&outside, dir.join("leak.md")).unwrap();
+
+        let skills = load_skills_from_dirs(std::slice::from_ref(&dir));
+        assert!(skills.is_empty(), "symlinked skill files must be rejected");
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_file(&outside);
     }
 }

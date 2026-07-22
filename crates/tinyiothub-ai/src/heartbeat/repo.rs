@@ -2,7 +2,8 @@
 
 use async_trait::async_trait;
 
-use super::types::{HeartbeatResult, HeartbeatTask};
+use super::types::{HeartbeatResult, HeartbeatTask, NewHeartbeatTask};
+use crate::tool::trust::TrustConfig;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RepoError {
@@ -27,6 +28,51 @@ pub trait HeartbeatTaskRepository: Send + Sync {
 
     async fn delete(&self, workspace_id: &str, task_id: i64) -> Result<(), RepoError>;
 
+    /// Atomically replace a workspace's whole task set.
+    ///
+    /// Default impl is delete-then-insert (non-atomic); storage backends
+    /// should override with a transaction.
+    async fn replace_all(&self, workspace_id: &str, tasks: &[NewHeartbeatTask]) -> Result<(), RepoError> {
+        for existing in self.list_by_workspace(workspace_id).await? {
+            self.delete(workspace_id, existing.id).await?;
+        }
+        for task in tasks {
+            let inserted = self.insert(workspace_id, &task.priority, &task.text).await?;
+            if task.paused {
+                self.set_paused(workspace_id, inserted.id, true).await?;
+            }
+        }
+        Ok(())
+    }
+
     /// Persist heartbeat execution results (replaces old ActionRepository).
     async fn insert_result(&self, workspace_id: &str, result: &HeartbeatResult) -> Result<(), RepoError>;
+
+    /// Load the workspace's persisted TrustConfig, if any. Default: none —
+    /// callers fall back to `TrustConfig::default()`.
+    async fn load_trust_config(&self, _workspace_id: &str) -> Result<Option<TrustConfig>, RepoError> {
+        Ok(None)
+    }
+
+    /// Persist the workspace's TrustConfig. Default: no-op (no storage).
+    async fn save_trust_config(&self, _workspace_id: &str, _config: &TrustConfig) -> Result<(), RepoError> {
+        Ok(())
+    }
+
+    /// Load the workspace's persisted heartbeat config, if any.
+    async fn load_heartbeat_config(
+        &self,
+        _workspace_id: &str,
+    ) -> Result<Option<super::types::WorkspaceHeartbeatConfig>, RepoError> {
+        Ok(None)
+    }
+
+    /// Persist the workspace's heartbeat config. Default: no-op.
+    async fn save_heartbeat_config(
+        &self,
+        _workspace_id: &str,
+        _config: &super::types::WorkspaceHeartbeatConfig,
+    ) -> Result<(), RepoError> {
+        Ok(())
+    }
 }

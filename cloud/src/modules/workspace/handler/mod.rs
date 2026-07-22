@@ -74,6 +74,8 @@ pub fn create_router() -> Router<AppState> {
         // Heartbeat routes (per-workspace AI autonomous inspection)
         .route("/{id}/heartbeat/config", get(heartbeat::get_config))
         .route("/{id}/heartbeat/config", put(heartbeat::update_config))
+        .route("/{id}/heartbeat/trust", get(heartbeat::get_trust_config))
+        .route("/{id}/heartbeat/trust", put(heartbeat::update_trust_config))
         .route("/{id}/heartbeat/logs", get(heartbeat::get_logs))
         .route("/{id}/heartbeat/tasks", get(heartbeat::get_tasks))
         .route("/{id}/heartbeat/tasks", put(heartbeat::update_tasks))

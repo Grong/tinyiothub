@@ -41,6 +41,6 @@ chrono = { workspace = true }
 regex = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
 mockall = { workspace = true }
 tempfile = { workspace = true }

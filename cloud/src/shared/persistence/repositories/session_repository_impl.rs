@@ -154,11 +154,25 @@ impl SessionRepository for SqliteSessionRepository {
     }
 
     async fn delete(&self, session_key: &str) -> Result<(), SessionError> {
-        let result = sqlx::query("DELETE FROM chat_sessions WHERE session_key = ?")
-            .bind(session_key)
-            .execute(self.database.pool())
+        // chat_messages has an FK to chat_sessions without ON DELETE CASCADE
+        // in the original schema, so messages must go first.
+        let mut tx = self
+            .database
+            .pool()
+            .begin()
             .await
             .map_err(|e| SessionError::RepositoryError(e.to_string()))?;
+        sqlx::query("DELETE FROM chat_messages WHERE session_key = ?")
+            .bind(session_key)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| SessionError::RepositoryError(e.to_string()))?;
+        let result = sqlx::query("DELETE FROM chat_sessions WHERE session_key = ?")
+            .bind(session_key)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| SessionError::RepositoryError(e.to_string()))?;
+        tx.commit().await.map_err(|e| SessionError::RepositoryError(e.to_string()))?;
 
         if result.rows_affected() == 0 {
             return Err(SessionError::NotFound(session_key.to_string()));
@@ -277,6 +291,40 @@ mod tests {
         let repo = create_test_repo().await;
         let result = repo.get("nonexistent:key/session").await.unwrap();
         assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_delete_session_also_removes_messages() {
+        // FK is ON in production pools; chat_messages has no ON DELETE CASCADE
+        // in the original schema, so delete must remove messages first.
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query("PRAGMA foreign_keys = ON").execute(&pool).await.unwrap();
+        crate::shared::persistence::test_helpers::run_all_migrations(&pool).await.unwrap();
+        let repo = SqliteSessionRepository::new(Database::new(pool.clone()));
+
+        let session = Session::new(
+            "agent:ws:agent1/sess_msgs".to_string(),
+            "ws".to_string(),
+            "agent1".to_string(),
+        );
+        repo.create(&session).await.unwrap();
+        sqlx::query(
+            "INSERT INTO chat_messages (session_key, role, content, timestamp) VALUES (?, 'user', 'hi', 1)",
+        )
+        .bind(&session.session_key)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        repo.delete(&session.session_key).await.unwrap();
+
+        let remaining: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM chat_messages WHERE session_key = ?")
+                .bind(&session.session_key)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(remaining.0, 0, "messages must be deleted with the session");
     }
 
     #[tokio::test]

@@ -26,20 +26,6 @@ pub async fn read_heartbeat_tasks(
     Ok(parse_heartbeat_md(&content))
 }
 
-/// Write tasks to HEARTBEAT.md
-///
-/// NOTE: File-based writes have a known TOCTOU race — concurrent edits from
-/// multiple admins may overwrite each other. Long-term fix (P2): migrate
-/// tasks to a DB table with optimistic locking.
-pub async fn write_heartbeat_tasks(
-    workspace_dir: &std::path::Path,
-    tasks: &[HeartbeatTask],
-) -> anyhow::Result<()> {
-    let content = build_heartbeat_md(tasks);
-    tokio::fs::write(workspace_dir.join("HEARTBEAT.md"), content).await?;
-    Ok(())
-}
-
 pub(crate) fn get_default_tasks() -> Vec<HeartbeatTask> {
     vec![
         HeartbeatTask {
@@ -99,6 +85,7 @@ fn parse_heartbeat_md(content: &str) -> Vec<HeartbeatTask> {
     tasks
 }
 
+#[cfg(test)]
 pub(crate) fn build_heartbeat_md(tasks: &[HeartbeatTask]) -> String {
     let mut s = "# Periodic Tasks\n".to_string();
     for task in tasks {
@@ -107,6 +94,48 @@ pub(crate) fn build_heartbeat_md(tasks: &[HeartbeatTask]) -> String {
         s.push_str(&format!("- [{}] {}\n", flag, task.text));
     }
     s
+}
+
+/// One-time migration: import HEARTBEAT.md tasks into the DB table.
+///
+/// The DB is the single source of truth for heartbeat tasks; the file is a
+/// legacy source. Runs only when the table is empty for this workspace and
+/// the file exists. On success the file is renamed to HEARTBEAT.md.migrated
+/// so it never re-seeds. Returns true when a migration happened.
+pub async fn migrate_file_tasks_to_db(
+    repo: &dyn tinyiothub_ai::heartbeat::repo::HeartbeatTaskRepository,
+    workspace_id: &str,
+    workspace_dir: &std::path::Path,
+) -> anyhow::Result<bool> {
+    let existing = repo
+        .list_by_workspace(workspace_id)
+        .await
+        .map_err(|e| anyhow::anyhow!("list tasks: {e}"))?;
+    if !existing.is_empty() {
+        return Ok(false);
+    }
+    let path = workspace_dir.join("HEARTBEAT.md");
+    if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
+        return Ok(false);
+    }
+    let tasks = read_heartbeat_tasks(workspace_dir).await?;
+    if tasks.is_empty() {
+        return Ok(false);
+    }
+    let new_tasks: Vec<tinyiothub_ai::heartbeat::types::NewHeartbeatTask> = tasks
+        .into_iter()
+        .map(|t| tinyiothub_ai::heartbeat::types::NewHeartbeatTask {
+            priority: t.priority,
+            text: t.text,
+            paused: t.paused,
+        })
+        .collect();
+    repo.replace_all(workspace_id, &new_tasks)
+        .await
+        .map_err(|e| anyhow::anyhow!("replace tasks: {e}"))?;
+    tokio::fs::rename(&path, workspace_dir.join("HEARTBEAT.md.migrated")).await?;
+    tracing::info!(workspace_id, count = new_tasks.len(), "Migrated HEARTBEAT.md tasks to DB");
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -178,5 +207,55 @@ mod tests {
         assert_eq!(parsed[0].priority, "high");
         assert_eq!(parsed[0].text, "检查离线设备");
         assert!(parsed[1].paused);
+    }
+
+    async fn migration_test_repo()
+    -> crate::modules::agent::heartbeat_repo::SqliteHeartbeatTaskRepository {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .expect("in-memory sqlite");
+        for stmt in
+            include_str!("../../../migrations/20260629000001_create_heartbeat_tasks.sql").split(';')
+        {
+            let stmt = stmt.trim();
+            if !stmt.is_empty() {
+                sqlx::query(stmt).execute(&pool).await.expect("apply migration");
+            }
+        }
+        crate::modules::agent::heartbeat_repo::SqliteHeartbeatTaskRepository::new(pool)
+    }
+
+    #[tokio::test]
+    async fn test_migrate_file_tasks_to_db_once() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("HEARTBEAT.md"), "- [high] 检查设备\n- [low|paused] 日报")
+            .unwrap();
+        let repo = migration_test_repo().await;
+
+        let migrated = migrate_file_tasks_to_db(&repo, "ws_1", dir.path()).await.unwrap();
+        assert!(migrated);
+
+        use tinyiothub_ai::heartbeat::repo::HeartbeatTaskRepository;
+        let tasks = repo.list_by_workspace("ws_1").await.unwrap();
+        assert_eq!(tasks.len(), 2);
+        assert!(tasks.iter().any(|t| t.text == "检查设备" && t.priority == "high" && !t.paused));
+        assert!(tasks.iter().any(|t| t.text == "日报" && t.paused));
+        assert!(!dir.path().join("HEARTBEAT.md").exists());
+        assert!(dir.path().join("HEARTBEAT.md.migrated").exists());
+
+        // Second run: file gone + table non-empty → no-op, no duplicates
+        let again = migrate_file_tasks_to_db(&repo, "ws_1", dir.path()).await.unwrap();
+        assert!(!again);
+        assert_eq!(repo.list_by_workspace("ws_1").await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_migrate_without_file_is_noop() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = migration_test_repo().await;
+        let migrated = migrate_file_tasks_to_db(&repo, "ws_1", dir.path()).await.unwrap();
+        assert!(!migrated);
     }
 }

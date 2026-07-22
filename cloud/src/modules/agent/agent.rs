@@ -246,6 +246,59 @@ impl AgentPool {
         agent_id: &str,
         workspace_id: &str,
     ) -> Result<Arc<tokio::sync::Mutex<zeroclaw::agent::Agent>>, AgentError> {
+        // Fast path: clone under a brief shard lock. Never hold a DashMap
+        // entry across .await — creation below does DB and tool-resolution
+        // I/O and would stall every other agent on the same shard.
+        if let Some(mut entry) = self.agents.get_mut(agent_id) {
+            let agent = Arc::clone(&entry.zeroclaw_agent);
+            entry.last_used = Instant::now();
+            return Ok(agent);
+        }
+
+        let config = config_service::get_config(&self.db_pool, agent_id).await?;
+
+        let namespaced: Arc<dyn Memory> = Arc::new(WorkspaceScopedMemory::new(
+            Arc::clone(&self.shared_memory),
+            workspace_id.to_string(),
+        ));
+
+        let provider = crate::shared::config::create_minimax_provider()
+            .map_err(|e| AgentError::BuildError(format!("Failed to create provider: {}", e)))?;
+
+        let ws_dir = crate::shared::paths::workspace_dir(workspace_id);
+
+        let ws_svc = self.workspace_service.read().await.clone();
+        let ks_svc = self.knowledge_service.read().await.clone();
+        let trust_config =
+            self.trust_configs.get(workspace_id).map(|e| std::sync::Arc::new(e.value().clone()));
+        let tools = tool_service::resolve_tools_for_agent(
+            &config,
+            workspace_id,
+            ws_svc,
+            ks_svc,
+            trust_config,
+        )
+        .await;
+
+        let agent = Self::build_agent(
+            &namespaced,
+            &self.observer,
+            &config,
+            self.response_cache.clone(),
+            provider,
+            &ws_dir,
+            tools,
+        )
+        .map_err(|e| AgentError::BuildError(e.to_string()))?;
+
+        let metadata = Agent {
+            agent_id: agent_id.to_string(),
+            workspace_id: workspace_id.to_string(),
+            config,
+        };
+
+        // Double-checked insert: a concurrent creator may have won the race
+        // while we were building. The loser's agent is dropped unstarted.
         use dashmap::mapref::entry::Entry;
         match self.agents.entry(agent_id.to_string()) {
             Entry::Occupied(mut occupied) => {
@@ -254,51 +307,6 @@ impl AgentPool {
                 Ok(agent)
             }
             Entry::Vacant(vacant) => {
-                let config = config_service::get_config(&self.db_pool, agent_id).await?;
-
-                let namespaced: Arc<dyn Memory> = Arc::new(WorkspaceScopedMemory::new(
-                    Arc::clone(&self.shared_memory),
-                    workspace_id.to_string(),
-                ));
-
-                let provider = crate::shared::config::create_minimax_provider().map_err(|e| {
-                    AgentError::BuildError(format!("Failed to create provider: {}", e))
-                })?;
-
-                let ws_dir = crate::shared::paths::workspace_dir(workspace_id);
-
-                let ws_svc = self.workspace_service.read().await.clone();
-                let ks_svc = self.knowledge_service.read().await.clone();
-                let trust_config = self
-                    .trust_configs
-                    .get(workspace_id)
-                    .map(|e| std::sync::Arc::new(e.value().clone()));
-                let tools = tool_service::resolve_tools_for_agent(
-                    &config,
-                    workspace_id,
-                    ws_svc,
-                    ks_svc,
-                    trust_config,
-                )
-                .await;
-
-                let agent = Self::build_agent(
-                    &namespaced,
-                    &self.observer,
-                    &config,
-                    self.response_cache.clone(),
-                    provider,
-                    &ws_dir,
-                    tools,
-                )
-                .map_err(|e| AgentError::BuildError(e.to_string()))?;
-
-                let metadata = Agent {
-                    agent_id: agent_id.to_string(),
-                    workspace_id: workspace_id.to_string(),
-                    config,
-                };
-
                 let entry = PoolEntry::new(agent, metadata);
                 let agent_arc = Arc::clone(&entry.zeroclaw_agent);
                 vacant.insert(entry);
@@ -535,9 +543,13 @@ impl AgentPool {
         message: &str,
         run_id: &str,
         system_prompt: &str,
+        authorized_workspace: &str,
     ) -> Result<tokio::sync::mpsc::Receiver<super::types::ChatEvent>, AgentError> {
         let parsed = super::session::SessionKey::parse(session_key)?;
-        parsed.verify_workspace(&parsed.workspace_id)?;
+        // Empty authorized workspace = unscoped (admin) token; nothing to check against.
+        if !authorized_workspace.is_empty() {
+            parsed.verify_workspace(authorized_workspace)?;
+        }
         let agent = self.get_or_create(agent_id, &parsed.workspace_id).await?;
         let config = config_service::get_config(&self.db_pool, agent_id).await?;
         let enable_reflection = config.enable_reflection;
@@ -557,6 +569,7 @@ impl AgentPool {
             &model,
             &parsed.workspace_id,
             agent_id,
+            &self.db_pool,
         )
         .await
         .map_err(|e| AgentError::RequestFailed(e.to_string()))
@@ -564,80 +577,23 @@ impl AgentPool {
 
     pub async fn chat_history(
         &self,
-        agent_id: &str,
+        _agent_id: &str,
         session_key: &str,
-        _limit: u32,
+        limit: u32,
+        authorized_workspace: &str,
     ) -> Result<serde_json::Value, AgentError> {
         let parsed = super::session::SessionKey::parse(session_key)?;
-        parsed.verify_workspace(&parsed.workspace_id)?;
-
-        let agent = self.get_or_create(agent_id, &parsed.workspace_id).await?;
-        let ag = agent.lock().await;
-        let history = ag.history();
-
-        let messages: Vec<serde_json::Value> = history
-            .iter()
-            .filter_map(|msg| {
-                let value = serde_json::to_value(msg).ok()?;
-                match value.get("type")?.as_str()? {
-                    "Chat" => {
-                        let mut data = value.get("data")?.clone();
-                        // Skip system messages
-                        if data.get("role")?.as_str()? == "system" {
-                            return None;
-                        }
-                        // Frontend expects content as array: [{ type: "text", text: "..." }]
-                        normalize_content(&mut data);
-                        Some(data)
-                    }
-                    "AssistantToolCalls" => {
-                        let data = value.get("data")?;
-                        let text = data.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                        let tool_calls =
-                            data.get("tool_calls").cloned().unwrap_or(serde_json::json!([]));
-                        let content = if text.is_empty() {
-                            serde_json::json!([])
-                        } else {
-                            serde_json::json!([{ "type": "text", "text": text }])
-                        };
-                        Some(serde_json::json!({
-                            "role": "assistant",
-                            "content": content,
-                            "toolCalls": tool_calls,
-                        }))
-                    }
-                    _ => {
-                        // ToolResults and other variants — skip for display
-                        None
-                    }
-                }
-            })
-            .collect();
-
-        Ok(serde_json::json!({ "messages": messages, "sessionKey": session_key }))
-    }
-}
-
-/// Convert content from plain string to frontend-compatible array format.
-///
-/// Frontend expects: `[{ "type": "text", "text": "..." }]`
-/// zeroclaw stores:   `"plain string"`
-fn normalize_content(data: &mut serde_json::Value) {
-    // Strip a per-turn injected skill block from user messages so the history
-    // bubble shows only the user's text, not the prepended skill body.
-    if data.get("role").and_then(|r| r.as_str()) == Some("user")
-        && let Some(text) = data.get("content").and_then(|c| c.as_str())
-    {
-        let stripped = tinyiothub_ai::skills::strip_injected_skill(text);
-        data["content"] = serde_json::json!(stripped);
-    }
-    if let Some(content) = data.get("content") {
-        if content.is_string() {
-            let text = content.as_str().unwrap_or("");
-            data["content"] = serde_json::json!([{ "type": "text", "text": text }]);
-        } else if !content.is_array() {
-            data["content"] = serde_json::json!([]);
+        if !authorized_workspace.is_empty() {
+            parsed.verify_workspace(authorized_workspace)?;
         }
+
+        // DB-backed, session-scoped history. The zeroclaw in-memory agent
+        // history is shared across all sessions of the workspace agent and
+        // cannot isolate them.
+        let messages = super::chat::history::list_messages(&self.db_pool, session_key, limit)
+            .await
+            .map_err(|e| AgentError::RequestFailed(e.to_string()))?;
+        Ok(super::chat::history::messages_to_history_json(messages, session_key))
     }
 }
 
@@ -647,14 +603,24 @@ impl AgentPool {
         agent_id: &str,
         session_key: &str,
         run_id: Option<&str>,
+        authorized_workspace: &str,
     ) -> Result<(), AgentError> {
         let parsed = super::session::SessionKey::parse(session_key)?;
-        parsed.verify_workspace(&parsed.workspace_id)?;
+        if !authorized_workspace.is_empty() {
+            parsed.verify_workspace(authorized_workspace)?;
+        }
         let _ = agent_id;
         if let Some(rid) = run_id {
             let mut handles = self.chat_handles.lock().await;
-            if let Some(handle) = handles.remove(rid) {
-                handle.abort();
+            match handles.remove(rid) {
+                Some(handle) => handle.abort(),
+                // An unknown run_id must not look like a successful abort —
+                // the caller's run may still be streaming.
+                None => {
+                    return Err(AgentError::NotFound(format!(
+                        "Unknown or already-finished run_id: {rid}"
+                    )));
+                }
             }
         }
         Ok(())
@@ -719,13 +685,11 @@ impl AgentPool {
             }
         });
 
-        // Execute with timeout
+        // No inner timeout here: the heartbeat tick in tinyiothub-ai bounds the
+        // whole run (see heartbeat::loop_ TICK_TIMEOUT). A shorter inner timeout
+        // fires first every time, making the tick-level bound unreachable.
         let mut ag = agent.lock().await;
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(120),
-            ag.turn_streamed(message, event_tx, None),
-        )
-        .await;
+        let result = ag.turn_streamed(message, event_tx, None).await;
         drop(ag);
 
         // Wait for collector to finish processing remaining events
@@ -737,13 +701,8 @@ impl AgentPool {
         };
 
         match result {
-            Ok(Ok((final_text, _conversation))) => {
-                Ok(StreamingRunResult { final_text, tool_calls })
-            }
-            Ok(Err(e)) => Err(AgentError::RequestFailed(e.to_string())),
-            Err(_elapsed) => {
-                Err(AgentError::RequestFailed("Heartbeat LLM call timed out after 120s".into()))
-            }
+            Ok((final_text, _conversation)) => Ok(StreamingRunResult { final_text, tool_calls }),
+            Err(e) => Err(AgentError::RequestFailed(e.to_string())),
         }
     }
 
@@ -781,5 +740,93 @@ mod tests {
         assert_eq!(config.temperature, 0.7);
         assert_eq!(config.max_tokens, 4096);
         assert!(config.tool_denylist.contains(&"delete_device".to_string()));
+    }
+
+    async fn test_db() -> SqlitePool {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        crate::shared::persistence::test_helpers::run_all_migrations(&pool).await.unwrap();
+        pool
+    }
+
+    async fn test_agent_pool() -> AgentPool {
+        let db = test_db().await;
+        let memory_store: Arc<dyn tinyiothub_core::memory::MemoryStore> =
+            Arc::new(tinyiothub_memory::SqliteAgentMemoryRepository::new(db.clone()));
+        AgentPool::new(db, memory_store, &crate::shared::config::AgentSettings::default())
+            .expect("test AgentPool")
+    }
+
+    #[tokio::test]
+    async fn chat_send_rejects_session_from_other_workspace() {
+        let pool = test_agent_pool().await;
+        let err = pool
+            .chat_send("agent_main", "agent:ws_other:agent_main/s1", "hi", "r1", "", "ws_mine")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AgentError::NotFound(_)));
+        // The workspace check must run before any agent is built.
+        assert_eq!(pool.pool_size(), 0);
+    }
+
+    #[tokio::test]
+    async fn chat_history_rejects_session_from_other_workspace() {
+        let pool = test_agent_pool().await;
+        let err = pool
+            .chat_history("agent_main", "agent:ws_other:agent_main/s1", 50, "ws_mine")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AgentError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn chat_history_with_unscoped_token_reads_persisted_messages() {
+        let pool = test_agent_pool().await;
+        let key = "agent:ws1:agent_main/s1";
+        crate::modules::agent::chat::history::ensure_session(
+            &pool.db_pool,
+            key,
+            "ws1",
+            "agent_main",
+        )
+        .await
+        .unwrap();
+        crate::modules::agent::chat::history::append_message(
+            &pool.db_pool,
+            key,
+            "user",
+            "hello",
+            "r1",
+        )
+        .await
+        .unwrap();
+
+        // Empty authorized_workspace = unscoped (admin) token: no workspace
+        // check, history served straight from the DB.
+        let out = pool.chat_history("agent_main", key, 50, "").await.unwrap();
+        assert!(out.to_string().contains("hello"));
+    }
+
+    #[tokio::test]
+    async fn chat_abort_rejects_session_from_other_workspace() {
+        let pool = test_agent_pool().await;
+        let err = pool
+            .chat_abort("agent_main", "agent:ws_other:agent_main/s1", Some("r1"), "ws_mine")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AgentError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn chat_abort_with_unknown_run_id_errors_and_none_run_id_is_noop() {
+        let pool = test_agent_pool().await;
+        let err = pool
+            .chat_abort("agent_main", "agent:ws1:agent_main/s1", Some("nonexistent-run"), "")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, AgentError::NotFound(_)),
+            "unknown run_id must not silently succeed: {err:?}"
+        );
+        pool.chat_abort("agent_main", "agent:ws1:agent_main/s1", None, "").await.unwrap();
     }
 }

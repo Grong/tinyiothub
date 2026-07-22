@@ -6,7 +6,10 @@ pub struct ChatStreamRequest {
     pub agent_id: String,
     pub session_key: String,
     pub message: String,
-    pub run_id: String,
+    /// Ignored — run_id is minted server-side. Client-chosen ids can collide
+    /// across runs and make another workspace's run abortable by guessing.
+    #[serde(default)]
+    pub run_id: Option<String>,
     /// Full system prompt (Layer1 platform base + Layer2 user persona) to inject into ZeroClaw
     #[serde(default)]
     pub system_prompt: Option<String>,

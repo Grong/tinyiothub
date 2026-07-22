@@ -103,6 +103,13 @@ pub trait ToolHandler: Send + Sync {
     fn input_schema(&self) -> InputSchema;
     /// Execute tool with arguments
     async fn execute(&self, args: Value) -> Result<Value, ToolError>;
+
+    /// Declared safety classification — authoritative for trust evaluation.
+    /// Defaults to name-pattern classification; override when the tool's
+    /// actual behavior doesn't match its name.
+    fn safety(&self) -> tinyiothub_ai::types::ToolSafety {
+        tinyiothub_ai::types::classify_tool_safety(self.name())
+    }
 }
 
 /// Tool metadata for listing

@@ -36,7 +36,7 @@ impl Default for TrustConfig {
         Self {
             trust_level: TrustLevel::ReadOnlyAuto,
             max_auto_actions_per_tick: 10,
-            allowed_tool_categories: vec!["read".into(), "query".into()],
+            allowed_tool_categories: vec!["read".into(), "query".into(), "write".into()],
             blocked_tools: vec![],
             allowed_destructive_tools: vec![],
         }
@@ -126,16 +126,26 @@ pub enum TrustDecision {
     Propose { reason: String },
 }
 
-/// Evaluate whether a tool can auto-execute given the workspace trust config.
+/// Evaluate whether a tool can auto-execute given the workspace trust config,
+/// classifying safety from the tool name. Prefer
+/// [`evaluate_tool_trust_with_safety`] when the registry's declared safety is
+/// available — name patterns are only a fallback.
 ///
 /// Rules (in priority order):
 /// 1. Explicitly blocked tool → Block
-/// 2. Read-only tool → Allow (safe by definition)
-/// 3. Destructive tool + not FullAuto → Propose
-/// 4. Write tool + FullAuto → Allow
-/// 5. Write tool + ReadOnlyAuto → Propose
-/// 6. Write tool + ApprovalRequired → Propose
+/// 2. Category not in allowed_tool_categories (non-empty) → Propose
+/// 3. Read-only tool → Allow (safe by definition)
+/// 4. Destructive tool + FullAuto + explicit allowlist → Allow, else Propose
+/// 5. Write tool + FullAuto → Allow
+/// 6. Write tool + ReadOnlyAuto / ApprovalRequired → Propose
 pub fn evaluate_tool_trust(config: &TrustConfig, tool_name: &str) -> TrustDecision {
+    evaluate_tool_trust_with_safety(config, tool_name, classify_tool_safety(tool_name))
+}
+
+/// Same as [`evaluate_tool_trust`] but with an explicitly declared safety.
+/// The declared safety is authoritative; the tool name is only used for
+/// block-list matching and messages.
+pub fn evaluate_tool_trust_with_safety(config: &TrustConfig, tool_name: &str, safety: ToolSafety) -> TrustDecision {
     // 1. Explicit block list
     if config.blocked_tools.iter().any(|t| t == tool_name) {
         return TrustDecision::Block {
@@ -146,14 +156,34 @@ pub fn evaluate_tool_trust(config: &TrustConfig, tool_name: &str) -> TrustDecisi
         };
     }
 
-    let safety = classify_tool_safety(tool_name);
+    // 2. Category gate for read/write tools: a non-empty
+    // allowed_tool_categories list must contain the tool's safety category.
+    // "query" is accepted as a legacy alias of "read"; an empty list means no
+    // restriction. Destructive tools are exempt — they are governed by the
+    // stricter per-tool allowed_destructive_tools allowlist below.
+    let category = safety_category(safety);
+    if !matches!(safety, ToolSafety::Destructive)
+        && !config.allowed_tool_categories.is_empty()
+        && !config
+            .allowed_tool_categories
+            .iter()
+            .any(|c| c == category || (category == "read" && c == "query"))
+    {
+        return TrustDecision::Propose {
+            reason: format!(
+                "Tool '{}' is in category '{}', which is not in the workspace's \
+                 allowed_tool_categories. Propose this action in pending_proposals instead.",
+                tool_name, category
+            ),
+        };
+    }
 
-    // 2. Read-only tools are intrinsically safe — always allow
+    // 3. Read-only tools are intrinsically safe — always allow
     if matches!(safety, ToolSafety::ReadOnly) {
         return TrustDecision::Allow;
     }
 
-    // 3. Destructive tools require explicit allowlisting even under FullAuto
+    // 4. Destructive tools require explicit allowlisting even under FullAuto
     if matches!(safety, ToolSafety::Destructive) {
         if config.trust_level == TrustLevel::FullAuto && config.allowed_destructive_tools.iter().any(|t| t == tool_name)
         {
@@ -169,7 +199,7 @@ pub fn evaluate_tool_trust(config: &TrustConfig, tool_name: &str) -> TrustDecisi
         };
     }
 
-    // 4. Write tools: check global trust level
+    // 5. Write tools: check global trust level
     match config.trust_level {
         TrustLevel::FullAuto => TrustDecision::Allow,
         TrustLevel::ReadOnlyAuto | TrustLevel::ApprovalRequired => TrustDecision::Propose {
@@ -183,77 +213,22 @@ pub fn evaluate_tool_trust(config: &TrustConfig, tool_name: &str) -> TrustDecisi
     }
 }
 
-/// Engine for evaluating tool trust at execution time.
-pub struct TrustEngine {
-    config: TrustConfig,
-    workspace_id: String,
-}
-
-impl TrustEngine {
-    pub fn new(config: TrustConfig, workspace_id: String) -> Self {
-        Self { config, workspace_id }
-    }
-
-    /// Evaluate whether a tool can auto-execute.
-    pub fn evaluate(&self, tool_name: &str) -> TrustDecision {
-        let decision = evaluate_tool_trust(&self.config, tool_name);
-        match &decision {
-            TrustDecision::Block { reason } => {
-                tracing::warn!(
-                    workspace_id = %self.workspace_id,
-                    tool = %tool_name,
-                    reason = %reason,
-                    "Tool blocked by trust engine"
-                );
-            }
-            TrustDecision::Propose { reason } => {
-                tracing::debug!(
-                    workspace_id = %self.workspace_id,
-                    tool = %tool_name,
-                    reason = %reason,
-                    "Tool requires human approval"
-                );
-            }
-            TrustDecision::Allow => {}
-        }
-        decision
-    }
-
-    pub fn trust_level(&self) -> TrustLevel {
-        self.config.trust_level
-    }
-
-    pub fn max_auto_actions(&self) -> u32 {
-        self.config.max_auto_actions_per_tick
-    }
-
-    pub fn workspace_id(&self) -> &str {
-        &self.workspace_id
+/// Safety category string used for allowed_tool_categories matching.
+fn safety_category(safety: ToolSafety) -> &'static str {
+    match safety {
+        ToolSafety::ReadOnly => "read",
+        ToolSafety::Write => "write",
+        ToolSafety::Destructive => "destructive",
     }
 }
 
-/// Wrapper that enforces trust before tool execution.
-pub struct TrustAwareTool<T> {
-    inner: T,
-    engine: std::sync::Arc<TrustEngine>,
-    category: String,
-}
-
-impl<T> TrustAwareTool<T> {
-    pub fn new(inner: T, engine: std::sync::Arc<TrustEngine>, category: String) -> Self {
-        Self {
-            inner,
-            engine,
-            category,
-        }
-    }
-
-    pub fn check_trust(&self) -> TrustDecision {
-        self.engine.evaluate(&self.category)
-    }
-
-    pub fn inner(&self) -> &T {
-        &self.inner
+/// Risk label for a proposal, computed from tool safety — never trust the
+/// LLM's self-reported risk, which it can understate.
+pub fn risk_for_tool(tool_name: &str) -> &'static str {
+    match classify_tool_safety(tool_name) {
+        ToolSafety::Destructive => "high",
+        ToolSafety::Write => "medium",
+        ToolSafety::ReadOnly => "low",
     }
 }
 
@@ -383,5 +358,71 @@ mod tests {
             evaluate_tool_trust(&config, "get_device"),
             TrustDecision::Block { .. }
         ));
+    }
+
+    #[test]
+    fn test_declared_safety_overrides_name_pattern() {
+        let config = default_config();
+        // Name says "delete_" (destructive by pattern), but the registry
+        // declares the tool read-only — declaration wins.
+        assert_eq!(
+            evaluate_tool_trust_with_safety(&config, "delete_device", ToolSafety::ReadOnly),
+            TrustDecision::Allow
+        );
+        // Inverse: innocent name, declared destructive.
+        assert!(matches!(
+            evaluate_tool_trust_with_safety(&config, "get_device", ToolSafety::Destructive),
+            TrustDecision::Propose { .. }
+        ));
+    }
+
+    #[test]
+    fn test_allowed_tool_categories_gate_auto_execution() {
+        // Write tool under FullAuto, but "write" not in allowed categories.
+        let config = TrustConfig {
+            trust_level: TrustLevel::FullAuto,
+            allowed_tool_categories: vec!["read".into()],
+            ..default_config()
+        };
+        assert!(matches!(
+            evaluate_tool_trust(&config, "write_properties"),
+            TrustDecision::Propose { .. }
+        ));
+        // Read tool allowed via "query" legacy alias.
+        let config = TrustConfig {
+            trust_level: TrustLevel::ReadOnlyAuto,
+            allowed_tool_categories: vec!["query".into()],
+            ..default_config()
+        };
+        assert_eq!(evaluate_tool_trust(&config, "get_device"), TrustDecision::Allow);
+        // Read tool blocked when neither "read" nor "query" is allowed.
+        let config = TrustConfig {
+            trust_level: TrustLevel::ReadOnlyAuto,
+            allowed_tool_categories: vec!["write".into()],
+            ..default_config()
+        };
+        assert!(matches!(
+            evaluate_tool_trust(&config, "get_device"),
+            TrustDecision::Propose { .. }
+        ));
+    }
+
+    #[test]
+    fn test_empty_allowed_tool_categories_means_no_restriction() {
+        let config = TrustConfig {
+            trust_level: TrustLevel::FullAuto,
+            allowed_tool_categories: vec![],
+            ..default_config()
+        };
+        assert_eq!(evaluate_tool_trust(&config, "write_properties"), TrustDecision::Allow);
+        assert_eq!(evaluate_tool_trust(&config, "get_device"), TrustDecision::Allow);
+    }
+
+    #[test]
+    fn test_risk_for_tool_computed_from_safety() {
+        assert_eq!(risk_for_tool("firmware_update"), "high");
+        assert_eq!(risk_for_tool("delete_device"), "high");
+        assert_eq!(risk_for_tool("write_properties"), "medium");
+        assert_eq!(risk_for_tool("get_device"), "low");
     }
 }

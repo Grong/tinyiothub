@@ -59,10 +59,9 @@ impl EventBus {
                 debug!("Event {} broadcasted to {} subscribers", event.id(), subscriber_count);
             }
             Err(_) => {
-                warn!(
-                    "Event {} broadcast failed — channel may be full (capacity=1000)",
-                    event.id()
-                );
+                // broadcast::send only fails when there are no receivers;
+                // slow subscribers drop via Lagged at their recv() side.
+                warn!("Event {} broadcast skipped — no active subscribers", event.id());
             }
         }
 

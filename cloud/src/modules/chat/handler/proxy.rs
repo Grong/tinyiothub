@@ -23,18 +23,18 @@ pub async fn chat_stream(
     claims: Claims,
     Json(req): Json<ChatStreamRequest>,
 ) -> Response {
+    // Same fail-closed guard as chat_history/chat_abort: an unscoped token
+    // must not be able to stream into another workspace's session by forging
+    // the session_key.
+    let session_workspace = extract_workspace_from_session_key(&req.session_key);
+    if session_workspace != claims.workspace_id {
+        let err: Json<ApiResponse<()>> =
+            ApiResponseBuilder::error_with_code(404, "Session not found");
+        return err.into_response();
+    }
+
     // session_key format: agent:<workspace_id>:<agent_id>/<sess_uuid>
-    let session_key = if !claims.workspace_id.is_empty() {
-        let parts: Vec<&str> = req.session_key.split(':').collect();
-        if parts.len() >= 3 {
-            let agent_and_sess = parts[2];
-            format!("agent:{}:{}", claims.workspace_id, agent_and_sess)
-        } else {
-            req.session_key.clone()
-        }
-    } else {
-        req.session_key.clone()
-    };
+    let session_key = scope_session_key_to_claims(&claims.workspace_id, &req.session_key);
 
     let workspace_id = session_key
         .split(':')
@@ -75,12 +75,14 @@ pub async fn chat_stream(
     }
 
     let message = req.message.clone();
-    let run_id = req.run_id.clone();
+    // Server-minted run_id: the client learns it from the first SSE event
+    // (every ChatEvent carries runId) and uses it for /chat/abort.
+    let run_id = uuid::Uuid::new_v4().to_string();
     let agent_id = req.agent_id.clone();
 
     let mut rx = match state
         .agent_pool
-        .chat_send(&agent_id, &session_key, &message, &run_id, &full_prompt)
+        .chat_send(&agent_id, &session_key, &message, &run_id, &full_prompt, &claims.workspace_id)
         .await
     {
         Ok(rx) => rx,
@@ -119,7 +121,11 @@ pub async fn chat_history(
         Err(e) => return ApiResponseBuilder::error(format!("Invalid session key: {}", e)),
     };
 
-    match state.agent_pool.chat_history(&parsed.agent_id, &query.session_key, limit).await {
+    match state
+        .agent_pool
+        .chat_history(&parsed.agent_id, &query.session_key, limit, &claims.workspace_id)
+        .await
+    {
         Ok(data) => ApiResponseBuilder::success(data),
         Err(e) => ApiResponseBuilder::error(format!("Failed to load chat history: {}", e)),
     }
@@ -142,7 +148,11 @@ pub async fn chat_abort(
     };
 
     let run_id_ref = req.run_id.as_deref();
-    match state.agent_pool.chat_abort(&parsed.agent_id, &req.session_key, run_id_ref).await {
+    match state
+        .agent_pool
+        .chat_abort(&parsed.agent_id, &req.session_key, run_id_ref, &claims.workspace_id)
+        .await
+    {
         Ok(()) => ApiResponseBuilder::success(serde_json::json!({"aborted": true})),
         Err(e) => ApiResponseBuilder::error(format!("Abort failed: {}", e)),
     }
@@ -298,4 +308,56 @@ fn extract_workspace_from_session_key(session_key: &str) -> String {
         .and_then(|s| s.split('/').next())
         .map(|s| s.to_string())
         .unwrap_or_default()
+}
+
+/// Rewrite the session key's workspace segment to the claim's workspace, so a
+/// client holding a scoped token cannot address another tenant's session by
+/// forging the key. An empty claim workspace (unscoped/admin token) leaves the
+/// key untouched.
+fn scope_session_key_to_claims(claims_workspace: &str, req_key: &str) -> String {
+    if claims_workspace.is_empty() {
+        return req_key.to_string();
+    }
+    let parts: Vec<&str> = req_key.split(':').collect();
+    if parts.len() >= 3 {
+        format!("agent:{}:{}", claims_workspace, parts[2])
+    } else {
+        req_key.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_workspace_from_standard_key() {
+        assert_eq!(extract_workspace_from_session_key("agent:ws-1:agent_main/sess_9"), "ws-1");
+    }
+
+    #[test]
+    fn extract_workspace_from_malformed_key_is_empty() {
+        assert_eq!(extract_workspace_from_session_key("no-colons"), "");
+        assert_eq!(extract_workspace_from_session_key(""), "");
+    }
+
+    #[test]
+    fn scope_rewrites_workspace_for_scoped_claims() {
+        // Even if the client sends another tenant's workspace, the claim wins.
+        assert_eq!(
+            scope_session_key_to_claims("ws_mine", "agent:ws_other:agent_main/s1"),
+            "agent:ws_mine:agent_main/s1"
+        );
+    }
+
+    #[test]
+    fn scope_passthrough_for_unscoped_claims() {
+        let key = "agent:ws_other:agent_main/s1";
+        assert_eq!(scope_session_key_to_claims("", key), key);
+    }
+
+    #[test]
+    fn scope_passthrough_for_malformed_key() {
+        assert_eq!(scope_session_key_to_claims("ws_mine", "garbage"), "garbage");
+    }
 }

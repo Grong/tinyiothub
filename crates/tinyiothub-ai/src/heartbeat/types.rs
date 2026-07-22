@@ -66,6 +66,9 @@ pub struct HeartbeatResult {
     pub workspace_id: String,
     pub status: HeartbeatStatus,
     pub summary: String,
+    /// Number of tasks executed this tick (set by the loop, not the LLM).
+    #[serde(default)]
+    pub task_count: u32,
     pub executed_actions: Vec<ExecutedAction>,
     pub proposals: Vec<super::super::proposal::Proposal>,
     pub error: Option<String>,
@@ -84,6 +87,14 @@ pub struct HeartbeatTask {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Input for creating/replacing heartbeat tasks (no server-assigned fields).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewHeartbeatTask {
+    pub priority: String,
+    pub text: String,
+    pub paused: bool,
+}
+
 /// Configuration for the heartbeat runner.
 #[derive(Debug, Clone)]
 pub struct HeartbeatConfig {
@@ -100,6 +111,44 @@ impl Default for HeartbeatConfig {
     }
 }
 
+/// Lowest interval a workspace may configure — a tick can take minutes
+/// (LLM call + tool execution), so tighter loops just pile up.
+pub const MIN_HEARTBEAT_INTERVAL_MINUTES: u32 = 5;
+
+/// Per-workspace heartbeat settings, persisted as JSON on the workspace row.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WorkspaceHeartbeatConfig {
+    pub enabled: bool,
+    pub interval_minutes: u32,
+}
+
+impl WorkspaceHeartbeatConfig {
+    pub fn validated(enabled: bool, interval_minutes: u32) -> Result<Self, String> {
+        if interval_minutes < MIN_HEARTBEAT_INTERVAL_MINUTES {
+            return Err(format!(
+                "interval_minutes must be >= {}",
+                MIN_HEARTBEAT_INTERVAL_MINUTES
+            ));
+        }
+        Ok(Self {
+            enabled,
+            interval_minutes,
+        })
+    }
+
+    pub fn from_db_json(json: Option<&str>) -> Option<Self> {
+        let json = json?.trim();
+        if json.is_empty() {
+            return None;
+        }
+        serde_json::from_str(json).ok()
+    }
+
+    pub fn to_db_json(&self) -> String {
+        serde_json::to_string(self).unwrap_or_default()
+    }
+}
+
 /// Internal signal sent to a heartbeat loop.
 #[derive(Debug, Clone)]
 pub enum LoopSignal {
@@ -109,4 +158,34 @@ pub enum LoopSignal {
     ReloadTasks,
     /// Re-read TrustConfig from shared state.
     ReloadConfig,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workspace_config_roundtrips_json() {
+        let cfg = WorkspaceHeartbeatConfig {
+            enabled: true,
+            interval_minutes: 30,
+        };
+        let json = cfg.to_db_json();
+        let loaded = WorkspaceHeartbeatConfig::from_db_json(Some(&json)).expect("parse");
+        assert_eq!(loaded.interval_minutes, 30);
+        assert!(loaded.enabled);
+    }
+
+    #[test]
+    fn workspace_config_empty_is_none() {
+        assert!(WorkspaceHeartbeatConfig::from_db_json(Some("")).is_none());
+        assert!(WorkspaceHeartbeatConfig::from_db_json(Some("  ")).is_none());
+        assert!(WorkspaceHeartbeatConfig::from_db_json(None).is_none());
+    }
+
+    #[test]
+    fn workspace_config_rejects_sub_minimum_interval() {
+        assert!(WorkspaceHeartbeatConfig::validated(true, MIN_HEARTBEAT_INTERVAL_MINUTES - 1).is_err());
+        assert!(WorkspaceHeartbeatConfig::validated(true, MIN_HEARTBEAT_INTERVAL_MINUTES).is_ok());
+    }
 }

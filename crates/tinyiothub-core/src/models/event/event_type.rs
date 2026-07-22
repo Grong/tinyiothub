@@ -75,6 +75,23 @@ pub enum AiEventType {
 }
 
 impl AiEventType {
+    /// The variant ident (e.g. "AlarmCreated") — used as the stable label for
+    /// logs, metrics, and drop notifications.
+    pub fn name(&self) -> &'static str {
+        match self {
+            AiEventType::AlarmCreated => "AlarmCreated",
+            AiEventType::AlarmResolved => "AlarmResolved",
+            AiEventType::HeartbeatCompleted => "HeartbeatCompleted",
+            AiEventType::ChatCompleted => "ChatCompleted",
+            AiEventType::WorkspaceCreated => "WorkspaceCreated",
+            AiEventType::WorkspaceDeleted => "WorkspaceDeleted",
+            AiEventType::HeartbeatPersistFailed => "HeartbeatPersistFailed",
+            AiEventType::ReflectionFailed => "ReflectionFailed",
+            AiEventType::ProposalCreated => "ProposalCreated",
+            AiEventType::ProposalResolved => "ProposalResolved",
+        }
+    }
+
     pub fn display_name(&self) -> &'static str {
         match self {
             AiEventType::AlarmCreated => "Alarm Created",
@@ -420,6 +437,15 @@ mod tests {
 
         let invalid = EventType::from_strings("ai", "nonexistent");
         assert!(invalid.is_err());
+    }
+
+    #[test]
+    fn test_ai_event_type_name_is_variant_ident() {
+        // The AI crate's drop-notifier/metrics label events by this name; it
+        // must match the enum variant ident so logs line up with the source.
+        assert_eq!(AiEventType::AlarmCreated.name(), "AlarmCreated");
+        assert_eq!(AiEventType::HeartbeatCompleted.name(), "HeartbeatCompleted");
+        assert_eq!(AiEventType::ProposalResolved.name(), "ProposalResolved");
     }
 
     #[test]

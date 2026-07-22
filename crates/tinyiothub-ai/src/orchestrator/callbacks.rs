@@ -7,11 +7,12 @@
 //! WorkspaceDeleted    --> HeartbeatRunner.stop()
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use tinyiothub_core::models::event::{ContentElement, Event, EventType, RichContent};
+use tokio::sync::Notify;
 use tracing::{debug, error, info, warn};
 
 use crate::event::bus::AiEventPublisher;
@@ -30,6 +31,9 @@ pub struct AiEventHandler {
     event_publisher: Arc<AiEventPublisher>,
     dlq: Option<Arc<dyn DeadLetterQueue>>,
     shutting_down: Arc<AtomicBool>,
+    retry_in_flight: Arc<AtomicUsize>,
+    retry_idle: Arc<Notify>,
+    shutdown_notify: Arc<Notify>,
 }
 
 impl AiEventHandler {
@@ -48,6 +52,9 @@ impl AiEventHandler {
             event_publisher,
             dlq,
             shutting_down,
+            retry_in_flight: Arc::new(AtomicUsize::new(0)),
+            retry_idle: Arc::new(Notify::new()),
+            shutdown_notify: Arc::new(Notify::new()),
         }
     }
 
@@ -160,14 +167,29 @@ impl AiEventHandler {
         let event_publisher = self.event_publisher.clone();
         let dlq = self.dlq.clone();
         let shutting_down = self.shutting_down.clone();
+        let shutdown_notify = self.shutdown_notify.clone();
+
+        self.retry_in_flight.fetch_add(1, Ordering::SeqCst);
+        let tracker = RetryTracker {
+            count: self.retry_in_flight.clone(),
+            idle: self.retry_idle.clone(),
+        };
 
         tokio::spawn(async move {
+            // Decrements the in-flight count on every exit path, waking drainers.
+            let _tracker = tracker;
             let mut attempt: u32 = 0;
             let max_attempts: u32 = 5;
             let base_delay = Duration::from_secs(2);
 
             loop {
-                tokio::time::sleep(base_delay * 2u32.pow(attempt)).await;
+                tokio::select! {
+                    _ = tokio::time::sleep(base_delay * 2u32.pow(attempt)) => {}
+                    _ = shutdown_notify.notified() => {
+                        debug!(ws_id, "Shutting down, aborting retry");
+                        return;
+                    }
+                }
                 if shutting_down.load(Ordering::SeqCst) {
                     debug!(ws_id, "Shutting down, aborting retry");
                     return;
@@ -186,20 +208,22 @@ impl AiEventHandler {
                                 error = %e,
                                 "Heartbeat persist exhausted retries, enqueuing to DLQ"
                             );
-                            if let Some(ref dlq) = dlq {
-                                let _ = dlq
-                                    .enqueue(
-                                        &ws_id,
-                                        "HeartbeatCompleted",
-                                        &serde_json::to_string(&result).unwrap_or_default(),
-                                        &e.to_string(),
-                                    )
-                                    .await;
+                            if let Err(dlq_err) = dead_letter_heartbeat_result(
+                                dlq.as_ref(),
+                                &event_publisher,
+                                &ws_id,
+                                &result,
+                                &e.to_string(),
+                                max_attempts,
+                            )
+                            .await
+                            {
+                                error!(
+                                    workspace_id = %ws_id,
+                                    error = %dlq_err,
+                                    "DLQ enqueue failed — heartbeat result lost"
+                                );
                             }
-                            event_publisher.publish(AiEvent::HeartbeatPersistFailed {
-                                workspace_id: ws_id,
-                                reason: format!("Failed after {} attempts: {}", max_attempts, e),
-                            });
                             return;
                         }
                         warn!(ws_id, attempt, error = %e, "Heartbeat persist retry");
@@ -207,6 +231,45 @@ impl AiEventHandler {
                 }
             }
         });
+    }
+
+    /// Number of retry tasks currently alive (sleeping or persisting).
+    pub fn in_flight_retries(&self) -> usize {
+        self.retry_in_flight.load(Ordering::SeqCst)
+    }
+
+    /// Abort in-flight retry backoff sleeps and wait for the tasks to exit.
+    pub async fn drain_retries(&self) {
+        self.shutdown_notify.notify_waiters();
+        loop {
+            if self.retry_in_flight.load(Ordering::SeqCst) == 0 {
+                return;
+            }
+            let notified = self.retry_idle.notified();
+            tokio::pin!(notified);
+            // Register the waiter before re-checking the count, otherwise a
+            // task finishing between check and await would be missed.
+            notified.as_mut().enable();
+            if self.retry_in_flight.load(Ordering::SeqCst) == 0 {
+                return;
+            }
+            notified.await;
+        }
+    }
+}
+
+/// Decrements the in-flight retry counter when the task exits, on any path,
+/// and wakes drainers once the last task is gone.
+struct RetryTracker {
+    count: Arc<AtomicUsize>,
+    idle: Arc<Notify>,
+}
+
+impl Drop for RetryTracker {
+    fn drop(&mut self) {
+        if self.count.fetch_sub(1, Ordering::SeqCst) == 1 {
+            self.idle.notify_waiters();
+        }
     }
 }
 
@@ -226,6 +289,45 @@ impl tinyiothub_core::event::EventHandler for AiEventHandler {
     }
 }
 
+/// Dead-letter a heartbeat result after persist retries are exhausted.
+///
+/// Always publishes HeartbeatPersistFailed — even when the DLQ itself rejects
+/// the entry, operators need the failure signal. Returns Err when the DLQ
+/// enqueue failed so the caller can log it; swallowing it would lose the
+/// result silently.
+async fn dead_letter_heartbeat_result(
+    dlq: Option<&Arc<dyn DeadLetterQueue>>,
+    event_publisher: &AiEventPublisher,
+    ws_id: &str,
+    result: &crate::heartbeat::types::HeartbeatResult,
+    last_error: &str,
+    max_attempts: u32,
+) -> Result<(), String> {
+    let mut enqueue_result = Ok(());
+    if let Some(dlq) = dlq {
+        enqueue_result = dlq
+            .enqueue(ws_id, "HeartbeatCompleted", &dlq_payload(result), last_error)
+            .await;
+    }
+    event_publisher.publish(AiEvent::HeartbeatPersistFailed {
+        workspace_id: ws_id.to_string(),
+        reason: format!("Failed after {} attempts: {}", max_attempts, last_error),
+    });
+    enqueue_result
+}
+
+/// HeartbeatResult serialization cannot fail in practice, but an empty
+/// payload would make the DLQ entry useless — fall back to a placeholder
+/// that at least preserves the workspace and error context.
+fn dlq_payload(result: &crate::heartbeat::types::HeartbeatResult) -> String {
+    serde_json::to_string(result).unwrap_or_else(|e| {
+        format!(
+            r#"{{"unserializable":true,"workspace_id":"{}","serialize_error":"{}"}}"#,
+            result.workspace_id, e
+        )
+    })
+}
+
 fn extract_payload(content: &RichContent) -> Option<String> {
     content.elements().iter().find_map(|el| match el {
         ContentElement::Text { content, .. } => Some(content.clone()),
@@ -234,7 +336,7 @@ fn extract_payload(content: &RichContent) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::sync::Arc;
     use std::sync::Mutex;
@@ -244,23 +346,34 @@ mod tests {
 
     use tinyiothub_core::event::EventHandler;
 
+    use crate::event::dlq::{DeadLetterEntry, DeadLetterQueue};
     use crate::heartbeat::repo::RepoError;
     use crate::heartbeat::types::{HeartbeatConfig, HeartbeatResult, HeartbeatStatus, HeartbeatTask};
     use crate::memory::provider::{LlmProvider, LlmResponse};
     use crate::memory::service::MemoryService;
 
-    struct MockTaskRepo {
+    pub(crate) struct MockTaskRepo {
+        pub(crate) fail_insert: bool,
         insert_result_calls: Arc<Mutex<Vec<(String, HeartbeatResult)>>>,
     }
 
     impl MockTaskRepo {
-        fn new() -> Self {
+        pub(crate) fn new() -> Self {
             Self {
+                fail_insert: false,
                 insert_result_calls: Arc::new(Mutex::new(Vec::new())),
             }
         }
 
-        fn insert_result_calls(&self) -> Arc<Mutex<Vec<(String, HeartbeatResult)>>> {
+        /// Every insert_result fails — drives the retry/backoff path.
+        pub(crate) fn failing() -> Self {
+            Self {
+                fail_insert: true,
+                insert_result_calls: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        pub(crate) fn insert_result_calls(&self) -> Arc<Mutex<Vec<(String, HeartbeatResult)>>> {
             Arc::clone(&self.insert_result_calls)
         }
     }
@@ -297,6 +410,9 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((workspace_id.to_string(), result.clone()));
+            if self.fail_insert {
+                return Err(RepoError::Database("mock insert failure".into()));
+            }
             Ok(())
         }
     }
@@ -403,7 +519,7 @@ mod tests {
         }
     }
 
-    fn make_memory_service() -> Arc<MemoryService> {
+    pub(crate) fn make_memory_service() -> Arc<MemoryService> {
         Arc::new(MemoryService::new(Arc::new(MockLlmProvider), Arc::new(MockMemoryStore)))
     }
 
@@ -492,6 +608,7 @@ mod tests {
             workspace_id: "ws_test".to_string(),
             status: HeartbeatStatus::Complete,
             summary: "All good".to_string(),
+            task_count: 0,
             executed_actions: vec![],
             proposals: vec![],
             error: None,
@@ -622,6 +739,7 @@ mod tests {
             workspace_id: "ws_test".to_string(),
             status: HeartbeatStatus::Complete,
             summary: "All good".to_string(),
+            task_count: 0,
             executed_actions: vec![],
             proposals: vec![],
             error: None,
@@ -650,5 +768,131 @@ mod tests {
         let content = RichContent::new_text("Test".to_string(), String::new());
         let extracted = extract_payload(&content);
         assert_eq!(extracted, Some(String::new()));
+    }
+
+    #[derive(Default)]
+    struct MockDlq {
+        fail: bool,
+        entries: Mutex<Vec<(String, String, String, String)>>,
+    }
+
+    #[async_trait::async_trait]
+    impl DeadLetterQueue for MockDlq {
+        async fn enqueue(
+            &self,
+            workspace_id: &str,
+            event_type: &str,
+            payload_json: &str,
+            failure_reason: &str,
+        ) -> Result<(), String> {
+            if self.fail {
+                return Err("dlq unavailable".into());
+            }
+            self.entries.lock().unwrap().push((
+                workspace_id.to_string(),
+                event_type.to_string(),
+                payload_json.to_string(),
+                failure_reason.to_string(),
+            ));
+            Ok(())
+        }
+
+        async fn list(&self, _workspace_id: &str) -> Result<Vec<DeadLetterEntry>, String> {
+            Ok(vec![])
+        }
+
+        async fn discard(&self, _entry_id: &str) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingHandler {
+        seen: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl EventHandler for RecordingHandler {
+        async fn handle(&self, event: &Event) -> tinyiothub_core::error::Result<()> {
+            self.seen.lock().unwrap().push(event.content().to_plain_text());
+            Ok(())
+        }
+        fn name(&self) -> &str {
+            "recording"
+        }
+        fn should_handle(&self, _event: &Event) -> bool {
+            true
+        }
+    }
+
+    fn recording_publisher() -> (Arc<AiEventPublisher>, Arc<RecordingHandler>) {
+        let bus = Arc::new(EventBus::new());
+        let seen = Arc::new(RecordingHandler::default());
+        bus.register_handler(seen.clone());
+        (Arc::new(AiEventPublisher::new(bus)), seen)
+    }
+
+    fn sample_result() -> HeartbeatResult {
+        HeartbeatResult {
+            workspace_id: "ws_1".to_string(),
+            status: HeartbeatStatus::Complete,
+            summary: "done".to_string(),
+            task_count: 1,
+            executed_actions: vec![],
+            proposals: vec![],
+            error: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn dead_letter_enqueue_failure_is_returned_not_swallowed() {
+        let (publisher, seen) = recording_publisher();
+        let dlq: Arc<dyn DeadLetterQueue> = Arc::new(MockDlq {
+            fail: true,
+            entries: Mutex::new(vec![]),
+        });
+
+        let r = dead_letter_heartbeat_result(Some(&dlq), &publisher, "ws_1", &sample_result(), "db down", 5).await;
+        publisher.shutdown().await;
+
+        assert!(r.is_err(), "DLQ enqueue failure must surface so the caller can log it");
+        let seen = seen.seen.lock().unwrap();
+        assert_eq!(seen.len(), 1, "HeartbeatPersistFailed must still be published");
+        assert!(seen[0].contains("ws_1"));
+    }
+
+    #[tokio::test]
+    async fn dead_letter_records_entry_with_full_payload() {
+        let (publisher, _seen) = recording_publisher();
+        let mock = Arc::new(MockDlq::default());
+        let dlq: Arc<dyn DeadLetterQueue> = mock.clone();
+
+        let r = dead_letter_heartbeat_result(Some(&dlq), &publisher, "ws_1", &sample_result(), "db down", 5).await;
+        publisher.shutdown().await;
+
+        assert!(r.is_ok());
+        let entries = mock.entries.lock().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "ws_1");
+        assert_eq!(entries[0].1, "HeartbeatCompleted");
+        assert!(
+            entries[0].2.contains("ws_1"),
+            "payload must carry the result JSON, not an empty string"
+        );
+        assert!(entries[0].2.contains("done"));
+        assert_eq!(entries[0].3, "db down");
+    }
+
+    #[tokio::test]
+    async fn dead_letter_without_dlq_still_publishes_failure_event() {
+        let (publisher, seen) = recording_publisher();
+
+        let r = dead_letter_heartbeat_result(None, &publisher, "ws_1", &sample_result(), "db down", 5).await;
+        publisher.shutdown().await;
+
+        assert!(r.is_ok());
+        let seen = seen.seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert!(seen[0].contains("ws_1"));
     }
 }

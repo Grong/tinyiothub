@@ -63,6 +63,7 @@ interface PendingProposal {
   reason: string;
   risk: string;
   createdAt: string;
+  parameters?: Record<string, unknown>;
 }
 
 interface AISummary {

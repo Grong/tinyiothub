@@ -1,4 +1,3 @@
-//! AI session module — manages chat sessions.
-//! Will be populated in a later task.
+//! AI session module — chat turn types shared by memory, events, and cloud.
 
 pub mod types;

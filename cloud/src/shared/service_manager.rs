@@ -38,6 +38,9 @@ pub struct ServiceManager {
 
     /// AI heartbeat runner (set during start_all)
     heartbeat_runner: Option<Arc<tinyiothub_ai::heartbeat::runner::HeartbeatRunner>>,
+
+    /// Shared AI event publisher (set during start_all, drained on shutdown)
+    event_publisher: Option<Arc<tinyiothub_ai::event::bus::AiEventPublisher>>,
 }
 
 impl ServiceManager {
@@ -53,6 +56,7 @@ impl ServiceManager {
             cron_scheduler: Arc::new(RwLock::new(None)),
             orchestrator: None,
             heartbeat_runner: None,
+            event_publisher: None,
         }
     }
 
@@ -133,9 +137,10 @@ impl ServiceManager {
                 enabled: true,
                 interval_minutes: 15,
             };
-            let event_publisher = Arc::new(tinyiothub_ai::event::bus::AiEventPublisher::new(
-                app_state.event_bus.clone(),
-            ));
+            let event_publisher = Arc::new(
+                tinyiothub_ai::event::bus::AiEventPublisher::new(app_state.event_bus.clone())
+                    .with_drop_notifier(Arc::new(tinyiothub_ai::event::bus::LoggingDropNotifier)),
+            );
             let heartbeat_runner =
                 Arc::new(tinyiothub_ai::heartbeat::runner::HeartbeatRunner::new(
                     heartbeat_task_repo.clone(),
@@ -146,6 +151,7 @@ impl ServiceManager {
             // Wire event publisher to services that need cross-domain dispatching
             app_state.alarm_service.set_event_publisher(event_publisher.clone());
             app_state.workspace_service.set_event_publisher(event_publisher.clone());
+            app_state.workspace_service.set_heartbeat_task_repo(heartbeat_task_repo.clone());
 
             // Wire agent pool via adapter
             let ai_adapter = Arc::new(crate::shared::ai_adapter::CloudAgentPoolAdapter::new(
@@ -153,10 +159,14 @@ impl ServiceManager {
             ));
             heartbeat_runner.set_agent_pool(ai_adapter).await;
 
-            let memory_service = Arc::new(tinyiothub_ai::memory::service::MemoryService::new(
-                Arc::new(crate::shared::llm_provider::MinimaxLlmProvider::new()),
-                app_state.memory_store.clone(),
-            ));
+            let memory_service = Arc::new(
+                tinyiothub_ai::memory::service::MemoryService::new(
+                    Arc::new(crate::shared::llm_provider::MinimaxLlmProvider::new()),
+                    app_state.memory_store.clone(),
+                )
+                // Share the runner's Metrics so reflection stats land in the same snapshot.
+                .with_metrics(heartbeat_runner.metrics.clone()),
+            );
 
             // Wire MemoryService into AgentPool for reflection from chat path
             app_state.agent_pool.set_memory_service(memory_service.clone()).await;
@@ -178,6 +188,16 @@ impl ServiceManager {
             match app_state.workspace_service.list_all_ids().await {
                 Ok(ws_ids) => {
                     for ws_id in &ws_ids {
+                        let workspace_dir = crate::shared::paths::workspace_dir(ws_id);
+                        if let Err(e) = crate::modules::agent::heartbeat::migrate_file_tasks_to_db(
+                            heartbeat_runner.task_repo().as_ref(),
+                            ws_id,
+                            &workspace_dir,
+                        )
+                        .await
+                        {
+                            warn!(%ws_id, "⚠️ Heartbeat task migration failed: {}", e);
+                        }
                         heartbeat_runner.start(ws_id).await;
                     }
                     info!("✅ AI Orchestrator started ({} workspaces)", ws_ids.len());
@@ -190,6 +210,7 @@ impl ServiceManager {
             // Store in ServiceManager for shutdown
             self.orchestrator = Some(orchestrator);
             self.heartbeat_runner = Some(heartbeat_runner);
+            self.event_publisher = Some(event_publisher);
 
             // Also store in AppState for potential access by other subsystems
             app_state.orchestrator = self.orchestrator.clone();
@@ -321,6 +342,11 @@ impl ServiceManager {
         if let Some(ref heartbeat_runner) = self.heartbeat_runner {
             heartbeat_runner.shutdown().await;
             info!("HeartbeatRunner shut down");
+        }
+        // Drain queued events after all producers have stopped.
+        if let Some(ref event_publisher) = self.event_publisher {
+            event_publisher.shutdown().await;
+            info!("AiEventPublisher drained");
         }
 
         // 发送关闭信号
