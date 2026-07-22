@@ -39,7 +39,7 @@
 |---|---|
 | `device_type` | 保留，降级为自由文本"子类型"标签（如 sensor/gateway），不再承担分类主语义；`thing_type` 是新的主分类 |
 | `parent_id` | 语义沿用但升级为本体层级；FK 约束从 `ON DELETE SET NULL` 改为 `RESTRICT`（配合"删有子节点的物拒绝"规则） |
-| `product_id` / products 表 | 本期保留不动。products 与 thing_templates 概念重叠（都是"型号"），后续迭代评估合并，记入 TODOS |
+| `product_id` / products 表 | **本期收敛（用户裁决 2026-07-22）**：products 表删除，`devices.product_id` → `devices.template_id`（FK → thing_templates，`ON DELETE SET NULL`）。products 是空心型号表（6 行、无 workspace_id、无属性/动作定义、API 路由已移除），其职责完全被 thing_templates 覆盖。顺带补上原 spec 缺口：物此前没有任何列指向模板，template_id 让 ER 图中的 `thing_templates ──< devices` 落到实处。数据重映射：8 台设备按 device_type 匹配内置模板（环境传感器→SHT30 模板等），无匹配的置 NULL（无模型的物是合法状态） |
 | `organization_id` / organizations 表 | 保留，分工明确化：organizations 管**行政/权限**维度，parent_id 树管**物理/空间归属**。两者并存不冲突 |
 | `name UNIQUE`（全局） | 改为表达式唯一索引 `UNIQUE INDEX ON devices(COALESCE(workspace_id,''), name)`——内置/全局行（workspace_id NULL，现有 16 个内置模板同款情况）按 `''` 参与唯一，避免 SQLite 把 NULL 视为互不相同导致约束失效 |
 | `state NOT NULL DEFAULT 0` | 保留；非 device 类型的物固定为 0。所有按 state 聚合的查询必须过滤 `thing_type='device'`（见审计清单） |
@@ -52,7 +52,7 @@
 **device_templates 现状**：`name` 同样全局 UNIQUE。E1 模板市场下跨工作区/市场安装必然撞名。方案：唯一约束改为表达式唯一索引 `COALESCE(workspace_id,'') + name`（内置模板 workspace_id 为 NULL，共 16 个，普通 `(workspace_id,name)` 约束对 NULL 无效）；市场安装撞名时自动加后缀（模板名+市场来源）。
 
 **SQLite 约束修改 = 表重建**（必须在迁移计划中显式编排）：SQLite 无法 ALTER CHECK/FK/UNIQUE 约束，以下三项都是"建新表 → 拷数据 → 删旧表 → 改名"：
-1. `devices` 重建：name 唯一约束改表达式索引 + parent_id FK 改 RESTRICT。重建最重：12 个索引、4 个外向 FK（parent_id 自引用、product_id、organization_id、workspace_id），且有 **8 张表持有指向 devices 的内向 FK**（device_alarm_rules、device_properties、device_commands、device_alarms、messages、device_traces、jobs 等），拷贝期间必须 `PRAGMA foreign_keys=OFF`，重建后恢复并跑 `PRAGMA foreign_key_check`
+1. `devices` 重建：name 唯一约束改表达式索引 + parent_id FK 改 RESTRICT + `product_id` 改 `template_id`（FK → thing_templates）。重建最重：12 个索引、4 个外向 FK（parent_id 自引用、template_id、organization_id、workspace_id），且有 **8 张表持有指向 devices 的内向 FK**（device_alarm_rules、device_properties、device_commands、device_alarms、messages、device_traces、jobs 等），拷贝期间必须 `PRAGMA foreign_keys=OFF`，重建后恢复并跑 `PRAGMA foreign_key_check`
 2. `tags` 重建：CHECK 放宽加 `'thing'`
 3. `device_templates` 重建（改名 thing_templates 时一并完成）：name 唯一约束改表达式索引 `COALESCE(workspace_id,'')+name`
 
@@ -266,7 +266,7 @@ Agent 不注入任何本体上下文，全部通过工具按需获取：
    - resources → thing_resources：加 workspace_id NOT NULL（回填所属工作区）、device_id 允许 NULL（未指派为合法状态）、删 parse_status 列
    - events：删 cleanup_old_events 触发器（不设保留上限，保留策略记入 TODOS）
    - device_alarm_rules：rule_type 支持 `'event'`，condition_config 增 `{event_name, min_level}` 形态
-2. **Backfill**：devices.thing_type='device'；thing_resources.workspace_id 从原 resources.workspace_id 平移
+2. **Backfill**：devices.thing_type='device'；devices.template_id 按 device_type 从 product_id 重映射（无匹配置 NULL）；thing_resources.workspace_id 从原 resources.workspace_id 平移；products 表删除（随 devices 重建同批完成）
 3. **Deploy**：代码全量上线（工具集/管线/前端），name 查找全部 workspace 作用域化；同分支删除 knowledge_* 表与图谱代码
 
 ## 八、测试策略
@@ -286,4 +286,4 @@ Agent 不注入任何本体上下文，全部通过工具按需获取：
 - R2：dead event path 前科——事件管线验收必须真实全链路（见二·①）
 - R3：mock 测试掩盖真实 DB 问题——集成测试必须 sqlx 真实 DB（见八）
 - R4：知识图谱两个月即拆的前车之鉴——本体落地后需尽快跑真实 Agent 任务验证
-- R5：products 与 thing_templates 概念重叠遗留——记入 TODOS 后续评估
+- R5：~~products 与 thing_templates 概念重叠遗留~~ **已关闭（用户裁决 2026-07-22）**：本期收敛，products 表删除、product_id → template_id（见〇节对账表）
