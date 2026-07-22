@@ -45,7 +45,7 @@
 | `state NOT NULL DEFAULT 0` | 保留；非 device 类型的物固定为 0。所有按 state 聚合的查询必须过滤 `thing_type='device'`（见审计清单） |
 | `workspace_id ON DELETE SET NULL`（devices） | 语义变更：工作区删除改为**应用层拒绝**（含物时须先迁移/删除其物），不再依赖 SET NULL 产生"既不在唯一约束内、也按名查不到"的孤儿物 |
 
-**tags 现状**：`tags.type` 有 `CHECK (type IN ('device','app'))`，`tag_bindings.target_type` 为自由文本。方案：CHECK 放宽加 `'thing'`；新的物标签绑定用 `target_type='thing'`，查询时兼容 `IN ('device','thing')`，存量绑定不动。
+**tags 现状**：`tags.type` 有 `CHECK (type IN ('device','app'))`，`UNIQUE(type, name)` 是全局的（跨租户撞名），`tag_bindings.target_type` 为自由文本。方案：CHECK 放宽加 `'thing'`；唯一约束改为表达式索引 `COALESCE(tenant_id,'') + type + name`；新的物标签绑定用 `target_type='thing'`，查询时兼容 `IN ('device','thing')`，存量绑定不动。
 
 **resources 表现状**（注意：实际表名是 `resources`，不是 workspace_resources）：`workspace_id NOT NULL`、`file_path NOT NULL DEFAULT ''`、`parse_status`（与将被删除的知识解析管线关联）、`tags TEXT`。迁移方案：全量行迁移到 `thing_resources`；`parse_status` 列不迁移（解析管线随图谱删除而消亡）；部署时在途解析任务随进程重启消亡，可接受。
 
@@ -54,7 +54,7 @@
 **SQLite 约束修改 = 表重建**（必须在迁移计划中显式编排）：SQLite 无法 ALTER CHECK/FK/UNIQUE 约束，以下三项都是"建新表 → 拷数据 → 删旧表 → 改名"：
 1. `devices` 重建：name 唯一约束改表达式索引 + parent_id FK 改 RESTRICT。重建最重：12 个索引、4 个外向 FK（parent_id 自引用、product_id、organization_id、workspace_id），且有 **8 张表持有指向 devices 的内向 FK**（device_alarm_rules、device_properties、device_commands、device_alarms、messages、device_traces、jobs 等），拷贝期间必须 `PRAGMA foreign_keys=OFF`，重建后恢复并跑 `PRAGMA foreign_key_check`
 2. `tags` 重建：CHECK 放宽加 `'thing'`
-3. `device_templates` 重建（改名 thing_templates 时一并完成）：name 唯一约束改 `(workspace_id, name)`
+3. `device_templates` 重建（改名 thing_templates 时一并完成）：name 唯一约束改表达式索引 `COALESCE(workspace_id,'')+name`
 
 **name 查找作用域变更的爆炸半径**：`find_by_name`/`get_device_by_name` 被 role、permission、template、device（service/properties handler）、gateway 等 10+ 处使用。方案：
 - 所有 name 查找改为 workspace 作用域（`find_by_name(workspace_id, name)`）
@@ -108,20 +108,22 @@ devices（泛化为物，新增部分）
 ### 数据模型 ER
 
 ```
-thing_templates ──< devices(things) ──< thing_resources (文档/图片/3D, device_id 外键, 可空=未指派)
+thing_templates ──< devices(things) ──< thing_resources (文档/图片/3D)
        │                  │
-       │                  └── ontology_summary / summary_status
+       │                  └── ontology_summary / summary_status('ok'|'dirty'|'failed')
        │
   properties / actions / events (JSON 定义, 模板层)
 
-thing_events: id, device_id, event_name, level(4级), data(JSON), unknown_event(bool), ts(RFC3339 UTC)
-  索引: (device_id, ts DESC)
+物事件实例：复用现有 events 表（不建 thing_events）
+  event_type='device', event_subtype=<模板事件名>, event_level=int(2-5),
+  device_id=物 id, content=事件 data JSON, metadata.unknown_event=bool
 ```
 
-- `thing_resources`：id、device_id（FK→物，**可空**，NULL=未指派归属）、type（document/image/scene3d）、content 或 file_path、tags
+- `thing_resources`：id、device_id（FK→物，**可空**，NULL=未指派归属）、**workspace_id NOT NULL**（多租户隔离，未指派资源仍归属工作区）、type（document/image/scene3d）、content 或 file_path、tags
 - **未指派是永久的合法状态**（非仅迁移过渡）：有些资源天然暂不归属某个物，前端资源列表持续展示未指派分组并引导指派
-- 删除物的级联语义：`thing_events` → `ON DELETE CASCADE`（物删除后事件历史无意义）；`thing_resources.device_id` → `ON DELETE SET NULL`（文档不随物消失，回落为未指派，UI 删除确认中明示）；device_alarm_rules 维持现有 CASCADE 不变
+- 删除物的级联语义：events 表历史行保留（device_id 成为悬空引用，按时间清理）；`thing_resources.device_id` → `ON DELETE SET NULL`（文档不随物消失，回落为未指派，UI 删除确认中明示）；device_alarm_rules 维持现有 CASCADE 不变
 - 删除表：knowledge_entities、knowledge_relations、knowledge_parse_jobs、resources（数据迁移后删）
+- **删除 events 表的 1 万行清理触发器**（cleanup_old_events）：物事件进入后上限会很快被打满，本期不设存储上限；保留策略记入 TODOS（首个运维迭代处理）
 
 ### 资源与数据迁移
 
@@ -134,38 +136,53 @@ thing_events: id, device_id, event_name, level(4级), data(JSON), unknown_event(
 ### ① 事件流（新增）
 
 ```
-设备上报 → 网关/驱动 → 事件路由 ──┬──→ thing_events 表（实例存储，供 Agent/前端查询）
-                                 ├──→ event 模块现有管线（实时推送、概览）
+设备上报 → 网关/驱动 → 事件路由 ──┬──→ events 表（event_subtype=事件名，实例存储）
                                  └──→ alarm 模块（rule_type='event' 规则匹配触发）
 ```
 
 - 上报格式：MQTT topic 约定 `thing/{id}/event/{event_name}`，payload：`{event_name, level, data, ts}`，data 为 JSON object（按模板事件 schema 校验，未知字段保留），ts 为 RFC3339 UTC（缺省由服务端填）
-- 级别映射：thing events 用 4 级文本枚举；现有 event 模块（events 表/EventLevel）为整数级别含 Debug。映射：info/warning/error/critical 直映射对应整数值，**debug 级不入 thing_events**（属诊断噪声）
+- 存储映射（复用现有 events 表，**不建 thing_events、不双写**）：`event_type='device'`、`event_subtype=event_name`、`event_level` int（info=2/warning=3/error=4/critical=5，debug 级不入）、`device_id`=物 id、`content`=data JSON、`metadata.unknown_event`=bool；实时推送走 event 模块既有机制
 - `device_event_triggers` 旧触发表：与新 `rule_type='event'` 告警规则概念重叠，本期**废弃**——存量数据不迁移（核实线上无有效使用后直接弃用），代码随图谱拆除一并清理
 - 未知事件名降级为 info 级存原始数据，`unknown_event=true`，不报错给设备（固件可能先于模板更新）
+- 畸形 payload（非 JSON、缺 event_name/level 字段）：拒绝落库，记 `malformed` 计数与结构化日志（含 topic、物 id、payload 前 200 字符）
+- 事件风暴节流：单物 60 条/分钟上限，超出丢弃并计 `throttled` 计数（不报错给设备，防止固件 bug 洪泛打爆存储）——复用共享 events 表后节流是硬要求
 - alarm 规则新增 `rule_type='event'`，`condition_config = {event_name, min_level}`
-- **验收标准（防 dead event path 前科）**：真实 MQTT 上报 → thing_events 落库 → 真实告警触发，全链路集成测试，不接受 mock
-- 事件存储本期不设保留上限；保留策略记入 TODOS（首个运维迭代处理）
+- **验收标准（防 dead event path 前科）**：真实 MQTT 上报 → events 表落库 → 真实告警触发，全链路集成测试，不接受 mock
 
 ### ② 动作下发（commands 平移）
 
 现有命令下发链路不动。模板 actions 定义带参数 schema，Agent 的 invoke_action 按 schema 校验后走现有通道。非 device 类型物调用动作返回明确错误"该物不支持动作"。
 
-### ③ LLM 知识摘要（ontology_summary）
+### ③ LLM 知识摘要（ontology_summary，懒计算）
+
+摘要只有一个消费者（get_thing 工具）且对陈旧容忍度高，因此**读时计算 + 脏标记**，不建预计算管线：
 
 ```
-触发时机（异步任务，不阻塞主流程）：
-  · 物的文档资源增/删/内容改 → 重算
-  · 模板变更（属性/事件/动作定义改）→ 该模板所有物重算
-  · 物改名或改父节点（面包屑是摘要输入）→ 重算，**并级联重算整个子树**（后代的面包屑也变了），去抖合并为一次子树任务
-  · 手动重新生成
+脏标记（summary_status='dirty'）的设置时机：
+  · 物的文档资源增/删/内容改 → 该物标 dirty
+  · 模板变更 → 该模板所有物标 dirty（一条 UPDATE，不触发计算）
+  · 物改名/改父节点 → 该物及整个子树标 dirty（面包屑变了）
+
+读时计算（get_thing / get_thing_profile 调用时）：
+  · summary_status='ok' → 直接返回缓存摘要
+  · 'dirty' 或摘要为空 → 同步调 LLM 重算（10s 超时），成功写回并返回；
+    失败返回旧值（或"该物暂无摘要"），summary_status='failed'
+  · 同物并发读时计算用 single-flight 去重
 
 输入：物名称/类型/面包屑路径 + 物模型定义 + 各文档资源前 2000 字符（单物最多拼 5 篇）
-输出：≤500 字中文摘要，写回 devices.ontology_summary
-防抖：同一物 60s 内多次触发只算一次；失败重试 3 次后 summary_status='failed'
+输出：≤500 字中文摘要
+防注入：文档内容以 <user_document> 围栏包裹进 prompt（沿用知识解析先例），输出写库前做安全过滤
 ```
 
+被删除的复杂性（外部声音意见，已采纳）：防抖窗口、jobs 队列、扇出并发限流、失败重试状态机、子树级联重算——全部不需要。dirty 标记是廉价的，计算只在有人读时发生。
+
 摘要只服务 Agent 的 get_thing 工具，不进 system prompt。文档只存原文，不再有 LLM 实体/关系解析。
+
+### 可观测性（两条新管线的硬性要求）
+
+- 事件管线：计数指标 `events_ingested` / `events_unknown` / `events_malformed` / `events_throttled`（按物维度可下钻）；结构化日志含 thing_id、event_name、level
+- 摘要管线：指标 `summary_success` / `summary_failed` / `summary_duration`；每次重算记录触发原因（资源变更/模板变更/改名/手动）
+- 物操作审计：创建/删除/改父/invoke_action 记审计日志（操作者、时间、目标物）
 
 ## 三、Agent 工具集
 
@@ -179,15 +196,20 @@ Agent 不注入任何本体上下文，全部通过工具按需获取：
 | get_thing_tree | root_id?, depth? | 树形结构（仅 id/名称/类型），默认深度 3 | 全局视野 |
 | read_property | thing_id, property_name | 当前值 + 时间戳 | 读遥测最新值缓存；无缓存返回 null + 提示 |
 | invoke_action | thing_id, action_name, params | 下发结果/异步任务 id | schema 校验；非 device 类型报错 |
-| query_events | thing_id, event_name?, level?, since?, limit | 事件实例列表 | 查 thing_events |
+| query_events | thing_id, event_name?, level?, since?, limit | 事件实例列表 | 查 events 表（event_subtype=事件名过滤） |
 | search_knowledge | thing_id?, q, tags?, limit | 命中文档列表（标题/所属物/片段） | 全文检索 thing_resources |
 | read_document | resource_id | 文档正文 | 按需取全文 |
 
 配套变更：
 - 删除现有工具：agent/tools/knowledge.rs（图谱版）、search_resources.rs
 - invoke_action 加工作区级开关 `require_action_confirm`（默认开）
+- 列表类工具（list_things/search_knowledge/query_events）统一分页：limit 默认 50、最大 200
 - 工具描述用中文写清"什么时候用哪个工具"
 - 移除 agent system prompt 的 build_context 注入逻辑
+
+### 代码归属
+
+新建 `cloud/src/modules/thing` 模块承载管理面（物 CRUD/层级/本体/资源/摘要管线触发），遵循 handler/service/repo/types 分层；device 模块只保留连接运行时（驱动/遥测/心跳）。Agent 工具调 thing 模块。
 
 ## 四、图谱拆除与改名范围
 
@@ -232,22 +254,26 @@ Agent 不注入任何本体上下文，全部通过工具按需获取：
 - 层级约束：parent_id 成环写入拒绝（应用层检测）；删除有子节点的物拒绝（FK RESTRICT + 应用层提示）
 - 遥测读取：无缓存值返回 null + "该属性暂无上报数据"
 
-## 七、迁移顺序（expand → migrate → contract，含 SQLite 表重建编排）
+## 七、迁移顺序（预发布直接重建，含 SQLite 表重建编排）
 
-1. **Expand**：建新表 thing_events / thing_resources；devices 加列（thing_type/ontology_summary/summary_status）
-2. **表重建**（每张都是 建新表→拷数据→删旧表→改名，拷贝期间 `PRAGMA foreign_keys=OFF`，完成后恢复并 `PRAGMA foreign_key_check`）：
-   - devices：name 唯一约束改 `(workspace_id, name)` + parent_id FK 改 RESTRICT（注意内向 FK：device_alarm_rules/device_properties/device_commands）
-   - tags：CHECK 放宽加 `'thing'`
-   - device_templates → thing_templates：改名的同时 name 唯一约束改 `(workspace_id, name)`
-3. **Migrate**：devices backfill thing_type='device'；resources → thing_resources（device_id=NULL，不迁 parse_status）
-4. **Deploy**：代码全量上线（工具集/管线/前端），name 查找全部 workspace 作用域化
-5. **Contract**：删 knowledge_* 与 resources 表、删图谱代码（与 Deploy 同分支，靠合并顺序保证）
+生产库现状：8 设备 / 3 资源 / 0 知识实体——预发布阶段数据量极小，**不做 expand/migrate/contract 分阶段迁移**，启动时一次重建到位。
+
+0. **备份**：迁移前自动 `cp` SQLite 文件到 `data/backups/`（带时间戳）；迁移在启动时、服务开放前完成，失败则中止启动并提示从备份恢复
+1. **表重建**（每张都是 建新表→拷数据→删旧表→改名，拷贝期间 `PRAGMA foreign_keys=OFF`，完成后恢复并 `PRAGMA foreign_key_check`）：
+   - devices：name 唯一约束改表达式索引 `COALESCE(workspace_id,'')+name` + parent_id FK 改 RESTRICT（注意内向 FK：device_alarm_rules/device_properties/device_commands 等 8 张表）+ 加列 thing_type/ontology_summary/summary_status
+   - tags：CHECK 放宽加 `'thing'` + 唯一约束改表达式索引 `COALESCE(tenant_id,'')+type+name`
+   - device_templates → thing_templates：改名的同时 name 唯一约束改表达式索引 `COALESCE(workspace_id,'')+name`
+   - resources → thing_resources：加 workspace_id NOT NULL（回填所属工作区）、device_id 允许 NULL（未指派为合法状态）、删 parse_status 列
+   - events：删 cleanup_old_events 触发器（不设保留上限，保留策略记入 TODOS）
+   - device_alarm_rules：rule_type 支持 `'event'`，condition_config 增 `{event_name, min_level}` 形态
+2. **Backfill**：devices.thing_type='device'；thing_resources.workspace_id 从原 resources.workspace_id 平移
+3. **Deploy**：代码全量上线（工具集/管线/前端），name 查找全部 workspace 作用域化；同分支删除 knowledge_* 表与图谱代码
 
 ## 八、测试策略
 
 - 单元：物模型 schema 校验、成环检测、摘要输入拼装（2000 字符/5 篇截断）、事件降级、导入兼容（旧 commands 键）
 - 集成（sqlx 真实 DB，禁 mock-only）：
-  - 事件全链路：真实 MQTT 上报 → thing_events 落库 → rule_type='event' 告警触发
+  - 事件全链路：真实 MQTT 上报 → events 表落库 → rule_type='event' 告警触发
   - 摘要管线：挂文档 → 触发 → mock LLM（仅 LLM 可 mock）→ 摘要写回
   - 迁移：name 冲突场景、resources 迁移、RESTRICT 删除拒绝
   - Agent 工具：9 个工具的参数校验与返回结构
