@@ -1,6 +1,4 @@
-mod knowledge;
 use async_trait::async_trait;
-pub use knowledge::{KnowledgeRepository, SqliteKnowledgeRepository};
 use sqlx::{FromRow, QueryBuilder};
 use tinyiothub_core::error::{Error, Result};
 use tinyiothub_storage::sqlite::Database;

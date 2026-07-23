@@ -1,5 +1,3 @@
-pub mod knowledge;
-
 use std::sync::{Arc, Mutex};
 
 use tinyiothub_ai::{
