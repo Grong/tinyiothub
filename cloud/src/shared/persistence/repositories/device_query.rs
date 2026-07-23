@@ -79,7 +79,7 @@ pub async fn find_all_devices_with_tags(
         driver_name: params.driver_name.clone(),
         state: params.state,
         parent_id: params.parent_id.clone(),
-        product_id: params.product_id.clone(),
+        template_id: params.template_id.clone(),
         workspace_id: _workspace_id,
         search_text: None,
         tag_name: None,

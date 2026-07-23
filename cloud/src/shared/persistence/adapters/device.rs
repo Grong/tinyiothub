@@ -156,7 +156,7 @@ impl<R: DeviceRepository + Send + Sync> DeviceRepository for TenantDeviceReposit
             INSERT INTO devices (
                 id, name, display_name, device_type, address, description, position,
                 driver_name, device_model, protocol_type, factory_name, linked_data,
-                driver_options, state, parent_id, product_id, linked_gateway, fingerprint,
+                driver_options, state, parent_id, template_id, linked_gateway, fingerprint,
                 workspace_id, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
@@ -176,7 +176,7 @@ impl<R: DeviceRepository + Send + Sync> DeviceRepository for TenantDeviceReposit
         .bind(&request.driver_options)
         .bind(0i32) // default state
         .bind(&request.parent_id)
-        .bind(&request.product_id)
+        .bind(&request.template_id)
         .bind(&request.linked_gateway)
         .bind(&request.fingerprint)
         .bind(&self.workspace_id)
@@ -241,7 +241,7 @@ impl<R: DeviceRepository + Send + Sync> DeviceRepository for TenantDeviceReposit
                 INSERT INTO devices (
                     id, name, display_name, device_type, address, description, position,
                     driver_name, device_model, protocol_type, factory_name, linked_data,
-                    driver_options, state, parent_id, product_id, linked_gateway, fingerprint,
+                    driver_options, state, parent_id, template_id, linked_gateway, fingerprint,
                     workspace_id, created_at, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 "#,
@@ -261,7 +261,7 @@ impl<R: DeviceRepository + Send + Sync> DeviceRepository for TenantDeviceReposit
             .bind(&request.driver_options)
             .bind(0i32) // default state
             .bind(&request.parent_id)
-            .bind(&request.product_id)
+            .bind(&request.template_id)
             .bind(&request.linked_gateway)
             .bind(&request.fingerprint)
             .bind(&self.workspace_id)
@@ -322,9 +322,9 @@ impl<R: DeviceRepository + Send + Sync> DeviceRepository for TenantDeviceReposit
         self.inner.find_all(&criteria).await
     }
 
-    async fn find_by_product_id(&self, product_id: &str) -> Result<Vec<Device>> {
+    async fn find_by_template_id(&self, template_id: &str) -> Result<Vec<Device>> {
         let criteria = DeviceCriteria::default()
-            .with_product_id(product_id.to_string())
+            .with_template_id(template_id.to_string())
             .with_workspace_id(self.workspace_id.clone());
         self.inner.find_all(&criteria).await
     }

@@ -186,7 +186,7 @@ impl ToolHandler for TestDriverHandler {
                 commands: None,
                 tags: None,
                 parent_id: None,
-                product_id: None,
+                template_id: None,
                 linked_gateway: None,
                 fingerprint: None,
                 workspace_id: None,

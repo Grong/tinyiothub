@@ -63,7 +63,6 @@ struct CreateDeviceInput {
     linked_data: Option<String>,
     connection_config: Option<String>,
     parent_id: Option<String>,
-    product_id: Option<String>,
     property_values: Option<HashMap<String, String>>,
     enabled_commands: Option<Vec<String>>,
 }
@@ -622,7 +621,7 @@ impl ToolHandler for CreateDeviceHandler {
 
         let tenant_device_service = state.tenant_device_service_str(&workspace_id);
 
-        if let Some(template_id) = &input.template_id {
+        if let Some(template_id) = input.template_id.clone() {
             let device_input = DeviceCreationInput {
                 name: input.name,
                 display_name: input.display_name,
@@ -632,7 +631,7 @@ impl ToolHandler for CreateDeviceHandler {
                 driver_name: input.driver_name,
                 driver_options: input.connection_config,
                 parent_id: input.parent_id,
-                product_id: input.product_id,
+                template_id: Some(template_id.clone()),
                 property_values: input.property_values.unwrap_or_default(),
                 enabled_commands: input.enabled_commands.unwrap_or_default(),
                 tenant_id: None,
@@ -669,7 +668,7 @@ impl ToolHandler for CreateDeviceHandler {
                 linked_data: input.linked_data,
                 driver_options: input.connection_config,
                 parent_id: input.parent_id,
-                product_id: input.product_id,
+                template_id: input.template_id,
                 linked_gateway: None,
                 fingerprint: None,
                 workspace_id: None,
