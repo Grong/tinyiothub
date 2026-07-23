@@ -66,6 +66,7 @@ pub fn create_router() -> Router<AppState> {
         .nest("/api-keys", crate::modules::tenant::create_api_key_router())
         .nest("/agents", crate::modules::agent::handler::create_router())
         .nest("/driver-health", crate::modules::driver_health::handler::create_router())
+        .nest("/things", crate::modules::thing::handler::create_router())
         .route("/tools/catalog", get(crate::modules::chat::handler::proxy::tools_catalog))
         .route("/tools/effective", get(crate::modules::chat::handler::proxy::tools_effective))
         .route("/tools/toggle", post(crate::modules::chat::handler::proxy::tools_toggle))
