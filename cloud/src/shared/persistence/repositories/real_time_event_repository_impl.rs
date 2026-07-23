@@ -57,13 +57,14 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
         "#;
 
         let content_json = serde_json::to_string(event.content())?;
+        let event_subtype_json = serde_json::to_string(event.event_type())?;
         let device_id_bind: Option<String> = event.source().device_id().map(|s| s.to_string());
         let user_id_bind: Option<String> = event.source().user_id().map(|s| s.to_string());
 
         sqlx::query(sql)
             .bind(event.id().to_string())
             .bind(event.event_type().type_string())
-            .bind(event.event_type().subtype_string())
+            .bind(&event_subtype_json)
             .bind(event.level().to_numeric())
             .bind(event.timestamp().to_rfc3339())
             .bind(event.source().source_type())
@@ -79,17 +80,19 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
     }
 
     async fn remove_status(&self, source: &EventSource, event_type: &EventType) -> Result<()> {
+        let event_subtype_json = serde_json::to_string(event_type)?;
+
+        // Align with dedup index columns: (event_type, event_subtype, device_id)
         let sql = r#"
             DELETE FROM events
-            WHERE source_type = ? AND source_id = ?
-              AND event_type = ? AND event_subtype = ?
+            WHERE event_type = ? AND event_subtype = ?
+              AND device_id = ?
         "#;
 
         sqlx::query(sql)
-            .bind(source.source_type())
-            .bind(source.source_id())
             .bind(event_type.type_string())
-            .bind(event_type.subtype_string())
+            .bind(&event_subtype_json)
+            .bind(source.device_id().map(|s| s.to_string()))
             .execute(self.database.pool())
             .await?;
 
@@ -113,7 +116,7 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
                 COUNT(*) as count,
                 SUM(CASE WHEN acknowledged = 0 THEN 1 ELSE 0 END) as unacknowledged_count
             FROM events
-            WHERE occurrence_count >= 1
+            WHERE occurrence_count >= 1 AND event_level >= 3
             GROUP BY event_level
         "#;
 
@@ -149,7 +152,7 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
                 MAX(event_level) as highest_level,
                 MAX(timestamp) as latest_timestamp
             FROM events
-            WHERE device_id IS NOT NULL AND occurrence_count >= 1
+            WHERE device_id IS NOT NULL AND occurrence_count >= 1 AND event_level >= 3
             GROUP BY device_id
         "#;
 
@@ -264,10 +267,12 @@ impl SqliteRealTimeEventRepository {
                 let type_conds: Vec<String> = event_types
                     .iter()
                     .map(|et| {
+                        let subtype_json =
+                            serde_json::to_string(et).unwrap_or_default();
                         format!(
                             "(event_type = '{}' AND event_subtype = '{}')",
                             et.type_string().replace('\'', "''"),
-                            et.subtype_string().replace('\'', "''")
+                            subtype_json.replace('\'', "''")
                         )
                     })
                     .collect();
@@ -309,7 +314,7 @@ impl SqliteRealTimeEventRepository {
 
     fn row_to_real_time_event(&self, row: &sqlx::sqlite::SqliteRow) -> Result<RealTimeEvent> {
         let id_str: String = row.get("id");
-        let event_type_str: String = row.get("event_type");
+        let _event_type_str: String = row.get("event_type");
         let event_subtype_str: String = row.get("event_subtype");
         let event_level_int: i32 = row.get("event_level");
         let timestamp_str: String = row.get("timestamp");
@@ -323,8 +328,10 @@ impl SqliteRealTimeEventRepository {
         let acknowledged_at_str: Option<String> = row.get("acknowledged_at");
 
         let id = EventId::from_string(id_str);
-        let event_type = EventType::from_strings(&event_type_str, &event_subtype_str)
-            .map_err(|e| crate::modules::event::EventError::Validation { message: e })?;
+        let event_type: EventType = serde_json::from_str(&event_subtype_str)
+            .map_err(|e| crate::modules::event::EventError::Validation {
+                message: e.to_string(),
+            })?;
         let level =
             EventLevel::from_numeric(event_level_int).unwrap_or(EventLevel::Info);
         let timestamp = DateTime::parse_from_rfc3339(&timestamp_str)
