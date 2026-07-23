@@ -6,6 +6,7 @@ pub mod errors;
 pub mod handler;
 pub mod repo;
 pub mod service;
+pub mod summary;
 pub mod types;
 
 pub use types::*;

@@ -5,6 +5,7 @@ use sqlx::SqlitePool;
 use super::{
     errors::ThingError,
     repo::ThingRepo,
+    summary::{self, StubLlmClient, SummaryComputer},
     types::{
         CreateThingRequest, ListThingsParams, ListThingsResult, ThingProfileResponse,
         ThingResource, ThingResponse, ThingRow, ThingTreeNode, ThingType, UpdateThingRequest,
@@ -14,6 +15,7 @@ use super::{
 pub struct ThingService {
     repo: ThingRepo,
     pool: SqlitePool,
+    summary_computer: SummaryComputer,
 }
 
 impl ThingService {
@@ -21,6 +23,7 @@ impl ThingService {
         Self {
             repo: ThingRepo::new(pool.clone()),
             pool,
+            summary_computer: SummaryComputer::new(),
         }
     }
 
@@ -68,11 +71,30 @@ impl ThingService {
     // ──────────────────────────────────────────
 
     pub async fn get_thing(&self, id: &str) -> Result<ThingResponse, ThingError> {
-        let row = self
+        let mut row = self
             .repo
             .get_by_id(id)
             .await?
             .ok_or_else(|| ThingError::NotFound(id.to_string()))?;
+
+        // Lazy summary compute: trigger if status is not 'ok'
+        if row.summary_status.as_deref() != Some("ok") {
+            let llm = StubLlmClient;
+            match self
+                .summary_computer
+                .get_or_compute(id, &self.pool, &llm)
+                .await
+            {
+                Ok(Some(summary)) => {
+                    row.ontology_summary = Some(summary);
+                    row.summary_status = Some("ok".to_string());
+                }
+                Ok(None) => { /* thing not found (should not happen) */ }
+                Err(e) => {
+                    tracing::warn!(?e, thing_id = %id, "Failed to compute ontology summary");
+                }
+            }
+        }
 
         let breadcrumb = self
             .repo
@@ -267,6 +289,12 @@ impl ThingService {
                 resource_id
             )));
         }
+
+        // Mark summary dirty so it will be recomputed on next read
+        if let Err(e) = summary::mark_dirty_for_resource_change(&self.pool, thing_id).await {
+            tracing::warn!(?e, thing_id = %thing_id, "Failed to mark summary dirty after resource attach");
+        }
+
         Ok(())
     }
 
