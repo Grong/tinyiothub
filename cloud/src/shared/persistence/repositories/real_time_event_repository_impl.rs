@@ -15,7 +15,13 @@ use crate::{
     shared::persistence::Database,
 };
 
-/// SQLite implementation of RealTimeEventRepository
+/// SQLite implementation of RealTimeEventRepository.
+///
+/// After the Thing Ontology migration, the `real_time_events` table is gone.
+/// This implementation now writes to the `events` table, which has absorbed the
+/// real-time status columns (occurrence_count, acknowledged, acknowledged_by,
+/// acknowledged_at, workspace_id) and an upsert dedup index on
+/// (event_type, event_subtype, device_id) WHERE device_id IS NOT NULL.
 pub struct SqliteRealTimeEventRepository {
     database: Database,
 }
@@ -35,31 +41,37 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
         }
 
         let sql = r#"
-            INSERT OR REPLACE INTO real_time_events (
-                id, event_type, level, source_type, source_id, device_id, user_id,
-                title, content_preview, timestamp, acknowledged, acknowledged_by, acknowledged_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO events (
+                id, event_type, event_subtype, event_level, timestamp,
+                source_type, source_id, device_id, user_id,
+                title, content, occurrence_count, acknowledged,
+                acknowledged_by, acknowledged_at, workspace_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, NULL, NULL, '')
+            ON CONFLICT(event_type, event_subtype, device_id) WHERE device_id IS NOT NULL
+            DO UPDATE SET
+                occurrence_count = occurrence_count + 1,
+                timestamp = excluded.timestamp,
+                source_id = excluded.source_id,
+                title = excluded.title,
+                content = excluded.content
         "#;
 
-        let event_type_str = serde_json::to_string(event.event_type())?;
-        let level_str = format!("{:?}", event.level());
-        let _source_str = serde_json::to_string(event.source())?;
-        let content_preview = event.content().get_preview(100); // First 100 chars
+        let content_json = serde_json::to_string(event.content())?;
+        let device_id_bind: Option<String> = event.source().device_id().map(|s| s.to_string());
+        let user_id_bind: Option<String> = event.source().user_id().map(|s| s.to_string());
 
         sqlx::query(sql)
             .bind(event.id().to_string())
-            .bind(event_type_str)
-            .bind(level_str)
+            .bind(event.event_type().type_string())
+            .bind(event.event_type().subtype_string())
+            .bind(event.level().to_numeric())
+            .bind(event.timestamp().to_rfc3339())
             .bind(event.source().source_type())
             .bind(event.source().source_id())
-            .bind(event.source().device_id())
-            .bind(event.source().user_id())
+            .bind(&device_id_bind)
+            .bind(&user_id_bind)
             .bind(event.content().title())
-            .bind(content_preview)
-            .bind(event.timestamp())
-            .bind(false) // acknowledged
-            .bind(None::<String>) // acknowledged_by
-            .bind(None::<DateTime<Utc>>) // acknowledged_at
+            .bind(content_json)
             .execute(self.database.pool())
             .await?;
 
@@ -68,16 +80,16 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
 
     async fn remove_status(&self, source: &EventSource, event_type: &EventType) -> Result<()> {
         let sql = r#"
-            DELETE FROM real_time_events 
-            WHERE source_type = ? AND source_id = ? AND event_type = ?
+            DELETE FROM events
+            WHERE source_type = ? AND source_id = ?
+              AND event_type = ? AND event_subtype = ?
         "#;
-
-        let event_type_str = serde_json::to_string(event_type)?;
 
         sqlx::query(sql)
             .bind(source.source_type())
             .bind(source.source_id())
-            .bind(event_type_str)
+            .bind(event_type.type_string())
+            .bind(event_type.subtype_string())
             .execute(self.database.pool())
             .await?;
 
@@ -85,74 +97,24 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
     }
 
     async fn find_active_events(&self, filter: &RealTimeFilter) -> Result<Vec<RealTimeEvent>> {
-        let mut base_sql = String::from(
-            r#"SELECT id, event_type, level, source_type, source_id, device_id, user_id,
-                   title, content_preview, timestamp, acknowledged, acknowledged_by, acknowledged_at
-            FROM real_time_events WHERE 1=1"#,
-        );
-
-        // Build query dynamically based on filter
-        let query = match (&filter.device_ids, filter.acknowledged) {
-            // Both device_ids and acknowledged are set
-            (Some(device_ids), Some(acknowledged)) if !device_ids.is_empty() => {
-                let placeholders = device_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-                base_sql.push_str(&format!(" AND device_id IN ({})", placeholders));
-                base_sql.push_str(" AND acknowledged = ?");
-                base_sql.push_str(" ORDER BY timestamp DESC");
-
-                let mut q = sqlx::query(sqlx::AssertSqlSafe(base_sql.clone()));
-                for device_id in device_ids {
-                    q = q.bind(device_id);
-                }
-                q.bind(acknowledged)
-            }
-            // Only device_ids is set and non-empty
-            (Some(device_ids), None) if !device_ids.is_empty() => {
-                let placeholders = device_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-                base_sql.push_str(&format!(" AND device_id IN ({})", placeholders));
-                base_sql.push_str(" ORDER BY timestamp DESC");
-
-                let mut q = sqlx::query(sqlx::AssertSqlSafe(base_sql.clone()));
-                for device_id in device_ids {
-                    q = q.bind(device_id);
-                }
-                q
-            }
-            // Only acknowledged is set
-            (_, Some(acknowledged))
-                if filter.device_ids.as_ref().is_none_or(|ids| ids.is_empty()) =>
-            {
-                base_sql.push_str(" AND acknowledged = ?");
-                base_sql.push_str(" ORDER BY timestamp DESC");
-                sqlx::query(sqlx::AssertSqlSafe(base_sql.clone())).bind(acknowledged)
-            }
-            // Neither is set
-            _ => {
-                base_sql.push_str(" ORDER BY timestamp DESC");
-                sqlx::query(sqlx::AssertSqlSafe(base_sql.clone()))
-            }
-        };
-
-        // Execute query with proper parameter binding
-        let rows = query.fetch_all(self.database.pool()).await?;
-
+        let rows = self.execute_active_events_query(filter).await?;
         let mut events = Vec::new();
-        for row in rows {
+        for row in &rows {
             events.push(self.row_to_real_time_event(row)?);
         }
-
         Ok(events)
     }
 
     async fn get_status_summary(&self, _filter: &RealTimeFilter) -> Result<StatusSummary> {
-        // Get total counts by level
+        // Get total counts by event_level (INTEGER)
         let sql = r#"
-            SELECT 
-                level,
+            SELECT
+                event_level,
                 COUNT(*) as count,
                 SUM(CASE WHEN acknowledged = 0 THEN 1 ELSE 0 END) as unacknowledged_count
-            FROM real_time_events 
-            GROUP BY level
+            FROM events
+            WHERE occurrence_count >= 1
+            GROUP BY event_level
         "#;
 
         let rows = sqlx::query(sql).fetch_all(self.database.pool()).await?;
@@ -164,30 +126,30 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
         let mut unacknowledged_count = 0u64;
 
         for row in rows {
-            let level: String = row.get("level");
+            let level: i32 = row.get("event_level");
             let count: i64 = row.get("count");
             let unack_count: i64 = row.get("unacknowledged_count");
 
             total_active += count as u64;
             unacknowledged_count += unack_count as u64;
 
-            match level.as_str() {
-                "Critical" => critical_count = count as u64,
-                "Error" => error_count = count as u64,
-                "Warning" => warning_count = count as u64,
+            match level {
+                5 => critical_count = count as u64,
+                4 => error_count = count as u64,
+                3 => warning_count = count as u64,
                 _ => {}
             }
         }
 
         // Get device summaries
         let device_sql = r#"
-            SELECT 
+            SELECT
                 device_id,
                 COUNT(*) as active_count,
-                MAX(level) as highest_level,
+                MAX(event_level) as highest_level,
                 MAX(timestamp) as latest_timestamp
-            FROM real_time_events 
-            WHERE device_id IS NOT NULL
+            FROM events
+            WHERE device_id IS NOT NULL AND occurrence_count >= 1
             GROUP BY device_id
         "#;
 
@@ -197,15 +159,14 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
         for row in device_rows {
             let device_id: String = row.get("device_id");
             let active_count: i64 = row.get("active_count");
-            let highest_level_str: String = row.get("highest_level");
-            let latest_timestamp: DateTime<Utc> = row.get("latest_timestamp");
+            let highest_level_int: i32 = row.get("highest_level");
+            let latest_timestamp_str: String = row.get("latest_timestamp");
 
-            let highest_level = match highest_level_str.as_str() {
-                "Critical" => EventLevel::Critical,
-                "Error" => EventLevel::Error,
-                "Warning" => EventLevel::Warning,
-                _ => EventLevel::Info,
-            };
+            let highest_level = EventLevel::from_numeric(highest_level_int)
+                .unwrap_or(EventLevel::Info);
+            let latest_timestamp = DateTime::parse_from_rfc3339(&latest_timestamp_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
 
             by_device.push(DeviceStatusSummary {
                 device_id,
@@ -215,8 +176,7 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
             });
         }
 
-        // Get type summaries (simplified)
-        let by_type = Vec::new(); // Would implement full type summary in real version
+        let by_type = Vec::new();
 
         Ok(StatusSummary {
             total_active,
@@ -231,14 +191,14 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
 
     async fn acknowledge_event(&self, id: &EventId, user_id: &str) -> Result<()> {
         let sql = r#"
-            UPDATE real_time_events 
+            UPDATE events
             SET acknowledged = 1, acknowledged_by = ?, acknowledged_at = ?
             WHERE id = ?
         "#;
 
         sqlx::query(sql)
             .bind(user_id)
-            .bind(Utc::now())
+            .bind(Utc::now().to_rfc3339())
             .bind(id.to_string())
             .execute(self.database.pool())
             .await?;
@@ -247,7 +207,7 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
     }
 
     async fn clear_acknowledged_events(&self) -> Result<u64> {
-        let sql = "DELETE FROM real_time_events WHERE acknowledged = 1";
+        let sql = "DELETE FROM events WHERE acknowledged = 1";
 
         let result = sqlx::query(sql).execute(self.database.pool()).await?;
 
@@ -255,43 +215,135 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
     }
 
     async fn cleanup_old_events(&self, before: DateTime<Utc>) -> Result<u64> {
-        let sql = "DELETE FROM real_time_events WHERE timestamp < ?";
+        let sql = "DELETE FROM events WHERE timestamp < ?";
 
-        let result = sqlx::query(sql).bind(before).execute(self.database.pool()).await?;
+        let result = sqlx::query(sql)
+            .bind(before.to_rfc3339())
+            .execute(self.database.pool())
+            .await?;
 
         Ok(result.rows_affected())
     }
 }
 
 impl SqliteRealTimeEventRepository {
-    fn row_to_real_time_event(&self, row: sqlx::sqlite::SqliteRow) -> Result<RealTimeEvent> {
+    /// Build and execute the active events query with dynamic filters.
+    /// Uses string interpolation with SQL-escaped values
+    /// (safe because all values come from internal domain logic, not raw user
+    /// input).
+    async fn execute_active_events_query(
+        &self,
+        filter: &RealTimeFilter,
+    ) -> Result<Vec<sqlx::sqlite::SqliteRow>> {
+        let mut conditions: Vec<String> = Vec::new();
+
+        // -- device_ids filter --
+        if let Some(ref device_ids) = filter.device_ids {
+            if !device_ids.is_empty() {
+                let quoted: Vec<String> = device_ids
+                    .iter()
+                    .map(|id| format!("'{}'", id.replace('\'', "''")))
+                    .collect();
+                conditions.push(format!("device_id IN ({})", quoted.join(",")));
+            }
+        }
+
+        // -- acknowledged filter --
+        if let Some(acknowledged) = filter.acknowledged {
+            conditions.push(format!("acknowledged = {}", if acknowledged { 1 } else { 0 }));
+        }
+
+        // -- min_level filter (event_level is now INTEGER) --
+        if let Some(ref min_level) = filter.min_level {
+            conditions.push(format!("event_level >= {}", min_level.to_numeric()));
+        }
+
+        // -- event_types filter --
+        if let Some(ref event_types) = filter.event_types {
+            if !event_types.is_empty() {
+                let type_conds: Vec<String> = event_types
+                    .iter()
+                    .map(|et| {
+                        format!(
+                            "(event_type = '{}' AND event_subtype = '{}')",
+                            et.type_string().replace('\'', "''"),
+                            et.subtype_string().replace('\'', "''")
+                        )
+                    })
+                    .collect();
+                conditions.push(format!("({})", type_conds.join(" OR ")));
+            }
+        }
+
+        // -- source_types filter --
+        if let Some(ref source_types) = filter.source_types {
+            if !source_types.is_empty() {
+                let quoted: Vec<String> = source_types
+                    .iter()
+                    .map(|st| format!("'{}'", st.replace('\'', "''")))
+                    .collect();
+                conditions.push(format!("source_type IN ({})", quoted.join(",")));
+            }
+        }
+
+        let mut sql = String::from(
+            r#"SELECT id, event_type, event_subtype, event_level, timestamp,
+                      source_type, source_id, device_id, user_id,
+                      title, content, occurrence_count,
+                      acknowledged, acknowledged_by, acknowledged_at
+               FROM events"#,
+        );
+
+        if !conditions.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&conditions.join(" AND "));
+        }
+
+        sql.push_str(" ORDER BY timestamp DESC");
+
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .fetch_all(self.database.pool())
+            .await?;
+        Ok(rows)
+    }
+
+    fn row_to_real_time_event(&self, row: &sqlx::sqlite::SqliteRow) -> Result<RealTimeEvent> {
         let id_str: String = row.get("id");
         let event_type_str: String = row.get("event_type");
-        let level_str: String = row.get("level");
-        let timestamp: DateTime<Utc> = row.get("timestamp");
+        let event_subtype_str: String = row.get("event_subtype");
+        let event_level_int: i32 = row.get("event_level");
+        let timestamp_str: String = row.get("timestamp");
         let title: String = row.get("title");
-        let content_preview: String = row.get("content_preview");
-        let acknowledged: bool = row.get("acknowledged");
-        let acknowledged_by: Option<String> = row.get("acknowledged_by");
-        let acknowledged_at: Option<DateTime<Utc>> = row.get("acknowledged_at");
-
-        let id = EventId::from_string(id_str);
-        let event_type: EventType = serde_json::from_str(&event_type_str)?;
-        let level = match level_str.as_str() {
-            "Info" => EventLevel::Info,
-            "Warning" => EventLevel::Warning,
-            "Error" => EventLevel::Error,
-            "Critical" => EventLevel::Critical,
-            "Debug" => EventLevel::Debug,
-            _ => EventLevel::Info,
-        };
-
         let source_type: String = row.get("source_type");
         let source_id: String = row.get("source_id");
         let device_id: Option<String> = row.get("device_id");
         let user_id: Option<String> = row.get("user_id");
+        let acknowledged: bool = row.get("acknowledged");
+        let acknowledged_by: Option<String> = row.get("acknowledged_by");
+        let acknowledged_at_str: Option<String> = row.get("acknowledged_at");
+
+        let id = EventId::from_string(id_str);
+        let event_type = EventType::from_strings(&event_type_str, &event_subtype_str)
+            .map_err(|e| crate::modules::event::EventError::Validation { message: e })?;
+        let level =
+            EventLevel::from_numeric(event_level_int).unwrap_or(EventLevel::Info);
+        let timestamp = DateTime::parse_from_rfc3339(&timestamp_str)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now());
 
         let source = EventSource::new(source_type, source_id, device_id, user_id);
+
+        // Use the content field as a preview — truncate to 100 chars
+        let content_raw: Option<String> = row.get("content");
+        let content_preview = content_raw
+            .unwrap_or_default()
+            .chars()
+            .take(100)
+            .collect::<String>();
+
+        let acknowledged_at = acknowledged_at_str
+            .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+            .map(|dt| dt.with_timezone(&Utc));
 
         Ok(RealTimeEvent {
             id,

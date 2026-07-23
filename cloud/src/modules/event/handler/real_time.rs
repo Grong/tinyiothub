@@ -1,5 +1,10 @@
 // Real-time event status API endpoints
-// Provides current active event status and acknowledgment functionality
+//
+// Provides current active event status and acknowledgment functionality.
+// After the Thing Ontology migration, real-time event status is stored in the
+// `events` table (which absorbed the former `real_time_events` table), using
+// the occurrence_count, acknowledged, acknowledged_by, and acknowledged_at
+// columns. Acknowledgment operates on events.id.
 
 use axum::{
     extract::{Path, Query, State},
