@@ -1,13 +1,19 @@
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 use tokio::sync::mpsc;
 
-use crate::modules::gateway::{
-    service::MqttPublish,
-    types::{
-        DeviceDiscoverMessage, DeviceTelemetryMessage, GatewayDataMessage, PairingAnnounce,
-        StatusMessage, TelemetryMessage,
+use crate::modules::{
+    event::router::{ThingEventInput, ThingEventPayload, ThrottleState, route_thing_event},
+    gateway::{
+        service::MqttPublish,
+        types::{
+            DeviceDiscoverMessage, DeviceTelemetryMessage, GatewayDataMessage, PairingAnnounce,
+            StatusMessage, TelemetryMessage,
+        },
     },
 };
 
@@ -28,6 +34,8 @@ impl PlatformMqttClient {
         announce_tx: mpsc::Sender<PairingAnnounce>,
         mut mqtt_rx: mpsc::Receiver<MqttPublish>,
         data_tx: mpsc::Sender<GatewayDataMessage>,
+        throttle: Arc<ThrottleState>,
+        db_pool: sqlx::SqlitePool,
     ) -> Self {
         let broker_url = broker_url.to_string();
         let username = username.to_string();
@@ -76,6 +84,11 @@ impl PlatformMqttClient {
                                     .subscribe("tinyiothub/+/gateway/+/device/+/telemetry", QoS::AtMostOnce)
                                     .await
                                     .ok();
+                                // Thing event topic
+                                subscribe_client
+                                    .subscribe("thing/+/event/+", QoS::AtLeastOnce)
+                                    .await
+                                    .ok();
                             }
                             Ok(Event::Incoming(Packet::Publish(publish))) => {
                                 let topic = publish.topic.clone();
@@ -100,6 +113,15 @@ impl PlatformMqttClient {
                                             tracing::warn!(?e, "Failed to parse pairing announce");
                                         }
                                     }
+                                } else if topic.starts_with("thing/") && topic.contains("/event/") {
+                                    // Handle thing/+/event/+ topic
+                                    Self::route_thing_event_message(
+                                        &topic,
+                                        &publish.payload,
+                                        &throttle,
+                                        &db_pool,
+                                    )
+                                    .await;
                                 } else {
                                     // Route gateway data messages by topic pattern
                                     Self::route_data_message(&topic, &publish.payload, &data_tx).await;
@@ -177,6 +199,86 @@ impl PlatformMqttClient {
 
         if let Some(data_msg) = msg {
             let _ = data_tx.send(data_msg).await;
+        }
+    }
+
+    /// Parse a `thing/{thing_id}/event/{event_name}` topic, deserialize the
+    /// payload, and route it through the thing event pipeline.
+    async fn route_thing_event_message(
+        topic: &str,
+        payload: &[u8],
+        throttle: &ThrottleState,
+        db_pool: &sqlx::SqlitePool,
+    ) {
+        // Parse topic: thing/{thing_id}/event/{event_name}
+        let parts: Vec<&str> = topic.split('/').collect();
+        if parts.len() < 4 {
+            tracing::warn!(topic = %topic, "Malformed thing event topic");
+            return;
+        }
+        let thing_id = parts[1].to_string();
+        let event_name = parts[3].to_string();
+
+        // Parse payload JSON
+        let payload_data: ThingEventPayload = match serde_json::from_slice(payload) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!(
+                    thing_id = %thing_id,
+                    event_name = %event_name,
+                    error = %e,
+                    "Malformed thing event payload"
+                );
+                return;
+            }
+        };
+
+        // Map level string to EventLevel
+        let level = match payload_data.level.to_lowercase().as_str() {
+            "critical" => tinyiothub_core::models::event::EventLevel::Critical,
+            "error" => tinyiothub_core::models::event::EventLevel::Error,
+            "warning" => tinyiothub_core::models::event::EventLevel::Warning,
+            "info" => tinyiothub_core::models::event::EventLevel::Info,
+            _ => {
+                tracing::warn!(
+                    thing_id = %thing_id,
+                    level = %payload_data.level,
+                    "Unknown event level, defaulting to Info"
+                );
+                tinyiothub_core::models::event::EventLevel::Info
+            }
+        };
+
+        let input = ThingEventInput {
+            thing_id: thing_id.clone(),
+            workspace_id: String::new(), // not present in MQTT topic; TODO: resolve from thing lookup
+            event_name: event_name.clone(),
+            level,
+            data: payload_data.data,
+            ts: payload_data.ts,
+        };
+
+        let result = route_thing_event(db_pool, throttle, input).await;
+
+        if result.throttled {
+            tracing::info!(
+                thing_id = %thing_id,
+                event_name = %event_name,
+                "Thing event throttled"
+            );
+        } else if result.malformed {
+            tracing::warn!(
+                thing_id = %thing_id,
+                event_name = %event_name,
+                "Thing event rejected (malformed or persist failure)"
+            );
+        } else {
+            tracing::info!(
+                event_id = %result.event_id,
+                thing_id = %thing_id,
+                event_name = %event_name,
+                "Thing event routed successfully"
+            );
         }
     }
 

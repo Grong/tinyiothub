@@ -7,6 +7,7 @@
 pub mod errors;
 pub mod handler;
 pub mod repo;
+pub mod router;
 pub mod service;
 pub mod types;
 

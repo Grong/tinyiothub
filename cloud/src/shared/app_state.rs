@@ -371,6 +371,8 @@ impl AppState {
         let mqtt_port = config.mqtt.primary.port;
         let mqtt_username = config.mqtt.primary.username.clone().unwrap_or_default();
         let mqtt_password = config.mqtt.primary.password.clone().unwrap_or_default();
+        let throttle_state = Arc::new(crate::modules::event::router::ThrottleState::new(60));
+        let mqtt_db_pool = database.pool().clone();
         let mqtt_client = Arc::new(crate::shared::mqtt_client::PlatformMqttClient::new(
             &mqtt_broker,
             mqtt_port,
@@ -379,6 +381,8 @@ impl AppState {
             announce_tx,
             mqtt_rx,
             data_tx,
+            throttle_state,
+            mqtt_db_pool,
         ));
 
         // 启动宣告处理任务
