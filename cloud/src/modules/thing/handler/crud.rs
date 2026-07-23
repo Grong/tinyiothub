@@ -29,17 +29,21 @@ fn thing_service(pool: &sqlx::SqlitePool) -> ThingService {
 pub async fn list_things(
     State(state): State<AppState>,
     Query(params): Query<ListThingsParams>,
-) -> Json<ApiResponse<serde_json::Value>> {
+) -> (StatusCode, Json<ApiResponse<serde_json::Value>>) {
     let pool = state.database.pool().clone();
     let svc = thing_service(&pool);
 
     let workspace_id = "default"; // TODO: resolve from JWT claims / WorkspaceScope
 
     match svc.list_things(workspace_id, &params).await {
-        Ok(result) => ApiResponseBuilder::success(serde_json::to_value(&result).unwrap_or_default()),
+        Ok(result) => {
+            let data = serde_json::to_value(&result).unwrap_or_default();
+            (StatusCode::OK, ApiResponseBuilder::success(data))
+        }
         Err(e) => {
+            let status = e.status_code();
             tracing::error!(?e, "Failed to list things");
-            ApiResponseBuilder::error(e.to_string())
+            (status, ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()))
         }
     }
 }
@@ -77,15 +81,16 @@ pub async fn create_thing(
 pub async fn get_thing(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Json<ApiResponse<ThingResponse>> {
+) -> (StatusCode, Json<ApiResponse<ThingResponse>>) {
     let pool = state.database.pool().clone();
     let svc = thing_service(&pool);
 
     match svc.get_thing(&id).await {
-        Ok(thing) => ApiResponseBuilder::success(thing),
+        Ok(thing) => (StatusCode::OK, ApiResponseBuilder::success(thing)),
         Err(e) => {
+            let status = e.status_code();
             tracing::error!(?e, "Failed to get thing");
-            ApiResponseBuilder::error(e.to_string())
+            (status, ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()))
         }
     }
 }
@@ -141,7 +146,7 @@ pub async fn delete_thing(
 pub async fn get_thing_ontology(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Json<ApiResponse<ThingResponse>> {
+) -> (StatusCode, Json<ApiResponse<ThingResponse>>) {
     get_thing(State(state), Path(id)).await
 }
 
@@ -152,15 +157,16 @@ pub async fn get_thing_ontology(
 pub async fn get_thing_profile(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Json<ApiResponse<ThingProfileResponse>> {
+) -> (StatusCode, Json<ApiResponse<ThingProfileResponse>>) {
     let pool = state.database.pool().clone();
     let svc = thing_service(&pool);
 
     match svc.get_thing_profile(&id).await {
-        Ok(profile) => ApiResponseBuilder::success(profile),
+        Ok(profile) => (StatusCode::OK, ApiResponseBuilder::success(profile)),
         Err(e) => {
+            let status = e.status_code();
             tracing::error!(?e, "Failed to get thing profile");
-            ApiResponseBuilder::error(e.to_string())
+            (status, ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()))
         }
     }
 }
@@ -178,7 +184,7 @@ pub async fn get_thing_tree(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Query(query): Query<TreeQuery>,
-) -> Json<ApiResponse<Vec<ThingTreeNode>>> {
+) -> (StatusCode, Json<ApiResponse<Vec<ThingTreeNode>>>) {
     let pool = state.database.pool().clone();
     let svc = thing_service(&pool);
 
@@ -188,10 +194,11 @@ pub async fn get_thing_tree(
         .get_thing_tree(workspace_id, Some(&id), query.depth)
         .await
     {
-        Ok(tree) => ApiResponseBuilder::success(tree),
+        Ok(tree) => (StatusCode::OK, ApiResponseBuilder::success(tree)),
         Err(e) => {
+            let status = e.status_code();
             tracing::error!(?e, "Failed to get thing tree");
-            ApiResponseBuilder::error(e.to_string())
+            (status, ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()))
         }
     }
 }
