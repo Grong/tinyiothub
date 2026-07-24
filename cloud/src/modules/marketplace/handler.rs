@@ -17,6 +17,7 @@ use crate::{
         marketplace::{
             client::MarketplaceClient, driver_installer::DriverInstaller,
             template_installer::TemplateInstaller,
+            thing_template_installer::ThingTemplateInstaller,
         },
         template::TemplateRepository,
     },
@@ -35,6 +36,8 @@ pub fn create_router() -> Router<AppState> {
         .route("/drivers/{id}", get(proxy_marketplace_driver))
         .route("/drivers/{id}/install", post(install_marketplace_driver))
         .route("/publish/template", post(publish_template_handler))
+        .route("/thing-templates", get(list_thing_templates))
+        .route("/thing-templates/{id}/install", post(install_thing_template))
 }
 
 fn marketplace_api_url() -> String {
@@ -373,5 +376,70 @@ async fn publish_template_handler(
     match publisher.publish_template(&template).await {
         Ok(result) => ApiResponseBuilder::success(result),
         Err(e) => ApiResponseBuilder::error(format!("发布失败: {}", e)),
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Thing Template Marketplace (local DB, not proxy)
+// ──────────────────────────────────────────────────────────────────
+
+/// List thing_templates as local marketplace items.
+/// Shows especially built-in templates (workspace_id IS NULL).
+async fn list_thing_templates(
+    State(state): State<AppState>,
+    Query(_params): Query<std::collections::HashMap<String, String>>,
+    WorkspaceScope(workspace_id): WorkspaceScope,
+) -> Json<ApiResponse<serde_json::Value>> {
+    let ws = workspace_id.as_deref().unwrap_or("");
+
+    match ThingTemplateInstaller::list(state.database.pool(), ws).await {
+        Ok(items) => {
+            let total = items.len() as u64;
+            let result = serde_json::json!({
+                "data": items,
+                "pagination": {
+                    "page": 1u32,
+                    "page_size": total as u32,
+                    "total_pages": 1u32,
+                    "total_count": total,
+                }
+            });
+            ApiResponseBuilder::success(result)
+        }
+        Err(e) => {
+            tracing::error!("Failed to list thing_templates: {}", e);
+            ApiResponseBuilder::error(format!("获取物模板列表失败: {}", e))
+        }
+    }
+}
+
+/// Install (copy) a thing_template into the caller's workspace.
+/// Handles name conflict by appending " (来自市场)" suffix.
+async fn install_thing_template(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    _claims: Claims,
+    WorkspaceScope(workspace_id): WorkspaceScope,
+) -> Json<ApiResponse<serde_json::Value>> {
+    let ws = workspace_id.as_deref().unwrap_or("");
+    if ws.is_empty() {
+        return ApiResponseBuilder::error("需要指定工作空间");
+    }
+
+    match ThingTemplateInstaller::install(state.database.pool(), &id, ws).await {
+        Ok(installed) => {
+            tracing::info!(
+                "Installed thing_template {} as '{}' (id={})",
+                id, installed.name, installed.id
+            );
+            ApiResponseBuilder::success(serde_json::json!({
+                "id": installed.id,
+                "name": installed.name,
+            }))
+        }
+        Err(e) => {
+            tracing::error!("Failed to install thing_template {}: {}", id, e);
+            ApiResponseBuilder::error(format!("安装物模板失败: {}", e))
+        }
     }
 }
