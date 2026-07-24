@@ -60,13 +60,12 @@ impl IntoResponse for ThingError {
 impl From<sqlx::Error> for ThingError {
     fn from(e: sqlx::Error) -> Self {
         // Detect UNIQUE constraint violation (SQLite error code 2067)
-        if let sqlx::Error::Database(ref db_err) = e {
-            if db_err.code().as_deref() == Some("2067") {
+        if let sqlx::Error::Database(ref db_err) = e
+            && db_err.code().as_deref() == Some("2067") {
                 return ThingError::NameConflict(
                     "name already exists in this workspace".to_string(),
                 );
             }
-        }
         ThingError::Database(e.to_string())
     }
 }

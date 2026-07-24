@@ -91,6 +91,12 @@ pub struct SummaryComputer {
     single_flight: Arc<DashMap<String, Arc<Notify>>>,
 }
 
+impl Default for SummaryComputer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SummaryComputer {
     pub fn new() -> Self {
         Self { single_flight: Arc::new(DashMap::new()) }
@@ -221,7 +227,7 @@ pub fn build_prompt(
          物名称: {}\n类型: {}\n路径: {}\n\n物模型:\n{}\n",
         thing_name, thing_type, breadcrumb, template_def
     );
-    for (_i, (title, content)) in docs.iter().take(5).enumerate() {
+    for (title, content) in docs.iter().take(5) {
         let snippet = &content[..content.len().min(2000)];
         prompt.push_str(&format!(
             "\n<user_document title=\"{}\">\n{}\n</user_document>\n",

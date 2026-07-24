@@ -161,11 +161,7 @@ pub fn parse_dtdl(json: &Value) -> Result<ParsedTemplate, ImportError> {
 
                     // Request schema
                     if let Some(req) = item["request"].as_object() {
-                        let req_schema = if let Some(schema_obj) = req.get("schema") {
-                            Some(schema_obj.clone())
-                        } else {
-                            None
-                        };
+                        let req_schema = req.get("schema").cloned();
                         if let Some(s) = req_schema {
                             cmd["request"] = json!({
                                 "name": req.get("name").and_then(|v| v.as_str()).unwrap_or("input"),
@@ -176,11 +172,7 @@ pub fn parse_dtdl(json: &Value) -> Result<ParsedTemplate, ImportError> {
 
                     // Response schema
                     if let Some(resp) = item["response"].as_object() {
-                        let resp_schema = if let Some(schema_obj) = resp.get("schema") {
-                            Some(schema_obj.clone())
-                        } else {
-                            None
-                        };
+                        let resp_schema = resp.get("schema").cloned();
                         if let Some(s) = resp_schema {
                             cmd["response"] = json!({
                                 "name": resp.get("name").and_then(|v| v.as_str()).unwrap_or("output"),
@@ -271,7 +263,7 @@ pub fn parse_wot_td(json: &Value) -> Result<ParsedTemplate, ImportError> {
                 "name": prop_name,
                 "displayName": prop_def["title"],
                 "description": prop_def["description"],
-                "schema": resolve_wot_schema(&prop_def),
+                "schema": resolve_wot_schema(prop_def),
                 "writable": !prop_def["readOnly"].as_bool().unwrap_or(false),
             }));
         }

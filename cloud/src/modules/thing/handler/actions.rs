@@ -73,7 +73,7 @@ pub async fn confirm_action(
             StatusCode::BAD_REQUEST,
             ApiResponseBuilder::error_with_code(
                 400,
-                &format!("操作不支持: 物类型为 '{}'，仅 'device' 类型物支持操作", thing.thing_type),
+                format!("操作不支持: 物类型为 '{}'，仅 'device' 类型物支持操作", thing.thing_type),
             ),
         );
     }
@@ -94,7 +94,7 @@ pub async fn confirm_action(
             StatusCode::NOT_FOUND,
             ApiResponseBuilder::error_with_code(
                 404,
-                &format!("操作 '{}' 未在物 {} 上注册", action_name, thing_id),
+                format!("操作 '{}' 未在物 {} 上注册", action_name, thing_id),
             ),
         );
     }
@@ -124,7 +124,7 @@ pub async fn confirm_action(
                 ),
                 Err(e) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    ApiResponseBuilder::error_with_code(500, &format!("操作执行失败: {}", e)),
+                    ApiResponseBuilder::error_with_code(500, format!("操作执行失败: {}", e)),
                 ),
             }
         }

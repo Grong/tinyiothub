@@ -65,7 +65,7 @@ impl ThrottleState {
                 let cutoff = now - Duration::from_secs(60);
                 let mut entry = self.windows.entry(thing_id.to_string()).or_default();
                 // Purge timestamps older than the window.
-                while entry.front().map_or(false, |t| *t < cutoff) {
+                while entry.front().is_some_and(|t| *t < cutoff) {
                     entry.pop_front();
                 }
                 if entry.len() >= self.max_per_minute {
@@ -203,8 +203,8 @@ pub async fn route_thing_event(
             );
 
             // Trigger event-based alarm rules if an AlarmService is available
-            if let Some(ref svc) = alarm_service {
-                if let Err(e) = svc
+            if let Some(ref svc) = alarm_service
+                && let Err(e) = svc
                     .check_event_alarms(
                         &input.workspace_id,
                         &input.thing_id,
@@ -221,7 +221,6 @@ pub async fn route_thing_event(
                         "Failed to check event alarms"
                     );
                 }
-            }
 
             EventRouteResult {
                 event_id: event_id_str,

@@ -239,13 +239,12 @@ impl SqliteRealTimeEventRepository {
         let mut conditions: Vec<String> = Vec::new();
 
         // -- device_ids filter --
-        if let Some(ref device_ids) = filter.device_ids {
-            if !device_ids.is_empty() {
+        if let Some(ref device_ids) = filter.device_ids
+            && !device_ids.is_empty() {
                 let quoted: Vec<String> =
                     device_ids.iter().map(|id| format!("'{}'", id.replace('\'', "''"))).collect();
                 conditions.push(format!("device_id IN ({})", quoted.join(",")));
             }
-        }
 
         // -- acknowledged filter --
         if let Some(acknowledged) = filter.acknowledged {
@@ -258,8 +257,8 @@ impl SqliteRealTimeEventRepository {
         }
 
         // -- event_types filter --
-        if let Some(ref event_types) = filter.event_types {
-            if !event_types.is_empty() {
+        if let Some(ref event_types) = filter.event_types
+            && !event_types.is_empty() {
                 let type_conds: Vec<String> = event_types
                     .iter()
                     .map(|et| {
@@ -273,16 +272,14 @@ impl SqliteRealTimeEventRepository {
                     .collect();
                 conditions.push(format!("({})", type_conds.join(" OR ")));
             }
-        }
 
         // -- source_types filter --
-        if let Some(ref source_types) = filter.source_types {
-            if !source_types.is_empty() {
+        if let Some(ref source_types) = filter.source_types
+            && !source_types.is_empty() {
                 let quoted: Vec<String> =
                     source_types.iter().map(|st| format!("'{}'", st.replace('\'', "''"))).collect();
                 conditions.push(format!("source_type IN ({})", quoted.join(",")));
             }
-        }
 
         let mut sql = String::from(
             r#"SELECT id, event_type, event_subtype, event_level, timestamp,

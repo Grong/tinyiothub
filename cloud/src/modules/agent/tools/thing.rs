@@ -1072,10 +1072,10 @@ mod tests {
     #[test]
     fn test_get_thing_tree_depth_clamp() {
         // Depth used via .clamp(1, 10) in execute
-        assert_eq!(None.unwrap_or(3).clamp(1, 10), 3, "None default 3");
-        assert_eq!(Some(5u32).unwrap_or(3).clamp(1, 10), 5, "explicit 5");
-        assert_eq!(Some(0u32).unwrap_or(3).clamp(1, 10), 1, "0 => min 1");
-        assert_eq!(Some(50u32).unwrap_or(3).clamp(1, 10), 10, "50 => max 10");
+        assert_eq!(3.clamp(1, 10), 3, "None default 3");
+        assert_eq!(5u32.clamp(1, 10), 5, "explicit 5");
+        assert_eq!(0u32.clamp(1, 10), 1, "0 => min 1");
+        assert_eq!(50u32.clamp(1, 10), 10, "50 => max 10");
     }
 
     // ── invoke_action non-device rejection ──────────────
