@@ -1,0 +1,262 @@
+/* ===== Things View ===== */
+
+.things-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* ===== Upgrade Notice (D8) ===== */
+
+.upgrade-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 13px;
+  color: var(--text);
+}
+
+.upgrade-notice__icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.upgrade-notice__text {
+  flex: 1;
+}
+
+.upgrade-notice__dismiss {
+  background: none;
+  border: none;
+  font-size: 18px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.upgrade-notice__dismiss:hover {
+  color: var(--text);
+}
+
+/* ===== Thing Table Row ===== */
+
+.thing-row {
+  cursor: pointer;
+  transition: background 0.15s var(--ease-out);
+}
+
+.thing-row:hover,
+.thing-row:focus-visible {
+  background: var(--bg-subtle);
+}
+
+.thing-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* ===== Knowledge Badge (D6) ===== */
+
+.knowledge-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.knowledge-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.knowledge-dot--has {
+  background: var(--success, #10b981);
+}
+
+.knowledge-dot--none {
+  background: var(--border, #9ca3af);
+}
+
+.knowledge-badge__text {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ===== Tree View (D3, D12) ===== */
+
+.tree-container {
+  overflow-x: auto;
+}
+
+.tree-header {
+  padding: var(--space-3) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.tree-header__count {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.tree-list {
+  padding: var(--space-1) 0;
+}
+
+.tree-node-wrapper {
+  user-select: none;
+}
+
+.tree-node {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 6px 12px;
+  font-size: 13px;
+  transition: background 0.15s var(--ease-out);
+  cursor: default;
+  border-left: 3px solid transparent;
+}
+
+.tree-node:hover {
+  background: var(--bg-subtle);
+}
+
+.tree-node--drag-over {
+  background: var(--bg-subtle);
+  border-left-color: var(--accent);
+}
+
+.tree-node--cycle-error {
+  border-left-color: var(--danger);
+  animation: tree-error-flash 0.6s var(--ease-out);
+}
+
+@keyframes tree-error-flash {
+  0%, 100% { background: transparent; }
+  50% { background: rgba(239, 68, 68, 0.08); }
+}
+
+.tree-node__toggle {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  cursor: pointer;
+  border-radius: var(--radius-sm, 4px);
+  transition: background 0.1s;
+}
+
+.tree-node__toggle:hover {
+  background: var(--bg-hover);
+}
+
+.tree-node__arrow {
+  display: inline-block;
+  font-size: 10px;
+  color: var(--muted);
+  transition: transform 0.2s var(--ease-out);
+  line-height: 1;
+}
+
+.tree-node__arrow--expanded {
+  transform: rotate(90deg);
+}
+
+.tree-node__arrow--hidden {
+  visibility: hidden;
+}
+
+.tree-node__content {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm, 4px);
+  transition: background 0.1s;
+}
+
+.tree-node__content:hover,
+.tree-node__content:focus-visible {
+  background: var(--bg-hover);
+}
+
+.tree-node__content:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.tree-node__name {
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tree-node__type {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.tree-children {
+  /* indentation handled via padding-left on .tree-node */
+}
+
+/* ===== Skeleton Rows (D7) ===== */
+
+.skeleton-row td {
+  padding: var(--space-2) var(--space-3);
+}
+
+.skeleton-line {
+  height: 14px;
+  border-radius: var(--radius-sm, 4px);
+  background: linear-gradient(
+    90deg,
+    var(--bg-subtle) 25%,
+    var(--bg-hover) 50%,
+    var(--bg-subtle) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s var(--ease-in-out) infinite;
+}
+
+.skeleton-line--sm {
+  width: 60px;
+}
+
+.skeleton-line--md {
+  width: 100px;
+}
+
+.skeleton-line--lg {
+  width: 140px;
+}
+
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ===== Empty / Error / Filter No-Results (D7) ===== */
+
+/* Reuse .empty-center from shared.css */
+/* Reuse .card from core.css */
