@@ -7,11 +7,13 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
+use sqlx::SqlitePool;
 use tinyiothub_ai::types::{TrustConfig, TrustDecision};
 use zeroclaw::tools::{Tool, ToolResult};
 use zeroclaw_api::attribution::{Attributable, Role, ToolKind};
 
 use super::canvas::CanvasTool;
+use super::thing::create_thing_tools;
 use crate::{
     modules::{
         mcp::{
@@ -251,8 +253,9 @@ impl IoTToolMetadata for TrustAwareTool {
 pub async fn load_all_tools(
     workspace_id: &str,
     workspace_service: Option<Arc<WorkspaceService>>,
+    db_pool: Option<SqlitePool>,
 ) -> Vec<Box<dyn Tool>> {
-    load_all_tools_with_safety(workspace_id, workspace_service)
+    load_all_tools_with_safety(workspace_id, workspace_service, db_pool)
         .await
         .into_iter()
         .map(|(tool, _)| tool)
@@ -265,12 +268,18 @@ pub async fn load_all_tools(
 async fn load_all_tools_with_safety(
     workspace_id: &str,
     _workspace_service: Option<Arc<WorkspaceService>>,
+    db_pool: Option<SqlitePool>,
 ) -> Vec<(Box<dyn Tool>, tinyiothub_ai::types::ToolSafety)> {
     use tinyiothub_ai::types::{ToolSafety, classify_tool_safety};
 
     let mut tools: Vec<(Box<dyn Tool>, ToolSafety)> = Vec::new();
     tools.push((Box::new(CanvasTool), classify_tool_safety("canvas")));
     tools.push((Box::new(super::GetSkillTool), classify_tool_safety("get_skill")));
+
+    // Thing Ontology tools (9) — always available, no denylist
+    if let Some(ref pool) = db_pool {
+        tools.extend(create_thing_tools(pool.clone(), workspace_id));
+    }
 
     if let Some(registry) = crate::modules::mcp::get_mcp_registry() {
         let reg = registry.read().await;
@@ -331,9 +340,10 @@ pub async fn resolve_tools_for_agent(
     workspace_id: &str,
     workspace_service: Option<Arc<WorkspaceService>>,
     trust_config: Option<Arc<TrustConfig>>,
+    db_pool: Option<SqlitePool>,
 ) -> Vec<Box<dyn Tool>> {
     let all_tools =
-        load_all_tools_with_safety(workspace_id, workspace_service).await;
+        load_all_tools_with_safety(workspace_id, workspace_service, db_pool).await;
     let filtered: Vec<(Box<dyn Tool>, tinyiothub_ai::types::ToolSafety)> = all_tools
         .into_iter()
         .filter(|(tool, _)| {
@@ -370,6 +380,16 @@ fn tool_label(name: &str) -> &str {
         "send_command" => "执行设备命令",
         "create_device" => "创建设备",
         "delete_device" => "删除设备",
+        // Thing tools
+        "list_things" => "列出物",
+        "get_thing" => "查看物",
+        "get_thing_profile" => "物完整快照",
+        "get_thing_tree" => "物层级树",
+        "read_property" => "读取属性值",
+        "invoke_action" => "执行操作",
+        "query_events" => "查询事件",
+        "search_knowledge" => "搜索知识文档",
+        "read_document" => "读取文档内容",
         // Alarm tools
         "alarm_list" => "查询告警列表",
         "alarm_acknowledge" => "确认告警",
@@ -404,6 +424,19 @@ fn tool_group(name: &str) -> (&str, &str) {
         )
     {
         ("device", "设备管理")
+    } else if matches!(
+        name,
+        "list_things"
+            | "get_thing"
+            | "get_thing_profile"
+            | "get_thing_tree"
+            | "read_property"
+            | "invoke_action"
+            | "query_events"
+            | "search_knowledge"
+            | "read_document"
+    ) {
+        ("thing", "物本体")
     } else if name.starts_with("alarm_") {
         ("alarm", "告警管理")
     } else if matches!(name, "list_drivers" | "test_driver") {
@@ -451,6 +484,7 @@ pub async fn build_catalog() -> serde_json::Value {
     }
 
     let group_order = [
+        ("thing", "物本体"),
         ("device", "设备管理"),
         ("alarm", "告警管理"),
         ("monitoring", "系统监控"),
