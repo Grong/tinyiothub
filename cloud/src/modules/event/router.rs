@@ -213,14 +213,14 @@ pub async fn route_thing_event(
                         &input.data,
                     )
                     .await
-                {
-                    tracing::error!(
-                        thing_id = %input.thing_id,
-                        event_name = %input.event_name,
-                        error = %e,
-                        "Failed to check event alarms"
-                    );
-                }
+            {
+                tracing::error!(
+                    thing_id = %input.thing_id,
+                    event_name = %input.event_name,
+                    error = %e,
+                    "Failed to check event alarms"
+                );
+            }
 
             EventRouteResult {
                 event_id: event_id_str,

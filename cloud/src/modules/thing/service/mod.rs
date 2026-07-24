@@ -124,9 +124,10 @@ impl ThingService {
 
         // Name conflict check within workspace (only if workspace provided)
         if let Some(ws) = workspace_id
-            && let Some(_existing) = self.repo.find_by_name(ws, &req.name).await? {
-                return Err(ThingError::NameConflict(req.name.clone()));
-            }
+            && let Some(_existing) = self.repo.find_by_name(ws, &req.name).await?
+        {
+            return Err(ThingError::NameConflict(req.name.clone()));
+        }
 
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
         let row = ThingRow {
@@ -189,10 +190,11 @@ impl ThingService {
         // If name change: check conflict in same workspace
         if let Some(ref new_name) = req.name
             && new_name != &existing.name
-                && let Some(ref ws) = existing.workspace_id
-                    && let Some(_conflict) = self.repo.find_by_name(ws, new_name).await? {
-                        return Err(ThingError::NameConflict(new_name.clone()));
-                    }
+            && let Some(ref ws) = existing.workspace_id
+            && let Some(_conflict) = self.repo.find_by_name(ws, new_name).await?
+        {
+            return Err(ThingError::NameConflict(new_name.clone()));
+        }
 
         let updated =
             self.repo.update(id, req).await?.ok_or_else(|| ThingError::NotFound(id.to_string()))?;

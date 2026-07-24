@@ -240,11 +240,12 @@ impl SqliteRealTimeEventRepository {
 
         // -- device_ids filter --
         if let Some(ref device_ids) = filter.device_ids
-            && !device_ids.is_empty() {
-                let quoted: Vec<String> =
-                    device_ids.iter().map(|id| format!("'{}'", id.replace('\'', "''"))).collect();
-                conditions.push(format!("device_id IN ({})", quoted.join(",")));
-            }
+            && !device_ids.is_empty()
+        {
+            let quoted: Vec<String> =
+                device_ids.iter().map(|id| format!("'{}'", id.replace('\'', "''"))).collect();
+            conditions.push(format!("device_id IN ({})", quoted.join(",")));
+        }
 
         // -- acknowledged filter --
         if let Some(acknowledged) = filter.acknowledged {
@@ -258,28 +259,30 @@ impl SqliteRealTimeEventRepository {
 
         // -- event_types filter --
         if let Some(ref event_types) = filter.event_types
-            && !event_types.is_empty() {
-                let type_conds: Vec<String> = event_types
-                    .iter()
-                    .map(|et| {
-                        let subtype_json = serde_json::to_string(et).unwrap_or_default();
-                        format!(
-                            "(event_type = '{}' AND event_subtype = '{}')",
-                            et.type_string().replace('\'', "''"),
-                            subtype_json.replace('\'', "''")
-                        )
-                    })
-                    .collect();
-                conditions.push(format!("({})", type_conds.join(" OR ")));
-            }
+            && !event_types.is_empty()
+        {
+            let type_conds: Vec<String> = event_types
+                .iter()
+                .map(|et| {
+                    let subtype_json = serde_json::to_string(et).unwrap_or_default();
+                    format!(
+                        "(event_type = '{}' AND event_subtype = '{}')",
+                        et.type_string().replace('\'', "''"),
+                        subtype_json.replace('\'', "''")
+                    )
+                })
+                .collect();
+            conditions.push(format!("({})", type_conds.join(" OR ")));
+        }
 
         // -- source_types filter --
         if let Some(ref source_types) = filter.source_types
-            && !source_types.is_empty() {
-                let quoted: Vec<String> =
-                    source_types.iter().map(|st| format!("'{}'", st.replace('\'', "''"))).collect();
-                conditions.push(format!("source_type IN ({})", quoted.join(",")));
-            }
+            && !source_types.is_empty()
+        {
+            let quoted: Vec<String> =
+                source_types.iter().map(|st| format!("'{}'", st.replace('\'', "''"))).collect();
+            conditions.push(format!("source_type IN ({})", quoted.join(",")));
+        }
 
         let mut sql = String::from(
             r#"SELECT id, event_type, event_subtype, event_level, timestamp,
