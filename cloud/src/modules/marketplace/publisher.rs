@@ -59,7 +59,7 @@ impl MarketplacePublisher {
                 "tags": template.tags,
                 "device_info": template.device_info,
                 "properties": template.properties,
-                "commands": template.commands,
+                "actions": template.actions,
             }
         });
 

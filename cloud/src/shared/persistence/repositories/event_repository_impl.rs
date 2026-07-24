@@ -31,9 +31,9 @@ impl EventRepository for SqliteEventRepository {
     async fn save(&self, event: &Event) -> Result<()> {
         let sql = r#"
             INSERT INTO events (
-                id, event_type, event_subtype, event_level, timestamp, source_type, source_id, 
-                device_id, user_id, title, content, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, event_type, event_subtype, event_level, timestamp, source_type, source_id,
+                device_id, user_id, title, content, created_at, workspace_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#;
 
         let event_type_str = match event.event_type() {
@@ -60,6 +60,7 @@ impl EventRepository for SqliteEventRepository {
             .bind(event.content().title())
             .bind(content_str)
             .bind(created_at_str)
+            .bind("")
             .execute(self.database.pool())
             .await?;
 
@@ -228,9 +229,9 @@ impl EventRepository for SqliteEventRepository {
 
         let sql = r#"
             INSERT INTO events (
-                id, event_type, event_subtype, event_level, timestamp, source_type, source_id, 
-                device_id, user_id, title, content, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, event_type, event_subtype, event_level, timestamp, source_type, source_id,
+                device_id, user_id, title, content, created_at, workspace_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#;
 
         for event in events {
@@ -258,6 +259,7 @@ impl EventRepository for SqliteEventRepository {
                 .bind(event.content().title())
                 .bind(content_str)
                 .bind(created_at_str)
+                .bind("")
                 .execute(&mut *tx)
                 .await
             {

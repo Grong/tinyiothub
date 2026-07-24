@@ -11,6 +11,8 @@ use tinyiothub_core::models::event::{
     DeviceEventType, EventId, EventLevel, EventSource, EventType,
 };
 
+use crate::modules::alarm::service::AlarmService;
+
 // ── Core types ──────────────────────────────────────────────────
 
 /// Result of routing a single thing event through validation,
@@ -104,6 +106,7 @@ pub struct ThingEventPayload {
 pub async fn route_thing_event(
     pool: &sqlx::SqlitePool,
     throttle: &ThrottleState,
+    alarm_service: Option<Arc<AlarmService>>,
     input: ThingEventInput,
 ) -> EventRouteResult {
     // ── 1. Validate payload ────────────────────────────────
@@ -171,7 +174,7 @@ pub async fn route_thing_event(
     let created_at = Utc::now().to_rfc3339();
 
     let result = sqlx::query(
-        "INSERT INTO events (id, event_type, event_subtype, event_level, timestamp, source_type, source_id, device_id, user_id, title, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO events (id, event_type, event_subtype, event_level, timestamp, source_type, source_id, device_id, user_id, title, content, created_at, workspace_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
     .bind(&event_id_str)
     .bind("device")
@@ -185,6 +188,7 @@ pub async fn route_thing_event(
     .bind(&input.event_name)
     .bind(serde_json::to_string(&content).unwrap_or_default())
     .bind(&created_at)
+    .bind(&input.workspace_id)
     .execute(pool)
     .await;
 
@@ -197,6 +201,28 @@ pub async fn route_thing_event(
                 level = %input.level,
                 "Thing event routed and persisted"
             );
+
+            // Trigger event-based alarm rules if an AlarmService is available
+            if let Some(ref svc) = alarm_service {
+                if let Err(e) = svc
+                    .check_event_alarms(
+                        &input.workspace_id,
+                        &input.thing_id,
+                        &input.event_name,
+                        &input.level,
+                        &input.data,
+                    )
+                    .await
+                {
+                    tracing::error!(
+                        thing_id = %input.thing_id,
+                        event_name = %input.event_name,
+                        error = %e,
+                        "Failed to check event alarms"
+                    );
+                }
+            }
+
             EventRouteResult {
                 event_id: event_id_str,
                 throttled: false,

@@ -303,7 +303,7 @@ async fn fetch_template_definition(
     pool: &SqlitePool,
 ) -> Result<String, SummaryError> {
     let row = sqlx::query(
-        "SELECT name, description, properties, commands FROM device_templates WHERE id = ?",
+        "SELECT name, description, properties, actions FROM thing_templates WHERE id = ?",
     )
     .bind(template_id)
     .fetch_optional(pool)
@@ -395,7 +395,7 @@ mod tests {
             .execute(pool)
             .await
             .unwrap();
-        sqlx::query("DROP TABLE IF EXISTS device_templates")
+        sqlx::query("DROP TABLE IF EXISTS thing_templates")
             .execute(pool)
             .await
             .unwrap();
@@ -422,12 +422,12 @@ mod tests {
         .unwrap();
 
         sqlx::query(
-            "CREATE TABLE IF NOT EXISTS device_templates (
+            "CREATE TABLE IF NOT EXISTS thing_templates (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 description TEXT,
                 properties TEXT NOT NULL DEFAULT '[]',
-                commands TEXT NOT NULL DEFAULT '[]',
+                actions TEXT NOT NULL DEFAULT '[]',
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             )",
@@ -706,7 +706,7 @@ mod tests {
 
         // Insert a template
         sqlx::query(
-            "INSERT INTO device_templates (id, name, description, properties, commands) \
+            "INSERT INTO thing_templates (id, name, description, properties, actions) \
              VALUES ('t1', '温湿度传感器', '工业级温湿度监测', \
              '[{\"name\":\"temperature\"},{\"name\":\"humidity\"}]', \
              '[{\"name\":\"reboot\"}]')",

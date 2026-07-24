@@ -23,7 +23,7 @@ pub struct DeviceTemplate {
     pub tags: String,        // JSON数组格式
     pub device_info: String, // JSON格式的DeviceInfo
     pub properties: String,  // JSON数组格式的PropertyTemplate
-    pub commands: String,    // JSON数组格式的CommandTemplate
+    pub actions: String,    // JSON数组格式的CommandTemplate
     pub is_builtin: i32,     // 是否为内置模板
     pub is_active: i32,      // 是否激活
     pub created_at: String,
@@ -234,7 +234,7 @@ impl DeviceTemplate {
             tags: serde_json::to_string(&request.tags).unwrap_or_default(),
             device_info: serde_json::to_string(&request.device_info).unwrap_or_default(),
             properties: serde_json::to_string(&request.properties).unwrap_or_default(),
-            commands: serde_json::to_string(&request.commands).unwrap_or_default(),
+            actions: serde_json::to_string(&request.commands).unwrap_or_default(),
             is_builtin: 1,
             is_active: 1,
             created_at: now.clone(),
@@ -253,9 +253,9 @@ impl DeviceTemplate {
             r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, device_type, protocol_type, driver_name, tags,
-                   device_info, properties, commands, is_builtin, is_active,
+                   device_info, properties, actions, is_builtin, is_active,
                    created_at, updated_at, workspace_id
-            FROM device_templates WHERE id = ? AND is_active = 1
+            FROM thing_templates WHERE id = ? AND is_active = 1
               AND (workspace_id IS NULL OR workspace_id = ?)
             "#,
         )
@@ -277,9 +277,9 @@ impl DeviceTemplate {
             r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, device_type, protocol_type, driver_name, tags,
-                   device_info, properties, commands, is_builtin, is_active,
+                   device_info, properties, actions, is_builtin, is_active,
                    created_at, updated_at, workspace_id
-            FROM device_templates WHERE name = ? AND is_active = 1
+            FROM thing_templates WHERE name = ? AND is_active = 1
               AND (workspace_id IS NULL OR workspace_id = ?)
             "#,
         )
@@ -321,10 +321,10 @@ impl DeviceTemplate {
 
         sqlx::query(
             r#"
-            INSERT INTO device_templates (
+            INSERT INTO thing_templates (
                 id, name, display_name, description, version, author, category,
                 manufacturer, device_type, protocol_type, driver_name, tags,
-                device_info, properties, commands, is_builtin, is_active,
+                device_info, properties, actions, is_builtin, is_active,
                 created_at, updated_at, workspace_id
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
@@ -364,7 +364,7 @@ impl DeviceTemplate {
         id: &str,
         request: &UpdateDeviceTemplateRequest,
     ) -> Result<DeviceTemplate, sqlx::Error> {
-        let mut query = QueryBuilder::new("UPDATE device_templates SET ");
+        let mut query = QueryBuilder::new("UPDATE thing_templates SET ");
         let mut has_updates = false;
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
@@ -494,7 +494,7 @@ impl DeviceTemplate {
             let commands_json = serde_json::to_string(commands).map_err(|e| {
                 sqlx::Error::Protocol(format!("Failed to serialize commands: {}", e))
             })?;
-            query.push("commands = ").push_bind(commands_json);
+            query.push("actions = ").push_bind(commands_json);
             has_updates = true;
         }
 
@@ -520,7 +520,7 @@ impl DeviceTemplate {
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         let result =
-            sqlx::query("UPDATE device_templates SET is_active = 0, updated_at = ? WHERE id = ?")
+            sqlx::query("UPDATE thing_templates SET is_active = 0, updated_at = ? WHERE id = ?")
                 .bind(now)
                 .bind(id)
                 .execute(db.pool())
@@ -531,7 +531,7 @@ impl DeviceTemplate {
 
     /// 标记模板为内置模板
     pub async fn set_builtin(db: &Database, id: &str) -> Result<(), sqlx::Error> {
-        sqlx::query("UPDATE device_templates SET is_builtin = 1 WHERE id = ?")
+        sqlx::query("UPDATE thing_templates SET is_builtin = 1 WHERE id = ?")
             .bind(id)
             .execute(db.pool())
             .await?;
@@ -548,9 +548,9 @@ impl DeviceTemplate {
             r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, device_type, protocol_type, driver_name, tags,
-                   device_info, properties, commands, is_builtin, is_active,
+                   device_info, properties, actions, is_builtin, is_active,
                    created_at, updated_at, workspace_id
-            FROM device_templates WHERE is_active = 1
+            FROM thing_templates WHERE is_active = 1
             "#,
         );
         query.push(" AND (workspace_id IS NULL OR workspace_id = ");
@@ -607,7 +607,7 @@ impl DeviceTemplate {
         workspace_id: &str,
     ) -> Result<i64, sqlx::Error> {
         let mut query =
-            QueryBuilder::new("SELECT COUNT(*) as count FROM device_templates WHERE is_active = 1");
+            QueryBuilder::new("SELECT COUNT(*) as count FROM thing_templates WHERE is_active = 1");
         query.push(" AND (workspace_id IS NULL OR workspace_id = ");
         query.push_bind(workspace_id);
         query.push(")");
@@ -655,9 +655,9 @@ impl DeviceTemplate {
             r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, device_type, protocol_type, driver_name, tags,
-                   device_info, properties, commands, is_builtin, is_active,
+                   device_info, properties, actions, is_builtin, is_active,
                    created_at, updated_at, workspace_id
-            FROM device_templates WHERE category = ? AND is_active = 1
+            FROM thing_templates WHERE category = ? AND is_active = 1
               AND (workspace_id IS NULL OR workspace_id = ?)
             ORDER BY is_builtin DESC, name
             "#,
@@ -683,9 +683,9 @@ impl DeviceTemplate {
             r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, device_type, protocol_type, driver_name, tags,
-                   device_info, properties, commands, is_builtin, is_active,
+                   device_info, properties, actions, is_builtin, is_active,
                    created_at, updated_at, workspace_id
-            FROM device_templates WHERE is_active = 1 AND (
+            FROM thing_templates WHERE is_active = 1 AND (
                 name LIKE ? OR
                 display_name LIKE ? OR
                 tags LIKE ?
@@ -716,9 +716,9 @@ impl DeviceTemplate {
             r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, device_type, protocol_type, driver_name, tags,
-                   device_info, properties, commands, is_builtin, is_active,
+                   device_info, properties, actions, is_builtin, is_active,
                    created_at, updated_at
-            FROM device_templates WHERE is_builtin = 1 AND is_active = 1
+            FROM thing_templates WHERE is_builtin = 1 AND is_active = 1
             ORDER BY category, name
             "#,
         )
@@ -731,7 +731,7 @@ impl DeviceTemplate {
     /// 检查模板名称是否存在
     pub async fn exists_by_name(db: &Database, name: &str) -> Result<bool, sqlx::Error> {
         let row = sqlx::query(
-            "SELECT COUNT(*) as count FROM device_templates WHERE name = ? AND is_active = 1",
+            "SELECT COUNT(*) as count FROM thing_templates WHERE name = ? AND is_active = 1",
         )
         .bind(name)
         .fetch_one(db.pool())
@@ -789,7 +789,7 @@ impl DeviceTemplate {
 
     /// 解析命令模板
     pub fn get_commands(&self) -> Result<Vec<CommandTemplate>, serde_json::Error> {
-        serde_json::from_str(&self.commands)
+        serde_json::from_str(&self.actions)
     }
 
     /// 检查是否为内置模板
@@ -819,7 +819,7 @@ impl TemplateCategory {
         // 为每个分类计算模板数量
         for category in &mut categories {
             let count_row = sqlx::query(
-                "SELECT COUNT(*) as count FROM device_templates WHERE category = ? AND is_active = 1"
+                "SELECT COUNT(*) as count FROM thing_templates WHERE category = ? AND is_active = 1"
             )
             .bind(&category.name)
             .fetch_one(db.pool())
@@ -881,7 +881,7 @@ impl Default for DeviceTemplate {
             tags: "[]".to_string(),
             device_info: "{}".to_string(),
             properties: "[]".to_string(),
-            commands: "[]".to_string(),
+            actions: "[]".to_string(),
             is_builtin: 0,
             is_active: 1,
             created_at: now.clone(),
