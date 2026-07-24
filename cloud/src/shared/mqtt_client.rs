@@ -26,6 +26,7 @@ pub struct PlatformMqttClient {
 }
 
 impl PlatformMqttClient {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         broker_url: &str,
         broker_port: u16,
