@@ -1,8 +1,7 @@
 // Summary module — LLM-based ontology summary for things.
 // Implements lazy compute with dirty markers and single-flight dedup.
 
-use std::sync::Arc;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use dashmap::DashMap;
 use sqlx::{Row, SqlitePool};
@@ -29,11 +28,10 @@ pub async fn mark_dirty_for_template_change(
     pool: &SqlitePool,
     template_id: &str,
 ) -> Result<u64, sqlx::Error> {
-    let result =
-        sqlx::query("UPDATE devices SET summary_status = 'dirty' WHERE template_id = ?")
-            .bind(template_id)
-            .execute(pool)
-            .await?;
+    let result = sqlx::query("UPDATE devices SET summary_status = 'dirty' WHERE template_id = ?")
+        .bind(template_id)
+        .execute(pool)
+        .await?;
     Ok(result.rows_affected())
 }
 
@@ -95,9 +93,7 @@ pub struct SummaryComputer {
 
 impl SummaryComputer {
     pub fn new() -> Self {
-        Self {
-            single_flight: Arc::new(DashMap::new()),
-        }
+        Self { single_flight: Arc::new(DashMap::new()) }
     }
 
     /// Get or compute the ontology summary for a thing.
@@ -112,12 +108,10 @@ impl SummaryComputer {
         llm: &dyn LlmClient,
     ) -> Result<Option<String>, SummaryError> {
         // 1. Read current status
-        let row = sqlx::query(
-            "SELECT ontology_summary, summary_status FROM devices WHERE id = ?",
-        )
-        .bind(thing_id)
-        .fetch_optional(pool)
-        .await?;
+        let row = sqlx::query("SELECT ontology_summary, summary_status FROM devices WHERE id = ?")
+            .bind(thing_id)
+            .fetch_optional(pool)
+            .await?;
 
         let (cached_summary, status): (Option<String>, Option<String>) = match row {
             Some(r) => (r.get(0), r.get(1)),
@@ -139,12 +133,10 @@ impl SummaryComputer {
                     drop(o);
                     notifier.notified().await;
                     // Re-read from DB after notification
-                    let row = sqlx::query(
-                        "SELECT ontology_summary FROM devices WHERE id = ?",
-                    )
-                    .bind(thing_id)
-                    .fetch_optional(pool)
-                    .await?;
+                    let row = sqlx::query("SELECT ontology_summary FROM devices WHERE id = ?")
+                        .bind(thing_id)
+                        .fetch_optional(pool)
+                        .await?;
                     return Ok(row.and_then(|r| r.get(0)));
                 }
                 Entry::Vacant(v) => {
@@ -159,8 +151,8 @@ impl SummaryComputer {
         let prompt = build_prompt_for_thing(thing_id, pool).await?;
 
         // 5. Call LLM with 10s timeout
-        let result = tokio::time::timeout(Duration::from_secs(10), llm.complete(&prompt, 500))
-            .await;
+        let result =
+            tokio::time::timeout(Duration::from_secs(10), llm.complete(&prompt, 500)).await;
 
         // 6. Handle result: persist or mark failed
         let outcome = match result {
@@ -244,17 +236,12 @@ pub fn build_prompt(
 // ──────────────────────────────────────────────
 
 /// Fetch thing metadata and assemble a prompt from DB.
-async fn build_prompt_for_thing(
-    thing_id: &str,
-    pool: &SqlitePool,
-) -> Result<String, SummaryError> {
+async fn build_prompt_for_thing(thing_id: &str, pool: &SqlitePool) -> Result<String, SummaryError> {
     // Fetch thing basic info
-    let thing_row = sqlx::query(
-        "SELECT name, thing_type, template_id FROM devices WHERE id = ?",
-    )
-    .bind(thing_id)
-    .fetch_optional(pool)
-    .await?;
+    let thing_row = sqlx::query("SELECT name, thing_type, template_id FROM devices WHERE id = ?")
+        .bind(thing_id)
+        .fetch_optional(pool)
+        .await?;
 
     let (name, thing_type, template_id): (String, String, Option<String>) = match thing_row {
         Some(r) => (r.get(0), r.get(1), r.get(2)),
@@ -321,9 +308,7 @@ async fn fetch_template_definition(
                 def.push_str(&format!("描述: {}\n", d));
             }
             // Parse JSON arrays for a readable capabilities summary
-            if let Ok(parsed_props) =
-                serde_json::from_str::<Vec<serde_json::Value>>(&props)
-            {
+            if let Ok(parsed_props) = serde_json::from_str::<Vec<serde_json::Value>>(&props) {
                 let prop_names: Vec<String> = parsed_props
                     .iter()
                     .filter_map(|p| p.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()))
@@ -332,9 +317,7 @@ async fn fetch_template_definition(
                     def.push_str(&format!("属性: {}\n", prop_names.join(", ")));
                 }
             }
-            if let Ok(parsed_cmds) =
-                serde_json::from_str::<Vec<serde_json::Value>>(&cmds)
-            {
+            if let Ok(parsed_cmds) = serde_json::from_str::<Vec<serde_json::Value>>(&cmds) {
                 let cmd_names: Vec<String> = parsed_cmds
                     .iter()
                     .filter_map(|c| c.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()))
@@ -349,10 +332,7 @@ async fn fetch_template_definition(
     }
 }
 
-async fn fetch_knowledge_docs(
-    thing_id: &str,
-    pool: &SqlitePool,
-) -> Vec<(String, String)> {
+async fn fetch_knowledge_docs(thing_id: &str, pool: &SqlitePool) -> Vec<(String, String)> {
     let rows: Vec<(String, Option<String>)> = sqlx::query_as(
         "SELECT name, content FROM resources WHERE device_id = ? ORDER BY created_at DESC LIMIT 5",
     )
@@ -361,9 +341,7 @@ async fn fetch_knowledge_docs(
     .await
     .unwrap_or_default();
 
-    rows.into_iter()
-        .map(|(name, content)| (name, content.unwrap_or_default()))
-        .collect()
+    rows.into_iter().map(|(name, content)| (name, content.unwrap_or_default())).collect()
 }
 
 // ──────────────────────────────────────────────
@@ -391,18 +369,9 @@ mod tests {
     use super::*;
 
     async fn setup_test_db(pool: &SqlitePool) {
-        sqlx::query("DROP TABLE IF EXISTS resources")
-            .execute(pool)
-            .await
-            .unwrap();
-        sqlx::query("DROP TABLE IF EXISTS thing_templates")
-            .execute(pool)
-            .await
-            .unwrap();
-        sqlx::query("DROP TABLE IF EXISTS devices")
-            .execute(pool)
-            .await
-            .unwrap();
+        sqlx::query("DROP TABLE IF EXISTS resources").execute(pool).await.unwrap();
+        sqlx::query("DROP TABLE IF EXISTS thing_templates").execute(pool).await.unwrap();
+        sqlx::query("DROP TABLE IF EXISTS devices").execute(pool).await.unwrap();
 
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS devices (
@@ -536,8 +505,7 @@ mod tests {
         .await
         .unwrap();
 
-        let affected =
-            mark_dirty_for_name_or_parent_change(&pool, "root").await.unwrap();
+        let affected = mark_dirty_for_name_or_parent_change(&pool, "root").await.unwrap();
         assert_eq!(affected, 3); // root + c1 + c2
 
         // 'other' should NOT be dirtied
@@ -558,10 +526,7 @@ mod tests {
             "device",
             "工厂1 / 产线A / 温度传感器A",
             "属性: temperature, humidity\n命令: reboot",
-            &[(
-                "传感器手册".to_string(),
-                "这是一份很长的文档...".to_string(),
-            )],
+            &[("传感器手册".to_string(), "这是一份很长的文档...".to_string())],
         );
         assert!(prompt.contains("温度传感器A"));
         assert!(prompt.contains("<user_document"));
@@ -585,10 +550,7 @@ mod tests {
 
         let computer = SummaryComputer::new();
         let llm = StubLlmClient;
-        let result = computer
-            .get_or_compute("d1", &pool, &llm)
-            .await
-            .unwrap();
+        let result = computer.get_or_compute("d1", &pool, &llm).await.unwrap();
 
         assert_eq!(result, Some("已有摘要".to_string()));
     }
@@ -597,17 +559,16 @@ mod tests {
     async fn test_summary_get_or_compute_computes(pool: SqlitePool) {
         setup_test_db(&pool).await;
 
-        sqlx::query("INSERT INTO devices (id, name, summary_status) VALUES ('d1', 'Test', 'dirty')")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO devices (id, name, summary_status) VALUES ('d1', 'Test', 'dirty')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let computer = SummaryComputer::new();
         let llm = StubLlmClient;
-        let result = computer
-            .get_or_compute("d1", &pool, &llm)
-            .await
-            .unwrap();
+        let result = computer.get_or_compute("d1", &pool, &llm).await.unwrap();
 
         assert!(result.is_some());
         assert!(!result.as_ref().unwrap().is_empty());
@@ -627,10 +588,7 @@ mod tests {
 
         let computer = SummaryComputer::new();
         let llm = StubLlmClient;
-        let result = computer
-            .get_or_compute("nonexistent", &pool, &llm)
-            .await
-            .unwrap();
+        let result = computer.get_or_compute("nonexistent", &pool, &llm).await.unwrap();
 
         assert_eq!(result, None);
     }
@@ -639,10 +597,12 @@ mod tests {
     async fn test_summary_single_flight(pool: SqlitePool) {
         setup_test_db(&pool).await;
 
-        sqlx::query("INSERT INTO devices (id, name, summary_status) VALUES ('d1', 'Test', 'dirty')")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO devices (id, name, summary_status) VALUES ('d1', 'Test', 'dirty')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let computer = Arc::new(SummaryComputer::new());
         let call_count = Arc::new(AtomicU32::new(0));
@@ -658,37 +618,23 @@ mod tests {
             async fn complete(&self, _p: &str, _t: u32) -> Result<String, String> {
                 self.count.fetch_add(1, Ordering::SeqCst);
                 tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
-                Ok(format!(
-                    "摘要版本{}",
-                    self.count.load(Ordering::SeqCst)
-                ))
+                Ok(format!("摘要版本{}", self.count.load(Ordering::SeqCst)))
             }
         }
 
         // Spawn first computation with a slow client
         let pool1 = pool.clone();
         let comp1 = computer.clone();
-        let cc1 = CountingClient {
-            count: call_count.clone(),
-            delay_ms: 200,
-        };
-        let h = tokio::spawn(async move {
-            comp1.get_or_compute("d1", &pool1, &cc1).await
-        });
+        let cc1 = CountingClient { count: call_count.clone(), delay_ms: 200 };
+        let h = tokio::spawn(async move { comp1.get_or_compute("d1", &pool1, &cc1).await });
 
         // Give the spawned task a head start to acquire the single-flight lock
         tokio::time::sleep(Duration::from_millis(30)).await;
 
         // Second call: should wait on the single-flight Notify and get the
         // same result without calling the LLM again.
-        let cc2 = CountingClient {
-            count: call_count.clone(),
-            delay_ms: 0,
-        };
-        let result2 = computer
-            .get_or_compute("d1", &pool, &cc2)
-            .await
-            .unwrap();
+        let cc2 = CountingClient { count: call_count.clone(), delay_ms: 0 };
+        let result2 = computer.get_or_compute("d1", &pool, &cc2).await.unwrap();
 
         let result1 = h.await.unwrap().unwrap();
 
@@ -735,10 +681,7 @@ mod tests {
 
         let computer = SummaryComputer::new();
         let llm = StubLlmClient;
-        let result = computer
-            .get_or_compute("d1", &pool, &llm)
-            .await
-            .unwrap();
+        let result = computer.get_or_compute("d1", &pool, &llm).await.unwrap();
 
         assert!(result.is_some());
 

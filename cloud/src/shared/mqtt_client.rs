@@ -258,7 +258,7 @@ impl PlatformMqttClient {
             ts: payload_data.ts,
         };
 
-        let result = route_thing_event(db_pool, throttle, input).await;
+        let result = route_thing_event(db_pool, throttle, None, input).await;
 
         if result.throttled {
             tracing::info!(

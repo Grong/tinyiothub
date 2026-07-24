@@ -7,15 +7,13 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::json;
-
 use tinyiothub_web::response::ApiResponse;
 
+use super::super::service::ThingService;
 use crate::{
     modules::agent::tools::take_pending_action,
     shared::{api_response::ApiResponseBuilder, app_state::AppState},
 };
-
-use super::super::service::ThingService;
 
 fn thing_service(pool: &sqlx::SqlitePool) -> ThingService {
     ThingService::new(pool.clone())
@@ -63,17 +61,20 @@ pub async fn confirm_action(
         Ok(t) => t,
         Err(e) => {
             let status = e.status_code();
-            return (status, ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()));
+            return (
+                status,
+                ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()),
+            );
         }
     };
 
     if thing.thing_type != "device" {
         return (
             StatusCode::BAD_REQUEST,
-            ApiResponseBuilder::error_with_code(400, &format!(
-                "操作不支持: 物类型为 '{}'，仅 'device' 类型物支持操作",
-                thing.thing_type
-            )),
+            ApiResponseBuilder::error_with_code(
+                400,
+                &format!("操作不支持: 物类型为 '{}'，仅 'device' 类型物支持操作", thing.thing_type),
+            ),
         );
     }
 
@@ -91,10 +92,10 @@ pub async fn confirm_action(
     if !command_exists {
         return (
             StatusCode::NOT_FOUND,
-            ApiResponseBuilder::error_with_code(404, &format!(
-                "操作 '{}' 未在物 {} 上注册",
-                action_name, thing_id
-            )),
+            ApiResponseBuilder::error_with_code(
+                404,
+                &format!("操作 '{}' 未在物 {} 上注册", action_name, thing_id),
+            ),
         );
     }
 
@@ -109,9 +110,7 @@ pub async fn confirm_action(
                 display_name: None,
                 description: None,
                 parameters: pending.params.as_ref().map(|p| p.to_string()),
-                created_at: chrono::Utc::now()
-                    .format("%Y-%m-%d %H:%M:%S")
-                    .to_string(),
+                created_at: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
             };
             match data_server.execute_command(cmd) {
                 Ok(()) => (

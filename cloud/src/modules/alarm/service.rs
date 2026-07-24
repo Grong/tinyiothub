@@ -286,6 +286,98 @@ impl AlarmService {
     pub fn rule_engine(&self) -> Arc<RuleEngine> {
         self.rule_engine.clone()
     }
+
+    /// Called after a thing event is persisted. Check all alarm rules with
+    /// `rule_type='event'` that match this thing/workspace and trigger alarms
+    /// when the event name and level satisfy the configured condition.
+    ///
+    /// Returns the list of created alarm IDs.
+    pub async fn check_event_alarms(
+        &self,
+        workspace_id: &str,
+        thing_id: &str,
+        event_name: &str,
+        event_level: &tinyiothub_core::models::event::EventLevel,
+        event_data: &serde_json::Value,
+    ) -> AlarmResult<Vec<String>> {
+        use super::event_matcher::EventAlarmCondition;
+
+        // 1. Query device_alarm_rules WHERE workspace_id=? AND rule_type='event'
+        //    AND (device_id=? OR device_id IS NULL)
+        let rules = self.rule_repository.find_event_rules(workspace_id, Some(thing_id)).await?;
+
+        if rules.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut triggered_ids = Vec::new();
+
+        // 2. For each rule, deserialize condition_config → EventAlarmCondition
+        for rule_row in &rules {
+            let condition: EventAlarmCondition =
+                match serde_json::from_str(&rule_row.condition_config) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::warn!(
+                            rule_id = %rule_row.id,
+                            condition_config = %rule_row.condition_config,
+                            error = %e,
+                            "Failed to parse event alarm condition"
+                        );
+                        continue;
+                    }
+                };
+
+            // 3. If matches(event_name, event_level) → trigger alarm
+            if !condition.matches(event_name, event_level) {
+                continue;
+            }
+
+            let alarm_level =
+                AlarmLevel::parse_str(&rule_row.alarm_level).unwrap_or(AlarmLevel::Warning);
+
+            let message = format!(
+                "[{}] Event '{}' at level {}: {}",
+                rule_row.rule_name, event_name, event_level, event_data
+            );
+
+            let alarm = Alarm::new(
+                thing_id.to_string(),
+                None, // property_id: not applicable for event rules
+                Some(rule_row.id.clone()),
+                AlarmType::Custom { name: format!("event_{}", event_name) },
+                alarm_level,
+                message,
+                Some(format!("{}", event_level)),
+                Some(condition.min_level.clone()),
+                rule_row.workspace_id.clone(),
+            );
+
+            match self.create_alarm(alarm).await {
+                Ok(a) => {
+                    tracing::info!(
+                        alarm_id = %a.id,
+                        thing_id = %thing_id,
+                        rule_id = %rule_row.id,
+                        event_name = %event_name,
+                        level = %event_level,
+                        "event_alarm_triggered"
+                    );
+                    triggered_ids.push(a.id);
+                }
+                Err(e) => {
+                    tracing::error!(
+                        rule_id = %rule_row.id,
+                        thing_id = %thing_id,
+                        error = %e,
+                        "Failed to create event alarm"
+                    );
+                }
+            }
+        }
+
+        Ok(triggered_ids)
+    }
 }
 
 /// 报警统计

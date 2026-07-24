@@ -1,5 +1,5 @@
 // MCP Tools Module
-// Core IoT management tools: device, alarm, job, driver
+// Core IoT management tools: thing, alarm, job, driver
 
 pub mod alarm_mcp;
 pub mod device;

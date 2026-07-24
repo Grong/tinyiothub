@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    modules::event::{
-        entities::Event, repositories::RealTimeEventRepository,
-    },
+    modules::event::{entities::Event, repositories::RealTimeEventRepository},
     shared::event::EventHandler,
 };
 

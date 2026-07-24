@@ -23,11 +23,7 @@ pub struct ThingService {
 
 impl ThingService {
     pub fn new(pool: SqlitePool) -> Self {
-        Self {
-            repo: ThingRepo::new(pool.clone()),
-            pool,
-            summary_computer: SummaryComputer::new(),
-        }
+        Self { repo: ThingRepo::new(pool.clone()), pool, summary_computer: SummaryComputer::new() }
     }
 
     // ──────────────────────────────────────────
@@ -45,28 +41,15 @@ impl ThingService {
 
         let mut items: Vec<ThingResponse> = Vec::with_capacity(rows.len());
         for row in &rows {
-            let breadcrumb = self
-                .repo
-                .get_breadcrumb(&row.id, 10)
-                .await
-                .unwrap_or_default();
+            let breadcrumb = self.repo.get_breadcrumb(&row.id, 10).await.unwrap_or_default();
             items.push(Self::row_to_response(row, breadcrumb));
         }
 
-        let unassigned = self
-            .repo
-            .list_unassigned_resources(workspace_id)
-            .await
-            .unwrap_or_default()
-            .len() as u64;
+        let unassigned =
+            self.repo.list_unassigned_resources(workspace_id).await.unwrap_or_default().len()
+                as u64;
 
-        Ok(ListThingsResult {
-            items,
-            total,
-            limit,
-            offset,
-            unassigned_resource_count: unassigned,
-        })
+        Ok(ListThingsResult { items, total, limit, offset, unassigned_resource_count: unassigned })
     }
 
     // ──────────────────────────────────────────
@@ -74,20 +57,13 @@ impl ThingService {
     // ──────────────────────────────────────────
 
     pub async fn get_thing(&self, id: &str) -> Result<ThingResponse, ThingError> {
-        let mut row = self
-            .repo
-            .get_by_id(id)
-            .await?
-            .ok_or_else(|| ThingError::NotFound(id.to_string()))?;
+        let mut row =
+            self.repo.get_by_id(id).await?.ok_or_else(|| ThingError::NotFound(id.to_string()))?;
 
         // Lazy summary compute: trigger if status is not 'ok'
         if row.summary_status.as_deref() != Some("ok") {
             let llm = StubLlmClient;
-            match self
-                .summary_computer
-                .get_or_compute(id, &self.pool, &llm)
-                .await
-            {
+            match self.summary_computer.get_or_compute(id, &self.pool, &llm).await {
                 Ok(Some(summary)) => {
                     row.ontology_summary = Some(summary);
                     row.summary_status = Some("ok".to_string());
@@ -99,32 +75,20 @@ impl ThingService {
             }
         }
 
-        let breadcrumb = self
-            .repo
-            .get_breadcrumb(id, 10)
-            .await
-            .unwrap_or_default();
+        let breadcrumb = self.repo.get_breadcrumb(id, 10).await.unwrap_or_default();
 
         Ok(Self::row_to_response(&row, breadcrumb))
     }
 
     /// Full profile: thing + properties + recent events + knowledge docs.
-    pub async fn get_thing_profile(
-        &self,
-        id: &str,
-    ) -> Result<ThingProfileResponse, ThingError> {
+    pub async fn get_thing_profile(&self, id: &str) -> Result<ThingProfileResponse, ThingError> {
         let thing = self.get_thing(id).await?;
 
         let properties = self.load_properties(id).await;
         let recent_events = self.load_recent_events(id).await;
         let knowledge_docs = self.load_knowledge_docs(id).await;
 
-        Ok(ThingProfileResponse {
-            thing,
-            properties,
-            recent_events,
-            knowledge_docs,
-        })
+        Ok(ThingProfileResponse { thing, properties, recent_events, knowledge_docs })
     }
 
     // ──────────────────────────────────────────
@@ -209,11 +173,8 @@ impl ThingService {
         req: &UpdateThingRequest,
     ) -> Result<ThingResponse, ThingError> {
         // Verify exists
-        let existing = self
-            .repo
-            .get_by_id(id)
-            .await?
-            .ok_or_else(|| ThingError::NotFound(id.to_string()))?;
+        let existing =
+            self.repo.get_by_id(id).await?.ok_or_else(|| ThingError::NotFound(id.to_string()))?;
 
         // Cycle check when changing parent
         if let Some(ref new_parent_id) = req.parent_id {
@@ -237,17 +198,10 @@ impl ThingService {
             }
         }
 
-        let updated = self
-            .repo
-            .update(id, req)
-            .await?
-            .ok_or_else(|| ThingError::NotFound(id.to_string()))?;
+        let updated =
+            self.repo.update(id, req).await?.ok_or_else(|| ThingError::NotFound(id.to_string()))?;
 
-        let breadcrumb = self
-            .repo
-            .get_breadcrumb(id, 10)
-            .await
-            .unwrap_or_default();
+        let breadcrumb = self.repo.get_breadcrumb(id, 10).await.unwrap_or_default();
 
         Ok(Self::row_to_response(&updated, breadcrumb))
     }
@@ -287,10 +241,7 @@ impl ThingService {
 
         let affected = self.repo.attach_resource(thing_id, resource_id).await?;
         if affected == 0 {
-            return Err(ThingError::NotFound(format!(
-                "resource {} not found",
-                resource_id
-            )));
+            return Err(ThingError::NotFound(format!("resource {} not found", resource_id)));
         }
 
         // Mark summary dirty so it will be recomputed on next read
@@ -336,67 +287,58 @@ impl ThingService {
     }
 
     async fn load_properties(&self, device_id: &str) -> Option<Vec<serde_json::Value>> {
-        let rows: Vec<PropertyRow> =
-            sqlx::query_as::<_, PropertyRow>(
-                "SELECT id, device_id, name, display_name, description, data_type, unit, \
+        let rows: Vec<PropertyRow> = sqlx::query_as::<_, PropertyRow>(
+            "SELECT id, device_id, name, display_name, description, data_type, unit, \
                  min_value, max_value, default_value, is_read_only, created_at, updated_at \
                  FROM device_properties WHERE device_id = ? ORDER BY name",
-            )
-            .bind(device_id)
-            .fetch_all(&self.pool)
-            .await
-            .ok()?;
+        )
+        .bind(device_id)
+        .fetch_all(&self.pool)
+        .await
+        .ok()?;
 
         if rows.is_empty() {
             return None;
         }
-        let values: Vec<serde_json::Value> = rows
-            .into_iter()
-            .filter_map(|r| serde_json::to_value(r).ok())
-            .collect();
+        let values: Vec<serde_json::Value> =
+            rows.into_iter().filter_map(|r| serde_json::to_value(r).ok()).collect();
         Some(values)
     }
 
     async fn load_recent_events(&self, device_id: &str) -> Option<Vec<serde_json::Value>> {
-        let rows: Vec<EventRow> =
-            sqlx::query_as::<_, EventRow>(
-                "SELECT id, event_type, event_subtype, level, source, source_id, \
+        let rows: Vec<EventRow> = sqlx::query_as::<_, EventRow>(
+            "SELECT id, event_type, event_subtype, level, source, source_id, \
                  title, content, metadata, created_at \
                  FROM events WHERE device_id = ? ORDER BY created_at DESC LIMIT 20",
-            )
-            .bind(device_id)
-            .fetch_all(&self.pool)
-            .await
-            .ok()?;
+        )
+        .bind(device_id)
+        .fetch_all(&self.pool)
+        .await
+        .ok()?;
 
         if rows.is_empty() {
             return None;
         }
-        let values: Vec<serde_json::Value> = rows
-            .into_iter()
-            .filter_map(|r| serde_json::to_value(r).ok())
-            .collect();
+        let values: Vec<serde_json::Value> =
+            rows.into_iter().filter_map(|r| serde_json::to_value(r).ok()).collect();
         Some(values)
     }
 
     async fn load_knowledge_docs(&self, device_id: &str) -> Option<Vec<serde_json::Value>> {
-        let rows: Vec<DocRow> =
-            sqlx::query_as::<_, DocRow>(
-                "SELECT id, name, type, file_path, content, tags, created_at, updated_at \
+        let rows: Vec<DocRow> = sqlx::query_as::<_, DocRow>(
+            "SELECT id, name, type, file_path, content, tags, created_at, updated_at \
                  FROM resources WHERE device_id = ? ORDER BY created_at DESC LIMIT 10",
-            )
-            .bind(device_id)
-            .fetch_all(&self.pool)
-            .await
-            .ok()?;
+        )
+        .bind(device_id)
+        .fetch_all(&self.pool)
+        .await
+        .ok()?;
 
         if rows.is_empty() {
             return None;
         }
-        let values: Vec<serde_json::Value> = rows
-            .into_iter()
-            .filter_map(|r| serde_json::to_value(r).ok())
-            .collect();
+        let values: Vec<serde_json::Value> =
+            rows.into_iter().filter_map(|r| serde_json::to_value(r).ok()).collect();
         Some(values)
     }
 }

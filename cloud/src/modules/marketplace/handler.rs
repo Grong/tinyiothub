@@ -430,7 +430,9 @@ async fn install_thing_template(
         Ok(installed) => {
             tracing::info!(
                 "Installed thing_template {} as '{}' (id={})",
-                id, installed.name, installed.id
+                id,
+                installed.name,
+                installed.id
             );
             ApiResponseBuilder::success(serde_json::json!({
                 "id": installed.id,

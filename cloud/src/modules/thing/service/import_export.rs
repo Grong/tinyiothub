@@ -6,7 +6,7 @@
 //   - Import WoT Thing Description JSON → thing_templates row
 //   - Backwards compat: accept "commands" key and map to "actions"
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sqlx::{FromRow, SqlitePool};
 
 // ──────────────────────────────────────────────
@@ -112,18 +112,13 @@ pub struct EventSchema {
 ///   contents[].@type="Command"   → actions
 pub fn parse_dtdl(json: &Value) -> Result<ParsedTemplate, ImportError> {
     // Validate @type
-    let dtdl_type = json["@type"]
-        .as_str()
-        .unwrap_or("Interface");
+    let dtdl_type = json["@type"].as_str().unwrap_or("Interface");
 
     if dtdl_type != "Interface" {
         return Err(ImportError::UnsupportedType(dtdl_type.to_string()));
     }
 
-    let name = json["displayName"]
-        .as_str()
-        .unwrap_or("Untitled")
-        .to_string();
+    let name = json["displayName"].as_str().unwrap_or("Untitled").to_string();
 
     let description = json["description"].as_str().map(|s| s.to_string());
 
@@ -205,10 +200,7 @@ pub fn parse_dtdl(json: &Value) -> Result<ParsedTemplate, ImportError> {
                     );
                 }
                 _ => {
-                    tracing::debug!(
-                        "Unknown DTDL content type '{}' — skipping",
-                        content_type
-                    );
+                    tracing::debug!("Unknown DTDL content type '{}' — skipping", content_type);
                 }
             }
         }
@@ -266,11 +258,8 @@ fn resolve_schema_value(schema: &Value) -> Value {
 ///   actions     → our action schema
 ///   events      → our event schema
 pub fn parse_wot_td(json: &Value) -> Result<ParsedTemplate, ImportError> {
-    let name = json["title"]
-        .as_str()
-        .or_else(|| json["id"].as_str())
-        .unwrap_or("Untitled")
-        .to_string();
+    let name =
+        json["title"].as_str().or_else(|| json["id"].as_str()).unwrap_or("Untitled").to_string();
 
     let description = json["description"].as_str().map(|s| s.to_string());
     let thing_type = "device".to_string();
@@ -388,10 +377,7 @@ pub fn export_to_dtdl(row: &ThingTemplateRow) -> Result<Value, ImportError> {
     // Properties → DTDL Property
     let properties: Vec<Value> = serde_json::from_str(&row.properties).unwrap_or_default();
     for prop in &properties {
-        let schema = prop
-            .get("schema")
-            .cloned()
-            .unwrap_or_else(|| json!("string"));
+        let schema = prop.get("schema").cloned().unwrap_or_else(|| json!("string"));
 
         contents.push(json!({
             "@type": "Property",
@@ -406,10 +392,7 @@ pub fn export_to_dtdl(row: &ThingTemplateRow) -> Result<Value, ImportError> {
     // Events → DTDL Telemetry
     let events: Vec<Value> = serde_json::from_str(&row.events).unwrap_or_default();
     for event in &events {
-        let schema = event
-            .get("schema")
-            .cloned()
-            .unwrap_or_else(|| json!("string"));
+        let schema = event.get("schema").cloned().unwrap_or_else(|| json!("string"));
 
         contents.push(json!({
             "@type": "Telemetry",
@@ -588,10 +571,7 @@ pub async fn save_template(
 }
 
 /// Load a template from thing_templates by ID.
-pub async fn load_template(
-    pool: &SqlitePool,
-    id: &str,
-) -> Result<ThingTemplateRow, ImportError> {
+pub async fn load_template(pool: &SqlitePool, id: &str) -> Result<ThingTemplateRow, ImportError> {
     sqlx::query_as::<_, ThingTemplateRow>(
         "SELECT id, name, display_name, description, version, category, \
          device_type, thing_type, properties, actions, events, \
@@ -872,13 +852,16 @@ mod tests {
     fn test_export_to_dtdl() {
         let properties = json!([
             {"name": "temperature", "schema": "double", "writable": false}
-        ]).to_string();
+        ])
+        .to_string();
         let events = json!([
             {"name": "ambientTemp", "schema": "double"}
-        ]).to_string();
+        ])
+        .to_string();
         let actions = json!([
             {"name": "setTemp", "request": {"name": "target", "schema": "double"}}
-        ]).to_string();
+        ])
+        .to_string();
 
         let row = make_template_row("Thermostat", &properties, &actions, &events);
         let dtdl = export_to_dtdl(&row).unwrap();
@@ -921,7 +904,8 @@ mod tests {
         let properties = json!([
             {"name": "count", "schema": "int64"},
             {"name": "flag", "schema": "boolean"}
-        ]).to_string();
+        ])
+        .to_string();
         let row = make_template_row("SchemaTest", &properties, "[]", "[]");
         let dtdl = export_to_dtdl(&row).unwrap();
         let contents = dtdl["contents"].as_array().unwrap();

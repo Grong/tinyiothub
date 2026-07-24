@@ -84,10 +84,7 @@ impl ThingTemplateInstaller {
     /// List thing_templates available as marketplace items.
     /// Shows built-in templates (workspace_id IS NULL) first,
     /// then workspace-scoped templates.
-    pub async fn list(
-        pool: &SqlitePool,
-        workspace_id: &str,
-    ) -> Result<Vec<ThingTemplateItem>> {
+    pub async fn list(pool: &SqlitePool, workspace_id: &str) -> Result<Vec<ThingTemplateItem>> {
         let rows = sqlx::query_as::<_, ThingTemplateListRow>(
             "SELECT id, name, thing_type, description, properties, actions, events, \
              is_builtin, category, created_at \
@@ -100,23 +97,26 @@ impl ThingTemplateInstaller {
         .await
         .map_err(|e| MarketplaceError::Template(e.to_string()))?;
 
-        Ok(rows.into_iter().map(|r| {
-            let property_count = json_array_len(&r.properties);
-            let action_count = json_array_len(&r.actions);
-            let event_count = json_array_len(&r.events);
-            ThingTemplateItem {
-                id: r.id,
-                name: r.name,
-                thing_type: r.thing_type,
-                description: r.description,
-                property_count,
-                action_count,
-                event_count,
-                is_builtin: r.is_builtin != 0,
-                category: r.category,
-                created_at: r.created_at,
-            }
-        }).collect())
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                let property_count = json_array_len(&r.properties);
+                let action_count = json_array_len(&r.actions);
+                let event_count = json_array_len(&r.events);
+                ThingTemplateItem {
+                    id: r.id,
+                    name: r.name,
+                    thing_type: r.thing_type,
+                    description: r.description,
+                    property_count,
+                    action_count,
+                    event_count,
+                    is_builtin: r.is_builtin != 0,
+                    category: r.category,
+                    created_at: r.created_at,
+                }
+            })
+            .collect())
     }
 
     /// Install (copy) a thing_template into the target workspace.
@@ -145,13 +145,8 @@ impl ThingTemplateInstaller {
         })?;
 
         // 2. Resolve name conflict in target workspace
-        let ws_key = if target_workspace_id.is_empty() {
-            ""
-        } else {
-            target_workspace_id
-        };
-        let final_name =
-            resolve_template_name(pool, ws_key, &source.name).await?;
+        let ws_key = if target_workspace_id.is_empty() { "" } else { target_workspace_id };
+        let final_name = resolve_template_name(pool, ws_key, &source.name).await?;
 
         // 3. Insert copy with new id and workspace_id
         let new_id = uuid::Uuid::new_v4().to_string();
@@ -192,13 +187,13 @@ impl ThingTemplateInstaller {
 
         tracing::info!(
             "Installed thing_template {} as {} (id={}) in workspace {}",
-            template_id, final_name, new_id, ws_key
+            template_id,
+            final_name,
+            new_id,
+            ws_key
         );
 
-        Ok(InstalledTemplate {
-            id: new_id,
-            name: final_name,
-        })
+        Ok(InstalledTemplate { id: new_id, name: final_name })
     }
 }
 
@@ -208,9 +203,7 @@ impl ThingTemplateInstaller {
 
 /// Count elements in a JSON array string. Returns 0 for malformed JSON.
 fn json_array_len(s: &str) -> usize {
-    serde_json::from_str::<Vec<serde_json::Value>>(s)
-        .map(|v| v.len())
-        .unwrap_or(0)
+    serde_json::from_str::<Vec<serde_json::Value>>(s).map(|v| v.len()).unwrap_or(0)
 }
 
 /// Resolve name conflicts in the target workspace.
@@ -250,11 +243,7 @@ async fn resolve_template_name(
 }
 
 /// Returns true if no row in thing_templates matches the workspace + name pair.
-async fn name_is_available(
-    pool: &SqlitePool,
-    workspace_key: &str,
-    name: &str,
-) -> bool {
+async fn name_is_available(pool: &SqlitePool, workspace_key: &str, name: &str) -> bool {
     let result: std::result::Result<i64, sqlx::Error> = sqlx::query_scalar(
         "SELECT COUNT(*) FROM thing_templates \
          WHERE COALESCE(workspace_id, '') = ? AND name = ?",

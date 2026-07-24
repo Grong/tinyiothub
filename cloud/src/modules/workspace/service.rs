@@ -93,7 +93,9 @@ impl WorkspaceService {
         agent_config: Option<&str>,
         require_action_confirm: Option<bool>,
     ) -> Result<Option<WorkspaceWithDeviceCount>> {
-        self.repository.update(id, name, description, agent_id, agent_config, require_action_confirm).await
+        self.repository
+            .update(id, name, description, agent_id, agent_config, require_action_confirm)
+            .await
     }
 
     pub async fn delete(&self, id: &str) -> Result<()> {

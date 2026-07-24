@@ -14,13 +14,15 @@
 //   8. search_knowledge  — full-text search thing_resources
 //   9. read_document     — full document content
 
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use async_trait::async_trait;
 use dashmap::DashMap;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use tinyiothub_ai::types::ToolSafety;
 use zeroclaw::tools::{Tool, ToolResult};
@@ -187,8 +189,8 @@ impl Tool for ListThingsTool {
             offset: Option<u32>,
         }
 
-        let input: Input = serde_json::from_value(args)
-            .map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
+        let input: Input =
+            serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
 
         let limit = clamp_limit(input.limit, 50, 200);
         let offset = input.offset.unwrap_or(0);
@@ -371,8 +373,8 @@ impl Tool for GetThingTreeTool {
             depth: Option<u32>,
         }
 
-        let input: Input = serde_json::from_value(args)
-            .map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
+        let input: Input =
+            serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
 
         let depth = Some(input.depth.unwrap_or(3).clamp(1, 10));
 
@@ -441,8 +443,8 @@ impl Tool for ReadPropertyTool {
             property_name: String,
         }
 
-        let input: Input = serde_json::from_value(args)
-            .map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
+        let input: Input =
+            serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
 
         // Verify thing exists
         self.thing_service
@@ -475,11 +477,7 @@ impl Tool for ReadPropertyTool {
         .await
         .map_err(|e| anyhow::anyhow!("数据库查询失败: {}", e))?
         .ok_or_else(|| {
-            anyhow::anyhow!(
-                "属性 '{}' 在物 {} 上未找到",
-                input.property_name,
-                input.thing_id
-            )
+            anyhow::anyhow!("属性 '{}' 在物 {} 上未找到", input.property_name, input.thing_id)
         })?;
 
         // Try device_cache for live value
@@ -489,9 +487,7 @@ impl Tool for ReadPropertyTool {
                 let val = d
                     .properties
                     .as_ref()
-                    .and_then(|props| {
-                        props.iter().find(|p| p.name == input.property_name)
-                    })
+                    .and_then(|props| props.iter().find(|p| p.name == input.property_name))
                     .and_then(|p| p.current_value.clone());
                 let ts = d.last_heartbeat.clone();
                 val.map(|v| (v, ts))
@@ -576,8 +572,8 @@ impl Tool for InvokeActionTool {
             params: Option<Value>,
         }
 
-        let input: Input = serde_json::from_value(args)
-            .map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
+        let input: Input =
+            serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
 
         // 1. Verify thing exists and check type
         let thing = self
@@ -595,15 +591,14 @@ impl Tool for InvokeActionTool {
         }
 
         // 2. Check require_action_confirm from workspace
-        let require_confirm: bool = sqlx::query_scalar(
-            "SELECT require_action_confirm FROM workspaces WHERE id = ?",
-        )
-        .bind(&self.workspace_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| anyhow::anyhow!("数据库查询失败: {}", e))?
-        .unwrap_or(0i32)
-        != 0;
+        let require_confirm: bool =
+            sqlx::query_scalar("SELECT require_action_confirm FROM workspaces WHERE id = ?")
+                .bind(&self.workspace_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| anyhow::anyhow!("数据库查询失败: {}", e))?
+                .unwrap_or(0i32)
+                != 0;
 
         // 3. Check if action exists in device_commands table
         let command_exists: bool = sqlx::query_scalar::<_, i64>(
@@ -652,9 +647,7 @@ impl Tool for InvokeActionTool {
                     display_name: None,
                     description: None,
                     parameters: input.params.as_ref().map(|p| p.to_string()),
-                    created_at: chrono::Utc::now()
-                        .format("%Y-%m-%d %H:%M:%S")
-                        .to_string(),
+                    created_at: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
                 };
                 match data_server.execute_command(cmd) {
                     Ok(()) => tool_ok(json!({
@@ -747,8 +740,8 @@ impl Tool for QueryEventsTool {
             limit: Option<u32>,
         }
 
-        let input: Input = serde_json::from_value(args)
-            .map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
+        let input: Input =
+            serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
 
         let limit = clamp_limit(input.limit, 50, 200) as i64;
 
@@ -871,8 +864,8 @@ impl Tool for SearchKnowledgeTool {
             limit: Option<u32>,
         }
 
-        let input: Input = serde_json::from_value(args)
-            .map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
+        let input: Input =
+            serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
 
         let limit = clamp_limit(input.limit, 50, 200) as i64;
         let like_pattern = format!("%{}%", input.q);
@@ -978,8 +971,8 @@ impl Tool for ReadDocumentTool {
             resource_id: String,
         }
 
-        let input: Input = serde_json::from_value(args)
-            .map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
+        let input: Input =
+            serde_json::from_value(args).map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
 
         #[derive(Debug, serde::Serialize, sqlx::FromRow)]
         struct DocFull {
@@ -1050,11 +1043,7 @@ pub fn create_thing_tools(
         read_only(Box::new(SearchKnowledgeTool { pool: pool.clone() })),
         read_only(Box::new(ReadDocumentTool { pool: pool.clone() })),
         // Destructive tool (1)
-        destructive(Box::new(InvokeActionTool {
-            thing_service,
-            pool,
-            workspace_id: ws,
-        })),
+        destructive(Box::new(InvokeActionTool { thing_service, pool, workspace_id: ws })),
     ]
 }
 

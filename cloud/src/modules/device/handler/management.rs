@@ -1,4 +1,8 @@
-use axum::{Json, Router, routing::{get, post}};
+use axum::{
+    Json, Router,
+    routing::{get, post},
+};
+
 use crate::shared::app_state::AppState;
 
 // /api/v1/devices management CRUD routes have been removed.
@@ -17,7 +21,12 @@ async fn device_endpoint_removed() -> Json<serde_json::Value> {
 pub fn create_router() -> Router<AppState> {
     Router::new()
         .route("/", get(device_endpoint_removed).post(device_endpoint_removed))
-        .route("/{id}", get(device_endpoint_removed).put(device_endpoint_removed).delete(device_endpoint_removed))
+        .route(
+            "/{id}",
+            get(device_endpoint_removed)
+                .put(device_endpoint_removed)
+                .delete(device_endpoint_removed),
+        )
         .route("/{id}/enable", post(device_endpoint_removed))
         .route("/{id}/disable", post(device_endpoint_removed))
         .route("/{id}/export-template", post(device_endpoint_removed))

@@ -165,8 +165,8 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
             let highest_level_int: i32 = row.get("highest_level");
             let latest_timestamp_str: String = row.get("latest_timestamp");
 
-            let highest_level = EventLevel::from_numeric(highest_level_int)
-                .unwrap_or(EventLevel::Info);
+            let highest_level =
+                EventLevel::from_numeric(highest_level_int).unwrap_or(EventLevel::Info);
             let latest_timestamp = DateTime::parse_from_rfc3339(&latest_timestamp_str)
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(|_| Utc::now());
@@ -220,10 +220,8 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
     async fn cleanup_old_events(&self, before: DateTime<Utc>) -> Result<u64> {
         let sql = "DELETE FROM events WHERE timestamp < ?";
 
-        let result = sqlx::query(sql)
-            .bind(before.to_rfc3339())
-            .execute(self.database.pool())
-            .await?;
+        let result =
+            sqlx::query(sql).bind(before.to_rfc3339()).execute(self.database.pool()).await?;
 
         Ok(result.rows_affected())
     }
@@ -243,10 +241,8 @@ impl SqliteRealTimeEventRepository {
         // -- device_ids filter --
         if let Some(ref device_ids) = filter.device_ids {
             if !device_ids.is_empty() {
-                let quoted: Vec<String> = device_ids
-                    .iter()
-                    .map(|id| format!("'{}'", id.replace('\'', "''")))
-                    .collect();
+                let quoted: Vec<String> =
+                    device_ids.iter().map(|id| format!("'{}'", id.replace('\'', "''"))).collect();
                 conditions.push(format!("device_id IN ({})", quoted.join(",")));
             }
         }
@@ -267,8 +263,7 @@ impl SqliteRealTimeEventRepository {
                 let type_conds: Vec<String> = event_types
                     .iter()
                     .map(|et| {
-                        let subtype_json =
-                            serde_json::to_string(et).unwrap_or_default();
+                        let subtype_json = serde_json::to_string(et).unwrap_or_default();
                         format!(
                             "(event_type = '{}' AND event_subtype = '{}')",
                             et.type_string().replace('\'', "''"),
@@ -283,10 +278,8 @@ impl SqliteRealTimeEventRepository {
         // -- source_types filter --
         if let Some(ref source_types) = filter.source_types {
             if !source_types.is_empty() {
-                let quoted: Vec<String> = source_types
-                    .iter()
-                    .map(|st| format!("'{}'", st.replace('\'', "''")))
-                    .collect();
+                let quoted: Vec<String> =
+                    source_types.iter().map(|st| format!("'{}'", st.replace('\'', "''"))).collect();
                 conditions.push(format!("source_type IN ({})", quoted.join(",")));
             }
         }
@@ -306,9 +299,7 @@ impl SqliteRealTimeEventRepository {
 
         sql.push_str(" ORDER BY timestamp DESC");
 
-        let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
-            .fetch_all(self.database.pool())
-            .await?;
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).fetch_all(self.database.pool()).await?;
         Ok(rows)
     }
 
@@ -328,12 +319,10 @@ impl SqliteRealTimeEventRepository {
         let acknowledged_at_str: Option<String> = row.get("acknowledged_at");
 
         let id = EventId::from_string(id_str);
-        let event_type: EventType = serde_json::from_str(&event_subtype_str)
-            .map_err(|e| crate::modules::event::EventError::Validation {
-                message: e.to_string(),
-            })?;
-        let level =
-            EventLevel::from_numeric(event_level_int).unwrap_or(EventLevel::Info);
+        let event_type: EventType = serde_json::from_str(&event_subtype_str).map_err(|e| {
+            crate::modules::event::EventError::Validation { message: e.to_string() }
+        })?;
+        let level = EventLevel::from_numeric(event_level_int).unwrap_or(EventLevel::Info);
         let timestamp = DateTime::parse_from_rfc3339(&timestamp_str)
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now());
@@ -342,11 +331,7 @@ impl SqliteRealTimeEventRepository {
 
         // Use the content field as a preview — truncate to 100 chars
         let content_raw: Option<String> = row.get("content");
-        let content_preview = content_raw
-            .unwrap_or_default()
-            .chars()
-            .take(100)
-            .collect::<String>();
+        let content_preview = content_raw.unwrap_or_default().chars().take(100).collect::<String>();
 
         let acknowledged_at = acknowledged_at_str
             .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())

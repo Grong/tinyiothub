@@ -12,8 +12,7 @@ use tinyiothub_ai::types::{TrustConfig, TrustDecision};
 use zeroclaw::tools::{Tool, ToolResult};
 use zeroclaw_api::attribution::{Attributable, Role, ToolKind};
 
-use super::canvas::CanvasTool;
-use super::thing::create_thing_tools;
+use super::{canvas::CanvasTool, thing::create_thing_tools};
 use crate::{
     modules::{
         mcp::{
@@ -342,8 +341,7 @@ pub async fn resolve_tools_for_agent(
     trust_config: Option<Arc<TrustConfig>>,
     db_pool: Option<SqlitePool>,
 ) -> Vec<Box<dyn Tool>> {
-    let all_tools =
-        load_all_tools_with_safety(workspace_id, workspace_service, db_pool).await;
+    let all_tools = load_all_tools_with_safety(workspace_id, workspace_service, db_pool).await;
     let filtered: Vec<(Box<dyn Tool>, tinyiothub_ai::types::ToolSafety)> = all_tools
         .into_iter()
         .filter(|(tool, _)| {

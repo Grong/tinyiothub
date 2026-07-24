@@ -53,7 +53,7 @@ pub async fn register_tools() {
     // Initialize heartbeat state (used by REST API handler)
     crate::modules::heartbeat::init_heartbeat_state();
 
-    // Device tools (7)
+    // Thing tools (7)
     reg.register(tools::device::DeviceProfileHandler);
     reg.register(tools::device::SearchDevicesHandler);
     reg.register(tools::device::DevicePropertyGetHandler);
@@ -77,5 +77,5 @@ pub async fn register_tools() {
     reg.register(tools::alarm_mcp::AlarmAcknowledgeHandler);
     reg.register(tools::alarm_mcp::AlarmRuleAddHandler);
 
-    tracing::info!("Registered {} MCP tools: 7 device, 2 driver, 4 job, 3 alarm", 16);
+    tracing::info!("Registered {} MCP tools: 7 thing, 2 driver, 4 job, 3 alarm", 16);
 }

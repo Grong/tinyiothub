@@ -5,10 +5,7 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
 };
-
 use tinyiothub_web::response::ApiResponse;
-
-use crate::shared::{api_response::ApiResponseBuilder, app_state::AppState};
 
 use super::super::{
     service::ThingService,
@@ -17,6 +14,7 @@ use super::super::{
         UpdateThingRequest,
     },
 };
+use crate::shared::{api_response::ApiResponseBuilder, app_state::AppState};
 
 fn thing_service(pool: &sqlx::SqlitePool) -> ThingService {
     ThingService::new(pool.clone())
@@ -190,10 +188,7 @@ pub async fn get_thing_tree(
 
     let workspace_id = "default"; // TODO: resolve from JWT claims
 
-    match svc
-        .get_thing_tree(workspace_id, Some(&id), query.depth)
-        .await
-    {
+    match svc.get_thing_tree(workspace_id, Some(&id), query.depth).await {
         Ok(tree) => (StatusCode::OK, ApiResponseBuilder::success(tree)),
         Err(e) => {
             let status = e.status_code();

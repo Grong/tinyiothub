@@ -23,7 +23,7 @@ pub struct DeviceTemplate {
     pub tags: String,        // JSON数组格式
     pub device_info: String, // JSON格式的DeviceInfo
     pub properties: String,  // JSON数组格式的PropertyTemplate
-    pub actions: String,    // JSON数组格式的CommandTemplate
+    pub actions: String,     // JSON数组格式的CommandTemplate
     pub is_builtin: i32,     // 是否为内置模板
     pub is_active: i32,      // 是否激活
     pub created_at: String,

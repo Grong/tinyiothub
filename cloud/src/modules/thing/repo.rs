@@ -23,13 +23,11 @@ impl ThingRepo {
         workspace_id: &str,
         name: &str,
     ) -> Result<Option<ThingRow>, sqlx::Error> {
-        sqlx::query_as::<_, ThingRow>(
-            "SELECT * FROM devices WHERE workspace_id = ? AND name = ?",
-        )
-        .bind(workspace_id)
-        .bind(name)
-        .fetch_optional(&self.pool)
-        .await
+        sqlx::query_as::<_, ThingRow>("SELECT * FROM devices WHERE workspace_id = ? AND name = ?")
+            .bind(workspace_id)
+            .bind(name)
+            .fetch_optional(&self.pool)
+            .await
     }
 
     /// List things with dynamic WHERE + pagination.
@@ -50,8 +48,7 @@ impl ThingRepo {
         let total: i64 = count_builder.build_query_scalar().fetch_one(&self.pool).await?;
 
         // Build SELECT query
-        let mut select_builder =
-            QueryBuilder::new("SELECT * FROM devices WHERE workspace_id = ");
+        let mut select_builder = QueryBuilder::new("SELECT * FROM devices WHERE workspace_id = ");
         select_builder.push_bind(workspace_id);
         Self::push_where_clauses(&mut select_builder, params);
         select_builder.push(" ORDER BY created_at DESC LIMIT ");
@@ -59,10 +56,7 @@ impl ThingRepo {
         select_builder.push(" OFFSET ");
         select_builder.push_bind(offset);
 
-        let rows = select_builder
-            .build_query_as::<ThingRow>()
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = select_builder.build_query_as::<ThingRow>().fetch_all(&self.pool).await?;
 
         Ok((rows, total as u64))
     }
@@ -173,10 +167,8 @@ impl ThingRepo {
     /// DELETE — checks children count first.
     /// Returns `Some(child_count)` if children exist, or rows_affected on success.
     pub async fn delete(&self, id: &str) -> Result<u64, sqlx::Error> {
-        let result = sqlx::query("DELETE FROM devices WHERE id = ?")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        let result =
+            sqlx::query("DELETE FROM devices WHERE id = ?").bind(id).execute(&self.pool).await?;
 
         Ok(result.rows_affected())
     }
@@ -229,10 +221,7 @@ impl ThingRepo {
         builder.push_bind(depth_val);
         builder.push(select_part);
 
-        let rows = builder
-            .build_query_as::<TreeNodeRow>()
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = builder.build_query_as::<TreeNodeRow>().fetch_all(&self.pool).await?;
 
         Ok(Self::build_tree(rows))
     }
@@ -300,10 +289,8 @@ impl ThingRepo {
         builder.push(depth_val);
         builder.push(") SELECT id, name, thing_type FROM ancestors ORDER BY depth DESC");
 
-        let rows: Vec<BreadcrumbRow> = builder
-            .build_query_as::<BreadcrumbRow>()
-            .fetch_all(&self.pool)
-            .await?;
+        let rows: Vec<BreadcrumbRow> =
+            builder.build_query_as::<BreadcrumbRow>().fetch_all(&self.pool).await?;
 
         Ok(rows
             .into_iter()
@@ -369,12 +356,11 @@ impl ThingRepo {
         thing_id: &str,
         resource_id: &str,
     ) -> Result<u64, sqlx::Error> {
-        let result =
-            sqlx::query("UPDATE resources SET device_id = ? WHERE id = ?")
-                .bind(thing_id)
-                .bind(resource_id)
-                .execute(&self.pool)
-                .await?;
+        let result = sqlx::query("UPDATE resources SET device_id = ? WHERE id = ?")
+            .bind(thing_id)
+            .bind(resource_id)
+            .execute(&self.pool)
+            .await?;
         Ok(result.rows_affected())
     }
 

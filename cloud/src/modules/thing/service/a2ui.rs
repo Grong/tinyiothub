@@ -8,7 +8,7 @@
 // Plus safe wrapper: render_a2ui_safe() → { type: "a2ui", components: {...} }
 //                                        or { type: "fallback", data, message }
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::modules::thing::types::ThingProfileResponse;
 
@@ -28,10 +28,7 @@ fn state_to_status(state: i32) -> &'static str {
 // ──────────────────────────────────────────────
 
 fn prop_name(p: &Value) -> &str {
-    p.get("display_name")
-        .or_else(|| p.get("name"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
+    p.get("display_name").or_else(|| p.get("name")).and_then(|v| v.as_str()).unwrap_or("")
 }
 
 fn prop_value(p: &Value) -> &str {
@@ -61,13 +58,7 @@ fn is_numeric_value(v: &Value) -> bool {
     // Check if the default_value looks like a number
     v.get("default_value")
         .or_else(|| v.get("value"))
-        .map(|dv| {
-            dv.is_number()
-                || dv
-                    .as_str()
-                    .map(|s| s.parse::<f64>().is_ok())
-                    .unwrap_or(false)
-        })
+        .map(|dv| dv.is_number() || dv.as_str().map(|s| s.parse::<f64>().is_ok()).unwrap_or(false))
         .unwrap_or(false)
 }
 
@@ -76,8 +67,8 @@ fn is_numeric_value(v: &Value) -> bool {
 // ──────────────────────────────────────────────
 
 const CHART_COLORS: &[&str] = &[
-    "#3b82f6", "#ef4444", "#10b981", "#f59e0b", "#8b5cf6",
-    "#ec4899", "#06b6d4", "#f97316", "#6366f1", "#14b8a6",
+    "#3b82f6", "#ef4444", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899", "#06b6d4", "#f97316",
+    "#6366f1", "#14b8a6",
 ];
 
 // ──────────────────────────────────────────────
@@ -178,10 +169,7 @@ pub fn build_data_chart(profile: &ThingProfileResponse) -> Value {
         })
         .collect();
 
-    let unit = numeric_props
-        .first()
-        .and_then(|p| prop_unit(p))
-        .unwrap_or("");
+    let unit = numeric_props.first().and_then(|p| prop_unit(p)).unwrap_or("");
 
     json!({
         "component": "DataChart",
@@ -276,9 +264,8 @@ pub fn build_a2ui_components(profile: &ThingProfileResponse) -> Value {
 /// If the A2UI builders panic, returns the raw profile as JSON fallback so the
 /// frontend can still display the data (rendered by the a2ui-fallback component).
 pub fn render_a2ui_safe(profile: &ThingProfileResponse) -> Value {
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        build_a2ui_components(profile)
-    })) {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| build_a2ui_components(profile)))
+    {
         Ok(components) => json!({"type": "a2ui", "components": components}),
         Err(_) => {
             json!({

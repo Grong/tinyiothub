@@ -6,12 +6,10 @@ use axum::{
     http::StatusCode,
 };
 use serde_json::Value;
-
 use tinyiothub_web::response::ApiResponse;
 
-use crate::shared::{api_response::ApiResponseBuilder, app_state::AppState};
-
 use super::super::service::import_export::{self, ImportError};
+use crate::shared::{api_response::ApiResponseBuilder, app_state::AppState};
 
 // ──────────────────────────────────────────────
 // POST /things/import/dtdl
@@ -104,14 +102,11 @@ fn import_error_response(e: ImportError) -> (StatusCode, Json<ApiResponse<Value>
     let status = match &e {
         ImportError::NotFound(_) => StatusCode::NOT_FOUND,
         ImportError::NameConflict(_) => StatusCode::CONFLICT,
-        ImportError::UnsupportedType(_) | ImportError::MissingField(_) | ImportError::InvalidJson(_) => {
-            StatusCode::BAD_REQUEST
-        }
+        ImportError::UnsupportedType(_)
+        | ImportError::MissingField(_)
+        | ImportError::InvalidJson(_) => StatusCode::BAD_REQUEST,
         ImportError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
     };
     tracing::error!(?e, "Import/export error");
-    (
-        status,
-        ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()),
-    )
+    (status, ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()))
 }
