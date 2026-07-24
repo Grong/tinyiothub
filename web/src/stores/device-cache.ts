@@ -1,9 +1,9 @@
 /**
- * DeviceCache — 浏览器侧设备数据缓存层
+ * DeviceCache — 浏览器侧物数据缓存层
  *
  * 单例模式，持有唯一 SSE 连接，所有组件从信号读数据。
- * 缓存从空开始，通过 SSE 推送和设备详情加载逐步填充。
- * 不做全量 fetch，适合大量设备场景。
+ * 缓存从空开始，通过 SSE 推送和物详情加载逐步填充。
+ * 不做全量 fetch，适合大量物场景。
  *
  * 认证方式（推荐）：
  * 1. 先通过 POST /api/v1/auth/sse-token（JWT header）获取短期 SSE token
@@ -34,7 +34,7 @@ class DeviceCache {
   private pendingSseEvents: any[] = [];
   private sseConnecting = false;
   /**
-   * 获取当前缓存的设备列表。
+   * 获取当前缓存的物列表。
    * 同时确保 SSE 连接已建立（静默，不 fetch）。
    */
   async getDevices(): Promise<Device[]> {
@@ -88,7 +88,7 @@ class DeviceCache {
   }
 
   /**
-   * 批量更新设备的完整属性（含元数据），用于详情页加载时初始化。
+   * 批量更新物的完整属性（含元数据），用于详情页加载时初始化。
    * 不触发 SSE 事件。
    */
   setDeviceProperties(deviceId: string, properties: DeviceProperty[]): void {
@@ -103,7 +103,7 @@ class DeviceCache {
   }
 
   /**
-   * 添加或更新单个设备到缓存。
+   * 添加或更新单个物到缓存。
    */
   setDevice(device: Device): void {
     const map = new Map(this.$devicesMap.get());
@@ -112,7 +112,7 @@ class DeviceCache {
   }
 
   /**
-   * 从缓存移除设备。
+   * 从缓存移除物。
    */
   removeDevice(deviceId: string): void {
     const map = new Map(this.$devicesMap.get());
@@ -291,7 +291,7 @@ class DeviceCache {
 
     let device = map.get(deviceId);
 
-    // 设备不在缓存中，从事件数据构造最小设备
+    // 物不在缓存中，从事件数据构造最小物
     if (!device) {
       const newDevice: Device = {
         id: deviceId,

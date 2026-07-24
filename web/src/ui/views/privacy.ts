@@ -23,7 +23,7 @@ export class PrivacyView extends LitElement {
           <section>
             <p>
               我们(TinyIoTHub 团队)非常重视您的个人信息和数据安全。本《隐私政策》说明我们在您使用 TinyIoTHub 服务过程中,
-              如何收集、使用、存储、共享和保护您的个人信息以及设备数据,以及您依法享有的权利。
+              如何收集、使用、存储、共享和保护您的个人信息以及物数据,以及您依法享有的权利。
               请您仔细阅读并理解本政策,继续使用本服务即视为您同意本政策。
             </p>
           </section>
@@ -33,14 +33,14 @@ export class PrivacyView extends LitElement {
             <h3>1.1 您主动提供的信息</h3>
             <ul>
               <li><strong>账户信息:</strong>用户名、手机号、密码(加密存储)、邮箱(选填)、显示名;</li>
-              <li><strong>设备配置:</strong>您接入的设备名称、协议参数、采集点表、规则表达式等;</li>
+              <li><strong>物配置:</strong>您接入的物名称、协议参数、采集点表、规则表达式等;</li>
               <li><strong>反馈信息:</strong>您主动提交的工单、问题反馈或客服沟通内容。</li>
             </ul>
             <h3>1.2 服务运行中产生的信息</h3>
             <ul>
-              <li><strong>设备数据:</strong>从您接入的设备采集到的实时点位、事件、告警等业务数据;</li>
+              <li><strong>物数据:</strong>从您接入的物采集到的实时点位、事件、告警等业务数据;</li>
               <li><strong>使用日志:</strong>登录时间、IP 地址、操作记录、API 调用日志(用于安全审计);</li>
-              <li><strong>设备/浏览器信息:</strong>UA、屏幕尺寸、语言偏好(用于优化界面体验)。</li>
+              <li><strong>物/浏览器信息:</strong>UA、屏幕尺寸、语言偏好(用于优化界面体验)。</li>
             </ul>
           </section>
 
@@ -49,7 +49,7 @@ export class PrivacyView extends LitElement {
             <ul>
               <li>提供、维护和优化 TinyIoTHub 服务及其各项功能;</li>
               <li>账户身份验证、安全风控、防止欺诈与滥用;</li>
-              <li>根据您的设备配置执行规则引擎、告警通知和自动化任务;</li>
+              <li>根据您的物配置执行规则引擎、告警通知和自动化任务;</li>
               <li>履行法律法规规定的合规义务(如必要的日志留存);</li>
               <li>在征得您同意后,向您发送服务通知或产品更新信息。</li>
             </ul>
@@ -58,7 +58,7 @@ export class PrivacyView extends LitElement {
           <section>
             <h2>3. 信息存储与跨境</h2>
             <p>
-              您的个人信息及设备数据存储于中国境内的服务器集群。除法律法规明确要求或您主动选择的跨境同步功能外,
+              您的个人信息及物数据存储于中国境内的服务器集群。除法律法规明确要求或您主动选择的跨境同步功能外,
               我们不会将您的数据传输至中华人民共和国境外。
             </p>
           </section>

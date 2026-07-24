@@ -14,7 +14,7 @@ import { success, error as toastError } from "../components/toast.js";
 const JOB_TYPE_LABELS: Record<string, string> = {
   http: "HTTP 请求",
   script: "脚本执行",
-  device_command: "设备命令",
+  device_command: "物命令",
   sql: "SQL 查询",
 };
 
@@ -738,7 +738,7 @@ export class CronView extends LitElement {
           <option value="">全部类型</option>
           <option value="http">HTTP 请求</option>
           <option value="script">脚本执行</option>
-          <option value="device_command">设备命令</option>
+          <option value="device_command">物命令</option>
           <option value="sql">SQL 查询</option>
         </select>
         <select class="select" .value=${this.filterStatus} @change=${(e: Event) => {
@@ -1187,7 +1187,7 @@ export class CronView extends LitElement {
                 >
                   <option value="http">HTTP 请求</option>
                   <option value="script">脚本执行</option>
-                  <option value="device_command">设备命令</option>
+                  <option value="device_command">物命令</option>
                   <option value="sql">SQL 查询</option>
                 </select>
               </div>
@@ -1261,14 +1261,14 @@ export class CronView extends LitElement {
               ${this.formType === "device_command"
                 ? html`
                     <div class="field">
-                      <span>目标设备</span>
+                      <span>目标物</span>
                       <select
                         .value=${this.formTargetDevice}
                         @change=${(e: Event) => {
                           this.formTargetDevice = (e.target as HTMLSelectElement).value;
                         }}
                       >
-                        <option value="">选择设备</option>
+                        <option value="">选择物</option>
                         ${this.devices.map(
                           (d) => html`<option value=${d.id}>${d.name}</option>`
                         )}

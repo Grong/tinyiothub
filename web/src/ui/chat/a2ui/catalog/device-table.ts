@@ -13,7 +13,7 @@ export function renderDeviceTable(
   onAction?: (fn: string, args: Record<string, unknown>) => void,
 ): TemplateResult {
   const title = safeStr(data.title, "");
-  const columns = normalizeColumns(data.columns, ["设备名称", "状态", "最新数据", "操作"]);
+  const columns = normalizeColumns(data.columns, ["物名称", "状态", "最新数据", "操作"]);
   const rawDevices = data.devices as Array<Record<string, unknown>> | undefined;
   const rawRows = data.rows as Array<unknown> | undefined;
   const devices: Array<Record<string, unknown>> = rawDevices
@@ -68,7 +68,7 @@ export function renderDeviceTable(
           })}
         </tbody>
       </table>
-      ${devices.length === 0 ? html`<div class="a2ui-caption" style="padding: 12px">暂无设备</div>` : nothing}
+      ${devices.length === 0 ? html`<div class="a2ui-caption" style="padding: 12px">暂无物</div>` : nothing}
     </div>
   `;
 }

@@ -67,11 +67,11 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: '设备管理',
+    label: '物管理',
     items: [
       {
-        route: 'devices',
-        label: '设备列表',
+        route: 'things',
+        label: '物列表',
         icon: 'M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z',
       },
       {
@@ -296,13 +296,35 @@ export class TinyIoTHubApp extends LitElement {
   handleRoute() {
     const path = window.location.pathname.slice(1) || '';
 
-    // Handle /devices/:id
+    // Redirect old /devices routes to /things
+    if (path === 'devices') {
+      this.navigate('things');
+      return;
+    }
     if (path.startsWith('devices/')) {
+      const rest = path.slice('devices/'.length);
+      this.navigate(`things/${rest}`);
+      return;
+    }
+
+    // Handle /things/:id — internally maps to 'devices' view
+    if (path.startsWith('things/')) {
       if (!this.isAuthenticated) {
         this.navigate('login');
         return;
       }
-      this.currentRoute = path;
+      this.currentRoute = 'devices/' + path.slice('things/'.length);
+      this._ensureViewLoaded('devices');
+      return;
+    }
+
+    // Handle /things (list page) — internally maps to 'devices' route
+    if (path === 'things') {
+      if (!this.isAuthenticated) {
+        this.navigate('login');
+        return;
+      }
+      this.currentRoute = 'devices';
       this._ensureViewLoaded('devices');
       return;
     }
@@ -369,7 +391,7 @@ export class TinyIoTHubApp extends LitElement {
   getPageTitle(): string {
     const titles: Record<string, string> = {
       dashboard: '概览',
-      devices: '设备管理',
+      devices: '物管理',
       'local-resources': '本地资源',
       alarms: '告警中心',
       events: '事件日志',
@@ -388,17 +410,17 @@ export class TinyIoTHubApp extends LitElement {
       'ai-ops': 'AI 运维',
     };
     // Handle /devices/:id
-    if (this.currentRoute.startsWith('devices/')) return '设备详情';
+    if (this.currentRoute.startsWith('devices/')) return '物详情';
     return titles[this.currentRoute] || '';
   }
 
   getPageSubtitle(): string {
     const subs: Record<string, string> = {
-      dashboard: '设备状态、告警概览和系统指标',
-      devices: '管理所有接入的 IoT 设备',
-      'local-resources': '管理设备模板和协议驱动',
-      alarms: '查看和管理设备告警',
-      events: '查看设备事件日志',
+      dashboard: '物状态、告警概览和系统指标',
+      devices: '管理所有接入的 IoT 物',
+      'local-resources': '管理物模板和协议驱动',
+      alarms: '查看和管理物告警',
+      events: '查看物事件日志',
       monitoring: '系统资源和性能监控',
       users: '管理系统用户和权限',
       settings: '系统配置和参数管理',
@@ -410,10 +432,10 @@ export class TinyIoTHubApp extends LitElement {
       cron: '管理定时执行的任务和作业',
       'memory-dashboard': '查看和管理 Agent 记忆与反思队列',
       workspace: 'AI 驱动的可视化分析与 3D 场景画布',
-      heartbeat: 'AI 自主巡检 — 自动发现设备异常，智能分析并执行恢复操作',
+      heartbeat: 'AI 自主巡检 — 自动发现物异常，智能分析并执行恢复操作',
       'ai-ops': 'AI 自主运维 — 审批、历史、信任配置与知识管理',
     };
-    if (this.currentRoute.startsWith('devices/')) return '查看设备属性、命令和事件';
+    if (this.currentRoute.startsWith('devices/')) return '查看物属性、命令和事件';
     return subs[this.currentRoute] || '';
   }
 

@@ -327,7 +327,7 @@ export class MarketplaceView extends LitElement {
               <div class="mp-meta">
                 <span class="mp-meta-item">${safeString(t.category, "其他")}</span>
                 <span class="mp-meta-sep">·</span>
-                <span class="mp-meta-item">${safeString(t.deviceType, "通用设备")}</span>
+                <span class="mp-meta-item">${safeString(t.deviceType, "通用物")}</span>
               </div>
               <div class="mp-desc">${safeString(t.description, "暂无描述")}</div>
               <div class="mp-actions">
@@ -554,13 +554,13 @@ export class MarketplaceView extends LitElement {
       { key: "basic", label: "基本信息" }
     ];
     if (Array.isArray(t.properties) && t.properties.length > 0) {
-      tabs.push({ key: "properties", label: "设备属性" });
+      tabs.push({ key: "properties", label: "物属性" });
     }
     if (Array.isArray(t.commands) && t.commands.length > 0) {
-      tabs.push({ key: "commands", label: "设备命令" });
+      tabs.push({ key: "commands", label: "物命令" });
     }
     if (t.device_info && Object.values(t.device_info).some(v => v != null && (Array.isArray(v) ? v.length > 0 : true))) {
-      tabs.push({ key: "deviceInfo", label: "设备信息" });
+      tabs.push({ key: "deviceInfo", label: "物信息" });
     }
     return tabs;
   }
@@ -601,7 +601,7 @@ export class MarketplaceView extends LitElement {
     const metaItems = [
       { label: "版本", value: safeString(t.version) },
       { label: "分类", value: safeString(t.category, "") },
-      { label: "设备类型", value: safeString(t.deviceType, "") },
+      { label: "物类型", value: safeString(t.deviceType, "") },
       { label: "协议", value: safeString(t.protocolType, "") },
       { label: "驱动", value: safeString(t.driverName, "") },
       { label: "制造商", value: safeString(t.manufacturer, "") },
@@ -633,10 +633,10 @@ export class MarketplaceView extends LitElement {
   renderPropertiesTab(t: MarketplaceTemplate) {
     const props = t.properties ?? [];
     if (props.length === 0) {
-      return html`<div class="mp-empty">暂无设备属性</div>`;
+      return html`<div class="mp-empty">暂无物属性</div>`;
     }
     return html`
-      <div class="mp-section-title">设备属性 (${props.length})</div>
+      <div class="mp-section-title">物属性 (${props.length})</div>
       <table class="mp-data-table">
         <thead>
           <tr>
@@ -684,10 +684,10 @@ export class MarketplaceView extends LitElement {
   renderCommandsTab(t: MarketplaceTemplate) {
     const cmds = t.commands ?? [];
     if (cmds.length === 0) {
-      return html`<div class="mp-empty">暂无设备命令</div>`;
+      return html`<div class="mp-empty">暂无物命令</div>`;
     }
     return html`
-      <div class="mp-section-title">设备命令 (${cmds.length})</div>
+      <div class="mp-section-title">物命令 (${cmds.length})</div>
       <table class="mp-data-table">
         <thead>
           <tr>
@@ -741,10 +741,10 @@ export class MarketplaceView extends LitElement {
   renderDeviceInfoTab(t: MarketplaceTemplate) {
     const info = t.device_info;
     if (!info) {
-      return html`<div class="mp-empty">暂无设备信息</div>`;
+      return html`<div class="mp-empty">暂无物信息</div>`;
     }
     return html`
-      <div class="mp-section-title">设备信息</div>
+      <div class="mp-section-title">物信息</div>
       <div class="mp-dt-list">
         ${info.default_name_pattern ? html`
           <div class="mp-dt-item">

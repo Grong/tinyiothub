@@ -282,7 +282,7 @@ export function renderDeviceCard(
             <svg viewBox="0 0 12 12" xmlns="http://www.w3.org/2000/svg" fill="none"><circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1"/><polyline points="6,3.5 6,6 8,7.5" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/></svg>
             ${lastSeen}
           </span>` : nothing}
-          <span class="a2ui-device-card__id" title="点击复制设备 ID"
+          <span class="a2ui-device-card__id" title="点击复制物 ID"
                 @click=${() => { navigator.clipboard.writeText(deviceId).then(() => {
                   // brief visual feedback handled by CSS :active
                 }); }}>

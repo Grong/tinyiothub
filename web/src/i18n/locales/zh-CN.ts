@@ -830,7 +830,7 @@ export const zh_CN: TranslationMap = {
     },
   },
   gatewayPairing: {
-    title: "添加网关设备",
+    title: "添加网关物",
     description: "输入网关屏幕上显示的 6 位配对码。",
     codePlaceholder: "000000",
     codeLabel: "6 位配对码",

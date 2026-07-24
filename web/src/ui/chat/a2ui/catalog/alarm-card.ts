@@ -26,7 +26,7 @@ export function renderAlarmCard(
   _onAction?: (fn: string, args: Record<string, unknown>) => void,
 ): TemplateResult {
   const alarmId = safeStr(data.id, "");
-  const deviceName = safeStr(data.deviceName || data.device_id, "未知设备");
+  const deviceName = safeStr(data.deviceName || data.device_id, "未知物");
   const level = safeStr(data.level, "info").toLowerCase();
   const message = safeStr(data.message, "");
   const status = safeStr(data.status, "active");

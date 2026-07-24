@@ -1,5 +1,5 @@
 /**
- * 设备 API
+ * 物 API
  */
 
 import { apiGet, apiPost, apiPut, apiDelete } from './client.js';

@@ -19,7 +19,7 @@ export function renderAlarmTable(
   _onAction?: (fn: string, args: Record<string, unknown>) => void,
 ): TemplateResult {
   const title = safeStr(data.title, "");
-  const columns = normalizeColumns(data.columns, ["设备", "级别", "消息", "状态", "时间"]);
+  const columns = normalizeColumns(data.columns, ["物", "级别", "消息", "状态", "时间"]);
   const alarms = (data.alarms as Array<Record<string, unknown>>) || [];
 
   return html`
