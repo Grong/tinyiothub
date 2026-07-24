@@ -7,6 +7,7 @@ use axum::{
 
 use crate::shared::app_state::AppState;
 
+pub mod actions;
 pub mod crud;
 
 /// Create the thing API router at /api/v1/things
@@ -20,4 +21,5 @@ pub fn create_router() -> Router<AppState> {
         .route("/{id}/ontology", get(crud::get_thing_ontology))
         .route("/{id}/profile", get(crud::get_thing_profile))
         .route("/{id}/tree", get(crud::get_thing_tree))
+        .route("/{id}/actions/{action_name}/confirm", post(actions::confirm_action))
 }

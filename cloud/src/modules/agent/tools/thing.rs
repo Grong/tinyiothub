@@ -15,16 +15,78 @@
 //   9. read_document     — full document content
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use dashmap::DashMap;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use sqlx::{SqlitePool};
+use sqlx::SqlitePool;
 use tinyiothub_ai::types::ToolSafety;
 use zeroclaw::tools::{Tool, ToolResult};
 use zeroclaw_api::attribution::{Attributable, Role, ToolKind};
 
 use crate::modules::thing::{service::ThingService, types::ListThingsParams};
+
+// ============================================================================
+// Confirmation token store for invoke_action
+// ============================================================================
+
+/// Pending action awaiting user confirmation.
+#[derive(Debug, Clone)]
+pub struct PendingAction {
+    pub token: String,
+    pub thing_id: String,
+    pub action_name: String,
+    pub params: Option<Value>,
+    pub workspace_id: String,
+    pub created_at: Instant,
+}
+
+/// Global store of pending action confirmations (DashMap + 30min TTL).
+static PENDING_ACTIONS: std::sync::OnceLock<Arc<DashMap<String, PendingAction>>> =
+    std::sync::OnceLock::new();
+
+fn pending_actions() -> &'static Arc<DashMap<String, PendingAction>> {
+    PENDING_ACTIONS.get_or_init(|| Arc::new(DashMap::new()))
+}
+
+const CONFIRMATION_TTL: Duration = Duration::from_secs(30 * 60);
+
+/// Store a pending action and return its confirmation token.
+pub fn store_pending_action(
+    thing_id: String,
+    action_name: String,
+    params: Option<Value>,
+    workspace_id: String,
+) -> String {
+    let token = uuid::Uuid::new_v4().to_string();
+    let pending = PendingAction {
+        token: token.clone(),
+        thing_id,
+        action_name,
+        params,
+        workspace_id,
+        created_at: Instant::now(),
+    };
+    pending_actions().insert(token.clone(), pending);
+    token
+}
+
+/// Retrieve and consume a pending action by token (returns None if expired or not found).
+pub fn take_pending_action(token: &str) -> Option<PendingAction> {
+    let entry = pending_actions().remove(token)?;
+    if entry.1.created_at.elapsed() > CONFIRMATION_TTL {
+        return None;
+    }
+    Some(entry.1)
+}
+
+/// Cleanup expired tokens (call periodically or on access).
+#[allow(dead_code)]
+pub fn cleanup_expired_tokens() {
+    pending_actions().retain(|_, v| v.created_at.elapsed() <= CONFIRMATION_TTL);
+}
 
 // ============================================================================
 // Helpers
@@ -561,14 +623,20 @@ impl Tool for InvokeActionTool {
             ));
         }
 
-        // 4. Execute action
+        // 4. Execute or request confirmation
         if require_confirm {
-            // Deferred: actual action execution requires the runtime engine
+            let token = store_pending_action(
+                input.thing_id.clone(),
+                input.action_name.clone(),
+                input.params.clone(),
+                self.workspace_id.clone(),
+            );
             return tool_ok(json!({
                 "thingId": input.thing_id,
                 "actionName": input.action_name,
-                "status": "pending_confirmation",
-                "message": "该操作需要用户确认后才能执行。请提示用户在界面上确认。",
+                "status": "confirmation_required",
+                "token": token,
+                "message": "该操作需要用户确认后才能执行。请使用确认接口提交 token。",
                 "requireConfirm": true
             }));
         }

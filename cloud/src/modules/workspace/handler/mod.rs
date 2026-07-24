@@ -140,7 +140,7 @@ async fn create_workspace(
         Ok(_agent_id) => {
             if let Ok(Some(updated)) = state
                 .workspace_service
-                .update(&workspace.id, None, None, Some(&_agent_id), None)
+                .update(&workspace.id, None, None, Some(&_agent_id), None, None)
                 .await
             {
                 (updated, None)
@@ -151,6 +151,7 @@ async fn create_workspace(
                     description: workspace.description,
                     tenant_id: workspace.tenant_id,
                     agent_id: workspace.agent_id,
+                    require_action_confirm: Some(workspace.require_action_confirm),
                     created_at: workspace.created_at,
                     updated_at: workspace.updated_at,
                     device_count: Some(0),
@@ -171,6 +172,7 @@ async fn create_workspace(
                 description: workspace.description,
                 tenant_id: workspace.tenant_id,
                 agent_id: workspace.agent_id,
+                require_action_confirm: Some(workspace.require_action_confirm),
                 created_at: workspace.created_at,
                 updated_at: workspace.updated_at,
                 device_count: Some(0),
@@ -186,6 +188,7 @@ async fn create_workspace(
         description: final_workspace.description,
         tenant_id: final_workspace.tenant_id,
         agent_id: final_workspace.agent_id,
+        require_action_confirm: Some(workspace.require_action_confirm),
         created_at: final_workspace.created_at,
         updated_at: final_workspace.updated_at,
         device_count: Some(0),
@@ -223,6 +226,7 @@ async fn update_workspace(
             payload.description.as_deref(),
             None,
             payload.agent_config.as_deref(),
+            payload.require_action_confirm,
         )
         .await
     {

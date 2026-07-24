@@ -10,4 +10,6 @@ pub use get_skill::GetSkillTool;
 pub use service::{
     IoTToolAdapter, build_catalog, filter_by_denylist, load_all_tools, resolve_tools_for_agent,
 };
-pub use thing::create_thing_tools;
+pub use thing::{
+    create_thing_tools, take_pending_action,
+};

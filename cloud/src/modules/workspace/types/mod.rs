@@ -12,6 +12,7 @@ pub struct Workspace {
     pub tenant_id: String,
     pub agent_id: Option<String>,
     pub agent_config: Option<String>,
+    pub require_action_confirm: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -25,6 +26,7 @@ pub struct WorkspaceWithDeviceCount {
     pub description: Option<String>,
     pub tenant_id: String,
     pub agent_id: Option<String>,
+    pub require_action_confirm: Option<bool>,
     pub created_at: String,
     pub updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -48,6 +50,7 @@ pub struct UpdateWorkspaceRequest {
     pub name: Option<String>,
     pub description: Option<String>,
     pub agent_config: Option<String>,
+    pub require_action_confirm: Option<bool>,
 }
 
 /// Assign device request
@@ -236,6 +239,7 @@ impl Workspace {
             tenant_id,
             agent_id: None,
             agent_config: None,
+            require_action_confirm: true,
             created_at: now.clone(),
             updated_at: now,
         }
