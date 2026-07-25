@@ -178,7 +178,59 @@ impl ThingService {
         };
 
         let created = self.repo.create(&row).await?;
+
+        // Copy template properties/actions to per-thing tables
+        if let Some(ref tid) = req.template_id {
+            let _ = self.copy_template_props(&created.id, tid).await;
+            let _ = self.copy_template_acts(&created.id, tid).await;
+        }
+
         Ok(Self::row_to_response(&created, vec![]))
+    }
+
+    async fn copy_template_props(&self, thing_id: &str, template_id: &str) -> Result<(), sqlx::Error> {
+        let Some((json_str,)) = sqlx::query_as::<_, (String,)>(
+            "SELECT properties FROM thing_templates WHERE id = ?"
+        ).bind(template_id).fetch_optional(&self.pool).await?.flatten() else { return Ok(()) };
+        let props: Vec<serde_json::Value> = serde_json::from_str(&json_str).unwrap_or_default();
+        for p in &props {
+            sqlx::query(
+                "INSERT INTO device_properties (id, device_id, name, display_name, description, data_type, unit, min_value, max_value, default_value, is_read_only, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))"
+            )
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(thing_id)
+            .bind(p["name"].as_str().unwrap_or(""))
+            .bind(p.get("displayName").and_then(|v| v.as_str()).or(p["name"].as_str()))
+            .bind(p.get("description").and_then(|v| v.as_str()).unwrap_or(""))
+            .bind(p.get("dataType").and_then(|v| v.as_str()).unwrap_or("string"))
+            .bind(p.get("unit").and_then(|v| v.as_str()).unwrap_or(""))
+            .bind(p.get("minValue").and_then(|v| v.as_f64()))
+            .bind(p.get("maxValue").and_then(|v| v.as_f64()))
+            .bind(p.get("defaultValue").and_then(|v| v.as_str()))
+            .bind((p.get("isReadOnly").and_then(|v| v.as_bool()).unwrap_or(false)) as i32)
+            .execute(&self.pool).await?;
+        }
+        Ok(())
+    }
+
+    async fn copy_template_acts(&self, thing_id: &str, template_id: &str) -> Result<(), sqlx::Error> {
+        let Some((json_str,)) = sqlx::query_as::<_, (String,)>(
+            "SELECT actions FROM thing_templates WHERE id = ?"
+        ).bind(template_id).fetch_optional(&self.pool).await?.flatten() else { return Ok(()) };
+        let acts: Vec<serde_json::Value> = serde_json::from_str(&json_str).unwrap_or_default();
+        for a in &acts {
+            sqlx::query(
+                "INSERT INTO device_commands (id, device_id, name, display_name, description, parameters, created_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))"
+            )
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(thing_id)
+            .bind(a["name"].as_str().unwrap_or(""))
+            .bind(a.get("displayName").and_then(|v| v.as_str()).or(a["name"].as_str()))
+            .bind(a.get("description").and_then(|v| v.as_str()).unwrap_or(""))
+            .bind(a.get("parameters").map(|v| v.to_string()).as_deref())
+            .execute(&self.pool).await?;
+        }
+        Ok(())
     }
 
     // ──────────────────────────────────────────
