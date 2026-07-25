@@ -118,7 +118,7 @@ impl ThingRepo {
 
         self.get_by_id(&row.id)
             .await?
-            .ok_or_else(|| ThingError::Database("readback after insert failed".into()))
+            .ok_or_else(|| sqlx::Error::Protocol("readback after insert failed".into()))
     }
 
     /// UPDATE — returns the updated row.
