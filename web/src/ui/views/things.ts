@@ -413,6 +413,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
           },
           properties: props,
           commands: acts,
+          knowledgeDocs: result.knowledgeDocs || [],
         } as any;
       } else {
         this.selectedDevice = result;
@@ -1905,6 +1906,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
         <button class="detail-tab ${this.detailTab === 'commands' ? 'active' : ''}" @click=${() => this.switchDetailTab('commands')}>${icons.zap} 命令</button>
         <button class="detail-tab ${this.detailTab === 'events' ? 'active' : ''}" @click=${() => this.switchDetailTab('events')}>${icons.scrollText} 事件</button>
         <button class="detail-tab ${this.detailTab === 'alarms' ? 'active' : ''}" @click=${() => this.switchDetailTab('alarms')}>${icons.bug} 告警</button>
+        <button class="detail-tab ${this.detailTab === 'knowledge' ? 'active' : ''}" @click=${() => this.switchDetailTab('knowledge')}>${icons.fileText} 知识</button>
       </div>
 
       <!-- Tab content -->
@@ -1912,6 +1914,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       ${this.detailTab === 'commands' ? this.renderDetailCommands() : nothing}
       ${this.detailTab === 'events' ? this.renderDetailEvents() : nothing}
       ${this.detailTab === 'alarms' ? this.renderDetailAlarms() : nothing}
+      ${this.detailTab === 'knowledge' ? this.renderDetailKnowledge() : nothing}
       ${this.showModal ? this.renderModal() : nothing}
       ${this.showHistoryDialog ? this.renderHistoryDialog() : nothing}
     `;
@@ -2181,6 +2184,43 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
       <!-- Rule editor modal -->
       ${this.showRuleModal ? this.renderRuleModal(profile.device.id, properties) : nothing}
+    `;
+  }
+
+  renderDetailKnowledge() {
+    const profile = this.selectedDevice;
+    if (!profile) return nothing;
+    const docs = (profile as any).knowledgeDocs || [];
+
+    return html`
+      <div class="card" style="margin-top: var(--space-4);">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-3);">
+          <div>
+            <div style="font-weight: 600;">知识文档</div>
+            <div style="font-size: 12px; color: var(--muted);">绑定到该物的文档和资源</div>
+          </div>
+          <span style="font-size: 12px; color: var(--muted);">共 ${docs.length} 篇</span>
+        </div>
+        ${docs.length === 0 ? html`
+          <div style="text-align: center; padding: var(--space-6) var(--space-4); color: var(--muted);">
+            <div style="font-size: 32px; margin-bottom: var(--space-2); opacity: 0.3;">📄</div>
+            <div style="font-size: 14px;">暂无知识文档</div>
+            <div style="font-size: 12px; margin-top: var(--space-1);">上传文档到该物以生成 AI 摘要</div>
+          </div>
+        ` : html`
+          <div style="display: flex; flex-direction: column; gap: var(--space-2);">
+            ${docs.map((doc: any) => html`
+              <div style="display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); border-radius: var(--radius); background: var(--bg-surface); font-size: 13px;">
+                <span style="font-size: 18px;">📄</span>
+                <div style="flex: 1;">
+                  <div>${doc.name || doc.filePath || '未命名文档'}</div>
+                  <div style="font-size: 11px; color: var(--muted);">${doc.resourceType || doc.type || ''} · ${doc.createdAt?.slice(0, 10) || ''}</div>
+                </div>
+              </div>
+            `)}
+          </div>
+        `}
+      </div>
     `;
   }
 
