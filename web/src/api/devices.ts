@@ -1,5 +1,5 @@
 /**
- * 物 API
+ * 物 API — 底层调用 /api/v1/things 路由
  */
 
 import { apiGet, apiPost, apiPut, apiDelete } from './client.js';
@@ -14,54 +14,66 @@ import type { PaginatedResponse } from './client.js';
 
 export const deviceApi = {
   async getDevices(params?: DeviceListParams) {
-    return apiGet<PaginatedResponse<Device>>('/devices', params as Record<string, any>);
+    return apiGet<PaginatedResponse<Device>>('/things', params as Record<string, any>);
   },
 
   async getDevice(id: string) {
-    return apiGet<Device>(`/devices/${id}`);
+    return apiGet<Device>(`/things/${id}`);
   },
 
   async getDeviceProfile(id: string) {
-    return apiGet<DeviceProfile>(`/devices/${id}/profile`);
+    return apiGet<DeviceProfile>(`/things/${id}/profile`);
   },
 
   async createDevice(data: CreateDeviceRequest) {
-    return apiPost<Device>('/devices', data);
+    return apiPost<Device>('/things', data);
   },
 
   async updateDevice(id: string, data: Partial<CreateDeviceRequest>) {
-    return apiPut<Device>(`/devices/${id}`, data);
+    return apiPut<Device>(`/things/${id}`, data);
   },
 
   async deleteDevice(id: string) {
-    return apiDelete<void>(`/devices/${id}`);
+    return apiDelete<void>(`/things/${id}`);
   },
 
   async getDeviceCommands(deviceId: string) {
-    return apiGet<DeviceCommand[]>(`/devices/${deviceId}/commands`);
+    // Thing actions endpoint — commands are now actions on things
+    return apiGet<DeviceCommand[]>(`/things/${deviceId}/commands`);
   },
 
   async executeCommand(deviceId: string, commandName: string, params?: Record<string, any>) {
-    return apiPost<any>(`/devices/${deviceId}/commands/${commandName}/execute`, params);
+    // invoke action via thing confirm endpoint
+    return apiPost<any>(`/things/${deviceId}/actions/${commandName}/confirm`, { token: "direct", params });
   },
 
   async getDeviceProperties(deviceId: string) {
-    return apiGet<any[]>(`/devices/${deviceId}/properties`);
+    // Properties are included in the profile response
+    return apiGet<any[]>(`/things/${deviceId}/profile`);
   },
 
   async updateDeviceProperty(deviceId: string, propertyName: string, value: any) {
-    return apiPut<void>(`/devices/${deviceId}/properties/${propertyName}`, { value });
+    return apiPut<void>(`/things/${deviceId}/properties/${propertyName}`, { value });
   },
 
   async createDeviceFromTemplate(data: { templateId: string; deviceInput: any }) {
-    return apiPost<any>('/devices/from-template', data);
+    // Map to thing create with template
+    return apiPost<any>('/things', {
+      name: data.deviceInput?.name,
+      templateId: data.templateId,
+      ...data.deviceInput,
+    });
   },
 
   async exportDeviceAsTemplate(id: string) {
-    return apiPost<{ templateId: string; name: string }>(`/devices/${id}/export-template`);
+    // DTDL export endpoint as fallback
+    return apiPost<{ templateId: string; name: string }>(`/things/templates/${id}/export/dtdl`);
   },
 
   async cloneDevice(id: string) {
-    return apiPost<Device>(`/devices/${id}/clone`);
+    // Get thing then create a copy
+    const thing = await apiGet<any>(`/things/${id}`);
+    const cloneData = { ...thing.result, name: `${thing.result?.name || 'clone'} (副本)`, id: undefined };
+    return apiPost<any>('/things', cloneData);
   },
 };
