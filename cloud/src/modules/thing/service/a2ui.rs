@@ -343,6 +343,8 @@ mod tests {
                 id: "thing-1".into(),
                 workspace_id: Some("ws-1".into()),
                 name: "温度传感器 A".into(),
+                display_name: Some("温度传感器 A".into()),
+                address: None,
                 device_type: Some("temperature".into()),
                 thing_type: thing_type.into(),
                 parent_id: Some("parent-1".into()),
@@ -352,6 +354,7 @@ mod tests {
                 protocol_type: Some("modbus-tcp".into()),
                 ontology_summary: Some("温湿度传感器，用于车间环境监测".into()),
                 summary_status: Some("ok".into()),
+                tags: vec![],
                 breadcrumb: vec![
                     BreadcrumbNode {
                         id: "b-1".into(),

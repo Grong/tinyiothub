@@ -141,7 +141,7 @@ const CATEGORY_ICONS: Record<string, ReturnType<typeof html>> = {
 
 type ViewMode = "table" | "grid";
 
-@customElement("view-devices")
+@customElement("view-things")
 export class DevicesView extends SignalWatcher(LitElement) {
   @state() loading = true;
   @state() error = "";
@@ -396,7 +396,18 @@ export class DevicesView extends SignalWatcher(LitElement) {
         deviceCache.setDeviceProperties(id, result.properties);
       }
 
-      this.selectedDevice = result;
+      // thing API returns flat profile; wrap into DeviceProfile format
+      // that the view expects (profile.device, profile.overview, etc.)
+      if (result && !result.device) {
+        this.selectedDevice = {
+          device: result,
+          overview: {},
+          properties: result.properties || [],
+          commands: result.recentEvents || [],
+        } as any;
+      } else {
+        this.selectedDevice = result;
+      }
     } catch (err: any) {
       this.error = err.message || "加载物详情失败";
     } finally {
