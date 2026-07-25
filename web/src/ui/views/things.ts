@@ -2253,7 +2253,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
                     ${visibleTags.map((t: any) => html`<span class="tag-pill">${typeof t === 'string' ? t : t.name || t}</span>`)}
                     ${hiddenCount > 0 ? html`<span class="tag-pill tag-pill--muted" title="${docTags.slice(3).map((t: any) => typeof t === 'string' ? t : t.name || t).join(', ')}">+${hiddenCount}</span>` : nothing}
                     ${docTags.length === 0 ? html`<span class="inline-muted" style="font-size: 12px;">添加标签</span>` : nothing}
-                    ${this.editingDocId === doc.id ? this.renderDocTagPopover(doc) : nothing}
+                    ${this.editingDocId === doc.id ? this.renderDocTagPopover() : nothing}
                   </div>
                 </div>
               </div>
@@ -2282,81 +2282,72 @@ export class DevicesView extends SignalWatcher(LitElement) {
   @state() editingDocTags: string[] = [];
   @state() tagPopoverSearch = '';
 
+  // Knowledge doc tag editing — reuses device card tag popover pattern
   startEditDoc(doc: any) {
     this.editingDocId = doc.id;
-    const tags = (typeof doc.tags === 'string' ? JSON.parse(doc.tags || '[]') : doc.tags) || [];
-    this.editingDocTags = [...tags];
-    this.tagPopoverSearch = '';
+    this.editingDocTags = (typeof doc.tags === 'string' ? JSON.parse(doc.tags || '[]') : doc.tags) || [];
+    this.tagSearchKeyword = '';
     this.requestUpdate();
   }
 
-  cancelDocEdit() { this.editingDocId = null; this.requestUpdate(); }
-
-  toggleDocTag(tagName: string) {
+  toggleDocTagString(tagName: string) {
     if (this.editingDocTags.includes(tagName)) {
       this.editingDocTags = this.editingDocTags.filter(t => t !== tagName);
     } else {
       this.editingDocTags = [...this.editingDocTags, tagName];
     }
-  }
-
-  removeDocTag(tagName: string) {
-    this.editingDocTags = this.editingDocTags.filter(t => t !== tagName);
     this.requestUpdate();
-    this._saveDocTags();
+    this._saveDocTagsDebounced();
   }
 
-  addDocTag() {
-    const v = this.tagPopoverSearch.trim();
-    if (v && !this.editingDocTags.includes(v)) {
-      this.editingDocTags = [...this.editingDocTags, v];
+  createDocTag(tagName: string) {
+    if (tagName && !this.editingDocTags.includes(tagName)) {
+      this.editingDocTags = [...this.editingDocTags, tagName];
     }
-    this.tagPopoverSearch = '';
+    this.tagSearchKeyword = '';
     this.requestUpdate();
-    this._saveDocTags();
+    this._saveDocTagsDebounced();
   }
 
-  private _saveDocTagsTimer: any = null;
-  private _saveDocTags() {
-    clearTimeout(this._saveDocTagsTimer);
-    this._saveDocTagsTimer = setTimeout(async () => {
-      const doc = (this.selectedDevice as any)?.knowledgeDocs?.find((d: any) => d.id === this.editingDocId);
-      if (!doc) return;
+  private _docTagSaveTimer: any = null;
+  private _saveDocTagsDebounced() {
+    clearTimeout(this._docTagSaveTimer);
+    this._docTagSaveTimer = setTimeout(async () => {
+      const docId = this.editingDocId;
       const wsId = (this.selectedDevice?.device as any)?.workspaceId || 'default';
-      await fetch(`/api/v1/workspaces/${wsId}/resources/${doc.id}`, {
+      await fetch(`/api/v1/workspaces/${wsId}/resources/${docId}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('auth-token') || ''}` },
         body: JSON.stringify({ tags: this.editingDocTags }),
       }).catch(() => {});
     }, 300);
   }
 
-  renderDocTagPopover(_doc: any) {
-    const keyword = this.tagPopoverSearch.trim();
+  renderDocTagPopover() {
+    const keyword = this.tagSearchKeyword.trim();
     const exactMatch = keyword && this.editingDocTags.some(t => t.toLowerCase() === keyword.toLowerCase());
     const showCreate = keyword && !exactMatch;
-
     return html`
       <div class="tag-popover" @click=${(e: Event) => e.stopPropagation()}>
         <input type="text" class="tag-popover__search" placeholder="搜索或输入新标签…"
-          .value=${this.tagPopoverSearch}
-          @input=${(e: Event) => { this.tagPopoverSearch = (e.target as HTMLInputElement).value; }}
-          @keydown=${(e: KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); this.addDocTag(); } }} />
+          .value=${this.tagSearchKeyword}
+          @input=${(e: Event) => { this.tagSearchKeyword = (e.target as HTMLInputElement).value; }}
+          @keydown=${(e: KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); this.createDocTag(this.tagSearchKeyword.trim()); } }} />
         <div class="tag-popover__list">
           ${showCreate ? html`
-            <button class="btn btn--sm tag-btn tag-btn--create" @click=${this.addDocTag}>
-              <span class="flex-mid gap-1">${icons.plus} 添加「${keyword}」</span>
+            <button class="btn btn--sm tag-btn tag-btn--create" @click=${() => this.createDocTag(keyword)}>
+              <span class="flex-mid gap-1">${icons.plus} 创建标签「${keyword}」</span>
             </button>
           ` : nothing}
           ${this.editingDocTags.map(t => {
-            const active = !keyword || t.toLowerCase().includes(keyword.toLowerCase());
-            return active ? html`
-              <button class="btn btn--sm tag-btn tag-btn--bound" @click=${() => this.removeDocTag(t)}>
+            const show = !keyword || t.toLowerCase().includes(keyword.toLowerCase());
+            return show ? html`
+              <button class="btn btn--sm tag-btn tag-btn--bound" @click=${() => this.toggleDocTagString(t)}>
                 <span class="flex-mid gap-1">${icons.check} ${t}</span>
               </button>
             ` : nothing;
           })}
           ${this.editingDocTags.length === 0 && !showCreate ? html`
-            <div style="padding:var(--space-2);font-size:12px;color:var(--muted);text-align:center;">输入标签名称后按回车添加</div>
+            <div style="padding:var(--space-2);font-size:12px;color:var(--muted);text-align:center;">输入标签名称，按回车添加</div>
           ` : nothing}
         </div>
       </div>
