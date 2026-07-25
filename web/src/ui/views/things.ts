@@ -3,6 +3,7 @@ import { customElement, state } from "lit/decorators.js";
 import { SignalWatcher } from "@lit-labs/signals";
 import { thingApi, type Thing } from "../../api/things.js";
 import { templateApi } from "../../api/templates.js";
+import { driverApi } from "../../api/drivers.js";
 import { i18n } from "../../i18n/index.js";
 import { success, error as toastError } from "../components/toast.js";
 import { icons } from "../icons.js";
@@ -161,6 +162,8 @@ export class ThingsView extends SignalWatcher(LitElement) {
   @state() wizConfigOptions: any[] = [];
   @state() wizValidationErrors: Record<string, string> = {};
   @state() wizardSaving = false;
+  @state() wizConfigLoading = false;
+  @state() driverNames: string[] = [];
 
   // Drag state
   @state() dragOverId: string | null = null;
@@ -174,6 +177,7 @@ export class ThingsView extends SignalWatcher(LitElement) {
     super.connectedCallback();
     this.showUpgradeNotice = !localStorage.getItem(UPGRADE_NOTICE_KEY);
     this.loadThings();
+    this.loadDrivers();
   }
 
   // === Data Loading ===
@@ -341,11 +345,55 @@ export class ThingsView extends SignalWatcher(LitElement) {
     this.wizValidationErrors = {};
     this.wizardSaving = false;
     this.loadTemplates();
+    this.loadDrivers();
   }
 
   closeWizard() {
     this.showWizard = false;
   }
+
+  // === Driver ===
+
+  async loadDrivers() {
+    try {
+      const res = await driverApi.getDrivers({ page: 1, pageSize: 200 });
+      const data = res.result;
+      const rawList = data?.data || data || [];
+      this.driverNames = (Array.isArray(rawList) ? rawList : []).map((d: any) => d.name || d.id || "").filter(Boolean);
+    } catch {
+      this.driverNames = [];
+    }
+  }
+
+  async loadDriverConfig(driverName: string) {
+    this.wizConfigLoading = true;
+    try {
+      const res = await driverApi.getDriverConfig(driverName);
+      const data = res.result;
+      if (data?.configOptions && Array.isArray(data.configOptions)) {
+        this.wizConfigOptions = data.configOptions;
+      } else if (Array.isArray(data)) {
+        this.wizConfigOptions = data;
+      } else {
+        this.wizConfigOptions = [];
+      }
+    } catch {
+      this.wizConfigOptions = [];
+    } finally {
+      this.wizConfigLoading = false;
+    }
+  }
+
+  async onWizardDriverSelect(driverName: string) {
+    this.wizDriver = driverName;
+    this.wizDriverConfig = {};
+    this.wizConfigOptions = [];
+    if (driverName) {
+      await this.loadDriverConfig(driverName);
+    }
+  }
+
+  // === Templates ===
 
   async loadTemplates() {
     this.wizTemplateLoading = true;
@@ -376,6 +424,9 @@ export class ThingsView extends SignalWatcher(LitElement) {
     this.wizDriverConfig = {};
     this.wizConfigOptions = [];
     this.wizValidationErrors = {};
+    if (this.wizDriver) {
+      this.loadDriverConfig(this.wizDriver);
+    }
     this.wizardStep = "device";
   }
 
@@ -417,6 +468,18 @@ export class ThingsView extends SignalWatcher(LitElement) {
     if (this.wizSelectedTemplate && isFieldRequired(this.wizSelectedTemplate.deviceInfo, "address") && !this.wizAddress.trim()) {
       errors.address = "物地址是必填字段";
     }
+    if (this.wizDriver && this.wizConfigOptions.length > 0) {
+      for (const opt of this.wizConfigOptions) {
+        if (opt.required) {
+          const userValue = this.wizDriverConfig[opt.name];
+          const hasUserValue = userValue !== undefined && userValue.trim() !== "";
+          const hasDefaultValue = opt.defaultValue && opt.defaultValue.trim() !== "";
+          if (!hasUserValue && !hasDefaultValue) {
+            errors[`driverConfig.${opt.name}`] = `${opt.label}是必填字段`;
+          }
+        }
+      }
+    }
     this.wizValidationErrors = errors;
     return Object.keys(errors).length === 0;
   }
@@ -433,6 +496,18 @@ export class ThingsView extends SignalWatcher(LitElement) {
     if (this.wizardSaving) return;
     this.wizardSaving = true;
     try {
+      // Build driver config merging user values with defaults
+      const finalDriverConfig: Record<string, string> = {};
+      if (this.wizDriver && this.wizConfigOptions.length > 0) {
+        for (const opt of this.wizConfigOptions) {
+          const userValue = this.wizDriverConfig[opt.name];
+          if (userValue !== undefined && userValue !== "") {
+            finalDriverConfig[opt.name] = userValue;
+          } else if (opt.defaultValue) {
+            finalDriverConfig[opt.name] = opt.defaultValue;
+          }
+        }
+      }
       const payload: Record<string, unknown> = {
         name: this.wizName.trim(),
         thingType: this.wizSelectedTemplate.deviceType || undefined,
@@ -440,6 +515,7 @@ export class ThingsView extends SignalWatcher(LitElement) {
         deviceType: this.wizSelectedTemplate.deviceType || undefined,
         protocolType: this.wizSelectedTemplate.protocolType || undefined,
         driverName: this.wizDriver || undefined,
+        driverOptions: Object.keys(finalDriverConfig).length > 0 ? JSON.stringify(finalDriverConfig) : undefined,
       };
       await thingApi.create(payload);
       success("物已创建");
@@ -901,67 +977,239 @@ export class ThingsView extends SignalWatcher(LitElement) {
     const t = this.wizSelectedTemplate;
     if (!t) return nothing;
     const displayName = getLocalizedText(t.displayName, t.name);
+    const hasError = (name: string) => Boolean(this.wizValidationErrors[name]);
+    const getError = (name: string) => this.wizValidationErrors[name] || "";
+
     return html`
       <div class="wizard-split">
+        <!-- Left panel: form -->
         <div class="wizard-split__form wizard-fields">
           <div class="wizard-form-header">
             <div class="wizard-form-header__title">填写物信息</div>
             <button class="btn btn--ghost btn--sm" @click=${this.wizardBack}>切换模板</button>
           </div>
-          <div class="field">
-            <label class="label">名称 <span style="color: var(--danger);">*</span></label>
-            <input type="text" class="input" placeholder="输入物名称"
-              .value=${this.wizName}
-              @input=${(e: Event) => { this.wizName = (e.target as HTMLInputElement).value; }}
-            />
-            ${this.wizValidationErrors["name"] ? html`<div class="field-error">${this.wizValidationErrors["name"]}</div>` : nothing}
-          </div>
-          <div class="field">
-            <label class="label">描述</label>
-            <input type="text" class="input" placeholder="物描述"
-              .value=${this.wizDescription}
-              @input=${(e: Event) => { this.wizDescription = (e.target as HTMLInputElement).value; }}
-            />
-          </div>
-          <div class="field">
-            <label class="label">地址</label>
-            <input type="text" class="input" placeholder="物地址（如 IP、MAC）"
-              .value=${this.wizAddress}
-              @input=${(e: Event) => { this.wizAddress = (e.target as HTMLInputElement).value; }}
-            />
-            ${this.wizValidationErrors["address"] ? html`<div class="field-error">${this.wizValidationErrors["address"]}</div>` : nothing}
-          </div>
-          <div class="field">
-            <label class="label">位置</label>
-            <input type="text" class="input" placeholder="物理位置"
-              .value=${this.wizPosition}
-              @input=${(e: Event) => { this.wizPosition = (e.target as HTMLInputElement).value; }}
-            />
-          </div>
-        </div>
-        <div class="wizard-split__preview">
-          <div class="wizard-form-header">
-            <div class="wizard-form-header__title">模板预览</div>
-          </div>
-          <div class="card" style="padding: var(--space-3);">
-            <div class="template-card__header">
-              <span class="template-card__icon">${CATEGORY_ICONS[t.category] || CATEGORY_ICONS.others}</span>
-              <div class="template-card__title-wrap">
-                <div class="template-card__title">${displayName}</div>
-                ${t.manufacturer ? html`<div class="inline-muted">${t.manufacturer}</div>` : nothing}
+
+          <!-- Template summary chip -->
+          <div class="template-chip">
+            <span class="template-chip__icon">${CATEGORY_ICONS[t.category] || CATEGORY_ICONS.others}</span>
+            <div class="template-chip__title-wrap">
+              <div class="template-chip__title">${displayName}</div>
+              <div class="template-chip__meta">
+                ${t.manufacturer ? html`<span>${t.manufacturer} · </span>` : nothing}
+                <span>${t.deviceType || t.category}</span>
+                ${t.version ? html` · v${t.version}` : nothing}
               </div>
             </div>
-            <div class="template-card__meta" style="margin-top: var(--space-2);">
-              ${t.deviceType ? html`<span>${t.deviceType}</span>` : nothing}
-              ${t.protocolType ? html`<span>${t.protocolType}</span>` : nothing}
-            </div>
-            <div class="template-card__stats" style="margin-top: var(--space-2);">
-              <span>${t.properties.length} 属性</span>
-              <span>${t.actions.length} 动作</span>
-            </div>
+            ${t.isBuiltin ? html`<span class="template-chip__badge">内置</span>` : nothing}
           </div>
+
+          <!-- Name -->
+          <div class="field ${hasError("name") ? "field--error" : ""}">
+            <span>物名称 <span class="form-label-required">*</span></span>
+            <input type="text" placeholder="请输入物名称"
+              .value=${this.wizName}
+              @input=${(e: any) => { this.wizName = e.target.value; }}
+            />
+            ${hasError("name") ? html`<div class="form-error">${getError("name")}</div>` : nothing}
+          </div>
+
+          <!-- Description -->
+          <div class="field">
+            <span>物描述 <span class="inline-muted">(可选)</span></span>
+            <textarea rows="2" placeholder="请输入物描述"
+              .value=${this.wizDescription}
+              @input=${(e: any) => { this.wizDescription = e.target.value; }}
+            ></textarea>
+          </div>
+
+          <!-- Address -->
+          <div class="field ${hasError("address") ? "field--error" : ""}">
+            <span>物地址 ${isFieldRequired(t.deviceInfo, "address")
+              ? html`<span class="form-label-required">*</span>`
+              : html`<span class="inline-muted">(可选)</span>`}</span>
+            <input type="text" placeholder="请输入物IP地址或连接地址"
+              .value=${this.wizAddress}
+              @input=${(e: any) => { this.wizAddress = e.target.value; }}
+            />
+            ${hasError("address") ? html`<div class="form-error">${getError("address")}</div>` : nothing}
+          </div>
+
+          <!-- Position -->
+          <div class="field">
+            <span>安装位置 <span class="inline-muted">(可选)</span></span>
+            <input type="text" placeholder="请输入物安装位置"
+              .value=${this.wizPosition}
+              @input=${(e: any) => { this.wizPosition = e.target.value; }}
+            />
+          </div>
+
+          <!-- Driver select -->
+          <div class="field">
+            <span>物驱动 <span class="inline-muted">(选择适合的驱动程序来完成数据采集)</span></span>
+            <select .value=${this.wizDriver} @change=${(e: Event) => this.onWizardDriverSelect((e.target as HTMLSelectElement).value)}>
+              <option value="">请选择驱动</option>
+              ${this.driverNames.map(name => html`<option value=${name}>${name}</option>`)}
+            </select>
+            ${t.driverName && this.wizDriver !== t.driverName ? html`
+              <div class="form-hint">模板默认驱动: ${t.driverName}</div>
+            ` : nothing}
+          </div>
+
+          <!-- Driver config -->
+          ${this.wizDriver ? html`
+            <div class="wizard-form-section">
+              <div class="wizard-form-section__header">
+                <span class="wizard-form-section__title">驱动配置</span>
+                <span class="wizard-form-section__meta">(${this.wizDriver})</span>
+              </div>
+              ${this.wizConfigLoading ? html`
+                <div class="wizard-loading wizard-loading--compact">
+                  <span class="loading-spinner"></span>
+                  <span class="wizard-loading__text">加载驱动配置参数...</span>
+                </div>
+              ` : this.wizConfigOptions.length > 0 ? html`
+                ${this.wizConfigOptions.map((opt: any) => this.renderWizardConfigField(opt))}
+              ` : html`
+                <div class="empty-hint--sm">该驱动无需额外配置参数</div>
+              `}
+            </div>
+          ` : nothing}
+        </div>
+
+        <!-- Right panel: template overview -->
+        <div class="wizard-split__overview">
+          ${this.renderTemplateOverview(t)}
         </div>
       </div>
+    `;
+  }
+
+  renderWizardConfigField(opt: any) {
+    const value = this.wizDriverConfig[opt.name] ?? "";
+    const hasError = Boolean(this.wizValidationErrors[`driverConfig.${opt.name}`]);
+    const errorMsg = this.wizValidationErrors[`driverConfig.${opt.name}`] || "";
+    const placeholder = opt.defaultValue ? `默认: ${opt.defaultValue}` : `请输入${opt.label}`;
+
+    return html`
+      <div class="field ${hasError ? "field--error" : ""}">
+        <span>
+          ${opt.label}
+          ${opt.required ? html`<span class="form-label-required">*</span>` : html`<span class="inline-muted">(可选)</span>`}
+          ${opt.defaultValue ? html`<span class="inline-muted inline-muted--spaced">· 默认: ${opt.defaultValue}</span>` : nothing}
+        </span>
+        ${opt.optionType === "boolean" ? html`
+          <select .value=${value || (opt.defaultValue === "true" ? "true" : "false")} @change=${(e: Event) => {
+            this.wizDriverConfig = { ...this.wizDriverConfig, [opt.name]: (e.target as HTMLSelectElement).value };
+          }}>
+            <option value="">请选择</option>
+            <option value="true">是</option>
+            <option value="false">否</option>
+          </select>
+        ` : opt.optionType === "number" ? html`
+          <input type="number" .value=${value} placeholder=${placeholder} @input=${(e: any) => {
+            this.wizDriverConfig = { ...this.wizDriverConfig, [opt.name]: e.target.value };
+          }} />
+        ` : html`
+          <input type="text" .value=${value} placeholder=${placeholder} @input=${(e: any) => {
+            this.wizDriverConfig = { ...this.wizDriverConfig, [opt.name]: e.target.value };
+          }} />
+        `}
+        ${hasError ? html`<div class="form-error">${errorMsg}</div>` : nothing}
+      </div>
+    `;
+  }
+
+  renderTemplateOverview(t: ProcessedTemplate) {
+    const displayName = getLocalizedText(t.displayName, t.name);
+    const description = getLocalizedText(t.description ?? undefined, "");
+    const totalProps = t.properties.length;
+    const totalActs = t.actions.length;
+    const readonlyProps = t.properties.filter((p: any) => p.accessMode === "r" || p.accessMode === "R").length;
+    const writableProps = totalProps - readonlyProps;
+
+    return html`
+      <div class="template-overview__summary">
+        <span class="template-overview__icon">${CATEGORY_ICONS[t.category] || CATEGORY_ICONS.others}</span>
+        <div class="template-overview__title-wrap">
+          <div class="template-overview__title">${displayName}</div>
+          <div class="template-overview__meta">
+            ${t.manufacturer ? html`${t.manufacturer} · ` : nothing}${t.deviceType || t.category}${t.version ? html` · v${t.version}` : nothing}
+          </div>
+        </div>
+        ${t.isBuiltin ? html`<span class="template-overview__badge">内置</span>` : nothing}
+      </div>
+      ${description ? html`<div class="template-overview__desc">${description}</div>` : nothing}
+      <div class="template-overview__meta-tags">
+        ${t.protocolType ? html`<span class="template-overview__meta-tag">协议: ${t.protocolType}</span>` : nothing}
+        ${t.driverName ? html`<span class="template-overview__meta-tag">驱动: ${t.driverName}</span>` : nothing}
+        ${t.category ? html`<span class="template-overview__meta-tag">${CATEGORY_LABELS[t.category] || t.category}</span>` : nothing}
+      </div>
+      ${t.tags && t.tags.length > 0 ? html`
+        <div class="template-overview__tags">
+          ${t.tags.map((tag: string) => html`<span class="template-overview__tag">${tag}</span>`)}
+        </div>
+      ` : nothing}
+      <div class="wizard-overview__stats">
+        <div class="wizard-overview__stat">
+          <div class="wizard-overview__stat-value">${totalProps}</div>
+          <div class="wizard-overview__stat-label">属性数</div>
+        </div>
+        <div class="wizard-overview__stat">
+          <div class="wizard-overview__stat-value">${totalActs}</div>
+          <div class="wizard-overview__stat-label">动作数</div>
+        </div>
+        <div class="wizard-overview__stat">
+          <div class="wizard-overview__stat-value">${readonlyProps}</div>
+          <div class="wizard-overview__stat-label">只读属性</div>
+        </div>
+        <div class="wizard-overview__stat">
+          <div class="wizard-overview__stat-value">${writableProps}</div>
+          <div class="wizard-overview__stat-label">可写属性</div>
+        </div>
+      </div>
+      ${totalProps > 0 ? html`
+        <div class="wizard-overview__section-title">属性列表</div>
+        <ul class="wizard-overview__list template-overview__list">
+          ${t.properties.map((p: any) => html`
+            <li class="wizard-overview__list-item">
+              <div class="template-overview__list-item-inner">
+                <span class="wizard-overview__list-item-name">${p.name || p.displayName || "unnamed"}</span>
+                ${p.accessMode === "r" || p.accessMode === "R"
+                  ? html`<span class="template-overview__list-badge-ro">R</span>`
+                  : html`<span class="template-overview__list-badge-rw">RW</span>`
+                }
+              </div>
+              <span class="wizard-overview__list-item-meta">
+                ${p.dataType || ""}${p.unit ? ` ${p.unit}` : ""}
+                ${p.minValue != null || p.maxValue != null
+                  ? html` <span class="template-overview__range">[${p.minValue ?? '–'}~${p.maxValue ?? '–'}]</span>`
+                  : nothing
+                }
+              </span>
+            </li>
+          `)}
+        </ul>
+      ` : nothing}
+      ${totalActs > 0 ? html`
+        <div class="wizard-overview__section-title">动作列表</div>
+        <ul class="wizard-overview__list template-overview__list--commands">
+          ${t.actions.map((a: any) => html`
+            <li class="wizard-overview__list-item">
+              <div class="template-overview__list-item-inner">
+                <span class="wizard-overview__list-item-name">${a.name || "unnamed"}</span>
+                ${a.parameters && a.parameters.length > 0
+                  ? html`<span class="template-overview__param-count">${a.parameters.length} 参数</span>`
+                  : nothing
+                }
+              </div>
+              <span class="wizard-overview__list-item-meta">${a.description || ""}</span>
+            </li>
+          `)}
+        </ul>
+      ` : nothing}
+      ${totalProps === 0 && totalActs === 0 ? html`
+        <div class="empty-hint--sm">该模板暂无属性和动作定义</div>
+      ` : nothing}
     `;
   }
 }
