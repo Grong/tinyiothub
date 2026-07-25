@@ -2258,10 +2258,12 @@ export class DevicesView extends SignalWatcher(LitElement) {
                       </div>
                     `}
                   </div>
-                  ${docTags.length > 0 && this.editingDocId !== doc.id ? html`
+                  ${this.editingDocId !== doc.id ? html`
                     <div class="device-card__footer">
                       ${visibleTags.map((t: any) => html`<span class="tag-pill">${typeof t === 'string' ? t : t.name || t}</span>`)}
-                      ${hiddenCount > 0 ? html`<span class="tag-pill tag-pill--muted">+${hiddenCount}</span>` : nothing}
+                      ${hiddenCount > 0 ? html`<span class="tag-pill tag-pill--muted" title="${docTags.slice(3).map((t: any) => typeof t === 'string' ? t : t.name || t).join(', ')}">+${hiddenCount}</span>` : nothing}
+                      ${docTags.length === 0 ? html`<span class="inline-muted" style="font-size: 12px;">无标签</span>` : nothing}
+                      <button class="btn btn--ghost btn--sm tag-btn--edit-card" title="编辑标签" @click=${(e: Event) => { e.stopPropagation(); this.startEditDoc(doc); }}>${icons.edit}</button>
                     </div>
                   ` : nothing}
                 </div>
