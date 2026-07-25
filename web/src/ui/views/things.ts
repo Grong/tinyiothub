@@ -2235,9 +2235,14 @@ export class DevicesView extends SignalWatcher(LitElement) {
                   <div class="device-card__body">
                     ${this.editingDocId === doc.id ? html`
                       <div class="device-card__info" style="padding:var(--space-1) 0;">
-                        <input class="kb-card__edit-input" .value=${doc.description || ''} placeholder="添加描述…" @input=${(e: Event) => { this._editDesc = (e.target as HTMLInputElement).value; }} />
-                        <input class="kb-card__edit-input" .value=${docTags.join(', ')} placeholder="标签（逗号分隔）" @input=${(e: Event) => { this._editTags = (e.target as HTMLInputElement).value; }} style="margin-top:4px;" />
-                        <div style="margin-top:4px;display:flex;gap:var(--space-1);">
+                        <input class="kb-card__edit-input" .value=${doc.description || this._editDesc} placeholder="添加描述…" @input=${(e: Event) => { this._editDesc = (e.target as HTMLInputElement).value; }} />
+                        <div class="kb-tag-editor" style="margin-top:6px;">
+                          ${this._editTagList.map((t: string, i: number) => html`
+                            <span class="edit-tag-pill">${t}<button class="edit-tag-pill__remove" @click=${(e: Event) => { e.stopPropagation(); this._editTagList = this._editTagList.filter((_, j) => j !== i); }}>&times;</button></span>
+                          `)}
+                          <input class="edit-tag-input" placeholder="输入标签，回车添加" @keydown=${(e: KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); const v = (e.target as HTMLInputElement).value.trim(); if (v && !this._editTagList.includes(v)) { this._editTagList = [...this._editTagList, v]; (e.target as HTMLInputElement).value = ''; } } }} />
+                        </div>
+                        <div style="margin-top:6px;display:flex;gap:var(--space-1);">
                           <button class="btn btn--primary btn--xs" @click=${(e: Event) => { e.stopPropagation(); this.saveDocEdit(doc); }}>保存</button>
                           <button class="btn btn--ghost btn--xs" @click=${(e: Event) => { e.stopPropagation(); this.cancelDocEdit(); }}>取消</button>
                         </div>
@@ -2290,23 +2295,22 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   @state() editingDocId: string | null = null;
   private _editDesc = '';
-  private _editTags = '';
+  private _editTagList: string[] = [];
 
   startEditDoc(doc: any) {
     this.editingDocId = doc.id;
     this._editDesc = doc.description || '';
-    this._editTags = ((typeof doc.tags === 'string' ? JSON.parse(doc.tags || '[]') : doc.tags) || []).join(', ');
+    this._editTagList = (typeof doc.tags === 'string' ? JSON.parse(doc.tags || '[]') : doc.tags) || [];
   }
 
   cancelDocEdit() { this.editingDocId = null; }
 
   async saveDocEdit(doc: any) {
     const wsId = (this.selectedDevice?.device as any)?.workspaceId || 'default';
-    const tags = this._editTags.split(',').map(s => s.trim()).filter(Boolean);
     try {
       await fetch(`/api/v1/workspaces/${wsId}/resources/${doc.id}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('auth-token') || ''}` },
-        body: JSON.stringify({ description: this._editDesc || null, tags }),
+        body: JSON.stringify({ description: this._editDesc || null, tags: this._editTagList }),
       });
       this.editingDocId = null;
       const thingId = this.selectedDevice?.device?.id;

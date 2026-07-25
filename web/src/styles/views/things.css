@@ -293,6 +293,12 @@
 .kb-item__tags { display: flex; gap: 4px; margin-top: 4px; }
 
 .kb-card__edit-input { width: 100%; padding: 3px 6px; font-size: 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); }
+.kb-tag-editor { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.edit-tag-pill { display: inline-flex; align-items: center; gap: 2px; font-size: 11px; padding: 1px 6px; border-radius: 10px; background: var(--bg-subtle); border: 1px solid var(--border); color: var(--text); }
+.edit-tag-pill__remove { background: none; border: none; cursor: pointer; padding: 0; font-size: 14px; line-height: 1; color: var(--muted); }
+.edit-tag-pill__remove:hover { color: var(--danger); }
+.edit-tag-input { flex: 1; min-width: 100px; border: none; background: none; font-size: 11px; color: var(--text); padding: 2px 0; outline: none; }
+.edit-tag-input::placeholder { color: var(--muted); }
 
 /* Empty state */
 .kb-empty { text-align: center; padding: var(--space-8) var(--space-4); color: var(--muted); }
