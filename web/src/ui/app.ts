@@ -350,7 +350,9 @@ export class TinyIoTHubApp extends LitElement {
 
   /** Lazy-load the view module for the given route if needed. */
   private _ensureViewLoaded(route: string) {
-    const base = route.startsWith('devices/') ? 'devices' : route;
+    const base = route.startsWith('devices/') ? 'devices'
+      : route.startsWith('thing-detail/') ? 'thing-detail'
+      : route;
     const loader = lazyViews[base];
     if (!loader) return;
     const tag = `view-${base}`;
@@ -628,7 +630,9 @@ export class TinyIoTHubApp extends LitElement {
     if (route === 'register') return html`<view-register></view-register>`;
     if (route === 'home') return html`<view-home></view-home>`;
 
-    const base = route.startsWith('devices/') ? 'devices' : route;
+    const base = route.startsWith('devices/') ? 'devices'
+      : route.startsWith('thing-detail/') ? 'thing-detail'
+      : route;
     const tag = `view-${base}`;
     const isReady = !!customElements.get(tag);
     const isLoading = this.loadingRoute === base;
