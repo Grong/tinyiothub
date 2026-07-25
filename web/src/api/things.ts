@@ -171,7 +171,7 @@ export const thingApi = {
     // 2. Create workspace resource record
     const createRes = await fetch(`/api/v1/workspaces/${workspaceId}/resources`, {
       method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: fileName, file_path: filePath, type: 'document' }),
+      body: JSON.stringify({ name: fileName, file_path: filePath, resource_type: 'document' }),
     }).then(r => r.json());
     if (!createRes.result?.id) throw new Error('创建资源记录失败');
     // 3. Attach to thing
