@@ -491,7 +491,6 @@ struct EventRow {
 struct DocRow {
     id: String,
     name: String,
-    #[sqlx(rename = "type")]
     resource_type: String,
     file_path: String,
     content: Option<String>,
