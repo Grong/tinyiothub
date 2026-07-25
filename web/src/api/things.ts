@@ -158,4 +158,17 @@ export const thingApi = {
   async attachResource(thingId: string, resourceId: string) {
     return apiPost<void>(`/things/${thingId}/resources`, { resourceId });
   },
+  // Backward-compat aliases (devices.ts still uses old method names)
+  getDevices: (params?: Record<string, string>) => apiGet<any>('/things', params),
+  getDevice: (id: string) => apiGet<any>('/things/' + id),
+  getDeviceProfile: (id: string) => apiGet<any>('/things/' + id + '/profile'),
+  createDevice: (data: any) => apiPost<any>('/things', data),
+  updateDevice: (id: string, data: Record<string, unknown>) => apiPut<any>('/things/' + id, data),
+  deleteDevice: (id: string) => apiDelete<any>('/things/' + id),
+  getDeviceCommands: (id: string) => apiGet<any[]>('/things/' + id + '/commands'),
+  executeCommand: (id: string, name: string, params?: Record<string, any>) => apiPost<any>('/things/' + id + '/actions/' + encodeURIComponent(name) + '/confirm', { token: 'direct', params }),
+  exportDeviceAsTemplate: (id: string) => apiGet<any>('/things/templates/' + id + '/export/dtdl'),
+  cloneDevice: async (id: string) => { const r = await apiGet<any>('/things/' + id); return apiPost<any>('/things', { ...r.result, name: (r.result?.name || 'clone') + ' (副本)' }); },
+  createFromTemplate: (data: any) => apiPost<any>('/things', { ...data.deviceInput, templateId: data.templateId }),
 };
+

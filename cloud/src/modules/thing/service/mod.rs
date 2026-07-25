@@ -10,7 +10,7 @@ use super::{
     repo::ThingRepo,
     summary::{self, StubLlmClient, SummaryComputer},
     types::{
-        CreateThingRequest, ListThingsParams, ListThingsResult, ThingProfileResponse,
+        CreateThingRequest, ListThingsParams, ListThingsResult, TagInfo, ThingProfileResponse,
         ThingResource, ThingResponse, ThingRow, ThingTreeNode, ThingType, UpdateThingRequest,
     },
 };
@@ -39,10 +39,16 @@ impl ThingService {
         let limit = params.limit();
         let offset = params.offset();
 
+        // Load tags for all things in batch
+        let thing_ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+        let tags_map = self.load_tags_batch(&thing_ids).await.unwrap_or_default();
+
         let mut items: Vec<ThingResponse> = Vec::with_capacity(rows.len());
         for row in &rows {
             let breadcrumb = self.repo.get_breadcrumb(&row.id, 10).await.unwrap_or_default();
-            items.push(Self::row_to_response(row, breadcrumb));
+            let mut resp = Self::row_to_response(row, breadcrumb);
+            resp.tags = tags_map.get(&row.id).cloned().unwrap_or_default();
+            items.push(resp);
         }
 
         let unassigned =
@@ -269,6 +275,7 @@ impl ThingService {
             id: row.id.clone(),
             workspace_id: row.workspace_id.clone(),
             name: row.name.clone(),
+            display_name: row.display_name.clone(),
             device_type: row.device_type.clone(),
             thing_type: row.thing_type.clone(),
             parent_id: row.parent_id.clone(),
@@ -276,12 +283,43 @@ impl ThingService {
             state: row.state,
             driver_name: row.driver_name.clone(),
             protocol_type: row.protocol_type.clone(),
+            address: row.address.clone(),
             ontology_summary: row.ontology_summary.clone(),
             summary_status: row.summary_status.clone(),
+            tags: vec![],
             breadcrumb,
             created_at: row.created_at.clone(),
             updated_at: row.updated_at.clone(),
         }
+    }
+
+    /// Batch-load tags for multiple thing IDs from tag_bindings.
+    async fn load_tags_batch(
+        &self,
+        thing_ids: &[&str],
+    ) -> Result<std::collections::HashMap<String, Vec<super::types::TagInfo>>, sqlx::Error> {
+        if thing_ids.is_empty() {
+            return Ok(Default::default());
+        }
+        let mut qb = sqlx::QueryBuilder::new(
+            "SELECT tb.target_id, t.id, t.name, t.color FROM tag_bindings tb \
+             JOIN tags t ON t.id = tb.tag_id \
+             WHERE tb.target_type IN ('device','thing') AND tb.target_id IN ("
+        );
+        let mut separated = qb.separated(",");
+        for id in thing_ids {
+            separated.push_bind(*id);
+        }
+        separated.push_unseparated(")");
+        let rows = qb
+            .build_query_as::<(String, String, String, Option<String>)>()
+            .fetch_all(&self.pool)
+            .await?;
+        let mut map: std::collections::HashMap<String, Vec<TagInfo>> = std::collections::HashMap::new();
+        for (target_id, id, name, color) in rows {
+            map.entry(target_id).or_default().push(TagInfo { id, name, color });
+        }
+        Ok(map)
     }
 
     async fn load_properties(&self, device_id: &str) -> Option<Vec<serde_json::Value>> {

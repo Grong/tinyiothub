@@ -1433,7 +1433,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
         enabledCommands: this.wizSelectedTemplate.commands?.map((c: any) => c.name) || [],
       };
 
-      const res = await deviceApi.createDeviceFromTemplate({
+      const res = await deviceApi.createFromTemplate({
         templateId: this.wizSelectedTemplate.id,
         deviceInput,
       });

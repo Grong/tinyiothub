@@ -226,7 +226,7 @@ export class CronView extends LitElement {
       const res = await deviceApi.getDevices({ page: 1, pageSize: 200 });
       const data = res.result;
       if (data?.data) {
-        this.devices = data.data.map((d) => ({ id: d.id, name: d.displayName || d.name }));
+        this.devices = data.data.map((d: any) => ({ id: d.id, name: d.displayName || d.name }));
       }
     } catch {
       // non-critical

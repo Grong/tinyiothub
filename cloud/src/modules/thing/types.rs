@@ -94,6 +94,15 @@ impl std::fmt::Display for SummaryStatus {
 // DB Row
 // ──────────────────────────────────────────────
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TagInfo {
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+}
+
 /// Maps to the `devices` table after the Thing Ontology migration.
 #[derive(Debug, Clone, FromRow)]
 pub struct ThingRow {
@@ -173,6 +182,8 @@ pub struct ThingResponse {
     pub workspace_id: Option<String>,
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub device_type: Option<String>,
     pub thing_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -185,9 +196,13 @@ pub struct ThingResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub protocol_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub ontology_summary: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary_status: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<TagInfo>,
     /// Ancestor chain from root to this node.
     pub breadcrumb: Vec<BreadcrumbNode>,
     pub created_at: String,
