@@ -2228,13 +2228,11 @@ export class DevicesView extends SignalWatcher(LitElement) {
                       ${doc.createdAt ? html`<span class="device-card__gateway-tag">${doc.createdAt.slice(0, 10)}</span>` : nothing}
                     </div>
                     <div class="device-card__actions">
-                      <button class="btn btn--ghost btn--sm device-card__action-btn" title="编辑" @click=${(e: Event) => { e.stopPropagation(); this.startEditDoc(doc); }}>${icons.edit}</button>
                       <button class="btn btn--ghost btn--sm device-card__action-btn btn--danger-text" title="移除" @click=${(e: Event) => { e.stopPropagation(); this.removeKnowledgeDoc(doc.id); }}>${icons.trash2}</button>
                     </div>
                   </div>
-                  <div class="device-card__body">
-                      <div class="device-card__body">
-                      <div class="device-card__info">
+                  <div class="device-card__body" style="cursor:pointer;" @click=${(e: Event) => { e.stopPropagation(); this.editingDocId = this.editingDocId === doc.id ? null : doc.id; if (this.editingDocId) { this.editingDocTags = [...docTags]; this.tagSearchKeyword = ''; } this.requestUpdate(); }}>
+                    <div class="device-card__info">
                         ${doc.description ? html`
                           <div class="device-card__info-row">
                             <span class="device-card__info-value">${doc.description}</span>
