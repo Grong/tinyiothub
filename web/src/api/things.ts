@@ -173,7 +173,7 @@ export const thingApi = {
     const resourceType = isImage ? 'file' : 'document';
     const createRes = await fetch(`/api/v1/workspaces/${workspaceId}/resources`, {
       method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: fileName, file_path: filePath, resource_type: resourceType }),
+      body: JSON.stringify({ name: fileName, file_path: filePath, resource_type: resourceType, tags: [] }),
     }).then(r => r.json());
     if (!createRes.result?.id) throw new Error('创建资源记录失败');
     // 3. Attach to thing
