@@ -116,7 +116,9 @@ impl ThingRepo {
         .execute(&self.pool)
         .await?;
 
-        self.get_by_id(&row.id).await.map(|r| r.expect("just inserted"))
+        self.get_by_id(&row.id)
+            .await?
+            .ok_or_else(|| ThingError::Database("readback after insert failed".into()))
     }
 
     /// UPDATE — returns the updated row.
@@ -244,7 +246,10 @@ impl ThingRepo {
 
         let mut roots: Vec<super::types::ThingTreeNode> = vec![];
         for row in &rows {
-            let node = nodes.remove(&row.id).unwrap();
+            let Some(node) = nodes.remove(&row.id) else {
+                tracing::warn!(id = %row.id, "Thing tree: node not found in map, skipping");
+                continue;
+            };
             if let Some(ref pid) = row.parent_id {
                 if let Some(parent) = nodes.get_mut(pid) {
                     parent.children.push(node);
