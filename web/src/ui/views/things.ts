@@ -2214,30 +2214,27 @@ export class DevicesView extends SignalWatcher(LitElement) {
             <div class="kb-empty__hint">点击上方「添加」上传文件或关联已有资源</div>
           </div>
         ` : html`
-          <div class="kb-list">
+          <div class="kb-card-grid">
             ${docs.map((doc: any) => {
               const docTags = (typeof doc.tags === 'string' ? JSON.parse(doc.tags || '[]') : doc.tags) || [];
               return html`
-              <div class="kb-item">
-                <span class="kb-item__icon">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="20" height="20">
-                    <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
+              <div class="kb-card">
+                <div class="kb-card__header">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="18" height="18" opacity="0.4">
+                    <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>
                   </svg>
-                </span>
-                <div class="kb-item__body">
-                  <div class="kb-item__name">${doc.name || doc.filePath || '未命名'}</div>
-                  ${doc.description ? html`<div class="kb-item__desc">${doc.description}</div>` : nothing}
-                  <div class="kb-item__meta">
-                    <span>${doc.resourceType || 'document'}</span>
-                    ${doc.filePath ? html`<span class="kb-item__path">${doc.filePath}</span>` : nothing}
-                    ${doc.createdAt ? html`<span>${doc.createdAt.slice(0, 10)}</span>` : nothing}
-                  </div>
-                  ${docTags.length > 0 ? html`
-                    <div class="kb-item__tags">
-                      ${docTags.map((t: any) => html`<span class="tag-pill tag-pill--xs">${t}</span>`)}
-                    </div>
-                  ` : nothing}
+                  <span class="kb-card__type">${doc.resourceType || 'document'}</span>
+                  <span class="kb-card__date">${doc.createdAt?.slice(0, 10) || ''}</span>
                 </div>
+                <div class="kb-card__body">
+                  <div class="kb-card__title">${doc.name || doc.filePath || '未命名'}</div>
+                  ${doc.description ? html`<div class="kb-card__desc">${doc.description}</div>` : nothing}
+                </div>
+                ${docTags.length > 0 ? html`
+                  <div class="kb-card__tags">
+                    ${docTags.map((t: any) => html`<span class="tag-pill tag-pill--xs">${typeof t === 'string' ? t : t.name || t}</span>`)}
+                  </div>
+                ` : nothing}
               </div>
             `; })}
           </div>
