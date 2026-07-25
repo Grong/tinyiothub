@@ -304,7 +304,7 @@ impl ThingService {
         let mut qb = sqlx::QueryBuilder::new(
             "SELECT tb.target_id, t.id, t.name, t.color FROM tag_bindings tb \
              JOIN tags t ON t.id = tb.tag_id \
-             WHERE tb.target_type IN ('device','thing') AND tb.target_id IN ("
+             WHERE tb.target_type IN ('device','thing') AND tb.target_id IN (",
         );
         let mut separated = qb.separated(",");
         for id in thing_ids {
@@ -315,7 +315,8 @@ impl ThingService {
             .build_query_as::<(String, String, String, Option<String>)>()
             .fetch_all(&self.pool)
             .await?;
-        let mut map: std::collections::HashMap<String, Vec<TagInfo>> = std::collections::HashMap::new();
+        let mut map: std::collections::HashMap<String, Vec<TagInfo>> =
+            std::collections::HashMap::new();
         for (target_id, id, name, color) in rows {
             map.entry(target_id).or_default().push(TagInfo { id, name, color });
         }
