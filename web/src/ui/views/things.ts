@@ -2,7 +2,10 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { SignalWatcher } from "@lit-labs/signals";
 import { thingApi, type Thing } from "../../api/things.js";
+import { templateApi } from "../../api/templates.js";
+import { i18n } from "../../i18n/index.js";
 import { success, error as toastError } from "../components/toast.js";
+import { icons } from "../icons.js";
 
 type ViewMode = "list" | "tree";
 
@@ -13,6 +16,112 @@ interface TreeNode {
   children: TreeNode[];
   depth: number;
 }
+
+// === Template wizard helpers ===
+
+interface DeviceInfo {
+  defaultNamePattern: string;
+  defaultDisplayNamePattern?: string;
+  defaultDescription?: Record<string, string>;
+  defaultPosition?: string;
+  requiredFields: string[];
+}
+
+interface ProcessedTemplate {
+  id: string;
+  name: string;
+  displayName: Record<string, string>;
+  description: Record<string, string> | null;
+  category: string;
+  version: string;
+  manufacturer?: string;
+  deviceType: string;
+  protocolType?: string;
+  driverName?: string;
+  tags: string[];
+  deviceInfo: DeviceInfo;
+  properties: any[];
+  actions: any[];
+  isBuiltin: boolean;
+}
+
+function parseJsonField(raw: any, fallback: any): any {
+  if (raw === null || raw === undefined) return fallback;
+  if (typeof raw === "object") return raw;
+  if (typeof raw === "string") {
+    try { return JSON.parse(raw); } catch { return fallback; }
+  }
+  return fallback;
+}
+
+function transformTemplate(raw: any): ProcessedTemplate {
+  return {
+    id: raw.id,
+    name: raw.name,
+    displayName: parseJsonField(raw.displayName, {}),
+    description: parseJsonField(raw.description, null),
+    category: raw.category || "others",
+    version: raw.version || "",
+    manufacturer: raw.manufacturer,
+    deviceType: raw.deviceType || "",
+    protocolType: raw.protocolType,
+    driverName: raw.driverName,
+    tags: parseJsonField(raw.tags, []),
+    deviceInfo: parseJsonField(raw.deviceInfo, { defaultNamePattern: raw.name, requiredFields: [] } as DeviceInfo),
+    properties: parseJsonField(raw.properties, []),
+    actions: parseJsonField(raw.actions || raw.commands, []), // back-compat: accept old "commands" key
+    isBuiltin: raw.isBuiltin === 1 || raw.isBuiltin === true,
+  };
+}
+
+function isFieldRequired(deviceInfo: DeviceInfo | undefined, fieldName: string): boolean {
+  return deviceInfo?.requiredFields?.includes(fieldName) || false;
+}
+
+function getLocalizedText(obj: Record<string, string> | undefined, fallback: string): string {
+  if (!obj || typeof obj !== "object") return fallback;
+  const locale = i18n.getLocale();
+  if (locale.startsWith("zh")) {
+    return obj["zh"] || obj["en"] || Object.values(obj)[0] || fallback;
+  }
+  return obj["en"] || obj["zh"] || Object.values(obj)[0] || fallback;
+}
+
+const CATEGORY_LABELS: Record<string, string> = {
+  sensors: "传感器",
+  controllers: "控制器",
+  cameras: "摄像头",
+  gateways: "网关",
+  others: "其他",
+};
+
+const CATEGORY_ICONS: Record<string, ReturnType<typeof html>> = {
+  sensors: html`
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+      <path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z" />
+    </svg>
+  `,
+  controllers: html`
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+      <rect x="2" y="6" width="7" height="12" rx="2" />  <rect x="15" y="6" width="7" height="12" rx="2" />  <circle cx="5.5" cy="12" r="1.5" /><circle cx="18.5" cy="12" r="1.5" />
+    </svg>
+  `,
+  cameras: html`
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+      <path d="M23 7l-7 5 7 5V7z" />  <rect x="1" y="5" width="15" height="14" rx="2" />
+    </svg>
+  `,
+  gateways: html`
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+      <circle cx="12" cy="12" r="2" />  <path d="M12 2v4" />  <path d="M12 18v4" />  <path d="m4.93 4.93 2.83 2.83" />  <path d="m16.24 16.24 2.83 2.83" />  <path d="M2 12h4" />  <path d="M18 12h4" />
+    </svg>
+  `,
+  others: html`
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+      <rect x="3" y="3" width="18" height="18" rx="2" />  <circle cx="12" cy="12" r="3" />
+    </svg>
+  `,
+};
 
 @customElement("view-things")
 export class ThingsView extends SignalWatcher(LitElement) {
@@ -35,13 +144,23 @@ export class ThingsView extends SignalWatcher(LitElement) {
   // Upgrade notice
   @state() showUpgradeNotice = false;
 
-  // Create modal
-  @state() showCreateModal = false;
-  @state() createSaving = false;
-  @state() createName = "";
-  @state() createThingType = "";
-  @state() createParentId = "";
-  @state() createTemplateId = "";
+  // Wizard (2-step template-based)
+  @state() showWizard = false;
+  @state() wizardStep: "template" | "device" = "template";
+  @state() wizardLastFocus: HTMLElement | undefined;
+  @state() wizTemplates: ProcessedTemplate[] = [];
+  @state() wizTemplateLoading = false;
+  @state() wizTemplateSearch = "";
+  @state() wizSelectedTemplate: ProcessedTemplate | null = null;
+  @state() wizName = "";
+  @state() wizDescription = "";
+  @state() wizAddress = "";
+  @state() wizPosition = "";
+  @state() wizDriver = "";
+  @state() wizDriverConfig: Record<string, string> = {};
+  @state() wizConfigOptions: any[] = [];
+  @state() wizValidationErrors: Record<string, string> = {};
+  @state() wizardSaving = false;
 
   // Drag state
   @state() dragOverId: string | null = null;
@@ -205,43 +324,131 @@ export class ThingsView extends SignalWatcher(LitElement) {
     }
   }
 
-  // === Create ===
+  // === Wizard (2-step template-based) ===
 
-  openCreateModal() {
-    this.createName = "";
-    this.createThingType = "";
-    this.createParentId = "";
-    this.createTemplateId = "";
-    this.showCreateModal = true;
+  openWizard() {
+    this.showWizard = true;
+    this.wizardStep = "template";
+    this.wizSelectedTemplate = null;
+    this.wizTemplateSearch = "";
+    this.wizName = "";
+    this.wizDescription = "";
+    this.wizAddress = "";
+    this.wizPosition = "";
+    this.wizDriver = "";
+    this.wizDriverConfig = {};
+    this.wizConfigOptions = [];
+    this.wizValidationErrors = {};
+    this.wizardSaving = false;
+    this.loadTemplates();
   }
 
-  closeCreateModal() {
-    this.showCreateModal = false;
+  closeWizard() {
+    this.showWizard = false;
   }
 
-  async submitCreate() {
-    if (!this.createName.trim()) return;
-    this.createSaving = true;
+  async loadTemplates() {
+    this.wizTemplateLoading = true;
+    try {
+      const res = await templateApi.getTemplates({ page: 1, pageSize: 200 });
+      const data = res.result;
+      const rawList = data?.data || data || [];
+      this.wizTemplates = (Array.isArray(rawList) ? rawList : []).map(transformTemplate);
+    } catch {
+      this.wizTemplates = [];
+    } finally {
+      this.wizTemplateLoading = false;
+    }
+  }
+
+  selectTemplate(template: ProcessedTemplate) {
+    this.wizSelectedTemplate = template;
+    const di = template.deviceInfo;
+    this.wizName = di.defaultNamePattern
+      ? di.defaultNamePattern.replace("{name}", template.name)
+      : template.name;
+    this.wizDescription = di.defaultDescription
+      ? getLocalizedText(di.defaultDescription, "")
+      : getLocalizedText(template.description || {}, "");
+    this.wizAddress = "";
+    this.wizPosition = di.defaultPosition || "";
+    this.wizDriver = template.driverName || "";
+    this.wizDriverConfig = {};
+    this.wizConfigOptions = [];
+    this.wizValidationErrors = {};
+    this.wizardStep = "device";
+  }
+
+  wizardBack() {
+    this.wizardStep = "template";
+    this.wizValidationErrors = {};
+  }
+
+  get filteredWizardTemplates(): ProcessedTemplate[] {
+    const q = this.wizTemplateSearch.trim().toLowerCase();
+    if (!q) return this.wizTemplates;
+    return this.wizTemplates.filter(t => {
+      const name = t.name?.toLowerCase() || "";
+      const displayName = getLocalizedText(t.displayName, "").toLowerCase();
+      const desc = t.description ? Object.values(t.description).join(" ").toLowerCase() : "";
+      return name.includes(q) || displayName.includes(q) || desc.includes(q);
+    });
+  }
+
+  get wizardTemplatesByCategory(): Record<string, ProcessedTemplate[]> {
+    const groups: Record<string, ProcessedTemplate[]> = {};
+    for (const t of this.filteredWizardTemplates) {
+      const cat = t.category || "others";
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(t);
+    }
+    return groups;
+  }
+
+  validateWizardForm(): boolean {
+    const errors: Record<string, string> = {};
+    if (!this.wizName.trim()) {
+      errors.name = "物名称不能为空";
+    } else if (this.wizName.trim().length < 2) {
+      errors.name = "物名称至少需要2个字符";
+    } else if (this.wizName.trim().length > 50) {
+      errors.name = "物名称不能超过50个字符";
+    }
+    if (this.wizSelectedTemplate && isFieldRequired(this.wizSelectedTemplate.deviceInfo, "address") && !this.wizAddress.trim()) {
+      errors.address = "物地址是必填字段";
+    }
+    this.wizValidationErrors = errors;
+    return Object.keys(errors).length === 0;
+  }
+
+  async submitWizard() {
+    if (!this.wizSelectedTemplate) {
+      toastError("请先选择物模板");
+      return;
+    }
+    if (!this.validateWizardForm()) {
+      toastError("请检查并修正表单中的错误");
+      return;
+    }
+    if (this.wizardSaving) return;
+    this.wizardSaving = true;
     try {
       const payload: Record<string, unknown> = {
-        name: this.createName.trim(),
-        thingType: this.createThingType || undefined,
-        parentId: this.createParentId || undefined,
-        templateId: this.createTemplateId || undefined,
+        name: this.wizName.trim(),
+        thingType: this.wizSelectedTemplate.deviceType || undefined,
+        templateId: this.wizSelectedTemplate.id,
+        deviceType: this.wizSelectedTemplate.deviceType || undefined,
+        protocolType: this.wizSelectedTemplate.protocolType || undefined,
+        driverName: this.wizDriver || undefined,
       };
-      const res = await thingApi.create(payload);
-      const newThing = res.result;
+      await thingApi.create(payload);
       success("物已创建");
-      this.closeCreateModal();
-      if (newThing?.id) {
-        this.navigateToThing(newThing.id);
-      } else {
-        await this.loadThings();
-      }
+      this.closeWizard();
+      await this.loadThings();
     } catch (err: any) {
-      toastError(err.message || "创建失败");
+      toastError(err.message || "物创建失败");
     } finally {
-      this.createSaving = false;
+      this.wizardSaving = false;
     }
   }
 
@@ -298,7 +505,7 @@ export class ThingsView extends SignalWatcher(LitElement) {
         <div class="things-view__content">
           ${this.viewMode === "list" ? this.renderListView() : this.renderTreeView()}
         </div>
-        ${this.showCreateModal ? this.renderCreateModal() : nothing}
+        ${this.showWizard ? this.renderWizard() : nothing}
       </div>
     `;
   }
@@ -359,7 +566,7 @@ export class ThingsView extends SignalWatcher(LitElement) {
             aria-pressed=${this.viewMode === "tree"}
           >&#9776; 树</button>
         </div>
-        <button class="btn btn--primary" @click=${this.openCreateModal}>创建物</button>
+        <button class="btn btn--primary" @click=${this.openWizard}>创建物</button>
       </div>
     `;
   }
@@ -557,7 +764,7 @@ export class ThingsView extends SignalWatcher(LitElement) {
         <div style="font-size: 13px; color: var(--muted); margin-bottom: var(--space-4);">
           创建第一个物来开始管理您的 IoT 设备
         </div>
-        <button class="btn btn--primary" @click=${this.openCreateModal}>创建第一个物</button>
+        <button class="btn btn--primary" @click=${this.openWizard}>创建第一个物</button>
       </div>
     `;
   }
@@ -596,62 +803,162 @@ export class ThingsView extends SignalWatcher(LitElement) {
     `;
   }
 
-  // === Create Modal (D8) ===
+  // === Wizard (2-step template-based) ===
 
-  renderCreateModal() {
+  renderWizard() {
+    const isStep1 = this.wizardStep === "template";
     return html`
-      <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="创建物" @click=${this.closeCreateModal} @keydown=${(e: KeyboardEvent) => { if (e.key === "Escape") this.closeCreateModal(); }}>
-        <div class="modal" @click=${(e: Event) => e.stopPropagation()}>
-          <div class="modal-header">
-            <span>创建物</span>
-            <button class="btn btn--icon" aria-label="关闭" @click=${this.closeCreateModal}>&times;</button>
-          </div>
-          <div class="modal-body">
-            <div class="field">
-              <label class="label">名称 <span style="color: var(--danger);">*</span></label>
-              <input
-                type="text"
-                class="input"
-                placeholder="输入物名称"
-                .value=${this.createName}
-                @input=${(e: Event) => { this.createName = (e.target as HTMLInputElement).value; }}
-              />
-            </div>
-            <div class="field">
-              <label class="label">类型</label>
-              <select class="select" .value=${this.createThingType} @change=${(e: Event) => { this.createThingType = (e.target as HTMLSelectElement).value; }}>
-                <option value="">选择类型</option>
-                <option value="device">设备</option>
-                <option value="space">空间</option>
-                <option value="group">分组</option>
-              </select>
-            </div>
-            <div class="field">
-              <label class="label">父级（可选）</label>
-              <input
-                type="text"
-                class="input"
-                placeholder="父级物 ID"
-                .value=${this.createParentId}
-                @input=${(e: Event) => { this.createParentId = (e.target as HTMLInputElement).value; }}
-              />
-            </div>
-            <div class="field">
-              <label class="label">模板（可选）</label>
-              <input
-                type="text"
-                class="input"
-                placeholder="模板 ID"
-                .value=${this.createTemplateId}
-                @input=${(e: Event) => { this.createTemplateId = (e.target as HTMLInputElement).value; }}
-              />
-            </div>
-          </div>
-          <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-top: 1px solid var(--border);">
-            <button class="btn btn--ghost" @click=${this.closeCreateModal}>取消</button>
-            <button class="btn btn--primary" ?disabled=${this.createSaving || !this.createName.trim()} @click=${this.submitCreate}>
-              ${this.createSaving ? "创建中..." : "创建"}
+      <div class="wizard-overlay" role="dialog" aria-modal="true" aria-label="物创建向导" @click=${(e: Event) => { if ((e.target as HTMLElement).classList.contains("wizard-overlay")) this.closeWizard(); }} @keydown=${(e: KeyboardEvent) => { if (e.key === "Escape") this.closeWizard(); }}>
+        <div class="wizard-dialog">
+          <div class="wizard-dialog__header">
+            <button class="wizard-dialog__back" aria-label="返回" @click=${isStep1 ? this.closeWizard : this.wizardBack}>
+              <span class="rotate-90">${icons.arrowDown}</span>
+              <span>${isStep1 ? "返回物列表" : "返回模板选择"}</span>
             </button>
+            <span class="wizard-dialog__title">${isStep1 ? "选择物模板" : "填写物信息"}</span>
+            <button class="modal-close wizard-dialog__close" aria-label="关闭" @click=${this.closeWizard}>&times;</button>
+          </div>
+          <div class="wizard-dialog__body">
+            ${isStep1 ? this.renderWizardTemplateSelection() : this.renderWizardDeviceInfo()}
+          </div>
+          ${!isStep1 ? html`
+            <div class="wizard-form-footer">
+              <button class="btn btn--ghost" @click=${this.wizardBack}>上一步</button>
+              <button class="btn btn--primary" ?disabled=${this.wizardSaving || !this.wizName.trim()} @click=${this.submitWizard}>
+                ${this.wizardSaving ? "创建中..." : "创建物"}
+              </button>
+            </div>
+          ` : nothing}
+        </div>
+      </div>
+    `;
+  }
+
+  renderWizardTemplateSelection() {
+    const groups = this.wizardTemplatesByCategory;
+    const categories = Object.keys(groups);
+    return html`
+      <div class="wizard-search">
+        <span class="wizard-search__icon">${icons.search}</span>
+        <input type="text" class="wizard-search__input" placeholder="搜索物模板..."
+          .value=${this.wizTemplateSearch}
+          @input=${(e: Event) => { this.wizTemplateSearch = (e.target as HTMLInputElement).value; }}
+        />
+      </div>
+      ${this.wizTemplateLoading ? html`
+        <div class="wizard-loading">
+          <span class="loading-spinner"></span>
+          <span class="wizard-loading__text">加载中...</span>
+        </div>
+      ` : this.filteredWizardTemplates.length === 0 ? html`
+        <div class="wizard-empty">
+          <div class="wizard-empty__icon">&#128230;</div>
+          <div class="wizard-empty__title">没有找到匹配的模板</div>
+          <div class="wizard-empty__hint">尝试调整搜索条件或浏览其他分类</div>
+        </div>
+      ` : html`
+        ${categories.map(cat => html`
+          <div class="wizard-category">
+            <div class="wizard-category__header">
+              <span class="wizard-category__title">${CATEGORY_LABELS[cat] || cat}</span>
+              <span class="wizard-category__count">${groups[cat].length} 个模板</span>
+            </div>
+            <div class="wizard-template-grid">
+              ${groups[cat].map(t => this.renderTemplateCard(t))}
+            </div>
+          </div>
+        `)}
+      `}
+    `;
+  }
+
+  renderTemplateCard(t: ProcessedTemplate) {
+    const displayName = getLocalizedText(t.displayName, t.name);
+    return html`
+      <div class="card template-card" @click=${() => this.selectTemplate(t)}>
+        <div class="template-card__header">
+          <span class="template-card__icon">${CATEGORY_ICONS[t.category] || CATEGORY_ICONS.others}</span>
+          <div class="template-card__title-wrap">
+            <div class="template-card__title">${displayName}</div>
+            ${t.manufacturer ? html`<div class="inline-muted">${t.manufacturer}</div>` : nothing}
+          </div>
+          ${t.isBuiltin ? html`<span class="template-card__badge">内置</span>` : nothing}
+        </div>
+        <div class="template-card__meta">
+          ${t.deviceType ? html`<span>${t.deviceType}</span>` : nothing}
+          ${t.protocolType ? html`<span>${t.protocolType}</span>` : nothing}
+          ${t.version ? html`<span>v${t.version}</span>` : nothing}
+        </div>
+        <div class="template-card__stats">
+          <span>${t.properties.length} 属性</span>
+          <span>${t.actions.length} 动作</span>
+        </div>
+      </div>
+    `;
+  }
+
+  renderWizardDeviceInfo() {
+    const t = this.wizSelectedTemplate;
+    if (!t) return nothing;
+    const displayName = getLocalizedText(t.displayName, t.name);
+    return html`
+      <div class="wizard-split">
+        <div class="wizard-split__form wizard-fields">
+          <div class="wizard-form-header">
+            <div class="wizard-form-header__title">填写物信息</div>
+            <button class="btn btn--ghost btn--sm" @click=${this.wizardBack}>切换模板</button>
+          </div>
+          <div class="field">
+            <label class="label">名称 <span style="color: var(--danger);">*</span></label>
+            <input type="text" class="input" placeholder="输入物名称"
+              .value=${this.wizName}
+              @input=${(e: Event) => { this.wizName = (e.target as HTMLInputElement).value; }}
+            />
+            ${this.wizValidationErrors["name"] ? html`<div class="field-error">${this.wizValidationErrors["name"]}</div>` : nothing}
+          </div>
+          <div class="field">
+            <label class="label">描述</label>
+            <input type="text" class="input" placeholder="物描述"
+              .value=${this.wizDescription}
+              @input=${(e: Event) => { this.wizDescription = (e.target as HTMLInputElement).value; }}
+            />
+          </div>
+          <div class="field">
+            <label class="label">地址</label>
+            <input type="text" class="input" placeholder="物地址（如 IP、MAC）"
+              .value=${this.wizAddress}
+              @input=${(e: Event) => { this.wizAddress = (e.target as HTMLInputElement).value; }}
+            />
+            ${this.wizValidationErrors["address"] ? html`<div class="field-error">${this.wizValidationErrors["address"]}</div>` : nothing}
+          </div>
+          <div class="field">
+            <label class="label">位置</label>
+            <input type="text" class="input" placeholder="物理位置"
+              .value=${this.wizPosition}
+              @input=${(e: Event) => { this.wizPosition = (e.target as HTMLInputElement).value; }}
+            />
+          </div>
+        </div>
+        <div class="wizard-split__preview">
+          <div class="wizard-form-header">
+            <div class="wizard-form-header__title">模板预览</div>
+          </div>
+          <div class="card" style="padding: var(--space-3);">
+            <div class="template-card__header">
+              <span class="template-card__icon">${CATEGORY_ICONS[t.category] || CATEGORY_ICONS.others}</span>
+              <div class="template-card__title-wrap">
+                <div class="template-card__title">${displayName}</div>
+                ${t.manufacturer ? html`<div class="inline-muted">${t.manufacturer}</div>` : nothing}
+              </div>
+            </div>
+            <div class="template-card__meta" style="margin-top: var(--space-2);">
+              ${t.deviceType ? html`<span>${t.deviceType}</span>` : nothing}
+              ${t.protocolType ? html`<span>${t.protocolType}</span>` : nothing}
+            </div>
+            <div class="template-card__stats" style="margin-top: var(--space-2);">
+              <span>${t.properties.length} 属性</span>
+              <span>${t.actions.length} 动作</span>
+            </div>
           </div>
         </div>
       </div>
