@@ -401,7 +401,15 @@ impl ThingService {
         // 2. Fallback: device_commands table
         #[derive(Debug, serde::Serialize, sqlx::FromRow)]
         #[serde(rename_all = "camelCase")]
-        struct CmdRow { id: String, device_id: String, name: String, display_name: Option<String>, description: Option<String>, parameters: Option<String>, created_at: String }
+        struct CmdRow {
+            id: String,
+            device_id: String,
+            name: String,
+            display_name: Option<String>,
+            description: Option<String>,
+            parameters: Option<String>,
+            created_at: String,
+        }
         let cmd_rows: Vec<CmdRow> = sqlx::query_as::<_, CmdRow>(
             "SELECT id, device_id, name, display_name, description, parameters, created_at \
              FROM device_commands WHERE device_id = ? ORDER BY name",
@@ -411,7 +419,9 @@ impl ThingService {
         .await
         .ok()?;
         if !cmd_rows.is_empty() {
-            return Some(cmd_rows.into_iter().filter_map(|r| serde_json::to_value(r).ok()).collect());
+            return Some(
+                cmd_rows.into_iter().filter_map(|r| serde_json::to_value(r).ok()).collect(),
+            );
         }
         None
     }
