@@ -26,7 +26,7 @@ Docs-only changes: skip Rust/frontend batteries; run markdown lint and link-inte
 
 ## Project Snapshot
 
-TinyIoTHub is a Rust + Lit 3 SaaS IoT platform for managing edge gateway devices with multi-protocol support (Modbus, ONVIF, SNMP, MQTT). Architecture is DDD + Clean Architecture with a multi-crate workspace.
+TinyIoTHub is a Rust + Lit 3 SaaS IoT platform for managing things (物) — devices, spaces, buildings, production lines — with multi-protocol support (Modbus, ONVIF, SNMP, MQTT). Architecture is DDD + Clean Architecture with a multi-crate workspace. Things are organized in a hierarchical ontology with properties, events, actions, and knowledge resources.
 
 **Tech stack**: Rust 2024, Tokio, Axum, Tower, SQLx + SQLite | Lit 3 + Vite + TypeScript, nanostore
 
@@ -68,8 +68,10 @@ cloud/                       # SaaS application orchestration (main binary)
     api/                     # HTTP middleware (WorkspaceScope, auth)
     modules/                 # Business modules (types → service → handler)
       agent/                 # AI Agent (chat, config, tools, session, reflection, memory)
-      device/                # Device CRUD + drivers
-      alert/                 # Alert rules + notifications
+      device/                # Device connection runtime (drivers, telemetry, heartbeat)
+      thing/                 # Thing ontology management (CRUD, hierarchy, ontology, resources, summary)
+      event/                 # Event pipeline (router, throttle, real-time, SSE)
+      alarm/                 # Alarm rules + notifications (rule_type='device' | 'event')
       plugin/                # Plugin registry
       ...
     shared/                  # Cross-layer (persistence, security, error_handling, utils)
@@ -96,10 +98,42 @@ docs/                        # Technical docs, guides, specs
 ```
 modules/<module>/
   types.rs     # Request/response structs (never dto.rs)
-  service.rs   # Business logic
+  service.rs   # Business logic (services/mod.rs for multi-service modules)
   handler/     # HTTP handlers (call service, return ApiResponse)
+  repo.rs      # Database queries (Repository pattern, no SQL in handlers)
 shared/        # Cross-module (persistence, security, middleware)
 ```
+
+### Thing Ontology Module
+
+The `thing` module (`cloud/src/modules/thing/`) manages the thing (物) management plane:
+
+```
+modules/thing/
+  types.rs                       # ThingType, SummaryStatus, DTOs (ThingResponse, ThingTreeNode, etc.)
+  errors.rs                      # ThingError → HTTP status codes
+  repo.rs                        # ThingRepo: CRUD, tree, breadcrumb, cycle detection
+  service/
+    mod.rs                       # ThingService: list/get/profile/tree CRUD + resource attach
+    summary.rs                   # SummaryComputer: dirty markers, single-flight, LLM fencing
+    a2ui.rs                      # A2UI component mapper (DeviceCard, DataChart, ControlPanel)
+    import_export.rs             # DTDL/WoT Thing Description import/export
+  handler/
+    mod.rs                       # Router at /api/v1/things
+    crud.rs                      # CRUD + ontology + profile + tree handlers
+    actions.rs                   # POST confirm endpoint (invoke_action confirmation)
+    import_export.rs             # DTDL/WoT import/export HTTP handlers
+```
+
+**Key design decisions:**
+- `devices` table IS the `things` table (not a separate table). Device is the default `thing_type`.
+- `thing_type` distinguishes device/space/line/building. Non-device things have no connection state.
+- `parent_id` forms a hierarchical tree (RESTRICT on delete). `tags` provide flat multi-dimensional classification.
+- LLM summary is lazily computed on read (10s timeout, single-flight dedup, `<user_document>` fencing).
+- All name lookups are workspace-scoped via expression index `COALESCE(workspace_id, ''), name`.
+- Agent consumes things entirely through tools (no system prompt injection).
+
+**Removed:** Knowledge graph (`knowledge_entities`, `knowledge_relations`, `knowledge_parse_jobs`), `resources` table (→ `thing_resources`), `products` table (→ `thing_templates`), `real_time_events`/`lost_events`/`event_performance_metrics` (→ unified `events` table).
 
 ## Risk Tiers
 
