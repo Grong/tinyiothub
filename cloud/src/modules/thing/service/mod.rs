@@ -407,11 +407,6 @@ impl ThingService {
         .ok()?;
 
         if rows.is_empty() {
-            if let Ok(Some((ref json,))) = sqlx::query_as::<_, (String,)>(
-                "SELECT t.properties FROM thing_templates t JOIN devices d ON d.template_id=t.id WHERE d.id=?",
-            ).bind(device_id).fetch_optional(&self.pool).await {
-                return serde_json::from_str(json).ok();
-            }
             return None;
         }
         let values: Vec<serde_json::Value> =
@@ -420,50 +415,16 @@ impl ThingService {
     }
 
     /// Load actions: template first, then device_commands table.
+        /// Load actions from per-thing device_commands table.
     async fn load_actions(&self, thing_id: &str) -> Option<Vec<serde_json::Value>> {
-        // 1. Template's actions JSON
-        let row: Option<(Option<String>,)> = sqlx::query_as(
-            "SELECT t.actions FROM thing_templates t \
-             JOIN devices d ON d.template_id = t.id \
-             WHERE d.id = ?",
-        )
-        .bind(thing_id)
-        .fetch_optional(&self.pool)
-        .await
-        .ok()
-        .flatten();
-        if let Some((Some(ref json_str),)) = row
-            && let Ok(acts) = serde_json::from_str::<Vec<serde_json::Value>>(json_str)
-            && !acts.is_empty()
-        {
-            return Some(acts);
-        }
-        // 2. Fallback: device_commands table
         #[derive(Debug, serde::Serialize, sqlx::FromRow)]
         #[serde(rename_all = "camelCase")]
-        struct CmdRow {
-            id: String,
-            device_id: String,
-            name: String,
-            display_name: Option<String>,
-            description: Option<String>,
-            parameters: Option<String>,
-            created_at: String,
-        }
-        let cmd_rows: Vec<CmdRow> = sqlx::query_as::<_, CmdRow>(
-            "SELECT id, device_id, name, display_name, description, parameters, created_at \
-             FROM device_commands WHERE device_id = ? ORDER BY name",
-        )
-        .bind(thing_id)
-        .fetch_all(&self.pool)
-        .await
-        .ok()?;
-        if !cmd_rows.is_empty() {
-            return Some(
-                cmd_rows.into_iter().filter_map(|r| serde_json::to_value(r).ok()).collect(),
-            );
-        }
-        None
+        struct CmdRow { id: String, device_id: String, name: String, display_name: Option<String>, description: Option<String>, parameters: Option<String>, created_at: String }
+        let rows: Vec<CmdRow> = sqlx::query_as::<_, CmdRow>(
+            "SELECT id,device_id,name,display_name,description,parameters,created_at FROM device_commands WHERE device_id=? ORDER BY name",
+        ).bind(thing_id).fetch_all(&self.pool).await.ok()?;
+        if rows.is_empty() { return None; }
+        Some(rows.into_iter().filter_map(|r| serde_json::to_value(r).ok()).collect())
     }
 
     async fn load_knowledge_docs(&self, device_id: &str) -> Option<Vec<serde_json::Value>> {
@@ -477,11 +438,6 @@ impl ThingService {
         .ok()?;
 
         if rows.is_empty() {
-            if let Ok(Some((ref json,))) = sqlx::query_as::<_, (String,)>(
-                "SELECT t.properties FROM thing_templates t JOIN devices d ON d.template_id=t.id WHERE d.id=?",
-            ).bind(device_id).fetch_optional(&self.pool).await {
-                return serde_json::from_str(json).ok();
-            }
             return None;
         }
         let values: Vec<serde_json::Value> =
