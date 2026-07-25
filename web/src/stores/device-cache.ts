@@ -187,7 +187,7 @@ class DeviceCache {
   }
 
   private connectWithSseToken(sseToken: string, workspaceId: string): void {
-    const url = `${API_BASE}/events/sse/token?sse_token=${encodeURIComponent(sseToken)}&workspace_id=${encodeURIComponent(workspaceId)}&event_types=device.status_change,device.connection,device.property_change`;
+    const url = `${API_BASE}/events/sse/token?sse_token=${encodeURIComponent(sseToken)}&workspace_id=${encodeURIComponent(workspaceId)}&event_types=device.status_change,device.connection,device.property_change,thing.status_change,thing.property_change`;
 
     this.doConnect(url);
   }
@@ -201,7 +201,7 @@ class DeviceCache {
     }
 
     // 向后兼容：JWT 在 URL 中（?token=xxx）
-    const url = `${API_BASE}/events/sse?token=${encodeURIComponent(token)}&workspace_id=${encodeURIComponent(workspaceId)}&event_types=device.status_change,device.connection,device.property_change`;
+    const url = `${API_BASE}/events/sse?token=${encodeURIComponent(token)}&workspace_id=${encodeURIComponent(workspaceId)}&event_types=device.status_change,device.connection,device.property_change,thing.status_change,thing.property_change`;
 
     this.doConnect(url);
   }
