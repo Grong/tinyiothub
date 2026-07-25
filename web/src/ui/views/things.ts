@@ -2191,6 +2191,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     const profile = this.selectedDevice;
     if (!profile) return nothing;
     const docs = (profile as any).knowledgeDocs || [];
+    console.log('knowledge docs:', docs.length, 'editingDocId:', this.editingDocId);
 
     return html`
       <div class="card" style="margin-top: var(--space-4);">
