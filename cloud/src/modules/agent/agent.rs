@@ -124,8 +124,6 @@ pub struct AgentPool {
     pub memory_store: Arc<dyn tinyiothub_core::memory::MemoryStore>,
     pub workspace_service:
         tokio::sync::RwLock<Option<Arc<crate::modules::workspace::WorkspaceService>>>,
-    pub knowledge_service:
-        tokio::sync::RwLock<Option<Arc<crate::modules::workspace::KnowledgeService>>>,
     pub trust_configs: DashMap<String, tinyiothub_ai::types::TrustConfig>,
     pub memory_service:
         tokio::sync::RwLock<Option<Arc<tinyiothub_ai::memory::service::MemoryService>>>,
@@ -190,7 +188,6 @@ impl AgentPool {
             chat_handles: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             memory_store,
             workspace_service: tokio::sync::RwLock::new(None),
-            knowledge_service: tokio::sync::RwLock::new(None),
             trust_configs: DashMap::new(),
             memory_service: tokio::sync::RwLock::new(None),
             event_publisher: tokio::sync::RwLock::new(None),
@@ -218,14 +215,6 @@ impl AgentPool {
         service: Arc<crate::modules::workspace::WorkspaceService>,
     ) {
         let mut guard = self.workspace_service.write().await;
-        *guard = Some(service);
-    }
-
-    pub async fn set_knowledge_service(
-        &self,
-        service: Arc<crate::modules::workspace::KnowledgeService>,
-    ) {
-        let mut guard = self.knowledge_service.write().await;
         *guard = Some(service);
     }
 
@@ -268,15 +257,14 @@ impl AgentPool {
         let ws_dir = crate::shared::paths::workspace_dir(workspace_id);
 
         let ws_svc = self.workspace_service.read().await.clone();
-        let ks_svc = self.knowledge_service.read().await.clone();
         let trust_config =
             self.trust_configs.get(workspace_id).map(|e| std::sync::Arc::new(e.value().clone()));
         let tools = tool_service::resolve_tools_for_agent(
             &config,
             workspace_id,
             ws_svc,
-            ks_svc,
             trust_config,
+            Some(self.db_pool.clone()),
         )
         .await;
 
@@ -504,8 +492,8 @@ impl AgentPool {
         config_service::verify_agent_workspace(&self.db_pool, agent_id, workspace_id).await?;
         let config = config_service::get_config(&self.db_pool, agent_id).await?;
         let ws_svc = self.workspace_service.read().await.clone();
-        let ks_svc = self.knowledge_service.read().await.clone();
-        let all_tools = tool_service::load_all_tools(workspace_id, ws_svc, ks_svc).await;
+        let all_tools =
+            tool_service::load_all_tools(workspace_id, ws_svc, Some(self.db_pool.clone())).await;
         let effective = tool_service::filter_by_denylist(all_tools, &config.tool_denylist);
         let names: Vec<&str> = effective.iter().map(|t| t.name()).collect();
         Ok(serde_json::json!({ "tools": names }))

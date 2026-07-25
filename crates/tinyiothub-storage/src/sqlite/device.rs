@@ -84,8 +84,8 @@ impl DeviceRepository for SqliteDeviceRepository {
         if let Some(parent_id) = &criteria.parent_id {
             builder.push(" AND parent_id = ").push_bind(parent_id);
         }
-        if let Some(product_id) = &criteria.product_id {
-            builder.push(" AND product_id = ").push_bind(product_id);
+        if let Some(template_id) = &criteria.template_id {
+            builder.push(" AND template_id = ").push_bind(template_id);
         }
         if let Some(search_text) = &criteria.search_text {
             let keywords: Vec<&str> = search_text.split_whitespace().collect();
@@ -171,8 +171,8 @@ impl DeviceRepository for SqliteDeviceRepository {
         if let Some(parent_id) = &criteria.parent_id {
             builder.push(" AND parent_id = ").push_bind(parent_id);
         }
-        if let Some(product_id) = &criteria.product_id {
-            builder.push(" AND product_id = ").push_bind(product_id);
+        if let Some(template_id) = &criteria.template_id {
+            builder.push(" AND template_id = ").push_bind(template_id);
         }
         if let Some(search_text) = &criteria.search_text {
             let keywords: Vec<&str> = search_text.split_whitespace().collect();
@@ -215,7 +215,7 @@ impl DeviceRepository for SqliteDeviceRepository {
             INSERT INTO devices (
                 id, name, display_name, device_type, address, description, position,
                 driver_name, device_model, protocol_type, factory_name, linked_data,
-                driver_options, state, parent_id, product_id,
+                driver_options, state, parent_id, template_id,
                 linked_gateway, fingerprint, workspace_id, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
@@ -235,7 +235,7 @@ impl DeviceRepository for SqliteDeviceRepository {
         .bind(&request.driver_options)
         .bind(0i32)
         .bind(&request.parent_id)
-        .bind(&request.product_id)
+        .bind(&request.template_id)
         .bind(&request.linked_gateway)
         .bind(&request.fingerprint)
         .bind(&request.workspace_id)
@@ -366,11 +366,11 @@ impl DeviceRepository for SqliteDeviceRepository {
             builder.push("parent_id = ").push_bind(parent_id);
             has_updates = true;
         }
-        if let Some(product_id) = &request.product_id {
+        if let Some(template_id) = &request.template_id {
             if has_updates {
                 builder.push(", ");
             }
-            builder.push("product_id = ").push_bind(product_id);
+            builder.push("template_id = ").push_bind(template_id);
             has_updates = true;
         }
 
@@ -443,7 +443,7 @@ impl DeviceRepository for SqliteDeviceRepository {
                 INSERT INTO devices (
                     id, name, display_name, device_type, address, description, position,
                     driver_name, device_model, protocol_type, factory_name, linked_data,
-                    driver_options, state, parent_id, product_id,
+                    driver_options, state, parent_id, template_id,
                     linked_gateway, fingerprint, workspace_id, created_at, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 "#,
@@ -463,7 +463,7 @@ impl DeviceRepository for SqliteDeviceRepository {
             .bind(&request.driver_options)
             .bind(0i32)
             .bind(&request.parent_id)
-            .bind(&request.product_id)
+            .bind(&request.template_id)
             .bind(&request.linked_gateway)
             .bind(&request.fingerprint)
             .bind(&request.workspace_id)
@@ -488,7 +488,7 @@ impl DeviceRepository for SqliteDeviceRepository {
                 driver_options: request.driver_options.clone(),
                 status: tinyiothub_core::models::device::DeviceStatus::Offline,
                 parent_id: request.parent_id.clone(),
-                product_id: request.product_id.clone(),
+                template_id: request.template_id.clone(),
                 linked_gateway: request.linked_gateway.clone(),
                 fingerprint: request.fingerprint.clone(),
                 workspace_id: None,
@@ -571,13 +571,13 @@ impl DeviceRepository for SqliteDeviceRepository {
         Ok(devices)
     }
 
-    async fn find_by_product_id(&self, product_id: &str) -> Result<Vec<Device>> {
+    async fn find_by_template_id(&self, template_id: &str) -> Result<Vec<Device>> {
         let sql = format!(
-            "SELECT {} FROM devices WHERE product_id = ? ORDER BY name",
+            "SELECT {} FROM devices WHERE template_id = ? ORDER BY name",
             device_row_mapper::SELECT_COLUMNS
         );
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
-            .bind(product_id)
+            .bind(template_id)
             .fetch_all(self.database.pool())
             .await?;
 

@@ -1,6 +1,4 @@
-mod knowledge;
 use async_trait::async_trait;
-pub use knowledge::{KnowledgeRepository, SqliteKnowledgeRepository};
 use sqlx::{FromRow, QueryBuilder};
 use tinyiothub_core::error::{Error, Result};
 use tinyiothub_storage::sqlite::Database;
@@ -36,6 +34,7 @@ pub trait WorkspaceRepository: Send + Sync {
         description: Option<&str>,
         agent_id: Option<&str>,
         agent_config: Option<&str>,
+        require_action_confirm: Option<bool>,
     ) -> Result<Option<WorkspaceWithDeviceCount>>;
     async fn delete(&self, id: &str) -> Result<()>;
     async fn assign_device(&self, device_id: &str, workspace_id: &str) -> Result<()>;
@@ -91,6 +90,7 @@ struct WorkspaceWithDeviceCountRow {
     description: Option<String>,
     tenant_id: String,
     agent_id: Option<String>,
+    require_action_confirm: Option<bool>,
     created_at: String,
     updated_at: String,
     device_count: Option<i64>,
@@ -106,6 +106,7 @@ impl From<WorkspaceWithDeviceCountRow> for WorkspaceWithDeviceCount {
             description: row.description,
             tenant_id: row.tenant_id,
             agent_id: row.agent_id,
+            require_action_confirm: row.require_action_confirm,
             created_at: row.created_at,
             updated_at: row.updated_at,
             device_count: row.device_count,
@@ -226,6 +227,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
                 w.description,
                 w.tenant_id,
                 w.agent_id,
+                w.require_action_confirm,
                 w.created_at,
                 w.updated_at,
                 COUNT(d.id) as device_count
@@ -260,6 +262,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
                 w.description,
                 w.tenant_id,
                 w.agent_id,
+                w.require_action_confirm,
                 w.created_at,
                 w.updated_at,
                 COUNT(d.id) as device_count
@@ -293,8 +296,8 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
 
         sqlx::query(
             r#"
-            INSERT INTO workspaces (id, name, description, tenant_id, agent_id, agent_config, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO workspaces (id, name, description, tenant_id, agent_id, agent_config, require_action_confirm, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
             "#,
         )
         .bind(&id)
@@ -315,6 +318,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
             tenant_id: tenant_id.to_string(),
             agent_id: agent_id.map(String::from),
             agent_config: agent_config.map(String::from),
+            require_action_confirm: true,
             created_at: now.clone(),
             updated_at: now,
         })
@@ -327,6 +331,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         description: Option<&str>,
         agent_id: Option<&str>,
         agent_config: Option<&str>,
+        require_action_confirm: Option<bool>,
     ) -> Result<Option<WorkspaceWithDeviceCount>> {
         let mut builder = QueryBuilder::new("UPDATE workspaces SET ");
         let mut has_updates = false;
@@ -361,6 +366,14 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
                 builder.push(", ");
             }
             builder.push("agent_config = ").push_bind(c);
+            has_updates = true;
+        }
+
+        if let Some(rac) = require_action_confirm {
+            if has_updates {
+                builder.push(", ");
+            }
+            builder.push("require_action_confirm = ").push_bind(rac);
             has_updates = true;
         }
 

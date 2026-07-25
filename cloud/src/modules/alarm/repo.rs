@@ -58,6 +58,27 @@ pub trait AlarmRuleRepository: Send + Sync {
         enabled: bool,
         workspace_id: Option<&str>,
     ) -> AlarmResult<()>;
+    /// Find enabled event-type alarm rules matching a workspace and optionally a device.
+    /// Returns raw rows so the caller can deserialize `condition_config` as `EventAlarmCondition`.
+    async fn find_event_rules(
+        &self,
+        workspace_id: &str,
+        device_id: Option<&str>,
+    ) -> AlarmResult<Vec<EventRuleRow>>;
+}
+
+/// Raw row for an event-type alarm rule (rule_type='event').
+///
+/// The `condition_config` is JSON matching `EventAlarmCondition`,
+/// not the usual `AlarmCondition` enum — so it requires separate deserialization.
+#[derive(Debug, Clone)]
+pub struct EventRuleRow {
+    pub id: String,
+    pub rule_name: String,
+    pub condition_config: String,
+    pub alarm_level: String,
+    pub workspace_id: Option<String>,
+    pub notification_config_json: Option<String>,
 }
 
 /// 报警查询条件
@@ -686,6 +707,7 @@ impl SqliteAlarmRuleRepository {
             "change" => RuleType::Change,
             "duration" => RuleType::Duration,
             "composite" => RuleType::Composite,
+            "event" => RuleType::Event,
             _ => {
                 return Err(AlarmError::InvalidRuleConfig(format!(
                     "未知的规则类型: {}",
@@ -984,5 +1006,54 @@ impl AlarmRuleRepository for SqliteAlarmRuleRepository {
             .await
             .map_err(|e| AlarmError::InternalError(format!("更新规则状态失败: {}", e)))?;
         Ok(())
+    }
+
+    async fn find_event_rules(
+        &self,
+        workspace_id: &str,
+        device_id: Option<&str>,
+    ) -> AlarmResult<Vec<EventRuleRow>> {
+        use sqlx::Row;
+
+        let query = if device_id.is_some() {
+            "SELECT id, rule_name, condition_config, alarm_level, workspace_id, notification_config
+             FROM device_alarm_rules
+             WHERE rule_type = 'event'
+               AND is_enabled = 1
+               AND workspace_id = ?
+               AND (device_id = ? OR device_id IS NULL)
+             ORDER BY created_at DESC"
+        } else {
+            "SELECT id, rule_name, condition_config, alarm_level, workspace_id, notification_config
+             FROM device_alarm_rules
+             WHERE rule_type = 'event'
+               AND is_enabled = 1
+               AND workspace_id = ?
+               AND device_id IS NULL
+             ORDER BY created_at DESC"
+        };
+
+        let mut sqlx_query = sqlx::query(query).bind(workspace_id);
+        if let Some(did) = device_id {
+            sqlx_query = sqlx_query.bind(did);
+        }
+
+        let rows = sqlx_query
+            .fetch_all(self.database.pool())
+            .await
+            .map_err(|e| AlarmError::InternalError(format!("查询事件规则失败: {}", e)))?;
+
+        let mut event_rules = Vec::new();
+        for row in rows {
+            event_rules.push(EventRuleRow {
+                id: row.get("id"),
+                rule_name: row.get("rule_name"),
+                condition_config: row.get("condition_config"),
+                alarm_level: row.get("alarm_level"),
+                workspace_id: row.get("workspace_id"),
+                notification_config_json: row.get("notification_config"),
+            });
+        }
+        Ok(event_rules)
     }
 }

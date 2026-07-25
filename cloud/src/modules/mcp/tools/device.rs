@@ -1,5 +1,5 @@
-// Device Tools Module
-// MCP tools for device management
+// Thing Tools Module
+// MCP tools for thing management
 
 use std::collections::HashMap;
 
@@ -63,7 +63,6 @@ struct CreateDeviceInput {
     linked_data: Option<String>,
     connection_config: Option<String>,
     parent_id: Option<String>,
-    product_id: Option<String>,
     property_values: Option<HashMap<String, String>>,
     enabled_commands: Option<Vec<String>>,
 }
@@ -110,11 +109,11 @@ pub struct DeviceProfileHandler;
 #[async_trait]
 impl ToolHandler for DeviceProfileHandler {
     fn name(&self) -> &str {
-        "get_device"
+        "get_thing"
     }
 
     fn description(&self) -> &str {
-        "Get detailed information about a single device, including its property definitions, current values, status, and metrics"
+        "Get detailed information about a single thing, including its property definitions, current values, status, and metrics"
     }
 
     fn input_schema(&self) -> InputSchema {
@@ -123,14 +122,14 @@ impl ToolHandler for DeviceProfileHandler {
             "id".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some("Device ID (required)".to_string()),
+                description: Some("Thing ID (required)".to_string()),
             },
         );
         props.insert(
             "includeProperties".to_string(),
             PropertySchema {
                 prop_type: "boolean".to_string(),
-                description: Some("Include device properties (default: true)".to_string()),
+                description: Some("Include thing properties (default: true)".to_string()),
             },
         );
         InputSchema::object(vec!["id".to_string()], props)
@@ -152,7 +151,7 @@ impl ToolHandler for DeviceProfileHandler {
         let mut device = find_device_by_id_with_tags(state.database(), &input.id, "")
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
-            .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.id)))?;
+            .ok_or_else(|| ToolError::NotFound(format!("Thing {} not found", input.id)))?;
 
         // Sync real-time state
         if let Some(cached) = state.device_cache.get(&device.id) {
@@ -179,7 +178,7 @@ impl ToolHandler for DevicePropertyGetHandler {
     }
 
     fn description(&self) -> &str {
-        "Get the definition and current value of a specific property on a device"
+        "Get the definition and current value of a specific property on a thing"
     }
 
     fn input_schema(&self) -> InputSchema {
@@ -188,7 +187,7 @@ impl ToolHandler for DevicePropertyGetHandler {
             "deviceId".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some("Device ID (required)".to_string()),
+                description: Some("Thing ID (required)".to_string()),
             },
         );
         props.insert(
@@ -222,7 +221,7 @@ impl ToolHandler for DevicePropertyGetHandler {
         let _device = find_device_by_id(state.database(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
-            .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.device_id)))?;
+            .ok_or_else(|| ToolError::NotFound(format!("Thing {} not found", input.device_id)))?;
 
         let all_properties =
             find_device_properties_by_device_id(state.database(), &input.device_id)
@@ -232,7 +231,7 @@ impl ToolHandler for DevicePropertyGetHandler {
         let prop =
             all_properties.iter().find(|p| p.name == input.property_name).ok_or_else(|| {
                 ToolError::NotFound(format!(
-                    "Property '{}' not found on device {}",
+                    "Property '{}' not found on thing {}",
                     input.property_name, input.device_id
                 ))
             })?;
@@ -287,7 +286,7 @@ impl ToolHandler for WritePropertiesHandler {
     }
 
     fn description(&self) -> &str {
-        "Batch write device properties. Only writable properties can be updated."
+        "Batch write thing properties. Only writable properties can be updated."
     }
 
     fn input_schema(&self) -> InputSchema {
@@ -296,7 +295,7 @@ impl ToolHandler for WritePropertiesHandler {
             "deviceId".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some("Device ID (required)".to_string()),
+                description: Some("Thing ID (required)".to_string()),
             },
         );
         props.insert(
@@ -323,7 +322,7 @@ impl ToolHandler for WritePropertiesHandler {
         let _device = find_device_by_id(state.database(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
-            .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.device_id)))?;
+            .ok_or_else(|| ToolError::NotFound(format!("Thing {} not found", input.device_id)))?;
 
         let device_properties =
             find_device_properties_by_device_id(state.database(), &input.device_id)
@@ -410,7 +409,7 @@ impl ToolHandler for DeviceCommandHandler {
     }
 
     fn description(&self) -> &str {
-        "Send a command to a device"
+        "Send a command to a thing"
     }
 
     fn input_schema(&self) -> InputSchema {
@@ -419,7 +418,7 @@ impl ToolHandler for DeviceCommandHandler {
             "deviceId".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some("Device ID (required)".to_string()),
+                description: Some("Thing ID (required)".to_string()),
             },
         );
         props.insert(
@@ -453,7 +452,7 @@ impl ToolHandler for DeviceCommandHandler {
         let device = find_device_by_id(state.database(), &input.device_id)
             .await
             .map_err(|e| ToolError::Internal(e.to_string()))?
-            .ok_or_else(|| ToolError::NotFound(format!("Device {} not found", input.device_id)))?;
+            .ok_or_else(|| ToolError::NotFound(format!("Thing {} not found", input.device_id)))?;
 
         let is_online = state
             .device_cache
@@ -466,7 +465,7 @@ impl ToolHandler for DeviceCommandHandler {
                 device_id: input.device_id,
                 command_name: input.command_name,
                 success: false,
-                message: Some("Device is offline".to_string()),
+                message: Some("Thing is offline".to_string()),
                 execution_time: None,
             })
             .unwrap());
@@ -487,7 +486,7 @@ impl ToolHandler for DeviceCommandHandler {
                     device_id: input.device_id.clone(),
                     command_name: input.command_name.clone(),
                     success: false,
-                    message: Some(format!("Command '{}' not found on device", input.command_name)),
+                    message: Some(format!("Command '{}' not found on thing", input.command_name)),
                     execution_time: None,
                 })
                 .unwrap());
@@ -537,11 +536,11 @@ pub struct CreateDeviceHandler;
 #[async_trait]
 impl ToolHandler for CreateDeviceHandler {
     fn name(&self) -> &str {
-        "create_device"
+        "create_thing"
     }
 
     fn description(&self) -> &str {
-        "Create a new device from structured input"
+        "Create a new thing from structured input"
     }
 
     fn input_schema(&self) -> InputSchema {
@@ -559,7 +558,7 @@ impl ToolHandler for CreateDeviceHandler {
             "name".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some("Device name (required)".to_string()),
+                description: Some("Thing name (required)".to_string()),
             },
         );
         props.insert(
@@ -573,7 +572,7 @@ impl ToolHandler for CreateDeviceHandler {
             "address".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some("Device address".to_string()),
+                description: Some("Thing address".to_string()),
             },
         );
         props.insert(
@@ -622,7 +621,7 @@ impl ToolHandler for CreateDeviceHandler {
 
         let tenant_device_service = state.tenant_device_service_str(&workspace_id);
 
-        if let Some(template_id) = &input.template_id {
+        if let Some(template_id) = input.template_id.clone() {
             let device_input = DeviceCreationInput {
                 name: input.name,
                 display_name: input.display_name,
@@ -632,7 +631,7 @@ impl ToolHandler for CreateDeviceHandler {
                 driver_name: input.driver_name,
                 driver_options: input.connection_config,
                 parent_id: input.parent_id,
-                product_id: input.product_id,
+                template_id: Some(template_id.clone()),
                 property_values: input.property_values.unwrap_or_default(),
                 enabled_commands: input.enabled_commands.unwrap_or_default(),
                 tenant_id: None,
@@ -649,10 +648,9 @@ impl ToolHandler for CreateDeviceHandler {
                 .await
             {
                 Ok(device) => Ok(serde_json::to_value(device).unwrap()),
-                Err(e) => Err(ToolError::Internal(format!(
-                    "Failed to create device from template: {}",
-                    e
-                ))),
+                Err(e) => {
+                    Err(ToolError::Internal(format!("Failed to create thing from template: {}", e)))
+                }
             }
         } else {
             let request = CreateDeviceRequest {
@@ -669,14 +667,14 @@ impl ToolHandler for CreateDeviceHandler {
                 linked_data: input.linked_data,
                 driver_options: input.connection_config,
                 parent_id: input.parent_id,
-                product_id: input.product_id,
+                template_id: input.template_id,
                 linked_gateway: None,
                 fingerprint: None,
                 workspace_id: None,
             };
             match tenant_device_service.create_device(&request).await {
                 Ok(device) => Ok(serde_json::to_value(device).unwrap()),
-                Err(e) => Err(ToolError::Internal(format!("Failed to create device: {}", e))),
+                Err(e) => Err(ToolError::Internal(format!("Failed to create thing: {}", e))),
             }
         }
     }
@@ -688,11 +686,11 @@ pub struct DeleteDeviceHandler;
 #[async_trait]
 impl ToolHandler for DeleteDeviceHandler {
     fn name(&self) -> &str {
-        "delete_device"
+        "delete_thing"
     }
 
     fn description(&self) -> &str {
-        "Delete a device"
+        "Delete a thing"
     }
 
     fn input_schema(&self) -> InputSchema {
@@ -701,7 +699,7 @@ impl ToolHandler for DeleteDeviceHandler {
             "id".to_string(),
             PropertySchema {
                 prop_type: "string".to_string(),
-                description: Some("Device ID (required)".to_string()),
+                description: Some("Thing ID (required)".to_string()),
             },
         );
         InputSchema::object(vec!["id".to_string()], props)
@@ -721,17 +719,17 @@ impl ToolHandler for DeleteDeviceHandler {
         let tenant_device_service = state.tenant_device_service_str(&workspace_id);
 
         match tenant_device_service.delete_device(&input.id).await {
-            Ok(true) => Ok(serde_json::json!({"success": true, "device_id": input.id})),
+            Ok(true) => Ok(serde_json::json!({"success": true, "thing_id": input.id})),
             Ok(false) => Err(ToolError::NotFound(format!(
-                "Device {} not found or does not belong to workspace",
+                "Thing {} not found or does not belong to workspace",
                 input.id
             ))),
-            Err(e) => Err(ToolError::Internal(format!("Failed to delete device: {}", e))),
+            Err(e) => Err(ToolError::Internal(format!("Failed to delete thing: {}", e))),
         }
     }
 }
 
-// === Search Devices Handler ===
+// === Search Things Handler ===
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -769,11 +767,11 @@ pub struct SearchDevicesHandler;
 #[async_trait]
 impl ToolHandler for SearchDevicesHandler {
     fn name(&self) -> &str {
-        "search_devices"
+        "search_things"
     }
 
     fn description(&self) -> &str {
-        "Search devices by keyword across name, display name, address, and description. Returns a concise list of matching devices."
+        "Search things by keyword across name, display name, address, and description. Returns a concise list of matching things."
     }
 
     fn input_schema(&self) -> InputSchema {

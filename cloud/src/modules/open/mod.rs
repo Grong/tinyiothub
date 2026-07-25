@@ -18,12 +18,12 @@ use crate::shared::{api_response::ApiResponse, app_state::AppState};
 pub fn create_open_router() -> Router<AppState> {
     Router::new()
         .route("/open/health", get(open_health))
-        .route("/open/devices", get(list_devices))
-        .route("/open/devices/{id}", get(get_device))
-        .route("/open/devices/{id}/properties", get(get_device_properties))
-        .route("/open/devices/{id}/commands", get(list_commands))
-        .route("/open/devices/{id}/command", post(send_command))
-        .route("/open/devices/{id}/events", get(list_events))
+        .route("/open/things", get(list_things))
+        .route("/open/things/{id}", get(get_thing))
+        .route("/open/things/{id}/properties", get(get_thing_properties))
+        .route("/open/things/{id}/commands", get(list_commands))
+        .route("/open/things/{id}/command", post(send_command))
+        .route("/open/things/{id}/events", get(list_events))
         .route("/open/events", get(list_all_events))
         .fallback(handle_open_api)
 }
@@ -126,8 +126,8 @@ async fn open_health(
     })))
 }
 
-/// List devices
-async fn list_devices(
+/// List things
+async fn list_things(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Response<Body>, StatusCode> {
@@ -153,7 +153,7 @@ async fn list_devices(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let devices: Vec<_> = rows.into_iter().collect();
+    let things: Vec<_> = rows.into_iter().collect();
 
     let latency_ms = start.elapsed().as_millis() as i32;
     record_api_usage(
@@ -161,7 +161,7 @@ async fn list_devices(
         &workspace_id,
         Some(&key.id),
         "GET",
-        "/open/devices",
+        "/open/things",
         StatusCode::OK,
         latency_ms,
     )
@@ -170,12 +170,12 @@ async fn list_devices(
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "application/json")
-        .body(Body::from(serde_json::to_string(&devices).unwrap_or_default()))
+        .body(Body::from(serde_json::to_string(&things).unwrap_or_default()))
         .unwrap())
 }
 
-/// Get device details
-async fn get_device(
+/// Get thing details
+async fn get_thing(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<String>,
@@ -194,7 +194,7 @@ async fn get_device(
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let row = row.ok_or(StatusCode::NOT_FOUND)?;
-    let device = {
+    let thing = {
         use sqlx::Row;
         let get = |col: &str| -> Result<String, StatusCode> {
             row.try_get::<String, _>(col).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
@@ -224,7 +224,7 @@ async fn get_device(
         &workspace_id,
         Some(&key.id),
         "GET",
-        &format!("/open/devices/{}", id),
+        &format!("/open/things/{}", id),
         StatusCode::OK,
         latency_ms,
     )
@@ -233,12 +233,12 @@ async fn get_device(
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "application/json")
-        .body(Body::from(serde_json::to_string(&device).unwrap_or_default()))
+        .body(Body::from(serde_json::to_string(&thing).unwrap_or_default()))
         .unwrap())
 }
 
-/// Get device properties
-async fn get_device_properties(
+/// Get thing properties
+async fn get_thing_properties(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<String>,
@@ -249,7 +249,7 @@ async fn get_device_properties(
     let (key, _tenant, workspace_id) = validate_api_key(&state, api_key).await?;
 
     let rows = sqlx::query(
-        "SELECT name, display_name, data_type, value, unit, updated_at FROM device_properties WHERE device_id = ? ORDER BY created_at DESC"
+        "SELECT name, display_name, data_type, value, unit, updated_at FROM thing_properties WHERE device_id = ? ORDER BY created_at DESC"
     )
     .bind(&id)
     .fetch_all(state.database.pool())
@@ -285,7 +285,7 @@ async fn get_device_properties(
         &workspace_id,
         Some(&key.id),
         "GET",
-        &format!("/open/devices/{}/properties", id),
+        &format!("/open/things/{}/properties", id),
         StatusCode::OK,
         latency_ms,
     )
@@ -298,7 +298,7 @@ async fn get_device_properties(
         .unwrap())
 }
 
-/// List device commands
+/// List thing commands
 async fn list_commands(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -310,7 +310,7 @@ async fn list_commands(
     let (key, _tenant, workspace_id) = validate_api_key(&state, api_key).await?;
 
     let rows = sqlx::query(
-        "SELECT id, name, display_name, description, command_type FROM device_commands WHERE device_id = ? ORDER BY created_at DESC"
+        "SELECT id, name, display_name, description, command_type FROM thing_actions WHERE device_id = ? ORDER BY created_at DESC"
     )
     .bind(&id)
     .fetch_all(state.database.pool())
@@ -345,7 +345,7 @@ async fn list_commands(
         &workspace_id,
         Some(&key.id),
         "GET",
-        &format!("/open/devices/{}/commands", id),
+        &format!("/open/things/{}/commands", id),
         StatusCode::OK,
         latency_ms,
     )
@@ -358,7 +358,7 @@ async fn list_commands(
         .unwrap())
 }
 
-/// Send device command
+/// Send thing command
 async fn send_command(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -380,7 +380,7 @@ async fn send_command(
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
     sqlx::query(
-        "INSERT INTO device_commands (id, device_id, name, command_type, parameters, status, created_at, updated_at) VALUES (?, ?, ?, 'custom', ?, 'pending', ?, ?)"
+        "INSERT INTO thing_actions (id, device_id, name, command_type, parameters, status, created_at, updated_at) VALUES (?, ?, ?, 'custom', ?, 'pending', ?, ?)"
     )
     .bind(&cmd_id)
     .bind(&id)
@@ -404,7 +404,7 @@ async fn send_command(
         &workspace_id,
         Some(&key.id),
         "POST",
-        &format!("/open/devices/{}/command", id),
+        &format!("/open/things/{}/command", id),
         StatusCode::OK,
         latency_ms,
     )
@@ -417,7 +417,7 @@ async fn send_command(
         .unwrap())
 }
 
-/// Get device events
+/// Get thing events
 async fn list_events(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -459,7 +459,7 @@ async fn list_events(
         &workspace_id,
         Some(&key.id),
         "GET",
-        &format!("/open/devices/{}/events", id),
+        &format!("/open/things/{}/events", id),
         StatusCode::OK,
         latency_ms,
     )

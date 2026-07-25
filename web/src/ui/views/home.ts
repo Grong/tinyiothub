@@ -181,7 +181,7 @@ export class HomeView extends LitElement {
                 <span class="gradient">一句话的事</span>
               </h1>
               <p class="hero-desc">
-                AI 原生 AIoT 平台。融合知识图谱推理、3D 数字孪生与大模型智能运维，支持 Modbus/ONVIF/SNMP/MQTT 多协议接入，内置 L0-L3 自愈引擎。用自然语言完成设备配置、故障排查与数据洞察，内嵌 MCP Server——Claude、Cursor 即连即用。
+                AI 原生 AIoT 平台。融合知识图谱推理、3D 数字孪生与大模型智能运维，支持 Modbus/ONVIF/SNMP/MQTT 多协议接入，内置 L0-L3 自愈引擎。用自然语言完成物配置、故障排查与数据洞察，内嵌 MCP Server——Claude、Cursor 即连即用。
               </p>
               <div class="hero-cta">
                 <button class="btn btn--primary btn--lg" @click=${() => this.navigate('/login')}>
@@ -252,7 +252,7 @@ export class HomeView extends LitElement {
               <div class="section-label">核心能力</div>
               <h2 class="section-title">六大核心能力</h2>
               <p class="section-desc">
-                从设备接入到 AI 智能运维，覆盖 AIoT 全生命周期
+                从物接入到 AI 智能运维，覆盖 AIoT 全生命周期
               </p>
             </div>
             <div class="feature-grid">
@@ -260,7 +260,7 @@ export class HomeView extends LitElement {
                 <div class="feature-icon">
                   <svg viewBox="0 0 24 24" fill="none" stroke="url(#icon-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>
                 </div>
-                <h3>多协议设备接入</h3>
+                <h3>多协议物接入</h3>
                 <p>Modbus RTU/TCP、ONVIF、SNMP、MQTT，开箱即用</p>
               </div>
               <div class="feature-card reveal reveal-delay-2">
@@ -282,14 +282,14 @@ export class HomeView extends LitElement {
                   <svg viewBox="0 0 24 24" fill="none" stroke="url(#icon-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="12" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><line x1="8" y1="7.2" x2="10.3" y2="10.8"/><line x1="16" y1="7.2" x2="13.7" y2="10.8"/><line x1="8" y1="16.8" x2="10.3" y2="13.2"/><line x1="16" y1="16.8" x2="13.7" y2="13.2"/></svg>
                 </div>
                 <h3>知识图谱</h3>
-                <p>设备关系拓扑建模，故障影响范围推理，实体与关系灵活定义</p>
+                <p>物关系拓扑建模，故障影响范围推理，实体与关系灵活定义</p>
               </div>
               <div class="feature-card reveal reveal-delay-2">
                 <div class="feature-icon">
                   <svg viewBox="0 0 24 24" fill="none" stroke="url(#icon-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
                 </div>
                 <h3>自然语言运维</h3>
-                <p>用日常语言配置设备、查询状态、排查故障，内嵌 MCP Server</p>
+                <p>用日常语言配置物、查询状态、排查故障，内嵌 MCP Server</p>
               </div>
               <div class="feature-card reveal reveal-delay-3">
                 <div class="feature-icon">
@@ -309,7 +309,7 @@ export class HomeView extends LitElement {
               <div class="section-label">AI 原生优势</div>
               <h2 class="section-title">大模型驱动的智能运维</h2>
               <p class="section-desc">
-                深度融合 AI 能力，从设备管理到故障排查，用对话替代复杂操作
+                深度融合 AI 能力，从物管理到故障排查，用对话替代复杂操作
               </p>
             </div>
             <div class="ai-native-grid">
@@ -318,7 +318,7 @@ export class HomeView extends LitElement {
                   <svg viewBox="0 0 24 24" fill="none" stroke="url(#icon-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="5" r="2.5"/><circle cx="19" cy="5" r="2.5"/><circle cx="12" cy="12" r="2.5"/><circle cx="5" cy="19" r="2.5"/><circle cx="19" cy="19" r="2.5"/><line x1="7.2" y1="6.2" x2="10.5" y2="10.5"/><line x1="16.8" y1="6.2" x2="13.5" y2="10.5"/><line x1="7.2" y1="17.8" x2="10.5" y2="13.5"/><line x1="16.8" y1="17.8" x2="13.5" y2="13.5"/></svg>
                 </div>
                 <h3>知识图谱 · 智能推理</h3>
-                <p>自动构建设备关系拓扑，支持实体、属性、关系的灵活建模。故障发生时沿知识图谱推理影响范围，快速定位根因。</p>
+                <p>自动构建物关系拓扑，支持实体、属性、关系的灵活建模。故障发生时沿知识图谱推理影响范围，快速定位根因。</p>
                 <div class="ai-native-card__tags">
                   <span class="ai-native-card__tag">实体关系建模</span>
                   <span class="ai-native-card__tag">故障影响推理</span>
@@ -366,7 +366,7 @@ export class HomeView extends LitElement {
               </div>
               <div class="showcase-content">
                 <p class="section-desc" style="text-align: left; margin: 0 0 28px 0;">
-                  边缘侧与云端实时协同，设备状态即时同步，故障自动触发工单，构建完整的运维知识库。
+                  边缘侧与云端实时协同，物状态即时同步，故障自动触发工单，构建完整的运维知识库。
                 </p>
                 <div class="showcase-list">
                   <div class="showcase-item reveal reveal-delay-1">
@@ -375,7 +375,7 @@ export class HomeView extends LitElement {
                     </div>
                     <div>
                       <div class="showcase-item__title">智慧工厂</div>
-                      <div class="showcase-item__desc">老旧设备数字化改造，分钟级接入，零布线施工</div>
+                      <div class="showcase-item__desc">老旧物数字化改造，分钟级接入，零布线施工</div>
                     </div>
                   </div>
                   <div class="showcase-item reveal reveal-delay-2">
@@ -433,7 +433,7 @@ export class HomeView extends LitElement {
         <section class="cta-section reveal">
           <div class="cta-inner">
             <h2 class="cta-title">准备好开始了吗？</h2>
-            <p class="cta-desc">几分钟接入第一台设备，体验自然语言运维。开源免费，支持私有化部署。</p>
+            <p class="cta-desc">几分钟接入第一台物，体验自然语言运维。开源免费，支持私有化部署。</p>
             <div class="cta-buttons">
               <button class="btn btn--primary btn--lg" @click=${() => this.navigate('/login')}>
                 免费开始使用

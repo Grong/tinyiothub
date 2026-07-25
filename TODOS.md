@@ -264,5 +264,22 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
   - **Effort:** S (human: 20min / CC: 5min)
   - **Owner:** TBD
 
+## Thing Ontology (from /plan-eng-review 2026-07-22)
+
+### P3 — search_knowledge 升级 FTS5 trigram
+- **What:** thing_resources 全文检索从 `LIKE '%q%'` 扫描升级为 SQLite FTS5 trigram 虚拟表（含同步触发器）。
+- **Why:** 工程评审 D14 裁决本期维持 LIKE（预发布文档量级几十篇无感）；但 search_knowledge 是 Agent 高频调用路径，文档上千篇后全表扫描劣化。FTS5 默认 unicode61 分词对中文无效，需 trigram tokenizer（SQLite ≥3.34）。
+- **Context:** 现有 LIKE 实现见 `cloud/src/modules/workspace/repo/knowledge.rs:265`（图谱拆除后平移至 thing_resources repo）。升级点：建 fts 虚拟表 + INSERT/UPDATE/DELETE 同步触发器 + repo 查询改 MATCH。
+- **Depends on:** Thing Ontology mega-branch 落地（thing_resources 表存在后）。
+- **Effort:** M (human: ~1d / CC: ~1h)
+
 ## Completed
 
+
+## Thing Ontology Architecture Follow-up (from /plan-ceo-review 2026-07-25)
+
+### P2 — Move thing service SQL to storage layer
+- **What:** `cloud/src/modules/thing/service/mod.rs` has raw SQL in `load_properties`, `load_actions`, `load_knowledge_docs`, `load_tags_batch`, `copy_template_props`, `copy_template_acts`. The storage crate already has `find_device_properties_by_device_id` and `find_device_commands_by_device_id` — these should be used instead, following the Repository pattern (AGENTS.md anti-pattern: "Do not write SQL in API handlers").
+- **Why:** Table rename from `device_properties`→`thing_properties` required updating SQL in TWO places (service layer AND storage layer). This caused a production bug where storage layer queries failed after rename.
+- **Files:** `cloud/src/modules/thing/service/mod.rs`, `crates/tinyiothub-storage/src/sqlite/device_property.rs`, `crates/tinyiothub-storage/src/sqlite/device_command.rs`
+- **Effort:** S (human: ~1h / CC: ~10min)

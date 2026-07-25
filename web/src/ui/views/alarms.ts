@@ -169,7 +169,7 @@ export class AlarmsView extends LitElement {
           <thead>
             <tr>
               <th>级别</th>
-              <th>设备</th>
+              <th>物</th>
               <th>告警信息</th>
               <th>状态</th>
               <th>时间</th>

@@ -35,7 +35,7 @@ pub async fn find_device_command_by_id(db: &Database, id: &str) -> Result<Option
     let row = sqlx::query_as::<_, DeviceCommandRow>(
         r#"
         SELECT id, device_id, name, display_name, description, parameters, created_at
-        FROM device_commands WHERE id = ?
+        FROM thing_actions WHERE id = ?
         "#,
     )
     .bind(id)
@@ -57,7 +57,7 @@ pub async fn create_device_command(
 
     sqlx::query(
         r#"
-        INSERT INTO device_commands (id, device_id, name, display_name, description, parameters, created_at)
+        INSERT INTO thing_actions (id, device_id, name, display_name, description, parameters, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
         "#,
     )
@@ -92,7 +92,7 @@ pub async fn find_device_commands_by_device_id(
     let rows = sqlx::query_as::<_, DeviceCommandRow>(
         r#"
         SELECT id, device_id, name, display_name, description, parameters, created_at
-        FROM device_commands WHERE device_id = ?
+        FROM thing_actions WHERE device_id = ?
         ORDER BY name ASC
         "#,
     )
@@ -112,7 +112,7 @@ pub async fn find_device_command_by_device_and_name(
     let row = sqlx::query_as::<_, DeviceCommandRow>(
         r#"
         SELECT id, device_id, name, display_name, description, parameters, created_at
-        FROM device_commands WHERE device_id = ? AND name = ?
+        FROM thing_actions WHERE device_id = ? AND name = ?
         "#,
     )
     .bind(device_id)
@@ -137,7 +137,7 @@ pub async fn bulk_create_device_commands(
 
         sqlx::query(
             r#"
-            INSERT INTO device_commands (id, device_id, name, display_name, description, parameters, created_at)
+            INSERT INTO thing_actions (id, device_id, name, display_name, description, parameters, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             "#,
         )

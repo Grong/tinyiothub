@@ -50,7 +50,7 @@ pub async fn find_device_property_by_id(db: &Database, id: &str) -> Result<Optio
         r#"
         SELECT id, device_id, name, display_name, description, data_type, unit,
                min_value, max_value, default_value, is_read_only, created_at, updated_at
-        FROM device_properties WHERE id = ?
+        FROM thing_properties WHERE id = ?
         "#,
     )
     .bind(id)
@@ -74,7 +74,7 @@ pub async fn find_device_properties_by_device_id(
         r#"
         SELECT id, device_id, name, display_name, description, data_type, unit,
                min_value, max_value, default_value, is_read_only, created_at, updated_at
-        FROM device_properties WHERE device_id = ?
+        FROM thing_properties WHERE device_id = ?
         ORDER BY name
         "#,
     )
@@ -105,7 +105,7 @@ pub async fn create_device_properties_batch(
 
         sqlx::query(
             r#"
-            INSERT INTO device_properties (
+            INSERT INTO thing_properties (
                 id, device_id, name, display_name, description, data_type, unit,
                 min_value, max_value, default_value, is_read_only, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

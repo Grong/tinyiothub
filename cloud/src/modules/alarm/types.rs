@@ -695,6 +695,8 @@ pub enum RuleType {
     Change,
     Duration,
     Composite,
+    /// Event-based alarm rule: triggered when a thing event matches event_name + min_level
+    Event,
 }
 
 impl RuleType {
@@ -705,6 +707,7 @@ impl RuleType {
             RuleType::Change => "change",
             RuleType::Duration => "duration",
             RuleType::Composite => "composite",
+            RuleType::Event => "event",
         }
     }
 }

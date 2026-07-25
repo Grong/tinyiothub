@@ -254,7 +254,7 @@ export class WorkspaceView extends LitElement {
         <p class="workspace-empty__hint">AI 将在此处生成可交互的 3D 场景</p>
         <div class="workspace-empty__prompts">
           <span>生成智能楼宇的 3D 模型</span>
-          <span>可视化设备在楼层中的分布</span>
+          <span>可视化物在楼层中的分布</span>
         </div>
       </div>
     `;
@@ -272,7 +272,7 @@ export class WorkspaceView extends LitElement {
           </svg>
         </div>
         <p class="workspace-empty__title">数据洞察面板</p>
-        <p class="workspace-empty__hint">AI 将通过对话为您填充设备状态、图表等数据卡片</p>
+        <p class="workspace-empty__hint">AI 将通过对话为您填充物状态、图表等数据卡片</p>
       </div>
     `;
   }

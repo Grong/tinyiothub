@@ -1,7 +1,6 @@
 // Workspaces API handlers
 
 pub mod heartbeat;
-pub mod knowledge;
 
 use axum::{
     Json, Router,
@@ -57,20 +56,6 @@ pub fn create_router() -> Router<AppState> {
         .route("/{id}/resources/{rid}", get(get_resource))
         .route("/{id}/resources/{rid}", put(update_resource))
         .route("/{id}/resources/{rid}", delete(delete_resource))
-        // Knowledge graph routes
-        .route("/{id}/knowledge/documents", get(knowledge::list_documents))
-        .route("/{id}/knowledge/documents", post(knowledge::create_document))
-        .route("/{id}/knowledge/documents/{did}", get(knowledge::get_document))
-        .route("/{id}/knowledge/documents/{did}", put(knowledge::update_document))
-        .route("/{id}/knowledge/documents/{did}", delete(knowledge::delete_document))
-        .route("/{id}/knowledge/documents/{did}/parse", post(knowledge::trigger_parse))
-        .route("/{id}/knowledge/documents/{did}/preview", post(knowledge::preview_parse))
-        .route("/{id}/knowledge/parse/{job_id}", get(knowledge::get_parse_job))
-        .route("/{id}/knowledge/entities", get(knowledge::list_entities))
-        .route("/{id}/knowledge/entities/{eid}", put(knowledge::update_entity))
-        .route("/{id}/knowledge/relations", get(knowledge::list_relations))
-        .route("/{id}/knowledge/search", get(knowledge::search_knowledge))
-        .route("/{id}/knowledge/context", get(knowledge::get_context))
         // Heartbeat routes (per-workspace AI autonomous inspection)
         .route("/{id}/heartbeat/config", get(heartbeat::get_config))
         .route("/{id}/heartbeat/config", put(heartbeat::update_config))
@@ -155,7 +140,7 @@ async fn create_workspace(
         Ok(_agent_id) => {
             if let Ok(Some(updated)) = state
                 .workspace_service
-                .update(&workspace.id, None, None, Some(&_agent_id), None)
+                .update(&workspace.id, None, None, Some(&_agent_id), None, None)
                 .await
             {
                 (updated, None)
@@ -166,6 +151,7 @@ async fn create_workspace(
                     description: workspace.description,
                     tenant_id: workspace.tenant_id,
                     agent_id: workspace.agent_id,
+                    require_action_confirm: Some(workspace.require_action_confirm),
                     created_at: workspace.created_at,
                     updated_at: workspace.updated_at,
                     device_count: Some(0),
@@ -186,6 +172,7 @@ async fn create_workspace(
                 description: workspace.description,
                 tenant_id: workspace.tenant_id,
                 agent_id: workspace.agent_id,
+                require_action_confirm: Some(workspace.require_action_confirm),
                 created_at: workspace.created_at,
                 updated_at: workspace.updated_at,
                 device_count: Some(0),
@@ -201,6 +188,7 @@ async fn create_workspace(
         description: final_workspace.description,
         tenant_id: final_workspace.tenant_id,
         agent_id: final_workspace.agent_id,
+        require_action_confirm: Some(workspace.require_action_confirm),
         created_at: final_workspace.created_at,
         updated_at: final_workspace.updated_at,
         device_count: Some(0),
@@ -238,6 +226,7 @@ async fn update_workspace(
             payload.description.as_deref(),
             None,
             payload.agent_config.as_deref(),
+            payload.require_action_confirm,
         )
         .await
     {

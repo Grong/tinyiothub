@@ -245,7 +245,7 @@ export class LocalResourcesView extends LitElement {
         this.totalCount = data.pagination?.totalCount || data.data.length;
       }
     } catch (err: any) {
-      this.error = err.message || "加载设备模板失败";
+      this.error = err.message || "加载物模板失败";
     }
   }
 
@@ -685,7 +685,7 @@ export class LocalResourcesView extends LitElement {
       return html`
         <div class="settings-page lr-page">
           <div class="settings-tabs">
-            <button class="settings-tab active">设备模板</button>
+            <button class="settings-tab active">物模板</button>
             <button class="settings-tab">驱动管理</button>
             <button class="settings-tab">标签管理</button>
           </div>
@@ -700,7 +700,7 @@ export class LocalResourcesView extends LitElement {
       return html`
         <div class="settings-page lr-page">
           <div class="settings-tabs">
-            <button class="settings-tab active">设备模板</button>
+            <button class="settings-tab active">物模板</button>
             <button class="settings-tab">驱动管理</button>
             <button class="settings-tab">标签管理</button>
           </div>
@@ -744,7 +744,7 @@ export class LocalResourcesView extends LitElement {
         <!-- Left sidebar tabs -->
         <div class="settings-tabs">
           <button class="settings-tab ${tab === "templates" ? 'active' : ''}" @click=${() => this.switchTab("templates")}>
-            设备模板
+            物模板
             ${templateCount > 0 ? html`<span style="font-size: 11px; color: var(--muted); margin-left: 4px;">${templateCount}</span>` : nothing}
           </button>
           <button class="settings-tab ${tab === "drivers" ? 'active' : ''}" @click=${() => this.switchTab("drivers")}>
@@ -847,7 +847,7 @@ export class LocalResourcesView extends LitElement {
               ? html`<tr><td colspan="7" class="empty-center" style="padding: var(--space-9) var(--space-4);">
                 <div class="empty-center__icon" style="font-size: 36px; opacity: 1;">📦</div>
                 <div class="empty-center__text" style="font-weight: 600; margin-bottom: 4px;">暂无模板</div>
-                <div class="empty-center__text" style="margin-bottom: var(--space-3);">创建模板来定义设备属性和命令</div>
+                <div class="empty-center__text" style="margin-bottom: var(--space-3);">创建模板来定义物属性和命令</div>
                 <button class="btn btn--primary btn--sm" @click=${this.openCreate}>新建模板</button>
               </td></tr>`
               : this.templates.map(t => html`
@@ -893,7 +893,7 @@ export class LocalResourcesView extends LitElement {
             <tr>
               <th>驱动名称</th>
               <th>版本</th>
-              <th>关联设备</th>
+              <th>关联物</th>
               <th>描述</th>
               <th>操作</th>
             </tr>
@@ -903,7 +903,7 @@ export class LocalResourcesView extends LitElement {
               ? html`<tr><td colspan="5" class="empty-center" style="padding: var(--space-9) var(--space-4);">
                 <div class="empty-center__icon" style="font-size: 36px; opacity: 1;">⚙️</div>
                 <div class="empty-center__text" style="font-weight: 600; margin-bottom: 4px;">暂无驱动</div>
-                <div class="empty-center__text" style="margin-bottom: var(--space-3);">创建协议驱动来连接设备</div>
+                <div class="empty-center__text" style="margin-bottom: var(--space-3);">创建协议驱动来连接物</div>
                 <button class="btn btn--primary btn--sm" @click=${this.openDriverCreate}>新建驱动</button>
               </td></tr>`
               : this.drivers.map(d => html`
@@ -918,7 +918,7 @@ export class LocalResourcesView extends LitElement {
                   <td>${d.version || "-"}</td>
                   <td>
                     ${d.deviceNum > 0
-                      ? html`<span style="color: var(--success);">${d.deviceNum} 台设备</span>`
+                      ? html`<span style="color: var(--success);">${d.deviceNum} 台物</span>`
                       : html`<span style="color: var(--muted);">未关联</span>`
                     }
                   </td>
@@ -1068,7 +1068,7 @@ export class LocalResourcesView extends LitElement {
           <input type="text" placeholder="可选" .value=${this.formManufacturer} @input=${(e: any) => { this.formManufacturer = e.target.value; }} />
         </div>
         <div class="field">
-          <label>设备类型</label>
+          <label>物类型</label>
           <input type="text" placeholder="如 sensor, controller, camera" .value=${this.formDeviceType} @input=${(e: any) => { this.formDeviceType = e.target.value; }} />
         </div>
         <div class="field">
@@ -1081,7 +1081,7 @@ export class LocalResourcesView extends LitElement {
         </div>
       </div>
       <div class="tem-section-divider">
-        <span>设备信息</span>
+        <span>物信息</span>
       </div>
       <div class="tem-form-grid">
         <div class="field">
@@ -1587,7 +1587,7 @@ export class LocalResourcesView extends LitElement {
             <div class="tdc-stats">
               <div class="tdc-stat">
                 <span class="tdc-stat__num">${d.deviceNum}</span>
-                <span class="tdc-stat__label">关联设备</span>
+                <span class="tdc-stat__label">关联物</span>
               </div>
               <div class="tdc-stat">
                 <span class="tdc-stat__num">${d.optionsDescriptors.length}</span>

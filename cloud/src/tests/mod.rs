@@ -25,6 +25,7 @@ mod system_handler_tests;
 mod tag_handler_tests;
 mod template_handler_tests;
 mod tenant_handler_tests;
+mod thing_handler_tests;
 mod token_handler_tests;
 mod user_handler_tests;
 mod workspace_handler_tests;

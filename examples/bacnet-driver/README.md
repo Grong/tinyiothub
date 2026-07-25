@@ -154,7 +154,7 @@ curl -X POST http://localhost:8080/api/v1/drivers/upload \
 ### 2. 创建设备
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/devices \
+curl -X POST http://localhost:8080/api/v1/things \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

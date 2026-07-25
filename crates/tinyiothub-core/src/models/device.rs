@@ -100,7 +100,7 @@ pub struct Device {
     pub parent_id: Option<String>,
     pub linked_gateway: Option<String>,
     pub fingerprint: Option<String>,
-    pub product_id: Option<String>,
+    pub template_id: Option<String>,
     pub workspace_id: Option<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
@@ -129,7 +129,7 @@ pub struct DeviceQueryParams {
     pub driver_name: Option<String>,
     pub state: Option<i32>,
     pub parent_id: Option<String>,
-    pub product_id: Option<String>,
+    pub template_id: Option<String>,
     pub page: Option<u32>,
     pub page_size: Option<u32>,
 }
@@ -153,7 +153,7 @@ pub struct CreateDeviceRequest {
     pub parent_id: Option<String>,
     pub linked_gateway: Option<String>,
     pub fingerprint: Option<String>,
-    pub product_id: Option<String>,
+    pub template_id: Option<String>,
     #[serde(default)]
     pub workspace_id: Option<String>,
 }
@@ -178,7 +178,7 @@ pub struct UpdateDeviceRequest {
     pub parent_id: Option<String>,
     pub linked_gateway: Option<String>,
     pub fingerprint: Option<String>,
-    pub product_id: Option<String>,
+    pub template_id: Option<String>,
 }
 
 /// 设备统计信息
@@ -232,9 +232,9 @@ impl Device {
         self.parent_id.is_some()
     }
 
-    /// 检查设备是否关联了产品
-    pub fn has_product(&self) -> bool {
-        self.product_id.is_some()
+    /// 检查设备是否关联了模板
+    pub fn has_template(&self) -> bool {
+        self.template_id.is_some()
     }
 
     /// 验证设备配置
@@ -284,7 +284,7 @@ impl Default for Device {
             parent_id: None,
             linked_gateway: None,
             fingerprint: None,
-            product_id: None,
+            template_id: None,
             workspace_id: None,
             created_at: Some(now.clone()),
             updated_at: Some(now),
@@ -435,12 +435,12 @@ mod tests {
     }
 
     #[test]
-    fn test_device_has_product() {
+    fn test_device_has_template() {
         let mut device = Device::default();
-        assert!(!device.has_product());
+        assert!(!device.has_template());
 
-        device.product_id = Some("prod-001".to_string());
-        assert!(device.has_product());
+        device.template_id = Some("tmpl-001".to_string());
+        assert!(device.has_template());
     }
 
     #[test]

@@ -16,7 +16,7 @@ const SOURCE_LABELS: Record<string, string> = {
   reflection: "反思",
   import: "导入",
   system: "系统",
-  deviceSnapshot: "设备快照",
+  deviceSnapshot: "物快照",
 };
 
 const CONFIDENCE_LABELS: Record<string, string> = {

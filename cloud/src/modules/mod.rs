@@ -26,5 +26,6 @@ pub mod system;
 pub mod tag;
 pub mod template;
 pub mod tenant;
+pub mod thing;
 pub mod user;
 pub mod workspace;

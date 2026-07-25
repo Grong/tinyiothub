@@ -1,5 +1,3 @@
-pub mod knowledge;
-
 use std::sync::{Arc, Mutex};
 
 use tinyiothub_ai::{
@@ -93,8 +91,11 @@ impl WorkspaceService {
         description: Option<&str>,
         agent_id: Option<&str>,
         agent_config: Option<&str>,
+        require_action_confirm: Option<bool>,
     ) -> Result<Option<WorkspaceWithDeviceCount>> {
-        self.repository.update(id, name, description, agent_id, agent_config).await
+        self.repository
+            .update(id, name, description, agent_id, agent_config, require_action_confirm)
+            .await
     }
 
     pub async fn delete(&self, id: &str) -> Result<()> {
@@ -236,6 +237,7 @@ mod tests {
                 tenant_id: tenant_id.to_string(),
                 agent_id: None,
                 agent_config: None,
+                require_action_confirm: true,
                 created_at: String::new(),
                 updated_at: String::new(),
             })
@@ -247,6 +249,7 @@ mod tests {
             _description: Option<&str>,
             _agent_id: Option<&str>,
             _agent_config: Option<&str>,
+            _require_action_confirm: Option<bool>,
         ) -> Result<Option<WorkspaceWithDeviceCount>> {
             unimplemented!()
         }

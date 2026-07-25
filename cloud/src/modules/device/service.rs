@@ -512,8 +512,8 @@ impl DeviceService {
         self.repository.find_children(parent_id).await.map_err(|e| self.io_error(e))
     }
 
-    pub async fn get_devices_by_product(&self, product_id: &str) -> Result<Vec<Device>, Error> {
-        self.repository.find_by_product_id(product_id).await.map_err(|e| self.io_error(e))
+    pub async fn get_devices_by_template(&self, template_id: &str) -> Result<Vec<Device>, Error> {
+        self.repository.find_by_template_id(template_id).await.map_err(|e| self.io_error(e))
     }
 
     pub async fn get_devices_by_driver(&self, driver_name: &str) -> Result<Vec<Device>, Error> {
@@ -759,7 +759,7 @@ fn params_to_criteria(params: &DeviceQueryParams) -> DeviceCriteria {
         driver_name: params.driver_name.clone(),
         state: params.state,
         parent_id: params.parent_id.clone(),
-        product_id: params.product_id.clone(),
+        template_id: params.template_id.clone(),
         workspace_id: None,
         search_text: None,
         tag_name: None,

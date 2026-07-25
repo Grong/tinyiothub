@@ -153,21 +153,21 @@ class BacnetDriverTester:
         }
         
         response = requests.post(
-            f"{API_BASE_URL}/devices",
+            f"{API_BASE_URL}/things",
             headers=self.get_headers(),
             json=device_data
         )
-        
+
         if response.status_code == 200:
             data = response.json()
             if data.get("code") == 0:
                 self.device_id = data["result"]["id"]
-                print(f"✅ 设备创建成功，ID: {self.device_id}")
+                print(f"✅ 物创建成功，ID: {self.device_id}")
                 print(f"   名称: {data['result']['name']}")
                 print(f"   驱动: {data['result']['driver_name']}")
                 return True
-        
-        print(f"❌ 设备创建失败: {response.text}")
+
+        print(f"❌ 物创建失败: {response.text}")
         return False
     
     def read_device_data(self) -> bool:
@@ -225,13 +225,13 @@ class BacnetDriverTester:
         # 删除设备
         if self.device_id:
             response = requests.delete(
-                f"{API_BASE_URL}/devices/{self.device_id}",
+                f"{API_BASE_URL}/things/{self.device_id}",
                 headers=self.get_headers()
             )
             if response.status_code == 200:
-                print(f"✅ 设备已删除 (ID: {self.device_id})")
+                print(f"✅ 物已删除 (ID: {self.device_id})")
             else:
-                print(f"⚠️  删除设备失败: {response.text}")
+                print(f"⚠️  删除物失败: {response.text}")
                 success = False
         
         # 删除驱动

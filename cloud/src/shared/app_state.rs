@@ -118,9 +118,6 @@ pub struct AppState {
     /// 工作空间服务 - CRUD 操作
     pub workspace_service: Arc<crate::modules::workspace::WorkspaceService>,
 
-    /// 知识图谱服务 - 文档解析、实体关系、上下文生成
-    pub knowledge_service: Arc<crate::modules::workspace::KnowledgeService>,
-
     /// 标签服务 - CRUD 操作
     pub tag_service: Arc<crate::modules::tag::TagService>,
 
@@ -309,14 +306,6 @@ impl AppState {
         let workspace_service =
             Arc::new(crate::modules::workspace::WorkspaceService::new(workspace_repository));
 
-        // 知识图谱服务
-        let knowledge_repo =
-            Arc::new(crate::modules::workspace::repo::SqliteKnowledgeRepository::new(
-                database.as_ref().clone(),
-            ));
-        let knowledge_service =
-            Arc::new(crate::modules::workspace::KnowledgeService::new(knowledge_repo));
-
         // 标签服务
         let tag_service = Arc::new(crate::modules::tag::TagService::new(
             tag_repository.clone(),
@@ -382,6 +371,8 @@ impl AppState {
         let mqtt_port = config.mqtt.primary.port;
         let mqtt_username = config.mqtt.primary.username.clone().unwrap_or_default();
         let mqtt_password = config.mqtt.primary.password.clone().unwrap_or_default();
+        let throttle_state = Arc::new(crate::modules::event::router::ThrottleState::new(60));
+        let mqtt_db_pool = database.pool().clone();
         let mqtt_client = Arc::new(crate::shared::mqtt_client::PlatformMqttClient::new(
             &mqtt_broker,
             mqtt_port,
@@ -390,6 +381,8 @@ impl AppState {
             announce_tx,
             mqtt_rx,
             data_tx,
+            throttle_state,
+            mqtt_db_pool,
         ));
 
         // 启动宣告处理任务
@@ -436,7 +429,6 @@ impl AppState {
             user_service,
             tenant_service,
             workspace_service,
-            knowledge_service,
             tag_service,
             tag_repository,
             role_service,

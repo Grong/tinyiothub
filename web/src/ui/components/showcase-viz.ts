@@ -486,7 +486,7 @@ export class ShowcaseViz extends LitElement {
     }
   }
 
-  // 边缘集群 - 分散的设备节点 + 云中心
+  // 边缘集群 - 分散的物节点 + 云中心
   private buildCluster(positions: Float32Array, colors: Float32Array, count: number) {
     const hub = this.purple;
     const accent = this.gold;

@@ -175,7 +175,7 @@ mod core_interop {
                     tinyiothub_core::models::device::DeviceStatus::Offline
                 },
                 parent_id: None,
-                product_id: None,
+                template_id: None,
                 workspace_id: None,
                 linked_gateway: None,
                 fingerprint: None,

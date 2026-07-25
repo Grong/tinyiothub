@@ -67,7 +67,7 @@ export function renderWorkspaceTab(
         <textarea
           class="textarea"
           rows="8"
-          placeholder="描述这个 AI 助手所管理的工作区背景，例如：所管理的园区、建筑、设备类型和数量..."
+          placeholder="描述这个 AI 助手所管理的工作区背景，例如：所管理的园区、建筑、物类型和数量..."
           .value=${state.content}
           @input=${(e: InputEvent) => {
             state.content = (e.target as HTMLTextAreaElement).value;

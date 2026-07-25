@@ -1,5 +1,5 @@
 /**
- * 设备模板 API
+ * 物模板 API
  */
 
 import { apiGet, apiPost, apiPut, apiDelete } from './client.js';

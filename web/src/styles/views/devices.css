@@ -308,10 +308,10 @@
 /* Tag editor popover */
 .tag-popover {
   position: absolute;
-  top: 100%;
+  bottom: 100%;
   left: 0;
-  z-index: 100;
-  margin-top: var(--space-1);
+  z-index: 999;
+  margin-bottom: var(--space-1);
   min-width: 220px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -788,7 +788,7 @@
 
 .edit-inline-tag-popover {
   position: absolute;
-  top: 100%;
+  bottom: 100%;
   left: 0;
   z-index: 10;
   margin-top: 6px;

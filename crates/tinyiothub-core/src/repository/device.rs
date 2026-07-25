@@ -22,7 +22,7 @@ pub trait DeviceRepository: Send + Sync {
     async fn update_states_batch(&self, updates: &[(String, i32)]) -> Result<u64>;
     async fn update_enabled_status(&self, id: &str, enabled: bool) -> Result<bool>;
     async fn find_children(&self, parent_id: &str) -> Result<Vec<Device>>;
-    async fn find_by_product_id(&self, product_id: &str) -> Result<Vec<Device>>;
+    async fn find_by_template_id(&self, template_id: &str) -> Result<Vec<Device>>;
     async fn find_by_driver_name(&self, driver_name: &str) -> Result<Vec<Device>>;
     async fn find_by_linked_gateway(&self, linked_gateway: &str) -> Result<Vec<Device>>;
     async fn exists_by_name(&self, name: &str) -> Result<bool>;
@@ -47,7 +47,7 @@ pub struct DeviceCriteria {
     pub driver_name: Option<String>,
     pub state: Option<i32>,
     pub parent_id: Option<String>,
-    pub product_id: Option<String>,
+    pub template_id: Option<String>,
     pub workspace_id: Option<String>,
     pub search_text: Option<String>,
     pub tag_name: Option<String>,
@@ -117,8 +117,8 @@ impl DeviceCriteria {
         self
     }
 
-    pub fn with_product_id(mut self, product_id: String) -> Self {
-        self.product_id = Some(product_id);
+    pub fn with_template_id(mut self, template_id: String) -> Self {
+        self.template_id = Some(template_id);
         self
     }
 
@@ -197,8 +197,8 @@ impl DeviceCriteriaBuilder {
         self
     }
 
-    pub fn product_id(mut self, product_id: String) -> Self {
-        self.criteria.product_id = Some(product_id);
+    pub fn template_id(mut self, template_id: String) -> Self {
+        self.criteria.template_id = Some(template_id);
         self
     }
 

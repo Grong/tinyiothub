@@ -2,6 +2,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { SignalWatcher } from "@lit-labs/signals";
 import { deviceApi } from "../../api/devices.js";
+import { thingApi } from "../../api/things.js";
 import { driverApi } from "../../api/drivers.js";
 import { templateApi } from "../../api/templates.js";
 import { tagApi } from "../../api/tags.js";
@@ -235,6 +236,8 @@ export class DevicesView extends SignalWatcher(LitElement) {
   @state() wizConfigLoading = false;
   @state() wizValidationErrors: Record<string, string> = {};
   @state() driverNames: string[] = [];
+  @state() wizUnassignedResources: any[] = [];
+  @state() wizSelectedResourceIds: Set<string> = new Set();
 
   // Command execution
   @state() executingCommand = "";
@@ -327,14 +330,14 @@ export class DevicesView extends SignalWatcher(LitElement) {
     };
     document.addEventListener("device-updated", this._boundHandleDeviceUpdated);
     const path = window.location.pathname;
-    if (path.startsWith("/devices/")) {
+    if (path.startsWith("/things/")) {
       const id = path.split("/")[2];
       if (id) {
         this.loadDeviceDetail(id);
         return;
       }
     }
-    // 分页加载设备列表（SSE 缓存在进入详情页时按需初始化）
+    // 分页加载物列表（SSE 缓存在进入详情页时按需初始化）
     this.loadDevices();
     this.loadDriverNames();
     this.loadAllTags();
@@ -365,12 +368,13 @@ export class DevicesView extends SignalWatcher(LitElement) {
       const res = await deviceApi.getDevices(params);
       const data = res.result;
       if (data) {
-        this.devices = data.data || [];
-        this.totalPages = data.pagination?.totalPages || (this.devices.length > 0 ? 1 : 0);
-        this.total = data.pagination?.totalCount || this.devices.length;
+        // /api/v1/things returns { items, total, limit, offset } (ThingListResponse)
+        this.devices = data.items || data.data || [];
+        this.total = data.total || data.pagination?.totalCount || this.devices.length;
+        this.totalPages = Math.ceil(this.total / this.pageSize) || (this.devices.length > 0 ? 1 : 0);
       }
     } catch (err: any) {
-      this.error = err.message || "加载设备列表失败";
+      this.error = err.message || "加载物列表失败";
     } finally {
       this.loading = false;
     }
@@ -392,9 +396,20 @@ export class DevicesView extends SignalWatcher(LitElement) {
         deviceCache.setDeviceProperties(id, result.properties);
       }
 
-      this.selectedDevice = result;
+      // thing API returns flat profile; wrap into DeviceProfile format
+      // that the view expects (profile.device, profile.overview, etc.)
+      if (result && !result.device) {
+        this.selectedDevice = {
+          device: result,
+          overview: {},
+          properties: result.properties || [],
+          commands: result.recentEvents || [],
+        } as any;
+      } else {
+        this.selectedDevice = result;
+      }
     } catch (err: any) {
-      this.error = err.message || "加载设备详情失败";
+      this.error = err.message || "加载物详情失败";
     } finally {
       this.detailLoading = false;
       this.loading = false;
@@ -505,7 +520,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
   // === Navigation ===
 
   navigateToDevice(id: string) {
-    window.history.pushState({}, "", `/devices/${id}`);
+    window.history.pushState({}, "", `/things/${id}`);
     window.dispatchEvent(new PopStateEvent("popstate"));
     this.loadDeviceDetail(id);
   }
@@ -513,7 +528,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
   backToList() {
     this.selectedDevice = null;
     this.detailTab = "properties";
-    window.history.pushState({}, "", "/devices");
+    window.history.pushState({}, "", "/things");
     window.dispatchEvent(new PopStateEvent("popstate"));
     this.loadDevices();
   }
@@ -1088,13 +1103,13 @@ export class DevicesView extends SignalWatcher(LitElement) {
       const profileRes = await deviceApi.getDeviceProfile(d.id);
       const profile = profileRes.result;
       if (profile?.properties?.length) {
-        this.formProperties = profile.properties.map(p => ({
+        this.formProperties = profile.properties.map((p: any) => ({
           name: p.name, displayName: p.displayName, value: p.currentValue ?? p.value ?? '', dataType: p.dataType,
           unit: p.unit, isReadOnly: p.isReadOnly, minValue: p.minValue, maxValue: p.maxValue, description: p.description,
         }));
       }
       if (profile?.commands?.length) {
-        this.formCommands = profile.commands.map(c => ({
+        this.formCommands = profile.commands.map((c: any) => ({
           name: c.name, description: c.description,
           parameters: c.parameters && Object.keys(c.parameters).length > 0 ? JSON.stringify(c.parameters) : '',
         }));
@@ -1181,10 +1196,10 @@ export class DevicesView extends SignalWatcher(LitElement) {
       };
       if (this.editingDevice) {
         await deviceApi.updateDevice(this.editingDevice.id, payload);
-        success("设备已更新");
+        success("物已更新");
       } else {
         await deviceApi.createDevice(payload as CreateDeviceRequest);
-        success("设备已创建");
+        success("物已创建");
       }
       this.closeModal();
       await this.loadDevices();
@@ -1196,10 +1211,10 @@ export class DevicesView extends SignalWatcher(LitElement) {
   }
 
   async deleteDevice(d: Device) {
-    if (!confirm(`确定要删除设备 "${d.displayName || d.name}" 吗？`)) return;
+    if (!confirm(`确定要删除物 "${d.displayName || d.name}" 吗？`)) return;
     try {
       await deviceApi.deleteDevice(d.id);
-      success("设备已删除");
+      success("物已删除");
       await this.loadDevices();
     } catch (err: any) {
       toastError(err.message || "删除失败");
@@ -1207,7 +1222,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
   }
 
   async exportDeviceTemplate(d: Device) {
-    if (!confirm(`将设备 "${d.name}" 导出为模板？`)) return;
+    if (!confirm(`将物 "${d.name}" 导出为模板？`)) return;
     try {
       const res = await deviceApi.exportDeviceAsTemplate(d.id);
       success(`导出成功：模板 ID ${res.result?.templateId ?? ""}`);
@@ -1217,10 +1232,10 @@ export class DevicesView extends SignalWatcher(LitElement) {
   }
 
   async cloneDevice(d: Device) {
-    if (!confirm(`克隆设备 "${d.name}"？`)) return;
+    if (!confirm(`克隆物 "${d.name}"？`)) return;
     try {
       await deviceApi.cloneDevice(d.id);
-      success("设备克隆成功");
+      success("物克隆成功");
       this.loadDevices();
     } catch (e: any) {
       toastError(e.message || "克隆失败");
@@ -1257,12 +1272,24 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.wizConfigOptions = [];
     this.wizValidationErrors = {};
     this.wizardSaving = false;
+    this.wizUnassignedResources = [];
+    this.wizSelectedResourceIds = new Set();
     this.showWizard = true;
     this.loadTemplates();
+    this.loadUnassignedResources();
     requestAnimationFrame(() => {
       const overlay = this.querySelector(".wizard-overlay[role='dialog']");
       if (overlay) this.focusFirst(overlay as HTMLElement, 50);
     });
+  }
+
+  async loadUnassignedResources() {
+    try {
+      const res = await thingApi.listUnassignedResources();
+      this.wizUnassignedResources = res.result || [];
+    } catch {
+      this.wizUnassignedResources = [];
+    }
   }
 
   closeWizard() {
@@ -1351,15 +1378,15 @@ export class DevicesView extends SignalWatcher(LitElement) {
     const errors: Record<string, string> = {};
 
     if (!this.wizName.trim()) {
-      errors.deviceName = "设备名称不能为空";
+      errors.deviceName = "物名称不能为空";
     } else if (this.wizName.trim().length < 2) {
-      errors.deviceName = "设备名称至少需要2个字符";
+      errors.deviceName = "物名称至少需要2个字符";
     } else if (this.wizName.trim().length > 50) {
-      errors.deviceName = "设备名称不能超过50个字符";
+      errors.deviceName = "物名称不能超过50个字符";
     }
 
     if (this.wizSelectedTemplate && isFieldRequired(this.wizSelectedTemplate.deviceInfo, "address") && !this.wizAddress.trim()) {
-      errors.deviceAddress = "设备地址是必填字段";
+      errors.deviceAddress = "物地址是必填字段";
     }
 
     if (this.wizDriver && this.wizConfigOptions.length > 0) {
@@ -1381,7 +1408,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   async submitWizard() {
     if (!this.wizSelectedTemplate) {
-      toastError("请先选择设备模板");
+      toastError("请先选择物模板");
       return;
     }
     if (!this.validateWizardForm()) {
@@ -1417,16 +1444,27 @@ export class DevicesView extends SignalWatcher(LitElement) {
         enabledCommands: this.wizSelectedTemplate.commands?.map((c: any) => c.name) || [],
       };
 
-      await deviceApi.createDeviceFromTemplate({
+      const res = await deviceApi.createFromTemplate({
         templateId: this.wizSelectedTemplate.id,
         deviceInput,
       });
 
-      success("设备创建成功");
+      const newThing = res.result;
+      if (newThing?.id && this.wizSelectedResourceIds.size > 0) {
+        for (const resourceId of this.wizSelectedResourceIds) {
+          try {
+            await thingApi.attachResource(newThing.id, resourceId);
+          } catch {
+            // ignore individual failures
+          }
+        }
+      }
+
+      success("物创建成功");
       this.closeWizard();
       await this.loadDevices();
     } catch (err: any) {
-      toastError(err.message || "设备创建失败");
+      toastError(err.message || "物创建失败");
     } finally {
       this.wizardSaving = false;
     }
@@ -1466,7 +1504,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
         <div class="field filter-bar__search">
           <input
             type="text"
-            placeholder="搜索设备名称..."
+            placeholder="搜索物名称..."
             .value=${this.searchName}
             @input=${(e: Event) => { this.searchName = (e.target as HTMLInputElement).value; }}
             @keydown=${(e: KeyboardEvent) => { if (e.key === "Enter") { this.page = 1; this.loadDevices(); } }}
@@ -1500,7 +1538,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
             title="卡片视图"
           >&#9638;</button>
         </div>
-        <button class="btn btn--primary" @click=${this.openWizard}>新建设备</button>
+        <button class="btn btn--primary" @click=${this.openWizard}>新建物</button>
         <button class="btn btn--outline" @click=${() => { this.showPairingDialog = true; }}>${t("gatewayPairing.addGateway")}</button>
       </div>
     `;
@@ -1572,7 +1610,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
         <table class="data-table">
           <thead>
             <tr>
-              <th>设备名称</th>
+              <th>物名称</th>
               <th>类型</th>
               <th>协议</th>
               <th>状态</th>
@@ -1582,7 +1620,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
           </thead>
           <tbody>
             ${devices.length === 0
-              ? html`<tr><td colspan="6" class="empty-hint">暂无设备</td></tr>`
+              ? html`<tr><td colspan="6" class="empty-hint">暂无物</td></tr>`
               : devices.map(d => html`
                 <tr>
                   <td>
@@ -1619,7 +1657,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     const devices = this.devices;
     if (devices.length === 0) {
       return html`
-        <div class="card empty-hint">暂无设备</div>
+        <div class="card empty-hint">暂无物</div>
       `;
     }
     return html`
@@ -2072,7 +2110,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
         <div class="alarm-rules-card__header">
           <div>
             <div class="alarm-rules-card__title">告警规则</div>
-            <div class="alarm-rules-card__sub">管理设备的自动告警规则</div>
+            <div class="alarm-rules-card__sub">管理物的自动告警规则</div>
           </div>
           <button class="btn btn--primary btn--sm" @click=${this.openNewRule}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" class="btn__icon-left">
@@ -2092,7 +2130,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
                   <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
                 </svg>
                 <div class="alarm-rules-empty__text">暂无告警规则</div>
-                <div class="alarm-rules-empty__hint">添加规则后，设备数据变化将自动触发告警</div>
+                <div class="alarm-rules-empty__hint">添加规则后，物数据变化将自动触发告警</div>
               </div>
             `
             : html`
@@ -2214,7 +2252,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
               </span>
               <div>
                 <h2 class="device-edit-header__title">${isEdit ? '编辑告警规则' : '添加告警规则'}</h2>
-                <span class="device-edit-header__sub">设备: ${this.selectedDevice?.device?.displayName || this.selectedDevice?.device?.name}</span>
+                <span class="device-edit-header__sub">物: ${this.selectedDevice?.device?.displayName || this.selectedDevice?.device?.name}</span>
               </div>
             </div>
             <button class="device-edit-close" @click=${this.closeRuleModal} aria-label="关闭">&times;</button>
@@ -2424,7 +2462,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
     return html`
       <div class="modal-overlay device-edit-overlay" role="dialog" aria-modal="true"
-        aria-label="${isEdit ? '编辑设备' : '新建设备'}"
+        aria-label="${isEdit ? '编辑物' : '新建物'}"
         @click=${this.closeModal}
         @keydown=${(e: KeyboardEvent) => this.handleModalKeydown(e, this.closeModal)}>
         <div class="device-edit-dialog" @click=${(e: Event) => e.stopPropagation()}>
@@ -2439,7 +2477,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
               </span>
               <div>
                 <h2 class="device-edit-header__title">
-                  ${isEdit ? html`编辑设备 — <strong>${this.editingDevice!.name}</strong>` : '新建设备'}
+                  ${isEdit ? html`编辑物 — <strong>${this.editingDevice!.name}</strong>` : '新建物'}
                 </h2>
                 ${isEdit && this.editingDevice!.displayName ? html`<span class="device-edit-header__sub">${this.editingDevice!.displayName}</span>` : nothing}
               </div>
@@ -2486,13 +2524,13 @@ export class DevicesView extends SignalWatcher(LitElement) {
         </div>
         <div class="edit-grid edit-grid--2col">
           <div class="edit-field edit-field--required">
-            <label class="edit-field__label">设备名称</label>
+            <label class="edit-field__label">物名称</label>
             <input type="text" class="edit-field__input"
-              placeholder="输入设备名称" .value=${this.formName}
+              placeholder="输入物名称" .value=${this.formName}
               @input=${(e: any) => { this.formName = e.target.value; }} />
           </div>
           <div class="edit-field">
-            <label class="edit-field__label">设备类型</label>
+            <label class="edit-field__label">物类型</label>
             <input type="text" class="edit-field__input"
               placeholder="如 sensor, gateway" .value=${this.formType}
               @input=${(e: any) => { this.formType = e.target.value; }} />
@@ -2537,7 +2575,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
         <div class="edit-field edit-field--full" style="margin-top:4px">
           <label class="edit-field__label">描述</label>
           <textarea class="edit-field__textarea"
-            placeholder="可选的设备描述信息" .value=${this.formDescription}
+            placeholder="可选的物描述信息" .value=${this.formDescription}
             @input=${(e: any) => { this.formDescription = e.target.value; }} rows="2"></textarea>
         </div>
         <!-- Tags -->
@@ -2653,7 +2691,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     return html`
       <div class="edit-section">
         <div class="edit-section__header">
-          <span class="edit-section__title">设备属性</span>
+          <span class="edit-section__title">物属性</span>
           <button class="edit-property-add-btn" @click=${this.addFormProperty}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
               <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
@@ -2669,7 +2707,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
               <path d="M9 14l2 2 4-4"/>
             </svg>
             <span>暂无自定义属性</span>
-            <span class="edit-properties-empty__hint">点击「添加属性」来定义设备的数据点</span>
+            <span class="edit-properties-empty__hint">点击「添加属性」来定义物的数据点</span>
           </div>
         ` : html`
           <div class="edit-properties-list" style="overflow-x:auto">
@@ -2753,7 +2791,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     return html`
       <div class="edit-section">
         <div class="edit-section__header">
-          <span class="edit-section__title">设备命令</span>
+          <span class="edit-section__title">物命令</span>
           <button class="edit-property-add-btn" @click=${this.addFormCommand}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
               <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
@@ -2767,7 +2805,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
               <polygon points="5 3 19 12 5 21 5 3"/>
             </svg>
             <span>暂无命令定义</span>
-            <span class="edit-properties-empty__hint">添加命令以支持远程控制设备</span>
+            <span class="edit-properties-empty__hint">添加命令以支持远程控制物</span>
           </div>
         ` : html`
           <div class="edit-properties-list" style="overflow-x:auto">
@@ -2810,15 +2848,15 @@ export class DevicesView extends SignalWatcher(LitElement) {
   renderWizard() {
     const isStep1 = this.wizardStep === "template";
     return html`
-      <div class="wizard-overlay" role="dialog" aria-modal="true" aria-label="设备创建向导" @click=${(e: Event) => { if ((e.target as HTMLElement).classList.contains('wizard-overlay')) this.closeWizard(); }} @keydown=${(e: KeyboardEvent) => this.handleModalKeydown(e, this.closeWizard)}>
+      <div class="wizard-overlay" role="dialog" aria-modal="true" aria-label="物创建向导" @click=${(e: Event) => { if ((e.target as HTMLElement).classList.contains('wizard-overlay')) this.closeWizard(); }} @keydown=${(e: KeyboardEvent) => this.handleModalKeydown(e, this.closeWizard)}>
         <div class="wizard-dialog">
           <!-- Header -->
           <div class="wizard-dialog__header">
             <button class="wizard-dialog__back" aria-label="返回" @click=${isStep1 ? this.closeWizard : this.wizardBack}>
               <span class="rotate-90">${icons.arrowDown}</span>
-              <span>${isStep1 ? "返回设备列表" : "返回模板选择"}</span>
+              <span>${isStep1 ? "返回物列表" : "返回模板选择"}</span>
             </button>
-            <span class="wizard-dialog__title">${isStep1 ? "选择设备模板" : "填写设备信息"}</span>
+            <span class="wizard-dialog__title">${isStep1 ? "选择物模板" : "填写物信息"}</span>
             <button class="modal-close wizard-dialog__close" aria-label="关闭" @click=${this.closeWizard}>✕</button>
           </div>
           <!-- Body -->
@@ -2829,7 +2867,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
             <div class="wizard-form-footer">
               <button class="btn btn--ghost" @click=${this.wizardBack}>上一步</button>
               <button class="btn btn--primary" ?disabled=${this.wizardSaving || !this.wizName.trim()} @click=${this.submitWizard}>
-                ${this.wizardSaving ? "创建中..." : "创建设备"}
+                ${this.wizardSaving ? "创建中..." : "创建物"}
               </button>
             </div>
           ` : nothing}
@@ -2851,7 +2889,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
         <input
           type="text"
           class="wizard-search__input"
-          placeholder="搜索设备模板..."
+          placeholder="搜索物模板..."
           .value=${this.wizTemplateSearch}
           @input=${(e: Event) => { this.wizTemplateSearch = (e.target as HTMLInputElement).value; }}
         />
@@ -2924,7 +2962,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
         <!-- Left panel: form -->
         <div class="wizard-split__form wizard-fields">
           <div class="wizard-form-header">
-            <div class="wizard-form-header__title">填写设备信息</div>
+            <div class="wizard-form-header__title">填写物信息</div>
             <button class="btn btn--ghost btn--sm" @click=${this.wizardBack}>切换模板</button>
           </div>
 
@@ -2944,10 +2982,10 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
           <!-- Device name -->
           <div class="field ${hasError('deviceName') ? 'field--error' : ''}">
-            <span>设备名称 <span class="form-label-required">*</span></span>
+            <span>物名称 <span class="form-label-required">*</span></span>
             <input
               type="text"
-              placeholder="请输入设备名称"
+              placeholder="请输入物名称"
               .value=${this.wizName}
               @input=${(e: any) => { this.wizName = e.target.value; }}
             />
@@ -2956,9 +2994,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
           <!-- Device description -->
           <div class="field">
-            <span>设备描述 <span class="inline-muted">(可选)</span></span>
+            <span>物描述 <span class="inline-muted">(可选)</span></span>
             <textarea
-              placeholder="请输入设备描述"
+              placeholder="请输入物描述"
               rows="2"
               .value=${this.wizDescription}
               @input=${(e: any) => { this.wizDescription = e.target.value; }}
@@ -2967,12 +3005,12 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
           <!-- Device address -->
           <div class="field ${hasError('deviceAddress') ? 'field--error' : ''}">
-            <span>设备地址 ${isFieldRequired(t.deviceInfo, "address")
+            <span>物地址 ${isFieldRequired(t.deviceInfo, "address")
               ? html`<span class="form-label-required">*</span>`
               : html`<span class="inline-muted">(可选)</span>`}</span>
             <input
               type="text"
-              placeholder="请输入设备IP地址或连接地址"
+              placeholder="请输入物IP地址或连接地址"
               .value=${this.wizAddress}
               @input=${(e: any) => { this.wizAddress = e.target.value; }}
             />
@@ -2984,7 +3022,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
             <span>安装位置 <span class="inline-muted">(可选)</span></span>
             <input
               type="text"
-              placeholder="请输入设备安装位置"
+              placeholder="请输入物安装位置"
               .value=${this.wizPosition}
               @input=${(e: any) => { this.wizPosition = e.target.value; }}
             />
@@ -2992,7 +3030,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
           <!-- Driver select -->
           <div class="field">
-            <span>设备驱动 <span class="inline-muted">(选择适合的驱动程序)</span></span>
+            <span>物驱动 <span class="inline-muted">(选择适合的驱动程序)</span></span>
             <select .value=${this.wizDriver} @change=${(e: Event) => this.onWizardDriverSelect((e.target as HTMLSelectElement).value)}>
               <option value="">请选择驱动</option>
               ${this.driverNames.map(name => html`<option value=${name}>${name}</option>`)}
@@ -3021,6 +3059,30 @@ export class DevicesView extends SignalWatcher(LitElement) {
                   该驱动无需额外配置参数
                 </div>
               `}
+            </div>
+          ` : nothing}
+
+          ${this.wizUnassignedResources.length > 0 ? html`
+            <div class="wizard-form-section">
+              <div class="wizard-form-section__header">
+                <span class="wizard-form-section__title">挂载资源</span>
+                <span class="wizard-form-section__meta">(${this.wizUnassignedResources.length} 个未指派)</span>
+              </div>
+              ${this.wizUnassignedResources.map((r: any) => html`
+                <label class="field field--row" style="display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1) 0;">
+                  <input type="checkbox"
+                    .checked=${this.wizSelectedResourceIds.has(r.id)}
+                    @change=${(e: Event) => {
+                      const checked = (e.target as HTMLInputElement).checked;
+                      const next = new Set(this.wizSelectedResourceIds);
+                      checked ? next.add(r.id) : next.delete(r.id);
+                      this.wizSelectedResourceIds = next;
+                    }}
+                  />
+                  <span>${r.name || r.filePath}</span>
+                  <span class="inline-muted">${r.resourceType}</span>
+                </label>
+              `)}
             </div>
           ` : nothing}
         </div>

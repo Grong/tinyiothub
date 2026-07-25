@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS devices (
     driver_options TEXT,
     state INTEGER NOT NULL DEFAULT 0,
     parent_id TEXT,
-    product_id TEXT,
+    template_id TEXT,
     workspace_id TEXT,
     linked_gateway TEXT,
     fingerprint TEXT,

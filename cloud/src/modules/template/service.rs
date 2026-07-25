@@ -85,7 +85,7 @@ impl TemplateEngine {
                 .clone()
                 .or_else(|| device_info.default_driver_options.clone()),
             parent_id: user_input.parent_id.clone(),
-            product_id: user_input.product_id.clone(),
+            template_id: user_input.template_id.clone(),
             linked_gateway: None,
             fingerprint: None,
             workspace_id: None,
@@ -647,10 +647,10 @@ impl TemplateValidator {
                     {
                         result.add_error("parent_id", "父设备ID是必填字段", "REQUIRED_FIELD");
                     }
-                    "product_id"
-                        if input.product_id.as_ref().is_none_or(|id| id.trim().is_empty()) =>
+                    "template_id"
+                        if input.template_id.as_ref().is_none_or(|id| id.trim().is_empty()) =>
                     {
-                        result.add_error("product_id", "产品ID是必填字段", "REQUIRED_FIELD");
+                        result.add_error("template_id", "产品ID是必填字段", "REQUIRED_FIELD");
                     }
                     _ => {
                         // 其他自定义必填字段的验证可以在这里扩展

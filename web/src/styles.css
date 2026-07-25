@@ -12,6 +12,7 @@
 @import "./styles/views/models.css";
 @import "./styles/views/monitoring.css";
 @import "./styles/views/devices.css";
+@import "./styles/views/things.css";
 @import "./styles/views/settings.css";
 @import "./styles/views/alarms.css";
 @import "./styles/views/events.css";

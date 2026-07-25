@@ -239,9 +239,9 @@ impl TemplateSearchService {
             r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, device_type, protocol_type, driver_name, tags,
-                   device_info, properties, commands, is_builtin, is_active,
+                   device_info, properties, actions, is_builtin, is_active,
                    created_at, updated_at
-            FROM device_templates WHERE is_active = 1
+            FROM thing_templates WHERE is_active = 1
             "#,
         );
 
@@ -321,9 +321,9 @@ impl TemplateSearchService {
             r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, device_type, protocol_type, driver_name, tags,
-                   device_info, properties, commands, is_builtin, is_active,
+                   device_info, properties, actions, is_builtin, is_active,
                    created_at, updated_at
-            FROM device_templates
+            FROM thing_templates
             WHERE is_active = 1 AND category =
             "#,
         );
@@ -353,9 +353,9 @@ impl TemplateSearchService {
             r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, device_type, protocol_type, driver_name, tags,
-                   device_info, properties, commands, is_builtin, is_active,
+                   device_info, properties, actions, is_builtin, is_active,
                    created_at, updated_at
-            FROM device_templates
+            FROM thing_templates
             WHERE is_active = 1 AND manufacturer =
             "#,
         );
@@ -385,9 +385,9 @@ impl TemplateSearchService {
             r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, device_type, protocol_type, driver_name, tags,
-                   device_info, properties, commands, is_builtin, is_active,
+                   device_info, properties, actions, is_builtin, is_active,
                    created_at, updated_at
-            FROM device_templates
+            FROM thing_templates
             WHERE is_active = 1 AND protocol_type =
             "#,
         );
@@ -416,9 +416,9 @@ impl TemplateSearchService {
             r#"
             SELECT id, name, display_name, description, version, author, category,
                    manufacturer, device_type, protocol_type, driver_name, tags,
-                   device_info, properties, commands, is_builtin, is_active,
+                   device_info, properties, actions, is_builtin, is_active,
                    created_at, updated_at
-            FROM device_templates WHERE is_active = 1
+            FROM thing_templates WHERE is_active = 1
             "#,
         );
 
@@ -505,16 +505,16 @@ impl TemplateSearchService {
 
         let suggestions = sqlx::query(
             r#"
-            SELECT DISTINCT name as suggestion FROM device_templates
+            SELECT DISTINCT name as suggestion FROM thing_templates
             WHERE is_active = 1 AND name LIKE ?
             UNION
-            SELECT DISTINCT category as suggestion FROM device_templates
+            SELECT DISTINCT category as suggestion FROM thing_templates
             WHERE is_active = 1 AND category LIKE ?
             UNION
-            SELECT DISTINCT manufacturer as suggestion FROM device_templates
+            SELECT DISTINCT manufacturer as suggestion FROM thing_templates
             WHERE is_active = 1 AND manufacturer IS NOT NULL AND manufacturer LIKE ?
             UNION
-            SELECT DISTINCT protocol_type as suggestion FROM device_templates
+            SELECT DISTINCT protocol_type as suggestion FROM thing_templates
             WHERE is_active = 1 AND protocol_type IS NOT NULL AND protocol_type LIKE ?
             ORDER BY suggestion
             LIMIT ?
@@ -541,15 +541,15 @@ impl TemplateSearchService {
 
         let popular = sqlx::query(
             r#"
-            SELECT category as keyword, COUNT(*) as count FROM device_templates
+            SELECT category as keyword, COUNT(*) as count FROM thing_templates
             WHERE is_active = 1
             GROUP BY category
             UNION
-            SELECT manufacturer as keyword, COUNT(*) as count FROM device_templates
+            SELECT manufacturer as keyword, COUNT(*) as count FROM thing_templates
             WHERE is_active = 1 AND manufacturer IS NOT NULL
             GROUP BY manufacturer
             UNION
-            SELECT protocol_type as keyword, COUNT(*) as count FROM device_templates
+            SELECT protocol_type as keyword, COUNT(*) as count FROM thing_templates
             WHERE is_active = 1 AND protocol_type IS NOT NULL
             GROUP BY protocol_type
             ORDER BY count DESC
@@ -573,7 +573,7 @@ impl TemplateSearchService {
         params: &TemplateQueryParams,
     ) -> Result<i64, TemplateError> {
         let mut query =
-            QueryBuilder::new("SELECT COUNT(*) as count FROM device_templates WHERE is_active = 1");
+            QueryBuilder::new("SELECT COUNT(*) as count FROM thing_templates WHERE is_active = 1");
 
         self.build_search_conditions(&mut query, params);
 

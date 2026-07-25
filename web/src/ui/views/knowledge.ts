@@ -781,7 +781,7 @@ export class KnowledgeView extends LitElement {
           <line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
         </svg>
         <h3>暂无知识文档</h3>
-        <p>创建 Markdown 文档来描述您的物联网场景，AI 将自动抽取空间、设备、关系等结构化知识。</p>
+        <p>创建 Markdown 文档来描述您的物联网场景，AI 将自动抽取空间、物、关系等结构化知识。</p>
         <div class="knowledge-empty-actions">
           <button class="btn btn-primary" @click=${() => this.openEditor()}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
@@ -965,7 +965,7 @@ export class KnowledgeView extends LitElement {
     const diffStatus = this.getDiffStatus(entity);
     const typeConfig: Record<string, { icon: string; label: string }> = {
       space: { icon: '◻', label: '空间' },
-      device: { icon: '⬡', label: '设备' },
+      device: { icon: '⬡', label: '物' },
       functional: { icon: '⚙', label: '功能' },
     };
     const tc = typeConfig[entity.entityType] || { icon: '●', label: entity.entityType };

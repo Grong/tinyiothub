@@ -128,7 +128,7 @@ export class DashboardView extends LitElement {
     return html`
       <div class="stats-grid">
         <div class="card stat-card">
-          <div class="stat-card__label">设备总数</div>
+          <div class="stat-card__label">物总数</div>
           <div class="stat-card__value">${this.formatNumber(s?.totalDevices)}</div>
           <div class="stat-card__meta" style="color: var(--success);">${this.formatNumber(s?.onlineDevices)} 在线</div>
         </div>
@@ -164,7 +164,7 @@ export class DashboardView extends LitElement {
     const total = (d?.online ?? 0) + (d?.offline ?? 0) + (d?.error ?? 0) + (d?.maintenance ?? 0);
     return html`
       <div class="card" style="padding: 20px;">
-        <div style="font-weight: 600; margin-bottom: 16px;">设备状态分布</div>
+        <div style="font-weight: 600; margin-bottom: 16px;">物状态分布</div>
         ${d ? html`
           <div style="display: flex; flex-direction: column; gap: 12px;">
             ${this.renderDistBar("在线", d.online, total)}
@@ -262,7 +262,7 @@ export class DashboardView extends LitElement {
   renderQuickDevices() {
     return html`
       <div class="card" style="padding: 20px;">
-        <div style="font-weight: 600; margin-bottom: 16px;">设备快捷入口</div>
+        <div style="font-weight: 600; margin-bottom: 16px;">物快捷入口</div>
         ${this.quickDevices.length === 0
           ? html`
             <div class="empty-center">
@@ -271,15 +271,15 @@ export class DashboardView extends LitElement {
                   <path stroke-linecap="round" stroke-linejoin="round" d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
                 </svg>
               </div>
-              <div class="empty-center__text">还没有设备</div>
-              <a href="/devices" @click=${(e: Event) => { e.preventDefault(); window.history.pushState({}, "", "/devices"); window.dispatchEvent(new PopStateEvent("popstate")); }} style="font-size: 13px; color: var(--accent); text-decoration: none; margin-top: 4px; display: inline-block;">去添加 →</a>
+              <div class="empty-center__text">还没有物</div>
+              <a href="/things" @click=${(e: Event) => { e.preventDefault(); window.history.pushState({}, "", "/things"); window.dispatchEvent(new PopStateEvent("popstate")); }} style="font-size: 13px; color: var(--accent); text-decoration: none; margin-top: 4px; display: inline-block;">去添加 →</a>
             </div>`
           : html`
             <div style="display: flex; flex-direction: column; gap: 8px;">
               ${this.quickDevices.slice(0, 5).map(d => html`
-                <a href="/devices/${d.id}"
+                <a href="/things/${d.id}"
                   class="device-list-item"
-                  @click=${(e: Event) => { e.preventDefault(); window.history.pushState({}, "", `/devices/${d.id}`); window.dispatchEvent(new PopStateEvent("popstate")); }}
+                  @click=${(e: Event) => { e.preventDefault(); window.history.pushState({}, "", `/things/${d.id}`); window.dispatchEvent(new PopStateEvent("popstate")); }}
                 >
                   <span class="${this.dotClassForStatus(d.status)}" style="flex-shrink: 0;"></span>
                   <div style="flex: 1;">
