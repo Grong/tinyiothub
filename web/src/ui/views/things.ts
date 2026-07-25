@@ -2195,53 +2195,83 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
     return html`
       <div class="card" style="margin-top: var(--space-4);">
-        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-3);">
+        <div class="kb-header">
           <div>
-            <div style="font-weight: 600;">知识文档</div>
-            <div style="font-size: 12px; color: var(--muted);">绑定到该物的文档和资源</div>
+            <div class="kb-header__title">知识文档</div>
+            <div class="kb-header__sub">${docs.length ? `${docs.length} 个文档已挂载` : '暂无文档，上传或从工作区挂载'}</div>
           </div>
-          <div style="display: flex; align-items: center; gap: var(--space-2);">
-            <span style="font-size: 12px; color: var(--muted);">共 ${docs.length} 篇</span>
-            <button class="btn btn--ghost btn--sm" @click=${() => this.openResourcePicker(thingId)}>${icons.plus} 添加资源</button>
-            <button class="btn btn--ghost btn--sm" @click=${() => this.showUploadForm = !this.showUploadForm}>${icons.fileText} 上传文档</button>
+          <div class="kb-actions">
+            <button class="btn btn--ghost btn--sm" @click=${() => this.showUploadForm = !this.showUploadForm}>
+              <span style="margin-right:4px;">${icons.plus}</span>上传
+            </button>
+            <button class="btn btn--ghost btn--sm" @click=${() => this.openResourcePicker(thingId)}>
+              <span style="margin-right:4px;">${icons.link}</span>挂载
+            </button>
           </div>
         </div>
-        ${docs.length === 0 ? html`
-          <div style="text-align: center; padding: var(--space-6) var(--space-4); color: var(--muted);">
-            <div style="font-size: 32px; margin-bottom: var(--space-2); opacity: 0.3;">📄</div>
-            <div style="font-size: 14px;">暂无知识文档</div>
-            <div style="font-size: 12px; margin-top: var(--space-1);">点击「添加资源」挂载文档到该物</div>
+
+        ${this.showUploadForm ? this.renderUploadForm() : nothing}
+        ${this.showResourcePicker ? this.renderResourcePicker() : nothing}
+
+        ${docs.length === 0 && !this.showUploadForm && !this.showResourcePicker ? html`
+          <div class="kb-empty">
+            <div class="kb-empty__icon">
+              <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1" width="48" height="48" opacity="0.3">
+                <rect x="8" y="4" width="32" height="40" rx="2" /><line x1="16" y1="16" x2="32" y2="16" /><line x1="16" y1="22" x2="28" y2="22" /><line x1="16" y1="28" x2="24" y2="28" />
+              </svg>
+            </div>
+            <div class="kb-empty__title">拖放文件上传，或从工作区挂载</div>
           </div>
-        ` : html`
-          <div style="display: flex; flex-direction: column; gap: var(--space-2);">
+        ` : nothing}
+        ${docs.length > 0 ? html`
+          <div class="kb-list">
             ${docs.map((doc: any) => html`
-              <div style="display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); border-radius: var(--radius); background: var(--bg-surface); font-size: 13px;">
-                <span style="font-size: 18px;">${doc.resourceType === 'image' ? '🖼️' : '📄'}</span>
-                <div style="flex: 1; cursor: pointer;" @click=${() => { if (doc.content) { alert(doc.content?.slice(0, 2000) || ''); } }}>
-                  <div>${doc.name || doc.filePath || '未命名文档'}</div>
-                  <div style="font-size: 11px; color: var(--muted);">${doc.resourceType || doc.type || ''} · ${doc.createdAt?.slice(0, 10) || ''}</div>
+              <div class="kb-item">
+                <span class="kb-item__icon">${doc.resourceType === 'image' ? '&#128247;' : '&#128196;'}</span>
+                <div class="kb-item__body" @click=${() => { if (doc.content && doc.content.length < 10000) { alert(doc.content); } }}>
+                  <div class="kb-item__name">${doc.name || doc.filePath || '未命名'}</div>
+                  <div class="kb-item__meta">
+                    <span>${doc.resourceType || doc.type || 'document'}</span>
+                    ${doc.filePath ? html`<span class="kb-item__path">${doc.filePath}</span>` : nothing}
+                    ${doc.createdAt ? html`<span>${doc.createdAt.slice(0, 10)}</span>` : nothing}
+                  </div>
                 </div>
-                <button class="btn btn--ghost btn--sm" style="color: var(--danger);" @click=${() => this.detachResource(thingId, doc.id)} title="解除挂载">&times;</button>
               </div>
             `)}
           </div>
-        `}
-        ${this.showResourcePicker ? this.renderResourcePicker() : nothing}
-        ${this.showUploadForm ? this.renderUploadForm() : nothing}
+        ` : nothing}
       </div>
     `;
   }
 
   @state() showUploadForm = false;
   @state() uploadSaving = false;
+  @state() uploadDragOver = false;
 
   renderUploadForm() {
     return html`
-      <div style="margin-top: var(--space-3); border-top: 1px solid var(--border); padding-top: var(--space-3);">
-        <div style="font-size: 13px; font-weight: 600; margin-bottom: var(--space-2);">上传文件</div>
-        <div style="font-size: 12px; color: var(--muted); margin-bottom: var(--space-2);">文件保存到工作区 uploads 目录，由 workspace 模块统一管理</div>
-        <input type="file" id="knowledge-file-input" style="margin-bottom: var(--space-2);" @change=${(e: Event) => { this._uploadFile = (e.target as HTMLInputElement).files?.[0] || null; }} />
-        <button class="btn btn--primary btn--sm" ?disabled=${this.uploadSaving} @click=${this.submitUpload}>${this.uploadSaving ? '上传中...' : '上传到工作区'}</button>
+      <div class="kb-dropzone ${this.uploadDragOver ? 'kb-dropzone--active' : ''}"
+        @dragover=${(e: DragEvent) => { e.preventDefault(); this.uploadDragOver = true; }}
+        @dragleave=${() => { this.uploadDragOver = false; }}
+        @drop=${(e: DragEvent) => { e.preventDefault(); this.uploadDragOver = false; const files = e.dataTransfer?.files; if (files?.length) { this._uploadFile = files[0]; } }}>
+        <label class="kb-dropzone__label">
+          <input type="file" class="kb-dropzone__input"
+            @change=${(e: Event) => { this._uploadFile = (e.target as HTMLInputElement).files?.[0] || null; }} />
+          <div class="kb-dropzone__icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="24" height="24">
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" />
+            </svg>
+          </div>
+          <div class="kb-dropzone__text">
+            ${this._uploadFile ? html`<span class="kb-dropzone__file">${this._uploadFile.name}</span>` : '选择文件或拖放到此处'}
+          </div>
+          <div class="kb-dropzone__hint">支持 PDF、图片、文档等任意格式</div>
+        </label>
+        <button class="btn btn--primary btn--sm kb-upload-btn"
+          ?disabled=${this.uploadSaving || !this._uploadFile}
+          @click=${this.submitUpload}>
+          ${this.uploadSaving ? '上传中…' : '上传到工作区'}
+        </button>
       </div>
     `;
   }
@@ -2250,17 +2280,16 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   async submitUpload() {
     const file = this._uploadFile;
-    if (!file) { toastError('请选择文件'); return; }
-    const profile = this.selectedDevice;
-    const thingId = profile?.device?.id;
-    const wsId = (profile?.device as any)?.workspaceId || 'default';
+    if (!file) return;
+    const thingId = this.selectedDevice?.device?.id;
+    const wsId = (this.selectedDevice?.device as any)?.workspaceId || 'default';
     if (!thingId) return;
     this.uploadSaving = true;
     try {
       await thingApi.uploadFileToThing(thingId, wsId, file, file.name);
       success('文件已上传');
       this.showUploadForm = false;
-      (document.getElementById('knowledge-file-input') as HTMLInputElement).value = '';
+      this._uploadFile = null;
       await this.loadDeviceDetail(thingId);
     } catch (err: any) { toastError(err.message || '上传失败'); }
     finally { this.uploadSaving = false; }
@@ -2285,31 +2314,25 @@ export class DevicesView extends SignalWatcher(LitElement) {
   async attachThingResource(resourceId: string) {
     try {
       await thingApi.attachResource(this.resourcePickThingId, resourceId);
-      success('资源已挂载');
+      success('已挂载');
       this.showResourcePicker = false;
       await this.loadDeviceDetail(this.resourcePickThingId);
     } catch (err: any) { toastError(err.message || '挂载失败'); }
   }
 
-  async detachResource(thingId: string, resourceId: string) {
-    if (!confirm('确定解除该资源的挂载？')) return;
-    try {
-      await thingApi.attachResource(thingId, resourceId); // TODO: add detach API
-    } catch {}
-  }
-
   renderResourcePicker() {
     return html`
-      <div style="margin-top: var(--space-3); border-top: 1px solid var(--border); padding-top: var(--space-3);">
-        <div style="font-size: 13px; font-weight: 600; margin-bottom: var(--space-2);">未指派资源</div>
-        ${this.resourcePickLoading ? html`<div style="text-align:center;padding:var(--space-4);color:var(--muted);">加载中...</div>`
-        : this.unassignedResources.length === 0 ? html`<div style="text-align:center;padding:var(--space-4);color:var(--muted);">没有未指派的资源</div>`
+      <div class="kb-picker">
+        <div class="kb-picker__header">未指派资源<span class="kb-picker__count">${this.unassignedResources.length}</span></div>
+        ${this.resourcePickLoading ? html`<div class="kb-picker__loading">加载中…</div>`
+        : this.unassignedResources.length === 0 ? html`<div class="kb-picker__empty">当前工作区没有未指派的资源</div>`
         : html`
-          <div style="display:flex;flex-direction:column;gap:var(--space-1);max-height:240px;overflow-y:auto;">
+          <div class="kb-picker__list">
             ${this.unassignedResources.map((r: any) => html`
-              <div style="display:flex;align-items:center;justify-content:space-between;padding:var(--space-1) var(--space-2);border-radius:var(--radius);background:var(--bg-surface);font-size:13px;cursor:pointer;" @click=${() => this.attachThingResource(r.id)}>
-                <span>📄 ${r.name || r.filePath || '未命名'}</span>
-                <span style="font-size:11px;color:var(--muted);">${r.resourceType || ''}</span>
+              <div class="kb-picker__item" @click=${() => this.attachThingResource(r.id)}>
+                <span class="kb-picker__item-icon">&#128196;</span>
+                <span class="kb-picker__item-name">${r.name || r.filePath || '未命名'}</span>
+                <span class="kb-picker__item-type">${r.resourceType || ''}</span>
               </div>
             `)}
           </div>
