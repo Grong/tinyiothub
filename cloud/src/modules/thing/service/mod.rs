@@ -83,7 +83,12 @@ impl ThingService {
 
         let breadcrumb = self.repo.get_breadcrumb(id, 10).await.unwrap_or_default();
 
-        Ok(Self::row_to_response(&row, breadcrumb))
+        // Load tags for the single thing
+        let tags_map = self.load_tags_batch(&[id]).await.unwrap_or_default();
+        let mut resp = Self::row_to_response(&row, breadcrumb);
+        resp.tags = tags_map.get(id).cloned().unwrap_or_default();
+
+        Ok(resp)
     }
 
     /// Full profile: thing + properties + recent events + knowledge docs.
