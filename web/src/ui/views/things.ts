@@ -2233,21 +2233,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
                     </div>
                   </div>
                   <div class="device-card__body">
-                    ${this.editingDocId === doc.id ? html`
-                      <div class="device-card__info" style="padding:var(--space-1) 0;">
-                        <input class="kb-card__edit-input" .value=${doc.description || this._editDesc} placeholder="添加描述…" @input=${(e: Event) => { this._editDesc = (e.target as HTMLInputElement).value; }} />
-                        <div class="kb-tag-editor" style="margin-top:6px;">
-                          ${this._editTagList.map((t: string, i: number) => html`
-                            <span class="edit-tag-pill">${t}<button class="edit-tag-pill__remove" @click=${(e: Event) => { e.stopPropagation(); this._editTagList = this._editTagList.filter((_, j) => j !== i); }}>&times;</button></span>
-                          `)}
-                          <input class="edit-tag-input" placeholder="输入标签，回车添加" @keydown=${(e: KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); const v = (e.target as HTMLInputElement).value.trim(); if (v && !this._editTagList.includes(v)) { this._editTagList = [...this._editTagList, v]; (e.target as HTMLInputElement).value = ''; } } }} />
-                        </div>
-                        <div style="margin-top:6px;display:flex;gap:var(--space-1);">
-                          <button class="btn btn--primary btn--xs" @click=${(e: Event) => { e.stopPropagation(); this.saveDocEdit(doc); }}>保存</button>
-                          <button class="btn btn--ghost btn--xs" @click=${(e: Event) => { e.stopPropagation(); this.cancelDocEdit(); }}>取消</button>
-                        </div>
-                      </div>
-                    ` : html`
+                      ${this.editingDocId === doc.id ? this.renderDocTagPopover(doc) : html`
                       <div class="device-card__info">
                         ${doc.description ? html`
                           <div class="device-card__info-row">
@@ -2294,29 +2280,86 @@ export class DevicesView extends SignalWatcher(LitElement) {
   }
 
   @state() editingDocId: string | null = null;
-  private _editDesc = '';
-  private _editTagList: string[] = [];
+  @state() editingDocTags: string[] = [];
+  @state() tagPopoverSearch = '';
 
-  startEditDoc(doc: any) {
+  async startEditDoc(doc: any) {
     this.editingDocId = doc.id;
-    this._editDesc = doc.description || '';
-    this._editTagList = (typeof doc.tags === 'string' ? JSON.parse(doc.tags || '[]') : doc.tags) || [];
+    const tags = (typeof doc.tags === 'string' ? JSON.parse(doc.tags || '[]') : doc.tags) || [];
+    this.editingDocTags = [...tags];
+    this.tagPopoverSearch = '';
   }
 
   cancelDocEdit() { this.editingDocId = null; }
 
-  async saveDocEdit(doc: any) {
-    const wsId = (this.selectedDevice?.device as any)?.workspaceId || 'default';
-    try {
+  toggleDocTag(tagName: string) {
+    if (this.editingDocTags.includes(tagName)) {
+      this.editingDocTags = this.editingDocTags.filter(t => t !== tagName);
+    } else {
+      this.editingDocTags = [...this.editingDocTags, tagName];
+    }
+  }
+
+  removeDocTag(tagName: string) {
+    this.editingDocTags = this.editingDocTags.filter(t => t !== tagName);
+    this._saveDocTags();
+  }
+
+  addDocTag() {
+    const v = this.tagPopoverSearch.trim();
+    if (v && !this.editingDocTags.includes(v)) {
+      this.editingDocTags = [...this.editingDocTags, v];
+    }
+    this.tagPopoverSearch = '';
+    this._saveDocTags();
+  }
+
+  private _saveDocTagsTimer: any = null;
+  private _saveDocTags() {
+    clearTimeout(this._saveDocTagsTimer);
+    this._saveDocTagsTimer = setTimeout(async () => {
+      const doc = (this.selectedDevice as any)?.knowledgeDocs?.find((d: any) => d.id === this.editingDocId);
+      if (!doc) return;
+      const wsId = (this.selectedDevice?.device as any)?.workspaceId || 'default';
       await fetch(`/api/v1/workspaces/${wsId}/resources/${doc.id}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('auth-token') || ''}` },
-        body: JSON.stringify({ description: this._editDesc || null, tags: this._editTagList }),
-      });
-      this.editingDocId = null;
-      const thingId = this.selectedDevice?.device?.id;
-      if (thingId) await this.loadDeviceDetail(thingId);
-      success('已更新');
-    } catch (err: any) { toastError('更新失败'); }
+        body: JSON.stringify({ tags: this.editingDocTags }),
+      }).catch(() => {});
+    }, 300);
+  }
+
+  renderDocTagPopover(doc: any) {
+    const keyword = this.tagPopoverSearch.trim();
+    const filtered = this.editingDocTags.filter(t => !keyword || t.toLowerCase().includes(keyword.toLowerCase()));
+    const exactMatch = keyword && this.editingDocTags.some(t => t.toLowerCase() === keyword.toLowerCase());
+    const showCreate = keyword && !exactMatch;
+
+    return html`
+      <div class="tag-popover" @click=${(e: Event) => e.stopPropagation()}>
+        <input type="text" class="tag-popover__search" placeholder="搜索或输入新标签…"
+          .value=${this.tagPopoverSearch}
+          @input=${(e: Event) => { this.tagPopoverSearch = (e.target as HTMLInputElement).value; }}
+          @keydown=${(e: KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); this.addDocTag(); } }} />
+        <div class="tag-popover__list">
+          ${showCreate ? html`
+            <button class="btn btn--sm tag-btn tag-btn--create" @click=${this.addDocTag}>
+              <span class="flex-mid gap-1">${icons.plus} 添加「${keyword}」</span>
+            </button>
+          ` : nothing}
+          ${this.editingDocTags.map(t => {
+            const active = !keyword || t.toLowerCase().includes(keyword.toLowerCase());
+            return active ? html`
+              <button class="btn btn--sm tag-btn tag-btn--bound" @click=${() => this.removeDocTag(t)}>
+                <span class="flex-mid gap-1">${icons.check} ${t}</span>
+              </button>
+            ` : nothing;
+          })}
+          ${this.editingDocTags.length === 0 ? html`
+            <div class="tag-popover__empty">暂无标签，输入名称添加</div>
+          ` : nothing}
+        </div>
+      </div>
+    `;
   }
 
   @state() showResourceModal = false;
