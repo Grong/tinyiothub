@@ -18,7 +18,7 @@ UPDATE devices SET template_id = (
 WHERE template_id IS NULL;
 
 -- Properties — for all devices that now have template_id
-INSERT INTO device_properties (id, device_id, name, display_name, data_type, unit, is_read_only, created_at, updated_at)
+INSERT INTO thing_properties (id, device_id, name, display_name, data_type, unit, is_read_only, created_at, updated_at)
 SELECT
     lower(hex(randomblob(16))),
     d.id,
@@ -34,11 +34,11 @@ JOIN thing_templates t ON t.id = d.template_id
 CROSS JOIN json_each(t.properties) AS p
 WHERE d.template_id IS NOT NULL
   AND NOT EXISTS (
-    SELECT 1 FROM device_properties dp WHERE dp.device_id = d.id AND dp.name = json_extract(p.value, '$.name')
+    SELECT 1 FROM thing_properties dp WHERE dp.device_id = d.id AND dp.name = json_extract(p.value, '$.name')
   );
 
 -- Actions — for all devices that now have template_id
-INSERT INTO device_commands (id, device_id, name, display_name, parameters, created_at)
+INSERT INTO thing_actions (id, device_id, name, display_name, parameters, created_at)
 SELECT
     lower(hex(randomblob(16))),
     d.id,
@@ -51,5 +51,5 @@ JOIN thing_templates t ON t.id = d.template_id
 CROSS JOIN json_each(t.actions) AS a
 WHERE d.template_id IS NOT NULL
   AND NOT EXISTS (
-    SELECT 1 FROM device_commands dc WHERE dc.device_id = d.id AND dc.name = json_extract(a.value, '$.name')
+    SELECT 1 FROM thing_actions dc WHERE dc.device_id = d.id AND dc.name = json_extract(a.value, '$.name')
   );
