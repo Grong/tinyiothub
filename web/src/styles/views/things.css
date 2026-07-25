@@ -338,3 +338,14 @@
 .kb-picker__item-icon { flex-shrink: 0; }
 .kb-picker__item-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .kb-picker__item-type { font-size: 10px; color: var(--muted); text-transform: uppercase; }
+
+/* Modal tabs */
+.kb-modal-tab {
+  background: none; border: none; color: var(--muted); font-size: 13px;
+  padding: var(--space-2) var(--space-3); cursor: pointer;
+  border-bottom: 2px solid transparent; transition: all 0.15s;
+}
+.kb-modal-tab:hover { color: var(--home-text-primary, #fff); }
+.kb-modal-tab--active { color: var(--home-accent-cyan, #00d4ff); border-bottom-color: var(--home-accent-cyan, #00d4ff); }
+
+.kb-empty__hint { font-size: 12px; color: rgba(232,236,241,0.25); margin-top: var(--space-1); }

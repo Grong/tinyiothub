@@ -2191,44 +2191,34 @@ export class DevicesView extends SignalWatcher(LitElement) {
     const profile = this.selectedDevice;
     if (!profile) return nothing;
     const docs = (profile as any).knowledgeDocs || [];
-    const thingId = profile.device?.id;
 
     return html`
       <div class="card" style="margin-top: var(--space-4);">
         <div class="kb-header">
           <div>
             <div class="kb-header__title">知识文档</div>
-            <div class="kb-header__sub">${docs.length ? `${docs.length} 个文档已挂载` : '暂无文档，上传或从工作区挂载'}</div>
+            <div class="kb-header__sub">${docs.length ? `${docs.length} 个文档` : '上传手册、图纸、数据表等文档'}</div>
           </div>
-          <div class="kb-actions">
-            <button class="btn btn--ghost btn--sm" @click=${() => this.showUploadForm = !this.showUploadForm}>
-              <span style="margin-right:4px;">${icons.plus}</span>上传
-            </button>
-            <button class="btn btn--ghost btn--sm" @click=${() => this.openResourcePicker(thingId)}>
-              <span style="margin-right:4px;">${icons.link}</span>挂载
-            </button>
-          </div>
+          <button class="btn btn--ghost btn--sm" @click=${this.openAddResourceModal}>
+            <span style="margin-right:4px;">${icons.plus}</span>添加
+          </button>
         </div>
-
-        ${this.showUploadForm ? this.renderUploadForm() : nothing}
-        ${this.showResourcePicker ? this.renderResourcePicker() : nothing}
-
-        ${docs.length === 0 && !this.showUploadForm && !this.showResourcePicker ? html`
+        ${docs.length === 0 ? html`
           <div class="kb-empty">
             <div class="kb-empty__icon">
               <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1" width="48" height="48" opacity="0.3">
                 <rect x="8" y="4" width="32" height="40" rx="2" /><line x1="16" y1="16" x2="32" y2="16" /><line x1="16" y1="22" x2="28" y2="22" /><line x1="16" y1="28" x2="24" y2="28" />
               </svg>
             </div>
-            <div class="kb-empty__title">拖放文件上传，或从工作区挂载</div>
+            <div class="kb-empty__title">还没有文档</div>
+            <div class="kb-empty__hint">点击上方「添加」上传文件或关联已有资源</div>
           </div>
-        ` : nothing}
-        ${docs.length > 0 ? html`
+        ` : html`
           <div class="kb-list">
             ${docs.map((doc: any) => html`
               <div class="kb-item">
                 <span class="kb-item__icon">${doc.resourceType === 'image' ? '&#128247;' : '&#128196;'}</span>
-                <div class="kb-item__body" @click=${() => { if (doc.content && doc.content.length < 10000) { alert(doc.content); } }}>
+                <div class="kb-item__body">
                   <div class="kb-item__name">${doc.name || doc.filePath || '未命名'}</div>
                   <div class="kb-item__meta">
                     <span>${doc.resourceType || doc.type || 'document'}</span>
@@ -2239,70 +2229,36 @@ export class DevicesView extends SignalWatcher(LitElement) {
               </div>
             `)}
           </div>
-        ` : nothing}
+        `}
+        ${this.showResourceModal ? this.renderResourceModal() : nothing}
       </div>
     `;
   }
 
-  @state() showUploadForm = false;
+  // === Resource Modal (unified: upload + pick existing) ===
+
+  @state() showResourceModal = false;
+  @state() resourceModalTab: 'upload' | 'existing' = 'upload';
+  @state() uploadFile: File | null = null;
   @state() uploadSaving = false;
   @state() uploadDragOver = false;
-
-  renderUploadForm() {
-    return html`
-      <div class="kb-dropzone ${this.uploadDragOver ? 'kb-dropzone--active' : ''}"
-        @dragover=${(e: DragEvent) => { e.preventDefault(); this.uploadDragOver = true; }}
-        @dragleave=${() => { this.uploadDragOver = false; }}
-        @drop=${(e: DragEvent) => { e.preventDefault(); this.uploadDragOver = false; const files = e.dataTransfer?.files; if (files?.length) { this._uploadFile = files[0]; } }}>
-        <label class="kb-dropzone__label">
-          <input type="file" class="kb-dropzone__input"
-            @change=${(e: Event) => { this._uploadFile = (e.target as HTMLInputElement).files?.[0] || null; }} />
-          <div class="kb-dropzone__icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="24" height="24">
-              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" />
-            </svg>
-          </div>
-          <div class="kb-dropzone__text">
-            ${this._uploadFile ? html`<span class="kb-dropzone__file">${this._uploadFile.name}</span>` : '选择文件或拖放到此处'}
-          </div>
-          <div class="kb-dropzone__hint">支持 PDF、图片、文档等任意格式</div>
-        </label>
-        <button class="btn btn--primary btn--sm kb-upload-btn"
-          ?disabled=${this.uploadSaving || !this._uploadFile}
-          @click=${this.submitUpload}>
-          ${this.uploadSaving ? '上传中…' : '上传到工作区'}
-        </button>
-      </div>
-    `;
-  }
-
-  private _uploadFile: File | null = null;
-
-  async submitUpload() {
-    const file = this._uploadFile;
-    if (!file) return;
-    const thingId = this.selectedDevice?.device?.id;
-    const wsId = (this.selectedDevice?.device as any)?.workspaceId || 'default';
-    if (!thingId) return;
-    this.uploadSaving = true;
-    try {
-      await thingApi.uploadFileToThing(thingId, wsId, file, file.name);
-      success('文件已上传');
-      this.showUploadForm = false;
-      this._uploadFile = null;
-      await this.loadDeviceDetail(thingId);
-    } catch (err: any) { toastError(err.message || '上传失败'); }
-    finally { this.uploadSaving = false; }
-  }
-
-  @state() showResourcePicker = false;
-  @state() resourcePickThingId = '';
   @state() unassignedResources: any[] = [];
   @state() resourcePickLoading = false;
 
-  async openResourcePicker(thingId: string) {
-    this.resourcePickThingId = thingId;
-    this.showResourcePicker = true;
+  openAddResourceModal() {
+    this.showResourceModal = true;
+    this.resourceModalTab = 'upload';
+    this.uploadFile = null;
+    this.uploadSaving = false;
+    this.unassignedResources = [];
+    this.loadUnassignedForPicker();
+  }
+
+  closeResourceModal() {
+    this.showResourceModal = false;
+  }
+
+  async loadUnassignedForPicker() {
     this.resourcePickLoading = true;
     try {
       const res = await thingApi.listUnassignedResources();
@@ -2311,32 +2267,84 @@ export class DevicesView extends SignalWatcher(LitElement) {
     finally { this.resourcePickLoading = false; }
   }
 
-  async attachThingResource(resourceId: string) {
+  async submitUploadFromModal() {
+    const file = this.uploadFile;
+    if (!file) return;
+    const thingId = this.selectedDevice?.device?.id;
+    const wsId = (this.selectedDevice?.device as any)?.workspaceId || 'default';
+    if (!thingId) return;
+    this.uploadSaving = true;
     try {
-      await thingApi.attachResource(this.resourcePickThingId, resourceId);
-      success('已挂载');
-      this.showResourcePicker = false;
-      await this.loadDeviceDetail(this.resourcePickThingId);
-    } catch (err: any) { toastError(err.message || '挂载失败'); }
+      await thingApi.uploadFileToThing(thingId, wsId, file, file.name);
+      success('文件已上传');
+      this.closeResourceModal();
+      await this.loadDeviceDetail(thingId);
+    } catch (err: any) { toastError(err.message || '上传失败'); }
+    finally { this.uploadSaving = false; }
   }
 
-  renderResourcePicker() {
+  async attachExistingResource(resourceId: string) {
+    const thingId = this.selectedDevice?.device?.id;
+    if (!thingId) return;
+    try {
+      await thingApi.attachResource(thingId, resourceId);
+      success('已添加');
+      this.closeResourceModal();
+      await this.loadDeviceDetail(thingId);
+    } catch (err: any) { toastError(err.message || '添加失败'); }
+  }
+
+  renderResourceModal() {
     return html`
-      <div class="kb-picker">
-        <div class="kb-picker__header">未指派资源<span class="kb-picker__count">${this.unassignedResources.length}</span></div>
-        ${this.resourcePickLoading ? html`<div class="kb-picker__loading">加载中…</div>`
-        : this.unassignedResources.length === 0 ? html`<div class="kb-picker__empty">当前工作区没有未指派的资源</div>`
-        : html`
-          <div class="kb-picker__list">
-            ${this.unassignedResources.map((r: any) => html`
-              <div class="kb-picker__item" @click=${() => this.attachThingResource(r.id)}>
-                <span class="kb-picker__item-icon">&#128196;</span>
-                <span class="kb-picker__item-name">${r.name || r.filePath || '未命名'}</span>
-                <span class="kb-picker__item-type">${r.resourceType || ''}</span>
-              </div>
-            `)}
+      <div class="modal-overlay" role="dialog" aria-modal="true" @click=${this.closeResourceModal} @keydown=${(e: KeyboardEvent) => { if (e.key === 'Escape') this.closeResourceModal(); }}>
+        <div class="modal" style="max-width:480px;" @click=${(e: Event) => e.stopPropagation()}>
+          <div class="modal-header">
+            <span>添加文档</span>
+            <button class="btn btn--icon" aria-label="关闭" @click=${this.closeResourceModal}>&times;</button>
           </div>
-        `}
+          <div class="modal-body" style="padding:0;">
+            <div style="display:flex; border-bottom:1px solid var(--border); padding:0 var(--space-4);">
+              <button class="kb-modal-tab ${this.resourceModalTab === 'upload' ? 'kb-modal-tab--active' : ''}" @click=${() => { this.resourceModalTab = 'upload'; }}>上传文件</button>
+              <button class="kb-modal-tab ${this.resourceModalTab === 'existing' ? 'kb-modal-tab--active' : ''}" @click=${() => { this.resourceModalTab = 'existing'; }}>从工作区选择</button>
+            </div>
+            <div style="padding:var(--space-4);">
+              ${this.resourceModalTab === 'upload' ? html`
+                <div class="kb-dropzone ${this.uploadDragOver ? 'kb-dropzone--active' : ''}"
+                  @dragover=${(e: DragEvent) => { e.preventDefault(); this.uploadDragOver = true; }}
+                  @dragleave=${() => { this.uploadDragOver = false; }}
+                  @drop=${(e: DragEvent) => { e.preventDefault(); this.uploadDragOver = false; const files = e.dataTransfer?.files; if (files?.length) { this.uploadFile = files[0]; } }}>
+                  <label class="kb-dropzone__label">
+                    <input type="file" class="kb-dropzone__input"
+                      @change=${(e: Event) => { this.uploadFile = (e.target as HTMLInputElement).files?.[0] || null; }} />
+                    <div class="kb-dropzone__icon">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="28" height="28">
+                        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" />
+                      </svg>
+                    </div>
+                    <div class="kb-dropzone__text">${this.uploadFile ? this.uploadFile.name : '点击选择或拖放文件到此处'}</div>
+                    <div class="kb-dropzone__hint">上传到工作区并自动关联到当前物</div>
+                  </label>
+                </div>
+                <div style="margin-top: var(--space-3); text-align: right;">
+                  <button class="btn btn--ghost btn--sm" @click=${this.closeResourceModal}>取消</button>
+                  <button class="btn btn--primary btn--sm" style="margin-left:var(--space-2);" ?disabled=${this.uploadSaving || !this.uploadFile} @click=${this.submitUploadFromModal}>${this.uploadSaving ? '上传中…' : '上传'}</button>
+                </div>
+              ` : html`
+                ${this.resourcePickLoading ? html`<div class="kb-picker__loading">加载中…</div>`
+                : this.unassignedResources.length === 0 ? html`<div class="kb-picker__empty">当前工作区没有未关联的资源</div>`
+                : html`<div class="kb-picker__list" style="max-height:300px;">
+                  ${this.unassignedResources.map((r: any) => html`
+                    <div class="kb-picker__item" @click=${() => this.attachExistingResource(r.id)}>
+                      <span class="kb-picker__item-icon">&#128196;</span>
+                      <span class="kb-picker__item-name">${r.name || r.filePath || '未命名'}</span>
+                      <span class="kb-picker__item-type">${r.resourceType || ''}</span>
+                    </div>
+                  `)}
+                </div>`}
+              `}
+            </div>
+          </div>
+        </div>
       </div>
     `;
   }
