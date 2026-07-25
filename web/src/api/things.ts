@@ -168,10 +168,14 @@ export const thingApi = {
     const upRes = await fetch(`/api/v1/workspaces/${workspaceId}/resources/upload`, { method: 'POST', headers, body: form }).then(r => r.json());
     if (upRes.code !== 0) throw new Error(upRes.msg || '上传失败');
     const filePath = upRes.result?.file_path;
-    // 2. Create workspace resource record — uploaded files are always type 'file'
+    // 2. Create workspace resource record with auto-tags from file extension
+    const ext = fileName.split('.').pop()?.toLowerCase() || '';
+    const typeTag = ['pdf'].includes(ext) ? 'PDF' : ['png','jpg','jpeg','gif','svg','webp'].includes(ext) ? '图片'
+      : ['glb','gltf','obj','stl'].includes(ext) ? '3D模型' : ['doc','docx'].includes(ext) ? '文档'
+      : ['xls','xlsx','csv'].includes(ext) ? '表格' : '文件';
     const createRes = await fetch(`/api/v1/workspaces/${workspaceId}/resources`, {
       method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: fileName, file_path: filePath, resource_type: 'file', tags: [] }),
+      body: JSON.stringify({ name: fileName, file_path: filePath, resource_type: 'file', tags: [typeTag] }),
     }).then(r => r.json());
     if (!createRes.result?.id) throw new Error('创建资源记录失败');
     // 3. Attach to thing
