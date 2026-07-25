@@ -192,7 +192,7 @@ impl ThingService {
         for p in serde_json::from_str::<Vec<serde_json::Value>>(&json).unwrap_or_default() {
             let nm = p["name"].as_str().unwrap_or("");
             let dp = p.get("displayName").and_then(|v| v.as_str()).unwrap_or(nm);
-            sqlx::query("INSERT INTO device_properties (id,device_id,name,display_name,data_type,unit,is_read_only,created_at,updated_at) VALUES (?,?,?,?,?,?,?,datetime('now'),datetime('now'))")
+            sqlx::query("INSERT INTO thing_properties (id,device_id,name,display_name,data_type,unit,is_read_only,created_at,updated_at) VALUES (?,?,?,?,?,?,?,datetime('now'),datetime('now'))")
                 .bind(uuid::Uuid::new_v4().to_string()).bind(thing_id).bind(nm).bind(dp)
                 .bind(p.get("dataType").and_then(|v| v.as_str()).unwrap_or("string"))
                 .bind(p.get("unit").and_then(|v| v.as_str()).unwrap_or(""))
@@ -209,7 +209,7 @@ impl ThingService {
         for a in serde_json::from_str::<Vec<serde_json::Value>>(&json).unwrap_or_default() {
             let nm = a["name"].as_str().unwrap_or("");
             let dp = a.get("displayName").and_then(|v| v.as_str()).unwrap_or(nm);
-            sqlx::query("INSERT INTO device_commands (id,device_id,name,display_name,parameters,created_at) VALUES (?,?,?,?,?,datetime('now'))")
+            sqlx::query("INSERT INTO thing_actions (id,device_id,name,display_name,parameters,created_at) VALUES (?,?,?,?,?,datetime('now'))")
                 .bind(uuid::Uuid::new_v4().to_string()).bind(thing_id).bind(nm).bind(dp)
                 .bind(a.get("parameters").map(|v| v.to_string()).as_deref())
                 .execute(&self.pool).await?;
@@ -375,7 +375,7 @@ impl ThingService {
         let rows: Vec<PropertyRow> = sqlx::query_as::<_, PropertyRow>(
             "SELECT id, device_id, name, display_name, description, data_type, unit, \
                  min_value, max_value, default_value, is_read_only, created_at, updated_at \
-                 FROM device_properties WHERE device_id = ? ORDER BY name",
+                 FROM thing_properties WHERE device_id = ? ORDER BY name",
         )
         .bind(device_id)
         .fetch_all(&self.pool)
@@ -421,7 +421,7 @@ impl ThingService {
         #[serde(rename_all = "camelCase")]
         struct CmdRow { id: String, device_id: String, name: String, display_name: Option<String>, description: Option<String>, parameters: Option<String>, created_at: String }
         let rows: Vec<CmdRow> = sqlx::query_as::<_, CmdRow>(
-            "SELECT id,device_id,name,display_name,description,parameters,created_at FROM device_commands WHERE device_id=? ORDER BY name",
+            "SELECT id,device_id,name,display_name,description,parameters,created_at FROM thing_actions WHERE device_id=? ORDER BY name",
         ).bind(thing_id).fetch_all(&self.pool).await.ok()?;
         if rows.is_empty() { return None; }
         Some(rows.into_iter().filter_map(|r| serde_json::to_value(r).ok()).collect())

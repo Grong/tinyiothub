@@ -2147,7 +2147,7 @@ mod integration_tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO device_properties (id, device_id, name) VALUES ('prop-1', 'dev-1', 'temperature')")
+        sqlx::query("INSERT INTO thing_properties (id, device_id, name) VALUES ('prop-1', 'dev-1', 'temperature')")
             .execute(&pool).await.unwrap();
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
@@ -2198,7 +2198,7 @@ mod integration_tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO device_properties (id, device_id, name) VALUES ('prop-1', 'dev-1', 'temperature')")
+        sqlx::query("INSERT INTO thing_properties (id, device_id, name) VALUES ('prop-1', 'dev-1', 'temperature')")
             .execute(&pool).await.unwrap();
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
@@ -2233,7 +2233,7 @@ mod integration_tests {
 
         sqlx::query("INSERT INTO devices (id, name, workspace_id) VALUES ('dev-ar', 'AutoResolve Device', 'ws-ar')")
             .execute(&pool).await.unwrap();
-        sqlx::query("INSERT INTO device_properties (id, device_id, name) VALUES ('prop-ar', 'dev-ar', 'temperature')")
+        sqlx::query("INSERT INTO thing_properties (id, device_id, name) VALUES ('prop-ar', 'dev-ar', 'temperature')")
             .execute(&pool).await.unwrap();
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, workspace_id, created_at, updated_at)
@@ -2282,7 +2282,7 @@ mod integration_tests {
 
         sqlx::query("INSERT INTO devices (id, name, workspace_id) VALUES ('dev-arm', 'Meta Device', 'ws-arm')")
             .execute(&pool).await.unwrap();
-        sqlx::query("INSERT INTO device_properties (id, device_id, name) VALUES ('prop-arm', 'dev-arm', 'humidity')")
+        sqlx::query("INSERT INTO thing_properties (id, device_id, name) VALUES ('prop-arm', 'dev-arm', 'humidity')")
             .execute(&pool).await.unwrap();
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, notification_config, workspace_id, created_at, updated_at)
@@ -2329,7 +2329,7 @@ mod integration_tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO device_properties (id, device_id, name) VALUES ('prop-sd', 'dev-sd', 'temperature')")
+        sqlx::query("INSERT INTO thing_properties (id, device_id, name) VALUES ('prop-sd', 'dev-sd', 'temperature')")
             .execute(&pool).await.unwrap();
         sqlx::query(
             "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)

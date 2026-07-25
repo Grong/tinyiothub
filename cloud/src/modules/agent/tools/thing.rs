@@ -469,7 +469,7 @@ impl Tool for ReadPropertyTool {
         let prop: PropRow = sqlx::query_as::<_, PropRow>(
             "SELECT name, display_name, description, data_type, unit, \
              min_value, max_value, default_value, is_read_only \
-             FROM device_properties WHERE device_id = ? AND name = ?",
+             FROM thing_properties WHERE device_id = ? AND name = ?",
         )
         .bind(&input.thing_id)
         .bind(&input.property_name)
@@ -602,7 +602,7 @@ impl Tool for InvokeActionTool {
 
         // 3. Check if action exists in device_commands table
         let command_exists: bool = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM device_commands WHERE device_id = ? AND name = ?",
+            "SELECT COUNT(*) FROM thing_actions WHERE device_id = ? AND name = ?",
         )
         .bind(&input.thing_id)
         .bind(&input.action_name)

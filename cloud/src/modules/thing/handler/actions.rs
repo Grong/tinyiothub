@@ -80,7 +80,7 @@ pub async fn confirm_action(
 
     // 4. Verify the command exists
     let command_exists: bool = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM device_commands WHERE device_id = ? AND name = ?",
+        "SELECT COUNT(*) FROM thing_actions WHERE device_id = ? AND name = ?",
     )
     .bind(&thing_id)
     .bind(&action_name)

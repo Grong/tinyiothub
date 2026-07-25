@@ -249,7 +249,7 @@ async fn get_thing_properties(
     let (key, _tenant, workspace_id) = validate_api_key(&state, api_key).await?;
 
     let rows = sqlx::query(
-        "SELECT name, display_name, data_type, value, unit, updated_at FROM device_properties WHERE device_id = ? ORDER BY created_at DESC"
+        "SELECT name, display_name, data_type, value, unit, updated_at FROM thing_properties WHERE device_id = ? ORDER BY created_at DESC"
     )
     .bind(&id)
     .fetch_all(state.database.pool())
@@ -310,7 +310,7 @@ async fn list_commands(
     let (key, _tenant, workspace_id) = validate_api_key(&state, api_key).await?;
 
     let rows = sqlx::query(
-        "SELECT id, name, display_name, description, command_type FROM device_commands WHERE device_id = ? ORDER BY created_at DESC"
+        "SELECT id, name, display_name, description, command_type FROM thing_actions WHERE device_id = ? ORDER BY created_at DESC"
     )
     .bind(&id)
     .fetch_all(state.database.pool())
@@ -380,7 +380,7 @@ async fn send_command(
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
     sqlx::query(
-        "INSERT INTO device_commands (id, device_id, name, command_type, parameters, status, created_at, updated_at) VALUES (?, ?, ?, 'custom', ?, 'pending', ?, ?)"
+        "INSERT INTO thing_actions (id, device_id, name, command_type, parameters, status, created_at, updated_at) VALUES (?, ?, ?, 'custom', ?, 'pending', ?, ?)"
     )
     .bind(&cmd_id)
     .bind(&id)
