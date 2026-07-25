@@ -2225,13 +2225,23 @@ export class DevicesView extends SignalWatcher(LitElement) {
                   </svg>
                   <span class="kb-card__type">${doc.resourceType || 'file'}</span>
                   <span class="kb-card__date">${doc.createdAt?.slice(0, 10) || ''}</span>
+                  <button class="kb-card__edit" @click=${(e: Event) => { e.stopPropagation(); this.startEditDoc(doc); }} title="编辑">${icons.edit}</button>
                   <button class="kb-card__remove" @click=${(e: Event) => { e.stopPropagation(); this.removeKnowledgeDoc(doc.id); }} title="移除">&times;</button>
                 </div>
                 <div class="kb-card__body">
-                  <div class="kb-card__title">${doc.name || doc.filePath || '未命名'}</div>
-                  ${doc.description ? html`<div class="kb-card__desc">${doc.description}</div>` : nothing}
+                  ${this.editingDocId === doc.id ? html`
+                    <input class="kb-card__edit-input" .value=${doc.description || ''} placeholder="描述" @input=${(e: Event) => { this._editDesc = (e.target as HTMLInputElement).value; }} />
+                    <input class="kb-card__edit-input" .value=${docTags.join(', ')} placeholder="标签（逗号分隔）" @input=${(e: Event) => { this._editTags = (e.target as HTMLInputElement).value; }} style="margin-top:4px;" />
+                    <div style="display:flex;gap:var(--space-1);margin-top:4px;">
+                      <button class="btn btn--primary btn--xs" @click=${(e: Event) => { e.stopPropagation(); this.saveDocEdit(doc); }}>保存</button>
+                      <button class="btn btn--ghost btn--xs" @click=${(e: Event) => { e.stopPropagation(); this.cancelDocEdit(); }}>取消</button>
+                    </div>
+                  ` : html`
+                    <div class="kb-card__title">${doc.name || doc.filePath || '未命名'}</div>
+                    ${doc.description ? html`<div class="kb-card__desc">${doc.description}</div>` : nothing}
+                  `}
                 </div>
-                ${docTags.length > 0 ? html`
+                ${docTags.length > 0 && this.editingDocId !== doc.id ? html`
                   <div class="kb-card__tags">
                     ${docTags.map((t: any) => html`<span class="tag-pill tag-pill--xs">${typeof t === 'string' ? t : t.name || t}</span>`)}
                   </div>
@@ -2256,6 +2266,33 @@ export class DevicesView extends SignalWatcher(LitElement) {
       // For now just reload
       toastError('暂不支持解除绑定，请在工作区管理中操作');
     } catch {}
+  }
+
+  @state() editingDocId: string | null = null;
+  private _editDesc = '';
+  private _editTags = '';
+
+  startEditDoc(doc: any) {
+    this.editingDocId = doc.id;
+    this._editDesc = doc.description || '';
+    this._editTags = ((typeof doc.tags === 'string' ? JSON.parse(doc.tags || '[]') : doc.tags) || []).join(', ');
+  }
+
+  cancelDocEdit() { this.editingDocId = null; }
+
+  async saveDocEdit(doc: any) {
+    const wsId = (this.selectedDevice?.device as any)?.workspaceId || 'default';
+    const tags = this._editTags.split(',').map(s => s.trim()).filter(Boolean);
+    try {
+      await fetch(`/api/v1/workspaces/${wsId}/resources/${doc.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('auth-token') || ''}` },
+        body: JSON.stringify({ description: this._editDesc || null, tags }),
+      });
+      this.editingDocId = null;
+      const thingId = this.selectedDevice?.device?.id;
+      if (thingId) await this.loadDeviceDetail(thingId);
+      success('已更新');
+    } catch (err: any) { toastError('更新失败'); }
   }
 
   @state() showResourceModal = false;
