@@ -403,7 +403,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
           device: result,
           overview: {},
           properties: result.properties || [],
-          commands: result.recentEvents || [],
+          commands: result.actions || [],
         } as any;
       } else {
         this.selectedDevice = result;

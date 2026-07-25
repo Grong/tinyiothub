@@ -368,6 +368,22 @@ impl ThingService {
         Some(values)
     }
 
+    /// Load actions from the thing's template (thing_templates.actions JSON column).
+    async fn load_actions(&self, thing_id: &str) -> Option<Vec<serde_json::Value>> {
+        let row: Option<(Option<String>,)> = sqlx::query_as(
+            "SELECT t.actions FROM thing_templates t \
+             JOIN devices d ON d.template_id = t.id \
+             WHERE d.id = ?",
+        )
+        .bind(thing_id)
+        .fetch_optional(&self.pool)
+        .await
+        .ok()
+        .flatten();
+        let actions_json: &str = row.as_ref()?.as_deref()?;
+        serde_json::from_str(actions_json).ok()
+    }
+
     async fn load_knowledge_docs(&self, device_id: &str) -> Option<Vec<serde_json::Value>> {
         let rows: Vec<DocRow> = sqlx::query_as::<_, DocRow>(
             "SELECT id, name, type, file_path, content, tags, created_at, updated_at \
