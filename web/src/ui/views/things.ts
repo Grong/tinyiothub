@@ -2297,7 +2297,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
   renderResourceModal() {
     return html`
       <div class="modal-overlay" role="dialog" aria-modal="true" @click=${this.closeResourceModal} @keydown=${(e: KeyboardEvent) => { if (e.key === 'Escape') this.closeResourceModal(); }}>
-        <div class="modal" style="max-width:480px;" @click=${(e: Event) => e.stopPropagation()}>
+        <div class="modal" style="max-width:520px;" @click=${(e: Event) => e.stopPropagation()}>
           <div class="modal-header">
             <span>添加文档</span>
             <button class="btn btn--icon" aria-label="关闭" @click=${this.closeResourceModal}>&times;</button>
