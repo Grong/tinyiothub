@@ -57,3 +57,23 @@ pub async fn attach_resource(
         }
     }
 }
+
+// ──────────────────────────────────────────────
+// DELETE /{id}/resources/{rid} — detach resource from thing
+// ──────────────────────────────────────────────
+
+pub async fn detach_resource(
+    State(state): State<AppState>,
+    Path((thing_id, resource_id)): Path<(String, String)>,
+) -> (StatusCode, Json<ApiResponse<()>>) {
+    let pool = state.database.pool().clone();
+    let svc = thing_service(&pool);
+    match svc.detach_resource(&thing_id, &resource_id).await {
+        Ok(()) => (StatusCode::OK, ApiResponseBuilder::success(())),
+        Err(e) => {
+            let status = e.status_code();
+            tracing::error!(?e, thing_id = %thing_id, resource_id = %resource_id, "Failed to detach resource");
+            (status, ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()))
+        }
+    }
+}

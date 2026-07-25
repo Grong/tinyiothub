@@ -2229,7 +2229,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
                       ${doc.createdAt ? html`<span class="device-card__gateway-tag">${doc.createdAt.slice(0, 10)}</span>` : nothing}
                     </div>
                     <div class="device-card__actions">
-                      <button class="btn btn--ghost btn--sm device-card__action-btn btn--danger-text" title="移除" @click=${(e: Event) => { e.stopPropagation(); this.removeKnowledgeDoc(doc.id); }}>${icons.trash2}</button>
+                      <button class="btn btn--ghost btn--sm device-card__action-btn btn--danger-text" title="移除" @click=${(e: Event) => { e.stopPropagation(); this.removeKnowledgeDoc(doc); }}>${icons.trash2}</button>
                     </div>
                   </div>
                   <div class="device-card__body" @click=${(e: Event) => { e.stopPropagation(); if (this.editingDescId === doc.id) return; this.editingDescId = doc.id; this._editDescValue = doc.description || ''; this.requestUpdate(); }}>
@@ -2265,15 +2265,15 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   // === Resource Modal (unified: upload + pick existing) ===
 
-  async removeKnowledgeDoc(__docId: string) {
-    if (!confirm('从该物移除这篇文档？')) return;
+  async removeKnowledgeDoc(doc: any) {
+    if (!confirm(`确定移除「${doc.name || doc.filePath || '文档'}」？`)) return;
     const thingId = this.selectedDevice?.device?.id;
-    if (!thingId) return;
+    if (!thingId || !doc.id) return;
     try {
-      await thingApi.attachResource(thingId, ''); // Pass empty to clear binding? No — need proper detach.
-      // For now just reload
-      toastError('暂不支持解除绑定，请在工作区管理中操作');
-    } catch {}
+      await thingApi.detachResource(thingId, doc.id);
+      success('已移除');
+      await this.loadDeviceDetail(thingId);
+    } catch (err: any) { toastError(err.message || '移除失败'); }
   }
 
   async saveDocDesc(doc: any) {

@@ -29,4 +29,5 @@ pub fn create_router() -> Router<AppState> {
         .route("/templates/{id}/export/dtdl", get(import_export::export_dtdl))
         .route("/resources/unassigned", get(resources::list_unassigned_resources))
         .route("/{id}/resources", post(resources::attach_resource))
+        .route("/{id}/resources/{rid}", delete(resources::detach_resource))
 }

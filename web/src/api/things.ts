@@ -159,6 +159,10 @@ export const thingApi = {
     return apiPost<void>(`/things/${thingId}/resources`, { resourceId });
   },
 
+  async detachResource(thingId: string, resourceId: string) {
+    return apiDelete<void>(`/things/${thingId}/resources/${resourceId}`);
+  },
+
   /** Upload file to workspace, create resource, then attach to thing */
   async uploadFileToThing(thingId: string, workspaceId: string, file: File, fileName: string) {
     const token = localStorage.getItem('auth-token') || sessionStorage.getItem('auth-token') || '';

@@ -280,6 +280,19 @@ impl ThingService {
     // Resources
     // ──────────────────────────────────────────
 
+    /// Detach a resource from a thing (set device_id = NULL).
+    pub async fn detach_resource(
+        &self,
+        thing_id: &str,
+        resource_id: &str,
+    ) -> Result<(), ThingError> {
+        let affected = self.repo.detach_resource(thing_id, resource_id).await?;
+        if affected == 0 {
+            return Err(ThingError::NotFound(format!("resource {} not found on thing {}", resource_id, thing_id)));
+        }
+        Ok(())
+    }
+
     pub async fn attach_resource(
         &self,
         thing_id: &str,

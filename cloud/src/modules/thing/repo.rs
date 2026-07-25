@@ -356,6 +356,20 @@ impl ThingRepo {
     // Resources
     // ──────────────────────────────────────────
 
+    /// Detach resource from thing (set device_id = NULL).
+    pub async fn detach_resource(
+        &self,
+        thing_id: &str,
+        resource_id: &str,
+    ) -> Result<u64, sqlx::Error> {
+        let result = sqlx::query("UPDATE resources SET device_id = NULL WHERE id = ? AND device_id = ?")
+            .bind(resource_id)
+            .bind(thing_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
     pub async fn attach_resource(
         &self,
         thing_id: &str,

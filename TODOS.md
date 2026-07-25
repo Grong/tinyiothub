@@ -264,5 +264,14 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
   - **Effort:** S (human: 20min / CC: 5min)
   - **Owner:** TBD
 
+## Thing Ontology (from /plan-eng-review 2026-07-22)
+
+### P3 — search_knowledge 升级 FTS5 trigram
+- **What:** thing_resources 全文检索从 `LIKE '%q%'` 扫描升级为 SQLite FTS5 trigram 虚拟表（含同步触发器）。
+- **Why:** 工程评审 D14 裁决本期维持 LIKE（预发布文档量级几十篇无感）；但 search_knowledge 是 Agent 高频调用路径，文档上千篇后全表扫描劣化。FTS5 默认 unicode61 分词对中文无效，需 trigram tokenizer（SQLite ≥3.34）。
+- **Context:** 现有 LIKE 实现见 `cloud/src/modules/workspace/repo/knowledge.rs:265`（图谱拆除后平移至 thing_resources repo）。升级点：建 fts 虚拟表 + INSERT/UPDATE/DELETE 同步触发器 + repo 查询改 MATCH。
+- **Depends on:** Thing Ontology mega-branch 落地（thing_resources 表存在后）。
+- **Effort:** M (human: ~1d / CC: ~1h)
+
 ## Completed
 
