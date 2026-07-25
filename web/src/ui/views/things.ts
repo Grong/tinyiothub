@@ -1917,6 +1917,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       ${this.detailTab === 'knowledge' ? this.renderDetailKnowledge() : nothing}
       ${this.showModal ? this.renderModal() : nothing}
       ${this.showHistoryDialog ? this.renderHistoryDialog() : nothing}
+      ${this.showResourceModal ? this.renderResourceModal() : nothing}
     `;
   }
 
@@ -2258,7 +2259,6 @@ export class DevicesView extends SignalWatcher(LitElement) {
             `; })}
           </div>
         `}
-        ${this.showResourceModal ? this.renderResourceModal() : nothing}
       </div>
     `;
   }
@@ -2377,10 +2377,12 @@ export class DevicesView extends SignalWatcher(LitElement) {
   }
 
   @state() showResourceModal = false;
-  @state() resourceModalTab: 'upload' | 'existing' = 'upload';
+  @state() resourceModalTab: 'upload' | 'existing' | 'text' = 'upload';
   @state() uploadFile: File | null = null;
   @state() uploadSaving = false;
   @state() uploadDragOver = false;
+  @state() textDocTitle = '';
+  @state() textDocContent = '';
   @state() unassignedResources: any[] = [];
   @state() resourcePickLoading = false;
 
@@ -2388,6 +2390,8 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.showResourceModal = true;
     this.resourceModalTab = 'upload';
     this.uploadFile = null;
+    this.textDocTitle = '';
+    this.textDocContent = '';
     this.uploadSaving = false;
     this.unassignedResources = [];
     this.loadUnassignedForPicker();
@@ -2404,6 +2408,30 @@ export class DevicesView extends SignalWatcher(LitElement) {
       this.unassignedResources = res.result || [];
     } catch { this.unassignedResources = []; }
     finally { this.resourcePickLoading = false; }
+  }
+
+  async submitTextDoc() {
+    if (!this.textDocTitle.trim()) return;
+    const thingId = this.selectedDevice?.device?.id;
+    const wsId = (this.selectedDevice?.device as any)?.workspaceId || 'default';
+    if (!thingId) return;
+    this.uploadSaving = true;
+    try {
+      const token = localStorage.getItem('auth-token') || sessionStorage.getItem('auth-token') || '';
+      // Create resource via workspace API with content
+      const res = await fetch(`/api/v1/workspaces/${wsId}/resources`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ name: this.textDocTitle.trim(), resource_type: 'document', content: this.textDocContent, tags: [] }),
+      }).then(r => r.json());
+      if (res.result?.id) {
+        await thingApi.attachResource(thingId, res.result.id);
+      }
+      success('文档已保存');
+      this.closeResourceModal();
+      this.textDocTitle = ''; this.textDocContent = '';
+      await this.loadDeviceDetail(thingId);
+    } catch (err: any) { toastError(err.message || '保存失败'); }
+    finally { this.uploadSaving = false; }
   }
 
   async submitUploadFromModal() {
@@ -2444,6 +2472,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
           <div class="modal-body" style="padding:0;">
             <div style="display:flex; border-bottom:1px solid var(--border); padding:0 var(--space-4);">
               <button class="kb-modal-tab ${this.resourceModalTab === 'upload' ? 'kb-modal-tab--active' : ''}" @click=${() => { this.resourceModalTab = 'upload'; }}>上传文件</button>
+              <button class="kb-modal-tab ${this.resourceModalTab === 'text' ? 'kb-modal-tab--active' : ''}" @click=${() => { this.resourceModalTab = 'text'; }}>写文档</button>
               <button class="kb-modal-tab ${this.resourceModalTab === 'existing' ? 'kb-modal-tab--active' : ''}" @click=${() => { this.resourceModalTab = 'existing'; }}>从工作区选择</button>
             </div>
             <div style="padding:var(--space-4);">
@@ -2467,6 +2496,13 @@ export class DevicesView extends SignalWatcher(LitElement) {
                 <div style="margin-top: var(--space-3); text-align: right;">
                   <button class="btn btn--ghost btn--sm" @click=${this.closeResourceModal}>取消</button>
                   <button class="btn btn--primary btn--sm" style="margin-left:var(--space-2);" ?disabled=${this.uploadSaving || !this.uploadFile} @click=${this.submitUploadFromModal}>${this.uploadSaving ? '上传中…' : '上传'}</button>
+                </div>
+              ` : this.resourceModalTab === 'text' ? html`
+                <div class="field"><input class="input" placeholder="文档标题" .value=${this.textDocTitle} @input=${(e: Event) => { this.textDocTitle = (e.target as HTMLInputElement).value; }} /></div>
+                <div class="field"><textarea class="input" rows="6" placeholder="文档内容…" .value=${this.textDocContent} @input=${(e: Event) => { this.textDocContent = (e.target as HTMLTextAreaElement).value; }}></textarea></div>
+                <div style="text-align:right;">
+                  <button class="btn btn--ghost btn--sm" @click=${this.closeResourceModal}>取消</button>
+                  <button class="btn btn--primary btn--sm" style="margin-left:var(--space-2);" ?disabled=${this.uploadSaving || !this.textDocTitle.trim()} @click=${this.submitTextDoc}>${this.uploadSaving ? '保存中…' : '保存'}</button>
                 </div>
               ` : html`
                 ${this.resourcePickLoading ? html`<div class="kb-picker__loading">加载中…</div>`
