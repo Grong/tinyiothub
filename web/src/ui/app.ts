@@ -307,19 +307,8 @@ export class TinyIoTHubApp extends LitElement {
       return;
     }
 
-    // Handle /things/:id — internally maps to 'thing-detail' view
-    if (path.startsWith('things/')) {
-      if (!this.isAuthenticated) {
-        this.navigate('login');
-        return;
-      }
-      this.currentRoute = 'thing-detail/' + path.slice('things/'.length);
-      this._ensureViewLoaded('thing-detail');
-      return;
-    }
-
-    // Handle /things (list page) — uses dedicated things list/tree view
-    if (path === 'things') {
+    // Handle /things and /things/:id — single view handles list + detail internally
+    if (path === 'things' || path.startsWith('things/')) {
       if (!this.isAuthenticated) {
         this.navigate('login');
         return;
