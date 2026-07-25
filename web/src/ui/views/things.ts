@@ -2354,8 +2354,8 @@ export class DevicesView extends SignalWatcher(LitElement) {
               </button>
             ` : nothing;
           })}
-          ${this.editingDocTags.length === 0 ? html`
-            <div class="tag-popover__empty">暂无标签，输入名称添加</div>
+          ${this.editingDocTags.length === 0 && !showCreate ? html`
+            <div style="padding:var(--space-2);font-size:12px;color:var(--muted);text-align:center;">输入标签名称后按回车添加</div>
           ` : nothing}
         </div>
       </div>
