@@ -9,7 +9,10 @@ use serde::Deserialize;
 use tinyiothub_web::response::ApiResponse;
 
 use super::super::{service::ThingService, types::ThingResource};
-use crate::shared::{api_response::ApiResponseBuilder, app_state::AppState};
+use crate::{
+    api::middleware::WorkspaceScope,
+    shared::{api_response::ApiResponseBuilder, app_state::AppState},
+};
 
 #[derive(Deserialize)]
 pub struct AttachResourceRequest {
@@ -26,13 +29,14 @@ fn thing_service(pool: &sqlx::SqlitePool) -> ThingService {
 
 pub async fn list_unassigned_resources(
     State(state): State<AppState>,
+    WorkspaceScope(workspace_id): WorkspaceScope,
 ) -> (StatusCode, Json<ApiResponse<Vec<ThingResource>>>) {
     let pool = state.database.pool().clone();
     let svc = thing_service(&pool);
 
-    let workspace_id = "default"; // TODO: resolve from JWT
+    let ws = workspace_id.unwrap_or_default();
 
-    match svc.list_unassigned_resources(workspace_id).await {
+    match svc.list_unassigned_resources(&ws).await {
         Ok(resources) => (StatusCode::OK, ApiResponseBuilder::success(resources)),
         Err(e) => {
             let status = e.status_code();
