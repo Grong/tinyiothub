@@ -419,6 +419,7 @@ impl ThingService {
 // ──────────────────────────────────────────────
 
 #[derive(Debug, serde::Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct PropertyRow {
     id: String,
@@ -437,6 +438,7 @@ struct PropertyRow {
 }
 
 #[derive(Debug, serde::Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct EventRow {
     id: String,
@@ -452,6 +454,7 @@ struct EventRow {
 }
 
 #[derive(Debug, serde::Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct DocRow {
     id: String,
