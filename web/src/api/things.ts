@@ -7,11 +7,17 @@ import { apiGet, apiPost, apiPut, apiDelete } from './client.js';
 export interface Thing {
   id: string;
   name: string;
+  displayName?: string;
   thingType: string;
   deviceType: string;
   parentId: string | null;
   templateId: string | null;
   state: string;
+  status?: string;
+  protocolType?: string;
+  driverName?: string;
+  address?: string;
+  tags?: { id: string; name: string; color?: string }[];
   breadcrumb: { id: string; name: string; thingType: string }[];
   ontologySummary: string | null;
   summaryStatus: string;

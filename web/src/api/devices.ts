@@ -17,7 +17,7 @@ import type { PaginatedResponse } from './client.js';
 
 export const deviceApi = {
   async getDevices(params?: DeviceListParams) {
-    return apiGet<PaginatedResponse<Device>>('/things', params as Record<string, any>);
+    return apiGet<any>('/things', params as Record<string, any>);
   },
 
   async getDevice(id: string) {

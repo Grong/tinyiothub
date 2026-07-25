@@ -10,11 +10,14 @@ use crate::shared::app_state::AppState;
 
 /// Handler that returns 410 Gone with migration guidance in standard API format.
 async fn device_endpoint_removed() -> (axum::http::StatusCode, Json<serde_json::Value>) {
-    (axum::http::StatusCode::GONE, Json(serde_json::json!({
-        "code": 410,
-        "msg": "/api/devices has been removed. Use /api/things instead.",
-        "result": null
-    })))
+    (
+        axum::http::StatusCode::GONE,
+        Json(serde_json::json!({
+            "code": 410,
+            "msg": "/api/devices has been removed. Use /api/things instead.",
+            "result": null
+        })),
+    )
 }
 
 pub fn create_router() -> Router<AppState> {

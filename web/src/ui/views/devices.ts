@@ -2,6 +2,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { SignalWatcher } from "@lit-labs/signals";
 import { deviceApi } from "../../api/devices.js";
+import { thingApi } from "../../api/things.js";
 import { driverApi } from "../../api/drivers.js";
 import { templateApi } from "../../api/templates.js";
 import { tagApi } from "../../api/tags.js";
@@ -235,6 +236,8 @@ export class DevicesView extends SignalWatcher(LitElement) {
   @state() wizConfigLoading = false;
   @state() wizValidationErrors: Record<string, string> = {};
   @state() driverNames: string[] = [];
+  @state() wizUnassignedResources: any[] = [];
+  @state() wizSelectedResourceIds: Set<string> = new Set();
 
   // Command execution
   @state() executingCommand = "";
@@ -365,9 +368,10 @@ export class DevicesView extends SignalWatcher(LitElement) {
       const res = await deviceApi.getDevices(params);
       const data = res.result;
       if (data) {
-        this.devices = data.data || [];
-        this.totalPages = data.pagination?.totalPages || (this.devices.length > 0 ? 1 : 0);
-        this.total = data.pagination?.totalCount || this.devices.length;
+        // /api/v1/things returns { items, total, limit, offset } (ThingListResponse)
+        this.devices = data.items || data.data || [];
+        this.total = data.total || data.pagination?.totalCount || this.devices.length;
+        this.totalPages = Math.ceil(this.total / this.pageSize) || (this.devices.length > 0 ? 1 : 0);
       }
     } catch (err: any) {
       this.error = err.message || "加载物列表失败";
@@ -1257,12 +1261,24 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.wizConfigOptions = [];
     this.wizValidationErrors = {};
     this.wizardSaving = false;
+    this.wizUnassignedResources = [];
+    this.wizSelectedResourceIds = new Set();
     this.showWizard = true;
     this.loadTemplates();
+    this.loadUnassignedResources();
     requestAnimationFrame(() => {
       const overlay = this.querySelector(".wizard-overlay[role='dialog']");
       if (overlay) this.focusFirst(overlay as HTMLElement, 50);
     });
+  }
+
+  async loadUnassignedResources() {
+    try {
+      const res = await thingApi.listUnassignedResources();
+      this.wizUnassignedResources = res.result || [];
+    } catch {
+      this.wizUnassignedResources = [];
+    }
   }
 
   closeWizard() {
@@ -1417,10 +1433,21 @@ export class DevicesView extends SignalWatcher(LitElement) {
         enabledCommands: this.wizSelectedTemplate.commands?.map((c: any) => c.name) || [],
       };
 
-      await deviceApi.createDeviceFromTemplate({
+      const res = await deviceApi.createDeviceFromTemplate({
         templateId: this.wizSelectedTemplate.id,
         deviceInput,
       });
+
+      const newThing = res.result;
+      if (newThing?.id && this.wizSelectedResourceIds.size > 0) {
+        for (const resourceId of this.wizSelectedResourceIds) {
+          try {
+            await thingApi.attachResource(newThing.id, resourceId);
+          } catch {
+            // ignore individual failures
+          }
+        }
+      }
 
       success("物创建成功");
       this.closeWizard();
@@ -3021,6 +3048,30 @@ export class DevicesView extends SignalWatcher(LitElement) {
                   该驱动无需额外配置参数
                 </div>
               `}
+            </div>
+          ` : nothing}
+
+          ${this.wizUnassignedResources.length > 0 ? html`
+            <div class="wizard-form-section">
+              <div class="wizard-form-section__header">
+                <span class="wizard-form-section__title">挂载资源</span>
+                <span class="wizard-form-section__meta">(${this.wizUnassignedResources.length} 个未指派)</span>
+              </div>
+              ${this.wizUnassignedResources.map((r: any) => html`
+                <label class="field field--row" style="display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1) 0;">
+                  <input type="checkbox"
+                    .checked=${this.wizSelectedResourceIds.has(r.id)}
+                    @change=${(e: Event) => {
+                      const checked = (e.target as HTMLInputElement).checked;
+                      const next = new Set(this.wizSelectedResourceIds);
+                      checked ? next.add(r.id) : next.delete(r.id);
+                      this.wizSelectedResourceIds = next;
+                    }}
+                  />
+                  <span>${r.name || r.filePath}</span>
+                  <span class="inline-muted">${r.resourceType}</span>
+                </label>
+              `)}
             </div>
           ` : nothing}
         </div>
