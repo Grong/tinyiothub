@@ -380,7 +380,7 @@ impl ThingService {
         .await
         .ok()
         .flatten();
-        let actions_json: &str = row.as_ref()?.as_deref()?;
+        let actions_json: &str = row.as_ref()?.0.as_deref()?;
         serde_json::from_str(actions_json).ok()
     }
 

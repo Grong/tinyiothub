@@ -375,6 +375,7 @@ mod tests {
                 json!({"name": "humidity", "display_name": "湿度", "data_type": "float", "unit": "%RH", "default_value": "60"}),
                 json!({"name": "status", "display_name": "状态", "data_type": "string", "unit": null, "default_value": "running"}),
             ]),
+            actions: None,
             recent_events: None,
             knowledge_docs: None,
         }
