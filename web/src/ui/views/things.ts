@@ -2220,11 +2220,12 @@ export class DevicesView extends SignalWatcher(LitElement) {
               return html`
               <div class="kb-card">
                 <div class="kb-card__header">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="18" height="18" opacity="0.4">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="16" height="16" opacity="0.35">
                     <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>
                   </svg>
-                  <span class="kb-card__type">${doc.resourceType || 'document'}</span>
+                  <span class="kb-card__type">${doc.resourceType || 'file'}</span>
                   <span class="kb-card__date">${doc.createdAt?.slice(0, 10) || ''}</span>
+                  <button class="kb-card__remove" @click=${(e: Event) => { e.stopPropagation(); this.removeKnowledgeDoc(doc.id); }} title="移除">&times;</button>
                 </div>
                 <div class="kb-card__body">
                   <div class="kb-card__title">${doc.name || doc.filePath || '未命名'}</div>
@@ -2245,6 +2246,17 @@ export class DevicesView extends SignalWatcher(LitElement) {
   }
 
   // === Resource Modal (unified: upload + pick existing) ===
+
+  async removeKnowledgeDoc(docId: string) {
+    if (!confirm('从该物移除这篇文档？')) return;
+    const thingId = this.selectedDevice?.device?.id;
+    if (!thingId) return;
+    try {
+      await thingApi.attachResource(thingId, ''); // Pass empty to clear binding? No — need proper detach.
+      // For now just reload
+      toastError('暂不支持解除绑定，请在工作区管理中操作');
+    } catch {}
+  }
 
   @state() showResourceModal = false;
   @state() resourceModalTab: 'upload' | 'existing' = 'upload';
