@@ -9,7 +9,10 @@ use serde_json::Value;
 use tinyiothub_web::response::ApiResponse;
 
 use super::super::service::import_export::{self, ImportError};
-use crate::shared::{api_response::ApiResponseBuilder, app_state::AppState};
+use crate::{
+    api::middleware::WorkspaceScope,
+    shared::{api_response::ApiResponseBuilder, app_state::AppState},
+};
 
 // ──────────────────────────────────────────────
 // POST /things/import/dtdl
@@ -17,6 +20,7 @@ use crate::shared::{api_response::ApiResponseBuilder, app_state::AppState};
 
 pub async fn import_dtdl(
     State(state): State<AppState>,
+    WorkspaceScope(ws): WorkspaceScope,
     Json(body): Json<Value>,
 ) -> (StatusCode, Json<ApiResponse<Value>>) {
     let pool = state.database.pool().clone();
@@ -26,9 +30,9 @@ pub async fn import_dtdl(
         Err(e) => return import_error_response(e),
     };
 
-    let workspace_id = "default"; // TODO: resolve from JWT claims
+    let workspace_id = ws.unwrap_or_default();
 
-    match import_export::save_template(&pool, &parsed, Some(workspace_id)).await {
+    match import_export::save_template(&pool, &parsed, Some(workspace_id.as_str())).await {
         Ok(template_id) => (
             StatusCode::CREATED,
             ApiResponseBuilder::success(serde_json::json!({
@@ -47,6 +51,7 @@ pub async fn import_dtdl(
 
 pub async fn import_wot(
     State(state): State<AppState>,
+    WorkspaceScope(ws): WorkspaceScope,
     Json(body): Json<Value>,
 ) -> (StatusCode, Json<ApiResponse<Value>>) {
     let pool = state.database.pool().clone();
@@ -56,9 +61,9 @@ pub async fn import_wot(
         Err(e) => return import_error_response(e),
     };
 
-    let workspace_id = "default"; // TODO: resolve from JWT claims
+    let workspace_id = ws.unwrap_or_default();
 
-    match import_export::save_template(&pool, &parsed, Some(workspace_id)).await {
+    match import_export::save_template(&pool, &parsed, Some(workspace_id.as_str())).await {
         Ok(template_id) => (
             StatusCode::CREATED,
             ApiResponseBuilder::success(serde_json::json!({

@@ -14,7 +14,10 @@ use super::super::{
         UpdateThingRequest,
     },
 };
-use crate::shared::{api_response::ApiResponseBuilder, app_state::AppState};
+use crate::{
+    api::middleware::WorkspaceScope,
+    shared::{api_response::ApiResponseBuilder, app_state::AppState},
+};
 
 fn thing_service(pool: &sqlx::SqlitePool) -> ThingService {
     ThingService::new(pool.clone())
@@ -26,14 +29,15 @@ fn thing_service(pool: &sqlx::SqlitePool) -> ThingService {
 
 pub async fn list_things(
     State(state): State<AppState>,
+    WorkspaceScope(workspace_id): WorkspaceScope,
     Query(params): Query<ListThingsParams>,
 ) -> (StatusCode, Json<ApiResponse<serde_json::Value>>) {
     let pool = state.database.pool().clone();
     let svc = thing_service(&pool);
 
-    let workspace_id = "default"; // TODO: resolve from JWT claims / WorkspaceScope
+    let ws = workspace_id.unwrap_or_default();
 
-    match svc.list_things(workspace_id, &params).await {
+    match svc.list_things(&ws, &params).await {
         Ok(result) => {
             let data = serde_json::to_value(&result).unwrap_or_default();
             (StatusCode::OK, ApiResponseBuilder::success(data))
@@ -52,14 +56,15 @@ pub async fn list_things(
 
 pub async fn create_thing(
     State(state): State<AppState>,
+    WorkspaceScope(ws): WorkspaceScope,
     Json(req): Json<CreateThingRequest>,
 ) -> (StatusCode, Json<ApiResponse<ThingResponse>>) {
     let pool = state.database.pool().clone();
     let svc = thing_service(&pool);
 
-    let workspace_id = req.workspace_id.clone();
+    let workspace_id = ws.unwrap_or_default();
 
-    match svc.create_thing(&req, workspace_id.as_deref()).await {
+    match svc.create_thing(&req, Some(workspace_id.as_str())).await {
         Ok(thing) => {
             let resp = ApiResponseBuilder::success(thing);
             (StatusCode::CREATED, resp)
@@ -180,15 +185,16 @@ pub struct TreeQuery {
 
 pub async fn get_thing_tree(
     State(state): State<AppState>,
+    WorkspaceScope(workspace_id): WorkspaceScope,
     Path(id): Path<String>,
     Query(query): Query<TreeQuery>,
 ) -> (StatusCode, Json<ApiResponse<Vec<ThingTreeNode>>>) {
     let pool = state.database.pool().clone();
     let svc = thing_service(&pool);
 
-    let workspace_id = "default"; // TODO: resolve from JWT claims
+    let ws = workspace_id.unwrap_or_default();
 
-    match svc.get_thing_tree(workspace_id, Some(&id), query.depth).await {
+    match svc.get_thing_tree(&ws, Some(&id), query.depth).await {
         Ok(tree) => (StatusCode::OK, ApiResponseBuilder::success(tree)),
         Err(e) => {
             let status = e.status_code();

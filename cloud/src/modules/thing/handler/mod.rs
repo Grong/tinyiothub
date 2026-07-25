@@ -10,6 +10,7 @@ use crate::shared::app_state::AppState;
 pub mod actions;
 pub mod crud;
 pub mod import_export;
+pub mod resources;
 
 /// Create the thing API router at /api/v1/things
 pub fn create_router() -> Router<AppState> {
@@ -26,4 +27,6 @@ pub fn create_router() -> Router<AppState> {
         .route("/import/dtdl", post(import_export::import_dtdl))
         .route("/import/wot", post(import_export::import_wot))
         .route("/templates/{id}/export/dtdl", get(import_export::export_dtdl))
+        .route("/resources/unassigned", get(resources::list_unassigned_resources))
+        .route("/{id}/resources", post(resources::attach_resource))
 }

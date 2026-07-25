@@ -89,6 +89,19 @@ export interface ThingTreeNode {
   children: ThingTreeNode[];
 }
 
+export interface ThingResource {
+  id: string;
+  workspaceId: string;
+  deviceId: string | null;
+  resourceType: string;
+  name: string;
+  filePath: string;
+  content: string | null;
+  tags: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ConfirmActionResponse {
   thingId: string;
   actionName: string;
@@ -130,5 +143,13 @@ export const thingApi = {
 
   async delete(id: string) {
     return apiDelete<void>(`/things/${id}`);
+  },
+
+  async listUnassignedResources() {
+    return apiGet<ThingResource[]>('/things/resources/unassigned');
+  },
+
+  async attachResource(thingId: string, resourceId: string) {
+    return apiPost<void>(`/things/${thingId}/resources`, { resourceId });
   },
 };

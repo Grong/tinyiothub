@@ -164,6 +164,8 @@ export class ThingsView extends SignalWatcher(LitElement) {
   @state() wizardSaving = false;
   @state() wizConfigLoading = false;
   @state() driverNames: string[] = [];
+  @state() wizUnassignedResources: any[] = [];
+  @state() wizSelectedResourceIds: Set<string> = new Set();
 
   // Drag state
   @state() dragOverId: string | null = null;
@@ -344,8 +346,11 @@ export class ThingsView extends SignalWatcher(LitElement) {
     this.wizConfigOptions = [];
     this.wizValidationErrors = {};
     this.wizardSaving = false;
+    this.wizUnassignedResources = [];
+    this.wizSelectedResourceIds = new Set();
     this.loadTemplates();
     this.loadDrivers();
+    this.loadUnassignedResources();
   }
 
   closeWizard() {
@@ -362,6 +367,15 @@ export class ThingsView extends SignalWatcher(LitElement) {
       this.driverNames = (Array.isArray(rawList) ? rawList : []).map((d: any) => d.name || d.id || "").filter(Boolean);
     } catch {
       this.driverNames = [];
+    }
+  }
+
+  async loadUnassignedResources() {
+    try {
+      const res = await thingApi.listUnassignedResources();
+      this.wizUnassignedResources = res.result || [];
+    } catch {
+      this.wizUnassignedResources = [];
     }
   }
 
@@ -517,7 +531,17 @@ export class ThingsView extends SignalWatcher(LitElement) {
         driverName: this.wizDriver || undefined,
         driverOptions: Object.keys(finalDriverConfig).length > 0 ? JSON.stringify(finalDriverConfig) : undefined,
       };
-      await thingApi.create(payload);
+      const res = await thingApi.create(payload);
+      const newThing = res.result;
+      if (newThing?.id && this.wizSelectedResourceIds.size > 0) {
+        for (const resourceId of this.wizSelectedResourceIds) {
+          try {
+            await thingApi.attachResource(newThing.id, resourceId);
+          } catch {
+            // ignore individual failures
+          }
+        }
+      }
       success("物已创建");
       this.closeWizard();
       await this.loadThings();
@@ -1072,6 +1096,31 @@ export class ThingsView extends SignalWatcher(LitElement) {
               ` : html`
                 <div class="empty-hint--sm">该驱动无需额外配置参数</div>
               `}
+            </div>
+          ` : nothing}
+
+          <!-- Resource selection -->
+          ${this.wizUnassignedResources.length > 0 ? html`
+            <div class="wizard-form-section">
+              <div class="wizard-form-section__header">
+                <span class="wizard-form-section__title">挂载资源</span>
+                <span class="wizard-form-section__meta">(${this.wizUnassignedResources.length} 个未指派)</span>
+              </div>
+              ${this.wizUnassignedResources.map((r: any) => html`
+                <label class="field field--row" style="display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1) 0;">
+                  <input type="checkbox"
+                    .checked=${this.wizSelectedResourceIds.has(r.id)}
+                    @change=${(e: Event) => {
+                      const checked = (e.target as HTMLInputElement).checked;
+                      const next = new Set(this.wizSelectedResourceIds);
+                      checked ? next.add(r.id) : next.delete(r.id);
+                      this.wizSelectedResourceIds = next;
+                    }}
+                  />
+                  <span>${r.name || r.filePath}</span>
+                  <span class="inline-muted">${r.resourceType}</span>
+                </label>
+              `)}
             </div>
           ` : nothing}
         </div>
