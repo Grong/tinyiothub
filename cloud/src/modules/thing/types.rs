@@ -228,6 +228,9 @@ pub struct ThingProfileResponse {
     /// Cached properties (from device_properties table).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub properties: Option<Vec<serde_json::Value>>,
+    /// Available actions (from thing_templates.actions JSON).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actions: Option<Vec<serde_json::Value>>,
     /// Recent events for this thing.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recent_events: Option<Vec<serde_json::Value>>,

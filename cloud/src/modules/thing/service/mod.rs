@@ -91,10 +91,17 @@ impl ThingService {
         let thing = self.get_thing(id).await?;
 
         let properties = self.load_properties(id).await.unwrap_or_default();
+        let actions = self.load_actions(id).await.unwrap_or_default();
         let recent_events = self.load_recent_events(id).await.unwrap_or_default();
         let knowledge_docs = self.load_knowledge_docs(id).await.unwrap_or_default();
 
-        Ok(ThingProfileResponse { thing, properties: Some(properties), recent_events: Some(recent_events), knowledge_docs: Some(knowledge_docs) })
+        Ok(ThingProfileResponse {
+            thing,
+            properties: Some(properties),
+            actions: Some(actions),
+            recent_events: Some(recent_events),
+            knowledge_docs: Some(knowledge_docs),
+        })
     }
 
     // ──────────────────────────────────────────
