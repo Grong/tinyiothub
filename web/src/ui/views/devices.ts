@@ -396,7 +396,18 @@ export class DevicesView extends SignalWatcher(LitElement) {
         deviceCache.setDeviceProperties(id, result.properties);
       }
 
-      this.selectedDevice = result;
+      // thing API returns flat profile; wrap into DeviceProfile format
+      // that the view expects (profile.device, profile.overview, etc.)
+      if (result && !result.device) {
+        this.selectedDevice = {
+          device: result,
+          overview: {},
+          properties: result.properties || [],
+          commands: result.recentEvents || [],
+        } as any;
+      } else {
+        this.selectedDevice = result;
+      }
     } catch (err: any) {
       this.error = err.message || "加载物详情失败";
     } finally {
