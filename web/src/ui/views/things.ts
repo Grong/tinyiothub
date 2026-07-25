@@ -2249,7 +2249,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
                       </div>
                     </div>
                   </div>
-                  <div class="device-card__footer" @click=${(e: Event) => { e.stopPropagation(); if (this.editingDocId !== doc.id) this.startEditDoc(doc); }}>
+                  <div class="device-card__footer" @click=${(e: Event) => { e.stopPropagation(); this.editingDocId === doc.id ? (this.editingDocId = null) : this.startEditDoc(doc); }}>
                     ${visibleTags.map((t: any) => html`<span class="tag-pill">${typeof t === 'string' ? t : t.name || t}</span>`)}
                     ${hiddenCount > 0 ? html`<span class="tag-pill tag-pill--muted" title="${docTags.slice(3).map((t: any) => typeof t === 'string' ? t : t.name || t).join(', ')}">+${hiddenCount}</span>` : nothing}
                     ${docTags.length === 0 ? html`<span class="inline-muted" style="font-size: 12px;">添加标签</span>` : nothing}
