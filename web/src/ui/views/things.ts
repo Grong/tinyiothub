@@ -2221,7 +2221,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
               const hiddenCount = docTags.length - 3;
               return html`
               <div class="device-card__wrap" style="overflow:visible;">
-                <div class="card device-card" style="overflow:visible;">
+                <div class="card device-card" style="overflow:visible;contain:none;">
                   <div class="device-card__header">
                     <div class="device-card__header-left">
                       <span class="device-card__title" title="${doc.name}">${doc.name || doc.filePath || '未命名'}</span>
