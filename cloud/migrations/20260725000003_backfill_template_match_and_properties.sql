@@ -1,14 +1,26 @@
 -- Backfill: copy template properties and actions into per-thing tables
--- Run after 20260723000001_thing_ontology_rebuild.sql
+-- Run after 20260723000001_thing_ontology_rebuild.sql, before 00002 rename
 --
--- For every device that has a template_id, copy the template's
--- properties/actions into device_properties/device_commands.
--- This makes per-thing tables the source of truth, independent of templates.
+-- Two passes:
+--   1. Devices WITH template_id: match directly via FK
+--   2. Devices WITHOUT template_id: match by device_type to template name
 
--- Properties
+-- First, update template_id for devices without one by matching device_type
+-- to the built-in template name (case-insensitive LIKE match)
+UPDATE devices SET template_id = (
+    SELECT t.id FROM thing_templates t
+    WHERE devices.device_type <> ''
+      AND (t.name LIKE '%' || devices.device_type || '%'
+           OR t.device_type = devices.device_type)
+      AND t.workspace_id IS NULL  -- built-in templates only
+    LIMIT 1
+)
+WHERE template_id IS NULL;
+
+-- Properties — for all devices that now have template_id
 INSERT INTO device_properties (id, device_id, name, display_name, data_type, unit, is_read_only, created_at, updated_at)
 SELECT
-    lower(hex(randomblob(16))),  -- random UUID
+    lower(hex(randomblob(16))),
     d.id,
     json_extract(p.value, '$.name'),
     COALESCE(json_extract(p.value, '$.displayName'), json_extract(p.value, '$.name')),
@@ -25,7 +37,7 @@ WHERE d.template_id IS NOT NULL
     SELECT 1 FROM device_properties dp WHERE dp.device_id = d.id AND dp.name = json_extract(p.value, '$.name')
   );
 
--- Actions
+-- Actions — for all devices that now have template_id
 INSERT INTO device_commands (id, device_id, name, display_name, parameters, created_at)
 SELECT
     lower(hex(randomblob(16))),
