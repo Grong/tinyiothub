@@ -399,11 +399,20 @@ export class DevicesView extends SignalWatcher(LitElement) {
       // thing API returns flat profile; wrap into DeviceProfile format
       // that the view expects (profile.device, profile.overview, etc.)
       if (result && !result.device) {
+        const props = result.properties || [];
+        const acts = result.actions || result.commands || [];
+        // Map state (i32) → status string for the view
+        const statusStr = result.state === 1 ? 'online' : result.state === 2 ? 'error' : 'offline';
         this.selectedDevice = {
-          device: result,
-          overview: {},
-          properties: result.properties || [],
-          commands: result.actions || [],
+          device: { ...result, status: statusStr },
+          overview: {
+            totalProperties: props.length,
+            onlineProperties: props.filter((p: any) => p.currentValue != null || p.value != null).length,
+            totalCommands: acts.length,
+            activeAlarms: 0,
+          },
+          properties: props,
+          commands: acts,
         } as any;
       } else {
         this.selectedDevice = result;
