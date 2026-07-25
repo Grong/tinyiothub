@@ -1092,13 +1092,13 @@ export class DevicesView extends SignalWatcher(LitElement) {
       const profileRes = await deviceApi.getDeviceProfile(d.id);
       const profile = profileRes.result;
       if (profile?.properties?.length) {
-        this.formProperties = profile.properties.map(p => ({
+        this.formProperties = profile.properties.map((p: any) => ({
           name: p.name, displayName: p.displayName, value: p.currentValue ?? p.value ?? '', dataType: p.dataType,
           unit: p.unit, isReadOnly: p.isReadOnly, minValue: p.minValue, maxValue: p.maxValue, description: p.description,
         }));
       }
       if (profile?.commands?.length) {
-        this.formCommands = profile.commands.map(c => ({
+        this.formCommands = profile.commands.map((c: any) => ({
           name: c.name, description: c.description,
           parameters: c.parameters && Object.keys(c.parameters).length > 0 ? JSON.stringify(c.parameters) : '',
         }));

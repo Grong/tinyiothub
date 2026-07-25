@@ -2,7 +2,7 @@ import { LitElement, html, nothing } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { classMap } from "lit/directives/class-map.js";
 import { cronApi } from "../../api/cron.js";
-import { deviceApi } from "../../api/devices.js";
+import { thingApi } from "../../api/things.js";
 import type {
   Job,
   JobExecution,
@@ -223,10 +223,10 @@ export class CronView extends LitElement {
 
   async loadDevices() {
     try {
-      const res = await deviceApi.getDevices({ page: 1, pageSize: 200 });
+      const res = await thingApi.list({ page: '1', pageSize: '200' });
       const data = res.result;
-      if (data?.data) {
-        this.devices = data.data.map((d: any) => ({ id: d.id, name: d.displayName || d.name }));
+      if (data?.items) {
+        this.devices = data.items.map((d: any) => ({ id: d.id, name: d.displayName || d.name }));
       }
     } catch {
       // non-critical

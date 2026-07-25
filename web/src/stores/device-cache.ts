@@ -12,7 +12,7 @@
  */
 
 import { signal, computed } from '@lit-labs/signals';
-import { deviceApi } from '../api/devices.js';
+import { thingApi } from '../api/things.js';
 import { API_BASE } from '../api/config.js';
 import { getAuthToken, apiPost } from '../api/client.js';
 import type { Device, DeviceProperty } from '../types/index.js';
@@ -73,7 +73,7 @@ class DeviceCache {
     this.$devicesMap.set(updatedMap);
 
     try {
-      await deviceApi.updateDeviceProperty(deviceId, propertyName, value);
+      await thingApi.updateDeviceProperty(deviceId, propertyName, value);
     } catch (err) {
       // Rollback
       const rollbackMap = this.$devicesMap.get();

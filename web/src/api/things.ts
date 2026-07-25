@@ -166,6 +166,7 @@ export const thingApi = {
   updateDevice: (id: string, data: Record<string, unknown>) => apiPut<any>('/things/' + id, data),
   deleteDevice: (id: string) => apiDelete<any>('/things/' + id),
   getDeviceCommands: (id: string) => apiGet<any[]>('/things/' + id + '/commands'),
+  updateDeviceProperty: (deviceId: string, propertyName: string, value: any) => apiPut<void>('/things/' + deviceId + '/properties/' + propertyName, { value }),
   executeCommand: (id: string, name: string, params?: Record<string, any>) => apiPost<any>('/things/' + id + '/actions/' + encodeURIComponent(name) + '/confirm', { token: 'direct', params }),
   exportDeviceAsTemplate: (id: string) => apiGet<any>('/things/templates/' + id + '/export/dtdl'),
   cloneDevice: async (id: string) => { const r = await apiGet<any>('/things/' + id); return apiPost<any>('/things', { ...r.result, name: (r.result?.name || 'clone') + ' (副本)' }); },

@@ -18,9 +18,7 @@ import './views/home.js';
 // custom element is registered.
 const lazyViews: Record<string, () => Promise<void>> = {
   dashboard: () => import('./views/dashboard.js').then(() => {}),
-  devices: () => import('./views/devices.js').then(() => {}),
   things: () => import('./views/things.js').then(() => {}),
-  'thing-detail': () => import('./views/thing-detail.js').then(() => {}),
   alarms: () => import('./views/alarms.js').then(() => {}),
   events: () => import('./views/events.js').then(() => {}),
   monitoring: () => import('./views/monitoring.js').then(() => {}),
