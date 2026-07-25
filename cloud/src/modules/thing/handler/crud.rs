@@ -165,10 +165,20 @@ pub async fn get_thing_profile(
     let svc = thing_service(&pool);
 
     match svc.get_thing_profile(&id).await {
-        Ok(profile) => (StatusCode::OK, ApiResponseBuilder::success(profile)),
+        Ok(profile) => {
+            tracing::info!(
+                thing_id = %id,
+                props = profile.properties.as_ref().map_or(0, |v| v.len()),
+                actions = profile.actions.as_ref().map_or(0, |v| v.len()),
+                events = profile.recent_events.as_ref().map_or(0, |v| v.len()),
+                docs = profile.knowledge_docs.as_ref().map_or(0, |v| v.len()),
+                "Thing profile loaded"
+            );
+            (StatusCode::OK, ApiResponseBuilder::success(profile))
+        }
         Err(e) => {
             let status = e.status_code();
-            tracing::error!(?e, "Failed to get thing profile");
+            tracing::error!(?e, thing_id = %id, "Failed to get thing profile");
             (status, ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()))
         }
     }
