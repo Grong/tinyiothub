@@ -2315,10 +2315,18 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this._docTagSaveTimer = setTimeout(async () => {
       const docId = this.editingDocId;
       const wsId = (this.selectedDevice?.device as any)?.workspaceId || 'default';
-      await fetch(`/api/v1/workspaces/${wsId}/resources/${docId}`, {
+      const res = await fetch(`/api/v1/workspaces/${wsId}/resources/${docId}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('auth-token') || ''}` },
         body: JSON.stringify({ tags: this.editingDocTags }),
-      }).catch(() => {});
+      }).then(r => r.json()).catch(() => null);
+      // Update local state immediately
+      if (res?.code === 0) {
+        const idx = ((this.selectedDevice as any)?.knowledgeDocs || []).findIndex((d: any) => d.id === docId);
+        if (idx >= 0) {
+          (this.selectedDevice as any).knowledgeDocs[idx].tags = JSON.stringify(this.editingDocTags);
+          this.requestUpdate();
+        }
+      }
     }, 300);
   }
 
