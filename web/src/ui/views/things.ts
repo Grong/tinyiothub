@@ -2231,19 +2231,19 @@ export class DevicesView extends SignalWatcher(LitElement) {
                       <button class="btn btn--ghost btn--sm device-card__action-btn btn--danger-text" title="移除" @click=${(e: Event) => { e.stopPropagation(); this.removeKnowledgeDoc(doc.id); }}>${icons.trash2}</button>
                     </div>
                   </div>
-                  <div class="device-card__body" style="cursor:pointer;" @click=${(e: Event) => { e.stopPropagation(); this.editingDocId = this.editingDocId === doc.id ? null : doc.id; if (this.editingDocId) { this.editingDocTags = [...docTags]; this.tagSearchKeyword = ''; } this.requestUpdate(); }}>
+                  <div class="device-card__body" @click=${(e: Event) => { e.stopPropagation(); if (this.editingDescId === doc.id) return; this.editingDescId = doc.id; this._editDescValue = doc.description || ''; this.requestUpdate(); }}>
                     <div class="device-card__info">
-                        ${doc.description ? html`
-                          <div class="device-card__info-row">
-                            <span class="device-card__info-value">${doc.description}</span>
-                          </div>
-                        ` : nothing}
-                        ${doc.resourceType ? html`
-                          <div class="device-card__info-row">
-                            <span class="device-card__info-label">类型</span>
-                            <span class="device-card__info-value">${doc.resourceType}</span>
-                          </div>
-                        ` : nothing}
+                      ${this.editingDescId === doc.id ? html`
+                        <input class="kb-card__edit-input" .value=${this._editDescValue} placeholder="添加描述…" @input=${(e: Event) => { this._editDescValue = (e.target as HTMLInputElement).value; }}
+                          @keydown=${(e: KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); this.saveDocDesc(doc); } }}
+                          @blur=${() => this.saveDocDesc(doc)} />
+                      ` : html`
+                        ${doc.description ? html`<div class="device-card__info-row"><span class="device-card__info-value">${doc.description}</span></div>`
+                          : html`<div class="device-card__info-row"><span class="device-card__info-value" style="color:var(--muted);font-style:italic;">点击添加描述</span></div>`}
+                      `}
+                      <div class="device-card__info-row">
+                        <span class="device-card__info-label">类型</span>
+                        <span class="device-card__info-value">${doc.resourceType || 'file'}</span>
                       </div>
                     </div>
                   </div>
@@ -2276,8 +2276,24 @@ export class DevicesView extends SignalWatcher(LitElement) {
     } catch {}
   }
 
+  async saveDocDesc(doc: any) {
+    if (this._editDescValue === (doc.description || '')) { this.editingDescId = null; return; }
+    const wsId = (this.selectedDevice?.device as any)?.workspaceId || 'default';
+    try {
+      await fetch(`/api/v1/workspaces/${wsId}/resources/${doc.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('auth-token') || ''}` },
+        body: JSON.stringify({ description: this._editDescValue || null }),
+      });
+      doc.description = this._editDescValue || null;
+      this.editingDescId = null;
+      this.requestUpdate();
+    } catch {}
+  }
+
   @state() editingDocId: string | null = null;
   @state() editingDocTags: string[] = [];
+  @state() editingDescId: string | null = null;
+  private _editDescValue = '';
   @state() tagPopoverSearch = '';
 
   // Knowledge doc tag editing — reuses device card tag popover pattern
