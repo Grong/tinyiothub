@@ -8,14 +8,13 @@ use crate::shared::app_state::AppState;
 // /api/v1/devices management CRUD routes have been removed.
 // Use the /api/v1/things endpoints instead.
 
-/// Handler that returns 404 with migration guidance.
-async fn device_endpoint_removed() -> Json<serde_json::Value> {
-    Json(serde_json::json!({
-        "error": {
-            "code": "ENDPOINT_REMOVED",
-            "message": "/api/devices has been removed. Use /api/things instead."
-        }
-    }))
+/// Handler that returns 410 Gone with migration guidance in standard API format.
+async fn device_endpoint_removed() -> (axum::http::StatusCode, Json<serde_json::Value>) {
+    (axum::http::StatusCode::GONE, Json(serde_json::json!({
+        "code": 410,
+        "msg": "/api/devices has been removed. Use /api/things instead.",
+        "result": null
+    })))
 }
 
 pub fn create_router() -> Router<AppState> {
