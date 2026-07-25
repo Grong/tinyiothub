@@ -46,6 +46,40 @@ pub async fn list_unassigned_resources(
     }
 }
 
+#[derive(Deserialize)]
+pub struct CreateResourceRequest {
+    pub name: String,
+    pub content: Option<String>,
+    #[serde(rename = "type")]
+    pub resource_type: Option<String>,
+}
+
+// ──────────────────────────────────────────────
+// POST /resources/upload (create + attach in one step)
+// ──────────────────────────────────────────────
+
+pub async fn upload_resource(
+    State(state): State<AppState>,
+    WorkspaceScope(ws): WorkspaceScope,
+    Path(thing_id): Path<String>,
+    Json(req): Json<CreateResourceRequest>,
+) -> (StatusCode, Json<ApiResponse<ThingResource>>) {
+    let pool = state.database.pool().clone();
+    let svc = thing_service(&pool);
+
+    let ws_id = ws.unwrap_or_default();
+    let resource_type = req.resource_type.unwrap_or_else(|| "document".to_string());
+
+    match svc.create_and_attach_resource(&ws_id, &thing_id, &req.name, req.content.as_deref(), &resource_type).await {
+        Ok(resource) => (StatusCode::CREATED, ApiResponseBuilder::success(resource)),
+        Err(e) => {
+            let status = e.status_code();
+            tracing::error!(?e, thing_id = %thing_id, "Failed to upload resource");
+            (status, ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()))
+        }
+    }
+}
+
 // ──────────────────────────────────────────────
 // POST /{id}/resources
 // ──────────────────────────────────────────────

@@ -158,6 +158,10 @@ export const thingApi = {
   async attachResource(thingId: string, resourceId: string) {
     return apiPost<void>(`/things/${thingId}/resources`, { resourceId });
   },
+
+  async uploadResource(thingId: string, data: { name: string; content?: string; type?: string }) {
+    return apiPost<any>(`/things/resources/upload/${thingId}`, data);
+  },
   // Backward-compat aliases (devices.ts still uses old method names)
   getDevices: (params?: Record<string, string>) => apiGet<any>('/things', params),
   getDevice: (id: string) => apiGet<any>('/things/' + id),

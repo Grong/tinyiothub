@@ -2203,6 +2203,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
           <div style="display: flex; align-items: center; gap: var(--space-2);">
             <span style="font-size: 12px; color: var(--muted);">共 ${docs.length} 篇</span>
             <button class="btn btn--ghost btn--sm" @click=${() => this.openResourcePicker(thingId)}>${icons.plus} 添加资源</button>
+            <button class="btn btn--ghost btn--sm" @click=${() => this.showUploadForm = !this.showUploadForm}>${icons.fileText} 上传文档</button>
           </div>
         </div>
         ${docs.length === 0 ? html`
@@ -2226,8 +2227,45 @@ export class DevicesView extends SignalWatcher(LitElement) {
           </div>
         `}
         ${this.showResourcePicker ? this.renderResourcePicker() : nothing}
+        ${this.showUploadForm ? this.renderUploadForm() : nothing}
       </div>
     `;
+  }
+
+  @state() showUploadForm = false;
+  @state() uploadDocName = '';
+  @state() uploadDocContent = '';
+  @state() uploadSaving = false;
+
+  renderUploadForm() {
+    return html`
+      <div style="margin-top: var(--space-3); border-top: 1px solid var(--border); padding-top: var(--space-3);">
+        <div style="font-size: 13px; font-weight: 600; margin-bottom: var(--space-2);">上传文档</div>
+        <div class="field">
+          <input type="text" class="input" placeholder="文档名称" .value=${this.uploadDocName} @input=${(e: Event) => { this.uploadDocName = (e.target as HTMLInputElement).value; }} />
+        </div>
+        <div class="field">
+          <textarea class="input" rows="4" placeholder="文档内容（可选）" .value=${this.uploadDocContent} @input=${(e: Event) => { this.uploadDocContent = (e.target as HTMLTextAreaElement).value; }}></textarea>
+        </div>
+        <button class="btn btn--primary btn--sm" ?disabled=${this.uploadSaving || !this.uploadDocName.trim()} @click=${this.submitUpload}>${this.uploadSaving ? '上传中...' : '上传'}</button>
+      </div>
+    `;
+  }
+
+  async submitUpload() {
+    if (!this.uploadDocName.trim()) return;
+    const thingId = this.selectedDevice?.device?.id;
+    if (!thingId) return;
+    this.uploadSaving = true;
+    try {
+      await thingApi.uploadResource(thingId, { name: this.uploadDocName.trim(), content: this.uploadDocContent.trim() || undefined, type: 'document' });
+      success('文档已上传');
+      this.uploadDocName = '';
+      this.uploadDocContent = '';
+      this.showUploadForm = false;
+      await this.loadDeviceDetail(thingId);
+    } catch (err: any) { toastError(err.message || '上传失败'); }
+    finally { this.uploadSaving = false; }
   }
 
   @state() showResourcePicker = false;
