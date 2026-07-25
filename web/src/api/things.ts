@@ -168,12 +168,10 @@ export const thingApi = {
     const upRes = await fetch(`/api/v1/workspaces/${workspaceId}/resources/upload`, { method: 'POST', headers, body: form }).then(r => r.json());
     if (upRes.code !== 0) throw new Error(upRes.msg || '上传失败');
     const filePath = upRes.result?.file_path;
-    // 2. Create workspace resource record — derive type from MIME
-    const isImage = file.type.startsWith('image/') || /\.(png|jpe?g|gif|svg|webp|bmp)$/i.test(fileName);
-    const resourceType = isImage ? 'file' : 'document';
+    // 2. Create workspace resource record — uploaded files are always type 'file'
     const createRes = await fetch(`/api/v1/workspaces/${workspaceId}/resources`, {
       method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: fileName, file_path: filePath, resource_type: resourceType, tags: [] }),
+      body: JSON.stringify({ name: fileName, file_path: filePath, resource_type: 'file', tags: [] }),
     }).then(r => r.json());
     if (!createRes.result?.id) throw new Error('创建资源记录失败');
     // 3. Attach to thing
