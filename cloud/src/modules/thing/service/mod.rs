@@ -178,10 +178,6 @@ impl ThingService {
         };
 
         let created = self.repo.create(&row).await?;
-        if let Some(ref tid) = req.template_id {
-            let _ = self.copy_template_props(&created.id, tid).await;
-            let _ = self.copy_template_acts(&created.id, tid).await;
-        }
         Ok(Self::row_to_response(&created, vec![]))
     }
 
@@ -500,37 +496,4 @@ struct DocRow {
     tags: String,
     created_at: String,
     updated_at: String,
-}
-    async fn copy_template_props(&self, thing_id: &str, tid: &str) -> Result<(), sqlx::Error> {
-        let row: Option<(String,)> = sqlx::query_as("SELECT properties FROM thing_templates WHERE id = ?")
-            .bind(tid).fetch_optional(&self.pool).await?;
-        let Some((json_str,)) = row else { return Ok(()); };
-        for p in serde_json::from_str::<Vec<serde_json::Value>>(&json_str).unwrap_or_default() {
-            let nm = p["name"].as_str().unwrap_or("");
-            let dp = p.get("displayName").and_then(|v| v.as_str()).unwrap_or(nm);
-            sqlx::query("INSERT INTO device_properties (id,device_id,name,display_name,data_type,unit,is_read_only,created_at,updated_at) VALUES (?,?,?,?,?,?,?,datetime('now'),datetime('now'))")
-                .bind(uuid::Uuid::new_v4().to_string()).bind(thing_id).bind(nm).bind(dp)
-                .bind(p.get("dataType").and_then(|v| v.as_str()).unwrap_or("string"))
-                .bind(p.get("unit").and_then(|v| v.as_str()).unwrap_or(""))
-                .bind((p.get("isReadOnly").and_then(|v| v.as_bool()).unwrap_or(false)) as i32)
-                .execute(&self.pool).await?;
-        }
-        Ok(())
-    }
-
-    async fn copy_template_acts(&self, thing_id: &str, tid: &str) -> Result<(), sqlx::Error> {
-        let row: Option<(String,)> = sqlx::query_as("SELECT actions FROM thing_templates WHERE id = ?")
-            .bind(tid).fetch_optional(&self.pool).await?;
-        let Some((json_str,)) = row else { return Ok(()); };
-        for a in serde_json::from_str::<Vec<serde_json::Value>>(&json_str).unwrap_or_default() {
-            let nm = a["name"].as_str().unwrap_or("");
-            let dp = a.get("displayName").and_then(|v| v.as_str()).unwrap_or(nm);
-            sqlx::query("INSERT INTO device_commands (id,device_id,name,display_name,parameters,created_at) VALUES (?,?,?,?,?,datetime('now'))")
-                .bind(uuid::Uuid::new_v4().to_string()).bind(thing_id).bind(nm).bind(dp)
-                .bind(a.get("parameters").map(|v| v.to_string()).as_deref())
-                .execute(&self.pool).await?;
-        }
-        Ok(())
-    }
-
 }
