@@ -13,8 +13,6 @@ import type {
   CreateDeviceRequest,
   DeviceCommand,
 } from '../types/index.js';
-import type { PaginatedResponse } from './client.js';
-
 export const deviceApi = {
   async getDevices(params?: DeviceListParams) {
     return apiGet<any>('/things', params as Record<string, any>);
