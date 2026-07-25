@@ -2214,38 +2214,57 @@ export class DevicesView extends SignalWatcher(LitElement) {
             <div class="kb-empty__hint">点击上方「添加」上传文件或关联已有资源</div>
           </div>
         ` : html`
-          <div class="kb-card-grid">
+          <div class="model-grid">
             ${docs.map((doc: any) => {
               const docTags = (typeof doc.tags === 'string' ? JSON.parse(doc.tags || '[]') : doc.tags) || [];
+              const visibleTags = docTags.slice(0, 3);
+              const hiddenCount = docTags.length - 3;
               return html`
-              <div class="kb-card">
-                <div class="kb-card__header">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="16" height="16" opacity="0.35">
-                    <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>
-                  </svg>
-                  <span class="kb-card__type">${doc.resourceType || 'file'}</span>
-                  <span class="kb-card__date">${doc.createdAt?.slice(0, 10) || ''}</span>
-                  <button class="kb-card__edit" @click=${(e: Event) => { e.stopPropagation(); this.startEditDoc(doc); }} title="编辑">${icons.edit}</button>
-                  <button class="kb-card__remove" @click=${(e: Event) => { e.stopPropagation(); this.removeKnowledgeDoc(doc.id); }} title="移除">&times;</button>
-                </div>
-                <div class="kb-card__body">
-                  ${this.editingDocId === doc.id ? html`
-                    <input class="kb-card__edit-input" .value=${doc.description || ''} placeholder="描述" @input=${(e: Event) => { this._editDesc = (e.target as HTMLInputElement).value; }} />
-                    <input class="kb-card__edit-input" .value=${docTags.join(', ')} placeholder="标签（逗号分隔）" @input=${(e: Event) => { this._editTags = (e.target as HTMLInputElement).value; }} style="margin-top:4px;" />
-                    <div style="display:flex;gap:var(--space-1);margin-top:4px;">
-                      <button class="btn btn--primary btn--xs" @click=${(e: Event) => { e.stopPropagation(); this.saveDocEdit(doc); }}>保存</button>
-                      <button class="btn btn--ghost btn--xs" @click=${(e: Event) => { e.stopPropagation(); this.cancelDocEdit(); }}>取消</button>
+              <div class="device-card__wrap">
+                <div class="card device-card">
+                  <div class="device-card__header">
+                    <div class="device-card__header-left">
+                      <span class="device-card__title" title="${doc.name}">${doc.name || doc.filePath || '未命名'}</span>
+                      ${doc.createdAt ? html`<span class="device-card__gateway-tag">${doc.createdAt.slice(0, 10)}</span>` : nothing}
                     </div>
-                  ` : html`
-                    <div class="kb-card__title">${doc.name || doc.filePath || '未命名'}</div>
-                    ${doc.description ? html`<div class="kb-card__desc">${doc.description}</div>` : nothing}
-                  `}
-                </div>
-                ${docTags.length > 0 && this.editingDocId !== doc.id ? html`
-                  <div class="kb-card__tags">
-                    ${docTags.map((t: any) => html`<span class="tag-pill tag-pill--xs">${typeof t === 'string' ? t : t.name || t}</span>`)}
+                    <div class="device-card__actions">
+                      <button class="btn btn--ghost btn--sm device-card__action-btn" title="编辑" @click=${(e: Event) => { e.stopPropagation(); this.startEditDoc(doc); }}>${icons.edit}</button>
+                      <button class="btn btn--ghost btn--sm device-card__action-btn btn--danger-text" title="移除" @click=${(e: Event) => { e.stopPropagation(); this.removeKnowledgeDoc(doc.id); }}>${icons.trash2}</button>
+                    </div>
                   </div>
-                ` : nothing}
+                  <div class="device-card__body">
+                    ${this.editingDocId === doc.id ? html`
+                      <div class="device-card__info" style="padding:var(--space-1) 0;">
+                        <input class="kb-card__edit-input" .value=${doc.description || ''} placeholder="添加描述…" @input=${(e: Event) => { this._editDesc = (e.target as HTMLInputElement).value; }} />
+                        <input class="kb-card__edit-input" .value=${docTags.join(', ')} placeholder="标签（逗号分隔）" @input=${(e: Event) => { this._editTags = (e.target as HTMLInputElement).value; }} style="margin-top:4px;" />
+                        <div style="margin-top:4px;display:flex;gap:var(--space-1);">
+                          <button class="btn btn--primary btn--xs" @click=${(e: Event) => { e.stopPropagation(); this.saveDocEdit(doc); }}>保存</button>
+                          <button class="btn btn--ghost btn--xs" @click=${(e: Event) => { e.stopPropagation(); this.cancelDocEdit(); }}>取消</button>
+                        </div>
+                      </div>
+                    ` : html`
+                      <div class="device-card__info">
+                        ${doc.description ? html`
+                          <div class="device-card__info-row">
+                            <span class="device-card__info-value">${doc.description}</span>
+                          </div>
+                        ` : nothing}
+                        ${doc.resourceType ? html`
+                          <div class="device-card__info-row">
+                            <span class="device-card__info-label">类型</span>
+                            <span class="device-card__info-value">${doc.resourceType}</span>
+                          </div>
+                        ` : nothing}
+                      </div>
+                    `}
+                  </div>
+                  ${docTags.length > 0 && this.editingDocId !== doc.id ? html`
+                    <div class="device-card__footer">
+                      ${visibleTags.map((t: any) => html`<span class="tag-pill">${typeof t === 'string' ? t : t.name || t}</span>`)}
+                      ${hiddenCount > 0 ? html`<span class="tag-pill tag-pill--muted">+${hiddenCount}</span>` : nothing}
+                    </div>
+                  ` : nothing}
+                </div>
               </div>
             `; })}
           </div>
