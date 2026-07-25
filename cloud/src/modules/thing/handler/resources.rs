@@ -8,7 +8,10 @@ use axum::{
 use serde::Deserialize;
 use tinyiothub_web::response::ApiResponse;
 
-use super::super::{service::ThingService, types::ThingResource};
+use super::super::{
+    service::ThingService,
+    types::ThingResource,
+};
 use crate::shared::{api_response::ApiResponseBuilder, app_state::AppState};
 
 #[derive(Deserialize)]
