@@ -429,7 +429,7 @@ impl ThingService {
 
     async fn load_knowledge_docs(&self, device_id: &str) -> Option<Vec<serde_json::Value>> {
         let rows: Vec<DocRow> = sqlx::query_as::<_, DocRow>(
-            "SELECT id, name, type, file_path, content, tags, created_at, updated_at \
+            "SELECT id, name, resource_type, file_path, content, tags, created_at, updated_at \
                  FROM resources WHERE device_id = ? ORDER BY created_at DESC LIMIT 10",
         )
         .bind(device_id)
