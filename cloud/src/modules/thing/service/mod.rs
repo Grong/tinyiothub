@@ -391,12 +391,11 @@ impl ThingService {
         .await
         .ok()
         .flatten();
-        if let Some((Some(ref json_str),)) = row {
-            if let Ok(acts) = serde_json::from_str::<Vec<serde_json::Value>>(json_str) {
-                if !acts.is_empty() {
-                    return Some(acts);
-                }
-            }
+        if let Some((Some(ref json_str),)) = row
+            && let Ok(acts) = serde_json::from_str::<Vec<serde_json::Value>>(json_str)
+            && !acts.is_empty()
+        {
+            return Some(acts);
         }
         // 2. Fallback: device_commands table
         #[derive(Debug, serde::Serialize, sqlx::FromRow)]
