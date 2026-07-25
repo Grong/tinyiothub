@@ -2191,7 +2191,6 @@ export class DevicesView extends SignalWatcher(LitElement) {
     const profile = this.selectedDevice;
     if (!profile) return nothing;
     const docs = (profile as any).knowledgeDocs || [];
-    console.log('knowledge docs:', docs.length, 'editingDocId:', this.editingDocId);
 
     return html`
       <div class="card" style="margin-top: var(--space-4);">
@@ -2221,8 +2220,8 @@ export class DevicesView extends SignalWatcher(LitElement) {
               const visibleTags = docTags.slice(0, 3);
               const hiddenCount = docTags.length - 3;
               return html`
-              <div class="device-card__wrap">
-                <div class="card device-card">
+              <div class="device-card__wrap" style="overflow:visible;">
+                <div class="card device-card" style="overflow:visible;">
                   <div class="device-card__header">
                     <div class="device-card__header-left">
                       <span class="device-card__title" title="${doc.name}">${doc.name || doc.filePath || '未命名'}</span>
@@ -2250,7 +2249,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
                       </div>
                     </div>
                   </div>
-                  <div class="device-card__footer" style="cursor:pointer;min-height:28px;position:relative;" @click=${(e: Event) => { e.stopPropagation(); console.log('footer clicked', doc.id); this.editingDocId === doc.id ? (this.editingDocId = null) : this.startEditDoc(doc); }}>
+                  <div class="device-card__footer" style="cursor:pointer;min-height:28px;position:relative;" @click=${(e: Event) => { e.stopPropagation(); this.editingDocId === doc.id ? (this.editingDocId = null) : this.startEditDoc(doc); }}>
                     ${visibleTags.map((t: any) => html`<span class="tag-pill">${typeof t === 'string' ? t : t.name || t}</span>`)}
                     ${hiddenCount > 0 ? html`<span class="tag-pill tag-pill--muted" title="${docTags.slice(3).map((t: any) => typeof t === 'string' ? t : t.name || t).join(', ')}">+${hiddenCount}</span>` : nothing}
                     ${docTags.length === 0 ? html`<span class="inline-muted" style="font-size: 12px;">添加标签</span>` : nothing}
