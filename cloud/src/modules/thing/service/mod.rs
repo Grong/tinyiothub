@@ -186,9 +186,14 @@ impl ThingService {
     }
 
     async fn copy_template_props(&self, thing_id: &str, tid: &str) -> Result<(), sqlx::Error> {
-        let row: Option<(String,)> = sqlx::query_as("SELECT properties FROM thing_templates WHERE id=?")
-            .bind(tid).fetch_optional(&self.pool).await?;
-        let Some((json,)) = row else { return Ok(()); };
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT properties FROM thing_templates WHERE id=?")
+                .bind(tid)
+                .fetch_optional(&self.pool)
+                .await?;
+        let Some((json,)) = row else {
+            return Ok(());
+        };
         for p in serde_json::from_str::<Vec<serde_json::Value>>(&json).unwrap_or_default() {
             let nm = p["name"].as_str().unwrap_or("");
             let dp = p.get("displayName").and_then(|v| v.as_str()).unwrap_or(nm);
@@ -203,9 +208,14 @@ impl ThingService {
     }
 
     async fn copy_template_acts(&self, thing_id: &str, tid: &str) -> Result<(), sqlx::Error> {
-        let row: Option<(String,)> = sqlx::query_as("SELECT actions FROM thing_templates WHERE id=?")
-            .bind(tid).fetch_optional(&self.pool).await?;
-        let Some((json,)) = row else { return Ok(()); };
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT actions FROM thing_templates WHERE id=?")
+                .bind(tid)
+                .fetch_optional(&self.pool)
+                .await?;
+        let Some((json,)) = row else {
+            return Ok(());
+        };
         for a in serde_json::from_str::<Vec<serde_json::Value>>(&json).unwrap_or_default() {
             let nm = a["name"].as_str().unwrap_or("");
             let dp = a.get("displayName").and_then(|v| v.as_str()).unwrap_or(nm);
@@ -288,7 +298,10 @@ impl ThingService {
     ) -> Result<(), ThingError> {
         let affected = self.repo.detach_resource(thing_id, resource_id).await?;
         if affected == 0 {
-            return Err(ThingError::NotFound(format!("resource {} not found on thing {}", resource_id, thing_id)));
+            return Err(ThingError::NotFound(format!(
+                "resource {} not found on thing {}",
+                resource_id, thing_id
+            )));
         }
         Ok(())
     }
@@ -428,15 +441,25 @@ impl ThingService {
     }
 
     /// Load actions: template first, then device_commands table.
-        /// Load actions from per-thing device_commands table.
+    /// Load actions from per-thing device_commands table.
     async fn load_actions(&self, thing_id: &str) -> Option<Vec<serde_json::Value>> {
         #[derive(Debug, serde::Serialize, sqlx::FromRow)]
         #[serde(rename_all = "camelCase")]
-        struct CmdRow { id: String, device_id: String, name: String, display_name: Option<String>, description: Option<String>, parameters: Option<String>, created_at: String }
+        struct CmdRow {
+            id: String,
+            device_id: String,
+            name: String,
+            display_name: Option<String>,
+            description: Option<String>,
+            parameters: Option<String>,
+            created_at: String,
+        }
         let rows: Vec<CmdRow> = sqlx::query_as::<_, CmdRow>(
             "SELECT id,device_id,name,display_name,description,parameters,created_at FROM thing_actions WHERE device_id=? ORDER BY name",
         ).bind(thing_id).fetch_all(&self.pool).await.ok()?;
-        if rows.is_empty() { return None; }
+        if rows.is_empty() {
+            return None;
+        }
         Some(rows.into_iter().filter_map(|r| serde_json::to_value(r).ok()).collect())
     }
 
