@@ -289,6 +289,8 @@
 .kb-item__name { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .kb-item__meta { display: flex; gap: var(--space-2); font-size: 11px; color: var(--muted); margin-top: 2px; }
 .kb-item__path { max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+.kb-item__desc { font-size: 12px; color: rgba(232,236,241,0.5); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kb-item__tags { display: flex; gap: 4px; margin-top: 4px; }
 
 /* Empty state */
 .kb-empty { text-align: center; padding: var(--space-8) var(--space-4); color: var(--muted); }

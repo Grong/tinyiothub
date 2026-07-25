@@ -2215,19 +2215,27 @@ export class DevicesView extends SignalWatcher(LitElement) {
           </div>
         ` : html`
           <div class="kb-list">
-            ${docs.map((doc: any) => html`
+            ${docs.map((doc: any) => {
+              const docTags = (typeof doc.tags === 'string' ? JSON.parse(doc.tags || '[]') : doc.tags) || [];
+              return html`
               <div class="kb-item">
-                <span class="kb-item__icon">${doc.resourceType === 'image' ? '&#128247;' : '&#128196;'}</span>
+                <span class="kb-item__icon">${doc.resourceType === 'file' ? '&#128196;' : '&#128214;'}</span>
                 <div class="kb-item__body">
                   <div class="kb-item__name">${doc.name || doc.filePath || '未命名'}</div>
+                  ${doc.description ? html`<div class="kb-item__desc">${doc.description}</div>` : nothing}
                   <div class="kb-item__meta">
-                    <span>${doc.resourceType || doc.type || 'document'}</span>
+                    <span>${doc.resourceType || 'document'}</span>
                     ${doc.filePath ? html`<span class="kb-item__path">${doc.filePath}</span>` : nothing}
                     ${doc.createdAt ? html`<span>${doc.createdAt.slice(0, 10)}</span>` : nothing}
                   </div>
+                  ${docTags.length > 0 ? html`
+                    <div class="kb-item__tags">
+                      ${docTags.map((t: any) => html`<span class="tag-pill tag-pill--xs">${t}</span>`)}
+                    </div>
+                  ` : nothing}
                 </div>
               </div>
-            `)}
+            `; })}
           </div>
         `}
         ${this.showResourceModal ? this.renderResourceModal() : nothing}
