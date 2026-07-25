@@ -309,25 +309,25 @@ export class TinyIoTHubApp extends LitElement {
       return;
     }
 
-    // Handle /things/:id — uses mature devices detail view
+    // Handle /things/:id — internally maps to 'thing-detail' view
     if (path.startsWith('things/')) {
       if (!this.isAuthenticated) {
         this.navigate('login');
         return;
       }
-      this.currentRoute = 'devices/' + path.slice('things/'.length);
-      this._ensureViewLoaded('devices');
+      this.currentRoute = 'thing-detail/' + path.slice('things/'.length);
+      this._ensureViewLoaded('thing-detail');
       return;
     }
 
-    // Handle /things (list page) — uses mature devices list view
+    // Handle /things (list page) — uses dedicated things list/tree view
     if (path === 'things') {
       if (!this.isAuthenticated) {
         this.navigate('login');
         return;
       }
-      this.currentRoute = 'devices';
-      this._ensureViewLoaded('devices');
+      this.currentRoute = 'things';
+      this._ensureViewLoaded('things');
       return;
     }
 
