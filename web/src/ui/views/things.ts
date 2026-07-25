@@ -2267,7 +2267,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   // === Resource Modal (unified: upload + pick existing) ===
 
-  async removeKnowledgeDoc(docId: string) {
+  async removeKnowledgeDoc(__docId: string) {
     if (!confirm('从该物移除这篇文档？')) return;
     const thingId = this.selectedDevice?.device?.id;
     if (!thingId) return;
@@ -2282,14 +2282,15 @@ export class DevicesView extends SignalWatcher(LitElement) {
   @state() editingDocTags: string[] = [];
   @state() tagPopoverSearch = '';
 
-  async startEditDoc(doc: any) {
+  startEditDoc(doc: any) {
     this.editingDocId = doc.id;
     const tags = (typeof doc.tags === 'string' ? JSON.parse(doc.tags || '[]') : doc.tags) || [];
     this.editingDocTags = [...tags];
     this.tagPopoverSearch = '';
+    this.requestUpdate();
   }
 
-  cancelDocEdit() { this.editingDocId = null; }
+  cancelDocEdit() { this.editingDocId = null; this.requestUpdate(); }
 
   toggleDocTag(tagName: string) {
     if (this.editingDocTags.includes(tagName)) {
@@ -2301,6 +2302,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
 
   removeDocTag(tagName: string) {
     this.editingDocTags = this.editingDocTags.filter(t => t !== tagName);
+    this.requestUpdate();
     this._saveDocTags();
   }
 
@@ -2310,6 +2312,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       this.editingDocTags = [...this.editingDocTags, v];
     }
     this.tagPopoverSearch = '';
+    this.requestUpdate();
     this._saveDocTags();
   }
 
@@ -2327,9 +2330,8 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }, 300);
   }
 
-  renderDocTagPopover(doc: any) {
+  renderDocTagPopover(_doc: any) {
     const keyword = this.tagPopoverSearch.trim();
-    const filtered = this.editingDocTags.filter(t => !keyword || t.toLowerCase().includes(keyword.toLowerCase()));
     const exactMatch = keyword && this.editingDocTags.some(t => t.toLowerCase() === keyword.toLowerCase());
     const showCreate = keyword && !exactMatch;
 
