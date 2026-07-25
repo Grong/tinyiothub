@@ -71,7 +71,7 @@ pub fn create_router() -> Router<AppState> {
         .route("/tools/effective", get(crate::modules::chat::handler::proxy::tools_effective))
         .route("/tools/toggle", post(crate::modules::chat::handler::proxy::tools_toggle))
         .nest("/auth", crate::modules::auth::handler::session::create_router())
-        .nest("/auth/sse-token", crate::modules::auth::handler::token::create_protected_router())
+        .nest("/auth", crate::modules::auth::handler::token::create_protected_router())
         .route("/test-auth", get(test_auth_endpoint))
         .layer(axum_middleware::from_fn(crate::api::middleware::context::jwt_auth_middleware));
 
