@@ -159,8 +159,18 @@ export const thingApi = {
     return apiPost<void>(`/things/${thingId}/resources`, { resourceId });
   },
 
-  async uploadResource(thingId: string, data: { name: string; content?: string; type?: string }) {
-    return apiPost<any>(`/things/resources/upload/${thingId}`, data);
+  /** Upload file via workspace API, then create resource attached to thing */
+  async uploadFileToThing(thingId: string, workspaceId: string, file: File, fileName: string) {
+    const form = new FormData();
+    form.append('file', file, fileName);
+    const token = localStorage.getItem('auth-token') || sessionStorage.getItem('auth-token') || '';
+    const uploadRes = await fetch(`/api/v1/workspaces/${workspaceId}/resources/upload`, {
+      method: 'POST', headers: { 'Authorization': `Bearer ${token}` }, body: form,
+    }).then(r => r.json());
+    if (uploadRes.code !== 0) throw new Error(uploadRes.msg || 'Upload failed');
+    const filePath = uploadRes.result?.file_path;
+    // Create resource record and attach to thing
+    return apiPost<any>(`/things/${thingId}/resources`, { resourceId: '', name: fileName, filePath, type: 'document' });
   },
   // Backward-compat aliases (devices.ts still uses old method names)
   getDevices: (params?: Record<string, string>) => apiGet<any>('/things', params),

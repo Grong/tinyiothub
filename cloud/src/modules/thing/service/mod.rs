@@ -304,32 +304,6 @@ impl ThingService {
         Ok(())
     }
 
-    /// Create a resource and attach it to a thing in one step.
-    pub async fn create_and_attach_resource(
-        &self,
-        workspace_id: &str,
-        thing_id: &str,
-        name: &str,
-        content: Option<&str>,
-        resource_type: &str,
-    ) -> Result<ThingResource, ThingError> {
-        let id = uuid::Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        sqlx::query(
-            "INSERT INTO resources (id, workspace_id, device_id, type, name, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-        )
-        .bind(&id).bind(workspace_id).bind(thing_id).bind(resource_type).bind(name)
-        .bind(content).bind(&now).bind(&now)
-        .execute(&self.pool).await.map_err(|e| ThingError::Database(e.to_string()))?;
-
-        Ok(ThingResource {
-            id, workspace_id: workspace_id.to_string(), device_id: Some(thing_id.to_string()),
-            resource_type: resource_type.to_string(), name: name.to_string(),
-            file_path: String::new(), content: content.map(|s| s.to_string()),
-            tags: "[]".to_string(), created_at: now.clone(), updated_at: now,
-        })
-    }
-
     pub async fn list_unassigned_resources(
         &self,
         workspace_id: &str,

@@ -28,6 +28,5 @@ pub fn create_router() -> Router<AppState> {
         .route("/import/wot", post(import_export::import_wot))
         .route("/templates/{id}/export/dtdl", get(import_export::export_dtdl))
         .route("/resources/unassigned", get(resources::list_unassigned_resources))
-        .route("/resources/upload/{id}", post(resources::upload_resource))
         .route("/{id}/resources", post(resources::attach_resource))
 }

@@ -2233,36 +2233,34 @@ export class DevicesView extends SignalWatcher(LitElement) {
   }
 
   @state() showUploadForm = false;
-  @state() uploadDocName = '';
-  @state() uploadDocContent = '';
   @state() uploadSaving = false;
 
   renderUploadForm() {
     return html`
       <div style="margin-top: var(--space-3); border-top: 1px solid var(--border); padding-top: var(--space-3);">
-        <div style="font-size: 13px; font-weight: 600; margin-bottom: var(--space-2);">上传文档</div>
-        <div class="field">
-          <input type="text" class="input" placeholder="文档名称" .value=${this.uploadDocName} @input=${(e: Event) => { this.uploadDocName = (e.target as HTMLInputElement).value; }} />
-        </div>
-        <div class="field">
-          <textarea class="input" rows="4" placeholder="文档内容（可选）" .value=${this.uploadDocContent} @input=${(e: Event) => { this.uploadDocContent = (e.target as HTMLTextAreaElement).value; }}></textarea>
-        </div>
-        <button class="btn btn--primary btn--sm" ?disabled=${this.uploadSaving || !this.uploadDocName.trim()} @click=${this.submitUpload}>${this.uploadSaving ? '上传中...' : '上传'}</button>
+        <div style="font-size: 13px; font-weight: 600; margin-bottom: var(--space-2);">上传文件</div>
+        <div style="font-size: 12px; color: var(--muted); margin-bottom: var(--space-2);">文件保存到工作区 uploads 目录，由 workspace 模块统一管理</div>
+        <input type="file" id="knowledge-file-input" style="margin-bottom: var(--space-2);" @change=${(e: Event) => { this._uploadFile = (e.target as HTMLInputElement).files?.[0] || null; }} />
+        <button class="btn btn--primary btn--sm" ?disabled=${this.uploadSaving} @click=${this.submitUpload}>${this.uploadSaving ? '上传中...' : '上传到工作区'}</button>
       </div>
     `;
   }
 
+  private _uploadFile: File | null = null;
+
   async submitUpload() {
-    if (!this.uploadDocName.trim()) return;
-    const thingId = this.selectedDevice?.device?.id;
+    const file = this._uploadFile;
+    if (!file) { toastError('请选择文件'); return; }
+    const profile = this.selectedDevice;
+    const thingId = profile?.device?.id;
+    const wsId = (profile?.device as any)?.workspaceId || 'default';
     if (!thingId) return;
     this.uploadSaving = true;
     try {
-      await thingApi.uploadResource(thingId, { name: this.uploadDocName.trim(), content: this.uploadDocContent.trim() || undefined, type: 'document' });
-      success('文档已上传');
-      this.uploadDocName = '';
-      this.uploadDocContent = '';
+      await thingApi.uploadFileToThing(thingId, wsId, file, file.name);
+      success('文件已上传');
       this.showUploadForm = false;
+      (document.getElementById('knowledge-file-input') as HTMLInputElement).value = '';
       await this.loadDeviceDetail(thingId);
     } catch (err: any) { toastError(err.message || '上传失败'); }
     finally { this.uploadSaving = false; }
