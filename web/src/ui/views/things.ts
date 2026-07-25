@@ -2233,7 +2233,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
                     </div>
                   </div>
                   <div class="device-card__body">
-                      ${this.editingDocId === doc.id ? this.renderDocTagPopover(doc) : html`
+                      <div class="device-card__body">
                       <div class="device-card__info">
                         ${doc.description ? html`
                           <div class="device-card__info-row">
@@ -2247,15 +2247,14 @@ export class DevicesView extends SignalWatcher(LitElement) {
                           </div>
                         ` : nothing}
                       </div>
-                    `}
-                  </div>
-                  ${this.editingDocId !== doc.id ? html`
-                    <div class="device-card__footer" @click=${(e: Event) => { e.stopPropagation(); this.startEditDoc(doc); }}>
-                      ${visibleTags.map((t: any) => html`<span class="tag-pill">${typeof t === 'string' ? t : t.name || t}</span>`)}
-                      ${hiddenCount > 0 ? html`<span class="tag-pill tag-pill--muted" title="${docTags.slice(3).map((t: any) => typeof t === 'string' ? t : t.name || t).join(', ')}">+${hiddenCount}</span>` : nothing}
-                      ${docTags.length === 0 ? html`<span class="inline-muted" style="font-size: 12px;">添加标签</span>` : nothing}
                     </div>
-                  ` : nothing}
+                  </div>
+                  <div class="device-card__footer" @click=${(e: Event) => { e.stopPropagation(); if (this.editingDocId !== doc.id) this.startEditDoc(doc); }}>
+                    ${visibleTags.map((t: any) => html`<span class="tag-pill">${typeof t === 'string' ? t : t.name || t}</span>`)}
+                    ${hiddenCount > 0 ? html`<span class="tag-pill tag-pill--muted" title="${docTags.slice(3).map((t: any) => typeof t === 'string' ? t : t.name || t).join(', ')}">+${hiddenCount}</span>` : nothing}
+                    ${docTags.length === 0 ? html`<span class="inline-muted" style="font-size: 12px;">添加标签</span>` : nothing}
+                    ${this.editingDocId === doc.id ? this.renderDocTagPopover(doc) : nothing}
+                  </div>
                 </div>
               </div>
             `; })}
