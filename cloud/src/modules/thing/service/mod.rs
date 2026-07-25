@@ -91,7 +91,13 @@ impl ThingService {
         let thing = self.get_thing(id).await?;
 
         let properties = self.load_properties(id).await.unwrap_or_default();
+        if properties.is_empty() {
+            tracing::warn!(thing_id = %id, "profile: no properties");
+        }
         let actions = self.load_actions(id).await.unwrap_or_default();
+        if actions.is_empty() {
+            tracing::warn!(thing_id = %id, "profile: no actions (no template or empty)");
+        }
         let recent_events = self.load_recent_events(id).await.unwrap_or_default();
         let knowledge_docs = self.load_knowledge_docs(id).await.unwrap_or_default();
 
