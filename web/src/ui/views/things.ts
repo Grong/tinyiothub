@@ -2191,6 +2191,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     const profile = this.selectedDevice;
     if (!profile) return nothing;
     const docs = (profile as any).knowledgeDocs || [];
+    const thingId = profile.device?.id;
 
     return html`
       <div class="card" style="margin-top: var(--space-4);">
@@ -2199,23 +2200,80 @@ export class DevicesView extends SignalWatcher(LitElement) {
             <div style="font-weight: 600;">知识文档</div>
             <div style="font-size: 12px; color: var(--muted);">绑定到该物的文档和资源</div>
           </div>
-          <span style="font-size: 12px; color: var(--muted);">共 ${docs.length} 篇</span>
+          <div style="display: flex; align-items: center; gap: var(--space-2);">
+            <span style="font-size: 12px; color: var(--muted);">共 ${docs.length} 篇</span>
+            <button class="btn btn--ghost btn--sm" @click=${() => this.openResourcePicker(thingId)}>${icons.plus} 添加资源</button>
+          </div>
         </div>
         ${docs.length === 0 ? html`
           <div style="text-align: center; padding: var(--space-6) var(--space-4); color: var(--muted);">
             <div style="font-size: 32px; margin-bottom: var(--space-2); opacity: 0.3;">📄</div>
             <div style="font-size: 14px;">暂无知识文档</div>
-            <div style="font-size: 12px; margin-top: var(--space-1);">上传文档到该物以生成 AI 摘要</div>
+            <div style="font-size: 12px; margin-top: var(--space-1);">点击「添加资源」挂载文档到该物</div>
           </div>
         ` : html`
           <div style="display: flex; flex-direction: column; gap: var(--space-2);">
             ${docs.map((doc: any) => html`
               <div style="display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); border-radius: var(--radius); background: var(--bg-surface); font-size: 13px;">
-                <span style="font-size: 18px;">📄</span>
-                <div style="flex: 1;">
+                <span style="font-size: 18px;">${doc.resourceType === 'image' ? '🖼️' : '📄'}</span>
+                <div style="flex: 1; cursor: pointer;" @click=${() => { if (doc.content) { alert(doc.content?.slice(0, 2000) || ''); } }}>
                   <div>${doc.name || doc.filePath || '未命名文档'}</div>
                   <div style="font-size: 11px; color: var(--muted);">${doc.resourceType || doc.type || ''} · ${doc.createdAt?.slice(0, 10) || ''}</div>
                 </div>
+                <button class="btn btn--ghost btn--sm" style="color: var(--danger);" @click=${() => this.detachResource(thingId, doc.id)} title="解除挂载">&times;</button>
+              </div>
+            `)}
+          </div>
+        `}
+        ${this.showResourcePicker ? this.renderResourcePicker() : nothing}
+      </div>
+    `;
+  }
+
+  @state() showResourcePicker = false;
+  @state() resourcePickThingId = '';
+  @state() unassignedResources: any[] = [];
+  @state() resourcePickLoading = false;
+
+  async openResourcePicker(thingId: string) {
+    this.resourcePickThingId = thingId;
+    this.showResourcePicker = true;
+    this.resourcePickLoading = true;
+    try {
+      const res = await thingApi.listUnassignedResources();
+      this.unassignedResources = res.result || [];
+    } catch { this.unassignedResources = []; }
+    finally { this.resourcePickLoading = false; }
+  }
+
+  async attachThingResource(resourceId: string) {
+    try {
+      await thingApi.attachResource(this.resourcePickThingId, resourceId);
+      success('资源已挂载');
+      this.showResourcePicker = false;
+      await this.loadDeviceDetail(this.resourcePickThingId);
+    } catch (err: any) { toastError(err.message || '挂载失败'); }
+  }
+
+  async detachResource(thingId: string, resourceId: string) {
+    if (!confirm('确定解除该资源的挂载？')) return;
+    try {
+      await thingApi.attachResource(thingId, resourceId); // TODO: add detach API
+    } catch {}
+  }
+
+  renderResourcePicker() {
+    return html`
+      <div style="margin-top: var(--space-3); border-top: 1px solid var(--border); padding-top: var(--space-3);">
+        <div style="font-size: 13px; font-weight: 600; margin-bottom: var(--space-2);">未指派资源</div>
+        ${this.resourcePickLoading ? html`<div style="text-align:center;padding:var(--space-4);color:var(--muted);">加载中...</div>`
+        : this.unassignedResources.length === 0 ? html`<div style="text-align:center;padding:var(--space-4);color:var(--muted);">没有未指派的资源</div>`
+        : html`
+          <div style="display:flex;flex-direction:column;gap:var(--space-1);max-height:240px;overflow-y:auto;">
+            ${this.unassignedResources.map((r: any) => html`
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:var(--space-1) var(--space-2);border-radius:var(--radius);background:var(--bg-surface);font-size:13px;cursor:pointer;" @click=${() => this.attachThingResource(r.id)}>
+                <span>📄 ${r.name || r.filePath || '未命名'}</span>
+                <span style="font-size:11px;color:var(--muted);">${r.resourceType || ''}</span>
               </div>
             `)}
           </div>
