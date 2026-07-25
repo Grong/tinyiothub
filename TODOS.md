@@ -275,3 +275,11 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 
 ## Completed
 
+
+## Thing Ontology Architecture Follow-up (from /plan-ceo-review 2026-07-25)
+
+### P2 — Move thing service SQL to storage layer
+- **What:** `cloud/src/modules/thing/service/mod.rs` has raw SQL in `load_properties`, `load_actions`, `load_knowledge_docs`, `load_tags_batch`, `copy_template_props`, `copy_template_acts`. The storage crate already has `find_device_properties_by_device_id` and `find_device_commands_by_device_id` — these should be used instead, following the Repository pattern (AGENTS.md anti-pattern: "Do not write SQL in API handlers").
+- **Why:** Table rename from `device_properties`→`thing_properties` required updating SQL in TWO places (service layer AND storage layer). This caused a production bug where storage layer queries failed after rename.
+- **Files:** `cloud/src/modules/thing/service/mod.rs`, `crates/tinyiothub-storage/src/sqlite/device_property.rs`, `crates/tinyiothub-storage/src/sqlite/device_command.rs`
+- **Effort:** S (human: ~1h / CC: ~10min)
