@@ -4,6 +4,25 @@
 > 状态：已确认
 > 背景：现有 AI 功能中 workspace 级知识图谱与资源设计偏离方向。IoT 场景更适合"本体智能"——知识定义下沉到物，围绕物本体组织全部 AI 功能。
 
+## 修订记录 v3（2026-07-27，工程实施评审裁决）
+
+实施阶段工程评审（/plan-eng-review 2026-07-27）发现实施与本文多处偏离，逐项裁决如下。**以下裁决与本文其余章节冲突时，以本节为准。**
+
+| # | 偏离 | 裁决 |
+|---|------|------|
+| V1 | **模板 = 创建期蓝图，非运行时模型源**（D6）。物模型 = 每物自己的 thing_properties/thing_actions 实例；创建时从模板拷贝，之后模板不再被运行时查询。`template_id` 保留为创建来源血缘记录（市场/模板功能仍在用），不再有"模板变更→所有物标 dirty"传播（mark_dirty_for_template_change 已删除）。摘要输入从"模板定义"改为"物的实例定义"。原文章节"物模型=模板层结构定义"中的运行时语义作废。 | 接受实施，修订设计 |
+| V2 | **资源表名保持 `resources`**（不更名 thing_resources）；列名 `type` → `resource_type`；`parse_status` 列随解析管线删除（code+schema 已清理）。 | 接受实施 |
+| V3 | **设备属性/命令实例表更名**：device_properties → thing_properties、device_commands → thing_actions，真实数据按 ID 保留迁移（告警规则持续解析），00003 的合成种子数据（reboot/temperature 等虚构能力）已删除，旧表与 device_event_triggers 已 DROP。 | 修正实施 |
+| V4 | **事件去重索引按状态类限定**（OV-2）：events 加 `is_status` 列，去重唯一索引只覆盖 is_status=1 的状态类 upsert 行；发生类事件纯 append 不受索引约束。原全表去重索引与 append 语义架构性冲突（第二个同事件即静默丢弃）。upsert 重复发生时刷新 event_level、occurrence_count 累加、重置 ack 状态。 | 修正设计 |
+| V5 | **多租户隔离为硬性要求**（D3）：所有物管理面/Agent 工具/open API/ack API/资源挂载/确认令牌均按 workspace 作用域校验。 | 强化设计 |
+| V6 | **E2 A2UI 本体渲染移出本期**：a2ui.rs 是死代码且伪造控件，已删除；E2 作为独立后续分支（TODOS）。E3 旧版 `commands` 键导入兼容同步放弃（映射从未接线，已删除）。 | 缩减范围 |
+| V7 | **迁移安全网落地**（OV-1）：run_migrations 在有待应用迁移时自动 VACUUM INTO 备份到 data/backups/；迁移后 Rust 侧强制执行 foreign_key_check（PRAGMA 只返回行，sqlx 会丢弃），违规即中止启动并提示从备份恢复。 | 落地原设计承诺 |
+| V8 | **事件管线的可观测性**：debug 级事件不落库；未知事件名降级 info + unknown_event 标记（以创建模板的事件定义为已知集，无模板不标记）；ingest/unknown/malformed/throttled 以结构化日志 metric 字段计数。 | 按设计补强 |
+| V9 | **前端遗留页面拆除**（OV-3）：/knowledge（图谱页）与 /local-resources 路由及视图删除，devices.ts 删除；D13 动作确认弹窗与 D8 升级提示条本期补建。 | 按设计补齐 |
+| V10 | **MCP/open 契约更名后的收口**：open send_command 不再向动作定义表 INSERT（改为校验后经 DataServer 下发）；Agent 内置物工具优先于同名 MCP handler；默认 denylist 更名 delete_thing；require_action_confirm 缺失工作区行时 fail-closed。 | 修正实施 |
+
+遗留已知项（已入 TODOS）：events 表保留策略（须按状态/发生分类生命周期）；search_knowledge FTS5 trigram 升级；E2 A2UI 渲染。
+
 ## 核心决策汇总
 
 | # | 决策点 | 结论 |
