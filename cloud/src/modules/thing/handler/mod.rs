@@ -23,6 +23,7 @@ pub fn create_router() -> Router<AppState> {
         .route("/{id}/ontology", get(crud::get_thing_ontology))
         .route("/{id}/profile", get(crud::get_thing_profile))
         .route("/{id}/tree", get(crud::get_thing_tree))
+        .route("/{id}/actions/{action_name}/invoke", post(actions::invoke_action))
         .route("/{id}/actions/{action_name}/confirm", post(actions::confirm_action))
         .route("/import/dtdl", post(import_export::import_dtdl))
         .route("/import/wot", post(import_export::import_wot))

@@ -22,7 +22,6 @@ const lazyViews: Record<string, () => Promise<void>> = {
   alarms: () => import('./views/alarms.js').then(() => {}),
   events: () => import('./views/events.js').then(() => {}),
   monitoring: () => import('./views/monitoring.js').then(() => {}),
-  'local-resources': () => import('./views/local-resources.js').then(() => {}),
   users: () => import('./views/users.js').then(() => {}),
   settings: () => import('./views/settings.js').then(() => {}),
   chat: () => import('./views/chat.js').then(() => {}),
@@ -33,7 +32,6 @@ const lazyViews: Record<string, () => Promise<void>> = {
   marketplace: () => import('./views/marketplace.js').then(() => {}),
   'driver-health': () => import('./views/driver-health.js').then(() => {}),
   'memory-dashboard': () => import('./views/memory-dashboard.js').then(() => {}),
-  knowledge: () => import('./views/knowledge.js').then(() => {}),
   workspace: () => import('./views/workspace.js').then(() => {}),
   heartbeat: () => import('./views/heartbeat.js').then(() => {}),
   'ai-ops': () => import('./views/ai-ops.js').then(() => {}),
@@ -73,11 +71,6 @@ const NAV_GROUPS: NavGroup[] = [
         route: 'things',
         label: '物列表',
         icon: 'M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z',
-      },
-      {
-        route: 'local-resources',
-        label: '本地资源',
-        icon: 'M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6',
       },
       {
         route: 'marketplace',
@@ -120,11 +113,6 @@ const NAV_GROUPS: NavGroup[] = [
         route: 'memory-dashboard',
         label: '记忆面板',
         icon: 'M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm0 4v8h16V8H4zm3 2h4v4H7v-4zm6 0h4v2h-4v-2z',
-      },
-      {
-        route: 'knowledge',
-        label: '知识图谱',
-        icon: 'M5 3a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M19 3a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M12 17a2 2 0 1 0 0 4 2 2 0 0 0 0-4z M7 7l5 8 M17 7l-5 8',
       },
       {
         route: 'chat',
@@ -313,7 +301,7 @@ export class TinyIoTHubApp extends LitElement {
         this.navigate('login');
         return;
       }
-      this.currentRoute = 'things';
+      this.currentRoute = path;
       this._ensureViewLoaded('things');
       return;
     }
@@ -337,9 +325,7 @@ export class TinyIoTHubApp extends LitElement {
 
   /** Lazy-load the view module for the given route if needed. */
   private _ensureViewLoaded(route: string) {
-    const base = route.startsWith('devices/') ? 'devices'
-      : route.startsWith('thing-detail/') ? 'thing-detail'
-      : route;
+    const base = route;
     const loader = lazyViews[base];
     if (!loader) return;
     const tag = `view-${base}`;
@@ -384,14 +370,12 @@ export class TinyIoTHubApp extends LitElement {
       dashboard: '概览',
       devices: '物管理',
       things: '物列表',
-      'local-resources': '本地资源',
       alarms: '告警中心',
       events: '事件日志',
       monitoring: '系统监控',
       users: '用户管理',
       settings: '系统设置',
       marketplace: '应用市场',
-      knowledge: '知识图谱',
       'driver-health': '驱动健康',
       chat: 'AI 聊天',
       agents: 'Agent 管理',
@@ -401,8 +385,8 @@ export class TinyIoTHubApp extends LitElement {
       heartbeat: 'AI 巡检',
       'ai-ops': 'AI 运维',
     };
-    // Handle /devices/:id and /thing-detail/:id
-    if (this.currentRoute.startsWith('devices/') || this.currentRoute.startsWith('thing-detail/')) return '物详情';
+    // Handle /things/:id (detail page)
+    if (this.currentRoute.startsWith('things/')) return '物详情';
     return titles[this.currentRoute] || '';
   }
 
@@ -411,14 +395,12 @@ export class TinyIoTHubApp extends LitElement {
       dashboard: '物状态、告警概览和系统指标',
       devices: '管理所有接入的 IoT 物',
       things: '浏览和管理物层级结构',
-      'local-resources': '管理物模板和协议驱动',
       alarms: '查看和管理物告警',
       events: '查看物事件日志',
       monitoring: '系统资源和性能监控',
       users: '管理系统用户和权限',
       settings: '系统配置和参数管理',
       marketplace: '浏览和安装模板与驱动',
-      knowledge: '管理知识文档，构建物联网场景知识图谱',
       'driver-health': '查看已加载动态驱动的运行状态',
       chat: '与 AI Agent 对话',
       agents: '管理和配置 Agent',
@@ -428,7 +410,7 @@ export class TinyIoTHubApp extends LitElement {
       heartbeat: 'AI 自主巡检 — 自动发现物异常，智能分析并执行恢复操作',
       'ai-ops': 'AI 自主运维 — 审批、历史、信任配置与知识管理',
     };
-    if (this.currentRoute.startsWith('devices/') || this.currentRoute.startsWith('thing-detail/')) return '查看物属性、事件、动作和知识';
+    if (this.currentRoute.startsWith('things/')) return '查看物属性、事件、动作和知识';
     return subs[this.currentRoute] || '';
   }
 
@@ -472,7 +454,7 @@ export class TinyIoTHubApp extends LitElement {
           ${this.renderNav()}
         </nav>
         <div class="content ${this.currentRoute === 'workspace' ? 'content--workspace' : this.currentRoute === 'ai-ops' ? 'content--heartbeat' : ''}" role="main" id="main-content">
-          ${this.currentRoute.startsWith('devices/') || this.currentRoute.startsWith('thing-detail/') || this.currentRoute === 'chat' || this.currentRoute === 'workspace' || this.currentRoute === 'ai-ops'
+          ${this.currentRoute.startsWith('things/') || this.currentRoute === 'chat' || this.currentRoute === 'workspace' || this.currentRoute === 'ai-ops'
             ? nothing
             : html`
                 <section class="content-header">
@@ -585,8 +567,7 @@ export class TinyIoTHubApp extends LitElement {
                   <a
                     href="/${item.route}"
                     class="nav-item ${this.currentRoute === item.route ||
-                    (item.route === 'devices' && this.currentRoute.startsWith('devices/')) ||
-                    (item.route === 'things' && (this.currentRoute.startsWith('devices/') || this.currentRoute.startsWith('thing-detail/') || this.currentRoute === 'things'))
+                    (item.route === 'things' && (this.currentRoute === 'things' || this.currentRoute.startsWith('things/')))
                       ? 'active'
                       : ''}"
                     @click=${(e: Event) => {
@@ -617,9 +598,7 @@ export class TinyIoTHubApp extends LitElement {
     if (route === 'register') return html`<view-register></view-register>`;
     if (route === 'home') return html`<view-home></view-home>`;
 
-    const base = route.startsWith('devices/') ? 'devices'
-      : route.startsWith('thing-detail/') ? 'thing-detail'
-      : route;
+    const base = route;
     const tag = `view-${base}`;
     const isReady = !!customElements.get(tag);
     const isLoading = this.loadingRoute === base;
@@ -630,13 +609,10 @@ export class TinyIoTHubApp extends LitElement {
 
     // All lazy views use the same tag pattern
     if (base === 'dashboard') return html`<view-dashboard></view-dashboard>`;
-    if (base === 'devices') return html`<view-devices></view-devices>`;
     if (base === 'things') return html`<view-things></view-things>`;
-    if (base === 'thing-detail') return html`<view-thing-detail></view-thing-detail>`;
     if (base === 'alarms') return html`<view-alarms></view-alarms>`;
     if (base === 'events') return html`<view-events></view-events>`;
     if (base === 'monitoring') return html`<view-monitoring></view-monitoring>`;
-    if (base === 'local-resources') return html`<view-local-resources></view-local-resources>`;
     if (base === 'users') return html`<view-users></view-users>`;
     if (base === 'settings') return html`<view-settings></view-settings>`;
     if (base === 'chat') return html`<view-chat></view-chat>`;
@@ -645,7 +621,6 @@ export class TinyIoTHubApp extends LitElement {
     if (base === 'marketplace') return html`<view-marketplace></view-marketplace>`;
     if (base === 'driver-health') return html`<view-driver-health></view-driver-health>`;
     if (base === 'memory-dashboard') return html`<view-memory-dashboard></view-memory-dashboard>`;
-    if (base === 'knowledge') return html`<view-knowledge></view-knowledge>`;
     if (base === 'workspace') return html`<view-workspace></view-workspace>`;
     if (base === 'ai-ops') return html`<view-ai-ops></view-ai-ops>`;
     return html`<div style="padding: 40px; text-align: center; color: var(--muted);">

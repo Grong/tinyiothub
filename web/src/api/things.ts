@@ -135,6 +135,10 @@ export const thingApi = {
     return apiGet<ThingTreeNode[]>(`/things/${id}/tree${qs}`);
   },
 
+  async executeCommand(id: string, name: string, params?: Record<string, any>) {
+    return apiPost<any>(`/things/${id}/actions/${encodeURIComponent(name)}/invoke`, { params });
+  },
+
   async confirmAction(thingId: string, actionName: string, token: string) {
     return apiPost<ConfirmActionResponse>(`/things/${thingId}/actions/${encodeURIComponent(actionName)}/confirm`, { token });
   },
