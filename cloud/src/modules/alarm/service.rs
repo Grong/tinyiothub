@@ -2032,7 +2032,7 @@ mod integration_tests {
         sqlx::query("PRAGMA foreign_keys = OFF").execute(pool).await.unwrap();
         sqlx::query("DROP TABLE IF EXISTS device_alarms").execute(pool).await.unwrap();
         sqlx::query("DROP TABLE IF EXISTS device_alarm_rules").execute(pool).await.unwrap();
-        sqlx::query("DROP TABLE IF EXISTS device_properties").execute(pool).await.unwrap();
+        sqlx::query("DROP TABLE IF EXISTS thing_properties").execute(pool).await.unwrap();
         sqlx::query("DROP TABLE IF EXISTS devices").execute(pool).await.unwrap();
 
         // Match production schema with FK constraints
@@ -2048,7 +2048,7 @@ mod integration_tests {
         .await
         .unwrap();
         sqlx::query(
-            "CREATE TABLE device_properties (
+            "CREATE TABLE thing_properties (
             id TEXT PRIMARY KEY, device_id TEXT NOT NULL, name TEXT NOT NULL,
             data_type TEXT NOT NULL DEFAULT 'float',
             FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
@@ -2067,7 +2067,7 @@ mod integration_tests {
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now')),
             FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE,
-            FOREIGN KEY (property_id) REFERENCES device_properties(id) ON DELETE CASCADE
+            FOREIGN KEY (property_id) REFERENCES thing_properties(id) ON DELETE CASCADE
         )",
         )
         .execute(pool)
@@ -2085,7 +2085,7 @@ mod integration_tests {
             resolution_type TEXT, workspace_id TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE,
-            FOREIGN KEY (property_id) REFERENCES device_properties(id) ON DELETE SET NULL,
+            FOREIGN KEY (property_id) REFERENCES thing_properties(id) ON DELETE SET NULL,
             FOREIGN KEY (rule_id) REFERENCES device_alarm_rules(id) ON DELETE SET NULL
         )",
         )

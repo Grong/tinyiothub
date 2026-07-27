@@ -40,26 +40,48 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
             return Ok(());
         }
 
+        // eng-review T2/OV-2: status rows carry is_status=1 and are the ONLY
+        // rows covered by the dedup index. Repeat occurrences refresh level,
+        // accumulate occurrence_count, and reset acknowledgment (a NEW
+        // occurrence of a previously-acked event is actionable again).
         let sql = r#"
             INSERT INTO events (
                 id, event_type, event_subtype, event_level, timestamp,
                 source_type, source_id, device_id, user_id,
                 title, content, occurrence_count, acknowledged,
-                acknowledged_by, acknowledged_at, workspace_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, NULL, NULL, '')
-            ON CONFLICT(event_type, event_subtype, device_id) WHERE device_id IS NOT NULL
+                acknowledged_by, acknowledged_at, workspace_id, is_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, NULL, NULL, ?, 1)
+            ON CONFLICT(event_type, event_subtype, device_id) WHERE is_status = 1
             DO UPDATE SET
                 occurrence_count = occurrence_count + 1,
+                event_level = excluded.event_level,
                 timestamp = excluded.timestamp,
                 source_id = excluded.source_id,
                 title = excluded.title,
-                content = excluded.content
+                content = excluded.content,
+                acknowledged = 0,
+                acknowledged_by = NULL,
+                acknowledged_at = NULL
         "#;
 
         let content_json = serde_json::to_string(event.content())?;
         let event_subtype_json = serde_json::to_string(event.event_type())?;
         let device_id_bind: Option<String> = event.source().device_id().map(|s| s.to_string());
         let user_id_bind: Option<String> = event.source().user_id().map(|s| s.to_string());
+
+        // Resolve tenant scope from the owning device (was hardcoded '')
+        let workspace_id: String = match &device_id_bind {
+            Some(did) => sqlx::query_scalar(
+                "SELECT COALESCE(workspace_id, '') FROM devices WHERE id = ?",
+            )
+            .bind(did)
+            .fetch_optional(self.database.pool())
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default(),
+            None => String::new(),
+        };
 
         sqlx::query(sql)
             .bind(event.id().to_string())
@@ -73,6 +95,7 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
             .bind(&user_id_bind)
             .bind(event.content().title())
             .bind(content_json)
+            .bind(&workspace_id)
             .execute(self.database.pool())
             .await?;
 
