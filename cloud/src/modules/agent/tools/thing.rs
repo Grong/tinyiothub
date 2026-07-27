@@ -483,8 +483,8 @@ impl Tool for ReadPropertyTool {
             anyhow::anyhow!("属性 '{}' 在物 {} 上未找到", input.property_name, input.thing_id)
         })?;
 
-        // Try device_cache for live value
-        let (current_value, last_heartbeat) = crate::modules::mcp::get_app_state()
+        // Try device_cache for live value; design 六: no cache → null + hint
+        let cached = crate::modules::mcp::get_app_state()
             .and_then(|state| state.device_cache.get(&input.thing_id))
             .and_then(|d| {
                 let val = d
@@ -494,8 +494,12 @@ impl Tool for ReadPropertyTool {
                     .and_then(|p| p.current_value.clone());
                 let ts = d.last_heartbeat.clone();
                 val.map(|v| (v, ts))
-            })
-            .unwrap_or((String::new(), None));
+            });
+
+        let (current_value, last_heartbeat, hint) = match cached {
+            Some((v, ts)) => (json!(v), json!(ts), Value::Null),
+            None => (Value::Null, Value::Null, json!("该属性暂无上报数据")),
+        };
 
         tool_ok(json!({
             "thingId": input.thing_id,
@@ -510,6 +514,7 @@ impl Tool for ReadPropertyTool {
             "isReadOnly": prop.is_read_only,
             "currentValue": current_value,
             "lastHeartbeat": last_heartbeat,
+            "hint": hint,
         }))
     }
 }
@@ -600,7 +605,9 @@ impl Tool for InvokeActionTool {
                 .fetch_optional(&self.pool)
                 .await
                 .map_err(|e| anyhow::anyhow!("数据库查询失败: {}", e))?
-                .unwrap_or(0i32)
+                // Fail CLOSED (eng-review T7): a missing workspace row means
+                // something is wrong — require confirmation (design default ON)
+                .unwrap_or(1i32)
                 != 0;
 
         // 3. Check if action exists in device_commands table
@@ -619,6 +626,22 @@ impl Tool for InvokeActionTool {
                 "操作 '{}' 未在物 {} 上注册。请检查可用的操作列表。",
                 input.action_name, input.thing_id
             ));
+        }
+
+        // 3b. Validate params against the action's parameter schema (design 三;
+        // eng-review T7)
+        let params_schema: Option<String> =
+            sqlx::query_scalar("SELECT parameters FROM thing_actions WHERE device_id = ? AND name = ?")
+                .bind(&input.thing_id)
+                .bind(&input.action_name)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| anyhow::anyhow!("数据库查询失败: {}", e))?
+                .flatten();
+        if let Some(ref schema_json) = params_schema
+            && let Err(msg) = validate_action_params(schema_json, input.params.as_ref())
+        {
+            return tool_err(msg);
         }
 
         // 4. Execute or request confirmation
@@ -1020,6 +1043,58 @@ impl Tool for ReadDocumentTool {
 ///
 /// Read-only tools (searches, gets): safety ReadOnly => auto-approved.
 /// Destructive tools (invoke_action): safety Destructive => requires trust approval.
+/// Validate invoke params against the action's parameter schema.
+///
+/// Schema shape: `[{"name": "interval", "type": "number", "required": true}]`.
+/// Rules: required params present, no unknown params, primitive type match.
+/// Returns a Chinese error message on mismatch (design 六: 校验明细定位字段).
+fn validate_action_params(schema_json: &str, params: Option<&Value>) -> Result<(), String> {
+    let schema: Vec<Value> = serde_json::from_str(schema_json)
+        .map_err(|e| format!("操作参数 schema 解析失败: {}", e))?;
+    if schema.is_empty() {
+        return Ok(());
+    }
+    let provided = params.and_then(|p| p.as_object());
+
+    for spec in &schema {
+        let name = spec.get("name").and_then(|n| n.as_str()).unwrap_or("");
+        let required = spec.get("required").and_then(|r| r.as_bool()).unwrap_or(false);
+        let expected = spec.get("type").and_then(|t| t.as_str()).unwrap_or("string");
+        let value = provided.and_then(|obj| obj.get(name));
+        match value {
+            None if required => return Err(format!("缺少必填参数 '{}'", name)),
+            None => continue,
+            Some(v) => {
+                let ok = match expected {
+                    "string" => v.is_string(),
+                    "number" | "float" | "integer" => v.is_number(),
+                    "boolean" | "bool" => v.is_boolean(),
+                    "object" => v.is_object(),
+                    "array" => v.is_array(),
+                    _ => true,
+                };
+                if !ok {
+                    return Err(format!(
+                        "参数 '{}' 类型不符: 期望 {}, 实际 {}",
+                        name, expected, v
+                    ));
+                }
+            }
+        }
+    }
+
+    if let Some(obj) = provided {
+        let known: Vec<&str> =
+            schema.iter().filter_map(|sp| sp.get("name").and_then(|n| n.as_str())).collect();
+        for key in obj.keys() {
+            if !known.contains(&key.as_str()) {
+                return Err(format!("未知参数 '{}', 可用参数: {}", key, known.join(", ")));
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn create_thing_tools(
     pool: SqlitePool,
     workspace_id: &str,

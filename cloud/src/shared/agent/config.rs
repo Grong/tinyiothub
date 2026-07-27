@@ -108,7 +108,7 @@ fn default_top_p() -> f64 {
 }
 
 fn default_tool_denylist() -> Vec<String> {
-    vec!["delete_device".into(), "delete_schedule".into()]
+    vec!["delete_thing".into(), "delete_schedule".into()]
 }
 
 #[allow(deprecated)]
@@ -135,7 +135,7 @@ pub fn default_agent_config() -> serde_json::Value {
             "temperature": 0.7,
             "max_tokens": 4096,
             "top_p": 1.0,
-            "tool_denylist": ["delete_device", "delete_schedule"]
+            "tool_denylist": ["delete_thing", "delete_schedule"]
         })
     })
 }
