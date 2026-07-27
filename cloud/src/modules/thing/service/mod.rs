@@ -50,21 +50,23 @@ impl ThingService {
         let limit = params.limit();
         let offset = params.offset();
 
-        // Load tags for all things in batch
+        // Tags + breadcrumbs for the whole page in ONE query each (T11 — was
+        // one recursive CTE per row); DB errors surface instead of being
+        // swallowed into empty breadcrumbs/tags.
         let thing_ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
-        let tags_map = self.load_tags_batch(&thing_ids).await.unwrap_or_default();
+        let tags_map = self.repo.load_tags_batch(&thing_ids).await?;
+        let ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
+        let mut breadcrumbs = self.repo.get_breadcrumbs(&ids, 10).await?;
 
         let mut items: Vec<ThingResponse> = Vec::with_capacity(rows.len());
         for row in &rows {
-            let breadcrumb = self.repo.get_breadcrumb(&row.id, 10).await.unwrap_or_default();
+            let breadcrumb = breadcrumbs.remove(&row.id).unwrap_or_default();
             let mut resp = Self::row_to_response(row, breadcrumb);
             resp.tags = tags_map.get(&row.id).cloned().unwrap_or_default();
             items.push(resp);
         }
 
-        let unassigned =
-            self.repo.list_unassigned_resources(workspace_id).await.unwrap_or_default().len()
-                as u64;
+        let unassigned = self.repo.list_unassigned_resources(workspace_id).await?.len() as u64;
 
         Ok(ListThingsResult { items, total, limit, offset, unassigned_resource_count: unassigned })
     }
@@ -95,7 +97,7 @@ impl ThingService {
         let breadcrumb = self.repo.get_breadcrumb(id, 10).await.unwrap_or_default();
 
         // Load tags for the single thing
-        let tags_map = self.load_tags_batch(&[id]).await.unwrap_or_default();
+        let tags_map = self.repo.load_tags_batch(&[id]).await?;
         let mut resp = Self::row_to_response(&row, breadcrumb);
         resp.tags = tags_map.get(id).cloned().unwrap_or_default();
 
@@ -275,17 +277,6 @@ impl ThingService {
         let existing =
             self.repo.get_by_id(id).await?.ok_or_else(|| ThingError::NotFound(id.to_string()))?;
 
-        // Cycle check when changing parent
-        if let Some(ref new_parent_id) = req.parent_id {
-            let is_cycle = self.repo.check_cycle(id, new_parent_id).await?;
-            if is_cycle {
-                return Err(ThingError::CycleDetected {
-                    thing_id: id.to_string(),
-                    parent_id: new_parent_id.clone(),
-                });
-            }
-        }
-
         // If name change: check conflict in same workspace
         if let Some(ref new_name) = req.name
             && new_name != &existing.name
@@ -295,8 +286,18 @@ impl ThingService {
             return Err(ThingError::NameConflict(new_name.clone()));
         }
 
-        let updated =
-            self.repo.update(id, req).await?.ok_or_else(|| ThingError::NotFound(id.to_string()))?;
+        // Cycle check + update in ONE transaction (TOCTOU-safe — T11)
+        let updated = match self.repo.update_guarded(id, req).await? {
+            super::types::UpdateGuardedOutcome::Cycle => {
+                return Err(ThingError::CycleDetected {
+                    thing_id: id.to_string(),
+                    parent_id: req.parent_id.clone().unwrap_or_default(),
+                });
+            }
+            super::types::UpdateGuardedOutcome::Updated(row) => {
+                row.ok_or_else(|| ThingError::NotFound(id.to_string()))?
+            }
+        };
 
         // Dirty the summary subtree when the name or parent changed — the
         // breadcrumb is part of the summary input, so every descendant's
@@ -418,14 +419,6 @@ impl ThingService {
             created_at: row.created_at.clone(),
             updated_at: row.updated_at.clone(),
         }
-    }
-
-    /// Batch-load tags for multiple thing IDs (delegates to repo — T9).
-    async fn load_tags_batch(
-        &self,
-        thing_ids: &[&str],
-    ) -> Result<std::collections::HashMap<String, Vec<super::types::TagInfo>>, sqlx::Error> {
-        self.repo.load_tags_batch(thing_ids).await
     }
 
     /// Load properties from the storage layer (single source of SQL for

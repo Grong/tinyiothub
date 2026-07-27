@@ -333,3 +333,9 @@ pub struct DocRow {
     pub created_at: String,
     pub updated_at: String,
 }
+
+/// Outcome of a transaction-guarded update (cycle check + write in one tx).
+pub enum UpdateGuardedOutcome {
+    Cycle,
+    Updated(Option<ThingRow>),
+}
