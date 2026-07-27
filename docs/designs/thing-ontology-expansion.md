@@ -75,15 +75,16 @@ Each expansion ships as its own branch with its own review cycle.
 - **D3.1:** provider config follows the agent subsystem's existing LLM client
   (zeroclaw/provider infra), NOT a new client; 10s timeout + stale degradation
   already built and tested in summary.rs.
-- **D3.4:** gate = canvas renderer maturity check (agent/tools/canvas.rs +
-  web A2UI renderer) BEFORE writing any builder code. If immature → stays in
-  TODOS, no dead code this time (a2ui.rs lesson).
+- **D3.4:** (revised per OV-3) renderer is already live end-to-end — first
+  deliverable is the ontology→A2UI builder spec (state/type→component mapping,
+  re-render triggers, confirm panel shape), reviewed before any builder code.
 - **D3.3:** retention must exempt status rows (is_status=1) from time-based
   purge — the dedup row IS the live state of quiet devices.
 - **D3.5:** re-sync is always explicit (per-thing button or bulk opt-in),
   never silent overwrite of user-modified instances.
-- **D3.2:** eval corpus = ≥20 real ontology tasks across all 9 tools;
-  scoring = tool-selection accuracy + answer quality (LLM-judged rubric).
+- **D3.2:** (revised per OV-2) regression net, not validation: harness drives
+  the full zeroclaw agent loop vs real sqlx DB; ≥20 synthetic-but-labeled tasks
+  across all 9 tools; fixed judge model + rubric + pass/fail thresholds.
 
 ## NOT in scope
 
