@@ -103,7 +103,7 @@ impl fmt::Display for ResourceType {
 }
 
 /// Unified workspace resource (replaces workspace_resources + knowledge_documents)
-/// - type="document": content + parse_status fields are used
+/// - type="document": content field is used
 /// - type="file": file_path is used (uploaded binaries)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -118,7 +118,6 @@ pub struct WorkspaceResource {
     pub file_size: Option<i64>,
     pub tags: Vec<String>,
     pub metadata: Option<String>,
-    pub parse_status: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -137,7 +136,6 @@ pub struct ResourceSearchResult {
     pub file_size: Option<i64>,
     pub tags: Vec<String>,
     pub metadata: Option<String>,
-    pub parse_status: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub relevance: i64,
@@ -165,7 +163,6 @@ pub struct UpdateResourceRequest {
     pub content: Option<String>,
     pub tags: Option<Vec<String>>,
     pub metadata: Option<String>,
-    pub parse_status: Option<String>,
 }
 
 /// Suggest tags request
