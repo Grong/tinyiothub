@@ -266,12 +266,27 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 
 ## Thing Ontology (from /plan-eng-review 2026-07-22)
 
-### P2 — Events 表保留策略（occurrence-aware）
-- **What:** 为 events 单表体系设计并实施保留策略（定期清理 cron）。
-- **Why:** Thing Ontology 删除了 cleanup_old_events 触发器且不设上限。陷阱（/plan-eng-review 2026-07-27 外部声音）：events 表混合不可变审计行与可变状态行（occurrence_count/acknowledged 的 upsert 行），naive 按时间 purge 会删掉静默设备的"当前状态"——去重行本身就是实时状态。保留策略必须按事件性质区分生命周期（状态类行豁免或单独处理），OV-2 的 status 标记列可同时作为生命周期标记。
-- **Context:** 设计文档 line 132 承诺"保留策略记入 TODOS（首个运维迭代处理）"。与 alarm retention（90 天 cron 模式，见 Alarm System 节）同模式实现。
-- **Depends on:** Thing Ontology mega-branch 落地 + OV-2 dedup 重设计（status-only dedup key）。
-- **Effort:** S (human: ~1h / CC: ~15min)
+### P1 — 物列表 list|tree 视图切换 + 拖拽换父（设计 D3 未交付）
+- **What:** 物列表页「列表｜树」视图切换：树视图=全量层级树（默认展开 2 层，当前工作区根起），两视图共享过滤条件；拖拽换父（成环目标实时红框拒绝，合法落点即调更新 API）。
+- **Why:** 设计评审 D3 裁决的形态，实现为 table|grid；树数据 API（get_thing_tree）已就绪，只差视图。
+- **Context:** /ship 2026-07-27 plan completion 裁决延期。树交互 D12：单击节点进详情，箭头独立展开/收起。后端 parent_id 换父 API（update_thing + cycle 校验）已存在。
+- **Effort:** M (human: ~1d / CC: ~1-2h)
+
+### P2 — 物操作审计日志（设计「可观测性」节未交付）
+- **What:** 创建/删除/改父/invoke_action 记审计日志（操作者、时间、目标物）。
+- **Why:** 设计要求；当前只有 tracing 日志，无持久化审计表。
+- **Context:** /ship 2026-07-27 延期项。可参考 alarm/agent_actions 的审计表模式。
+- **Effort:** S (human: ~2h / CC: ~20min)
+
+### P2 — E3 WoT Thing Description 导出端点未接
+- **What:** `/things/templates/{id}/export/wot` 导出（当前只有 DTDL 导出）。
+- **Why:** E3 要求 DTDL/WoT 双向；import 双向已实现，export 只有 DTDL。
+- **Context:** import_export.rs 已有 WoT import;导出函数缺 wo­t 序列化。
+- **Effort:** S (human: ~2h / CC: ~15min)
+
+
+### ~~P2 — Events 表保留策略（occurrence-aware）~~ ✅ Completed v0.4.5.0 (2026-07-27)
+- EventRetentionExecutor + 全局 cron job（每日 03:17, 90 天）, is_status=0 发生类行按时间清理, is_status=1 状态行永不按时间清除；两个错误形状存量清除函数（cleanup_old_events/clear_acknowledged_events）同步修复
 
 ### P2 — E2 A2UI 本体驱动渲染（后续独立分支）
 - **What:** 本体驱动的 A2UI 渲染：get_thing_profile 驱动 DeviceCard/DataChart/ControlPanel；invoke_action 前渲染确认面板。

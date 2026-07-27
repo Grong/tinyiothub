@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.4.5.0] - 2026-07-27
+
+### Added
+
+- **Thing Ontology（物本体）**: devices generalized into Things — hierarchy (parent_id tree with cycle protection), thing templates as creation blueprints, per-thing properties/actions, knowledge documents with LLM-generated ontology summaries (lazy compute, dirty marking, single-flight), and full CRUD at `/api/things`
+- **Thing event pipeline**: MQTT `thing/{id}/event/{name}` ingest with per-thing throttle (60/min, error/critical exempt), unknown-event degradation, event-sourced alarm rules (`rule_type='event'`), and status-vs-occurrence event semantics with dedup upsert
+- **Agent ontology tools**: 9 tools (list_things, get_thing, get_thing_profile, get_thing_tree, read_property, invoke_action, query_events, search_knowledge, read_document) with workspace isolation and invoke_action confirmation flow
+- **E1 marketplace**: thing_templates category with name-collision suffix install; **E3**: DTDL / WoT Thing Description import/export (format_version 2)
+- **Invoke endpoints**: `POST /things/{id}/actions/{name}/invoke` + `/confirm` — UI action execution with workspace-gated confirmation (D13 modal) and fail-closed default
+- **Migration safety net**: automatic VACUUM backup before pending migrations, Rust-enforced foreign-key integrity check that aborts startup on violations, occurrence-aware events retention job (daily, status rows never time-purged)
+- **Frontend**: things list (table/grid), detail page tabs, create wizard, confirm modal (params table, danger styling, focus trap), first-login upgrade banner, `/devices` → `/things` redirect
+- **Tests**: 40+ new integration tests — event full-chain (MQTT→events→alarm), migration upgrade paths, tenant isolation, invoke confirm flow, retention exemption, open-API denied cases
+
+### Changed
+
+- **BREAKING**: `/api/devices` management endpoints removed (use `/api/things`); open API and MCP contracts renamed to thing semantics (adjudicated OV4)
+- **Templates are creation-time blueprints**: the thing model lives in per-thing instances; template edits no longer propagate (design v3 V1)
+- **Tenant isolation enforced everywhere**: thing CRUD, agent tools, open API, ack API, resource attach/detach, and confirm tokens all workspace-scoped
+- **Events unified to a single table**: real_time_events/lost_events/event_performance_metrics dropped; status rows upsert with occurrence_count, occurrence rows append-only
+- **Open API key verification**: prefix lookup + constant-time SHA-256 secret comparison + working expiry enforcement (previously every call 401'd and expired keys were accepted)
+
+### Fixed
+
+- **Migration boot loop (DM-1)**: FK repoint no longer commits before real property data exists — inline UNION copy with ID preservation; synthetic seed capabilities removed; upgrade-path regression tests
+- **Dead event path recidivism**: event_subtype now stores the event name (alarm matching works), workspace_id resolved from the thing (rules can match), AlarmService wired into MQTT ingest
+- **Summary pipeline**: single-flight deadlock, lost-wakeup hang, and UTF-8 slice panic on Chinese documents
+- **Open API**: property IDOR, send_command cross-tenant action injection, command list 500 (column mismatch), event wire-shape errors
+- **Orphaned tables**: device_properties/device_commands data preserved (IDs intact, alarm rules keep resolving); device_alarms hidden FK repaired
+- **N+1**: batched breadcrumb loading, single-CTE cycle check in transaction, covering index for workspace event scans
+- **Frontend**: renderPage route regression, dead navigation to removed pages, keyboard accessibility on clickable cards, empty-name thing creation now rejected (422)
+
+### Removed
+
+- **Workspace knowledge graph** (entities/relations/parse jobs, retired permanently)
+- **products table** (converged into thing_templates), device_event_triggers
+- ~7k lines of dead code: legacy device/knowledge/local-resources views, a2ui.rs, unused confirm-modal wiring, legacy import compat
+
 ## [0.4.4.1] - 2026-07-21
 
 ### Fixed
