@@ -51,7 +51,7 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
                 title, content, occurrence_count, acknowledged,
                 acknowledged_by, acknowledged_at, workspace_id, is_status
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, NULL, NULL, ?, 1)
-            ON CONFLICT(event_type, event_subtype, device_id) WHERE is_status = 1
+            ON CONFLICT(event_type, event_subtype, device_id) WHERE is_status = 1 AND device_id IS NOT NULL
             DO UPDATE SET
                 occurrence_count = occurrence_count + 1,
                 event_level = excluded.event_level,
