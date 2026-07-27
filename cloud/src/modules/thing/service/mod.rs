@@ -4,13 +4,24 @@ pub mod a2ui;
 pub mod import_export;
 
 use sqlx::SqlitePool;
+use tinyiothub_core::models::{
+    device_command::CreateDeviceCommandRequest, device_property::CreateDevicePropertyRequest,
+};
+
+use crate::shared::persistence::{
+    Database,
+    repositories::{
+        create_device_command, create_device_properties_batch,
+        find_device_commands_by_device_id, find_device_properties_by_device_id,
+    },
+};
 
 use super::{
     errors::ThingError,
     repo::ThingRepo,
     summary::{self, StubLlmClient, SummaryComputer},
     types::{
-        CreateThingRequest, ListThingsParams, ListThingsResult, TagInfo, ThingProfileResponse,
+        CreateThingRequest, ListThingsParams, ListThingsResult, ThingProfileResponse,
         ThingResource, ThingResponse, ThingRow, ThingTreeNode, ThingType, UpdateThingRequest,
     },
 };
@@ -194,16 +205,37 @@ impl ThingService {
         let Some((json,)) = row else {
             return Ok(());
         };
-        for p in serde_json::from_str::<Vec<serde_json::Value>>(&json).unwrap_or_default() {
-            let nm = p["name"].as_str().unwrap_or("");
-            let dp = p.get("displayName").and_then(|v| v.as_str()).unwrap_or(nm);
-            sqlx::query("INSERT INTO thing_properties (id,device_id,name,display_name,data_type,unit,is_read_only,created_at,updated_at) VALUES (?,?,?,?,?,?,?,datetime('now'),datetime('now'))")
-                .bind(uuid::Uuid::new_v4().to_string()).bind(thing_id).bind(nm).bind(dp)
-                .bind(p.get("dataType").and_then(|v| v.as_str()).unwrap_or("string"))
-                .bind(p.get("unit").and_then(|v| v.as_str()).unwrap_or(""))
-                .bind((p.get("isReadOnly").and_then(|v| v.as_bool()).unwrap_or(false)) as i32)
-                .execute(&self.pool).await?;
-        }
+        // Inserts go through the storage layer (single source of SQL for
+        // thing_properties — eng-review T9)
+        let requests: Vec<CreateDevicePropertyRequest> =
+            serde_json::from_str::<Vec<serde_json::Value>>(&json)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|p| CreateDevicePropertyRequest {
+                    device_id: thing_id.to_string(),
+                    name: p["name"].as_str().unwrap_or("").to_string(),
+                    display_name: p
+                        .get("displayName")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                    description: None,
+                    data_type: Some(
+                        p.get("dataType").and_then(|v| v.as_str()).unwrap_or("string").to_string(),
+                    ),
+                    unit: Some(p.get("unit").and_then(|v| v.as_str()).unwrap_or("").to_string()),
+                    min_value: p.get("minValue").and_then(|v| v.as_f64()),
+                    max_value: p.get("maxValue").and_then(|v| v.as_f64()),
+                    default_value: p
+                        .get("defaultValue")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                    is_read_only: Some(
+                        p.get("isReadOnly").and_then(|v| v.as_bool()).unwrap_or(false) as i32,
+                    ),
+                })
+                .collect();
+        let db = Database::new(self.pool.clone());
+        create_device_properties_batch(&db, &requests).await?;
         Ok(())
     }
 
@@ -216,13 +248,16 @@ impl ThingService {
         let Some((json,)) = row else {
             return Ok(());
         };
+        let db = Database::new(self.pool.clone());
         for a in serde_json::from_str::<Vec<serde_json::Value>>(&json).unwrap_or_default() {
-            let nm = a["name"].as_str().unwrap_or("");
-            let dp = a.get("displayName").and_then(|v| v.as_str()).unwrap_or(nm);
-            sqlx::query("INSERT INTO thing_actions (id,device_id,name,display_name,parameters,created_at) VALUES (?,?,?,?,?,datetime('now'))")
-                .bind(uuid::Uuid::new_v4().to_string()).bind(thing_id).bind(nm).bind(dp)
-                .bind(a.get("parameters").map(|v| v.to_string()).as_deref())
-                .execute(&self.pool).await?;
+            let req = CreateDeviceCommandRequest {
+                device_id: thing_id.to_string(),
+                name: a["name"].as_str().unwrap_or("").to_string(),
+                display_name: a.get("displayName").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                description: None,
+                parameters: a.get("parameters").map(|v| v.to_string()),
+            };
+            create_device_command(&db, &req).await?;
         }
         Ok(())
     }
@@ -385,171 +420,109 @@ impl ThingService {
         }
     }
 
-    /// Batch-load tags for multiple thing IDs from tag_bindings.
+    /// Batch-load tags for multiple thing IDs (delegates to repo — T9).
     async fn load_tags_batch(
         &self,
         thing_ids: &[&str],
     ) -> Result<std::collections::HashMap<String, Vec<super::types::TagInfo>>, sqlx::Error> {
-        if thing_ids.is_empty() {
-            return Ok(Default::default());
-        }
-        let mut qb = sqlx::QueryBuilder::new(
-            "SELECT tb.target_id, t.id, t.name, t.color FROM tag_bindings tb \
-             JOIN tags t ON t.id = tb.tag_id \
-             WHERE tb.target_type IN ('device','thing') AND tb.target_id IN (",
-        );
-        let mut separated = qb.separated(",");
-        for id in thing_ids {
-            separated.push_bind(*id);
-        }
-        separated.push_unseparated(")");
-        let rows = qb
-            .build_query_as::<(String, String, String, Option<String>)>()
-            .fetch_all(&self.pool)
-            .await?;
-        let mut map: std::collections::HashMap<String, Vec<TagInfo>> =
-            std::collections::HashMap::new();
-        for (target_id, id, name, color) in rows {
-            map.entry(target_id).or_default().push(TagInfo { id, name, color });
-        }
-        Ok(map)
+        self.repo.load_tags_batch(thing_ids).await
     }
 
+    /// Load properties from the storage layer (single source of SQL for
+    /// thing_properties — eng-review T9). No template fallback: the blueprint
+    /// model means a thing with no instances has no properties (D6).
     async fn load_properties(&self, device_id: &str) -> Option<Vec<serde_json::Value>> {
-        let rows: Vec<PropertyRow> = sqlx::query_as::<_, PropertyRow>(
-            "SELECT id, device_id, name, display_name, description, data_type, unit, \
-                 min_value, max_value, default_value, is_read_only, created_at, updated_at \
-                 FROM thing_properties WHERE device_id = ? ORDER BY name",
-        )
-        .bind(device_id)
-        .fetch_all(&self.pool)
-        .await
-        .ok()?;
-
-        if rows.is_empty() {
-            if let Ok(Some((Some(ref json),))) = sqlx::query_as::<_, (Option<String>,)>(
-                "SELECT t.properties FROM thing_templates t JOIN devices d ON d.template_id = t.id WHERE d.id = ?"
-            ).bind(device_id).fetch_optional(&self.pool).await {
-                return serde_json::from_str(json).ok();
-            }
+        let db = Database::new(self.pool.clone());
+        let props = find_device_properties_by_device_id(&db, device_id).await.ok()?;
+        if props.is_empty() {
             return None;
         }
-        let values: Vec<serde_json::Value> =
-            rows.into_iter().filter_map(|r| serde_json::to_value(r).ok()).collect();
-        Some(values)
+        // camelCase to match the existing profile API shape
+        Some(
+            props
+                .into_iter()
+                .map(|p| {
+                    serde_json::json!({
+                        "id": p.id,
+                        "deviceId": p.device_id,
+                        "name": p.name,
+                        "displayName": p.display_name,
+                        "description": p.description,
+                        "dataType": p.data_type,
+                        "unit": p.unit,
+                        "minValue": p.min_value,
+                        "maxValue": p.max_value,
+                        "defaultValue": p.default_value,
+                        "isReadOnly": p.is_read_only != 0,
+                        "createdAt": p.created_at,
+                        "updatedAt": p.updated_at,
+                    })
+                })
+                .collect(),
+        )
     }
 
+    /// Load recent events (repo query — T9), mapped to the frontend's
+    /// ThingEvent shape. Level int → name per the 4-level enum.
     async fn load_recent_events(&self, device_id: &str) -> Option<Vec<serde_json::Value>> {
-        let rows: Vec<EventRow> = sqlx::query_as::<_, EventRow>(
-            "SELECT id, event_type, event_subtype, level, source, source_id, \
-                 title, content, metadata, created_at \
-                 FROM events WHERE device_id = ? ORDER BY created_at DESC LIMIT 20",
-        )
-        .bind(device_id)
-        .fetch_all(&self.pool)
-        .await
-        .ok()?;
-
+        let rows = self.repo.list_recent_events(device_id, 20).await.ok()?;
         if rows.is_empty() {
             return None;
         }
-        let values: Vec<serde_json::Value> =
-            rows.into_iter().filter_map(|r| serde_json::to_value(r).ok()).collect();
-        Some(values)
+        Some(
+            rows.into_iter()
+                .map(|r| {
+                    let level = match r.event_level {
+                        5 => "critical",
+                        4 => "error",
+                        3 => "warning",
+                        _ => "info",
+                    };
+                    let content = r.content.unwrap_or_default();
+                    serde_json::json!({
+                        "id": r.id,
+                        "title": r.title.unwrap_or_default(),
+                        "message": r.event_subtype.clone().unwrap_or_default(),
+                        "level": level,
+                        "eventType": r.event_type,
+                        "createdAt": r.created_at,
+                        "contentPreview": content.chars().take(100).collect::<String>(),
+                    })
+                })
+                .collect(),
+        )
     }
 
-    /// Load actions: template first, then device_commands table.
-    /// Load actions from per-thing device_commands table.
+    /// Load actions from the storage layer (single source of SQL for
+    /// thing_actions — eng-review T9).
     async fn load_actions(&self, thing_id: &str) -> Option<Vec<serde_json::Value>> {
-        #[derive(Debug, serde::Serialize, sqlx::FromRow)]
-        #[serde(rename_all = "camelCase")]
-        struct CmdRow {
-            id: String,
-            device_id: String,
-            name: String,
-            display_name: Option<String>,
-            description: Option<String>,
-            parameters: Option<String>,
-            created_at: String,
+        let db = Database::new(self.pool.clone());
+        let cmds = find_device_commands_by_device_id(&db, thing_id).await.ok()?;
+        if cmds.is_empty() {
+            return None;
         }
-        let rows: Vec<CmdRow> = sqlx::query_as::<_, CmdRow>(
-            "SELECT id,device_id,name,display_name,description,parameters,created_at FROM thing_actions WHERE device_id=? ORDER BY name",
-        ).bind(thing_id).fetch_all(&self.pool).await.ok()?;
+        Some(
+            cmds.into_iter()
+                .map(|c| {
+                    serde_json::json!({
+                        "id": c.id,
+                        "deviceId": c.device_id,
+                        "name": c.name,
+                        "displayName": c.display_name,
+                        "description": c.description,
+                        "parameters": c.parameters,
+                        "createdAt": c.created_at,
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    async fn load_knowledge_docs(&self, device_id: &str) -> Option<Vec<serde_json::Value>> {
+        let rows = self.repo.list_knowledge_docs(device_id, 10).await.ok()?;
         if rows.is_empty() {
             return None;
         }
         Some(rows.into_iter().filter_map(|r| serde_json::to_value(r).ok()).collect())
     }
-
-    async fn load_knowledge_docs(&self, device_id: &str) -> Option<Vec<serde_json::Value>> {
-        let rows: Vec<DocRow> = sqlx::query_as::<_, DocRow>(
-            "SELECT id, name, resource_type, description, file_path, content, tags, created_at, updated_at \
-                 FROM resources WHERE device_id = ? ORDER BY created_at DESC LIMIT 10",
-        )
-        .bind(device_id)
-        .fetch_all(&self.pool)
-        .await
-        .ok()?;
-
-        if rows.is_empty() {
-            return None;
-        }
-        let values: Vec<serde_json::Value> =
-            rows.into_iter().filter_map(|r| serde_json::to_value(r).ok()).collect();
-        Some(values)
-    }
-}
-
-// ──────────────────────────────────────────────
-// Internal query rows
-// ──────────────────────────────────────────────
-
-#[derive(Debug, serde::Serialize, sqlx::FromRow)]
-#[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
-struct PropertyRow {
-    id: String,
-    device_id: String,
-    name: String,
-    display_name: Option<String>,
-    description: Option<String>,
-    data_type: String,
-    unit: Option<String>,
-    min_value: Option<f64>,
-    max_value: Option<f64>,
-    default_value: Option<String>,
-    is_read_only: bool,
-    created_at: String,
-    updated_at: String,
-}
-
-#[derive(Debug, serde::Serialize, sqlx::FromRow)]
-#[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
-struct EventRow {
-    id: String,
-    event_type: String,
-    event_subtype: Option<String>,
-    level: String,
-    source: String,
-    source_id: Option<String>,
-    title: Option<String>,
-    content: String,
-    metadata: Option<String>,
-    created_at: String,
-}
-
-#[derive(Debug, serde::Serialize, sqlx::FromRow)]
-#[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
-struct DocRow {
-    id: String,
-    name: String,
-    resource_type: String,
-    description: Option<String>,
-    file_path: String,
-    content: Option<String>,
-    tags: String,
-    created_at: String,
-    updated_at: String,
 }

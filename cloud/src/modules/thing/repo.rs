@@ -422,3 +422,72 @@ struct BreadcrumbRow {
 struct ParentRow {
     parent_id: Option<String>,
 }
+
+// ──────────────────────────────────────────────
+// Tags / knowledge docs / events (moved from service — eng-review T9)
+// ──────────────────────────────────────────────
+
+impl ThingRepo {
+    /// Batch-load tags for multiple thing IDs from tag_bindings.
+    pub async fn load_tags_batch(
+        &self,
+        thing_ids: &[&str],
+    ) -> Result<std::collections::HashMap<String, Vec<super::types::TagInfo>>, sqlx::Error> {
+        if thing_ids.is_empty() {
+            return Ok(Default::default());
+        }
+        let mut qb = sqlx::QueryBuilder::new(
+            "SELECT tb.target_id, t.id, t.name, t.color FROM tag_bindings tb \
+             JOIN tags t ON t.id = tb.tag_id \
+             WHERE tb.target_type IN ('device','thing') AND tb.target_id IN (",
+        );
+        let mut separated = qb.separated(",");
+        for id in thing_ids {
+            separated.push_bind(*id);
+        }
+        separated.push_unseparated(")");
+        let rows = qb
+            .build_query_as::<(String, String, String, Option<String>)>()
+            .fetch_all(&self.pool)
+            .await?;
+        let mut map: std::collections::HashMap<String, Vec<super::types::TagInfo>> =
+            std::collections::HashMap::new();
+        for (target_id, id, name, color) in rows {
+            map.entry(target_id).or_default().push(super::types::TagInfo { id, name, color });
+        }
+        Ok(map)
+    }
+
+    /// Knowledge docs attached to a thing, newest first.
+    pub async fn list_knowledge_docs(
+        &self,
+        device_id: &str,
+        limit: i64,
+    ) -> Result<Vec<super::types::DocRow>, sqlx::Error> {
+        sqlx::query_as::<_, super::types::DocRow>(
+            "SELECT id, name, resource_type, description, file_path, content, tags, created_at, updated_at \
+                 FROM resources WHERE device_id = ? ORDER BY created_at DESC LIMIT ?",
+        )
+        .bind(device_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+    }
+
+    /// Recent events for a thing, newest first.
+    pub async fn list_recent_events(
+        &self,
+        device_id: &str,
+        limit: i64,
+    ) -> Result<Vec<super::types::EventRow>, sqlx::Error> {
+        sqlx::query_as::<_, super::types::EventRow>(
+            "SELECT id, event_type, event_subtype, event_level, source_type, source_id, \
+                 title, content, metadata, created_at \
+                 FROM events WHERE device_id = ? ORDER BY created_at DESC LIMIT ?",
+        )
+        .bind(device_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+    }
+}
