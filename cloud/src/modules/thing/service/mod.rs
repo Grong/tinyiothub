@@ -263,6 +263,17 @@ impl ThingService {
         let updated =
             self.repo.update(id, req).await?.ok_or_else(|| ThingError::NotFound(id.to_string()))?;
 
+        // Dirty the summary subtree when the name or parent changed — the
+        // breadcrumb is part of the summary input, so every descendant's
+        // summary is now stale (design 二·③; eng-review T5).
+        let name_changed = req.name.as_ref().is_some_and(|n| n != &existing.name);
+        let parent_changed = req.parent_id.is_some() && req.parent_id != existing.parent_id;
+        if name_changed || parent_changed {
+            if let Err(e) = summary::mark_dirty_for_name_or_parent_change(&self.pool, id).await {
+                tracing::warn!(?e, thing_id = %id, "Failed to mark summary dirty after rename/reparent");
+            }
+        }
+
         let breadcrumb = self.repo.get_breadcrumb(id, 10).await.unwrap_or_default();
 
         Ok(Self::row_to_response(&updated, breadcrumb))
@@ -303,6 +314,13 @@ impl ThingService {
                 resource_id, thing_id
             )));
         }
+
+        // Symmetric with attach: removing a document changes the summary
+        // input, so the cached summary is now stale (eng-review T5).
+        if let Err(e) = summary::mark_dirty_for_resource_change(&self.pool, thing_id).await {
+            tracing::warn!(?e, thing_id = %thing_id, "Failed to mark summary dirty after resource detach");
+        }
+
         Ok(())
     }
 
