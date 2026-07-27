@@ -63,17 +63,26 @@ async fn test_create_device() {
     assert!(json["code"].is_number(), "Response must have numeric code field");
 }
 
+/// Helper: create a test app with a seeded workspace (required for /api/v1/things).
+async fn setup_with_workspace(tenant_id: &str, workspace_id: &str) -> axum::Router {
+    let (app_state, pool) = setup_test_app_with_pool().await;
+    seed_test_workspace(&pool, tenant_id, workspace_id).await;
+    let api_router = crate::api::create_router();
+    axum::Router::new().nest("/api", api_router).with_state(app_state)
+}
+
 // ============================================================================
-// List Devices
+// List Things (device management endpoints were removed; /api/v1/things is
+// the replacement — see modules/thing/handler)
 // ============================================================================
 
 #[tokio::test]
-async fn test_list_devices() {
-    let app = setup_test_app().await;
-    let token = create_test_token("user-1", "tenant-1");
+async fn test_list_things() {
+    let app = setup_with_workspace("tenant-1", "ws-list").await;
+    let token = create_test_token_with_workspace("user-1", "tenant-1", "ws-list");
 
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices?page=1&page_size=20", &token, None))
+        .oneshot(auth_request("GET", "/api/v1/things?limit=20&offset=0", &token, None))
         .await
         .unwrap();
 
@@ -81,38 +90,37 @@ async fn test_list_devices() {
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["code"], 0, "Expected success code");
-    // result should be a paginated response with data array
-    assert!(json["result"]["data"].is_array(), "Expected data array");
-    assert!(json["result"]["pagination"].is_object(), "Expected pagination object");
+    // result should be a paginated response with items array
+    assert!(json["result"]["items"].is_array(), "Expected items array");
+    assert!(json["result"]["total"].is_number(), "Expected total count");
 }
 
 // ============================================================================
-// Get Device — not found
+// Get Thing — not found
 // ============================================================================
 
 #[tokio::test]
-async fn test_get_device_not_found() {
+async fn test_get_thing_not_found() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices/nonexistent-id-12345", &token, None))
+        .oneshot(auth_request("GET", "/api/v1/things/nonexistent-id-12345", &token, None))
         .await
         .unwrap();
 
     let (status, json) = response_parts(response).await;
 
-    assert_eq!(status, StatusCode::OK);
-    // Handler returns error in JSON body, not HTTP status
-    assert_ne!(json["code"], 0, "Expected error code for nonexistent device");
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_ne!(json["code"], 0, "Expected error code for nonexistent thing");
 }
 
 // ============================================================================
-// Update Device — not found
+// Update Thing — not found
 // ============================================================================
 
 #[tokio::test]
-async fn test_update_device_not_found() {
+async fn test_update_thing_not_found() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
@@ -121,42 +129,42 @@ async fn test_update_device_not_found() {
     });
 
     let response = app
-        .oneshot(auth_request("PUT", "/api/v1/devices/nonexistent-id-12345", &token, Some(body)))
+        .oneshot(auth_request("PUT", "/api/v1/things/nonexistent-id-12345", &token, Some(body)))
         .await
         .unwrap();
 
     let (status, json) = response_parts(response).await;
 
-    assert_eq!(status, StatusCode::OK);
-    assert_ne!(json["code"], 0, "Expected error code for nonexistent device");
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_ne!(json["code"], 0, "Expected error code for nonexistent thing");
 }
 
 // ============================================================================
-// Delete Device — not found
+// Delete Thing — not found
 // ============================================================================
 
 #[tokio::test]
-async fn test_delete_device_not_found() {
+async fn test_delete_thing_not_found() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
     let response = app
-        .oneshot(auth_request("DELETE", "/api/v1/devices/nonexistent-id-12345", &token, None))
+        .oneshot(auth_request("DELETE", "/api/v1/things/nonexistent-id-12345", &token, None))
         .await
         .unwrap();
 
     let (status, json) = response_parts(response).await;
 
-    assert_eq!(status, StatusCode::OK);
-    assert_ne!(json["code"], 0, "Expected error code for nonexistent device");
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_ne!(json["code"], 0, "Expected error code for nonexistent thing");
 }
 
 // ============================================================================
-// Create Device — validation: missing required name
+// Create Thing — validation: missing required name
 // ============================================================================
 
 #[tokio::test]
-async fn test_create_device_missing_name() {
+async fn test_create_thing_missing_name() {
     let app = setup_test_app().await;
     let token = create_test_token("user-1", "tenant-1");
 
@@ -164,47 +172,24 @@ async fn test_create_device_missing_name() {
     let body = json!({});
 
     let response =
-        app.oneshot(auth_request("POST", "/api/v1/devices", &token, Some(body))).await.unwrap();
+        app.oneshot(auth_request("POST", "/api/v1/things", &token, Some(body))).await.unwrap();
 
     let status = response.status();
 
     // Axum's Json extractor returns 422 for deserialization failures (missing required field)
     // This is expected behavior — the handler correctly rejects invalid input
-    assert!(
-        status == StatusCode::UNPROCESSABLE_ENTITY || status == StatusCode::OK,
-        "Expected 422 or 200 for missing name, got: {}",
-        status
-    );
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "Expected 422 for missing name");
 }
 
-// ============================================================================
-// Create Device — empty name validation
-// ============================================================================
-
-#[tokio::test]
-async fn test_create_device_empty_name() {
-    let app = setup_test_app().await;
-    let token = create_test_token("user-1", "tenant-1");
-
-    let body = json!({
-        "name": ""
-    });
-
-    let response =
-        app.oneshot(auth_request("POST", "/api/v1/devices", &token, Some(body))).await.unwrap();
-
-    let (status, json) = response_parts(response).await;
-
-    assert_eq!(status, StatusCode::OK);
-    // Should get a validation error from the service layer
-    assert_ne!(json["code"], 0, "Expected validation error for empty name");
-}
+// NOTE: empty-name rejection is covered by
+// thing_handler_tests.rs::test_create_thing_empty_name_rejected
 
 // ============================================================================
 // Cross-Tenant Isolation
 // ============================================================================
 
-/// Verify that a user in workspace A cannot see devices created in workspace B.
+/// Verify that a user in workspace A cannot see, read, update, or delete
+/// things created in workspace B.
 /// This is the regression test for the security bug where omitting X-Workspace-Id
 /// header returned the raw (unfiltered) repository, exposing all devices.
 #[tokio::test]
@@ -218,34 +203,35 @@ async fn test_cross_workspace_isolation() {
     let api_router = crate::api::create_router();
     let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
 
-    // User A (workspace ws-a) creates a device — first ensure workspace exists
+    // User A (workspace ws-a) creates a thing
     let token_a = create_test_token_with_workspace("user-a", "tenant-a", "ws-a");
 
     let body = json!({
-        "name": "device-in-ws-a",
-        "display_name": "Device in Workspace A",
-        "device_type": "sensor",
-        "protocol_type": "modbus"
+        "name": "thing-in-ws-a",
+        "thingType": "device",
+        "deviceType": "sensor",
+        "protocolType": "modbus",
+        "workspaceId": "ws-a"
     });
 
     let response = app
         .clone()
-        .oneshot(auth_request("POST", "/api/v1/devices", &token_a, Some(body)))
+        .oneshot(auth_request("POST", "/api/v1/things", &token_a, Some(body)))
         .await
         .unwrap();
 
     let (status, json) = response_parts(response).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(json["code"], 0, "Expected success creating device in workspace A");
-    let device_id = json["result"]["id"].as_str().unwrap().to_string();
-    assert!(!device_id.is_empty(), "Device should have an id");
+    assert_eq!(status, StatusCode::CREATED, "Expected 201, got {}: {:?}", status, json);
+    assert_eq!(json["code"], 0, "Expected success creating thing in workspace A");
+    let thing_id = json["result"]["id"].as_str().unwrap().to_string();
+    assert!(!thing_id.is_empty(), "Thing should have an id");
 
-    // User B (workspace ws-b) lists devices — should NOT see workspace A's device
+    // User B (workspace ws-b) lists things — should NOT see workspace A's thing
     let token_b = create_test_token_with_workspace("user-b", "tenant-b", "ws-b");
 
     let response = app
         .clone()
-        .oneshot(auth_request("GET", "/api/v1/devices?page=1&page_size=20", &token_b, None))
+        .oneshot(auth_request("GET", "/api/v1/things?limit=20&offset=0", &token_b, None))
         .await
         .unwrap();
 
@@ -253,28 +239,72 @@ async fn test_cross_workspace_isolation() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["code"], 0, "Expected success code");
 
-    let data = json["result"]["data"].as_array().unwrap();
-    let device_ids: Vec<&str> = data.iter().filter_map(|d| d["id"].as_str()).collect();
+    let items = json["result"]["items"].as_array().unwrap();
+    let thing_ids: Vec<&str> = items.iter().filter_map(|d| d["id"].as_str()).collect();
 
     assert!(
-        !device_ids.contains(&device_id.as_str()),
-        "SECURITY BUG: User B (ws-b) can see workspace A's device (ws-a). \
+        !thing_ids.contains(&thing_id.as_str()),
+        "SECURITY BUG: User B (ws-b) can see workspace A's thing (ws-a). \
          Workspace isolation is broken!"
     );
 
-    // User A should see their own device
+    // User B reads workspace A's thing by id — must be denied (404)
     let response = app
-        .oneshot(auth_request("GET", "/api/v1/devices?page=1&page_size=20", &token_a, None))
+        .clone()
+        .oneshot(auth_request("GET", &format!("/api/v1/things/{}", thing_id), &token_b, None))
+        .await
+        .unwrap();
+    let (status, _json) = response_parts(response).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "SECURITY BUG: User B (ws-b) can read workspace A's thing (ws-a)"
+    );
+
+    // User B updates workspace A's thing — must be denied (404)
+    let response = app
+        .clone()
+        .oneshot(auth_request(
+            "PUT",
+            &format!("/api/v1/things/{}", thing_id),
+            &token_b,
+            Some(json!({"name": "hijacked-name"})),
+        ))
+        .await
+        .unwrap();
+    let (status, _json) = response_parts(response).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "SECURITY BUG: User B (ws-b) can update workspace A's thing (ws-a)"
+    );
+
+    // User B deletes workspace A's thing — must be denied (404)
+    let response = app
+        .clone()
+        .oneshot(auth_request("DELETE", &format!("/api/v1/things/{}", thing_id), &token_b, None))
+        .await
+        .unwrap();
+    let (status, _json) = response_parts(response).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "SECURITY BUG: User B (ws-b) can delete workspace A's thing (ws-a)"
+    );
+
+    // User A should see their own thing
+    let response = app
+        .oneshot(auth_request("GET", "/api/v1/things?limit=20&offset=0", &token_a, None))
         .await
         .unwrap();
 
     let (_status, json) = response_parts(response).await;
     assert_eq!(json["code"], 0);
-    let data = json["result"]["data"].as_array().unwrap();
-    let device_ids: Vec<&str> = data.iter().filter_map(|d| d["id"].as_str()).collect();
+    let items = json["result"]["items"].as_array().unwrap();
+    let thing_ids: Vec<&str> = items.iter().filter_map(|d| d["id"].as_str()).collect();
     assert!(
-        device_ids.contains(&device_id.as_str()),
-        "User A should see their own device in workspace A"
+        thing_ids.contains(&thing_id.as_str()),
+        "User A should see their own thing in workspace A"
     );
 }
 
@@ -324,55 +354,38 @@ async fn test_get_device_properties_not_found() {
 }
 
 // ============================================================================
-// Device Dashboard
+// Thing Profile — success path
 // ============================================================================
 
 #[tokio::test]
-async fn test_get_device_dashboard() {
-    let app = setup_test_app().await;
-    let token = create_test_token("user-1", "tenant-1");
+async fn test_get_thing_profile_success() {
+    let app = setup_with_workspace("tenant-1", "ws-profile").await;
+    let token = create_test_token_with_workspace("user-1", "tenant-1", "ws-profile");
 
-    let response =
-        app.oneshot(auth_request("GET", "/api/v1/devices/dashboard", &token, None)).await.unwrap();
-
-    let (status, json) = response_parts(response).await;
-
-    assert_eq!(status, StatusCode::OK);
-    assert!(json["code"].is_number(), "Expected numeric code");
-}
-
-// ============================================================================
-// Device Profile — success path
-// ============================================================================
-
-#[tokio::test]
-async fn test_get_device_profile_success() {
-    let app = setup_test_app().await;
-    let token = create_test_token("user-1", "tenant-1");
-
-    // Create a device first
+    // Create a thing first
     let body = json!({
-        "name": "profile-test-device-001",
-        "display_name": "Profile Test Device",
-        "device_type": "sensor",
-        "protocol_type": "modbus"
+        "name": "profile-test-thing-001",
+        "thingType": "device",
+        "deviceType": "sensor",
+        "protocolType": "modbus",
+        "workspaceId": "ws-profile"
     });
 
     let response = app
         .clone()
-        .oneshot(auth_request("POST", "/api/v1/devices", &token, Some(body)))
+        .oneshot(auth_request("POST", "/api/v1/things", &token, Some(body)))
         .await
         .unwrap();
 
     let (_status, create_json) = response_parts(response).await;
-    assert_eq!(create_json["code"], 0, "Expected success creating device: {}", create_json);
-    let device_id = create_json["result"]["id"].as_str().unwrap().to_string();
+    assert_eq!(create_json["code"], 0, "Expected success creating thing: {}", create_json);
+    let thing_id = create_json["result"]["id"].as_str().unwrap().to_string();
 
-    // Get device profile
+    // Get thing profile
     let response = app
         .oneshot(auth_request(
             "GET",
-            &format!("/api/v1/devices/{}/profile", device_id),
+            &format!("/api/v1/things/{}/profile", thing_id),
             &token,
             None,
         ))
@@ -382,12 +395,11 @@ async fn test_get_device_profile_success() {
     let (status, json) = response_parts(response).await;
 
     assert_eq!(status, StatusCode::OK);
-    assert!(json["code"].is_number(), "Expected numeric code");
-    if json["code"] == 0 {
-        assert!(json["result"]["device"].is_object(), "Profile should have device object");
-        assert!(json["result"]["properties"].is_array(), "Profile should have properties array");
-        assert!(json["result"]["overview"].is_object(), "Profile should have overview object");
-    }
+    assert_eq!(json["code"], 0, "Expected success code: {}", json);
+    // ThingResponse is flattened into the profile
+    assert_eq!(json["result"]["id"], thing_id, "Profile should contain the thing");
+    assert!(json["result"]["properties"].is_array(), "Profile should have properties array");
+    assert!(json["result"]["actions"].is_array(), "Profile should have actions array");
 }
 
 // ============================================================================
@@ -592,154 +604,6 @@ async fn test_execute_device_command_not_found() {
     if status == StatusCode::OK {
         assert!(json["code"].is_number(), "Expected numeric code");
     }
-}
-
-// ============================================================================
-// Device Enable / Disable
-// ============================================================================
-
-#[tokio::test]
-async fn test_enable_device_not_found() {
-    let app = setup_test_app().await;
-    let token = create_test_token("user-1", "tenant-1");
-
-    let response = app
-        .oneshot(auth_request("POST", "/api/v1/devices/nonexistent-id-12345/enable", &token, None))
-        .await
-        .unwrap();
-
-    let (status, json) = response_parts(response).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(json["code"].is_number(), "Expected numeric code");
-}
-
-#[tokio::test]
-async fn test_disable_device_not_found() {
-    let app = setup_test_app().await;
-    let token = create_test_token("user-1", "tenant-1");
-
-    let response = app
-        .oneshot(auth_request("POST", "/api/v1/devices/nonexistent-id-12345/disable", &token, None))
-        .await
-        .unwrap();
-
-    let (status, json) = response_parts(response).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(json["code"].is_number(), "Expected numeric code");
-}
-
-// ============================================================================
-// Device from Template
-// ============================================================================
-
-#[tokio::test]
-async fn test_create_device_from_template_not_found() {
-    let app = setup_test_app().await;
-    let token = create_test_token("user-1", "tenant-1");
-
-    let body = json!({
-        "template_id": "nonexistent-template",
-        "device_input": {
-            "name": "test-device",
-            "property_values": {},
-            "enabled_commands": []
-        }
-    });
-
-    let response = app
-        .oneshot(auth_request("POST", "/api/v1/devices/from-template", &token, Some(body)))
-        .await
-        .unwrap();
-
-    let (status, json) = response_parts(response).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(json["code"].is_number(), "Expected numeric code");
-}
-
-#[tokio::test]
-async fn test_preview_device_from_template_not_found() {
-    let app = setup_test_app().await;
-    let token = create_test_token("user-1", "tenant-1");
-
-    let body = json!({"name": "preview-device", "property_values": {}, "enabled_commands": []});
-
-    let response = app
-        .oneshot(auth_request(
-            "POST",
-            "/api/v1/devices/from-template/nonexistent-template-id/preview",
-            &token,
-            Some(body),
-        ))
-        .await
-        .unwrap();
-
-    let (status, json) = response_parts(response).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(json["code"].is_number(), "Expected numeric code");
-}
-
-#[tokio::test]
-async fn test_validate_device_input_not_found() {
-    let app = setup_test_app().await;
-    let token = create_test_token("user-1", "tenant-1");
-
-    let body = json!({"name": "validate-device", "property_values": {}, "enabled_commands": []});
-
-    let response = app
-        .oneshot(auth_request(
-            "POST",
-            "/api/v1/devices/from-template/nonexistent-template-id/validate",
-            &token,
-            Some(body),
-        ))
-        .await
-        .unwrap();
-
-    let (status, json) = response_parts(response).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(json["code"].is_number(), "Expected numeric code");
-}
-
-#[tokio::test]
-async fn test_validate_single_field_not_found() {
-    let app = setup_test_app().await;
-    let token = create_test_token("user-1", "tenant-1");
-
-    let body = json!({"field_name": "name", "field_value": "test"});
-
-    let response = app
-        .oneshot(auth_request(
-            "POST",
-            "/api/v1/devices/from-template/nonexistent-template-id/validate-field",
-            &token,
-            Some(body),
-        ))
-        .await
-        .unwrap();
-
-    let (status, json) = response_parts(response).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(json["code"].is_number(), "Expected numeric code");
-}
-
-#[tokio::test]
-async fn test_get_template_requirements_not_found() {
-    let app = setup_test_app().await;
-    let token = create_test_token("user-1", "tenant-1");
-
-    let response = app
-        .oneshot(auth_request(
-            "GET",
-            "/api/v1/devices/from-template/nonexistent-template-id/requirements",
-            &token,
-            None,
-        ))
-        .await
-        .unwrap();
-
-    let (status, json) = response_parts(response).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(json["code"].is_number(), "Expected numeric code");
 }
 
 // ============================================================================
