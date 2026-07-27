@@ -4,7 +4,8 @@ use chrono::Utc;
 use cron::Schedule;
 use tinyiothub_core::models::cron_job::CronJob;
 use tinyiothub_runtime::cron::{
-    DeviceCommandExecutor, ExecutionResult, ExecutorError, ExecutorRegistry,
+    DeviceCommandExecutor, EventRetentionExecutor, ExecutionResult, ExecutorError,
+    ExecutorRegistry,
 };
 use tinyiothub_storage::{
     sqlite::database::Database,
@@ -38,8 +39,10 @@ impl CronSchedulerService {
     ) -> Self {
         let mut registry = ExecutorRegistry::new();
         if let (Some(ds), Some(db)) = (data_server, database) {
-            registry.register(Box::new(DeviceCommandExecutor::new(ds, db)));
+            registry.register(Box::new(DeviceCommandExecutor::new(ds, db.clone())));
             info!("DeviceCommandExecutor registered");
+            registry.register(Box::new(EventRetentionExecutor::new(db)));
+            info!("EventRetentionExecutor registered");
         } else {
             warn!("DataServer or Database not available, device_command jobs will not work");
         }

@@ -240,7 +240,9 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
     }
 
     async fn clear_acknowledged_events(&self) -> Result<u64> {
-        let sql = "DELETE FROM events WHERE acknowledged = 1";
+        // Occurrence rows only — an acknowledged STATUS row is the live
+        // current-state of a device and must never be bulk-deleted (X1/OV-1)
+        let sql = "DELETE FROM events WHERE acknowledged = 1 AND is_status = 0";
 
         let result = sqlx::query(sql).execute(self.database.pool()).await?;
 
@@ -248,7 +250,9 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
     }
 
     async fn cleanup_old_events(&self, before: DateTime<Utc>) -> Result<u64> {
-        let sql = "DELETE FROM events WHERE timestamp < ?";
+        // Occurrence rows only — status rows (is_status=1) are live state,
+        // not log history, and are exempt from time-based purge (X1/OV-1)
+        let sql = "DELETE FROM events WHERE timestamp < ? AND is_status = 0";
 
         let result =
             sqlx::query(sql).bind(before.to_rfc3339()).execute(self.database.pool()).await?;

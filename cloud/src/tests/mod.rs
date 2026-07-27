@@ -33,3 +33,4 @@ mod thing_tenant_isolation_tests;
 mod token_handler_tests;
 mod user_handler_tests;
 mod workspace_handler_tests;
+pub mod event_retention_tests;
