@@ -383,12 +383,7 @@ async fn test_get_thing_profile_success() {
 
     // Get thing profile
     let response = app
-        .oneshot(auth_request(
-            "GET",
-            &format!("/api/v1/things/{}/profile", thing_id),
-            &token,
-            None,
-        ))
+        .oneshot(auth_request("GET", &format!("/api/v1/things/{}/profile", thing_id), &token, None))
         .await
         .unwrap();
 

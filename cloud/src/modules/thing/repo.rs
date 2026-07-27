@@ -445,10 +445,8 @@ impl ThingRepo {
         qb.push_bind(max_depth.min(10) as i32);
         qb.push(") SELECT root, id, name, thing_type FROM ancestors ORDER BY root, depth DESC");
 
-        let rows = qb
-            .build_query_as::<(String, String, String, String)>()
-            .fetch_all(&self.pool)
-            .await?;
+        let rows =
+            qb.build_query_as::<(String, String, String, String)>().fetch_all(&self.pool).await?;
         let mut map: std::collections::HashMap<String, Vec<super::types::BreadcrumbNode>> =
             std::collections::HashMap::new();
         for (root, id, name, thing_type) in rows {

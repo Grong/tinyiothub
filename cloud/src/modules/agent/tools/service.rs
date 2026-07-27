@@ -430,10 +430,7 @@ fn tool_group(name: &str) -> (&str, &str) {
     if name == "search_workspace_resources" {
         ("workspace", "工作空间")
     } else if name.starts_with("search_")
-        || matches!(
-            name,
-            "read_properties" | "write_properties" | "send_command"
-        )
+        || matches!(name, "read_properties" | "write_properties" | "send_command")
     {
         ("device", "设备管理")
     } else if matches!(

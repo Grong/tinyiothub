@@ -7,14 +7,6 @@ use tinyiothub_core::models::{
     device_command::CreateDeviceCommandRequest, device_property::CreateDevicePropertyRequest,
 };
 
-use crate::shared::persistence::{
-    Database,
-    repositories::{
-        create_device_command, create_device_properties_batch,
-        find_device_commands_by_device_id, find_device_properties_by_device_id,
-    },
-};
-
 use super::{
     errors::ThingError,
     repo::ThingRepo,
@@ -22,6 +14,13 @@ use super::{
     types::{
         CreateThingRequest, ListThingsParams, ListThingsResult, ThingProfileResponse,
         ThingResource, ThingResponse, ThingRow, ThingTreeNode, ThingType, UpdateThingRequest,
+    },
+};
+use crate::shared::persistence::{
+    Database,
+    repositories::{
+        create_device_command, create_device_properties_batch, find_device_commands_by_device_id,
+        find_device_properties_by_device_id,
     },
 };
 
@@ -74,7 +73,11 @@ impl ThingService {
     // Get
     // ──────────────────────────────────────────
 
-    pub async fn get_thing(&self, id: &str, workspace_id: &str) -> Result<ThingResponse, ThingError> {
+    pub async fn get_thing(
+        &self,
+        id: &str,
+        workspace_id: &str,
+    ) -> Result<ThingResponse, ThingError> {
         let mut row = self
             .repo
             .get_by_id_scoped(id, workspace_id)
@@ -220,33 +223,28 @@ impl ThingService {
         };
         // Inserts go through the storage layer (single source of SQL for
         // thing_properties — eng-review T9)
-        let requests: Vec<CreateDevicePropertyRequest> =
-            serde_json::from_str::<Vec<serde_json::Value>>(&json)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|p| CreateDevicePropertyRequest {
-                    device_id: thing_id.to_string(),
-                    name: p["name"].as_str().unwrap_or("").to_string(),
-                    display_name: p
-                        .get("displayName")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string()),
-                    description: None,
-                    data_type: Some(
-                        p.get("dataType").and_then(|v| v.as_str()).unwrap_or("string").to_string(),
-                    ),
-                    unit: Some(p.get("unit").and_then(|v| v.as_str()).unwrap_or("").to_string()),
-                    min_value: p.get("minValue").and_then(|v| v.as_f64()),
-                    max_value: p.get("maxValue").and_then(|v| v.as_f64()),
-                    default_value: p
-                        .get("defaultValue")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string()),
-                    is_read_only: Some(
-                        p.get("isReadOnly").and_then(|v| v.as_bool()).unwrap_or(false) as i32,
-                    ),
-                })
-                .collect();
+        let requests: Vec<CreateDevicePropertyRequest> = serde_json::from_str::<
+            Vec<serde_json::Value>,
+        >(&json)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| CreateDevicePropertyRequest {
+            device_id: thing_id.to_string(),
+            name: p["name"].as_str().unwrap_or("").to_string(),
+            display_name: p.get("displayName").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            description: None,
+            data_type: Some(
+                p.get("dataType").and_then(|v| v.as_str()).unwrap_or("string").to_string(),
+            ),
+            unit: Some(p.get("unit").and_then(|v| v.as_str()).unwrap_or("").to_string()),
+            min_value: p.get("minValue").and_then(|v| v.as_f64()),
+            max_value: p.get("maxValue").and_then(|v| v.as_f64()),
+            default_value: p.get("defaultValue").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            is_read_only: Some(
+                p.get("isReadOnly").and_then(|v| v.as_bool()).unwrap_or(false) as i32
+            ),
+        })
+        .collect();
         let db = Database::new(self.pool.clone());
         create_device_properties_batch(&db, &requests).await?;
         Ok(())

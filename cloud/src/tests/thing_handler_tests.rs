@@ -44,8 +44,11 @@ async fn test_create_thing_empty_name_rejected() {
 
     for name in ["", "   "] {
         let body = json!({ "name": name, "thingType": "device" });
-        let response =
-            app.clone().oneshot(auth_request("POST", "/api/v1/things", &token, Some(body))).await.unwrap();
+        let response = app
+            .clone()
+            .oneshot(auth_request("POST", "/api/v1/things", &token, Some(body)))
+            .await
+            .unwrap();
         let (status, _json) = response_parts(response).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "name {:?} must be rejected", name);
     }

@@ -260,15 +260,14 @@ impl PlatformMqttClient {
         // Resolve tenant scope from the thing (design OV6) — without it,
         // event-alarm rules (workspace-scoped) could never match and the
         // event would be invisible to every workspace query.
-        let workspace_id: String = sqlx::query_scalar(
-            "SELECT COALESCE(workspace_id, '') FROM devices WHERE id = ?",
-        )
-        .bind(&thing_id)
-        .fetch_optional(db_pool)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or_default();
+        let workspace_id: String =
+            sqlx::query_scalar("SELECT COALESCE(workspace_id, '') FROM devices WHERE id = ?")
+                .bind(&thing_id)
+                .fetch_optional(db_pool)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_default();
         if workspace_id.is_empty() {
             tracing::warn!(
                 thing_id = %thing_id,

@@ -74,7 +74,12 @@ pub trait RealTimeEventRepository: Send + Sync {
     async fn get_status_summary(&self, filter: &RealTimeFilter) -> Result<StatusSummary>;
 
     /// Acknowledge an event
-    async fn acknowledge_event(&self, id: &EventId, user_id: &str, workspace_id: &str) -> Result<()>;
+    async fn acknowledge_event(
+        &self,
+        id: &EventId,
+        user_id: &str,
+        workspace_id: &str,
+    ) -> Result<()>;
 
     /// Clear all acknowledged events
     async fn clear_acknowledged_events(&self) -> Result<u64>;

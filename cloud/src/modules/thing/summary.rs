@@ -169,11 +169,8 @@ impl SummaryComputer {
         };
 
         // RAII guard: releases the single-flight entry on every exit path.
-        let _flight = FlightGuard {
-            map: self.single_flight.clone(),
-            thing_id: thing_id.to_string(),
-            notify,
-        };
+        let _flight =
+            FlightGuard { map: self.single_flight.clone(), thing_id: thing_id.to_string(), notify };
 
         // 4. Build prompt from thing metadata, model, and docs
         let prompt = build_prompt_for_thing(thing_id, pool).await?;
@@ -386,13 +383,9 @@ mod tests {
         // acquired connection — a fresh pool connection would have FK on.
         let mut conn = pool.acquire().await.unwrap();
         sqlx::query("PRAGMA foreign_keys = OFF").execute(&mut *conn).await.unwrap();
-        for table in [
-            "device_alarm_rules",
-            "resources",
-            "thing_properties",
-            "thing_actions",
-            "devices",
-        ] {
+        for table in
+            ["device_alarm_rules", "resources", "thing_properties", "thing_actions", "devices"]
+        {
             sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE IF EXISTS {}", table)))
                 .execute(&mut *conn)
                 .await
@@ -753,14 +746,18 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        sqlx::query("INSERT INTO thing_properties (id, device_id, name) VALUES ('p1', 'd1', 'temperature')")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO thing_actions (id, device_id, name) VALUES ('a1', 'd1', 'reboot')")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO thing_properties (id, device_id, name) VALUES ('p1', 'd1', 'temperature')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO thing_actions (id, device_id, name) VALUES ('a1', 'd1', 'reboot')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         // Insert a knowledge doc
         sqlx::query(

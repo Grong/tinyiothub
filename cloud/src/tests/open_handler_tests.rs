@@ -29,18 +29,18 @@ async fn test_open_health() {
 }
 
 #[tokio::test]
-async fn test_open_devices_unauthorized() {
+async fn test_open_things_unauthorized() {
     let app = crate::test_utils::setup_test_app().await;
-    let response = app.oneshot(open_request("GET", "/api/open/open/devices")).await.unwrap();
+    let response = app.oneshot(open_request("GET", "/api/open/open/things")).await.unwrap();
     // Without API key, should return 401 or 200 with error
     assert!(response.status() == StatusCode::UNAUTHORIZED || response.status().is_success());
 }
 
 #[tokio::test]
-async fn test_open_device_not_found() {
+async fn test_open_thing_not_found() {
     let app = crate::test_utils::setup_test_app().await;
     let response = app
-        .oneshot(open_request("GET", "/api/open/open/devices/nonexistent-device-12345"))
+        .oneshot(open_request("GET", "/api/open/open/things/nonexistent-thing-12345"))
         .await
         .unwrap();
     assert!(response.status() == StatusCode::UNAUTHORIZED || response.status().is_success());

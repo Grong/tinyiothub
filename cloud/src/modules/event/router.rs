@@ -170,8 +170,7 @@ pub async fn route_thing_event(
     // dedup index key off it. Unknown names degrade to info level with
     // metadata.unknown_event=true (never an error to the device).
     let event_subtype = input.event_name.clone();
-    let effective_level =
-        if unknown_event { EventLevel::Info } else { input.level };
+    let effective_level = if unknown_event { EventLevel::Info } else { input.level };
     let level_num = effective_level.to_numeric();
 
     let source = EventSource::new(
@@ -268,11 +267,7 @@ pub async fn route_thing_event(
 /// Returns `true` when the event name is defined in the template's `events`
 /// JSON, or when the thing has no template (unflagged — templates are
 /// creation-time blueprints and event definitions have no per-thing home).
-async fn is_known_event_name(
-    pool: &sqlx::SqlitePool,
-    thing_id: &str,
-    event_name: &str,
-) -> bool {
+async fn is_known_event_name(pool: &sqlx::SqlitePool, thing_id: &str, event_name: &str) -> bool {
     let row: Option<(Option<String>,)> = sqlx::query_as(
         "SELECT t.events FROM devices d JOIN thing_templates t ON t.id = d.template_id WHERE d.id = ?",
     )

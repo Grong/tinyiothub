@@ -382,14 +382,13 @@ async fn send_command(
     let command_params = payload.get("params").cloned();
 
     // Verify the thing exists IN THIS WORKSPACE and is a device (T1)
-    let thing: Option<(String, String)> = sqlx::query_as(
-        "SELECT id, thing_type FROM devices WHERE id = ? AND workspace_id = ?",
-    )
-    .bind(&id)
-    .bind(&workspace_id)
-    .fetch_optional(state.database.pool())
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let thing: Option<(String, String)> =
+        sqlx::query_as("SELECT id, thing_type FROM devices WHERE id = ? AND workspace_id = ?")
+            .bind(&id)
+            .bind(&workspace_id)
+            .fetch_optional(state.database.pool())
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let Some((_, thing_type)) = thing else {
         return Err(StatusCode::NOT_FOUND);
     };
@@ -415,20 +414,18 @@ async fn send_command(
     // invoke_action confirm flow), not a definitions-table INSERT.
     let cmd_id = uuid::Uuid::new_v4().to_string();
     let app_state = crate::modules::mcp::get_app_state();
-    let dispatched = app_state
-        .and_then(|s| s.data_server().cloned())
-        .map(|data_server| {
-            let cmd = tinyiothub_core::models::device_command::DeviceCommand {
-                id: cmd_id.clone(),
-                device_id: id.clone(),
-                name: command_name.to_string(),
-                display_name: None,
-                description: None,
-                parameters: command_params.as_ref().map(|p| p.to_string()),
-                created_at: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
-            };
-            data_server.execute_command(cmd)
-        });
+    let dispatched = app_state.and_then(|s| s.data_server().cloned()).map(|data_server| {
+        let cmd = tinyiothub_core::models::device_command::DeviceCommand {
+            id: cmd_id.clone(),
+            device_id: id.clone(),
+            name: command_name.to_string(),
+            display_name: None,
+            description: None,
+            parameters: command_params.as_ref().map(|p| p.to_string()),
+            created_at: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+        };
+        data_server.execute_command(cmd)
+    });
     let status_str = match dispatched {
         Some(Ok(())) => "executed",
         Some(Err(_)) => return Err(StatusCode::INTERNAL_SERVER_ERROR),

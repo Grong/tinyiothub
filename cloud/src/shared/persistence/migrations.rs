@@ -125,18 +125,12 @@ async fn backup_before_migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     }
 
     let db_path = std::path::Path::new(&db_file);
-    let backup_dir = db_path
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."))
-        .join("backups");
+    let backup_dir = db_path.parent().unwrap_or_else(|| std::path::Path::new(".")).join("backups");
     std::fs::create_dir_all(&backup_dir).map_err(|e| {
         sqlx::Error::Configuration(format!("Failed to create backup directory: {}", e).into())
     })?;
 
-    let stem = db_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("database");
+    let stem = db_path.file_stem().and_then(|s| s.to_str()).unwrap_or("database");
     let ts = chrono::Utc::now().format("%Y%m%d-%H%M%S");
     let dest = backup_dir.join(format!("{}-{}.db", stem, ts));
     let dest_str = dest.to_string_lossy().replace('\'', "''");
@@ -181,7 +175,10 @@ async fn repair_thing_model_data(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         )
         .execute(pool)
         .await?;
-        tracing::info!(rows = copied.rows_affected(), "copied device_properties → thing_properties");
+        tracing::info!(
+            rows = copied.rows_affected(),
+            "copied device_properties → thing_properties"
+        );
         sqlx::query("DROP TABLE device_properties").execute(pool).await?;
     }
 
@@ -242,11 +239,10 @@ async fn table_exists(pool: &SqlitePool, table: &str) -> Result<bool, sqlx::Erro
 /// silently. This is the enforcement point the Thing Ontology design
 /// (section 七·1) actually requires.
 async fn enforce_foreign_key_integrity(pool: &SqlitePool) -> Result<(), sqlx::Error> {
-    let violations: Vec<(String, i64, String, i64)> = sqlx::query_as(
-        "SELECT \"table\", rowid, \"parent\", fkid FROM pragma_foreign_key_check",
-    )
-    .fetch_all(pool)
-    .await?;
+    let violations: Vec<(String, i64, String, i64)> =
+        sqlx::query_as("SELECT \"table\", rowid, \"parent\", fkid FROM pragma_foreign_key_check")
+            .fetch_all(pool)
+            .await?;
 
     if violations.is_empty() {
         return Ok(());

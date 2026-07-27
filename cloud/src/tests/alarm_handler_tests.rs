@@ -259,7 +259,44 @@ async fn test_list_alarms() {
 
 #[tokio::test]
 async fn test_list_alarms_filter_by_status() {
-    let app = setup_test_app().await;
+    let (app_state, pool) = setup_test_app_with_pool().await;
+    seed_test_workspace(&pool, "tenant-1", "ws-default-001").await;
+
+    // Seed an active alarm directly in the DB — the device management
+    // endpoints previously used for setup were removed (Thing Ontology).
+    // The list handler scopes alarms via device_id → devices.workspace_id,
+    // so both rows are required.
+    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    sqlx::query(
+        "INSERT INTO devices (id, name, workspace_id, created_at, updated_at) \
+         VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind("alarm-test-device-1")
+    .bind("Alarm Test Device")
+    .bind("ws-default-001")
+    .bind(&now)
+    .bind(&now)
+    .execute(&pool)
+    .await
+    .expect("Failed to seed test device");
+
+    sqlx::query(
+        "INSERT INTO device_alarms \
+         (id, device_id, alarm_level, alarm_message, alarm_time, \
+          is_acknowledged, is_resolved, workspace_id, created_at) \
+         VALUES (?, ?, 'warning', 'High temperature', ?, false, false, ?, ?)",
+    )
+    .bind("alarm-test-1")
+    .bind("alarm-test-device-1")
+    .bind(&now)
+    .bind("ws-default-001")
+    .bind(&now)
+    .execute(&pool)
+    .await
+    .expect("Failed to seed test alarm");
+
+    let api_router = crate::api::create_router();
+    let app = axum::Router::new().nest("/api", api_router).with_state(app_state);
     let token = create_test_token("user-1", "tenant-1");
 
     // Get current count (setup data is all active)

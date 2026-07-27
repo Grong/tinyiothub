@@ -630,14 +630,15 @@ impl Tool for InvokeActionTool {
 
         // 3b. Validate params against the action's parameter schema (design 三;
         // eng-review T7)
-        let params_schema: Option<String> =
-            sqlx::query_scalar("SELECT parameters FROM thing_actions WHERE device_id = ? AND name = ?")
-                .bind(&input.thing_id)
-                .bind(&input.action_name)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(|e| anyhow::anyhow!("数据库查询失败: {}", e))?
-                .flatten();
+        let params_schema: Option<String> = sqlx::query_scalar(
+            "SELECT parameters FROM thing_actions WHERE device_id = ? AND name = ?",
+        )
+        .bind(&input.thing_id)
+        .bind(&input.action_name)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("数据库查询失败: {}", e))?
+        .flatten();
         if let Some(ref schema_json) = params_schema
             && let Err(msg) = validate_action_params(schema_json, input.params.as_ref())
         {
@@ -1074,10 +1075,7 @@ fn validate_action_params(schema_json: &str, params: Option<&Value>) -> Result<(
                     _ => true,
                 };
                 if !ok {
-                    return Err(format!(
-                        "参数 '{}' 类型不符: 期望 {}, 实际 {}",
-                        name, expected, v
-                    ));
+                    return Err(format!("参数 '{}' 类型不符: 期望 {}, 实际 {}", name, expected, v));
                 }
             }
         }

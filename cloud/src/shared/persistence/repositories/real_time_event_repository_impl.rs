@@ -71,15 +71,15 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
 
         // Resolve tenant scope from the owning device (was hardcoded '')
         let workspace_id: String = match &device_id_bind {
-            Some(did) => sqlx::query_scalar(
-                "SELECT COALESCE(workspace_id, '') FROM devices WHERE id = ?",
-            )
-            .bind(did)
-            .fetch_optional(self.database.pool())
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or_default(),
+            Some(did) => {
+                sqlx::query_scalar("SELECT COALESCE(workspace_id, '') FROM devices WHERE id = ?")
+                    .bind(did)
+                    .fetch_optional(self.database.pool())
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default()
+            }
             None => String::new(),
         };
 
@@ -215,7 +215,12 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
         })
     }
 
-    async fn acknowledge_event(&self, id: &EventId, user_id: &str, workspace_id: &str) -> Result<()> {
+    async fn acknowledge_event(
+        &self,
+        id: &EventId,
+        user_id: &str,
+        workspace_id: &str,
+    ) -> Result<()> {
         // Tenant isolation (eng-review T1): only ack events in the caller's workspace
         let sql = r#"
             UPDATE events
