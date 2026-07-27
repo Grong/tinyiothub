@@ -192,17 +192,19 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
         })
     }
 
-    async fn acknowledge_event(&self, id: &EventId, user_id: &str) -> Result<()> {
+    async fn acknowledge_event(&self, id: &EventId, user_id: &str, workspace_id: &str) -> Result<()> {
+        // Tenant isolation (eng-review T1): only ack events in the caller's workspace
         let sql = r#"
             UPDATE events
             SET acknowledged = 1, acknowledged_by = ?, acknowledged_at = ?
-            WHERE id = ?
+            WHERE id = ? AND workspace_id = ?
         "#;
 
         sqlx::query(sql)
             .bind(user_id)
             .bind(Utc::now().to_rfc3339())
             .bind(id.to_string())
+            .bind(workspace_id)
             .execute(self.database.pool())
             .await?;
 
@@ -245,6 +247,11 @@ impl SqliteRealTimeEventRepository {
             let quoted: Vec<String> =
                 device_ids.iter().map(|id| format!("'{}'", id.replace('\'', "''"))).collect();
             conditions.push(format!("device_id IN ({})", quoted.join(",")));
+        }
+
+        // -- workspace filter (eng-review T1: tenant isolation) --
+        if let Some(ref workspace_id) = filter.workspace_id {
+            conditions.push(format!("workspace_id = '{}'", workspace_id.replace('\'', "''")));
         }
 
         // -- acknowledged filter --

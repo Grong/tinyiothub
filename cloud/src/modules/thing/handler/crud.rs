@@ -83,12 +83,14 @@ pub async fn create_thing(
 
 pub async fn get_thing(
     State(state): State<AppState>,
+    WorkspaceScope(workspace_id): WorkspaceScope,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<ApiResponse<ThingResponse>>) {
     let pool = state.database.pool().clone();
     let svc = thing_service(&pool);
+    let ws = workspace_id.unwrap_or_default();
 
-    match svc.get_thing(&id).await {
+    match svc.get_thing(&id, &ws).await {
         Ok(thing) => (StatusCode::OK, ApiResponseBuilder::success(thing)),
         Err(e) => {
             let status = e.status_code();
@@ -104,13 +106,15 @@ pub async fn get_thing(
 
 pub async fn update_thing(
     State(state): State<AppState>,
+    WorkspaceScope(workspace_id): WorkspaceScope,
     Path(id): Path<String>,
     Json(req): Json<UpdateThingRequest>,
 ) -> (StatusCode, Json<ApiResponse<ThingResponse>>) {
     let pool = state.database.pool().clone();
     let svc = thing_service(&pool);
+    let ws = workspace_id.unwrap_or_default();
 
-    match svc.update_thing(&id, &req).await {
+    match svc.update_thing(&id, &req, &ws).await {
         Ok(thing) => (StatusCode::OK, ApiResponseBuilder::success(thing)),
         Err(e) => {
             let status = e.status_code();
@@ -126,12 +130,14 @@ pub async fn update_thing(
 
 pub async fn delete_thing(
     State(state): State<AppState>,
+    WorkspaceScope(workspace_id): WorkspaceScope,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<ApiResponse<()>>) {
     let pool = state.database.pool().clone();
     let svc = thing_service(&pool);
+    let ws = workspace_id.unwrap_or_default();
 
-    match svc.delete_thing(&id).await {
+    match svc.delete_thing(&id, &ws).await {
         Ok(()) => (StatusCode::OK, ApiResponseBuilder::success(())),
         Err(e) => {
             let status = e.status_code();
@@ -148,9 +154,10 @@ pub async fn delete_thing(
 /// Alias for get_thing — returns the thing with its ontology summary.
 pub async fn get_thing_ontology(
     State(state): State<AppState>,
+    WorkspaceScope(workspace_id): WorkspaceScope,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<ApiResponse<ThingResponse>>) {
-    get_thing(State(state), Path(id)).await
+    get_thing(State(state), WorkspaceScope(workspace_id), Path(id)).await
 }
 
 // ──────────────────────────────────────────────
@@ -159,12 +166,14 @@ pub async fn get_thing_ontology(
 
 pub async fn get_thing_profile(
     State(state): State<AppState>,
+    WorkspaceScope(workspace_id): WorkspaceScope,
     Path(id): Path<String>,
 ) -> (StatusCode, Json<ApiResponse<ThingProfileResponse>>) {
     let pool = state.database.pool().clone();
     let svc = thing_service(&pool);
+    let ws = workspace_id.unwrap_or_default();
 
-    match svc.get_thing_profile(&id).await {
+    match svc.get_thing_profile(&id, &ws).await {
         Ok(profile) => {
             tracing::info!(
                 thing_id = %id,

@@ -11,6 +11,7 @@ use tinyiothub_web::response::ApiResponse;
 
 use super::super::service::ThingService;
 use crate::{
+    api::middleware::WorkspaceScope,
     modules::agent::tools::take_pending_action,
     shared::{api_response::ApiResponseBuilder, app_state::AppState},
 };
@@ -31,9 +32,12 @@ pub struct ConfirmActionRequest {
 
 pub async fn confirm_action(
     State(state): State<AppState>,
+    WorkspaceScope(workspace_id): WorkspaceScope,
     Path((thing_id, action_name)): Path<(String, String)>,
     Json(req): Json<ConfirmActionRequest>,
 ) -> (StatusCode, Json<ApiResponse<serde_json::Value>>) {
+    let ws = workspace_id.unwrap_or_default();
+
     // 1. Validate token and retrieve pending action
     let pending = match take_pending_action(&req.token) {
         Some(p) => p,
@@ -53,11 +57,19 @@ pub async fn confirm_action(
         );
     }
 
+    // 2b. Verify the token was issued for THIS workspace (eng-review T1)
+    if pending.workspace_id != ws {
+        return (
+            StatusCode::FORBIDDEN,
+            ApiResponseBuilder::error_with_code(403, "确认令牌不属于当前工作区"),
+        );
+    }
+
     // 3. Verify the thing exists and is a device
     let pool = state.database.pool().clone();
     let svc = thing_service(&pool);
 
-    let thing = match svc.get_thing(&thing_id).await {
+    let thing = match svc.get_thing(&thing_id, &ws).await {
         Ok(t) => t,
         Err(e) => {
             let status = e.status_code();

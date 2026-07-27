@@ -75,9 +75,12 @@ impl ThingService {
     // Get
     // ──────────────────────────────────────────
 
-    pub async fn get_thing(&self, id: &str) -> Result<ThingResponse, ThingError> {
-        let mut row =
-            self.repo.get_by_id(id).await?.ok_or_else(|| ThingError::NotFound(id.to_string()))?;
+    pub async fn get_thing(&self, id: &str, workspace_id: &str) -> Result<ThingResponse, ThingError> {
+        let mut row = self
+            .repo
+            .get_by_id_scoped(id, workspace_id)
+            .await?
+            .ok_or_else(|| ThingError::NotFound(id.to_string()))?;
 
         // Lazy summary compute: trigger if status is not 'ok'
         if row.summary_status.as_deref() != Some("ok") {
@@ -105,8 +108,12 @@ impl ThingService {
     }
 
     /// Full profile: thing + properties + recent events + knowledge docs.
-    pub async fn get_thing_profile(&self, id: &str) -> Result<ThingProfileResponse, ThingError> {
-        let thing = self.get_thing(id).await?;
+    pub async fn get_thing_profile(
+        &self,
+        id: &str,
+        workspace_id: &str,
+    ) -> Result<ThingProfileResponse, ThingError> {
+        let thing = self.get_thing(id, workspace_id).await?;
 
         let properties = self.load_properties(id).await.unwrap_or_default();
         let actions = self.load_actions(id).await.unwrap_or_default();
@@ -272,10 +279,14 @@ impl ThingService {
         &self,
         id: &str,
         req: &UpdateThingRequest,
+        workspace_id: &str,
     ) -> Result<ThingResponse, ThingError> {
-        // Verify exists
-        let existing =
-            self.repo.get_by_id(id).await?.ok_or_else(|| ThingError::NotFound(id.to_string()))?;
+        // Verify exists in this workspace
+        let existing = self
+            .repo
+            .get_by_id_scoped(id, workspace_id)
+            .await?
+            .ok_or_else(|| ThingError::NotFound(id.to_string()))?;
 
         // If name change: check conflict in same workspace
         if let Some(ref new_name) = req.name
@@ -287,7 +298,7 @@ impl ThingService {
         }
 
         // Cycle check + update in ONE transaction (TOCTOU-safe — T11)
-        let updated = match self.repo.update_guarded(id, req).await? {
+        let updated = match self.repo.update_guarded(id, req, workspace_id).await? {
             super::types::UpdateGuardedOutcome::Cycle => {
                 return Err(ThingError::CycleDetected {
                     thing_id: id.to_string(),
@@ -319,14 +330,14 @@ impl ThingService {
     // Delete
     // ──────────────────────────────────────────
 
-    pub async fn delete_thing(&self, id: &str) -> Result<(), ThingError> {
+    pub async fn delete_thing(&self, id: &str, workspace_id: &str) -> Result<(), ThingError> {
         // Check children first
         let children = self.repo.count_children(id).await?;
         if children > 0 {
             return Err(ThingError::HasChildren(children as usize));
         }
 
-        let affected = self.repo.delete(id).await?;
+        let affected = self.repo.delete_scoped(id, workspace_id).await?;
         if affected == 0 {
             return Err(ThingError::NotFound(id.to_string()));
         }
@@ -342,8 +353,9 @@ impl ThingService {
         &self,
         thing_id: &str,
         resource_id: &str,
+        workspace_id: &str,
     ) -> Result<(), ThingError> {
-        let affected = self.repo.detach_resource(thing_id, resource_id).await?;
+        let affected = self.repo.detach_resource(thing_id, resource_id, workspace_id).await?;
         if affected == 0 {
             return Err(ThingError::NotFound(format!(
                 "resource {} not found on thing {}",
@@ -364,14 +376,16 @@ impl ThingService {
         &self,
         thing_id: &str,
         resource_id: &str,
+        workspace_id: &str,
     ) -> Result<(), ThingError> {
-        // Verify thing exists
+        // Verify thing exists in this workspace; the repo update also
+        // requires the resource to belong to the same workspace (T1).
         self.repo
-            .get_by_id(thing_id)
+            .get_by_id_scoped(thing_id, workspace_id)
             .await?
             .ok_or_else(|| ThingError::NotFound(thing_id.to_string()))?;
 
-        let affected = self.repo.attach_resource(thing_id, resource_id).await?;
+        let affected = self.repo.attach_resource(thing_id, resource_id, workspace_id).await?;
         if affected == 0 {
             return Err(ThingError::NotFound(format!("resource {} not found", resource_id)));
         }

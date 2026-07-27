@@ -132,7 +132,7 @@ pub struct RecentCriticalEvent {
 pub async fn get_event_overview(
     Query(params): Query<OverviewQueryParams>,
     State(state): State<AppState>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<EventOverviewResponse>> {
     tracing::info!("Getting event overview with params: {:?}", params);
 
@@ -183,6 +183,7 @@ pub async fn get_event_overview(
         source_types: None,
         acknowledged: Some(false), // Only unacknowledged
         min_level: Some(crate::modules::event::value_objects::EventLevel::Critical),
+        workspace_id: Some(claims.workspace_id.clone()), // tenant isolation (T1)
     };
 
     let recent_critical_events = match real_time_repo.find_active_events(&real_time_filter).await {

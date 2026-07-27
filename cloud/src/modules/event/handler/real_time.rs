@@ -102,12 +102,13 @@ pub struct TypeStatusResponse {
 pub async fn get_real_time_events(
     Query(params): Query<RealTimeQueryParams>,
     State(state): State<AppState>,
-    _claims: Claims,
+    claims: Claims,
 ) -> Json<ApiResponse<Vec<RealTimeEventResponse>>> {
     tracing::info!("Getting real-time events with params: {:?}", params);
 
-    // Build real-time filter
+    // Build real-time filter (tenant-scoped — T1)
     let mut filter = RealTimeFilter::default();
+    filter.workspace_id = Some(claims.workspace_id.clone());
 
     // Device IDs
     if let Some(device_ids_str) = params.device_ids {
@@ -259,7 +260,7 @@ pub async fn acknowledge_event(
     let real_time_repo = &state.real_time_event_repository;
 
     // Acknowledge the event
-    match real_time_repo.acknowledge_event(&event_id, &claims.user_id).await {
+    match real_time_repo.acknowledge_event(&event_id, &claims.user_id, &claims.workspace_id).await {
         Ok(_) => {
             tracing::info!("Event {} acknowledged by user {}", event_id, claims.user_id);
             ApiResponseBuilder::success(true)

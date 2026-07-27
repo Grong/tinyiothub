@@ -27,6 +27,31 @@ impl ThingRepo {
     // Query
     // ──────────────────────────────────────────
 
+    /// Workspace-scoped lookup (eng-review T1): strict workspace match,
+    /// same semantics as list().
+    pub async fn get_by_id_scoped(
+        &self,
+        id: &str,
+        workspace_id: &str,
+    ) -> Result<Option<ThingRow>, sqlx::Error> {
+        sqlx::query_as::<_, ThingRow>("SELECT * FROM devices WHERE id = ? AND workspace_id = ?")
+            .bind(id)
+            .bind(workspace_id)
+            .fetch_optional(&self.pool)
+            .await
+    }
+
+    /// Workspace-scoped delete (eng-review T1): refuses to delete another
+    /// workspace's thing.
+    pub async fn delete_scoped(&self, id: &str, workspace_id: &str) -> Result<u64, sqlx::Error> {
+        let result = sqlx::query("DELETE FROM devices WHERE id = ? AND workspace_id = ?")
+            .bind(id)
+            .bind(workspace_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
     /// Workspace-scoped name lookup.
     pub async fn find_by_name(
         &self,
@@ -341,6 +366,7 @@ impl ThingRepo {
         &self,
         id: &str,
         input: &super::types::UpdateThingRequest,
+        workspace_id: &str,
     ) -> Result<super::types::UpdateGuardedOutcome, sqlx::Error> {
         let mut tx = self.pool.begin().await?;
 
@@ -386,6 +412,8 @@ impl ThingRepo {
         }
         builder.push(" WHERE id = ");
         builder.push_bind(id);
+        builder.push(" AND workspace_id = ");
+        builder.push_bind(workspace_id);
         builder.build().execute(&mut *tx).await?;
 
         tx.commit().await?;
@@ -458,13 +486,16 @@ impl ThingRepo {
         &self,
         thing_id: &str,
         resource_id: &str,
+        workspace_id: &str,
     ) -> Result<u64, sqlx::Error> {
-        let result =
-            sqlx::query("UPDATE resources SET device_id = NULL WHERE id = ? AND device_id = ?")
-                .bind(resource_id)
-                .bind(thing_id)
-                .execute(&self.pool)
-                .await?;
+        let result = sqlx::query(
+            "UPDATE resources SET device_id = NULL WHERE id = ? AND device_id = ? AND workspace_id = ?",
+        )
+        .bind(resource_id)
+        .bind(thing_id)
+        .bind(workspace_id)
+        .execute(&self.pool)
+        .await?;
         Ok(result.rows_affected())
     }
 
@@ -472,12 +503,15 @@ impl ThingRepo {
         &self,
         thing_id: &str,
         resource_id: &str,
+        workspace_id: &str,
     ) -> Result<u64, sqlx::Error> {
-        let result = sqlx::query("UPDATE resources SET device_id = ? WHERE id = ?")
-            .bind(thing_id)
-            .bind(resource_id)
-            .execute(&self.pool)
-            .await?;
+        let result =
+            sqlx::query("UPDATE resources SET device_id = ? WHERE id = ? AND workspace_id = ?")
+                .bind(thing_id)
+                .bind(resource_id)
+                .bind(workspace_id)
+                .execute(&self.pool)
+                .await?;
         Ok(result.rows_affected())
     }
 
