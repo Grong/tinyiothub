@@ -176,6 +176,7 @@ impl SummaryComputer {
         let prompt = build_prompt_for_thing(thing_id, pool).await?;
 
         // 5. Call LLM with 10s timeout
+        let llm_start = std::time::Instant::now();
         let result =
             tokio::time::timeout(Duration::from_secs(10), llm.complete(&prompt, 500)).await;
 
@@ -191,10 +192,16 @@ impl SummaryComputer {
                 .bind(thing_id)
                 .execute(pool)
                 .await?;
+                tracing::info!(
+                    thing_id = %thing_id,
+                    duration_ms = llm_start.elapsed().as_millis() as i64,
+                    metric = "summary_success",
+                    "Ontology summary computed"
+                );
                 Ok(Some(text))
             }
             Ok(Err(e)) => {
-                tracing::warn!(?e, thing_id = %thing_id, "LLM call failed");
+                tracing::warn!(?e, thing_id = %thing_id, metric = "summary_failed", "LLM call failed");
                 // Mark status as 'failed', keep whatever was cached
                 sqlx::query(
                     "UPDATE devices SET summary_status = 'failed', \
@@ -206,7 +213,7 @@ impl SummaryComputer {
                 Ok(cached_summary)
             }
             Err(_elapsed) => {
-                tracing::warn!(thing_id = %thing_id, "LLM call timed out");
+                tracing::warn!(thing_id = %thing_id, metric = "summary_failed", reason = "timeout", "LLM call timed out");
                 // Mark status as 'failed', keep whatever was cached
                 sqlx::query(
                     "UPDATE devices SET summary_status = 'failed', \

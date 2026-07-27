@@ -257,17 +257,21 @@ impl PlatformMqttClient {
             }
         };
 
-        // Resolve tenant scope from the thing (design OV6) — without it,
-        // event-alarm rules (workspace-scoped) could never match and the
-        // event would be invisible to every workspace query.
+        // Resolve tenant scope AND the template event definitions in ONE
+        // round trip (perf review: was two separate queries per event on the
+        // ingest hot path).
+        let thing_row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT d.workspace_id, t.events FROM devices d \
+             LEFT JOIN thing_templates t ON t.id = d.template_id WHERE d.id = ?",
+        )
+        .bind(&thing_id)
+        .fetch_optional(db_pool)
+        .await
+        .ok()
+        .flatten();
         let workspace_id: String =
-            sqlx::query_scalar("SELECT COALESCE(workspace_id, '') FROM devices WHERE id = ?")
-                .bind(&thing_id)
-                .fetch_optional(db_pool)
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or_default();
+            thing_row.as_ref().and_then(|(ws, _)| ws.clone()).unwrap_or_default();
+        let template_events = thing_row.and_then(|(_, ev)| ev);
         if workspace_id.is_empty() {
             tracing::warn!(
                 thing_id = %thing_id,
@@ -285,6 +289,7 @@ impl PlatformMqttClient {
             level,
             data: payload_data.data,
             ts: payload_data.ts,
+            template_events,
         };
 
         let result = route_thing_event(db_pool, throttle, alarm_service, input).await;

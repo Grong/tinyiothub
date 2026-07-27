@@ -263,3 +263,120 @@ async fn test_alarm_fks_reference_thing_properties() {
             .unwrap();
     assert_eq!(orphan_rules, 0, "device delete must cascade its alarm rules");
 }
+
+/// DM-1 regression: upgrade a deployment that ran PR #80 with REAL pre-branch
+/// data (alarm rule + alarm referencing a device_properties row, plus a
+/// synthetic seed in thing_properties). Before the UNION-copy fix, the FK
+/// repoint committed before any real rows existed in thing_properties →
+/// deferred FK violation at COMMIT → startup abort on every retry (boot loop).
+#[tokio::test]
+async fn test_upgrade_path_with_alarm_rules_no_boot_loop() {
+    // 1. Apply migrations up to (excluding) the cleanup migration
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .expect("in-memory pool");
+    let all = crate::shared::persistence::migrations::load_migrations().expect("load");
+    let pre: Vec<_> = all.into_iter().filter(|m| m.version < 20260727000001).collect();
+    sqlx::migrate::Migrator::with_migrations(pre).run(&pool).await.expect("pre-chain");
+
+    // 2. Seed the #80-lineage state
+    seed_test_workspace(&pool, "tenant-1", "ws-1").await;
+    sqlx::query("INSERT INTO devices (id, name, workspace_id) VALUES ('dev-1', 'Sensor', 'ws-1')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO device_properties (id, device_id, name, display_name, description, data_type, unit, min_value, max_value, default_value, is_read_only, created_at, updated_at)
+         VALUES ('prop-real', 'dev-1', 'soil_moisture', '土壤湿度', 'real prop', 'number', '%', 0, 100, NULL, 1, '2026-01-01', '2026-01-01')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO device_commands (id, device_id, name, display_name, description, parameters, created_at, updated_at)
+         VALUES ('cmd-real', 'dev-1', 'calibrate', '校准', 'real cmd', '[]', '2026-01-01', '2026-01-01')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    // synthetic seed row in the stripped thing_properties (00003 shape)
+    sqlx::query(
+        "INSERT INTO thing_properties (id, device_id, name, display_name, data_type, unit, is_read_only, created_at, updated_at)
+         VALUES ('seed-1', 'dev-1', 'temperature', '温度', 'number', '°C', 1, '2026-07-25', '2026-07-25')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO device_commands (id, device_id, name, display_name, created_at)
+         VALUES ('seed-2', 'dev-1', 'reboot', '重启设备', '2026-07-25')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO device_alarm_rules (id, device_id, property_id, rule_name, rule_type, condition_config, alarm_level, is_enabled, created_at, updated_at)
+         VALUES ('rule-1', 'dev-1', 'prop-real', 'High Temp', 'threshold', '{}', 'warning', 1, datetime('now'), datetime('now'))",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO device_alarms (id, device_id, property_id, rule_id, alarm_level, alarm_message, alarm_time, created_at)
+         VALUES ('alarm-1', 'dev-1', 'prop-real', 'rule-1', 'warning', 'temp high', datetime('now'), datetime('now'))",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // 3. Run the full chain — must NOT abort on FK violations
+    crate::shared::persistence::migrations::run_migrations(&pool)
+        .await
+        .expect("upgrade must not boot-loop");
+
+    // 4. Real rows preserved with metadata and IDs; seeds gone; refs resolve
+    let (desc, min_v): (Option<String>, Option<f64>) = sqlx::query_as(
+        "SELECT description, min_value FROM thing_properties WHERE id = 'prop-real'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("real property preserved with metadata");
+    assert_eq!(desc.as_deref(), Some("real prop"));
+    assert_eq!(min_v, Some(0.0));
+
+    let seed_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM thing_properties WHERE (name, display_name) IN (VALUES ('temperature','温度'))",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(seed_count, 0, "synthetic seed deleted");
+
+    let cmd_exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM thing_actions WHERE id = 'cmd-real')")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(cmd_exists, "real command preserved");
+
+    let resolved: Option<String> = sqlx::query_scalar(
+        "SELECT p.name FROM device_alarm_rules r JOIN thing_properties p ON p.id = r.property_id WHERE r.id = 'rule-1'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert_eq!(resolved.as_deref(), Some("soil_moisture"), "alarm rule still resolves");
+
+    let alarm_resolved: Option<String> = sqlx::query_scalar(
+        "SELECT p.name FROM device_alarms a JOIN thing_properties p ON p.id = a.property_id WHERE a.id = 'alarm-1'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert_eq!(alarm_resolved.as_deref(), Some("soil_moisture"), "alarm still resolves");
+
+    assert!(!table_exists(&pool, "device_properties").await, "old table dropped");
+    assert!(!table_exists(&pool, "device_commands").await, "old table dropped");
+}

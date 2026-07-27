@@ -106,6 +106,7 @@ fn input(
         level,
         data: serde_json::json!({"value": 42}),
         ts: None,
+        template_events: None,
     }
 }
 

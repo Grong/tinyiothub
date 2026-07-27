@@ -346,9 +346,7 @@ fn resolve_wot_schema(value: &Value) -> Value {
 // Backwards compat: "commands" → "actions"
 // ──────────────────────────────────────────────
 
-/// Accept both "actions" and legacy "commands" key in JSON input.
 
-/// Accept both "events" and legacy "events" key (alarm/signal mapping).
 
 // ──────────────────────────────────────────────
 // DTDL Export

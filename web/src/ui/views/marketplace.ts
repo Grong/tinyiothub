@@ -526,7 +526,7 @@ export class MarketplaceView extends LitElement {
               ? this.installedTemplateNames.has(this.detailItem.name)
                 ? html`
                   <span class="mp-installed-badge">已安装</span>
-                  <button class="btn primary btn--sm" @click=${() => { this.closeDetail(); this.navigateTo('local-resources'); }}>在本地查看</button>
+                  <button class="btn primary btn--sm" @click=${() => { this.closeDetail(); this.navigateTo('things'); }}>在本地查看</button>
                 `
                 : html`<button
                     class="btn primary"

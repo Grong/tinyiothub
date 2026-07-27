@@ -259,6 +259,22 @@ async fn delete_workspace(
         }
     };
 
+    // Guard: refuse to delete a workspace that still has things (design:
+    // 应用层拒绝，不再依赖 SET NULL 产生孤儿物)
+    let thing_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM devices WHERE workspace_id = ?",
+    )
+    .bind(&id)
+    .fetch_one(state.database.pool())
+    .await
+    .unwrap_or(0);
+    if thing_count > 0 {
+        return ApiResponseBuilder::error_with_code(
+            409,
+            format!("工作空间仍有 {} 个物，请先迁移或删除其物后再删除工作空间", thing_count),
+        );
+    }
+
     if let Some(agent_id) = workspace.agent_id
         && let Err(e) = state.agent_pool.delete_agent(&agent_id).await
     {

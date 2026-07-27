@@ -16,11 +16,13 @@
 --      the workspace graph; the column has no writer).
 --
 -- Real-data copy from the pre-branch device_properties / device_commands
--- tables cannot be expressed in plain SQL (the tables may or may not exist,
--- depending on which schema the deployment started from). It runs in Rust:
--- persistence::migrations::repair_thing_model_data(), invoked by
--- run_migrations() right after the Migrator. That step copies rows
--- PRESERVING IDs (INSERT OR IGNORE) and then drops the old tables.
+-- tables happens INLINE below (UNION into the rebuild inserts), because the
+-- device_alarm_rules / device_alarms FK repoints in this same migration
+-- reference thing_properties at COMMIT — a later Rust-side copy would leave
+-- dangling FK parents and boot-loop the deploy (eng-review DM-1). The old
+-- tables are dropped Rust-side by repair_thing_model_data(); for lineages
+-- where they were already dropped, run_migrations creates empty shells so
+-- the UNION sources always exist.
 --
 -- Note: 00003 itself is intentionally NOT edited — it is already applied
 -- with a recorded checksum on live databases; this migration neutralizes
@@ -52,13 +54,24 @@ CREATE TABLE thing_properties_new (
     UNIQUE(device_id, name)
 );
 
+-- UNION of both sources: rows already in thing_properties (may include
+-- 00003's synthetic seeds — deleted in step 2) AND the pre-branch real data
+-- in device_properties (full metadata preserved). ID namespaces are disjoint
+-- in practice; on any collision INSERT OR IGNORE keeps the first-seen row.
+-- device_properties is guaranteed to exist: run_migrations creates an empty
+-- shell for lineages where it was already dropped (eng-review DM-1 fix).
 INSERT OR IGNORE INTO thing_properties_new
     (id, device_id, name, display_name, description, data_type, unit,
      min_value, max_value, default_value, is_read_only, created_at, updated_at)
 SELECT id, device_id, name, display_name,
        NULL, data_type, unit,
        NULL, NULL, NULL, is_read_only, created_at, updated_at
-FROM thing_properties;
+FROM thing_properties
+UNION ALL
+SELECT id, device_id, name, display_name,
+       description, data_type, unit,
+       min_value, max_value, default_value, is_read_only, created_at, updated_at
+FROM device_properties;
 
 DROP TABLE thing_properties;
 ALTER TABLE thing_properties_new RENAME TO thing_properties;
@@ -86,7 +99,11 @@ INSERT OR IGNORE INTO thing_actions_new
     (id, device_id, name, display_name, description, parameters, created_at, updated_at)
 SELECT id, device_id, name, display_name,
        NULL, parameters, created_at, created_at
-FROM thing_actions;
+FROM thing_actions
+UNION ALL
+SELECT id, device_id, name, display_name,
+       description, parameters, created_at, updated_at
+FROM device_commands;
 
 DROP TABLE thing_actions;
 ALTER TABLE thing_actions_new RENAME TO thing_actions;

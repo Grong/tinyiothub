@@ -200,23 +200,33 @@ pub async fn invoke_action(
         );
     }
 
-    // 2. Action must be registered on the thing
-    let registered: bool = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM thing_actions WHERE device_id = ? AND name = ?",
-    )
-    .bind(&thing_id)
-    .bind(&action_name)
-    .fetch_one(&pool)
-    .await
-    .map(|c| c > 0)
-    .unwrap_or(false);
-    if !registered {
+    // 2. Action must be registered on the thing — and params must match its
+    // schema (same validation as the agent-side InvokeActionTool; pre-landing
+    // review finding: the two invoke paths must share one contract)
+    let action_schema: Option<String> =
+        sqlx::query_scalar("SELECT parameters FROM thing_actions WHERE device_id = ? AND name = ?")
+            .bind(&thing_id)
+            .bind(&action_name)
+            .fetch_optional(&pool)
+            .await
+            .ok()
+            .flatten()
+            .flatten();
+    let Some(action_schema) = action_schema else {
         return (
             StatusCode::NOT_FOUND,
             ApiResponseBuilder::error_with_code(
                 404,
                 format!("操作 '{}' 未在物 {} 上注册", action_name, thing_id),
             ),
+        );
+    };
+    if let Err(msg) =
+        crate::modules::agent::tools::thing::validate_action_params(&action_schema, req.params.as_ref())
+    {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            ApiResponseBuilder::error_with_code(422, msg),
         );
     }
 

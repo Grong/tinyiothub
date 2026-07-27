@@ -32,6 +32,9 @@ pub struct ThingEventInput {
     pub level: EventLevel,
     pub data: serde_json::Value,
     pub ts: Option<String>,
+    /// Template events JSON pre-fetched by the caller (saves a per-event
+    /// query on the ingest hot path). When None, the router looks it up.
+    pub template_events: Option<String>,
 }
 
 // ── Throttle state ──────────────────────────────────────────────
@@ -142,7 +145,13 @@ pub async fn route_thing_event(
     // ── 3. Unknown event name check ─────────────────────────
     // Known names come from the thing's creation template (best effort —
     // a thing without a template accepts all names unflagged).
-    let unknown_event = !is_known_event_name(pool, &input.thing_id, &input.event_name).await;
+    let unknown_event = !is_known_event_name(
+        pool,
+        &input.thing_id,
+        &input.event_name,
+        input.template_events.as_deref(),
+    )
+    .await;
 
     // ── 3. Throttle check ───────────────────────────────────
     if !throttle.check_and_record(&input.thing_id, &input.level) {
@@ -267,16 +276,27 @@ pub async fn route_thing_event(
 /// Returns `true` when the event name is defined in the template's `events`
 /// JSON, or when the thing has no template (unflagged — templates are
 /// creation-time blueprints and event definitions have no per-thing home).
-async fn is_known_event_name(pool: &sqlx::SqlitePool, thing_id: &str, event_name: &str) -> bool {
-    let row: Option<(Option<String>,)> = sqlx::query_as(
-        "SELECT t.events FROM devices d JOIN thing_templates t ON t.id = d.template_id WHERE d.id = ?",
-    )
-    .bind(thing_id)
-    .fetch_optional(pool)
-    .await
-    .unwrap_or(None);
+async fn is_known_event_name(
+    pool: &sqlx::SqlitePool,
+    thing_id: &str,
+    event_name: &str,
+    template_events: Option<&str>,
+) -> bool {
+    let events_json = match template_events {
+        Some(json) => Some(json.to_string()),
+        None => {
+            let row: Option<(Option<String>,)> = sqlx::query_as(
+                "SELECT t.events FROM devices d JOIN thing_templates t ON t.id = d.template_id WHERE d.id = ?",
+            )
+            .bind(thing_id)
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
+            row.and_then(|(ev,)| ev)
+        }
+    };
 
-    let Some((Some(events_json),)) = row else {
+    let Some(events_json) = events_json else {
         return true; // no template → accept all names unflagged
     };
     serde_json::from_str::<Vec<serde_json::Value>>(&events_json)

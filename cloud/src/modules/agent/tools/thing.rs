@@ -1049,7 +1049,7 @@ impl Tool for ReadDocumentTool {
 /// Schema shape: `[{"name": "interval", "type": "number", "required": true}]`.
 /// Rules: required params present, no unknown params, primitive type match.
 /// Returns a Chinese error message on mismatch (design 六: 校验明细定位字段).
-fn validate_action_params(schema_json: &str, params: Option<&Value>) -> Result<(), String> {
+pub fn validate_action_params(schema_json: &str, params: Option<&Value>) -> Result<(), String> {
     let schema: Vec<Value> = serde_json::from_str(schema_json)
         .map_err(|e| format!("操作参数 schema 解析失败: {}", e))?;
     if schema.is_empty() {

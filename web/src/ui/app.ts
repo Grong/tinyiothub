@@ -598,7 +598,7 @@ export class TinyIoTHubApp extends LitElement {
     if (route === 'register') return html`<view-register></view-register>`;
     if (route === 'home') return html`<view-home></view-home>`;
 
-    const base = route;
+    const base = route.startsWith('things/') ? 'things' : route;
     const tag = `view-${base}`;
     const isReady = !!customElements.get(tag);
     const isLoading = this.loadingRoute === base;

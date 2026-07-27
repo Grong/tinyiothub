@@ -9,7 +9,9 @@ use axum::{
     response::Response,
     routing::{get, post},
 };
+use sha2::Digest;
 use sqlx::Row;
+use subtle::ConstantTimeEq;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::shared::{api_response::ApiResponse, app_state::AppState};
@@ -34,13 +36,30 @@ async fn validate_api_key(
     api_key: Option<String>,
 ) -> Result<(crate::modules::tenant::ApiKey, crate::modules::tenant::Tenant, String), StatusCode> {
     let raw_key = api_key.ok_or(StatusCode::UNAUTHORIZED)?;
+    if raw_key.len() < 12 {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
 
+    // Lookup by the stored 12-char prefix (creation stores raw_key[..12]).
+    // Pre-fix this passed the full key — equality could never hold and every
+    // open-API call 401'd (pre-landing security review).
     let key = state
         .tenant_service
-        .find_api_key_by_prefix(&raw_key)
+        .find_api_key_by_prefix(&raw_key[..12])
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    // Verify the SECRET: constant-time SHA-256(presented) vs stored key_hash.
+    // The prefix is a lookup hint, not a credential.
+    let presented_hash = format!("{:x}", sha2::Sha256::digest(raw_key.as_bytes()));
+    let hash_matches: bool = presented_hash
+        .as_bytes()
+        .ct_eq(key.key_hash.as_bytes())
+        .into();
+    if !hash_matches {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
 
     if !key.is_enabled {
         return Err(StatusCode::FORBIDDEN);
@@ -50,11 +69,19 @@ async fn validate_api_key(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    if let Some(expires) = &key.expires_at
-        && let Ok(exp) = chrono::DateTime::parse_from_rfc3339(expires)
-        && exp < chrono::Utc::now()
-    {
-        return Err(StatusCode::FORBIDDEN);
+    // Expiry: stored as "%Y-%m-%d %H:%M:%S" (creation format); accept RFC3339
+    // too. An existing-but-unparseable expiry fails CLOSED.
+    if let Some(expires) = &key.expires_at {
+        let parsed = chrono::DateTime::parse_from_rfc3339(expires)
+            .map(|d| d.with_timezone(&chrono::Utc))
+            .or_else(|_| {
+                chrono::NaiveDateTime::parse_from_str(expires, "%Y-%m-%d %H:%M:%S")
+                    .map(|d| d.and_utc())
+            });
+        match parsed {
+            Ok(exp) if exp >= chrono::Utc::now() => {}
+            _ => return Err(StatusCode::FORBIDDEN),
+        }
     }
 
     // Resolve tenant_id from workspace for quota check
@@ -136,27 +163,25 @@ async fn list_things(
     let api_key = extract_api_key_header(&headers);
     let (key, _tenant, workspace_id) = validate_api_key(&state, api_key).await?;
 
-    let sql = format!(
-        "SELECT id, name, display_name, device_type, state, created_at FROM devices WHERE workspace_id = '{}' ORDER BY created_at DESC LIMIT 100",
-        workspace_id.replace('\'', "''")
-    );
-
-    let rows = state
-        .database
-        .query(&sql, |row| {
-            Ok(serde_json::json!({
-                "id": row.try_get::<String, _>("id")?,
-                "name": row.try_get::<String, _>("name")?,
-                "display_name": row.try_get::<Option<String>, _>("display_name")?,
-                "device_type": row.try_get::<Option<String>, _>("device_type")?,
-                "state": row.try_get::<i32, _>("state")?,
-                "created_at": row.try_get::<String, _>("created_at")?,
-            }))
+    let things: Vec<serde_json::Value> = sqlx::query(
+        "SELECT id, name, display_name, device_type, state, created_at FROM devices WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 100",
+    )
+    .bind(&workspace_id)
+    .fetch_all(state.database.pool())
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .into_iter()
+    .map(|row| {
+        serde_json::json!({
+            "id": row.try_get::<String, _>("id").unwrap_or_default(),
+            "name": row.try_get::<String, _>("name").unwrap_or_default(),
+            "display_name": row.try_get::<Option<String>, _>("display_name").unwrap_or_default(),
+            "device_type": row.try_get::<Option<String>, _>("device_type").unwrap_or_default(),
+            "state": row.try_get::<i32, _>("state").unwrap_or_default(),
+            "created_at": row.try_get::<String, _>("created_at").unwrap_or_default(),
         })
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let things: Vec<_> = rows.into_iter().collect();
+    })
+    .collect();
 
     let latency_ms = start.elapsed().as_millis() as i32;
     record_api_usage(
@@ -252,10 +277,16 @@ async fn get_thing_properties(
     let api_key = extract_api_key_header(&headers);
     let (key, _tenant, workspace_id) = validate_api_key(&state, api_key).await?;
 
+    // Workspace-scoped like every sibling endpoint (pre-landing security
+    // review: this was the one open-API endpoint missing the tenant guard —
+    // any API key could read any workspace's live property values)
     let rows = sqlx::query(
-        "SELECT name, display_name, data_type, value, unit, updated_at FROM thing_properties WHERE device_id = ? ORDER BY created_at DESC"
+        "SELECT name, display_name, data_type, value, unit, updated_at FROM thing_properties \
+         WHERE device_id = ? AND device_id IN (SELECT id FROM devices WHERE workspace_id = ?) \
+         ORDER BY created_at DESC"
     )
     .bind(&id)
+    .bind(&workspace_id)
     .fetch_all(state.database.pool())
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -340,7 +371,7 @@ async fn list_commands(
                 "name": get(&row, "name")?,
                 "display_name": get_opt(&row, "display_name")?,
                 "description": get_opt(&row, "description")?,
-                "command_type": get(&row, "command_type")?,
+                "parameters": get_opt(&row, "parameters")?,
             }))
         })
         .collect::<Result<Vec<_>, StatusCode>>()?;

@@ -228,7 +228,7 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
             WHERE id = ? AND workspace_id = ?
         "#;
 
-        sqlx::query(sql)
+        let result = sqlx::query(sql)
             .bind(user_id)
             .bind(Utc::now().to_rfc3339())
             .bind(id.to_string())
@@ -236,6 +236,13 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
             .execute(self.database.pool())
             .await?;
 
+        if result.rows_affected() == 0 {
+            // Event not found in this workspace (missing or cross-tenant) —
+            // surface it instead of silently pretending the ack worked
+            return Err(crate::modules::event::EventError::NotFound {
+                id: format!("{} (in workspace)", id),
+            });
+        }
         Ok(())
     }
 

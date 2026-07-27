@@ -55,6 +55,11 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         backup_before_migrate(pool).await?;
     }
 
+    // Ensure the thing-model UNION sources exist (DM-1): lineages where a
+    // prior repair already dropped device_properties/device_commands get
+    // empty shells so the cleanup migration's UNION SELECTs are always valid.
+    prepare_thing_model_copy(pool).await?;
+
     Migrator::with_migrations(migrations)
         .run(pool)
         .await
@@ -152,47 +157,79 @@ async fn backup_before_migrate(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
+/// Pre-migration guard (DM-1): ensure the UNION sources used by
+/// 20260727000001 exist in every lineage. A prior repair (or a hand-migrated
+/// dev DB) may have dropped device_properties/device_commands already;
+/// recreating them as empty shells keeps the cleanup migration's
+/// `INSERT ... SELECT ... FROM device_properties` valid everywhere.
+async fn prepare_thing_model_copy(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    // Only create shells when the base schema migration (20260106000002,
+    // which CREATEs these tables) has already run — otherwise it would
+    // collide with "table already exists" on fresh databases.
+    let base_applied: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version = 20260106000002)",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false);
+    if !base_applied {
+        return Ok(());
+    }
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS device_properties (
+            id TEXT PRIMARY KEY,
+            device_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            display_name TEXT,
+            description TEXT,
+            data_type TEXT NOT NULL DEFAULT 'string',
+            unit TEXT,
+            min_value REAL,
+            max_value REAL,
+            default_value TEXT,
+            is_read_only INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS device_commands (
+            id TEXT PRIMARY KEY,
+            device_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            display_name TEXT,
+            description TEXT,
+            parameters TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// Post-migration data repair for the Thing Ontology rebuild (eng-review T3/T12).
 ///
-/// Plain SQL migrations cannot conditionally copy from tables that may not
-/// exist (a deployment upgrading from pre-branch schema still has
-/// `device_properties` / `device_commands`; one that already ran the branch's
-/// migrations may not). This step:
-/// 1. Copies real property/command rows into thing_properties / thing_actions
-///    PRESERVING IDs (device_alarm_rules.property_id references them), then
-///    drops the old tables.
+/// The real-data copy happens INLINE in 20260727000001 (UNION into the
+/// rebuild inserts) — doing it here would run AFTER the FK repoints commit,
+/// leaving dangling parents and boot-looping the deploy (DM-1). This step:
+/// 1. Drops the old device_properties / device_commands tables (data already
+///    merged by the migration; empty shells where nothing ever existed).
 /// 2. Backfills events.workspace_id from the owning device (design 七·1 OV6;
 ///    rows whose device is gone keep '' and are logged).
 async fn repair_thing_model_data(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     if table_exists(pool, "device_properties").await? {
-        let copied = sqlx::query(
-            "INSERT OR IGNORE INTO thing_properties
-                (id, device_id, name, display_name, description, data_type, unit,
-                 min_value, max_value, default_value, is_read_only, created_at, updated_at)
-             SELECT id, device_id, name, display_name, description, data_type, unit,
-                    min_value, max_value, default_value, is_read_only, created_at, updated_at
-             FROM device_properties",
-        )
-        .execute(pool)
-        .await?;
-        tracing::info!(
-            rows = copied.rows_affected(),
-            "copied device_properties → thing_properties"
-        );
         sqlx::query("DROP TABLE device_properties").execute(pool).await?;
+        tracing::info!("dropped device_properties (data merged into thing_properties by migration)");
     }
 
     if table_exists(pool, "device_commands").await? {
-        let copied = sqlx::query(
-            "INSERT OR IGNORE INTO thing_actions
-                (id, device_id, name, display_name, description, parameters, created_at, updated_at)
-             SELECT id, device_id, name, display_name, description, parameters, created_at, updated_at
-             FROM device_commands",
-        )
-        .execute(pool)
-        .await?;
-        tracing::info!(rows = copied.rows_affected(), "copied device_commands → thing_actions");
         sqlx::query("DROP TABLE device_commands").execute(pool).await?;
+        tracing::info!("dropped device_commands (data merged into thing_actions by migration)");
     }
 
     let backfilled = sqlx::query(

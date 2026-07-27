@@ -1928,7 +1928,8 @@ export class DevicesView extends SignalWatcher(LitElement) {
           <!-- Header -->
           <div class="device-card__header">
             <div class="device-card__header-left">
-              <span class="status-dot status-dot--sm" style="background: ${this.statusColor(d.status)};"></span>
+              <span class="status-dot status-dot--sm" style="background: ${this.statusColor(d.status)};" aria-label="${this.statusLabel(d.status)}"></span>
+              <span class="status-badge__label">${this.statusLabel(d.status)}</span>
               <span class="device-card__title" title="${d.displayName || d.name}">${d.displayName || d.name}</span>
               ${d.linked_gateway ? html`<span class="device-card__gateway-tag">via gateway</span>` : nothing}
             </div>
@@ -1949,8 +1950,11 @@ export class DevicesView extends SignalWatcher(LitElement) {
           <!-- Info -->
           <div
             class="device-card__body"
+            role="button"
+            tabindex="0"
             title="${infoTooltip}"
             @click=${() => this.navigateToDevice(d.id)}
+            @keydown=${(e: KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); this.navigateToDevice(d.id); } }}
           >
             <div class="device-card__info">
               ${d.deviceType ? html`
