@@ -151,6 +151,11 @@ impl ThingService {
         req: &CreateThingRequest,
         workspace_id: Option<&str>,
     ) -> Result<ThingResponse, ThingError> {
+        // Validate name (regression: the old device API rejected empty names)
+        if req.name.trim().is_empty() {
+            return Err(ThingError::Validation("name must not be empty".to_string()));
+        }
+
         // Validate thing_type
         let thing_type = req
             .thing_type
