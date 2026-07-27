@@ -200,9 +200,29 @@ pub async fn invoke_action(
         );
     }
 
-    // 2. Action must be registered on the thing — and params must match its
-    // schema (same validation as the agent-side InvokeActionTool; pre-landing
-    // review finding: the two invoke paths must share one contract)
+    // 2. Action must be registered on the thing
+    let registered: bool = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM thing_actions WHERE device_id = ? AND name = ?",
+    )
+    .bind(&thing_id)
+    .bind(&action_name)
+    .fetch_one(&pool)
+    .await
+    .map(|c| c > 0)
+    .unwrap_or(false);
+    if !registered {
+        return (
+            StatusCode::NOT_FOUND,
+            ApiResponseBuilder::error_with_code(
+                404,
+                format!("操作 '{}' 未在物 {} 上注册", action_name, thing_id),
+            ),
+        );
+    }
+
+    // 2b. If the action HAS a parameter schema, params must match it (same
+    // validation as the agent-side InvokeActionTool — the two invoke paths
+    // share one contract). NULL parameters = no schema = skip validation.
     let action_schema: Option<String> =
         sqlx::query_scalar("SELECT parameters FROM thing_actions WHERE device_id = ? AND name = ?")
             .bind(&thing_id)
@@ -212,17 +232,9 @@ pub async fn invoke_action(
             .ok()
             .flatten()
             .flatten();
-    let Some(action_schema) = action_schema else {
-        return (
-            StatusCode::NOT_FOUND,
-            ApiResponseBuilder::error_with_code(
-                404,
-                format!("操作 '{}' 未在物 {} 上注册", action_name, thing_id),
-            ),
-        );
-    };
-    if let Err(msg) =
-        crate::modules::agent::tools::thing::validate_action_params(&action_schema, req.params.as_ref())
+    if let Some(ref schema) = action_schema
+        && let Err(msg) =
+            crate::modules::agent::tools::thing::validate_action_params(schema, req.params.as_ref())
     {
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
