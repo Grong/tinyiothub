@@ -1,6 +1,5 @@
 // Thing service — business logic layer
 
-pub mod a2ui;
 pub mod import_export;
 
 use sqlx::SqlitePool;

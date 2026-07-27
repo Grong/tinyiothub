@@ -77,6 +77,7 @@ pub fn store_pending_action(
 
 /// Retrieve and consume a pending action by token (returns None if expired or not found).
 pub fn take_pending_action(token: &str) -> Option<PendingAction> {
+    cleanup_expired_tokens();
     let entry = pending_actions().remove(token)?;
     if entry.1.created_at.elapsed() > CONFIRMATION_TTL {
         return None;
@@ -84,8 +85,7 @@ pub fn take_pending_action(token: &str) -> Option<PendingAction> {
     Some(entry.1)
 }
 
-/// Cleanup expired tokens (call periodically or on access).
-#[allow(dead_code)]
+/// Cleanup expired tokens (called on every take — keeps the map bounded).
 pub fn cleanup_expired_tokens() {
     pending_actions().retain(|_, v| v.created_at.elapsed() <= CONFIRMATION_TTL);
 }
