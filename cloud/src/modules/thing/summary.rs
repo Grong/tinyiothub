@@ -706,6 +706,42 @@ mod tests {
     }
 
     #[sqlx::test]
+    async fn test_summary_llm_failure_returns_stale_and_marks_failed(pool: SqlitePool) {
+        // Design 二·③/六: LLM failure → return the OLD summary (stale
+        // degradation), summary_status='failed', no error to the caller.
+        setup_test_db(&pool).await;
+        sqlx::query(
+            "INSERT INTO devices (id, name, ontology_summary, summary_status)              VALUES ('d1', 'Test', '旧摘要', 'dirty')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        struct FailingClient;
+        #[async_trait::async_trait]
+        impl LlmClient for FailingClient {
+            async fn complete(&self, _p: &str, _t: u32) -> Result<String, String> {
+                Err("LLM unavailable".to_string())
+            }
+        }
+
+        let computer = SummaryComputer::new();
+        let result = computer.get_or_compute("d1", &pool, &FailingClient).await.unwrap();
+
+        // Stale summary returned, status marked failed
+        assert_eq!(result, Some("旧摘要".to_string()));
+        let status: String =
+            sqlx::query_scalar("SELECT summary_status FROM devices WHERE id = 'd1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(status, "failed");
+
+        // The single-flight entry is released (no deadlock after failure)
+        assert!(computer.single_flight.is_empty());
+    }
+
+    #[sqlx::test]
     async fn test_summary_with_model_and_docs(pool: SqlitePool) {
         setup_test_db(&pool).await;
 
