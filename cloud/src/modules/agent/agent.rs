@@ -727,7 +727,7 @@ mod tests {
         assert_eq!(config.model, "minimax-m2");
         assert_eq!(config.temperature, 0.7);
         assert_eq!(config.max_tokens, 4096);
-        assert!(config.tool_denylist.contains(&"delete_device".to_string()));
+        assert!(config.tool_denylist.contains(&"delete_thing".to_string()));
     }
 
     async fn test_db() -> SqlitePool {

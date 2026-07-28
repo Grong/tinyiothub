@@ -11,6 +11,7 @@ use tinyiothub_web::response::ApiResponse;
 
 use super::super::service::ThingService;
 use crate::{
+    api::middleware::WorkspaceScope,
     modules::agent::tools::take_pending_action,
     shared::{api_response::ApiResponseBuilder, app_state::AppState},
 };
@@ -31,9 +32,12 @@ pub struct ConfirmActionRequest {
 
 pub async fn confirm_action(
     State(state): State<AppState>,
+    WorkspaceScope(workspace_id): WorkspaceScope,
     Path((thing_id, action_name)): Path<(String, String)>,
     Json(req): Json<ConfirmActionRequest>,
 ) -> (StatusCode, Json<ApiResponse<serde_json::Value>>) {
+    let ws = workspace_id.unwrap_or_default();
+
     // 1. Validate token and retrieve pending action
     let pending = match take_pending_action(&req.token) {
         Some(p) => p,
@@ -53,11 +57,19 @@ pub async fn confirm_action(
         );
     }
 
+    // 2b. Verify the token was issued for THIS workspace (eng-review T1)
+    if pending.workspace_id != ws {
+        return (
+            StatusCode::FORBIDDEN,
+            ApiResponseBuilder::error_with_code(403, "确认令牌不属于当前工作区"),
+        );
+    }
+
     // 3. Verify the thing exists and is a device
     let pool = state.database.pool().clone();
     let svc = thing_service(&pool);
 
-    let thing = match svc.get_thing(&thing_id).await {
+    let thing = match svc.get_thing(&thing_id, &ws).await {
         Ok(t) => t,
         Err(e) => {
             let status = e.status_code();
@@ -140,5 +152,158 @@ pub async fn confirm_action(
                 })),
             )
         }
+    }
+}
+
+// ──────────────────────────────────────────────
+// POST /things/{id}/actions/{action_name}/invoke
+// ──────────────────────────────────────────────
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InvokeActionRequest {
+    pub params: Option<serde_json::Value>,
+}
+
+/// Direct invoke from the UI (eng-review T14). Applies the workspace's
+/// require_action_confirm gate: when ON, mints a pending token and returns
+/// `confirmation_required` (the UI opens the confirm modal with it); when
+/// OFF, dispatches immediately.
+pub async fn invoke_action(
+    State(state): State<AppState>,
+    WorkspaceScope(workspace_id): WorkspaceScope,
+    Path((thing_id, action_name)): Path<(String, String)>,
+    Json(req): Json<InvokeActionRequest>,
+) -> (StatusCode, Json<ApiResponse<serde_json::Value>>) {
+    let ws = workspace_id.unwrap_or_default();
+    let pool = state.database.pool().clone();
+    let svc = thing_service(&pool);
+
+    // 1. Thing must exist in this workspace and be a device
+    let thing = match svc.get_thing(&thing_id, &ws).await {
+        Ok(t) => t,
+        Err(e) => {
+            let status = e.status_code();
+            return (
+                status,
+                ApiResponseBuilder::error_with_code(status.as_u16() as i32, e.to_string()),
+            );
+        }
+    };
+    if thing.thing_type != "device" {
+        return (
+            StatusCode::BAD_REQUEST,
+            ApiResponseBuilder::error_with_code(
+                400,
+                format!("操作不支持: 物类型为 '{}'，仅 'device' 类型物支持操作", thing.thing_type),
+            ),
+        );
+    }
+
+    // 2. Action must be registered on the thing
+    let registered: bool = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM thing_actions WHERE device_id = ? AND name = ?",
+    )
+    .bind(&thing_id)
+    .bind(&action_name)
+    .fetch_one(&pool)
+    .await
+    .map(|c| c > 0)
+    .unwrap_or(false);
+    if !registered {
+        return (
+            StatusCode::NOT_FOUND,
+            ApiResponseBuilder::error_with_code(
+                404,
+                format!("操作 '{}' 未在物 {} 上注册", action_name, thing_id),
+            ),
+        );
+    }
+
+    // 2b. If the action HAS a parameter schema, params must match it (same
+    // validation as the agent-side InvokeActionTool — the two invoke paths
+    // share one contract). NULL parameters = no schema = skip validation.
+    let action_schema: Option<String> =
+        sqlx::query_scalar("SELECT parameters FROM thing_actions WHERE device_id = ? AND name = ?")
+            .bind(&thing_id)
+            .bind(&action_name)
+            .fetch_optional(&pool)
+            .await
+            .ok()
+            .flatten()
+            .flatten();
+    if let Some(ref schema) = action_schema
+        && let Err(msg) =
+            crate::modules::agent::tools::thing::validate_action_params(schema, req.params.as_ref())
+    {
+        return (StatusCode::UNPROCESSABLE_ENTITY, ApiResponseBuilder::error_with_code(422, msg));
+    }
+
+    // 3. require_action_confirm gate (fail closed — T7)
+    let require_confirm: bool =
+        sqlx::query_scalar("SELECT require_action_confirm FROM workspaces WHERE id = ?")
+            .bind(&ws)
+            .fetch_optional(&pool)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(1i32)
+            != 0;
+
+    if require_confirm {
+        let token = crate::modules::agent::tools::thing::store_pending_action(
+            thing_id.clone(),
+            action_name.clone(),
+            req.params.clone(),
+            ws.clone(),
+        );
+        return (
+            StatusCode::OK,
+            ApiResponseBuilder::success(json!({
+                "thingId": thing_id,
+                "actionName": action_name,
+                "status": "confirmation_required",
+                "token": token,
+                "params": req.params,
+            })),
+        );
+    }
+
+    // 4. Dispatch immediately via the command channel
+    let app_state = crate::modules::mcp::get_app_state();
+    match app_state.and_then(|s| s.data_server().cloned()) {
+        Some(data_server) => {
+            let cmd = tinyiothub_core::models::device_command::DeviceCommand {
+                id: uuid::Uuid::new_v4().to_string(),
+                device_id: thing_id.clone(),
+                name: action_name.clone(),
+                display_name: None,
+                description: None,
+                parameters: req.params.as_ref().map(|p| p.to_string()),
+                created_at: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+            };
+            match data_server.execute_command(cmd) {
+                Ok(()) => (
+                    StatusCode::OK,
+                    ApiResponseBuilder::success(json!({
+                        "thingId": thing_id,
+                        "actionName": action_name,
+                        "status": "executed",
+                    })),
+                ),
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ApiResponseBuilder::error_with_code(500, format!("操作执行失败: {}", e)),
+                ),
+            }
+        }
+        None => (
+            StatusCode::OK,
+            ApiResponseBuilder::success(json!({
+                "thingId": thing_id,
+                "actionName": action_name,
+                "status": "simulated",
+            })),
+        ),
     }
 }

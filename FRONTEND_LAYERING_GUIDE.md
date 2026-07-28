@@ -35,12 +35,12 @@ web/src/
 
 ```typescript
 // ✅ 允许：简单列表页直接用 api-client
-// web/src/ui/views/device-list.ts
+// web/src/ui/views/thing-list.ts
 import { apiGet } from '../../api/client';
 
 async firstUpdated() {
-  const response = await apiGet('/devices');
-  this.devices = response.result || [];
+  const response = await apiGet('/things');
+  this.things = response.result || [];
 }
 ```
 
@@ -62,36 +62,36 @@ async firstUpdated() {
 
 ```typescript
 // ✅ 必须：跨组件复用或复杂逻辑
-// web/src/stores/devices.ts
+// web/src/stores/things.ts
 import { atom, computed } from 'nanostores';
-import { apiGet, apiPost } from '../api/client';
+import { apiGet, apiPut } from '../api/client';
 
-export const $devices = atom<Device[]>([]);
+export const $things = atom<Thing[]>([]);
 
-export async function loadDevices(params?: DeviceQuery) {
-  const response = await apiGet<Device[]>('devices', params);
-  $devices.set(response.result || []);
+export async function loadThings(params?: ThingQuery) {
+  const response = await apiGet<Thing[]>('things', params);
+  $things.set(response.result || []);
 }
 
-export async function updateDeviceStatus(id: string, status: string) {
-  await apiPost(`devices/${id}/status`, { status });
-  await loadDevices();
+export async function renameThing(id: string, name: string) {
+  await apiPut(`things/${id}`, { name });
+  await loadThings();
 }
 
-// web/src/ui/views/device-list.ts
-import { $devices, loadDevices } from '../../stores/devices';
+// web/src/ui/views/thing-list.ts
+import { $things, loadThings } from '../../stores/things';
 
-@customElement('device-list')
-export class DeviceList extends LitElement {
-  @state() private devices: Device[] = [];
+@customElement('thing-list')
+export class ThingList extends LitElement {
+  @state() private things: Thing[] = [];
   private unsubscribe?: () => void;
 
   connectedCallback() {
     super.connectedCallback();
-    this.unsubscribe = $devices.subscribe(devices => {
-      this.devices = devices;
+    this.unsubscribe = $things.subscribe(things => {
+      this.things = things;
     });
-    loadDevices();
+    loadThings();
   }
 
   disconnectedCallback() {
@@ -145,7 +145,7 @@ export async function sendCommand(deviceId: string, command: string, params?: ob
 
 ```typescript
 // ❌ 禁止：任何时候都不准这样
-fetch('/api/v1/devices')
+fetch('/api/v1/things')
 ```
 
 ❌ 不保存 `subscribe()` 返回的 unsubscribe：

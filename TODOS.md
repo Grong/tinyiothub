@@ -266,6 +266,35 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 
 ## Thing Ontology (from /plan-eng-review 2026-07-22)
 
+### P1 — 物列表 list|tree 视图切换 + 拖拽换父（设计 D3 未交付）
+- **What:** 物列表页「列表｜树」视图切换：树视图=全量层级树（默认展开 2 层，当前工作区根起），两视图共享过滤条件；拖拽换父（成环目标实时红框拒绝，合法落点即调更新 API）。
+- **Why:** 设计评审 D3 裁决的形态，实现为 table|grid；树数据 API（get_thing_tree）已就绪，只差视图。
+- **Context:** /ship 2026-07-27 plan completion 裁决延期。树交互 D12：单击节点进详情，箭头独立展开/收起。后端 parent_id 换父 API（update_thing + cycle 校验）已存在。
+- **Effort:** M (human: ~1d / CC: ~1-2h)
+
+### P2 — 物操作审计日志（设计「可观测性」节未交付）
+- **What:** 创建/删除/改父/invoke_action 记审计日志（操作者、时间、目标物）。
+- **Why:** 设计要求；当前只有 tracing 日志，无持久化审计表。
+- **Context:** /ship 2026-07-27 延期项。可参考 alarm/agent_actions 的审计表模式。
+- **Effort:** S (human: ~2h / CC: ~20min)
+
+### P2 — E3 WoT Thing Description 导出端点未接
+- **What:** `/things/templates/{id}/export/wot` 导出（当前只有 DTDL 导出）。
+- **Why:** E3 要求 DTDL/WoT 双向；import 双向已实现，export 只有 DTDL。
+- **Context:** import_export.rs 已有 WoT import;导出函数缺 wo­t 序列化。
+- **Effort:** S (human: ~2h / CC: ~15min)
+
+
+### ~~P2 — Events 表保留策略（occurrence-aware）~~ ✅ Completed v0.4.5.0 (2026-07-27)
+- EventRetentionExecutor + 全局 cron job（每日 03:17, 90 天）, is_status=0 发生类行按时间清理, is_status=1 状态行永不按时间清除；两个错误形状存量清除函数（cleanup_old_events/clear_acknowledged_events）同步修复
+
+### P2 — E2 A2UI 本体驱动渲染（后续独立分支）
+- **What:** 本体驱动的 A2UI 渲染：get_thing_profile 驱动 DeviceCard/DataChart/ControlPanel；invoke_action 前渲染确认面板。
+- **Why:** E2 为 CEO 审查（2026-07-22）接受的扩展项，但 mega-branch 中的 a2ui.rs 是死代码且 build_control_panel 硬编码了不存在的控件（电源开关/重启设备，actions:[]），工程评审（2026-07-27 D10）裁决删除。无此 TODO 则已接受的扩展项静默消亡。
+- **Context:** 设计文档要求"落地时先验证渲染成熟度"。当前 canvas 工具路径（agent/tools/canvas.rs）消费 LLM 原生 JSONL，builder 方式需要先决定集成点（LLM 直出 vs 服务端 builder）。
+- **Depends on:** Thing Ontology mega-branch 落地。
+- **Effort:** M (human: ~2d / CC: ~2h)
+
 ### P3 — search_knowledge 升级 FTS5 trigram
 - **What:** thing_resources 全文检索从 `LIKE '%q%'` 扫描升级为 SQLite FTS5 trigram 虚拟表（含同步触发器）。
 - **Why:** 工程评审 D14 裁决本期维持 LIKE（预发布文档量级几十篇无感）；但 search_knowledge 是 Agent 高频调用路径，文档上千篇后全表扫描劣化。FTS5 默认 unicode61 分词对中文无效，需 trigram tokenizer（SQLite ≥3.34）。
@@ -278,8 +307,4 @@ Source: `/plan-eng-review` on `main` (2026-06-15)
 
 ## Thing Ontology Architecture Follow-up (from /plan-ceo-review 2026-07-25)
 
-### P2 — Move thing service SQL to storage layer
-- **What:** `cloud/src/modules/thing/service/mod.rs` has raw SQL in `load_properties`, `load_actions`, `load_knowledge_docs`, `load_tags_batch`, `copy_template_props`, `copy_template_acts`. The storage crate already has `find_device_properties_by_device_id` and `find_device_commands_by_device_id` — these should be used instead, following the Repository pattern (AGENTS.md anti-pattern: "Do not write SQL in API handlers").
-- **Why:** Table rename from `device_properties`→`thing_properties` required updating SQL in TWO places (service layer AND storage layer). This caused a production bug where storage layer queries failed after rename.
-- **Files:** `cloud/src/modules/thing/service/mod.rs`, `crates/tinyiothub-storage/src/sqlite/device_property.rs`, `crates/tinyiothub-storage/src/sqlite/device_command.rs`
-- **Effort:** S (human: ~1h / CC: ~10min)
+### ~~P2 — Move thing service SQL to storage layer~~ ✅ Completed 2026-07-27 (eng-review T9, commit "refactor(thing): move service-layer SQL to storage/repo")

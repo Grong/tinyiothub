@@ -40,26 +40,48 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
             return Ok(());
         }
 
+        // eng-review T2/OV-2: status rows carry is_status=1 and are the ONLY
+        // rows covered by the dedup index. Repeat occurrences refresh level,
+        // accumulate occurrence_count, and reset acknowledgment (a NEW
+        // occurrence of a previously-acked event is actionable again).
         let sql = r#"
             INSERT INTO events (
                 id, event_type, event_subtype, event_level, timestamp,
                 source_type, source_id, device_id, user_id,
                 title, content, occurrence_count, acknowledged,
-                acknowledged_by, acknowledged_at, workspace_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, NULL, NULL, '')
-            ON CONFLICT(event_type, event_subtype, device_id) WHERE device_id IS NOT NULL
+                acknowledged_by, acknowledged_at, workspace_id, is_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, NULL, NULL, ?, 1)
+            ON CONFLICT(event_type, event_subtype, device_id) WHERE is_status = 1 AND device_id IS NOT NULL
             DO UPDATE SET
                 occurrence_count = occurrence_count + 1,
+                event_level = excluded.event_level,
                 timestamp = excluded.timestamp,
                 source_id = excluded.source_id,
                 title = excluded.title,
-                content = excluded.content
+                content = excluded.content,
+                acknowledged = 0,
+                acknowledged_by = NULL,
+                acknowledged_at = NULL
         "#;
 
         let content_json = serde_json::to_string(event.content())?;
         let event_subtype_json = serde_json::to_string(event.event_type())?;
         let device_id_bind: Option<String> = event.source().device_id().map(|s| s.to_string());
         let user_id_bind: Option<String> = event.source().user_id().map(|s| s.to_string());
+
+        // Resolve tenant scope from the owning device (was hardcoded '')
+        let workspace_id: String = match &device_id_bind {
+            Some(did) => {
+                sqlx::query_scalar("SELECT COALESCE(workspace_id, '') FROM devices WHERE id = ?")
+                    .bind(did)
+                    .fetch_optional(self.database.pool())
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default()
+            }
+            None => String::new(),
+        };
 
         sqlx::query(sql)
             .bind(event.id().to_string())
@@ -73,6 +95,7 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
             .bind(&user_id_bind)
             .bind(event.content().title())
             .bind(content_json)
+            .bind(&workspace_id)
             .execute(self.database.pool())
             .await?;
 
@@ -192,25 +215,41 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
         })
     }
 
-    async fn acknowledge_event(&self, id: &EventId, user_id: &str) -> Result<()> {
+    async fn acknowledge_event(
+        &self,
+        id: &EventId,
+        user_id: &str,
+        workspace_id: &str,
+    ) -> Result<()> {
+        // Tenant isolation (eng-review T1): only ack events in the caller's workspace
         let sql = r#"
             UPDATE events
             SET acknowledged = 1, acknowledged_by = ?, acknowledged_at = ?
-            WHERE id = ?
+            WHERE id = ? AND workspace_id = ?
         "#;
 
-        sqlx::query(sql)
+        let result = sqlx::query(sql)
             .bind(user_id)
             .bind(Utc::now().to_rfc3339())
             .bind(id.to_string())
+            .bind(workspace_id)
             .execute(self.database.pool())
             .await?;
 
+        if result.rows_affected() == 0 {
+            // Event not found in this workspace (missing or cross-tenant) —
+            // surface it instead of silently pretending the ack worked
+            return Err(crate::modules::event::EventError::NotFound {
+                id: format!("{} (in workspace)", id),
+            });
+        }
         Ok(())
     }
 
     async fn clear_acknowledged_events(&self) -> Result<u64> {
-        let sql = "DELETE FROM events WHERE acknowledged = 1";
+        // Occurrence rows only — an acknowledged STATUS row is the live
+        // current-state of a device and must never be bulk-deleted (X1/OV-1)
+        let sql = "DELETE FROM events WHERE acknowledged = 1 AND is_status = 0";
 
         let result = sqlx::query(sql).execute(self.database.pool()).await?;
 
@@ -218,7 +257,9 @@ impl RealTimeEventRepository for SqliteRealTimeEventRepository {
     }
 
     async fn cleanup_old_events(&self, before: DateTime<Utc>) -> Result<u64> {
-        let sql = "DELETE FROM events WHERE timestamp < ?";
+        // Occurrence rows only — status rows (is_status=1) are live state,
+        // not log history, and are exempt from time-based purge (X1/OV-1)
+        let sql = "DELETE FROM events WHERE timestamp < ? AND is_status = 0";
 
         let result =
             sqlx::query(sql).bind(before.to_rfc3339()).execute(self.database.pool()).await?;
@@ -245,6 +286,11 @@ impl SqliteRealTimeEventRepository {
             let quoted: Vec<String> =
                 device_ids.iter().map(|id| format!("'{}'", id.replace('\'', "''"))).collect();
             conditions.push(format!("device_id IN ({})", quoted.join(",")));
+        }
+
+        // -- workspace filter (eng-review T1: tenant isolation) --
+        if let Some(ref workspace_id) = filter.workspace_id {
+            conditions.push(format!("workspace_id = '{}'", workspace_id.replace('\'', "''")));
         }
 
         // -- acknowledged filter --

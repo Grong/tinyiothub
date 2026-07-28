@@ -303,3 +303,39 @@ pub struct ThingResource {
     pub created_at: String,
     pub updated_at: String,
 }
+
+/// Recent event row for the thing profile (real events-table columns).
+#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+pub struct EventRow {
+    pub id: String,
+    pub event_type: String,
+    pub event_subtype: Option<String>,
+    pub event_level: i64,
+    pub source_type: String,
+    pub source_id: Option<String>,
+    pub title: Option<String>,
+    pub content: Option<String>,
+    pub metadata: Option<String>,
+    pub created_at: String,
+}
+
+/// Knowledge document row attached to a thing.
+#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct DocRow {
+    pub id: String,
+    pub name: String,
+    pub resource_type: String,
+    pub description: Option<String>,
+    pub file_path: String,
+    pub content: Option<String>,
+    pub tags: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Outcome of a transaction-guarded update (cycle check + write in one tx).
+pub enum UpdateGuardedOutcome {
+    Cycle,
+    Updated(Option<Box<ThingRow>>),
+}

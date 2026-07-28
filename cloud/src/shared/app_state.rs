@@ -383,6 +383,7 @@ impl AppState {
             data_tx,
             throttle_state,
             mqtt_db_pool,
+            Some(alarm_service.clone()),
         ));
 
         // 启动宣告处理任务

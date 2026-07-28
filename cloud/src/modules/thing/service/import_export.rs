@@ -346,18 +346,6 @@ fn resolve_wot_schema(value: &Value) -> Value {
 // Backwards compat: "commands" → "actions"
 // ──────────────────────────────────────────────
 
-/// Accept both "actions" and legacy "commands" key in JSON input.
-pub fn extract_actions(json: &Value) -> Option<&Vec<Value>> {
-    json.get("actions")
-        .and_then(|v| v.as_array())
-        .or_else(|| json.get("commands").and_then(|v| v.as_array()))
-}
-
-/// Accept both "events" and legacy "events" key (alarm/signal mapping).
-pub fn extract_events(json: &Value) -> Option<&Vec<Value>> {
-    json.get("events").and_then(|v| v.as_array())
-}
-
 // ──────────────────────────────────────────────
 // DTDL Export
 // ──────────────────────────────────────────────
@@ -947,41 +935,5 @@ mod tests {
         for (orig, reim) in orig_props.iter().zip(reim_props.iter()) {
             assert_eq!(orig["name"], reim["name"]);
         }
-    }
-
-    // ── Backwards compat: "commands" key ──
-
-    #[test]
-    fn test_extract_actions_from_commands_key() {
-        let json = json!({
-            "commands": [
-                {"name": "reboot", "parameters": {"delay": {"type": "integer"}}},
-                {"name": "shutdown"}
-            ]
-        });
-        let cmds = extract_actions(&json).unwrap();
-        assert_eq!(cmds.len(), 2);
-        assert_eq!(cmds[0]["name"], "reboot");
-    }
-
-    #[test]
-    fn test_extract_actions_prefers_actions_over_commands() {
-        let json = json!({
-            "actions": [
-                {"name": "newAction"}
-            ],
-            "commands": [
-                {"name": "oldCommand"}
-            ]
-        });
-        let cmds = extract_actions(&json).unwrap();
-        assert_eq!(cmds.len(), 1);
-        assert_eq!(cmds[0]["name"], "newAction");
-    }
-
-    #[test]
-    fn test_extract_actions_empty() {
-        let json = json!({});
-        assert!(extract_actions(&json).is_none());
     }
 }

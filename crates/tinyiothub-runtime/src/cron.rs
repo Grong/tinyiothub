@@ -194,6 +194,64 @@ impl JobExecutor for DeviceCommandExecutor {
     }
 }
 
+/// Deletes occurrence-type events older than `retention_days`.
+///
+/// The events table mixes immutable audit rows (is_status=0, log history —
+/// safe to time-purge) with mutable status rows (is_status=1, the LIVE
+/// current-state of devices — never time-purged). This distinction is the
+/// whole point of the executor: a naive time-based purge would silently
+/// destroy the current state of quiet devices (eng-review OV-1/X1).
+pub struct EventRetentionExecutor {
+    database: Database,
+}
+
+impl EventRetentionExecutor {
+    pub fn new(database: Database) -> Self {
+        Self { database }
+    }
+}
+
+#[async_trait]
+impl JobExecutor for EventRetentionExecutor {
+    fn can_handle(&self, job_type: &str) -> bool {
+        job_type == "event_retention"
+    }
+
+    async fn execute(&self, job: &CronJob, _run_id: &str) -> std::result::Result<ExecutionResult, ExecutorError> {
+        let start = Instant::now();
+
+        let config: Value =
+            serde_json::from_str(&job.config).map_err(|e| ExecutorError::InvalidConfig(e.to_string()))?;
+        let retention_days = config
+            .get("retention_days")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(90)
+            .max(1);
+        let cutoff = chrono::Utc::now() - chrono::Duration::days(retention_days);
+
+        let deleted = self
+            .database
+            .execute_with_params(
+                "DELETE FROM events WHERE is_status = 0 AND timestamp < ?",
+                &[&cutoff.to_rfc3339()],
+            )
+            .await
+            .map_err(|e| ExecutorError::CommandFailed(format!("retention purge failed: {}", e)))?;
+        let duration_ms = start.elapsed().as_millis() as i64;
+        tracing::info!(deleted, retention_days, "events retention purge complete");
+
+        Ok(ExecutionResult {
+            status: "success".to_string(),
+            output: Some(format!(
+                "deleted {} occurrence-type events older than {} days",
+                deleted, retention_days
+            )),
+            error_message: None,
+            duration_ms,
+        })
+    }
+}
+
 /// Registry that holds all available executors and routes jobs by type.
 pub struct ExecutorRegistry {
     executors: Vec<Box<dyn JobExecutor>>,

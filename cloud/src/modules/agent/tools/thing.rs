@@ -77,6 +77,7 @@ pub fn store_pending_action(
 
 /// Retrieve and consume a pending action by token (returns None if expired or not found).
 pub fn take_pending_action(token: &str) -> Option<PendingAction> {
+    cleanup_expired_tokens();
     let entry = pending_actions().remove(token)?;
     if entry.1.created_at.elapsed() > CONFIRMATION_TTL {
         return None;
@@ -84,8 +85,7 @@ pub fn take_pending_action(token: &str) -> Option<PendingAction> {
     Some(entry.1)
 }
 
-/// Cleanup expired tokens (call periodically or on access).
-#[allow(dead_code)]
+/// Cleanup expired tokens (called on every take — keeps the map bounded).
 pub fn cleanup_expired_tokens() {
     pending_actions().retain(|_, v| v.created_at.elapsed() <= CONFIRMATION_TTL);
 }
@@ -217,6 +217,7 @@ impl Tool for ListThingsTool {
 
 pub struct GetThingTool {
     thing_service: Arc<ThingService>,
+    workspace_id: String,
 }
 
 impl Attributable for GetThingTool {
@@ -258,7 +259,7 @@ impl Tool for GetThingTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("缺少必需参数: thingId"))?;
 
-        match self.thing_service.get_thing(thing_id).await {
+        match self.thing_service.get_thing(thing_id, &self.workspace_id).await {
             Ok(result) => tool_ok(result),
             Err(e) => tool_err(e.to_string()),
         }
@@ -271,6 +272,7 @@ impl Tool for GetThingTool {
 
 pub struct GetThingProfileTool {
     thing_service: Arc<ThingService>,
+    workspace_id: String,
 }
 
 impl Attributable for GetThingProfileTool {
@@ -312,7 +314,7 @@ impl Tool for GetThingProfileTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("缺少必需参数: thingId"))?;
 
-        match self.thing_service.get_thing_profile(thing_id).await {
+        match self.thing_service.get_thing_profile(thing_id, &self.workspace_id).await {
             Ok(result) => tool_ok(result),
             Err(e) => tool_err(e.to_string()),
         }
@@ -396,6 +398,7 @@ impl Tool for GetThingTreeTool {
 pub struct ReadPropertyTool {
     thing_service: Arc<ThingService>,
     pool: SqlitePool,
+    workspace_id: String,
 }
 
 impl Attributable for ReadPropertyTool {
@@ -448,7 +451,7 @@ impl Tool for ReadPropertyTool {
 
         // Verify thing exists
         self.thing_service
-            .get_thing(&input.thing_id)
+            .get_thing(&input.thing_id, &self.workspace_id)
             .await
             .map_err(|e| anyhow::anyhow!("物不存在: {}", e))?;
 
@@ -480,8 +483,8 @@ impl Tool for ReadPropertyTool {
             anyhow::anyhow!("属性 '{}' 在物 {} 上未找到", input.property_name, input.thing_id)
         })?;
 
-        // Try device_cache for live value
-        let (current_value, last_heartbeat) = crate::modules::mcp::get_app_state()
+        // Try device_cache for live value; design 六: no cache → null + hint
+        let cached = crate::modules::mcp::get_app_state()
             .and_then(|state| state.device_cache.get(&input.thing_id))
             .and_then(|d| {
                 let val = d
@@ -491,8 +494,12 @@ impl Tool for ReadPropertyTool {
                     .and_then(|p| p.current_value.clone());
                 let ts = d.last_heartbeat.clone();
                 val.map(|v| (v, ts))
-            })
-            .unwrap_or((String::new(), None));
+            });
+
+        let (current_value, last_heartbeat, hint) = match cached {
+            Some((v, ts)) => (json!(v), json!(ts), Value::Null),
+            None => (Value::Null, Value::Null, json!("该属性暂无上报数据")),
+        };
 
         tool_ok(json!({
             "thingId": input.thing_id,
@@ -507,6 +514,7 @@ impl Tool for ReadPropertyTool {
             "isReadOnly": prop.is_read_only,
             "currentValue": current_value,
             "lastHeartbeat": last_heartbeat,
+            "hint": hint,
         }))
     }
 }
@@ -578,7 +586,7 @@ impl Tool for InvokeActionTool {
         // 1. Verify thing exists and check type
         let thing = self
             .thing_service
-            .get_thing(&input.thing_id)
+            .get_thing(&input.thing_id, &self.workspace_id)
             .await
             .map_err(|e| anyhow::anyhow!("物不存在: {}", e))?;
 
@@ -597,7 +605,9 @@ impl Tool for InvokeActionTool {
                 .fetch_optional(&self.pool)
                 .await
                 .map_err(|e| anyhow::anyhow!("数据库查询失败: {}", e))?
-                .unwrap_or(0i32)
+                // Fail CLOSED (eng-review T7): a missing workspace row means
+                // something is wrong — require confirmation (design default ON)
+                .unwrap_or(1i32)
                 != 0;
 
         // 3. Check if action exists in device_commands table
@@ -616,6 +626,23 @@ impl Tool for InvokeActionTool {
                 "操作 '{}' 未在物 {} 上注册。请检查可用的操作列表。",
                 input.action_name, input.thing_id
             ));
+        }
+
+        // 3b. Validate params against the action's parameter schema (design 三;
+        // eng-review T7)
+        let params_schema: Option<String> = sqlx::query_scalar(
+            "SELECT parameters FROM thing_actions WHERE device_id = ? AND name = ?",
+        )
+        .bind(&input.thing_id)
+        .bind(&input.action_name)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("数据库查询失败: {}", e))?
+        .flatten();
+        if let Some(ref schema_json) = params_schema
+            && let Err(msg) = validate_action_params(schema_json, input.params.as_ref())
+        {
+            return tool_err(msg);
         }
 
         // 4. Execute or request confirmation
@@ -678,6 +705,7 @@ impl Tool for InvokeActionTool {
 
 pub struct QueryEventsTool {
     pool: SqlitePool,
+    workspace_id: String,
 }
 
 impl Attributable for QueryEventsTool {
@@ -752,6 +780,8 @@ impl Tool for QueryEventsTool {
              FROM events WHERE device_id = ",
         );
         builder.push_bind(&input.thing_id);
+        builder.push(" AND workspace_id = ");
+        builder.push_bind(&self.workspace_id);
 
         if let Some(ref event_name) = input.event_name {
             builder.push(" AND event_type = ");
@@ -805,6 +835,7 @@ impl Tool for QueryEventsTool {
 
 pub struct SearchKnowledgeTool {
     pool: SqlitePool,
+    workspace_id: String,
 }
 
 impl Attributable for SearchKnowledgeTool {
@@ -872,9 +903,10 @@ impl Tool for SearchKnowledgeTool {
 
         // Build dynamic query with QueryBuilder
         let mut builder = sqlx::QueryBuilder::new(
-            "SELECT id, name, type, file_path, tags, created_at, updated_at \
-             FROM resources WHERE 1=1",
+            "SELECT id, name, resource_type AS type, file_path, tags, created_at, updated_at \
+             FROM resources WHERE workspace_id = ",
         );
+        builder.push_bind(&self.workspace_id);
 
         if let Some(ref tid) = input.thing_id {
             builder.push(" AND device_id = ");
@@ -929,6 +961,7 @@ impl Tool for SearchKnowledgeTool {
 
 pub struct ReadDocumentTool {
     pool: SqlitePool,
+    workspace_id: String,
 }
 
 impl Attributable for ReadDocumentTool {
@@ -989,10 +1022,11 @@ impl Tool for ReadDocumentTool {
         }
 
         let doc: DocFull = sqlx::query_as::<_, DocFull>(
-            "SELECT id, name, type, file_path, content, tags, device_id, \
-             created_at, updated_at FROM resources WHERE id = ?",
+            "SELECT id, name, resource_type AS type, file_path, content, tags, device_id, \
+             created_at, updated_at FROM resources WHERE id = ? AND workspace_id = ?",
         )
         .bind(&input.resource_id)
+        .bind(&self.workspace_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| anyhow::anyhow!("数据库查询失败: {}", e))?
@@ -1010,6 +1044,55 @@ impl Tool for ReadDocumentTool {
 ///
 /// Read-only tools (searches, gets): safety ReadOnly => auto-approved.
 /// Destructive tools (invoke_action): safety Destructive => requires trust approval.
+/// Validate invoke params against the action's parameter schema.
+///
+/// Schema shape: `[{"name": "interval", "type": "number", "required": true}]`.
+/// Rules: required params present, no unknown params, primitive type match.
+/// Returns a Chinese error message on mismatch (design 六: 校验明细定位字段).
+pub fn validate_action_params(schema_json: &str, params: Option<&Value>) -> Result<(), String> {
+    let schema: Vec<Value> = serde_json::from_str(schema_json)
+        .map_err(|e| format!("操作参数 schema 解析失败: {}", e))?;
+    if schema.is_empty() {
+        return Ok(());
+    }
+    let provided = params.and_then(|p| p.as_object());
+
+    for spec in &schema {
+        let name = spec.get("name").and_then(|n| n.as_str()).unwrap_or("");
+        let required = spec.get("required").and_then(|r| r.as_bool()).unwrap_or(false);
+        let expected = spec.get("type").and_then(|t| t.as_str()).unwrap_or("string");
+        let value = provided.and_then(|obj| obj.get(name));
+        match value {
+            None if required => return Err(format!("缺少必填参数 '{}'", name)),
+            None => continue,
+            Some(v) => {
+                let ok = match expected {
+                    "string" => v.is_string(),
+                    "number" | "float" | "integer" => v.is_number(),
+                    "boolean" | "bool" => v.is_boolean(),
+                    "object" => v.is_object(),
+                    "array" => v.is_array(),
+                    _ => true,
+                };
+                if !ok {
+                    return Err(format!("参数 '{}' 类型不符: 期望 {}, 实际 {}", name, expected, v));
+                }
+            }
+        }
+    }
+
+    if let Some(obj) = provided {
+        let known: Vec<&str> =
+            schema.iter().filter_map(|sp| sp.get("name").and_then(|n| n.as_str())).collect();
+        for key in obj.keys() {
+            if !known.contains(&key.as_str()) {
+                return Err(format!("未知参数 '{}', 可用参数: {}", key, known.join(", ")));
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn create_thing_tools(
     pool: SqlitePool,
     workspace_id: &str,
@@ -1029,8 +1112,14 @@ pub fn create_thing_tools(
             thing_service: thing_service.clone(),
             workspace_id: ws.clone(),
         })),
-        read_only(Box::new(GetThingTool { thing_service: thing_service.clone() })),
-        read_only(Box::new(GetThingProfileTool { thing_service: thing_service.clone() })),
+        read_only(Box::new(GetThingTool {
+            thing_service: thing_service.clone(),
+            workspace_id: ws.clone(),
+        })),
+        read_only(Box::new(GetThingProfileTool {
+            thing_service: thing_service.clone(),
+            workspace_id: ws.clone(),
+        })),
         read_only(Box::new(GetThingTreeTool {
             thing_service: thing_service.clone(),
             workspace_id: ws.clone(),
@@ -1038,10 +1127,11 @@ pub fn create_thing_tools(
         read_only(Box::new(ReadPropertyTool {
             thing_service: thing_service.clone(),
             pool: pool.clone(),
+            workspace_id: ws.clone(),
         })),
-        read_only(Box::new(QueryEventsTool { pool: pool.clone() })),
-        read_only(Box::new(SearchKnowledgeTool { pool: pool.clone() })),
-        read_only(Box::new(ReadDocumentTool { pool: pool.clone() })),
+        read_only(Box::new(QueryEventsTool { pool: pool.clone(), workspace_id: ws.clone() })),
+        read_only(Box::new(SearchKnowledgeTool { pool: pool.clone(), workspace_id: ws.clone() })),
+        read_only(Box::new(ReadDocumentTool { pool: pool.clone(), workspace_id: ws.clone() })),
         // Destructive tool (1)
         destructive(Box::new(InvokeActionTool { thing_service, pool, workspace_id: ws })),
     ]

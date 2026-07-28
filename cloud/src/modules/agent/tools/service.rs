@@ -275,6 +275,19 @@ async fn load_all_tools_with_safety(
     tools.push((Box::new(CanvasTool), classify_tool_safety("canvas")));
     tools.push((Box::new(super::GetSkillTool), classify_tool_safety("get_skill")));
 
+    // Built-in thing tool names — win over MCP handlers on collision (T7)
+    const BUILTIN_THING_TOOL_NAMES: [&str; 9] = [
+        "list_things",
+        "get_thing",
+        "get_thing_profile",
+        "get_thing_tree",
+        "read_property",
+        "invoke_action",
+        "query_events",
+        "search_knowledge",
+        "read_document",
+    ];
+
     // Thing Ontology tools (9) — always available, no denylist
     if let Some(ref pool) = db_pool {
         tools.extend(create_thing_tools(pool.clone(), workspace_id));
@@ -284,6 +297,13 @@ async fn load_all_tools_with_safety(
         let reg = registry.read().await;
         for meta in reg.list_tools() {
             if meta.name.trim().is_empty() {
+                continue;
+            }
+            // Built-in thing tools take precedence: an MCP handler with the
+            // same name (e.g. DeviceProfileHandler renamed to "get_thing")
+            // would double-register with a different schema (eng-review T7)
+            if BUILTIN_THING_TOOL_NAMES.contains(&meta.name.as_str()) {
+                tracing::warn!(tool = %meta.name, "Skipping MCP handler colliding with built-in thing tool");
                 continue;
             }
             let name = meta.name.clone();
@@ -370,14 +390,13 @@ pub async fn resolve_tools_for_agent(
 /// Label mapping for known tools (display name in Chinese).
 fn tool_label(name: &str) -> &str {
     match name {
-        // Device tools
-        "search_devices" => "搜索设备",
-        "get_device" => "获取设备 Profile",
+        // Device-runtime tools (MCP)
+        "search_things" => "搜索物",
         "read_properties" => "读取属性",
         "write_properties" => "写入属性",
         "send_command" => "执行设备命令",
-        "create_device" => "创建设备",
-        "delete_device" => "删除设备",
+        "create_thing" => "创建物",
+        "delete_thing" => "删除物",
         // Thing tools
         "list_things" => "列出物",
         "get_thing" => "查看物",
@@ -411,15 +430,7 @@ fn tool_group(name: &str) -> (&str, &str) {
     if name == "search_workspace_resources" {
         ("workspace", "工作空间")
     } else if name.starts_with("search_")
-        || matches!(
-            name,
-            "get_device"
-                | "read_properties"
-                | "write_properties"
-                | "send_command"
-                | "create_device"
-                | "delete_device"
-        )
+        || matches!(name, "read_properties" | "write_properties" | "send_command")
     {
         ("device", "设备管理")
     } else if matches!(
@@ -433,6 +444,8 @@ fn tool_group(name: &str) -> (&str, &str) {
             | "query_events"
             | "search_knowledge"
             | "read_document"
+            | "create_thing"
+            | "delete_thing"
     ) {
         ("thing", "物本体")
     } else if name.starts_with("alarm_") {
@@ -535,8 +548,8 @@ mod tests {
 
     #[test]
     fn test_tool_label_mapping() {
-        assert_eq!(tool_label("search_devices"), "搜索设备");
-        assert_eq!(tool_label("get_device"), "获取设备 Profile");
+        assert_eq!(tool_label("search_things"), "搜索物");
+        assert_eq!(tool_label("get_thing"), "查看物");
         assert_eq!(tool_label("alarm_list"), "查询告警列表");
         assert_eq!(tool_label("list_drivers"), "查询驱动列表");
         assert_eq!(tool_label("list_schedules"), "查询任务列表");
@@ -550,9 +563,9 @@ mod tests {
 
     #[test]
     fn test_tool_group_classification() {
-        assert_eq!(tool_group("search_devices"), ("device", "设备管理"));
-        assert_eq!(tool_group("get_device"), ("device", "设备管理"));
-        assert_eq!(tool_group("delete_device"), ("device", "设备管理"));
+        assert_eq!(tool_group("search_things"), ("device", "设备管理"));
+        assert_eq!(tool_group("get_thing"), ("thing", "物本体"));
+        assert_eq!(tool_group("delete_thing"), ("thing", "物本体"));
 
         assert_eq!(tool_group("alarm_list"), ("alarm", "告警管理"));
         assert_eq!(tool_group("alarm_acknowledge"), ("alarm", "告警管理"));

@@ -37,6 +37,7 @@ impl PlatformMqttClient {
         data_tx: mpsc::Sender<GatewayDataMessage>,
         throttle: Arc<ThrottleState>,
         db_pool: sqlx::SqlitePool,
+        alarm_service: Option<Arc<crate::modules::alarm::service::AlarmService>>,
     ) -> Self {
         let broker_url = broker_url.to_string();
         let username = username.to_string();
@@ -121,6 +122,7 @@ impl PlatformMqttClient {
                                         &publish.payload,
                                         &throttle,
                                         &db_pool,
+                                        alarm_service.clone(),
                                     )
                                     .await;
                                 } else {
@@ -210,6 +212,7 @@ impl PlatformMqttClient {
         payload: &[u8],
         throttle: &ThrottleState,
         db_pool: &sqlx::SqlitePool,
+        alarm_service: Option<Arc<crate::modules::alarm::service::AlarmService>>,
     ) {
         // Parse topic: thing/{thing_id}/event/{event_name}
         let parts: Vec<&str> = topic.split('/').collect();
@@ -224,10 +227,14 @@ impl PlatformMqttClient {
         let payload_data: ThingEventPayload = match serde_json::from_slice(payload) {
             Ok(p) => p,
             Err(e) => {
+                let preview: String = String::from_utf8_lossy(payload).chars().take(200).collect();
                 tracing::warn!(
+                    topic = %topic,
                     thing_id = %thing_id,
                     event_name = %event_name,
                     error = %e,
+                    payload_preview = %preview,
+                    metric = "events_malformed",
                     "Malformed thing event payload"
                 );
                 return;
@@ -250,16 +257,42 @@ impl PlatformMqttClient {
             }
         };
 
+        // Resolve tenant scope AND the template event definitions in ONE
+        // round trip (perf review: was two separate queries per event on the
+        // ingest hot path).
+        let thing_row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT d.workspace_id, t.events FROM devices d \
+             LEFT JOIN thing_templates t ON t.id = d.template_id WHERE d.id = ?",
+        )
+        .bind(&thing_id)
+        .fetch_optional(db_pool)
+        .await
+        .ok()
+        .flatten();
+        let workspace_id: String =
+            thing_row.as_ref().and_then(|(ws, _)| ws.clone()).unwrap_or_default();
+        let template_events = thing_row.and_then(|(_, ev)| ev);
+        if workspace_id.is_empty() {
+            tracing::warn!(
+                thing_id = %thing_id,
+                event_name = %event_name,
+                metric = "events_malformed",
+                "Thing event dropped: unknown thing or no workspace"
+            );
+            return;
+        }
+
         let input = ThingEventInput {
             thing_id: thing_id.clone(),
-            workspace_id: String::new(), // not present in MQTT topic; TODO: resolve from thing lookup
+            workspace_id,
             event_name: event_name.clone(),
             level,
             data: payload_data.data,
             ts: payload_data.ts,
+            template_events,
         };
 
-        let result = route_thing_event(db_pool, throttle, None, input).await;
+        let result = route_thing_event(db_pool, throttle, alarm_service, input).await;
 
         if result.throttled {
             tracing::info!(

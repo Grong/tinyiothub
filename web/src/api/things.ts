@@ -135,6 +135,10 @@ export const thingApi = {
     return apiGet<ThingTreeNode[]>(`/things/${id}/tree${qs}`);
   },
 
+  async executeCommand(id: string, name: string, params?: Record<string, any>) {
+    return apiPost<any>(`/things/${id}/actions/${encodeURIComponent(name)}/invoke`, { params });
+  },
+
   async confirmAction(thingId: string, actionName: string, token: string) {
     return apiPost<ConfirmActionResponse>(`/things/${thingId}/actions/${encodeURIComponent(actionName)}/confirm`, { token });
   },
@@ -194,7 +198,6 @@ export const thingApi = {
   deleteDevice: (id: string) => apiDelete<any>('/things/' + id),
   getDeviceCommands: (id: string) => apiGet<any[]>('/things/' + id + '/commands'),
   updateDeviceProperty: (deviceId: string, propertyName: string, value: any) => apiPut<void>('/things/' + deviceId + '/properties/' + propertyName, { value }),
-  executeCommand: (id: string, name: string, params?: Record<string, any>) => apiPost<any>('/things/' + id + '/actions/' + encodeURIComponent(name) + '/confirm', { token: 'direct', params }),
   exportDeviceAsTemplate: (id: string) => apiGet<any>('/things/templates/' + id + '/export/dtdl'),
   cloneDevice: async (id: string) => { const r = await apiGet<any>('/things/' + id); return apiPost<any>('/things', { ...r.result, name: (r.result?.name || 'clone') + ' (副本)' }); },
   createFromTemplate: (data: any) => apiPost<any>('/things', { ...data.deviceInput, templateId: data.templateId }),

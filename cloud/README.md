@@ -5,75 +5,27 @@
 ## 目录结构
 
 ```
-api/
-├── src/                      # Rust 源代码
-│   ├── api/                  # REST API 层
-│   │   ├── auth/             # 认证相关 API
-│   │   ├── devices/          # 设备管理 API
-│   │   ├── drivers/          # 驱动管理 API
-│   │   ├── alarms/           # 告警管理 API
-│   │   ├── alarm_rules/      # 告警规则 API
-│   │   ├── agents/           # AI Agent 管理 API
-│   │   ├── chat/             # AI Agent 聊天 API
-│   │   ├── events/           # 事件管理 API
-│   │   ├── jobs/             # 定时任务 API
-│   │   ├── marketplace/      # 应用市场 API
+cloud/
+├── src/
+│   ├── api/                  # 路由挂载 + HTTP 中间件（WorkspaceScope, auth）
+│   ├── modules/              # 业务模块（types → service → handler 三层结构）
+│   │   ├── thing/            # 物本体管理（CRUD、层级树、本体、资源、LLM 摘要）
+│   │   ├── device/           # 设备连接运行时（驱动、遥测、心跳）
+│   │   ├── event/            # 事件管道（router、throttle、real-time、SSE、保留任务）
+│   │   ├── alarm/            # 告警规则 + 通知
+│   │   ├── agent/            # AI Agent（chat、config、tools、session、memory）
+│   │   ├── template/         # 物模板（创建时蓝图）
+│   │   ├── marketplace/      # 应用市场（驱动 / 物模板）
+│   │   ├── workspace/        # 工作空间（含知识资源）
 │   │   ├── mcp/              # 内嵌 MCP Server
-│   │   ├── notifications/    # 通知管理 API
-│   │   ├── notification_channels/ # 通知渠道 API
-│   │   ├── self_healing/     # 自愈引擎 API
-│   │   ├── system/           # 系统管理 API
-│   │   ├── monitoring/       # 监控 API
-│   │   ├── templates/        # 设备模板 API
-│   │   ├── tenants/          # 租户管理 API
-│   │   ├── users/            # 用户管理 API
-│   │   ├── workspaces/       # 工作空间 API
-│   │   ├── batch/            # 批量操作 API
-│   │   ├── open/             # 开放接口 API
-│   │   ├── heartbeat/        # 心跳 API
-│   │   └── middleware/       # 中间件
-│   ├── application/          # 应用服务层
-│   │   ├── agent/            # Agent 会话、聊天、记忆服务
-│   │   ├── cron_scheduler.rs # 定时任务调度（CronSchedulerService）
-│   │   ├── data_context.rs   # 数据上下文
-│   │   ├── data_server.rs    # 数据服务
-│   │   └── service_manager.rs # 服务管理器
-│   ├── domain/               # 领域层
-│   │   ├── agent/            # Agent 领域
-│   │   ├── alarm/            # 告警领域
-│   │   ├── automation/       # 自动化领域
-│   │   ├── cron/             # 定时任务领域
-│   │   ├── device/           # 设备领域（含 driver/registry）
-│   │   ├── event/            # 事件领域
-│   │   ├── marketplace/      # 市场领域
-│   │   ├── permission/       # 权限领域
-│   │   ├── plugin/           # 插件领域
-│   │   ├── product/          # 产品领域
-│   │   ├── role/             # 角色领域
-│   │   ├── self_healing/     # 自愈引擎领域
-│   │   ├── tag/              # 标签领域
-│   │   ├── template/         # 模板领域
-│   │   ├── tenant/           # 租户领域
-│   │   ├── user/             # 用户领域
-│   │   └── workspace/        # 工作空间领域
-│   │       ├── repository.rs # Repository trait（接口）
-│   │       └── service.rs    # 领域服务
-│   ├── dto/                  # 数据传输对象（纯结构体，无 SQL）
-│   ├── infrastructure/       # 基础设施层
-│   │   └── persistence/      # 数据持久化
-│   │       └── repositories/ # Repository 实现（SQLite）
-│   ├── shared/               # 共享组件
+│   │   └── ...               # auth, chat, cron, jobs, open, system 等
+│   ├── shared/               # 跨模块组件（persistence, security, error_handling, utils）
+│   ├── tests/                # 集成测试
 │   ├── lib.rs                # 库入口
 │   └── main.rs               # 程序入口
-├── derive/                   # 自定义宏
 ├── migrations/               # 数据库迁移文件
-├── drivers/                  # 驱动实现
-├── templates/                # 设备模板
-├── vendor/                   # 第三方依赖（本地 fork）
-├── Cargo.toml                # 项目配置
-├── Dockerfile                # Docker 构建文件
-├── app_settings.toml         # 应用配置
-└── tinyiothub.db             # SQLite 数据库
+├── templates/                # 物模板
+└── Cargo.toml                # 项目配置
 ```
 
 ## 快速开始
@@ -81,27 +33,27 @@ api/
 ### 开发运行
 
 ```bash
-cd api
+cd cloud
 cargo run
 ```
 
 ### 发布构建
 
 ```bash
-cd api
+cd cloud
 cargo build --release
 ```
 
 ### 运行测试
 
 ```bash
-cd api
+cd cloud
 cargo test
 ```
 
 ## 配置
 
-主配置文件: `app_settings.toml`
+主配置文件: 仓库根目录 `app_settings.toml`
 
 ```toml
 [server]
@@ -124,9 +76,9 @@ port = 1883
 主要端点:
 - `/api/v1/system/health` - 健康检查
 - `/api/v1/auth/login` - 用户登录
-- `/api/v1/devices` - 设备管理
+- `/api/v1/things` - 物管理（设备/空间/产线统一模型）
 - `/api/v1/drivers` - 驱动管理
-- `/api/v1/templates` - 模板管理
+- `/api/v1/device-templates` - 物模板管理
 - `/api/v1/alarms` - 告警管理
 - `/api/v1/alarm-rules` - 告警规则
 - `/api/v1/agents` - AI Agent 管理

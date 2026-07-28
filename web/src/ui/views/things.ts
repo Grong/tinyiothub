@@ -3,6 +3,23 @@ import { customElement, state } from "lit/decorators.js";
 import { SignalWatcher } from "@lit-labs/signals";
 import { deviceApi } from "../../api/devices.js";
 import { thingApi } from "../../api/things.js";
+import "./confirm-modal.js";
+import {
+  renderDeviceDetail as renderDeviceDetailFn,
+  renderDetailProperties as renderDetailPropertiesFn,
+  renderDetailCommands as renderDetailCommandsFn,
+  renderDetailEvents as renderDetailEventsFn,
+  renderDetailAlarms as renderDetailAlarmsFn,
+  renderDetailKnowledge as renderDetailKnowledgeFn,
+  renderHistoryDialog as renderHistoryDialogFn,
+  drawHistoryChart as drawHistoryChartFn,
+} from "./things-detail.js";
+import {
+  renderWizard as renderWizardFn,
+  renderWizardTemplateSelection as renderWizardTemplateSelectionFn,
+  renderWizardDeviceInfo as renderWizardDeviceInfoFn,
+  renderWizardConfigField as renderWizardConfigFieldFn,
+} from "./things-wizard.js";
 import { driverApi } from "../../api/drivers.js";
 import { templateApi } from "../../api/templates.js";
 import { tagApi } from "../../api/tags.js";
@@ -10,7 +27,7 @@ import { eventApi } from "../../api/events.js";
 import { alarmApi } from "../../api/alarms.js";
 import { deviceCache } from "../../stores/device-cache.js";
 import { i18n, t } from "../../i18n/index.js";
-import type { Device, DeviceProfile, DeviceProperty, CreateDeviceRequest, DriverConfigOption, Tag, DeviceEvent } from "../../types/index.js";
+import type { Device, DeviceProfile, CreateDeviceRequest, DriverConfigOption, Tag } from "../../types/index.js";
 import type { AlarmRule, AlarmLevel, RuleType, AlarmCondition, ComparisonOperator, ChangeType, LogicalOperator, NotificationChannelType, CreateAlarmRuleRequest, UpdateAlarmRuleRequest } from "../../types/index.js";
 import { success, error as toastError } from "../components/toast.js";
 import { icons } from "../icons.js";
@@ -74,11 +91,11 @@ function transformTemplate(raw: any): ProcessedTemplate {
   };
 }
 
-function isFieldRequired(deviceInfo: DeviceInfo | undefined, fieldName: string): boolean {
+export function isFieldRequired(deviceInfo: DeviceInfo | undefined, fieldName: string): boolean {
   return deviceInfo?.requiredFields?.includes(fieldName) || false;
 }
 
-function getLocalizedText(obj: Record<string, string> | undefined, fallback: string): string {
+export function getLocalizedText(obj: Record<string, string> | undefined, fallback: string): string {
   if (!obj || typeof obj !== "object") return fallback;
   const locale = i18n.getLocale();
   if (locale.startsWith("zh")) {
@@ -87,7 +104,7 @@ function getLocalizedText(obj: Record<string, string> | undefined, fallback: str
   return obj["en"] || obj["zh"] || Object.values(obj)[0] || fallback;
 }
 
-const CATEGORY_LABELS: Record<string, string> = {
+export const CATEGORY_LABELS: Record<string, string> = {
   sensors: "传感器",
   controllers: "控制器",
   cameras: "摄像头",
@@ -95,7 +112,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   others: "其他",
 };
 
-const CATEGORY_ICONS: Record<string, ReturnType<typeof html>> = {
+export const CATEGORY_ICONS: Record<string, ReturnType<typeof html>> = {
   sensors: html`
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
       <path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z" />
@@ -144,131 +161,254 @@ type ViewMode = "table" | "grid";
 @customElement("view-things")
 export class DevicesView extends SignalWatcher(LitElement) {
   @state() loading = true;
+
   @state() error = "";
+
   @state() devices: Device[] = [];
+
   @state() total = 0;
+
   @state() totalPages = 0;
+
   @state() page = 1;
+
   @state() pageSize = 20;
+
   @state() searchName = "";
+
   @state() selectedDevice: DeviceProfile | null = null;
+
   @state() detailLoading = false;
+
   @state() detailTab: string = "properties";
 
+
   // View mode
+
   @state() viewMode: ViewMode = "grid";
 
+
   // Filters
+
   @state() filterStatus = "";
+
   @state() filterProtocol = "";
 
+
   // Create/Edit modal
+
   @state() showModal = false;
+
   @state() editingDevice: Device | null = null;
+
   @state() showPairingDialog = false;
+
   @state() saving = false;
+
   @state() formName = "";
+
   @state() formType = "";
+
   @state() formAddress = "";
+
   @state() formDescription = "";
+
   @state() formManufacturer = "";
+
   @state() formModel = "";
+
   @state() formProtocol = "";
+
   @state() formPosition = "";
+
   @state() formPort = "";
+
   @state() formDriver = "";
+
   @state() formDriverConfig: Record<string, string> = {};
+
   @state() formDriverConfigOptions: DriverConfigOption[] = [];
+
   @state() formDriverConfigLoading = false;
+
   @state() formProperties: { name: string; displayName?: string; value: any; dataType: string; unit?: string; isReadOnly?: boolean; minValue?: number; maxValue?: number; description?: string }[] = [];
+
   @state() formModalTab: 'basic' | 'driver' | 'properties' | 'commands' = 'basic';
+
   @state() formCommands: { name: string; description?: string; parameters?: string }[] = [];
+
   @state() formProfileLoading = false;
 
+
   // Alarm rule management
+
   @state() alarmRules: AlarmRule[] = [];
+
   @state() rulesLoading = false;
+
   @state() showRuleModal = false;
+
   @state() editingRule: AlarmRule | null = null;
+
   @state() ruleSaving = false;
+
   // Device alarm list
+
   @state() deviceAlarms: import("../../types/index.js").Alarm[] = [];
+
   @state() alarmsLoading = false;
+
   // Rule form
+
   @state() ruleFormName = "";
+
   @state() ruleFormDesc = "";
+
   @state() ruleFormPropertyId = "";
+
   @state() ruleFormType: RuleType = "threshold";
+
   @state() ruleFormLevel: AlarmLevel = "Warning";
+
   @state() ruleFormCondition: AlarmCondition = { type: "threshold", operator: "greater_than", value: 0 };
+
   // Threshold/range
+
   @state() ruleFormOperator: ComparisonOperator = "greater_than";
+
   @state() ruleFormValue = 0;
+
   @state() ruleFormMin = 0;
+
   @state() ruleFormMax = 100;
+
   // Change
+
   @state() ruleFormChangeType: ChangeType = "any";
+
   @state() ruleFormChangeThreshold = 10;
+
   @state() ruleFormChangeWindow = 300;
+
   // Composite
+
   @state() ruleFormLogicOp: LogicalOperator = "and";
+
   @state() ruleCompositeConditions: AlarmCondition[] = [];
+
   // Notification
+
   @state() ruleFormNotifyEnabled = false;
+
   @state() ruleFormNotifyChannels: NotificationChannelType[] = [];
+
   @state() ruleFormNotifyRecipients = "";
 
+
   // Wizard (2-step template-based)
+
   @state() showWizard = false;
+
   @state() wizardStep: "template" | "device" = "template";
+
   @state() wizardSaving = false;
+
   @state() wizTemplates: ProcessedTemplate[] = [];
+
   @state() wizTemplateLoading = false;
+
   @state() wizTemplateSearch = "";
+
   @state() wizSelectedTemplate: ProcessedTemplate | null = null;
+
   @state() wizName = "";
+
   @state() wizDescription = "";
+
   @state() wizAddress = "";
+
   @state() wizPosition = "";
+
   @state() wizDriver = "";
+
   @state() wizDriverConfig: Record<string, string> = {};
+
   @state() wizConfigOptions: DriverConfigOption[] = [];
+
   @state() wizConfigLoading = false;
+
   @state() wizValidationErrors: Record<string, string> = {};
+
   @state() driverNames: string[] = [];
+
   @state() wizUnassignedResources: any[] = [];
+
   @state() wizSelectedResourceIds: Set<string> = new Set();
 
+
   // Command execution
+
   @state() executingCommand = "";
 
+  @state() confirmModalOpen = false;
+
+  @state() confirmLoading = false;
+
+  @state() upgradeBannerDismissed = localStorage.getItem("thing-upgrade-banner-dismissed") === "1";
+
+  private pendingAction: { token: string; thingId: string; thingName: string; actionName: string; params: Record<string, string> } | null = null;
+
+
   // Tags
+
   @state() allTags: Tag[] = [];
+
   @state() editingTagsDeviceId: string | null = null;
+
   @state() tagSearchKeyword = "";
+
   @state() tagSaving = false;
+
   @state() tagCreating = false;
+
   private _boundCloseTagEditor = () => { this.editingTagsDeviceId = null; };
+
   private _unsubI18n?: () => void;
 
+
   // Property history dialog
+
   @state() showHistoryDialog = false;
+
   @state() historyPropertyName = "";
+
   @state() historyPropertyUnit = "";
+
   @state() historyLoading = false;
+
   @state() historyData: { time: string; value: number }[] = [];
+
   @state() historyRange: string = "1h";
+
   @state() historyCustomStart = "";
+
   @state() historyCustomEnd = "";
+
   private historyDeviceId = "";
+
   private _boundHandleDeviceUpdated: EventListener = () => {};
 
+
   // Focus management for modals
+
   private modalLastFocus?: Element;
+
   private historyLastFocus?: Element;
+
   private wizardLastFocus?: Element;
 
-  private handleModalKeydown(e: KeyboardEvent, closeFn: () => void) {
+
+  handleModalKeydown(e: KeyboardEvent, closeFn: () => void) {
     if (e.key === "Escape") {
       e.preventDefault();
       closeFn();
@@ -298,6 +438,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }
   }
 
+
   private focusFirst(container: HTMLElement, delay = 0) {
     setTimeout(() => {
       const el = container.querySelector<HTMLElement>(
@@ -307,9 +448,11 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }, delay);
   }
 
+
   createRenderRoot() {
     return this;
   }
+
 
   updated(changedProperties: Map<string, unknown>) {
     super.updated(changedProperties);
@@ -317,6 +460,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       requestAnimationFrame(() => this.drawHistoryChart());
     }
   }
+
 
   connectedCallback() {
     super.connectedCallback();
@@ -343,6 +487,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.loadAllTags();
   }
 
+
   disconnectedCallback() {
     super.disconnectedCallback();
     this._unsubI18n?.();
@@ -351,7 +496,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
     document.removeEventListener("device-updated", this._boundHandleDeviceUpdated);
   }
 
+
   // === Data Loading ===
+
 
   async loadDevices() {
     this.loading = true;
@@ -379,6 +526,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       this.loading = false;
     }
   }
+
 
   async loadDeviceDetail(id: string) {
     this.detailLoading = true;
@@ -426,6 +574,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }
   }
 
+
   async loadDriverNames() {
     try {
       const res = await driverApi.getDriverNames();
@@ -437,6 +586,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       // non-critical
     }
   }
+
 
   async loadDriverConfig(driverName: string) {
     this.wizConfigLoading = true;
@@ -467,7 +617,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }
   }
 
+
   // === Tags ===
+
 
   async loadAllTags() {
     try {
@@ -478,10 +630,12 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }
   }
 
+
   toggleTagEditor(deviceId: string) {
     this.editingTagsDeviceId = this.editingTagsDeviceId === deviceId ? null : deviceId;
     this.tagSearchKeyword = "";
   }
+
 
   async toggleTag(device: Device, tag: Tag) {
     if (this.tagSaving) return;
@@ -501,6 +655,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       this.tagSaving = false;
     }
   }
+
 
   async createAndBindTag(device: Device, name: string) {
     if (this.tagCreating || !name.trim()) return;
@@ -527,13 +682,16 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }
   }
 
+
   // === Navigation ===
+
 
   navigateToDevice(id: string) {
     window.history.pushState({}, "", `/things/${id}`);
     window.dispatchEvent(new PopStateEvent("popstate"));
     this.loadDeviceDetail(id);
   }
+
 
   backToList() {
     this.selectedDevice = null;
@@ -543,6 +701,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.loadDevices();
   }
 
+
   switchDetailTab(key: string) {
     this.detailTab = key;
     if (key === "alarms") {
@@ -550,6 +709,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       this.loadDeviceAlarms();
     }
   }
+
 
   async loadDeviceAlarms() {
     const deviceId = this.selectedDevice?.device?.id;
@@ -567,7 +727,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }
   }
 
+
   // ===== Alarm Rule Management =====
+
 
   async loadAlarmRules() {
     const deviceId = this.selectedDevice?.device?.id;
@@ -584,11 +746,13 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }
   }
 
+
   openNewRule() {
     this.editingRule = null;
     this.resetRuleForm();
     this.showRuleModal = true;
   }
+
 
   openEditRule(rule: AlarmRule) {
     this.editingRule = rule;
@@ -619,6 +783,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.showRuleModal = true;
   }
 
+
   resetRuleForm() {
     this.ruleFormName = "";
     this.ruleFormDesc = "";
@@ -639,10 +804,12 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.ruleFormNotifyRecipients = "";
   }
 
+
   closeRuleModal() {
     this.showRuleModal = false;
     this.editingRule = null;
   }
+
 
   buildCondition(): AlarmCondition {
     switch (this.ruleFormType) {
@@ -658,6 +825,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
         return { type: "threshold", operator: "greater_than", value: 0 };
     }
   }
+
 
   async saveRule() {
     if (!this.ruleFormName.trim()) {
@@ -710,6 +878,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }
   }
 
+
   async deleteRule(rule: AlarmRule) {
     if (!confirm(`确定删除规则「${rule.name}」吗？`)) return;
     try {
@@ -721,6 +890,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }
   }
 
+
   async toggleRule(rule: AlarmRule) {
     try {
       await alarmApi.toggleRule(rule.id, !rule.isEnabled);
@@ -731,6 +901,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }
   }
 
+
   addCompositeCondition() {
     this.ruleCompositeConditions = [
       ...this.ruleCompositeConditions,
@@ -738,15 +909,18 @@ export class DevicesView extends SignalWatcher(LitElement) {
     ];
   }
 
+
   removeCompositeCondition(index: number) {
     this.ruleCompositeConditions = this.ruleCompositeConditions.filter((_, i) => i !== index);
   }
+
 
   updateCompositeCondition(index: number, cond: AlarmCondition) {
     this.ruleCompositeConditions = this.ruleCompositeConditions.map((c, i) =>
       i === index ? cond : c
     );
   }
+
 
   toggleChannel(channel: NotificationChannelType) {
     if (this.ruleFormNotifyChannels.includes(channel)) {
@@ -756,10 +930,12 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }
   }
 
+
   isNumericType(dataType: string): boolean {
     const dt = dataType?.toLowerCase() || "";
     return ["int", "integer", "float", "double", "number", "long", "short", "decimal", "byte"].some(t => dt.includes(t));
   }
+
 
   async openPropertyHistory(name: string, unit: string) {
     const deviceId = this.selectedDevice?.device?.id;
@@ -780,6 +956,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       if (overlay) this.focusFirst(overlay as HTMLElement, 50);
     });
   }
+
 
   async loadHistoryData() {
     if (!this.historyDeviceId || !this.historyPropertyName) return;
@@ -838,6 +1015,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }
   }
 
+
   onHistoryRangeChange(range: string) {
     this.historyRange = range;
     if (range !== "custom") {
@@ -845,10 +1023,12 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }
   }
 
+
   onHistoryCustomTimeApply() {
     if (!this.historyCustomStart && !this.historyCustomEnd) return;
     this.loadHistoryData();
   }
+
 
   closeHistoryDialog() {
     this.showHistoryDialog = false;
@@ -866,158 +1046,12 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.historyLastFocus = undefined;
   }
 
-  renderHistoryDialog() {
-    if (!this.showHistoryDialog) return nothing;
-
-    const ranges = [
-      { key: "30m", label: "30分钟" },
-      { key: "1h", label: "1小时" },
-      { key: "5h", label: "5小时" },
-      { key: "24h", label: "24小时" },
-      { key: "custom", label: "自定义" },
-    ];
-
-    return html`
-      <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="历史曲线" @click=${this.closeHistoryDialog} @keydown=${(e: KeyboardEvent) => this.handleModalKeydown(e, this.closeHistoryDialog)}>
-        <div class="modal modal--wide" @click=${(e: Event) => e.stopPropagation()}>
-          <div class="modal-header">
-            <span>${this.historyPropertyName}${this.historyPropertyUnit ? ` (${this.historyPropertyUnit})` : ""} — 历史曲线</span>
-            <button class="btn btn--icon" aria-label="关闭" @click=${this.closeHistoryDialog}>×</button>
-          </div>
-          <div class="modal-body history-modal-body">
-            <!-- Time range selector -->
-            <div class="time-range-bar">
-              ${ranges.map(r => html`
-                <button
-                  class="time-range-btn ${this.historyRange === r.key ? 'time-range-btn--active' : ''}"
-                  @click=${() => this.onHistoryRangeChange(r.key)}
-                >${r.label}</button>
-              `)}
-            </div>
-            ${this.historyRange === "custom" ? html`
-              <div class="time-range-inputs">
-                <label>开始</label>
-                <input type="datetime-local"
-                  .value=${this.historyCustomStart}
-                  @change=${(e: Event) => { this.historyCustomStart = (e.target as HTMLInputElement).value; }}
-                />
-                <label>结束</label>
-                <input type="datetime-local"
-                  .value=${this.historyCustomEnd}
-                  @change=${(e: Event) => { this.historyCustomEnd = (e.target as HTMLInputElement).value; }}
-                />
-                <button class="btn time-range-query-btn"
-                  @click=${this.onHistoryCustomTimeApply}
-                >查询</button>
-              </div>
-            ` : nothing}
-            <!-- Chart -->
-            ${this.historyLoading
-              ? html`<div class="history-chart-placeholder">加载中...</div>`
-              : this.historyData.length === 0
-                ? html`<div class="history-chart-placeholder">暂无历史数据</div>`
-                : html`<div id="history-chart-container" class="history-chart-container">
-                    <canvas id="history-chart"></canvas>
-                  </div>`
-            }
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  drawHistoryChart() {
-    const canvas = this.querySelector("#history-chart") as HTMLCanvasElement;
-    if (!canvas || this.historyData.length === 0) return;
-
-    const container = this.querySelector("#history-chart-container") as HTMLElement;
-    if (!container) return;
-
-    const dpr = window.devicePixelRatio || 1;
-    const w = container.clientWidth;
-    const h = container.clientHeight;
-    canvas.width = w * dpr;
-    canvas.height = h * dpr;
-    canvas.style.width = w + "px";
-    canvas.style.height = h + "px";
-
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.scale(dpr, dpr);
-
-    const data = this.historyData;
-    const padding = { top: 24, right: 20, bottom: 36, left: 56 };
-    const chartW = w - padding.left - padding.right;
-    const chartH = h - padding.top - padding.bottom;
-
-    const values = data.map(d => d.value);
-    let minVal = Math.min(...values);
-    let maxVal = Math.max(...values);
-    if (minVal === maxVal) { minVal -= 1; maxVal += 1; }
-    const range = maxVal - minVal;
-
-    const cs = getComputedStyle(document.documentElement);
-    const textColor = cs.getPropertyValue("--muted").trim() || "#888";
-    const lineColor = cs.getPropertyValue("--accent").trim() || "#6366f1";
-    const gridColor = cs.getPropertyValue("--border").trim() || "#e5e7eb";
-
-    ctx.clearRect(0, 0, w, h);
-
-    // Grid lines + Y labels
-    ctx.strokeStyle = gridColor;
-    ctx.lineWidth = 0.5;
-    ctx.fillStyle = textColor;
-    ctx.font = "11px system-ui, sans-serif";
-    ctx.textAlign = "right";
-    const yTicks = 5;
-    for (let i = 0; i <= yTicks; i++) {
-      const y = padding.top + (chartH / yTicks) * i;
-      const val = maxVal - (range / yTicks) * i;
-      ctx.beginPath();
-      ctx.moveTo(padding.left, y);
-      ctx.lineTo(w - padding.right, y);
-      ctx.stroke();
-      ctx.fillText(val.toFixed(1), padding.left - 6, y + 4);
-    }
-
-    // X labels
-    ctx.textAlign = "center";
-    const xLabelCount = Math.min(data.length, 6);
-    const xStep = Math.max(1, Math.floor(data.length / xLabelCount));
-    for (let i = 0; i < data.length; i += xStep) {
-      const x = padding.left + (chartW / (data.length - 1)) * i;
-      const label = data[i].time.slice(5, 16);
-      ctx.fillText(label, x, h - padding.bottom + 16);
-    }
-
-    // Line
-    ctx.strokeStyle = lineColor;
-    ctx.lineWidth = 2;
-    ctx.lineJoin = "round";
-    ctx.beginPath();
-    for (let i = 0; i < data.length; i++) {
-      const x = padding.left + (chartW / (data.length - 1)) * i;
-      const y = padding.top + chartH - ((data[i].value - minVal) / range) * chartH;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
-    ctx.stroke();
-
-    // Dots
-    ctx.fillStyle = lineColor;
-    for (let i = 0; i < data.length; i++) {
-      const x = padding.left + (chartW / (data.length - 1)) * i;
-      const y = padding.top + chartH - ((data[i].value - minVal) / range) * chartH;
-      ctx.beginPath();
-      ctx.arc(x, y, 3, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
 
   goToPage(p: number) {
     this.page = p;
     this.loadDevices();
   }
+
 
   private getPaginationItems(): (number | string)[] {
     const total = this.totalPages;
@@ -1034,7 +1068,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
     return [1, '...', current - 1, current, current + 1, '...', total];
   }
 
+
   // === Helpers ===
+
 
   statusLabel(status?: string): string {
     switch (status) {
@@ -1046,6 +1082,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }
   }
 
+
   statusColor(status?: string): string {
     switch (status) {
       case "online": return "var(--success)";
@@ -1056,7 +1093,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }
   }
 
+
   // === Edit Modal ===
+
 
   openCreate() {
     this.modalLastFocus = document.activeElement ?? undefined;
@@ -1083,6 +1122,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       if (overlay) this.focusFirst(overlay as HTMLElement, 50);
     });
   }
+
 
   async openEdit(d: Device) {
     this.modalLastFocus = document.activeElement ?? undefined;
@@ -1140,6 +1180,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     });
   }
 
+
   closeModal() {
     this.showModal = false;
     this.editingDevice = null;
@@ -1149,6 +1190,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }
     this.modalLastFocus = undefined;
   }
+
 
   async loadFormDriverConfig(driverName: string) {
     if (!driverName) { this.formDriverConfigOptions = []; return; }
@@ -1167,12 +1209,14 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }
   }
 
+
   onFormDriverChange(e: Event) {
     const driverName = (e.target as HTMLSelectElement).value;
     this.formDriver = driverName;
     this.formDriverConfig = {};
     this.loadFormDriverConfig(driverName);
   }
+
 
   async saveForm() {
     if (!this.formName.trim()) return;
@@ -1220,6 +1264,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }
   }
 
+
   async deleteDevice(d: Device) {
     if (!confirm(`确定要删除物 "${d.displayName || d.name}" 吗？`)) return;
     try {
@@ -1231,6 +1276,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }
   }
 
+
   async exportDeviceTemplate(d: Device) {
     if (!confirm(`将物 "${d.name}" 导出为模板？`)) return;
     try {
@@ -1240,6 +1286,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       toastError(e.message || "导出失败");
     }
   }
+
 
   async cloneDevice(d: Device) {
     if (!confirm(`克隆物 "${d.name}"？`)) return;
@@ -1252,21 +1299,108 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }
   }
 
+
   async executeCommand(deviceId: string, commandName: string) {
     if (this.executingCommand) return;
     this.executingCommand = commandName;
     try {
-      await deviceApi.executeCommand(deviceId, commandName);
-      success(`命令 "${commandName}" 执行成功`);
-      await this.loadDeviceDetail(deviceId);
+      const res = await deviceApi.executeCommand(deviceId, commandName);
+      const body = res?.result ?? res;
+      if (body?.status === "confirmation_required") {
+        const d = this.selectedDevice?.device;
+        this.pendingAction = {
+          token: body.token,
+          thingId: deviceId,
+          thingName: d?.displayName || d?.name || deviceId,
+          actionName: commandName,
+          params: (body.params ?? {}) as Record<string, string>,
+        };
+        this.confirmModalOpen = true;
+      } else {
+        success(`命令 "${commandName}" 执行成功`);
+        await this.loadDeviceDetail(deviceId);
+      }
     } catch (err: any) {
       toastError(err.message || "命令执行失败");
     } finally {
       this.executingCommand = "";
     }
+    this.requestUpdate();
   }
 
+
+  async onConfirmAction() {
+    if (!this.pendingAction) return;
+    this.confirmLoading = true;
+    this.requestUpdate();
+    try {
+      await thingApi.confirmAction(
+        this.pendingAction.thingId,
+        this.pendingAction.actionName,
+        this.pendingAction.token,
+      );
+      success(`命令 "${this.pendingAction.actionName}" 执行成功`);
+      this.confirmModalOpen = false;
+      const thingId = this.pendingAction.thingId;
+      this.pendingAction = null;
+      await this.loadDeviceDetail(thingId);
+    } catch (err: any) {
+      toastError(err.message || "命令执行失败");
+    } finally {
+      this.confirmLoading = false;
+      this.requestUpdate();
+    }
+  }
+
+
+  onCancelConfirm() {
+    this.confirmModalOpen = false;
+    this.pendingAction = null;
+    this.requestUpdate();
+  }
+
+
+  private isDangerAction(name: string): boolean {
+    return /reboot|shutdown|reset|delete|restart|重启|停止|删除|复位/i.test(name);
+  }
+
+
+  renderConfirmModal() {
+    return html`
+      <confirm-modal
+        .open=${this.confirmModalOpen}
+        .actionName=${this.pendingAction?.actionName ?? ""}
+        .thingName=${this.pendingAction?.thingName ?? ""}
+        .parameters=${this.pendingAction?.params ?? {}}
+        .danger=${this.isDangerAction(this.pendingAction?.actionName ?? "")}
+        .loading=${this.confirmLoading}
+        @confirm=${this.onConfirmAction}
+        @cancel=${this.onCancelConfirm}
+      ></confirm-modal>
+    `;
+  }
+
+
+  dismissUpgradeBanner() {
+    localStorage.setItem("thing-upgrade-banner-dismissed", "1");
+    this.upgradeBannerDismissed = true;
+    this.requestUpdate();
+  }
+
+
+  renderUpgradeBanner() {
+    if (this.upgradeBannerDismissed || this.selectedDevice) return nothing;
+    return html`
+      <div class="card" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;border-left:3px solid var(--cyan,#00d4ff);">
+        <span>设备已升级为「物」，全部数据已迁移。物可以是设备，也可以是车间、产线、园区等概念节点。</span>
+        <button class="btn btn--icon" aria-label="关闭提示" @click=${this.dismissUpgradeBanner}>&times;</button>
+      </div>
+    `;
+  }
+
+
   // === Wizard (2-step template-based) ===
+
 
   openWizard() {
     this.wizardLastFocus = document.activeElement ?? undefined;
@@ -1293,6 +1427,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     });
   }
 
+
   async loadUnassignedResources() {
     try {
       const res = await thingApi.listUnassignedResources();
@@ -1302,6 +1437,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }
   }
 
+
   closeWizard() {
     this.showWizard = false;
     const el = this.wizardLastFocus as HTMLElement | undefined;
@@ -1310,6 +1446,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }
     this.wizardLastFocus = undefined;
   }
+
 
   async loadTemplates() {
     this.wizTemplateLoading = true;
@@ -1324,6 +1461,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       this.wizTemplateLoading = false;
     }
   }
+
 
   selectTemplate(template: ProcessedTemplate) {
     this.wizSelectedTemplate = template;
@@ -1349,10 +1487,12 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.wizardStep = "device";
   }
 
+
   wizardBack() {
     this.wizardStep = "template";
     this.wizValidationErrors = {};
   }
+
 
   async onWizardDriverSelect(driverName: string) {
     this.wizDriver = driverName;
@@ -1362,6 +1502,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       await this.loadDriverConfig(driverName);
     }
   }
+
 
   get filteredWizardTemplates(): ProcessedTemplate[] {
     const q = this.wizTemplateSearch.trim().toLowerCase();
@@ -1374,6 +1515,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     });
   }
 
+
   get wizardTemplatesByCategory(): Record<string, ProcessedTemplate[]> {
     const groups: Record<string, ProcessedTemplate[]> = {};
     for (const t of this.filteredWizardTemplates) {
@@ -1383,6 +1525,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }
     return groups;
   }
+
 
   validateWizardForm(): boolean {
     const errors: Record<string, string> = {};
@@ -1415,6 +1558,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.wizValidationErrors = errors;
     return Object.keys(errors).length === 0;
   }
+
 
   async submitWizard() {
     if (!this.wizSelectedTemplate) {
@@ -1480,7 +1624,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }
   }
 
+
   // === Render ===
+
 
   render() {
     if (this.loading) {
@@ -1502,11 +1648,12 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }
 
     if (this.selectedDevice) {
-      return this.renderDeviceDetail();
+      return html`${this.renderDeviceDetail()}${this.renderConfirmModal()}`;
     }
 
-    return this.renderDeviceList();
+    return html`${this.renderUpgradeBanner()}${this.renderDeviceList()}${this.renderConfirmModal()}`;
   }
+
 
   renderToolbar() {
     return html`
@@ -1554,6 +1701,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     `;
   }
 
+
   renderDeviceList() {
     return html`
       <div class="device-list">
@@ -1573,6 +1721,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       </div>
     `;
   }
+
 
   renderPagination() {
     if (this.total === 0) return nothing;
@@ -1612,6 +1761,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       </div>
     `;
   }
+
 
   renderTableView() {
     const devices = this.devices;
@@ -1663,6 +1813,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     `;
   }
 
+
   renderGridView() {
     const devices = this.devices;
     if (devices.length === 0) {
@@ -1676,6 +1827,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       </div>
     `;
   }
+
 
   renderTableCellTags(d: Device) {
     const deviceTags = d.tags || [];
@@ -1696,6 +1848,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       ${isEditingTags ? this.renderTagPopover(d, deviceTags) : nothing}
     `;
   }
+
 
   renderTagPopover(d: Device, deviceTags: Tag[]) {
     const keyword = this.tagSearchKeyword.trim();
@@ -1754,6 +1907,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     `;
   }
 
+
   renderDeviceCard(d: Device) {
     const deviceTags = d.tags || [];
     const visibleTags = deviceTags.slice(0, 3);
@@ -1774,7 +1928,8 @@ export class DevicesView extends SignalWatcher(LitElement) {
           <!-- Header -->
           <div class="device-card__header">
             <div class="device-card__header-left">
-              <span class="status-dot status-dot--sm" style="background: ${this.statusColor(d.status)};"></span>
+              <span class="status-dot status-dot--sm" style="background: ${this.statusColor(d.status)};" aria-label="${this.statusLabel(d.status)}"></span>
+              <span class="status-badge__label">${this.statusLabel(d.status)}</span>
               <span class="device-card__title" title="${d.displayName || d.name}">${d.displayName || d.name}</span>
               ${d.linked_gateway ? html`<span class="device-card__gateway-tag">via gateway</span>` : nothing}
             </div>
@@ -1795,8 +1950,11 @@ export class DevicesView extends SignalWatcher(LitElement) {
           <!-- Info -->
           <div
             class="device-card__body"
+            role="button"
+            tabindex="0"
             title="${infoTooltip}"
             @click=${() => this.navigateToDevice(d.id)}
+            @keydown=${(e: KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); this.navigateToDevice(d.id); } }}
           >
             <div class="device-card__info">
               ${d.deviceType ? html`
@@ -1845,425 +2003,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
     `;
   }
 
-  renderDeviceDetail() {
-    const profile = this.selectedDevice;
-    if (!profile) return nothing;
-    const d = profile.device;
-    const ov = profile.overview;
-    const deviceTags: Tag[] = (d as any).tags || [];
-
-    return html`
-      <!-- Header: name, status, type, tags, edit -->
-      <div class="card detail-header">
-        <div class="detail-header__row">
-          <div class="detail-header__main">
-            <button class="btn btn--ghost btn--sm detail-header__back" @click=${this.backToList}>
-              &larr; 返回
-            </button>
-            <h2 class="detail-header__title">${d.displayName || d.name}</h2>
-            <span class="status-badge status-badge--subtle">
-              <span class="status-dot status-dot--sm" style="background: ${this.statusColor(d.status)};"></span>
-              <span class="status-badge__label">${this.statusLabel(d.status)}</span>
-            </span>
-            ${d.deviceType ? html`
-              <span class="type-tag">${d.deviceType}</span>
-            ` : nothing}
-          </div>
-          <button class="btn btn--ghost btn--sm" @click=${() => this.openEdit(d)}>编辑</button>
-        </div>
-        ${deviceTags.length > 0 ? html`
-          <div class="detail-header__tags">
-            ${deviceTags.map((t: Tag) => html`
-              <span class="tag-pill">${t.name}</span>
-            `)}
-          </div>
-        ` : nothing}
-      </div>
-
-      <!-- Mini stat grid -->
-      <div class="detail-stat-grid">
-        <div class="stat">
-          <div class="stat-label">属性总数</div>
-          <div class="stat-value">${ov.totalProperties}</div>
-        </div>
-        <div class="stat">
-          <div class="stat-label">在线属性</div>
-          <div class="stat-value ok">${ov.onlineProperties}</div>
-        </div>
-        <div class="stat">
-          <div class="stat-label">命令数</div>
-          <div class="stat-value">${ov.totalCommands}</div>
-        </div>
-        <div class="stat">
-          <div class="stat-label">活跃告警</div>
-          <div class="stat-value ${ov.activeAlarms > 0 ? 'warn' : ''}">${ov.activeAlarms}</div>
-        </div>
-      </div>
-
-      <!-- Tab bar -->
-      <div class="detail-tabs">
-        <button class="detail-tab ${this.detailTab === 'properties' ? 'active' : ''}" @click=${() => this.switchDetailTab('properties')}>${icons.barChart} 属性</button>
-        <button class="detail-tab ${this.detailTab === 'commands' ? 'active' : ''}" @click=${() => this.switchDetailTab('commands')}>${icons.zap} 命令</button>
-        <button class="detail-tab ${this.detailTab === 'events' ? 'active' : ''}" @click=${() => this.switchDetailTab('events')}>${icons.scrollText} 事件</button>
-        <button class="detail-tab ${this.detailTab === 'alarms' ? 'active' : ''}" @click=${() => this.switchDetailTab('alarms')}>${icons.bug} 告警</button>
-        <button class="detail-tab ${this.detailTab === 'knowledge' ? 'active' : ''}" @click=${() => this.switchDetailTab('knowledge')}>${icons.fileText} 知识</button>
-      </div>
-
-      <!-- Tab content -->
-      ${this.detailTab === 'properties' ? this.renderDetailProperties() : nothing}
-      ${this.detailTab === 'commands' ? this.renderDetailCommands() : nothing}
-      ${this.detailTab === 'events' ? this.renderDetailEvents() : nothing}
-      ${this.detailTab === 'alarms' ? this.renderDetailAlarms() : nothing}
-      ${this.detailTab === 'knowledge' ? this.renderDetailKnowledge() : nothing}
-      ${this.showModal ? this.renderModal() : nothing}
-      ${this.showHistoryDialog ? this.renderHistoryDialog() : nothing}
-      ${this.showResourceModal ? this.renderResourceModal() : nothing}
-    `;
-  }
-
-  renderDetailProperties() {
-    const profile = this.selectedDevice;
-    if (!profile) return html`<div class="card empty-center">暂无属性数据</div>`;
-
-    // 从缓存读取（SSE 推送的实时数据），用 profile.properties 的元数据补充缺失字段
-    const cached = deviceCache.$devicesMap.get().get(profile.device.id);
-    let properties: DeviceProperty[] = [];
-
-    if (cached?.properties?.length) {
-      // 有缓存：用 API 属性元数据 + 缓存实时值
-      const apiMap = new Map((profile.properties ?? []).map(p => [p.name, p]));
-      properties = cached.properties.map(cachedProp => {
-        const apiProp = apiMap.get(cachedProp.name);
-        return apiProp
-          ? { ...apiProp, currentValue: cachedProp.currentValue ?? cachedProp.value, updatedAt: cachedProp.updatedAt }
-          : cachedProp;
-      });
-    } else if (profile.properties?.length) {
-      // 无缓存：用 API 属性
-      properties = profile.properties;
-    }
-
-    if (properties.length === 0) {
-      return html`<div class="card empty-center">暂无属性数据</div>`;
-    }
-
-    return html`
-      <div class="card prop-table-wrap">
-        <table class="data-table--compact">
-          <thead>
-            <tr>
-              <th>属性</th>
-              <th>名称</th>
-              <th>当前值</th>
-              <th></th>
-              <th>类型</th>
-              <th class="cell-actions">读写</th>
-              <th>更新时间</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${properties.map((p: DeviceProperty) => html`
-              <tr>
-                <td>${p.name}</td>
-                <td>${p.displayName || p.name}</td>
-                <td>
-                  <span class="prop-value">${p.currentValue ?? p.value ?? "-"}</span>
-                  ${p.unit ? html`<span class="prop-unit">${p.unit}</span>` : nothing}
-                </td>
-                <td class="cell-actions">
-                  ${this.isNumericType(p.dataType) ? html`
-                    <button
-                      class="btn btn--icon btn--xs"
-                      title="曲线"
-                      aria-label="历史曲线"
-                      @click=${() => this.openPropertyHistory(p.name, p.unit || "")}
-                    >${icons.trendingUp}</button>
-                  ` : nothing}
-                </td>
-                <td class="prop-type">${p.dataType}</td>
-                <td class="cell-actions">
-                  <span class="${p.isReadOnly ? 'prop-ro-badge' : 'prop-rw-badge'}">
-                    ${p.isReadOnly ? '只读' : '读写'}
-                  </span>
-                </td>
-                <td class="prop-type">${p.updatedAt?.slice(0, 16) || "-"}</td>
-              </tr>
-            `)}
-          </tbody>
-        </table>
-      </div>
-    `;
-  }
-
-  renderDetailCommands() {
-    const profile = this.selectedDevice;
-    if (!profile) return nothing;
-    const d = profile.device;
-
-    if (profile.commands.length === 0) {
-      return html`<div class="card empty-center">暂无命令</div>`;
-    }
-
-    return html`
-      <div class="card command-list-wrap">
-        <div class="command-list">
-          ${profile.commands.map(c => html`
-            <div class="command-item">
-              <div>
-                <div class="command-item__name">${c.name}</div>
-                <div class="command-item__desc">${c.description || "无描述"}</div>
-              </div>
-              <button
-                class="btn btn--primary btn--sm"
-                ?disabled=${this.executingCommand === c.name}
-                @click=${() => this.executeCommand(d.id, c.name)}
-              >
-                ${this.executingCommand === c.name ? "执行中..." : "执行"}
-              </button>
-            </div>
-          `)}
-        </div>
-      </div>
-    `;
-  }
-
-  renderDetailEvents() {
-    const profile = this.selectedDevice;
-    if (!profile) return nothing;
-
-    const events = profile.recentEvents || [];
-    if (events.length === 0) {
-      return html`<div class="card empty-center">暂无事件记录</div>`;
-    }
-
-    const levelClass = (level: string) => {
-      switch (level) {
-        case 'info': return 'event-badge--info';
-        case 'warning': return 'event-badge--warning';
-        case 'error': return 'event-badge--error';
-        case 'critical': return 'event-badge--critical';
-        default: return 'event-badge--info';
-      }
-    };
-
-    const levelLabel = (level: string) => {
-      switch (level) {
-        case 'info': return '信息';
-        case 'warning': return '警告';
-        case 'error': return '错误';
-        case 'critical': return '严重';
-        default: return level;
-      }
-    };
-
-    return html`
-      <div class="card events-list-wrap">
-        ${events.map((ev: DeviceEvent) => html`
-          <div class="event-item">
-            <span class="event-badge ${levelClass(ev.level)}">${levelLabel(ev.level)}</span>
-            <div class="event-item__body">
-              <div class="event-item__title">${ev.title}</div>
-              ${ev.message ? html`<div class="event-item__message">${ev.message}</div>` : nothing}
-            </div>
-            <span class="event-item__time">${ev.createdAt?.slice(0, 16)}</span>
-          </div>
-        `)}
-      </div>
-    `;
-  }
-
-  renderDetailAlarms() {
-    const profile = this.selectedDevice;
-    if (!profile) return nothing;
-    const properties = profile.properties || [];
-
-    return html`
-      <!-- Active alarms — real-time display -->
-      <div class="card" style="margin-top: var(--space-4);">
-        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-3);">
-          <div>
-            <div class="alarm-rules-card__title">实时告警</div>
-            <div class="alarm-rules-card__sub">当前活跃的告警，恢复正常后自动消失</div>
-          </div>
-          <button class="btn btn--ghost btn--xs" @click=${this.loadDeviceAlarms} ?disabled=${this.alarmsLoading}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="vertical-align: -2px;">
-              <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-            </svg>
-          </button>
-        </div>
-        ${this.alarmsLoading
-          ? html`<div class="alarm-rules-card__loading"><span class="loading-spinner"></span> 加载中...</div>`
-          : this.deviceAlarms.length === 0
-            ? html`<div class="alarm-rules-empty">
-                <div class="alarm-rules-empty__text" style="color: var(--success);">🎉 无活跃告警</div>
-                <div class="alarm-rules-empty__hint">一切正常</div>
-              </div>`
-            : html`
-              <div class="alarm-rules-list">
-                ${this.deviceAlarms.map((a: any) => html`
-                  <div class="alarm-rule-item" style="animation: ruleFadeIn 0.35s var(--ease-out) both;">
-                    <div class="alarm-rule-item__main">
-                      <div class="alarm-rule-item__header">
-                        <span class="alarm-rule-badge alarm-rule-badge--${(a.alarmLevel || '').toLowerCase()}">${this.levelLabel2(a.alarmLevel || '')}</span>
-                        <span class="alarm-rule-item__name">${a.message}</span>
-                      </div>
-                      <div class="alarm-rule-item__meta">
-                        <span>${(a.alarmTime || a.createdAt || '').slice(0, 16)}</span>
-                      </div>
-                    </div>
-                  </div>
-                `)}
-              </div>
-            `
-        }
-      </div>
-
-      <!-- Alarm rules section -->
-      <div class="card alarm-rules-card">
-        <div class="alarm-rules-card__header">
-          <div>
-            <div class="alarm-rules-card__title">告警规则</div>
-            <div class="alarm-rules-card__sub">管理物的自动告警规则</div>
-          </div>
-          <button class="btn btn--primary btn--sm" @click=${this.openNewRule}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" class="btn__icon-left">
-              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-            </svg>
-            添加规则
-          </button>
-        </div>
-
-        ${this.rulesLoading
-          ? html`<div class="empty-center alarm-rules-card__loading"><span class="loading-spinner"></span> 加载中...</div>`
-          : this.alarmRules.length === 0
-            ? html`
-              <div class="alarm-rules-empty">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="40" height="40" class="alarm-rules-empty__icon">
-                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-                  <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
-                </svg>
-                <div class="alarm-rules-empty__text">暂无告警规则</div>
-                <div class="alarm-rules-empty__hint">添加规则后，物数据变化将自动触发告警</div>
-              </div>
-            `
-            : html`
-              <div class="alarm-rules-list">
-                ${this.alarmRules.map(rule => {
-                  const condSummary = this.formatCondition(rule.condition);
-                  const propName = properties.find(p => p.id === rule.propertyId)?.displayName || properties.find(p => p.name === rule.propertyId)?.displayName || rule.propertyId || "—";
-                  return html`
-                    <div class="alarm-rule-item ${rule.isEnabled ? '' : 'alarm-rule-item--disabled'}" style="animation: ruleFadeIn 0.35s var(--ease-out) both; animation-delay: ${Math.min(this.alarmRules.indexOf(rule) * 50, 300)}ms;">
-                      <div class="alarm-rule-item__main">
-                        <div class="alarm-rule-item__header">
-                          <span class="alarm-rule-item__name">${rule.name}</span>
-                          <span class="alarm-rule-badge alarm-rule-badge--${rule.alarmLevel.toLowerCase()}">${this.levelLabel2(rule.alarmLevel)}</span>
-                          ${rule.notificationConfig?.enabled
-                            ? html`<span class="alarm-rule-item__notify-icon" title="通知已开启">🔔</span>`
-                            : nothing
-                          }
-                        </div>
-                        <div class="alarm-rule-item__meta">
-                          <span>属性: ${propName}</span>
-                          <span>条件: ${condSummary}</span>
-                        </div>
-                      </div>
-                      <div class="alarm-rule-item__actions">
-                        <label class="toggle-switch" title=${rule.isEnabled ? "已启用" : "已禁用"}>
-                          <input type="checkbox" .checked=${rule.isEnabled} @change=${() => this.toggleRule(rule)} />
-                          <span class="toggle-switch__slider"></span>
-                        </label>
-                        <button class="btn btn--ghost btn--xs" @click=${() => this.openEditRule(rule)}>编辑</button>
-                        <button class="btn btn--ghost btn--xs btn--danger-text" @click=${() => this.deleteRule(rule)}>删除</button>
-                      </div>
-                    </div>
-                  `;
-                })}
-              </div>
-            `
-        }
-      </div>
-
-      <!-- Rule editor modal -->
-      ${this.showRuleModal ? this.renderRuleModal(profile.device.id, properties) : nothing}
-    `;
-  }
-
-  renderDetailKnowledge() {
-    const profile = this.selectedDevice;
-    if (!profile) return nothing;
-    const docs = (profile as any).knowledgeDocs || [];
-
-    return html`
-      <div class="card" style="margin-top: var(--space-4);">
-        <div class="kb-header">
-          <div>
-            <div class="kb-header__title">知识文档</div>
-            <div class="kb-header__sub">${docs.length ? `${docs.length} 个文档` : '上传手册、图纸、数据表等文档'}</div>
-          </div>
-          <button class="btn btn--ghost btn--sm" @click=${this.openAddResourceModal}>
-            <span style="margin-right:4px;">${icons.plus}</span>添加
-          </button>
-        </div>
-        ${docs.length === 0 ? html`
-          <div class="kb-empty">
-            <div class="kb-empty__icon">
-              <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1" width="48" height="48" opacity="0.3">
-                <rect x="8" y="4" width="32" height="40" rx="2" /><line x1="16" y1="16" x2="32" y2="16" /><line x1="16" y1="22" x2="28" y2="22" /><line x1="16" y1="28" x2="24" y2="28" />
-              </svg>
-            </div>
-            <div class="kb-empty__title">还没有文档</div>
-            <div class="kb-empty__hint">点击上方「添加」上传文件或关联已有资源</div>
-          </div>
-        ` : html`
-          <div class="model-grid">
-            ${docs.map((doc: any) => {
-              const docTags = (typeof doc.tags === 'string' ? JSON.parse(doc.tags || '[]') : doc.tags) || [];
-              const visibleTags = docTags.slice(0, 3);
-              const hiddenCount = docTags.length - 3;
-              return html`
-              <div class="device-card__wrap" style="overflow:visible;">
-                <div class="card device-card" style="overflow:visible;contain:none;">
-                  <div class="device-card__header">
-                    <div class="device-card__header-left">
-                      <span class="device-card__title" title="${doc.name}">${doc.name || doc.filePath || '未命名'}</span>
-                      ${doc.createdAt ? html`<span class="device-card__gateway-tag">${doc.createdAt.slice(0, 10)}</span>` : nothing}
-                    </div>
-                    <div class="device-card__actions">
-                      <button class="btn btn--ghost btn--sm device-card__action-btn btn--danger-text" title="移除" @click=${(e: Event) => { e.stopPropagation(); this.removeKnowledgeDoc(doc); }}>${icons.trash2}</button>
-                    </div>
-                  </div>
-                  <div class="device-card__body" @click=${(e: Event) => { e.stopPropagation(); if (this.editingDescId === doc.id) return; this.editingDescId = doc.id; this._editDescValue = doc.description || ''; this.requestUpdate(); }}>
-                    <div class="device-card__info">
-                      ${this.editingDescId === doc.id ? html`
-                        <input class="kb-card__edit-input" .value=${this._editDescValue} placeholder="添加描述…" @input=${(e: Event) => { this._editDescValue = (e.target as HTMLInputElement).value; }}
-                          @keydown=${(e: KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); this.saveDocDesc(doc); } }}
-                          @blur=${() => this.saveDocDesc(doc)} />
-                      ` : html`
-                        ${doc.description ? html`<div class="device-card__info-row"><span class="device-card__info-value">${doc.description}</span></div>`
-                          : html`<div class="device-card__info-row"><span class="device-card__info-value" style="color:var(--muted);font-style:italic;">点击添加描述</span></div>`}
-                      `}
-                      <div class="device-card__info-row">
-                        <span class="device-card__info-label">类型</span>
-                        <span class="device-card__info-value">${doc.resourceType || 'file'}</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div class="device-card__footer" style="cursor:pointer;min-height:28px;position:relative;" @click=${(e: Event) => { e.stopPropagation(); this.editingDocId === doc.id ? (this.editingDocId = null) : this.startEditDoc(doc); }}>
-                    ${visibleTags.map((t: any) => html`<span class="tag-pill">${typeof t === 'string' ? t : t.name || t}</span>`)}
-                    ${hiddenCount > 0 ? html`<span class="tag-pill tag-pill--muted" title="${docTags.slice(3).map((t: any) => typeof t === 'string' ? t : t.name || t).join(', ')}">+${hiddenCount}</span>` : nothing}
-                    ${docTags.length === 0 ? html`<span class="inline-muted" style="font-size: 12px;">添加标签</span>` : nothing}
-                    ${this.editingDocId === doc.id ? this.renderDocTagPopover() : nothing}
-                  </div>
-                </div>
-              </div>
-            `; })}
-          </div>
-        `}
-      </div>
-    `;
-  }
 
   // === Resource Modal (unified: upload + pick existing) ===
+
 
   async removeKnowledgeDoc(doc: any) {
     if (!confirm(`确定移除「${doc.name || doc.filePath || '文档'}」？`)) return;
@@ -2275,6 +2017,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       await this.loadDeviceDetail(thingId);
     } catch (err: any) { toastError(err.message || '移除失败'); }
   }
+
 
   async saveDocDesc(doc: any) {
     if (this._editDescValue === (doc.description || '')) { this.editingDescId = null; return; }
@@ -2290,19 +2033,27 @@ export class DevicesView extends SignalWatcher(LitElement) {
     } catch {}
   }
 
+
   @state() editingDocId: string | null = null;
+
   @state() editingDocTags: string[] = [];
+
   @state() editingDescId: string | null = null;
-  private _editDescValue = '';
+
+  _editDescValue = '';
+
   @state() tagPopoverSearch = '';
 
+
   // Knowledge doc tag editing — reuses device card tag popover pattern
+
   startEditDoc(doc: any) {
     this.editingDocId = doc.id;
     this.editingDocTags = (typeof doc.tags === 'string' ? JSON.parse(doc.tags || '[]') : doc.tags) || [];
     this.tagSearchKeyword = '';
     this.requestUpdate();
   }
+
 
   toggleDocTagString(tagName: string) {
     if (this.editingDocTags.includes(tagName)) {
@@ -2314,6 +2065,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this._saveDocTagsDebounced();
   }
 
+
   createDocTag(tagName: string) {
     if (tagName && !this.editingDocTags.includes(tagName)) {
       this.editingDocTags = [...this.editingDocTags, tagName];
@@ -2323,7 +2075,9 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this._saveDocTagsDebounced();
   }
 
+
   private _docTagSaveTimer: any = null;
+
   private _saveDocTagsDebounced() {
     clearTimeout(this._docTagSaveTimer);
     this._docTagSaveTimer = setTimeout(async () => {
@@ -2343,6 +2097,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       }
     }, 300);
   }
+
 
   renderDocTagPopover() {
     const keyword = this.tagSearchKeyword.trim();
@@ -2376,15 +2131,25 @@ export class DevicesView extends SignalWatcher(LitElement) {
     `;
   }
 
+
   @state() showResourceModal = false;
+
   @state() resourceModalTab: 'upload' | 'existing' | 'text' = 'upload';
+
   @state() uploadFile: File | null = null;
+
   @state() uploadSaving = false;
+
   @state() uploadDragOver = false;
+
   @state() textDocTitle = '';
+
   @state() textDocContent = '';
+
   @state() unassignedResources: any[] = [];
+
   @state() resourcePickLoading = false;
+
 
   openAddResourceModal() {
     this.showResourceModal = true;
@@ -2397,9 +2162,11 @@ export class DevicesView extends SignalWatcher(LitElement) {
     this.loadUnassignedForPicker();
   }
 
+
   closeResourceModal() {
     this.showResourceModal = false;
   }
+
 
   async loadUnassignedForPicker() {
     this.resourcePickLoading = true;
@@ -2409,6 +2176,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     } catch { this.unassignedResources = []; }
     finally { this.resourcePickLoading = false; }
   }
+
 
   async submitTextDoc() {
     if (!this.textDocTitle.trim()) return;
@@ -2434,6 +2202,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     finally { this.uploadSaving = false; }
   }
 
+
   async submitUploadFromModal() {
     const file = this.uploadFile;
     if (!file) return;
@@ -2450,6 +2219,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     finally { this.uploadSaving = false; }
   }
 
+
   async attachExistingResource(resourceId: string) {
     const thingId = this.selectedDevice?.device?.id;
     if (!thingId) return;
@@ -2460,6 +2230,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       await this.loadDeviceDetail(thingId);
     } catch (err: any) { toastError(err.message || '添加失败'); }
   }
+
 
   renderResourceModal() {
     return html`
@@ -2524,6 +2295,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     `;
   }
 
+
   formatCondition(cond: AlarmCondition): string {
     switch (cond.type) {
       case "threshold": {
@@ -2549,16 +2321,19 @@ export class DevicesView extends SignalWatcher(LitElement) {
     }
   }
 
+
   levelLabel2(level: string): string {
     const m: Record<string, string> = { Info: "信息", Warning: "警告", Error: "错误", Critical: "严重", info: "信息", warning: "警告", error: "错误", critical: "严重" };
     return m[level] || level;
   }
+
 
   statusLabel2(status: string): string {
     const s = status?.toLowerCase();
     const m: Record<string, string> = { active: "活跃", acknowledged: "已确认", resolved: "已解决", suppressed: "已抑制" };
     return m[s] || status;
   }
+
 
   renderRuleModal(_deviceId: string, properties: any[]) {
     const isEdit = !!this.editingRule;
@@ -2800,6 +2575,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     `;
   }
 
+
   renderModal() {
     const isEdit = !!this.editingDevice;
     const tabs: { key: 'basic' | 'driver' | 'properties' | 'commands'; label: string }[] = [
@@ -2863,6 +2639,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       </div>
     `;
   }
+
 
   private renderBasicInfoTab() {
     return html`
@@ -2985,6 +2762,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
     `;
   }
 
+
   private renderDriverTab() {
     return html`
       <div class="edit-section">
@@ -3035,6 +2813,7 @@ export class DevicesView extends SignalWatcher(LitElement) {
       </div>
     `;
   }
+
 
   private renderPropertiesTab() {
     return html`
@@ -3131,10 +2910,12 @@ export class DevicesView extends SignalWatcher(LitElement) {
     `;
   }
 
+
   private addFormProperty() {
     this.formProperties = [...this.formProperties, { name: '', displayName: '', value: '', dataType: 'number', unit: '', isReadOnly: false, description: '' }];
     this.requestUpdate();
   }
+
 
   private renderCommandsTab() {
     return html`
@@ -3189,87 +2970,12 @@ export class DevicesView extends SignalWatcher(LitElement) {
     `;
   }
 
+
   private addFormCommand() {
     this.formCommands = [...this.formCommands, { name: '', description: '', parameters: '' }];
     this.requestUpdate();
   }
 
-  renderWizard() {
-    const isStep1 = this.wizardStep === "template";
-    return html`
-      <div class="wizard-overlay" role="dialog" aria-modal="true" aria-label="物创建向导" @click=${(e: Event) => { if ((e.target as HTMLElement).classList.contains('wizard-overlay')) this.closeWizard(); }} @keydown=${(e: KeyboardEvent) => this.handleModalKeydown(e, this.closeWizard)}>
-        <div class="wizard-dialog">
-          <!-- Header -->
-          <div class="wizard-dialog__header">
-            <button class="wizard-dialog__back" aria-label="返回" @click=${isStep1 ? this.closeWizard : this.wizardBack}>
-              <span class="rotate-90">${icons.arrowDown}</span>
-              <span>${isStep1 ? "返回物列表" : "返回模板选择"}</span>
-            </button>
-            <span class="wizard-dialog__title">${isStep1 ? "选择物模板" : "填写物信息"}</span>
-            <button class="modal-close wizard-dialog__close" aria-label="关闭" @click=${this.closeWizard}>✕</button>
-          </div>
-          <!-- Body -->
-          <div class="wizard-dialog__body">
-            ${isStep1 ? this.renderWizardTemplateSelection() : this.renderWizardDeviceInfo()}
-          </div>
-          ${!isStep1 ? html`
-            <div class="wizard-form-footer">
-              <button class="btn btn--ghost" @click=${this.wizardBack}>上一步</button>
-              <button class="btn btn--primary" ?disabled=${this.wizardSaving || !this.wizName.trim()} @click=${this.submitWizard}>
-                ${this.wizardSaving ? "创建中..." : "创建物"}
-              </button>
-            </div>
-          ` : nothing}
-        </div>
-      </div>
-    `;
-  }
-
-  renderWizardTemplateSelection() {
-    const groups = this.wizardTemplatesByCategory;
-    const categories = Object.keys(groups);
-
-    return html`
-      <!-- Search bar -->
-      <div class="wizard-search">
-        <span class="wizard-search__icon">
-          ${icons.search}
-        </span>
-        <input
-          type="text"
-          class="wizard-search__input"
-          placeholder="搜索物模板..."
-          .value=${this.wizTemplateSearch}
-          @input=${(e: Event) => { this.wizTemplateSearch = (e.target as HTMLInputElement).value; }}
-        />
-      </div>
-
-      ${this.wizTemplateLoading ? html`
-        <div class="wizard-loading">
-          <span class="loading-spinner"></span>
-          <span class="wizard-loading__text">加载中...</span>
-        </div>
-      ` : this.filteredWizardTemplates.length === 0 ? html`
-        <div class="wizard-empty">
-          <div class="wizard-empty__icon">📦</div>
-          <div class="wizard-empty__title">没有找到匹配的模板</div>
-          <div class="wizard-empty__hint">尝试调整搜索条件或浏览其他分类</div>
-        </div>
-      ` : html`
-        ${categories.map(cat => html`
-          <div class="wizard-category">
-            <div class="wizard-category__header">
-              <span class="wizard-category__title">${CATEGORY_LABELS[cat] || cat}</span>
-              <span class="wizard-category__count">${groups[cat].length} 个模板</span>
-            </div>
-            <div class="wizard-template-grid">
-              ${groups[cat].map(t => this.renderTemplateCard(t))}
-            </div>
-          </div>
-        `)}
-      `}
-    `;
-  }
 
   renderTemplateCard(t: ProcessedTemplate) {
     const displayName = getLocalizedText(t.displayName, t.name);
@@ -3299,185 +3005,6 @@ export class DevicesView extends SignalWatcher(LitElement) {
     `;
   }
 
-  renderWizardDeviceInfo() {
-    const t = this.wizSelectedTemplate;
-    if (!t) return nothing;
-    const displayName = getLocalizedText(t.displayName, t.name);
-    const hasError = (name: string) => Boolean(this.wizValidationErrors[name]);
-    const getError = (name: string) => this.wizValidationErrors[name] || "";
-
-    return html`
-      <div class="wizard-split">
-        <!-- Left panel: form -->
-        <div class="wizard-split__form wizard-fields">
-          <div class="wizard-form-header">
-            <div class="wizard-form-header__title">填写物信息</div>
-            <button class="btn btn--ghost btn--sm" @click=${this.wizardBack}>切换模板</button>
-          </div>
-
-          <!-- Template summary chip -->
-          <div class="template-chip">
-            <span class="template-chip__icon">${CATEGORY_ICONS[t.category] || CATEGORY_ICONS.others}</span>
-            <div class="template-chip__title-wrap">
-              <div class="template-chip__title">${displayName}</div>
-              <div class="template-chip__meta">
-                ${t.manufacturer ? html`<span>${t.manufacturer} · </span>` : nothing}
-                <span>${t.deviceType || t.category}</span>
-                ${t.version ? html` · v${t.version}` : nothing}
-              </div>
-            </div>
-            ${t.isBuiltin ? html`<span class="template-chip__badge">内置</span>` : nothing}
-          </div>
-
-          <!-- Device name -->
-          <div class="field ${hasError('deviceName') ? 'field--error' : ''}">
-            <span>物名称 <span class="form-label-required">*</span></span>
-            <input
-              type="text"
-              placeholder="请输入物名称"
-              .value=${this.wizName}
-              @input=${(e: any) => { this.wizName = e.target.value; }}
-            />
-            ${hasError("deviceName") ? html`<div class="form-error">${getError("deviceName")}</div>` : nothing}
-          </div>
-
-          <!-- Device description -->
-          <div class="field">
-            <span>物描述 <span class="inline-muted">(可选)</span></span>
-            <textarea
-              placeholder="请输入物描述"
-              rows="2"
-              .value=${this.wizDescription}
-              @input=${(e: any) => { this.wizDescription = e.target.value; }}
-            ></textarea>
-          </div>
-
-          <!-- Device address -->
-          <div class="field ${hasError('deviceAddress') ? 'field--error' : ''}">
-            <span>物地址 ${isFieldRequired(t.deviceInfo, "address")
-              ? html`<span class="form-label-required">*</span>`
-              : html`<span class="inline-muted">(可选)</span>`}</span>
-            <input
-              type="text"
-              placeholder="请输入物IP地址或连接地址"
-              .value=${this.wizAddress}
-              @input=${(e: any) => { this.wizAddress = e.target.value; }}
-            />
-            ${hasError("deviceAddress") ? html`<div class="form-error">${getError("deviceAddress")}</div>` : nothing}
-          </div>
-
-          <!-- Device position -->
-          <div class="field">
-            <span>安装位置 <span class="inline-muted">(可选)</span></span>
-            <input
-              type="text"
-              placeholder="请输入物安装位置"
-              .value=${this.wizPosition}
-              @input=${(e: any) => { this.wizPosition = e.target.value; }}
-            />
-          </div>
-
-          <!-- Driver select -->
-          <div class="field">
-            <span>物驱动 <span class="inline-muted">(选择适合的驱动程序)</span></span>
-            <select .value=${this.wizDriver} @change=${(e: Event) => this.onWizardDriverSelect((e.target as HTMLSelectElement).value)}>
-              <option value="">请选择驱动</option>
-              ${this.driverNames.map(name => html`<option value=${name}>${name}</option>`)}
-            </select>
-            ${t.driverName && this.wizDriver !== t.driverName ? html`
-              <div class="form-hint">模板默认驱动: ${t.driverName}</div>
-            ` : nothing}
-          </div>
-
-          <!-- Driver config -->
-          ${this.wizDriver ? html`
-            <div class="wizard-form-section">
-              <div class="wizard-form-section__header">
-                <span class="wizard-form-section__title">驱动配置</span>
-                <span class="wizard-form-section__meta">(${this.wizDriver})</span>
-              </div>
-              ${this.wizConfigLoading ? html`
-                <div class="wizard-loading wizard-loading--compact">
-                  <span class="loading-spinner"></span>
-                  <span class="wizard-loading__text">加载驱动配置参数...</span>
-                </div>
-              ` : this.wizConfigOptions.length > 0 ? html`
-                ${this.wizConfigOptions.map(opt => this.renderWizardConfigField(opt))}
-              ` : html`
-                <div class="empty-hint--sm">
-                  该驱动无需额外配置参数
-                </div>
-              `}
-            </div>
-          ` : nothing}
-
-          ${this.wizUnassignedResources.length > 0 ? html`
-            <div class="wizard-form-section">
-              <div class="wizard-form-section__header">
-                <span class="wizard-form-section__title">挂载资源</span>
-                <span class="wizard-form-section__meta">(${this.wizUnassignedResources.length} 个未指派)</span>
-              </div>
-              ${this.wizUnassignedResources.map((r: any) => html`
-                <label class="field field--row" style="display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1) 0;">
-                  <input type="checkbox"
-                    .checked=${this.wizSelectedResourceIds.has(r.id)}
-                    @change=${(e: Event) => {
-                      const checked = (e.target as HTMLInputElement).checked;
-                      const next = new Set(this.wizSelectedResourceIds);
-                      checked ? next.add(r.id) : next.delete(r.id);
-                      this.wizSelectedResourceIds = next;
-                    }}
-                  />
-                  <span>${r.name || r.filePath}</span>
-                  <span class="inline-muted">${r.resourceType}</span>
-                </label>
-              `)}
-            </div>
-          ` : nothing}
-        </div>
-
-        <!-- Right panel: template overview -->
-        <div class="wizard-split__overview">
-          ${this.renderTemplateOverview(t)}
-        </div>
-      </div>
-    `;
-  }
-
-  renderWizardConfigField(opt: DriverConfigOption) {
-    const value = this.wizDriverConfig[opt.name] ?? "";
-    const hasError = Boolean(this.wizValidationErrors[`driverConfig.${opt.name}`]);
-    const errorMsg = this.wizValidationErrors[`driverConfig.${opt.name}`] || "";
-    const placeholder = opt.defaultValue ? `默认: ${opt.defaultValue}` : `请输入${opt.label}`;
-
-    return html`
-      <div class="field ${hasError ? 'field--error' : ''}">
-        <span>
-          ${opt.label}
-          ${opt.required ? html`<span class="form-label-required">*</span>` : html`<span class="inline-muted">(可选)</span>`}
-          ${opt.defaultValue ? html`<span class="inline-muted inline-muted--spaced">· 默认: ${opt.defaultValue}</span>` : nothing}
-        </span>
-        ${opt.optionType === "boolean" ? html`
-          <select .value=${value || (opt.defaultValue === "true" ? "true" : "false")} @change=${(e: Event) => {
-            this.wizDriverConfig = { ...this.wizDriverConfig, [opt.name]: (e.target as HTMLSelectElement).value };
-          }}>
-            <option value="">请选择</option>
-            <option value="true">是</option>
-            <option value="false">否</option>
-          </select>
-        ` : opt.optionType === "number" ? html`
-          <input type="number" .value=${value} placeholder=${placeholder} @input=${(e: any) => {
-            this.wizDriverConfig = { ...this.wizDriverConfig, [opt.name]: e.target.value };
-          }} />
-        ` : html`
-          <input type="text" .value=${value} placeholder=${placeholder} @input=${(e: any) => {
-            this.wizDriverConfig = { ...this.wizDriverConfig, [opt.name]: e.target.value };
-          }} />
-        `}
-        ${hasError ? html`<div class="form-error">${errorMsg}</div>` : nothing}
-      </div>
-    `;
-  }
 
   renderTemplateOverview(t: ProcessedTemplate) {
     const displayName = getLocalizedText(t.displayName, t.name);
@@ -3593,5 +3120,53 @@ export class DevicesView extends SignalWatcher(LitElement) {
         </div>
       ` : nothing}
     `;
+  }
+
+  renderWizard() {
+    return renderWizardFn(this);
+  }
+
+  renderWizardTemplateSelection() {
+    return renderWizardTemplateSelectionFn(this);
+  }
+
+  renderDetailAlarms() {
+    return renderDetailAlarmsFn(this);
+  }
+
+  renderDetailProperties() {
+    return renderDetailPropertiesFn(this);
+  }
+
+  renderDetailKnowledge() {
+    return renderDetailKnowledgeFn(this);
+  }
+
+  renderHistoryDialog() {
+    return renderHistoryDialogFn(this);
+  }
+
+  renderWizardConfigField(opt: DriverConfigOption) {
+    return renderWizardConfigFieldFn(this, opt);
+  }
+
+  renderDetailEvents() {
+    return renderDetailEventsFn(this);
+  }
+
+  renderDetailCommands() {
+    return renderDetailCommandsFn(this);
+  }
+
+  renderWizardDeviceInfo() {
+    return renderWizardDeviceInfoFn(this);
+  }
+
+  drawHistoryChart() {
+    return drawHistoryChartFn(this);
+  }
+
+  renderDeviceDetail() {
+    return renderDeviceDetailFn(this);
   }
 }

@@ -43,12 +43,14 @@ pub async fn list_unassigned_resources(
 
 pub async fn attach_resource(
     State(state): State<AppState>,
+    WorkspaceScope(workspace_id): WorkspaceScope,
     Path(id): Path<String>,
     Json(req): Json<AttachResourceRequest>,
 ) -> (StatusCode, Json<ApiResponse<()>>) {
     let pool = state.database.pool().clone();
     let svc = thing_service(&pool);
-    match svc.attach_resource(&id, &req.resource_id).await {
+    let ws = workspace_id.unwrap_or_default();
+    match svc.attach_resource(&id, &req.resource_id, &ws).await {
         Ok(()) => (StatusCode::OK, ApiResponseBuilder::success(())),
         Err(e) => {
             let status = e.status_code();
@@ -64,11 +66,13 @@ pub async fn attach_resource(
 
 pub async fn detach_resource(
     State(state): State<AppState>,
+    WorkspaceScope(workspace_id): WorkspaceScope,
     Path((thing_id, resource_id)): Path<(String, String)>,
 ) -> (StatusCode, Json<ApiResponse<()>>) {
     let pool = state.database.pool().clone();
     let svc = thing_service(&pool);
-    match svc.detach_resource(&thing_id, &resource_id).await {
+    let ws = workspace_id.unwrap_or_default();
+    match svc.detach_resource(&thing_id, &resource_id, &ws).await {
         Ok(()) => (StatusCode::OK, ApiResponseBuilder::success(())),
         Err(e) => {
             let status = e.status_code();

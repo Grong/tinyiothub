@@ -7,9 +7,7 @@ use std::{
 use chrono::Utc;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use tinyiothub_core::models::event::{
-    DeviceEventType, EventId, EventLevel, EventSource, EventType,
-};
+use tinyiothub_core::models::event::{EventId, EventLevel, EventSource};
 
 use crate::modules::alarm::service::AlarmService;
 
@@ -34,6 +32,9 @@ pub struct ThingEventInput {
     pub level: EventLevel,
     pub data: serde_json::Value,
     pub ts: Option<String>,
+    /// Template events JSON pre-fetched by the caller (saves a per-event
+    /// query on the ingest hot path). When None, the router looks it up.
+    pub template_events: Option<String>,
 }
 
 // ── Throttle state ──────────────────────────────────────────────
@@ -114,6 +115,7 @@ pub async fn route_thing_event(
         tracing::warn!(
             thing_id = %input.thing_id,
             event_name = %input.event_name,
+            metric = "events_malformed",
             "Malformed thing event: empty required field"
         );
         return EventRouteResult {
@@ -124,15 +126,39 @@ pub async fn route_thing_event(
         };
     }
 
-    // ── 2. Unknown event name check (future schema registry) ──
-    // TODO: plug in event-name whitelist / schema registry.
-    let unknown_event = false;
+    // ── 2. Debug-level events are not stored (design 二·①) ──────
+    if input.level == EventLevel::Debug {
+        tracing::debug!(
+            thing_id = %input.thing_id,
+            event_name = %input.event_name,
+            metric = "events_dropped_debug",
+            "Thing event dropped (debug level)"
+        );
+        return EventRouteResult {
+            event_id: String::new(),
+            throttled: false,
+            unknown_event: false,
+            malformed: false,
+        };
+    }
+
+    // ── 3. Unknown event name check ─────────────────────────
+    // Known names come from the thing's creation template (best effort —
+    // a thing without a template accepts all names unflagged).
+    let unknown_event = !is_known_event_name(
+        pool,
+        &input.thing_id,
+        &input.event_name,
+        input.template_events.as_deref(),
+    )
+    .await;
 
     // ── 3. Throttle check ───────────────────────────────────
     if !throttle.check_and_record(&input.thing_id, &input.level) {
         tracing::warn!(
             thing_id = %input.thing_id,
             level = %input.level,
+            metric = "events_throttled",
             "Thing event throttled ({} per 60 s limit)",
             throttle.max_per_minute
         );
@@ -149,9 +175,12 @@ pub async fn route_thing_event(
     let event_id_str = event_id.to_string();
     let timestamp = input.ts.unwrap_or_else(|| Utc::now().to_rfc3339());
 
-    let event_type = EventType::Device(DeviceEventType::DeviceNormal);
-    let event_subtype = serde_json::to_string(&event_type).unwrap_or_default();
-    let level_num = input.level.to_numeric();
+    // event_subtype IS the event name (design 二·①) — alarm rules and the
+    // dedup index key off it. Unknown names degrade to info level with
+    // metadata.unknown_event=true (never an error to the device).
+    let event_subtype = input.event_name.clone();
+    let effective_level = if unknown_event { EventLevel::Info } else { input.level };
+    let level_num = effective_level.to_numeric();
 
     let source = EventSource::new(
         "thing".to_string(),
@@ -160,21 +189,13 @@ pub async fn route_thing_event(
         None::<String>,
     );
 
-    let content = serde_json::json!({
-        "title": input.event_name,
-        "elements": [{
-            "Text": {
-                "content": serde_json::to_string(&input.data).unwrap_or_default(),
-                "format": "Plain"
-            }
-        }],
-        "metadata": {}
-    });
+    let content = serde_json::to_string(&input.data).unwrap_or_default();
+    let metadata = serde_json::json!({ "unknown_event": unknown_event }).to_string();
 
     let created_at = Utc::now().to_rfc3339();
 
     let result = sqlx::query(
-        "INSERT INTO events (id, event_type, event_subtype, event_level, timestamp, source_type, source_id, device_id, user_id, title, content, created_at, workspace_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO events (id, event_type, event_subtype, event_level, timestamp, source_type, source_id, device_id, user_id, title, content, metadata, created_at, workspace_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
     .bind(&event_id_str)
     .bind("device")
@@ -186,7 +207,8 @@ pub async fn route_thing_event(
     .bind(source.device_id())
     .bind(source.user_id())
     .bind(&input.event_name)
-    .bind(serde_json::to_string(&content).unwrap_or_default())
+    .bind(&content)
+    .bind(&metadata)
     .bind(&created_at)
     .bind(&input.workspace_id)
     .execute(pool)
@@ -198,7 +220,9 @@ pub async fn route_thing_event(
                 event_id = %event_id_str,
                 thing_id = %input.thing_id,
                 event_name = %input.event_name,
-                level = %input.level,
+                level = %effective_level,
+                unknown_event = unknown_event,
+                metric = if unknown_event { "events_unknown" } else { "events_ingested" },
                 "Thing event routed and persisted"
             );
 
@@ -234,6 +258,7 @@ pub async fn route_thing_event(
                 thing_id = %input.thing_id,
                 event_name = %input.event_name,
                 error = %e,
+                metric = "events_malformed",
                 "Failed to persist thing event"
             );
             EventRouteResult {
@@ -244,6 +269,40 @@ pub async fn route_thing_event(
             }
         }
     }
+}
+
+/// Best-effort known-event check against the thing's creation template.
+///
+/// Returns `true` when the event name is defined in the template's `events`
+/// JSON, or when the thing has no template (unflagged — templates are
+/// creation-time blueprints and event definitions have no per-thing home).
+async fn is_known_event_name(
+    pool: &sqlx::SqlitePool,
+    thing_id: &str,
+    event_name: &str,
+    template_events: Option<&str>,
+) -> bool {
+    let events_json = match template_events {
+        Some(json) => Some(json.to_string()),
+        None => {
+            let row: Option<(Option<String>,)> = sqlx::query_as(
+                "SELECT t.events FROM devices d JOIN thing_templates t ON t.id = d.template_id WHERE d.id = ?",
+            )
+            .bind(thing_id)
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
+            row.and_then(|(ev,)| ev)
+        }
+    };
+
+    let Some(events_json) = events_json else {
+        return true; // no template → accept all names unflagged
+    };
+    serde_json::from_str::<Vec<serde_json::Value>>(&events_json)
+        .unwrap_or_default()
+        .iter()
+        .any(|e| e.get("name").and_then(|n| n.as_str()) == Some(event_name))
 }
 
 // ── Tests ───────────────────────────────────────────────────────

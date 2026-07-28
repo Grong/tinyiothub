@@ -127,7 +127,6 @@ struct WorkspaceResourceRow {
     file_size: Option<i64>,
     tags: String,
     metadata: Option<String>,
-    parse_status: Option<String>,
     created_at: String,
     updated_at: String,
 }
@@ -152,7 +151,6 @@ impl From<WorkspaceResourceRow> for WorkspaceResource {
             file_size: row.file_size,
             tags,
             metadata: row.metadata,
-            parse_status: row.parse_status,
             created_at: row.created_at,
             updated_at: row.updated_at,
         }
@@ -171,7 +169,6 @@ struct ResourceSearchResultRow {
     file_size: Option<i64>,
     tags: String,
     metadata: Option<String>,
-    parse_status: Option<String>,
     created_at: String,
     updated_at: String,
     relevance: i64,
@@ -197,7 +194,6 @@ impl From<ResourceSearchResultRow> for ResourceSearchResult {
             file_size: row.file_size,
             tags,
             metadata: row.metadata,
-            parse_status: row.parse_status,
             created_at: row.created_at,
             updated_at: row.updated_at,
             relevance: row.relevance,
@@ -445,7 +441,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         let rows = if let Some(rt) = resource_type {
             sqlx::query_as::<_, WorkspaceResourceRow>(
                 r#"
-                SELECT id, workspace_id, resource_type, name, description, content, file_path, file_size, tags, metadata, parse_status, created_at, updated_at
+                SELECT id, workspace_id, resource_type, name, description, content, file_path, file_size, tags, metadata, created_at, updated_at
                 FROM resources
                 WHERE workspace_id = ? AND resource_type = ?
                 ORDER BY created_at DESC
@@ -461,7 +457,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         } else {
             sqlx::query_as::<_, WorkspaceResourceRow>(
                 r#"
-                SELECT id, workspace_id, resource_type, name, description, content, file_path, file_size, tags, metadata, parse_status, created_at, updated_at
+                SELECT id, workspace_id, resource_type, name, description, content, file_path, file_size, tags, metadata, created_at, updated_at
                 FROM resources
                 WHERE workspace_id = ?
                 ORDER BY created_at DESC
@@ -485,7 +481,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
     ) -> Result<Option<WorkspaceResource>> {
         let row = sqlx::query_as::<_, WorkspaceResourceRow>(
             r#"
-            SELECT id, workspace_id, resource_type, name, description, content, file_path, file_size, tags, metadata, parse_status, created_at, updated_at
+            SELECT id, workspace_id, resource_type, name, description, content, file_path, file_size, tags, metadata, created_at, updated_at
             FROM resources
             WHERE workspace_id = ? AND id = ?
             "#,
@@ -542,7 +538,6 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
             file_size: None,
             tags: tags.to_vec(),
             metadata: metadata.map(String::from),
-            parse_status: None,
             created_at: now.clone(),
             updated_at: now,
         })
@@ -635,7 +630,7 @@ impl WorkspaceRepository for SqliteWorkspaceRepository {
         // Relevance: name match = 3, description match = 2, tag match = 2, content match = 1
         let mut builder = QueryBuilder::new(
             "SELECT id, workspace_id, resource_type, name, description, \
-             content, file_path, file_size, tags, metadata, parse_status, \
+             content, file_path, file_size, tags, metadata, \
              created_at, updated_at, SUM(relevance) as relevance FROM (",
         );
 

@@ -9,9 +9,10 @@
 ## 特性
 
 **设备接入**
+- 物本体模型：设备、空间、产线统一为层级化「物」，属性/事件/操作 + 知识文档
 - 多协议支持：Modbus RTU/TCP、ONVIF、SNMP、MQTT，开箱即用
 - AI 驱动匹配：描述设备类型，自动匹配或生成驱动代码
-- 设备模板：JSON 模板一键创建，支持验证和预览
+- 物模板：JSON 模板一键创建，支持 DTDL / WoT 模型导入与 DTDL 导出
 
 **智能运维**
 - L0-L3 分级自愈引擎：system/device/task 三级探针，自动故障检测与恢复
@@ -154,10 +155,10 @@ pnpm build
 
 ### 配置文件
 
-后端配置文件位于 `cloud/app_settings.toml`：
+后端配置文件位于仓库根目录 `app_settings.toml`：
 
 ```toml
-# cloud/app_settings.toml 示例
+# app_settings.toml 示例
 [server]
 host = "0.0.0.0"
 port = 3002
@@ -313,73 +314,26 @@ export const loadUsers = task(async (params?: { page?: number; pageSize?: number
 ```
 cloud/
 ├── src/
-│   ├── api/                  # REST API 层
-│   │   ├── auth/             # 认证相关 API
-│   │   ├── devices/          # 设备管理 API
-│   │   ├── drivers/          # 驱动管理 API
-│   │   ├── alarms/           # 告警管理 API
-│   │   ├── alarm_rules/      # 告警规则 API
-│   │   ├── agents/           # AI Agent 管理 API
-│   │   ├── chat/             # AI Agent 聊天 API
-│   │   ├── events/           # 事件管理 API
-│   │   ├── jobs/             # 定时任务 API
-│   │   ├── marketplace/      # 应用市场 API
+│   ├── api/                  # 路由挂载 + HTTP 中间件（WorkspaceScope, auth）
+│   ├── modules/              # 业务模块（types → service → handler 三层结构）
+│   │   ├── thing/            # 物本体管理（CRUD、层级树、本体、资源、LLM 摘要）
+│   │   ├── device/           # 设备连接运行时（驱动、遥测、心跳）
+│   │   ├── event/            # 事件管道（router、throttle、real-time、SSE、保留任务）
+│   │   ├── alarm/            # 告警规则 + 通知（rule_type='device' | 'event'）
+│   │   ├── agent/            # AI Agent（chat、config、tools、session、memory）
+│   │   ├── template/         # 物模板（创建时蓝图）
+│   │   ├── marketplace/      # 应用市场（驱动 / 物模板）
+│   │   ├── workspace/        # 工作空间（含知识资源）
 │   │   ├── mcp/              # 内嵌 MCP Server
-│   │   ├── notifications/    # 通知管理 API
-│   │   ├── notification_channels/ # 通知渠道 API
-│   │   ├── self_healing/     # 自愈引擎 API
-│   │   ├── system/           # 系统管理 API
-│   │   ├── monitoring/       # 监控 API
-│   │   ├── templates/        # 设备模板 API
-│   │   ├── tenants/          # 租户管理 API
-│   │   ├── users/            # 用户管理 API
-│   │   ├── workspaces/       # 工作空间 API
-│   │   ├── batch/            # 批量操作 API
-│   │   ├── open/             # 开放接口 API
-│   │   ├── heartbeat/        # 心跳 API
-│   │   └── middleware/       # 中间件
-│   ├── application/          # 应用服务层
-│   │   ├── agent/            # Agent 会话、聊天、记忆服务
-│   │   ├── cron_scheduler.rs # 定时任务调度（CronSchedulerService）
-│   │   ├── data_context.rs   # 数据上下文
-│   │   ├── data_server.rs    # 数据服务
-│   │   └── service_manager.rs # 服务管理器
-│   ├── domain/               # 领域层
-│   │   ├── agent/            # Agent 领域
-│   │   ├── alarm/            # 告警领域
-│   │   ├── automation/       # 自动化领域
-│   │   ├── cron/             # 定时任务领域
-│   │   ├── device/           # 设备领域（含 driver/registry）
-│   │   ├── event/            # 事件领域
-│   │   ├── marketplace/      # 市场领域
-│   │   ├── permission/       # 权限领域
-│   │   ├── plugin/           # 插件领域
-│   │   ├── product/          # 产品领域
-│   │   ├── role/             # 角色领域
-│   │   ├── self_healing/     # 自愈引擎领域
-│   │   ├── tag/              # 标签领域
-│   │   ├── template/         # 模板领域
-│   │   ├── tenant/           # 租户领域
-│   │   ├── user/             # 用户领域
-│   │   └── workspace/        # 工作空间领域
-│   │       ├── repository.rs # Repository trait（接口）
-│   │       └── service.rs    # 领域服务
-│   ├── dto/                  # 数据传输对象（纯结构体，无 SQL）
-│   ├── infrastructure/       # 基础设施层
-│   │   └── persistence/
-│   │       └── repositories/ # Repository 实现（SQLite）
-│   ├── shared/               # 共享组件
+│   │   └── ...               # auth, chat, cron, jobs, open, system 等
+│   ├── shared/               # 跨模块组件（persistence, security, error_handling, utils）
+│   ├── tests/                # 集成测试
 │   ├── lib.rs                # 库入口
 │   └── main.rs               # 程序入口
-├── derive/                   # 自定义宏
 ├── migrations/               # 数据库迁移文件
-├── drivers/                  # 驱动实现
-├── templates/                # 设备模板
-├── vendor/                   # 第三方依赖（本地 fork）
+├── templates/                # 物模板
 ├── Cargo.toml                # Rust 项目配置
-├── Dockerfile                # Docker 构建文件
-├── app_settings.toml         # 应用配置
-└── tinyiothub.db             # SQLite 数据库
+└── README.md                 # 后端说明
 ```
 
 ### 前端目录结构 (web/)
@@ -408,13 +362,24 @@ web/
 - `POST /api/v1/auth/logout` - 用户登出
 - `GET /api/v1/auth/session` - 获取会话信息
 
-### 设备管理
-- `GET /api/v1/devices` - 获取设备列表
-- `POST /api/v1/devices` - 创建设备
-- `GET /api/v1/devices/{id}` - 获取设备详情
-- `PUT /api/v1/devices/{id}` - 更新设备
-- `DELETE /api/v1/devices/{id}` - 删除设备
-- `GET /api/v1/devices/{id}/profile` - 获取设备配置文件
+### 物管理（Thing）
+- `GET /api/v1/things` - 获取物列表
+- `POST /api/v1/things` - 创建物
+- `GET /api/v1/things/{id}` - 获取物详情
+- `PUT /api/v1/things/{id}` - 更新物
+- `DELETE /api/v1/things/{id}` - 删除物
+- `GET /api/v1/things/{id}/profile` - 获取物画像（属性/事件/操作 + LLM 本体摘要）
+- `GET /api/v1/things/{id}/ontology` - 获取物本体定义
+- `GET /api/v1/things/{id}/tree` - 获取物层级树
+- `POST /api/v1/things/{id}/actions/{name}/invoke` - 调用物操作（需确认）
+- `POST /api/v1/things/{id}/actions/{name}/confirm` - 确认并执行物操作
+- `POST /api/v1/things/import/dtdl` / `POST /api/v1/things/import/wot` - DTDL / WoT 模型导入
+- `GET /api/v1/things/templates/{id}/export/dtdl` - DTDL 模型导出
+- `GET /api/v1/things/resources/unassigned` - 获取未关联的知识资源
+- `POST /api/v1/things/{id}/resources` - 关联知识资源到物
+- `DELETE /api/v1/things/{id}/resources/{rid}` - 解除物的资源关联
+
+> **破坏性变更（v0.4.5.0）**：`/api/v1/devices` 管理端点已移除，请迁移至 `/api/v1/things`。设备连接运行时接口（dashboard、命令执行、trace）仍保留在 `/api/v1/devices` 下。
 
 ### 驱动管理
 - `GET /api/v1/drivers` - 获取驱动列表
@@ -467,7 +432,8 @@ web/
 
 ### 事件系统
 - `GET /api/v1/events` - 获取事件列表
-- `GET /api/v1/events/stream` - SSE 事件流订阅
+- `GET /api/v1/events/sse` - SSE 事件流订阅
+- `GET /api/v1/events/real-time` - 实时事件查询
 
 ### 通知管理
 - `GET /api/v1/notifications` - 获取通知列表
@@ -682,10 +648,14 @@ gateway/{sn}/command          # 命令下发
 gateway/{sn}/device_command   # 设备命令
 gateway/{sn}/data             # 数据上传
 gateway/{sn}/alarm            # 告警消息
+thing/{thing_id}/event/{event_name}   # 物事件上报（节流 60/分钟，error/critical 不节流）
 ```
+
+物事件上报的完整协议契约见 [docs/device-event-contract.md](docs/device-event-contract.md)。
 
 ## 最新动态
 
+- **物本体（Thing Ontology）**: 设备泛化为「物」— 层级树、物模板蓝图、属性/事件/操作、LLM 本体摘要，全新 `/api/things` API（v0.4.5.0）
 - **沉浸式工作空间**: 3D 数字孪生场景 + AI 数据洞察面板，可折叠执行过程，玻璃拟态 UI
 - **A2UI 协议**: 27 种动态 UI 组件（设备卡片、数据图表、Scene3D 等），AI 实时渲染仪表盘
 - **工作空间资源管理**: 场景模型、设备模型、图片、文档的上传与管理，语义搜索

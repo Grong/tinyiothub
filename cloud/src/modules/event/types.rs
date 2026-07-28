@@ -228,6 +228,8 @@ pub struct RealTimeFilter {
     pub source_types: Option<Vec<String>>,
     pub acknowledged: Option<bool>,
     pub min_level: Option<EventLevel>,
+    /// Tenant isolation (eng-review T1): restrict to one workspace.
+    pub workspace_id: Option<String>,
 }
 
 impl RealTimeFilter {

@@ -24,6 +24,9 @@ pub enum ThingError {
     #[error("Action not supported: {0}")]
     ActionNotSupported(String),
 
+    #[error("Validation failed: {0}")]
+    Validation(String),
+
     #[error("Database error: {0}")]
     Database(String),
 
@@ -40,6 +43,7 @@ impl ThingError {
             ThingError::CycleDetected { .. } => StatusCode::CONFLICT,
             ThingError::HasChildren(_) => StatusCode::CONFLICT,
             ThingError::ActionNotSupported(_) => StatusCode::BAD_REQUEST,
+            ThingError::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
             ThingError::Database(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ThingError::WorkspaceNotFound(_) => StatusCode::NOT_FOUND,
         }

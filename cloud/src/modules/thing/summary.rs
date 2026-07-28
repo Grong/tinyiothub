@@ -23,18 +23,6 @@ pub async fn mark_dirty_for_resource_change(
     Ok(())
 }
 
-/// Called when a template changes — dirty ALL things using that template.
-pub async fn mark_dirty_for_template_change(
-    pool: &SqlitePool,
-    template_id: &str,
-) -> Result<u64, sqlx::Error> {
-    let result = sqlx::query("UPDATE devices SET summary_status = 'dirty' WHERE template_id = ?")
-        .bind(template_id)
-        .execute(pool)
-        .await?;
-    Ok(result.rows_affected())
-}
-
 /// Called when thing name/parent changes — dirty thing + entire subtree.
 pub async fn mark_dirty_for_name_or_parent_change(
     pool: &SqlitePool,
@@ -91,6 +79,25 @@ pub struct SummaryComputer {
     single_flight: Arc<DashMap<String, Arc<Notify>>>,
 }
 
+/// Removes a single-flight entry and wakes its waiters when dropped.
+///
+/// Held for the duration of a summary computation so that EVERY exit path —
+/// success, error via early `?`, or panic — releases waiters. Without this,
+/// one transient error leaves the entry occupied forever and all future
+/// summary requests for that thing hang on a Notify that never fires.
+struct FlightGuard {
+    map: Arc<DashMap<String, Arc<Notify>>>,
+    thing_id: String,
+    notify: Arc<Notify>,
+}
+
+impl Drop for FlightGuard {
+    fn drop(&mut self) {
+        self.map.remove(&self.thing_id);
+        self.notify.notify_waiters();
+    }
+}
+
 impl Default for SummaryComputer {
     fn default() -> Self {
         Self::new()
@@ -134,10 +141,18 @@ impl SummaryComputer {
             use dashmap::mapref::entry::Entry;
             match self.single_flight.entry(thing_id.to_string()) {
                 Entry::Occupied(o) => {
-                    // Already inflight — wait for it to complete
+                    // Already inflight — wait for it to complete.
+                    // enable() registers this waiter BEFORE the entry lock is
+                    // released, closing the lost-wakeup window where the
+                    // computer finishes (and its notify_waiters fires) between
+                    // drop(o) and the first poll of notified(). The timeout is
+                    // a final backstop so a waiter can never hang forever.
                     let notifier = o.get().clone();
+                    let wait = notifier.notified();
+                    tokio::pin!(wait);
+                    wait.as_mut().enable();
                     drop(o);
-                    notifier.notified().await;
+                    let _ = tokio::time::timeout(Duration::from_secs(30), wait).await;
                     // Re-read from DB after notification
                     let row = sqlx::query("SELECT ontology_summary FROM devices WHERE id = ?")
                         .bind(thing_id)
@@ -153,15 +168,22 @@ impl SummaryComputer {
             }
         };
 
-        // 4. Build prompt from thing metadata, template, and docs
+        // RAII guard: releases the single-flight entry on every exit path.
+        let _flight =
+            FlightGuard { map: self.single_flight.clone(), thing_id: thing_id.to_string(), notify };
+
+        // 4. Build prompt from thing metadata, model, and docs
         let prompt = build_prompt_for_thing(thing_id, pool).await?;
 
         // 5. Call LLM with 10s timeout
+        let llm_start = std::time::Instant::now();
         let result =
             tokio::time::timeout(Duration::from_secs(10), llm.complete(&prompt, 500)).await;
 
         // 6. Handle result: persist or mark failed
-        let outcome = match result {
+        // (returned directly; the FlightGuard drops after evaluation, before
+        // the value leaves this scope)
+        match result {
             Ok(Ok(text)) => {
                 // Success: persist summary and mark status 'ok'
                 sqlx::query(
@@ -172,10 +194,16 @@ impl SummaryComputer {
                 .bind(thing_id)
                 .execute(pool)
                 .await?;
+                tracing::info!(
+                    thing_id = %thing_id,
+                    duration_ms = llm_start.elapsed().as_millis() as i64,
+                    metric = "summary_success",
+                    "Ontology summary computed"
+                );
                 Ok(Some(text))
             }
             Ok(Err(e)) => {
-                tracing::warn!(?e, thing_id = %thing_id, "LLM call failed");
+                tracing::warn!(?e, thing_id = %thing_id, metric = "summary_failed", "LLM call failed");
                 // Mark status as 'failed', keep whatever was cached
                 sqlx::query(
                     "UPDATE devices SET summary_status = 'failed', \
@@ -187,7 +215,7 @@ impl SummaryComputer {
                 Ok(cached_summary)
             }
             Err(_elapsed) => {
-                tracing::warn!(thing_id = %thing_id, "LLM call timed out");
+                tracing::warn!(thing_id = %thing_id, metric = "summary_failed", reason = "timeout", "LLM call timed out");
                 // Mark status as 'failed', keep whatever was cached
                 sqlx::query(
                     "UPDATE devices SET summary_status = 'failed', \
@@ -198,13 +226,7 @@ impl SummaryComputer {
                 .await?;
                 Ok(cached_summary)
             }
-        };
-
-        // Clean up single-flight entry and notify waiters
-        self.single_flight.remove(thing_id);
-        notify.notify_waiters();
-
-        outcome
+        }
     }
 }
 // ──────────────────────────────────────────────
@@ -228,7 +250,9 @@ pub fn build_prompt(
         thing_name, thing_type, breadcrumb, template_def
     );
     for (title, content) in docs.iter().take(5) {
-        let snippet = &content[..content.len().min(2000)];
+        // chars(), not byte slicing — the corpus is Chinese (3 bytes/char)
+        // and a byte cut on a non-boundary panics.
+        let snippet: String = content.chars().take(2000).collect();
         prompt.push_str(&format!(
             "\n<user_document title=\"{}\">\n{}\n</user_document>\n",
             title, snippet
@@ -244,30 +268,28 @@ pub fn build_prompt(
 /// Fetch thing metadata and assemble a prompt from DB.
 async fn build_prompt_for_thing(thing_id: &str, pool: &SqlitePool) -> Result<String, SummaryError> {
     // Fetch thing basic info
-    let thing_row = sqlx::query("SELECT name, thing_type, template_id FROM devices WHERE id = ?")
+    let thing_row = sqlx::query("SELECT name, thing_type FROM devices WHERE id = ?")
         .bind(thing_id)
         .fetch_optional(pool)
         .await?;
 
-    let (name, thing_type, template_id): (String, String, Option<String>) = match thing_row {
-        Some(r) => (r.get(0), r.get(1), r.get(2)),
+    let (name, thing_type): (String, String) = match thing_row {
+        Some(r) => (r.get(0), r.get(1)),
         None => return Ok("未找到该物。".to_string()),
     };
 
     // Build breadcrumb
     let breadcrumb = build_breadcrumb_string(thing_id, pool).await?;
 
-    // Fetch template definition if available
-    let template_def = if let Some(ref tid) = template_id {
-        fetch_template_definition(tid, pool).await.unwrap_or_default()
-    } else {
-        String::from("无物模型定义。")
-    };
+    // Blueprint model (eng-review D6, 2026-07-27): the thing's model is its
+    // own property/action instances. The creation template is not queried at
+    // runtime.
+    let model_def = fetch_thing_model_definition(thing_id, pool).await;
 
     // Fetch knowledge docs (max 5)
     let docs = fetch_knowledge_docs(thing_id, pool).await;
 
-    Ok(build_prompt(&name, &thing_type, &breadcrumb, &template_def, &docs))
+    Ok(build_prompt(&name, &thing_type, &breadcrumb, &model_def, &docs))
 }
 
 async fn build_breadcrumb_string(
@@ -291,51 +313,35 @@ async fn build_breadcrumb_string(
     Ok(path.join(" / "))
 }
 
-async fn fetch_template_definition(
-    template_id: &str,
-    pool: &SqlitePool,
-) -> Result<String, SummaryError> {
-    let row = sqlx::query(
-        "SELECT name, description, properties, actions FROM thing_templates WHERE id = ?",
-    )
-    .bind(template_id)
-    .fetch_optional(pool)
-    .await?;
+/// Build the model definition string from the thing's OWN property/action
+/// instances (blueprint model — templates are creation-time blueprints only).
+async fn fetch_thing_model_definition(thing_id: &str, pool: &SqlitePool) -> String {
+    let props: Vec<(String,)> =
+        sqlx::query_as("SELECT name FROM thing_properties WHERE device_id = ? ORDER BY name")
+            .bind(thing_id)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
+    let acts: Vec<(String,)> =
+        sqlx::query_as("SELECT name FROM thing_actions WHERE device_id = ? ORDER BY name")
+            .bind(thing_id)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
 
-    match row {
-        Some(r) => {
-            let name: String = r.get(0);
-            let desc: Option<String> = r.get(1);
-            let props: String = r.get(2);
-            let cmds: String = r.get(3);
-
-            let mut def = format!("模板: {}\n", name);
-            if let Some(d) = desc {
-                def.push_str(&format!("描述: {}\n", d));
-            }
-            // Parse JSON arrays for a readable capabilities summary
-            if let Ok(parsed_props) = serde_json::from_str::<Vec<serde_json::Value>>(&props) {
-                let prop_names: Vec<String> = parsed_props
-                    .iter()
-                    .filter_map(|p| p.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()))
-                    .collect();
-                if !prop_names.is_empty() {
-                    def.push_str(&format!("属性: {}\n", prop_names.join(", ")));
-                }
-            }
-            if let Ok(parsed_cmds) = serde_json::from_str::<Vec<serde_json::Value>>(&cmds) {
-                let cmd_names: Vec<String> = parsed_cmds
-                    .iter()
-                    .filter_map(|c| c.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()))
-                    .collect();
-                if !cmd_names.is_empty() {
-                    def.push_str(&format!("命令: {}\n", cmd_names.join(", ")));
-                }
-            }
-            Ok(def)
-        }
-        None => Ok(String::from("无物模型定义。")),
+    let mut def = String::new();
+    if !props.is_empty() {
+        let names: Vec<&str> = props.iter().map(|(n,)| n.as_str()).collect();
+        def.push_str(&format!("属性: {}\n", names.join(", ")));
     }
+    if !acts.is_empty() {
+        let names: Vec<&str> = acts.iter().map(|(n,)| n.as_str()).collect();
+        def.push_str(&format!("动作: {}\n", names.join(", ")));
+    }
+    if def.is_empty() {
+        def.push_str("无物模型定义。");
+    }
+    def
 }
 
 async fn fetch_knowledge_docs(thing_id: &str, pool: &SqlitePool) -> Vec<(String, String)> {
@@ -375,9 +381,24 @@ mod tests {
     use super::*;
 
     async fn setup_test_db(pool: &SqlitePool) {
-        sqlx::query("DROP TABLE IF EXISTS resources").execute(pool).await.unwrap();
-        sqlx::query("DROP TABLE IF EXISTS thing_templates").execute(pool).await.unwrap();
-        sqlx::query("DROP TABLE IF EXISTS devices").execute(pool).await.unwrap();
+        // sqlx::test runs the full migration chain, so the production schema
+        // is present. Disable FK enforcement while replacing it with the
+        // simplified test schema: with FK on, DROP TABLE runs an implicit
+        // delete + schema revalidation that deadlocks against the
+        // device_alarm_rules → thing_properties → devices reference chain.
+        // The PRAGMA is per-connection, so the drops must run on the SAME
+        // acquired connection — a fresh pool connection would have FK on.
+        let mut conn = pool.acquire().await.unwrap();
+        sqlx::query("PRAGMA foreign_keys = OFF").execute(&mut *conn).await.unwrap();
+        for table in
+            ["device_alarm_rules", "resources", "thing_properties", "thing_actions", "devices"]
+        {
+            sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE IF EXISTS {}", table)))
+                .execute(&mut *conn)
+                .await
+                .unwrap();
+        }
+        drop(conn);
 
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS devices (
@@ -397,12 +418,23 @@ mod tests {
         .unwrap();
 
         sqlx::query(
-            "CREATE TABLE IF NOT EXISTS thing_templates (
+            "CREATE TABLE IF NOT EXISTS thing_properties (
                 id TEXT PRIMARY KEY,
+                device_id TEXT NOT NULL,
                 name TEXT NOT NULL,
-                description TEXT,
-                properties TEXT NOT NULL DEFAULT '[]',
-                actions TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS thing_actions (
+                id TEXT PRIMARY KEY,
+                device_id TEXT NOT NULL,
+                name TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             )",
@@ -445,37 +477,6 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(status, "dirty");
-    }
-
-    #[sqlx::test]
-    async fn test_summary_dirty_on_template_change(pool: SqlitePool) {
-        setup_test_db(&pool).await;
-
-        sqlx::query(
-            "INSERT INTO devices (id, name, summary_status, template_id) \
-             VALUES ('d1', 'Test', NULL, 't1')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query(
-            "INSERT INTO devices (id, name, summary_status, template_id) \
-             VALUES ('d2', 'Test2', NULL, 't1')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        let affected = mark_dirty_for_template_change(&pool, "t1").await.unwrap();
-        assert_eq!(affected, 2);
-
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM devices WHERE summary_status = 'dirty' AND template_id = 't1'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(count, 2);
     }
 
     #[sqlx::test]
@@ -538,6 +539,58 @@ mod tests {
         assert!(prompt.contains("<user_document"));
         assert!(prompt.contains("</user_document>"));
         assert!(prompt.contains("IoT 物本体专家"));
+    }
+
+    #[test]
+    fn test_build_prompt_utf8_boundary() {
+        // Regression: byte-slicing `&content[..2000]` panics when byte 2000 is
+        // not a char boundary. Chinese text is 3 bytes/char in UTF-8.
+        let long_doc = "温".repeat(2500); // 2500 chars = 7500 bytes
+        let prompt = build_prompt(
+            "传感器A",
+            "device",
+            "工厂 / 传感器A",
+            "属性: temperature",
+            &[("手册".to_string(), long_doc)],
+        );
+        // Must not panic, and the fenced snippet must be capped at 2000 chars.
+        let start = prompt.find("<user_document").unwrap();
+        let end = prompt.find("</user_document>").unwrap();
+        let section = &prompt[start..end];
+        assert!(section.chars().count() <= 2100); // 2000 + title/tag overhead
+    }
+
+    #[sqlx::test]
+    async fn test_single_flight_entry_released_on_error(pool: SqlitePool) {
+        // Regression: an early `?` return after the single-flight gate (e.g.
+        // the summary-persist UPDATE failing) used to leave the entry
+        // occupied forever — every later request for the thing hung.
+        setup_test_db(&pool).await;
+        sqlx::query(
+            "INSERT INTO devices (id, name, summary_status) VALUES ('d1', 'Test', 'dirty')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // LLM that closes the pool inside complete(): the subsequent
+        // persist UPDATE fails, forcing the early-error exit path.
+        struct PoolClosingClient(SqlitePool);
+        #[async_trait::async_trait]
+        impl LlmClient for PoolClosingClient {
+            async fn complete(&self, _p: &str, _t: u32) -> Result<String, String> {
+                self.0.close().await;
+                Ok("摘要".to_string())
+            }
+        }
+
+        let computer = SummaryComputer::new();
+        let llm = PoolClosingClient(pool.clone());
+        let result = computer.get_or_compute("d1", &pool, &llm).await;
+        assert!(result.is_err());
+
+        // The single-flight entry must be gone — no permanent deadlock.
+        assert!(computer.single_flight.is_empty());
     }
 
     // ── get_or_compute tests ────────────────────
@@ -653,24 +706,61 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn test_summary_with_template_and_docs(pool: SqlitePool) {
+    async fn test_summary_llm_failure_returns_stale_and_marks_failed(pool: SqlitePool) {
+        // Design 二·③/六: LLM failure → return the OLD summary (stale
+        // degradation), summary_status='failed', no error to the caller.
         setup_test_db(&pool).await;
-
-        // Insert a template
         sqlx::query(
-            "INSERT INTO thing_templates (id, name, description, properties, actions) \
-             VALUES ('t1', '温湿度传感器', '工业级温湿度监测', \
-             '[{\"name\":\"temperature\"},{\"name\":\"humidity\"}]', \
-             '[{\"name\":\"reboot\"}]')",
+            "INSERT INTO devices (id, name, ontology_summary, summary_status)              VALUES ('d1', 'Test', '旧摘要', 'dirty')",
         )
         .execute(&pool)
         .await
         .unwrap();
 
-        // Insert a thing referencing the template
+        struct FailingClient;
+        #[async_trait::async_trait]
+        impl LlmClient for FailingClient {
+            async fn complete(&self, _p: &str, _t: u32) -> Result<String, String> {
+                Err("LLM unavailable".to_string())
+            }
+        }
+
+        let computer = SummaryComputer::new();
+        let result = computer.get_or_compute("d1", &pool, &FailingClient).await.unwrap();
+
+        // Stale summary returned, status marked failed
+        assert_eq!(result, Some("旧摘要".to_string()));
+        let status: String =
+            sqlx::query_scalar("SELECT summary_status FROM devices WHERE id = 'd1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(status, "failed");
+
+        // The single-flight entry is released (no deadlock after failure)
+        assert!(computer.single_flight.is_empty());
+    }
+
+    #[sqlx::test]
+    async fn test_summary_with_model_and_docs(pool: SqlitePool) {
+        setup_test_db(&pool).await;
+
+        // Thing with its own property/action instances (blueprint model)
         sqlx::query(
-            "INSERT INTO devices (id, name, thing_type, template_id, summary_status) \
-             VALUES ('d1', '传感器A', 'device', 't1', 'dirty')",
+            "INSERT INTO devices (id, name, thing_type, summary_status) \
+             VALUES ('d1', '传感器A', 'device', 'dirty')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO thing_properties (id, device_id, name) VALUES ('p1', 'd1', 'temperature')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO thing_actions (id, device_id, name) VALUES ('a1', 'd1', 'reboot')",
         )
         .execute(&pool)
         .await

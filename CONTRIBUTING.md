@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- **Rust** nightly (via [rustup](https://rustup.rs/))
+- **Rust** 1.85+ stable (2024 Edition, via [rustup](https://rustup.rs/))
 - **Node.js** 20+ and **pnpm** 9+
 - **SQLite** (for local development)
 
