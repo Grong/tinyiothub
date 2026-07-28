@@ -70,7 +70,7 @@ cloud/                       # SaaS application orchestration (main binary)
       agent/                 # AI Agent (chat, config, tools, session, reflection, memory)
       device/                # Device connection runtime (drivers, telemetry, heartbeat)
       thing/                 # Thing ontology management (CRUD, hierarchy, ontology, resources, summary)
-      event/                 # Event pipeline (router, throttle, real-time, SSE)
+      event/                 # Event pipeline (router, throttle, real-time, SSE, retention job)
       alarm/                 # Alarm rules + notifications (rule_type='device' | 'event')
       plugin/                # Plugin registry
       ...
@@ -113,16 +113,16 @@ modules/thing/
   types.rs                       # ThingType, SummaryStatus, DTOs (ThingResponse, ThingTreeNode, etc.)
   errors.rs                      # ThingError → HTTP status codes
   repo.rs                        # ThingRepo: CRUD, tree, breadcrumb, cycle detection
+  summary.rs                     # SummaryComputer: dirty markers, single-flight, LLM fencing
   service/
     mod.rs                       # ThingService: list/get/profile/tree CRUD + resource attach
-    summary.rs                   # SummaryComputer: dirty markers, single-flight, LLM fencing
-    a2ui.rs                      # A2UI component mapper (DeviceCard, DataChart, ControlPanel)
     import_export.rs             # DTDL/WoT Thing Description import/export
   handler/
     mod.rs                       # Router at /api/v1/things
     crud.rs                      # CRUD + ontology + profile + tree handlers
-    actions.rs                   # POST confirm endpoint (invoke_action confirmation)
+    actions.rs                   # invoke/confirm endpoints (invoke_action confirmation)
     import_export.rs             # DTDL/WoT import/export HTTP handlers
+    resources.rs                 # Resource attach/detach + unassigned list
 ```
 
 **Key design decisions:**

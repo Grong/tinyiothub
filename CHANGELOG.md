@@ -7,7 +7,7 @@
 - **Thing Ontology（物本体）**: devices generalized into Things — hierarchy (parent_id tree with cycle protection), thing templates as creation blueprints, per-thing properties/actions, knowledge documents with LLM-generated ontology summaries (lazy compute, dirty marking, single-flight), and full CRUD at `/api/things`
 - **Thing event pipeline**: MQTT `thing/{id}/event/{name}` ingest with per-thing throttle (60/min, error/critical exempt), unknown-event degradation, event-sourced alarm rules (`rule_type='event'`), and status-vs-occurrence event semantics with dedup upsert
 - **Agent ontology tools**: 9 tools (list_things, get_thing, get_thing_profile, get_thing_tree, read_property, invoke_action, query_events, search_knowledge, read_document) with workspace isolation and invoke_action confirmation flow
-- **E1 marketplace**: thing_templates category with name-collision suffix install; **E3**: DTDL / WoT Thing Description import/export (format_version 2)
+- **E1 marketplace**: thing_templates category with name-collision suffix install; **E3**: DTDL / WoT Thing Description import + DTDL export (format_version 2; WoT export tracked in TODOS)
 - **Invoke endpoints**: `POST /things/{id}/actions/{name}/invoke` + `/confirm` — UI action execution with workspace-gated confirmation (D13 modal) and fail-closed default
 - **Migration safety net**: automatic VACUUM backup before pending migrations, Rust-enforced foreign-key integrity check that aborts startup on violations, occurrence-aware events retention job (daily, status rows never time-purged)
 - **Frontend**: things list (table/grid), detail page tabs, create wizard, confirm modal (params table, danger styling, focus trap), first-login upgrade banner, `/devices` → `/things` redirect
