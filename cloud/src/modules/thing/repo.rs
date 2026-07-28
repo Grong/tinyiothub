@@ -417,7 +417,7 @@ impl ThingRepo {
         builder.build().execute(&mut *tx).await?;
 
         tx.commit().await?;
-        Ok(super::types::UpdateGuardedOutcome::Updated(self.get_by_id(id).await?))
+        Ok(super::types::UpdateGuardedOutcome::Updated(self.get_by_id(id).await?.map(Box::new)))
     }
 
     /// Breadcrumbs for MANY things in ONE recursive-CTE query

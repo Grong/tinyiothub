@@ -107,8 +107,10 @@ pub async fn get_real_time_events(
     tracing::info!("Getting real-time events with params: {:?}", params);
 
     // Build real-time filter (tenant-scoped — T1)
-    let mut filter = RealTimeFilter::default();
-    filter.workspace_id = Some(claims.workspace_id.clone());
+    let mut filter = RealTimeFilter {
+        workspace_id: Some(claims.workspace_id.clone()),
+        ..Default::default()
+    };
 
     // Device IDs
     if let Some(device_ids_str) = params.device_ids {

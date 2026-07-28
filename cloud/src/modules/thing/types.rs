@@ -337,5 +337,5 @@ pub struct DocRow {
 /// Outcome of a transaction-guarded update (cycle check + write in one tx).
 pub enum UpdateGuardedOutcome {
     Cycle,
-    Updated(Option<ThingRow>),
+    Updated(Option<Box<ThingRow>>),
 }

@@ -181,7 +181,9 @@ impl SummaryComputer {
             tokio::time::timeout(Duration::from_secs(10), llm.complete(&prompt, 500)).await;
 
         // 6. Handle result: persist or mark failed
-        let outcome = match result {
+        // (returned directly; the FlightGuard drops after evaluation, before
+        // the value leaves this scope)
+        match result {
             Ok(Ok(text)) => {
                 // Success: persist summary and mark status 'ok'
                 sqlx::query(
@@ -224,9 +226,7 @@ impl SummaryComputer {
                 .await?;
                 Ok(cached_summary)
             }
-        };
-
-        outcome
+        }
     }
 }
 // ──────────────────────────────────────────────
