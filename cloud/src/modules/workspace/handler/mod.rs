@@ -261,13 +261,12 @@ async fn delete_workspace(
 
     // Guard: refuse to delete a workspace that still has things (design:
     // 应用层拒绝，不再依赖 SET NULL 产生孤儿物)
-    let thing_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM devices WHERE workspace_id = ?",
-    )
-    .bind(&id)
-    .fetch_one(state.database.pool())
-    .await
-    .unwrap_or(0);
+    let thing_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE workspace_id = ?")
+            .bind(&id)
+            .fetch_one(state.database.pool())
+            .await
+            .unwrap_or(0);
     if thing_count > 0 {
         return ApiResponseBuilder::error_with_code(
             409,

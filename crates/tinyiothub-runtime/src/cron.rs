@@ -220,8 +220,8 @@ impl JobExecutor for EventRetentionExecutor {
     async fn execute(&self, job: &CronJob, _run_id: &str) -> std::result::Result<ExecutionResult, ExecutorError> {
         let start = Instant::now();
 
-        let config: Value = serde_json::from_str(&job.config)
-            .map_err(|e| ExecutorError::InvalidConfig(e.to_string()))?;
+        let config: Value =
+            serde_json::from_str(&job.config).map_err(|e| ExecutorError::InvalidConfig(e.to_string()))?;
         let retention_days = config
             .get("retention_days")
             .and_then(|v| v.as_i64())

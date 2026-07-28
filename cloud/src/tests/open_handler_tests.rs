@@ -119,7 +119,11 @@ async fn test_open_send_command_cross_workspace_404() {
     // Thing lives in ws-A; the API key belongs to ws-B → 404 (no cross-tenant dispatch)
     let (app, raw_key, _pool) = setup_open_app_with_key("ws-a", "ws-b", "device").await;
     let response = app
-        .oneshot(authed_post("/api/open/open/things/dev-open/command", &raw_key, serde_json::json!({"command": "reboot"})))
+        .oneshot(authed_post(
+            "/api/open/open/things/dev-open/command",
+            &raw_key,
+            serde_json::json!({"command": "reboot"}),
+        ))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
@@ -129,7 +133,11 @@ async fn test_open_send_command_cross_workspace_404() {
 async fn test_open_send_command_non_device_400() {
     let (app, raw_key, _pool) = setup_open_app_with_key("ws-a", "ws-a", "space").await;
     let response = app
-        .oneshot(authed_post("/api/open/open/things/dev-open/command", &raw_key, serde_json::json!({"command": "reboot"})))
+        .oneshot(authed_post(
+            "/api/open/open/things/dev-open/command",
+            &raw_key,
+            serde_json::json!({"command": "reboot"}),
+        ))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
@@ -139,7 +147,11 @@ async fn test_open_send_command_non_device_400() {
 async fn test_open_send_command_unregistered_action_404() {
     let (app, raw_key, _pool) = setup_open_app_with_key("ws-a", "ws-a", "device").await;
     let response = app
-        .oneshot(authed_post("/api/open/open/things/dev-open/command", &raw_key, serde_json::json!({"command": "nonexistent"})))
+        .oneshot(authed_post(
+            "/api/open/open/things/dev-open/command",
+            &raw_key,
+            serde_json::json!({"command": "nonexistent"}),
+        ))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
@@ -151,7 +163,11 @@ async fn test_open_api_key_wrong_secret_rejected() {
     let (app, _raw_key, _pool) = setup_open_app_with_key("ws-a", "ws-a", "device").await;
     let wrong = "tinh_testkeyWRONGSECRETWRONG";
     let response = app
-        .oneshot(authed_post("/api/open/open/things/dev-open/command", wrong, serde_json::json!({"command": "reboot"})))
+        .oneshot(authed_post(
+            "/api/open/open/things/dev-open/command",
+            wrong,
+            serde_json::json!({"command": "reboot"}),
+        ))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);

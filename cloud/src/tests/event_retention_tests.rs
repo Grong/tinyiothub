@@ -6,15 +6,15 @@
 //! to prove the purge paths respect that split.
 
 use chrono::{Duration, Utc};
-use tinyiothub_core::models::cron_job::CronJob;
+use tinyiothub_core::{cron::JobExecutor, models::cron_job::CronJob};
 use tinyiothub_runtime::cron::EventRetentionExecutor;
 use tinyiothub_storage::sqlite::Database;
 
-use tinyiothub_core::cron::JobExecutor;
-
-use crate::modules::event::repo::RealTimeEventRepository;
-use crate::shared::persistence::repositories::SqliteRealTimeEventRepository;
-use crate::test_utils::seed_test_workspace;
+use crate::{
+    modules::event::repo::RealTimeEventRepository,
+    shared::persistence::repositories::SqliteRealTimeEventRepository,
+    test_utils::seed_test_workspace,
+};
 
 async fn test_pool() -> sqlx::SqlitePool {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
@@ -27,7 +27,13 @@ async fn test_pool() -> sqlx::SqlitePool {
 }
 
 /// Insert an event row. `is_status` distinguishes occurrence (0) from status (1).
-async fn insert_event(pool: &sqlx::SqlitePool, id: &str, age_days: i64, is_status: i64, acknowledged: i64) {
+async fn insert_event(
+    pool: &sqlx::SqlitePool,
+    id: &str,
+    age_days: i64,
+    is_status: i64,
+    acknowledged: i64,
+) {
     // event_subtype varies by id so status rows don't collide on the
     // (correct) status-dedup unique index
     let ts = (Utc::now() - Duration::days(age_days)).to_rfc3339();

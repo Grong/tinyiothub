@@ -38,8 +38,8 @@ pub fn load_migrations() -> Result<Vec<Migration>, sqlx::migrate::MigrateError> 
 /// 2. Back up the database file to `data/backups/` (only when migrations
 ///    are actually pending).
 /// 3. Run the migration set.
-/// 4. Copy real property/command data from pre-Thing-Ontology tables
-///    (preserving IDs), backfill `events.workspace_id`.
+/// 4. Post-migration repair: drop pre-Thing-Ontology tables (data already
+///    merged inline by the cleanup migration), backfill `events.workspace_id`.
 /// 5. Repair schema inconsistencies (add missing columns).
 /// 6. Enforce referential integrity — abort startup on FK violations
 ///    (`PRAGMA foreign_key_check` inside a migration script only returns
@@ -224,7 +224,9 @@ async fn prepare_thing_model_copy(pool: &SqlitePool) -> Result<(), sqlx::Error> 
 async fn repair_thing_model_data(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     if table_exists(pool, "device_properties").await? {
         sqlx::query("DROP TABLE device_properties").execute(pool).await?;
-        tracing::info!("dropped device_properties (data merged into thing_properties by migration)");
+        tracing::info!(
+            "dropped device_properties (data merged into thing_properties by migration)"
+        );
     }
 
     if table_exists(pool, "device_commands").await? {

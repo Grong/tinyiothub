@@ -4,8 +4,7 @@ use chrono::Utc;
 use cron::Schedule;
 use tinyiothub_core::models::cron_job::CronJob;
 use tinyiothub_runtime::cron::{
-    DeviceCommandExecutor, EventRetentionExecutor, ExecutionResult, ExecutorError,
-    ExecutorRegistry,
+    DeviceCommandExecutor, EventRetentionExecutor, ExecutionResult, ExecutorError, ExecutorRegistry,
 };
 use tinyiothub_storage::{
     sqlite::database::Database,

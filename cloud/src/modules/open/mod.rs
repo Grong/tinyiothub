@@ -53,10 +53,7 @@ async fn validate_api_key(
     // Verify the SECRET: constant-time SHA-256(presented) vs stored key_hash.
     // The prefix is a lookup hint, not a credential.
     let presented_hash = format!("{:x}", sha2::Sha256::digest(raw_key.as_bytes()));
-    let hash_matches: bool = presented_hash
-        .as_bytes()
-        .ct_eq(key.key_hash.as_bytes())
-        .into();
+    let hash_matches: bool = presented_hash.as_bytes().ct_eq(key.key_hash.as_bytes()).into();
     if !hash_matches {
         return Err(StatusCode::UNAUTHORIZED);
     }
@@ -283,7 +280,7 @@ async fn get_thing_properties(
     let rows = sqlx::query(
         "SELECT name, display_name, data_type, value, unit, updated_at FROM thing_properties \
          WHERE device_id = ? AND device_id IN (SELECT id FROM devices WHERE workspace_id = ?) \
-         ORDER BY created_at DESC"
+         ORDER BY created_at DESC",
     )
     .bind(&id)
     .bind(&workspace_id)

@@ -236,10 +236,7 @@ pub async fn invoke_action(
         && let Err(msg) =
             crate::modules::agent::tools::thing::validate_action_params(schema, req.params.as_ref())
     {
-        return (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            ApiResponseBuilder::error_with_code(422, msg),
-        );
+        return (StatusCode::UNPROCESSABLE_ENTITY, ApiResponseBuilder::error_with_code(422, msg));
     }
 
     // 3. require_action_confirm gate (fail closed — T7)
