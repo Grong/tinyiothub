@@ -564,7 +564,7 @@ export function renderDetailKnowledge(host: DevicesView) {
                       </div>
                     </div>
                   </div>
-                  <div class="device-card__footer" style="cursor:pointer;min-height:28px;position:relative;" @click=${(e: Event) => { e.stopPropagation(); host.editingDocId === doc.id ? (host.editingDocId = null) : host.startEditDoc(doc); }}>
+                  <div class="device-card__footer" style="cursor:pointer;min-height:28px;position:relative;" @click=${(e: Event) => { e.stopPropagation(); if (host.editingDocId === doc.id) { host.editingDocId = null; } else { host.startEditDoc(doc); } }}>
                     ${visibleTags.map((t: any) => html`<span class="tag-pill">${typeof t === 'string' ? t : t.name || t}</span>`)}
                     ${hiddenCount > 0 ? html`<span class="tag-pill tag-pill--muted" title="${docTags.slice(3).map((t: any) => typeof t === 'string' ? t : t.name || t).join(', ')}">+${hiddenCount}</span>` : nothing}
                     ${docTags.length === 0 ? html`<span class="inline-muted" style="font-size: 12px;">添加标签</span>` : nothing}

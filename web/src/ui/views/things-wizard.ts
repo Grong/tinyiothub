@@ -210,7 +210,7 @@ export function renderWizardDeviceInfo(host: DevicesView) {
                     @change=${(e: Event) => {
                       const checked = (e.target as HTMLInputElement).checked;
                       const next = new Set(host.wizSelectedResourceIds);
-                      checked ? next.add(r.id) : next.delete(r.id);
+                      if (checked) { next.add(r.id); } else { next.delete(r.id); }
                       host.wizSelectedResourceIds = next;
                     }}
                   />
