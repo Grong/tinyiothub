@@ -1,8 +1,35 @@
 # Thing Agent Loop — AI 自治驱动物本体设计
 
 > 日期：2026-07-29
-> 状态：已确认（brainstorming 逐节批准）
+> 状态：已确认（brainstorming 逐节批准 + /plan-ceo-review SELECTIVE EXPANSION 裁决）
 > 背景：物本体（Thing Ontology）集成改造已完成（物/模板/事件管线/9 个本体工具/invoke_action 确认门）。本期实现"本体智能"的下一个阶段：**AI 自治驱动物**——感知→决策→行动→验证的无人闭环。这是"AI 驱动本体"四个方向中的第一个子项目（其余三个：AI 构建与进化本体、A2UI 本体渲染、智能问答入口，各自独立 spec 周期）。
+
+## 修订记录 v2（2026-07-29，CEO 审查 + 三轮对抗评审 + 外部声音）
+
+/plan-ceo-review（SELECTIVE EXPANSION）接受 6 项扩展（X1-X6，见 CEO Plan `~/.gstack/projects/Grong-tinyiothub/ceo-plans/2026-07-29-thing-agent-loop.md`），三轮对抗评审（27 项）与外部声音（14 项）全部裁决。**以下裁决与本文其余章节冲突时，以本节为准。**
+
+| # | 裁决 |
+|---|------|
+| O1 | **run_single → 流式 turn_streamed + TurnEvent 拦截**（决策 #3、架构图、Run 生命周期三处）。核实 zeroclaw：ToolCall 事件 fire-and-forget 不暂停，因此硬性上限只在 tool 内策略门强制；流式侧负责轨迹捕获（R1 verified 客观判定）、预算监控、best-effort abort（CancellationToken）。abort 返回 `Err(ToolLoopCancelled)` 无 LLM 收尾，RunReport/清单由框架从轨迹合成 |
+| O2 | **决策 #9/R4 修订**：心跳 runner 不动，仅加"结论投递出口"（X6 桥接：心跳诊断结论作为 UserDirective 投递，带 `problem_key` 与 `source=heartbeat:{tick_id}`） |
+| O3 | **§八 thing_agent/policy.rs 作废**：策略逻辑收进 `crates/tinyiothub-ai/src/policy`——PolicyEngine trait 上新建 SQLite 持久化实现（现状仅 NoopPolicyEngine），扩展 `PolicyDecision::RequireApproval` 与计频规则；自有新表 `policy_rules`。**X3 全有或全无**：若砍 X3，连 policy_rules 表/策略端点都不建 |
+| O4 | **agent_runs 加列**：`problem_key TEXT NULL`、`dedup_key TEXT`、`acked_at/acked_by`；API 加 `POST /agent/runs/{id}/ack`；索引 `(workspace_id, problem_key, created_at)` 与 `(workspace_id, dedup_key, created_at)` |
+| O5 | **§二 UserDirectiveTrigger**：`TriggerSource::UserDirective` 加 `source` 字段；心跳来源 directive 降为 Normal、参与合并、不享"排队不丢"；用户指令队列上限 50/工作区，超出拒绝并告知；同工作区同文本指令 60s 去重（双击/重试） |
+| O6 | **自治策略三态**：`mode: off | diagnose | act`（替代 enabled 布尔）——off=不起 Run 零 LLM 成本；diagnose=原"只诊断不行动"；act=完全自治。默认 off |
+| O7 | **策略逐次现读**（废快照）：每次 invoke_action 现查策略（SQLite 点查），kill switch 即时生效；DB 读失败 fail-closed（V10 先例复述） |
+| O8 | **RunContext = `Arc<RwLock<RunContext>>`**：per-workspace 一个自治 Agent 实例（串行调度保证无竞争），每 Run 换内容；与 chat 的 Agent 实例隔离 |
+| O9 | **预算口径**：工具调用 25 次（zeroclaw 并行派发，"轮"不是可靠单位）+ 时长 5min，流式侧硬截断；每 Run/每物动作硬上限 tool 内强制；token 本期仅监控记录不设硬上限 |
+| O10 | **Critical 事件绕过 30s 合并窗口**直接入队（与"数秒内唤醒"验收对齐） |
+| O11 | **X6 dedup 规则（6h 窗口、窗口内计数、全 outcome 覆盖）**：failed/rejected/budget_exceeded → 跳过；acted+verified / no_action_needed → 跳过；acted+未 verified → 窗口内已放行过一次则跳；超 6h 不抑制（复发可再处置）；已 ack 的 problem_key 抑制 7 天 |
+| O12 | **chat 回推 = 复用 `history::append_message`**（chat/service.rs:271 同款，SQLite 直写 assistant 消息，零 LLM 成本）；live SSE 推送留 TODOS |
+| O13 | **安全节补强**：事件 payload 以 `<event_data>` 围栏、用户指令以 `<user_directive>` 围栏进 prompt（沿用 `<user_document>` 先例）；新端点（tasks/runs/ack/策略）全部工作区隔离 + admin 角色（V5 复述）；注入防护=围栏+动作名单+计频熔断三层 |
+| O14 | **可观测性补充**：广播 channel 满丢弃记 `agent_wake_dropped`；`agent_action_denied` 激增告警（策略过紧或行为漂移信号）；kill switch runbook（off→全部 Run 停止） |
+| O15 | **测试节补充**：X1-X6 用例行（见 CEO Plan）、LLM 无响应 5min 时长截断、事件 payload 注入文本下 denylist 仍生效 |
+| O16 | **R6（新）**：zeroclaw abort 验证为 go/no-go 检查——若 abort 不停 LLM 循环，B 方案=工具内计数拒绝（RunContext 计数器超限即拒绝后续调用） |
+
+**接受的扩展（叠加本期范围）**：X1 历史处置注入（同 dedup_key 历史 Runs ≤3 条 ×≤200 字进 prompt）、X2 失败人工清单（无 LLM 时框架从轨迹合成；无会话 Run 推最近活跃会话）、X3 统一策略面（三接入面：chat 确认/心跳 trust 适配/thing_agent 门）、X4 token 日聚合（普通视图 + Run 落库时发 `agent_tokens_daily` 指标）、X5 放宽 hint-only（`policy_relax_hint` 字段，UI 留 A2UI）、X6 心跳桥接（O2/O11）。
+
+**新延后项**（入 TODOS）：live SSE 回推、TrendAnomalyTrigger、GoalTrigger、Runs/策略 UI 面板、heartbeat_trust_config 旧表下线、心跳迁入 Trigger 框架、POST tasks 前端面板。
 
 ## 核心决策汇总
 
