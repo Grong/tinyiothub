@@ -22,6 +22,12 @@ pub enum TriggerSource {
         session_key: Option<String>,
         source: Option<String>, // source: None=chat/API, Some("heartbeat:{tick}")
     },
+    /// Output of the scheduler's merge window (T8): every non-Critical signal
+    /// sharing one `dedup_key` inside a 30s window, in arrival order. T9/T10
+    /// prompt assembly recurses into `signals` to build the aggregated context.
+    Merged {
+        signals: Vec<WakeSignal>,
+    },
 }
 
 #[derive(Debug, Clone)]
