@@ -5,6 +5,12 @@
 
 ## Thing Agent Loop — Deferred (from /plan-ceo-review 2026-07-29, spec v2 O1-O16)
 
+### P3 — agent_runs 保留策略
+- **What:** 为 agent_runs 表定义保留策略（按 outcome 分类生命周期：acted+verified 长留、failed 中留、no_action 短留），定期清理。
+- **Why:** events 表"无保留策略"的坑 D3.3 才补上；agent_runs 最坏 480 行/天/工作区，不重复踩同一个坑。
+- **Context:** 复用 D3.3 occurrence-aware retention 框架；agent_daily_cost 视图依赖历史行，清理时保留聚合结果。
+- **Effort:** S (human: ~0.5d / CC: ~30min) | **Depends on:** Thing Agent Loop 主框架落地
+
 ### P2 — live SSE 回推自治 Run 结果
 - **What:** Run 完成回推 chat 时，向正在观看该会话的客户端实时推送（当前仅 `history::append_message` 落库，在线用户需刷新才可见）。
 - **Why:** 用户指令"受理→执行→回报"体验闭环的最后一公里；无实时推送时在线用户感知不到执行完成。
@@ -56,11 +62,8 @@
 - **Files:** `cloud/src/shared/service_manager.rs:169-170`, `crates/tinyiothub-ai/src/event/bus.rs`, `crates/tinyiothub-ai/src/event/dlq.rs`
 - **Effort:** S (human: ~4h / CC: ~30min)
 
-### P2 — Wire TrustConfig DB loading
-- **What:** 从 `heartbeat_trust_config` 表加载 TrustConfig，替换 `HeartbeatRunner::load_trust_config()` 中的 `TrustConfig::default()` 硬编码。
-- **Why:** 当前所有工作空间使用默认信任配置，DB 中的配置永远不生效。
-- **Files:** `crates/tinyiothub-ai/src/heartbeat/runner.rs:206-208`, `cloud/src/modules/agent/heartbeat_repo.rs`
-- **Effort:** S (human: ~3h / CC: ~20min)
+### P2 — ~~Wire TrustConfig DB loading~~（已失效，2026-07-29 核实删除）
+- **核实结果：** `crates/tinyiothub-ai/src/heartbeat/runner.rs:341-350` 经 `task_repo.load_trust_config` 从 `workspaces.heartbeat_trust_config` 列加载（heartbeat_repo.rs:167-180，含测试 :593-603）。DB 加载已接线，本条作废。
 
 ### P2 — Add dynamic task/config refresh to heartbeat loop (Outside Voice)
 - **What:** 运行中的心跳循环无法获取最新的任务列表或 TrustConfig。任务增删需完整 stop/restart。TrustConfig 更新对运行中的循环不生效。

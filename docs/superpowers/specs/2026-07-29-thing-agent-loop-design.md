@@ -14,7 +14,7 @@
 | O2 | **决策 #9/R4 修订**：心跳 runner 不动，仅加"结论投递出口"（X6 桥接：心跳诊断结论作为 UserDirective 投递，带 `problem_key` 与 `source=heartbeat:{tick_id}`） |
 | O3 | **§八 thing_agent/policy.rs 作废**：策略逻辑收进 `crates/tinyiothub-ai/src/policy`——PolicyEngine trait 上新建 SQLite 持久化实现（现状仅 NoopPolicyEngine），扩展 `PolicyDecision::RequireApproval` 与计频规则；自有新表 `policy_rules`。**X3 全有或全无**：若砍 X3，连 policy_rules 表/策略端点都不建 |
 | O4 | **agent_runs 加列**：`problem_key TEXT NULL`、`dedup_key TEXT`、`acked_at/acked_by`；API 加 `POST /agent/runs/{id}/ack`；索引 `(workspace_id, problem_key, created_at)` 与 `(workspace_id, dedup_key, created_at)` |
-| O5 | **§二 UserDirectiveTrigger**：`TriggerSource::UserDirective` 加 `source` 字段；心跳来源 directive 降为 Normal、参与合并、不享"排队不丢"；用户指令队列上限 50/工作区，超出拒绝并告知；同工作区同文本指令 60s 去重（双击/重试） |
+| O5 | **§二 UserDirectiveTrigger**：`TriggerSource::UserDirective` 加 `source` 字段；心跳来源 directive 降为 Normal、~~参与合并~~（O24 修正为不参与合并，problem_key 预入队去重已覆盖）、不享"排队不丢"；用户指令队列上限 50/工作区，超出拒绝并告知；同工作区同文本指令 60s 去重（双击/重试） |
 | O6 | **自治策略三态**：`mode: off | diagnose | act`（替代 enabled 布尔）——off=不起 Run 零 LLM 成本；diagnose=原"只诊断不行动"；act=完全自治。默认 off |
 | O7 | **策略逐次现读**（废快照）：每次 invoke_action 现查策略（SQLite 点查），kill switch 即时生效；DB 读失败 fail-closed（V10 先例复述） |
 | O8 | **RunContext = `Arc<RwLock<RunContext>>`**：per-workspace 一个自治 Agent 实例（串行调度保证无竞争），每 Run 换内容；与 chat 的 Agent 实例隔离 |
@@ -26,10 +26,30 @@
 | O14 | **可观测性补充**：广播 channel 满丢弃记 `agent_wake_dropped`；`agent_action_denied` 激增告警（策略过紧或行为漂移信号）；kill switch runbook（off→全部 Run 停止） |
 | O15 | **测试节补充**：X1-X6 用例行（见 CEO Plan）、LLM 无响应 5min 时长截断、事件 payload 注入文本下 denylist 仍生效 |
 | O16 | **R6（新）**：zeroclaw abort 验证为 go/no-go 检查——若 abort 不停 LLM 循环，B 方案=工具内计数拒绝（RunContext 计数器超限即拒绝后续调用） |
+| O17 | **自治实例 LLM 配置**跟随 agent 子系统既有 LLM client（D3.1 先例复述，不新建客户端）；**事件广播拓扑**=单全局 `tokio::broadcast` channel（容量 256，工作区过滤在消费侧，lag→丢弃 + `agent_wake_dropped` 指标）（eng review D3） |
+| O18 | **invoke_action 自治变体 = thing_agent 模块薄包装**：复用 `InvokeActionTool`（thing.rs:526）的校验/下发，仅将确认令牌分支替换为策略门 + RunContext 注入；thing.rs 不加行（eng review D4） |
+| O19 | **测试节加 4 行**：指令 60s 去重（连发两条同文本→仅 1 Run）、Critical 绕过合并窗口直接入队、队列上限 50（第 51 条拒收并告知）、mode=off（唤醒到达但零 LLM 调用零 Run 落库）（eng review D5） |
 
 **接受的扩展（叠加本期范围）**：X1 历史处置注入（同 dedup_key 历史 Runs ≤3 条 ×≤200 字进 prompt）、X2 失败人工清单（无 LLM 时框架从轨迹合成；无会话 Run 推最近活跃会话）、X3 统一策略面（三接入面：chat 确认/心跳 trust 适配/thing_agent 门）、X4 token 日聚合（普通视图 + Run 落库时发 `agent_tokens_daily` 指标）、X5 放宽 hint-only（`policy_relax_hint` 字段，UI 留 A2UI）、X6 心跳桥接（O2/O11）。
 
-**新延后项**（入 TODOS）：live SSE 回推、TrendAnomalyTrigger、GoalTrigger、Runs/策略 UI 面板、heartbeat_trust_config 旧表下线、心跳迁入 Trigger 框架、POST tasks 前端面板。
+**新延后项**（入 TODOS）：live SSE 回推、TrendAnomalyTrigger、GoalTrigger、Runs/策略 UI 面板、heartbeat_trust_config 旧表下线、心跳迁入 Trigger 框架、POST tasks 前端面板、agent_runs 保留策略。
+
+## 修订记录 v3（2026-07-29，/plan-eng-review + eng 轮外部声音）
+
+eng review 四节 + 外部声音（12 项，经代码核实：#1 成立构建级、#3 成立、#11 被 ToolResult 推翻、#12 维持已裁决）全部裁决。正文已对齐本节（§二/§三/§四/§五/§八/决策 #3），不再依赖"以修订为准"优先级。
+
+| # | 裁决 |
+|---|------|
+| O20 | **thing_agent 留在 crates/tinyiothub-ai**（D7）：crate 加 zeroclaw git 依赖（tag v0.8.1-patched）；cloud 侧能力（本体工具/chat 回推/事件广播）经 trait 注入（HeartbeatTaskRepository 先例）；自治 Agent 实例由 cloud 工厂构造（含 9 本体工具 + 自治变体）注入 runner。policy 引擎不需要 zeroclaw 依赖 |
+| O21 | **X6 挂点 = Orchestrator 订阅 HeartbeatCompleted**（D8，callbacks.rs:116 同款）：loop_.rs 零改动，真正兑现"心跳 runner 不动"；problem_key 从结构化 proposals 派生（proposal 类型 + 目标物 id，不用自由文本摘要）；心跳自主动作同样标 actor=agent（防第二共振循环） |
+| O22 | **实施顺序**：R16 abort spike 为 T0 最先执行（go/no-go 门控 runner 设计）；迁移（含 events actor 列）先于触发器 |
+| O23 | **X3 适配器等价语义收窄**：等价 = 同一 TrustConfig 输入下适配器裁决与既有心跳路径一致（非跨接入面 parity——三面语义本就不同）；存储归属：workspace_autonomy_policy 存 mode/名单/计频（单点读），policy_rules 存统一引擎通用规则 |
+| O24 | **心跳 directive 不参与合并窗口**（problem_key 预入队去重已覆盖，合并销毁 per-directive 身份）；chat/API 用户指令仍不合并 |
+| O25 | **正文对齐完成**：§三 25 调用、§四 mode 三态、§五 三表全列、§八 policy 位置与代码归属、决策 #3 流式 |
+| O26 | **mode→off 清空待处理队列**（记 metric；kill switch 覆盖已排队工作，不只进行中的 Run） |
+| O27 | **广播 lag → events 表游标补偿查询**（不是只丢弃）：事件已持久化，lag/重启后按游标补拉，Critical 不静默丢 |
+| O28 | **无会话回推收窄为 admin 最近活跃会话**（多用户工作区防泄漏），无则告警通道 |
+| O29 | **双自治循环并存为本期知情决策**（OV#12 复核维持）：心跳迁徙 Trigger 框架已入 TODOS，不行动 |
 
 ## 核心决策汇总
 
@@ -37,7 +57,7 @@
 |---|--------|------|
 | 1 | 总体路线 | 方案 B：新建独立 Thing Agent Loop 子系统（`crates/tinyiothub-ai/src/thing_agent`），不在心跳循环上演进，不做 per-thing agent |
 | 2 | Loop 粒度 | per-workspace 一个自治 Loop，串行执行（复用 HeartbeatManager/AgentPool 模式）；物通过本体工具发现与操作 |
-| 3 | Loop 内核 | **复用 zeroclaw agentic loop（run_single + 工具），不写刚性阶段编排**。Sense/Plan/Act/Verify 全部由 system prompt 纪律 + 工具设计约束（对标 Claude Code：harness 只做触发/权限/上下文/中断，循环由模型自主驱动）。吸取 2026-07-06 harness loop 刚性流水线被 revert（e38e404e）的教训 |
+| 3 | Loop 内核 | **复用 zeroclaw agentic loop（流式 turn_streamed + TurnEvent 拦截 + 工具），不写刚性阶段编排**。Sense/Plan/Act/Verify 全部由 system prompt 纪律 + 工具设计约束（对标 Claude Code：harness 只做触发/权限/上下文/中断，循环由模型自主驱动）。吸取 2026-07-06 harness loop 刚性流水线被 revert（e38e404e）的教训 |
 | 4 | 自治级别 | L4 完全自治：动作不需逐次人工确认，约束由预声明策略门承担；安全栏杆 = kill switch + 名单 + 熔断 + 共振防护 + 全量审计 |
 | 5 | 触发源 | 本期三个：物事件实时唤醒、定时巡检、用户指令（chat 工具投递）；趋势异常、持续目标只留 Trigger 接口不实现 |
 | 6 | 确认机制分工 | chat 链路的 `require_action_confirm` 确认令牌**不动**；自治 Run 内 invoke_action 走自治策略门。两条场景线互不干扰 |
@@ -90,7 +110,7 @@ enum TriggerSource {
 |---|---|---|
 | `ThingEventTrigger` | 订阅既有事件管线：物事件路由函数写入 events 表后同步进程内广播，**不轮询 DB** | 工作区级配置 `min_wake_level`（默认 warning）：info 不唤醒；`unknown_event=true` 不唤醒；状态类/发生类事件均可触发，携带事件上下文 |
 | `TimerTrigger` | per-workspace 间隔巡检（默认 15min，可配） | 到点发 Normal 优先级信号，无具体事件上下文，AI 自主用本体工具巡检 |
-| `UserDirectiveTrigger` | 用户行动指令异步闭环执行 | 优先级 High，**不合并**（每条用户指令独立执行）；计入每小时唤醒上限，但超限时不丢弃而是排队延迟 |
+| `UserDirectiveTrigger` | 用户行动指令异步闭环执行 | 优先级 High；chat/API 来源**不合并**（每条用户指令独立执行）；**心跳来源例外**：不参与合并（problem_key 预入队去重已覆盖，合并会销毁 per-directive 身份）、降 Normal、不享"排队不丢"；用户指令超上限排队延迟（队列上限 50/工作区，超出拒绝并告知；同工作区同文本指令 60s 去重） |
 
 用户指令的两个入口：
 
@@ -114,7 +134,7 @@ enum TriggerSource {
 WakeSignal 出队
   → 构建 RunContext（触发源上下文 + 工作区自治配置 + 相关物本体信息 + 最近 5 条 Run 摘要）
   → 拼装 system prompt（四段式）
-  → zeroclaw run_single(ws_id, prompt, tools)   ← 模型自主驱动，无刚性编排
+  → zeroclaw 流式 turn_streamed（工具轨迹实时捕获：ToolCall + ToolResult）   ← 模型自主驱动，无刚性编排
   → 结束 → RunReport 落库 + 记忆更新 + （用户指令）回推 chat
 ```
 
@@ -130,7 +150,7 @@ WakeSignal 出队
 ### 工具与预算
 
 - 工具集：自治 Run 内复用现有 9 个本体工具，其中 `invoke_action` 走策略门（第四节）而非确认令牌；`dispatch_thing_task` 仅注册在 chat 链路（用户指令入口），自治 Run 内不注册
-- **防失控预算**：单次 Run 硬上限——最大工具轮次 15、单物最大动作 3 次、总时长 5min；任一超限强制收尾，Report 标记 `budget_exceeded`
+- **防失控预算**：单次 Run 硬上限——工具调用 25 次、单物最大动作 3 次、总时长 5min；任一超限强制收尾，Report 标记 `budget_exceeded`
 
 ### RunReport
 
@@ -157,7 +177,7 @@ struct RunReport {
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
-| `enabled` | **OFF** | 总开关（kill switch）。新工作区默认关闭自治；关闭时触发器照常发信号但 Run 内所有动作被拒，AI 退化为"只诊断不行动" |
+| `mode` | `off` | 三态总开关：`off`=不起 Run 零 LLM 成本；`diagnose`=Run 照跑但所有动作被拒（只诊断）；`act`=完全自治。默认 off，显式开启才生效。mode→off 时清空该工作区待处理队列（记 metric） |
 | `allowed_actions` | `["*"]` | 动作白名单（模板动作名，支持 `*`） |
 | `denied_actions` | `[]` | 黑名单，优先级高于白名单（如 `firmware_update`、`factory_reset` 永拒） |
 | `max_actions_per_run` | 3 | 单次 Run 动作上限 |
@@ -194,16 +214,19 @@ AI 动作产生的事件在事件管线标记 `actor=agent`，ThingEventTrigger 
 
 ## 五、数据模型、审计、记忆与报告回推
 
-### 新增两张表（一个小迁移，遵循既有迁移模式）
+### 新增三张表（一个小迁移，遵循既有迁移模式）
 
 ```sql
-workspace_autonomy_policy   -- 第四节策略配置，workspace_id 主键
+workspace_autonomy_policy   -- 第四节策略配置（mode/名单/计频，单点读），workspace_id 主键
+policy_rules                -- X3 统一策略引擎的通用规则存储（chat 确认/心跳 trust 适配共用）
 agent_runs                  -- 每次闭环运行一条
   ├── id, workspace_id, trigger_type, trigger_context(JSON)
   ├── outcome TEXT,            -- acted/no_action/failed/budget_exceeded/rejected
   ├── summary TEXT, report JSON,  -- 完整 RunReport（含 actions 数组与验证结果）
   ├── verified INTEGER, tool_rounds INTEGER, tokens INTEGER, duration_ms INTEGER
-  └── created_at  -- 索引: (workspace_id, created_at)
+  ├── problem_key TEXT NULL, dedup_key TEXT,   -- X6 去重 / X1 历史注入
+  ├── acked_at TEXT NULL, acked_by TEXT NULL   -- 人工关闭
+  └── created_at  -- 索引: (workspace_id, created_at)、(workspace_id, problem_key, created_at)、(workspace_id, dedup_key, created_at)
 ```
 
 **不新建的**：动作级审计复用既有——invoke_action 已有审计日志（操作者/时间/目标物），自治动作以 `actor=agent, run_id` 落入同一通道。
@@ -266,7 +289,9 @@ agent_runs                  -- 每次闭环运行一条
 
 ## 八、代码归属与实施边界
 
-- 新模块 `crates/tinyiothub-ai/src/thing_agent/`：`trigger/`（三个触发器 + 抽象）、`scheduler.rs`（队列/合并/熔断）、`runner.rs`（Run 生命周期/prompt 拼装/预算）、`policy.rs`（策略门）、`report.rs`（RunReport/落库/回推）
+- 新模块 `crates/tinyiothub-ai/src/thing_agent/`（eng review D7 裁决：tinyiothub-ai 加 zeroclaw git 依赖，cloud 能力经 trait 注入——HeartbeatTaskRepository 先例）：`trigger/`（三个触发器 + 抽象）、`scheduler.rs`（队列/合并/熔断）、`runner.rs`（Run 生命周期/prompt 拼装/预算/流式轨迹）、`report.rs`（RunReport 合成/落库/回推）；自治 Agent 实例由 cloud 工厂构造（带 9 本体工具 + 自治变体）注入 runner
+- 策略逻辑在 `crates/tinyiothub-ai/src/policy/`（PolicyEngine trait + SQLite 持久化实现；policy_rules 表）
+- invoke_action 自治变体为 thing_agent 侧薄包装：复用 `InvokeActionTool`（thing.rs:526）校验/下发，仅确认令牌分支替换为策略门 + RunContext 注入；thing.rs 不加行
 - 改动点：事件路由函数加进程内广播 + `actor` 标记；agent 工具注册处加 `dispatch_thing_task`；invoke_action 工具加自治上下文分支（走策略门）；Orchestrator 接线 Loop 启停；chat service 接收回推消息
 - 不改动：chat 同步问答链路、心跳循环、require_action_confirm 确认令牌流、既有 9 个本体工具的语义
 
