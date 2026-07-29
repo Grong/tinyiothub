@@ -4,6 +4,8 @@
 //! - TrustEngine: intrinsic tool safety (read/write/destructive)
 //! - PolicyEngine: workspace-specific rules (rate limits, allowlists, content filters)
 
+pub mod autonomy;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
@@ -60,6 +62,8 @@ pub enum PolicyDecision {
     Block { reason: String },
     /// Action is flagged — execute but log/report.
     Flag { reason: String },
+    /// Action needs explicit user approval before it may proceed.
+    RequireApproval { reason: String },
 }
 
 /// Engine for evaluating workspace-level policies.
