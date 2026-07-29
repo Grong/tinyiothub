@@ -146,28 +146,34 @@ impl SchedulerHandle {
             });
         }
 
-        if let TriggerSource::UserDirective { text, source: None, .. } = &sig.source {
+        let directive_text = match &sig.source {
+            TriggerSource::UserDirective { text, source: None, .. } => Some(text.clone()),
+            _ => None,
+        };
+        if let Some(text) = directive_text {
             // ④ same-text user directive dedup, 60s (O5).
-            {
-                let now = Instant::now();
-                let mut dedup = self.directive_dedup.lock();
-                dedup.retain(|_, seen| now.duration_since(*seen) < DIRECTIVE_DEDUP);
-                if dedup.contains_key(text) {
-                    tracing::debug!(
-                        workspace_id = %self.workspace_id,
-                        "duplicate user directive within 60s — ignored"
-                    );
-                    return Err(EnqueueError::Duplicate);
-                }
-                dedup.insert(text.clone(), now);
+            let now = Instant::now();
+            let mut dedup = self.directive_dedup.lock();
+            dedup.retain(|_, seen| now.duration_since(*seen) < DIRECTIVE_DEDUP);
+            if dedup.contains_key(&text) {
+                tracing::debug!(
+                    workspace_id = %self.workspace_id,
+                    "duplicate user directive within 60s — ignored"
+                );
+                return Err(EnqueueError::Duplicate);
             }
             // ③ user directives are never throttled and never silently
             // dropped — a full queue rejects so the caller can inform the
-            // user (O5).
-            return self.ready_tx.try_send(sig).map_err(|e| match e {
-                mpsc::error::TrySendError::Full(_) => EnqueueError::Rejected,
-                mpsc::error::TrySendError::Closed(_) => EnqueueError::Closed,
-            });
+            // user (O5). The dedup entry is recorded ONLY on a successful
+            // send: a Rejected/Closed directive must stay retryable.
+            return match self.ready_tx.try_send(sig) {
+                Ok(()) => {
+                    dedup.insert(text, now);
+                    Ok(())
+                }
+                Err(mpsc::error::TrySendError::Full(_)) => Err(EnqueueError::Rejected),
+                Err(mpsc::error::TrySendError::Closed(_)) => Err(EnqueueError::Closed),
+            };
         }
 
         // ① mergeable: parked in the merger task until the window deadline.
@@ -207,14 +213,35 @@ impl SchedulerHandle {
     /// Waits until both the consumer and the merger have acknowledged, so
     /// signals enqueued after `drain()` returns are never wiped. An
     /// in-flight run is NOT cancelled; drain completes once it finishes.
+    ///
+    /// Concurrent drains are serialized: acks record only the LATEST
+    /// generation, so two overlapping drains would starve the later one.
     pub async fn drain(&self) {
+        let _guard = self.drain.lock.lock().await;
         let generation = self.drain.requested.fetch_add(1, Ordering::SeqCst) + 1;
-        self.drain.consumer_notify.notify_one();
+        // Phase 1: the merger acks first — after this it no longer flushes
+        // pre-drain windows into the ready queue.
         self.drain.merger_notify.notify_one();
-        let target = generation * 2; // consumer + merger ack every generation
-        while self.drain.completed.load(Ordering::SeqCst) < target {
-            self.drain.ack_notify.notified().await;
+        wait_ack(&self.drain, &self.drain.merger_acked, generation).await;
+        // Phase 2: only then the consumer purges the ready queue, so a
+        // window flushed just before the drain cannot slip through.
+        self.drain.consumer_notify.notify_one();
+        wait_ack(&self.drain, &self.drain.consumer_acked, generation).await;
+    }
+}
+
+/// Wait until `counter` reaches `generation`. The waiter is registered
+/// (enabled) BEFORE the counter is re-checked, so an ack landing between
+/// the check and the wait can never be lost.
+async fn wait_ack(drain: &DrainState, counter: &AtomicU64, generation: u64) {
+    loop {
+        let notified = drain.ack_notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if counter.load(Ordering::SeqCst) >= generation {
+            return;
         }
+        notified.await;
     }
 }
 
@@ -246,22 +273,27 @@ impl Throttle {
     }
 }
 
-/// Drain coordination: `requested`/`completed` are monotonic generations;
-/// each task acks a generation after purging its pending state.
+/// Drain coordination: `requested` is a monotonic generation; each task
+/// records the latest generation it acked after purging its pending state.
 #[derive(Default)]
 struct DrainState {
     requested: AtomicU64,
-    completed: AtomicU64,
+    consumer_acked: AtomicU64,
+    merger_acked: AtomicU64,
     consumer_notify: Notify,
     merger_notify: Notify,
     ack_notify: Notify,
+    /// Serializes concurrent `drain()` calls.
+    lock: tokio::sync::Mutex<()>,
 }
 
 impl DrainState {
-    fn ack(&self, last_gen: &mut u64, generation: u64) {
+    fn ack(&self, counter: &AtomicU64, last_gen: &mut u64, generation: u64) {
         *last_gen = generation;
-        self.completed.fetch_add(1, Ordering::SeqCst);
-        self.ack_notify.notify_waiters();
+        counter.store(generation, Ordering::SeqCst);
+        // notify_one stores a permit, so an ack is never lost even when no
+        // waiter is registered yet.
+        self.ack_notify.notify_one();
     }
 }
 
@@ -276,7 +308,7 @@ async fn consumer_loop(mut ready_rx: mpsc::Receiver<WakeSignal>, run: RunFn, dra
             while ready_rx.try_recv().is_ok() {
                 cleared += 1;
             }
-            drain.ack(&mut last_gen, generation);
+            drain.ack(&drain.consumer_acked, &mut last_gen, generation);
             if cleared > 0 {
                 tracing::info!(cleared, "scheduler drained ready queue");
             }
@@ -314,7 +346,7 @@ async fn merger_loop(
         if generation > last_gen {
             windows.clear();
             while ingress_rx.try_recv().is_ok() {}
-            drain.ack(&mut last_gen, generation);
+            drain.ack(&drain.merger_acked, &mut last_gen, generation);
             tracing::info!(workspace_id = %workspace_id, "scheduler drained merge windows");
         }
 
@@ -710,6 +742,11 @@ mod tests {
             Err(EnqueueError::Dropped),
             "full queue drops low-priority signals (agent_wake_dropped)"
         );
+        assert_eq!(
+            handle.enqueue(critical_signal(42)),
+            Err(EnqueueError::Dropped),
+            "Critical bypasses the throttle but is still dropped on a full queue"
+        );
 
         gate.notify_waiters(); // let the in-flight run finish; remaining tasks abort with the runtime
     }
@@ -752,6 +789,10 @@ mod tests {
             tokio::spawn(async move { handle.drain().await })
         };
         settle().await;
+        assert!(
+            !draining.is_finished(),
+            "drain must stay pending while a run is in flight (consumer cannot ack yet)"
+        );
         blocking.store(false, Ordering::SeqCst);
         gate.notify_waiters();
         draining.await.expect("drain completes after both tasks ack");
@@ -815,5 +856,135 @@ mod tests {
         assert_eq!(max_seen.load(Ordering::SeqCst), 1, "no two runs may overlap");
 
         release.notify_one();
+    }
+
+    // Regression (review I1): an ack must never be lost, regardless of
+    // whether a waiter is already registered — the old notify_waiters()
+    // dropped the unregistered case and hung drain() forever.
+    #[tokio::test]
+    async fn drain_ack_is_never_lost() {
+        let drain = DrainState::default();
+        let mut last = 0;
+
+        // Order A: ack lands while NO waiter is registered. The stored
+        // permit must still release a waiter created afterwards.
+        drain.ack(&drain.merger_acked, &mut last, 1);
+        wait_ack(&drain, &drain.merger_acked, 1).await;
+
+        // Order B: waiter registered (enabled) BEFORE the ack — the ack
+        // must wake it (this is the check-then-register gap in wait_ack).
+        let notified = drain.ack_notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        drain.ack(&drain.consumer_acked, &mut last, 1);
+        notified.await;
+        assert_eq!(drain.consumer_acked.load(Ordering::SeqCst), 1);
+    }
+
+    // Regression (review I2): two concurrent drain() calls must BOTH
+    // complete — drains are serialized so each observes acks for its own
+    // generation (previously the second drain's target was unreachable).
+    #[tokio::test]
+    async fn concurrent_drains_both_complete() {
+        pause();
+        let blocking = Arc::new(AtomicBool::new(true));
+        let gate = Arc::new(Notify::new());
+        let started = Arc::new(Notify::new());
+        let (blocking_run, gate_run, started_run) = (blocking.clone(), gate.clone(), started.clone());
+        let handle = Scheduler::spawn(WS.to_string(), move |_sig| {
+            let blocking = blocking_run.clone();
+            let gate = gate_run.clone();
+            let started = started_run.clone();
+            Box::pin(async move {
+                started.notify_one();
+                while blocking.load(Ordering::SeqCst) {
+                    gate.notified().await;
+                }
+            })
+        });
+
+        handle.enqueue(directive("in-flight")).expect("enqueue");
+        started.notified().await; // consumer blocked inside the run
+
+        let d1 = tokio::spawn({
+            let handle = handle.clone();
+            async move { handle.drain().await }
+        });
+        settle().await;
+        let d2 = tokio::spawn({
+            let handle = handle.clone();
+            async move { handle.drain().await }
+        });
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        assert!(!d1.is_finished(), "drain 1 waits for the in-flight run");
+        assert!(!d2.is_finished(), "drain 2 queues behind drain 1");
+
+        blocking.store(false, Ordering::SeqCst);
+        gate.notify_waiters();
+        for _ in 0..100 {
+            if d1.is_finished() && d2.is_finished() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(d1.is_finished(), "drain 1 completes after the run");
+        assert!(d2.is_finished(), "concurrent drain 2 also completes (serialized)");
+        d1.await.expect("drain 1");
+        d2.await.expect("drain 2");
+    }
+
+    // Regression (review M4): a directive REJECTED on a full queue must not
+    // poison the 60s dedup table — the user can retry the same text.
+    #[tokio::test]
+    async fn rejected_directive_stays_retryable() {
+        pause();
+        let blocking = Arc::new(AtomicBool::new(true));
+        let gate = Arc::new(Notify::new());
+        let started = Arc::new(Notify::new());
+        let (blocking_run, gate_run, started_run) = (blocking.clone(), gate.clone(), started.clone());
+        let handle = Scheduler::spawn(WS.to_string(), move |_sig| {
+            let blocking = blocking_run.clone();
+            let gate = gate_run.clone();
+            let started = started_run.clone();
+            Box::pin(async move {
+                started.notify_one();
+                while blocking.load(Ordering::SeqCst) {
+                    gate.notified().await;
+                }
+            })
+        });
+
+        handle.enqueue(directive("in-flight")).expect("first signal");
+        started.notified().await; // consumer holds one run in flight
+        for i in 0..QUEUE_CAPACITY {
+            handle.enqueue(directive(&format!("queued-{i}"))).expect("queue slot");
+        }
+        assert_eq!(
+            handle.enqueue(directive("retry-me")),
+            Err(EnqueueError::Rejected),
+            "full queue rejects the directive"
+        );
+
+        // Release the consumer; once a queue slot frees up the SAME text
+        // must be accepted (not reported as Duplicate within the 60s window).
+        blocking.store(false, Ordering::SeqCst);
+        gate.notify_waiters();
+        let mut accepted = false;
+        for _ in 0..200 {
+            match handle.enqueue(directive("retry-me")) {
+                Ok(()) => {
+                    accepted = true;
+                    break;
+                }
+                Err(EnqueueError::Rejected) => tokio::task::yield_now().await,
+                Err(other) => panic!("expected Rejected while draining, got {other:?}"),
+            }
+        }
+        assert!(
+            accepted,
+            "rejected directive must be retryable, not poisoned as Duplicate"
+        );
     }
 }
