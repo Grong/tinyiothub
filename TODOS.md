@@ -3,6 +3,51 @@
 > **最新完整 TODO 清单已迁移至:** `docs/superpowers/plans/2026-04-14-todo-audit-and-cleanup-plan.md`
 > 本文档保留 Edge Intelligence Agent 历史记录，新项目 TODO 请查阅上方计划。
 
+## Thing Agent Loop — Deferred (from /plan-ceo-review 2026-07-29, spec v2 O1-O16)
+
+### P2 — live SSE 回推自治 Run 结果
+- **What:** Run 完成回推 chat 时，向正在观看该会话的客户端实时推送（当前仅 `history::append_message` 落库，在线用户需刷新才可见）。
+- **Why:** 用户指令"受理→执行→回报"体验闭环的最后一公里；无实时推送时在线用户感知不到执行完成。
+- **Context:** chat 模块当前无 per-session 广播通道（grep 无 broadcast/subscribe）；需新增轻量 session 通知机制或挂到既有 SSE 通道。
+- **Effort:** M (human: ~1d / CC: ~1h)
+
+### P2 — TrendAnomalyTrigger（遥测基线异常触发器）
+- **What:** 分析遥测趋势发现模型外异常（无事件定义也能发现问题），注册为第四个 Trigger。
+- **Why:** 事件驱动只能发现"已定义"的问题；趋势异常覆盖未预见故障模式。
+- **Context:** Trigger 接口与调度已预留（spec §二）；需要遥测基线/异常检测算法选型。
+- **Effort:** L (human: ~3d / CC: ~4h) | **Depends on:** Thing Agent Loop 主框架落地
+
+### P3 — GoalTrigger（持续目标维持）
+- **What:** 用户下达高层目标（"车间温度维持 20-26°C"），AI 长期巡检+事件响应维持，周期报告。
+- **Why:** 10x 愿景的核心形态；L4 自治的最终价值。
+- **Context:** Trigger 接口已预留；需要目标状态管理（目标表、达成判定、长期记忆）。
+- **Effort:** L (human: ~3d / CC: ~4h) | **Depends on:** Thing Agent Loop + X1 历史注入
+
+### P2 — Runs 列表/策略配置 UI 面板 + X5 预填配置页
+- **What:** agent_runs 列表页、三态策略配置页、X5 `policy_relax_hint` 预填落地。
+- **Why:** 本期 API 完整但无界面；Runs 可见性是"可信自治"叙事的主展示面。
+- **Context:** A2UI 子项目（CEO 计划 D3.4）是天然展示层，建议与 A2UI 本体渲染同期做。
+- **Effort:** M (human: ~2d / CC: ~2h) | **Depends on:** E2 A2UI 本体渲染
+
+### P3 — heartbeat_trust_config 旧表下线
+- **What:** X3 统一策略面适配器稳定后，迁移数据并 DROP heartbeat_trust_config。
+- **Why:** 消除最后一个旧治理面，完成三接入面收敛。
+- **Context:** X3 适配器读旧表翻译为新引擎输入；下线前需跑适配器等价测试全绿一个迭代。
+- **Effort:** S (human: ~0.5d / CC: ~30min) | **Depends on:** X3 统一策略面
+
+### P2 — 心跳 runner 迁入 Trigger 框架
+- **What:** HeartbeatRunner 的定时巡检改为 TimerTrigger 的一种配置，统一巡检语义。
+- **Why:** 消除心跳与 Thing Agent Loop 两套巡检并存（spec R4）；X6 已架桥，迁徙是自然后续。
+- **Context:** 心跳 runner 本期不动（O2 裁决仅加投递出口）；迁徙时保留 TrustEngine 适配路径。
+- **Effort:** M (human: ~2d / CC: ~2h) | **Depends on:** Thing Agent Loop 稳定运行一个迭代
+
+### P3 — POST /agent/tasks 前端面板
+- **What:** 管理 API `POST /api/workspaces/{id}/agent/tasks` 的前端入口（自治任务提交面板）。
+- **Why:** chat 工具已覆盖主路径，面板服务"不想开对话直接派任务"的用户。
+- **Context:** API 本期交付；可与 Runs 面板同页。
+- **Effort:** S (human: ~0.5d / CC: ~30min) | **Depends on:** Runs UI 面板
+
+
 ## AI Subsystem (from /plan-ceo-review 2026-06-30, SCOPE REDUCTION)
 
 ### P1 — Wire DropNotifier + DeadLetterQueue
