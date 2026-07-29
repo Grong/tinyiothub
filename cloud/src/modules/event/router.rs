@@ -7,8 +7,10 @@ use std::{
 use chrono::Utc;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
+use tinyiothub_ai::thing_agent::ThingEventSignal;
 use tinyiothub_core::models::event::{EventId, EventLevel, EventSource};
 
+use super::bus::ThingEventBus;
 use crate::modules::alarm::service::AlarmService;
 
 // ── Core types ──────────────────────────────────────────────────
@@ -104,10 +106,17 @@ pub struct ThingEventPayload {
 /// 2. Maps the level string to `EventLevel`.
 /// 3. Checks the per-thing throttle.
 /// 4. Inserts a row into the `events` table.
+/// 5. Broadcasts a [`ThingEventSignal`] on the global bus (T6).
+///
+/// `actor` marks who produced the event: `"device"` for device-reported
+/// events (MQTT ingest), `"agent"` for events produced by agent actions
+/// (resonance guard — the thing-agent loop must not wake on its own output).
 pub async fn route_thing_event(
     pool: &sqlx::SqlitePool,
     throttle: &ThrottleState,
     alarm_service: Option<Arc<AlarmService>>,
+    event_bus: &ThingEventBus,
+    actor: &str,
     input: ThingEventInput,
 ) -> EventRouteResult {
     // ── 1. Validate payload ────────────────────────────────
@@ -195,7 +204,7 @@ pub async fn route_thing_event(
     let created_at = Utc::now().to_rfc3339();
 
     let result = sqlx::query(
-        "INSERT INTO events (id, event_type, event_subtype, event_level, timestamp, source_type, source_id, device_id, user_id, title, content, metadata, created_at, workspace_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        "INSERT INTO events (id, event_type, event_subtype, event_level, timestamp, source_type, source_id, device_id, user_id, title, content, metadata, created_at, workspace_id, actor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
     .bind(&event_id_str)
     .bind("device")
@@ -211,11 +220,13 @@ pub async fn route_thing_event(
     .bind(&metadata)
     .bind(&created_at)
     .bind(&input.workspace_id)
+    .bind(actor)
     .execute(pool)
     .await;
 
     match result {
-        Ok(_) => {
+        Ok(res) => {
+            let rowid = res.last_insert_rowid();
             tracing::info!(
                 event_id = %event_id_str,
                 thing_id = %input.thing_id,
@@ -225,6 +236,19 @@ pub async fn route_thing_event(
                 metric = if unknown_event { "events_unknown" } else { "events_ingested" },
                 "Thing event routed and persisted"
             );
+
+            // Broadcast to thing-agent subscribers (T6). No subscribers is
+            // not an error — the row is persisted and replayable.
+            event_bus.publish(ThingEventSignal {
+                workspace_id: input.workspace_id.clone(),
+                thing_id: input.thing_id.clone(),
+                event_name: input.event_name.clone(),
+                event_id: rowid,
+                level: level_num,
+                data: input.data.clone(),
+                is_unknown: unknown_event,
+                actor: actor.to_string(),
+            });
 
             // Trigger event-based alarm rules if an AlarmService is available
             if let Some(ref svc) = alarm_service

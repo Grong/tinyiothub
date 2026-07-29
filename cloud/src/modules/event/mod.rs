@@ -4,6 +4,7 @@
 // service: aggregates, specifications, business logic
 // handler: HTTP routes
 
+pub mod bus;
 pub mod errors;
 pub mod handler;
 pub mod repo;

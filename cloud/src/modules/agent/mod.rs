@@ -21,6 +21,7 @@ pub mod heartbeat_repo;
 pub mod policy_repo;
 pub mod scaffold;
 pub mod session;
+pub mod thing_agent_host;
 
 // Re-exports from old modules/agent/ — kept for compat
 pub mod handler;

@@ -29,6 +29,7 @@ mod system_handler_tests;
 mod tag_handler_tests;
 mod template_handler_tests;
 mod tenant_handler_tests;
+mod thing_event_broadcast_tests;
 mod thing_event_pipeline_tests;
 mod thing_handler_tests;
 mod thing_tenant_isolation_tests;
