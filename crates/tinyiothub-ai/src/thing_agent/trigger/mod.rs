@@ -4,8 +4,10 @@ use tokio::sync::mpsc;
 
 use crate::thing_agent::types::WakeSignal;
 
+pub mod thing_event;
 pub mod timer;
 
+pub use thing_event::ThingEventTrigger;
 pub use timer::TimerTrigger;
 
 /// A source of [`WakeSignal`]s. Implementations run until the channel closes
