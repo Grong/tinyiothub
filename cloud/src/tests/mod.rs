@@ -19,6 +19,7 @@ mod jobs_handler_tests;
 mod marketplace_handler_tests;
 mod mcp_handler_tests;
 mod migration_thing_model_tests;
+mod migrations_thing_agent_loop_tests;
 mod monitoring_handler_tests;
 mod notification_handler_tests;
 mod open_handler_tests;
