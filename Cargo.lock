@@ -5774,6 +5774,8 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+ "zeroclaw-api",
+ "zeroclawlabs",
 ]
 
 [[package]]

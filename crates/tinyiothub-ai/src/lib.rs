@@ -12,6 +12,7 @@ pub mod prompt;
 pub mod proposal;
 pub mod session;
 pub mod skills;
+pub mod thing_agent;
 pub mod tool;
 
 /// Shared types re-exported at crate root for cross-domain use.
