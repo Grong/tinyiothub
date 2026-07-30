@@ -81,6 +81,11 @@ pub struct RunContextInner {
     pub output_tokens: u64,
     /// Sticky: first budget violation that triggered cancel.
     pub truncated: Option<TruncationReason>,
+    /// The tool-call budget in force when [`TruncationReason::ToolCallBudget`]
+    /// first fired. Parallel dispatch batches can push `tool_calls` several
+    /// past the budget in one shot, so the summary must report this, not
+    /// `tool_calls - 1`.
+    pub tool_call_budget: Option<u32>,
 }
 
 pub struct RunContext {
@@ -230,6 +235,7 @@ impl RunContextInner {
                 // UnknownCancelled once the abort drops it).
                 if self.truncated.is_none() && self.tool_calls > max_tool_calls {
                     self.truncated = Some(TruncationReason::ToolCallBudget);
+                    self.tool_call_budget = Some(max_tool_calls);
                 }
             }
             TurnEvent::ToolResult { id, output, .. } => {
@@ -383,7 +389,10 @@ fn synthesize_summary(inner: &RunContextInner, end: &TurnEnd) -> String {
     let reason = match end {
         TurnEnd::Cancelled | TurnEnd::Empty | TurnEnd::Text(_) => match inner.truncated {
             Some(TruncationReason::ToolCallBudget) => {
-                format!("执行被预算截断（工具调用超过 {} 次）", inner.tool_calls - 1)
+                let budget = inner
+                    .tool_call_budget
+                    .unwrap_or_else(|| inner.tool_calls.saturating_sub(1));
+                format!("执行被预算截断（工具调用超过 {budget} 次）")
             }
             Some(TruncationReason::DurationBudget) => "执行被预算截断（时长超限）".to_string(),
             None => "LLM 未产生总结文本".to_string(),
@@ -703,6 +712,32 @@ mod tests {
             inner: Arc::new(RwLock::new(RunContextInner::default())),
         };
         (ctx, RunContextInner::default())
+    }
+
+    #[tokio::test]
+    async fn parallel_tool_batch_reports_exact_budget_in_summary() {
+        // zeroclaw dispatches tool calls in parallel batches: a batch of N
+        // ToolCall events can jump tool_calls from 23 to 28 in one shot. The
+        // summary must report the configured budget (25), not tool_calls - 1.
+        let mut events = Vec::new();
+        for i in 1..=23 {
+            events.push(read(&format!("r{i}"), "t1"));
+            events.push(result(&format!("r{i}"), TOOL_READ_PROPERTY, "{\"value\":1}"));
+        }
+        // One parallel batch of 5 calls: 23 → 28, budget is 25.
+        for i in 24..=28 {
+            events.push(read(&format!("r{i}"), "t1"));
+        }
+
+        let (inner, cancel) = run_stub(events, 25, Duration::from_secs(300)).await;
+        assert!(cancel.is_cancelled());
+        assert_eq!(inner.truncated, Some(TruncationReason::ToolCallBudget));
+        assert_eq!(inner.tool_calls, 28);
+
+        let (ctx, _) = ctx_with();
+        let out = assemble_report(&ctx, TurnEnd::Cancelled, 1000, &inner);
+        assert!(out.report.summary.contains("工具调用超过 25 次"));
+        assert!(!out.report.summary.contains("27"));
     }
 
     #[test]
