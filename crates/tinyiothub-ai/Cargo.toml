@@ -14,6 +14,7 @@ tinyiothub-runtime = { workspace = true }
 
 # Async runtime
 tokio = { workspace = true }
+tokio-util = "0.7"
 
 # Serialization
 serde = { workspace = true }

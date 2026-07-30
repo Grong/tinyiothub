@@ -5772,6 +5772,7 @@ dependencies = [
  "tinyiothub-core",
  "tinyiothub-runtime",
  "tokio",
+ "tokio-util",
  "tracing",
  "uuid",
  "zeroclaw-api",
