@@ -245,6 +245,12 @@ async fn wait_ack(drain: &DrainState, counter: &AtomicU64, generation: u64) {
     }
 }
 
+impl crate::thing_agent::traits::DirectiveSink for SchedulerHandle {
+    fn enqueue(&self, sig: WakeSignal) -> Result<(), EnqueueError> {
+        SchedulerHandle::enqueue(self, sig)
+    }
+}
+
 /// Sliding-window counter of budgeted wakes admitted in the last hour.
 #[derive(Default)]
 struct Throttle {

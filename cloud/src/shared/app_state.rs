@@ -157,6 +157,11 @@ pub struct AppState {
     /// 全局物事件广播总线（T6）—— thing-agent loop 经此订阅事件信号
     pub thing_event_bus: Arc<crate::modules::event::bus::ThingEventBus>,
 
+    /// 用户指令投递入口（T14）—— HTTP 端点 / chat 工具经此向
+    /// thing-agent loop 投递 WakeSignal。T15 用 ThingAgentManager 实现
+    /// 并注入；None 时指令入口返回 503。
+    pub directive_sink: Option<Arc<dyn tinyiothub_ai::thing_agent::DirectiveSink>>,
+
     /// Agent 记忆存储 - 持久化 agent 记忆到 SQLite
     pub memory_store: Arc<dyn MemoryStore>,
 }
@@ -446,9 +451,15 @@ impl AppState {
             gateway_service,
             mqtt_client: Some(mqtt_client),
             thing_event_bus,
+            directive_sink: None, // T15 闭环接线时注入 ThingAgentManager
 
             memory_store,
         }
+    }
+
+    /// 注入用户指令投递入口（T15 闭环接线调用）
+    pub fn set_directive_sink(&mut self, sink: Arc<dyn tinyiothub_ai::thing_agent::DirectiveSink>) {
+        self.directive_sink = Some(sink);
     }
 
     /// 设置数据服务器（由 ServiceManager 调用）
