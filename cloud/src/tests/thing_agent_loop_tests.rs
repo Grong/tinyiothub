@@ -406,6 +406,18 @@ async fn warning_event_runs_full_loop_and_persists_verified_report() {
         "actor=agent 的 warning 事件不得唤醒（O21）"
     );
 
+    // 总数断言（排除已知的定时巡检 run）：agent 动作/事件若误唤醒，run 会
+    // 落在别的 dedup_key 上，只有总数断言才能封死共振防护。
+    let total: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM agent_runs WHERE workspace_id = ? AND (dedup_key IS NULL OR dedup_key != ?)",
+    )
+    .bind(WS)
+    .bind(format!("timer:{WS}"))
+    .fetch_one(&fx.pool)
+    .await
+    .expect("count all non-timer runs");
+    assert_eq!(total, 1, "全表仅事件 run 一行：任何 key 上都不得有误唤醒");
+
     assert!(fx.provider.call_count() >= 3, "LLM 至少三轮：invoke → read → 总结");
 }
 

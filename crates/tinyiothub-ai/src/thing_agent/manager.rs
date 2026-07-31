@@ -16,10 +16,10 @@
 //! WorkspaceDeleted → stop(): abort triggers, drain (O26), drop handle
 //! ```
 //!
-//! Mode gating (off/diagnose/act) is NOT re-implemented here: the thing-event
-//! trigger (T7) already suppresses signals when the policy mode is off, and
-//! the autonomous `invoke_action` tool (T11) fail-closes on the policy gate.
-//! The manager is deliberately a dumb wiring layer.
+//! Mode gating (off/diagnose/act) is NOT re-implemented here: both triggers
+//! (T5 timer / T7 thing-event) already suppress signals when the policy mode
+//! is off, and the autonomous `invoke_action` tool (T11) fail-closes on the
+//! policy gate. The manager is deliberately a dumb wiring layer.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -167,6 +167,7 @@ impl ThingAgentManager {
         let timer = TimerTrigger {
             workspace_id: ws.clone(),
             interval: self.config.timer_interval,
+            policy_repo: Arc::clone(&self.deps.policy_repo),
         };
         let timer_task = tokio::spawn(async move {
             if let Err(e) = timer.run(tx).await {
