@@ -9,6 +9,7 @@
 
 #[allow(clippy::module_inception)]
 pub mod agent;
+pub mod autonomous_factory;
 pub mod chat;
 pub mod config;
 pub mod memory;

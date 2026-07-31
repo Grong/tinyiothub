@@ -1,3 +1,4 @@
+pub mod autonomous_invoke;
 pub mod canvas;
 pub mod get_skill;
 pub mod handler;
@@ -5,6 +6,7 @@ pub mod service;
 pub mod thing;
 pub mod types;
 
+pub use autonomous_invoke::{AutonomousInvokeActionTool, RunContextSlot, new_run_context_slot};
 pub use canvas::CanvasTool;
 pub use get_skill::GetSkillTool;
 pub use service::{
