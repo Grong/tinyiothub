@@ -19,10 +19,17 @@
 //! Per-run/per-thing action cap (O9, `max_actions_per_run`, default 3): the
 //! T9 runner increments `RunContextInner::action_counts[thing_id]` at
 //! dispatch time — BEFORE zeroclaw calls `Tool::execute` (the ToolCall event
-//! is sent first and the consume task runs at this tool's first await
-//! point). This tool therefore treats the observed count as
+//! is sent first and the consume task is expected to run at this tool's
+//! first await point). This tool therefore treats the observed count as
 //! "in-flight inclusive" and gates on `count - 1` previously dispatched
 //! actions. Denied attempts consume budget too (anti retry-loop fuse).
+//!
+//! Note: that ordering is a scheduling expectation, not a happens-before
+//! guarantee. Under a parallel tool-call batch the consume task may lag, so
+//! the observed count can be stale and the gate may OVER-deny (block an
+//! action that was still within budget) — the safe direction. The hourly
+//! fuse (`max_actions_per_hour`, re-read from the DB on every call) is the
+//! deterministic backstop that bounds total spend regardless of ordering.
 
 use std::sync::Arc;
 
@@ -54,9 +61,10 @@ struct Input {
     params: Option<Value>,
 }
 
-/// Dispatch a device command through the DataServer command queue (mirrors
-/// the dispatch block in thing.rs / handler/actions.rs). Returns the
-/// executed/simulated payload, or an error result when the queue rejects it.
+/// Dispatch a device command through the DataServer command queue.
+/// Mirrors the dispatch tail in thing.rs:666-700 — keep in sync (O18 forbids
+/// editing thing.rs). Returns the executed/simulated payload, or an error
+/// result when the queue rejects it.
 fn dispatch_command(thing_id: &str, action_name: &str, params: Option<&Value>) -> ToolResult {
     let app_state = crate::modules::mcp::get_app_state();
     match app_state.and_then(|s| s.data_server().cloned()) {
@@ -129,13 +137,18 @@ impl AutonomousInvokeActionTool {
 
     /// Consume the confirmation token minted by the inner tool and dispatch
     /// directly (policy gate replaces human confirmation, O18). Returns None
-    /// when the token vanished or mismatches — practically unreachable, the
-    /// caller then passes the inner result through unchanged.
+    /// when the token vanished or mismatches (thing/action/workspace) —
+    /// practically unreachable; the caller maps None to a tool error rather
+    /// than leaking the confirmation_required payload (and its token) to the
+    /// LLM.
     fn auto_confirm(&self, inner_output: &str, input: &Input) -> Option<ToolResult> {
         let token =
             serde_json::from_str::<Value>(inner_output).ok()?.get("token")?.as_str()?.to_string();
         let pending = take_pending_action(&token)?;
-        if pending.thing_id != input.thing_id || pending.action_name != input.action_name {
+        if pending.thing_id != input.thing_id
+            || pending.action_name != input.action_name
+            || pending.workspace_id != self.workspace_id
+        {
             return None;
         }
         Some(dispatch_command(&pending.thing_id, &pending.action_name, pending.params.as_ref()))
@@ -301,7 +314,16 @@ impl Tool for AutonomousInvokeActionTool {
             .and_then(|v| v.get("status").and_then(|s| s.as_str()).map(str::to_string))
             .unwrap_or_default();
         let final_result = if status == "confirmation_required" {
-            self.auto_confirm(&result.output, &input).unwrap_or(result)
+            // Never pass the confirmation_required payload through on
+            // auto-confirm failure: it carries a live token to the LLM.
+            match self.auto_confirm(&result.output, &input) {
+                Some(r) => r,
+                None => tool_err(
+                    "auto-confirm failed: token mismatch or expired; action NOT dispatched"
+                        .to_string(),
+                )
+                .expect("static message"),
+            }
         } else {
             result
         };
@@ -660,6 +682,77 @@ mod tests {
         );
         assert!(out.get("token").is_none(), "no human token in autonomous mode: {out}");
         assert_eq!(agent_event_count(&fx.pool, "dev-1").await, 1);
+    }
+
+    // ── auto-confirm failure paths ─────────────────────────────
+
+    /// Tool whose OUTER workspace (policy gate + auto-confirm workspace
+    /// check) differs from the INNER tool's workspace (token minter). The
+    /// inner tool binds confirmation tokens to its own workspace, so the
+    /// outer auto-confirm must reject them.
+    async fn cross_workspace_fixture(
+        outer_ws: &str,
+        inner_ws: &str,
+    ) -> (SqlitePool, AutonomousInvokeActionTool, Arc<RwLock<RunContextInner>>) {
+        let pool = test_pool().await;
+        seed_test_workspace(&pool, "tenant-1", outer_ws).await;
+        let policy_repo = Arc::new(SqlitePolicyRepository::new(pool.clone()));
+        policy_repo.save_autonomy(outer_ws, &act_policy(), "test").await.unwrap();
+        let ctx = Arc::new(RwLock::new(RunContextInner::default()));
+        let inner = InvokeActionTool {
+            thing_service: Arc::new(ThingService::new(pool.clone())),
+            pool: pool.clone(),
+            workspace_id: inner_ws.to_string(),
+        };
+        let tool = AutonomousInvokeActionTool::new(
+            inner,
+            policy_repo,
+            new_run_context_slot(Arc::clone(&ctx)),
+            pool.clone(),
+            outer_ws.to_string(),
+            Arc::new(ThingEventBus::new()),
+            Arc::new(ThrottleState::new(60)),
+        );
+        (pool, tool, ctx)
+    }
+
+    #[tokio::test]
+    async fn workspace_mismatch_blocks_auto_confirm() {
+        // The inner tool mints a token bound to ws-inner-mm; the outer tool's
+        // workspace is ws-outer-mm — the pending action must NOT be confirmed.
+        let (pool, tool, ctx) = cross_workspace_fixture("ws-outer-mm", "ws-inner-mm").await;
+        seed_device(&pool, "ws-inner-mm", "dev-1", "device").await;
+        register_action(&pool, "dev-1", "reboot").await;
+        *ctx.write().await.action_counts.entry("dev-1".to_string()).or_insert(0) += 1;
+
+        let result = tool.execute(args("dev-1", "reboot")).await.expect("execute");
+        assert!(!result.success, "cross-workspace token must not auto-confirm: {result:?}");
+        assert!(result.error.as_deref().unwrap_or("").contains("auto-confirm"));
+        assert_eq!(agent_event_count(&pool, "dev-1").await, 0, "no dispatch, no event");
+    }
+
+    #[tokio::test]
+    async fn auto_confirm_failure_does_not_leak_token() {
+        // On auto-confirm mismatch the tool must return a tool_err, never the
+        // inner confirmation_required payload (which carries a live token).
+        let (pool, tool, ctx) = cross_workspace_fixture("ws-outer-lk", "ws-inner-lk").await;
+        seed_device(&pool, "ws-inner-lk", "dev-1", "device").await;
+        register_action(&pool, "dev-1", "reboot").await;
+        *ctx.write().await.action_counts.entry("dev-1".to_string()).or_insert(0) += 1;
+
+        let result = tool.execute(args("dev-1", "reboot")).await.expect("execute");
+        assert!(!result.success);
+        assert!(
+            !result.output.contains("token") && !result.output.contains("confirmation_required"),
+            "failure must not echo the confirmation payload to the LLM: {}",
+            result.output
+        );
+
+        // Unit-level: an unknown/vanished token also yields None (mapped to
+        // the same tool_err above), never a passthrough.
+        let input = Input { thing_id: "dev-1".into(), action_name: "reboot".into(), params: None };
+        let fake = json!({"status": "confirmation_required", "token": "no-such-token"}).to_string();
+        assert!(tool.auto_confirm(&fake, &input).is_none());
     }
 
     // ── inner behavior reuse ───────────────────────────────────

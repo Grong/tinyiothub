@@ -665,7 +665,10 @@ impl Tool for InvokeActionTool {
             }));
         }
 
-        // Execute via DataServer if available
+        // Execute via DataServer if available.
+        // NOTE: this dispatch tail (through the closing brace of this match)
+        // is mirrored by `dispatch_command` in autonomous_invoke.rs — if you
+        // change it here, keep the mirror in sync.
         let app_state = crate::modules::mcp::get_app_state();
         match app_state.and_then(|s| s.data_server().cloned()) {
             Some(data_server) => {
