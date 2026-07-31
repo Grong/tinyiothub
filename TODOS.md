@@ -53,6 +53,12 @@
 - **Context:** API 本期交付；可与 Runs 面板同页。
 - **Effort:** S (human: ~0.5d / CC: ~30min) | **Depends on:** Runs UI 面板
 
+### P2 — chat 会话 admin 维度（回推防泄漏收窄）
+- **What:** `chat_sessions.user_id` 列在写入路径（history.rs ensure_session、session_repository_impl）填值，或加 `metadata.is_admin`；`recent_active_admin_session` 据此真正按 admin 过滤。
+- **Why:** O28 要求无会话回推收窄为 admin 会话防多用户泄漏；当前实现是"工作区任意用户最近会话"，多用户工作区下 run 报告可能推入普通用户会话。
+- **Context:** 列已存在（20260408000001 迁移）但两个写入路径都不填；单用户形态下风险低（CEO 0E 决议接受）。
+- **Effort:** S (human: ~0.5d / CC: ~30min) | **Depends on:** Thing Agent Loop 主框架落地
+
 
 ## AI Subsystem (from /plan-ceo-review 2026-06-30, SCOPE REDUCTION)
 

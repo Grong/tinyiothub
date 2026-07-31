@@ -131,6 +131,11 @@ impl ThingAgentHost for CloudThingAgentHost {
 
     /// chat_sessions 没有 admin/owner 维度（user_id 列从未被写入），用最接近的
     /// 既有机制：工作区内 30 天内有消息的最近活跃会话（O28）。
+    ///
+    /// NOTE: 当前实现返回工作区内任意用户的最近活跃会话，不区分 admin 角色——
+    /// `chat_sessions.user_id` 列存在但写入路径（history.rs / session_repository_impl.rs）
+    /// 均不填值，schema 暂无 admin 维度。单用户工作区形态下可接受（CEO 0E 决议）；
+    /// 多用户防泄漏的 admin 收窄已入 TODOS（"chat 会话 admin 维度"）。
     async fn recent_active_admin_session(
         &self,
         workspace_id: &str,
