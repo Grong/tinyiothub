@@ -48,6 +48,31 @@ pub enum Outcome {
     Rejected,
 }
 
+impl Outcome {
+    /// DB/metric 字符串（snake_case，与 serde 表示一致）。
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Outcome::Acted => "acted",
+            Outcome::NoActionNeeded => "no_action_needed",
+            Outcome::Failed => "failed",
+            Outcome::BudgetExceeded => "budget_exceeded",
+            Outcome::Rejected => "rejected",
+        }
+    }
+
+    /// 从 DB 字符串解析；未知值 None（调用方 fail-closed）。
+    pub fn from_db(s: &str) -> Option<Self> {
+        Some(match s {
+            "acted" => Outcome::Acted,
+            "no_action_needed" => Outcome::NoActionNeeded,
+            "failed" => Outcome::Failed,
+            "budget_exceeded" => Outcome::BudgetExceeded,
+            "rejected" => Outcome::Rejected,
+            _ => return None,
+        })
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ActionRecord {
     pub thing_id: String,
