@@ -24,7 +24,7 @@ use dashmap::DashMap;
 use sqlx::SqlitePool;
 use tinyiothub_ai::{
     policy::autonomy::PolicyRepository,
-    thing_agent::{AgentHandle, RunContextInner},
+    thing_agent::{AgentHandle, RunContextInner, manager::AutonomousAgentProvider},
 };
 use tokio::sync::RwLock;
 use zeroclaw::{
@@ -188,6 +188,18 @@ impl AutonomousAgentFactory {
 
     pub fn pool_size(&self) -> usize {
         self.agents.len()
+    }
+}
+
+/// T15: the ThingAgentManager drives runs through this trait.
+#[async_trait::async_trait]
+impl AutonomousAgentProvider for AutonomousAgentFactory {
+    async fn get_or_create(
+        &self,
+        workspace_id: &str,
+        ctx: Arc<RwLock<RunContextInner>>,
+    ) -> anyhow::Result<AgentHandle> {
+        AutonomousAgentFactory::get_or_create(self, workspace_id, ctx).await
     }
 }
 

@@ -3,8 +3,8 @@
 //! AlarmCreated       --> HeartbeatRunner.signal()
 //! HeartbeatCompleted --> HeartbeatTaskRepository.insert_result()
 //! (Chat reflection is handled directly in chat/service.rs)
-//! WorkspaceCreated    --> HeartbeatRunner.start()
-//! WorkspaceDeleted    --> HeartbeatRunner.stop()
+//! WorkspaceCreated    --> HeartbeatRunner.start() + ThingAgentManager.start()
+//! WorkspaceDeleted    --> HeartbeatRunner.stop() + ThingAgentManager.stop()
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -22,6 +22,7 @@ use crate::heartbeat::repo::HeartbeatTaskRepository;
 use crate::heartbeat::runner::HeartbeatRunner;
 use crate::heartbeat::types::SignalPriority;
 use crate::memory::service::MemoryService;
+use crate::thing_agent::manager::ThingAgentManager;
 
 /// Cross-domain callback handler.
 pub struct AiEventHandler {
@@ -30,6 +31,8 @@ pub struct AiEventHandler {
     memory_service: Arc<MemoryService>,
     event_publisher: Arc<AiEventPublisher>,
     dlq: Option<Arc<dyn DeadLetterQueue>>,
+    /// T15 thing-agent loop registry; None where the loop is not deployed.
+    thing_agent_manager: Option<Arc<ThingAgentManager>>,
     shutting_down: Arc<AtomicBool>,
     retry_in_flight: Arc<AtomicUsize>,
     retry_idle: Arc<Notify>,
@@ -43,6 +46,7 @@ impl AiEventHandler {
         memory_service: Arc<MemoryService>,
         event_publisher: Arc<AiEventPublisher>,
         dlq: Option<Arc<dyn DeadLetterQueue>>,
+        thing_agent_manager: Option<Arc<ThingAgentManager>>,
         shutting_down: Arc<AtomicBool>,
     ) -> Self {
         Self {
@@ -51,6 +55,7 @@ impl AiEventHandler {
             memory_service,
             event_publisher,
             dlq,
+            thing_agent_manager,
             shutting_down,
             retry_in_flight: Arc::new(AtomicUsize::new(0)),
             retry_idle: Arc::new(Notify::new()),
@@ -126,9 +131,15 @@ impl AiEventHandler {
             }
             AiEvent::WorkspaceCreated { workspace_id } => {
                 self.heartbeat_runner.start(workspace_id).await;
+                if let Some(manager) = &self.thing_agent_manager {
+                    manager.start(workspace_id);
+                }
             }
             AiEvent::WorkspaceDeleted { workspace_id } => {
                 self.heartbeat_runner.stop(workspace_id).await;
+                if let Some(manager) = &self.thing_agent_manager {
+                    manager.stop(workspace_id).await;
+                }
             }
             // Self-referential events published by AiEventHandler itself —
             // these are intentionally no-ops to avoid processing loops.
@@ -557,7 +568,15 @@ pub(crate) mod tests {
         let publisher = make_publisher();
         let memory = make_memory_service();
 
-        let handler = AiEventHandler::new(runner, repo, memory, publisher, None, Arc::new(AtomicBool::new(false)));
+        let handler = AiEventHandler::new(
+            runner,
+            repo,
+            memory,
+            publisher,
+            None,
+            None,
+            Arc::new(AtomicBool::new(false)),
+        );
         assert_eq!(handler.name(), "AiEventHandler");
     }
 
@@ -568,7 +587,15 @@ pub(crate) mod tests {
         let publisher = make_publisher();
         let memory = make_memory_service();
 
-        let handler = AiEventHandler::new(runner, repo, memory, publisher, None, Arc::new(AtomicBool::new(false)));
+        let handler = AiEventHandler::new(
+            runner,
+            repo,
+            memory,
+            publisher,
+            None,
+            None,
+            Arc::new(AtomicBool::new(false)),
+        );
 
         let ai_event = wrap_ai_event(&AiEvent::WorkspaceCreated {
             workspace_id: "ws_1".into(),
@@ -600,6 +627,7 @@ pub(crate) mod tests {
             Arc::clone(&repo),
             memory,
             publisher,
+            None,
             None,
             Arc::new(AtomicBool::new(false)),
         );
@@ -636,7 +664,15 @@ pub(crate) mod tests {
         let publisher = make_publisher();
         let memory = make_memory_service();
 
-        let handler = AiEventHandler::new(runner, repo, memory, publisher, None, Arc::new(AtomicBool::new(false)));
+        let handler = AiEventHandler::new(
+            runner,
+            repo,
+            memory,
+            publisher,
+            None,
+            None,
+            Arc::new(AtomicBool::new(false)),
+        );
 
         // Non-critical alarm should not trigger heartbeat signal
         let alarm = AiEvent::AlarmCreated(crate::alarm::types::AlarmEvent {
@@ -663,7 +699,15 @@ pub(crate) mod tests {
         let publisher = make_publisher();
         let memory = make_memory_service();
 
-        let handler = AiEventHandler::new(runner, repo, memory, publisher, None, Arc::new(AtomicBool::new(false)));
+        let handler = AiEventHandler::new(
+            runner,
+            repo,
+            memory,
+            publisher,
+            None,
+            None,
+            Arc::new(AtomicBool::new(false)),
+        );
 
         // WorkspaceCreated (no tasks loaded → loop won't start, but no panic)
         let event = wrap_ai_event(&AiEvent::WorkspaceCreated {
@@ -678,6 +722,41 @@ pub(crate) mod tests {
         handler.handle_ai_event(&event).await;
     }
 
+    // T15: workspace lifecycle events start/stop the thing-agent loop
+    // alongside the heartbeat runner.
+    #[tokio::test]
+    async fn test_workspace_lifecycle_drives_thing_agent_manager() {
+        let repo: Arc<dyn crate::heartbeat::repo::HeartbeatTaskRepository> = Arc::new(MockTaskRepo::new());
+        let runner = make_heartbeat_runner(Arc::clone(&repo));
+        let publisher = make_publisher();
+        let memory = make_memory_service();
+        let parts = crate::thing_agent::manager::tests::stub_manager();
+        let manager = parts.manager.clone();
+
+        let handler = AiEventHandler::new(
+            runner,
+            repo,
+            memory,
+            publisher,
+            None,
+            Some(manager.clone()),
+            Arc::new(AtomicBool::new(false)),
+        );
+
+        assert!(!manager.is_running("ws_life"));
+        let event = wrap_ai_event(&AiEvent::WorkspaceCreated {
+            workspace_id: "ws_life".into(),
+        });
+        handler.handle_ai_event(&event).await;
+        assert!(manager.is_running("ws_life"), "WorkspaceCreated must start the loop");
+
+        let event = wrap_ai_event(&AiEvent::WorkspaceDeleted {
+            workspace_id: "ws_life".into(),
+        });
+        handler.handle_ai_event(&event).await;
+        assert!(!manager.is_running("ws_life"), "WorkspaceDeleted must stop the loop");
+    }
+
     #[tokio::test]
     async fn test_self_referential_events_are_noop() {
         let repo: Arc<dyn crate::heartbeat::repo::HeartbeatTaskRepository> = Arc::new(MockTaskRepo::new());
@@ -685,7 +764,15 @@ pub(crate) mod tests {
         let publisher = make_publisher();
         let memory = make_memory_service();
 
-        let handler = AiEventHandler::new(runner, repo, memory, publisher, None, Arc::new(AtomicBool::new(false)));
+        let handler = AiEventHandler::new(
+            runner,
+            repo,
+            memory,
+            publisher,
+            None,
+            None,
+            Arc::new(AtomicBool::new(false)),
+        );
 
         // Self-referential events should not panic
         for event_variant in [
@@ -731,6 +818,7 @@ pub(crate) mod tests {
             Arc::clone(&repo),
             memory,
             publisher,
+            None,
             None,
             Arc::new(AtomicBool::new(true)), // shutting_down = true
         );

@@ -86,6 +86,17 @@ impl Scheduler {
         workspace_id: String,
         run: impl Fn(WakeSignal) -> BoxRunFuture + Send + Sync + 'static,
     ) -> SchedulerHandle {
+        Self::spawn_with_merge_window(workspace_id, run, MERGE_WINDOW)
+    }
+
+    /// [`Scheduler::spawn`] with a custom merge window — integration tests
+    /// use sub-second windows so they can run in real time (paused-clock
+    /// auto-advance interacts badly with sqlx worker-thread roundtrips).
+    pub fn spawn_with_merge_window(
+        workspace_id: String,
+        run: impl Fn(WakeSignal) -> BoxRunFuture + Send + Sync + 'static,
+        merge_window: Duration,
+    ) -> SchedulerHandle {
         let (ready_tx, ready_rx) = mpsc::channel(QUEUE_CAPACITY);
         let (ingress_tx, ingress_rx) = mpsc::unbounded_channel();
         let throttle = Arc::new(Mutex::new(Throttle::default()));
@@ -98,6 +109,7 @@ impl Scheduler {
             ready_tx.clone(),
             throttle.clone(),
             drain.clone(),
+            merge_window,
         ));
         tokio::spawn(consumer_loop(ready_rx, run, drain.clone()));
 
@@ -336,7 +348,7 @@ struct MergeWindow {
     deadline: Instant,
 }
 
-/// ① merger: collects keyed non-Critical signals into per-key 30s windows
+/// ① merger: collects keyed non-Critical signals into per-key windows
 /// and flushes one (possibly merged) signal per window into the ready queue.
 async fn merger_loop(
     workspace_id: String,
@@ -344,6 +356,7 @@ async fn merger_loop(
     ready_tx: mpsc::Sender<WakeSignal>,
     throttle: Arc<Mutex<Throttle>>,
     drain: Arc<DrainState>,
+    merge_window: Duration,
 ) {
     let mut windows: HashMap<String, MergeWindow> = HashMap::new();
     let mut last_gen = 0u64;
@@ -365,14 +378,14 @@ async fn merger_loop(
 
         tokio::select! {
             maybe = ingress_rx.recv() => match maybe {
-                Some(sig) => add_to_window(&mut windows, sig),
+                Some(sig) => add_to_window(&mut windows, sig, merge_window),
                 None => break,
             },
             () = &mut sleep, if next_deadline.is_some() => {
                 // Pull everything still buffered in ingress first so signals
                 // that arrived before the deadline join this window.
                 while let Ok(sig) = ingress_rx.try_recv() {
-                    add_to_window(&mut windows, sig);
+                    add_to_window(&mut windows, sig, merge_window);
                 }
                 flush_due_windows(&workspace_id, &mut windows, &throttle, &ready_tx);
             }
@@ -381,7 +394,7 @@ async fn merger_loop(
     }
 }
 
-fn add_to_window(windows: &mut HashMap<String, MergeWindow>, sig: WakeSignal) {
+fn add_to_window(windows: &mut HashMap<String, MergeWindow>, sig: WakeSignal, merge_window: Duration) {
     let Some(key) = sig.dedup_key.clone() else {
         // enqueue() only routes keyed signals here; drop defensively.
         tracing::warn!(
@@ -394,7 +407,7 @@ fn add_to_window(windows: &mut HashMap<String, MergeWindow>, sig: WakeSignal) {
         .entry(key)
         .or_insert_with(|| MergeWindow {
             signals: Vec::new(),
-            deadline: Instant::now() + MERGE_WINDOW,
+            deadline: Instant::now() + merge_window,
         })
         .signals
         .push(sig);

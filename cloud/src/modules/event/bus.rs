@@ -25,6 +25,12 @@ impl ThingEventBus {
         self.tx.subscribe()
     }
 
+    /// Live subscriber count — tests await trigger subscription before
+    /// publishing (broadcast has no catch-up for pre-subscribe sends).
+    pub fn receiver_count(&self) -> usize {
+        self.tx.receiver_count()
+    }
+
     /// Publish a signal. Returns the number of live receivers; 0 is fine
     /// (nobody subscribed yet — events are still persisted for replay).
     pub fn publish(&self, signal: ThingEventSignal) -> usize {
