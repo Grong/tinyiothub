@@ -28,9 +28,10 @@ pub mod types {
         build_reflection_input, build_reflection_prompt, contains_injection, parse_facts, sanitize_input,
     };
     pub use crate::memory::types::MemoryFact;
+    pub use crate::policy::adapters::{ChatConfirmAdapter, ChatConfirmVerdict, HeartbeatTrustAdapter};
     pub use crate::policy::{
-        NoopPolicyEngine, PolicyAction, PolicyCategory, PolicyDecision, PolicyEngine, PolicyRule, sanitize_llm_input,
-        validate_llm_output,
+        NoopPolicyEngine, PolicyAction, PolicyCategory, PolicyDecision, PolicyEngine, PolicyRule, evaluate_rules,
+        sanitize_llm_input, target_matches, validate_llm_output,
     };
     pub use crate::prompt::PromptRegistry;
     pub use crate::prompt::types::PromptTemplate;

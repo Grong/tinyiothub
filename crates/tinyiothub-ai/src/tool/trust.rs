@@ -214,7 +214,7 @@ pub fn evaluate_tool_trust_with_safety(config: &TrustConfig, tool_name: &str, sa
 }
 
 /// Safety category string used for allowed_tool_categories matching.
-fn safety_category(safety: ToolSafety) -> &'static str {
+pub fn safety_category(safety: ToolSafety) -> &'static str {
     match safety {
         ToolSafety::ReadOnly => "read",
         ToolSafety::Write => "write",

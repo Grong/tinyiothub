@@ -189,7 +189,12 @@ impl Tool for TrustAwareTool {
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let tool_name = <Self as Tool>::name(self);
 
-        match tinyiothub_ai::types::evaluate_tool_trust_with_safety(
+        // X3/T16: the legacy heartbeat trust path is converged onto the unified
+        // engine via HeartbeatTrustAdapter. O23 equivalence: for the same
+        // TrustConfig input the adapter's verdict equals
+        // evaluate_tool_trust_with_safety (verified by the adapter's
+        // parameterized equivalence tests).
+        match tinyiothub_ai::types::HeartbeatTrustAdapter::evaluate(
             &self.trust_config,
             tool_name,
             self.safety,
