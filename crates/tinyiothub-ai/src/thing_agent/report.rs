@@ -25,6 +25,13 @@ pub trait AgentRunsRepository: Send + Sync {
     async fn recent_summaries(&self, workspace_id: &str, limit: u32) -> anyhow::Result<Vec<String>>;
     /// 同 dedup_key 的历史摘要，新→旧（T10 历史段，条数由调用方截断）。
     async fn history_by_dedup_key(&self, workspace_id: &str, key: &str, limit: u32) -> anyhow::Result<Vec<String>>;
+    /// 同 dedup_key 的最近 N 条完整 RunReport，新→旧（T17 X5 连续策略拒绝判定用）。
+    async fn recent_runs_by_dedup_key(
+        &self,
+        workspace_id: &str,
+        key: &str,
+        limit: u32,
+    ) -> anyhow::Result<Vec<RunReport>>;
     /// 人工确认一次 run；首次确认返回 true，重复确认/不存在返回 false（幂等）。
     async fn ack_run(&self, run_id: &str, actor: &str) -> anyhow::Result<bool>;
     /// `since_hours` 窗口内该 problem_key 最近一次 run 的

@@ -301,7 +301,7 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
     {
         tracing::error!(workspace_id = %ws, run_id = %run_id, error = %e, "run report persist failed");
     }
-    deliver(&report, &signal, deps.host.as_ref()).await;
+    deliver(&report, &signal, deps.runs_repo.as_ref(), deps.host.as_ref()).await;
 }
 
 #[cfg(test)]
@@ -554,6 +554,15 @@ pub(crate) mod tests {
             _key: &str,
             _limit: u32,
         ) -> anyhow::Result<Vec<String>> {
+            Ok(vec![])
+        }
+
+        async fn recent_runs_by_dedup_key(
+            &self,
+            _workspace_id: &str,
+            _key: &str,
+            _limit: u32,
+        ) -> anyhow::Result<Vec<RunReport>> {
             Ok(vec![])
         }
 

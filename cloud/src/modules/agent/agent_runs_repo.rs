@@ -119,6 +119,28 @@ impl AgentRunsRepository for SqliteAgentRunsRepository {
         Ok(rows.into_iter().map(|(o, s)| format_summary(&o, &s)).collect())
     }
 
+    async fn recent_runs_by_dedup_key(
+        &self,
+        workspace_id: &str,
+        key: &str,
+        limit: u32,
+    ) -> anyhow::Result<Vec<RunReport>> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT report FROM agent_runs
+             WHERE workspace_id = ? AND dedup_key = ?
+             ORDER BY created_at DESC, rowid DESC
+             LIMIT ?",
+        )
+        .bind(workspace_id)
+        .bind(key)
+        .bind(i64::from(limit))
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|(json,)| serde_json::from_str::<RunReport>(&json).map_err(Into::into))
+            .collect()
+    }
+
     async fn ack_run(&self, run_id: &str, actor: &str) -> anyhow::Result<bool> {
         // 幂等：仅首认生效（acked_at IS NULL），重复确认/不存在 rows_affected = 0。
         let result = sqlx::query(
@@ -357,6 +379,46 @@ mod tests {
         assert!(!history.iter().any(|s| s.contains("另一类") || s.contains("他区")));
 
         assert!(repo.history_by_dedup_key("ws_1", "missing", 3).await.expect("empty").is_empty());
+    }
+
+    #[tokio::test]
+    async fn recent_runs_by_dedup_key_returns_parsed_reports_newest_first() {
+        let pool = test_pool().await;
+        let repo = SqliteAgentRunsRepository::new(pool.clone());
+
+        repo.insert_run(&sample_report("acted", "ws_1", "已处理"), None, Some("key1"))
+            .await
+            .expect("insert acted");
+        let mut denied = sample_report("denied", "ws_1", "策略拒绝");
+        denied.outcome = Outcome::Rejected;
+        denied.actions = vec![ActionRecord {
+            thing_id: "t1".to_string(),
+            action_name: "reboot".to_string(),
+            params: serde_json::Value::Null,
+            result: ActionResult::Success(
+                serde_json::json!({"denied": true, "reason": "action_not_allowed"}),
+            ),
+            verified: false,
+        }];
+        repo.insert_run(&denied, None, Some("key1")).await.expect("insert denied");
+        repo.insert_run(&sample_report("other_key", "ws_1", "其他 key"), None, Some("key2"))
+            .await
+            .expect("insert other key");
+        repo.insert_run(&sample_report("other_ws", "ws_2", "他区"), None, Some("key1"))
+            .await
+            .expect("insert other ws");
+
+        let runs = repo.recent_runs_by_dedup_key("ws_1", "key1", 3).await.expect("recent");
+        assert_eq!(runs.len(), 2, "只返回 key1 且只返回 ws_1");
+        assert_eq!(runs[0].run_id, "denied");
+        assert_eq!(runs[0].outcome, Outcome::Rejected);
+        assert_eq!(runs[0].actions[0].action_name, "reboot");
+        assert_eq!(runs[1].run_id, "acted");
+        assert_eq!(runs[1].outcome, Outcome::Acted);
+
+        assert!(
+            repo.recent_runs_by_dedup_key("ws_1", "missing", 3).await.expect("empty").is_empty()
+        );
     }
 
     #[tokio::test]
