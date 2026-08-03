@@ -512,3 +512,70 @@ async fn user_directive_runs_and_pushes_assistant_message() {
     });
     assert_eq!(err, Err(EnqueueError::Closed));
 }
+
+// ── 4. X5 (T17 review Minor 2): 真实 SqliteAgentRunsRepository + 真实
+//    内存库 → 连续 3 次策略拒绝 → deliver 告警携带 policy_relax_hint ──────
+
+#[tokio::test]
+async fn policy_denial_streak_triggers_relax_hint_with_real_repo() {
+    use tinyiothub_ai::thing_agent::{
+        ActionRecord, ActionResult, AgentRunsRepository, Outcome, Priority, RunReport, pushback,
+    };
+
+    let (pool, _dir) = test_pool("loop_relax_hint").await;
+    seed_test_workspace(&pool, "tenant-1", WS).await;
+    let repo = SqliteAgentRunsRepository::new(pool.clone());
+    let host = CloudThingAgentHost::new(pool.clone(), Arc::new(ThingEventBus::new()));
+
+    let denied_report = |run_id: &str| RunReport {
+        run_id: run_id.to_string(),
+        workspace_id: WS.to_string(),
+        trigger: EVENT_KEY.to_string(),
+        outcome: Outcome::Rejected,
+        summary: "动作被策略拒绝，建议检查自治策略配置".to_string(),
+        actions: vec![ActionRecord {
+            thing_id: THING.to_string(),
+            action_name: "reboot".to_string(),
+            params: serde_json::Value::Null,
+            result: ActionResult::Success(
+                serde_json::json!({"denied": true, "reason": "action_not_allowed"}),
+            ),
+            verified: false,
+        }],
+        verified: false,
+        duration_ms: 100,
+        tool_calls: 2,
+        tokens: 500,
+    };
+
+    // 当前 run 在 alert 之前已落库 → recent_runs_by_dedup_key 第一条即当前 run。
+    for id in ["run_1", "run_2", "run_3"] {
+        repo.insert_run(&denied_report(id), None, Some(EVENT_KEY)).await.expect("insert run");
+    }
+
+    let signal = WakeSignal {
+        workspace_id: WS.to_string(),
+        priority: Priority::Critical,
+        source: TriggerSource::ThingEvent {
+            thing_id: THING.to_string(),
+            event_name: "temp_high".to_string(),
+            event_id: 1,
+            level: 5,
+            data: serde_json::json!({"value": 87.5}),
+        },
+        dedup_key: Some(EVENT_KEY.to_string()),
+    };
+
+    pushback::deliver(&denied_report("run_3"), &signal, &repo, &host).await;
+
+    // run_rejected 告警落 events 表，payload 携带 policy_relax_hint。
+    let content: String = sqlx::query_scalar(
+        "SELECT content FROM events WHERE event_subtype = 'thing_agent_alert' AND content LIKE '%run_rejected%' ORDER BY rowid DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("rejected alert row");
+    assert!(content.contains("policy_relax_hint"), "hint 入 payload: {content}");
+    assert!(content.contains("add_to_allowed"), "suggested 预填: {content}");
+    assert!(content.contains("reboot"), "action_name: {content}");
+}

@@ -362,10 +362,43 @@ pub fn judge_verified(trace: &[ToolTraceEntry], actions: &mut [ActionRecord]) ->
     actions.iter().all(|a| a.verified)
 }
 
+/// T11 结构化拒绝结果（`{"denied":true,"reason":...}`）判定。
+fn is_denied_result(v: &serde_json::Value) -> bool {
+    v.get("denied").and_then(|d| d.as_bool()) == Some(true)
+}
+
+/// X5/T17：run 内 LLM 尝试的所有 invoke_action 均被策略门拒绝。
+/// 零动作返回 false（NoActionNeeded）；部分拒绝（有动作成功）返回 false（Acted）。
+pub(crate) fn all_actions_policy_denied(actions: &[ActionRecord]) -> bool {
+    !actions.is_empty()
+        && actions
+            .iter()
+            .all(|a| matches!(&a.result, ActionResult::Success(v) if is_denied_result(v)))
+}
+
+/// Outcome 判定（纯函数）：预算截断 > LLM 失败 > 零动作尝试 > 全部策略拒绝 > Acted。
+pub(crate) fn decide_outcome(
+    truncated: Option<TruncationReason>,
+    turn_failed: bool,
+    actions: &[ActionRecord],
+) -> Outcome {
+    if truncated.is_some() {
+        Outcome::BudgetExceeded
+    } else if turn_failed {
+        Outcome::Failed
+    } else if actions.is_empty() {
+        Outcome::NoActionNeeded
+    } else if all_actions_policy_denied(actions) {
+        Outcome::Rejected
+    } else {
+        Outcome::Acted
+    }
+}
+
 /// Framework-synthesized summary (O1) for runs without usable LLM text:
 /// trigger + action list with results + why the run ended
-/// (budget truncation / LLM failure / timeout / no text).
-fn synthesize_summary(inner: &RunContextInner, end: &TurnEnd) -> String {
+/// (budget truncation / policy rejection / LLM failure / timeout / no text).
+fn synthesize_summary(inner: &RunContextInner, end: &TurnEnd, outcome: Outcome) -> String {
     use std::fmt::Write as _;
 
     let mut s = format!("触发: {}\n动作:", inner.trigger);
@@ -374,14 +407,18 @@ fn synthesize_summary(inner: &RunContextInner, end: &TurnEnd) -> String {
         any = true;
         let thing = thing_id_of(&e.args).unwrap_or_else(|| "?".into());
         let action = e.args.get("actionName").and_then(|v| v.as_str()).unwrap_or("?");
-        let outcome = match &e.output {
+        let outcome_text = match &e.output {
             None => "已取消（截断时仍在执行）".to_string(),
             Some(out) => match serde_json::from_str::<serde_json::Value>(out) {
+                Ok(v) if is_denied_result(&v) => {
+                    let reason = v.get("reason").and_then(|r| r.as_str()).unwrap_or("unknown");
+                    format!("被策略拒绝（{reason}）")
+                }
                 Ok(_) => "成功".to_string(),
                 Err(_) => format!("失败: {out}"),
             },
         };
-        let _ = write!(s, "\n- {thing}.{action}: {outcome}");
+        let _ = write!(s, "\n- {thing}.{action}: {outcome_text}");
     }
     if !any {
         s.push_str(" 无");
@@ -395,6 +432,7 @@ fn synthesize_summary(inner: &RunContextInner, end: &TurnEnd) -> String {
                 format!("执行被预算截断（工具调用超过 {budget} 次）")
             }
             Some(TruncationReason::DurationBudget) => "执行被预算截断（时长超限）".to_string(),
+            None if outcome == Outcome::Rejected => "动作被策略拒绝，建议检查自治策略配置".to_string(),
             None => "LLM 未产生总结文本".to_string(),
         },
         TurnEnd::Failed => "LLM 失败（turn 返回错误）".to_string(),
@@ -409,19 +447,15 @@ fn assemble_report(ctx: &RunContext, end: TurnEnd, duration_ms: u64, inner: &Run
     let mut actions = build_actions(&inner.trace);
     let verified = judge_verified(&inner.trace, &mut actions);
 
-    let outcome = if inner.truncated.is_some() {
-        Outcome::BudgetExceeded
-    } else if matches!(end, TurnEnd::Failed | TurnEnd::TimedOut) {
-        Outcome::Failed
-    } else if actions.is_empty() {
-        Outcome::NoActionNeeded
-    } else {
-        Outcome::Acted
-    };
+    let outcome = decide_outcome(
+        inner.truncated,
+        matches!(end, TurnEnd::Failed | TurnEnd::TimedOut),
+        &actions,
+    );
 
     let (summary, llm_text) = match end {
         TurnEnd::Text(text) => (text.clone(), Some(text)),
-        other => (synthesize_summary(inner, &other), None),
+        other => (synthesize_summary(inner, &other, outcome), None),
     };
 
     RunOutcome {
@@ -832,5 +866,73 @@ mod tests {
         assert!(out.report.actions.is_empty());
         // Vacuous truth: nothing to verify.
         assert!(out.report.verified);
+    }
+
+    /// T11 结构化拒绝的 invoke_action 轨迹条目。
+    fn denied_entry(id: &str, thing: &str, action: &str, reason: &str) -> ToolTraceEntry {
+        ToolTraceEntry {
+            id: id.to_string(),
+            name: TOOL_INVOKE_ACTION.to_string(),
+            args: serde_json::json!({"thingId": thing, "actionName": action}),
+            output: Some(format!(r#"{{"denied":true,"reason":"{reason}"}}"#)),
+        }
+    }
+
+    #[test]
+    fn all_actions_denied_yields_rejected_even_with_llm_text() {
+        let (ctx, mut inner) = ctx_with();
+        inner.trigger = "thing:t1:event:temp_high".to_string();
+        inner.trace = vec![
+            denied_entry("c1", "t1", "reboot", "action_not_allowed"),
+            denied_entry("c2", "t1", "set_fan", "action_denied"),
+        ];
+        inner.tool_calls = 2;
+
+        // LLM 文本照常作为 summary，但 outcome 由轨迹判定为 Rejected（T17）。
+        let out = assemble_report(&ctx, TurnEnd::Text("两个动作都被拒绝".into()), 900, &inner);
+        assert_eq!(out.report.outcome, Outcome::Rejected);
+        assert_eq!(out.report.summary, "两个动作都被拒绝");
+        assert_eq!(out.report.actions.len(), 2);
+    }
+
+    #[test]
+    fn all_actions_denied_synthesized_summary_mentions_policy() {
+        let (ctx, mut inner) = ctx_with();
+        inner.trigger = "thing:t1:event:temp_high".to_string();
+        inner.trace = vec![denied_entry("c1", "t1", "reboot", "action_not_allowed")];
+        inner.tool_calls = 1;
+
+        let out = assemble_report(&ctx, TurnEnd::Empty, 900, &inner);
+        assert_eq!(out.report.outcome, Outcome::Rejected);
+        assert_eq!(out.llm_text, None);
+        assert!(
+            out.report.summary.contains("被策略拒绝（action_not_allowed）"),
+            "动作清单明示拒绝: {}",
+            out.report.summary
+        );
+        assert!(
+            out.report.summary.contains("动作被策略拒绝，建议检查自治策略配置"),
+            "结尾给出策略建议: {}",
+            out.report.summary
+        );
+    }
+
+    #[test]
+    fn partial_denial_yields_acted() {
+        let (ctx, mut inner) = ctx_with();
+        inner.trigger = "thing:t1:event:temp_high".to_string();
+        inner.trace = vec![
+            denied_entry("c1", "t1", "reboot", "action_not_allowed"),
+            entry(
+                "c2",
+                TOOL_INVOKE_ACTION,
+                serde_json::json!({"thingId":"t1","actionName":"set_fan"}),
+                Some("{\"ok\":true}"),
+            ),
+        ];
+        inner.tool_calls = 2;
+
+        let out = assemble_report(&ctx, TurnEnd::Empty, 900, &inner);
+        assert_eq!(out.report.outcome, Outcome::Acted, "部分拒绝（有动作成功）仍为 Acted");
     }
 }

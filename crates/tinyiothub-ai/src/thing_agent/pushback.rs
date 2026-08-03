@@ -705,6 +705,46 @@ mod tests {
         );
     }
 
+    // X5 端到端可见性：T11 结构化拒绝轨迹 → runner outcome 判定 = Rejected →
+    // 连续 3 条 → hint 触发（review 修复前 runner 产出 Acted，链路不可达）。
+    #[tokio::test]
+    async fn runner_rejected_outcome_reaches_relax_hint_end_to_end() {
+        use crate::thing_agent::runner::{ToolTraceEntry, build_actions, decide_outcome};
+
+        let denied_entry = |id: &str| ToolTraceEntry {
+            id: id.to_string(),
+            name: "invoke_action".to_string(),
+            args: serde_json::json!({"thingId": "t1", "actionName": "reboot"}),
+            output: Some(r#"{"denied":true,"reason":"action_not_allowed"}"#.to_string()),
+        };
+        // runner 纯函数链路：trajectory → actions → outcome。
+        let actions = build_actions(&[denied_entry("c1"), denied_entry("c2")]);
+        let outcome = decide_outcome(None, false, &actions);
+        assert_eq!(outcome, Outcome::Rejected, "全部策略拒绝必须判 Rejected");
+
+        // 连续 3 条该 outcome 的 run（当前 run 在 alert 前已落库）→ hint 触发。
+        let run = |run_id: &str| RunReport {
+            run_id: run_id.to_string(),
+            outcome,
+            actions: actions.clone(),
+            ..rejected_run(run_id, "reboot", "action_not_allowed")
+        };
+        let host = StubHost::default();
+        let runs = StubRunsRepo {
+            reports: Mutex::new(vec![run("run_3"), run("run_2"), run("run_1")]),
+        };
+        deliver(&run("run_3"), &event_signal(Priority::Critical), &runs, &host).await;
+
+        let alerts = host.alerts.lock().unwrap();
+        let rejected_alert = alerts
+            .iter()
+            .find(|(_, p)| p["reason"] == "run_rejected")
+            .expect("run_rejected alert");
+        let hint = rejected_alert.1["policy_relax_hint"].as_object().expect("hint object");
+        assert_eq!(hint["action_name"], "reboot");
+        assert_eq!(hint["suggested"], "add_to_allowed");
+    }
+
     #[tokio::test]
     async fn hourly_fuse_reason_does_not_trigger_relax_hint() {
         let host = StubHost::default();
