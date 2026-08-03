@@ -26,7 +26,7 @@ StubLlm（自动化套件，逐断言映射）。
 
   [minimax]
   auth_token = "<真实 token>"   # 档位 A 必填
-  model = "MiniMax-M2.7-highspeed"
+  model = "MiniMax-M3"
   ```
 - 工具：`mosquitto_pub`、`sqlite3`、`jq`、`curl`。
 
@@ -40,7 +40,7 @@ cargo run -p tinyiothub-cloud
 `thing-agent loop started`（workspace 创建后）。健康检查：
 
 ```bash
-curl -s http://localhost:3002/api/v1/system/health | jq .code   # 期望 0/200
+curl -s http://localhost:3002/health   # 期望包含 OK
 ```
 
 ## 2. 登录 + 创建工作空间
@@ -62,7 +62,7 @@ echo "workspace: $WS"
 服务运行中直接写库（sqlite 多连接安全；设备也可在 Web UI 创建）：
 
 ```bash
-sqlite3 tinyiothub.db <<'SQL'
+sqlite3 data/tinyiothub.db <<'SQL'
 INSERT OR IGNORE INTO devices (id, name, workspace_id, thing_type)
   VALUES ('thermo-01', 'E2E 温控器', 'WS_ID', 'device');
 INSERT OR IGNORE INTO thing_actions (id, device_id, name)
@@ -72,8 +72,9 @@ INSERT OR IGNORE INTO thing_properties (id, device_id, name, data_type)
 SQL
 ```
 
-把 `WS_ID` 替换为 `$WS`。完成后重启服务或等 Orchestrator 回调为该
-workspace 拉起 thing-agent loop（创建工作空间即触发，种子设备无需重启）。
+把 `WS_ID` 替换为 `$WS`。thing-agent loop 在服务启动时为既有 workspace
+拉起；新 workspace 由 Orchestrator 回调拉起。完成后重启服务或等回调为该
+workspace 拉起 thing-agent loop（种子设备无需重启）。
 
 ## 4. 配置自治策略（act + 全量允许）
 
@@ -113,7 +114,7 @@ curl -s "$BASE/workspaces/$WS/agent/runs?limit=5" \
 - `outcome == "acted"`，`verified == true`（invoke 后 read_property 回读）
 - 动作明细（Runs API 不含 actions，直查库）：
   ```bash
-  sqlite3 tinyiothub.db \
+  sqlite3 data/tinyiothub.db \
     "SELECT json_extract(report,'$.actions[0].action_name'),
             json_extract(report,'$.actions[0].result.success.status')
      FROM agent_runs WHERE workspace_id='$WS' ORDER BY rowid DESC LIMIT 1"
@@ -121,7 +122,7 @@ curl -s "$BASE/workspaces/$WS/agent/runs?limit=5" \
   ```
 - agent 动作已按 actor='agent' 落 events 表（共振防护硬交接）：
   ```bash
-  sqlite3 tinyiothub.db \
+  sqlite3 data/tinyiothub.db \
     "SELECT actor, event_subtype FROM events WHERE device_id='thermo-01' AND actor='agent'"
   # 期望: agent | set_target_temp，且该事件没有再唤醒新 Run（runs 总数不变）
   ```
@@ -129,7 +130,7 @@ curl -s "$BASE/workspaces/$WS/agent/runs?limit=5" \
 **断言点 C — chat/Runs API 可见报告：**
 
 - `summary` 为自然语言处置报告（含结果与验证结论）
-- 无活跃会话时回退为告警：`sqlite3 tinyiothub.db "SELECT content FROM events WHERE event_subtype='thing_agent_alert' ORDER BY rowid DESC LIMIT 1"` 含同一 run 摘要
+- 无活跃会话时回退为告警：`sqlite3 data/tinyiothub.db "SELECT content FROM events WHERE event_subtype='thing_agent_alert' ORDER BY rowid DESC LIMIT 1"` 含同一 run 摘要
 - （可选）先在工作空间开一个 chat 会话再发指令，assistant 消息会直接回推到会话（T13/T14 链路）
 
 ## 6. 同事件再唤醒 —— 记忆不重复动作
@@ -163,14 +164,14 @@ curl -s -X PUT $BASE/workspaces/$WS/agent/policy \
   -d '{"mode":"off"}' | jq .result.mode   # "off"
 
 # 验证关断：再发一次 critical，观察 30s，runs 总数不变
-sqlite3 tinyiothub.db "SELECT COUNT(*) FROM agent_runs WHERE workspace_id='$WS'"
+sqlite3 data/tinyiothub.db "SELECT COUNT(*) FROM agent_runs WHERE workspace_id='$WS'"
 mosquitto_pub -h localhost -t thing/thermo-01/event/temp_high -q 1 -m '{"level":"critical","data":{"value":35}}'
 sleep 30
-sqlite3 tinyiothub.db "SELECT COUNT(*) FROM agent_runs WHERE workspace_id='$WS'"   # 与上次相同
+sqlite3 data/tinyiothub.db "SELECT COUNT(*) FROM agent_runs WHERE workspace_id='$WS'"   # 与上次相同
 
 # 清理
 docker rm -f e2e-mosquitto
-sqlite3 tinyiothub.db "DELETE FROM devices WHERE id='thermo-01'"
+sqlite3 data/tinyiothub.db "DELETE FROM devices WHERE id='thermo-01'"
 ```
 
 ## 档位 B：StubLlm（无 LLM key 时的等效验收）
