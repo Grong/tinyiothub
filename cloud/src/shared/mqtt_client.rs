@@ -7,7 +7,10 @@ use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 use tokio::sync::mpsc;
 
 use crate::modules::{
-    event::router::{ThingEventInput, ThingEventPayload, ThrottleState, route_thing_event},
+    event::{
+        bus::ThingEventBus,
+        router::{ThingEventInput, ThingEventPayload, ThrottleState, route_thing_event},
+    },
     gateway::{
         service::MqttPublish,
         types::{
@@ -36,6 +39,7 @@ impl PlatformMqttClient {
         mut mqtt_rx: mpsc::Receiver<MqttPublish>,
         data_tx: mpsc::Sender<GatewayDataMessage>,
         throttle: Arc<ThrottleState>,
+        event_bus: Arc<ThingEventBus>,
         db_pool: sqlx::SqlitePool,
         alarm_service: Option<Arc<crate::modules::alarm::service::AlarmService>>,
     ) -> Self {
@@ -121,6 +125,7 @@ impl PlatformMqttClient {
                                         &topic,
                                         &publish.payload,
                                         &throttle,
+                                        &event_bus,
                                         &db_pool,
                                         alarm_service.clone(),
                                     )
@@ -211,6 +216,7 @@ impl PlatformMqttClient {
         topic: &str,
         payload: &[u8],
         throttle: &ThrottleState,
+        event_bus: &ThingEventBus,
         db_pool: &sqlx::SqlitePool,
         alarm_service: Option<Arc<crate::modules::alarm::service::AlarmService>>,
     ) {
@@ -292,7 +298,9 @@ impl PlatformMqttClient {
             template_events,
         };
 
-        let result = route_thing_event(db_pool, throttle, alarm_service, input).await;
+        // MQTT-ingested events are device-reported: actor "device" (T6).
+        let result =
+            route_thing_event(db_pool, throttle, alarm_service, event_bus, "device", input).await;
 
         if result.throttled {
             tracing::info!(

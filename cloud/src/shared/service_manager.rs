@@ -181,6 +181,52 @@ impl ServiceManager {
             app_state.agent_pool.set_memory_service(memory_service.clone()).await;
             app_state.agent_pool.set_event_publisher(event_publisher.clone()).await;
 
+            // T15 thing-agent loop: per-workspace 自治 Loop 注册表。
+            // Orchestrator 的 WorkspaceCreated/Deleted 事件流驱动其启停；
+            // 三触发器（物事件/定时巡检/用户指令）汇入 per-workspace 调度器。
+            let thing_agent_manager = {
+                let pool = app_state.database.pool().clone();
+                let policy_repo = Arc::new(
+                    crate::modules::agent::policy_repo::SqlitePolicyRepository::new(pool.clone()),
+                );
+                let runs_repo = Arc::new(
+                    crate::modules::agent::agent_runs_repo::SqliteAgentRunsRepository::new(
+                        pool.clone(),
+                    ),
+                );
+                let manager = Arc::new(tinyiothub_ai::thing_agent::ThingAgentManager::new(
+                    Arc::new(crate::modules::agent::thing_agent_host::CloudThingAgentHost::new(
+                        pool.clone(),
+                        app_state.thing_event_bus.clone(),
+                    )),
+                    policy_repo.clone(),
+                    Arc::new(
+                        crate::modules::agent::autonomous_factory::AutonomousAgentFactory::new(
+                            pool.clone(),
+                            policy_repo,
+                            app_state.thing_event_bus.clone(),
+                            Arc::new(crate::modules::event::router::ThrottleState::new(60)),
+                            app_state.agent_pool.shared_memory.clone(),
+                            app_state.agent_pool.observer.clone(),
+                            crate::modules::agent::autonomous_factory::minimax_provider_factory(),
+                            crate::shared::agent::config::AgentRuntimeConfig::default().model,
+                        ),
+                    ),
+                    runs_repo.clone(),
+                    Arc::new(tinyiothub_ai::thing_agent::Runner::new()),
+                    tinyiothub_ai::thing_agent::ThingAgentManagerConfig::default(),
+                ));
+                // T18 X6 心跳桥：HeartbeatCompleted 的结构化 proposals 经 O11
+                // dedup 后投递 UserDirective 进 thing-agent loop。
+                let bridge =
+                    Arc::new(tinyiothub_ai::orchestrator::callbacks::HeartbeatBridge::new(
+                        runs_repo,
+                        manager.clone(),
+                    ));
+                (manager, bridge)
+            };
+            let (thing_agent_manager, heartbeat_bridge) = thing_agent_manager;
+
             let orchestrator = Arc::new(tinyiothub_ai::orchestrator::Orchestrator::new(
                 app_state.event_bus.clone(),
                 heartbeat_runner.clone(),
@@ -190,8 +236,14 @@ impl ServiceManager {
                 Some(Arc::new(crate::modules::agent::dlq_repo::SqliteDeadLetterQueue::new(
                     app_state.database.pool().clone(),
                 ))),
+                Some(thing_agent_manager.clone()),
+                Some(heartbeat_bridge),
             ));
             orchestrator.start();
+
+            // T14 用户指令入口：chat 工具 / HTTP 端点经 directive_sink 投递到
+            // 对应工作区的 thing-agent 调度器。
+            app_state.set_directive_sink(thing_agent_manager.clone());
 
             // Start heartbeat loops for existing workspaces
             match app_state.workspace_service.list_all_ids().await {
@@ -208,6 +260,7 @@ impl ServiceManager {
                             warn!(%ws_id, "⚠️ Heartbeat task migration failed: {}", e);
                         }
                         heartbeat_runner.start(ws_id).await;
+                        thing_agent_manager.start(ws_id);
                     }
                     info!("✅ AI Orchestrator started ({} workspaces)", ws_ids.len());
                 }

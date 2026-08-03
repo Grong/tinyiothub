@@ -67,6 +67,18 @@ pub fn create_router() -> Router<AppState> {
         .route("/{id}/heartbeat/approvals", get(heartbeat::get_approvals))
         .route("/{id}/heartbeat/approvals/{proposal_id}/approve", post(heartbeat::approve_proposal))
         .route("/{id}/heartbeat/approvals/{proposal_id}/reject", post(heartbeat::reject_proposal))
+        // Thing-agent user-directive entries (T14)
+        .route("/{id}/agent/tasks", post(crate::modules::agent::handler::agent_tasks::create_task))
+        .route("/{id}/agent/runs", get(crate::modules::agent::handler::agent_tasks::list_runs))
+        .route(
+            "/{id}/agent/runs/{run_id}/ack",
+            post(crate::modules::agent::handler::agent_tasks::ack_run),
+        )
+        .route(
+            "/{id}/agent/policy",
+            get(crate::modules::agent::handler::agent_tasks::get_policy)
+                .put(crate::modules::agent::handler::agent_tasks::update_policy),
+        )
 }
 
 /// List workspaces for current tenant

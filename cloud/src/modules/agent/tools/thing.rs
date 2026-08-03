@@ -95,7 +95,7 @@ pub fn cleanup_expired_tokens() {
 // ============================================================================
 
 /// Wrap a serializable payload into a successful ToolResult.
-fn tool_ok(payload: impl serde::Serialize) -> anyhow::Result<ToolResult> {
+pub(crate) fn tool_ok(payload: impl serde::Serialize) -> anyhow::Result<ToolResult> {
     Ok(ToolResult {
         success: true,
         output: serde_json::to_string(&payload).unwrap_or_default(),
@@ -104,7 +104,7 @@ fn tool_ok(payload: impl serde::Serialize) -> anyhow::Result<ToolResult> {
 }
 
 /// Wrap an error message into a failed ToolResult.
-fn tool_err(msg: impl Into<String>) -> anyhow::Result<ToolResult> {
+pub(crate) fn tool_err(msg: impl Into<String>) -> anyhow::Result<ToolResult> {
     Ok(ToolResult { success: false, output: String::new(), error: Some(msg.into()) })
 }
 
@@ -524,9 +524,11 @@ impl Tool for ReadPropertyTool {
 // ============================================================================
 
 pub struct InvokeActionTool {
-    thing_service: Arc<ThingService>,
-    pool: SqlitePool,
-    workspace_id: String,
+    // pub(crate) so the T11 autonomous variant (tools/autonomous_invoke.rs,
+    // O18 thin wrapper) can construct it — no logic change.
+    pub(crate) thing_service: Arc<ThingService>,
+    pub(crate) pool: SqlitePool,
+    pub(crate) workspace_id: String,
 }
 
 impl Attributable for InvokeActionTool {
@@ -663,7 +665,10 @@ impl Tool for InvokeActionTool {
             }));
         }
 
-        // Execute via DataServer if available
+        // Execute via DataServer if available.
+        // NOTE: this dispatch tail (through the closing brace of this match)
+        // is mirrored by `dispatch_command` in autonomous_invoke.rs — if you
+        // change it here, keep the mirror in sync.
         let app_state = crate::modules::mcp::get_app_state();
         match app_state.and_then(|s| s.data_server().cloned()) {
             Some(data_server) => {

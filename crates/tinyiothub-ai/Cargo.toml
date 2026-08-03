@@ -14,6 +14,7 @@ tinyiothub-runtime = { workspace = true }
 
 # Async runtime
 tokio = { workspace = true }
+tokio-util = "0.7"
 
 # Serialization
 serde = { workspace = true }
@@ -39,6 +40,10 @@ parking_lot = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 regex = { workspace = true }
+
+# ZeroClaw Agent runtime (forked with pub security + pub heartbeat, v0.8.1)
+zeroclaw = { git = "https://github.com/Grong/zeroclaw.git", tag = "v0.8.1-patched", package = "zeroclawlabs", features = ["agent-runtime"] }
+zeroclaw-api = { git = "https://github.com/Grong/zeroclaw.git", tag = "v0.8.1-patched" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

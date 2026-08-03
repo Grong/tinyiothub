@@ -4,8 +4,9 @@
 //! AlarmCreated       --> EventBus --> Orchestrator --> HeartbeatRunner.signal()
 //! (Chat reflection is handled directly in chat/service.rs)
 //! HeartbeatCompleted --> EventBus --> Orchestrator --> HeartbeatTaskRepository.insert_result()
-//! WorkspaceCreated    --> EventBus --> Orchestrator --> HeartbeatRunner.start()
-//! WorkspaceDeleted    --> EventBus --> Orchestrator --> HeartbeatRunner.stop()
+//! WorkspaceCreated    --> EventBus --> Orchestrator --> HeartbeatRunner.start() +
+//! ThingAgentManager.start() WorkspaceDeleted    --> EventBus --> Orchestrator -->
+//! HeartbeatRunner.stop() + ThingAgentManager.stop()
 
 pub mod callbacks;
 
@@ -20,6 +21,7 @@ use crate::event::dlq::DeadLetterQueue;
 use crate::heartbeat::repo::HeartbeatTaskRepository;
 use crate::heartbeat::runner::HeartbeatRunner;
 use crate::memory::service::MemoryService;
+use crate::thing_agent::manager::ThingAgentManager;
 
 use callbacks::AiEventHandler;
 
@@ -39,6 +41,8 @@ impl Orchestrator {
         memory_service: Arc<MemoryService>,
         drop_notifier: Option<Arc<dyn DropNotifier>>,
         dlq: Option<Arc<dyn DeadLetterQueue>>,
+        thing_agent_manager: Option<Arc<ThingAgentManager>>,
+        heartbeat_bridge: Option<Arc<callbacks::HeartbeatBridge>>,
     ) -> Self {
         let mut publisher = AiEventPublisher::new(event_bus.clone());
         if let Some(n) = drop_notifier {
@@ -54,6 +58,8 @@ impl Orchestrator {
             memory_service,
             event_publisher.clone(),
             dlq,
+            thing_agent_manager,
+            heartbeat_bridge,
             shutting_down.clone(),
         ));
 
@@ -137,7 +143,7 @@ mod tests {
             Arc::new(AiEventPublisher::new(bus.clone())),
             HeartbeatConfig::default(),
         ));
-        Orchestrator::new(bus, runner, repo, make_memory_service(), None, None)
+        Orchestrator::new(bus, runner, repo, make_memory_service(), None, None, None, None)
     }
 
     #[tokio::test]

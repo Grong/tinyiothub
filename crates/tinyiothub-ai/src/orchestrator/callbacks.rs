@@ -2,9 +2,10 @@
 //!
 //! AlarmCreated       --> HeartbeatRunner.signal()
 //! HeartbeatCompleted --> HeartbeatTaskRepository.insert_result()
+//!                    --> HeartbeatBridge.dispatch_proposals() (X6, O21)
 //! (Chat reflection is handled directly in chat/service.rs)
-//! WorkspaceCreated    --> HeartbeatRunner.start()
-//! WorkspaceDeleted    --> HeartbeatRunner.stop()
+//! WorkspaceCreated    --> HeartbeatRunner.start() + ThingAgentManager.start()
+//! WorkspaceDeleted    --> HeartbeatRunner.stop() + ThingAgentManager.stop()
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -20,8 +21,145 @@ use crate::event::dlq::DeadLetterQueue;
 use crate::event::types::AiEvent;
 use crate::heartbeat::repo::HeartbeatTaskRepository;
 use crate::heartbeat::runner::HeartbeatRunner;
-use crate::heartbeat::types::SignalPriority;
+use crate::heartbeat::types::{HeartbeatResult, SignalPriority};
 use crate::memory::service::MemoryService;
+use crate::proposal::{Proposal, ProposalStatus};
+use crate::thing_agent::manager::ThingAgentManager;
+use crate::thing_agent::report::AgentRunsRepository;
+use crate::thing_agent::traits::DirectiveSink;
+use crate::thing_agent::types::{Outcome, Priority, TriggerSource, WakeSignal};
+
+/// X6 心跳桥（O21 裁决）：订阅既有 `AiEvent::HeartbeatCompleted`（loop_.rs
+/// 零改动），从心跳报告的结构化 proposals 提取问题，按 O11 dedup 后投递
+/// `UserDirective{ source: Some("heartbeat"), priority: Normal }` 给
+/// thing-agent loop 处置。
+///
+/// problem_key 从结构化字段派生（`{tool_name}:{device_id}`），不用自由文本
+/// 摘要——LLM 措辞变化会击穿去重（O21）。
+pub struct HeartbeatBridge {
+    runs_repo: Arc<dyn AgentRunsRepository>,
+    sink: Arc<dyn DirectiveSink>,
+}
+
+/// O11 dedup 窗口：同 problem_key 6h 内的 Run 参与抑制判定；超窗旧 Run 不
+/// 抑制（复发可再处置）。
+pub const PROBLEM_WINDOW_HOURS: u32 = 6;
+/// O11：人工 ack 后该 problem_key 的抑制时长（7 天）。
+pub const ACK_SUPPRESS_HOURS: u32 = 7 * 24;
+
+impl HeartbeatBridge {
+    pub fn new(runs_repo: Arc<dyn AgentRunsRepository>, sink: Arc<dyn DirectiveSink>) -> Self {
+        Self { runs_repo, sink }
+    }
+
+    /// problem_key：结构化字段 `{tool_name}:{device_id}`；无目标设备的提案
+    /// 用 "-" 占位（稳定，不随措辞变化）。
+    pub fn problem_key_of(proposal: &Proposal) -> String {
+        format!(
+            "{}:{}",
+            proposal.tool_name,
+            proposal.device_id.as_deref().unwrap_or("-")
+        )
+    }
+
+    /// 对心跳报告中的每个 proposal 做 O11 dedup，通过则投递心跳 directive。
+    /// 投递失败（队列满/节流/loop 未启动）仅记录日志——心跳 directive 不享
+    /// "排队不丢"（O5），丢弃可接受。
+    pub async fn dispatch_proposals(&self, workspace_id: &str, result: &HeartbeatResult) {
+        for proposal in &result.proposals {
+            // 心跳已裁决（approved/rejected）的提案不二次投递。
+            if proposal.status != ProposalStatus::Pending {
+                continue;
+            }
+            let problem_key = Self::problem_key_of(proposal);
+            match self.should_dispatch(workspace_id, &problem_key).await {
+                Ok(true) => {
+                    let signal = heartbeat_directive(workspace_id, problem_key.clone(), proposal);
+                    if let Err(e) = self.sink.enqueue(signal) {
+                        debug!(
+                            workspace_id,
+                            problem_key, error = %e, "heartbeat directive not admitted (droppable by design)"
+                        );
+                    } else {
+                        info!(
+                            workspace_id,
+                            problem_key, "heartbeat proposal dispatched to thing-agent loop"
+                        );
+                    }
+                }
+                Ok(false) => {
+                    debug!(workspace_id, problem_key, "heartbeat proposal suppressed by O11 dedup");
+                }
+                Err(e) => {
+                    // fail-closed：dedup 判定依据不可用时跳过投递，宁可漏报
+                    // 一次也不重复打扰（下一个 tick 会再试）。
+                    warn!(workspace_id, problem_key, error = %e, "dedup query failed — proposal skipped (fail-closed)");
+                }
+            }
+        }
+    }
+
+    /// O11 dedup（6h 窗口 + 窗口内计数 + 全 outcome 覆盖 + ack 抑制 7 天）：
+    /// - 7d 窗口最近一次 Run 已 ack → 跳过（6h 窗口非空时 last(7d)==last(6h)， 6h 内 acked
+    ///   由本分支覆盖；6h 空而 7d 内有 acked = 复发在 ack 抑制期内）
+    /// - 6h 窗口无 Run → 放行（新问题 / 超 6h 复发）
+    /// - 最近一次 failed/rejected/budget_exceeded → 跳过
+    /// - acted+verified / no_action_needed → 跳过
+    /// - acted+未 verified：窗口内仅 1 次 → 放行一次重试；第二次起跳过
+    async fn should_dispatch(&self, workspace_id: &str, problem_key: &str) -> anyhow::Result<bool> {
+        if let Some((_, _, acked)) = self
+            .runs_repo
+            .last_problem_run(workspace_id, problem_key, ACK_SUPPRESS_HOURS)
+            .await?
+            && acked
+        {
+            return Ok(false);
+        }
+        let Some((outcome, verified, _acked)) = self
+            .runs_repo
+            .last_problem_run(workspace_id, problem_key, PROBLEM_WINDOW_HOURS)
+            .await?
+        else {
+            return Ok(true);
+        };
+        match outcome {
+            Outcome::Failed | Outcome::Rejected | Outcome::BudgetExceeded | Outcome::NoActionNeeded => Ok(false),
+            Outcome::Acted if verified => Ok(false),
+            Outcome::Acted => {
+                let n = self
+                    .runs_repo
+                    .count_problem_runs(workspace_id, problem_key, PROBLEM_WINDOW_HOURS)
+                    .await?;
+                Ok(n <= 1)
+            }
+        }
+    }
+}
+
+/// 心跳 directive 文本：从 proposal 生成可执行指令（O2）。
+fn heartbeat_directive_text(problem_key: &str, proposal: &Proposal) -> String {
+    format!(
+        "心跳巡检发现待处置问题 {problem_key}：{}（原因：{}；风险：{}）。请诊断并处置。",
+        proposal.summary, proposal.reason, proposal.risk
+    )
+}
+
+/// 心跳来源 directive（O5/O24）：Normal 优先级、dedup_key=None 不参与合并、
+/// source=Some("heartbeat") 标记来源（不走 60s 同文去重、不享排队不丢）。
+fn heartbeat_directive(workspace_id: &str, problem_key: String, proposal: &Proposal) -> WakeSignal {
+    WakeSignal {
+        workspace_id: workspace_id.to_string(),
+        priority: Priority::Normal,
+        source: TriggerSource::UserDirective {
+            user_id: "heartbeat".to_string(),
+            text: heartbeat_directive_text(&problem_key, proposal),
+            session_key: None,
+            source: Some("heartbeat".to_string()),
+            problem_key: Some(problem_key),
+        },
+        dedup_key: None,
+    }
+}
 
 /// Cross-domain callback handler.
 pub struct AiEventHandler {
@@ -30,6 +168,10 @@ pub struct AiEventHandler {
     memory_service: Arc<MemoryService>,
     event_publisher: Arc<AiEventPublisher>,
     dlq: Option<Arc<dyn DeadLetterQueue>>,
+    /// T15 thing-agent loop registry; None where the loop is not deployed.
+    thing_agent_manager: Option<Arc<ThingAgentManager>>,
+    /// T18 X6 心跳桥；None 时 HeartbeatCompleted 仅落库不投递 directive。
+    heartbeat_bridge: Option<Arc<HeartbeatBridge>>,
     shutting_down: Arc<AtomicBool>,
     retry_in_flight: Arc<AtomicUsize>,
     retry_idle: Arc<Notify>,
@@ -43,6 +185,8 @@ impl AiEventHandler {
         memory_service: Arc<MemoryService>,
         event_publisher: Arc<AiEventPublisher>,
         dlq: Option<Arc<dyn DeadLetterQueue>>,
+        thing_agent_manager: Option<Arc<ThingAgentManager>>,
+        heartbeat_bridge: Option<Arc<HeartbeatBridge>>,
         shutting_down: Arc<AtomicBool>,
     ) -> Self {
         Self {
@@ -51,6 +195,8 @@ impl AiEventHandler {
             memory_service,
             event_publisher,
             dlq,
+            thing_agent_manager,
+            heartbeat_bridge,
             shutting_down,
             retry_in_flight: Arc::new(AtomicUsize::new(0)),
             retry_idle: Arc::new(Notify::new()),
@@ -123,12 +269,23 @@ impl AiEventHandler {
                         self.retry_with_backoff(workspace_id, result).await;
                     }
                 }
+                // X6 心跳桥：落库结果如何不影响投递判定（O11 dedup 依据
+                // agent_runs，不依赖本次心跳结果的持久化）。
+                if let Some(bridge) = &self.heartbeat_bridge {
+                    bridge.dispatch_proposals(workspace_id, result).await;
+                }
             }
             AiEvent::WorkspaceCreated { workspace_id } => {
                 self.heartbeat_runner.start(workspace_id).await;
+                if let Some(manager) = &self.thing_agent_manager {
+                    manager.start(workspace_id);
+                }
             }
             AiEvent::WorkspaceDeleted { workspace_id } => {
                 self.heartbeat_runner.stop(workspace_id).await;
+                if let Some(manager) = &self.thing_agent_manager {
+                    manager.stop(workspace_id).await;
+                }
             }
             // Self-referential events published by AiEventHandler itself —
             // these are intentionally no-ops to avoid processing loops.
@@ -557,7 +714,16 @@ pub(crate) mod tests {
         let publisher = make_publisher();
         let memory = make_memory_service();
 
-        let handler = AiEventHandler::new(runner, repo, memory, publisher, None, Arc::new(AtomicBool::new(false)));
+        let handler = AiEventHandler::new(
+            runner,
+            repo,
+            memory,
+            publisher,
+            None,
+            None,
+            None,
+            Arc::new(AtomicBool::new(false)),
+        );
         assert_eq!(handler.name(), "AiEventHandler");
     }
 
@@ -568,7 +734,16 @@ pub(crate) mod tests {
         let publisher = make_publisher();
         let memory = make_memory_service();
 
-        let handler = AiEventHandler::new(runner, repo, memory, publisher, None, Arc::new(AtomicBool::new(false)));
+        let handler = AiEventHandler::new(
+            runner,
+            repo,
+            memory,
+            publisher,
+            None,
+            None,
+            None,
+            Arc::new(AtomicBool::new(false)),
+        );
 
         let ai_event = wrap_ai_event(&AiEvent::WorkspaceCreated {
             workspace_id: "ws_1".into(),
@@ -600,6 +775,8 @@ pub(crate) mod tests {
             Arc::clone(&repo),
             memory,
             publisher,
+            None,
+            None,
             None,
             Arc::new(AtomicBool::new(false)),
         );
@@ -636,7 +813,16 @@ pub(crate) mod tests {
         let publisher = make_publisher();
         let memory = make_memory_service();
 
-        let handler = AiEventHandler::new(runner, repo, memory, publisher, None, Arc::new(AtomicBool::new(false)));
+        let handler = AiEventHandler::new(
+            runner,
+            repo,
+            memory,
+            publisher,
+            None,
+            None,
+            None,
+            Arc::new(AtomicBool::new(false)),
+        );
 
         // Non-critical alarm should not trigger heartbeat signal
         let alarm = AiEvent::AlarmCreated(crate::alarm::types::AlarmEvent {
@@ -663,7 +849,16 @@ pub(crate) mod tests {
         let publisher = make_publisher();
         let memory = make_memory_service();
 
-        let handler = AiEventHandler::new(runner, repo, memory, publisher, None, Arc::new(AtomicBool::new(false)));
+        let handler = AiEventHandler::new(
+            runner,
+            repo,
+            memory,
+            publisher,
+            None,
+            None,
+            None,
+            Arc::new(AtomicBool::new(false)),
+        );
 
         // WorkspaceCreated (no tasks loaded → loop won't start, but no panic)
         let event = wrap_ai_event(&AiEvent::WorkspaceCreated {
@@ -678,6 +873,42 @@ pub(crate) mod tests {
         handler.handle_ai_event(&event).await;
     }
 
+    // T15: workspace lifecycle events start/stop the thing-agent loop
+    // alongside the heartbeat runner.
+    #[tokio::test]
+    async fn test_workspace_lifecycle_drives_thing_agent_manager() {
+        let repo: Arc<dyn crate::heartbeat::repo::HeartbeatTaskRepository> = Arc::new(MockTaskRepo::new());
+        let runner = make_heartbeat_runner(Arc::clone(&repo));
+        let publisher = make_publisher();
+        let memory = make_memory_service();
+        let parts = crate::thing_agent::manager::tests::stub_manager();
+        let manager = parts.manager.clone();
+
+        let handler = AiEventHandler::new(
+            runner,
+            repo,
+            memory,
+            publisher,
+            None,
+            Some(manager.clone()),
+            None,
+            Arc::new(AtomicBool::new(false)),
+        );
+
+        assert!(!manager.is_running("ws_life"));
+        let event = wrap_ai_event(&AiEvent::WorkspaceCreated {
+            workspace_id: "ws_life".into(),
+        });
+        handler.handle_ai_event(&event).await;
+        assert!(manager.is_running("ws_life"), "WorkspaceCreated must start the loop");
+
+        let event = wrap_ai_event(&AiEvent::WorkspaceDeleted {
+            workspace_id: "ws_life".into(),
+        });
+        handler.handle_ai_event(&event).await;
+        assert!(!manager.is_running("ws_life"), "WorkspaceDeleted must stop the loop");
+    }
+
     #[tokio::test]
     async fn test_self_referential_events_are_noop() {
         let repo: Arc<dyn crate::heartbeat::repo::HeartbeatTaskRepository> = Arc::new(MockTaskRepo::new());
@@ -685,7 +916,16 @@ pub(crate) mod tests {
         let publisher = make_publisher();
         let memory = make_memory_service();
 
-        let handler = AiEventHandler::new(runner, repo, memory, publisher, None, Arc::new(AtomicBool::new(false)));
+        let handler = AiEventHandler::new(
+            runner,
+            repo,
+            memory,
+            publisher,
+            None,
+            None,
+            None,
+            Arc::new(AtomicBool::new(false)),
+        );
 
         // Self-referential events should not panic
         for event_variant in [
@@ -731,6 +971,8 @@ pub(crate) mod tests {
             Arc::clone(&repo),
             memory,
             publisher,
+            None,
+            None,
             None,
             Arc::new(AtomicBool::new(true)), // shutting_down = true
         );
@@ -894,5 +1136,398 @@ pub(crate) mod tests {
         let seen = seen.seen.lock().unwrap();
         assert_eq!(seen.len(), 1);
         assert!(seen[0].contains("ws_1"));
+    }
+
+    // ── T18 X6 心跳桥 ──────────────────────────────────────────
+
+    mod heartbeat_bridge {
+        use super::*;
+        use crate::proposal::{Proposal, ProposalStatus};
+        use crate::thing_agent::report::AgentRunsRepository;
+        use crate::thing_agent::scheduler::{EnqueueError, Scheduler};
+        use crate::thing_agent::traits::DirectiveSink;
+        use crate::thing_agent::types::{Outcome, Priority, RunReport, TriggerSource, WakeSignal};
+
+        /// 内存 run 集：(outcome, verified, acked, age_hours)。窗口语义与
+        /// Sqlite 实现一致（严格小于窗口不计入边界外）。
+        struct MemRuns {
+            runs: Vec<(Outcome, bool, bool, u32)>,
+            fail: bool,
+        }
+
+        impl MemRuns {
+            fn new(runs: Vec<(Outcome, bool, bool, u32)>) -> Self {
+                Self { runs, fail: false }
+            }
+
+            fn failing() -> Self {
+                Self {
+                    runs: vec![],
+                    fail: true,
+                }
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl AgentRunsRepository for MemRuns {
+            async fn insert_run(
+                &self,
+                _report: &RunReport,
+                _problem_key: Option<&str>,
+                _dedup_key: Option<&str>,
+            ) -> anyhow::Result<()> {
+                Ok(())
+            }
+
+            async fn recent_summaries(&self, _workspace_id: &str, _limit: u32) -> anyhow::Result<Vec<String>> {
+                Ok(vec![])
+            }
+
+            async fn history_by_dedup_key(
+                &self,
+                _workspace_id: &str,
+                _key: &str,
+                _limit: u32,
+            ) -> anyhow::Result<Vec<String>> {
+                Ok(vec![])
+            }
+
+            async fn recent_runs_by_dedup_key(
+                &self,
+                _workspace_id: &str,
+                _key: &str,
+                _limit: u32,
+            ) -> anyhow::Result<Vec<RunReport>> {
+                Ok(vec![])
+            }
+
+            async fn ack_run(&self, _run_id: &str, _actor: &str) -> anyhow::Result<bool> {
+                Ok(false)
+            }
+
+            async fn last_problem_run(
+                &self,
+                _workspace_id: &str,
+                _problem_key: &str,
+                since_hours: u32,
+            ) -> anyhow::Result<Option<(Outcome, bool, bool)>> {
+                if self.fail {
+                    anyhow::bail!("repo down");
+                }
+                Ok(self
+                    .runs
+                    .iter()
+                    .filter(|(_, _, _, age)| *age < since_hours)
+                    .min_by_key(|(_, _, _, age)| *age)
+                    .map(|(o, v, a, _)| (*o, *v, *a)))
+            }
+
+            async fn count_problem_runs(
+                &self,
+                _workspace_id: &str,
+                _problem_key: &str,
+                since_hours: u32,
+            ) -> anyhow::Result<u32> {
+                if self.fail {
+                    anyhow::bail!("repo down");
+                }
+                Ok(self.runs.iter().filter(|(_, _, _, age)| *age < since_hours).count() as u32)
+            }
+        }
+
+        #[derive(Default)]
+        struct RecordingSink {
+            signals: Mutex<Vec<WakeSignal>>,
+        }
+
+        impl DirectiveSink for RecordingSink {
+            fn enqueue(&self, signal: WakeSignal) -> Result<(), EnqueueError> {
+                self.signals.lock().unwrap().push(signal);
+                Ok(())
+            }
+        }
+
+        fn proposal(tool_name: &str, device_id: Option<&str>) -> Proposal {
+            Proposal {
+                id: "p1".into(),
+                workspace_id: "ws_1".into(),
+                agent_id: "hb".into(),
+                tool_name: tool_name.into(),
+                device_id: device_id.map(str::to_string),
+                summary: "车间温度超过阈值 30°C".into(),
+                reason: "连续 3 次采样超限".into(),
+                risk: "medium".into(),
+                parameters: None,
+                created_at: "2026-08-03T00:00:00Z".into(),
+                status: ProposalStatus::Pending,
+            }
+        }
+
+        fn result_with(proposals: Vec<Proposal>) -> HeartbeatResult {
+            HeartbeatResult {
+                workspace_id: "ws_1".into(),
+                status: HeartbeatStatus::Complete,
+                summary: "tick done".into(),
+                task_count: 1,
+                executed_actions: vec![],
+                proposals,
+                error: None,
+            }
+        }
+
+        fn bridge(runs: MemRuns) -> (HeartbeatBridge, Arc<RecordingSink>) {
+            let sink = Arc::new(RecordingSink::default());
+            (HeartbeatBridge::new(Arc::new(runs), sink.clone()), sink)
+        }
+
+        async fn dispatched(runs: Vec<(Outcome, bool, bool, u32)>) -> Arc<RecordingSink> {
+            let (bridge, sink) = bridge(MemRuns::new(runs));
+            bridge
+                .dispatch_proposals("ws_1", &result_with(vec![proposal("set_hvac", Some("dev-1"))]))
+                .await;
+            sink
+        }
+
+        #[test]
+        fn problem_key_uses_structured_fields_not_free_text() {
+            let p = proposal("set_hvac", Some("dev-1"));
+            assert_eq!(HeartbeatBridge::problem_key_of(&p), "set_hvac:dev-1");
+            // 无目标设备的提案用稳定占位符，不含摘要/原因等自由文本。
+            let p = proposal("set_hvac", None);
+            assert_eq!(HeartbeatBridge::problem_key_of(&p), "set_hvac:-");
+        }
+
+        #[tokio::test]
+        async fn no_prior_run_dispatches_with_heartbeat_directive_shape() {
+            let sink = dispatched(vec![]).await;
+            let signals = sink.signals.lock().unwrap();
+            assert_eq!(signals.len(), 1);
+            let sig = &signals[0];
+            assert_eq!(sig.workspace_id, "ws_1");
+            // O5/O24：心跳来源 directive 降 Normal、不参与合并、标记来源。
+            assert_eq!(sig.priority, Priority::Normal);
+            assert_eq!(sig.dedup_key, None, "心跳 directive 不进合并窗口");
+            match &sig.source {
+                TriggerSource::UserDirective {
+                    user_id,
+                    text,
+                    session_key,
+                    source,
+                    problem_key,
+                } => {
+                    assert_eq!(user_id, "heartbeat");
+                    assert_eq!(source.as_deref(), Some("heartbeat"));
+                    assert_eq!(problem_key.as_deref(), Some("set_hvac:dev-1"));
+                    assert_eq!(*session_key, None);
+                    assert!(text.contains("set_hvac:dev-1"), "指令文本携带 problem：{text}");
+                    assert!(text.contains("车间温度超过阈值"), "指令文本携带摘要：{text}");
+                    assert!(text.contains("请诊断并处置"), "指令文本可执行：{text}");
+                }
+                other => panic!("expected UserDirective, got {other:?}"),
+            }
+        }
+
+        // O11 全 outcome 矩阵：窗口内最近一次 run 的 outcome 决定是否抑制。
+        #[tokio::test]
+        async fn outcome_matrix_suppresses_and_dispatches() {
+            // 抑制：failed / rejected / budget_exceeded / no_action_needed /
+            // acted+verified（各一例，年龄 1h 在 6h 窗口内）。
+            for (outcome, verified) in [
+                (Outcome::Failed, false),
+                (Outcome::Rejected, false),
+                (Outcome::BudgetExceeded, false),
+                (Outcome::NoActionNeeded, false),
+                (Outcome::Acted, true),
+            ] {
+                let sink = dispatched(vec![(outcome, verified, false, 1)]).await;
+                assert!(
+                    sink.signals.lock().unwrap().is_empty(),
+                    "{outcome:?} (verified={verified}) must suppress"
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn acted_unverified_allows_exactly_one_retry_in_window() {
+            // 窗口内仅 1 次 acted+未 verified → 放行一次重试。
+            let sink = dispatched(vec![(Outcome::Acted, false, false, 1)]).await;
+            assert_eq!(sink.signals.lock().unwrap().len(), 1, "first retry allowed");
+            // 窗口内已有 2 次 → 第二次起跳过。
+            let sink = dispatched(vec![
+                (Outcome::Acted, false, false, 1),
+                (Outcome::Acted, false, false, 2),
+            ])
+            .await;
+            assert!(sink.signals.lock().unwrap().is_empty(), "second retry suppressed");
+        }
+
+        #[tokio::test]
+        async fn recurrence_beyond_6h_window_dispatches_again() {
+            // 超 6h 旧 Run 不抑制：7h 前 acted+verified → 放行。
+            let sink = dispatched(vec![(Outcome::Acted, true, false, 7)]).await;
+            assert_eq!(
+                sink.signals.lock().unwrap().len(),
+                1,
+                "recurrence after 6h must dispatch"
+            );
+        }
+
+        #[tokio::test]
+        async fn ack_suppresses_for_7_days() {
+            // ack 抑制：6h 窗口内 acked → 跳过。
+            let sink = dispatched(vec![(Outcome::Acted, true, true, 1)]).await;
+            assert!(sink.signals.lock().unwrap().is_empty(), "acked within 6h suppressed");
+            // 6h 窗口外、7 天内 acked（72h）→ 仍跳过（复发在 ack 抑制期内）。
+            let sink = dispatched(vec![(Outcome::Acted, true, true, 72)]).await;
+            assert!(sink.signals.lock().unwrap().is_empty(), "acked within 7d suppressed");
+            // ack 超 7 天（192h）→ 抑制过期，放行。
+            let sink = dispatched(vec![(Outcome::Acted, true, true, 192)]).await;
+            assert_eq!(
+                sink.signals.lock().unwrap().len(),
+                1,
+                "ack older than 7d no longer suppresses"
+            );
+        }
+
+        #[tokio::test]
+        async fn repo_failure_skips_dispatch_fail_closed() {
+            let (bridge, sink) = bridge(MemRuns::failing());
+            bridge
+                .dispatch_proposals("ws_1", &result_with(vec![proposal("set_hvac", Some("dev-1"))]))
+                .await;
+            assert!(
+                sink.signals.lock().unwrap().is_empty(),
+                "dedup query failure must fail-closed (skip, not spam)"
+            );
+        }
+
+        #[tokio::test]
+        async fn no_proposals_dispatches_nothing() {
+            let sink = dispatched(vec![]).await; // sanity: one proposal dispatches
+            assert_eq!(sink.signals.lock().unwrap().len(), 1);
+
+            let (bridge, sink) = bridge(MemRuns::new(vec![]));
+            bridge.dispatch_proposals("ws_1", &result_with(vec![])).await;
+            assert!(
+                sink.signals.lock().unwrap().is_empty(),
+                "HeartbeatCompleted without proposals must not dispatch"
+            );
+        }
+
+        // 已裁决（approved/rejected）的提案不二次投递——心跳结果里混入历史
+        // 提案时不得重复打扰。
+        #[tokio::test]
+        async fn decided_proposals_are_not_dispatched() {
+            for status in [ProposalStatus::Approved, ProposalStatus::Rejected] {
+                let (bridge, sink) = bridge(MemRuns::new(vec![]));
+                let mut decided = proposal("set_hvac", Some("dev-1"));
+                decided.status = status.clone();
+                bridge.dispatch_proposals("ws_1", &result_with(vec![decided])).await;
+                assert!(
+                    sink.signals.lock().unwrap().is_empty(),
+                    "{status:?} proposal must not be re-dispatched"
+                );
+            }
+
+            // 对照：同批 pending 提案照常投递。
+            let sink = dispatched(vec![]).await;
+            assert_eq!(sink.signals.lock().unwrap().len(), 1, "pending sanity check");
+        }
+
+        // 心跳 directive 经真实调度器：不参与合并窗口（source=Some 绕过 30s
+        // 窗口立即执行），且不触发 60s 同文去重（同文本连投两条都受理）。
+        #[tokio::test]
+        async fn heartbeat_directive_bypasses_merge_window_and_text_dedup() {
+            tokio::time::pause();
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let handle = Scheduler::spawn("ws_1".to_string(), move |sig| {
+                let tx = tx.clone();
+                Box::pin(async move {
+                    let _ = tx.send(sig);
+                })
+            });
+
+            let p = proposal("set_hvac", Some("dev-1"));
+            let sig1 = heartbeat_directive("ws_1", "set_hvac:dev-1".into(), &p);
+            let sig2 = heartbeat_directive("ws_1", "set_hvac:dev-1".into(), &p);
+            handle.enqueue(sig1).expect("first heartbeat directive");
+            // 同文本第二条：不是 60s Duplicate（那是 chat/API 用户指令的规则）。
+            handle
+                .enqueue(sig2)
+                .expect("same-text heartbeat directive is not a Duplicate");
+
+            // 暂停时钟下不 advance：若进了 30s 合并窗口则永远收不到。
+            let first = rx.recv().await.expect("runs immediately, no merge window");
+            let second = rx
+                .recv()
+                .await
+                .expect("second identical directive also runs immediately");
+            assert_eq!(first.priority, Priority::Normal);
+            assert!(matches!(first.source, TriggerSource::UserDirective { .. }));
+            assert!(
+                !matches!(first.source, TriggerSource::Merged { .. }),
+                "heartbeat directives must never be merged"
+            );
+            assert!(!matches!(second.source, TriggerSource::Merged { .. }));
+        }
+
+        // Orchestrator 接线：HeartbeatCompleted 落库后驱动心跳桥投递。
+        #[tokio::test]
+        async fn heartbeat_completed_drives_bridge_after_persist() {
+            let repo = Arc::new(MockTaskRepo::new());
+            let insert_calls = repo.insert_result_calls();
+            let repo: Arc<dyn crate::heartbeat::repo::HeartbeatTaskRepository> = repo;
+            let runner = make_heartbeat_runner(Arc::clone(&repo));
+            let publisher = make_publisher();
+            let memory = make_memory_service();
+
+            let (bridge, sink) = bridge(MemRuns::new(vec![]));
+            let handler = AiEventHandler::new(
+                runner,
+                Arc::clone(&repo),
+                memory,
+                publisher,
+                None,
+                None,
+                Some(Arc::new(bridge)),
+                Arc::new(AtomicBool::new(false)),
+            );
+
+            let event = wrap_ai_event(&AiEvent::HeartbeatCompleted {
+                workspace_id: "ws_1".to_string(),
+                result: result_with(vec![proposal("set_hvac", Some("dev-1"))]),
+            });
+            handler.handle_ai_event(&event).await;
+
+            assert_eq!(insert_calls.lock().unwrap().len(), 1, "result still persisted");
+            assert_eq!(sink.signals.lock().unwrap().len(), 1, "bridge dispatched the proposal");
+        }
+
+        // 无桥（None）时 HeartbeatCompleted 仅落库，不 panic。
+        #[tokio::test]
+        async fn heartbeat_completed_without_bridge_only_persists() {
+            let repo = Arc::new(MockTaskRepo::new());
+            let insert_calls = repo.insert_result_calls();
+            let repo: Arc<dyn crate::heartbeat::repo::HeartbeatTaskRepository> = repo;
+            let runner = make_heartbeat_runner(Arc::clone(&repo));
+
+            let handler = AiEventHandler::new(
+                runner,
+                Arc::clone(&repo),
+                make_memory_service(),
+                make_publisher(),
+                None,
+                None,
+                None,
+                Arc::new(AtomicBool::new(false)),
+            );
+
+            let event = wrap_ai_event(&AiEvent::HeartbeatCompleted {
+                workspace_id: "ws_1".to_string(),
+                result: result_with(vec![proposal("set_hvac", Some("dev-1"))]),
+            });
+            handler.handle_ai_event(&event).await;
+            assert_eq!(insert_calls.lock().unwrap().len(), 1);
+        }
     }
 }

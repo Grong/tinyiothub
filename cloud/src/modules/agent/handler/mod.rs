@@ -6,6 +6,7 @@
 // - /workspaces/{id}/heartbeat/* — heartbeat configuration (in workspace handler)
 // - /agents/{id}/files/* - workspace files
 
+pub mod agent_tasks;
 pub mod files;
 pub mod skills;
 pub mod types;

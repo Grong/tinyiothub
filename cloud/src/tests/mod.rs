@@ -4,6 +4,7 @@
 //! They use `tower::ServiceExt::oneshot()` to test HTTP handlers without starting a real server.
 
 mod agent_handler_tests;
+mod agent_tasks_api_tests;
 mod alarm_handler_tests;
 mod auth_handler_tests;
 mod batch_handler_tests;
@@ -14,11 +15,13 @@ mod driver_handler_tests;
 mod driver_health_handler_tests;
 mod event_handler_tests;
 pub mod event_retention_tests;
+mod heartbeat_bridge_tests;
 mod invoke_action_flow_tests;
 mod jobs_handler_tests;
 mod marketplace_handler_tests;
 mod mcp_handler_tests;
 mod migration_thing_model_tests;
+mod migrations_thing_agent_loop_tests;
 mod monitoring_handler_tests;
 mod notification_handler_tests;
 mod open_handler_tests;
@@ -28,6 +31,8 @@ mod system_handler_tests;
 mod tag_handler_tests;
 mod template_handler_tests;
 mod tenant_handler_tests;
+mod thing_agent_loop_tests;
+mod thing_event_broadcast_tests;
 mod thing_event_pipeline_tests;
 mod thing_handler_tests;
 mod thing_tenant_isolation_tests;

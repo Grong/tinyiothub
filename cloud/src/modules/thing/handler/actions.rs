@@ -1,5 +1,7 @@
 // Thing action handlers (invoke + confirm)
 
+use std::sync::Arc;
+
 use axum::{
     Json,
     extract::{Path, State},
@@ -7,12 +9,13 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::json;
+use tinyiothub_ai::types::{ChatConfirmAdapter, ChatConfirmVerdict};
 use tinyiothub_web::response::ApiResponse;
 
 use super::super::service::ThingService;
 use crate::{
     api::middleware::WorkspaceScope,
-    modules::agent::tools::take_pending_action,
+    modules::agent::{policy_engine::SqlitePolicyEngine, tools::take_pending_action},
     shared::{api_response::ApiResponseBuilder, app_state::AppState},
 };
 
@@ -239,7 +242,9 @@ pub async fn invoke_action(
         return (StatusCode::UNPROCESSABLE_ENTITY, ApiResponseBuilder::error_with_code(422, msg));
     }
 
-    // 3. require_action_confirm gate (fail closed — T7)
+    // 3. Unified policy gate (X3/T16): a Block rule denies before any confirm
+    // decision; a RequireApproval rule mints a confirmation token; otherwise
+    // the legacy require_action_confirm toggle decides (fail closed — T7).
     let require_confirm: bool =
         sqlx::query_scalar("SELECT require_action_confirm FROM workspaces WHERE id = ?")
             .bind(&ws)
@@ -250,23 +255,30 @@ pub async fn invoke_action(
             .unwrap_or(1i32)
             != 0;
 
-    if require_confirm {
-        let token = crate::modules::agent::tools::thing::store_pending_action(
-            thing_id.clone(),
-            action_name.clone(),
-            req.params.clone(),
-            ws.clone(),
-        );
-        return (
-            StatusCode::OK,
-            ApiResponseBuilder::success(json!({
-                "thingId": thing_id,
-                "actionName": action_name,
-                "status": "confirmation_required",
-                "token": token,
-                "params": req.params,
-            })),
-        );
+    let adapter = ChatConfirmAdapter::new(Arc::new(SqlitePolicyEngine::new(pool.clone())));
+    match adapter.decide(&ws, &action_name, require_confirm).await {
+        ChatConfirmVerdict::Deny { reason } => {
+            return (StatusCode::FORBIDDEN, ApiResponseBuilder::error_with_code(403, reason));
+        }
+        ChatConfirmVerdict::RequireToken => {
+            let token = crate::modules::agent::tools::thing::store_pending_action(
+                thing_id.clone(),
+                action_name.clone(),
+                req.params.clone(),
+                ws.clone(),
+            );
+            return (
+                StatusCode::OK,
+                ApiResponseBuilder::success(json!({
+                    "thingId": thing_id,
+                    "actionName": action_name,
+                    "status": "confirmation_required",
+                    "token": token,
+                    "params": req.params,
+                })),
+            );
+        }
+        ChatConfirmVerdict::Execute => {}
     }
 
     // 4. Dispatch immediately via the command channel

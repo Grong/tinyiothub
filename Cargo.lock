@@ -5772,8 +5772,11 @@ dependencies = [
  "tinyiothub-core",
  "tinyiothub-runtime",
  "tokio",
+ "tokio-util",
  "tracing",
  "uuid",
+ "zeroclaw-api",
+ "zeroclawlabs",
 ]
 
 [[package]]
@@ -5848,6 +5851,7 @@ dependencies = [
  "tokio-postgres",
  "tokio-stream",
  "tokio-tungstenite 0.26.2",
+ "tokio-util",
  "toml 0.8.23",
  "tower",
  "tower-http",

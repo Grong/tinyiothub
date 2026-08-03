@@ -214,3 +214,33 @@ async fn test_invoke_unregistered_action_404() {
         "unregistered action must be 404, got {status}: {body:?}"
     );
 }
+
+// ──────────────────────────────────────────────
+// Unified policy engine (X3/T16): policy_rules Block → 403
+// ──────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_invoke_denied_by_policy_block_rule() {
+    let (app, pool, token) = setup("ws-blocked").await;
+    let thing = create_thing(&app, &token, "ws-blocked", "dev-blocked", "device").await;
+    register_action(&pool, &thing, "wipe").await;
+
+    // Workspace admin blocks the "wipe" action via the unified policy rules.
+    sqlx::query(
+        "INSERT INTO policy_rules (id, workspace_id, category, action, target, priority, reason)
+         VALUES ('blk-wipe', 'ws-blocked', 'agent_action', 'block', 'wipe', 100, 'wipe is forbidden')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let (status, body) = invoke(&app, &token, &thing, "wipe").await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "blocked action must be 403, got {status}: {body:?}");
+    assert!(body["result"]["token"].is_null(), "blocked action must not issue a token: {body:?}");
+
+    // Other actions in the same workspace are unaffected (toggle ON → token).
+    register_action(&pool, &thing, "reboot").await;
+    let (status, body) = invoke(&app, &token, &thing, "reboot").await;
+    assert_eq!(status, StatusCode::OK, "unrelated action must still invoke: {body:?}");
+    assert_eq!(body["result"]["status"], "confirmation_required");
+}

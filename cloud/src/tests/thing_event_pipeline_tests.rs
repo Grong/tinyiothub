@@ -20,6 +20,7 @@ use crate::{
             SqliteAlarmRuleRepository,
         },
         event::{
+            bus::ThingEventBus,
             repositories::RealTimeEventRepository,
             router::{ThingEventInput, ThrottleState, route_thing_event},
         },
@@ -119,11 +120,14 @@ async fn test_route_event_persists_row_with_expected_shape() {
     let pool = test_pool().await;
     insert_device(&pool, "dev-1", "ws-1").await;
     let throttle = ThrottleState::new(60);
+    let bus = ThingEventBus::new();
 
     let result = route_thing_event(
         &pool,
         &throttle,
         None,
+        &bus,
+        "device",
         input("dev-1", "ws-1", "temp_high", EventLevel::Warning),
     )
     .await;
@@ -170,11 +174,14 @@ async fn test_unknown_event_name_degrades_to_info_flagged() {
     insert_device_with_template(&pool, "dev-t", "ws-1", "tpl-1", r#"[{"name":"known_event"}]"#)
         .await;
     let throttle = ThrottleState::new(60);
+    let bus = ThingEventBus::new();
 
     let result = route_thing_event(
         &pool,
         &throttle,
         None,
+        &bus,
+        "device",
         input("dev-t", "ws-1", "mystery_event", EventLevel::Error),
     )
     .await;
@@ -205,11 +212,14 @@ async fn test_known_template_event_not_flagged() {
     insert_device_with_template(&pool, "dev-k", "ws-1", "tpl-k", r#"[{"name":"known_event"}]"#)
         .await;
     let throttle = ThrottleState::new(60);
+    let bus = ThingEventBus::new();
 
     let result = route_thing_event(
         &pool,
         &throttle,
         None,
+        &bus,
+        "device",
         input("dev-k", "ws-1", "known_event", EventLevel::Error),
     )
     .await;
@@ -228,11 +238,14 @@ async fn test_device_without_template_not_flagged() {
     let pool = test_pool().await;
     insert_device(&pool, "dev-nt", "ws-1").await;
     let throttle = ThrottleState::new(60);
+    let bus = ThingEventBus::new();
 
     let result = route_thing_event(
         &pool,
         &throttle,
         None,
+        &bus,
+        "device",
         input("dev-nt", "ws-1", "any_name_at_all", EventLevel::Error),
     )
     .await;
@@ -270,10 +283,13 @@ async fn test_event_alarm_rule_fires_device_alarm() {
     let alarm_service = Arc::new(AlarmService::new(alarm_repo, rule_repo));
 
     let throttle = ThrottleState::new(60);
+    let bus = ThingEventBus::new();
     let result = route_thing_event(
         &pool,
         &throttle,
         Some(alarm_service.clone()),
+        &bus,
+        "device",
         input("dev-al", "ws-al", "temp_high", EventLevel::Warning),
     )
     .await;
@@ -293,6 +309,8 @@ async fn test_event_alarm_rule_fires_device_alarm() {
         &pool,
         &throttle2,
         Some(alarm_service),
+        &bus,
+        "device",
         input("dev-al", "ws-al", "other_event", EventLevel::Critical),
     )
     .await;
@@ -326,10 +344,13 @@ async fn test_event_alarm_rule_respects_min_level() {
 
     // Warning < min_level error → no alarm.
     let throttle = ThrottleState::new(60);
+    let bus = ThingEventBus::new();
     route_thing_event(
         &pool,
         &throttle,
         Some(alarm_service),
+        &bus,
+        "device",
         input("dev-ml", "ws-ml", "temp_high", EventLevel::Warning),
     )
     .await;
@@ -351,12 +372,15 @@ async fn test_throttle_admits_60_rejects_61st_but_spares_critical() {
     let pool = test_pool().await;
     insert_device(&pool, "dev-th", "ws-1").await;
     let throttle = ThrottleState::new(60);
+    let bus = ThingEventBus::new();
 
     for i in 0..60 {
         let r = route_thing_event(
             &pool,
             &throttle,
             None,
+            &bus,
+            "device",
             input("dev-th", "ws-1", "ping", EventLevel::Info),
         )
         .await;
@@ -368,6 +392,8 @@ async fn test_throttle_admits_60_rejects_61st_but_spares_critical() {
         &pool,
         &throttle,
         None,
+        &bus,
+        "device",
         input("dev-th", "ws-1", "ping", EventLevel::Info),
     )
     .await;
@@ -383,6 +409,8 @@ async fn test_throttle_admits_60_rejects_61st_but_spares_critical() {
         &pool,
         &throttle,
         None,
+        &bus,
+        "device",
         input("dev-th", "ws-1", "meltdown", EventLevel::Critical),
     )
     .await;
@@ -406,12 +434,15 @@ async fn test_append_events_same_subtype_both_insert() {
     let pool = test_pool().await;
     insert_device(&pool, "dev-dd", "ws-1").await;
     let throttle = ThrottleState::new(60);
+    let bus = ThingEventBus::new();
 
     for _ in 0..2 {
         let r = route_thing_event(
             &pool,
             &throttle,
             None,
+            &bus,
+            "device",
             input("dev-dd", "ws-1", "door_open", EventLevel::Info),
         )
         .await;

@@ -3,6 +3,63 @@
 > **最新完整 TODO 清单已迁移至:** `docs/superpowers/plans/2026-04-14-todo-audit-and-cleanup-plan.md`
 > 本文档保留 Edge Intelligence Agent 历史记录，新项目 TODO 请查阅上方计划。
 
+## Thing Agent Loop — Deferred (from /plan-ceo-review 2026-07-29, spec v2 O1-O16)
+
+### P3 — agent_runs 保留策略
+- **What:** 为 agent_runs 表定义保留策略（按 outcome 分类生命周期：acted+verified 长留、failed 中留、no_action 短留），定期清理。
+- **Why:** events 表"无保留策略"的坑 D3.3 才补上；agent_runs 最坏 480 行/天/工作区，不重复踩同一个坑。
+- **Context:** 复用 D3.3 occurrence-aware retention 框架；agent_daily_cost 视图依赖历史行，清理时保留聚合结果。
+- **Effort:** S (human: ~0.5d / CC: ~30min) | **Depends on:** Thing Agent Loop 主框架落地
+
+### P2 — live SSE 回推自治 Run 结果
+- **What:** Run 完成回推 chat 时，向正在观看该会话的客户端实时推送（当前仅 `history::append_message` 落库，在线用户需刷新才可见）。
+- **Why:** 用户指令"受理→执行→回报"体验闭环的最后一公里；无实时推送时在线用户感知不到执行完成。
+- **Context:** chat 模块当前无 per-session 广播通道（grep 无 broadcast/subscribe）；需新增轻量 session 通知机制或挂到既有 SSE 通道。
+- **Effort:** M (human: ~1d / CC: ~1h)
+
+### P2 — TrendAnomalyTrigger（遥测基线异常触发器）
+- **What:** 分析遥测趋势发现模型外异常（无事件定义也能发现问题），注册为第四个 Trigger。
+- **Why:** 事件驱动只能发现"已定义"的问题；趋势异常覆盖未预见故障模式。
+- **Context:** Trigger 接口与调度已预留（spec §二）；需要遥测基线/异常检测算法选型。
+- **Effort:** L (human: ~3d / CC: ~4h) | **Depends on:** Thing Agent Loop 主框架落地
+
+### P3 — GoalTrigger（持续目标维持）
+- **What:** 用户下达高层目标（"车间温度维持 20-26°C"），AI 长期巡检+事件响应维持，周期报告。
+- **Why:** 10x 愿景的核心形态；L4 自治的最终价值。
+- **Context:** Trigger 接口已预留；需要目标状态管理（目标表、达成判定、长期记忆）。
+- **Effort:** L (human: ~3d / CC: ~4h) | **Depends on:** Thing Agent Loop + X1 历史注入
+
+### P2 — Runs 列表/策略配置 UI 面板 + X5 预填配置页
+- **What:** agent_runs 列表页、三态策略配置页、X5 `policy_relax_hint` 预填落地。
+- **Why:** 本期 API 完整但无界面；Runs 可见性是"可信自治"叙事的主展示面。
+- **Context:** A2UI 子项目（CEO 计划 D3.4）是天然展示层，建议与 A2UI 本体渲染同期做。
+- **Effort:** M (human: ~2d / CC: ~2h) | **Depends on:** E2 A2UI 本体渲染
+
+### P3 — heartbeat_trust_config 旧表下线
+- **What:** X3 统一策略面适配器稳定后，迁移数据并 DROP heartbeat_trust_config。
+- **Why:** 消除最后一个旧治理面，完成三接入面收敛。
+- **Context:** X3 适配器读旧表翻译为新引擎输入；下线前需跑适配器等价测试全绿一个迭代。
+- **Effort:** S (human: ~0.5d / CC: ~30min) | **Depends on:** X3 统一策略面
+
+### P2 — 心跳 runner 迁入 Trigger 框架
+- **What:** HeartbeatRunner 的定时巡检改为 TimerTrigger 的一种配置，统一巡检语义。
+- **Why:** 消除心跳与 Thing Agent Loop 两套巡检并存（spec R4）；X6 已架桥，迁徙是自然后续。
+- **Context:** 心跳 runner 本期不动（O2 裁决仅加投递出口）；迁徙时保留 TrustEngine 适配路径。
+- **Effort:** M (human: ~2d / CC: ~2h) | **Depends on:** Thing Agent Loop 稳定运行一个迭代
+
+### P3 — POST /agent/tasks 前端面板
+- **What:** 管理 API `POST /api/workspaces/{id}/agent/tasks` 的前端入口（自治任务提交面板）。
+- **Why:** chat 工具已覆盖主路径，面板服务"不想开对话直接派任务"的用户。
+- **Context:** API 本期交付；可与 Runs 面板同页。
+- **Effort:** S (human: ~0.5d / CC: ~30min) | **Depends on:** Runs UI 面板
+
+### P2 — chat 会话 admin 维度（回推防泄漏收窄）
+- **What:** `chat_sessions.user_id` 列在写入路径（history.rs ensure_session、session_repository_impl）填值，或加 `metadata.is_admin`；`recent_active_admin_session` 据此真正按 admin 过滤。
+- **Why:** O28 要求无会话回推收窄为 admin 会话防多用户泄漏；当前实现是"工作区任意用户最近会话"，多用户工作区下 run 报告可能推入普通用户会话。
+- **Context:** 列已存在（20260408000001 迁移）但两个写入路径都不填；单用户形态下风险低（CEO 0E 决议接受）。
+- **Effort:** S (human: ~0.5d / CC: ~30min) | **Depends on:** Thing Agent Loop 主框架落地
+
+
 ## AI Subsystem (from /plan-ceo-review 2026-06-30, SCOPE REDUCTION)
 
 ### P1 — Wire DropNotifier + DeadLetterQueue
@@ -11,11 +68,8 @@
 - **Files:** `cloud/src/shared/service_manager.rs:169-170`, `crates/tinyiothub-ai/src/event/bus.rs`, `crates/tinyiothub-ai/src/event/dlq.rs`
 - **Effort:** S (human: ~4h / CC: ~30min)
 
-### P2 — Wire TrustConfig DB loading
-- **What:** 从 `heartbeat_trust_config` 表加载 TrustConfig，替换 `HeartbeatRunner::load_trust_config()` 中的 `TrustConfig::default()` 硬编码。
-- **Why:** 当前所有工作空间使用默认信任配置，DB 中的配置永远不生效。
-- **Files:** `crates/tinyiothub-ai/src/heartbeat/runner.rs:206-208`, `cloud/src/modules/agent/heartbeat_repo.rs`
-- **Effort:** S (human: ~3h / CC: ~20min)
+### P2 — ~~Wire TrustConfig DB loading~~（已失效，2026-07-29 核实删除）
+- **核实结果：** `crates/tinyiothub-ai/src/heartbeat/runner.rs:341-350` 经 `task_repo.load_trust_config` 从 `workspaces.heartbeat_trust_config` 列加载（heartbeat_repo.rs:167-180，含测试 :593-603）。DB 加载已接线，本条作废。
 
 ### P2 — Add dynamic task/config refresh to heartbeat loop (Outside Voice)
 - **What:** 运行中的心跳循环无法获取最新的任务列表或 TrustConfig。任务增删需完整 stop/restart。TrustConfig 更新对运行中的循环不生效。

@@ -154,6 +154,14 @@ pub struct AppState {
     /// MQTT 客户端（可选，未配置时为空）
     pub mqtt_client: Option<Arc<crate::shared::mqtt_client::PlatformMqttClient>>,
 
+    /// 全局物事件广播总线（T6）—— thing-agent loop 经此订阅事件信号
+    pub thing_event_bus: Arc<crate::modules::event::bus::ThingEventBus>,
+
+    /// 用户指令投递入口（T14）—— HTTP 端点 / chat 工具经此向
+    /// thing-agent loop 投递 WakeSignal。T15 用 ThingAgentManager 实现
+    /// 并注入；None 时指令入口返回 503。
+    pub directive_sink: Option<Arc<dyn tinyiothub_ai::thing_agent::DirectiveSink>>,
+
     /// Agent 记忆存储 - 持久化 agent 记忆到 SQLite
     pub memory_store: Arc<dyn MemoryStore>,
 }
@@ -372,6 +380,7 @@ impl AppState {
         let mqtt_username = config.mqtt.primary.username.clone().unwrap_or_default();
         let mqtt_password = config.mqtt.primary.password.clone().unwrap_or_default();
         let throttle_state = Arc::new(crate::modules::event::router::ThrottleState::new(60));
+        let thing_event_bus = Arc::new(crate::modules::event::bus::ThingEventBus::new());
         let mqtt_db_pool = database.pool().clone();
         let mqtt_client = Arc::new(crate::shared::mqtt_client::PlatformMqttClient::new(
             &mqtt_broker,
@@ -382,6 +391,7 @@ impl AppState {
             mqtt_rx,
             data_tx,
             throttle_state,
+            thing_event_bus.clone(),
             mqtt_db_pool,
             Some(alarm_service.clone()),
         ));
@@ -440,9 +450,16 @@ impl AppState {
             sysinfo_system: Arc::new(std::sync::Mutex::new(sysinfo::System::new_all())),
             gateway_service,
             mqtt_client: Some(mqtt_client),
+            thing_event_bus,
+            directive_sink: None, // T15 闭环接线时注入 ThingAgentManager
 
             memory_store,
         }
+    }
+
+    /// 注入用户指令投递入口（T15 闭环接线调用）
+    pub fn set_directive_sink(&mut self, sink: Arc<dyn tinyiothub_ai::thing_agent::DirectiveSink>) {
+        self.directive_sink = Some(sink);
     }
 
     /// 设置数据服务器（由 ServiceManager 调用）

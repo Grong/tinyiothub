@@ -189,7 +189,12 @@ impl Tool for TrustAwareTool {
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let tool_name = <Self as Tool>::name(self);
 
-        match tinyiothub_ai::types::evaluate_tool_trust_with_safety(
+        // X3/T16: the legacy heartbeat trust path is converged onto the unified
+        // engine via HeartbeatTrustAdapter. O23 equivalence: for the same
+        // TrustConfig input the adapter's verdict equals
+        // evaluate_tool_trust_with_safety (verified by the adapter's
+        // parameterized equivalence tests).
+        match tinyiothub_ai::types::HeartbeatTrustAdapter::evaluate(
             &self.trust_config,
             tool_name,
             self.safety,
@@ -276,7 +281,7 @@ async fn load_all_tools_with_safety(
     tools.push((Box::new(super::GetSkillTool), classify_tool_safety("get_skill")));
 
     // Built-in thing tool names — win over MCP handlers on collision (T7)
-    const BUILTIN_THING_TOOL_NAMES: [&str; 9] = [
+    const BUILTIN_THING_TOOL_NAMES: [&str; 10] = [
         "list_things",
         "get_thing",
         "get_thing_profile",
@@ -286,12 +291,20 @@ async fn load_all_tools_with_safety(
         "query_events",
         "search_knowledge",
         "read_document",
+        "dispatch_thing_task",
     ];
 
     // Thing Ontology tools (9) — always available, no denylist
     if let Some(ref pool) = db_pool {
         tools.extend(create_thing_tools(pool.clone(), workspace_id));
     }
+
+    // 用户指令派发工具（T14）—— chat Agent 专用；自治 thing-agent 工厂
+    // （autonomous_factory.rs）不注册它，避免 loop 自我派发。
+    tools.push((
+        Box::new(super::dispatch_task::DispatchThingTaskTool::new(workspace_id, None)),
+        classify_tool_safety("dispatch_thing_task"),
+    ));
 
     if let Some(registry) = crate::modules::mcp::get_mcp_registry() {
         let reg = registry.read().await;

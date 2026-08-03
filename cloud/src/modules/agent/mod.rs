@@ -9,17 +9,24 @@
 
 #[allow(clippy::module_inception)]
 pub mod agent;
+pub mod autonomous_factory;
 pub mod chat;
 pub mod config;
 pub mod memory;
 pub mod reflect;
 pub mod tools;
 
+pub mod agent_runs_repo;
+#[cfg(test)]
+pub mod directive_sink;
 pub mod dlq_repo;
 pub mod heartbeat;
 pub mod heartbeat_repo;
+pub mod policy_engine;
+pub mod policy_repo;
 pub mod scaffold;
 pub mod session;
+pub mod thing_agent_host;
 
 // Re-exports from old modules/agent/ — kept for compat
 pub mod handler;
