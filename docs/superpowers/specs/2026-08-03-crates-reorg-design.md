@@ -27,9 +27,11 @@
 2. **全局 AppState 单例后门**（外部声音发现，已核实）：`cloud/src/modules/mcp/mod.rs`
    有 `static APP_STATE: TokioOnceCell<Arc<AppState>>` + 公开 `get_app_state()`，
    任何模块可绕过 State 萃取拿整个 AppState（thing/handler/actions.rs:118,285 在用）。
-3. **已核实的循环引用 3 组**：alarm↔event（event/router.rs 反向引用 alarm）、
-   event↔notification（event/mod.rs:94 re-export + service.rs:354 参数引用）、
-   thing→agent/mcp（thing/handler/actions.rs:18,118,240,264,285）。
+3. **已核实的循环引用 5 组**（P0 环扫描 2026-08-03 实测）：
+   alarm↔event（event/router.rs 反向引用）、event↔notification（event/mod.rs:94 + service.rs:354）、
+   thing→agent/mcp（thing/handler/actions.rs）、agent→thing（agent/tools/thing.rs，与上一项成环）、
+   agent↔workspace（agent/agent.rs ↔ workspace/{service,handler/mod,handler/heartbeat}.rs）、
+   agent↔chat（chat 规划并入 agent crate，内部消解）。
    另：mcp→alarm、mcp→heartbeat 依赖边（mcp/tools/alarm_mcp.rs）。
 4. **存储层分裂**：repository 分散在 tinyiothub-storage 与 cloud/shared/persistence。
 5. **占位成员污染 workspace**：plugins/* 7 个 1–4 行空壳；cli 10 行。
