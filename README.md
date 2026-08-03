@@ -2,6 +2,9 @@
 
 轻量级工业边缘 IoT 平台。多协议设备接入、L0-L3 自愈引擎、自然语言运维 — 让边缘网络管理像聊天一样简单。
 
+> **项目状态**：早期开发阶段（v0.x）。核心平台（物模型、告警、事件、AI Agent、MCP）可用；
+> 部分协议驱动仍在开发中，API 在 1.0 前可能有破坏性变更。欢迎试用与反馈。
+
 **官方网站**: https://tinyiothub.com  
 **仓库地址**: https://github.com/Grong/tinyiothub  
 **Docker Hub**: https://hub.docker.com/r/grong/tinyiothub
@@ -10,8 +13,8 @@
 
 **设备接入**
 - 物本体模型：设备、空间、产线统一为层级化「物」，属性/事件/操作 + 知识文档
-- 多协议支持：Modbus RTU/TCP、ONVIF、SNMP、MQTT，开箱即用
-- AI 驱动匹配：描述设备类型，自动匹配或生成驱动代码
+- 协议支持：MQTT 可用；Modbus RTU/TCP、ONVIF、SNMP 驱动开发中（驱动框架与 SDK 已就绪）
+- AI 驱动匹配（实验性）：描述设备类型，辅助匹配或生成驱动代码
 - 物模板：JSON 模板一键创建，支持 DTDL / WoT 模型导入与 DTDL 导出
 
 **智能运维**
@@ -39,11 +42,8 @@ tinyiothub/
 ├── cloud/                   # SaaS 应用编排层（主二进制）
 │   ├── src/                 # SaaS 领域逻辑（tenant, user, workspace, marketplace）
 │   ├── migrations/          # 数据库迁移
-│   ├── drivers/             # 驱动实现
 │   ├── templates/           # 设备模板
-│   ├── vendor/              # 第三方依赖（本地 fork）
-│   ├── Cargo.toml           # Rust 项目配置
-│   └── tinyiothub.db        # SQLite 数据库
+│   └── Cargo.toml           # Rust 项目配置
 ├── crates/                  # 内部库 Crate
 │   ├── tinyiothub-core/     # 契约层：traits + 领域模型 + repository 接口
 │   ├── tinyiothub-runtime/  # 基础设施：EventBus, DataServer, drivers
@@ -61,16 +61,17 @@ tinyiothub/
 │   ├── package.json         # Node.js 项目配置
 │   └── vite.config.ts      # Vite 构建配置
 ├── sdks/                    # SDK 开发包
-│   └── driver-sdk/         # 驱动开发 SDK
+│   └── plugin-sdk/         # 驱动开发 SDK
 ├── examples/                # 示例项目
 │   ├── example-plugin/     # 插件示例
 │   └── bacnet-driver/      # BACnet 驱动示例
 ├── marketplace/            # 市场资源
 │   ├── drivers/            # 驱动市场
 │   └── templates/          # 模板市场
+├── vendor/                  # 第三方依赖（本地 fork，如 onvif-rs）
 ├── scripts/                # 工具脚本
+├── deploy/                 # Docker 部署（docker-compose、边缘镜像）
 ├── docs/                   # 项目文档
-├── .kiro/                  # 开发规范
 └── skills/                 # AI prompts / skills
 ```
 
@@ -82,7 +83,7 @@ tinyiothub/
 
 **后端**:
 - **Rust**: 1.85+ (2024 Edition)
-- **操作系统**: Linux, Windows, HarmonyOS
+- **操作系统**: Linux, Windows（HarmonyOS 支持实验性）
 - **数据库**: SQLite (内置)
 - **网络**: MQTT Broker (可选)
 
@@ -118,7 +119,7 @@ pnpm dev
 .\scripts\build-single-binary.ps1 -Release
 
 # Linux/macOS
-./scripts/build-single-binary.sh --release
+./scripts/build-static.sh
 ```
 
 **运行**:
@@ -136,7 +137,7 @@ cd cloud
 - ✅ 启动快速（<2s vs ~5s）
 - ✅ 支持动态路由
 
-详见: [单进程部署方案](docs/deployment/single-process-deployment.md)
+Docker 部署见 [deploy/docker/README.md](deploy/docker/README.md)。
 
 #### 前端独立运行（开发调试）
 
@@ -271,7 +272,7 @@ export const loadUsers = task(async (params?: { page?: number; pageSize?: number
 })
 ```
 
-详细的API开发规范请参考：[API开发规范](.kiro/steering/api-standards.md)
+详细的API开发规范请参考：[AGENTS.md](AGENTS.md)
 
 ## 项目架构
 
@@ -608,36 +609,16 @@ pnpm test          # 运行测试
 pnpm preview       # 预览生产构建
 ```
 
-#### API测试
+#### 测试与检查
 
 ```bash
-# 验证驱动API
-./scripts/verify-driver-api.sh
-
-# API格式检查
-python3 scripts/test-api-format.py
+cargo test           # 运行后端测试
+just ci              # 完整 CI 检查（fmt + clippy + test）
 ```
 
-## 鸿蒙系统部署
+## 鸿蒙系统部署（实验性）
 
-### 构建和部署
-
-详细部署指南请参考：
-- [鸿蒙部署指南](HARMONYOS_DEPLOYMENT_GUIDE.md)
-- [快速开始](QUICK_START_HARMONYOS.md)
-- [构建说明](build-harmonyos.md)
-
-使用部署脚本：
-```bash
-# Linux/macOS
-./deploy-to-harmonyos.sh
-
-# Windows
-.\build-harmonyos.bat
-
-# 或使用构建脚本
-./build-harmonyos.sh
-```
+HarmonyOS 支持处于实验阶段，部署脚本：`scripts/deploy-to-ohos.ps1`（Windows）。
 
 ## MQTT 主题
 
@@ -664,4 +645,4 @@ thing/{thing_id}/event/{event_name}   # 物事件上报（节流 60/分钟，err
 
 ## 许可证
 
-MIT License - 详见 [license](license) 文件
+MIT License - 详见 [LICENSE](LICENSE) 文件
