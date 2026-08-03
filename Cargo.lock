@@ -5883,7 +5883,6 @@ dependencies = [
  "serde_json",
  "sqlx",
  "thiserror 1.0.69",
- "tinyiothub-error",
  "tokio",
  "uuid",
 ]
@@ -5957,7 +5956,6 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tinyiothub-core",
- "tinyiothub-error",
  "tinyiothub-plugin",
  "tinyiothub-runtime",
  "tinyiothub-storage",
@@ -5967,16 +5965,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
-]
-
-[[package]]
-name = "tinyiothub-error"
-version = "0.4.6"
-dependencies = [
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 1.0.69",
 ]
 
 [[package]]

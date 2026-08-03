@@ -18,7 +18,6 @@ tinyiothub-core = { workspace = true }
 tinyiothub-runtime = { workspace = true }
 tinyiothub-plugin = { workspace = true }
 tinyiothub-storage = { workspace = true }
-tinyiothub-error = { workspace = true }
 tinyiothub-web = { workspace = true }
 tokio = { workspace = true }
 axum = { workspace = true }

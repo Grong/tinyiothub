@@ -36,7 +36,7 @@ pub enum EdgeError {
     TooManyRequests,
 
     #[error(transparent)]
-    Core(#[from] tinyiothub_error::Error),
+    Core(#[from] tinyiothub_core::error::Error),
 
     #[error("{0}")]
     Internal(String),

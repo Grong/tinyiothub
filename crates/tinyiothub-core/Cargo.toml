@@ -15,11 +15,10 @@ uuid = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
 sqlx = { workspace = true, optional = true }
-tinyiothub-error = { workspace = true }
 
 [features]
 default = []
-sqlx = ["dep:sqlx", "tinyiothub-error/sqlx-dep"]
+sqlx = ["dep:sqlx"]
 
 [dev-dependencies]
 tokio = { workspace = true }

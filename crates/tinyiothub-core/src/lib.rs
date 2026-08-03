@@ -10,6 +10,8 @@ pub mod rule;
 pub mod types;
 pub mod version;
 
+pub use error::{Error, Result};
+
 /// Generate a unique ID using UUID v4
 pub fn generate_id() -> String {
     uuid::Uuid::new_v4().to_string()
