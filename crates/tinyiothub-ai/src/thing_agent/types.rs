@@ -20,7 +20,11 @@ pub enum TriggerSource {
         user_id: String,
         text: String,
         session_key: Option<String>,
-        source: Option<String>, // source: None=chat/API, Some("heartbeat:{tick}")
+        source: Option<String>, // source: None=chat/API, Some("heartbeat")=X6 心跳桥
+        /// X6 心跳桥投递的指令携带 problem_key（O11 dedup：run 落库后供
+        /// `last_problem_run`/`count_problem_runs` 抑制判定）；chat/API
+        /// 用户指令为 None。
+        problem_key: Option<String>,
     },
     /// Output of the scheduler's merge window (T8): every non-Critical signal
     /// sharing one `dedup_key` inside a 30s window, in arrival order. T9/T10

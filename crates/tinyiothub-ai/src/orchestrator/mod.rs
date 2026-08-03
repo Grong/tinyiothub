@@ -42,6 +42,7 @@ impl Orchestrator {
         drop_notifier: Option<Arc<dyn DropNotifier>>,
         dlq: Option<Arc<dyn DeadLetterQueue>>,
         thing_agent_manager: Option<Arc<ThingAgentManager>>,
+        heartbeat_bridge: Option<Arc<callbacks::HeartbeatBridge>>,
     ) -> Self {
         let mut publisher = AiEventPublisher::new(event_bus.clone());
         if let Some(n) = drop_notifier {
@@ -58,6 +59,7 @@ impl Orchestrator {
             event_publisher.clone(),
             dlq,
             thing_agent_manager,
+            heartbeat_bridge,
             shutting_down.clone(),
         ));
 
@@ -141,7 +143,7 @@ mod tests {
             Arc::new(AiEventPublisher::new(bus.clone())),
             HeartbeatConfig::default(),
         ));
-        Orchestrator::new(bus, runner, repo, make_memory_service(), None, None, None)
+        Orchestrator::new(bus, runner, repo, make_memory_service(), None, None, None, None)
     }
 
     #[tokio::test]

@@ -294,9 +294,15 @@ async fn run_pipeline(deps: PipelineDeps, signal: WakeSignal) {
     let report = outcome.report;
 
     // T12 落库失败不阻断回推：结果已经发生，用户仍应收到报告（T13 镜像语义）。
+    // X6：心跳桥投递的指令携带 problem_key（O11 dedup 判定依据）；其余触发
+    // 源为 None。
+    let problem_key = match &signal.source {
+        TriggerSource::UserDirective { problem_key, .. } => problem_key.as_deref(),
+        _ => None,
+    };
     if let Err(e) = deps
         .runs_repo
-        .insert_run(&report, None, signal.dedup_key.as_deref())
+        .insert_run(&report, problem_key, signal.dedup_key.as_deref())
         .await
     {
         tracing::error!(workspace_id = %ws, run_id = %run_id, error = %e, "run report persist failed");
@@ -508,6 +514,7 @@ pub(crate) mod tests {
         pub(crate) run_id: String,
         pub(crate) trigger: String,
         pub(crate) outcome: Outcome,
+        pub(crate) problem_key: Option<String>,
         pub(crate) dedup_key: Option<String>,
     }
 
@@ -532,13 +539,14 @@ pub(crate) mod tests {
         async fn insert_run(
             &self,
             report: &RunReport,
-            _problem_key: Option<&str>,
+            problem_key: Option<&str>,
             dedup_key: Option<&str>,
         ) -> anyhow::Result<()> {
             self.runs.lock().unwrap().push(RecordedRun {
                 run_id: report.run_id.clone(),
                 trigger: report.trigger.clone(),
                 outcome: report.outcome,
+                problem_key: problem_key.map(str::to_string),
                 dedup_key: dedup_key.map(str::to_string),
             });
             Ok(())
@@ -577,6 +585,15 @@ pub(crate) mod tests {
             _since_hours: u32,
         ) -> anyhow::Result<Option<(Outcome, bool, bool)>> {
             Ok(None)
+        }
+
+        async fn count_problem_runs(
+            &self,
+            _workspace_id: &str,
+            _problem_key: &str,
+            _since_hours: u32,
+        ) -> anyhow::Result<u32> {
+            Ok(0)
         }
     }
 
@@ -805,6 +822,7 @@ pub(crate) mod tests {
                 text: "把车间温度降到 26 度".to_string(),
                 session_key: Some("agent:ws_01:a/s1".to_string()),
                 source: None,
+                problem_key: None,
             },
             dedup_key: None,
         })
@@ -833,10 +851,43 @@ pub(crate) mod tests {
                 text: "hi".to_string(),
                 session_key: None,
                 source: None,
+                problem_key: None,
             },
             dedup_key: None,
         });
         assert_eq!(err, Err(EnqueueError::Closed));
+    }
+
+    // X6 (T18): 心跳桥投递的 directive（source=Some("heartbeat")）携带
+    // problem_key —— run 落库必须带上，否则 O11 dedup 永远查不到历史。
+    #[tokio::test(start_paused = true)]
+    async fn heartbeat_directive_run_records_problem_key() {
+        let parts = stub_manager();
+        parts.manager.start(WS);
+
+        let sink: &dyn DirectiveSink = parts.manager.as_ref();
+        sink.enqueue(WakeSignal {
+            workspace_id: WS.to_string(),
+            priority: Priority::Normal,
+            source: TriggerSource::UserDirective {
+                user_id: "heartbeat".to_string(),
+                text: "心跳巡检发现待处置问题 set_hvac:dev-1，请诊断并处置。".to_string(),
+                session_key: None,
+                source: Some("heartbeat".to_string()),
+                problem_key: Some("set_hvac:dev-1".to_string()),
+            },
+            dedup_key: None,
+        })
+        .expect("heartbeat directive accepted");
+
+        wait_until(|| !parts.runs.runs.lock().unwrap().is_empty(), "run persisted").await;
+        let runs = parts.runs.runs.lock().unwrap();
+        let run = runs
+            .iter()
+            .find(|r| r.problem_key.as_deref() == Some("set_hvac:dev-1"))
+            .expect("run must record the heartbeat problem_key");
+        assert_eq!(run.trigger, "user:heartbeat");
+        assert_eq!(run.dedup_key, None, "心跳 directive 不参与合并，dedup_key 为空");
     }
 
     #[test]
@@ -871,6 +922,7 @@ pub(crate) mod tests {
                 text: "x".to_string(),
                 session_key: None,
                 source: None,
+                problem_key: None,
             },
             dedup_key: None,
         };

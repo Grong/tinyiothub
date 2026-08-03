@@ -202,6 +202,7 @@ mod tests {
                 text: "把车间温度降到 26 度".to_string(),
                 session_key: None,
                 source: None,
+                problem_key: None,
             },
             dedup_key: None,
         }

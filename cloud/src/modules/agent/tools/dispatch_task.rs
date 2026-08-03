@@ -94,6 +94,7 @@ impl Tool for DispatchThingTaskTool {
                 text: text.to_string(),
                 session_key: None,
                 source: None, // None = chat/API 用户指令（不节流、不去 merge 窗口）
+                problem_key: None,
             },
             dedup_key: None,
         };

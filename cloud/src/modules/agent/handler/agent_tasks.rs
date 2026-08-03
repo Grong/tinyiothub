@@ -85,6 +85,7 @@ pub async fn create_task(
             text: text.to_string(),
             session_key: None,
             source: None, // None = chat/API 用户指令（O5：不节流，队列满拒绝）
+            problem_key: None,
         },
         dedup_key: None,
     };

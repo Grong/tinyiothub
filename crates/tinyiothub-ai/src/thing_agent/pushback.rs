@@ -404,6 +404,15 @@ mod tests {
         ) -> anyhow::Result<Option<(Outcome, bool, bool)>> {
             Ok(None)
         }
+
+        async fn count_problem_runs(
+            &self,
+            _workspace_id: &str,
+            _problem_key: &str,
+            _since_hours: u32,
+        ) -> anyhow::Result<u32> {
+            Ok(0)
+        }
     }
 
     fn report(outcome: Outcome, verified: bool, actions: Vec<ActionRecord>) -> RunReport {
@@ -473,6 +482,7 @@ mod tests {
                 text: "调低设定值".to_string(),
                 session_key: session_key.map(str::to_string),
                 source: None,
+                problem_key: None,
             },
             dedup_key: None,
         }

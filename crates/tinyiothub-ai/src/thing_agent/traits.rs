@@ -145,6 +145,7 @@ mod tests {
                 text: "重启网关".to_string(),
                 session_key: None,
                 source: None,
+                problem_key: None,
             },
             dedup_key: None,
         })
@@ -166,6 +167,7 @@ mod tests {
                 text: "重启网关".to_string(),
                 session_key: None,
                 source: None,
+                problem_key: None,
             },
             dedup_key: None,
         });

@@ -520,6 +520,7 @@ mod tests {
                 text: text.to_string(),
                 session_key: None,
                 source: None,
+                problem_key: None,
             },
             dedup_key: None,
         }
@@ -534,6 +535,7 @@ mod tests {
                 text: format!("heartbeat tick {tick}"),
                 session_key: None,
                 source: Some(format!("heartbeat:{tick}")),
+                problem_key: None,
             },
             dedup_key: None,
         }

@@ -42,6 +42,9 @@ pub trait AgentRunsRepository: Send + Sync {
         problem_key: &str,
         since_hours: u32,
     ) -> anyhow::Result<Option<(Outcome, bool, bool)>>;
+    /// `since_hours` 窗口内该 problem_key 的 run 计数（X6 dedup "窗口内计数"，
+    /// O11：acted+未 verified 仅在窗口内首次放行一次重试，第二次起跳过）。
+    async fn count_problem_runs(&self, workspace_id: &str, problem_key: &str, since_hours: u32) -> anyhow::Result<u32>;
 }
 
 /// 记忆/历史段统一条目格式：`"[acted] 调低设定值成功"`。

@@ -177,6 +177,25 @@ impl AgentRunsRepository for SqliteAgentRunsRepository {
             (Outcome::from_db(&o).unwrap_or(Outcome::Failed), verified, acked_at.is_some())
         }))
     }
+
+    async fn count_problem_runs(
+        &self,
+        workspace_id: &str,
+        problem_key: &str,
+        since_hours: u32,
+    ) -> anyhow::Result<u32> {
+        let (n,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM agent_runs
+             WHERE workspace_id = ? AND problem_key = ?
+               AND created_at > datetime('now', ?)",
+        )
+        .bind(workspace_id)
+        .bind(problem_key)
+        .bind(format!("-{since_hours} hours"))
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(n as u32)
+    }
 }
 
 #[cfg(test)]
@@ -484,6 +503,28 @@ mod tests {
         let (outcome, ..) =
             repo.last_problem_run("ws_1", "p3", 6).await.expect("query").expect("legacy row");
         assert_eq!(outcome, Outcome::Failed);
+    }
+
+    #[tokio::test]
+    async fn count_problem_runs_respects_window_key_and_workspace() {
+        let pool = test_pool().await;
+        let repo = SqliteAgentRunsRepository::new(pool.clone());
+
+        insert_raw(&pool, "in_1", "ws_1", "acted", Some("p1"), None, 0, "-1 hours").await;
+        insert_raw(&pool, "in_2", "ws_1", "acted", Some("p1"), None, 0, "-5 hours").await;
+        // 窗口外（-7h）不计入；6h 边界：-359min 在内，-361min 在外
+        insert_raw(&pool, "out", "ws_1", "acted", Some("p1"), None, 0, "-7 hours").await;
+        insert_raw(&pool, "edge_in", "ws_1", "acted", Some("p1"), None, 0, "-359 minutes").await;
+        insert_raw(&pool, "edge_out", "ws_1", "acted", Some("p1"), None, 0, "-361 minutes").await;
+        // 其他 problem_key / 工作区不计入
+        insert_raw(&pool, "other_key", "ws_1", "acted", Some("p2"), None, 0, "-1 hours").await;
+        insert_raw(&pool, "other_ws", "ws_2", "acted", Some("p1"), None, 0, "-1 hours").await;
+
+        assert_eq!(repo.count_problem_runs("ws_1", "p1", 6).await.expect("count"), 3);
+        assert_eq!(repo.count_problem_runs("ws_1", "p1", 8).await.expect("count"), 5);
+        assert_eq!(repo.count_problem_runs("ws_1", "p2", 6).await.expect("count"), 1);
+        assert_eq!(repo.count_problem_runs("ws_2", "p1", 6).await.expect("count"), 1);
+        assert_eq!(repo.count_problem_runs("ws_1", "missing", 6).await.expect("count"), 0);
     }
 
     #[tokio::test]

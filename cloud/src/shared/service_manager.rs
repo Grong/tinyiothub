@@ -189,7 +189,12 @@ impl ServiceManager {
                 let policy_repo = Arc::new(
                     crate::modules::agent::policy_repo::SqlitePolicyRepository::new(pool.clone()),
                 );
-                Arc::new(tinyiothub_ai::thing_agent::ThingAgentManager::new(
+                let runs_repo = Arc::new(
+                    crate::modules::agent::agent_runs_repo::SqliteAgentRunsRepository::new(
+                        pool.clone(),
+                    ),
+                );
+                let manager = Arc::new(tinyiothub_ai::thing_agent::ThingAgentManager::new(
                     Arc::new(crate::modules::agent::thing_agent_host::CloudThingAgentHost::new(
                         pool.clone(),
                         app_state.thing_event_bus.clone(),
@@ -207,15 +212,20 @@ impl ServiceManager {
                             crate::shared::agent::config::AgentRuntimeConfig::default().model,
                         ),
                     ),
-                    Arc::new(
-                        crate::modules::agent::agent_runs_repo::SqliteAgentRunsRepository::new(
-                            pool,
-                        ),
-                    ),
+                    runs_repo.clone(),
                     Arc::new(tinyiothub_ai::thing_agent::Runner::new()),
                     tinyiothub_ai::thing_agent::ThingAgentManagerConfig::default(),
-                ))
+                ));
+                // T18 X6 心跳桥：HeartbeatCompleted 的结构化 proposals 经 O11
+                // dedup 后投递 UserDirective 进 thing-agent loop。
+                let bridge =
+                    Arc::new(tinyiothub_ai::orchestrator::callbacks::HeartbeatBridge::new(
+                        runs_repo,
+                        manager.clone(),
+                    ));
+                (manager, bridge)
             };
+            let (thing_agent_manager, heartbeat_bridge) = thing_agent_manager;
 
             let orchestrator = Arc::new(tinyiothub_ai::orchestrator::Orchestrator::new(
                 app_state.event_bus.clone(),
@@ -227,6 +237,7 @@ impl ServiceManager {
                     app_state.database.pool().clone(),
                 ))),
                 Some(thing_agent_manager.clone()),
+                Some(heartbeat_bridge),
             ));
             orchestrator.start();
 
