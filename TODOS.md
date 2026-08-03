@@ -3,6 +3,23 @@
 > **最新完整 TODO 清单已迁移至:** `docs/superpowers/plans/2026-04-14-todo-audit-and-cleanup-plan.md`
 > 本文档保留 Edge Intelligence Agent 历史记录，新项目 TODO 请查阅上方计划。
 
+## Crates Reorg Review (from /plan-eng-review 2026-08-03)
+
+### P2 — unwrap/expect 治理（edge 与驱动加载路径优先）
+- **What:** 非测试代码 1078 处 `.unwrap()`/`.expect()` 分批治理，优先 `edge/` 与驱动加载路径（registry.rs/loader.rs）。
+- **Why:** 边缘设备上 panic = 现场宕机；开源后此密度会被安全审计派点名。错误类型（tinyiothub-error）已存在但形同虚设。
+- **Context:** 2026-08-03 统计（grep 非测试代码）。edge 场景优先，cloud handler 层可缓。与 crates 重组解耦，可随时进行。
+- **Effort:** L (human: ~1w / CC: ~1d 分批) | **Depends on:** —
+
+### P2 — 跟踪 sqlx 0.9 正式版，迁出 alpha 依赖
+- **What:** `Cargo.toml` workspace 依赖 `sqlx = "0.9.0-alpha.1"` → 0.9 正式版发布后迁移；或评估回退 0.8 stable。
+- **Why:** 生产+开源项目用 alpha 依赖，下游打包者（distro/Nix）直接放弃；alpha API 漂移风险随每次更新。
+- **Context:** 当前使用 features: runtime-tokio/sqlite/chrono/uuid/migrate。迁移前跑全量 db 测试。
+- **Effort:** M (human: ~1d / CC: ~1h) | **Depends on:** sqlx 0.9 GA
+
+### TODOS 维护注记（2026-08-03 核实）
+- "AI Subsystem → P1 — Wire DropNotifier + DeadLetterQueue" **已实际完成**：`cloud/src/shared/service_manager.rs:151,235-236` 接线 LoggingDropNotifier + SqliteDeadLetterQueue（modules/agent/dlq_repo.rs）。条目过期，应归档。
+
 ## Thing Agent Loop — Deferred (from /plan-ceo-review 2026-07-29, spec v2 O1-O16)
 
 ### P3 — agent_runs 保留策略
