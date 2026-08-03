@@ -1,7 +1,7 @@
 // cloud/src/modules/marketplace/publisher.rs
 
 use reqwest::Client;
-use tinyiothub_config::MarketplaceConfig;
+use tinyiothub_core::config::MarketplaceConfig;
 
 use super::error::{MarketplaceError, Result};
 use crate::modules::template::types::DeviceTemplate;

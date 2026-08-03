@@ -155,7 +155,6 @@ http-body-util = "0.1"
 # Workspace crates (path deps — not published yet)
 tinyiothub-macros = { path = "crates/tinyiothub-macros" }
 tinyiothub-core = { path = "crates/tinyiothub-core" }
-tinyiothub-config = { path = "crates/tinyiothub-config" }
 tinyiothub-storage = { path = "crates/tinyiothub-storage" }
 tinyiothub-plugin = { path = "crates/tinyiothub-plugin" }
 tinyiothub-plugin-sdk = { path = "sdks/plugin-sdk" }

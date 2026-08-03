@@ -1,8 +1,8 @@
 // Configuration Module - Using config crate for zero-boilerplate config management
-pub use tinyiothub_config::*;
+pub use tinyiothub_core::config::*;
 
 pub mod settings {
-    pub use tinyiothub_config::{
+    pub use tinyiothub_core::config::{
         AliyunSmsConfig, ApplicationSettings, MarketplaceConfig, SmsConfig,
     };
 }

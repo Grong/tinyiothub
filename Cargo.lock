@@ -5837,7 +5837,6 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tinyiothub-ai",
- "tinyiothub-config",
  "tinyiothub-core",
  "tinyiothub-macros",
  "tinyiothub-marketplace",
@@ -5863,14 +5862,6 @@ dependencies = [
  "validator",
  "zeroclaw-api",
  "zeroclawlabs",
-]
-
-[[package]]
-name = "tinyiothub-config"
-version = "0.4.6"
-dependencies = [
- "serde",
- "serde_json",
 ]
 
 [[package]]

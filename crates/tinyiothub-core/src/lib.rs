@@ -1,3 +1,4 @@
+pub mod config;
 pub mod constants;
 pub mod cron;
 pub mod driver;

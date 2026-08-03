@@ -2,7 +2,7 @@ use std::{path::Path, time::Duration};
 
 use reqwest::Client;
 use sha2::{Digest, Sha256};
-use tinyiothub_config::MarketplaceConfig;
+use tinyiothub_core::config::MarketplaceConfig;
 use tinyiothub_marketplace::types::{Driver as MDriver, PaginatedList, Template as MTemplate};
 
 use super::{
