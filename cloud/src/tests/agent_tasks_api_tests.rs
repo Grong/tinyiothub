@@ -453,3 +453,40 @@ async fn policy_round_trip_with_updated_by() {
     .await;
     assert_eq!(json["code"], 400, "invalid mode must be 400: {json}");
 }
+
+// O26 kill switch：PUT policy mode→off 必须 drain 该工作区待处理队列；
+// 其他 mode 不触发。
+#[tokio::test]
+async fn policy_mode_to_off_drains_pending_queue() {
+    async fn put_policy(app: &Router, token: &str, mode: &str) -> Value {
+        let (_status, json) = response_parts(
+            app.clone()
+                .oneshot(auth_request(
+                    "PUT",
+                    &format!("/api/v1/workspaces/{WS}/agent/policy"),
+                    token,
+                    Some(json!({"mode": mode, "allowedActions": ["*"]})),
+                ))
+                .await
+                .unwrap(),
+        )
+        .await;
+        json
+    }
+
+    let stub = Arc::new(StubDirectiveSink::default());
+    let (app, _pool) = app_with_sink(stub.clone()).await;
+    let token = create_test_token("user-1", "tenant-1");
+
+    // act / diagnose：不 drain。
+    let json = put_policy(&app, &token, "act").await;
+    assert_eq!(json["code"], 0, "PUT act: {json}");
+    let json = put_policy(&app, &token, "diagnose").await;
+    assert_eq!(json["code"], 0, "PUT diagnose: {json}");
+    assert!(stub.drained().is_empty(), "non-off modes must not drain");
+
+    // off：drain 一次，目标为本工作区。
+    let json = put_policy(&app, &token, "off").await;
+    assert_eq!(json["code"], 0, "PUT off: {json}");
+    assert_eq!(stub.drained(), vec![WS.to_string()], "mode→off must drain the workspace queue");
+}

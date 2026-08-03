@@ -306,5 +306,18 @@ pub async fn update_policy(
         return ApiResponseBuilder::error("保存策略失败");
     }
 
+    // O26 kill switch：mode 切到 off 时清空该工作区调度器的待处理队列
+    // （不取消在跑的 run，drain 返回时其已完成）。sink 未接线时跳过。
+    if policy.mode == AutonomyMode::Off
+        && let Some(sink) = state.directive_sink.as_ref()
+    {
+        sink.drain(&workspace_id).await;
+        tracing::info!(
+            metric = "agent_queue_drained",
+            workspace_id = %workspace_id,
+            "policy mode→off：待处理队列已清空（O26）"
+        );
+    }
+
     ApiResponseBuilder::success(PolicyView::from(policy))
 }

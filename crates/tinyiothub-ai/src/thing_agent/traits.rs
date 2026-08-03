@@ -38,6 +38,7 @@ pub trait ThingAgentHost: Send + Sync {
 /// per-workspace 注册表）实现本 trait 并按 workspace 路由到对应
 /// SchedulerHandle；[`crate::thing_agent::scheduler::SchedulerHandle`]
 /// 本身也实现它（单工作区直连，测试/桩用）。
+#[async_trait::async_trait]
 pub trait DirectiveSink: Send + Sync {
     /// 投递唤醒信号。语义与
     /// [`crate::thing_agent::scheduler::SchedulerHandle::enqueue`] 相同：
@@ -47,6 +48,13 @@ pub trait DirectiveSink: Send + Sync {
         &self,
         signal: crate::thing_agent::types::WakeSignal,
     ) -> Result<(), crate::thing_agent::scheduler::EnqueueError>;
+
+    /// O26 kill switch：清空该工作区调度器的待处理队列（ready queue + 未
+    /// flush 的合并窗口）。语义与
+    /// [`crate::thing_agent::scheduler::SchedulerHandle::drain`] 相同：不取消
+    /// 在跑的 run（返回时其已完成），drain 之后新入队的信号不受影响。
+    /// 未知工作区为 no-op。默认实现为 no-op（测试桩无需关心）。
+    async fn drain(&self, _workspace_id: &str) {}
 }
 
 #[cfg(test)]

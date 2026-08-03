@@ -201,6 +201,10 @@ impl AutonomousAgentProvider for AutonomousAgentFactory {
     ) -> anyhow::Result<AgentHandle> {
         AutonomousAgentFactory::get_or_create(self, workspace_id, ctx).await
     }
+
+    fn invalidate(&self, workspace_id: &str) {
+        AutonomousAgentFactory::invalidate(self, workspace_id);
+    }
 }
 
 /// The 9 thing-ontology tools with `invoke_action` swapped for the

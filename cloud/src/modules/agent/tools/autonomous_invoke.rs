@@ -242,6 +242,15 @@ impl Tool for AutonomousInvokeActionTool {
             .map_err(|e| anyhow::anyhow!("参数解析失败: {}", e))?;
 
         let denied = |reason: &str| {
+            // O14：所有拒绝统一在此打点（策略门 / 保险丝 / 读失败）。
+            tracing::info!(
+                metric = "agent_action_denied",
+                workspace_id = %self.workspace_id,
+                thing = %input.thing_id,
+                action = %input.action_name,
+                reason = %reason,
+                "autonomous action denied"
+            );
             tool_ok(json!({
                 "denied": true,
                 "reason": reason,
@@ -336,6 +345,15 @@ impl Tool for AutonomousInvokeActionTool {
             .and_then(|v| v.get("status").and_then(|s| s.as_str()).map(str::to_string))
             .unwrap_or_default();
         if final_result.success && (final_status == "executed" || final_status == "simulated") {
+            // O14：放行并真实下发的动作打点（与 deny 侧配平）。
+            tracing::info!(
+                metric = "agent_action_allowed",
+                workspace_id = %self.workspace_id,
+                thing = %input.thing_id,
+                action = %input.action_name,
+                status = %final_status,
+                "autonomous action dispatched"
+            );
             self.record_agent_event(&input, &final_status).await;
         }
         Ok(final_result)

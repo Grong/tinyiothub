@@ -15,8 +15,9 @@ const MAX_MEMORY_ENTRIES: usize = 5;
 const MAX_HISTORY_ENTRIES: usize = 3;
 /// Per-entry history truncation, in chars (X1).
 const MAX_HISTORY_CHARS: usize = 200;
-/// Per-event data truncation in merged-trigger lines, in chars.
-const MAX_MERGED_DATA_CHARS: usize = 500;
+/// Per-event data truncation (single-event trigger and merged-trigger lines),
+/// in chars.
+const MAX_EVENT_DATA_CHARS: usize = 500;
 /// Per-thing action cap echoed in the boundary segment (policy default).
 const MAX_ACTIONS_PER_THING: u32 = 3;
 
@@ -94,6 +95,7 @@ fn render_trigger(source: &TriggerSource, out: &mut String) {
             ..
         } => {
             let json = serde_json::to_string(data).unwrap_or_else(|_| "null".to_string());
+            let json = truncate(&json, MAX_EVENT_DATA_CHARS);
             out.push_str(&format!(
                 "事件 {event_name}（级别 {level}）来自物 {thing_id}，数据：<event_data>{json}</event_data>"
             ));
@@ -131,7 +133,7 @@ fn render_merged_line(source: &TriggerSource, out: &mut String) {
             ..
         } => {
             let json = serde_json::to_string(data).unwrap_or_else(|_| "null".to_string());
-            let json = truncate(&json, MAX_MERGED_DATA_CHARS);
+            let json = truncate(&json, MAX_EVENT_DATA_CHARS);
             out.push_str(&format!(
                 "- 事件 {event_name}（级别 {level}）来自物 {thing_id}，数据：<event_data>{json}</event_data>"
             ));
@@ -432,6 +434,24 @@ mod tests {
         let prompt = build_prompt(&merged, &[], &[], &[]);
 
         // Payload survives but is capped: no run of 501+ y's, ellipsis present.
+        assert!(!prompt.contains(&"y".repeat(501)), "truncation violated");
+        assert!(prompt.contains("<event_data>{\"blob\":\""), "payload lost");
+        assert!(prompt.contains("…</event_data>"), "ellipsis missing");
+    }
+
+    #[test]
+    fn single_event_data_truncated_at_500_chars_with_ellipsis() {
+        let mut big = event_signal();
+        big.source = TriggerSource::ThingEvent {
+            thing_id: "t1".to_string(),
+            event_name: "flood".to_string(),
+            event_id: 44,
+            level: 3,
+            data: serde_json::json!({"blob": "y".repeat(600)}),
+        };
+        let prompt = build_prompt(&big, &[], &[], &[]);
+
+        // Same cap as the merged path: no run of 501+ y's, ellipsis present.
         assert!(!prompt.contains(&"y".repeat(501)), "truncation violated");
         assert!(prompt.contains("<event_data>{\"blob\":\""), "payload lost");
         assert!(prompt.contains("…</event_data>"), "ellipsis missing");

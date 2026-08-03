@@ -53,6 +53,10 @@ pub trait AutonomousAgentProvider: Send + Sync {
         workspace_id: &str,
         ctx: Arc<tokio::sync::RwLock<RunContextInner>>,
     ) -> anyhow::Result<AgentHandle>;
+
+    /// 失效该工作区的缓存 agent（loop 停止时调用，避免 WorkspaceDeleted
+    /// 后缓存实例泄漏）。
+    fn invalidate(&self, workspace_id: &str);
 }
 
 /// Tunables for [`ThingAgentManager`].
@@ -184,7 +188,9 @@ impl ThingAgentManager {
 
     /// Stop the loop: remove from the registry, abort the trigger/forward
     /// tasks (no new signals), then drain queued signals (O26). An in-flight
-    /// run is not cancelled; `drain()` returns once it finishes.
+    /// run is not cancelled; `drain()` returns once it finishes. The cached
+    /// per-workspace agent is invalidated last, so a deleted workspace leaves
+    /// no factory entry behind.
     pub async fn stop(&self, workspace_id: &str) {
         let Some((_, lp)) = self.workspaces.remove(workspace_id) else {
             return;
@@ -194,6 +200,7 @@ impl ThingAgentManager {
         }
         lp.handle.drain().await;
         drop(lp.handle);
+        self.deps.agent_provider.invalidate(workspace_id);
         tracing::info!(workspace_id, "thing-agent loop stopped");
     }
 
@@ -206,6 +213,7 @@ impl ThingAgentManager {
     }
 }
 
+#[async_trait::async_trait]
 impl DirectiveSink for ThingAgentManager {
     /// Route a directive to the target workspace's scheduler. Unknown
     /// workspace (loop not started / already stopped) maps to
@@ -215,6 +223,16 @@ impl DirectiveSink for ThingAgentManager {
             return Err(EnqueueError::Closed);
         };
         entry.handle.enqueue(signal)
+    }
+
+    /// O26 kill switch: forward the drain to the target workspace's
+    /// scheduler; unknown workspace is a no-op. The handle is cloned out
+    /// before `.await` — never hold a DashMap guard across it.
+    async fn drain(&self, workspace_id: &str) {
+        let handle = self.workspaces.get(workspace_id).map(|entry| entry.handle.clone());
+        if let Some(handle) = handle {
+            handle.drain().await;
+        }
     }
 }
 
@@ -378,6 +396,7 @@ pub(crate) mod tests {
     pub(crate) struct StubAgentProvider {
         handle: AgentHandle,
         pub(crate) llm: Arc<ScriptedProvider>,
+        pub(crate) invalidated: Mutex<Vec<String>>,
         _dir: tempfile::TempDir,
     }
 
@@ -405,6 +424,7 @@ pub(crate) mod tests {
             Self {
                 handle: Arc::new(tokio::sync::Mutex::new(agent)),
                 llm,
+                invalidated: Mutex::new(vec![]),
                 _dir: dir,
             }
         }
@@ -418,6 +438,10 @@ pub(crate) mod tests {
             _ctx: Arc<tokio::sync::RwLock<RunContextInner>>,
         ) -> anyhow::Result<AgentHandle> {
             Ok(Arc::clone(&self.handle))
+        }
+
+        fn invalidate(&self, workspace_id: &str) {
+            self.invalidated.lock().unwrap().push(workspace_id.to_string());
         }
     }
 
@@ -804,6 +828,53 @@ pub(crate) mod tests {
 
         // Stop is idempotent.
         parts.manager.stop(WS).await;
+    }
+
+    // stop() 必须失效工厂里缓存的 per-workspace agent（WorkspaceDeleted 不
+    // 泄漏缓存实例）。
+    #[tokio::test(start_paused = true)]
+    async fn stop_invalidates_cached_agent() {
+        let parts = stub_manager();
+        parts.manager.start(WS);
+        wait_subscribed(&parts.host).await;
+
+        parts.manager.stop(WS).await;
+        assert_eq!(
+            parts.agents.invalidated.lock().unwrap().as_slice(),
+            &[WS.to_string()],
+            "stop must invalidate the cached agent for the workspace"
+        );
+
+        // Unknown workspace stop → no invalidate call.
+        parts.manager.stop("ws_unknown").await;
+        assert_eq!(parts.agents.invalidated.lock().unwrap().len(), 1);
+    }
+
+    // O26 kill switch 接线：DirectiveSink::drain 经 manager 路由到目标工作区
+    // 调度器，清空合并窗口里待处理的信号；未知工作区 no-op。
+    #[tokio::test(start_paused = true)]
+    async fn directive_sink_drain_clears_pending_queue() {
+        let parts = stub_manager();
+        parts.manager.start(WS);
+        wait_subscribed(&parts.host).await;
+
+        // warning 事件进 30s 合并窗口（pending，尚未 flush）。
+        parts.host.tx.send(event(1, 3, "device")).expect("send event");
+        settle().await;
+
+        let sink: &dyn DirectiveSink = parts.manager.as_ref();
+        sink.drain("ws_unknown").await; // no-op，不得 panic
+        sink.drain(WS).await;
+
+        // 越过合并窗口：被 drain 的信号不得产生 run（对照组见
+        // normal_events_merge_into_single_run —— 不 drain 则 1 run）。
+        tokio::time::advance(Duration::from_secs(60)).await;
+        settle().await;
+        assert_eq!(
+            parts.runs.runs_with_dedup(EVENT_KEY),
+            0,
+            "drained pending signal must not run"
+        );
     }
 
     // T14 DirectiveSink: directives route to the workspace scheduler and run

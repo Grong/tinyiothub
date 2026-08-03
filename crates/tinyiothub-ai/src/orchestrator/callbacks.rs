@@ -23,7 +23,7 @@ use crate::heartbeat::repo::HeartbeatTaskRepository;
 use crate::heartbeat::runner::HeartbeatRunner;
 use crate::heartbeat::types::{HeartbeatResult, SignalPriority};
 use crate::memory::service::MemoryService;
-use crate::proposal::Proposal;
+use crate::proposal::{Proposal, ProposalStatus};
 use crate::thing_agent::manager::ThingAgentManager;
 use crate::thing_agent::report::AgentRunsRepository;
 use crate::thing_agent::traits::DirectiveSink;
@@ -67,6 +67,10 @@ impl HeartbeatBridge {
     /// "排队不丢"（O5），丢弃可接受。
     pub async fn dispatch_proposals(&self, workspace_id: &str, result: &HeartbeatResult) {
         for proposal in &result.proposals {
+            // 心跳已裁决（approved/rejected）的提案不二次投递。
+            if proposal.status != ProposalStatus::Pending {
+                continue;
+            }
             let problem_key = Self::problem_key_of(proposal);
             match self.should_dispatch(workspace_id, &problem_key).await {
                 Ok(true) => {
@@ -1408,6 +1412,26 @@ pub(crate) mod tests {
                 sink.signals.lock().unwrap().is_empty(),
                 "HeartbeatCompleted without proposals must not dispatch"
             );
+        }
+
+        // 已裁决（approved/rejected）的提案不二次投递——心跳结果里混入历史
+        // 提案时不得重复打扰。
+        #[tokio::test]
+        async fn decided_proposals_are_not_dispatched() {
+            for status in [ProposalStatus::Approved, ProposalStatus::Rejected] {
+                let (bridge, sink) = bridge(MemRuns::new(vec![]));
+                let mut decided = proposal("set_hvac", Some("dev-1"));
+                decided.status = status.clone();
+                bridge.dispatch_proposals("ws_1", &result_with(vec![decided])).await;
+                assert!(
+                    sink.signals.lock().unwrap().is_empty(),
+                    "{status:?} proposal must not be re-dispatched"
+                );
+            }
+
+            // 对照：同批 pending 提案照常投递。
+            let sink = dispatched(vec![]).await;
+            assert_eq!(sink.signals.lock().unwrap().len(), 1, "pending sanity check");
         }
 
         // 心跳 directive 经真实调度器：不参与合并窗口（source=Some 绕过 30s

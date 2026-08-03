@@ -257,9 +257,15 @@ async fn wait_ack(drain: &DrainState, counter: &AtomicU64, generation: u64) {
     }
 }
 
+#[async_trait::async_trait]
 impl crate::thing_agent::traits::DirectiveSink for SchedulerHandle {
     fn enqueue(&self, sig: WakeSignal) -> Result<(), EnqueueError> {
         SchedulerHandle::enqueue(self, sig)
+    }
+
+    /// 单工作区直连句柄：忽略 workspace_id，drain 自身。
+    async fn drain(&self, _workspace_id: &str) {
+        SchedulerHandle::drain(self).await;
     }
 }
 

@@ -331,6 +331,7 @@ struct LoopFixture {
     pool: sqlx::SqlitePool,
     bus: Arc<ThingEventBus>,
     manager: Arc<ThingAgentManager>,
+    factory: Arc<AutonomousAgentFactory>,
     provider: LoopScriptedProvider,
     _dir: tempfile::TempDir,
 }
@@ -349,6 +350,7 @@ struct FixtureParts {
     pool: sqlx::SqlitePool,
     bus: Arc<ThingEventBus>,
     manager: Arc<ThingAgentManager>,
+    factory: Arc<AutonomousAgentFactory>,
     policy_repo: Arc<SqlitePolicyRepository>,
     _dir: tempfile::TempDir,
 }
@@ -392,7 +394,7 @@ async fn build_fixture(
     let manager = Arc::new(ThingAgentManager::new(
         Arc::new(CloudThingAgentHost::new(pool.clone(), bus.clone())),
         policy_repo.clone(),
-        factory,
+        factory.clone(),
         Arc::new(SqliteAgentRunsRepository::new(pool.clone())),
         runner,
         ThingAgentManagerConfig {
@@ -404,7 +406,7 @@ async fn build_fixture(
         },
     ));
 
-    FixtureParts { pool, bus, manager, policy_repo, _dir: dir }
+    FixtureParts { pool, bus, manager, factory, policy_repo, _dir: dir }
 }
 
 fn scripted_provider_factory(provider: &LoopScriptedProvider) -> ProviderFactory {
@@ -429,6 +431,7 @@ async fn fixture(name: &str) -> LoopFixture {
         pool: parts.pool,
         bus: parts.bus,
         manager: parts.manager,
+        factory: parts.factory,
         provider,
         _dir: parts._dir,
     }
@@ -610,6 +613,23 @@ async fn five_events_in_30s_merge_into_one_wake() {
     // 窗口已关闭：等待远超一个窗口周期，没有重复唤醒。
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert_eq!(run_count(&fx.pool, EVENT_KEY).await, 1, "30s 内 5 事件仅 1 次唤醒");
+}
+
+// ── 2b. stop() 失效工厂缓存的 per-workspace agent（WorkspaceDeleted 不泄漏）─
+
+#[tokio::test]
+async fn stop_invalidates_cached_factory_agent() {
+    let fx = fixture("loop_stop_invalidate").await;
+    fx.manager.start(WS);
+    wait_subscribed(&fx.bus).await;
+
+    // 跑一次 Run，让工厂为该 workspace 建出缓存 agent。
+    route(&fx, "device").await;
+    wait_for("run persisted", || run_count_is(&fx.pool, EVENT_KEY, 1)).await;
+    assert_eq!(fx.factory.pool_size(), 1, "run must cache the workspace agent");
+
+    fx.manager.stop(WS).await;
+    assert_eq!(fx.factory.pool_size(), 0, "stop must invalidate the cached agent");
 }
 
 // ── 3. user directive → run → push_chat_message 回推（T13/T14）───────
