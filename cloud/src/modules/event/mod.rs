@@ -93,7 +93,7 @@ pub use service::EventAggregate;
 /// Backward compatibility: old aggregates::NotificationChannelType path
 pub mod aggregates {
     pub use super::service::EventAggregate;
-    pub use crate::modules::notification::types::NotificationChannelType;
+    pub use tinyiothub_core::notification_types::NotificationChannelType;
 }
 
 // Re-export errors module types at top level for convenience

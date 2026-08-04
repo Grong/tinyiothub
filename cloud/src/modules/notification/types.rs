@@ -57,35 +57,8 @@ impl NotificationStatus {
     }
 }
 
-/// Notification Channel Type
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum NotificationChannelType {
-    Email,
-    Sms,
-    Sse,
-    Webhook,
-}
-
-impl NotificationChannelType {
-    pub fn parse_str(s: &str) -> Option<Self> {
-        match s {
-            "email" => Some(NotificationChannelType::Email),
-            "sms" => Some(NotificationChannelType::Sms),
-            "sse" => Some(NotificationChannelType::Sse),
-            "webhook" => Some(NotificationChannelType::Webhook),
-            _ => None,
-        }
-    }
-
-    pub fn as_str(&self) -> &str {
-        match self {
-            NotificationChannelType::Email => "email",
-            NotificationChannelType::Sms => "sms",
-            NotificationChannelType::Sse => "sse",
-            NotificationChannelType::Webhook => "webhook",
-        }
-    }
-}
+// Re-export from core (sunk in P4.0-Task13); keep parse_str/as_str methods there.
+pub use tinyiothub_core::notification_types::NotificationChannelType;
 
 /// Notification Rule Entity
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -245,6 +218,17 @@ impl NotificationAggregate {
 
     pub fn rule(&self) -> &NotificationRule {
         &self.rule
+    }
+
+    /// Conversion boundary (P4.0-Task13): produce the slim core view the event
+    /// domain consumes for rule matching, so event never imports this aggregate.
+    pub fn rule_ref(&self) -> tinyiothub_core::notification_types::NotificationRuleRef {
+        tinyiothub_core::notification_types::NotificationRuleRef {
+            id: self.rule.id.clone(),
+            enabled: self.rule.enabled,
+            event_type: self.rule.event_type.clone(),
+            event_level: self.rule.event_level,
+        }
     }
 
     pub fn records(&self) -> &[NotificationRecord] {

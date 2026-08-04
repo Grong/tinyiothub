@@ -351,12 +351,12 @@ impl EventService {
     pub fn process_event_for_notifications(
         &self,
         event: &Event,
-        notification_rules: &[crate::modules::notification::NotificationAggregate],
+        notification_rules: &[tinyiothub_core::notification_types::NotificationRuleRef],
     ) -> DomainResult<Vec<String>> {
         let mut matching_rules = Vec::new();
-        for rule_aggregate in notification_rules {
-            if rule_aggregate.matches_event(&event.event_type().to_string(), &event.level()) {
-                matching_rules.push(rule_aggregate.rule().id.clone());
+        for rule_ref in notification_rules {
+            if rule_ref.matches_event(&event.event_type().to_string(), &event.level()) {
+                matching_rules.push(rule_ref.id.clone());
             }
         }
         Ok(matching_rules)
