@@ -105,6 +105,7 @@ scheduler = { workspace = true }
 memory = { workspace = true }
 web = { workspace = true }
 ai = { workspace = true }
+llm = { workspace = true }
 tinyiothub-marketplace = { path = "../marketplace" }
 
 # Dynamic loading

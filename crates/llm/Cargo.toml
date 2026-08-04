@@ -1,0 +1,21 @@
+[package]
+name = "llm"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "LLM contract crate for TinyIoTHub — provider trait, prompts, session types"
+
+[lib]
+name = "tinyiothub_llm"
+
+[dependencies]
+# Serialization
+serde = { workspace = true }
+
+# Async trait
+async-trait = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }

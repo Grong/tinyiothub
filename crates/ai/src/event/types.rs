@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::alarm::types::AlarmEvent;
 use crate::heartbeat::types::HeartbeatResult;
-use crate::session::types::ChatTurnMessage;
+use tinyiothub_llm::session::types::ChatTurnMessage;
 
 /// AI subsystem domain events.
 #[derive(Debug, Clone, Serialize, Deserialize)]

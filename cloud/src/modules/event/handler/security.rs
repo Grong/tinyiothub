@@ -12,8 +12,9 @@ use serde::{Deserialize, Serialize};
 use tinyiothub_web::response::ApiResponseBuilder;
 use tokio::sync::OnceCell;
 
+use tinyiothub_web::handle_service_result;
+
 use crate::{
-    handle_service_result,
     modules::event::value_objects::EventId,
     shared::{
         api_response::ApiResponse,

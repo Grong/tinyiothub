@@ -8,9 +8,8 @@ pub mod knowledge;
 pub mod memory;
 pub mod orchestrator;
 pub mod policy;
-pub mod prompt;
 pub mod proposal;
-pub mod session;
+pub use tinyiothub_llm::{prompt, session};
 pub mod skills;
 pub mod thing_agent;
 pub mod tool;
@@ -33,8 +32,8 @@ pub mod types {
         NoopPolicyEngine, PolicyAction, PolicyCategory, PolicyDecision, PolicyEngine, PolicyRule, evaluate_rules,
         sanitize_llm_input, target_matches, validate_llm_output,
     };
-    pub use crate::prompt::PromptRegistry;
-    pub use crate::prompt::types::PromptTemplate;
+    pub use tinyiothub_llm::prompt::PromptRegistry;
+    pub use tinyiothub_llm::prompt::types::PromptTemplate;
     pub use crate::proposal::{Proposal, ProposalStatus};
     pub use crate::tool::registry::{OutputSchema, ToolDescriptor, ToolParameter, ToolRegistry};
     pub use crate::tool::trust::{

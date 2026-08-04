@@ -3,7 +3,7 @@
 //! Pure parsing and prompt-building functions. The cloud layer wires
 //! these with LLM providers, DB logging, and MemoryStore persistence.
 
-use crate::session::types::ChatTurnMessage;
+use tinyiothub_llm::session::types::ChatTurnMessage;
 
 use super::types::{INJECTION_PATTERNS, MAX_REFLECTION_INPUT_CHARS, MemoryError, MemoryFact};
 

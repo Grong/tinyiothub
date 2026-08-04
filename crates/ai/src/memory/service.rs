@@ -15,7 +15,7 @@ use super::provider::LlmProvider;
 use super::reflect::{build_reflection_prompt, parse_facts};
 use super::types::MemoryError;
 use crate::heartbeat::metrics::Metrics;
-use crate::session::types::ChatTurnMessage;
+use tinyiothub_llm::session::types::ChatTurnMessage;
 
 /// Dedup window: skip reflection if same session was processed within this duration.
 const DEDUP_WINDOW_SECS: i64 = 10;

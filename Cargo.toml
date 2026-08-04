@@ -161,6 +161,7 @@ scheduler = { path = "crates/scheduler" }
 memory = { path = "crates/memory" }
 web = { path = "crates/web" }
 ai = { path = "crates/ai" }
+llm = { path = "crates/llm" }
 
 [profile.release]
 opt-level = 2

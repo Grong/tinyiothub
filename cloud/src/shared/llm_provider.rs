@@ -1,8 +1,8 @@
-//! Minimax LLM provider — implements tinyiothub_ai::LlmProvider
+//! Minimax LLM provider — implements tinyiothub_llm::LlmProvider
 //! so MemoryService can use the real LLM backend.
 
 use async_trait::async_trait;
-use tinyiothub_ai::memory::provider::{LlmCallMetadata, LlmProvider, LlmResponse};
+use tinyiothub_llm::provider::{LlmCallMetadata, LlmProvider, LlmResponse};
 
 /// Wraps zeroclaw's ModelProvider to implement AI crate's LlmProvider trait.
 pub struct MinimaxLlmProvider;
