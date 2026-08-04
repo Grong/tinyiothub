@@ -96,14 +96,14 @@ elsa = { workspace = true }
 redis = { workspace = true }
 
 # Workspace crates
-tinyiothub-core = { workspace = true, features = ["sqlx"] }
-tinyiothub-macros = { workspace = true }
-tinyiothub-plugin-sdk = { workspace = true }
-tinyiothub-storage = { workspace = true }
-tinyiothub-runtime = { workspace = true }
-tinyiothub-memory = { workspace = true }
-tinyiothub-web = { workspace = true }
-tinyiothub-ai = { workspace = true }
+core = { workspace = true, features = ["sqlx"] }
+macros = { workspace = true }
+plugin-sdk = { workspace = true }
+db = { workspace = true }
+runtime = { workspace = true }
+memory = { workspace = true }
+web = { workspace = true }
+ai = { workspace = true }
 tinyiothub-marketplace = { path = "../marketplace" }
 
 # Dynamic loading

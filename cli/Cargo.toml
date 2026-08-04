@@ -10,5 +10,5 @@ name = "tinyiothub-cli"
 path = "src/main.rs"
 
 [dependencies]
-tinyiothub-core = { workspace = true }
-tinyiothub-runtime = { workspace = true }
+core = { workspace = true }
+runtime = { workspace = true }

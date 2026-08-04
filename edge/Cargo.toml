@@ -14,11 +14,11 @@ name = "tinyiothub-edge"
 path = "src/main.rs"
 
 [dependencies]
-tinyiothub-core = { workspace = true }
-tinyiothub-runtime = { workspace = true }
-tinyiothub-plugin = { workspace = true }
-tinyiothub-storage = { workspace = true }
-tinyiothub-web = { workspace = true }
+core = { workspace = true }
+runtime = { workspace = true }
+plugin = { workspace = true }
+db = { workspace = true }
+web = { workspace = true }
 tokio = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }

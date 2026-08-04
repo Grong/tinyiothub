@@ -1,5 +1,5 @@
 [package]
-name = "tinyiothub-runtime"
+name = "runtime"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -7,11 +7,14 @@ license.workspace = true
 repository.workspace = true
 description = "Shared runtime infrastructure for TinyIoTHub (drivers, event bus, data server)"
 
+[lib]
+name = "tinyiothub_runtime"
+
 [dependencies]
-tinyiothub-core = { workspace = true }
-tinyiothub-macros = { workspace = true }
-tinyiothub-plugin-sdk = { workspace = true, features = ["core-interop"] }
-tinyiothub-storage = { workspace = true }
+core = { workspace = true }
+macros = { workspace = true }
+plugin-sdk = { workspace = true, features = ["core-interop"] }
+db = { workspace = true }
 
 # Async runtime
 tokio = { workspace = true, features = ["process", "sync"] }

@@ -1,5 +1,5 @@
 [package]
-name = "tinyiothub-macros"
+name = "macros"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Procedural macros for TinyIoTHub"
 
 [lib]
+name = "tinyiothub_macros"
 proc-macro = true
 
 [dependencies]

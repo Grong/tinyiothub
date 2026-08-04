@@ -30,7 +30,7 @@ thiserror = { workspace = true }
 futures = { workspace = true }
 sled = { workspace = true }
 
-tinyiothub-web = { workspace = true }
+web = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

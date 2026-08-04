@@ -1,5 +1,5 @@
 [package]
-name = "tinyiothub-ai"
+name = "ai"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -7,10 +7,13 @@ license.workspace = true
 repository.workspace = true
 description = "AI subsystem for TinyIoTHub — agents, patrol, alarms, memory, tools"
 
+[lib]
+name = "tinyiothub_ai"
+
 [dependencies]
 # Workspace crates
-tinyiothub-core = { workspace = true }
-tinyiothub-runtime = { workspace = true }
+core = { workspace = true }
+runtime = { workspace = true }
 
 # Async runtime
 tokio = { workspace = true }

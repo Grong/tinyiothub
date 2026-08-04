@@ -1,5 +1,5 @@
 [package]
-name = "tinyiothub-storage"
+name = "db"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -7,8 +7,11 @@ license.workspace = true
 repository.workspace = true
 description = "Repository traits and SQLite persistence implementations"
 
+[lib]
+name = "tinyiothub_storage"
+
 [dependencies]
-tinyiothub-core = { workspace = true, features = ["sqlx"] }
+core = { workspace = true, features = ["sqlx"] }
 
 # Async runtime
 tokio = { workspace = true }

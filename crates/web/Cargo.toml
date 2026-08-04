@@ -1,5 +1,5 @@
 [package]
-name = "tinyiothub-web"
+name = "web"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -7,10 +7,13 @@ license.workspace = true
 repository.workspace = true
 description = "HTTP handlers and middleware for TinyIoTHub (placeholder)"
 
+[lib]
+name = "tinyiothub_web"
+
 [dependencies]
-tinyiothub-core = { workspace = true }
-tinyiothub-runtime = { workspace = true }
-tinyiothub-storage = { workspace = true }
+core = { workspace = true }
+runtime = { workspace = true }
+db = { workspace = true }
 
 # Web framework
 axum = { workspace = true }

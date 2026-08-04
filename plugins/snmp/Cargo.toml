@@ -9,4 +9,4 @@ license.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-tinyiothub-plugin = { workspace = true }
+plugin = { workspace = true }

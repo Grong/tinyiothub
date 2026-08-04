@@ -1,5 +1,5 @@
 [package]
-name = "tinyiothub-memory"
+name = "memory"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -7,9 +7,12 @@ license.workspace = true
 repository.workspace = true
 description = "Agent memory persistence — SqliteAgentMemoryRepository + embedding layer"
 
+[lib]
+name = "tinyiothub_memory"
+
 [dependencies]
-tinyiothub-core = { path = "../tinyiothub-core" }
-tinyiothub-storage = { path = "../tinyiothub-storage" }
+core = { path = "../core" }
+db = { path = "../db" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }

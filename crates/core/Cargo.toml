@@ -1,22 +1,27 @@
 [package]
-name = "tinyiothub-plugin-sdk"
+name = "core"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "SDK for developing TinyIoTHub device plugins"
+description = "Core types, traits and utilities for TinyIoTHub"
+
+[lib]
+name = "tinyiothub_core"
 
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
-uuid = { workspace = true }
 chrono = { workspace = true }
-tinyiothub-core = { workspace = true, optional = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+sqlx = { workspace = true, optional = true }
 
 [features]
 default = []
-core-interop = ["tinyiothub-core"]
+sqlx = ["dep:sqlx"]
 
 [dev-dependencies]
 tokio = { workspace = true }

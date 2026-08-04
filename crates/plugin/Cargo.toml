@@ -1,10 +1,13 @@
 [package]
-name = "tinyiothub-plugin"
+name = "plugin"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[lib]
+name = "tinyiothub_plugin"
+
 [dependencies]
-tinyiothub-core = { workspace = true }
+core = { workspace = true }
 libloading = "0.8"
