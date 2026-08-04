@@ -18,7 +18,7 @@ use tinyiothub_core::models::{
         JobStatistics, UpdateJobRequest,
     },
 };
-use tinyiothub_runtime::cron::ExecutorRegistry;
+use tinyiothub_scheduler::ExecutorRegistry;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::shared::{
@@ -402,10 +402,10 @@ async fn run_job_now(
             {
                 Ok(Ok(res)) => Ok(res),
                 Ok(Err(e)) => Err(e),
-                Err(_) => Err(tinyiothub_runtime::cron::ExecutorError::Timeout(timeout_secs)),
+                Err(_) => Err(tinyiothub_scheduler::ExecutorError::Timeout(timeout_secs)),
             }
         } else {
-            Err(tinyiothub_runtime::cron::ExecutorError::InvalidConfig(format!(
+            Err(tinyiothub_scheduler::ExecutorError::InvalidConfig(format!(
                 "no executor for job type {}",
                 job_clone.job_type
             )))
@@ -431,7 +431,7 @@ async fn run_job_now(
             }
             Err(err) => {
                 let status = match err {
-                    tinyiothub_runtime::cron::ExecutorError::Timeout(_) => "timeout",
+                    tinyiothub_scheduler::ExecutorError::Timeout(_) => "timeout",
                     _ => "failed",
                 };
                 let err_msg = err.to_string();

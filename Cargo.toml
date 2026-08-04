@@ -158,6 +158,7 @@ db = { path = "crates/db" }
 plugin = { path = "crates/plugin" }
 plugin-sdk = { path = "crates/plugin-sdk" }
 runtime = { path = "crates/runtime" }
+scheduler = { path = "crates/scheduler" }
 memory = { path = "crates/memory" }
 web = { path = "crates/web" }
 ai = { path = "crates/ai" }

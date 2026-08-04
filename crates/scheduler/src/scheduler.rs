@@ -2,21 +2,16 @@ use std::{str::FromStr, sync::Arc};
 
 use chrono::Utc;
 use cron::Schedule;
+use tinyiothub_core::error::{Error, Result};
 use tinyiothub_core::models::cron_job::CronJob;
-use tinyiothub_runtime::cron::{
-    DeviceCommandExecutor, EventRetentionExecutor, ExecutionResult, ExecutorError, ExecutorRegistry,
-};
-use tinyiothub_storage::{
-    sqlite::database::Database,
-    traits::cron::{CronJobRepository, CronRunRepository},
-};
+use tinyiothub_core::repository::cron::{CronJobRepository, CronRunRepository};
 use tokio::{
     sync::{Semaphore, broadcast},
     task::JoinHandle,
 };
 use tracing::{error, info, warn};
 
-use crate::shared::error::Result;
+use crate::engine::{ExecutionResult, ExecutorError, ExecutorRegistry};
 
 /// Cron job scheduler service that polls for due jobs and executes them.
 pub struct CronSchedulerService {
@@ -29,22 +24,14 @@ pub struct CronSchedulerService {
 }
 
 impl CronSchedulerService {
-    /// Create a new scheduler service with the given repositories.
+    /// Create a new scheduler service with the given repositories and executor
+    /// registry. Concrete (db-bound) executors are registered by the caller —
+    /// see `ExecutorRegistry::register`.
     pub fn new(
         job_repo: Arc<dyn CronJobRepository>,
         run_repo: Arc<dyn CronRunRepository>,
-        data_server: Option<Arc<tinyiothub_runtime::DataServer>>,
-        database: Option<Database>,
+        registry: ExecutorRegistry,
     ) -> Self {
-        let mut registry = ExecutorRegistry::new();
-        if let (Some(ds), Some(db)) = (data_server, database) {
-            registry.register(Box::new(DeviceCommandExecutor::new(ds, db.clone())));
-            info!("DeviceCommandExecutor registered");
-            registry.register(Box::new(EventRetentionExecutor::new(db)));
-            info!("EventRetentionExecutor registered");
-        } else {
-            warn!("DataServer or Database not available, device_command jobs will not work");
-        }
         Self {
             job_repo,
             run_repo,
@@ -129,7 +116,7 @@ async fn tick_impl(
             .clone()
             .acquire_owned()
             .await
-            .map_err(|e| crate::shared::error::Error::Internal(e.to_string()))?;
+            .map_err(|e| Error::Internal(e.to_string()))?;
         let job_repo = job_repo.clone();
         let run_repo = run_repo.clone();
         let registry = registry.clone();
@@ -290,4 +277,29 @@ fn compute_next_run_at(cron_expression: &str) -> Option<String> {
     let schedule = Schedule::from_str(&normalized).ok()?;
     let next = schedule.upcoming(Utc).next()?;
     Some(next.format("%Y-%m-%d %H:%M:%S").to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compute_next_run_at_five_field_normalized() {
+        // 5-field expression is normalized to 6-field (seconds=0)
+        let next = compute_next_run_at("0 3 * * *");
+        assert!(next.is_some());
+        let next = next.unwrap();
+        // Format: "%Y-%m-%d %H:%M:%S", seconds must be 00
+        assert!(next.ends_with(":00"), "unexpected: {next}");
+    }
+
+    #[test]
+    fn test_compute_next_run_at_six_field() {
+        assert!(compute_next_run_at("0 0 3 * * *").is_some());
+    }
+
+    #[test]
+    fn test_compute_next_run_at_invalid() {
+        assert!(compute_next_run_at("not a cron").is_none());
+    }
 }

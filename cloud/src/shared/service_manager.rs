@@ -31,7 +31,7 @@ pub struct ServiceManager {
     service_handles: Arc<RwLock<Vec<JoinHandle<Result<(), Error>>>>>,
 
     /// Cron 调度器（可选，用于优雅关闭）
-    cron_scheduler: Arc<RwLock<Option<crate::shared::cron_scheduler::CronSchedulerService>>>,
+    cron_scheduler: Arc<RwLock<Option<tinyiothub_scheduler::CronSchedulerService>>>,
 
     /// AI orchestrator (set during start_all)
     orchestrator: Option<Arc<tinyiothub_ai::orchestrator::Orchestrator>>,
@@ -117,11 +117,19 @@ impl ServiceManager {
         // 2. 启动 Cron 调度器
         #[cfg(not(feature = "harmonyos"))]
         {
-            let cron_scheduler = crate::shared::cron_scheduler::CronSchedulerService::new(
+            // Wire db-bound executors into the scheduler registry
+            let mut registry = tinyiothub_scheduler::ExecutorRegistry::new();
+            registry.register(Box::new(tinyiothub_runtime::DeviceCommandExecutor::new(
+                data_server.clone(),
+                (*app_state.database).clone(),
+            )));
+            registry.register(Box::new(tinyiothub_runtime::EventRetentionExecutor::new(
+                (*app_state.database).clone(),
+            )));
+            let cron_scheduler = tinyiothub_scheduler::CronSchedulerService::new(
                 app_state.cron_job_repo.clone(),
                 app_state.cron_run_repo.clone(),
-                Some(data_server.clone()),
-                Some((*app_state.database).clone()),
+                registry,
             );
             let cron_handle = cron_scheduler.start();
             self.service_handles.write().await.push(cron_handle);

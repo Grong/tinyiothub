@@ -5,15 +5,15 @@
 //! - `data_server` — Driver lifecycle, polling loop, command dispatch
 //! - `driver`      — Driver wrapper, retry, status, concrete drivers
 //! - `event_bus`   — Event bus and handler dispatch
-//! - `cron`        — Cron job executor registry and concrete executors
+//! - `cron_executors` — Db-bound cron executors (device command, event retention)
 
-pub mod cron;
+pub mod cron_executors;
 pub mod data_server;
 pub mod driver;
 pub mod event_bus;
 
 // Re-exports for convenience
-pub use cron::ExecutorRegistry;
+pub use cron_executors::{DeviceCommandExecutor, EventRetentionExecutor};
 pub use data_server::DataServer;
 pub use driver::{
     DriverWrapper, create_driver, driver_registry, get_all_driver_names, has_driver, registry::DriverRegistry,

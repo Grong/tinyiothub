@@ -22,7 +22,6 @@ pub mod error_handling;
 pub mod performance;
 
 pub mod api_response;
-pub mod cron_scheduler;
 pub mod pagination;
 pub mod service_manager;
 pub mod sse_token;

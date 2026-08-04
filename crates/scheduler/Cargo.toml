@@ -1,0 +1,26 @@
+[package]
+name = "scheduler"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Cron engine and scheduler service for TinyIoTHub"
+
+[lib]
+name = "tinyiothub_scheduler"
+
+[dependencies]
+core = { workspace = true }
+tokio = { workspace = true, features = ["process", "sync"] }
+tokio-cron-scheduler = { workspace = true }
+cron = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

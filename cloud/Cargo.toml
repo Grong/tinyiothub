@@ -101,6 +101,7 @@ macros = { workspace = true }
 plugin-sdk = { workspace = true }
 db = { workspace = true }
 runtime = { workspace = true }
+scheduler = { workspace = true }
 memory = { workspace = true }
 web = { workspace = true }
 ai = { workspace = true }

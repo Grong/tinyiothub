@@ -4867,6 +4867,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "scheduler"
+version = "0.4.6"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "core",
+ "cron 0.12.1",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-cron-scheduler",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "schemars"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5939,6 +5955,7 @@ dependencies = [
  "reqwest 0.12.28",
  "rumqttc 0.24.0",
  "runtime",
+ "scheduler",
  "serde",
  "serde_json",
  "serialport",
