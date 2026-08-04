@@ -1,7 +1,5 @@
 // Thing action handlers (invoke + confirm)
 
-use std::sync::Arc;
-
 use axum::{
     Json,
     extract::{Path, State},
@@ -9,13 +7,12 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::json;
-use tinyiothub_ai::types::{ChatConfirmAdapter, ChatConfirmVerdict};
+use tinyiothub_core::thing_hooks::ThingConfirmVerdict;
 use tinyiothub_web::response::ApiResponse;
 
 use super::super::service::ThingService;
 use crate::{
     api::middleware::WorkspaceScope,
-    modules::agent::{policy_engine::SqlitePolicyEngine, tools::take_pending_action},
     shared::{api_response::ApiResponseBuilder, app_state::AppState},
 };
 
@@ -42,7 +39,7 @@ pub async fn confirm_action(
     let ws = workspace_id.unwrap_or_default();
 
     // 1. Validate token and retrieve pending action
-    let pending = match take_pending_action(&req.token) {
+    let pending = match state.thing_action_hooks.take_pending(&req.token) {
         Some(p) => p,
         None => {
             return (
@@ -235,8 +232,7 @@ pub async fn invoke_action(
             .flatten()
             .flatten();
     if let Some(ref schema) = action_schema
-        && let Err(msg) =
-            crate::modules::agent::tools::thing::validate_action_params(schema, req.params.as_ref())
+        && let Err(msg) = state.thing_action_hooks.validate_params(schema, req.params.as_ref())
     {
         return (StatusCode::UNPROCESSABLE_ENTITY, ApiResponseBuilder::error_with_code(422, msg));
     }
@@ -254,13 +250,12 @@ pub async fn invoke_action(
             .unwrap_or(1i32)
             != 0;
 
-    let adapter = ChatConfirmAdapter::new(Arc::new(SqlitePolicyEngine::new(pool.clone())));
-    match adapter.decide(&ws, &action_name, require_confirm).await {
-        ChatConfirmVerdict::Deny { reason } => {
+    match state.thing_action_hooks.decide_confirm(&ws, &action_name, require_confirm).await {
+        ThingConfirmVerdict::Deny { reason } => {
             return (StatusCode::FORBIDDEN, ApiResponseBuilder::error_with_code(403, reason));
         }
-        ChatConfirmVerdict::RequireToken => {
-            let token = crate::modules::agent::tools::thing::store_pending_action(
+        ThingConfirmVerdict::RequireToken => {
+            let token = state.thing_action_hooks.store_pending(
                 thing_id.clone(),
                 action_name.clone(),
                 req.params.clone(),
@@ -277,7 +272,7 @@ pub async fn invoke_action(
                 })),
             );
         }
-        ChatConfirmVerdict::Execute => {}
+        ThingConfirmVerdict::Execute => {}
     }
 
     // 4. Dispatch immediately via the command channel

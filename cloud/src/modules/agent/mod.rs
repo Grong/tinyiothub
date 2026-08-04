@@ -27,6 +27,7 @@ pub mod policy_repo;
 pub mod scaffold;
 pub mod session_repository;
 pub mod session;
+pub mod thing_action_hooks;
 pub mod thing_agent_host;
 
 // Re-exports from old modules/agent/ — kept for compat

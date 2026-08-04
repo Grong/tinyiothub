@@ -8,6 +8,7 @@ pub mod memory;
 pub mod models;
 pub mod repository;
 pub mod rule;
+pub mod thing_hooks;
 pub mod types;
 pub mod version;
 

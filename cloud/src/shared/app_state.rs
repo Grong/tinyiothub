@@ -165,6 +165,11 @@ pub struct AppState {
 
     /// Agent 记忆存储 - 持久化 agent 记忆到 SQLite
     pub memory_store: Arc<dyn MemoryStore>,
+
+    /// Thing action hooks（P4.0b）—— thing handler 经此调用 agent 侧的
+    /// 参数校验 / 确认令牌存储 / 策略裁决，斩断 thing→agent 依赖边。
+    /// 由组合层（此处）注入 agent 实现；thing 域只依赖 core trait。
+    pub thing_action_hooks: Arc<dyn tinyiothub_core::thing_hooks::ThingActionHooks>,
 }
 
 impl AppState {
@@ -415,6 +420,12 @@ impl AppState {
             }
         });
 
+        // Thing action hooks（P4.0b）—— agent 侧实现 core trait，注入给 thing handler
+        let thing_action_hooks: Arc<dyn tinyiothub_core::thing_hooks::ThingActionHooks> =
+            Arc::new(crate::modules::agent::thing_action_hooks::AgentThingActionHooks::new(
+                database.pool().clone(),
+            ));
+
         Self {
             device_cache,
             database,
@@ -455,6 +466,7 @@ impl AppState {
             directive_sink: None, // T15 闭环接线时注入 ThingAgentManager
 
             memory_store,
+            thing_action_hooks,
         }
     }
 
