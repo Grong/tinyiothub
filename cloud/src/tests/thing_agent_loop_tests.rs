@@ -387,6 +387,7 @@ async fn build_fixture(
         observer,
         provider_factory,
         "stub-model".to_string(),
+        None,
     ));
 
     let manager = Arc::new(ThingAgentManager::new(
@@ -831,7 +832,7 @@ async fn duplicate_directive_via_dispatch_tool_yields_single_run() {
     let fx = fixture("loop_dedup_directive").await;
     fx.manager.start(WS);
     let sink: Arc<dyn DirectiveSink> = fx.manager.clone();
-    let tool = DispatchThingTaskTool::new(WS, Some(sink));
+    let tool = DispatchThingTaskTool::new(WS, Some(sink), None);
 
     let first = tool.execute(json!({"text": "重启网关"})).await.expect("first dispatch");
     assert!(first.success, "first directive accepted: {:?}", first.error);
@@ -932,7 +933,7 @@ async fn queue_full_51st_directive_rejected_and_user_informed() {
     .await;
     parts.manager.start(WS);
     let sink: Arc<dyn DirectiveSink> = parts.manager.clone();
-    let tool = DispatchThingTaskTool::new(WS, Some(sink));
+    let tool = DispatchThingTaskTool::new(WS, Some(sink), None);
 
     // 第一条占住串行 consumer（LLM 永久挂起，60s 预算内不会收尾）。
     let first = tool.execute(json!({"text": "占住执行位的指令"})).await.expect("first dispatch");

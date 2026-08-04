@@ -218,6 +218,7 @@ impl ServiceManager {
                             app_state.agent_pool.observer.clone(),
                             crate::modules::agent::autonomous_factory::minimax_provider_factory(),
                             crate::shared::agent::config::AgentRuntimeConfig::default().model,
+                            Some(Arc::new(app_state.clone())),
                         ),
                     ),
                     runs_repo.clone(),

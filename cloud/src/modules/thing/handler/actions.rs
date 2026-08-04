@@ -115,8 +115,7 @@ pub async fn confirm_action(
     }
 
     // 5. Execute via DataServer if available
-    let app_state = crate::modules::mcp::get_app_state();
-    match app_state.and_then(|s| s.data_server().cloned()) {
+    match state.data_server().cloned() {
         Some(data_server) => {
             let cmd = tinyiothub_core::models::device_command::DeviceCommand {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -282,8 +281,7 @@ pub async fn invoke_action(
     }
 
     // 4. Dispatch immediately via the command channel
-    let app_state = crate::modules::mcp::get_app_state();
-    match app_state.and_then(|s| s.data_server().cloned()) {
+    match state.data_server().cloned() {
         Some(data_server) => {
             let cmd = tinyiothub_core::models::device_command::DeviceCommand {
                 id: uuid::Uuid::new_v4().to_string(),

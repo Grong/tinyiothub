@@ -1,9 +1,11 @@
 // Driver Tools Module
 // MCP tools for driver management
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
+
+use crate::shared::app_state::AppState;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -105,7 +107,15 @@ impl ToolHandler for ListDriversHandler {
 }
 
 // === Test Driver Handler ===
-pub struct TestDriverHandler;
+pub struct TestDriverHandler {
+    state: Option<Arc<AppState>>,
+}
+
+impl TestDriverHandler {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
+        Self { state }
+    }
+}
 
 #[async_trait]
 impl ToolHandler for TestDriverHandler {
@@ -163,7 +173,7 @@ impl ToolHandler for TestDriverHandler {
         }
 
         if input.driver_name == "SimulatedDriver" {
-            let _state = crate::modules::mcp::get_app_state()
+            let _state = self.state.as_ref()
                 .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
             let test_device = tinyiothub_core::models::device::Device {

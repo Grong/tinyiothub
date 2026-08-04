@@ -1,9 +1,11 @@
 // Alarm MCP Tools Module
 // MCP tools wrapping existing alarm REST APIs
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
+
+use crate::shared::app_state::AppState;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::Value;
@@ -60,7 +62,15 @@ struct CreateAlarmRuleInput {
 }
 
 /// List alarms tool handler
-pub struct AlarmListHandler;
+pub struct AlarmListHandler {
+    state: Option<Arc<AppState>>,
+}
+
+impl AlarmListHandler {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
+        Self { state }
+    }
+}
 
 #[async_trait]
 impl ToolHandler for AlarmListHandler {
@@ -142,7 +152,7 @@ impl ToolHandler for AlarmListHandler {
         let claims = get_mcp_context()
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
 
-        let state = crate::modules::mcp::get_app_state()
+        let state = self.state.as_ref()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         let page = input.page.unwrap_or(1);
@@ -218,7 +228,15 @@ impl ToolHandler for AlarmListHandler {
 }
 
 /// Acknowledge alarm tool handler
-pub struct AlarmAcknowledgeHandler;
+pub struct AlarmAcknowledgeHandler {
+    state: Option<Arc<AppState>>,
+}
+
+impl AlarmAcknowledgeHandler {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
+        Self { state }
+    }
+}
 
 #[async_trait]
 impl ToolHandler for AlarmAcknowledgeHandler {
@@ -256,7 +274,7 @@ impl ToolHandler for AlarmAcknowledgeHandler {
         let claims = get_mcp_context()
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
 
-        let state = crate::modules::mcp::get_app_state()
+        let state = self.state.as_ref()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         // SECURITY: Verify alarm belongs to the authenticated workspace before acknowledging
@@ -306,7 +324,15 @@ impl ToolHandler for AlarmAcknowledgeHandler {
 }
 
 /// Create alarm rule tool handler
-pub struct AlarmRuleAddHandler;
+pub struct AlarmRuleAddHandler {
+    state: Option<Arc<AppState>>,
+}
+
+impl AlarmRuleAddHandler {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
+        Self { state }
+    }
+}
 
 #[async_trait]
 impl ToolHandler for AlarmRuleAddHandler {
@@ -409,7 +435,7 @@ impl ToolHandler for AlarmRuleAddHandler {
             ));
         }
 
-        let state = crate::modules::mcp::get_app_state()
+        let state = self.state.as_ref()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         // Parse alarm level

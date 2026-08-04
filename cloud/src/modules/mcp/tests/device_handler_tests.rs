@@ -6,7 +6,7 @@ use serde_json::json;
 /// Test get_thing handler returns error for non-existent thing
 #[tokio::test]
 async fn test_get_thing_not_found() {
-    crate::modules::mcp::register_tools().await;
+    crate::modules::mcp::register_tools(None).await;
     let registry = crate::modules::mcp::get_mcp_registry().unwrap();
     let guard = registry.read().await;
     let handler = guard.get("get_thing").unwrap();
@@ -24,7 +24,7 @@ async fn test_get_thing_not_found() {
 /// Test search_things handler returns valid response (or graceful error)
 #[tokio::test]
 async fn test_search_things_returns_response() {
-    crate::modules::mcp::register_tools().await;
+    crate::modules::mcp::register_tools(None).await;
     let registry = crate::modules::mcp::get_mcp_registry().unwrap();
     let guard = registry.read().await;
     let handler = guard.get("search_things").unwrap();
@@ -48,7 +48,7 @@ async fn test_search_things_returns_response() {
 /// Test search_things accepts keyword and limit parameters
 #[tokio::test]
 async fn test_search_things_with_params() {
-    crate::modules::mcp::register_tools().await;
+    crate::modules::mcp::register_tools(None).await;
     let registry = crate::modules::mcp::get_mcp_registry().unwrap();
     let guard = registry.read().await;
     let handler = guard.get("search_things").unwrap();
@@ -104,7 +104,7 @@ async fn test_search_things_with_params() {
 /// Test search_things with tag filter
 #[tokio::test]
 async fn test_search_things_with_tag() {
-    crate::modules::mcp::register_tools().await;
+    crate::modules::mcp::register_tools(None).await;
     let registry = crate::modules::mcp::get_mcp_registry().unwrap();
     let guard = registry.read().await;
     let handler = guard.get("search_things").unwrap();
@@ -131,7 +131,7 @@ async fn test_search_things_with_tag() {
 /// Test read_properties handler metadata
 #[tokio::test]
 async fn test_read_properties_handler_metadata() {
-    crate::modules::mcp::register_tools().await;
+    crate::modules::mcp::register_tools(None).await;
     let registry = crate::modules::mcp::get_mcp_registry().unwrap();
     let guard = registry.read().await;
     let handler = guard.get("read_properties").unwrap();
@@ -143,7 +143,7 @@ async fn test_read_properties_handler_metadata() {
 /// Test write_properties handler metadata
 #[tokio::test]
 async fn test_write_properties_handler_metadata() {
-    crate::modules::mcp::register_tools().await;
+    crate::modules::mcp::register_tools(None).await;
     let registry = crate::modules::mcp::get_mcp_registry().unwrap();
     let guard = registry.read().await;
     let handler = guard.get("write_properties").unwrap();
@@ -155,7 +155,7 @@ async fn test_write_properties_handler_metadata() {
 /// Test send_command handler metadata
 #[tokio::test]
 async fn test_send_command_handler_metadata() {
-    crate::modules::mcp::register_tools().await;
+    crate::modules::mcp::register_tools(None).await;
     let registry = crate::modules::mcp::get_mcp_registry().unwrap();
     let guard = registry.read().await;
     let handler = guard.get("send_command").unwrap();
@@ -167,7 +167,7 @@ async fn test_send_command_handler_metadata() {
 /// Test create_thing handler metadata
 #[tokio::test]
 async fn test_create_thing_handler_metadata() {
-    crate::modules::mcp::register_tools().await;
+    crate::modules::mcp::register_tools(None).await;
     let registry = crate::modules::mcp::get_mcp_registry().unwrap();
     let guard = registry.read().await;
     let handler = guard.get("create_thing").unwrap();
@@ -184,7 +184,7 @@ async fn test_create_thing_handler_metadata() {
 /// Test delete_thing handler metadata
 #[tokio::test]
 async fn test_delete_thing_handler_metadata() {
-    crate::modules::mcp::register_tools().await;
+    crate::modules::mcp::register_tools(None).await;
     let registry = crate::modules::mcp::get_mcp_registry().unwrap();
     let guard = registry.read().await;
     let handler = guard.get("delete_thing").unwrap();

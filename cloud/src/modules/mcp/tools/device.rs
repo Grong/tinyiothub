@@ -1,9 +1,11 @@
 // Thing Tools Module
 // MCP tools for thing management
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
+
+use crate::shared::app_state::AppState;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tinyiothub_core::models::device::CreateDeviceRequest;
@@ -105,7 +107,15 @@ struct CommandResponse {
 }
 
 // === Get Device Profile Handler ===
-pub struct DeviceProfileHandler;
+pub struct DeviceProfileHandler {
+    state: Option<Arc<AppState>>,
+}
+
+impl DeviceProfileHandler {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
+        Self { state }
+    }
+}
 
 #[async_trait]
 impl ToolHandler for DeviceProfileHandler {
@@ -140,7 +150,7 @@ impl ToolHandler for DeviceProfileHandler {
         let input: GetDeviceInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
-        let state = crate::modules::mcp::get_app_state()
+        let state = self.state.as_ref()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         let include_properties = input.include_properties.unwrap_or(true);
@@ -170,7 +180,15 @@ impl ToolHandler for DeviceProfileHandler {
 }
 
 // === Device Property Get Handler ===
-pub struct DevicePropertyGetHandler;
+pub struct DevicePropertyGetHandler {
+    state: Option<Arc<AppState>>,
+}
+
+impl DevicePropertyGetHandler {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
+        Self { state }
+    }
+}
 
 #[async_trait]
 impl ToolHandler for DevicePropertyGetHandler {
@@ -212,7 +230,7 @@ impl ToolHandler for DevicePropertyGetHandler {
         let input: Input =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
-        let state = crate::modules::mcp::get_app_state()
+        let state = self.state.as_ref()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         let _workspace_id = crate::modules::mcp::handlers::get_mcp_context()
@@ -278,7 +296,15 @@ impl ToolHandler for DevicePropertyGetHandler {
 }
 
 // === Write Properties Handler ===
-pub struct WritePropertiesHandler;
+pub struct WritePropertiesHandler {
+    state: Option<Arc<AppState>>,
+}
+
+impl WritePropertiesHandler {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
+        Self { state }
+    }
+}
 
 #[async_trait]
 impl ToolHandler for WritePropertiesHandler {
@@ -313,7 +339,7 @@ impl ToolHandler for WritePropertiesHandler {
         let input: WritePropertiesInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
-        let state = crate::modules::mcp::get_app_state()
+        let state = self.state.as_ref()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         let workspace_id = crate::modules::mcp::handlers::get_mcp_context()
@@ -401,7 +427,15 @@ impl ToolHandler for WritePropertiesHandler {
 }
 
 // === Device Command Handler ===
-pub struct DeviceCommandHandler;
+pub struct DeviceCommandHandler {
+    state: Option<Arc<AppState>>,
+}
+
+impl DeviceCommandHandler {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
+        Self { state }
+    }
+}
 
 #[async_trait]
 impl ToolHandler for DeviceCommandHandler {
@@ -443,7 +477,7 @@ impl ToolHandler for DeviceCommandHandler {
         let input: SendCommandInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
-        let state = crate::modules::mcp::get_app_state()
+        let state = self.state.as_ref()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         let _workspace_id = crate::modules::mcp::handlers::get_mcp_context()
@@ -532,7 +566,15 @@ impl ToolHandler for DeviceCommandHandler {
 }
 
 // === Create Device Handler ===
-pub struct CreateDeviceHandler;
+pub struct CreateDeviceHandler {
+    state: Option<Arc<AppState>>,
+}
+
+impl CreateDeviceHandler {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
+        Self { state }
+    }
+}
 
 #[async_trait]
 impl ToolHandler for CreateDeviceHandler {
@@ -613,7 +655,7 @@ impl ToolHandler for CreateDeviceHandler {
         let input: CreateDeviceInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
-        let state = crate::modules::mcp::get_app_state()
+        let state = self.state.as_ref()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         let workspace_id = crate::modules::mcp::handlers::get_mcp_context()
@@ -682,7 +724,15 @@ impl ToolHandler for CreateDeviceHandler {
 }
 
 // === Delete Device Handler ===
-pub struct DeleteDeviceHandler;
+pub struct DeleteDeviceHandler {
+    state: Option<Arc<AppState>>,
+}
+
+impl DeleteDeviceHandler {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
+        Self { state }
+    }
+}
 
 #[async_trait]
 impl ToolHandler for DeleteDeviceHandler {
@@ -710,7 +760,7 @@ impl ToolHandler for DeleteDeviceHandler {
         let input: DeleteDeviceInput =
             serde_json::from_value(args).map_err(|e| ToolError::InvalidParams(e.to_string()))?;
 
-        let state = crate::modules::mcp::get_app_state()
+        let state = self.state.as_ref()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         let workspace_id = crate::modules::mcp::handlers::get_mcp_context()
@@ -763,7 +813,15 @@ struct SearchDevicesResponse {
     devices: Vec<SearchDeviceResult>,
 }
 
-pub struct SearchDevicesHandler;
+pub struct SearchDevicesHandler {
+    state: Option<Arc<AppState>>,
+}
+
+impl SearchDevicesHandler {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
+        Self { state }
+    }
+}
 
 #[async_trait]
 impl ToolHandler for SearchDevicesHandler {
@@ -810,7 +868,7 @@ impl ToolHandler for SearchDevicesHandler {
 
         let limit = input.limit.unwrap_or(20).min(50);
 
-        let state = crate::modules::mcp::get_app_state()
+        let state = self.state.as_ref()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         let workspace_id = crate::modules::mcp::handlers::get_mcp_context()

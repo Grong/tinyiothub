@@ -399,6 +399,7 @@ pub struct ReadPropertyTool {
     thing_service: Arc<ThingService>,
     pool: SqlitePool,
     workspace_id: String,
+    app_state: Option<Arc<crate::shared::app_state::AppState>>,
 }
 
 impl Attributable for ReadPropertyTool {
@@ -484,7 +485,9 @@ impl Tool for ReadPropertyTool {
         })?;
 
         // Try device_cache for live value; design 六: no cache → null + hint
-        let cached = crate::modules::mcp::get_app_state()
+        let cached = self
+            .app_state
+            .as_ref()
             .and_then(|state| state.device_cache.get(&input.thing_id))
             .and_then(|d| {
                 let val = d
@@ -529,6 +532,7 @@ pub struct InvokeActionTool {
     pub(crate) thing_service: Arc<ThingService>,
     pub(crate) pool: SqlitePool,
     pub(crate) workspace_id: String,
+    pub(crate) app_state: Option<Arc<crate::shared::app_state::AppState>>,
 }
 
 impl Attributable for InvokeActionTool {
@@ -669,8 +673,7 @@ impl Tool for InvokeActionTool {
         // NOTE: this dispatch tail (through the closing brace of this match)
         // is mirrored by `dispatch_command` in autonomous_invoke.rs — if you
         // change it here, keep the mirror in sync.
-        let app_state = crate::modules::mcp::get_app_state();
-        match app_state.and_then(|s| s.data_server().cloned()) {
+        match self.app_state.as_ref().and_then(|s| s.data_server().cloned()) {
             Some(data_server) => {
                 let cmd = tinyiothub_core::models::device_command::DeviceCommand {
                     id: uuid::Uuid::new_v4().to_string(),
@@ -1101,6 +1104,7 @@ pub fn validate_action_params(schema_json: &str, params: Option<&Value>) -> Resu
 pub fn create_thing_tools(
     pool: SqlitePool,
     workspace_id: &str,
+    app_state: Option<Arc<crate::shared::app_state::AppState>>,
 ) -> Vec<(Box<dyn Tool>, ToolSafety)> {
     let thing_service = Arc::new(ThingService::new(pool.clone()));
     let ws = workspace_id.to_string();
@@ -1133,12 +1137,13 @@ pub fn create_thing_tools(
             thing_service: thing_service.clone(),
             pool: pool.clone(),
             workspace_id: ws.clone(),
+            app_state: app_state.clone(),
         })),
         read_only(Box::new(QueryEventsTool { pool: pool.clone(), workspace_id: ws.clone() })),
         read_only(Box::new(SearchKnowledgeTool { pool: pool.clone(), workspace_id: ws.clone() })),
         read_only(Box::new(ReadDocumentTool { pool: pool.clone(), workspace_id: ws.clone() })),
         // Destructive tool (1)
-        destructive(Box::new(InvokeActionTool { thing_service, pool, workspace_id: ws })),
+        destructive(Box::new(InvokeActionTool { thing_service, pool, workspace_id: ws, app_state })),
     ]
 }
 

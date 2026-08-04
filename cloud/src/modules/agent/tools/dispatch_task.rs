@@ -5,9 +5,8 @@
 // ThingAgentManager），随后立即回复"已受理，完成后回报"——执行结果
 // 由 thing-agent loop 完成后主动回推（T13 pushback），本工具不等待。
 //
-// sink 解析顺序：构造注入（测试）→ 全局 AppState.directive_sink
-// （生产，T15 注入）。全局 AppState 读取遵循 thing.rs 的
-// `mcp::get_app_state()` 先例。
+// sink 解析顺序：构造注入（测试）→ 注入的 AppState.directive_sink
+// （生产，T15 接线；经 AgentPool.set_app_state 延迟绑定传入）。
 
 use std::sync::Arc;
 
@@ -20,21 +19,27 @@ use zeroclaw::tools::{Tool, ToolResult};
 use zeroclaw_api::attribution::{Attributable, Role, ToolKind};
 
 use super::thing::{tool_err, tool_ok};
+use crate::shared::app_state::AppState;
 
 pub struct DispatchThingTaskTool {
     workspace_id: String,
     sink: Option<Arc<dyn DirectiveSink>>,
+    app_state: Option<Arc<AppState>>,
 }
 
 impl DispatchThingTaskTool {
-    pub fn new(workspace_id: &str, sink: Option<Arc<dyn DirectiveSink>>) -> Self {
-        Self { workspace_id: workspace_id.to_string(), sink }
+    pub fn new(
+        workspace_id: &str,
+        sink: Option<Arc<dyn DirectiveSink>>,
+        app_state: Option<Arc<AppState>>,
+    ) -> Self {
+        Self { workspace_id: workspace_id.to_string(), sink, app_state }
     }
 
     fn resolve_sink(&self) -> Option<Arc<dyn DirectiveSink>> {
-        self.sink.clone().or_else(|| {
-            crate::modules::mcp::get_app_state().and_then(|state| state.directive_sink.clone())
-        })
+        self.sink
+            .clone()
+            .or_else(|| self.app_state.as_ref().and_then(|state| state.directive_sink.clone()))
     }
 }
 
@@ -127,7 +132,7 @@ mod tests {
     use crate::modules::agent::directive_sink::StubDirectiveSink;
 
     fn tool_with(sink: Arc<StubDirectiveSink>) -> DispatchThingTaskTool {
-        DispatchThingTaskTool::new("ws_1", Some(sink))
+        DispatchThingTaskTool::new("ws_1", Some(sink), None)
     }
 
     // ── 参数校验 ────────────────────────────────
@@ -198,9 +203,8 @@ mod tests {
 
     #[tokio::test]
     async fn no_sink_reports_service_unavailable() {
-        // 构造注入 None；全局 AppState 仅在 main/server 启动时设置，
-        // 单测进程内为 None。
-        let tool = DispatchThingTaskTool::new("ws_1", None);
+        // 构造注入 None；AppState 亦为 None —— 与生产启动前行为一致。
+        let tool = DispatchThingTaskTool::new("ws_1", None, None);
         let result = tool.execute(json!({"text": "重启网关"})).await.expect("execute");
         assert!(!result.success);
         assert!(result.error.unwrap().contains("未就绪"));

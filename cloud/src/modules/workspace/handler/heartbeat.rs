@@ -752,7 +752,7 @@ mod tests {
     }
 
     fn registry_with(handler: RecordingHandler) -> HandlerRegistry {
-        let mut reg = HandlerRegistry::new();
+        let mut reg = HandlerRegistry::new(None);
         reg.register(handler);
         reg
     }

@@ -16,8 +16,9 @@ pub async fn create_app_router(app_state: AppState) -> Router {
     // Initialize MCP tools with AppState
     tracing::info!("Initializing MCP tools...");
     use std::sync::Arc;
-    crate::modules::mcp::init_app_state(Arc::new(app_state.clone()));
-    crate::modules::mcp::register_tools().await;
+    let shared_state = Arc::new(app_state.clone());
+    crate::modules::mcp::register_tools(Some(shared_state.clone())).await;
+    app_state.agent_pool.set_app_state(shared_state).await;
     tracing::info!("MCP tools initialized");
 
     // Refresh agent tools after MCP registration

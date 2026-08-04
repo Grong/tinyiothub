@@ -1,9 +1,11 @@
 // Job Tools Module — Compatibility layer over new cron system
 // MCP tools for scheduled job management
 
-use std::{collections::HashMap, str::FromStr};
+use std::{collections::HashMap, str::FromStr, sync::Arc};
 
 use async_trait::async_trait;
+
+use crate::shared::app_state::AppState;
 use serde::Deserialize;
 use serde_json::Value;
 use tinyiothub_core::models::cron_job::{CreateCronJobRequest, CronJobQuery, UpdateCronJobRequest};
@@ -141,7 +143,15 @@ fn map_update_input(input: &UpdateScheduleInput) -> UpdateCronJobRequest {
 // ─── Handlers ──────────────────────────────────────────────────────────────
 
 /// List schedules tool handler
-pub struct ListSchedulesHandler;
+pub struct ListSchedulesHandler {
+    state: Option<Arc<AppState>>,
+}
+
+impl ListSchedulesHandler {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
+        Self { state }
+    }
+}
 
 #[async_trait]
 impl ToolHandler for ListSchedulesHandler {
@@ -195,7 +205,7 @@ impl ToolHandler for ListSchedulesHandler {
         let _claims = get_mcp_context()
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
 
-        let state = crate::modules::mcp::get_app_state()
+        let state = self.state.as_ref()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         let query = CronJobQuery {
@@ -218,7 +228,15 @@ impl ToolHandler for ListSchedulesHandler {
 }
 
 /// Create schedule tool handler
-pub struct CreateScheduleHandler;
+pub struct CreateScheduleHandler {
+    state: Option<Arc<AppState>>,
+}
+
+impl CreateScheduleHandler {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
+        Self { state }
+    }
+}
 
 #[async_trait]
 impl ToolHandler for CreateScheduleHandler {
@@ -324,7 +342,7 @@ impl ToolHandler for CreateScheduleHandler {
         let claims = get_mcp_context()
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
 
-        let state = crate::modules::mcp::get_app_state()
+        let state = self.state.as_ref()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         // SECURITY: Verify target_device_id belongs to authenticated workspace if provided
@@ -384,7 +402,15 @@ impl ToolHandler for CreateScheduleHandler {
 }
 
 /// Update schedule tool handler
-pub struct UpdateScheduleHandler;
+pub struct UpdateScheduleHandler {
+    state: Option<Arc<AppState>>,
+}
+
+impl UpdateScheduleHandler {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
+        Self { state }
+    }
+}
 
 #[async_trait]
 impl ToolHandler for UpdateScheduleHandler {
@@ -436,7 +462,7 @@ impl ToolHandler for UpdateScheduleHandler {
         let _claims = get_mcp_context()
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
 
-        let state = crate::modules::mcp::get_app_state()
+        let state = self.state.as_ref()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         // Normalize 5-field cron to 6-field (prepend seconds=0)
@@ -466,7 +492,15 @@ impl ToolHandler for UpdateScheduleHandler {
 }
 
 /// Delete schedule tool handler
-pub struct DeleteScheduleHandler;
+pub struct DeleteScheduleHandler {
+    state: Option<Arc<AppState>>,
+}
+
+impl DeleteScheduleHandler {
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
+        Self { state }
+    }
+}
 
 #[async_trait]
 impl ToolHandler for DeleteScheduleHandler {
@@ -497,7 +531,7 @@ impl ToolHandler for DeleteScheduleHandler {
         let _claims = get_mcp_context()
             .ok_or_else(|| ToolError::Unauthorized("MCP context not initialized".to_string()))?;
 
-        let state = crate::modules::mcp::get_app_state()
+        let state = self.state.as_ref()
             .ok_or_else(|| ToolError::Internal("AppState not initialized".to_string()))?;
 
         // Verify the job exists and belongs to the workspace

@@ -183,8 +183,9 @@ async fn main_impl() -> std::io::Result<()> {
 
         use axum::Router;
         use tower_http::services::ServeDir;
-        tinyiothub_cloud::api::mcp::init_app_state(Arc::new(app_state.clone()));
-        tinyiothub_cloud::api::mcp::register_tools().await;
+        let shared_state = Arc::new(app_state.clone());
+        tinyiothub_cloud::modules::mcp::register_tools(Some(shared_state.clone())).await;
+        app_state.agent_pool.set_app_state(shared_state).await;
         // Refresh agent tools after MCP registration
         if let Err(e) = app_state.agent_pool.refresh_tools().await {
             tracing::error!("Failed to refresh agent tools: {}", e);

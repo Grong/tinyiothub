@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use axum::{
     Json, Router,
+    extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::post,
@@ -200,19 +201,9 @@ async fn extract_api_key(
 /// Handle all MCP requests
 async fn handle_mcp_request(
     headers: axum::http::HeaderMap,
+    State(state): State<AppState>,
     Json(request): Json<JsonRpcRequest>,
 ) -> Response {
-    let state = match super::get_app_state() {
-        Some(s) => s,
-        None => {
-            return ApiResponseBuilder::error_with_code::<serde_json::Value>(
-                500,
-                "MCP registry not initialized",
-            )
-            .into_response();
-        }
-    };
-
     let ctx = match extract_api_key(&headers, &state).await {
         Ok(c) => c,
         Err(e) => {
@@ -345,18 +336,7 @@ async fn handle_mcp_request(
 }
 
 /// Handle tools/list endpoint
-async fn handle_tools_list(headers: axum::http::HeaderMap) -> Response {
-    let state = match super::get_app_state() {
-        Some(s) => s,
-        None => {
-            return ApiResponseBuilder::error_with_code::<serde_json::Value>(
-                500,
-                "MCP registry not initialized",
-            )
-            .into_response();
-        }
-    };
-
+async fn handle_tools_list(headers: axum::http::HeaderMap, State(state): State<AppState>) -> Response {
     let ctx = match extract_api_key(&headers, &state).await {
         Ok(c) => c,
         Err(e) => {
@@ -385,19 +365,9 @@ async fn handle_tools_list(headers: axum::http::HeaderMap) -> Response {
 /// Handle tools/call endpoint
 async fn handle_tools_call(
     headers: axum::http::HeaderMap,
+    State(state): State<AppState>,
     Json(params): Json<ToolCallParams>,
 ) -> Response {
-    let state = match super::get_app_state() {
-        Some(s) => s,
-        None => {
-            return ApiResponseBuilder::error_with_code::<serde_json::Value>(
-                500,
-                "MCP registry not initialized",
-            )
-            .into_response();
-        }
-    };
-
     let ctx = match extract_api_key(&headers, &state).await {
         Ok(c) => c,
         Err(e) => {

@@ -10,7 +10,7 @@ use serde_json::json;
 /// Test list_schedules handler metadata
 #[tokio::test]
 async fn test_list_schedules_handler_metadata() {
-    crate::modules::mcp::register_tools().await;
+    crate::modules::mcp::register_tools(None).await;
     let registry = crate::modules::mcp::get_mcp_registry().unwrap();
     let guard = registry.read().await;
     let handler = guard.get("list_schedules").unwrap();
@@ -26,7 +26,7 @@ async fn test_list_schedules_handler_metadata() {
 /// Test list_schedules returns array
 #[tokio::test]
 async fn test_list_schedules_returns_array() {
-    crate::modules::mcp::register_tools().await;
+    crate::modules::mcp::register_tools(None).await;
     let registry = crate::modules::mcp::get_mcp_registry().unwrap();
     let guard = registry.read().await;
     let handler = guard.get("list_schedules").unwrap();
@@ -54,7 +54,7 @@ async fn test_list_schedules_returns_array() {
 /// Test list_schedules accepts filters
 #[tokio::test]
 async fn test_list_schedules_with_filters() {
-    crate::modules::mcp::register_tools().await;
+    crate::modules::mcp::register_tools(None).await;
     let registry = crate::modules::mcp::get_mcp_registry().unwrap();
     let guard = registry.read().await;
     let handler = guard.get("list_schedules").unwrap();
@@ -81,7 +81,7 @@ async fn test_list_schedules_with_filters() {
 /// Test create_schedule handler metadata
 #[tokio::test]
 async fn test_create_schedule_handler_metadata() {
-    crate::modules::mcp::register_tools().await;
+    crate::modules::mcp::register_tools(None).await;
     let registry = crate::modules::mcp::get_mcp_registry().unwrap();
     let guard = registry.read().await;
     let handler = guard.get("create_schedule").unwrap();
@@ -97,7 +97,7 @@ async fn test_create_schedule_handler_metadata() {
 /// Test delete_schedule handler metadata
 #[tokio::test]
 async fn test_delete_schedule_handler_metadata() {
-    crate::modules::mcp::register_tools().await;
+    crate::modules::mcp::register_tools(None).await;
     let registry = crate::modules::mcp::get_mcp_registry().unwrap();
     let guard = registry.read().await;
     let handler = guard.get("delete_schedule").unwrap();
@@ -113,7 +113,7 @@ async fn test_delete_schedule_handler_metadata() {
 /// Test alarm_list handler metadata
 #[tokio::test]
 async fn test_alarm_list_handler_metadata() {
-    crate::modules::mcp::register_tools().await;
+    crate::modules::mcp::register_tools(None).await;
     let registry = crate::modules::mcp::get_mcp_registry().unwrap();
     let guard = registry.read().await;
     let handler = guard.get("alarm_list").unwrap();
@@ -129,7 +129,7 @@ async fn test_alarm_list_handler_metadata() {
 /// Test alarm_list accepts filters
 #[tokio::test]
 async fn test_alarm_list_with_filters() {
-    crate::modules::mcp::register_tools().await;
+    crate::modules::mcp::register_tools(None).await;
     let registry = crate::modules::mcp::get_mcp_registry().unwrap();
     let guard = registry.read().await;
     let handler = guard.get("alarm_list").unwrap();
@@ -156,7 +156,7 @@ async fn test_alarm_list_with_filters() {
 /// Test alarm_acknowledge handler metadata
 #[tokio::test]
 async fn test_alarm_acknowledge_handler_metadata() {
-    crate::modules::mcp::register_tools().await;
+    crate::modules::mcp::register_tools(None).await;
     let registry = crate::modules::mcp::get_mcp_registry().unwrap();
     let guard = registry.read().await;
     let handler = guard.get("alarm_acknowledge").unwrap();
@@ -168,7 +168,7 @@ async fn test_alarm_acknowledge_handler_metadata() {
 /// Test alarm_acknowledge requires alarm_id
 #[tokio::test]
 async fn test_alarm_acknowledge_requires_id() {
-    crate::modules::mcp::register_tools().await;
+    crate::modules::mcp::register_tools(None).await;
     let registry = crate::modules::mcp::get_mcp_registry().unwrap();
     let guard = registry.read().await;
     let handler = guard.get("alarm_acknowledge").unwrap();
@@ -180,7 +180,7 @@ async fn test_alarm_acknowledge_requires_id() {
 /// Test alarm_rule_add handler metadata
 #[tokio::test]
 async fn test_alarm_rule_add_handler_metadata() {
-    crate::modules::mcp::register_tools().await;
+    crate::modules::mcp::register_tools(None).await;
     let registry = crate::modules::mcp::get_mcp_registry().unwrap();
     let guard = registry.read().await;
     let handler = guard.get("alarm_rule_add").unwrap();
@@ -192,7 +192,7 @@ async fn test_alarm_rule_add_handler_metadata() {
 /// Test alarm_rule_add validates rule_type
 #[tokio::test]
 async fn test_alarm_rule_add_validates_rule_type() {
-    crate::modules::mcp::register_tools().await;
+    crate::modules::mcp::register_tools(None).await;
     let registry = crate::modules::mcp::get_mcp_registry().unwrap();
     let guard = registry.read().await;
     let handler = guard.get("alarm_rule_add").unwrap();

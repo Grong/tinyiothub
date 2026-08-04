@@ -441,8 +441,7 @@ async fn send_command(
     // Dispatch through the real command channel (same path as the
     // invoke_action confirm flow), not a definitions-table INSERT.
     let cmd_id = uuid::Uuid::new_v4().to_string();
-    let app_state = crate::modules::mcp::get_app_state();
-    let dispatched = app_state.and_then(|s| s.data_server().cloned()).map(|data_server| {
+    let dispatched = state.data_server().cloned().map(|data_server| {
         let cmd = tinyiothub_core::models::device_command::DeviceCommand {
             id: cmd_id.clone(),
             device_id: id.clone(),

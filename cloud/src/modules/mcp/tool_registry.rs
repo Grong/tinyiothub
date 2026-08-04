@@ -2,10 +2,13 @@
 // ToolHandler trait + HandlerRegistry for managing MCP tools
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::Value;
+
+use crate::shared::app_state::AppState;
 
 /// MCP tool execution errors
 #[derive(Debug, Clone)]
@@ -132,15 +135,22 @@ impl ToolMetadata {
 }
 
 /// Handler registry for managing MCP tools
-#[derive(Default)]
 pub struct HandlerRegistry {
-    handlers: HashMap<String, std::sync::Arc<dyn ToolHandler>>,
+    /// AppState injected at startup; tool handlers are constructed with it.
+    /// `None` in tests that exercise handlers without a full app state.
+    state: Option<Arc<AppState>>,
+    handlers: HashMap<String, Arc<dyn ToolHandler>>,
 }
 
 impl HandlerRegistry {
-    /// Create a new empty registry
-    pub fn new() -> Self {
-        Self { handlers: HashMap::new() }
+    /// Create a new empty registry holding the given app state
+    pub fn new(state: Option<Arc<AppState>>) -> Self {
+        Self { state, handlers: HashMap::new() }
+    }
+
+    /// The app state this registry was initialized with
+    pub fn state(&self) -> Option<&Arc<AppState>> {
+        self.state.as_ref()
     }
 
     /// Register a tool handler
@@ -222,7 +232,7 @@ mod tests {
 
     #[test]
     fn test_registry_register_and_get() {
-        let mut registry = HandlerRegistry::new();
+        let mut registry = HandlerRegistry::new(None);
         registry.register(DummyHandler);
 
         assert!(registry.contains("dummy_tool"));
@@ -232,7 +242,7 @@ mod tests {
 
     #[test]
     fn test_registry_list_tools() {
-        let mut registry = HandlerRegistry::new();
+        let mut registry = HandlerRegistry::new(None);
         registry.register(DummyHandler);
 
         let tools = registry.list_tools();

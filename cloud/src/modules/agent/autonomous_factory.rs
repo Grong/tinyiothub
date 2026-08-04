@@ -68,6 +68,7 @@ pub struct AutonomousAgentFactory {
     observer: Arc<dyn Observer>,
     provider_factory: ProviderFactory,
     model: String,
+    app_state: Option<Arc<crate::shared::app_state::AppState>>,
     pub(crate) agents: DashMap<String, AutonomousEntry>,
 }
 
@@ -81,6 +82,7 @@ impl AutonomousAgentFactory {
         observer: Arc<dyn Observer>,
         provider_factory: ProviderFactory,
         model: String,
+        app_state: Option<Arc<crate::shared::app_state::AppState>>,
     ) -> Self {
         Self {
             db_pool,
@@ -91,6 +93,7 @@ impl AutonomousAgentFactory {
             observer,
             provider_factory,
             model,
+            app_state,
             agents: DashMap::new(),
         }
     }
@@ -122,6 +125,7 @@ impl AutonomousAgentFactory {
             Arc::clone(&slot),
             Arc::clone(&self.event_bus),
             Arc::clone(&self.throttle),
+            self.app_state.clone(),
         );
 
         let provider = (self.provider_factory)()?;
@@ -212,19 +216,22 @@ pub(crate) fn build_autonomous_tools(
     run_ctx: RunContextSlot,
     event_bus: Arc<ThingEventBus>,
     throttle: Arc<ThrottleState>,
+    app_state: Option<Arc<crate::shared::app_state::AppState>>,
 ) -> Vec<Box<dyn Tool>> {
     // The 9 ontology tools minus the chat invoke_action (confirmation-token
     // flow), plus the autonomous invoke_action (policy-gated).
-    let mut tools: Vec<Box<dyn Tool>> = create_thing_tools(pool.clone(), workspace_id)
-        .into_iter()
-        .filter(|(tool, _)| tool.name() != "invoke_action")
-        .map(|(tool, _)| tool)
-        .collect();
+    let mut tools: Vec<Box<dyn Tool>> =
+        create_thing_tools(pool.clone(), workspace_id, app_state.clone())
+            .into_iter()
+            .filter(|(tool, _)| tool.name() != "invoke_action")
+            .map(|(tool, _)| tool)
+            .collect();
 
     let inner = InvokeActionTool {
         thing_service: Arc::new(ThingService::new(pool.clone())),
         pool: pool.clone(),
         workspace_id: workspace_id.to_string(),
+        app_state,
     };
     tools.push(Box::new(AutonomousInvokeActionTool::new(
         inner,
@@ -336,6 +343,7 @@ mod tests {
             observer,
             scripted_provider_factory(),
             "minimax-m2".to_string(),
+            None,
         )
     }
 
@@ -355,6 +363,7 @@ mod tests {
             new_run_context_slot(run_ctx()),
             Arc::new(ThingEventBus::new()),
             Arc::new(ThrottleState::new(60)),
+            None,
         );
 
         let mut names: Vec<&str> = tools.iter().map(|t| t.name()).collect();

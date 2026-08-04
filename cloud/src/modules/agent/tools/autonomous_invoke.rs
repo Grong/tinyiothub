@@ -63,8 +63,12 @@ struct Input {
 /// Mirrors the dispatch tail in thing.rs:666-700 — keep in sync (O18 forbids
 /// editing thing.rs). Returns the executed/simulated payload, or an error
 /// result when the queue rejects it.
-fn dispatch_command(thing_id: &str, action_name: &str, params: Option<&Value>) -> ToolResult {
-    let app_state = crate::modules::mcp::get_app_state();
+fn dispatch_command(
+    app_state: Option<&Arc<crate::shared::app_state::AppState>>,
+    thing_id: &str,
+    action_name: &str,
+    params: Option<&Value>,
+) -> ToolResult {
     match app_state.and_then(|s| s.data_server().cloned()) {
         Some(data_server) => {
             let cmd = tinyiothub_core::models::device_command::DeviceCommand {
@@ -149,7 +153,12 @@ impl AutonomousInvokeActionTool {
         {
             return None;
         }
-        Some(dispatch_command(&pending.thing_id, &pending.action_name, pending.params.as_ref()))
+        Some(dispatch_command(
+            self.inner.app_state.as_ref(),
+            &pending.thing_id,
+            &pending.action_name,
+            pending.params.as_ref(),
+        ))
     }
 
     /// Record the dispatched action in the events table with actor="agent"
@@ -435,6 +444,7 @@ mod tests {
             thing_service: Arc::new(ThingService::new(pool.clone())),
             pool: pool.clone(),
             workspace_id: workspace_id.to_string(),
+            app_state: None,
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,
@@ -614,6 +624,7 @@ mod tests {
             thing_service: Arc::new(ThingService::new(pool.clone())),
             pool: pool.clone(),
             workspace_id: "ws-err".to_string(),
+            app_state: None,
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,
@@ -717,6 +728,7 @@ mod tests {
             thing_service: Arc::new(ThingService::new(pool.clone())),
             pool: pool.clone(),
             workspace_id: inner_ws.to_string(),
+            app_state: None,
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,
@@ -808,6 +820,7 @@ mod tests {
             thing_service: Arc::new(ThingService::new(pool.clone())),
             pool: pool.clone(),
             workspace_id: "ws-norun".to_string(),
+            app_state: None,
         };
         let tool = AutonomousInvokeActionTool::new(
             inner,

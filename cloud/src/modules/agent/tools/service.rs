@@ -258,8 +258,9 @@ pub async fn load_all_tools(
     workspace_id: &str,
     workspace_service: Option<Arc<WorkspaceService>>,
     db_pool: Option<SqlitePool>,
+    app_state: Option<Arc<crate::shared::app_state::AppState>>,
 ) -> Vec<Box<dyn Tool>> {
-    load_all_tools_with_safety(workspace_id, workspace_service, db_pool)
+    load_all_tools_with_safety(workspace_id, workspace_service, db_pool, app_state)
         .await
         .into_iter()
         .map(|(tool, _)| tool)
@@ -273,6 +274,7 @@ async fn load_all_tools_with_safety(
     workspace_id: &str,
     _workspace_service: Option<Arc<WorkspaceService>>,
     db_pool: Option<SqlitePool>,
+    app_state: Option<Arc<crate::shared::app_state::AppState>>,
 ) -> Vec<(Box<dyn Tool>, tinyiothub_ai::types::ToolSafety)> {
     use tinyiothub_ai::types::{ToolSafety, classify_tool_safety};
 
@@ -296,13 +298,17 @@ async fn load_all_tools_with_safety(
 
     // Thing Ontology tools (9) — always available, no denylist
     if let Some(ref pool) = db_pool {
-        tools.extend(create_thing_tools(pool.clone(), workspace_id));
+        tools.extend(create_thing_tools(pool.clone(), workspace_id, app_state.clone()));
     }
 
     // 用户指令派发工具（T14）—— chat Agent 专用；自治 thing-agent 工厂
     // （autonomous_factory.rs）不注册它，避免 loop 自我派发。
     tools.push((
-        Box::new(super::dispatch_task::DispatchThingTaskTool::new(workspace_id, None)),
+        Box::new(super::dispatch_task::DispatchThingTaskTool::new(
+            workspace_id,
+            None,
+            app_state,
+        )),
         classify_tool_safety("dispatch_thing_task"),
     ));
 
@@ -373,8 +379,10 @@ pub async fn resolve_tools_for_agent(
     workspace_service: Option<Arc<WorkspaceService>>,
     trust_config: Option<Arc<TrustConfig>>,
     db_pool: Option<SqlitePool>,
+    app_state: Option<Arc<crate::shared::app_state::AppState>>,
 ) -> Vec<Box<dyn Tool>> {
-    let all_tools = load_all_tools_with_safety(workspace_id, workspace_service, db_pool).await;
+    let all_tools =
+        load_all_tools_with_safety(workspace_id, workspace_service, db_pool, app_state).await;
     let filtered: Vec<(Box<dyn Tool>, tinyiothub_ai::types::ToolSafety)> = all_tools
         .into_iter()
         .filter(|(tool, _)| {

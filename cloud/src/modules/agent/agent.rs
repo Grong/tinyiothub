@@ -127,6 +127,10 @@ pub struct AgentPool {
         tokio::sync::RwLock<Option<Arc<tinyiothub_memory::service::MemoryService>>>,
     pub event_publisher:
         tokio::sync::RwLock<Option<Arc<tinyiothub_ai::event::bus::AiEventPublisher>>>,
+    /// Late-bound app state (set once at startup after AppState construction;
+    /// the pool is part of AppState so it cannot receive it at build time).
+    pub(crate) app_state:
+        tokio::sync::RwLock<Option<Arc<crate::shared::app_state::AppState>>>,
 }
 
 impl AgentPool {
@@ -189,7 +193,15 @@ impl AgentPool {
             trust_configs: DashMap::new(),
             memory_service: tokio::sync::RwLock::new(None),
             event_publisher: tokio::sync::RwLock::new(None),
+            app_state: tokio::sync::RwLock::new(None),
         })
+    }
+
+    /// Bind the application state for tool construction (chat thing tools
+    /// read `device_cache` / `data_server` / `directive_sink` through it).
+    pub async fn set_app_state(&self, state: Arc<crate::shared::app_state::AppState>) {
+        let mut guard = self.app_state.write().await;
+        *guard = Some(state);
     }
 
     pub async fn set_event_publisher(
@@ -263,6 +275,7 @@ impl AgentPool {
             ws_svc,
             trust_config,
             Some(self.db_pool.clone()),
+            self.app_state.read().await.clone(),
         )
         .await;
 
@@ -490,8 +503,13 @@ impl AgentPool {
         config_service::verify_agent_workspace(&self.db_pool, agent_id, workspace_id).await?;
         let config = config_service::get_config(&self.db_pool, agent_id).await?;
         let ws_svc = self.workspace_service.read().await.clone();
-        let all_tools =
-            tool_service::load_all_tools(workspace_id, ws_svc, Some(self.db_pool.clone())).await;
+        let all_tools = tool_service::load_all_tools(
+            workspace_id,
+            ws_svc,
+            Some(self.db_pool.clone()),
+            self.app_state.read().await.clone(),
+        )
+        .await;
         let effective = tool_service::filter_by_denylist(all_tools, &config.tool_denylist);
         let names: Vec<&str> = effective.iter().map(|t| t.name()).collect();
         Ok(serde_json::json!({ "tools": names }))
