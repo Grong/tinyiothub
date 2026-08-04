@@ -3842,14 +3842,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
-name = "plugin"
-version = "0.4.6"
-dependencies = [
- "core",
- "libloading",
-]
-
-[[package]]
 name = "plugin-sdk"
 version = "0.4.6"
 dependencies = [
@@ -5992,49 +5984,49 @@ dependencies = [
 name = "tinyiothub-driver-bacnet"
 version = "0.4.6"
 dependencies = [
- "plugin",
+ "plugin-sdk",
 ]
 
 [[package]]
 name = "tinyiothub-driver-modbus"
 version = "0.4.6"
 dependencies = [
- "plugin",
+ "plugin-sdk",
 ]
 
 [[package]]
 name = "tinyiothub-driver-mqtt"
 version = "0.4.6"
 dependencies = [
- "plugin",
+ "plugin-sdk",
 ]
 
 [[package]]
 name = "tinyiothub-driver-mqtt-bridge"
 version = "0.4.6"
 dependencies = [
- "plugin",
+ "plugin-sdk",
 ]
 
 [[package]]
 name = "tinyiothub-driver-onvif"
 version = "0.4.6"
 dependencies = [
- "plugin",
+ "plugin-sdk",
 ]
 
 [[package]]
 name = "tinyiothub-driver-opcua"
 version = "0.4.6"
 dependencies = [
- "plugin",
+ "plugin-sdk",
 ]
 
 [[package]]
 name = "tinyiothub-driver-snmp"
 version = "0.4.6"
 dependencies = [
- "plugin",
+ "plugin-sdk",
 ]
 
 [[package]]
@@ -6049,7 +6041,6 @@ dependencies = [
  "libloading",
  "local-ip-address",
  "mac_address",
- "plugin",
  "rand 0.8.6",
  "rumqttc 0.24.0",
  "runtime",

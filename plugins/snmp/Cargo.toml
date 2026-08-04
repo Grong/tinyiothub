@@ -9,4 +9,4 @@ license.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-plugin = { workspace = true }
+plugin-sdk = { workspace = true }

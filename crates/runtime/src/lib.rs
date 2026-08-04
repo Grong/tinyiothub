@@ -11,6 +11,7 @@ pub mod cron_executors;
 pub mod data_server;
 pub mod driver;
 pub mod event_bus;
+pub mod plugin;
 
 // Re-exports for convenience
 pub use cron_executors::{DeviceCommandExecutor, EventRetentionExecutor};

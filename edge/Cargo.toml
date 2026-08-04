@@ -16,7 +16,6 @@ path = "src/main.rs"
 [dependencies]
 core = { workspace = true }
 runtime = { workspace = true }
-plugin = { workspace = true }
 db = { workspace = true }
 web = { workspace = true }
 tokio = { workspace = true }

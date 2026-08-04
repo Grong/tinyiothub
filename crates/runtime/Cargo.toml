@@ -52,7 +52,7 @@ arc-swap = "1.9"
 futures-util = { workspace = true }
 
 # Dynamic library loading
-libloading = "0.8"
+libloading = { workspace = true }
 
 # Date/time
 chrono = { workspace = true }

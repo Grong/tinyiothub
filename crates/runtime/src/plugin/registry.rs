@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use crate::ffi::PluginInfo;
+use super::ffi::PluginInfo;
 
 /// Handle to a loaded plugin (opaque to callers).
 #[derive(Debug, Clone)]

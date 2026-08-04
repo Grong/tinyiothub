@@ -4,7 +4,7 @@ use std::path::Path;
 
 use libloading::{Library, Symbol};
 
-use crate::ffi::{PluginFfi, PluginInfo};
+use super::ffi::{PluginFfi, PluginInfo};
 
 /// Errors that can occur during plugin loading.
 #[derive(Debug, Clone, PartialEq, Eq)]

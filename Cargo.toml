@@ -155,7 +155,6 @@ http-body-util = "0.1"
 macros = { path = "crates/macros" }
 core = { path = "crates/core" }
 db = { path = "crates/db" }
-plugin = { path = "crates/plugin" }
 plugin-sdk = { path = "crates/plugin-sdk" }
 runtime = { path = "crates/runtime" }
 scheduler = { path = "crates/scheduler" }
