@@ -161,11 +161,11 @@ pub trait EventAuditLog: Send + Sync {
 
 /// Database-backed audit log implementation
 pub struct DatabaseAuditLog {
-    db: Arc<crate::shared::persistence::Database>,
+    db: Arc<tinyiothub_storage::Database>,
 }
 
 impl DatabaseAuditLog {
-    pub fn new(db: Arc<crate::shared::persistence::Database>) -> Self {
+    pub fn new(db: Arc<tinyiothub_storage::Database>) -> Self {
         Self { db }
     }
 

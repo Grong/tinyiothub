@@ -2,17 +2,16 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::Row;
 
-use crate::{
-    modules::event::{
-        Result,
-        entities::Event,
-        repositories::{
-            EventCriteria, EventRepository, EventStatistics, ExportFormat, SortBy, SortOrder,
-            StatisticsParams,
-        },
-        value_objects::{EventId, EventLevel, EventSource, EventType, RichContent},
+use tinyiothub_storage::Database;
+
+use crate::modules::event::{
+    Result,
+    entities::Event,
+    repositories::{
+        EventCriteria, EventRepository, EventStatistics, ExportFormat, SortBy, SortOrder,
+        StatisticsParams,
     },
-    shared::persistence::Database,
+    value_objects::{EventId, EventLevel, EventSource, EventType, RichContent},
 };
 
 /// SQLite implementation of EventRepository

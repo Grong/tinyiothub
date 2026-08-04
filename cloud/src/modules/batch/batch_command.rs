@@ -6,7 +6,9 @@ use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::{modules::device::service::DeviceService, shared::persistence::database::Database};
+use tinyiothub_storage::Database;
+
+use crate::modules::device::service::DeviceService;
 
 #[derive(Error, Debug)]
 pub enum BatchCommandError {

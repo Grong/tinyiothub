@@ -703,7 +703,7 @@ fn generate_code() -> String {
 
 /// 根据手机号查找或创建用户（原子操作，防止并发重复创建）
 async fn find_or_create_user_by_phone(
-    db: &crate::shared::persistence::Database,
+    db: &tinyiothub_storage::Database,
     phone: &str,
 ) -> Result<crate::modules::user::User, Box<dyn std::error::Error + Send + Sync>> {
     // 最多重试 3 次，处理并发创建导致的唯一约束冲突

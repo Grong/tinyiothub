@@ -6,11 +6,9 @@ use tracing::info;
 use crate::{
     api::middleware::WorkspaceScope,
     modules::monitoring::types::{DashboardMetrics, DashboardStats, MonthlyGrowth, NetworkMetrics},
-    shared::{
-        api_response::ApiResponse, app_state::AppState, persistence::Database,
-        security::jwt::Claims,
-    },
+    shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims},
 };
+use tinyiothub_storage::Database;
 
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]

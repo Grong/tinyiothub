@@ -8,7 +8,7 @@ use super::types::{
     CreateDeviceTemplateRequest, DeviceTemplate, TemplateCategory, TemplateQueryParams,
     UpdateDeviceTemplateRequest,
 };
-use crate::shared::persistence::Database;
+use tinyiothub_storage::Database;
 
 // ─── TemplateRepository ───────────────────────────────────────
 

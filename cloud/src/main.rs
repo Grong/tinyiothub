@@ -72,7 +72,7 @@ async fn main_impl() -> std::io::Result<()> {
     info!("CPUs: {}", num_cpus::get());
 
     // === 2. 初始化数据库 ===
-    use tinyiothub_cloud::shared::persistence::DatabaseConfig;
+    use tinyiothub_storage::DatabaseConfig;
     let settings = config::get();
     let db_url = if settings.database.url.starts_with("sqlite:") {
         settings.database.url.clone()
@@ -86,7 +86,8 @@ async fn main_impl() -> std::io::Result<()> {
         acquire_timeout_secs: settings.database.connect_timeout_secs,
         idle_timeout_secs: 600,
     };
-    let db_pool = tinyiothub_cloud::shared::persistence::create_pool(&db_config)
+    let is_harmonyos = cfg!(target_env = "ohos") || settings.harmonyos.enabled;
+    let db_pool = tinyiothub_storage::create_pool(&db_config, is_harmonyos)
         .await
         .expect("Failed to create DB pool");
     let device_cache = std::sync::Arc::new(tinyiothub_storage::cache::DeviceCache::new());
@@ -102,7 +103,7 @@ async fn main_impl() -> std::io::Result<()> {
 
     // === 4.1 重新加载已安装的动态驱动 ===
     {
-        use tinyiothub_cloud::shared::persistence::repositories::driver_installation::DriverInstallationRepo;
+        use tinyiothub_storage::DriverInstallationRepo;
         let repo = DriverInstallationRepo::new((*app_state.database).clone());
         match repo.find_all().await {
             Ok(installations) => {

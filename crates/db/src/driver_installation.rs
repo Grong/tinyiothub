@@ -1,8 +1,10 @@
+//! Driver installation records (driver_installations table).
+
 // cloud/src/shared/persistence/repositories/driver_installation.rs
 
 use sqlx::FromRow;
 
-use crate::shared::persistence::Database;
+use crate::Database;
 
 #[derive(Debug, Clone, FromRow)]
 pub struct DriverInstallation {

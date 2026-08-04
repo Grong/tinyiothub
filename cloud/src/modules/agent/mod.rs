@@ -25,6 +25,7 @@ pub mod heartbeat_repo;
 pub mod policy_engine;
 pub mod policy_repo;
 pub mod scaffold;
+pub mod session_repository;
 pub mod session;
 pub mod thing_agent_host;
 

@@ -30,7 +30,7 @@ async fn test_pool() -> sqlx::SqlitePool {
         .connect("sqlite::memory:")
         .await
         .expect("in-memory pool");
-    crate::shared::persistence::migrations::run_migrations(&pool).await.expect("migrations");
+    tinyiothub_storage::migrations::run_migrations(&pool).await.expect("migrations");
     pool
 }
 

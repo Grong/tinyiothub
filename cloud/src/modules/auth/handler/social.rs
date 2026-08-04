@@ -523,7 +523,7 @@ async fn update_social_config(
 
 // ============== 辅助函数 ==============
 
-async fn get_wechat_config(db: &crate::shared::persistence::Database) -> Option<SocialConfig> {
+async fn get_wechat_config(db: &tinyiothub_storage::Database) -> Option<SocialConfig> {
     let sql = "SELECT * FROM social_configs WHERE provider = 'wechat' LIMIT 1";
 
     let rows = db
@@ -612,7 +612,7 @@ struct WechatTokenResponse {
 
 /// 根据微信 openid 查找或创建用户
 async fn find_or_create_user_by_wechat(
-    db: &crate::shared::persistence::Database,
+    db: &tinyiothub_storage::Database,
     openid: &str,
 ) -> Result<User, StatusCode> {
     // 查找 social_bindings
@@ -683,7 +683,7 @@ fn user_from_row(row: sqlx::sqlite::SqliteRow) -> User {
 
 /// 存储社交账号绑定
 async fn save_social_binding(
-    db: &crate::shared::persistence::Database,
+    db: &tinyiothub_storage::Database,
     user_id: &str,
     provider: &str,
     provider_user_id: &str,

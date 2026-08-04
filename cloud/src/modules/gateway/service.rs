@@ -5,6 +5,7 @@ use std::{
 };
 
 use tinyiothub_core::models::device::CreateDeviceRequest;
+use tinyiothub_storage::DeviceRepositoryFactory;
 use tokio::sync::{RwLock, mpsc};
 
 use crate::{
@@ -22,7 +23,6 @@ use crate::{
             types::*,
         },
     },
-    shared::persistence::factory::DeviceRepositoryFactory,
 };
 
 const MAX_PAIRING_REQUESTS_PER_IP_PER_MINUTE: usize = 3;
@@ -353,7 +353,7 @@ mod tests {
 
     async fn make_pool() -> SqlitePool {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        crate::shared::persistence::test_helpers::run_all_migrations(&pool).await.unwrap();
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool).await.unwrap();
         // Create a tenant and workspace for FK references
         sqlx::query("INSERT INTO tenants (id, name, slug, created_at, updated_at) VALUES ('tenant1', 'test', 'tenant1', '2025-01-01', '2025-01-01')")
             .execute(&pool)
@@ -369,10 +369,10 @@ mod tests {
     fn make_service(pool: SqlitePool) -> (GatewayService, mpsc::Receiver<MqttPublish>) {
         let (tx, rx) = mpsc::channel(100);
         let cache = Arc::new(PairingCache::new(1000));
-        let database = Arc::new(crate::shared::persistence::Database::new(pool));
+        let database = Arc::new(tinyiothub_storage::Database::new(pool));
         let factory = Arc::new(DeviceRepositoryFactory::new(database.clone()));
         let event_repo: Arc<dyn EventRepository> =
-            Arc::new(crate::shared::persistence::repositories::SqliteEventRepository::new(
+            Arc::new(crate::modules::event::sqlite_event::SqliteEventRepository::new(
                 database.as_ref().clone(),
             ));
         let service = GatewayService::new(factory, event_repo, cache, tx);
@@ -604,10 +604,10 @@ mod tests {
         // Create a tiny cache and fill it
         let tiny_cache = Arc::new(PairingCache::new(1));
         let (tx, _rx2) = mpsc::channel(1);
-        let database = Arc::new(crate::shared::persistence::Database::new(pool));
+        let database = Arc::new(tinyiothub_storage::Database::new(pool));
         let factory = Arc::new(DeviceRepositoryFactory::new(database.clone()));
         let event_repo: Arc<dyn EventRepository> =
-            Arc::new(crate::shared::persistence::repositories::SqliteEventRepository::new(
+            Arc::new(crate::modules::event::sqlite_event::SqliteEventRepository::new(
                 database.as_ref().clone(),
             ));
         let svc2 = GatewayService::new(factory, event_repo, tiny_cache.clone(), tx);
@@ -655,10 +655,10 @@ mod tests {
         drop(rx); // Close the receiver to simulate MQTT channel failure
 
         let cache = Arc::new(PairingCache::new(1000));
-        let database = Arc::new(crate::shared::persistence::Database::new(pool.clone()));
+        let database = Arc::new(tinyiothub_storage::Database::new(pool.clone()));
         let factory = Arc::new(DeviceRepositoryFactory::new(database.clone()));
         let event_repo: Arc<dyn EventRepository> =
-            Arc::new(crate::shared::persistence::repositories::SqliteEventRepository::new(
+            Arc::new(crate::modules::event::sqlite_event::SqliteEventRepository::new(
                 database.as_ref().clone(),
             ));
         let svc = GatewayService::new(factory, event_repo, cache.clone(), tx);

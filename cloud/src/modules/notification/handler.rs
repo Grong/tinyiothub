@@ -29,13 +29,13 @@ use crate::{
     shared::{
         api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
         app_state::AppState,
-        persistence::repositories::{
-            count_notification_channels, create_notification_channel, delete_notification_channel,
-            find_all_notification_channels, find_notification_channel_by_id,
-            get_notification_channel_statistics, update_notification_channel,
-        },
         security::jwt::Claims,
     },
+};
+use tinyiothub_storage::{
+    count_notification_channels, create_notification_channel, delete_notification_channel,
+    find_all_notification_channels, find_notification_channel_by_id,
+    get_notification_channel_statistics, update_notification_channel,
 };
 
 // ──────────────────────────────────────────────

@@ -301,7 +301,7 @@ impl ServiceManager {
     async fn start_health_monitor(
         &self,
         data_server: Arc<DataServer>,
-        database: Arc<crate::shared::persistence::Database>,
+        database: Arc<tinyiothub_storage::Database>,
     ) -> Result<(), Error> {
         info!("Starting Health Monitor...");
 
@@ -336,7 +336,7 @@ impl ServiceManager {
 
     async fn perform_health_check(
         data_server: &DataServer,
-        database: &Arc<crate::shared::persistence::Database>,
+        database: &Arc<tinyiothub_storage::Database>,
     ) -> Result<(), Error> {
         match sqlx::query("SELECT 1").fetch_optional(database.pool()).await {
             Ok(_) => {

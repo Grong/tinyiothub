@@ -23,17 +23,18 @@ use crate::{
             channels::NotificationChannelFactory,
             security::{EventSecurityFactory, SecureEventService},
         },
-        persistence::{
-            Database,
-            factory::DeviceRepositoryFactory,
-            repositories::{
-                DeviceTraceRepository, NotificationHistoryRepositoryImpl,
-                NotificationRuleRepositoryImpl, SqliteEventRepository,
-                SqliteRealTimeEventRepository,
-            },
-        },
         redis::RedisClient,
     },
+};
+use tinyiothub_storage::{Database, DeviceRepositoryFactory};
+
+use crate::modules::{
+    device::trace_repository::DeviceTraceRepository,
+    event::{
+        sqlite_event::SqliteEventRepository,
+        sqlite_real_time_event::SqliteRealTimeEventRepository,
+    },
+    notification::repo::{NotificationHistoryRepositoryImpl, NotificationRuleRepositoryImpl},
 };
 
 /// 应用程序状态 - 使用 Axum 推荐的依赖注入模式
@@ -225,7 +226,7 @@ impl AppState {
 
         // 基础服务 - 使用事件总线
         let device_repository: Arc<dyn crate::modules::device::repository::DeviceRepository> =
-            Arc::new(crate::shared::persistence::repositories::SqliteDeviceRepository::new(
+            Arc::new(tinyiothub_storage::SqliteDeviceRepository::new(
                 database.as_ref().clone(),
             ));
         let device_service = Arc::new(
@@ -233,7 +234,7 @@ impl AppState {
                 .with_tag_repository(tag_repository.clone()),
         );
         let device_query_service: Arc<dyn DeviceQueryService> =
-            Arc::new(crate::shared::persistence::repositories::SqliteDeviceQueryService::new(
+            Arc::new(crate::modules::device::query_service_impl::SqliteDeviceQueryService::new(
                 database.as_ref().clone(),
             ));
 
@@ -352,7 +353,7 @@ impl AppState {
 
         // 会话服务 - 用于 Agent 聊天会话管理
         let session_repository: Arc<dyn crate::modules::agent::SessionRepository> =
-            Arc::new(crate::shared::persistence::repositories::SqliteSessionRepository::new(
+            Arc::new(crate::modules::agent::session_repository::SqliteSessionRepository::new(
                 database.as_ref().clone(),
             ));
         let session_service =
@@ -589,7 +590,7 @@ impl AppState {
         };
 
         // 2. 验证属性存在且属于该设备
-        let property = match crate::shared::persistence::repositories::find_device_property_by_id(
+        let property = match tinyiothub_storage::find_device_property_by_id(
             self.database(),
             property_id,
         )
@@ -745,7 +746,7 @@ impl AppState {
         let database_url = format!("sqlite://{}", db_path.to_str().unwrap());
         let pool = sqlx::SqlitePool::connect(&database_url).await.unwrap();
 
-        crate::shared::persistence::test_helpers::run_all_migrations(&pool).await.unwrap();
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool).await.unwrap();
 
         let device_cache = Arc::new(DeviceCache::new());
 

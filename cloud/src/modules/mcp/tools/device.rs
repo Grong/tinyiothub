@@ -14,10 +14,11 @@ use crate::{
         mcp::tool_registry::{InputSchema, PropertySchema, ToolError, ToolHandler},
         template::types::{CreateDeviceFromTemplateRequest, DeviceCreationInput},
     },
-    shared::persistence::repositories::{
-        find_device_by_id, find_device_by_id_with_tags, find_device_command_by_device_and_name,
-        find_device_properties_by_device_id, load_tags_for_devices,
-    },
+};
+use tinyiothub_storage::{find_device_command_by_device_and_name, find_device_properties_by_device_id};
+
+use crate::modules::device::device_query::{
+    find_device_by_id, find_device_by_id_with_tags, load_tags_for_devices,
 };
 
 /// Tool input: Get single device

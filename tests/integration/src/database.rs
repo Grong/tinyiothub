@@ -10,7 +10,7 @@ pub async fn create_test_pool() -> SqlitePool {
         .await
         .expect("Failed to create test database");
 
-    tinyiothub_cloud::shared::persistence::test_helpers::run_all_migrations(&pool)
+    tinyiothub_storage::test_helpers::run_all_migrations(&pool)
         .await
         .expect("Failed to run migrations");
     pool

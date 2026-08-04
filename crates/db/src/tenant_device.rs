@@ -1,3 +1,5 @@
+//! Tenant-aware device repository adapter (workspace-isolating wrapper).
+
 use async_trait::async_trait;
 use sqlx::Row;
 use tinyiothub_core::{
@@ -6,9 +8,8 @@ use tinyiothub_core::{
     models::device::{CreateDeviceRequest, Device, DeviceStatusUpdate, UpdateDeviceRequest},
     now_string,
 };
-use tinyiothub_storage::traits::device::{DeviceCriteria, DeviceRepository};
-
-use crate::shared::persistence::database::Database;
+use crate::Database;
+use crate::traits::device::{DeviceCriteria, DeviceRepository};
 
 /// Tenant-aware device repository adapter
 ///
@@ -369,7 +370,7 @@ impl<R: DeviceRepository + Send + Sync> DeviceRepository for TenantDeviceReposit
         page: u32,
         page_size: u32,
     ) -> Result<Vec<Device>> {
-        use tinyiothub_storage::traits::device::DeviceCriteria;
+        use crate::traits::device::DeviceCriteria;
 
         let mut criteria = DeviceCriteria::builder()
             .limit(page_size)

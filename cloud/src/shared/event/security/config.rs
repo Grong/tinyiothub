@@ -30,7 +30,7 @@ fn validate_event_security_config(config: &EventSecurityConfig) -> Result<()> {
 
 /// Event security factory for creating and configuring security components
 pub struct EventSecurityFactory {
-    db: Arc<crate::shared::persistence::Database>,
+    db: Arc<tinyiothub_storage::Database>,
     config: EventSecurityConfig,
 }
 
@@ -44,7 +44,7 @@ pub struct SecurityComponents {
 impl EventSecurityFactory {
     /// Create a new security factory
     pub fn new(
-        db: Arc<crate::shared::persistence::Database>,
+        db: Arc<tinyiothub_storage::Database>,
         config: EventSecurityConfig,
     ) -> Result<Self> {
         validate_event_security_config(&config)?;

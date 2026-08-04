@@ -1,13 +1,16 @@
 // Device module — migrated from domain/device/
 
+pub mod device_query;
 pub mod diagnostics;
 pub mod driver;
 pub mod handler;
 pub mod monitoring;
 pub mod performance;
 pub mod query;
+pub mod query_service_impl;
 pub mod service;
 pub mod trace;
+pub mod trace_repository;
 pub mod types;
 
 // Backward compatibility aliases (domain::device::trace_service → modules::device::trace)

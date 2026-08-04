@@ -12,10 +12,9 @@ use super::types::{
     HistoryStatistics, NotificationChannelType, NotificationRecord, NotificationRule,
     NotificationStatus, RuleStatistics,
 };
-use crate::{
-    modules::event::{EventError, Result},
-    shared::persistence::Database,
-};
+use tinyiothub_storage::Database;
+
+use crate::modules::event::{EventError, Result};
 
 // ──────────────────────────────────────────────
 // Notification Rule Repository

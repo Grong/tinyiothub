@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, QueryBuilder, Row};
 
-use crate::shared::persistence::Database;
+use tinyiothub_storage::Database;
 
 /// 设备模板实体 - 使用 snake_case 数据库字段
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]

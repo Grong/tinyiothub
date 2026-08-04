@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use tinyiothub_core::{error::Error, generate_id};
 
-use crate::shared::persistence::repositories::DeviceTraceRepository;
+use crate::modules::device::trace_repository::DeviceTraceRepository;
 
 pub struct DeviceTraceService {
     repository: Arc<DeviceTraceRepository>,

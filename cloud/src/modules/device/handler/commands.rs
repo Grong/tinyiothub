@@ -6,10 +6,9 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tinyiothub_web::response::ApiResponseBuilder;
 
-use crate::shared::{
-    api_response::ApiResponse, app_state::AppState,
-    persistence::repositories::find_device_command_by_id, security::jwt::Claims,
-};
+use tinyiothub_storage::find_device_command_by_id;
+
+use crate::shared::{api_response::ApiResponse, app_state::AppState, security::jwt::Claims};
 
 #[derive(Debug, Deserialize)]
 pub struct ExecuteCommandRequest {

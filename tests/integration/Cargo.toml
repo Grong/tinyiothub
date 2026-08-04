@@ -6,6 +6,7 @@ publish = false
 
 [dependencies]
 tinyiothub-cloud = { path = "../../cloud", features = ["test-utils"] }
+db = { workspace = true }
 sqlx = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 uuid = { workspace = true }

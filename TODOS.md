@@ -177,14 +177,14 @@ Source: `/plan-ceo-review` on `feat/device-ecosystem-v0.2` (2026-05-08)
 ### P0 — CRITICAL
 
 - **[#40] Driver loading needs sandbox or admin-only gate**
-  - `registry.rs:48-50` loads arbitrary `.so` and calls `init()` with full process privileges
-  - `validator.rs:20-22` dry-load triggers `__attribute__((constructor))` before any validation
+  - `crates/runtime/src/driver/registry.rs:50-65` loads arbitrary `.so` and calls `init()` with full process privileges
+  - `crates/runtime/src/driver/validator.rs:19-24` dry-load triggers `__attribute__((constructor))` before any validation
   - **Action:** Implement admin-only gate for driver installation (quick fix), plan subprocess sandbox for v0.2.x
   - **Owner:** TBD
 
 ### P1 — HIGH
 
-- **[#41] TemplateExporter secret stripping is shallow**
+- **[#41] TemplateExporter (`cloud/src/modules/template/exporter.rs`) secret stripping is shallow**
   - Only strips top-level keys; nested JSON like `{"auth": {"password": "secret"}}` leaks
   - Missing variants: `passwd`, `key`, `credential`, `cert`
   - **Action:** Recursive JSON traversal + expanded sensitive key list
@@ -193,12 +193,12 @@ Source: `/plan-ceo-review` on `feat/device-ecosystem-v0.2` (2026-05-08)
 ### P2 — MEDIUM
 
 - **[#42] Exported templates lose device properties and commands**
-  - `exporter.rs:31-32` creates empty `properties` and `commands` vectors
+  - `cloud/src/modules/template/exporter.rs` created empty `properties` and `commands` vectors
   - Users export a configured device and get a hollow template
   - **Action:** Map `device.properties` → `PropertyTemplate`, `device.commands` → `CommandTemplate`
   - **Owner:** TBD
 
-- **[#44] Add unit tests for DriverRegistry failure paths**
+- **[#44] Add unit tests for DriverRegistry (`crates/runtime/src/driver/registry.rs`, `runtime::driver`) failure paths**
   - Zero coverage for: ABI mismatch, null vtable, null init, missing symbols, duplicate driver, ref_count blocking unload
   - Single integration test only checks "empty registry returns empty list"
   - **Action:** Craft mock/minimal `.so` files or use `libloading` mocking to test each failure path

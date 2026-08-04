@@ -1,3 +1,5 @@
+//! Embedded SQLite migrations and the safe migration runner (backup, repair, FK enforcement).
+
 use sqlx::{
     migrate::{Migration, Migrator},
     sqlite::SqlitePool,

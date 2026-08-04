@@ -127,7 +127,7 @@ async fn create_test_app_state() -> AppState {
 
     // Run migrations via centralized module (handles skip lists, orphaned
     // records, and schema consistency automatically).
-    crate::shared::persistence::migrations::run_migrations(&pool)
+    tinyiothub_storage::migrations::run_migrations(&pool)
         .await
         .expect("Failed to run migrations");
 

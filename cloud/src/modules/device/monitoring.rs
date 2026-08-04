@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tinyiothub_storage::cache::DeviceCache;
 
 use super::super::alarm::repo::AlarmRepository;
-use crate::shared::persistence::Database;
+use tinyiothub_storage::Database;
 
 pub struct DeviceMonitoringService {
     database: Arc<Database>,
@@ -118,7 +118,7 @@ impl DeviceMonitoringService {
     pub async fn get_device_metrics(&self, device_id: &str) -> Option<DeviceMetrics> {
         if let Some(_device) = self.device_cache.get(device_id) {
             let device_repository: Arc<dyn crate::modules::device::repository::DeviceRepository> =
-                Arc::new(crate::shared::persistence::repositories::SqliteDeviceRepository::new(
+                Arc::new(tinyiothub_storage::SqliteDeviceRepository::new(
                     self.database.as_ref().clone(),
                 ));
             let device_service =

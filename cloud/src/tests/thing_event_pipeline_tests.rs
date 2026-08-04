@@ -13,6 +13,8 @@ use tinyiothub_core::models::event::{
     TextFormat,
 };
 
+use tinyiothub_storage::Database;
+
 use crate::{
     modules::{
         alarm::{
@@ -23,10 +25,8 @@ use crate::{
             bus::ThingEventBus,
             repositories::RealTimeEventRepository,
             router::{ThingEventInput, ThrottleState, route_thing_event},
+            sqlite_real_time_event::SqliteRealTimeEventRepository,
         },
-    },
-    shared::persistence::{
-        Database, repositories::real_time_event_repository_impl::SqliteRealTimeEventRepository,
     },
     test_utils::seed_test_workspace,
 };
@@ -39,7 +39,7 @@ async fn test_pool() -> sqlx::SqlitePool {
         .connect("sqlite::memory:")
         .await
         .expect("in-memory pool");
-    crate::shared::persistence::migrations::run_migrations(&pool).await.expect("migrations");
+    tinyiothub_storage::migrations::run_migrations(&pool).await.expect("migrations");
     pool
 }
 

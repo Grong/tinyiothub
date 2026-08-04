@@ -12,7 +12,7 @@ use tinyiothub_storage::sqlite::Database;
 
 use crate::{
     modules::event::repo::RealTimeEventRepository,
-    shared::persistence::repositories::SqliteRealTimeEventRepository,
+    modules::event::sqlite_real_time_event::SqliteRealTimeEventRepository,
     test_utils::seed_test_workspace,
 };
 
@@ -22,7 +22,7 @@ async fn test_pool() -> sqlx::SqlitePool {
         .connect("sqlite::memory:")
         .await
         .expect("in-memory pool");
-    crate::shared::persistence::migrations::run_migrations(&pool).await.expect("migrations");
+    tinyiothub_storage::migrations::run_migrations(&pool).await.expect("migrations");
     pool
 }
 

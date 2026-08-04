@@ -2,17 +2,15 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::Row;
 
-use crate::{
-    modules::event::{
-        Result,
-        entities::Event,
-        repositories::{
-            DeviceStatusSummary, RealTimeEvent, RealTimeEventRepository, RealTimeFilter,
-            StatusSummary,
-        },
-        value_objects::{EventId, EventLevel, EventSource, EventType},
+use tinyiothub_storage::Database;
+
+use crate::modules::event::{
+    Result,
+    entities::Event,
+    repositories::{
+        DeviceStatusSummary, RealTimeEvent, RealTimeEventRepository, RealTimeFilter, StatusSummary,
     },
-    shared::persistence::Database,
+    value_objects::{EventId, EventLevel, EventSource, EventType},
 };
 
 /// SQLite implementation of RealTimeEventRepository.

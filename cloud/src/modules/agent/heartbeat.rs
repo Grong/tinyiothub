@@ -217,7 +217,7 @@ mod tests {
             .await
             .expect("in-memory sqlite");
         for stmt in
-            include_str!("../../../migrations/20260629000001_create_heartbeat_tasks.sql").split(';')
+            include_str!("../../../../crates/db/migrations/20260629000001_create_heartbeat_tasks.sql").split(';')
         {
             let stmt = stmt.trim();
             if !stmt.is_empty() {

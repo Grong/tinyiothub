@@ -1,10 +1,9 @@
 use async_trait::async_trait;
 use sqlx::Row;
 
-use crate::{
-    modules::agent::types::{Session, SessionError, SessionRepository},
-    shared::persistence::Database,
-};
+use tinyiothub_storage::Database;
+
+use crate::modules::agent::types::{Session, SessionError, SessionRepository};
 
 /// SQLite implementation of SessionRepository (session index only)
 #[derive(Debug, Clone)]
@@ -229,7 +228,7 @@ mod tests {
 
     async fn create_test_repo() -> SqliteSessionRepository {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        crate::shared::persistence::test_helpers::run_all_migrations(&pool).await.unwrap();
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool).await.unwrap();
         SqliteSessionRepository::new(Database::new(pool))
     }
 
@@ -299,7 +298,7 @@ mod tests {
         // in the original schema, so delete must remove messages first.
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
         sqlx::query("PRAGMA foreign_keys = ON").execute(&pool).await.unwrap();
-        crate::shared::persistence::test_helpers::run_all_migrations(&pool).await.unwrap();
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool).await.unwrap();
         let repo = SqliteSessionRepository::new(Database::new(pool.clone()));
 
         let session = Session::new(

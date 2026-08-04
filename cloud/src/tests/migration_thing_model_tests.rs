@@ -16,7 +16,7 @@ async fn migrated_pool() -> sqlx::SqlitePool {
         .connect("sqlite::memory:")
         .await
         .expect("in-memory pool");
-    crate::shared::persistence::migrations::run_migrations(&pool).await.expect("migrations");
+    tinyiothub_storage::migrations::run_migrations(&pool).await.expect("migrations");
     pool
 }
 
@@ -277,7 +277,7 @@ async fn test_upgrade_path_with_alarm_rules_no_boot_loop() {
         .connect("sqlite::memory:")
         .await
         .expect("in-memory pool");
-    let all = crate::shared::persistence::migrations::load_migrations().expect("load");
+    let all = tinyiothub_storage::migrations::load_migrations().expect("load");
     let pre: Vec<_> = all.into_iter().filter(|m| m.version < 20260727000001).collect();
     sqlx::migrate::Migrator::with_migrations(pre).run(&pool).await.expect("pre-chain");
 
@@ -332,7 +332,7 @@ async fn test_upgrade_path_with_alarm_rules_no_boot_loop() {
     .unwrap();
 
     // 3. Run the full chain — must NOT abort on FK violations
-    crate::shared::persistence::migrations::run_migrations(&pool)
+    tinyiothub_storage::migrations::run_migrations(&pool)
         .await
         .expect("upgrade must not boot-loop");
 

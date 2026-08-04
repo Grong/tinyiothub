@@ -16,12 +16,9 @@ use super::{
         ThingResource, ThingResponse, ThingRow, ThingTreeNode, ThingType, UpdateThingRequest,
     },
 };
-use crate::shared::persistence::{
-    Database,
-    repositories::{
-        create_device_command, create_device_properties_batch, find_device_commands_by_device_id,
-        find_device_properties_by_device_id,
-    },
+use tinyiothub_storage::{
+    Database, create_device_command, create_device_properties_batch,
+    find_device_commands_by_device_id, find_device_properties_by_device_id,
 };
 
 pub struct ThingService {

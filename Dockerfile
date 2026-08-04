@@ -76,7 +76,7 @@ WORKDIR /app
 
 COPY --from=backend-builder /out/tinyiothub-cloud /app/
 
-COPY --from=backend-builder /build/cloud/migrations /app/migrations
+COPY --from=backend-builder /build/crates/db/migrations /app/migrations
 COPY --from=backend-builder /build/cloud/templates /app/templates
 
 COPY --from=frontend-builder /dist/ui /app/wwwroot

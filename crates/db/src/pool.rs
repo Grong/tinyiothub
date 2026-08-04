@@ -1,10 +1,15 @@
+//! Migrating SQLite pool creation (foreign keys on, runs embedded migrations).
+
 use std::{str::FromStr, time::Duration};
 
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 
-use super::config::DatabaseConfig;
+use crate::sqlite::config::DatabaseConfig;
 
-pub async fn create_pool(config: &DatabaseConfig) -> Result<SqlitePool, sqlx::Error> {
+pub async fn create_pool(
+    config: &DatabaseConfig,
+    is_harmonyos: bool,
+) -> Result<SqlitePool, sqlx::Error> {
     tracing::info!("Creating database connection pool with config: {:?}", config);
 
     // Parse connection options
@@ -14,7 +19,7 @@ pub async fn create_pool(config: &DatabaseConfig) -> Result<SqlitePool, sqlx::Er
     // For HarmonyOS: Use conservative settings to prevent issues
     #[cfg(target_os = "linux")]
     {
-        if cfg!(target_env = "ohos") || crate::shared::config::get().harmonyos.enabled {
+        if is_harmonyos {
             tracing::warn!("HarmonyOS detected: Using conservative SQLite settings");
 
             // Use conservative settings for HarmonyOS
@@ -36,12 +41,14 @@ pub async fn create_pool(config: &DatabaseConfig) -> Result<SqlitePool, sqlx::Er
 
             // Run migrations via centralized module
             tracing::info!("Running database migrations...");
-            super::migrations::run_migrations(&pool).await?;
+            crate::migrations::run_migrations(&pool).await?;
             tracing::info!("Database migrations completed successfully");
 
             return Ok(pool);
         }
     }
+    #[cfg(not(target_os = "linux"))]
+    let _ = is_harmonyos;
 
     let pool = SqlitePoolOptions::new()
         .max_connections(config.max_connections)
@@ -53,14 +60,8 @@ pub async fn create_pool(config: &DatabaseConfig) -> Result<SqlitePool, sqlx::Er
 
     // Run migrations via centralized module
     tracing::info!("Running database migrations...");
-    super::migrations::run_migrations(&pool).await?;
+    crate::migrations::run_migrations(&pool).await?;
     tracing::info!("Database migrations completed successfully");
 
     Ok(pool)
-}
-
-pub async fn create_pool_from_url(database_url: &str) -> Result<SqlitePool, sqlx::Error> {
-    let config = DatabaseConfig { url: database_url.to_string(), ..Default::default() };
-
-    create_pool(&config).await
 }

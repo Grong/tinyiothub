@@ -50,11 +50,11 @@ pub trait EventAccessControl: Send + Sync {
 
 /// Role-based access control implementation
 pub struct RoleBasedAccessControl {
-    db: Arc<crate::shared::persistence::Database>,
+    db: Arc<tinyiothub_storage::Database>,
 }
 
 impl RoleBasedAccessControl {
-    pub fn new(db: Arc<crate::shared::persistence::Database>) -> Self {
+    pub fn new(db: Arc<tinyiothub_storage::Database>) -> Self {
         Self { db }
     }
 

@@ -8,8 +8,8 @@ use tinyiothub_core::models::{
     device_property::DeviceProperty,
 };
 
-use crate::shared::persistence::repositories::{
-    bulk_create_device_commands, create_device_command, create_device_properties_batch,
+use tinyiothub_storage::{
+    Database, bulk_create_device_commands, create_device_command, create_device_properties_batch,
     find_device_commands_by_device_id, find_device_properties_by_device_id,
 };
 
@@ -30,9 +30,7 @@ use crate::{
         },
         tag::TagRepository,
     },
-    shared::{
-        error::Error, event::EventBus, pagination::DataObjectWithPagination, persistence::Database,
-    },
+    shared::{error::Error, event::EventBus, pagination::DataObjectWithPagination},
 };
 
 pub struct DeviceService {

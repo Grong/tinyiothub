@@ -2694,6 +2694,7 @@ dependencies = [
 name = "integration-tests"
 version = "0.4.6"
 dependencies = [
+ "db",
  "sqlx",
  "tinyiothub-cloud",
  "tokio",

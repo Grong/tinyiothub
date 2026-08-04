@@ -9,6 +9,8 @@ pub mod errors;
 pub mod handler;
 pub mod repo;
 pub mod router;
+pub mod sqlite_event;
+pub mod sqlite_real_time_event;
 pub mod service;
 pub mod types;
 

@@ -67,7 +67,7 @@ fn extract_bearer_token<'a>(headers: &'a HeaderMap, uri: &'a axum::http::Uri) ->
 async fn extract_user_from_jwt(
     headers: &HeaderMap,
     uri: &axum::http::Uri,
-    db: Option<&crate::shared::persistence::Database>,
+    db: Option<&tinyiothub_storage::Database>,
 ) -> Option<UserInfo> {
     let token = extract_bearer_token(headers, uri)?;
 

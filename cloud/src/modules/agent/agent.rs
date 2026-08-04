@@ -732,7 +732,7 @@ mod tests {
 
     async fn test_db() -> SqlitePool {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-        crate::shared::persistence::test_helpers::run_all_migrations(&pool).await.unwrap();
+        tinyiothub_storage::test_helpers::run_all_migrations(&pool).await.unwrap();
         pool
     }
 

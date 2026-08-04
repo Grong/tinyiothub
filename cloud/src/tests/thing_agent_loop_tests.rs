@@ -298,7 +298,7 @@ async fn test_pool(name: &str) -> (sqlx::SqlitePool, tempfile::TempDir) {
         .connect(&url)
         .await
         .expect("temp file pool");
-    crate::shared::persistence::migrations::run_migrations(&pool).await.expect("migrations");
+    tinyiothub_storage::migrations::run_migrations(&pool).await.expect("migrations");
     (pool, dir)
 }
 
