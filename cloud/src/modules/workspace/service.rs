@@ -4,6 +4,7 @@ use tinyiothub_ai::{
     event::{bus::AiEventPublisher, types::AiEvent},
     heartbeat::{repo::HeartbeatTaskRepository, types::NewHeartbeatTask},
 };
+use tinyiothub_core::agent_hooks::AgentHooks;
 
 use super::{
     repo::WorkspaceRepository,
@@ -17,6 +18,7 @@ pub struct WorkspaceService {
     repository: Arc<dyn WorkspaceRepository>,
     event_publisher: Mutex<Option<Arc<AiEventPublisher>>>,
     heartbeat_task_repo: Mutex<Option<Arc<dyn HeartbeatTaskRepository>>>,
+    agent_hooks: Mutex<Option<Arc<dyn AgentHooks>>>,
 }
 
 impl WorkspaceService {
@@ -25,6 +27,7 @@ impl WorkspaceService {
             repository,
             event_publisher: Mutex::new(None),
             heartbeat_task_repo: Mutex::new(None),
+            agent_hooks: Mutex::new(None),
         }
     }
 
@@ -34,6 +37,10 @@ impl WorkspaceService {
 
     pub fn set_heartbeat_task_repo(&self, repo: Arc<dyn HeartbeatTaskRepository>) {
         *self.heartbeat_task_repo.lock().unwrap() = Some(repo);
+    }
+
+    pub fn set_agent_hooks(&self, hooks: Arc<dyn AgentHooks>) {
+        *self.agent_hooks.lock().unwrap() = Some(hooks);
     }
 
     pub async fn list_all_ids(&self) -> Result<Vec<String>> {
@@ -75,7 +82,10 @@ impl WorkspaceService {
     async fn seed_default_heartbeat_tasks(&self, workspace_id: &str) {
         let repo = self.heartbeat_task_repo.lock().unwrap().clone();
         let Some(repo) = repo else { return };
-        let defaults: Vec<NewHeartbeatTask> = crate::modules::agent::heartbeat::get_default_tasks()
+        let hooks = self.agent_hooks.lock().unwrap().clone();
+        let Some(hooks) = hooks else { return };
+        let defaults: Vec<NewHeartbeatTask> = hooks
+            .default_heartbeat_tasks()
             .into_iter()
             .map(|t| NewHeartbeatTask { priority: t.priority, text: t.text, paused: t.paused })
             .collect();
@@ -318,29 +328,160 @@ mod tests {
         }
     }
 
-    async fn heartbeat_repo() -> crate::modules::agent::heartbeat_repo::SqliteHeartbeatTaskRepository
-    {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(":memory:")
-            .await
-            .expect("in-memory sqlite");
-        for stmt in
-            include_str!("../../../../crates/db/migrations/20260629000001_create_heartbeat_tasks.sql").split(';')
-        {
-            let stmt = stmt.trim();
-            if !stmt.is_empty() {
-                sqlx::query(stmt).execute(&pool).await.expect("apply migration");
-            }
+    /// In-memory heartbeat task repo — the concrete Sqlite repo lives in the
+    /// agent module, which workspace must not reference (P4.0d).
+    struct MockHeartbeatTaskRepo {
+        tasks: Mutex<Vec<tinyiothub_ai::heartbeat::types::HeartbeatTask>>,
+    }
+
+    impl MockHeartbeatTaskRepo {
+        fn new() -> Self {
+            Self { tasks: Mutex::new(Vec::new()) }
         }
-        crate::modules::agent::heartbeat_repo::SqliteHeartbeatTaskRepository::new(pool)
+    }
+
+    #[async_trait::async_trait]
+    impl HeartbeatTaskRepository for MockHeartbeatTaskRepo {
+        async fn list_by_workspace(
+            &self,
+            workspace_id: &str,
+        ) -> std::result::Result<
+            Vec<tinyiothub_ai::heartbeat::types::HeartbeatTask>,
+            tinyiothub_ai::heartbeat::repo::RepoError,
+        > {
+            Ok(self
+                .tasks
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|t| t.workspace_id == workspace_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn upsert(
+            &self,
+            _workspace_id: &str,
+            _task: &tinyiothub_ai::heartbeat::types::HeartbeatTask,
+            _expected_version: i64,
+        ) -> std::result::Result<bool, tinyiothub_ai::heartbeat::repo::RepoError> {
+            unimplemented!()
+        }
+
+        async fn insert(
+            &self,
+            _workspace_id: &str,
+            _priority: &str,
+            _text: &str,
+        ) -> std::result::Result<
+            tinyiothub_ai::heartbeat::types::HeartbeatTask,
+            tinyiothub_ai::heartbeat::repo::RepoError,
+        > {
+            unimplemented!()
+        }
+
+        async fn set_paused(
+            &self,
+            _workspace_id: &str,
+            _task_id: i64,
+            _paused: bool,
+        ) -> std::result::Result<(), tinyiothub_ai::heartbeat::repo::RepoError> {
+            unimplemented!()
+        }
+
+        async fn delete(
+            &self,
+            _workspace_id: &str,
+            _task_id: i64,
+        ) -> std::result::Result<(), tinyiothub_ai::heartbeat::repo::RepoError> {
+            unimplemented!()
+        }
+
+        async fn replace_all(
+            &self,
+            workspace_id: &str,
+            tasks: &[NewHeartbeatTask],
+        ) -> std::result::Result<(), tinyiothub_ai::heartbeat::repo::RepoError> {
+            let mut store = self.tasks.lock().unwrap();
+            store.retain(|t| t.workspace_id != workspace_id);
+            store.extend(tasks.iter().enumerate().map(|(i, t)| {
+                tinyiothub_ai::heartbeat::types::HeartbeatTask {
+                    id: i as i64 + 1,
+                    workspace_id: workspace_id.to_string(),
+                    priority: t.priority.clone(),
+                    text: t.text.clone(),
+                    paused: t.paused,
+                    version: 1,
+                    created_at: chrono::Utc::now(),
+                    updated_at: chrono::Utc::now(),
+                }
+            }));
+            Ok(())
+        }
+
+        async fn insert_result(
+            &self,
+            _workspace_id: &str,
+            _result: &tinyiothub_ai::heartbeat::types::HeartbeatResult,
+        ) -> std::result::Result<(), tinyiothub_ai::heartbeat::repo::RepoError> {
+            unimplemented!()
+        }
+    }
+
+    /// Stub hooks — the real default task set lives in the agent domain; here
+    /// we only verify the service seeds whatever the hooks provide.
+    struct StubAgentHooks;
+
+    #[async_trait::async_trait]
+    impl AgentHooks for StubAgentHooks {
+        fn default_heartbeat_tasks(&self) -> Vec<tinyiothub_core::agent_hooks::HeartbeatTaskDef> {
+            vec![
+                tinyiothub_core::agent_hooks::HeartbeatTaskDef {
+                    priority: "high".into(),
+                    text: "检查离线设备并尝试自动重连".into(),
+                    paused: false,
+                },
+                tinyiothub_core::agent_hooks::HeartbeatTaskDef {
+                    priority: "medium".into(),
+                    text: "扫描未处理的高优先级告警".into(),
+                    paused: false,
+                },
+                tinyiothub_core::agent_hooks::HeartbeatTaskDef {
+                    priority: "medium".into(),
+                    text: "生成设备状态日报摘要".into(),
+                    paused: false,
+                },
+                tinyiothub_core::agent_hooks::HeartbeatTaskDef {
+                    priority: "low".into(),
+                    text: "检查系统磁盘和内存使用率".into(),
+                    paused: true,
+                },
+            ]
+        }
+
+        async fn read_legacy_heartbeat_tasks(
+            &self,
+            _workspace_dir: &std::path::Path,
+        ) -> std::result::Result<Vec<tinyiothub_core::agent_hooks::HeartbeatTaskDef>, String>
+        {
+            unimplemented!()
+        }
+
+        async fn migrate_legacy_heartbeat_tasks(
+            &self,
+            _workspace_id: &str,
+            _workspace_dir: &std::path::Path,
+        ) -> std::result::Result<bool, String> {
+            unimplemented!()
+        }
     }
 
     #[tokio::test]
     async fn create_seeds_default_heartbeat_tasks() {
         let service = WorkspaceService::new(Arc::new(MockWorkspaceRepository::default()));
-        let repo = Arc::new(heartbeat_repo().await);
+        let repo = Arc::new(MockHeartbeatTaskRepo::new());
         service.set_heartbeat_task_repo(repo.clone());
+        service.set_agent_hooks(Arc::new(StubAgentHooks));
 
         service.create("tenant_1", "ws", None, None, None).await.expect("create");
 

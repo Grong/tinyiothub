@@ -170,6 +170,11 @@ pub struct AppState {
     /// 参数校验 / 确认令牌存储 / 策略裁决，斩断 thing→agent 依赖边。
     /// 由组合层（此处）注入 agent 实现；thing 域只依赖 core trait。
     pub thing_action_hooks: Arc<dyn tinyiothub_core::thing_hooks::ThingActionHooks>,
+
+    /// Agent hooks（P4.0d）—— workspace 域经此使用 agent 侧的默认心跳
+    /// 任务集 /  legacy HEARTBEAT.md 解析与迁移，斩断 workspace→agent
+    /// 依赖边。由组合层（此处）注入 agent 实现；workspace 域只依赖 core trait。
+    pub agent_hooks: Arc<dyn tinyiothub_core::agent_hooks::AgentHooks>,
 }
 
 impl AppState {
@@ -426,6 +431,14 @@ impl AppState {
                 database.pool().clone(),
             ));
 
+        // Agent hooks（P4.0d）—— agent 侧实现 core trait，注入给 workspace 域
+        let agent_hooks: Arc<dyn tinyiothub_core::agent_hooks::AgentHooks> =
+            Arc::new(crate::modules::agent::agent_hooks::AgentHooksImpl::new(Arc::new(
+                crate::modules::agent::heartbeat_repo::SqliteHeartbeatTaskRepository::new(
+                    database.pool().clone(),
+                ),
+            )));
+
         Self {
             device_cache,
             database,
@@ -467,6 +480,7 @@ impl AppState {
 
             memory_store,
             thing_action_hooks,
+            agent_hooks,
         }
     }
 

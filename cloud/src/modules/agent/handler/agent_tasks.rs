@@ -1,6 +1,6 @@
 // Thing Agent 用户指令端点（T14）
 //
-// Routes (registered under /workspaces/{id}/agent in workspace handler):
+// Routes (nested under /workspaces by the composition layer — api/mod.rs):
 //   POST /tasks                  {text} → {taskId}（队列满 → 429）
 //   GET  /runs?limit=&offset=    分页（limit 默认 50 最大 200）
 //   POST /runs/{run_id}/ack      幂等
@@ -12,8 +12,9 @@
 // 现行 schema 无此二列（查询必失败回落 "user"），不可用。
 
 use axum::{
-    Json,
+    Json, Router,
     extract::{Extension, Path, Query, State},
+    routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
 use tinyiothub_ai::thing_agent::{AgentRunsRepository, EnqueueError, Priority, TriggerSource, WakeSignal};
@@ -52,6 +53,17 @@ macro_rules! verify_agent_admin {
 }
 
 // ── POST /{id}/agent/tasks ──
+
+/// Workspace-scoped agent directive routes (`/workspaces/{id}/agent/*`).
+/// Registered by the composition layer (api/mod.rs) so the workspace module
+/// carries no agent dependency edge (P4.0d).
+pub fn create_workspace_router() -> Router<AppState> {
+    Router::new()
+        .route("/{id}/agent/tasks", post(create_task))
+        .route("/{id}/agent/runs", get(list_runs))
+        .route("/{id}/agent/runs/{run_id}/ack", post(ack_run))
+        .route("/{id}/agent/policy", get(get_policy).put(update_policy))
+}
 
 #[derive(Debug, Deserialize)]
 pub struct CreateTaskRequest {

@@ -13,12 +13,10 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use tinyiothub_ai::heartbeat::types::NewHeartbeatTask;
+use tinyiothub_core::agent_hooks::HeartbeatTaskDef;
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{
-    modules::agent::heartbeat::{
-        HeartbeatTask, get_default_tasks, migrate_file_tasks_to_db, read_heartbeat_tasks,
-    },
     shared::{api_response::ApiResponse, app_state::AppState, paths, security::jwt::Claims},
     verify_workspace_access,
 };
@@ -32,7 +30,7 @@ pub struct HeartbeatConfigResponse {
     interval_minutes: u32,
     workspace_id: String,
     agent_id: String,
-    tasks: Vec<HeartbeatTask>,
+    tasks: Vec<HeartbeatTaskDef>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -84,7 +82,7 @@ pub struct HeartbeatLogsResponse {
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateHeartbeatTasksRequest {
-    pub tasks: Vec<HeartbeatTask>,
+    pub tasks: Vec<HeartbeatTaskDef>,
 }
 
 // ── GET /{id}/heartbeat/config ──
@@ -365,7 +363,7 @@ pub async fn get_tasks(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
     Path(workspace_id): Path<String>,
-) -> Json<ApiResponse<Vec<HeartbeatTask>>> {
+) -> Json<ApiResponse<Vec<HeartbeatTaskDef>>> {
     verify_workspace_access!(state, claims, workspace_id);
 
     let tasks = load_tasks(&state, &workspace_id).await;
@@ -380,7 +378,7 @@ pub async fn update_tasks(
     Extension(claims): Extension<Claims>,
     Path(workspace_id): Path<String>,
     Json(req): Json<UpdateHeartbeatTasksRequest>,
-) -> Json<ApiResponse<Vec<HeartbeatTask>>> {
+) -> Json<ApiResponse<Vec<HeartbeatTaskDef>>> {
     verify_workspace_access!(state, claims, workspace_id);
 
     let Some(ref runner) = state.heartbeat_runner else {
@@ -665,12 +663,11 @@ async fn update_proposal_status(
 /// DB is the single source of truth for heartbeat tasks. Migrates legacy
 /// HEARTBEAT.md on first access; falls back to file/defaults when the
 /// heartbeat runner (and thus the repo) is unavailable.
-async fn load_tasks(state: &AppState, workspace_id: &str) -> Vec<HeartbeatTask> {
+async fn load_tasks(state: &AppState, workspace_id: &str) -> Vec<HeartbeatTaskDef> {
     if let Some(ref runner) = state.heartbeat_runner {
         let workspace_dir = paths::workspace_dir(workspace_id);
         if let Err(e) =
-            migrate_file_tasks_to_db(runner.task_repo().as_ref(), workspace_id, &workspace_dir)
-                .await
+            state.agent_hooks.migrate_legacy_heartbeat_tasks(workspace_id, &workspace_dir).await
         {
             tracing::warn!(%workspace_id, "Heartbeat task migration failed: {}", e);
         }
@@ -678,7 +675,11 @@ async fn load_tasks(state: &AppState, workspace_id: &str) -> Vec<HeartbeatTask> 
             Ok(tasks) => {
                 return tasks
                     .into_iter()
-                    .map(|t| HeartbeatTask { priority: t.priority, text: t.text, paused: t.paused })
+                    .map(|t| HeartbeatTaskDef {
+                        priority: t.priority,
+                        text: t.text,
+                        paused: t.paused,
+                    })
                     .collect();
             }
             Err(e) => {
@@ -687,9 +688,9 @@ async fn load_tasks(state: &AppState, workspace_id: &str) -> Vec<HeartbeatTask> 
         }
     }
     let workspace_dir = paths::workspace_dir(workspace_id);
-    read_heartbeat_tasks(&workspace_dir).await.unwrap_or_else(|e| {
+    state.agent_hooks.read_legacy_heartbeat_tasks(&workspace_dir).await.unwrap_or_else(|e| {
         tracing::warn!(%workspace_id, "Failed to read HEARTBEAT.md: {}", e);
-        get_default_tasks()
+        state.agent_hooks.default_heartbeat_tasks()
     })
 }
 

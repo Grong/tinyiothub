@@ -169,6 +169,7 @@ impl ServiceManager {
             app_state.alarm_service.set_event_publisher(event_publisher.clone());
             app_state.workspace_service.set_event_publisher(event_publisher.clone());
             app_state.workspace_service.set_heartbeat_task_repo(heartbeat_task_repo.clone());
+            app_state.workspace_service.set_agent_hooks(app_state.agent_hooks.clone());
 
             // Wire agent pool via adapter
             let ai_adapter = Arc::new(crate::shared::ai_adapter::CloudAgentPoolAdapter::new(

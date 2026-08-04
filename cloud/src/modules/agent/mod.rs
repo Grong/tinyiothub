@@ -16,6 +16,7 @@ pub mod memory;
 pub mod reflect;
 pub mod tools;
 
+pub mod agent_hooks;
 pub mod agent_runs_repo;
 #[cfg(test)]
 pub mod directive_sink;
