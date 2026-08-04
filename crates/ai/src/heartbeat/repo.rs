@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 
 use super::types::{HeartbeatResult, HeartbeatTask, NewHeartbeatTask};
-use crate::tool::trust::TrustConfig;
+use tinyiothub_skills::trust::TrustConfig;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RepoError {

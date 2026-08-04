@@ -21,7 +21,7 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc;
 
 use super::Trigger;
-use crate::policy::autonomy::{AutonomyMode, PolicyRepository};
+use tinyiothub_policy::autonomy::{AutonomyMode, PolicyRepository};
 use crate::thing_agent::traits::{ThingAgentHost, ThingEventSignal};
 use crate::thing_agent::types::{Priority, TriggerSource, WakeSignal};
 
@@ -167,7 +167,7 @@ mod tests {
     use std::sync::Mutex;
     use std::time::Duration;
 
-    use crate::policy::autonomy::AutonomyPolicy;
+    use tinyiothub_policy::autonomy::AutonomyPolicy;
 
     const WS: &str = "ws_01";
 

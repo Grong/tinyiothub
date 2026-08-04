@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use sqlx::SqlitePool;
-use tinyiothub_ai::policy::autonomy::{AutonomyMode, AutonomyPolicy, PolicyRepository};
+use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy, PolicyRepository};
 
 pub struct SqlitePolicyRepository {
     pool: SqlitePool,

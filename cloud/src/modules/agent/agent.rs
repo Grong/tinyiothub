@@ -27,10 +27,8 @@ use super::{
     chat::service as chat_service, config::service as config_service,
     tools::service as tool_service,
 };
-use crate::shared::{
-    agent::config::{AgentConfig, AgentError, AgentInfo, AgentRuntimeConfig},
-    workspace_memory::WorkspaceScopedMemory,
-};
+use crate::shared::agent::config::{AgentConfig, AgentError, AgentInfo, AgentRuntimeConfig};
+use tinyiothub_memory::workspace_memory::WorkspaceScopedMemory;
 
 // ============================================================================
 // Skills Section (zeroclaw SystemPromptBuilder integration)
@@ -45,16 +43,16 @@ impl PromptSection for TinyIoTHubSkillsSection {
 
     fn build(&self, ctx: &PromptContext<'_>) -> anyhow::Result<String> {
         let skills = load_workspace_skills(ctx.workspace_dir);
-        Ok(tinyiothub_ai::skills::build_skill_index_prompt(&skills))
+        Ok(tinyiothub_skills::build_skill_index_prompt(&skills))
     }
 }
 
 /// Load skills for a workspace, workspace-specific dir overriding the global one.
 pub(crate) fn load_workspace_skills(
     workspace_dir: &std::path::Path,
-) -> Vec<tinyiothub_ai::skills::LoadedSkill> {
+) -> Vec<tinyiothub_skills::LoadedSkill> {
     let dirs = vec![workspace_dir.join("skills"), std::path::PathBuf::from("data/skills")];
-    tinyiothub_ai::skills::load_skills_from_dirs(&dirs)
+    tinyiothub_skills::load_skills_from_dirs(&dirs)
 }
 
 // ============================================================================
@@ -126,7 +124,7 @@ pub struct AgentPool {
         tokio::sync::RwLock<Option<Arc<crate::modules::workspace::WorkspaceService>>>,
     pub trust_configs: DashMap<String, tinyiothub_ai::types::TrustConfig>,
     pub memory_service:
-        tokio::sync::RwLock<Option<Arc<tinyiothub_ai::memory::service::MemoryService>>>,
+        tokio::sync::RwLock<Option<Arc<tinyiothub_memory::service::MemoryService>>>,
     pub event_publisher:
         tokio::sync::RwLock<Option<Arc<tinyiothub_ai::event::bus::AiEventPublisher>>>,
 }
@@ -204,7 +202,7 @@ impl AgentPool {
 
     pub async fn set_memory_service(
         &self,
-        service: Arc<tinyiothub_ai::memory::service::MemoryService>,
+        service: Arc<tinyiothub_memory::service::MemoryService>,
     ) {
         let mut guard = self.memory_service.write().await;
         *guard = Some(service);

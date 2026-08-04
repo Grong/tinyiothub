@@ -1,0 +1,21 @@
+[package]
+name = "policy"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Policy engine — workspace guardrails, autonomy gates, and HITL proposals"
+
+[lib]
+name = "tinyiothub_policy"
+
+[dependencies]
+skills = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

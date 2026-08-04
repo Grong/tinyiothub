@@ -1,21 +1,21 @@
 //! SQLite implementation of the unified PolicyEngine trait (X3/T16).
 //!
 //! Loads rules from the `policy_rules` table and arbitrates them through
-//! `tinyiothub_ai::policy::evaluate_rules` (priority desc, ties fail safe,
+//! `tinyiothub_policy::evaluate_rules` (priority desc, ties fail safe,
 //! default Allow). Read failures are fail-closed as
 //! `RequireApproval("policy_read_failed")` — defer to a human rather than
 //! silently allow or hard-block.
 
 use async_trait::async_trait;
 use sqlx::{Row, SqlitePool};
-use tinyiothub_ai::policy::{
+use tinyiothub_policy::{
     PolicyAction, PolicyCategory, PolicyDecision, PolicyEngine, PolicyRule, evaluate_rules,
 };
 
 /// PolicyEngine backed by the `policy_rules` table.
 ///
 /// Rules are loaded per workspace and arbitrated through
-/// [`evaluate_rules`](tinyiothub_ai::policy::evaluate_rules) — priority desc,
+/// [`evaluate_rules`](tinyiothub_policy::evaluate_rules) — priority desc,
 /// ties fail safe, default Allow. Rows whose category/action strings don't
 /// parse are skipped so a bad row never poisons evaluation. Read failures fail
 /// closed as `RequireApproval("policy_read_failed")` — defer to a human rather
@@ -122,7 +122,7 @@ impl SqlitePolicyEngine {
 #[cfg(test)]
 mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
-    use tinyiothub_ai::policy::{
+    use tinyiothub_policy::{
         PolicyAction, PolicyCategory, PolicyDecision, PolicyEngine, PolicyRule,
     };
 

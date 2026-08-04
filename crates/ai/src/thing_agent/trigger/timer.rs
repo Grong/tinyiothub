@@ -11,7 +11,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use super::Trigger;
-use crate::policy::autonomy::{AutonomyMode, PolicyRepository};
+use tinyiothub_policy::autonomy::{AutonomyMode, PolicyRepository};
 use crate::thing_agent::types::{Priority, TriggerSource, WakeSignal};
 
 /// Emits a [`WakeSignal`] with `priority: Normal`, `source: Timer` and
@@ -69,7 +69,7 @@ mod tests {
 
     use tokio::time::{advance, pause};
 
-    use crate::policy::autonomy::AutonomyPolicy;
+    use tinyiothub_policy::autonomy::AutonomyPolicy;
 
     fn policy(mode: AutonomyMode) -> AutonomyPolicy {
         AutonomyPolicy {

@@ -32,4 +32,3 @@ pub mod event;
 pub mod hardware;
 pub mod mqtt_client;
 pub mod redis;
-pub mod workspace_memory;

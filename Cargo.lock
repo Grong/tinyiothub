@@ -92,12 +92,15 @@ dependencies = [
  "core",
  "dashmap",
  "llm",
+ "memory",
  "mockall",
  "parking_lot 0.12.5",
+ "policy",
  "regex",
  "runtime",
  "serde",
  "serde_json",
+ "skills",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
@@ -3125,16 +3128,22 @@ dependencies = [
 name = "memory"
 version = "0.4.6"
 dependencies = [
+ "anyhow",
  "async-trait",
  "chrono",
  "core",
+ "dashmap",
  "db",
+ "llm",
  "serde",
  "serde_json",
  "sqlx",
+ "thiserror 1.0.69",
  "tokio",
  "tracing",
  "uuid",
+ "zeroclaw-api",
+ "zeroclawlabs",
 ]
 
 [[package]]
@@ -3875,6 +3884,18 @@ dependencies = [
  "fdeflate",
  "flate2",
  "miniz_oxide",
+]
+
+[[package]]
+name = "policy"
+version = "0.4.6"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "skills",
+ "tokio",
 ]
 
 [[package]]
@@ -5257,6 +5278,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2aa850e253778c88a04c3d7323b043aeda9d3e30d5971937c1855769763678e"
 
 [[package]]
+name = "skills"
+version = "0.4.6"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "uuid",
+]
+
+[[package]]
 name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5952,6 +5984,7 @@ dependencies = [
  "num_cpus",
  "parking_lot 0.12.5",
  "plugin-sdk",
+ "policy",
  "proptest",
  "rand 0.8.6",
  "redis",
@@ -5965,6 +5998,7 @@ dependencies = [
  "serialport",
  "sha1",
  "sha2 0.10.9",
+ "skills",
  "smallvec",
  "sqlx",
  "subtle",

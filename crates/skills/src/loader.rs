@@ -13,7 +13,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use super::types::SkillDefinition;
+use crate::types::SkillDefinition;
 
 /// How a skill's content enters the model's context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

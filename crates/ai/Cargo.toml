@@ -15,6 +15,9 @@ name = "tinyiothub_ai"
 core = { workspace = true }
 runtime = { workspace = true }
 llm = { workspace = true }
+memory = { workspace = true }
+policy = { workspace = true }
+skills = { workspace = true }
 
 # Async runtime
 tokio = { workspace = true }

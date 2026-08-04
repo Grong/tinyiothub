@@ -6,6 +6,7 @@
 
 pub mod adapters;
 pub mod autonomy;
+pub mod proposal;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

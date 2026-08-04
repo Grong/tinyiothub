@@ -12,11 +12,11 @@ use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 use tinyiothub_ai::{
     heartbeat::types::{HeartbeatResult, HeartbeatStatus},
     orchestrator::callbacks::HeartbeatBridge,
-    proposal::{Proposal, ProposalStatus},
     thing_agent::{
         AgentRunsRepository, DirectiveSink, EnqueueError, Priority, TriggerSource, WakeSignal,
     },
 };
+use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
 
 use crate::modules::agent::agent_runs_repo::SqliteAgentRunsRepository;
 

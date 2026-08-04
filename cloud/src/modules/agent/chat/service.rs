@@ -96,7 +96,7 @@ pub async fn send_message(
     chat_handles: &Arc<
         tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>,
     >,
-    memory_service: Option<std::sync::Arc<tinyiothub_ai::memory::service::MemoryService>>,
+    memory_service: Option<std::sync::Arc<tinyiothub_memory::service::MemoryService>>,
     event_publisher: Option<std::sync::Arc<tinyiothub_ai::event::bus::AiEventPublisher>>,
     enable_reflection: bool,
     model: &str,
@@ -112,7 +112,7 @@ pub async fn send_message(
     let (turn_message, reflect_message) = {
         let ws_dir = crate::shared::paths::workspace_dir(workspace_id);
         let skills = crate::modules::agent::agent::load_workspace_skills(&ws_dir);
-        match tinyiothub_ai::skills::resolve_trigger(message, &skills) {
+        match tinyiothub_skills::resolve_trigger(message, &skills) {
             Some(hit) => {
                 let user_text = if hit.cleaned_message.is_empty() {
                     "综合情况".to_string()
@@ -120,7 +120,7 @@ pub async fn send_message(
                     hit.cleaned_message
                 };
                 let turn =
-                    tinyiothub_ai::skills::wrap_injected_skill(&hit.name, &hit.body, &user_text);
+                    tinyiothub_skills::wrap_injected_skill(&hit.name, &hit.body, &user_text);
                 (turn, user_text)
             }
             None => (message.to_string(), message.to_string()),

@@ -177,7 +177,7 @@ impl ServiceManager {
             heartbeat_runner.set_agent_pool(ai_adapter).await;
 
             let memory_service = Arc::new(
-                tinyiothub_ai::memory::service::MemoryService::new(
+                tinyiothub_memory::service::MemoryService::new(
                     Arc::new(crate::shared::llm_provider::MinimaxLlmProvider::new()),
                     app_state.memory_store.clone(),
                 )

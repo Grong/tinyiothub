@@ -37,10 +37,8 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
-use tinyiothub_ai::{
-    policy::autonomy::{GateVerdict, PolicyRepository, gate_check},
-    thing_agent::RunContextInner,
-};
+use tinyiothub_ai::thing_agent::RunContextInner;
+use tinyiothub_policy::autonomy::{GateVerdict, PolicyRepository, gate_check};
 use tinyiothub_core::models::event::EventLevel;
 use tokio::sync::RwLock;
 use zeroclaw::tools::{Tool, ToolResult};
@@ -366,10 +364,8 @@ impl Tool for AutonomousInvokeActionTool {
 
 #[cfg(test)]
 mod tests {
-    use tinyiothub_ai::{
-        policy::autonomy::{AutonomyMode, AutonomyPolicy},
-        thing_agent::RunContextInner,
-    };
+    use tinyiothub_ai::thing_agent::RunContextInner;
+    use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy};
     use zeroclaw::tools::Tool;
 
     use super::*;

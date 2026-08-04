@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 // Re-export AI crate types for backward compatibility.
-pub use tinyiothub_ai::skills::{SkillType, glob_match};
+pub use tinyiothub_skills::{SkillType, glob_match};
 
 /// DB-persisted skill with workspace/agent identity.
 ///
@@ -53,7 +53,7 @@ impl AgentSkill {
 
     /// Delegate to AI crate SkillDefinition::parse_frontmatter.
     pub fn parse_frontmatter(content: &str) -> (Option<serde_json::Value>, &str) {
-        tinyiothub_ai::skills::SkillDefinition::parse_frontmatter(content)
+        tinyiothub_skills::SkillDefinition::parse_frontmatter(content)
     }
 
     /// Delegate to AI crate SkillDefinition::execute.
@@ -68,8 +68,8 @@ impl AgentSkill {
         def.matches_path(file_path)
     }
 
-    fn to_definition(&self) -> tinyiothub_ai::skills::SkillDefinition {
-        tinyiothub_ai::skills::SkillDefinition {
+    fn to_definition(&self) -> tinyiothub_skills::SkillDefinition {
+        tinyiothub_skills::SkillDefinition {
             skill_name: self.skill_name.clone(),
             skill_content: self.skill_content.clone(),
             skill_type: self.skill_type,

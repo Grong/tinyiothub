@@ -184,7 +184,7 @@ pub async fn get_trust_config(
                 .flatten()
                 .unwrap_or_default(),
         },
-        None => tinyiothub_ai::tool::trust::TrustConfig::default(),
+        None => tinyiothub_skills::trust::TrustConfig::default(),
     };
 
     ApiResponseBuilder::success(serde_json::to_value(config).unwrap_or_default())
@@ -196,7 +196,7 @@ pub async fn update_trust_config(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
     Path(workspace_id): Path<String>,
-    Json(config): Json<tinyiothub_ai::tool::trust::TrustConfig>,
+    Json(config): Json<tinyiothub_skills::trust::TrustConfig>,
 ) -> Json<ApiResponse<serde_json::Value>> {
     verify_workspace_access!(state, claims, workspace_id);
 

@@ -15,7 +15,7 @@ use super::repo::HeartbeatTaskRepository;
 use super::types::{HeartbeatConfig, HeartbeatSignal, LoopSignal};
 use crate::agent::pool::AgentPoolLike;
 use crate::event::bus::AiEventPublisher;
-use crate::tool::trust::TrustConfig;
+use tinyiothub_skills::trust::TrustConfig;
 
 struct LoopHandle {
     cancel_tx: oneshot::Sender<()>,
@@ -359,9 +359,9 @@ mod tests {
 
     struct MockTaskRepo {
         tasks: Vec<HeartbeatTask>,
-        trust: Option<crate::tool::trust::TrustConfig>,
+        trust: Option<tinyiothub_skills::trust::TrustConfig>,
         hb_config: Option<crate::heartbeat::types::WorkspaceHeartbeatConfig>,
-        saved_trust: std::sync::Mutex<Vec<crate::tool::trust::TrustConfig>>,
+        saved_trust: std::sync::Mutex<Vec<tinyiothub_skills::trust::TrustConfig>>,
     }
 
     impl MockTaskRepo {
@@ -383,13 +383,13 @@ mod tests {
         async fn load_trust_config(
             &self,
             _workspace_id: &str,
-        ) -> Result<Option<crate::tool::trust::TrustConfig>, RepoError> {
+        ) -> Result<Option<tinyiothub_skills::trust::TrustConfig>, RepoError> {
             Ok(self.trust.clone())
         }
         async fn save_trust_config(
             &self,
             _workspace_id: &str,
-            config: &crate::tool::trust::TrustConfig,
+            config: &tinyiothub_skills::trust::TrustConfig,
         ) -> Result<(), RepoError> {
             self.saved_trust.lock().unwrap().push(config.clone());
             Ok(())
@@ -608,8 +608,8 @@ mod tests {
     #[tokio::test]
     async fn test_start_loads_trust_config_from_repo() {
         let repo = Arc::new(MockTaskRepo {
-            trust: Some(crate::tool::trust::TrustConfig {
-                trust_level: crate::tool::trust::TrustLevel::FullAuto,
+            trust: Some(tinyiothub_skills::trust::TrustConfig {
+                trust_level: tinyiothub_skills::trust::TrustLevel::FullAuto,
                 ..Default::default()
             }),
             ..MockTaskRepo::new(vec![])
@@ -619,7 +619,7 @@ mod tests {
         runner.start("ws_1").await;
 
         let loaded = runner.get_trust_config("ws_1").expect("trust config cached on start");
-        assert_eq!(loaded.trust_level, crate::tool::trust::TrustLevel::FullAuto);
+        assert_eq!(loaded.trust_level, tinyiothub_skills::trust::TrustLevel::FullAuto);
     }
 
     #[tokio::test]
@@ -630,7 +630,7 @@ mod tests {
         runner.start("ws_1").await;
 
         let loaded = runner.get_trust_config("ws_1").expect("trust config cached on start");
-        assert_eq!(loaded.trust_level, crate::tool::trust::TrustLevel::ReadOnlyAuto);
+        assert_eq!(loaded.trust_level, tinyiothub_skills::trust::TrustLevel::ReadOnlyAuto);
     }
 
     #[tokio::test]
@@ -639,15 +639,15 @@ mod tests {
         let publisher = make_publisher();
         let runner = HeartbeatRunner::new(repo.clone(), publisher, HeartbeatConfig::default());
 
-        let cfg = crate::tool::trust::TrustConfig {
-            trust_level: crate::tool::trust::TrustLevel::FullAuto,
+        let cfg = tinyiothub_skills::trust::TrustConfig {
+            trust_level: tinyiothub_skills::trust::TrustLevel::FullAuto,
             ..Default::default()
         };
         runner.update_trust_config("ws_1", cfg).await;
 
         let saved = repo.saved_trust.lock().unwrap();
         assert_eq!(saved.len(), 1, "update_trust_config must persist to the repo");
-        assert_eq!(saved[0].trust_level, crate::tool::trust::TrustLevel::FullAuto);
+        assert_eq!(saved[0].trust_level, tinyiothub_skills::trust::TrustLevel::FullAuto);
     }
 
     #[tokio::test]

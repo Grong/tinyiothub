@@ -70,7 +70,7 @@ pub struct HeartbeatResult {
     #[serde(default)]
     pub task_count: u32,
     pub executed_actions: Vec<ExecutedAction>,
-    pub proposals: Vec<super::super::proposal::Proposal>,
+    pub proposals: Vec<tinyiothub_policy::proposal::Proposal>,
     pub error: Option<String>,
 }
 

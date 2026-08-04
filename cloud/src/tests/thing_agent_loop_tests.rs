@@ -24,13 +24,11 @@ use std::{
 
 use serde_json::json;
 use sqlx::Row;
-use tinyiothub_ai::{
-    policy::autonomy::{AutonomyMode, AutonomyPolicy, PolicyRepository},
-    thing_agent::{
-        DirectiveSink, EnqueueError, Runner, ThingAgentManager, ThingAgentManagerConfig,
-        TriggerSource, WakeSignal,
-    },
+use tinyiothub_ai::thing_agent::{
+    DirectiveSink, EnqueueError, Runner, ThingAgentManager, ThingAgentManagerConfig,
+    TriggerSource, WakeSignal,
 };
+use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy, PolicyRepository};
 use tinyiothub_core::models::event::EventLevel;
 use zeroclaw::{
     providers::{ChatRequest, ChatResponse, ToolCall},

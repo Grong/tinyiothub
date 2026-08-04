@@ -11,10 +11,10 @@ use dashmap::DashMap;
 use tinyiothub_core::memory::{Confidence, MemoryInput, MemorySource, MemoryStore, MemoryZone, QueueCandidateInput};
 use tracing::{debug, info, warn};
 
-use super::provider::LlmProvider;
-use super::reflect::{build_reflection_prompt, parse_facts};
-use super::types::MemoryError;
-use crate::heartbeat::metrics::Metrics;
+use crate::provider::LlmProvider;
+use crate::reflect::{build_reflection_prompt, parse_facts};
+use crate::types::MemoryError;
+use crate::metrics::Metrics;
 use tinyiothub_llm::session::types::ChatTurnMessage;
 
 /// Dedup window: skip reflection if same session was processed within this duration.
@@ -100,7 +100,7 @@ impl MemoryService {
 
         let turn_text = super::reflect::sanitize_input(&super::reflect::build_reflection_input(messages));
 
-        let instruction = include_str!("../../templates/REFLECTION_PROMPT.md");
+        let instruction = include_str!("../templates/REFLECTION_PROMPT.md");
         let prompt = build_reflection_prompt(instruction, &active_text, &turn_text);
 
         let llm_response = tokio::time::timeout(Duration::from_secs(120), self.llm.chat(None, &prompt, model, 0.3))
@@ -218,7 +218,7 @@ impl MemoryService {
             .map(|m| format!("[{}] {}\n", m.zone.as_str(), m.content))
             .collect();
 
-        let prompt = include_str!("../../templates/COMPILE_PROMPT.md").replace("{memories_text}", &memories_text);
+        let prompt = include_str!("../templates/COMPILE_PROMPT.md").replace("{memories_text}", &memories_text);
 
         tokio::time::timeout(Duration::from_secs(120), self.llm.chat(None, &prompt, model, 0.3))
             .await
@@ -292,7 +292,7 @@ impl MemoryService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::memory::provider::LlmResponse;
+    use crate::provider::LlmResponse;
     use async_trait::async_trait;
     use std::sync::Mutex;
 

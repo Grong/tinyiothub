@@ -16,10 +16,8 @@ use axum::{
     extract::{Extension, Path, Query, State},
 };
 use serde::{Deserialize, Serialize};
-use tinyiothub_ai::{
-    policy::autonomy::{AutonomyMode, AutonomyPolicy, PolicyRepository},
-    thing_agent::{AgentRunsRepository, EnqueueError, Priority, TriggerSource, WakeSignal},
-};
+use tinyiothub_ai::thing_agent::{AgentRunsRepository, EnqueueError, Priority, TriggerSource, WakeSignal};
+use tinyiothub_policy::autonomy::{AutonomyMode, AutonomyPolicy, PolicyRepository};
 use tinyiothub_web::response::ApiResponseBuilder;
 
 use crate::{

@@ -1,18 +1,12 @@
-//! AI subsystem for TinyIoTHub — agents, heartbeat, alarms, memory, tools
+//! AI subsystem for TinyIoTHub — agents, heartbeat, alarms, orchestration
 
 pub mod agent;
 pub mod alarm;
 pub mod event;
 pub mod heartbeat;
-pub mod knowledge;
-pub mod memory;
 pub mod orchestrator;
-pub mod policy;
-pub mod proposal;
-pub use tinyiothub_llm::{prompt, session};
-pub mod skills;
 pub mod thing_agent;
-pub mod tool;
+pub use tinyiothub_llm::{prompt, session};
 
 /// Shared types re-exported at crate root for cross-domain use.
 pub mod types {
@@ -21,22 +15,22 @@ pub mod types {
     pub use crate::event::types::AiEvent;
     pub use crate::heartbeat::metrics::{Metrics, MetricsSnapshot};
     pub use crate::heartbeat::types::{HeartbeatSignal, SignalPriority};
-    pub use crate::knowledge::{KnowledgeEntity, KnowledgeGraph, KnowledgeRelation, NoopKnowledgeGraph};
-    pub use crate::memory::provider::{LlmCallMetadata, LlmProvider, LlmResponse};
-    pub use crate::memory::reflect::{
+    pub use tinyiothub_memory::knowledge::{KnowledgeEntity, KnowledgeGraph, KnowledgeRelation, NoopKnowledgeGraph};
+    pub use tinyiothub_llm::provider::{LlmCallMetadata, LlmProvider, LlmResponse};
+    pub use tinyiothub_memory::reflect::{
         build_reflection_input, build_reflection_prompt, contains_injection, parse_facts, sanitize_input,
     };
-    pub use crate::memory::types::MemoryFact;
-    pub use crate::policy::adapters::{ChatConfirmAdapter, ChatConfirmVerdict, HeartbeatTrustAdapter};
-    pub use crate::policy::{
+    pub use tinyiothub_memory::types::MemoryFact;
+    pub use tinyiothub_policy::adapters::{ChatConfirmAdapter, ChatConfirmVerdict, HeartbeatTrustAdapter};
+    pub use tinyiothub_policy::{
         NoopPolicyEngine, PolicyAction, PolicyCategory, PolicyDecision, PolicyEngine, PolicyRule, evaluate_rules,
         sanitize_llm_input, target_matches, validate_llm_output,
     };
     pub use tinyiothub_llm::prompt::PromptRegistry;
     pub use tinyiothub_llm::prompt::types::PromptTemplate;
-    pub use crate::proposal::{Proposal, ProposalStatus};
-    pub use crate::tool::registry::{OutputSchema, ToolDescriptor, ToolParameter, ToolRegistry};
-    pub use crate::tool::trust::{
+    pub use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
+    pub use tinyiothub_skills::registry::{OutputSchema, ToolDescriptor, ToolParameter, ToolRegistry};
+    pub use tinyiothub_skills::trust::{
         ToolSafety, TrustConfig, TrustDecision, TrustLevel, classify_tool_safety, evaluate_tool_trust,
         evaluate_tool_trust_with_safety, risk_for_tool,
     };

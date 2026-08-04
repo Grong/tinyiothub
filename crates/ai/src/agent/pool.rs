@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 
-use crate::tool::trust::TrustConfig;
+use tinyiothub_skills::trust::TrustConfig;
 
 /// A tool call actually executed by the agent framework during a run.
 /// This is the ground truth for audit trails — never trust the LLM's

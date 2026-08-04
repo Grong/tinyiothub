@@ -11,7 +11,7 @@ use super::metrics::Metrics;
 use super::types::{HeartbeatConfig, HeartbeatStatus, HeartbeatTask, LoopSignal};
 use crate::event::bus::AiEventPublisher;
 use crate::event::types::AiEvent;
-use crate::tool::trust::TrustConfig;
+use tinyiothub_skills::trust::TrustConfig;
 
 const MAX_CONSECUTIVE_FAILURES: u32 = 5;
 
@@ -217,7 +217,7 @@ async fn run_heartbeat_tick(
 fn build_heartbeat_prompt(workspace_id: &str, tasks: &[&HeartbeatTask], trust_config: &TrustConfig) -> String {
     let tasks_text: String = tasks
         .iter()
-        .map(|t| format!("- [{}] {}", t.priority, crate::memory::reflect::sanitize_input(&t.text)))
+        .map(|t| format!("- [{}] {}", t.priority, tinyiothub_memory::reflect::sanitize_input(&t.text)))
         .collect::<Vec<_>>()
         .join("\n");
 

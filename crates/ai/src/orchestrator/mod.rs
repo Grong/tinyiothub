@@ -20,7 +20,7 @@ use crate::event::bus::{AiEventPublisher, DropNotifier};
 use crate::event::dlq::DeadLetterQueue;
 use crate::heartbeat::repo::HeartbeatTaskRepository;
 use crate::heartbeat::runner::HeartbeatRunner;
-use crate::memory::service::MemoryService;
+use tinyiothub_memory::service::MemoryService;
 use crate::thing_agent::manager::ThingAgentManager;
 
 use callbacks::AiEventHandler;

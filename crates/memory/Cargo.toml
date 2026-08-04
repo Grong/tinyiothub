@@ -13,11 +13,22 @@ name = "tinyiothub_memory"
 [dependencies]
 core = { path = "../core" }
 db = { path = "../db" }
+llm = { path = "../llm" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }
 async-trait = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
+dashmap = { workspace = true }
+
+# ZeroClaw memory backend contract (for WorkspaceScopedMemory)
+zeroclaw = { git = "https://github.com/Grong/zeroclaw.git", tag = "v0.8.1-patched", package = "zeroclawlabs", features = ["agent-runtime"] }
+zeroclaw-api = { git = "https://github.com/Grong/zeroclaw.git", tag = "v0.8.1-patched" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

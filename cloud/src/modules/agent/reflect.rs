@@ -11,7 +11,7 @@ pub use tinyiothub_ai::session::types::ChatTurnMessage;
 
 #[cfg(test)]
 mod tests {
-    use tinyiothub_ai::memory::reflect::build_reflection_prompt;
+    use tinyiothub_memory::reflect::build_reflection_prompt;
 
     #[test]
     fn prompt_template_loaded() {

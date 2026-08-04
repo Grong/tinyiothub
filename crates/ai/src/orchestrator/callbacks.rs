@@ -22,8 +22,8 @@ use crate::event::types::AiEvent;
 use crate::heartbeat::repo::HeartbeatTaskRepository;
 use crate::heartbeat::runner::HeartbeatRunner;
 use crate::heartbeat::types::{HeartbeatResult, SignalPriority};
-use crate::memory::service::MemoryService;
-use crate::proposal::{Proposal, ProposalStatus};
+use tinyiothub_memory::service::MemoryService;
+use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
 use crate::thing_agent::manager::ThingAgentManager;
 use crate::thing_agent::report::AgentRunsRepository;
 use crate::thing_agent::traits::DirectiveSink;
@@ -506,8 +506,8 @@ pub(crate) mod tests {
     use crate::event::dlq::{DeadLetterEntry, DeadLetterQueue};
     use crate::heartbeat::repo::RepoError;
     use crate::heartbeat::types::{HeartbeatConfig, HeartbeatResult, HeartbeatStatus, HeartbeatTask};
-    use crate::memory::provider::{LlmProvider, LlmResponse};
-    use crate::memory::service::MemoryService;
+    use tinyiothub_llm::provider::{LlmProvider, LlmResponse};
+    use tinyiothub_memory::service::MemoryService;
 
     pub(crate) struct MockTaskRepo {
         pub(crate) fail_insert: bool,
@@ -1142,7 +1142,7 @@ pub(crate) mod tests {
 
     mod heartbeat_bridge {
         use super::*;
-        use crate::proposal::{Proposal, ProposalStatus};
+        use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
         use crate::thing_agent::report::AgentRunsRepository;
         use crate::thing_agent::scheduler::{EnqueueError, Scheduler};
         use crate::thing_agent::traits::DirectiveSink;

@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use super::trust::ToolSafety;
+use crate::trust::ToolSafety;
 
 /// Schema for structured LLM output enforcement.
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -5,7 +5,7 @@
 
 use tinyiothub_llm::session::types::ChatTurnMessage;
 
-use super::types::{INJECTION_PATTERNS, MAX_REFLECTION_INPUT_CHARS, MemoryError, MemoryFact};
+use crate::types::{INJECTION_PATTERNS, MAX_REFLECTION_INPUT_CHARS, MemoryError, MemoryFact};
 
 /// Build a reflection prompt from active memories and a conversation turn.
 /// `instruction` is the reflection instructions/template (e.g., from REFLECTION_PROMPT.md).

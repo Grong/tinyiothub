@@ -103,6 +103,8 @@ db = { workspace = true }
 runtime = { workspace = true }
 scheduler = { workspace = true }
 memory = { workspace = true }
+policy = { workspace = true }
+skills = { workspace = true }
 web = { workspace = true }
 ai = { workspace = true }
 llm = { workspace = true }

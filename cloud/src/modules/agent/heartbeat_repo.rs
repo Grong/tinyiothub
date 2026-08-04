@@ -167,7 +167,7 @@ impl HeartbeatTaskRepository for SqliteHeartbeatTaskRepository {
     async fn load_trust_config(
         &self,
         workspace_id: &str,
-    ) -> Result<Option<tinyiothub_ai::tool::trust::TrustConfig>, RepoError> {
+    ) -> Result<Option<tinyiothub_skills::trust::TrustConfig>, RepoError> {
         let row: Option<(String,)> =
             sqlx::query_as("SELECT heartbeat_trust_config FROM workspaces WHERE id = ?")
                 .bind(workspace_id)
@@ -178,7 +178,7 @@ impl HeartbeatTaskRepository for SqliteHeartbeatTaskRepository {
             if json.trim().is_empty() {
                 None
             } else {
-                Some(tinyiothub_ai::tool::trust::TrustConfig::from_db_json(Some(&json)))
+                Some(tinyiothub_skills::trust::TrustConfig::from_db_json(Some(&json)))
             }
         }))
     }
@@ -186,7 +186,7 @@ impl HeartbeatTaskRepository for SqliteHeartbeatTaskRepository {
     async fn save_trust_config(
         &self,
         workspace_id: &str,
-        config: &tinyiothub_ai::tool::trust::TrustConfig,
+        config: &tinyiothub_skills::trust::TrustConfig,
     ) -> Result<(), RepoError> {
         sqlx::query("UPDATE workspaces SET heartbeat_trust_config = ? WHERE id = ?")
             .bind(config.to_db_json())
@@ -335,10 +335,8 @@ async fn insert_action_row(
 #[cfg(test)]
 mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
-    use tinyiothub_ai::{
-        heartbeat::types::{ExecutedAction, HeartbeatStatus, NewHeartbeatTask},
-        proposal::{Proposal, ProposalStatus},
-    };
+    use tinyiothub_ai::heartbeat::types::{ExecutedAction, HeartbeatStatus, NewHeartbeatTask};
+    use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
 
     use super::*;
 
@@ -585,13 +583,13 @@ mod tests {
         .expect("insert workspace");
         let repo = SqliteHeartbeatTaskRepository::new(pool.clone());
 
-        let cfg = tinyiothub_ai::tool::trust::TrustConfig {
-            trust_level: tinyiothub_ai::tool::trust::TrustLevel::FullAuto,
+        let cfg = tinyiothub_skills::trust::TrustConfig {
+            trust_level: tinyiothub_skills::trust::TrustLevel::FullAuto,
             ..Default::default()
         };
         repo.save_trust_config("ws_t", &cfg).await.expect("save");
         let loaded = repo.load_trust_config("ws_t").await.expect("load").expect("persisted");
-        assert_eq!(loaded.trust_level, tinyiothub_ai::tool::trust::TrustLevel::FullAuto);
+        assert_eq!(loaded.trust_level, tinyiothub_skills::trust::TrustLevel::FullAuto);
     }
 
     #[tokio::test]
@@ -600,8 +598,8 @@ mod tests {
         create_workspaces_table(&pool).await;
         let repo = SqliteHeartbeatTaskRepository::new(pool.clone());
 
-        let config = tinyiothub_ai::tool::trust::TrustConfig {
-            trust_level: tinyiothub_ai::tool::trust::TrustLevel::FullAuto,
+        let config = tinyiothub_skills::trust::TrustConfig {
+            trust_level: tinyiothub_skills::trust::TrustLevel::FullAuto,
             ..Default::default()
         };
         sqlx::query(
@@ -623,7 +621,7 @@ mod tests {
         let loaded = repo.load_trust_config("ws_full").await.expect("load");
         assert_eq!(
             loaded.map(|c| c.trust_level),
-            Some(tinyiothub_ai::tool::trust::TrustLevel::FullAuto)
+            Some(tinyiothub_skills::trust::TrustLevel::FullAuto)
         );
 
         // Empty column and unknown workspace both mean "no persisted config".

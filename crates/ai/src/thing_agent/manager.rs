@@ -28,7 +28,7 @@ use dashmap::DashMap;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use crate::policy::autonomy::{AutonomyMode, PolicyRepository};
+use tinyiothub_policy::autonomy::{AutonomyMode, PolicyRepository};
 use crate::thing_agent::prompt::build_prompt;
 use crate::thing_agent::pushback::deliver;
 use crate::thing_agent::report::AgentRunsRepository;
@@ -336,7 +336,7 @@ pub(crate) mod tests {
     use zeroclaw::providers::{ChatRequest, ChatResponse};
     use zeroclaw_api::attribution::{Attributable, ModelProviderKind, ProviderKind, Role};
 
-    use crate::policy::autonomy::AutonomyPolicy;
+    use tinyiothub_policy::autonomy::AutonomyPolicy;
     use crate::thing_agent::traits::ThingEventSignal;
     use crate::thing_agent::types::{Outcome, Priority, RunReport};
 

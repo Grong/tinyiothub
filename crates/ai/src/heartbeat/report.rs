@@ -5,7 +5,7 @@ use std::sync::LazyLock;
 use tracing::warn;
 
 use super::types::{ExecutedAction, HeartbeatResult, HeartbeatStatus};
-use crate::proposal::{Proposal, ProposalStatus};
+use tinyiothub_policy::proposal::{Proposal, ProposalStatus};
 
 static JSON_FENCE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"```json\s*\n([\s\S]*?)\n```").expect("JSON fence regex should compile"));
@@ -88,7 +88,7 @@ fn parse_proposals(value: &serde_json::Value, workspace_id: &str) -> Vec<Proposa
                         id: uuid::Uuid::new_v4().to_string(),
                         workspace_id: workspace_id.to_string(),
                         agent_id: String::new(),
-                        risk: crate::tool::trust::risk_for_tool(&tool_name).to_string(),
+                        risk: tinyiothub_skills::trust::risk_for_tool(&tool_name).to_string(),
                         tool_name,
                         device_id: p["device_id"].as_str().map(|s| s.to_string()),
                         summary: p["summary"].as_str().unwrap_or("").to_string(),

@@ -13,8 +13,8 @@
 
 use std::sync::Arc;
 
-use crate::policy::{PolicyAction, PolicyCategory, PolicyDecision, PolicyEngine, PolicyRule, evaluate_rules};
-use crate::tool::trust::{ToolSafety, TrustConfig, TrustDecision, TrustLevel, safety_category};
+use crate::{PolicyAction, PolicyCategory, PolicyDecision, PolicyEngine, PolicyRule, evaluate_rules};
+use tinyiothub_skills::trust::{ToolSafety, TrustConfig, TrustDecision, TrustLevel, safety_category};
 
 // ── ChatConfirmAdapter ──────────────────────────────────────────
 
@@ -230,8 +230,8 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::policy::{NoopPolicyEngine, PolicyAction, PolicyCategory, PolicyRule};
-    use crate::tool::trust::{
+    use crate::{NoopPolicyEngine, PolicyAction, PolicyCategory, PolicyRule};
+    use tinyiothub_skills::trust::{
         ToolSafety, TrustConfig, TrustLevel, classify_tool_safety, evaluate_tool_trust, evaluate_tool_trust_with_safety,
     };
 
@@ -343,14 +343,14 @@ mod tests {
     struct VecEngine(Vec<PolicyRule>);
 
     #[async_trait::async_trait]
-    impl crate::policy::PolicyEngine for VecEngine {
+    impl crate::PolicyEngine for VecEngine {
         async fn evaluate(
             &self,
             workspace_id: &str,
             category: PolicyCategory,
             target: &str,
-        ) -> crate::policy::PolicyDecision {
-            crate::policy::evaluate_rules(&self.0, workspace_id, category, target)
+        ) -> crate::PolicyDecision {
+            crate::evaluate_rules(&self.0, workspace_id, category, target)
         }
         async fn add_rule(&self, _rule: PolicyRule) -> anyhow::Result<()> {
             Ok(())
