@@ -18,6 +18,8 @@ features:
     details: 内置 Modbus RTU/TCP、ONVIF、SNMP、MQTT 驱动，AI 辅助匹配与生成驱动代码，JSON 模板一键创建设备
   - title: L0-L3 自愈引擎
     details: system/device/task 三级探针自动检测故障并恢复，心跳探针主动巡检，Cron 定时任务调度
+  - title: 自治运维（Thing Agent Loop）
+    details: AI 被设备事件、定时巡检或用户指令唤醒，基于物本体自主诊断并操作设备——三态策略门（off/diagnose/act）管控权限，行动后回读验证，全程审计可追溯
   - title: 自然语言运维
     details: 用日常语言配置设备、查询状态、排查故障。内嵌 MCP Server，支持 Claude Desktop、Cursor 直接连接
   - title: 规则引擎

@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.4.6.0] - 2026-08-03
+
+### Added
+
+- **Thing Agent Loop（自治运维闭环）**: AI 不再只回答问题——它被设备事件、定时巡检或用户指令唤醒，查询物本体、自主决策、直接操作设备，行动后回读验证并留下完整审计。温度超限自动调节、设备离线自动诊断这类场景现在开箱即用（演示脚本见 `examples/thing-agent-e2e.md`）
+- **三态自治策略门**: 每个工作区独立设置 `off | diagnose | act` 三档自治级别（默认 off，零 LLM 成本）；动作白/黑名单、每小时频率熔断、kill switch 即时生效——你可以在 `PUT /api/workspaces/{id}/agent/policy` 一键收紧或放开
+- **流式执行与客观验证**: Agent 运行时框架实时捕获每次工具调用轨迹，25 次调用/5 分钟硬预算防失控；"已验证"标记由回读动作客观判定，不采信 AI 自述
+- **统一策略面（X3）**: chat 确认令牌、心跳信任配置、自治策略门收敛为一个策略引擎三个接入面——同一个动作在任意路径上得到一致的裁决
+- **心跳桥（X6）**: 心跳巡检发现的问题自动转交自治 Loop 处置，带结构化去重（6 小时窗口内同一问题不重复处理，人工 ack 后 7 天抑制）
+- **管理 API**: `POST /agent/tasks`（提交自治指令）、`GET /agent/runs`（运行历史分页）、`POST /agent/runs/{id}/ack`（人工确认）、`GET/PUT /agent/policy`（策略读写），全部工作区隔离 + admin 角色
+- **智能防刷**: 同类事件 30 秒合并一次唤醒（告警风暴看全貌而非刷屏）、每小时唤醒熔断、AI 自己动作产生的事件不再唤醒 AI（共振防护）、指令 60 秒去重
+- **审计与成本可见**: 每次运行落库（触发源/动作/验证/耗时/token），按工作区按日聚合成本；失败时自动生成人工接管清单推送到 chat
+
+### Changed
+
+- **invoke_action 双轨确认**: chat 对话中的动作仍走人工确认令牌（体验不变）；自治 Loop 中的动作改走策略门（预声明规则替代逐次确认）
+- **事件管线**: events 表新增 `actor` 列区分设备/AI 来源，支持进程内广播与游标补偿（重启不丢高级别事件）
+
+### For contributors
+
+- 新模块 `crates/ai/src/thing_agent`（trigger/scheduler/runner/report）+ `cloud/src/modules/agent/autonomous_factory.rs`；`crates/policy` 策略引擎 SQLite 持久化实现
+- 设计与裁决记录：`docs/superpowers/specs/2026-07-29-thing-agent-loop-design.md`（O1-O29）、19 任务实现计划同名 plans 目录
+- 1421+ 测试全绿；全链路集成测试真实路由进、真实驱动出（仅 LLM 可剧本化）
+
 ## [0.4.5.0] - 2026-07-27
 
 ### Added

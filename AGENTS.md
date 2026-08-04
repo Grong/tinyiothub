@@ -42,7 +42,7 @@ cloud/ (bin) → runtime / db / web / ai / memory / plugin / macros → core
 | `db` | `tinyiothub_storage` | SQLite concrete implementations. (Planned: buzz-style flat per-domain modules, no trait inversion — later task.) | Depending on any crate except `core` |
 | `runtime` | `tinyiothub_runtime` | EventBus, DataServer, driver framework, executors, DLQ trait. (Planned: absorb `plugin` loader/registry/sandbox as `runtime::plugin` — P2.) | Depending on web or domain crates |
 | `web` | `tinyiothub_web` | HTTP middleware, ApiResponseBuilder, security extractors | Business logic |
-| `ai` | `tinyiothub_ai` | Agent loop, LLM orchestration. (Planned: split into llm/policy/skills/agent crates — P2+.) | — |
+| `ai` | `tinyiothub_ai` | Agent loop, LLM orchestration; includes `thing_agent` (autonomous Thing Agent Loop: triggers/scheduler/streaming runner/pushback) | — |
 | `memory` | `tinyiothub_memory` | Agent memory store + reflection pipeline | — |
 | `plugin` | `tinyiothub_plugin` | Plugin loader/registry/sandbox. (Planned: merge into `runtime::plugin` — P2.) | — |
 | `plugin-sdk` | `tinyiothub_plugin_sdk` | Driver-author SDK; ABI contract single source of truth | Depending on runtime/web |
