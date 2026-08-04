@@ -33,29 +33,39 @@ TinyIoTHub is a Rust + Lit 3 SaaS IoT platform for managing things (物) — dev
 ### Dependency Direction (one-way, irreversible)
 
 ```
-cloud/ → runtime → core ← storage
+cloud/ (bin) → runtime / db / web / ai / memory / plugin / macros → core
 ```
 
-| Crate | Role | Forbidden |
-|-------|------|-----------|
-| `tinyiothub-core` | Traits, domain models, repository interfaces, rule engine | No I/O, no DB access |
-| `tinyiothub-runtime` | EventBus, DataServer, drivers, executors | No cloud/web dependency |
-| `tinyiothub-storage` | SQLite implementations (re-export core traits) | No runtime/cloud dependency |
-| `tinyiothub-web` | HTTP middleware, ApiResponseBuilder, security extractors | No business logic |
-| `tinyiothub-error` | Error types with `thiserror` derives | — |
-| `cloud` | Application orchestration, routing, business modules | No direct SQL in handlers |
+| Crate (dir = package) | Lib name | Role | Forbidden |
+|-------|------|------|-----------|
+| `core` | `tinyiothub_core` | Contract traits + value types (DTO/error/config). Absorbed former `tinyiothub-error` and `tinyiothub-config` (`core::error`, `core::config`). **Guardrail: traits + value types only; no logic functions, no I/O. Every new type must justify why it does not belong in a domain crate.** | Logic functions, I/O, DB access |
+| `db` | `tinyiothub_storage` | SQLite concrete implementations. (Planned: buzz-style flat per-domain modules, no trait inversion — later task.) | Depending on any crate except `core` |
+| `runtime` | `tinyiothub_runtime` | EventBus, DataServer, driver framework, executors, DLQ trait. (Planned: absorb `plugin` loader/registry/sandbox as `runtime::plugin` — P2.) | Depending on web or domain crates |
+| `web` | `tinyiothub_web` | HTTP middleware, ApiResponseBuilder, security extractors | Business logic |
+| `ai` | `tinyiothub_ai` | Agent loop, LLM orchestration. (Planned: split into llm/policy/skills/agent crates — P2+.) | — |
+| `memory` | `tinyiothub_memory` | Agent memory store + reflection pipeline | — |
+| `plugin` | `tinyiothub_plugin` | Plugin loader/registry/sandbox. (Planned: merge into `runtime::plugin` — P2.) | — |
+| `plugin-sdk` | `tinyiothub_plugin_sdk` | Driver-author SDK; ABI contract single source of truth | Depending on runtime/web |
+| `macros` | `tinyiothub_macros` | Proc macros | — |
+| `cloud` (root bin) | — | Application orchestration, routing, business modules. (Planned: move to `apps/cloud` as a thin bin — later phase.) | Direct SQL in handlers |
 
-**Forbidden dependencies**: core/storage must not depend on runtime; no crate may reverse-depend upward.
+**Naming rule**: crate directories and package names use short names (`core`, `db`, …); `[lib] name` is pinned to `tinyiothub_*` so `use tinyiothub_core::…` imports stay stable across directory moves.
+
+**Forbidden dependencies**: core/db must not depend on runtime; no crate may reverse-depend upward.
 
 ## Stability Tiers
 
 | Crate | Tier | Notes |
 |-------|------|-------|
-| `tinyiothub-core` | Stable | Contract crate — breaking changes require MAJOR version bump |
-| `tinyiothub-error` | Stable | Error types used across all crates |
-| `tinyiothub-web` | Beta | HTTP infrastructure — breaking changes permitted in MINOR with changelog |
-| `tinyiothub-storage` | Beta | SQLite implementation — schema changes require migration |
-| `tinyiothub-runtime` | Beta | EventBus, DataServer — breaking changes permitted in MINOR |
+| `core` | Stable | Contract crate — includes former `tinyiothub-error` + `tinyiothub-config`; breaking changes require MAJOR version bump |
+| `plugin-sdk` | Stable | Driver ABI contract — breaking changes require MAJOR version bump |
+| `web` | Beta | HTTP infrastructure — breaking changes permitted in MINOR with changelog |
+| `db` | Beta | SQLite implementation — schema changes require migration |
+| `runtime` | Beta | EventBus, DataServer — breaking changes permitted in MINOR |
+| `memory` | Beta | Agent memory store + reflection pipeline |
+| `ai` | Experimental | Agent loop + LLM orchestration — under active development |
+| `plugin` | Experimental | Plugin loader/registry — planned merge into `runtime::plugin` (P2) |
+| `macros` | Experimental | Internal proc macros |
 | `cloud` | Experimental | SaaS application layer — under active development |
 
 **Tiers**: Stable = covered by breaking-change policy. Beta = breaking changes permitted in MINOR with changelog notes. Experimental = no stability guarantee. Tiers are promoted, never demoted, through deliberate team decision.
@@ -77,12 +87,17 @@ cloud/                       # SaaS application orchestration (main binary)
     shared/                  # Cross-layer (persistence, security, error_handling, utils)
     server.rs                # Axum server startup
 crates/
-  tinyiothub-core/           # Contracts: traits + domain models + repository interfaces
-  tinyiothub-runtime/        # Infrastructure: EventBus, DataServer, drivers, executors
-  tinyiothub-storage/        # Data: SQLite implementations
-  tinyiothub-web/            # HTTP infrastructure: ApiResponseBuilder, middleware
-  tinyiothub-error/          # Error types
-  tinyiothub-memory/         # Agent memory store + reflection pipeline
+  core/                      # Contracts: traits + value types (lib tinyiothub_core; absorbed error+config)
+  db/                        # Data: SQLite implementations (lib tinyiothub_storage)
+  runtime/                   # Infrastructure: EventBus, DataServer, drivers, executors (lib tinyiothub_runtime)
+  web/                       # HTTP infrastructure: ApiResponseBuilder, middleware (lib tinyiothub_web)
+  ai/                        # Agent loop + LLM orchestration (lib tinyiothub_ai)
+  memory/                    # Agent memory store + reflection pipeline (lib tinyiothub_memory)
+  plugin/                    # Plugin loader/registry/sandbox (lib tinyiothub_plugin; P2: → runtime::plugin)
+  plugin-sdk/                # Driver-author SDK (package plugin-sdk, lib tinyiothub_plugin_sdk)
+  macros/                    # Proc macros (lib tinyiothub_macros)
+# Planned (P2+): domain crates (auth/thing/event/alarm/agent/…) extracted from cloud/,
+# scheduler/ standalone crate, and apps/{cloud,edge,marketplace} thin binaries.
 web/                          # Lit 3 + Vite frontend
   src/ui/                    # Web Components (pages + components)
   src/api/                   # API client layer
@@ -139,7 +154,7 @@ modules/thing/
 
 - **Low risk**: docs only, `.kiro/specs/**`, pure chore/ci changes without behavior impact, test-only changes
 - **Medium risk**: most `cloud/src/modules/*/service.rs` and `cloud/src/modules/*/handler/` behavior changes, `web/src/ui/**` component changes, `web/src/stores/**` state changes
-- **High risk**: `cloud/src/shared/security/**`, `cloud/src/shared/persistence/**`, `cloud/migrations/**`, `crates/tinyiothub-core/src/**` (contract changes ripple everywhere), `crates/tinyiothub-web/src/**`, `.github/workflows/**`, JWT/session boundary code, `cloud/src/modules/agent/**` (AI agent runtime has security implications)
+- **High risk**: `cloud/src/shared/security/**`, `cloud/src/shared/persistence/**`, `cloud/migrations/**`, `crates/core/src/**` (contract changes ripple everywhere), `crates/web/src/**`, `.github/workflows/**`, JWT/session boundary code, `cloud/src/modules/agent/**` (AI agent runtime has security implications)
 
 When uncertain, classify as higher risk.
 
@@ -193,7 +208,7 @@ Branch/commit/PR rules:
 ## API Conventions
 
 - **Path prefix**: `/api/v1/`
-- **Response format**: `{ "code": 0, "msg": "", "result": T | null }` — use `ApiResponseBuilder` from `tinyiothub-web`
+- **Response format**: `{ "code": 0, "msg": "", "result": T | null }` — use `ApiResponseBuilder` from the `web` crate (`tinyiothub_web`)
 - **Naming**: RESTful, snake_case in Rust, camelCase in TypeScript
 - **Auth**: JWT + session management via Tower middleware
 
