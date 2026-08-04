@@ -110,17 +110,16 @@ pnpm install
 pnpm dev
 ```
 
-访问: http://localhost:3001
+访问: http://localhost:5173
 
 #### 生产模式（单进程部署）
 
 **构建**:
 ```bash
-# Windows
-.\scripts\build-single-binary.ps1 -Release
-
-# Linux/macOS
-./scripts/build-static.sh
+# 前端静态资源 + 后端发布构建（仓库根目录）
+cd web && pnpm build && cd ..
+cargo build --release -p tinyiothub-cloud
+# 或：just build（后端 release）；容器构建见 Dockerfile
 ```
 
 **运行**:
@@ -184,7 +183,7 @@ expiration_secs = 10800  # 3 hours
 
 ```typescript
 server: {
-  port: 3001,
+  port: 5173,
   proxy: {
     '/api': 'http://localhost:3002'
   }
@@ -195,9 +194,9 @@ server: {
 
 启动后访问以下地址：
 
-- **Web 管理界面**: http://localhost:3001/ (前端开发服务器)
+- **Web 管理界面**: http://localhost:5173/ (前端开发服务器)
 - **后端 API**: http://localhost:3002/api/v1/
-- **健康检查**: http://localhost:3002/api/v1/system/health
+- **健康检查**: http://localhost:3002/health（返回纯文本 OK）
 
 ## API 开发规范
 

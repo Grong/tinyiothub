@@ -4,6 +4,8 @@
 
 设备Profile接口提供了获取指定设备完整信息的功能，包括设备基本信息、属性列表、指令列表、最近事件和统计信息。这是一个综合性的接口，适用于设备详情页面的数据展示。
 
+> 本接口为运行时数据面端点（保留 device 命名）。管理面的物配置文件请使用 `GET /api/v1/things/{id}/profile`。
+
 ## 接口信息
 
 - **路径**: `GET /api/v1/devices/{device_id}/profile`
@@ -72,24 +74,19 @@
     "recent_events": [
       {
         "id": "event_001",
-        "device_id": "device_001",
         "event_type": "alarm",
         "level": "error",
         "title": "温度过高告警",
         "message": "设备温度超过阈值 85°C，当前温度 92°C",
-        "data": {
+        "timestamp": "2024-01-07 15:30:00",
+        "metadata": {
           "temperature": 92.0,
           "threshold": 85.0,
           "unit": "°C"
-        },
-        "source": "temperature_sensor",
-        "created_at": "2024-01-07 15:30:00",
-        "acknowledged_at": null,
-        "resolved_at": null,
-        "status": "active"
+        }
       }
     ],
-    "statistics": {
+    "overview": {
       "total_properties": 12,
       "online_properties": 10,
       "offline_properties": 2,
@@ -141,11 +138,11 @@
 | is_online | boolean | 设备在线状态 |
 | properties | DeviceProperty[] | 设备属性列表 |
 | commands | DeviceCommand[] | 设备指令列表 |
-| recent_events | DeviceEvent[] | 最近事件列表（最多5条） |
-| statistics | DeviceProfileStatistics | 设备统计信息 |
+| recent_events | DeviceEventSummary[] | 最近事件列表（最近10条，来自统一 events 表） |
+| overview | DeviceProfileOverview | 设备概述统计信息 |
 | generated_at | string | 配置文件生成时间 |
 
-### DeviceProfileStatistics
+### DeviceProfileOverview
 
 | 字段名 | 类型 | 描述 |
 |--------|------|------|

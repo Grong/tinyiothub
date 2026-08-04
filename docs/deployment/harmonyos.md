@@ -49,8 +49,7 @@ port = 3002
 [database]
 url = "/data/tinyiothub/tinyiothub.db"
 
-[hardware]
-enabled = true
+# 硬件抽象层（串口/LED/显示屏）按需配置，见 [hardware] 各子项
 ```
 
 ## 硬件抽象层
@@ -81,10 +80,10 @@ journalctl -u tinyiothub -f
 ### 性能监控
 
 ```bash
-curl http://localhost:3002/api/v1/monitoring/metrics
+curl http://localhost:3002/api/v1/monitoring/metrics/system
 ```
 
 ## 了解更多
 
-- [鸿蒙部署指南详细版](../HARMONYOS_DEPLOYMENT_GUIDE.md)
-- [快速开始鸿蒙版](../QUICK_START_HARMONYOS.md)
+- 鸿蒙交叉编译配置：`cloud/.cargo/config-harmonyos.toml`
+- 鸿蒙硬件抽象层实现：`cloud/src/shared/hardware/harmonyos/`

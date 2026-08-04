@@ -12,7 +12,7 @@
 ```bash
 # 克隆项目
 git clone https://github.com/tinyiothub/tinyiothub.git
-cd tinyiothub/docker
+cd tinyiothub/deploy/docker
 
 # 申请 SSL 证书（首次部署）
 bash init-ssl.sh
@@ -56,7 +56,7 @@ services:
       - ./data:/app/data
       - ./logs:/app/logs
     environment:
-      - DATABASE_URL=tinyiothub.db
+      - TINYIOTHUB__DATABASE__URL=/app/data/tinyiothub.db
       - RUST_LOG=info
     restart: unless-stopped
 ```
@@ -94,12 +94,12 @@ docker logs -f tinyiothub
 
 ```yaml
 environment:
-  - MQTT__PRIMARY__HOST=192.168.1.124
-  - MQTT__PRIMARY__PORT=1883
+  - TINYIOTHUB__MQTT__PRIMARY__HOST=192.168.1.124
+  - TINYIOTHUB__MQTT__PRIMARY__PORT=1883
 ```
 
 ## 健康检查
 
 ```bash
-curl http://localhost:3002/api/v1/system/health
+curl http://localhost:3002/api/health
 ```

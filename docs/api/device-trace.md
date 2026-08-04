@@ -4,6 +4,8 @@
 
 设备Trace接口提供了设备操作轨迹记录、调试信息、性能监控等功能。通过这些接口可以追踪设备的所有操作历史，进行故障诊断和性能分析。
 
+> 本接口为运行时数据面端点（保留 device 命名）。
+
 ## 接口列表
 
 ### 1. 获取设备追踪记录
@@ -154,7 +156,7 @@
 
 ### 4. 获取设备性能指标
 
-- **路径**: `GET /api/v1/devices/{device_id}/traces/performance`
+- **路径**: `GET /api/v1/devices/{device_id}/performance`
 - **认证**: 需要JWT认证
 
 #### 响应示例
@@ -176,22 +178,7 @@
 }
 ```
 
-### 5. 导出追踪记录
-
-- **路径**: `GET /api/v1/devices/{device_id}/traces/export`
-- **认证**: 需要JWT认证
-- **查询参数**: 支持与获取追踪记录相同的筛选参数
-
-#### 响应示例
-
-```json
-{
-  "success": true,
-  "result": "/api/v1/devices/device_001/traces/download/export_uuid_123"
-}
-```
-
-### 6. 清理追踪记录
+### 5. 清理追踪记录
 
 - **路径**: `POST /api/v1/devices/{device_id}/traces/clear`
 - **认证**: 需要JWT认证

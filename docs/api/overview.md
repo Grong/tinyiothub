@@ -2,7 +2,7 @@
 
 ## 概述
 
-本项目提供了一套完整的云端 SaaS IoT RESTful API，采用业务域驱动的架构设计，支持设备管理、用户认证、告警处理、系统监控等核心功能。
+本项目提供了一套完整的云端 SaaS IoT RESTful API，采用业务域驱动的架构设计，支持物（Thing）管理、用户认证、告警处理、系统监控等核心功能。
 
 ## 架构特点
 
@@ -71,20 +71,20 @@
 
 ---
 
-### 🔧 设备管理 (`/api/v1/devices`)
+### 📦 物管理 (`/api/v1/things`)
 
-#### GET /api/v1/devices
-获取设备列表
+> 管理面的"设备"概念已更名为"物"（Thing）。原 `/api/v1/devices` 管理端点已删除（返回 410 Gone），请改用 `/api/v1/things`。物支持 `parent_id` 层级树、`thing_type` 分类与面包屑。所有管理面 API 按 workspace 作用域，`name` 在 workspace 内唯一。
+
+#### GET /api/v1/things
+获取物列表
 
 **查询参数:**
-- `name` - 设备名称筛选
-- `device_type` - 设备类型筛选
-- `driver_name` - 驱动名称筛选
-- `state` - 设备状态筛选
-- `product_id` - 产品ID筛选
-- `enabled` - 是否启用筛选
-- `page` - 页码 (默认: 1)
-- `page_size` - 每页大小 (默认: 20)
+- `thing_type` - 物类型筛选
+- `parent_id` - 父物 ID 筛选（层级树）
+- `tags` - 标签筛选
+- `q` - 搜索关键词
+- `limit` - 每页大小 (默认: 50，最大: 200)
+- `offset` - 偏移量 (默认: 0)
 
 **响应:**
 ```json
@@ -93,86 +93,64 @@
   "msg": "",
   "result": [
     {
-      "id": "device-id",
+      "id": "thing-id",
       "name": "温度传感器01",
-      "display_name": "一楼温度传感器",
-      "device_type": "sensor",
-      "address": "192.168.1.100",
+      "thing_type": "sensor",
+      "parent_id": null,
       "driver_name": "modbus_rtu",
-      "state": "online",
-      "enabled": true,
       "created_at": "2024-01-01 10:00:00"
     }
   ]
 }
 ```
 
-#### POST /api/v1/devices
-创建新设备
+#### POST /api/v1/things
+创建新物
 
 **请求体:**
 ```json
 {
   "name": "温度传感器02",
-  "displayName": "二楼温度传感器",
-  "deviceType": "sensor",
-  "address": "192.168.1.101",
-  "driverName": "modbus_rtu",
-  "connectionConfig": "{\"baudRate\": 9600}"
+  "thing_type": "sensor",
+  "parent_id": null,
+  "template_id": "tpl-001",
+  "driver_name": "modbus_rtu"
 }
 ```
 
-#### GET /api/v1/devices/:id
-获取设备详情
+#### GET /api/v1/things/:id
+获取物详情
 
-#### PUT /api/v1/devices/:id
-更新设备信息
+#### PUT /api/v1/things/:id
+更新物信息
 
-#### DELETE /api/v1/devices/:id
-删除设备
+#### DELETE /api/v1/things/:id
+删除物
 
-#### POST /api/v1/devices/:id/enable
-启用设备
+#### GET /api/v1/things/:id/tree
+获取物层级树（`depth` 参数控制深度）
 
-#### POST /api/v1/devices/:id/disable
-禁用设备
+#### GET /api/v1/things/:id/profile
+获取物完整配置文件（属性、动作、统计）
 
-#### GET /api/v1/devices/:id/status
-获取设备状态
+#### GET /api/v1/things/:id/ontology
+获取物的本体摘要（ontology_summary）
 
-**响应:**
-```json
-{
-  "code": 0,
-  "msg": "",
-  "result": {
-    "device_id": "device-id",
-    "online": true,
-    "last_seen": "2024-01-01T10:30:00Z",
-    "connection_status": "connected",
-    "error_message": null
-  }
-}
-```
+#### POST /api/v1/things/:id/actions/:action_name/invoke
+调用物动作（管理面 commands 已更名为 actions；下发链路传输层仍叫 command）
 
-#### GET /api/v1/devices/:id/data
-读取设备数据
+#### POST /api/v1/things/:id/actions/:action_name/confirm
+确认需人工确认的物动作
 
-#### POST /api/v1/devices/:id/commands
-执行设备命令
+#### 运行时数据面端点（仍为 device 语境）
 
-**请求体:**
-```json
-{
-  "commandName": "read_temperature",
-  "parameters": {
-    "register": 1001
-  }
-}
-```
+遥测 ingest、网关协议与 driver 连接等运行时数据面仍使用 "device" 命名，以下端点保留：
 
-#### GET /api/v1/devices/:id/properties
-获取设备属性
+- `GET /api/v1/devices/:id/status` - 获取设备在线状态
+- `GET /api/v1/devices/:id/properties` - 获取设备属性（存储于 thing_properties）
+- `GET /api/v1/devices/:id/profile` - 获取设备配置文件
+- `GET /api/v1/devices/:id/traces` - 获取设备追踪记录
+- `POST /api/v1/devices/:id/commands/:command_id/execute` - 执行设备指令（传输层 command）
 
 ---
 
@@ -238,7 +216,7 @@
 #### GET /api/v1/events
 获取事件列表
 
-#### GET /api/v1/events/stream
+#### GET /api/v1/events/sse
 SSE 事件流订阅
 
 #### GET /api/v1/workspaces
@@ -363,21 +341,7 @@ SSE 事件流订阅
 
 ### ⚙️ 系统管理 (`/api/v1/system`)
 
-#### GET /api/v1/system/products
-获取产品列表
-
-#### POST /api/v1/system/products
-创建新产品
-
-**请求体:**
-```json
-{
-  "name": "智能温度传感器",
-  "model": "TS-2024",
-  "manufacturer": "科技公司",
-  "description": "高精度温度传感器"
-}
-```
+> 产品（products）功能已删除。原 products/device_templates 已统一为物模板（thing_templates），作为创建期的蓝图（属性/事件/动作 JSON 定义），请使用 `/api/v1/device-templates` 端点。
 
 #### GET /api/v1/system/tasks
 获取任务列表
@@ -446,7 +410,7 @@ curl -X POST http://localhost:3002/api/auth/login \
   -d '{"username":"admin","password":"password123"}'
 
 # 使用Token访问API
-curl -X GET http://localhost:3002/api/v1/devices \
+curl -X GET http://localhost:3002/api/v1/things \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 ```
 

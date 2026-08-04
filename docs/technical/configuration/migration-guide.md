@@ -2,7 +2,7 @@
 
 ## 概述
 
-根据项目命名规范（`.kiro/steering/naming.md`），我们重构了配置文件的命名和结构，使其更加专业和易于维护。
+根据项目命名规范（`AGENTS.md`），我们重构了配置文件的命名和结构，使其更加专业和易于维护。
 
 ## 文件命名变更
 
@@ -82,32 +82,27 @@ expiration_secs = 10800
 
 ## 向后兼容性
 
-### 自动兼容
-- 系统会自动加载新旧两种格式的配置文件
-- 旧的配置文件仍然有效，无需立即迁移
-- 新配置会覆盖旧配置（优先级更高）
+### 旧格式已停止加载
+- 配置加载器（`cloud/src/shared/config/mod.rs`）只读取 `app_settings.toml` 和环境变量
+- 旧的 `appSetting.toml` / `appSetting-harmonyos.toml` **不再被加载**，必须迁移到新格式
+- 旧的 `config_util` 兼容 API 已移除
 
 ### 加载顺序
-1. 默认配置
-2. `app_settings.toml`（新格式，优先级最高）
-3. `app_settings_harmonyos.toml`（鸿蒙专用）
-4. `appSetting.toml`（旧格式，向后兼容）
-5. 环境变量覆盖
+1. 默认配置（serde 默认值）
+2. `app_settings.toml`（如果存在）
+3. 环境变量覆盖（`TINYIOTHUB__` 前缀，优先级最高）
 
 ## 迁移步骤
 
-### 立即可用
-✅ **无需任何操作** - 系统已经支持新配置格式
-
-### 推荐迁移（可选）
-1. **复制现有配置**：
+### 从旧格式迁移（必须）
+1. **备份现有配置**：
    ```bash
    cp appSetting.toml appSetting.toml.backup
    ```
 
-2. **使用新配置文件**：
+2. **按上方键名映射表迁移到新配置文件**：
    - 编辑 `app_settings.toml`
-   - 根据需要调整配置值
+   - 将旧键名替换为新的层次化键名
 
 3. **验证配置**：
    ```bash

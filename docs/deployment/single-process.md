@@ -20,16 +20,22 @@
 ### Linux/macOS
 
 ```bash
-./scripts/build-single-binary.sh --release
+# 构建前端（输出到 dist/ui）
+cd web && pnpm run build && cd ..
+
+# 构建后端（静态文件通过 server.static_files_dir 指向前端产物）
+cargo build --release --bin tinyiothub-cloud
 ```
 
 ## 运行
 
 ```bash
-cd api
-.\target\release\tinyiothub.exe  # Windows
-./target/release/tinyiothub      # Linux/macOS
+.\target\release\tinyiothub-cloud.exe  # Windows
+./target/release/tinyiothub-cloud      # Linux/macOS
 ```
+
+启动时会自动执行数据库迁移（`crates/db/migrations/`）：迁移前自动 VACUUM 备份到 `data/backups/`，
+并在启动前做 `foreign_key_check`；迁移失败会中止启动，请按提示从备份恢复。
 
 ## 配置
 
@@ -39,10 +45,7 @@ cd api
 [server]
 host = "0.0.0.0"
 port = 3002
-
-[server.static]
-enabled = true
-path = "static"
+static_files_dir = "wwwroot"
 ```
 
 ## 访问
@@ -51,7 +54,7 @@ path = "static"
 
 - Web 界面: http://localhost:3002/
 - API: http://localhost:3002/api/v1/
-- 健康检查: http://localhost:3002/api/v1/system/health
+- 健康检查: http://localhost:3002/api/health
 
 ## 性能对比
 

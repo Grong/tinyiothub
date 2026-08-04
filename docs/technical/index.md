@@ -18,14 +18,6 @@
 - [配置系统](./configuration/configuration-system.md) — 配置架构设计
 - [配置迁移](./configuration/migration-guide.md) — 配置格式迁移
 
-## 规划中
-
-以下功能正在规划中，详细设计见 `.kiro/specs/`：
-
-- **event-service-system**: 事件驱动架构升级（SSE 推送、富文本、通知渠道）
-- **device-template-system**: JSON 模板快速创建设备
-- **harmonyos-jwt-openssl**: HarmonyOS SIGSEGV 修复
-
 ## 历史文档
 
-已归档的历史分析文档见 `.kiro/archive/`（如需要可恢复）。
+已归档的历史变更记录见 [changelog/](./changelog/)。

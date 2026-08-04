@@ -8,20 +8,18 @@
 ### 第四阶段：API 层 (Phase 4) - 100%
 
 #### 报警管理 API - 完成
-- [x] `src/api/alarms/mod.rs` - 模块定义
-- [x] `src/api/alarms/query.rs` - 查询接口
+- [x] `cloud/src/modules/alarm/handler.rs` - 报警路由（`create_alarm_router`）
   - GET /api/v1/alarms - 查询报警列表（带分页）
   - GET /api/v1/alarms/:id - 获取报警详情
   - GET /api/v1/alarms/statistics - 报警统计
-- [x] `src/api/alarms/management.rs` - 管理接口
-  - POST /api/v1/alarms/:id/acknowledge - 确认报警
-  - POST /api/v1/alarms/:id/resolve - 解决报警
-  - POST /api/v1/alarms/batch-acknowledge - 批量确认
-  - POST /api/v1/alarms/batch-resolve - 批量解决
+  - GET /api/v1/alarms/recent - 最近报警
+  - PUT /api/v1/alarms/:id/acknowledge - 确认报警
+  - PUT /api/v1/alarms/:id/resolve - 解决报警
+  - POST /api/v1/alarms/batch/acknowledge - 批量确认
+  - POST /api/v1/alarms/batch/resolve - 批量解决
 
 #### 规则管理 API - 完成
-- [x] `src/api/alarm_rules/mod.rs` - 模块定义
-- [x] `src/api/alarm_rules/crud.rs` - CRUD 接口
+- [x] `cloud/src/modules/alarm/handler.rs` - 规则路由（`create_alarm_rule_router`）
   - GET /api/v1/alarm-rules - 查询规则列表
   - POST /api/v1/alarm-rules - 创建规则
   - GET /api/v1/alarm-rules/:id - 获取规则详情
@@ -30,18 +28,16 @@
   - POST /api/v1/alarm-rules/:id/toggle - 启用/禁用规则
 
 #### DTOs - 完成
-- [x] `src/dto/entity/alarm.rs` - 报警 DTO (AlarmDto, AlarmRuleDto, AlarmStatisticsDto)
-- [x] `src/dto/request/alarm.rs` - 请求 DTO (所有请求类型)
-- [x] `src/dto/response/alarm.rs` - 响应 DTO (BatchOperationResult)
+- [x] `cloud/src/modules/alarm/types.rs` - 报警类型与 DTO (AlarmDto, AlarmRuleDto, AlarmStatisticsDto, 请求/响应类型)
 
 #### 路由注册 - 完成
-- [x] 在 `src/api/mod.rs` 中注册路由
+- [x] 在 `cloud/src/api/mod.rs` 中注册路由（`/alarms`、`/alarm-rules`）
 - [x] 集成到主路由器
 
 #### AppState 集成 - 完成
 - [x] 添加 alarm_service 字段
-- [x] 初始化 AlarmService
-- [x] 注册 AlarmEventHandler
+- [x] 初始化 AlarmService（`cloud/src/modules/alarm/service.rs`）
+- [x] 注册 AlarmEventHandler（`cloud/src/shared/service_manager.rs`）
 
 ## 🚧 进行中
 
@@ -97,7 +93,7 @@
 3. 需要添加数据库索引优化
 4. 需要实现报警抑制逻辑
 5. 需要实现自动解决检查
-6. 需要集成通知服务到 AlarmEventHandler
+6. ~~需要集成通知服务到 AlarmEventHandler~~ ✅ 已集成（`notification.rs`，AlarmEventHandler 创建报警后分发通知）
 
 ## 🐛 已知问题
 
@@ -119,7 +115,7 @@
 ### 前端特性
 1. ✅ 完整的 TypeScript 类型定义
 2. ✅ 统一的 API 客户端集成
-3. ✅ nanostore 状态管理
+3. ✅ @lit-labs/signals 状态管理
 4. ✅ 报警列表组件（支持筛选、分页、批量操作）
 5. ✅ 报警详情组件（支持确认、解决）
 6. ✅ 报警统计组件（实时统计展示）

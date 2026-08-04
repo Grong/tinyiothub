@@ -30,13 +30,6 @@ TinyIoTHub 采用现代化的层次配置系统，支持多源配置加载、环
 │  │  Security   │  │   Device    │  │    Monitoring       │  │
 │  │   Config    │  │   Config    │  │      Config         │  │
 │  └─────────────┘  └─────────────┘  └─────────────────────┘  │
-├─────────────────────────────────────────────────────────────┤
-│                    Legacy Compatibility                     │
-│  ┌─────────────────────────────────────────────────────────┐ │
-│  │  Legacy API (config_util::get_str, get_num, etc.)      │ │
-│  │  • Backward compatibility with old configuration       │ │
-│  │  • Automatic mapping from new to old format            │ │
-│  └─────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -64,12 +57,8 @@ TinyIoTHub 采用现代化的层次配置系统，支持多源配置加载、环
 ### 📁 文件组织
 
 ```
-src/infrastructure/config/
-├── mod.rs              # 主模块，全局配置管理
-├── settings.rs         # 配置结构定义
-├── sources.rs          # 多配置源支持
-├── validation.rs       # 配置验证系统
-└── environment.rs      # 环境变量处理
+crates/core/src/config.rs        # 配置结构定义与验证（tinyiothub_core::config）
+cloud/src/shared/config/mod.rs   # 配置加载、全局实例（OnceLock）、环境变量覆盖
 ```
 
 ### 🏗️ 配置层次结构
@@ -123,17 +112,17 @@ interval_secs = 30
 
 配置系统按以下优先级加载配置（后加载的覆盖先加载的）：
 
-1. **默认配置** (最低优先级)
-2. **app_settings.toml** (新格式)
-3. **app_settings_harmonyos.toml** (鸿蒙专用)
-4. **appSetting.toml** (旧格式，向后兼容)
-5. **环境变量** (最高优先级)
+1. **默认配置** (最低优先级，serde 默认值)
+2. **app_settings.toml** (如果存在)
+3. **环境变量** (最高优先级，`TINYIOTHUB__` 前缀)
 
 ### 📝 使用示例
 
 #### 现代 API
 ```rust
-use crate::infrastructure::config;
+use tinyiothub_core::config::ApplicationSettings;
+// cloud 侧通过 cloud::shared::config 访问全局实例
+use crate::shared::config;
 
 // 获取全局配置
 let config = config::get();
@@ -143,26 +132,13 @@ let mqtt_host = &config.mqtt.primary.host;
 let jwt_secret = &config.security.jwt.secret;
 let server_port = config.server.port;
 
-// 检查功能开关
-if config.is_feature_enabled("debug_mode") {
-    // 调试模式逻辑
-}
-
 // 环境检查
 if config.is_development() {
     // 开发环境逻辑
 }
 ```
 
-#### 兼容 API (向后兼容)
-```rust
-use crate::infrastructure::config::legacy;
-
-// 旧的配置访问方式仍然有效
-let mqtt_host = legacy::get_str("mqtt_host");
-let mqtt_port = legacy::get_num("mqtt_port");
-let auth_time = legacy::get_num_or_def("auth_time", 3600);
-```
+> 旧的 `config_util` 兼容 API（`get_str`/`get_num` 等）已移除，请统一使用类型安全配置访问。
 
 ## 环境特定配置
 
@@ -236,47 +212,45 @@ pub struct ServerConfig {
 
 #### 2. 范围验证
 ```rust
-impl ConfigValidator {
-    fn validate_server_config(&self, config: &ServerConfig) -> Result<(), ConfigError> {
-        // 端口范围检查
-        if config.port < 1024 || config.port > 65535 {
-            return Err(ConfigError::ValidationError(
-                "端口号必须在 1024-65535 范围内".to_string()
-            ));
-        }
-        
-        // 连接数检查
-        if config.max_connections == 0 || config.max_connections > 10000 {
-            return Err(ConfigError::ValidationError(
-                "最大连接数必须在 1-10000 范围内".to_string()
-            ));
-        }
-        
-        Ok(())
+// ApplicationSettings::validate() 中的服务器配置检查
+fn validate_server_config(config: &ServerConfig) -> Result<(), ConfigError> {
+    // 端口范围检查
+    if config.port < 1024 || config.port > 65535 {
+        return Err(ConfigError::ValidationError(
+            "端口号必须在 1024-65535 范围内".to_string()
+        ));
     }
+    
+    // 连接数检查
+    if config.max_connections == 0 || config.max_connections > 10000 {
+        return Err(ConfigError::ValidationError(
+            "最大连接数必须在 1-10000 范围内".to_string()
+        ));
+    }
+    
+    Ok(())
 }
 ```
 
 #### 3. 安全验证
 ```rust
-impl ConfigValidator {
-    fn validate_jwt_config(&self, config: &JwtConfig) -> Result<(), ConfigError> {
-        // JWT 密钥长度检查
-        if config.secret.len() < 32 {
-            return Err(ConfigError::ValidationError(
-                "JWT 密钥长度必须至少 32 个字符".to_string()
-            ));
-        }
-        
-        // 过期时间检查
-        if config.expiration_secs < 300 || config.expiration_secs > 86400 * 7 {
-            return Err(ConfigError::ValidationError(
-                "JWT 过期时间必须在 5分钟 到 7天 之间".to_string()
-            ));
-        }
-        
-        Ok(())
+// ApplicationSettings::validate() 中的 JWT 配置检查
+fn validate_jwt_config(config: &JwtConfig) -> Result<(), ConfigError> {
+    // JWT 密钥长度检查
+    if config.secret.len() < 32 {
+        return Err(ConfigError::ValidationError(
+            "JWT 密钥长度必须至少 32 个字符".to_string()
+        ));
     }
+    
+    // 过期时间检查
+    if config.expiration_secs < 300 || config.expiration_secs > 86400 * 7 {
+        return Err(ConfigError::ValidationError(
+            "JWT 过期时间必须在 5分钟 到 7天 之间".to_string()
+        ));
+    }
+    
+    Ok(())
 }
 ```
 
@@ -284,45 +258,43 @@ impl ConfigValidator {
 
 ### 🌍 环境变量命名规则
 
-环境变量使用 `TINYIOTHUB_` 前缀，层次结构用双下划线分隔：
+环境变量使用 `TINYIOTHUB__` 前缀，层次结构用双下划线分隔：
 
 ```bash
 # 服务器配置
-export TINYIOTHUB_SERVER__HOST="0.0.0.0"
-export TINYIOTHUB_SERVER__PORT="3002"
+export TINYIOTHUB__SERVER__HOST="0.0.0.0"
+export TINYIOTHUB__SERVER__PORT="3002"
 
 # 数据库配置
-export TINYIOTHUB_DATABASE__URL="sqlite:///data/tinyiothub.db"
-export TINYIOTHUB_DATABASE__MAX_CONNECTIONS="20"
+export TINYIOTHUB__DATABASE__URL="sqlite:///data/tinyiothub.db"
+export TINYIOTHUB__DATABASE__MAX_CONNECTIONS="20"
 
 # MQTT 配置
-export TINYIOTHUB_MQTT__PRIMARY__HOST="mqtt.example.com"
-export TINYIOTHUB_MQTT__PRIMARY__PORT="1883"
-export TINYIOTHUB_MQTT__PRIMARY__USERNAME="iot_user"
-export TINYIOTHUB_MQTT__PRIMARY__PASSWORD="secure_password"
+export TINYIOTHUB__MQTT__PRIMARY__HOST="mqtt.example.com"
+export TINYIOTHUB__MQTT__PRIMARY__PORT="1883"
+export TINYIOTHUB__MQTT__PRIMARY__USERNAME="iot_user"
+export TINYIOTHUB__MQTT__PRIMARY__PASSWORD="secure_password"
 
 # JWT 配置
-export TINYIOTHUB_SECURITY__JWT__SECRET="production-jwt-secret-key-must-be-at-least-32-characters-long"
-export TINYIOTHUB_SECURITY__JWT__EXPIRATION_SECS="3600"
+export TINYIOTHUB__SECURITY__JWT__SECRET="production-jwt-secret-key-must-be-at-least-32-characters-long"
+export TINYIOTHUB__SECURITY__JWT__EXPIRATION_SECS="3600"
 
 # 日志配置
-export IOT_EDGE_LOGGING__LEVEL="warn"
-export IOT_EDGE_LOGGING__FILE_ENABLED="true"
+export TINYIOTHUB__LOGGING__LEVEL="warn"
+export TINYIOTHUB__LOGGING__FILE_ENABLED="true"
 ```
 
 ### 📋 使用示例
 
 ```bash
 # 开发环境
-export IOT_EDGE_ENVIRONMENT__NAME="development"
-export IOT_EDGE_FEATURES__DEBUG_MODE="true"
-export IOT_EDGE_LOGGING__LEVEL="debug"
+export TINYIOTHUB__ENVIRONMENT__NAME="development"
+export TINYIOTHUB__LOGGING__LEVEL="debug"
 
 # 生产环境
-export IOT_EDGE_ENVIRONMENT__NAME="production"
-export IOT_EDGE_FEATURES__DEBUG_MODE="false"
-export IOT_EDGE_LOGGING__LEVEL="warn"
-export IOT_EDGE_SECURITY__JWT__SECRET="production-secret-key"
+export TINYIOTHUB__ENVIRONMENT__NAME="production"
+export TINYIOTHUB__LOGGING__LEVEL="warn"
+export TINYIOTHUB__SECURITY__JWT__SECRET="production-secret-key"
 
 # 启动应用
 cargo run
@@ -418,17 +390,17 @@ jq . app_settings.json
 #### 3. 环境变量不生效
 ```bash
 # 检查环境变量
-env | grep IOT_EDGE_
+env | grep TINYIOTHUB__
 
 # 验证变量名格式
-echo $IOT_EDGE_SERVER__PORT
+echo $TINYIOTHUB__SERVER__PORT
 ```
 
 ### 📊 调试技巧
 
 ```bash
 # 启用配置调试日志
-RUST_LOG=iot_edge_gateway::infrastructure::config=trace cargo run
+RUST_LOG=tinyiothub_cloud::shared::config=trace cargo run
 
 # 检查配置加载过程
 RUST_LOG=debug cargo run 2>&1 | grep -i config
@@ -443,7 +415,7 @@ curl http://localhost:3002/api/system/configuration
 
 1. **更新配置结构**:
 ```rust
-// src/infrastructure/config/settings.rs
+// crates/core/src/config.rs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MyNewConfig {
     pub enabled: bool,
@@ -460,22 +432,20 @@ pub struct ApplicationSettings {
 
 2. **添加验证规则**:
 ```rust
-// src/infrastructure/config/validation.rs
-impl ConfigValidator {
-    fn validate_my_new_config(&self, config: &MyNewConfig) -> Result<(), ConfigError> {
-        if config.timeout_secs == 0 {
-            return Err(ConfigError::ValidationError(
-                "超时时间不能为0".to_string()
-            ));
-        }
-        Ok(())
+// crates/core/src/config.rs — ApplicationSettings::validate()
+fn validate_my_new_config(config: &MyNewConfig) -> Result<(), ConfigError> {
+    if config.timeout_secs == 0 {
+        return Err(ConfigError::ValidationError(
+            "超时时间不能为0".to_string()
+        ));
     }
+    Ok(())
 }
 ```
 
 3. **更新默认配置**:
 ```rust
-// 在 create_default_settings() 中添加默认值
+// 在 Default 实现中添加默认值
 my_new_feature: MyNewConfig {
     enabled: false,
     timeout_secs: 30,
@@ -485,8 +455,8 @@ my_new_feature: MyNewConfig {
 
 4. **添加环境变量支持**:
 ```rust
-// 环境变量: IOTEDGE_MY_NEW_FEATURE__ENABLED
-// 环境变量: IOTEDGE_MY_NEW_FEATURE__TIMEOUT_SECS
+// 环境变量: TINYIOTHUB__MY_NEW_FEATURE__ENABLED
+// 环境变量: TINYIOTHUB__MY_NEW_FEATURE__TIMEOUT_SECS
 ```
 
 ### 🔄 配置热重载 (未来功能)

@@ -676,6 +676,10 @@ interface ControlPanelData {
 
 ## TinyIoTHub Device Data Model Reference
 
+> 对应后端模型：`crates/core/src/models/device.rs`（`tinyiothub_core::models::device::Device`）。
+> devices 表已原地泛化为"物"（thing）：新增 `thing_type` / `ontology_summary` / `template_id`，
+> 管理面 API 为 `/api/things`。原 `products` 表已删除。
+
 ### Device Entity
 
 ```typescript
@@ -691,10 +695,10 @@ interface Device {
   deviceModel?: string;
   protocolType?: string;
   factoryName?: string;
-  state: 0 | 1 | 2 | 3;      // 0=offline, 1=online, 2=alarm, 3=fault
+  status: "offline" | "online" | "error";  // DeviceStatus
   parentId?: string;
-  productId?: string;
-  tenantId?: string;
+  templateId?: string;       // 物模板（thing_templates）
+  workspaceId?: string;
   createdAt?: string;
   updatedAt?: string;
   isOnline: boolean;         // Runtime field

@@ -6,7 +6,7 @@ TinyIoTHub 采用层次化配置系统，支持多环境配置和敏感信息管
 
 | 环境 | 配置文件 |
 |------|----------|
-| 后端 | `api/app_settings.toml` |
+| 后端 | `app_settings.toml`（仓库根目录，参考 `app_settings.example.toml`） |
 | 前端 | `web/.env.local` |
 
 ## 后端配置
@@ -37,8 +37,7 @@ username = "admin"
 password = "password"
 qos = 1
 
-[mqtt.backup]  # 备用通道
-enabled = true
+[mqtt.secondary]  # 备用通道
 host = "192.168.1.125"
 port = 1883
 ```
@@ -50,22 +49,10 @@ port = 1883
 secret = "your-secret-key-must-be-at-least-32-characters-long"
 expiration_secs = 10800  # 3 小时
 
-[security.rate_limit]
+[security.rate_limiting]
 enabled = true
-max_requests = 100
-window_secs = 60
-```
-
-### 驱动配置
-
-```toml
-[drivers]
-path = "./drivers"     # 驱动目录
-auto_load = true      # 自动加载
-
-[drivers.retry]
-max_attempts = 3      # 最大重试次数
-interval_ms = 1000    # 重试间隔
+requests_per_minute = 60
+auth_requests_per_minute = 10
 ```
 
 ## 前端配置
@@ -103,5 +90,5 @@ server: {
 
 ```bash
 # 通过环境变量修改端口
-TINYIOTHUB__SERVER__PORT=8080 cargo run
+TINYIOTHUB__SERVER__PORT=8080 cargo run -p tinyiothub-cloud
 ```

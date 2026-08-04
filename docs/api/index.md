@@ -1,6 +1,6 @@
 # API 参考
 
-TinyIoTHub 提供完整的 REST API，支持设备管理、数据采集、告警监控等功能。
+TinyIoTHub 提供完整的 REST API，支持物（Thing）管理、数据采集、告警监控等功能。
 
 ## 基础信息
 
@@ -56,44 +56,60 @@ GET /api/v1/auth/session
 Authorization: Bearer <token>
 ```
 
-## 设备管理
+## 物管理
 
-### 获取设备列表
+> 管理面的"设备"概念已更名为"物"（Thing）。原 `/api/v1/devices` 管理端点已删除（返回 410 Gone），请改用 `/api/v1/things`。运行时数据面（属性、状态、追踪等）仍保留 `/api/v1/devices/{id}/...` 端点。所有管理面 API 按 workspace 作用域。
+
+### 获取物列表
 
 ```http
-GET /api/v1/devices
+GET /api/v1/things
 ```
 
-### 创建设备
+**查询参数：** `thing_type`、`parent_id`、`tags`、`q`（搜索）、`limit`、`offset`
+
+### 创建物
 
 ```http
-POST /api/v1/devices
+POST /api/v1/things
 Authorization: Bearer <token>
 
 {
   "name": "温度传感器",
-  "sn": "SN001",
-  "driver": "modbus_tcp",
-  "config": {}
+  "thing_type": "sensor",
+  "parent_id": null,
+  "driver_name": "modbus_tcp"
 }
 ```
 
-### 获取设备详情
+### 获取物详情
 
 ```http
-GET /api/v1/devices/{id}
+GET /api/v1/things/{id}
 ```
 
-### 更新设备
+### 更新物
 
 ```http
-PUT /api/v1/devices/{id}
+PUT /api/v1/things/{id}
 ```
 
-### 删除设备
+### 删除物
 
 ```http
-DELETE /api/v1/devices/{id}
+DELETE /api/v1/things/{id}
+```
+
+### 获取物层级树
+
+```http
+GET /api/v1/things/{id}/tree?depth=3
+```
+
+### 调用物动作
+
+```http
+POST /api/v1/things/{id}/actions/{action_name}/invoke
 ```
 
 ## 驱动管理

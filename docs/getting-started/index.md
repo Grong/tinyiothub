@@ -5,7 +5,7 @@
 ## 环境要求
 
 ### 后端要求
-- **Rust**: 1.70+ (2021 Edition)
+- **Rust**: 1.85+ (2024 Edition)
 - **操作系统**: Linux, Windows, HarmonyOS
 - **数据库**: SQLite (内置)
 - **网络**: MQTT Broker (可选)
@@ -22,7 +22,7 @@
 #### 启动后端
 
 ```bash
-cd api
+cd cloud
 cargo run
 ```
 
@@ -36,27 +36,29 @@ pnpm install
 pnpm dev
 ```
 
-前端应用将在 http://localhost:3001 启动
+前端应用将在 http://localhost:5173 启动（Vite 开发服务器，API 请求自动代理到后端）
 
 ### 方式二：生产模式（单进程部署）
 
 #### 构建后端
 
 ```bash
-# Windows
-.\scripts\build-single-binary.ps1 -Release
-
-# Linux/macOS
-./scripts/build-single-binary.sh --release
+# 前端静态资源 + 后端发布构建（仓库根目录）
+cd web && pnpm build && cd ..
+cargo build --release -p tinyiothub-cloud
 ```
+
+或使用 Just 快捷命令：`just build`（后端 release）；容器化一体构建见根目录 `Dockerfile`（`docker build -t tinyiothub .`）。
+
+> 注：`scripts/build-static.sh` 与 `scripts/build-single-binary.ps1` 基于旧的 api/ 目录布局，已废弃，勿使用。
 
 #### 运行
 
 ```bash
-cd api
-.\target\release\tinyiothub.exe  # Windows
-./target/release/tinyiothub      # Linux/macOS
+./target/release/tinyiothub-cloud
 ```
+
+生产模式下后端直接托管前端页面（SPA），无需单独启动前端。
 
 ## 访问服务
 
@@ -64,9 +66,10 @@ cd api
 
 | 服务 | 地址 |
 |------|------|
-| Web 管理界面 | http://localhost:3001/ |
+| Web 管理界面（开发模式） | http://localhost:5173/ |
+| Web 管理界面（生产模式） | http://localhost:3002/ |
 | 后端 API | http://localhost:3002/api/v1/ |
-| 健康检查 | http://localhost:3002/api/v1/system/health |
+| 健康检查 | http://localhost:3002/api/health |
 
 ## 默认账号
 
@@ -81,4 +84,4 @@ cd api
 
 - [安装部署详解 →](/getting-started/installation)
 - [配置说明 →](/getting-started/configuration)
-- [设备管理 →](/guide/devices)
+- [物管理 →](/guide/devices)

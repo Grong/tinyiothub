@@ -28,14 +28,14 @@ thing/{thing_id}/event/{event_name}
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `level` | string | 是 | `info`、`warning`、`error`、`critical` |
+| `level` | string | 是 | `info`(2)、`warning`(3)、`error`(4)、`critical`(5) |
 | `data` | object | 是 | 事件携带的自定义数据，平台不校验结构 |
 | `ts` | string | 否 | ISO 8601 时间戳，不传则使用服务端接收时间 |
 
 ## 行为约定
 
 ### 未知事件名
-- 平台**不会报错**。未知事件名将被降级为 `info` 级别存储，设备端不会收到任何错误响应。
+- 平台**不会报错**。未知事件名将被降级为 `info` 级别存储，并打上 `unknown_event` 标记，设备端不会收到任何错误响应。
 
 ### 畸形 Payload
 - 如果 payload 不是合法 JSON、缺少 `level` 字段、或 `level` 值无效，平台会**静默丢弃**该事件。**不会**向设备发送错误消息（避免 MQTT 风暴）。

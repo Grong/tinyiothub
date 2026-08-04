@@ -5,12 +5,12 @@
 事件处理器按照 DDD（领域驱动设计）原则分为两层：
 
 ### 1. 基础设施层 Handler（技术关注点）
-**位置**: `src/infrastructure/event/handlers/`
+**位置**: `cloud/src/shared/event/handlers/`
 
 这些 Handler 处理技术实现细节，不包含业务逻辑：
 
 - **PersistenceEventHandler** (优先级 90)
-  - 职责：将事件持久化到数据库
+  - 职责：将事件持久化到数据库（`events` 统一表）
   - 特性：批量写入（100条/批，5秒刷新）、智能过滤
   - 过滤规则：
     - Debug 级别的属性变化不持久化
@@ -18,7 +18,8 @@
     - Warning 及以上级别总是持久化
 
 - **RealTimeStatusHandler** (优先级 10)
-  - 职责：更新内存中的实时事件状态
+  - 职责：将需要追踪实时状态的事件 upsert 到 `events` 表
+  - 说明：原 `real_time_events` 表已合并进 `events` 统一表（Thing Ontology 迁移）
   - 用途：快速查询当前活跃事件
 
 - **SseEventHandler** (优先级 1)
@@ -26,12 +27,12 @@
   - 特性：实时性最高，优先级最高
 
 ### 2. 领域层 Handler（业务逻辑）
-**位置**: `src/domain/*/handlers/`
+**位置**: `cloud/src/modules/`（按业务模块组织）
 
 这些 Handler 包含业务规则和领域逻辑：
 
 - **AlarmEventHandler** (优先级 50)
-  - 位置：`src/domain/alarm/handlers/alarm_event_handler.rs`
+  - 位置：`cloud/src/modules/alarm/service.rs`（从 `cloud::modules::alarm` 导出）
   - 职责：
     - 根据业务规则判断是否触发报警
     - 创建报警记录
@@ -40,7 +41,11 @@
   - 业务规则示例：
     - Warning/Error/Critical 级别触发报警
     - 根据属性配置的报警阈值判断
+    - 物事件规则匹配（`rule_type = 'event'`）
     - 报警去重和聚合
+
+`EventHandler` trait 定义在 `crates/core/src/event.rs`（`tinyiothub_core::event::EventHandler`），
+事件实体定义在 `crates/core/src/models/event/`（`tinyiothub_core::models::event::Event`）。
 
 ## 事件处理流程
 
@@ -68,28 +73,28 @@ EventBus.publish(event)
 
 ### 步骤 1: 创建 Handler 文件
 
-在对应的领域模块下创建 handler：
+在对应的业务模块下创建 handler：
 
 ```rust
-// src/domain/your_domain/handlers/your_handler.rs
-use crate::domain::event::entities::Event;
-use crate::infrastructure::event::EventHandler;
+// cloud/src/modules/your_domain/your_handler.rs
+use tinyiothub_core::models::event::Event;
+use tinyiothub_core::event::EventHandler;
 use std::sync::Arc;
 
 pub struct YourBusinessHandler {
     // 注入需要的服务
-    database: Arc<Database>,
+    database: Arc<tinyiothub_storage::sqlite::Database>,
 }
 
 impl YourBusinessHandler {
-    pub fn new(database: Arc<Database>) -> Self {
+    pub fn new(database: Arc<tinyiothub_storage::sqlite::Database>) -> Self {
         Self { database }
     }
 }
 
 #[async_trait::async_trait]
 impl EventHandler for YourBusinessHandler {
-    async fn handle(&self, event: &Event) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn handle(&self, event: &Event) -> tinyiothub_core::error::Result<()> {
         // 实现业务逻辑
         Ok(())
     }
@@ -113,18 +118,14 @@ impl EventHandler for YourBusinessHandler {
 ### 步骤 2: 导出 Handler
 
 ```rust
-// src/domain/your_domain/handlers/mod.rs
+// cloud/src/modules/your_domain/mod.rs
 mod your_handler;
 pub use your_handler::YourBusinessHandler;
-
-// src/domain/your_domain/mod.rs
-pub mod handlers;
-pub use handlers::YourBusinessHandler;
 ```
 
 ### 步骤 3: 注册到 EventBus
 
-在 `src/shared/app_state.rs` 中注册：
+在 `cloud/src/shared/service_manager.rs` 中注册：
 
 ```rust
 // 在 AppState::new() 方法中
