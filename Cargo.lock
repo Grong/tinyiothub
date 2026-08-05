@@ -3460,6 +3460,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "notify"
+version = "0.4.6"
+dependencies = [
+ "async-stream",
+ "async-trait",
+ "axum",
+ "chrono",
+ "core",
+ "db",
+ "event",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "uuid",
+ "web",
+]
+
+[[package]]
 name = "ntapi"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6136,6 +6157,7 @@ dependencies = [
  "memory",
  "mockall",
  "moka",
+ "notify",
  "num_cpus",
  "parking_lot 0.12.5",
  "plugin-sdk",

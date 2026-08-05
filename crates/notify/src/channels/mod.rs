@@ -30,7 +30,7 @@ impl NotificationChannelFactory {
 
     /// Create all available notification channels
     pub fn create_all_channels()
-    -> Vec<Box<dyn crate::modules::notification::types::NotificationChannel>> {
+    -> Vec<Box<dyn crate::types::NotificationChannel>> {
         vec![
             Box::new(Self::create_email_channel()),
             Box::new(Self::create_sms_channel()),

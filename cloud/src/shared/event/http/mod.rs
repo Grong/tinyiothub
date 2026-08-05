@@ -3,10 +3,11 @@
 // These handlers were part of `modules::event::handler` before the event
 // domain crate extraction (P4-Task18). They stay in cloud because they depend
 // on the event security plane (`shared::event::security`) and the SSE
-// manager/token manager (`shared::event::sse_manager`, auth SSE tokens), which
-// are entangled with the not-yet-extracted notification module.
+// manager/token manager (`shared::event::sse_manager`, auth SSE tokens).
+// The notification module was extracted in P4-Task21 (notify crate); the SSE
+// manager still consumes `tinyiothub_notify::channels::sse_channel`.
 //
-// Reclaim task: the future notify/security-plane extraction should move these
+// Reclaim task: a future security-plane extraction should move these
 // routes (and the `shared::event` infrastructure) out of cloud.
 
 use axum::{

@@ -18,9 +18,9 @@
 //!
 //! Boundary notes:
 //! - `NotificationChannelType` etc. come from `tinyiothub_event::aggregates`
-//!   (sunk to core in P4.0-Task13) — there is NO alarm → modules::notification
-//!   edge; the notification domain extraction (Task 21) reclaims
-//!   `cloud::modules::notification` independently.
+//!   (sunk to core in P4.0-Task13) — there is NO alarm → notify edge; the
+//!   notification domain was extracted in P4-Task21 (`tinyiothub_notify`)
+//!   and alarm's notification dispatch stays independent of it.
 //! - `RecentAlarm` moved here from `cloud::modules::monitoring::types`
 //!   (the `/alarms/recent` handler was its only consumer).
 

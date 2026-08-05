@@ -10,6 +10,5 @@ pub mod jobs;
 pub mod marketplace;
 pub mod mcp;
 pub mod monitoring;
-pub mod notification;
 pub mod open;
 pub mod system;

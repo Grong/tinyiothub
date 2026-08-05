@@ -7,7 +7,6 @@ use axum::{
     routing::{delete, get, post, put},
 };
 use chrono::Utc;
-use tinyiothub_auth::security::jwt::Claims;
 use tinyiothub_core::models::notification_channel::{
     ChannelStatistics, CreateNotificationChannelRequest, NotificationChannel,
     NotificationChannelQueryParams, SendMessageRequest, UpdateNotificationChannelRequest,
@@ -17,24 +16,19 @@ use tinyiothub_storage::{
     find_all_notification_channels, find_notification_channel_by_id,
     get_notification_channel_statistics, update_notification_channel,
 };
-use tinyiothub_web::response::ApiResponseBuilder;
+use tinyiothub_web::middleware::workspace::AuthClaims;
+use tinyiothub_web::response::{ApiResponse, ApiResponseBuilder, PaginatedResponse, PaginationInfo};
 use tracing::{error, info};
 use uuid::Uuid;
 
-use super::{
-    service::NotificationMessage,
+use crate::{
+    NotifyState,
+    service::{NotificationMessage, send_notification_message},
     types::{
         CreateNotificationRuleRequest, NotificationChannelType, NotificationHistoryQuery,
         NotificationHistoryResponse, NotificationLevel, NotificationRule, NotificationRuleQuery,
         NotificationRuleResponse, TestNotificationRequest, UpdateNotificationRuleRequest,
         convert_device_filter, device_filter_to_json,
-    },
-};
-use crate::{
-    modules::notification::service::send_notification_message,
-    shared::{
-        api_response::{ApiResponse, PaginatedResponse, PaginationInfo},
-        app_state::AppState,
     },
 };
 
@@ -43,7 +37,11 @@ use crate::{
 // ──────────────────────────────────────────────
 
 /// Create notification rules router
-pub fn create_router() -> Router<AppState> {
+pub fn create_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    NotifyState: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/rules", get(get_notification_rules).post(create_notification_rule))
         .route(
@@ -61,7 +59,11 @@ pub fn create_router() -> Router<AppState> {
 // ──────────────────────────────────────────────
 
 /// Create notification channels router
-pub fn create_channel_router() -> Router<AppState> {
+pub fn create_channel_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    NotifyState: axum::extract::FromRef<S>,
+{
     Router::new()
         .route("/notification-channels", get(list_channels))
         .route("/notification-channels", post(create_channel))
@@ -80,10 +82,10 @@ pub fn create_channel_router() -> Router<AppState> {
 #[axum::debug_handler]
 pub async fn get_notification_rules(
     Query(query): Query<NotificationRuleQuery>,
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<NotifyState>,
+    claims: AuthClaims,
 ) -> Json<ApiResponse<Vec<NotificationRuleResponse>>> {
-    match get_notification_rules_impl(&state, query, &claims.workspace_id).await {
+    match get_notification_rules_impl(&state, query, &claims.0.workspace_id).await {
         Ok(rules) => ApiResponseBuilder::success(rules),
         Err(e) => {
             error!("Failed to get notification rules: {}", e);
@@ -93,12 +95,12 @@ pub async fn get_notification_rules(
 }
 
 async fn get_notification_rules_impl(
-    state: &AppState,
+    state: &NotifyState,
     query: NotificationRuleQuery,
     workspace_id: &str,
 ) -> Result<Vec<NotificationRuleResponse>, String> {
     let notification_manager =
-        state.get_notification_manager().ok_or("Notification manager not available")?;
+        state.notification_manager.as_deref().ok_or("Notification manager not available")?;
 
     let rules = notification_manager
         .get_rules()
@@ -157,11 +159,11 @@ async fn get_notification_rules_impl(
 /// Create a new notification rule
 #[axum::debug_handler]
 pub async fn create_notification_rule(
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<NotifyState>,
+    claims: AuthClaims,
     Json(request): Json<CreateNotificationRuleRequest>,
 ) -> Json<ApiResponse<NotificationRuleResponse>> {
-    match create_notification_rule_impl(&state, request, &claims.workspace_id).await {
+    match create_notification_rule_impl(&state, request, &claims.0.workspace_id).await {
         Ok(rule) => ApiResponseBuilder::success(rule),
         Err(e) => {
             error!("Failed to create notification rule: {}", e);
@@ -171,12 +173,12 @@ pub async fn create_notification_rule(
 }
 
 async fn create_notification_rule_impl(
-    state: &AppState,
+    state: &NotifyState,
     request: CreateNotificationRuleRequest,
     workspace_id: &str,
 ) -> Result<NotificationRuleResponse, String> {
     let notification_manager =
-        state.get_notification_manager().ok_or("Notification manager not available")?;
+        state.notification_manager.as_deref().ok_or("Notification manager not available")?;
 
     let notification_methods: Result<Vec<NotificationChannelType>, _> = request
         .notification_methods
@@ -246,10 +248,10 @@ async fn create_notification_rule_impl(
 #[axum::debug_handler]
 pub async fn get_notification_rule(
     Path(rule_id): Path<String>,
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<NotifyState>,
+    claims: AuthClaims,
 ) -> Json<ApiResponse<NotificationRuleResponse>> {
-    match get_notification_rule_impl(&state, &rule_id, &claims.workspace_id).await {
+    match get_notification_rule_impl(&state, &rule_id, &claims.0.workspace_id).await {
         Ok(Some(rule)) => ApiResponseBuilder::success(rule),
         Ok(None) => ApiResponseBuilder::error("Notification rule not found"),
         Err(e) => {
@@ -260,12 +262,12 @@ pub async fn get_notification_rule(
 }
 
 async fn get_notification_rule_impl(
-    state: &AppState,
+    state: &NotifyState,
     rule_id: &str,
     workspace_id: &str,
 ) -> Result<Option<NotificationRuleResponse>, String> {
     let notification_manager =
-        state.get_notification_manager().ok_or("Notification manager not available")?;
+        state.notification_manager.as_deref().ok_or("Notification manager not available")?;
 
     let rules = notification_manager
         .get_rules()
@@ -307,12 +309,12 @@ async fn get_notification_rule_impl(
 /// Update a notification rule
 #[axum::debug_handler]
 pub async fn update_notification_rule(
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<NotifyState>,
+    claims: AuthClaims,
     Path(rule_id): Path<String>,
     Json(request): Json<UpdateNotificationRuleRequest>,
 ) -> Json<ApiResponse<NotificationRuleResponse>> {
-    match update_notification_rule_impl(&state, &rule_id, request, &claims.workspace_id).await {
+    match update_notification_rule_impl(&state, &rule_id, request, &claims.0.workspace_id).await {
         Ok(rule) => ApiResponseBuilder::success(rule),
         Err(e) => {
             error!("Failed to update notification rule {}: {}", rule_id, e);
@@ -322,13 +324,13 @@ pub async fn update_notification_rule(
 }
 
 async fn update_notification_rule_impl(
-    state: &AppState,
+    state: &NotifyState,
     rule_id: &str,
     request: UpdateNotificationRuleRequest,
     workspace_id: &str,
 ) -> Result<NotificationRuleResponse, String> {
     let notification_manager =
-        state.get_notification_manager().ok_or("Notification manager not available")?;
+        state.notification_manager.as_deref().ok_or("Notification manager not available")?;
 
     let rules = notification_manager
         .get_rules()
@@ -413,10 +415,10 @@ async fn update_notification_rule_impl(
 #[axum::debug_handler]
 pub async fn delete_notification_rule(
     Path(rule_id): Path<String>,
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<NotifyState>,
+    claims: AuthClaims,
 ) -> Json<ApiResponse<bool>> {
-    match delete_notification_rule_impl(&state, &rule_id, &claims.workspace_id).await {
+    match delete_notification_rule_impl(&state, &rule_id, &claims.0.workspace_id).await {
         Ok(()) => {
             info!("Deleted notification rule: {}", rule_id);
             ApiResponseBuilder::success(true)
@@ -429,12 +431,12 @@ pub async fn delete_notification_rule(
 }
 
 async fn delete_notification_rule_impl(
-    state: &AppState,
+    state: &NotifyState,
     rule_id: &str,
     workspace_id: &str,
 ) -> Result<(), String> {
     let notification_manager =
-        state.get_notification_manager().ok_or("Notification manager not available")?;
+        state.notification_manager.as_deref().ok_or("Notification manager not available")?;
 
     // Verify workspace ownership before delete
     let rules = notification_manager
@@ -459,10 +461,10 @@ async fn delete_notification_rule_impl(
 #[axum::debug_handler]
 pub async fn get_notification_history(
     Query(query): Query<NotificationHistoryQuery>,
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<NotifyState>,
+    claims: AuthClaims,
 ) -> Json<ApiResponse<Vec<NotificationHistoryResponse>>> {
-    match get_notification_history_impl(&state, query, &claims.workspace_id).await {
+    match get_notification_history_impl(&state, query, &claims.0.workspace_id).await {
         Ok(history) => ApiResponseBuilder::success(history),
         Err(e) => {
             error!("Failed to get notification history: {}", e);
@@ -472,12 +474,12 @@ pub async fn get_notification_history(
 }
 
 async fn get_notification_history_impl(
-    state: &AppState,
+    state: &NotifyState,
     query: NotificationHistoryQuery,
     _workspace_id: &str,
 ) -> Result<Vec<NotificationHistoryResponse>, String> {
     let notification_manager =
-        state.get_notification_manager().ok_or("Notification manager not available")?;
+        state.notification_manager.as_deref().ok_or("Notification manager not available")?;
 
     let history = if let Some(event_id) = query.event_id {
         notification_manager
@@ -509,11 +511,11 @@ async fn get_notification_history_impl(
 /// Send a test notification
 #[axum::debug_handler]
 pub async fn send_test_notification(
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<NotifyState>,
+    claims: AuthClaims,
     Json(request): Json<TestNotificationRequest>,
 ) -> Json<ApiResponse<bool>> {
-    match send_test_notification_impl(&state, request, &claims.workspace_id).await {
+    match send_test_notification_impl(&state, request, &claims.0.workspace_id).await {
         Ok(()) => {
             info!("Test notification sent successfully");
             ApiResponseBuilder::success(true)
@@ -526,12 +528,12 @@ pub async fn send_test_notification(
 }
 
 async fn send_test_notification_impl(
-    state: &AppState,
+    state: &NotifyState,
     request: TestNotificationRequest,
     _workspace_id: &str,
 ) -> Result<(), String> {
     let notification_manager =
-        state.get_notification_manager().ok_or("Notification manager not available")?;
+        state.notification_manager.as_deref().ok_or("Notification manager not available")?;
 
     let level = NotificationLevel::parse_str(&request.level)
         .map_err(|_e| format!("Invalid notification level: {}", request.level))?;
@@ -568,14 +570,14 @@ async fn send_test_notification_impl(
 
 /// List notification channels
 async fn list_channels(
-    State(state): State<AppState>,
+    State(state): State<NotifyState>,
     Query(mut params): Query<NotificationChannelQueryParams>,
-    claims: Claims,
+    claims: AuthClaims,
 ) -> Json<ApiResponse<PaginatedResponse<NotificationChannel>>> {
     let page = params.page.unwrap_or(1);
     let page_size = params.page_size.unwrap_or(20);
 
-    params.workspace_id = Some(claims.workspace_id.clone());
+    params.workspace_id = Some(claims.0.workspace_id.clone());
 
     let (channels_result, count_result) = tokio::join!(
         find_all_notification_channels(&state.database, &params),
@@ -602,15 +604,15 @@ async fn list_channels(
 
 /// Get a single channel by ID
 async fn get_channel(
-    State(state): State<AppState>,
+    State(state): State<NotifyState>,
     Path(id): Path<String>,
-    claims: Claims,
+    claims: AuthClaims,
 ) -> Json<ApiResponse<NotificationChannel>> {
     let db = state.database.clone();
     match find_notification_channel_by_id(&db, &id).await {
         Ok(Some(channel)) => {
             if let Some(ref channel_ws) = channel.workspace_id
-                && channel_ws != &claims.workspace_id
+                && channel_ws != &claims.0.workspace_id
             {
                 return ApiResponseBuilder::error_with_code(404, "通知渠道不存在");
             }
@@ -626,8 +628,8 @@ async fn get_channel(
 
 /// Create a new notification channel
 async fn create_channel(
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<NotifyState>,
+    claims: AuthClaims,
     Json(payload): Json<CreateNotificationChannelRequest>,
 ) -> Json<ApiResponse<NotificationChannel>> {
     let db = state.database.clone();
@@ -641,7 +643,7 @@ async fn create_channel(
         return ApiResponseBuilder::error_with_code(400, "无效的配置 JSON");
     }
 
-    match create_notification_channel(&db, &payload, Some(&claims.workspace_id)).await {
+    match create_notification_channel(&db, &payload, Some(&claims.0.workspace_id)).await {
         Ok(channel) => ApiResponseBuilder::success(channel),
         Err(e) => {
             tracing::error!("Failed to create channel: {}", e);
@@ -652,9 +654,9 @@ async fn create_channel(
 
 /// Update an existing notification channel
 async fn update_channel(
-    State(state): State<AppState>,
+    State(state): State<NotifyState>,
     Path(id): Path<String>,
-    claims: Claims,
+    claims: AuthClaims,
     Json(payload): Json<UpdateNotificationChannelRequest>,
 ) -> Json<ApiResponse<NotificationChannel>> {
     let db = state.database.clone();
@@ -662,7 +664,7 @@ async fn update_channel(
     // Verify workspace ownership
     if let Ok(Some(channel)) = find_notification_channel_by_id(&db, &id).await
         && let Some(ref channel_ws) = channel.workspace_id
-        && channel_ws != &claims.workspace_id
+        && channel_ws != &claims.0.workspace_id
     {
         return ApiResponseBuilder::error_with_code(404, "通知渠道不存在");
     }
@@ -680,7 +682,7 @@ async fn update_channel(
         return ApiResponseBuilder::error_with_code(400, "无效的配置 JSON");
     }
 
-    match update_notification_channel(&db, &id, &payload, Some(&claims.workspace_id)).await {
+    match update_notification_channel(&db, &id, &payload, Some(&claims.0.workspace_id)).await {
         Ok(channel) => ApiResponseBuilder::success(channel),
         Err(e) => {
             tracing::error!("Failed to update channel: {}", e);
@@ -691,13 +693,13 @@ async fn update_channel(
 
 /// Delete a notification channel
 async fn delete_channel(
-    State(state): State<AppState>,
+    State(state): State<NotifyState>,
     Path(id): Path<String>,
-    claims: Claims,
+    claims: AuthClaims,
 ) -> Json<ApiResponse<bool>> {
     let db = state.database.clone();
 
-    match delete_notification_channel(&db, &id, Some(&claims.workspace_id)).await {
+    match delete_notification_channel(&db, &id, Some(&claims.0.workspace_id)).await {
         Ok(_) => ApiResponseBuilder::success(true),
         Err(e) => {
             tracing::error!("Failed to delete channel: {}", e);
@@ -708,9 +710,9 @@ async fn delete_channel(
 
 /// Test a notification channel
 async fn test_channel(
-    State(state): State<AppState>,
+    State(state): State<NotifyState>,
     Path(id): Path<String>,
-    claims: Claims,
+    claims: AuthClaims,
     Json(payload): Json<SendMessageRequest>,
 ) -> Json<ApiResponse<serde_json::Value>> {
     let db = state.database.clone();
@@ -718,7 +720,7 @@ async fn test_channel(
     let channel = match find_notification_channel_by_id(&db, &id).await {
         Ok(Some(c)) => {
             if let Some(ref channel_ws) = c.workspace_id
-                && channel_ws != &claims.workspace_id
+                && channel_ws != &claims.0.workspace_id
             {
                 return ApiResponseBuilder::error_with_code(404, "通知渠道不存在");
             }
@@ -755,11 +757,11 @@ async fn test_channel(
 
 /// Get channel statistics
 async fn get_statistics(
-    State(state): State<AppState>,
-    claims: Claims,
+    State(state): State<NotifyState>,
+    claims: AuthClaims,
 ) -> Json<ApiResponse<ChannelStatistics>> {
     let db = state.database.clone();
-    match get_notification_channel_statistics(&db, Some(&claims.workspace_id)).await {
+    match get_notification_channel_statistics(&db, Some(&claims.0.workspace_id)).await {
         Ok(stats) => ApiResponseBuilder::success(stats),
         Err(e) => {
             tracing::error!("Failed to get statistics: {}", e);

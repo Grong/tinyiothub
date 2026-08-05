@@ -5,7 +5,7 @@ use tracing::{debug, info};
 
 use tinyiothub_event::{EventError, Result};
 
-use crate::modules::notification::types::{
+use crate::types::{
     NotificationChannel, NotificationChannelType, NotificationLevel, NotificationMessage,
 };
 
@@ -408,7 +408,7 @@ impl NotificationChannel for EmailNotificationChannel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::notification::types::NotificationMessage;
+    use crate::types::NotificationMessage;
 
     #[test]
     fn test_email_channel_creation() {

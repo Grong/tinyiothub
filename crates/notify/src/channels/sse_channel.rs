@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use tinyiothub_event::Result;
 
-use crate::modules::notification::types::{
+use crate::types::{
     NotificationChannel, NotificationChannelType, NotificationMessage,
 };
 
@@ -315,7 +315,7 @@ mod tests {
     use tokio::time::Duration;
 
     use super::*;
-    use crate::modules::notification::types::{
+    use crate::types::{
         NotificationChannel, NotificationLevel, NotificationMessage,
     };
 

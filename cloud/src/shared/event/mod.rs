@@ -1,7 +1,6 @@
 // Infrastructure Layer - Event System
 // This module contains infrastructure concerns and external integrations
 
-pub mod channels;
 pub mod handlers;
 pub mod http;
 pub mod security;

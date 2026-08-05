@@ -3,7 +3,7 @@ use tracing::{debug, info};
 
 use tinyiothub_event::{EventError, Result};
 
-use crate::modules::notification::types::{
+use crate::types::{
     NotificationChannel, NotificationChannelType, NotificationMessage,
 };
 
@@ -317,7 +317,7 @@ impl NotificationChannel for SmsNotificationChannel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::notification::types::{
+    use crate::types::{
         NotificationChannel, NotificationLevel, NotificationMessage,
     };
 

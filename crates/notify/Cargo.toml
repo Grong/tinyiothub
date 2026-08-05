@@ -1,0 +1,50 @@
+[package]
+name = "notify"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Notification domain for TinyIoTHub — notification rules, channel management, and notification channels (email/sms/sse)"
+
+[lib]
+name = "tinyiothub_notify"
+
+[dependencies]
+# Workspace crates
+core = { workspace = true }
+db = { workspace = true }
+web = { workspace = true }
+event = { workspace = true }
+
+# Web framework
+axum = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+
+# Async trait
+async-trait = { workspace = true }
+
+# Async streams (SSE channel)
+async-stream = { workspace = true }
+
+# HTTP client (SMS channel providers)
+reqwest = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Database
+sqlx = { workspace = true }
+
+# IDs
+uuid = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

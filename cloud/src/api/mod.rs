@@ -47,11 +47,8 @@ pub fn create_router() -> Router<AppState> {
         .nest("/users/permissions", tinyiothub_user::permission::create_router())
         .nest("/device-templates", tinyiothub_thing::template::handler::create_router())
         .nest("/marketplace", crate::modules::marketplace::handler::create_router())
-        .nest("/notifications", crate::modules::notification::handler::create_router())
-        .nest(
-            "/notification-channels",
-            crate::modules::notification::handler::create_channel_router(),
-        )
+        .nest("/notifications", tinyiothub_notify::router())
+        .nest("/notification-channels", tinyiothub_notify::channel_router())
         .nest("/tenants", tinyiothub_tenant::router())
         .nest(
             "/events",

@@ -10,7 +10,7 @@ use axum::response::Response;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info};
 
-use crate::shared::event::channels::sse_channel::{SseMessage, SseNotificationChannel};
+use tinyiothub_notify::channels::sse_channel::{SseMessage, SseNotificationChannel};
 use tinyiothub_event::entities::Event;
 
 /// SSE Connection Manager
